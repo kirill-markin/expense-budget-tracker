@@ -1,4 +1,4 @@
-import { verifyIapJwt } from "@/server/auth/verifyIapJwt";
+import { validateSession } from "@/server/auth/session";
 import { updateLedgerEntry } from "@/server/transactions/updateLedgerEntry";
 
 type RequestBody = Readonly<{
@@ -9,7 +9,7 @@ type RequestBody = Readonly<{
 
 export const POST = async (request: Request): Promise<Response> => {
   try {
-    await verifyIapJwt(request);
+    await validateSession(request);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return new Response(`Unauthorized: ${message}`, { status: 401 });
@@ -44,7 +44,7 @@ export const POST = async (request: Request): Promise<Response> => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`BigQuery update failed: ${message}`, { status: 500 });
+    return new Response(`Database update failed: ${message}`, { status: 500 });
   }
 
   return Response.json({ ok: true });

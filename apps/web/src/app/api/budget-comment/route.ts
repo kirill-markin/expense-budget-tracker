@@ -1,4 +1,4 @@
-import { verifyIapJwt } from "@/server/auth/verifyIapJwt";
+import { validateSession } from "@/server/auth/session";
 import { getLatestComment } from "@/server/budget/getLatestComment";
 import { insertBudgetComment } from "@/server/budget/insertBudgetComment";
 
@@ -7,7 +7,7 @@ const VALID_DIRECTIONS = new Set(["income", "spend"]);
 
 export const GET = async (request: Request): Promise<Response> => {
   try {
-    await verifyIapJwt(request);
+    await validateSession(request);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return new Response(`Unauthorized: ${message}`, { status: 401 });
@@ -35,7 +35,7 @@ export const GET = async (request: Request): Promise<Response> => {
     return Response.json({ comment });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`BigQuery query failed: ${message}`, { status: 500 });
+    return new Response(`Database query failed: ${message}`, { status: 500 });
   }
 };
 
@@ -48,7 +48,7 @@ type PostBody = Readonly<{
 
 export const POST = async (request: Request): Promise<Response> => {
   try {
-    await verifyIapJwt(request);
+    await validateSession(request);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return new Response(`Unauthorized: ${message}`, { status: 401 });
@@ -84,6 +84,6 @@ export const POST = async (request: Request): Promise<Response> => {
     return Response.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`BigQuery insert failed: ${message}`, { status: 500 });
+    return new Response(`Database insert failed: ${message}`, { status: 500 });
   }
 };

@@ -1,4 +1,4 @@
-import { verifyIapJwt } from "@/server/auth/verifyIapJwt";
+import { validateSession } from "@/server/auth/session";
 import { fillBudgetBase } from "@/server/budget/fillBudgetBase";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
@@ -13,7 +13,7 @@ type RequestBody = Readonly<{
 
 export const POST = async (request: Request): Promise<Response> => {
   try {
-    await verifyIapJwt(request);
+    await validateSession(request);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return new Response(`Unauthorized: ${message}`, { status: 401 });
@@ -53,6 +53,6 @@ export const POST = async (request: Request): Promise<Response> => {
     return Response.json({ ok: true, monthsFilled: filled });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`BigQuery fill failed: ${message}`, { status: 500 });
+    return new Response(`Database insert failed: ${message}`, { status: 500 });
   }
 };
