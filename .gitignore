@@ -1,2 +1,17 @@
-# Local working artifacts
+# Dependencies
+node_modules/
+.venv/
+
+# Build output
+.next/
+dist/
+
+# Environment
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Local artifacts
 tmp/

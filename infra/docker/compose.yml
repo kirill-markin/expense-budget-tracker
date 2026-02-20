@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tracker
+      POSTGRES_PASSWORD: tracker
+      POSTGRES_DB: tracker
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../db/migrations:/migrations:ro
+      - ../../db/seeds:/seeds:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracker"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: ../../apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - ../../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../../apps/worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
