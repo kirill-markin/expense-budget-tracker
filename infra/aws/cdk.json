@@ -1,6 +1,3 @@
 {
-  "app": "npx ts-node bin/app.ts",
-  "context": {
-    "@aws-cdk/core:bootstrapQualifier": "hnb659fds"
-  }
+  "app": "npx ts-node bin/app.ts"
 }

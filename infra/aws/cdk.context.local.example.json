@@ -1,0 +1,9 @@
+{
+  "region": "eu-central-1",
+  "domainName": "expense-budget-tracker.example.com",
+  "certificateArn": "arn:aws:acm:eu-central-1:XXXXXXXXXXXX:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "alertEmail": "your-email@gmail.com",
+  "hostedZoneId": "ZXXXXXXXXXXXXX",
+  "keyPairName": "",
+  "githubRepo": "kirill-markin/expense-budget-tracker"
+}

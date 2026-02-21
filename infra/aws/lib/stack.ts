@@ -10,6 +10,15 @@ import * as events_targets from "aws-cdk-lib/aws-events-targets";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cloudwatch_actions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as sns_subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
+import * as logs from "aws-cdk-lib/aws-logs";
+import * as route53 from "aws-cdk-lib/aws-route53";
+import * as route53_targets from "aws-cdk-lib/aws-route53-targets";
+import * as backup from "aws-cdk-lib/aws-backup";
 import { Construct } from "constructs";
 
 export class ExpenseBudgetTrackerStack extends cdk.Stack {
@@ -20,6 +29,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const domainName = this.node.tryGetContext("domainName") as string | undefined;
     const certificateArn = this.node.tryGetContext("certificateArn") as string | undefined;
     const keyPairName = this.node.tryGetContext("keyPairName") as string | undefined;
+    const alertEmail = this.node.tryGetContext("alertEmail") as string | undefined;
+    const hostedZoneId = this.node.tryGetContext("hostedZoneId") as string | undefined;
     const callbackUrl = domainName ? `https://${domainName}/oauth2/idpresponse` : undefined;
 
     // --- VPC ---
@@ -57,6 +68,16 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       description: "Lambda: FX fetchers",
     });
     dbSg.addIngressRule(lambdaSg, ec2.Port.tcp(5432), "Lambda to Postgres");
+
+    // --- SNS Topic for alerts ---
+    const alertTopic = new sns.Topic(this, "AlertTopic", {
+      topicName: "expense-tracker-alerts",
+    });
+    if (alertEmail) {
+      alertTopic.addSubscription(
+        new sns_subscriptions.EmailSubscription(alertEmail),
+      );
+    }
 
     // --- Cognito User Pool ---
     const userPool = new cognito.UserPool(this, "UserPool", {
@@ -116,15 +137,41 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- EC2 Instance (Docker Compose runtime) ---
+    const ec2LogGroup = new logs.LogGroup(this, "Ec2LogGroup", {
+      logGroupName: "/expense-tracker/ec2",
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       "#!/bin/bash",
       "set -euo pipefail",
-      // Install Docker
+      // Install Docker + CloudWatch agent
       "dnf update -y",
-      "dnf install -y docker git",
+      "dnf install -y docker git amazon-cloudwatch-agent",
       "systemctl enable docker && systemctl start docker",
       "usermod -aG docker ec2-user",
+      // Configure CloudWatch agent for Docker logs
+      `cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWEOF'`,
+      JSON.stringify({
+        logs: {
+          logs_collected: {
+            files: {
+              collect_list: [
+                {
+                  file_path: "/var/lib/docker/containers/*/*.log",
+                  log_group_name: ec2LogGroup.logGroupName,
+                  log_stream_name: "{instance_id}/docker",
+                  timestamp_format: "%Y-%m-%dT%H:%M:%S",
+                },
+              ],
+            },
+          },
+        },
+      }),
+      "CWEOF",
+      "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json",
       // Install Docker Compose plugin
       "mkdir -p /usr/local/lib/docker/cli-plugins",
       'curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose',
@@ -150,6 +197,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy"),
       ],
     });
     db.secret?.grantRead(ec2Role);
@@ -173,6 +221,16 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       internetFacing: true,
       securityGroup: albSg,
     });
+
+    // S3 bucket for ALB access logs
+    const accessLogsBucket = new s3.Bucket(this, "AlbAccessLogs", {
+      bucketName: `expense-tracker-alb-logs-${cdk.Aws.ACCOUNT_ID}`,
+      lifecycleRules: [{ expiration: cdk.Duration.days(90) }],
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      enforceSSL: true,
+    });
+    alb.logAccessLogs(accessLogsBucket);
 
     const targetGroup = new elbv2.ApplicationTargetGroup(this, "WebTg", {
       vpc,
@@ -233,7 +291,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
         metricName: "expense-tracker-waf",
       },
       rules: [
-        // Rate limiting: 1000 requests per 5 minutes per IP
         {
           name: "RateLimit",
           priority: 1,
@@ -250,7 +307,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
             metricName: "expense-tracker-rate-limit",
           },
         },
-        // AWS Managed Rules: common threats
         {
           name: "AWSManagedCommonRules",
           priority: 2,
@@ -267,7 +323,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
             metricName: "expense-tracker-common-rules",
           },
         },
-        // AWS Managed Rules: known bad inputs (SQLi, XSS)
         {
           name: "AWSManagedKnownBadInputs",
           priority: 3,
@@ -287,11 +342,63 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       ],
     });
 
-    // Associate WAF with ALB
     new wafv2.CfnWebACLAssociation(this, "WafAlbAssociation", {
       resourceArn: alb.loadBalancerArn,
       webAclArn: waf.attrArn,
     });
+
+    // --- CloudWatch Alarms ---
+    // ALB 5xx errors
+    new cloudwatch.Alarm(this, "Alb5xxAlarm", {
+      metric: alb.metrics.httpCodeElb(elbv2.HttpCodeElb.ELB_5XX_COUNT, {
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      }),
+      threshold: 5,
+      evaluationPeriods: 1,
+      alarmDescription: "ALB returned 5+ server errors in 5 minutes",
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+    // EC2 CPU > 80%
+    new cloudwatch.Alarm(this, "Ec2CpuAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: "AWS/EC2",
+        metricName: "CPUUtilization",
+        dimensionsMap: { InstanceId: instance.instanceId },
+        period: cdk.Duration.minutes(5),
+        statistic: "Average",
+      }),
+      threshold: 80,
+      evaluationPeriods: 3,
+      alarmDescription: "EC2 CPU above 80% for 15 minutes",
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+    }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+    // RDS DB connections > 80% of max (t4g.micro max ~85 connections)
+    new cloudwatch.Alarm(this, "DbConnectionsAlarm", {
+      metric: db.metricDatabaseConnections({
+        period: cdk.Duration.minutes(5),
+        statistic: "Average",
+      }),
+      threshold: 68,
+      evaluationPeriods: 2,
+      alarmDescription: "RDS connections above 80% capacity (68/85)",
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+    // RDS free storage < 2 GB
+    new cloudwatch.Alarm(this, "DbStorageAlarm", {
+      metric: db.metricFreeStorageSpace({
+        period: cdk.Duration.minutes(15),
+        statistic: "Average",
+      }),
+      threshold: 2 * 1024 * 1024 * 1024,
+      comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+      evaluationPeriods: 1,
+      alarmDescription: "RDS free storage below 2 GB",
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+    }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
     // --- Lambda (FX fetchers) ---
     const fxFetcher = new lambda.Function(this, "FxFetcher", {
@@ -308,7 +415,18 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       },
     });
 
-    // Grant Lambda access to DB secret and set DATABASE_URL at deploy
+    // Lambda FX fetcher errors
+    new cloudwatch.Alarm(this, "FxLambdaErrorAlarm", {
+      metric: fxFetcher.metricErrors({
+        period: cdk.Duration.hours(1),
+        statistic: "Sum",
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      alarmDescription: "FX fetcher Lambda had errors",
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
     if (db.secret) {
       db.secret.grantRead(fxFetcher);
       fxFetcher.addEnvironment("DB_SECRET_ARN", db.secret.secretArn);
@@ -320,6 +438,65 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     new events.Rule(this, "FxSchedule", {
       schedule: events.Schedule.cron({ hour: "8", minute: "0" }),
       targets: [new events_targets.LambdaFunction(fxFetcher)],
+    });
+
+    // --- Route 53 (optional) ---
+    if (domainName && hostedZoneId) {
+      const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
+        hostedZoneId,
+        zoneName: domainName.split(".").slice(-2).join("."),
+      });
+      new route53.ARecord(this, "DnsRecord", {
+        zone,
+        recordName: domainName,
+        target: route53.RecordTarget.fromAlias(
+          new route53_targets.LoadBalancerTarget(alb),
+        ),
+      });
+    }
+
+    // --- GitHub Actions OIDC (CI/CD) ---
+    const githubRepo = this.node.tryGetContext("githubRepo") as string | undefined;
+    if (githubRepo) {
+      const oidcProvider = new iam.OpenIdConnectProvider(this, "GithubOidc", {
+        url: "https://token.actions.githubusercontent.com",
+        clientIds: ["sts.amazonaws.com"],
+      });
+
+      const deployRole = new iam.Role(this, "GithubActionsRole", {
+        roleName: "expense-tracker-github-deploy",
+        assumedBy: new iam.WebIdentityPrincipal(
+          oidcProvider.openIdConnectProviderArn,
+          {
+            StringEquals: {
+              "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+            },
+            StringLike: {
+              "token.actions.githubusercontent.com:sub": `repo:${githubRepo}:ref:refs/heads/main`,
+            },
+          },
+        ),
+        managedPolicies: [
+          iam.ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess"),
+        ],
+      });
+
+      // Allow GitHub Actions to send SSM commands to EC2
+      deployRole.addToPolicy(new iam.PolicyStatement({
+        actions: ["ssm:SendCommand", "ssm:GetCommandInvocation"],
+        resources: ["*"],
+      }));
+
+      new cdk.CfnOutput(this, "GithubDeployRoleArn", {
+        value: deployRole.roleArn,
+        description: "IAM role ARN for GitHub Actions deployment",
+      });
+    }
+
+    // --- AWS Backup ---
+    const backupPlan = backup.BackupPlan.daily35DayRetention(this, "BackupPlan");
+    backupPlan.addSelection("DbBackup", {
+      resources: [backup.BackupResource.fromRdsDatabaseInstance(db)],
     });
 
     // --- Outputs ---
@@ -342,6 +519,22 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     new cdk.CfnOutput(this, "CognitoDomain", {
       value: userPoolDomain.domainName,
       description: "Cognito hosted UI domain prefix",
+    });
+    new cdk.CfnOutput(this, "AlertTopicArn", {
+      value: alertTopic.topicArn,
+      description: "SNS topic for alerts",
+    });
+    new cdk.CfnOutput(this, "AccessLogsBucket", {
+      value: accessLogsBucket.bucketName,
+      description: "S3 bucket for ALB access logs",
+    });
+    new cdk.CfnOutput(this, "Ec2LogGroup", {
+      value: ec2LogGroup.logGroupName,
+      description: "CloudWatch log group for EC2 Docker logs",
+    });
+    new cdk.CfnOutput(this, "Ec2InstanceId", {
+      value: instance.instanceId,
+      description: "EC2 instance ID (for SSM deploy commands)",
     });
   }
 }

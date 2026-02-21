@@ -9,6 +9,9 @@ dist/
 # Environment
 .env
 
+# CDK local secrets (account-specific)
+cdk.context.local.json
+
 # Python
 __pycache__/
 *.pyc
