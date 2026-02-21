@@ -3,18 +3,26 @@ export const register = (): void => {
 
   const errors: Array<string> = [];
 
-  const sessionSecret = process.env.SESSION_SECRET;
-  if (
-    sessionSecret === undefined ||
-    sessionSecret === "" ||
-    sessionSecret === "change-me-to-a-random-string"
-  ) {
-    errors.push("SESSION_SECRET must be set to a secure random value in production");
+  const authMode = process.env.AUTH_MODE ?? "none";
+
+  if (authMode !== "none" && authMode !== "proxy") {
+    errors.push(`Invalid AUTH_MODE="${authMode}". Expected "none" or "proxy"`);
   }
 
-  const passwordHash = process.env.PASSWORD_HASH;
-  if (passwordHash === undefined || passwordHash === "") {
-    errors.push("PASSWORD_HASH must be set to an Argon2id hash in production");
+  if (authMode === "proxy") {
+    const proxyHeader = process.env.AUTH_PROXY_HEADER;
+    if (proxyHeader === undefined || proxyHeader === "") {
+      errors.push("AUTH_PROXY_HEADER must be set when AUTH_MODE=proxy");
+    }
+  }
+
+  if (authMode === "none") {
+    const host = process.env.HOST ?? "127.0.0.1";
+    if (host !== "127.0.0.1" && host !== "localhost") {
+      console.warn(
+        `WARNING: AUTH_MODE=none with HOST=${host}. The app has no authentication and should only bind to localhost`,
+      );
+    }
   }
 
   const databaseUrl = process.env.DATABASE_URL;

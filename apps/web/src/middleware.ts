@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/health"]);
+type AuthMode = "none" | "proxy";
 
-const isPublicPath = (pathname: string): boolean =>
-  PUBLIC_PATHS.has(pathname);
+const getAuthMode = (): AuthMode => {
+  const raw = process.env.AUTH_MODE ?? "none";
+  if (raw === "none" || raw === "proxy") return raw;
+  throw new Error(`Invalid AUTH_MODE: ${raw}. Expected "none" or "proxy"`);
+};
 
 const SECURITY_HEADERS: ReadonlyArray<[string, string]> = [
   ["X-Content-Type-Options", "nosniff"],
@@ -45,32 +48,22 @@ export const middleware = (request: NextRequest): NextResponse => {
     return response;
   }
 
-  if (isPublicPath(pathname)) {
-    const response = NextResponse.next();
-    addSecurityHeaders(response);
-    return response;
-  }
+  const authMode = getAuthMode();
 
-  const secret = process.env.SESSION_SECRET;
-  if (secret === undefined || secret === "") {
-    const response = NextResponse.next();
-    addSecurityHeaders(response);
-    return response;
-  }
-
-  const sessionCookie = request.cookies.get("session");
-  if (sessionCookie === undefined || sessionCookie.value === "") {
-    if (pathname.startsWith("/api/")) {
-      const response = new NextResponse("Unauthorized", { status: 401 });
+  if (authMode === "proxy" && pathname !== "/api/health") {
+    const headerName = process.env.AUTH_PROXY_HEADER ?? "";
+    if (headerName === "") {
+      const response = new NextResponse("Server misconfigured: AUTH_PROXY_HEADER not set", { status: 500 });
       addSecurityHeaders(response);
       return response;
     }
 
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    const response = NextResponse.redirect(loginUrl);
-    addSecurityHeaders(response);
-    return response;
+    const headerValue = request.headers.get(headerName);
+    if (headerValue === null || headerValue === "") {
+      const response = new NextResponse("Unauthorized", { status: 401 });
+      addSecurityHeaders(response);
+      return response;
+    }
   }
 
   const response = NextResponse.next();
