@@ -1,10 +1,11 @@
 import { getBudgetGrid } from "@/server/budget/getBudgetGrid";
-import { extractUserId } from "@/server/userId";
+import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 
 export const GET = async (request: Request): Promise<Response> => {
   const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
   const url = new URL(request.url);
   const monthFrom = url.searchParams.get("monthFrom");
   const monthTo = url.searchParams.get("monthTo");
@@ -23,6 +24,6 @@ export const GET = async (request: Request): Promise<Response> => {
     return new Response("monthFrom must be <= monthTo", { status: 400 });
   }
 
-  const grid = await getBudgetGrid(userId, monthFrom, monthTo, planFrom, actualTo);
+  const grid = await getBudgetGrid(userId, workspaceId, monthFrom, monthTo, planFrom, actualTo);
   return Response.json(grid);
 };

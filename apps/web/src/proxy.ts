@@ -5,15 +5,17 @@
  * AUTH_MODE=proxy — requires a JWT header named by AUTH_PROXY_HEADER (e.g. x-amzn-oidc-data);
  *                   decodes it to extract the Cognito `sub` claim as userId.
  *
- * The resolved userId is forwarded as x-user-id header to all downstream route handlers.
- * /api/health is always exempt from auth (no x-user-id set).
+ * The resolved userId is forwarded as x-user-id and x-workspace-id headers to all
+ * downstream route handlers. /api/health is always exempt from auth.
  */
 import { NextRequest, NextResponse } from "next/server";
 
 type AuthMode = "none" | "proxy";
 
 const LOCAL_USER_ID = "local";
+const LOCAL_WORKSPACE_ID = "local";
 const USER_ID_HEADER = "x-user-id";
+const WORKSPACE_ID_HEADER = "x-workspace-id";
 
 const getAuthMode = (): AuthMode => {
   const raw = process.env.AUTH_MODE ?? "none";
@@ -70,9 +72,10 @@ const extractSubFromJwt = (jwt: string): string => {
   return sub;
 };
 
-const forwardWithUserId = (request: NextRequest, userId: string): NextResponse => {
+const forwardWithIdentity = (request: NextRequest, userId: string, workspaceId: string): NextResponse => {
   const headers = new Headers(request.headers);
   headers.set(USER_ID_HEADER, userId);
+  headers.set(WORKSPACE_ID_HEADER, workspaceId);
   const response = NextResponse.next({ request: { headers } });
   addSecurityHeaders(response);
   return response;
@@ -90,7 +93,7 @@ export const proxy = (request: NextRequest): NextResponse => {
   const authMode = getAuthMode();
 
   if (authMode === "none") {
-    return forwardWithUserId(request, LOCAL_USER_ID);
+    return forwardWithIdentity(request, LOCAL_USER_ID, LOCAL_WORKSPACE_ID);
   }
 
   // AUTH_MODE=proxy — health check is exempt from auth
@@ -124,7 +127,9 @@ export const proxy = (request: NextRequest): NextResponse => {
     return response;
   }
 
-  return forwardWithUserId(request, userId);
+  // v1: each user's default workspace = their user_id
+  const workspaceId = userId;
+  return forwardWithIdentity(request, userId, workspaceId);
 };
 
 export const config = {

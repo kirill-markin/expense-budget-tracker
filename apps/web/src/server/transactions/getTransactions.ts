@@ -94,9 +94,10 @@ const buildWhereClause = (
 
 export const getTransactionsPage = async (
   userId: string,
+  workspaceId: string,
   filter: TransactionsFilter,
 ): Promise<TransactionsPage> => {
-  const reportCurrency = await getReportCurrency(userId);
+  const reportCurrency = await getReportCurrency(userId, workspaceId);
   const sortColumn = SORT_COLUMNS[filter.sortKey] ?? "ts";
   const sortDir = filter.sortDir === "asc" ? "ASC" : "DESC";
 
@@ -140,7 +141,7 @@ export const getTransactionsPage = async (
     ${countWhere}
   `;
 
-  return withUserContext(userId, async (q) => {
+  return withUserContext(userId, workspaceId, async (q) => {
     const [entriesResult, countResult] = await Promise.all([
       q(entriesQuery, entriesParams),
       q(countQuery, countParams),
@@ -177,9 +178,10 @@ export const getTransactionsPage = async (
   });
 };
 
-export const getAccounts = async (userId: string): Promise<ReadonlyArray<AccountOption>> => {
+export const getAccounts = async (userId: string, workspaceId: string): Promise<ReadonlyArray<AccountOption>> => {
   const result = await queryAs(
     userId,
+    workspaceId,
     "SELECT DISTINCT account_id FROM ledger_entries ORDER BY account_id",
     [],
   );

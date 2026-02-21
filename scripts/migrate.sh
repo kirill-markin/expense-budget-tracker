@@ -48,6 +48,7 @@ GRANT USAGE ON SCHEMA public TO app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   ledger_entries, budget_lines, budget_comments, workspace_settings
 TO app;
+GRANT SELECT, INSERT ON TABLE workspaces, workspace_members TO app;
 GRANT SELECT ON TABLE exchange_rates TO app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app;
 SQL

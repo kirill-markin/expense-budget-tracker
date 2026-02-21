@@ -13,11 +13,12 @@ type InsertBudgetCommentParams = Readonly<{
   comment: string;
 }>;
 
-export const insertBudgetComment = async (userId: string, params: InsertBudgetCommentParams): Promise<void> => {
+export const insertBudgetComment = async (userId: string, workspaceId: string, params: InsertBudgetCommentParams): Promise<void> => {
   await queryAs(
     userId,
-    `INSERT INTO budget_comments (user_id, budget_month, direction, category, comment)
+    workspaceId,
+    `INSERT INTO budget_comments (workspace_id, budget_month, direction, category, comment)
      VALUES ($1, to_date($2, 'YYYY-MM'), $3, $4, $5)`,
-    [userId, params.month, params.direction, params.category, params.comment],
+    [workspaceId, params.month, params.direction, params.category, params.comment],
   );
 };

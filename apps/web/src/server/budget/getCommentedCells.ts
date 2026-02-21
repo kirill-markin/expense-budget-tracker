@@ -15,9 +15,10 @@ type GetCommentedCellsParams = Readonly<{
  * Returns all (month, direction, category) tuples within the given range
  * where the most recent comment is non-empty.
  */
-export const getCommentedCells = async (userId: string, params: GetCommentedCellsParams): Promise<ReadonlyArray<CommentedCell>> => {
+export const getCommentedCells = async (userId: string, workspaceId: string, params: GetCommentedCellsParams): Promise<ReadonlyArray<CommentedCell>> => {
   const result = await queryAs(
     userId,
+    workspaceId,
     `WITH latest AS (
        SELECT
          budget_month, direction, category, comment,

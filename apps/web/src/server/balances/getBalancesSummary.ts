@@ -191,10 +191,10 @@ const WARNINGS_QUERY = `
   ORDER BY dc.currency
 `;
 
-export const getBalancesSummary = async (userId: string): Promise<BalancesSummaryResult> => {
-  const reportCurrency = await getReportCurrency(userId);
+export const getBalancesSummary = async (userId: string, workspaceId: string): Promise<BalancesSummaryResult> => {
+  const reportCurrency = await getReportCurrency(userId, workspaceId);
 
-  return withUserContext(userId, async (q) => {
+  return withUserContext(userId, workspaceId, async (q) => {
     const [accountResult, totalResult, warningResult, stalenessResult] = await Promise.all([
       q(ACCOUNTS_QUERY, [reportCurrency]),
       q(TOTALS_QUERY, [reportCurrency]),

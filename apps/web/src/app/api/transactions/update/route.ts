@@ -1,5 +1,5 @@
 import { updateLedgerEntry } from "@/server/transactions/updateLedgerEntry";
-import { extractUserId } from "@/server/userId";
+import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 type RequestBody = Readonly<{
   entryId: unknown;
@@ -9,6 +9,7 @@ type RequestBody = Readonly<{
 
 export const POST = async (request: Request): Promise<Response> => {
   const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   let body: RequestBody;
   try {
@@ -32,7 +33,7 @@ export const POST = async (request: Request): Promise<Response> => {
   }
 
   try {
-    await updateLedgerEntry(userId, {
+    await updateLedgerEntry(userId, workspaceId, {
       entryId,
       category: category as string | null,
       note: note as string | null,

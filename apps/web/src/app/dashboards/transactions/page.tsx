@@ -10,7 +10,8 @@ export const dynamic = "force-dynamic";
 async function TransactionsData() {
   const headersList = await headers();
   const userId = headersList.get("x-user-id") ?? "local";
-  const accounts = await getAccounts(userId);
+  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const accounts = await getAccounts(userId, workspaceId);
 
   return <TransactionsRawTable accounts={accounts} />;
 }

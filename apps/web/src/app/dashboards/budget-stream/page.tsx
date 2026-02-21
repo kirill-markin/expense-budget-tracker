@@ -13,11 +13,12 @@ const INITIAL_PAST_MONTHS = 12;
 async function BudgetStreamData() {
   const headersList = await headers();
   const userId = headersList.get("x-user-id") ?? "local";
+  const workspaceId = headersList.get("x-workspace-id") ?? "local";
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);
   const monthTo = currentMonth;
 
-  const { rows } = await getBudgetGrid(userId, monthFrom, monthTo, currentMonth, currentMonth);
+  const { rows } = await getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth);
 
   return (
     <BudgetStreamDashboard

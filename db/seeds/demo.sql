@@ -1,10 +1,16 @@
 -- Anonymized demo dataset for local development and testing.
--- All data uses user_id = 'local' (default for AUTH_MODE=none).
+-- All data uses workspace_id = 'local' (default for AUTH_MODE=none).
+
+-- Workspace + membership
+INSERT INTO workspaces (workspace_id, name) VALUES ('local', 'local')
+ON CONFLICT (workspace_id) DO NOTHING;
+INSERT INTO workspace_members (workspace_id, user_id) VALUES ('local', 'local')
+ON CONFLICT (workspace_id, user_id) DO NOTHING;
 
 -- Workspace settings
-INSERT INTO workspace_settings (user_id, reporting_currency)
+INSERT INTO workspace_settings (workspace_id, reporting_currency)
 VALUES ('local', 'USD')
-ON CONFLICT (user_id) DO NOTHING;
+ON CONFLICT (workspace_id) DO NOTHING;
 
 -- Exchange rates (sample: EUR, GBP, RUB → USD)
 INSERT INTO exchange_rates (base_currency, quote_currency, rate_date, rate) VALUES
@@ -22,7 +28,7 @@ INSERT INTO exchange_rates (base_currency, quote_currency, rate_date, rate) VALU
   ('RUB', 'USD', '2026-02-15', 0.01015);
 
 -- Ledger entries
-INSERT INTO ledger_entries (entry_id, event_id, ts, account_id, amount, currency, kind, category, counterparty, note, user_id, inserted_at) VALUES
+INSERT INTO ledger_entries (entry_id, event_id, ts, account_id, amount, currency, kind, category, counterparty, note, workspace_id, inserted_at) VALUES
   -- Income
   ('e001', 'ev001', '2026-01-05 09:00:00+00', 'checking-usd', 5000.00, 'USD', 'income', 'salary',       'Employer Inc',   'Jan salary',       'local', '2026-01-05 09:00:00+00'),
   ('e002', 'ev002', '2026-02-05 09:00:00+00', 'checking-usd', 5000.00, 'USD', 'income', 'salary',       'Employer Inc',   'Feb salary',       'local', '2026-02-05 09:00:00+00'),
@@ -44,7 +50,7 @@ INSERT INTO ledger_entries (entry_id, event_id, ts, account_id, amount, currency
   ('e023', 'ev022', '2026-02-08 08:00:00+00', 'checking-gbp',  400.00, 'GBP', 'transfer', NULL,         NULL,              'From USD account', 'local', '2026-02-08 08:00:00+00');
 
 -- Budget lines (base plans for Jan and Feb 2026)
-INSERT INTO budget_lines (budget_month, direction, category, kind, currency, planned_value, user_id, inserted_at) VALUES
+INSERT INTO budget_lines (budget_month, direction, category, kind, currency, planned_value, workspace_id, inserted_at) VALUES
   ('2026-01-01', 'income', 'salary',        'base', 'USD', 5000.00, 'local', '2025-12-20 10:00:00+00'),
   ('2026-01-01', 'income', 'freelance',     'base', 'USD', 500.00,  'local', '2025-12-20 10:00:00+00'),
   ('2026-01-01', 'spend',  'rent',          'base', 'USD', 1500.00, 'local', '2025-12-20 10:00:00+00'),
@@ -60,6 +66,6 @@ INSERT INTO budget_lines (budget_month, direction, category, kind, currency, pla
   ('2026-01-01', 'spend',  'groceries',     'modifier', 'USD', -100.00, 'local', '2026-01-18 10:00:00+00');
 
 -- Budget comments
-INSERT INTO budget_comments (budget_month, direction, category, comment, user_id, inserted_at) VALUES
+INSERT INTO budget_comments (budget_month, direction, category, comment, workspace_id, inserted_at) VALUES
   ('2026-01-01', 'spend', 'groceries', 'Reduced budget due to travel', 'local', '2026-01-18 10:05:00+00'),
   ('2026-02-01', 'spend', 'utilities', 'Expected higher bill this month', 'local', '2026-01-25 10:05:00+00');

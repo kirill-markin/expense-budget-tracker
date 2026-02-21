@@ -1,5 +1,5 @@
 import { insertBudgetPlan } from "@/server/budget/insertBudgetPlan";
-import { extractUserId } from "@/server/userId";
+import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const VALID_DIRECTIONS = new Set(["income", "spend"]);
@@ -15,6 +15,7 @@ type RequestBody = Readonly<{
 
 export const POST = async (request: Request): Promise<Response> => {
   const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   let body: RequestBody;
   try {
@@ -46,7 +47,7 @@ export const POST = async (request: Request): Promise<Response> => {
   }
 
   try {
-    await insertBudgetPlan(userId, {
+    await insertBudgetPlan(userId, workspaceId, {
       month,
       direction,
       category,

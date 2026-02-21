@@ -20,12 +20,13 @@ type InsertBudgetPlanParams = Readonly<{
 
 export type { BudgetLineKind, InsertBudgetPlanParams };
 
-export const insertBudgetPlan = async (userId: string, params: InsertBudgetPlanParams): Promise<void> => {
-  const reportCurrency = await getReportCurrency(userId);
+export const insertBudgetPlan = async (userId: string, workspaceId: string, params: InsertBudgetPlanParams): Promise<void> => {
+  const reportCurrency = await getReportCurrency(userId, workspaceId);
   await queryAs(
     userId,
-    `INSERT INTO budget_lines (user_id, budget_month, direction, category, kind, currency, planned_value)
+    workspaceId,
+    `INSERT INTO budget_lines (workspace_id, budget_month, direction, category, kind, currency, planned_value)
      VALUES ($1, to_date($2, 'YYYY-MM'), $3, $4, $5, $6, $7)`,
-    [userId, params.month, params.direction, params.category, params.kind, reportCurrency, params.plannedValue],
+    [workspaceId, params.month, params.direction, params.category, params.kind, reportCurrency, params.plannedValue],
   );
 };

@@ -1,6 +1,6 @@
 import { getTransactionsPage } from "@/server/transactions/getTransactions";
 import type { TransactionsFilter } from "@/server/transactions/getTransactions";
-import { extractUserId } from "@/server/userId";
+import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 const MAX_LIMIT = 500;
 const DEFAULT_LIMIT = 100;
@@ -11,6 +11,7 @@ const VALID_SORT_KEYS = new Set([
 
 export const GET = async (request: Request): Promise<Response> => {
   const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
   const url = new URL(request.url);
   const params = url.searchParams;
 
@@ -44,6 +45,6 @@ export const GET = async (request: Request): Promise<Response> => {
     offset: offsetRaw,
   };
 
-  const page = await getTransactionsPage(userId, filter);
+  const page = await getTransactionsPage(userId, workspaceId, filter);
   return Response.json(page);
 };

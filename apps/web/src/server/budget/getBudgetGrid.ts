@@ -254,10 +254,10 @@ type CumulativeRaw = Readonly<{
   transfer_actual: number;
 }>;
 
-export const getBudgetGrid = async (userId: string, monthFrom: string, monthTo: string, planFrom: string, actualTo: string): Promise<BudgetGridResult> => {
-  const reportCurrency = await getReportCurrency(userId);
+export const getBudgetGrid = async (userId: string, workspaceId: string, monthFrom: string, monthTo: string, planFrom: string, actualTo: string): Promise<BudgetGridResult> => {
+  const reportCurrency = await getReportCurrency(userId, workspaceId);
 
-  return withUserContext(userId, async (q) => {
+  return withUserContext(userId, workspaceId, async (q) => {
     const [rowsResult, warningResult, cumulativeResult, balanceResult] = await Promise.all([
       q(QUERY, [reportCurrency, monthFrom, monthTo, planFrom, actualTo]),
       q(WARNINGS_QUERY, [reportCurrency]),

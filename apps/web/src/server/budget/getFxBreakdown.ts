@@ -138,9 +138,9 @@ type RawRow = Readonly<{
   change_report: string;
 }>;
 
-export const getFxBreakdown = async (userId: string, month: string): Promise<FxBreakdownResult> => {
-  const reportCurrency = await getReportCurrency(userId);
-  const result = await queryAs(userId, QUERY, [reportCurrency, month]);
+export const getFxBreakdown = async (userId: string, workspaceId: string, month: string): Promise<FxBreakdownResult> => {
+  const reportCurrency = await getReportCurrency(userId, workspaceId);
+  const result = await queryAs(userId, workspaceId, QUERY, [reportCurrency, month]);
   return {
     rows: (result.rows as ReadonlyArray<RawRow>).map((row) => ({
       currency: row.currency,

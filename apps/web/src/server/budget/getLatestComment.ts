@@ -12,9 +12,10 @@ type GetLatestCommentParams = Readonly<{
   category: string;
 }>;
 
-export const getLatestComment = async (userId: string, params: GetLatestCommentParams): Promise<string | null> => {
+export const getLatestComment = async (userId: string, workspaceId: string, params: GetLatestCommentParams): Promise<string | null> => {
   const result = await queryAs(
     userId,
+    workspaceId,
     `SELECT comment
      FROM budget_comments
      WHERE budget_month = to_date($1, 'YYYY-MM')

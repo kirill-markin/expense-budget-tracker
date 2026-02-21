@@ -14,11 +14,12 @@ const INITIAL_FUTURE_MONTHS = 12;
 async function BudgetData() {
   const headersList = await headers();
   const userId = headersList.get("x-user-id") ?? "local";
+  const workspaceId = headersList.get("x-workspace-id") ?? "local";
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);
   const monthTo = offsetMonth(currentMonth, INITIAL_FUTURE_MONTHS);
 
-  const { rows, conversionWarnings, cumulativeBefore, monthEndBalances } = await getBudgetGrid(userId, monthFrom, monthTo, currentMonth, currentMonth);
+  const { rows, conversionWarnings, cumulativeBefore, monthEndBalances } = await getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth);
 
   return (
     <BudgetTable

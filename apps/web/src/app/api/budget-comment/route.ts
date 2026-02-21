@@ -1,12 +1,13 @@
 import { getLatestComment } from "@/server/budget/getLatestComment";
 import { insertBudgetComment } from "@/server/budget/insertBudgetComment";
-import { extractUserId } from "@/server/userId";
+import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const VALID_DIRECTIONS = new Set(["income", "spend"]);
 
 export const GET = async (request: Request): Promise<Response> => {
   const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
   const url = new URL(request.url);
   const month = url.searchParams.get("month");
   const direction = url.searchParams.get("direction");
@@ -25,7 +26,7 @@ export const GET = async (request: Request): Promise<Response> => {
   }
 
   try {
-    const comment = await getLatestComment(userId, { month, direction, category });
+    const comment = await getLatestComment(userId, workspaceId, { month, direction, category });
     return Response.json({ comment });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -42,6 +43,7 @@ type PostBody = Readonly<{
 
 export const POST = async (request: Request): Promise<Response> => {
   const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   let body: PostBody;
   try {
@@ -69,7 +71,7 @@ export const POST = async (request: Request): Promise<Response> => {
   }
 
   try {
-    await insertBudgetComment(userId, { month, direction, category, comment });
+    await insertBudgetComment(userId, workspaceId, { month, direction, category, comment });
     return Response.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

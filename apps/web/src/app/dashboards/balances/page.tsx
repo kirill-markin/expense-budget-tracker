@@ -10,7 +10,8 @@ export const dynamic = "force-dynamic";
 async function BalancesData() {
   const headersList = await headers();
   const userId = headersList.get("x-user-id") ?? "local";
-  const { accounts, totals, conversionWarnings } = await getBalancesSummary(userId);
+  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const { accounts, totals, conversionWarnings } = await getBalancesSummary(userId, workspaceId);
 
   return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} />;
 }
