@@ -27,6 +27,8 @@ services:
       - "3000:3000"
     env_file:
       - ../../.env
+    environment:
+      HOST: "0.0.0.0"
     depends_on:
       postgres:
         condition: service_healthy
