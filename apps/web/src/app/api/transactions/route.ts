@@ -1,4 +1,3 @@
-import { validateSession } from "@/server/auth/session";
 import { getTransactionsPage } from "@/server/transactions/getTransactions";
 import type { TransactionsFilter } from "@/server/transactions/getTransactions";
 
@@ -10,13 +9,6 @@ const VALID_SORT_KEYS = new Set([
 ]);
 
 export const GET = async (request: Request): Promise<Response> => {
-  try {
-    await validateSession(request);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Unauthorized: ${message}`, { status: 401 });
-  }
-
   const url = new URL(request.url);
   const params = url.searchParams;
 

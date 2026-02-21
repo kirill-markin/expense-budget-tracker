@@ -1,4 +1,3 @@
-import { validateSession } from "@/server/auth/session";
 import { getLatestComment } from "@/server/budget/getLatestComment";
 import { insertBudgetComment } from "@/server/budget/insertBudgetComment";
 
@@ -6,13 +5,6 @@ const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const VALID_DIRECTIONS = new Set(["income", "spend"]);
 
 export const GET = async (request: Request): Promise<Response> => {
-  try {
-    await validateSession(request);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Unauthorized: ${message}`, { status: 401 });
-  }
-
   const url = new URL(request.url);
   const month = url.searchParams.get("month");
   const direction = url.searchParams.get("direction");
@@ -47,13 +39,6 @@ type PostBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
-  try {
-    await validateSession(request);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Unauthorized: ${message}`, { status: 401 });
-  }
-
   let body: PostBody;
   try {
     body = await request.json() as PostBody;

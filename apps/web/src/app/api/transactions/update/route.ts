@@ -1,4 +1,3 @@
-import { validateSession } from "@/server/auth/session";
 import { updateLedgerEntry } from "@/server/transactions/updateLedgerEntry";
 
 type RequestBody = Readonly<{
@@ -8,13 +7,6 @@ type RequestBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
-  try {
-    await validateSession(request);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Unauthorized: ${message}`, { status: 401 });
-  }
-
   let body: RequestBody;
   try {
     body = await request.json() as RequestBody;

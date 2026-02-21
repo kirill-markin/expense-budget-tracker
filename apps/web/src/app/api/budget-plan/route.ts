@@ -1,4 +1,3 @@
-import { validateSession } from "@/server/auth/session";
 import { insertBudgetPlan } from "@/server/budget/insertBudgetPlan";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
@@ -14,13 +13,6 @@ type RequestBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
-  try {
-    await validateSession(request);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Unauthorized: ${message}`, { status: 401 });
-  }
-
   let body: RequestBody;
   try {
     body = await request.json() as RequestBody;
