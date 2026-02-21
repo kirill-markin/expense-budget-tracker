@@ -1,10 +1,21 @@
-FROM python:3.12-slim
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+COPY package.json package-lock.json ./
+RUN npm ci
 
-COPY . .
+COPY tsconfig.json ./
+COPY src/ src/
+RUN npx tsc
 
-CMD ["python", "scheduler.py"]
+FROM node:24-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY --from=builder /app/dist/ dist/
+
+CMD ["node", "dist/scheduler.js"]

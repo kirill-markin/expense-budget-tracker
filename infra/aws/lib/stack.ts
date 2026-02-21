@@ -5,6 +5,7 @@ import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as elbv2_actions from "aws-cdk-lib/aws-elasticloadbalancingv2-actions";
 import * as elbv2_targets from "aws-cdk-lib/aws-elasticloadbalancingv2-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambda_nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as events from "aws-cdk-lib/aws-events";
 import * as events_targets from "aws-cdk-lib/aws-events-targets";
 import * as cognito from "aws-cdk-lib/aws-cognito";
@@ -20,6 +21,7 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53_targets from "aws-cdk-lib/aws-route53-targets";
 import * as backup from "aws-cdk-lib/aws-backup";
 import { Construct } from "constructs";
+import * as path from "path";
 
 export class ExpenseBudgetTrackerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -401,10 +403,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
     // --- Lambda (FX fetchers) ---
-    const fxFetcher = new lambda.Function(this, "FxFetcher", {
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: "lambda_handler.handler",
-      code: lambda.Code.fromAsset("../../apps/worker"),
+    const fxFetcher = new lambda_nodejs.NodejsFunction(this, "FxFetcher", {
+      entry: path.join(__dirname, "../../../apps/worker/src/lambda.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_24_X,
       timeout: cdk.Duration.minutes(5),
       memorySize: 256,
       vpc,
@@ -412,6 +414,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       securityGroups: [lambdaSg],
       environment: {
         DATABASE_URL: "placeholder",
+      },
+      bundling: {
+        minify: true,
+        sourceMap: true,
       },
     });
 

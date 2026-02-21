@@ -64,7 +64,7 @@ If you prefer not to create a separate account, the stack still works — all re
 - **ALB** with HTTPS + Cognito authentication (JWT via ALB auth action)
 - **Cognito User Pool** — managed auth with hosted login UI, no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
-- **Lambda** (Python 3.12) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
+- **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
 - **CloudWatch Alarms + SNS** — alerts on ALB 5xx, EC2 CPU, DB connections, DB storage, Lambda errors
 - **S3** — ALB access logs (90-day retention)
 - **CloudWatch Logs** — Docker container logs from EC2 (30-day retention), Lambda logs (automatic)

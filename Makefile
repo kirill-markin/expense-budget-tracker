@@ -22,8 +22,8 @@ build:
 
 test:
 	$(COMPOSE) run --rm web npm test
-	$(COMPOSE) run --rm worker python -m pytest
+	$(COMPOSE) run --rm worker npm test
 
 lint:
 	$(COMPOSE) run --rm web npm run lint
-	$(COMPOSE) run --rm worker python -m ruff check .
+	$(COMPOSE) run --rm worker npm run lint
