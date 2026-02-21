@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 
 import { getAccounts } from "@/server/transactions/getTransactions";
 import { TransactionsRawTable } from "@/ui/tables/TransactionsRawTable";
@@ -7,7 +8,9 @@ import { LoadingIndicator } from "@/ui/LoadingIndicator";
 export const dynamic = "force-dynamic";
 
 async function TransactionsData() {
-  const accounts = await getAccounts();
+  const headersList = await headers();
+  const userId = headersList.get("x-user-id") ?? "local";
+  const accounts = await getAccounts(userId);
 
   return <TransactionsRawTable accounts={accounts} />;
 }

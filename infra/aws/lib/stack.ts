@@ -138,6 +138,17 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
     });
 
+    // --- App DB role secret ---
+    const appDbSecret = new cdk.aws_secretsmanager.Secret(this, "AppDbSecret", {
+      secretName: "expense-tracker/app-db-password",
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ username: "app" }),
+        generateStringKey: "password",
+        excludePunctuation: true,
+        passwordLength: 32,
+      },
+    });
+
     // --- EC2 Instance (Docker Compose runtime) ---
     const ec2LogGroup = new logs.LogGroup(this, "Ec2LogGroup", {
       logGroupName: "/expense-tracker/ec2",
@@ -182,13 +193,19 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       "cd /home/ec2-user",
       "git clone https://github.com/kirill-markin/expense-budget-tracker.git app",
       "cd app",
-      // Write .env from Secrets Manager
-      `echo "DATABASE_URL=$(aws secretsmanager get-secret-value --secret-id expense-tracker/db-credentials --query SecretString --output text | python3 -c 'import sys,json; s=json.load(sys.stdin); print(f"postgresql://{s[\\"username\\"]}:{s[\\"password\\"]}@${db.dbInstanceEndpointAddress}:5432/tracker")')" > .env`,
+      // Write .env from Secrets Manager (owner role for migrations, app role for web)
+      `DB_SECRET=$(aws secretsmanager get-secret-value --secret-id expense-tracker/db-credentials --query SecretString --output text)`,
+      `DB_USER=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["username"])')`,
+      `DB_PASS=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
+      `APP_PASS=$(aws secretsmanager get-secret-value --secret-id expense-tracker/app-db-password --query SecretString --output text | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
+      `echo "MIGRATION_DATABASE_URL=postgresql://\${DB_USER}:\${DB_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker" > .env`,
+      `echo "APP_DB_PASSWORD=\${APP_PASS}" >> .env`,
+      `echo "DATABASE_URL=postgresql://app:\${APP_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker" >> .env`,
       'echo "AUTH_MODE=proxy" >> .env',
       'echo "AUTH_PROXY_HEADER=x-amzn-oidc-data" >> .env',
       'echo "HOST=0.0.0.0" >> .env',
       'echo "CORS_ORIGIN=*" >> .env',
-      // Run migrations and start web
+      // Run migrations (creates app role with APP_DB_PASSWORD) and start web
       "docker compose -f infra/docker/compose.yml up -d postgres",
       "sleep 5",
       "docker compose -f infra/docker/compose.yml run --rm migrate",
@@ -203,6 +220,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       ],
     });
     db.secret?.grantRead(ec2Role);
+    appDbSecret.grantRead(ec2Role);
 
     const instance = new ec2.Instance(this, "WebServer", {
       vpc,
@@ -516,7 +534,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, "DbSecretArn", {
       value: db.secret?.secretArn ?? "N/A",
-      description: "Secrets Manager ARN for DB credentials",
+      description: "Secrets Manager ARN for DB owner credentials",
+    });
+    new cdk.CfnOutput(this, "AppDbSecretArn", {
+      value: appDbSecret.secretArn,
+      description: "Secrets Manager ARN for app role credentials",
     });
     new cdk.CfnOutput(this, "CognitoUserPoolId", {
       value: userPool.userPoolId,

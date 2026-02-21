@@ -14,7 +14,7 @@ type FillBudgetBaseParams = Readonly<{
   baseValue: number;
 }>;
 
-export const fillBudgetBase = async (params: FillBudgetBaseParams): Promise<number> => {
+export const fillBudgetBase = async (userId: string, params: FillBudgetBaseParams): Promise<number> => {
   const year = params.fromMonth.substring(0, 4);
   const monthNum = parseInt(params.fromMonth.substring(5, 7), 10);
 
@@ -25,7 +25,7 @@ export const fillBudgetBase = async (params: FillBudgetBaseParams): Promise<numb
 
   await Promise.all(
     targetMonths.map((month) =>
-      insertBudgetPlan({
+      insertBudgetPlan(userId, {
         month,
         direction: params.direction,
         category: params.category,

@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 
 import { offsetMonth, getCurrentMonth } from "@/lib/monthUtils";
 import { getBudgetGrid } from "@/server/budget/getBudgetGrid";
@@ -11,11 +12,13 @@ const INITIAL_PAST_MONTHS = 6;
 const INITIAL_FUTURE_MONTHS = 12;
 
 async function BudgetData() {
+  const headersList = await headers();
+  const userId = headersList.get("x-user-id") ?? "local";
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);
   const monthTo = offsetMonth(currentMonth, INITIAL_FUTURE_MONTHS);
 
-  const { rows, conversionWarnings, cumulativeBefore, monthEndBalances } = await getBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
+  const { rows, conversionWarnings, cumulativeBefore, monthEndBalances } = await getBudgetGrid(userId, monthFrom, monthTo, currentMonth, currentMonth);
 
   return (
     <BudgetTable

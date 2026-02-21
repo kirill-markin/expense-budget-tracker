@@ -1,4 +1,4 @@
-import { query } from "@/server/db";
+import { queryAs } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 
 /**
@@ -138,9 +138,9 @@ type RawRow = Readonly<{
   change_report: string;
 }>;
 
-export const getFxBreakdown = async (month: string): Promise<FxBreakdownResult> => {
-  const reportCurrency = await getReportCurrency();
-  const result = await query(QUERY, [reportCurrency, month]);
+export const getFxBreakdown = async (userId: string, month: string): Promise<FxBreakdownResult> => {
+  const reportCurrency = await getReportCurrency(userId);
+  const result = await queryAs(userId, QUERY, [reportCurrency, month]);
   return {
     rows: (result.rows as ReadonlyArray<RawRow>).map((row) => ({
       currency: row.currency,

@@ -4,7 +4,7 @@
  * Returns the comment text ordered by inserted_at DESC, or null if no
  * comment exists for the given (month, direction, category) tuple.
  */
-import { query } from "@/server/db";
+import { queryAs } from "@/server/db";
 
 type GetLatestCommentParams = Readonly<{
   month: string;
@@ -12,8 +12,9 @@ type GetLatestCommentParams = Readonly<{
   category: string;
 }>;
 
-export const getLatestComment = async (params: GetLatestCommentParams): Promise<string | null> => {
-  const result = await query(
+export const getLatestComment = async (userId: string, params: GetLatestCommentParams): Promise<string | null> => {
+  const result = await queryAs(
+    userId,
     `SELECT comment
      FROM budget_comments
      WHERE budget_month = to_date($1, 'YYYY-MM')

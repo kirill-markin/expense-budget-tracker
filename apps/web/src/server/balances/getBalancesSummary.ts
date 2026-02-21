@@ -1,7 +1,7 @@
 /**
  * Account balances summary for the balances dashboard.
  *
- * Runs four parallel queries:
+ * Runs four parallel queries inside a single user-scoped transaction:
  * 1. ACCOUNTS — per-account balance in native + report currency, last non-transfer timestamp.
  * 2. TOTALS — aggregated balance per currency with positive/negative split.
  * 3. WARNINGS — currencies present in data but missing exchange rates.
@@ -10,7 +10,7 @@
  * FX conversion uses the latest available rate per currency from exchange_rates.
  * Accounts are classified as active/inactive based on balance and 90-day activity.
  */
-import { query } from "@/server/db";
+import { withUserContext } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { type StalenessInput, isAccountOverdue } from "@/server/balances/accountStaleness";
 
@@ -191,77 +191,79 @@ const WARNINGS_QUERY = `
   ORDER BY dc.currency
 `;
 
-export const getBalancesSummary = async (): Promise<BalancesSummaryResult> => {
-  const reportCurrency = await getReportCurrency();
+export const getBalancesSummary = async (userId: string): Promise<BalancesSummaryResult> => {
+  const reportCurrency = await getReportCurrency(userId);
 
-  const [accountResult, totalResult, warningResult, stalenessResult] = await Promise.all([
-    query(ACCOUNTS_QUERY, [reportCurrency]),
-    query(TOTALS_QUERY, [reportCurrency]),
-    query(WARNINGS_QUERY, [reportCurrency]),
-    query(STALENESS_QUERY, []),
-  ]);
+  return withUserContext(userId, async (q) => {
+    const [accountResult, totalResult, warningResult, stalenessResult] = await Promise.all([
+      q(ACCOUNTS_QUERY, [reportCurrency]),
+      q(TOTALS_QUERY, [reportCurrency]),
+      q(WARNINGS_QUERY, [reportCurrency]),
+      q(STALENESS_QUERY, []),
+    ]);
 
-  const stalenessMap = new Map<string, StalenessInput>();
-  for (const row of stalenessResult.rows as ReadonlyArray<{
-    account_id: string;
-    total_non_transfer_txns: string;
-    recent_non_transfer_txns_30d: string;
-    p75_recent_gap_days: number | null;
-  }>) {
-    stalenessMap.set(row.account_id, {
-      totalNonTransferTxns: Number(row.total_non_transfer_txns),
-      recentNonTransferTxns30d: Number(row.recent_non_transfer_txns_30d),
-      p75RecentGapDays: row.p75_recent_gap_days !== null ? Number(row.p75_recent_gap_days) : null,
-      daysSinceLast: null,
-    });
-  }
-
-  return {
-    accounts: accountResult.rows.map((row: {
+    const stalenessMap = new Map<string, StalenessInput>();
+    for (const row of stalenessResult.rows as ReadonlyArray<{
       account_id: string;
-      currency: string;
-      balance: number;
-      balance_report: number | null;
-      last_transaction_ts: string | null;
-    }) => {
-      const lastTransactionTs = row.last_transaction_ts !== null
-        ? new Date(row.last_transaction_ts).toISOString()
-        : null;
-      const daysSinceLast = lastTransactionTs !== null
-        ? Math.floor((Date.now() - new Date(lastTransactionTs).getTime()) / (1000 * 60 * 60 * 24))
-        : null;
-      const staleness = stalenessMap.get(row.account_id);
-      const overdue = staleness !== undefined
-        ? isAccountOverdue({ ...staleness, daysSinceLast })
-        : false;
-      return {
-        accountId: row.account_id,
+      total_non_transfer_txns: string;
+      recent_non_transfer_txns_30d: string;
+      p75_recent_gap_days: number | null;
+    }>) {
+      stalenessMap.set(row.account_id, {
+        totalNonTransferTxns: Number(row.total_non_transfer_txns),
+        recentNonTransferTxns30d: Number(row.recent_non_transfer_txns_30d),
+        p75RecentGapDays: row.p75_recent_gap_days !== null ? Number(row.p75_recent_gap_days) : null,
+        daysSinceLast: null,
+      });
+    }
+
+    return {
+      accounts: accountResult.rows.map((row: {
+        account_id: string;
+        currency: string;
+        balance: number;
+        balance_report: number | null;
+        last_transaction_ts: string | null;
+      }) => {
+        const lastTransactionTs = row.last_transaction_ts !== null
+          ? new Date(row.last_transaction_ts).toISOString()
+          : null;
+        const daysSinceLast = lastTransactionTs !== null
+          ? Math.floor((Date.now() - new Date(lastTransactionTs).getTime()) / (1000 * 60 * 60 * 24))
+          : null;
+        const staleness = stalenessMap.get(row.account_id);
+        const overdue = staleness !== undefined
+          ? isAccountOverdue({ ...staleness, daysSinceLast })
+          : false;
+        return {
+          accountId: row.account_id,
+          currency: row.currency,
+          status: computeAccountStatus(Number(row.balance), lastTransactionTs),
+          balance: Number(row.balance),
+          balanceUsd: row.balance_report !== null ? Number(row.balance_report) : null,
+          lastTransactionTs,
+          overdue,
+        };
+      }),
+      totals: totalResult.rows.map((row: {
+        currency: string;
+        balance: number;
+        balance_positive: number;
+        balance_negative: number;
+        balance_report: number | null;
+        has_unconvertible: boolean;
+      }) => ({
         currency: row.currency,
-        status: computeAccountStatus(Number(row.balance), lastTransactionTs),
         balance: Number(row.balance),
+        balancePositive: Number(row.balance_positive),
+        balanceNegative: Number(row.balance_negative),
         balanceUsd: row.balance_report !== null ? Number(row.balance_report) : null,
-        lastTransactionTs,
-        overdue,
-      };
-    }),
-    totals: totalResult.rows.map((row: {
-      currency: string;
-      balance: number;
-      balance_positive: number;
-      balance_negative: number;
-      balance_report: number | null;
-      has_unconvertible: boolean;
-    }) => ({
-      currency: row.currency,
-      balance: Number(row.balance),
-      balancePositive: Number(row.balance_positive),
-      balanceNegative: Number(row.balance_negative),
-      balanceUsd: row.balance_report !== null ? Number(row.balance_report) : null,
-      hasUnconvertible: row.has_unconvertible,
-    })),
-    conversionWarnings: warningResult.rows.map((row: { currency: string }) => ({
-      currency: row.currency,
-      reason: `No exchange rates found for ${row.currency}`,
-    })),
-  };
+        hasUnconvertible: row.has_unconvertible,
+      })),
+      conversionWarnings: warningResult.rows.map((row: { currency: string }) => ({
+        currency: row.currency,
+        reason: `No exchange rates found for ${row.currency}`,
+      })),
+    };
+  });
 };

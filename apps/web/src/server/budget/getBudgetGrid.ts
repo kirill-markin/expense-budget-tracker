@@ -1,7 +1,7 @@
 /**
  * Budget grid assembly for the budget dashboard.
  *
- * Runs four parallel queries:
+ * Runs four parallel queries inside a single user-scoped transaction:
  * 1. QUERY — planned (base + modifier) vs actual per month/direction/category,
  *    with FX conversion via rate_ranges. Plan uses last-write-wins on inserted_at.
  * 2. CUMULATIVE_BALANCE — actual income/spend/transfer totals before the loaded
@@ -10,7 +10,7 @@
  * 4. MONTH_END_BALANCES — mark-to-market portfolio balance at each month-end,
  *    used to anchor the Balance row and derive FX adjustments.
  */
-import { query } from "@/server/db";
+import { withUserContext } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 
 export type BudgetRow = Readonly<{
@@ -254,43 +254,45 @@ type CumulativeRaw = Readonly<{
   transfer_actual: number;
 }>;
 
-export const getBudgetGrid = async (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): Promise<BudgetGridResult> => {
-  const reportCurrency = await getReportCurrency();
+export const getBudgetGrid = async (userId: string, monthFrom: string, monthTo: string, planFrom: string, actualTo: string): Promise<BudgetGridResult> => {
+  const reportCurrency = await getReportCurrency(userId);
 
-  const [rowsResult, warningResult, cumulativeResult, balanceResult] = await Promise.all([
-    query(QUERY, [reportCurrency, monthFrom, monthTo, planFrom, actualTo]),
-    query(WARNINGS_QUERY, [reportCurrency]),
-    query(CUMULATIVE_BALANCE_QUERY, [reportCurrency, monthFrom]),
-    query(MONTH_END_BALANCES_QUERY, [reportCurrency, monthFrom, actualTo]),
-  ]);
+  return withUserContext(userId, async (q) => {
+    const [rowsResult, warningResult, cumulativeResult, balanceResult] = await Promise.all([
+      q(QUERY, [reportCurrency, monthFrom, monthTo, planFrom, actualTo]),
+      q(WARNINGS_QUERY, [reportCurrency]),
+      q(CUMULATIVE_BALANCE_QUERY, [reportCurrency, monthFrom]),
+      q(MONTH_END_BALANCES_QUERY, [reportCurrency, monthFrom, actualTo]),
+    ]);
 
-  const cumulative: CumulativeRaw = cumulativeResult.rows[0] as CumulativeRaw;
+    const cumulative: CumulativeRaw = cumulativeResult.rows[0] as CumulativeRaw;
 
-  const monthEndBalances: Record<string, number> = {};
-  for (const row of balanceResult.rows as ReadonlyArray<{ month: string; balance_report: string }>) {
-    monthEndBalances[row.month] = Number(row.balance_report);
-  }
+    const monthEndBalances: Record<string, number> = {};
+    for (const row of balanceResult.rows as ReadonlyArray<{ month: string; balance_report: string }>) {
+      monthEndBalances[row.month] = Number(row.balance_report);
+    }
 
-  return {
-    rows: rowsResult.rows.map((row: { month: string; direction: string; category: string; planned_base: number; planned_modifier: number; planned: number; actual: number; has_unconvertible: boolean }) => ({
-      month: row.month,
-      direction: row.direction,
-      category: row.category,
-      plannedBase: Number(row.planned_base),
-      plannedModifier: Number(row.planned_modifier),
-      planned: Number(row.planned),
-      actual: Number(row.actual),
-      hasUnconvertible: row.has_unconvertible,
-    })),
-    conversionWarnings: warningResult.rows.map((row: { currency: string }) => ({
-      currency: row.currency,
-      reason: `No exchange rates available for ${row.currency}`,
-    })),
-    cumulativeBefore: {
-      incomeActual: Number(cumulative.income_actual),
-      spendActual: Number(cumulative.spend_actual),
-      transferActual: Number(cumulative.transfer_actual),
-    },
-    monthEndBalances,
-  };
+    return {
+      rows: rowsResult.rows.map((row: { month: string; direction: string; category: string; planned_base: number; planned_modifier: number; planned: number; actual: number; has_unconvertible: boolean }) => ({
+        month: row.month,
+        direction: row.direction,
+        category: row.category,
+        plannedBase: Number(row.planned_base),
+        plannedModifier: Number(row.planned_modifier),
+        planned: Number(row.planned),
+        actual: Number(row.actual),
+        hasUnconvertible: row.has_unconvertible,
+      })),
+      conversionWarnings: warningResult.rows.map((row: { currency: string }) => ({
+        currency: row.currency,
+        reason: `No exchange rates available for ${row.currency}`,
+      })),
+      cumulativeBefore: {
+        incomeActual: Number(cumulative.income_actual),
+        spendActual: Number(cumulative.spend_actual),
+        transferActual: Number(cumulative.transfer_actual),
+      },
+      monthEndBalances,
+    };
+  });
 };

@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 
 import { offsetMonth, getCurrentMonth } from "@/lib/monthUtils";
 import { getBudgetGrid } from "@/server/budget/getBudgetGrid";
@@ -10,11 +11,13 @@ export const dynamic = "force-dynamic";
 const INITIAL_PAST_MONTHS = 12;
 
 async function BudgetStreamData() {
+  const headersList = await headers();
+  const userId = headersList.get("x-user-id") ?? "local";
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);
   const monthTo = currentMonth;
 
-  const { rows } = await getBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
+  const { rows } = await getBudgetGrid(userId, monthFrom, monthTo, currentMonth, currentMonth);
 
   return (
     <BudgetStreamDashboard

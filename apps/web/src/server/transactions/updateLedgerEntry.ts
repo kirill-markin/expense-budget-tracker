@@ -3,8 +3,9 @@
  *
  * Updates only the mutable fields (category, note) of an existing entry.
  * Amount, currency, account, and timestamp are immutable after creation.
+ * RLS ensures the update only affects entries owned by the given user.
  */
-import { query } from "@/server/db";
+import { queryAs } from "@/server/db";
 
 type UpdateLedgerEntryParams = Readonly<{
   entryId: string;
@@ -14,8 +15,9 @@ type UpdateLedgerEntryParams = Readonly<{
 
 export type { UpdateLedgerEntryParams };
 
-export const updateLedgerEntry = async (params: UpdateLedgerEntryParams): Promise<void> => {
-  await query(
+export const updateLedgerEntry = async (userId: string, params: UpdateLedgerEntryParams): Promise<void> => {
+  await queryAs(
+    userId,
     "UPDATE ledger_entries SET category = $1, note = $2 WHERE entry_id = $3",
     [params.category, params.note, params.entryId],
   );

@@ -7,7 +7,7 @@
  * configurable sort and pagination. The report-currency amount is computed
  * at read time — no precomputed amount_usd column.
  */
-import { query } from "@/server/db";
+import { withUserContext, queryAs } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 
 export type LedgerEntry = Readonly<{
@@ -93,9 +93,10 @@ const buildWhereClause = (
 };
 
 export const getTransactionsPage = async (
+  userId: string,
   filter: TransactionsFilter,
 ): Promise<TransactionsPage> => {
-  const reportCurrency = await getReportCurrency();
+  const reportCurrency = await getReportCurrency(userId);
   const sortColumn = SORT_COLUMNS[filter.sortKey] ?? "ts";
   const sortDir = filter.sortDir === "asc" ? "ASC" : "DESC";
 
@@ -139,43 +140,46 @@ export const getTransactionsPage = async (
     ${countWhere}
   `;
 
-  const [entriesResult, countResult] = await Promise.all([
-    query(entriesQuery, entriesParams),
-    query(countQuery, countParams),
-  ]);
+  return withUserContext(userId, async (q) => {
+    const [entriesResult, countResult] = await Promise.all([
+      q(entriesQuery, entriesParams),
+      q(countQuery, countParams),
+    ]);
 
-  return {
-    entries: entriesResult.rows.map((row: {
-      entry_id: string;
-      event_id: string;
-      ts: string;
-      account_id: string;
-      amount: number;
-      amount_report: number | null;
-      currency: string;
-      kind: string;
-      category: string | null;
-      counterparty: string | null;
-      note: string | null;
-    }) => ({
-      entryId: row.entry_id,
-      eventId: row.event_id,
-      ts: new Date(row.ts).toISOString(),
-      accountId: row.account_id,
-      amount: Number(row.amount),
-      amountUsd: row.amount_report !== null ? Number(row.amount_report) : null,
-      currency: row.currency,
-      kind: row.kind,
-      category: row.category,
-      counterparty: row.counterparty,
-      note: row.note,
-    })),
-    total: Number((countResult.rows[0] as { total: string }).total),
-  };
+    return {
+      entries: entriesResult.rows.map((row: {
+        entry_id: string;
+        event_id: string;
+        ts: string;
+        account_id: string;
+        amount: number;
+        amount_report: number | null;
+        currency: string;
+        kind: string;
+        category: string | null;
+        counterparty: string | null;
+        note: string | null;
+      }) => ({
+        entryId: row.entry_id,
+        eventId: row.event_id,
+        ts: new Date(row.ts).toISOString(),
+        accountId: row.account_id,
+        amount: Number(row.amount),
+        amountUsd: row.amount_report !== null ? Number(row.amount_report) : null,
+        currency: row.currency,
+        kind: row.kind,
+        category: row.category,
+        counterparty: row.counterparty,
+        note: row.note,
+      })),
+      total: Number((countResult.rows[0] as { total: string }).total),
+    };
+  });
 };
 
-export const getAccounts = async (): Promise<ReadonlyArray<AccountOption>> => {
-  const result = await query(
+export const getAccounts = async (userId: string): Promise<ReadonlyArray<AccountOption>> => {
+  const result = await queryAs(
+    userId,
     "SELECT DISTINCT account_id FROM ledger_entries ORDER BY account_id",
     [],
   );

@@ -1,4 +1,5 @@
 import { updateLedgerEntry } from "@/server/transactions/updateLedgerEntry";
+import { extractUserId } from "@/server/userId";
 
 type RequestBody = Readonly<{
   entryId: unknown;
@@ -7,6 +8,8 @@ type RequestBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
+  const userId = extractUserId(request);
+
   let body: RequestBody;
   try {
     body = await request.json() as RequestBody;
@@ -29,7 +32,7 @@ export const POST = async (request: Request): Promise<Response> => {
   }
 
   try {
-    await updateLedgerEntry({
+    await updateLedgerEntry(userId, {
       entryId,
       category: category as string | null,
       note: note as string | null,

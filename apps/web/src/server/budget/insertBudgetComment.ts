@@ -4,7 +4,7 @@
  * Comments are append-only (same pattern as budget_lines). The latest
  * non-empty comment per (month, direction, category) is the effective one.
  */
-import { query } from "@/server/db";
+import { queryAs } from "@/server/db";
 
 type InsertBudgetCommentParams = Readonly<{
   month: string;
@@ -13,10 +13,11 @@ type InsertBudgetCommentParams = Readonly<{
   comment: string;
 }>;
 
-export const insertBudgetComment = async (params: InsertBudgetCommentParams): Promise<void> => {
-  await query(
-    `INSERT INTO budget_comments (budget_month, direction, category, comment)
-     VALUES (to_date($1, 'YYYY-MM'), $2, $3, $4)`,
-    [params.month, params.direction, params.category, params.comment],
+export const insertBudgetComment = async (userId: string, params: InsertBudgetCommentParams): Promise<void> => {
+  await queryAs(
+    userId,
+    `INSERT INTO budget_comments (user_id, budget_month, direction, category, comment)
+     VALUES ($1, to_date($2, 'YYYY-MM'), $3, $4, $5)`,
+    [userId, params.month, params.direction, params.category, params.comment],
   );
 };

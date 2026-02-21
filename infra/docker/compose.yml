@@ -22,7 +22,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://tracker:tracker@postgres:5432/tracker
+      MIGRATION_DATABASE_URL: postgresql://tracker:tracker@postgres:5432/tracker
+      APP_DB_PASSWORD: app
     volumes:
       - ../../scripts:/scripts:ro
       - ../../db:/db:ro
@@ -37,7 +38,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://tracker:tracker@postgres:5432/tracker
+      DATABASE_URL: postgresql://app:app@postgres:5432/tracker
       HOST: "0.0.0.0"
       AUTH_MODE: "none"
     depends_on:

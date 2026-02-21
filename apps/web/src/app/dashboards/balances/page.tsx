@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 
 import { getBalancesSummary } from "@/server/balances/getBalancesSummary";
 import { BalancesTable } from "@/ui/tables/BalancesTable";
@@ -7,7 +8,9 @@ import { LoadingIndicator } from "@/ui/LoadingIndicator";
 export const dynamic = "force-dynamic";
 
 async function BalancesData() {
-  const { accounts, totals, conversionWarnings } = await getBalancesSummary();
+  const headersList = await headers();
+  const userId = headersList.get("x-user-id") ?? "local";
+  const { accounts, totals, conversionWarnings } = await getBalancesSummary(userId);
 
   return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} />;
 }

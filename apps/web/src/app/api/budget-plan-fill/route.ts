@@ -1,4 +1,5 @@
 import { fillBudgetBase } from "@/server/budget/fillBudgetBase";
+import { extractUserId } from "@/server/userId";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const VALID_DIRECTIONS = new Set(["income", "spend"]);
@@ -11,6 +12,8 @@ type RequestBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
+  const userId = extractUserId(request);
+
   let body: RequestBody;
   try {
     body = await request.json() as RequestBody;
@@ -41,7 +44,7 @@ export const POST = async (request: Request): Promise<Response> => {
   }
 
   try {
-    const filled = await fillBudgetBase({ fromMonth, direction, category, baseValue });
+    const filled = await fillBudgetBase(userId, { fromMonth, direction, category, baseValue });
     return Response.json({ ok: true, monthsFilled: filled });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
