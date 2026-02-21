@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: eu-central-1
+  AWS_REGION: ${{ vars.AWS_REGION }}
 
 jobs:
   deploy:

@@ -18,7 +18,10 @@ if (fs.existsSync(localContextPath)) {
   }
 }
 
-const region = app.node.tryGetContext("region") as string || "eu-central-1";
+const region = app.node.tryGetContext("region") as string | undefined;
+if (!region) {
+  throw new Error("Missing required context: 'region'. Set it in cdk.context.local.json or pass via -c region=eu-central-1");
+}
 
 new ExpenseBudgetTrackerStack(app, "ExpenseBudgetTracker", {
   env: {

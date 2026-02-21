@@ -42,7 +42,9 @@ make down
 
 ## AWS (CDK)
 
-Full AWS deployment guide is in `infra/aws/README.md`.
+Full AWS deployment guide is in [`infra/aws/README.md`](../infra/aws/README.md).
+
+We recommend deploying into a **dedicated AWS account** (the AWS equivalent of a GCP project) for complete isolation of resources, billing, and IAM. See the "AWS account isolation" section in the AWS README for setup instructions.
 
 Summary: CDK stack deploys VPC, EC2 (Docker Compose), RDS Postgres (private), ALB with Cognito auth, WAF, Lambda for FX fetchers, CloudWatch monitoring, S3 access logs, and optional Route 53 DNS.
 
@@ -51,5 +53,6 @@ cd infra/aws
 npm install
 cp cdk.context.local.example.json cdk.context.local.json
 # edit cdk.context.local.json with your values
-cdk deploy
+AWS_PROFILE=expense-tracker cdk bootstrap   # first time only
+AWS_PROFILE=expense-tracker cdk deploy
 ```
