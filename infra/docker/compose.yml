@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tracker"]
       interval: 5s
@@ -40,6 +40,7 @@ services:
     environment:
       DATABASE_URL: postgresql://app:app@postgres:5432/tracker
       HOST: "0.0.0.0"
+      PORT: "3000"
       AUTH_MODE: "none"
     depends_on:
       postgres:
