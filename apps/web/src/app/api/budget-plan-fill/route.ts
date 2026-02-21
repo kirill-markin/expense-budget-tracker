@@ -1,3 +1,4 @@
+import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { fillBudgetBase } from "@/server/budget/fillBudgetBase";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -12,9 +13,6 @@ type RequestBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
-  const userId = extractUserId(request);
-  const workspaceId = extractWorkspaceId(request);
-
   let body: RequestBody;
   try {
     body = await request.json() as RequestBody;
@@ -43,6 +41,15 @@ export const POST = async (request: Request): Promise<Response> => {
   if (typeof baseValue !== "number" || !Number.isFinite(baseValue)) {
     return new Response("Invalid baseValue. Expected finite number", { status: 400 });
   }
+
+  if (isDemoModeFromRequest(request)) {
+    const fromNum = Number(fromMonth.slice(5));
+    const monthsFilled = 12 - fromNum;
+    return Response.json({ ok: true, monthsFilled });
+  }
+
+  const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   try {
     const filled = await fillBudgetBase(userId, workspaceId, { fromMonth, direction, category, baseValue });

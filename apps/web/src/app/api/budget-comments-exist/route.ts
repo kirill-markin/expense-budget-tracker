@@ -1,11 +1,11 @@
+import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { getCommentedCells } from "@/server/budget/getCommentedCells";
+import { getDemoCommentedCells } from "@/server/demo/data";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 
 export const GET = async (request: Request): Promise<Response> => {
-  const userId = extractUserId(request);
-  const workspaceId = extractWorkspaceId(request);
   const url = new URL(request.url);
   const monthFrom = url.searchParams.get("monthFrom");
   const monthTo = url.searchParams.get("monthTo");
@@ -21,6 +21,13 @@ export const GET = async (request: Request): Promise<Response> => {
   if (monthFrom > monthTo) {
     return new Response("monthFrom must be <= monthTo", { status: 400 });
   }
+
+  if (isDemoModeFromRequest(request)) {
+    return Response.json({ cells: getDemoCommentedCells({ monthFrom, monthTo }) });
+  }
+
+  const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   try {
     const cells = await getCommentedCells(userId, workspaceId, { monthFrom, monthTo });

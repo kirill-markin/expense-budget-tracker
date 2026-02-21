@@ -1,3 +1,4 @@
+import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { updateLedgerEntry } from "@/server/transactions/updateLedgerEntry";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -8,9 +9,6 @@ type RequestBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
-  const userId = extractUserId(request);
-  const workspaceId = extractWorkspaceId(request);
-
   let body: RequestBody;
   try {
     body = await request.json() as RequestBody;
@@ -31,6 +29,13 @@ export const POST = async (request: Request): Promise<Response> => {
   if (note !== null && typeof note !== "string") {
     return new Response("Invalid note. Expected string or null", { status: 400 });
   }
+
+  if (isDemoModeFromRequest(request)) {
+    return Response.json({ ok: true });
+  }
+
+  const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   try {
     await updateLedgerEntry(userId, workspaceId, {

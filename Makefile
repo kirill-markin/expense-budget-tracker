@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f infra/docker/compose.yml
 
-.PHONY: up down migrate seed dev build test lint
+.PHONY: up down migrate dev build test lint
 
 up:
 	$(COMPOSE) up -d
@@ -10,9 +10,6 @@ down:
 
 migrate:
 	$(COMPOSE) run --rm migrate
-
-seed:
-	$(COMPOSE) exec postgres psql "postgresql://tracker:tracker@localhost:5432/tracker" -f /seeds/demo.sql
 
 dev:
 	$(COMPOSE) up

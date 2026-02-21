@@ -1,4 +1,6 @@
+import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { getTransactionsPage } from "@/server/transactions/getTransactions";
+import { getDemoTransactionsPage } from "@/server/demo/data";
 import type { TransactionsFilter } from "@/server/transactions/getTransactions";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -10,8 +12,6 @@ const VALID_SORT_KEYS = new Set([
 ]);
 
 export const GET = async (request: Request): Promise<Response> => {
-  const userId = extractUserId(request);
-  const workspaceId = extractWorkspaceId(request);
   const url = new URL(request.url);
   const params = url.searchParams;
 
@@ -45,6 +45,12 @@ export const GET = async (request: Request): Promise<Response> => {
     offset: offsetRaw,
   };
 
+  if (isDemoModeFromRequest(request)) {
+    return Response.json(getDemoTransactionsPage(filter));
+  }
+
+  const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
   const page = await getTransactionsPage(userId, workspaceId, filter);
   return Response.json(page);
 };

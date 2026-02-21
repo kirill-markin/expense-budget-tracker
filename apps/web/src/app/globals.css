@@ -32,6 +32,30 @@ a:hover {
   text-decoration: underline;
 }
 
+.demo-banner {
+  background: var(--accent);
+  color: var(--bg);
+  text-align: center;
+  padding: 4px 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.demo-toggle {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.demo-toggle:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;

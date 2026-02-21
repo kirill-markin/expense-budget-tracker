@@ -6,10 +6,13 @@ Self-hosted open-source personal finance expense and budget tracker with balance
 
 ```bash
 make up    # start Postgres, run migrations, start web + worker
-make seed  # load demo data
 ```
 
 Open `http://localhost:3000`.
+
+### Demo mode
+
+To preview all dashboards without a database, set `DEMO_MODE=true` or click "Try Demo" in the topbar. Demo mode serves static sample data and discards writes.
 
 ## Documentation
 

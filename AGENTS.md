@@ -33,7 +33,7 @@ Open-source personal finance tracker: expenses, budgets, balances, transfers, an
 | `db/migrations/` | Postgres migrations (applied in order by `scripts/migrate.sh`) |
 | `db/views/` | Postgres views (`accounts`) |
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |
-| `db/seeds/demo.sql` | Demo data for local development |
+| `apps/web/src/server/demo/data.ts` | Static demo data for demo mode (no DB needed) |
 | `infra/docker/compose.yml` | Local Docker Compose (Postgres + migrate + web + worker) |
 | `infra/aws/` | AWS CDK stack (EC2, RDS, ALB/Cognito, Lambda, WAF) |
 | `scripts/migrate.sh` | Runs all migrations + views against `DATABASE_URL` |
@@ -44,4 +44,4 @@ Open-source personal finance tracker: expenses, budgets, balances, transfers, an
 - [docs/architecture.md](docs/architecture.md) — system overview, data model, multi-currency design, auth model
 - [docs/deployment.md](docs/deployment.md) — local Docker Compose and AWS CDK setup
 - [infra/aws/README.md](infra/aws/README.md) — full AWS CDK deployment guide
-- [Makefile](Makefile) — `make up`, `make down`, `make migrate`, `make seed`, `make test`, `make lint`
+- [Makefile](Makefile) — `make up`, `make down`, `make migrate`, `make test`, `make lint`

@@ -1,3 +1,4 @@
+import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { insertBudgetPlan } from "@/server/budget/insertBudgetPlan";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -14,9 +15,6 @@ type RequestBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
-  const userId = extractUserId(request);
-  const workspaceId = extractWorkspaceId(request);
-
   let body: RequestBody;
   try {
     body = await request.json() as RequestBody;
@@ -45,6 +43,13 @@ export const POST = async (request: Request): Promise<Response> => {
   if (typeof plannedValue !== "number" || !Number.isFinite(plannedValue)) {
     return new Response("Invalid plannedValue. Expected finite number", { status: 400 });
   }
+
+  if (isDemoModeFromRequest(request)) {
+    return Response.json({ ok: true });
+  }
+
+  const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   try {
     await insertBudgetPlan(userId, workspaceId, {

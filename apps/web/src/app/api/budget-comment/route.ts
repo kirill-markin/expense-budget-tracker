@@ -1,13 +1,13 @@
+import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { getLatestComment } from "@/server/budget/getLatestComment";
 import { insertBudgetComment } from "@/server/budget/insertBudgetComment";
+import { getDemoLatestComment } from "@/server/demo/data";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const VALID_DIRECTIONS = new Set(["income", "spend"]);
 
 export const GET = async (request: Request): Promise<Response> => {
-  const userId = extractUserId(request);
-  const workspaceId = extractWorkspaceId(request);
   const url = new URL(request.url);
   const month = url.searchParams.get("month");
   const direction = url.searchParams.get("direction");
@@ -24,6 +24,13 @@ export const GET = async (request: Request): Promise<Response> => {
   if (typeof category !== "string" || category.length === 0) {
     return new Response("Invalid category. Expected non-empty string", { status: 400 });
   }
+
+  if (isDemoModeFromRequest(request)) {
+    return Response.json({ comment: getDemoLatestComment({ month, direction, category }) });
+  }
+
+  const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   try {
     const comment = await getLatestComment(userId, workspaceId, { month, direction, category });
@@ -42,9 +49,6 @@ type PostBody = Readonly<{
 }>;
 
 export const POST = async (request: Request): Promise<Response> => {
-  const userId = extractUserId(request);
-  const workspaceId = extractWorkspaceId(request);
-
   let body: PostBody;
   try {
     body = await request.json() as PostBody;
@@ -69,6 +73,13 @@ export const POST = async (request: Request): Promise<Response> => {
   if (typeof comment !== "string") {
     return new Response("Invalid comment. Expected string", { status: 400 });
   }
+
+  if (isDemoModeFromRequest(request)) {
+    return Response.json({ ok: true });
+  }
+
+  const userId = extractUserId(request);
+  const workspaceId = extractWorkspaceId(request);
 
   try {
     await insertBudgetComment(userId, workspaceId, { month, direction, category, comment });
