@@ -84,7 +84,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     // --- Cognito User Pool ---
     const userPool = new cognito.UserPool(this, "UserPool", {
       userPoolName: "expense-tracker-users",
-      selfSignUpEnabled: false,
+      selfSignUpEnabled: true,
       signInAliases: { email: true },
       autoVerify: { email: true },
       passwordPolicy: {
