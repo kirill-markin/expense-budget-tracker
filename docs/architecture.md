@@ -118,7 +118,7 @@ Conversion to the reporting currency happens at read time via SQL joins:
 Zero built-in auth logic. Two modes controlled by `AUTH_MODE` env var:
 
 - `none` (default) — no authentication. App binds to `127.0.0.1`, userId is hardcoded to `"local"`, workspaceId is `"local"`. All data belongs to this single workspace.
-- `proxy` — trusts a JWT header set by a reverse proxy (ALB + Cognito, Cloudflare Access, etc.). Extracts `sub` claim as userId. In v1, workspaceId = userId (each user has a default workspace matching their user ID). Returns 401 if the header is missing or malformed.
+- `proxy` — trusts a JWT header set by the reverse proxy (ALB + Cognito). Extracts `sub` claim as userId. In v1, workspaceId = userId (each user has a default workspace matching their user ID). Returns 401 if the header is missing or malformed.
 
 Details in `apps/web/src/proxy.ts`.
 

@@ -17,7 +17,7 @@ This runs `docker compose -f infra/docker/compose.yml up -d`, which starts:
 1. **postgres** — Postgres 18 with health check.
 2. **migrate** — init container that runs `scripts/migrate.sh` (all migrations + views).
 3. **web** — Next.js app on `http://localhost:3000`.
-4. **worker** — Python FX rate fetcher on a daily schedule.
+4. **worker** — TypeScript FX rate fetcher on a daily schedule.
 
 ### Demo mode
 
@@ -44,7 +44,7 @@ Full AWS deployment guide is in [`infra/aws/README.md`](../infra/aws/README.md).
 
 We recommend deploying into a **dedicated AWS account** (the AWS equivalent of a GCP project) for complete isolation of resources, billing, and IAM. See the "AWS account isolation" section in the AWS README for setup instructions.
 
-Summary: CDK stack deploys VPC, EC2 (Docker Compose), RDS Postgres (private), ALB with Cognito auth, WAF, Lambda for FX fetchers, CloudWatch monitoring, S3 access logs, and optional Route 53 DNS.
+Summary: CDK stack deploys VPC, EC2 (Docker Compose), RDS Postgres (private), ALB with Cognito auth, ACM certificate, Route 53 DNS, WAF, Lambda for FX fetchers, CloudWatch monitoring, and S3 access logs.
 
 ```bash
 cd infra/aws

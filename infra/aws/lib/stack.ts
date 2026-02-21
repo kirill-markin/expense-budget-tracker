@@ -28,36 +28,27 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // --- Context parameters ---
-    const baseDomain = this.node.tryGetContext("domainName") as string | undefined || undefined;
+    // --- Context parameters (domainName, hostedZoneId, region validated in bin/app.ts) ---
+    const baseDomain = this.node.tryGetContext("domainName") as string;
     const subdomain = this.node.tryGetContext("subdomain") as string | undefined ?? "app";
-    const certificateArn = this.node.tryGetContext("certificateArn") as string | undefined || undefined;
     const keyPairName = this.node.tryGetContext("keyPairName") as string | undefined || undefined;
     const alertEmail = this.node.tryGetContext("alertEmail") as string | undefined || undefined;
-    const hostedZoneId = this.node.tryGetContext("hostedZoneId") as string | undefined || undefined;
+    const hostedZoneId = this.node.tryGetContext("hostedZoneId") as string;
 
-    const appDomain = baseDomain
-      ? subdomain ? `${subdomain}.${baseDomain}` : baseDomain
-      : undefined;
-    const callbackUrl = appDomain ? `https://${appDomain}/oauth2/idpresponse` : undefined;
+    const appDomain = subdomain ? `${subdomain}.${baseDomain}` : baseDomain;
+    const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
 
-    // --- Route 53 zone (resolved early for ACM DNS validation) ---
-    const zone = baseDomain && hostedZoneId
-      ? route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
-          hostedZoneId,
-          zoneName: baseDomain,
-        })
-      : undefined;
+    // --- Route 53 zone (for ACM DNS validation and A-record) ---
+    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
+      hostedZoneId,
+      zoneName: baseDomain,
+    });
 
-    // --- ACM Certificate (auto-create if zone is available but no ARN provided) ---
-    const certificate = certificateArn
-      ? acm.Certificate.fromCertificateArn(this, "ImportedCert", certificateArn)
-      : zone && appDomain
-        ? new acm.Certificate(this, "Certificate", {
-            domainName: appDomain,
-            validation: acm.CertificateValidation.fromDns(zone),
-          })
-        : undefined;
+    // --- ACM Certificate (auto-created, DNS validation via Route 53) ---
+    const certificate = new acm.Certificate(this, "Certificate", {
+      domainName: appDomain,
+      validation: acm.CertificateValidation.fromDns(zone),
+    });
 
     // --- VPC ---
     const vpc = new ec2.Vpc(this, "Vpc", {
@@ -131,9 +122,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       oAuth: {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
-        callbackUrls: callbackUrl
-          ? [callbackUrl]
-          : [`https://${cdk.Aws.REGION}.elb.amazonaws.com/oauth2/idpresponse`],
+        callbackUrls: [callbackUrl],
       },
       supportedIdentityProviders: [
         cognito.UserPoolClientIdentityProvider.COGNITO,
@@ -287,41 +276,33 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       },
     });
 
-    // ALB listeners with Cognito auth
-    if (certificate) {
-      const httpsListener = alb.addListener("HttpsListener", {
-        port: 443,
-        certificates: [certificate],
-        defaultAction: new elbv2_actions.AuthenticateCognitoAction({
-          userPool,
-          userPoolClient,
-          userPoolDomain,
-          next: elbv2.ListenerAction.forward([targetGroup]),
-        }),
-      });
+    // ALB listeners: HTTPS + Cognito auth, HTTP → HTTPS redirect
+    const httpsListener = alb.addListener("HttpsListener", {
+      port: 443,
+      certificates: [certificate],
+      defaultAction: new elbv2_actions.AuthenticateCognitoAction({
+        userPool,
+        userPoolClient,
+        userPoolDomain,
+        next: elbv2.ListenerAction.forward([targetGroup]),
+      }),
+    });
 
-      // Health check bypass: /api/health without auth
-      httpsListener.addAction("HealthBypass", {
-        priority: 1,
-        conditions: [elbv2.ListenerCondition.pathPatterns(["/api/health"])],
-        action: elbv2.ListenerAction.forward([targetGroup]),
-      });
+    // Health check bypass: /api/health without auth
+    httpsListener.addAction("HealthBypass", {
+      priority: 1,
+      conditions: [elbv2.ListenerCondition.pathPatterns(["/api/health"])],
+      action: elbv2.ListenerAction.forward([targetGroup]),
+    });
 
-      alb.addListener("HttpRedirect", {
-        port: 80,
-        defaultAction: elbv2.ListenerAction.redirect({
-          protocol: "HTTPS",
-          port: "443",
-          permanent: true,
-        }),
-      });
-    } else {
-      // No certificate: HTTP only, no Cognito auth (dev/testing)
-      alb.addListener("HttpListener", {
-        port: 80,
-        defaultTargetGroups: [targetGroup],
-      });
-    }
+    alb.addListener("HttpRedirect", {
+      port: 80,
+      defaultAction: elbv2.ListenerAction.redirect({
+        protocol: "HTTPS",
+        port: "443",
+        permanent: true,
+      }),
+    });
 
     // --- AWS WAF ---
     const waf = new wafv2.CfnWebACL(this, "Waf", {
@@ -486,16 +467,14 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       targets: [new events_targets.LambdaFunction(fxFetcher)],
     });
 
-    // --- Route 53 (optional) ---
-    if (zone && appDomain) {
-      new route53.ARecord(this, "DnsRecord", {
-        zone,
-        recordName: appDomain,
-        target: route53.RecordTarget.fromAlias(
-          new route53_targets.LoadBalancerTarget(alb),
-        ),
-      });
-    }
+    // --- Route 53 DNS record ---
+    new route53.ARecord(this, "DnsRecord", {
+      zone,
+      recordName: appDomain,
+      target: route53.RecordTarget.fromAlias(
+        new route53_targets.LoadBalancerTarget(alb),
+      ),
+    });
 
     // --- GitHub Actions OIDC (CI/CD) ---
     const githubRepo = this.node.tryGetContext("githubRepo") as string | undefined;
@@ -542,15 +521,13 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- Outputs ---
-    if (appDomain) {
-      new cdk.CfnOutput(this, "AppUrl", {
-        value: `https://${appDomain}`,
-        description: "Application URL",
-      });
-    }
+    new cdk.CfnOutput(this, "AppUrl", {
+      value: `https://${appDomain}`,
+      description: "Application URL",
+    });
     new cdk.CfnOutput(this, "AlbDns", {
       value: alb.loadBalancerDnsName,
-      description: "ALB DNS name — point your domain CNAME here (only needed for external DNS)",
+      description: "ALB DNS name",
     });
     new cdk.CfnOutput(this, "DbEndpoint", {
       value: db.dbInstanceEndpointAddress,

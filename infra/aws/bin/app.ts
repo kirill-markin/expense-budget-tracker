@@ -23,6 +23,16 @@ if (!region) {
   throw new Error("Missing required context: 'region'. Set it in cdk.context.local.json or pass via -c region=eu-central-1");
 }
 
+const domainName = app.node.tryGetContext("domainName") as string | undefined;
+if (!domainName) {
+  throw new Error("Missing required context: 'domainName'. Set it in cdk.context.local.json (e.g. \"myfinance.com\")");
+}
+
+const hostedZoneId = app.node.tryGetContext("hostedZoneId") as string | undefined;
+if (!hostedZoneId) {
+  throw new Error("Missing required context: 'hostedZoneId'. Set it in cdk.context.local.json (Route 53 hosted zone ID for your domain)");
+}
+
 new ExpenseBudgetTrackerStack(app, "ExpenseBudgetTracker", {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
