@@ -1,3 +1,15 @@
+/**
+ * Account balances summary for the balances dashboard.
+ *
+ * Runs four parallel queries:
+ * 1. ACCOUNTS — per-account balance in native + report currency, last non-transfer timestamp.
+ * 2. TOTALS — aggregated balance per currency with positive/negative split.
+ * 3. WARNINGS — currencies present in data but missing exchange rates.
+ * 4. STALENESS — P75 inter-transaction gap stats for overdue detection.
+ *
+ * FX conversion uses the latest available rate per currency from exchange_rates.
+ * Accounts are classified as active/inactive based on balance and 90-day activity.
+ */
 import { query } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { type StalenessInput, isAccountOverdue } from "@/server/balances/accountStaleness";

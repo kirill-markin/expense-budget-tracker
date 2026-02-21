@@ -1,3 +1,9 @@
+/**
+ * Retrieve the most recent comment for a single budget cell.
+ *
+ * Returns the comment text ordered by inserted_at DESC, or null if no
+ * comment exists for the given (month, direction, category) tuple.
+ */
 import { query } from "@/server/db";
 
 type GetLatestCommentParams = Readonly<{

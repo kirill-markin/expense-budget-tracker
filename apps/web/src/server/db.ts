@@ -1,3 +1,9 @@
+/**
+ * Postgres connection pool and query helper.
+ *
+ * A single pg.Pool is created on first import using DATABASE_URL.
+ * All server modules share this pool for connection reuse.
+ */
 import pg from "pg";
 
 const pool = new pg.Pool({

@@ -1,3 +1,10 @@
+/**
+ * Append a budget plan line.
+ *
+ * Budget lines are append-only: each insert creates a new row with the current
+ * timestamp. Queries resolve the effective value via last-write-wins on inserted_at.
+ * Currency is set from workspace_settings.reporting_currency at write time.
+ */
 import { query } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 

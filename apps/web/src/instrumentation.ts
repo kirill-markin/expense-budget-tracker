@@ -1,3 +1,14 @@
+/**
+ * Production startup validation.
+ *
+ * Called once by Next.js on server boot. Checks:
+ * - AUTH_MODE is "none" or "proxy"
+ * - AUTH_PROXY_HEADER is set when AUTH_MODE=proxy
+ * - Warns when AUTH_MODE=none with non-localhost HOST
+ * - DATABASE_URL is set
+ *
+ * Throws with all collected errors on misconfiguration. Skipped in dev.
+ */
 export const register = (): void => {
   if (process.env.NODE_ENV !== "production") return;
 

@@ -1,3 +1,12 @@
+/**
+ * Paginated ledger entry queries for the transactions dashboard.
+ *
+ * Fetches entries with runtime FX conversion via a LEFT JOIN on exchange_rates
+ * using date-range matching (rate valid from rate_date until next_rate_date).
+ * Supports filtering by date range, account, kind, and category, with
+ * configurable sort and pagination. The report-currency amount is computed
+ * at read time — no precomputed amount_usd column.
+ */
 import { query } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 

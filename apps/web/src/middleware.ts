@@ -1,3 +1,14 @@
+/**
+ * Next.js request middleware: auth gate, CSRF check, security headers.
+ *
+ * AUTH_MODE=none — all requests pass (protection via localhost bind).
+ * AUTH_MODE=proxy — requires a non-empty header named by AUTH_PROXY_HEADER;
+ * returns 401 if missing. /api/health is always exempt.
+ *
+ * Every response gets security headers (X-Content-Type-Options, X-Frame-Options,
+ * Referrer-Policy, Permissions-Policy, HSTS when CORS_ORIGIN is HTTPS).
+ * State-changing requests are checked for CSRF origin mismatch.
+ */
 import { NextRequest, NextResponse } from "next/server";
 
 type AuthMode = "none" | "proxy";

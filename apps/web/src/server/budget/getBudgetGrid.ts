@@ -1,3 +1,15 @@
+/**
+ * Budget grid assembly for the budget dashboard.
+ *
+ * Runs four parallel queries:
+ * 1. QUERY — planned (base + modifier) vs actual per month/direction/category,
+ *    with FX conversion via rate_ranges. Plan uses last-write-wins on inserted_at.
+ * 2. CUMULATIVE_BALANCE — actual income/spend/transfer totals before the loaded
+ *    range, used as the Balance row starting point.
+ * 3. WARNINGS — currencies missing exchange rates.
+ * 4. MONTH_END_BALANCES — mark-to-market portfolio balance at each month-end,
+ *    used to anchor the Balance row and derive FX adjustments.
+ */
 import { query } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 

@@ -1,3 +1,10 @@
+/**
+ * Fill budget base values for remaining months of the year.
+ *
+ * Given a starting month (e.g. "2026-03"), inserts the same base value
+ * for every subsequent month through December of that year. Used by
+ * the "fill to year-end" UI action. Returns the number of months filled.
+ */
 import { insertBudgetPlan } from "@/server/budget/insertBudgetPlan";
 
 type FillBudgetBaseParams = Readonly<{

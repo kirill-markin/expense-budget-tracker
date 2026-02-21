@@ -1,3 +1,9 @@
+/**
+ * Inline editing of ledger entry metadata.
+ *
+ * Updates only the mutable fields (category, note) of an existing entry.
+ * Amount, currency, account, and timestamp are immutable after creation.
+ */
 import { query } from "@/server/db";
 
 type UpdateLedgerEntryParams = Readonly<{

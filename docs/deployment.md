@@ -1,0 +1,55 @@
+# Deployment
+
+## Local (Docker Compose)
+
+### Prerequisites
+
+- Docker and Docker Compose
+
+### Start
+
+```bash
+make up
+```
+
+This runs `docker compose -f infra/docker/compose.yml up -d`, which starts:
+
+1. **postgres** — Postgres 16 with health check.
+2. **migrate** — init container that runs `scripts/migrate.sh` (all migrations + views).
+3. **web** — Next.js app on `http://localhost:3000`.
+4. **worker** — Python FX rate fetcher on a daily schedule.
+
+### Load demo data
+
+```bash
+make seed
+```
+
+### Stop
+
+```bash
+make down
+```
+
+### Other commands
+
+| Command | Description |
+|---|---|
+| `make dev` | Start in foreground (logs visible) |
+| `make build` | Rebuild container images |
+| `make test` | Run web + worker tests |
+| `make lint` | Run web + worker linters |
+
+## AWS (CDK)
+
+Full AWS deployment guide is in `infra/aws/README.md`.
+
+Summary: CDK stack deploys VPC, EC2 (Docker Compose), RDS Postgres (private), ALB with Cognito auth, WAF, Lambda for FX fetchers, CloudWatch monitoring, S3 access logs, and optional Route 53 DNS.
+
+```bash
+cd infra/aws
+npm install
+cp cdk.context.local.example.json cdk.context.local.json
+# edit cdk.context.local.json with your values
+cdk deploy
+```

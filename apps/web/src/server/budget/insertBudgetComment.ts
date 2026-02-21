@@ -1,3 +1,9 @@
+/**
+ * Append a comment to a budget cell.
+ *
+ * Comments are append-only (same pattern as budget_lines). The latest
+ * non-empty comment per (month, direction, category) is the effective one.
+ */
 import { query } from "@/server/db";
 
 type InsertBudgetCommentParams = Readonly<{
