@@ -5,6 +5,10 @@ node_modules/
 # Build output
 .next/
 dist/
+*.tsbuildinfo
+
+# Lock files (npm only — package-lock.json is tracked)
+yarn.lock
 
 # Environment
 .env

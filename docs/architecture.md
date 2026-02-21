@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────┐     ┌────────────────────┐     ┌──────────────┐
-│ Browser UI  │────▶│  Next.js (web)     │────▶│  Postgres 16 │
+│ Browser UI  │────▶│  Next.js (web)     │────▶│  Postgres 18 │
 │             │◀────│  API routes + SSR  │◀────│              │
 └─────────────┘     └────────────────────┘     └──────────────┘
                                                        ▲
@@ -16,7 +16,7 @@
 
 Three components, one database:
 
-1. **web** (`apps/web/`) — Next.js 15 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool`.
+1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool`.
 2. **worker** (`apps/worker/`) — Python process that fetches daily exchange rates from ECB, CBR, and NBS and inserts them into `exchange_rates`. Runs on a schedule (local Docker) or as a Lambda (AWS).
 3. **Postgres** — single source of truth. Five tables, one view.
 
@@ -69,7 +69,7 @@ Zero built-in auth logic. Two modes controlled by `AUTH_MODE` env var:
 - `none` (default) — no authentication. App binds to `127.0.0.1` so only local access is possible.
 - `proxy` — trusts a header set by a reverse proxy (ALB, Cloudflare Access, nginx, etc.). Returns 401 if the header is missing.
 
-Details in `apps/web/src/middleware.ts`.
+Details in `apps/web/src/proxy.ts`.
 
 ## Deployment profiles
 

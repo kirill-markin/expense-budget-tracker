@@ -14,7 +14,7 @@ make up
 
 This runs `docker compose -f infra/docker/compose.yml up -d`, which starts:
 
-1. **postgres** — Postgres 16 with health check.
+1. **postgres** — Postgres 18 with health check.
 2. **migrate** — init container that runs `scripts/migrate.sh` (all migrations + views).
 3. **web** — Next.js app on `http://localhost:3000`.
 4. **worker** — Python FX rate fetcher on a daily schedule.

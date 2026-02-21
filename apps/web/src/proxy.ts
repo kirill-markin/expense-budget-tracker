@@ -1,5 +1,5 @@
 /**
- * Next.js request middleware: auth gate, CSRF check, security headers.
+ * Next.js request proxy: auth gate, CSRF check, security headers.
  *
  * AUTH_MODE=none — all requests pass (protection via localhost bind).
  * AUTH_MODE=proxy — requires a non-empty header named by AUTH_PROXY_HEADER;
@@ -50,7 +50,7 @@ const checkCsrf = (request: NextRequest): boolean => {
   return origin === allowedOrigin;
 };
 
-export const middleware = (request: NextRequest): NextResponse => {
+export const proxy = (request: NextRequest): NextResponse => {
   const { pathname } = request.nextUrl;
 
   if (!checkCsrf(request)) {

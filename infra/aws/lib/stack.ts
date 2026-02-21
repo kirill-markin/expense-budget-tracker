@@ -121,7 +121,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
 
     const db = new rds.DatabaseInstance(this, "Db", {
       engine: rds.DatabaseInstanceEngine.postgres({
-        version: rds.PostgresEngineVersion.VER_16,
+        version: rds.PostgresEngineVersion.VER_18,
       }),
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO),
       vpc,

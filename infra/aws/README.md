@@ -5,7 +5,7 @@ Deploy expense-budget-tracker to your own AWS account using AWS CDK.
 ## What gets created
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT gateway)
-- **RDS Postgres 16** (t4g.micro) in private subnet, credentials in Secrets Manager
+- **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
 - **EC2** (t3.small) running Docker Compose: web app (Next.js)
 - **ALB** with HTTPS + Cognito authentication (JWT via ALB auth action)
 - **Cognito User Pool** — managed auth with hosted login UI, no auth code in the app
@@ -21,7 +21,7 @@ Deploy expense-budget-tracker to your own AWS account using AWS CDK.
 ## Prerequisites
 
 1. AWS account with CLI configured (`aws configure`)
-2. Node.js 20+
+2. Node.js 24+
 3. CDK CLI: `npm install -g aws-cdk`
 4. CDK bootstrapped in your account: `cdk bootstrap`
 5. ACM certificate ARN for HTTPS (required for Cognito auth)
