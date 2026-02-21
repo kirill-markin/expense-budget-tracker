@@ -4,10 +4,19 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK.
 
 ## Prerequisites
 
-- AWS CLI v2
-- Node.js 24+
-- CDK CLI: `npm install -g aws-cdk`
-- A domain registered in Route 53 (or transferred to Route 53)
+Verify that all required tools are installed:
+
+```bash
+aws --version       # AWS CLI v2+
+node --version      # Node.js 24+
+npx cdk --version   # AWS CDK CLI 2.100+
+```
+
+If anything is missing:
+
+- **AWS CLI v2**: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+- **Node.js 24**: https://nodejs.org/en/download
+- **CDK CLI**: `npm install -g aws-cdk`
 
 ## What gets created
 
@@ -30,7 +39,11 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK.
 
 ### 1. Create a dedicated AWS account
 
-Each deployment should live in its own dedicated AWS account — complete isolation of resources, billing, and IAM.
+Create a **new, dedicated AWS account** for this project. Do not deploy into an existing account with other workloads — it makes resources hard to find, billing hard to track, and cleanup hard to do safely. One account per project = clean isolation of resources, billing, and IAM.
+
+Recommended account name: **`expense-budget-tracker`**.
+
+If you use AWS Organizations (multiple accounts under one payer):
 
 ```bash
 # Enable Organizations in your main (payer) account (once)
@@ -39,37 +52,72 @@ aws organizations create-organization
 # Create a member account for the tracker
 # Use a unique email — Gmail/Workspace "+" aliases work: you+expense@gmail.com
 aws organizations create-account \
-  --email you+expense-tracker@gmail.com \
+  --email you+expense-budget-tracker@gmail.com \
   --account-name "expense-budget-tracker"
 
-# Check creation status
+# Check creation status (wait until State is SUCCEEDED)
 aws organizations list-accounts \
   --query "Accounts[?Name=='expense-budget-tracker']"
 ```
 
+Save the **Account ID** (12-digit number) — you need it in the next step.
+
 ### 2. Configure CLI profile
 
-Add a named profile that assumes the cross-account role created automatically by Organizations:
+**Option A — Organizations cross-account role** (if you created a member account in step 1):
+
+Add a named profile to `~/.aws/config`:
 
 ```ini
-# ~/.aws/config
 [profile expense-tracker]
-role_arn = arn:aws:iam::<NEW_ACCOUNT_ID>:role/OrganizationAccountAccessRole
+role_arn = arn:aws:iam::<ACCOUNT_ID>:role/OrganizationAccountAccessRole
 source_profile = default
 region = eu-central-1
 ```
 
+**Option B — Standalone account with SSO or IAM credentials**:
+
+```ini
+[profile expense-tracker]
+region = eu-central-1
+# Add your auth method: sso-session, access keys, etc.
+```
+
+Verify the profile works:
+
+```bash
+aws sts get-caller-identity --profile expense-tracker
+```
+
 ### 3. Register a domain in Route 53
 
-Register a new domain or transfer an existing one to Route 53 (console → Route 53 → Registered domains).
+Domain registration is done through the AWS Console (not available via CLI).
 
-After registration, Route 53 automatically creates a **Hosted Zone**. Get its ID:
+**To register a new domain:**
+
+1. Open the Route 53 domain registration page in the AWS Console:
+   `https://console.aws.amazon.com/route53/domains/home#/DomainRegistration`
+   Make sure you are in the correct AWS account (the one from step 1).
+2. Click **Register domains**.
+3. Search for the domain you want (e.g. `myfinance.com`). Pricing depends on TLD — `.com` domains cost ~$14/year.
+4. Fill in contact information and complete the purchase.
+5. Wait for registration to complete (usually 5–15 minutes for common TLDs, up to 48 hours for some).
+
+**To transfer an existing domain from another registrar:**
+
+1. Open: `https://console.aws.amazon.com/route53/domains/home#/DomainTransfer`
+2. Click **Transfer domain** and follow the instructions (unlock the domain at your current registrar, get the auth code, etc.).
+
+**After registration or transfer**, Route 53 automatically creates a **Hosted Zone** for your domain. Get its ID:
 
 ```bash
 aws route53 list-hosted-zones-by-name \
   --dns-name myfinance.com \
-  --query "HostedZones[0].Id" --output text
+  --query "HostedZones[0].Id" --output text \
+  --profile expense-tracker
 ```
+
+This returns something like `/hostedzone/Z0123456789ABCDEFGHIJ` — the part after `/hostedzone/` is your **hostedZoneId**.
 
 ### 4. Configure the stack
 
@@ -95,8 +143,8 @@ Edit `cdk.context.local.json` with your values:
 
 ```bash
 export AWS_PROFILE=expense-tracker
-cdk bootstrap   # first time only
-cdk deploy
+npx cdk bootstrap   # first time only
+npx cdk deploy
 ```
 
 CDK auto-creates the SSL certificate (DNS validation via Route 53) and the DNS A-record. After deploy completes, the app is live at `https://app.myfinance.com` (or your configured domain).
@@ -156,7 +204,7 @@ ssh -i my-key.pem ec2-user@<public-ip>
 ## Tear down
 
 ```bash
-cdk destroy
+npx cdk destroy
 ```
 
 Note: RDS creates a final snapshot on destroy. Cognito User Pool is retained to prevent user data loss.
