@@ -10,13 +10,24 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../../db/migrations:/migrations:ro
-      - ../../db/seeds:/seeds:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tracker"]
       interval: 5s
       timeout: 3s
       retries: 5
+
+  migrate:
+    image: postgres:16
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tracker:tracker@postgres:5432/tracker
+    volumes:
+      - ../../scripts:/scripts:ro
+      - ../../db:/db:ro
+    entrypoint: ["bash", "/scripts/migrate.sh"]
+    restart: "no"
 
   web:
     build:
@@ -25,24 +36,33 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    env_file:
-      - ../../.env
     environment:
+      DATABASE_URL: postgresql://tracker:tracker@postgres:5432/tracker
       HOST: "0.0.0.0"
+      AUTH_MODE: "none"
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   worker:
     build:
       context: ../../apps/worker
       dockerfile: Dockerfile
     restart: unless-stopped
-    env_file:
-      - ../../.env
+    environment:
+      DATABASE_URL: postgresql://tracker:tracker@postgres:5432/tracker
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

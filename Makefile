@@ -9,10 +9,10 @@ down:
 	$(COMPOSE) down
 
 migrate:
-	$(COMPOSE) exec postgres sh -c 'for f in /migrations/*.sql; do psql "$$DATABASE_URL" -f "$$f"; done'
+	$(COMPOSE) run --rm migrate
 
 seed:
-	$(COMPOSE) exec postgres psql "$$DATABASE_URL" -f /seeds/demo.sql
+	$(COMPOSE) exec postgres psql "postgresql://tracker:tracker@localhost:5432/tracker" -f /seeds/demo.sql
 
 dev:
 	$(COMPOSE) up
