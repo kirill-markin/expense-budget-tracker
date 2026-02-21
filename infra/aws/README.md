@@ -76,6 +76,8 @@ If you prefer not to create a separate account, the stack still works — all re
 
 HTTPS is required for Cognito authentication. Two paths depending on where your DNS lives.
 
+The app deploys to `app.{domainName}` by default (configurable via `subdomain` parameter). For example, if `domainName` is `myfinance.com`, the app URL is `https://app.myfinance.com`. Set `subdomain` to `""` to deploy to the root domain.
+
 ### Path A: Buy domain in AWS (simplest)
 
 Everything stays in AWS — CDK auto-creates the SSL certificate and DNS records.
@@ -83,7 +85,7 @@ Everything stays in AWS — CDK auto-creates the SSL certificate and DNS records
 1. Register a domain in Route 53 (console → Route 53 → Registered domains → Register):
    ```bash
    aws route53domains register-domain \
-     --domain-name money.example.com \
+     --domain-name myfinance.com \
      --duration-in-years 1 \
      --admin-contact '{"FirstName":"...","LastName":"...","ContactType":"PERSON","Email":"...","PhoneNumber":"+1.0000000000","CountryCode":"XX"}' \
      --registrant-contact '...' \
@@ -94,19 +96,19 @@ Everything stays in AWS — CDK auto-creates the SSL certificate and DNS records
 2. Route 53 automatically creates a **Hosted Zone** for the domain. Get its ID:
    ```bash
    aws route53 list-hosted-zones-by-name \
-     --dns-name example.com \
+     --dns-name myfinance.com \
      --query "HostedZones[0].Id" --output text
    ```
 
-3. Put `domainName` and `hostedZoneId` in `cdk.context.local.json`. Leave `certificateArn` empty — CDK will create and validate the certificate automatically via Route 53 DNS.
+3. Put `domainName` and `hostedZoneId` in `cdk.context.local.json`. CDK auto-creates the SSL certificate (DNS validation via Route 53) and the `app.myfinance.com` A-record.
 
 ### Path B: External domain (Cloudflare, Namecheap, etc.)
 
-1. Create an ACM certificate in the AWS Console (Certificate Manager → Request certificate → DNS validation).
+1. Create an ACM certificate for `app.yourdomain.com` in the AWS Console (Certificate Manager → Request → DNS validation).
 2. Add the CNAME validation records at your DNS provider.
 3. Wait for validation (usually a few minutes).
 4. Put `domainName` and `certificateArn` in `cdk.context.local.json`.
-5. After deploy, create a CNAME record at your DNS provider pointing your domain to the `AlbDns` output value.
+5. After deploy, create a CNAME record at your DNS provider pointing `app.yourdomain.com` to the `AlbDns` output value.
 
 ### No domain (dev/testing only)
 
@@ -150,7 +152,8 @@ Leave `domainName`, `certificateArn`, and `hostedZoneId` empty. The stack deploy
 | Parameter | Required | Description |
 |---|---|---|
 | `region` | Yes | AWS region, e.g. `eu-central-1` |
-| `domainName` | Yes (for HTTPS) | Your domain, e.g. `money.example.com` |
+| `domainName` | Yes (for HTTPS) | Base domain you own, e.g. `myfinance.com` |
+| `subdomain` | Optional | Subdomain prefix for the app (default: `app` → `app.myfinance.com`). Set to `""` for root domain |
 | `hostedZoneId` | Yes (for HTTPS, Path A) | Route 53 hosted zone ID — CDK auto-creates SSL certificate and DNS record |
 | `certificateArn` | Yes (for HTTPS, Path B) | ACM certificate ARN — only needed if DNS is outside Route 53 |
 | `alertEmail` | Recommended | Email for CloudWatch alarm notifications |

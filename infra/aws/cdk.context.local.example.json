@@ -1,6 +1,7 @@
 {
   "region": "eu-central-1",
-  "domainName": "money.example.com",
+  "domainName": "myfinance.com",
+  "subdomain": "app",
   "hostedZoneId": "ZXXXXXXXXXXXXX",
   "certificateArn": "",
   "alertEmail": "your-email@gmail.com",

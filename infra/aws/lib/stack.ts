@@ -29,27 +29,32 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     super(scope, id, props);
 
     // --- Context parameters ---
-    const domainName = this.node.tryGetContext("domainName") as string | undefined || undefined;
+    const baseDomain = this.node.tryGetContext("domainName") as string | undefined || undefined;
+    const subdomain = this.node.tryGetContext("subdomain") as string | undefined ?? "app";
     const certificateArn = this.node.tryGetContext("certificateArn") as string | undefined || undefined;
     const keyPairName = this.node.tryGetContext("keyPairName") as string | undefined || undefined;
     const alertEmail = this.node.tryGetContext("alertEmail") as string | undefined || undefined;
     const hostedZoneId = this.node.tryGetContext("hostedZoneId") as string | undefined || undefined;
-    const callbackUrl = domainName ? `https://${domainName}/oauth2/idpresponse` : undefined;
+
+    const appDomain = baseDomain
+      ? subdomain ? `${subdomain}.${baseDomain}` : baseDomain
+      : undefined;
+    const callbackUrl = appDomain ? `https://${appDomain}/oauth2/idpresponse` : undefined;
 
     // --- Route 53 zone (resolved early for ACM DNS validation) ---
-    const zone = domainName && hostedZoneId
+    const zone = baseDomain && hostedZoneId
       ? route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
           hostedZoneId,
-          zoneName: domainName.split(".").slice(-2).join("."),
+          zoneName: baseDomain,
         })
       : undefined;
 
     // --- ACM Certificate (auto-create if zone is available but no ARN provided) ---
     const certificate = certificateArn
       ? acm.Certificate.fromCertificateArn(this, "ImportedCert", certificateArn)
-      : zone && domainName
+      : zone && appDomain
         ? new acm.Certificate(this, "Certificate", {
-            domainName,
+            domainName: appDomain,
             validation: acm.CertificateValidation.fromDns(zone),
           })
         : undefined;
@@ -482,10 +487,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- Route 53 (optional) ---
-    if (zone && domainName) {
+    if (zone && appDomain) {
       new route53.ARecord(this, "DnsRecord", {
         zone,
-        recordName: domainName,
+        recordName: appDomain,
         target: route53.RecordTarget.fromAlias(
           new route53_targets.LoadBalancerTarget(alb),
         ),
@@ -537,9 +542,15 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- Outputs ---
+    if (appDomain) {
+      new cdk.CfnOutput(this, "AppUrl", {
+        value: `https://${appDomain}`,
+        description: "Application URL",
+      });
+    }
     new cdk.CfnOutput(this, "AlbDns", {
       value: alb.loadBalancerDnsName,
-      description: "ALB DNS name — point your domain CNAME here",
+      description: "ALB DNS name — point your domain CNAME here (only needed for external DNS)",
     });
     new cdk.CfnOutput(this, "DbEndpoint", {
       value: db.dbInstanceEndpointAddress,
