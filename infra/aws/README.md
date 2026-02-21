@@ -72,6 +72,46 @@ If you prefer not to create a separate account, the stack still works — all re
 - **AWS Backup** — daily backup plan with 35-day retention for RDS
 - **GitHub Actions OIDC** — CI/CD role for push-to-deploy (optional, if `githubRepo` provided)
 
+## Domain setup
+
+HTTPS is required for Cognito authentication. Two paths depending on where your DNS lives.
+
+### Path A: Buy domain in AWS (simplest)
+
+Everything stays in AWS — CDK auto-creates the SSL certificate and DNS records.
+
+1. Register a domain in Route 53 (console → Route 53 → Registered domains → Register):
+   ```bash
+   aws route53domains register-domain \
+     --domain-name money.example.com \
+     --duration-in-years 1 \
+     --admin-contact '{"FirstName":"...","LastName":"...","ContactType":"PERSON","Email":"...","PhoneNumber":"+1.0000000000","CountryCode":"XX"}' \
+     --registrant-contact '...' \
+     --tech-contact '...'
+   ```
+   Or use the AWS Console — easier for one-time setup.
+
+2. Route 53 automatically creates a **Hosted Zone** for the domain. Get its ID:
+   ```bash
+   aws route53 list-hosted-zones-by-name \
+     --dns-name example.com \
+     --query "HostedZones[0].Id" --output text
+   ```
+
+3. Put `domainName` and `hostedZoneId` in `cdk.context.local.json`. Leave `certificateArn` empty — CDK will create and validate the certificate automatically via Route 53 DNS.
+
+### Path B: External domain (Cloudflare, Namecheap, etc.)
+
+1. Create an ACM certificate in the AWS Console (Certificate Manager → Request certificate → DNS validation).
+2. Add the CNAME validation records at your DNS provider.
+3. Wait for validation (usually a few minutes).
+4. Put `domainName` and `certificateArn` in `cdk.context.local.json`.
+5. After deploy, create a CNAME record at your DNS provider pointing your domain to the `AlbDns` output value.
+
+### No domain (dev/testing only)
+
+Leave `domainName`, `certificateArn`, and `hostedZoneId` empty. The stack deploys with HTTP-only ALB (no HTTPS, no Cognito auth). Access via the auto-generated ALB DNS name from the `AlbDns` output.
+
 ## First-time setup checklist
 
 1. Create a dedicated AWS account (see "AWS account isolation" above):
@@ -87,19 +127,20 @@ If you prefer not to create a separate account, the stack still works — all re
    source_profile = default
    region = eu-central-1
    ```
-3. Install prerequisites: Node.js 24+, CDK CLI (`npm install -g aws-cdk`), ACM certificate for your domain
-4. Bootstrap CDK in the target account:
+3. Install prerequisites: Node.js 24+, CDK CLI (`npm install -g aws-cdk`)
+4. Set up your domain (see "Domain setup" above)
+5. Bootstrap CDK in the target account:
    ```bash
    AWS_PROFILE=expense-tracker cdk bootstrap
    ```
-5. Configure the stack:
+6. Configure the stack:
    ```bash
    cd infra/aws
    npm install
    cp cdk.context.local.example.json cdk.context.local.json
    # edit cdk.context.local.json with your values
    ```
-6. Deploy:
+7. Deploy:
    ```bash
    AWS_PROFILE=expense-tracker cdk deploy
    ```
@@ -110,10 +151,10 @@ If you prefer not to create a separate account, the stack still works — all re
 |---|---|---|
 | `region` | Yes | AWS region, e.g. `eu-central-1` |
 | `domainName` | Yes (for HTTPS) | Your domain, e.g. `money.example.com` |
-| `certificateArn` | Yes (for HTTPS) | ACM certificate ARN for your domain |
+| `hostedZoneId` | Yes (for HTTPS, Path A) | Route 53 hosted zone ID — CDK auto-creates SSL certificate and DNS record |
+| `certificateArn` | Yes (for HTTPS, Path B) | ACM certificate ARN — only needed if DNS is outside Route 53 |
 | `alertEmail` | Recommended | Email for CloudWatch alarm notifications |
 | `githubRepo` | Recommended | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
-| `hostedZoneId` | Optional | Route 53 hosted zone ID for automatic DNS |
 | `keyPairName` | Optional | EC2 key pair name for SSH access |
 
 ## Initial deploy
@@ -144,14 +185,14 @@ No AWS keys stored in GitHub — uses OIDC federation. The role ARN encodes the 
 ## After initial deploy
 
 1. Confirm SNS email subscription in your inbox
-2. Create your first user in Cognito:
+2. Visit your domain — Cognito sign-up/login page appears. Self-registration is enabled: new users can create accounts directly
+3. To create users via CLI instead:
    ```bash
    aws cognito-idp admin-create-user \
      --user-pool-id <UserPoolId from output> \
      --username you@example.com \
      --temporary-password 'TempPass123!'
    ```
-3. Visit your domain — Cognito login page appears
 
 ## Auth flow
 

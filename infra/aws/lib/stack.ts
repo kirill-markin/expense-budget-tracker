@@ -19,6 +19,7 @@ import * as sns_subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53_targets from "aws-cdk-lib/aws-route53-targets";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as backup from "aws-cdk-lib/aws-backup";
 import { Construct } from "constructs";
 import * as path from "path";
@@ -28,12 +29,30 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     super(scope, id, props);
 
     // --- Context parameters ---
-    const domainName = this.node.tryGetContext("domainName") as string | undefined;
-    const certificateArn = this.node.tryGetContext("certificateArn") as string | undefined;
-    const keyPairName = this.node.tryGetContext("keyPairName") as string | undefined;
-    const alertEmail = this.node.tryGetContext("alertEmail") as string | undefined;
-    const hostedZoneId = this.node.tryGetContext("hostedZoneId") as string | undefined;
+    const domainName = this.node.tryGetContext("domainName") as string | undefined || undefined;
+    const certificateArn = this.node.tryGetContext("certificateArn") as string | undefined || undefined;
+    const keyPairName = this.node.tryGetContext("keyPairName") as string | undefined || undefined;
+    const alertEmail = this.node.tryGetContext("alertEmail") as string | undefined || undefined;
+    const hostedZoneId = this.node.tryGetContext("hostedZoneId") as string | undefined || undefined;
     const callbackUrl = domainName ? `https://${domainName}/oauth2/idpresponse` : undefined;
+
+    // --- Route 53 zone (resolved early for ACM DNS validation) ---
+    const zone = domainName && hostedZoneId
+      ? route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
+          hostedZoneId,
+          zoneName: domainName.split(".").slice(-2).join("."),
+        })
+      : undefined;
+
+    // --- ACM Certificate (auto-create if zone is available but no ARN provided) ---
+    const certificate = certificateArn
+      ? acm.Certificate.fromCertificateArn(this, "ImportedCert", certificateArn)
+      : zone && domainName
+        ? new acm.Certificate(this, "Certificate", {
+            domainName,
+            validation: acm.CertificateValidation.fromDns(zone),
+          })
+        : undefined;
 
     // --- VPC ---
     const vpc = new ec2.Vpc(this, "Vpc", {
@@ -264,12 +283,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // ALB listeners with Cognito auth
-    if (certificateArn) {
+    if (certificate) {
       const httpsListener = alb.addListener("HttpsListener", {
         port: 443,
-        certificates: [
-          elbv2.ListenerCertificate.fromArn(certificateArn),
-        ],
+        certificates: [certificate],
         defaultAction: new elbv2_actions.AuthenticateCognitoAction({
           userPool,
           userPoolClient,
@@ -465,11 +482,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- Route 53 (optional) ---
-    if (domainName && hostedZoneId) {
-      const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
-        hostedZoneId,
-        zoneName: domainName.split(".").slice(-2).join("."),
-      });
+    if (zone && domainName) {
       new route53.ARecord(this, "DnsRecord", {
         zone,
         recordName: domainName,
