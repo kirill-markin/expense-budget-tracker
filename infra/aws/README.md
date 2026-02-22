@@ -91,17 +91,50 @@ aws sts get-caller-identity --profile expense-tracker
 
 ### 3. Register a domain in Route 53
 
-Domain registration is done through the AWS Console (not available via CLI).
+Register a domain via the **AWS Console** or **CLI**. Pricing depends on TLD — `.com` domains cost ~$14/year, paid upfront for 1 year (minimum).
 
-**To register a new domain:**
+> **Note:** Route 53 Domains API is only available in `us-east-1`, regardless of your deployment region. This is an AWS limitation — it only affects domain registration, not DNS or infrastructure.
 
-1. Open the Route 53 domain registration page in the AWS Console:
+**Option A — CLI:**
+
+```bash
+# Check availability
+aws route53domains check-domain-availability \
+  --region us-east-1 \
+  --domain-name myfinance.com \
+  --profile expense-tracker
+
+# Register (replace contact details with your own)
+aws route53domains register-domain \
+  --region us-east-1 \
+  --profile expense-tracker \
+  --domain-name myfinance.com \
+  --duration-in-years 1 \
+  --auto-renew \
+  --privacy-protect-admin-contact \
+  --privacy-protect-registrant-contact \
+  --privacy-protect-tech-contact \
+  --admin-contact '{"FirstName":"…","LastName":"…","ContactType":"PERSON","Email":"…","PhoneNumber":"+1.5551234567","AddressLine1":"…","City":"…","CountryCode":"US","ZipCode":"…"}' \
+  --registrant-contact '<same as admin>' \
+  --tech-contact '<same as admin>'
+
+# Check registration status
+aws route53domains get-operation-detail \
+  --region us-east-1 \
+  --profile expense-tracker \
+  --operation-id <operation-id-from-register-output>
+```
+
+> **New accounts:** domain registration may fail until account verification (billing) is complete. If it fails, check Billing console or contact AWS Support.
+
+**Option B — Console:**
+
+1. Open the Route 53 domain registration page:
    `https://console.aws.amazon.com/route53/domains/home#/DomainRegistration`
    Make sure you are in the correct AWS account (the one from step 1).
 2. Click **Register domains**.
-3. Search for the domain you want (e.g. `myfinance.com`). Pricing depends on TLD — `.com` domains cost ~$14/year.
-4. Fill in contact information and complete the purchase.
-5. Wait for registration to complete (usually 5–15 minutes for common TLDs, up to 48 hours for some).
+3. Search for the domain, fill in contact information, and complete the purchase.
+4. Wait for registration to complete (usually 5–15 minutes, up to 48 hours for some TLDs).
 
 **To transfer an existing domain from another registrar:**
 
@@ -191,13 +224,17 @@ No AWS keys stored in GitHub — uses OIDC federation.
 - **Container logs**: CloudWatch Logs `/expense-tracker/ec2`, 30-day retention
 - **Lambda logs**: CloudWatch Logs (automatic), searchable in console
 
-## SSH into EC2
+## Shell access to EC2
+
+**SSM Session Manager (recommended)** — no key pair needed, no open ports, audit log included:
 
 ```bash
-# Via SSM (no key pair needed)
-aws ssm start-session --target <instance-id>
+aws ssm start-session --target <instance-id> --profile expense-tracker
+```
 
-# Via SSH (if key pair provided)
+**SSH (optional)** — only if `keyPairName` is set in CDK config:
+
+```bash
 ssh -i my-key.pem ec2-user@<public-ip>
 ```
 
