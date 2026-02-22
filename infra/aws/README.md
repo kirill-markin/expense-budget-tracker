@@ -20,7 +20,7 @@ If anything is missing:
 
 ## What gets created
 
-- **VPC** with public and private subnets (2 AZs, 1 NAT gateway)
+- **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.nano for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
 - **EC2** (t3.small) running Docker Compose: web app (Next.js)
 - **ALB** with HTTPS + Cognito authentication (JWT via ALB auth action)

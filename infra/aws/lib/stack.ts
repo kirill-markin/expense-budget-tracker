@@ -51,8 +51,17 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- VPC ---
+    // NAT instance (t4g.nano ~$3/mo) instead of managed NAT Gateway (~$35/mo).
+    // Trade-off: no HA, no auto-recovery, limited bandwidth (~5 Gbps burst).
+    // Acceptable for a pet project where only the Lambda FX fetcher uses NAT
+    // (a few KB/day). To switch to managed NAT Gateway, remove natGatewayProvider
+    // and keep only: natGateways: 1,
+    const natProvider = ec2.NatProvider.instanceV2({
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
+    });
     const vpc = new ec2.Vpc(this, "Vpc", {
       maxAzs: 2,
+      natGatewayProvider: natProvider,
       natGateways: 1,
       subnetConfiguration: [
         { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
