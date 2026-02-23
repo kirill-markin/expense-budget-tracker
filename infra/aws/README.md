@@ -1,6 +1,6 @@
 # AWS Deployment (CDK)
 
-Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK.
+Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and domain managed by Cloudflare.
 
 ## Prerequisites
 
@@ -18,14 +18,25 @@ If anything is missing:
 - **Node.js 24**: https://nodejs.org/en/download
 - **CDK CLI**: `npm install -g aws-cdk`
 
+## Architecture
+
+```
+Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Docker) → RDS
+                                                                       ↓
+                                                                 Lambda (FX rates)
+```
+
+**Cloudflare** handles domain registration, DNS, CDN caching, DDoS protection, and edge TLS.
+**AWS** handles compute, database, auth, monitoring, and application logic.
+
 ## What gets created
+
+**On AWS (via CDK):**
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.nano for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
 - **EC2** (t3.small) running Docker Compose: web app (Next.js)
-- **ALB** with HTTPS + Cognito authentication (JWT via ALB auth action)
-- **ACM Certificate** — auto-created, DNS validation via Route 53
-- **Route 53** — DNS A-record pointing to ALB
+- **ALB** with HTTPS (Cloudflare Origin Certificate) + Cognito authentication (JWT via ALB auth action)
 - **Cognito User Pool** — managed auth with hosted login UI, no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
@@ -34,6 +45,13 @@ If anything is missing:
 - **CloudWatch Logs** — Docker container logs from EC2 (30-day retention), Lambda logs (automatic)
 - **AWS Backup** — daily backup plan with 35-day retention for RDS
 - **GitHub Actions OIDC** — CI/CD role for push-to-deploy (if `githubRepo` provided)
+
+**On Cloudflare (via scripts):**
+
+- Domain registration
+- DNS CNAME record (proxied) pointing to ALB
+- Origin Certificate for ALB HTTPS (imported into ACM)
+- Edge SSL, CDN, DDoS protection (automatic with proxied DNS)
 
 ## Step-by-step setup
 
@@ -89,68 +107,37 @@ Verify the profile works:
 aws sts get-caller-identity --profile expense-tracker
 ```
 
-### 3. Register a domain in Route 53
+### 3. Register domain and set up Cloudflare
 
-Register a domain via the **AWS Console** or **CLI**. Pricing depends on TLD — `.com` domains cost ~$14/year, paid upfront for 1 year (minimum).
+Domain and DNS are managed by Cloudflare. Cloudflare provides free CDN, DDoS protection, and edge SSL on top of DNS.
 
-> **Note:** Route 53 Domains API is only available in `us-east-1`, regardless of your deployment region. This is an AWS limitation — it only affects domain registration, not DNS or infrastructure.
+**Register or transfer the domain** on the Cloudflare Dashboard:
 
-**Option A — CLI:**
+1. Go to https://dash.cloudflare.com/ and log in (or create an account).
+2. Register a new domain or transfer an existing one.
+3. Note two values from the domain overview page (right sidebar):
+   - **Zone ID**
+   - **Account ID**
+4. Create an **API token** at https://dash.cloudflare.com/profile/api-tokens:
+   - Template: "Edit zone DNS"
+   - Zone Resources: Include → Specific zone → your domain
+   - Also add permission: Zone → SSL and Certificates → Edit
 
-```bash
-# Check availability
-aws route53domains check-domain-availability \
-  --region us-east-1 \
-  --domain-name myfinance.com \
-  --profile expense-tracker
-
-# Register (replace contact details with your own)
-aws route53domains register-domain \
-  --region us-east-1 \
-  --profile expense-tracker \
-  --domain-name myfinance.com \
-  --duration-in-years 1 \
-  --auto-renew \
-  --privacy-protect-admin-contact \
-  --privacy-protect-registrant-contact \
-  --privacy-protect-tech-contact \
-  --admin-contact '{"FirstName":"…","LastName":"…","ContactType":"PERSON","Email":"…","PhoneNumber":"+1.5551234567","AddressLine1":"…","City":"…","CountryCode":"US","ZipCode":"…"}' \
-  --registrant-contact '<same as admin>' \
-  --tech-contact '<same as admin>'
-
-# Check registration status
-aws route53domains get-operation-detail \
-  --region us-east-1 \
-  --profile expense-tracker \
-  --operation-id <operation-id-from-register-output>
-```
-
-> **New accounts:** domain registration may fail until account verification (billing) is complete. If it fails, check Billing console or contact AWS Support.
-
-**Option B — Console:**
-
-1. Open the Route 53 domain registration page:
-   `https://console.aws.amazon.com/route53/domains/home#/DomainRegistration`
-   Make sure you are in the correct AWS account (the one from step 1).
-2. Click **Register domains**.
-3. Search for the domain, fill in contact information, and complete the purchase.
-4. Wait for registration to complete (usually 5–15 minutes, up to 48 hours for some TLDs).
-
-**To transfer an existing domain from another registrar:**
-
-1. Open: `https://console.aws.amazon.com/route53/domains/home#/DomainTransfer`
-2. Click **Transfer domain** and follow the instructions (unlock the domain at your current registrar, get the auth code, etc.).
-
-**After registration or transfer**, Route 53 automatically creates a **Hosted Zone** for your domain. Get its ID:
+**Create a Cloudflare Origin Certificate and import into ACM** (one-time, before first deploy):
 
 ```bash
-aws route53 list-hosted-zones-by-name \
-  --dns-name myfinance.com \
-  --query "HostedZones[0].Id" --output text \
-  --profile expense-tracker
+export CLOUDFLARE_API_TOKEN="your-api-token"
+export CLOUDFLARE_ZONE_ID="your-zone-id"
+export AWS_PROFILE=expense-tracker
+
+bash scripts/cloudflare/setup-certificate.sh \
+  --domain myfinance.com \
+  --region eu-central-1
 ```
 
-This returns something like `/hostedzone/Z0123456789ABCDEFGHIJ` — the part after `/hostedzone/` is your **hostedZoneId**.
+The script creates a Cloudflare Origin Certificate (15-year validity, wildcard) and imports it into AWS ACM. It prints the **certificate ARN** — you need this for step 4.
+
+> **Why Origin Certificate?** Cloudflare Origin Certificates are free, long-lived (15 years), and trusted by Cloudflare's edge servers. Since all traffic flows through Cloudflare proxy, browsers see Cloudflare's edge certificate (Universal SSL, free). The Origin Certificate secures the connection between Cloudflare and your ALB.
 
 ### 4. Configure the stack
 
@@ -165,12 +152,12 @@ Edit `cdk.context.local.json` with your values:
 | Parameter | Required | Description |
 |---|---|---|
 | `region` | **Yes** | AWS region, e.g. `eu-central-1` |
-| `domainName` | **Yes** | Domain registered in Route 53, e.g. `myfinance.com` |
-| `hostedZoneId` | **Yes** | Route 53 hosted zone ID from step 3 |
+| `domainName` | **Yes** | Your domain, e.g. `myfinance.com` |
+| `certificateArn` | **Yes** | ACM certificate ARN from step 3 |
 | `subdomain` | Optional | Subdomain prefix (default: `app` → `app.myfinance.com`). Set to `""` for root domain |
 | `alertEmail` | Recommended | Email for CloudWatch alarm notifications |
 | `githubRepo` | Recommended | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
-| `keyPairName` | Optional | EC2 key pair name for SSH access |
+| `keyPairName` | Optional | EC2 key pair name for SSH access (not recommended — use SSM instead) |
 
 ### 5. Bootstrap and deploy
 
@@ -180,7 +167,18 @@ npx cdk bootstrap   # first time only
 npx cdk deploy
 ```
 
-CDK auto-creates the SSL certificate (DNS validation via Route 53) and the DNS A-record. After deploy completes, the app is live at `https://app.myfinance.com` (or your configured domain).
+After deploy completes, **create the DNS record** pointing to the ALB:
+
+```bash
+export CLOUDFLARE_API_TOKEN="your-api-token"
+export CLOUDFLARE_ZONE_ID="your-zone-id"
+
+bash scripts/cloudflare/setup-dns.sh \
+  --subdomain app \
+  --stack-name ExpenseBudgetTracker
+```
+
+Then set **SSL/TLS mode to Full (Strict)** in Cloudflare Dashboard → SSL/TLS → Overview.
 
 ### 6. Post-deploy
 
@@ -211,7 +209,7 @@ No AWS keys stored in GitHub — uses OIDC federation.
 
 ## Auth flow
 
-1. User visits the app → ALB redirects to Cognito hosted UI
+1. User visits the app → Cloudflare edge → ALB redirects to Cognito hosted UI
 2. User logs in → Cognito issues JWT
 3. ALB validates JWT → sets `x-amzn-oidc-data` header
 4. App reads the header (`AUTH_MODE=proxy`) → user is authenticated
@@ -244,4 +242,4 @@ ssh -i my-key.pem ec2-user@<public-ip>
 npx cdk destroy
 ```
 
-Note: RDS creates a final snapshot on destroy. Cognito User Pool is retained to prevent user data loss.
+Note: RDS creates a final snapshot on destroy. Cognito User Pool is retained to prevent user data loss. Cloudflare DNS records and Origin Certificate are not affected by `cdk destroy` — delete them manually in the Cloudflare Dashboard if needed.

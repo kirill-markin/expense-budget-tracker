@@ -2,7 +2,7 @@
   "region": "eu-central-1",
   "domainName": "myfinance.com",
   "subdomain": "app",
-  "hostedZoneId": "ZXXXXXXXXXXXXX",
+  "certificateArn": "arn:aws:acm:eu-central-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "alertEmail": "your-email@gmail.com",
   "keyPairName": "",
   "githubRepo": "your-github-user/expense-budget-tracker"

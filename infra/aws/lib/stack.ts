@@ -17,8 +17,6 @@ import * as cloudwatch_actions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as sns_subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as logs from "aws-cdk-lib/aws-logs";
-import * as route53 from "aws-cdk-lib/aws-route53";
-import * as route53_targets from "aws-cdk-lib/aws-route53-targets";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as backup from "aws-cdk-lib/aws-backup";
 import { Construct } from "constructs";
@@ -28,27 +26,20 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // --- Context parameters (domainName, hostedZoneId, region validated in bin/app.ts) ---
+    // --- Context parameters (domainName, certificateArn, region validated in bin/app.ts) ---
     const baseDomain = this.node.tryGetContext("domainName") as string;
     const subdomain = this.node.tryGetContext("subdomain") as string | undefined ?? "app";
     const keyPairName = this.node.tryGetContext("keyPairName") as string | undefined || undefined;
     const alertEmail = this.node.tryGetContext("alertEmail") as string | undefined || undefined;
-    const hostedZoneId = this.node.tryGetContext("hostedZoneId") as string;
+    const certificateArn = this.node.tryGetContext("certificateArn") as string;
 
     const appDomain = subdomain ? `${subdomain}.${baseDomain}` : baseDomain;
     const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
 
-    // --- Route 53 zone (for ACM DNS validation and A-record) ---
-    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
-      hostedZoneId,
-      zoneName: baseDomain,
-    });
-
-    // --- ACM Certificate (auto-created, DNS validation via Route 53) ---
-    const certificate = new acm.Certificate(this, "Certificate", {
-      domainName: appDomain,
-      validation: acm.CertificateValidation.fromDns(zone),
-    });
+    // --- TLS Certificate (pre-created Cloudflare Origin Cert imported into ACM) ---
+    const certificate = acm.Certificate.fromCertificateArn(
+      this, "Certificate", certificateArn,
+    );
 
     // --- VPC ---
     // NAT instance (t4g.nano ~$3/mo) instead of managed NAT Gateway (~$35/mo).
@@ -476,15 +467,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       targets: [new events_targets.LambdaFunction(fxFetcher)],
     });
 
-    // --- Route 53 DNS record ---
-    new route53.ARecord(this, "DnsRecord", {
-      zone,
-      recordName: appDomain,
-      target: route53.RecordTarget.fromAlias(
-        new route53_targets.LoadBalancerTarget(alb),
-      ),
-    });
-
     // --- GitHub Actions OIDC (CI/CD) ---
     const githubRepo = this.node.tryGetContext("githubRepo") as string | undefined;
     if (githubRepo) {
@@ -566,7 +548,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       value: accessLogsBucket.bucketName,
       description: "S3 bucket for ALB access logs",
     });
-    new cdk.CfnOutput(this, "Ec2LogGroup", {
+    new cdk.CfnOutput(this, "Ec2LogGroupName", {
       value: ec2LogGroup.logGroupName,
       description: "CloudWatch log group for EC2 Docker logs",
     });

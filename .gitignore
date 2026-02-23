@@ -5,6 +5,7 @@ node_modules/
 # Build output
 .next/
 dist/
+cdk.out/
 *.tsbuildinfo
 
 # Lock files (npm only — package-lock.json is tracked)

@@ -28,9 +28,9 @@ if (!domainName) {
   throw new Error("Missing required context: 'domainName'. Set it in cdk.context.local.json (e.g. \"myfinance.com\")");
 }
 
-const hostedZoneId = app.node.tryGetContext("hostedZoneId") as string | undefined;
-if (!hostedZoneId) {
-  throw new Error("Missing required context: 'hostedZoneId'. Set it in cdk.context.local.json (Route 53 hosted zone ID for your domain)");
+const certificateArn = app.node.tryGetContext("certificateArn") as string | undefined;
+if (!certificateArn) {
+  throw new Error("Missing required context: 'certificateArn'. Set it in cdk.context.local.json (ACM certificate ARN — run scripts/cloudflare/setup-certificate.sh first)");
 }
 
 new ExpenseBudgetTrackerStack(app, "ExpenseBudgetTracker", {
