@@ -4,16 +4,15 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 
 ## Estimated cost
 
-| Item | Cost |
-|---|---|
-| Domain (`.com`, Cloudflare) | ~$10/year |
-| EC2 t3.small (24/7) | ~$15/month |
-| RDS t4g.micro (24/7) | ~$12/month |
-| NAT instance t4g.nano | ~$3/month |
-| ALB | ~$16/month |
-| Secrets Manager (2 secrets) | ~$1/month |
-| S3, CloudWatch, WAF, Lambda | ~$3/month |
-| **Total** | **~$10/year + ~$50/month** |
+| Item | Cost | Why |
+|---|---|---|
+| Domain (`.com`, Cloudflare) | ~$10/year | Custom domain for the app (`app.yourdomain.com`) |
+| EC2 t3.small (24/7) | ~$15/month | Runs Next.js web app in Docker |
+| RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
+| NAT instance t4g.nano | ~$3/month | Outbound internet for Lambda in private subnet (FX rate fetching) |
+| ALB | ~$16/month | HTTPS termination with Origin Certificate, Cognito auth integration, health checks |
+| S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs (S3), container and alarm monitoring (CloudWatch), rate limiting and SQLi/XSS protection (WAF), daily FX rate fetching (Lambda) |
+| **Total** | **~$10/year + ~$49/month** | |
 
 Cloudflare (DNS, CDN, DDoS, edge SSL) is free. All prices are approximate for `eu-central-1` and may vary.
 
