@@ -29,8 +29,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     // --- Context parameters (domainName, certificateArn, region validated in bin/app.ts) ---
     const baseDomain = this.node.tryGetContext("domainName") as string;
     const subdomain = this.node.tryGetContext("subdomain") as string | undefined ?? "app";
-    const keyPairName = this.node.tryGetContext("keyPairName") as string | undefined || undefined;
-    const alertEmail = this.node.tryGetContext("alertEmail") as string | undefined || undefined;
+    // SSH access via SSM Session Manager (no key pair needed)
+    const alertEmail = this.node.tryGetContext("alertEmail") as string;
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
 
     const appDomain = subdomain ? `${subdomain}.${baseDomain}` : baseDomain;
@@ -90,11 +90,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const alertTopic = new sns.Topic(this, "AlertTopic", {
       topicName: "expense-tracker-alerts",
     });
-    if (alertEmail) {
-      alertTopic.addSubscription(
-        new sns_subscriptions.EmailSubscription(alertEmail),
-      );
-    }
+    alertTopic.addSubscription(
+      new sns_subscriptions.EmailSubscription(alertEmail),
+    );
 
     // --- Cognito User Pool ---
     const userPool = new cognito.UserPool(this, "UserPool", {
@@ -111,24 +109,14 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    const authCertificateArn = this.node.tryGetContext("authCertificateArn") as string | undefined;
-
-    let userPoolDomain: cognito.UserPoolDomain;
-    if (authCertificateArn) {
-      const authDomain = `auth.${baseDomain}`;
-      const authCertificate = acm.Certificate.fromCertificateArn(
-        this, "AuthCertificate", authCertificateArn,
-      );
-      userPoolDomain = userPool.addDomain("CognitoDomain", {
-        customDomain: { domainName: authDomain, certificate: authCertificate },
-      });
-    } else {
-      userPoolDomain = userPool.addDomain("CognitoDomain", {
-        cognitoDomain: {
-          domainPrefix: `expense-tracker-${cdk.Aws.ACCOUNT_ID}`,
-        },
-      });
-    }
+    const authCertificateArn = this.node.tryGetContext("authCertificateArn") as string;
+    const authDomain = `auth.${baseDomain}`;
+    const authCertificate = acm.Certificate.fromCertificateArn(
+      this, "AuthCertificate", authCertificateArn,
+    );
+    const userPoolDomain = userPool.addDomain("CognitoDomain", {
+      customDomain: { domainName: authDomain, certificate: authCertificate },
+    });
 
     const userPoolClient = userPool.addClient("AlbClient", {
       generateSecret: true,
@@ -256,9 +244,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       securityGroup: ec2Sg,
       userData,
       role: ec2Role,
-      keyPair: keyPairName
-        ? ec2.KeyPair.fromKeyPairName(this, "KeyPair", keyPairName)
-        : undefined,
     });
 
     // --- ALB ---
@@ -481,8 +466,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- GitHub Actions OIDC (CI/CD) ---
-    const githubRepo = this.node.tryGetContext("githubRepo") as string | undefined;
-    if (githubRepo) {
+    const githubRepo = this.node.tryGetContext("githubRepo") as string;
+    {
       const oidcProvider = new iam.OpenIdConnectProvider(this, "GithubOidc", {
         url: "https://token.actions.githubusercontent.com",
         clientIds: ["sts.amazonaws.com"],

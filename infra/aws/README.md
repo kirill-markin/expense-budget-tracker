@@ -51,20 +51,22 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Do
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
 - **EC2** (t3.small) running Docker Compose: web app (Next.js)
 - **ALB** with HTTPS (Cloudflare Origin Certificate) + Cognito authentication (JWT via ALB auth action)
-- **Cognito User Pool** — managed auth with hosted login UI, no auth code in the app
+- **Cognito User Pool** — managed auth with custom login domain (`auth.yourdomain.com`), no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
 - **CloudWatch Alarms + SNS** — alerts on ALB 5xx, EC2 CPU, DB connections, DB storage, Lambda errors
 - **S3** — ALB access logs (90-day retention)
 - **CloudWatch Logs** — Docker container logs from EC2 (30-day retention), Lambda logs (automatic)
 - **AWS Backup** — daily backup plan with 35-day retention for RDS
-- **GitHub Actions OIDC** — CI/CD role for push-to-deploy (if `githubRepo` provided)
+- **GitHub Actions OIDC** — CI/CD role for push-to-deploy
 
 **On Cloudflare (via scripts):**
 
 - Domain registration
-- DNS CNAME record (proxied) pointing to ALB
+- DNS CNAME `app.*` (proxied) pointing to ALB
+- DNS CNAME `auth.*` (DNS-only) pointing to Cognito CloudFront
 - Origin Certificate for ALB HTTPS (imported into ACM)
+- ACM validation CNAME for auth domain certificate
 - Edge SSL, CDN, DDoS protection (automatic with proxied DNS)
 
 ## Step-by-step setup
@@ -196,20 +198,18 @@ The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the A
 
 > **Why Origin Certificate?** Cloudflare Origin Certificates are free, long-lived (15 years), and trusted by Cloudflare's edge servers. Since all traffic flows through Cloudflare proxy, browsers see Cloudflare's edge certificate (Universal SSL, free). The Origin Certificate secures the connection between Cloudflare and your ALB.
 
-#### 3e. Custom login domain (optional)
+#### 3e. Create auth domain certificate (~5-30 min wait)
 
-By default, the login page uses an AWS Cognito domain (`expense-tracker-*.amazoncognito.com`). To use your own domain (e.g. `auth.yourdomain.com`), run:
+The login page uses a custom domain (`auth.yourdomain.com`). This requires a public ACM certificate in `us-east-1` (Cognito uses CloudFront under the hood).
 
 ```bash
 bash scripts/cloudflare/setup-auth-domain.sh \
   --domain yourdomain.com
 ```
 
-The script requests a public ACM certificate in `us-east-1` (required by Cognito/CloudFront), validates it via Cloudflare DNS, and waits for it to be issued (~5-30 minutes). It prints the **auth certificate ARN** — add it to `cdk.context.local.json` as `authCertificateArn`.
+The script requests the certificate, validates it via Cloudflare DNS, and waits for it to be issued. It prints the **auth certificate ARN** — you need this for step 4.
 
-> **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal.
-
-If you skip this step, the default AWS Cognito domain is used (works fine, just less polished).
+> **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal. Do not delete it.
 
 ### 4. Configure the stack
 
@@ -221,16 +221,15 @@ cp cdk.context.local.example.json cdk.context.local.json
 
 Edit `cdk.context.local.json` with your values:
 
-| Parameter | Required | Description |
-|---|---|---|
-| `region` | **Yes** | AWS region, e.g. `eu-central-1` |
-| `domainName` | **Yes** | Your domain, e.g. `myfinance.com` |
-| `certificateArn` | **Yes** | ACM certificate ARN from step 3d |
-| `authCertificateArn` | Optional | ACM certificate ARN from step 3e (enables custom login domain `auth.yourdomain.com`) |
-| `subdomain` | Optional | Subdomain prefix (default: `app` → `app.myfinance.com`). Set to `""` for root domain |
-| `alertEmail` | Recommended | Email for CloudWatch alarm notifications |
-| `githubRepo` | Recommended | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
-| `keyPairName` | Optional | EC2 key pair name for SSH access (not recommended — use SSM instead) |
+| Parameter | Description |
+|---|---|
+| `region` | AWS region, e.g. `eu-central-1` |
+| `domainName` | Your domain, e.g. `myfinance.com` |
+| `subdomain` | Subdomain prefix for the app, e.g. `app` → `app.myfinance.com` |
+| `certificateArn` | ACM certificate ARN from step 3d (Cloudflare Origin Cert) |
+| `authCertificateArn` | ACM certificate ARN from step 3e (public cert in `us-east-1` for `auth.myfinance.com`) |
+| `alertEmail` | Email for CloudWatch alarm notifications |
+| `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
 
 ### 5. Bootstrap and deploy
 
@@ -248,19 +247,11 @@ export CLOUDFLARE_ZONE_ID="<paste-your-zone-id-here>"
 
 bash scripts/cloudflare/setup-dns.sh \
   --subdomain app \
-  --stack-name ExpenseBudgetTracker
-```
-
-If you configured a custom login domain (step 3e), add the `--auth-domain` flag:
-
-```bash
-bash scripts/cloudflare/setup-dns.sh \
-  --subdomain app \
   --stack-name ExpenseBudgetTracker \
   --auth-domain auth.yourdomain.com
 ```
 
-The script creates the app DNS CNAME (proxied), sets SSL/TLS to Full (Strict), and — if `--auth-domain` is provided — creates the auth CNAME (DNS-only, pointing to Cognito's CloudFront distribution).
+The script creates the app DNS CNAME (proxied via Cloudflare), sets SSL/TLS to Full (Strict), and creates the auth CNAME (DNS-only, pointing to Cognito's CloudFront distribution).
 
 ### 6. Post-deploy
 
@@ -276,7 +267,7 @@ The script creates the app DNS CNAME (proxied), sets SSL/TLS to Full (Strict), a
 
 ## CI/CD (automatic deploys on push)
 
-If `githubRepo` is set in config, CDK creates an IAM OIDC role for GitHub Actions.
+CDK creates an IAM OIDC role for GitHub Actions.
 
 After first deploy:
 1. Copy `GithubDeployRoleArn` from CDK outputs
@@ -306,16 +297,10 @@ No AWS keys stored in GitHub — uses OIDC federation.
 
 ## Shell access to EC2
 
-**SSM Session Manager (recommended)** — no key pair needed, no open ports, audit log included:
+SSM Session Manager — no key pair needed, no open ports, audit log included:
 
 ```bash
 aws ssm start-session --target <instance-id> --profile expense-tracker
-```
-
-**SSH (optional)** — only if `keyPairName` is set in CDK config:
-
-```bash
-ssh -i my-key.pem ec2-user@<public-ip>
 ```
 
 ## Tear down
