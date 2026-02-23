@@ -3,7 +3,7 @@
 # Run once after the first CDK deploy.
 #
 # Required env vars:
-#   CLOUDFLARE_API_TOKEN  — API token with Zone:DNS:Edit permission
+#   CLOUDFLARE_API_TOKEN  — API token with Zone:DNS:Edit, Zone:SSL and Certificates:Edit, Zone:Zone Settings:Edit
 #   CLOUDFLARE_ZONE_ID    — Zone ID from Cloudflare dashboard
 #   AWS_PROFILE           — AWS CLI profile for the target account
 #
@@ -82,6 +82,25 @@ fi
 
 echo ""
 echo "DNS record set: ${SUBDOMAIN} -> ${ALB_DNS} (Cloudflare proxied)"
-echo ""
-echo "IMPORTANT: Set Cloudflare SSL/TLS mode to 'Full (Strict)' in:"
-echo "  Cloudflare Dashboard > SSL/TLS > Overview"
+
+# --- Set SSL/TLS mode to Full (Strict) ---
+echo "Setting SSL/TLS mode to Full (Strict)..."
+
+# Disable automatic SSL/TLS (switch to custom mode)
+curl -s -X PATCH "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/settings/ssl_automatic_mode" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"value":"custom"}' > /dev/null
+
+SSL_RESULT=$(curl -s -X PATCH "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/settings/ssl" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"value":"strict"}')
+
+SSL_SUCCESS=$(echo "$SSL_RESULT" | python3 -c 'import sys,json; print(json.load(sys.stdin)["success"])')
+if [[ "$SSL_SUCCESS" == "True" ]]; then
+  echo "SSL/TLS mode set to Full (Strict)."
+else
+  echo "WARNING: Could not set SSL/TLS mode via API. Set it manually:" >&2
+  echo "  Cloudflare Dashboard > SSL/TLS > Overview > Full (Strict)" >&2
+fi

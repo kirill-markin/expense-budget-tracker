@@ -139,9 +139,11 @@ Go to https://dash.cloudflare.com/profile/api-tokens → **Create Token**:
 
 - Template: **"Edit zone DNS"**
 - Zone Resources: Include → Specific zone → your domain
-- **Important:** click "+ Add more" and add a second permission: **Zone → SSL and Certificates → Edit**
+- **Important:** click "+ Add more" and add two more permissions:
+  - **Zone → SSL and Certificates → Edit** (for Origin Certificate creation)
+  - **Zone → Zone Settings → Edit** (for setting SSL mode to Full Strict)
 
-The token needs **both** permissions (DNS + SSL). Without SSL permission, the certificate step will fail.
+The token needs all three permissions (DNS + SSL + Zone Settings). Missing any will cause script failures.
 
 Copy the token and save it in your password manager along with the Zone ID from step 3c.
 
@@ -222,7 +224,7 @@ npx cdk bootstrap                       # first time only
 npx cdk deploy --require-approval never  # ~10-15 min
 ```
 
-After deploy completes, **create the DNS record** pointing to the ALB:
+After deploy completes, **create the DNS record** pointing to the ALB and configure SSL:
 
 ```bash
 export CLOUDFLARE_API_TOKEN="<paste-your-api-token-here>"
@@ -233,16 +235,7 @@ bash scripts/cloudflare/setup-dns.sh \
   --stack-name ExpenseBudgetTracker
 ```
 
-Then set **SSL/TLS mode to Full (Strict)** via the API:
-
-```bash
-curl -s -X PATCH "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/settings/ssl" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data '{"value":"strict"}' | python3 -m json.tool
-```
-
-Or manually: Cloudflare Dashboard → SSL/TLS → Overview → **Full (Strict)**.
+The script creates the DNS CNAME record (proxied) and sets SSL/TLS mode to Full (Strict) automatically.
 
 ### 6. Post-deploy
 
