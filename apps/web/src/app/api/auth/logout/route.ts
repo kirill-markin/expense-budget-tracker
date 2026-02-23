@@ -17,8 +17,11 @@ export const GET = (request: Request): Response => {
   const cognitoDomain = getRequiredEnv("COGNITO_DOMAIN");
   const cognitoClientId = getRequiredEnv("COGNITO_CLIENT_ID");
 
-  const origin = new URL(request.url).origin;
-  const logoutUrl = `https://${cognitoDomain}/logout?client_id=${cognitoClientId}&logout_uri=${encodeURIComponent(origin + "/")}`;
+  // Build the public origin from ALB-forwarded headers (request.url is the internal container address)
+  const proto = request.headers.get("x-forwarded-proto") ?? "https";
+  const host = request.headers.get("host") ?? "";
+  const logoutRedirect = `${proto}://${host}/`;
+  const logoutUrl = `https://${cognitoDomain}/logout?client_id=${cognitoClientId}&logout_uri=${encodeURIComponent(logoutRedirect)}`;
 
   const response = NextResponse.redirect(logoutUrl);
 
