@@ -34,27 +34,44 @@ fi
 
 echo "Creating Cloudflare Origin Certificate for *.${DOMAIN} and ${DOMAIN}..."
 
+# --- Generate RSA private key and CSR ---
+TMPDIR_CERT=$(mktemp -d)
+KEY_FILE="${TMPDIR_CERT}/origin.key"
+CSR_FILE="${TMPDIR_CERT}/origin.csr"
+
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout "$KEY_FILE" \
+  -out "$CSR_FILE" \
+  -subj "/CN=${DOMAIN}" 2>/dev/null
+
+CSR_PEM=$(cat "$CSR_FILE")
+
 # --- Create Origin Certificate via Cloudflare API ---
 CERT_RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/certificates" \
   -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
   -H "Content-Type: application/json" \
-  --data "{
-    \"hostnames\": [\"*.${DOMAIN}\", \"${DOMAIN}\"],
-    \"requested_validity\": 5475,
-    \"request_type\": \"origin-rsa\",
-    \"csr\": \"\"
-  }")
+  --data "$(python3 -c '
+import json, sys
+csr = open(sys.argv[1]).read()
+print(json.dumps({
+    "hostnames": ["*." + sys.argv[2], sys.argv[2]],
+    "requested_validity": 5475,
+    "request_type": "origin-rsa",
+    "csr": csr
+}))
+' "$CSR_FILE" "$DOMAIN")")
 
 SUCCESS=$(echo "$CERT_RESPONSE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["success"])')
 if [[ "$SUCCESS" != "True" ]]; then
   echo "Failed to create Cloudflare Origin Certificate:" >&2
   echo "$CERT_RESPONSE" | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin).get("errors", []), indent=2))' >&2
+  rm -rf "$TMPDIR_CERT"
   exit 1
 fi
 
-# Extract certificate and private key
-CERT_PEM=$(echo "$CERT_RESPONSE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["certificate"])')
-KEY_PEM=$(echo "$CERT_RESPONSE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["private_key"])')
+# Extract signed certificate to file
+CERT_FILE="${TMPDIR_CERT}/origin.crt"
+echo "$CERT_RESPONSE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["certificate"])' > "$CERT_FILE"
 
 echo "Origin Certificate created (15-year validity)."
 
@@ -63,9 +80,11 @@ echo "Importing into AWS ACM (region: ${REGION})..."
 
 CERT_ARN=$(aws acm import-certificate \
   --region "$REGION" \
-  --certificate "$CERT_PEM" \
-  --private-key "$KEY_PEM" \
+  --certificate "fileb://${CERT_FILE}" \
+  --private-key "fileb://${KEY_FILE}" \
   --query "CertificateArn" --output text)
+
+rm -rf "$TMPDIR_CERT"
 
 echo ""
 echo "Certificate imported into ACM."
