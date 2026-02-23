@@ -184,9 +184,31 @@ Copy the **Zone ID** from the output and set it:
 export CLOUDFLARE_ZONE_ID="<zone-id-from-output>"
 ```
 
+#### 3c′. Save Cloudflare credentials for future use
+
+Copy the example env file and fill in both values you just obtained:
+
+```bash
+cp scripts/cloudflare/.env.example scripts/cloudflare/.env
+```
+
+Edit `scripts/cloudflare/.env`:
+
+```dotenv
+CLOUDFLARE_API_TOKEN=<paste-your-api-token-here>
+CLOUDFLARE_ZONE_ID=<paste-your-zone-id-here>
+```
+
+This file is gitignored. All subsequent steps can load it instead of re-exporting:
+
+```bash
+set -a; source scripts/cloudflare/.env; set +a
+```
+
 #### 3d. Create Origin Certificate and import into ACM (terminal)
 
 ```bash
+set -a; source scripts/cloudflare/.env; set +a
 export AWS_PROFILE=expense-tracker
 
 bash scripts/cloudflare/setup-certificate.sh \
@@ -203,6 +225,9 @@ The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the A
 The login page uses a custom domain (`auth.yourdomain.com`). This requires a public ACM certificate in `us-east-1` (Cognito uses CloudFront under the hood).
 
 ```bash
+set -a; source scripts/cloudflare/.env; set +a
+export AWS_PROFILE=expense-tracker
+
 bash scripts/cloudflare/setup-auth-domain.sh \
   --domain yourdomain.com
 ```
@@ -242,8 +267,7 @@ npx cdk deploy --require-approval never  # ~10-15 min
 After deploy completes, **create the DNS record** pointing to the ALB and configure SSL:
 
 ```bash
-export CLOUDFLARE_API_TOKEN="<paste-your-api-token-here>"
-export CLOUDFLARE_ZONE_ID="<paste-your-zone-id-here>"
+set -a; source scripts/cloudflare/.env; set +a
 
 bash scripts/cloudflare/setup-dns.sh \
   --subdomain app \
