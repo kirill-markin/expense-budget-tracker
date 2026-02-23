@@ -15,6 +15,55 @@ const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+/** Workspace IDs already verified to exist in this process. */
+const provisionedWorkspaces = new Set<string>();
+
+/**
+ * Ensure a workspace, membership, and settings row exist for the given user.
+ *
+ * Uses an in-memory cache so only the very first request per workspace hits
+ * the DB. Operates on its own connection with RLS context to go through the
+ * self-provision policy (0002_workspace_self_provision.sql).
+ */
+const ensureWorkspace = async (userId: string, workspaceId: string): Promise<void> => {
+  if (provisionedWorkspaces.has(workspaceId)) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+
+    const check = await client.query(
+      "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+      [workspaceId, userId],
+    );
+
+    if (check.rows.length === 0) {
+      await client.query(
+        "INSERT INTO workspaces (workspace_id, name) VALUES ($1, $1) ON CONFLICT (workspace_id) DO NOTHING",
+        [workspaceId],
+      );
+      await client.query(
+        "INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2) ON CONFLICT (workspace_id, user_id) DO NOTHING",
+        [workspaceId, userId],
+      );
+      await client.query(
+        "INSERT INTO workspace_settings (workspace_id, reporting_currency) VALUES ($1, 'USD') ON CONFLICT (workspace_id) DO NOTHING",
+        [workspaceId],
+      );
+    }
+
+    await client.query("COMMIT");
+    provisionedWorkspaces.add(workspaceId);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
 /** Execute a query without RLS context (global tables only). */
 export const query = (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>
   pool.query(text, params as Array<unknown>);
@@ -28,6 +77,7 @@ export const queryAs = async (
   text: string,
   params: ReadonlyArray<unknown>,
 ): Promise<pg.QueryResult> => {
+  await ensureWorkspace(userId, workspaceId);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -52,6 +102,7 @@ export const withUserContext = async <T>(
   workspaceId: string,
   callback: (queryFn: QueryFn) => Promise<T>,
 ): Promise<T> => {
+  await ensureWorkspace(userId, workspaceId);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
