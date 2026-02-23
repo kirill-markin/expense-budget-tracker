@@ -39,6 +39,14 @@ Open-source personal finance tracker: expenses, budgets, balances, transfers, an
 | `scripts/migrate.sh` | Runs all migrations + views against `DATABASE_URL` |
 | `.env.example` | Environment variables reference |
 
+## AWS deployment
+
+Before querying AWS resources, read `infra/aws/cdk.context.local.json` first — it contains the region, domain, certificate ARNs, and all account-specific settings. Then check `~/.aws/config` for the AWS CLI profile that targets the same account and region. Always use the matching `--profile` and `--region` flags.
+
+- **CDK context**: `infra/aws/cdk.context.local.json`
+- **CDK stack name**: `ExpenseBudgetTracker`
+- **CI/CD**: GitHub Actions on push to `main`, deploys CDK + updates EC2 via SSM. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
+
 ## Reference
 
 - [docs/architecture.md](docs/architecture.md) — system overview, data model, multi-currency design, auth model

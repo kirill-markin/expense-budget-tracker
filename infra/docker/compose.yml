@@ -41,7 +41,10 @@ services:
       DATABASE_URL: postgresql://app:app@postgres:5432/tracker
       HOST: "0.0.0.0"
       PORT: "3000"
-      AUTH_MODE: "none"
+      AUTH_MODE: ${AUTH_MODE:-none}
+      AUTH_PROXY_HEADER: ${AUTH_PROXY_HEADER:-}
+      COGNITO_DOMAIN: ${COGNITO_DOMAIN:-}
+      COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
     depends_on:
       postgres:
         condition: service_healthy

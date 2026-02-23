@@ -3,7 +3,7 @@
  *
  * Called once by Next.js on server boot. Checks:
  * - AUTH_MODE is "none" or "proxy"
- * - AUTH_PROXY_HEADER is set when AUTH_MODE=proxy
+ * - AUTH_PROXY_HEADER, COGNITO_DOMAIN, COGNITO_CLIENT_ID are set when AUTH_MODE=proxy
  * - Warns when AUTH_MODE=none with non-localhost HOST
  * - DATABASE_URL is set
  *
@@ -24,6 +24,14 @@ export const register = (): void => {
     const proxyHeader = process.env.AUTH_PROXY_HEADER;
     if (proxyHeader === undefined || proxyHeader === "") {
       errors.push("AUTH_PROXY_HEADER must be set when AUTH_MODE=proxy");
+    }
+    const cognitoDomain = process.env.COGNITO_DOMAIN;
+    if (cognitoDomain === undefined || cognitoDomain === "") {
+      errors.push("COGNITO_DOMAIN must be set when AUTH_MODE=proxy");
+    }
+    const cognitoClientId = process.env.COGNITO_CLIENT_ID;
+    if (cognitoClientId === undefined || cognitoClientId === "") {
+      errors.push("COGNITO_CLIENT_ID must be set when AUTH_MODE=proxy");
     }
   }
 

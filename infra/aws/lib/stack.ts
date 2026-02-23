@@ -125,6 +125,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
         callbackUrls: [callbackUrl],
+        logoutUrls: [`https://${appDomain}/`],
       },
       supportedIdentityProviders: [
         cognito.UserPoolClientIdentityProvider.COGNITO,
@@ -224,6 +225,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       'echo "AUTH_PROXY_HEADER=x-amzn-oidc-data" >> .env',
       'echo "HOST=0.0.0.0" >> .env',
       'echo "CORS_ORIGIN=*" >> .env',
+      `echo "COGNITO_DOMAIN=${authDomain}" >> .env`,
+      `echo "COGNITO_CLIENT_ID=${userPoolClient.userPoolClientId}" >> .env`,
       // Run migrations (creates app role with APP_DB_PASSWORD) and start web
       "docker compose -f infra/docker/compose.yml up -d postgres",
       "sleep 5",

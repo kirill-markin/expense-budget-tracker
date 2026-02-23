@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { isDemoMode } from "@/lib/demoMode";
+import { AccountMenu } from "@/ui/AccountMenu";
 import { DemoModeToggle } from "@/ui/DemoModeToggle";
 
 import "./globals.css";
@@ -24,7 +25,10 @@ export default async function RootLayout(props: Readonly<{ children: React.React
         )}
         <header className="topbar">
           <a href="/" className="topbar-brand">expense-budget-tracker</a>
-          <DemoModeToggle isDemoMode={demo} />
+          <div className="topbar-actions">
+            <DemoModeToggle isDemoMode={demo} />
+            <AccountMenu authEnabled={process.env.AUTH_MODE === "proxy"} />
+          </div>
         </header>
         {children}
       </body>
