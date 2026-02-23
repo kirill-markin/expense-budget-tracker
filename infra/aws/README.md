@@ -7,10 +7,9 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 Verify that all required tools are installed:
 
 ```bash
-aws --version        # AWS CLI v2+
-node --version       # Node.js 24+
-npx cdk --version    # AWS CDK CLI 2.100+
-wrangler --version   # Cloudflare CLI (Wrangler) 4+
+aws --version       # AWS CLI v2+
+node --version      # Node.js 24+
+npx cdk --version   # AWS CDK CLI 2.100+
 ```
 
 If anything is missing:
@@ -18,7 +17,6 @@ If anything is missing:
 - **AWS CLI v2**: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 - **Node.js 24**: https://nodejs.org/en/download
 - **CDK CLI**: `npm install -g aws-cdk`
-- **Wrangler** (Cloudflare CLI): `npm install -g wrangler` — then `wrangler login` to authenticate
 
 ## Architecture
 
@@ -111,33 +109,74 @@ aws sts get-caller-identity --profile expense-tracker
 
 ### 3. Register domain and set up Cloudflare
 
-Domain and DNS are managed by Cloudflare. Cloudflare provides free CDN, DDoS protection, and edge SSL on top of DNS.
+Domain and DNS are managed by Cloudflare. Cloudflare provides free CDN, DDoS protection, and edge SSL on top of DNS. No Cloudflare CLI is needed — only the dashboard (for domain registration) and API calls via `curl` (for everything else).
 
-**Register or transfer the domain** on the Cloudflare Dashboard:
+#### 3a. Register domain (dashboard — one time)
+
+Domain registration is only available through the Cloudflare web UI:
 
 1. Go to https://dash.cloudflare.com/ and log in (or create an account).
-2. Register a new domain or transfer an existing one.
-3. Note two values from the domain overview page (right sidebar):
-   - **Zone ID**
-   - **Account ID**
-4. Create an **API token** at https://dash.cloudflare.com/profile/api-tokens:
-   - Template: "Edit zone DNS"
-   - Zone Resources: Include → Specific zone → your domain
-   - Also add permission: Zone → SSL and Certificates → Edit
+2. **Domain Registration** → **Register Domain** → search for your domain and purchase it.
+   Cloudflare sells domains at cost (no markup).
 
-**Create a Cloudflare Origin Certificate and import into ACM** (one-time, before first deploy):
+#### 3b. Create API token (dashboard — one time)
+
+Go to https://dash.cloudflare.com/profile/api-tokens → **Create Token**:
+
+- Template: **"Edit zone DNS"**
+- Zone Resources: Include → Specific zone → your domain
+- **Important:** click "+ Add more" and add a second permission: **Zone → SSL and Certificates → Edit**
+
+The token needs **both** permissions (DNS + SSL). Without SSL permission, the certificate step will fail.
+
+Copy the token and save it in your password manager along with the Zone ID from step 3c.
+
+#### 3c. Verify token and find Zone ID (terminal)
+
+Set the API token:
 
 ```bash
-export CLOUDFLARE_API_TOKEN="your-api-token"
-export CLOUDFLARE_ZONE_ID="your-zone-id"
+export CLOUDFLARE_API_TOKEN="<paste-your-api-token-here>"
+```
+
+Verify the token works:
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | python3 -m json.tool
+```
+
+Expected: `"status": "active"`.
+
+Find your Zone ID (replace `yourdomain.com` with your domain):
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/zones?name=yourdomain.com" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  | python3 -c '
+import sys, json
+for z in json.load(sys.stdin)["result"]:
+    print(f"Zone: {z["name"]}  ID: {z["id"]}  Status: {z["status"]}")
+'
+```
+
+Copy the **Zone ID** from the output and set it:
+
+```bash
+export CLOUDFLARE_ZONE_ID="<zone-id-from-output>"
+```
+
+#### 3d. Create Origin Certificate and import into ACM (terminal)
+
+```bash
 export AWS_PROFILE=expense-tracker
 
 bash scripts/cloudflare/setup-certificate.sh \
-  --domain myfinance.com \
+  --domain yourdomain.com \
   --region eu-central-1
 ```
 
-The script creates a Cloudflare Origin Certificate (15-year validity, wildcard) and imports it into AWS ACM. It prints the **certificate ARN** — you need this for step 4.
+The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the API and imports it into AWS ACM. It prints the **certificate ARN** — you need this for step 4.
 
 > **Why Origin Certificate?** Cloudflare Origin Certificates are free, long-lived (15 years), and trusted by Cloudflare's edge servers. Since all traffic flows through Cloudflare proxy, browsers see Cloudflare's edge certificate (Universal SSL, free). The Origin Certificate secures the connection between Cloudflare and your ALB.
 
@@ -172,15 +211,24 @@ npx cdk deploy
 After deploy completes, **create the DNS record** pointing to the ALB:
 
 ```bash
-export CLOUDFLARE_API_TOKEN="your-api-token"
-export CLOUDFLARE_ZONE_ID="your-zone-id"
+export CLOUDFLARE_API_TOKEN="<paste-your-api-token-here>"
+export CLOUDFLARE_ZONE_ID="<paste-your-zone-id-here>"
 
 bash scripts/cloudflare/setup-dns.sh \
   --subdomain app \
   --stack-name ExpenseBudgetTracker
 ```
 
-Then set **SSL/TLS mode to Full (Strict)** in Cloudflare Dashboard → SSL/TLS → Overview.
+Then set **SSL/TLS mode to Full (Strict)** via the API:
+
+```bash
+curl -s -X PATCH "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/settings/ssl" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{"value":"strict"}' | python3 -m json.tool
+```
+
+Or manually: Cloudflare Dashboard → SSL/TLS → Overview → **Full (Strict)**.
 
 ### 6. Post-deploy
 
