@@ -239,7 +239,7 @@ The script creates the DNS CNAME record (proxied) and sets SSL/TLS mode to Full 
 
 ### 6. Post-deploy
 
-1. **Confirm SNS email** — check your inbox for the alarm subscription confirmation
+1. **Confirm SNS email** — check the `alertEmail` inbox for a message from "AWS Notifications" with subject "AWS Notification - Subscription Confirmation". Click the "Confirm subscription" link inside. Without this, CloudWatch alarm notifications will not be delivered
 2. **Visit your domain** — Cognito sign-up/login page appears. Self-registration is enabled
 3. To create users via CLI instead:
    ```bash
