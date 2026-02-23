@@ -110,7 +110,42 @@ else
     }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
 fi
 
-# --- Step 4: Wait for certificate to be ISSUED ---
+# --- Step 4: Ensure root domain has an A record ---
+# Cognito custom domains require the parent domain to resolve (DNS A record).
+# If the root domain has no A record yet, create a Cloudflare-proxied placeholder.
+# Replace this placeholder with the real server IP when a landing page is deployed.
+echo "Checking if ${DOMAIN} has an A record..."
+
+ROOT_RECORDS=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${DOMAIN}&type=A" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json")
+
+ROOT_COUNT=$(echo "$ROOT_RECORDS" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
+
+if [[ "$ROOT_COUNT" -eq 0 ]]; then
+  echo "No A record found for ${DOMAIN}. Creating a Cloudflare-proxied placeholder (192.0.2.1)..."
+  echo "  This is required for Cognito to accept a custom subdomain."
+  echo "  Replace with the real server IP when a landing page is deployed on the root domain."
+
+  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "{
+      \"type\": \"A\",
+      \"name\": \"${DOMAIN}\",
+      \"content\": \"192.0.2.1\",
+      \"ttl\": 1,
+      \"proxied\": true,
+      \"comment\": \"Placeholder for Cognito custom domain validation. Replace with real IP when landing page is ready.\"
+    }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+
+  echo "Waiting 10s for DNS propagation..."
+  sleep 10
+else
+  echo "A record for ${DOMAIN} already exists. OK."
+fi
+
+# --- Step 5: Wait for certificate to be ISSUED ---
 echo "Waiting for ACM certificate validation (this may take 5-30 minutes)..."
 
 aws acm wait certificate-validated \

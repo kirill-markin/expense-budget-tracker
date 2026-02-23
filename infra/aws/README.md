@@ -234,6 +234,8 @@ bash scripts/cloudflare/setup-auth-domain.sh \
 
 The script requests the certificate, validates it via Cloudflare DNS, and waits for it to be issued. It prints the **auth certificate ARN** — you need this for step 4.
 
+If your root domain (`yourdomain.com`) does not have an A record yet, the script automatically creates a Cloudflare-proxied placeholder (`192.0.2.1`). This is required because Cognito validates that the parent domain resolves before allowing a custom subdomain. Replace the placeholder with a real server IP when you deploy a landing page on the root domain.
+
 > **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal. Do not delete it.
 
 ### 4. Configure the stack
