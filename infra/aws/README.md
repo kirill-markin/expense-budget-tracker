@@ -7,9 +7,10 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 Verify that all required tools are installed:
 
 ```bash
-aws --version       # AWS CLI v2+
-node --version      # Node.js 24+
-npx cdk --version   # AWS CDK CLI 2.100+
+aws --version        # AWS CLI v2+
+node --version       # Node.js 24+
+npx cdk --version    # AWS CDK CLI 2.100+
+wrangler --version   # Cloudflare CLI (Wrangler) 4+
 ```
 
 If anything is missing:
@@ -17,6 +18,7 @@ If anything is missing:
 - **AWS CLI v2**: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 - **Node.js 24**: https://nodejs.org/en/download
 - **CDK CLI**: `npm install -g aws-cdk`
+- **Wrangler** (Cloudflare CLI): `npm install -g wrangler` — then `wrangler login` to authenticate
 
 ## Architecture
 
