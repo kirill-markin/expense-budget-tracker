@@ -30,7 +30,10 @@ jobs:
       # Deploy infrastructure + Lambda
       - name: CDK deploy
         working-directory: infra/aws
+        env:
+          CDK_CONTEXT: ${{ secrets.CDK_CONTEXT }}
         run: |
+          echo "$CDK_CONTEXT" > cdk.context.local.json
           npm ci
           npx cdk deploy --all --require-approval never
 
