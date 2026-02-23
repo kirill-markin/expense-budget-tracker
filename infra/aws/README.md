@@ -196,6 +196,21 @@ The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the A
 
 > **Why Origin Certificate?** Cloudflare Origin Certificates are free, long-lived (15 years), and trusted by Cloudflare's edge servers. Since all traffic flows through Cloudflare proxy, browsers see Cloudflare's edge certificate (Universal SSL, free). The Origin Certificate secures the connection between Cloudflare and your ALB.
 
+#### 3e. Custom login domain (optional)
+
+By default, the login page uses an AWS Cognito domain (`expense-tracker-*.amazoncognito.com`). To use your own domain (e.g. `auth.yourdomain.com`), run:
+
+```bash
+bash scripts/cloudflare/setup-auth-domain.sh \
+  --domain yourdomain.com
+```
+
+The script requests a public ACM certificate in `us-east-1` (required by Cognito/CloudFront), validates it via Cloudflare DNS, and waits for it to be issued (~5-30 minutes). It prints the **auth certificate ARN** — add it to `cdk.context.local.json` as `authCertificateArn`.
+
+> **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal.
+
+If you skip this step, the default AWS Cognito domain is used (works fine, just less polished).
+
 ### 4. Configure the stack
 
 ```bash
@@ -210,7 +225,8 @@ Edit `cdk.context.local.json` with your values:
 |---|---|---|
 | `region` | **Yes** | AWS region, e.g. `eu-central-1` |
 | `domainName` | **Yes** | Your domain, e.g. `myfinance.com` |
-| `certificateArn` | **Yes** | ACM certificate ARN from step 3 |
+| `certificateArn` | **Yes** | ACM certificate ARN from step 3d |
+| `authCertificateArn` | Optional | ACM certificate ARN from step 3e (enables custom login domain `auth.yourdomain.com`) |
 | `subdomain` | Optional | Subdomain prefix (default: `app` → `app.myfinance.com`). Set to `""` for root domain |
 | `alertEmail` | Recommended | Email for CloudWatch alarm notifications |
 | `githubRepo` | Recommended | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
@@ -235,7 +251,16 @@ bash scripts/cloudflare/setup-dns.sh \
   --stack-name ExpenseBudgetTracker
 ```
 
-The script creates the DNS CNAME record (proxied) and sets SSL/TLS mode to Full (Strict) automatically.
+If you configured a custom login domain (step 3e), add the `--auth-domain` flag:
+
+```bash
+bash scripts/cloudflare/setup-dns.sh \
+  --subdomain app \
+  --stack-name ExpenseBudgetTracker \
+  --auth-domain auth.yourdomain.com
+```
+
+The script creates the app DNS CNAME (proxied), sets SSL/TLS to Full (Strict), and — if `--auth-domain` is provided — creates the auth CNAME (DNS-only, pointing to Cognito's CloudFront distribution).
 
 ### 6. Post-deploy
 

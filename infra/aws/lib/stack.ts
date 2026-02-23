@@ -111,11 +111,24 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    const userPoolDomain = userPool.addDomain("CognitoDomain", {
-      cognitoDomain: {
-        domainPrefix: `expense-tracker-${cdk.Aws.ACCOUNT_ID}`,
-      },
-    });
+    const authCertificateArn = this.node.tryGetContext("authCertificateArn") as string | undefined;
+
+    let userPoolDomain: cognito.UserPoolDomain;
+    if (authCertificateArn) {
+      const authDomain = `auth.${baseDomain}`;
+      const authCertificate = acm.Certificate.fromCertificateArn(
+        this, "AuthCertificate", authCertificateArn,
+      );
+      userPoolDomain = userPool.addDomain("CognitoDomain", {
+        customDomain: { domainName: authDomain, certificate: authCertificate },
+      });
+    } else {
+      userPoolDomain = userPool.addDomain("CognitoDomain", {
+        cognitoDomain: {
+          domainPrefix: `expense-tracker-${cdk.Aws.ACCOUNT_ID}`,
+        },
+      });
+    }
 
     const userPoolClient = userPool.addClient("AlbClient", {
       generateSecret: true,
