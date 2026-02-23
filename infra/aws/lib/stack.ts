@@ -228,10 +228,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       `echo "COGNITO_DOMAIN=${authDomain}" >> .env`,
       `echo "COGNITO_CLIENT_ID=${userPoolClient.userPoolClientId}" >> .env`,
       // Run migrations (creates app role with APP_DB_PASSWORD) and start web
-      "docker compose -f infra/docker/compose.yml up -d postgres",
+      // --env-file .env: compose project dir is infra/docker/ (from -f), but .env is at repo root
+      "docker compose --env-file .env -f infra/docker/compose.yml up -d postgres",
       "sleep 5",
-      "docker compose -f infra/docker/compose.yml run --rm migrate",
-      "docker compose -f infra/docker/compose.yml up -d web",
+      "docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate",
+      "docker compose --env-file .env -f infra/docker/compose.yml up -d web",
     );
 
     const ec2Role = new iam.Role(this, "Ec2Role", {
@@ -283,9 +284,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                 "fi",
                 "",
                 "git pull origin main",
-                "docker compose -f infra/docker/compose.yml build",
-                "docker compose -f infra/docker/compose.yml run --rm migrate",
-                "docker compose -f infra/docker/compose.yml up -d web",
+                "docker compose --env-file .env -f infra/docker/compose.yml build",
+                "docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate",
+                "docker compose --env-file .env -f infra/docker/compose.yml up -d web",
                 'echo "Deploy complete."',
               ],
             },
