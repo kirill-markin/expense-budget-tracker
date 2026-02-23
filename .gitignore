@@ -14,8 +14,9 @@ yarn.lock
 # Environment
 .env
 
-# CDK local secrets (account-specific)
+# CDK local/cached context (account-specific, auto-generated)
 cdk.context.local.json
+cdk.context.json
 
 # Python
 __pycache__/
