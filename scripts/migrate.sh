@@ -19,10 +19,44 @@ fi
 
 APP_DB_PASSWORD="${APP_DB_PASSWORD:-app}"
 
+# Create migration tracking table (idempotent).
+# If this is an existing database (tables already created by prior deploys),
+# seed the tracking table so migrations are not re-applied.
+TRACKING_EXISTS=$(psql "$MIGRATION_DATABASE_URL" -tAc \
+  "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'schema_migrations'")
+
+psql "$MIGRATION_DATABASE_URL" -q <<SQL
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  filename TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+SQL
+
+if [ "$TRACKING_EXISTS" != "1" ]; then
+  HAS_TABLES=$(psql "$MIGRATION_DATABASE_URL" -tAc \
+    "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'workspaces'")
+  if [ "$HAS_TABLES" = "1" ]; then
+    echo "Bootstrap: existing database detected, seeding schema_migrations..."
+    for f in "$ROOT_DIR"/db/migrations/*.sql; do
+      BASENAME=$(basename "$f")
+      psql "$MIGRATION_DATABASE_URL" -c \
+        "INSERT INTO schema_migrations (filename) VALUES ('$BASENAME') ON CONFLICT DO NOTHING"
+      echo "  Recorded $BASENAME as already applied"
+    done
+  fi
+fi
+
 echo "Running migrations..."
 for f in "$ROOT_DIR"/db/migrations/*.sql; do
-  echo "  Applying $(basename "$f")"
-  psql "$MIGRATION_DATABASE_URL" -f "$f"
+  BASENAME=$(basename "$f")
+  ALREADY=$(psql "$MIGRATION_DATABASE_URL" -tAc "SELECT 1 FROM schema_migrations WHERE filename = '$BASENAME'")
+  if [ "$ALREADY" = "1" ]; then
+    echo "  Skipping $BASENAME (already applied)"
+    continue
+  fi
+  echo "  Applying $BASENAME"
+  psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+  psql "$MIGRATION_DATABASE_URL" -c "INSERT INTO schema_migrations (filename) VALUES ('$BASENAME')"
 done
 
 echo "Applying views..."

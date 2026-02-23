@@ -11,6 +11,7 @@ import * as events_targets from "aws-cdk-lib/aws-events-targets";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as ssm from "aws-cdk-lib/aws-ssm";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatch_actions from "aws-cdk-lib/aws-cloudwatch-actions";
@@ -199,10 +200,14 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       }),
       "CWEOF",
       "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json",
-      // Install Docker Compose plugin
+      // Install Docker Compose plugin + Buildx (compose v2 requires buildx 0.17+)
       "mkdir -p /usr/local/lib/docker/cli-plugins",
       'curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose',
       "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose",
+      'ARCH=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")',
+      'BUILDX_VER=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)[\'tag_name\'])")',
+      'curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VER}/buildx-${BUILDX_VER}.linux-${ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-buildx',
+      "chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
       // Clone repo and start
       "cd /home/ec2-user",
       "git clone https://github.com/kirill-markin/expense-budget-tracker.git app",
@@ -244,6 +249,46 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       securityGroup: ec2Sg,
       userData,
       role: ec2Role,
+    });
+
+    // --- SSM Deploy Document (triggered by CI/CD to update app on EC2) ---
+    const deployDocument = new ssm.CfnDocument(this, "DeployDocument", {
+      documentType: "Command",
+      updateMethod: "NewVersion",
+      content: {
+        schemaVersion: "2.2",
+        description: "Pull latest code, build, migrate, and restart the app on EC2.",
+        mainSteps: [
+          {
+            action: "aws:runShellScript",
+            name: "deploy",
+            inputs: {
+              timeoutSeconds: "300",
+              runCommand: [
+                "set -euo pipefail",
+                "cd /home/ec2-user/app",
+                "",
+                "# Install Docker Buildx if missing (compose v2 requires buildx 0.17+)",
+                "if ! docker buildx version >/dev/null 2>&1; then",
+                '  echo "Installing Docker Buildx..."',
+                '  ARCH=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")',
+                '  BUILDX_VER=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)[\'tag_name\'])")',
+                '  mkdir -p /usr/local/lib/docker/cli-plugins',
+                '  curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VER}/buildx-${BUILDX_VER}.linux-${ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-buildx',
+                "  chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
+                '  echo "Buildx $(docker buildx version) installed."',
+                "fi",
+                "",
+                "git pull origin main",
+                "docker compose -f infra/docker/compose.yml build",
+                "docker compose -f infra/docker/compose.yml run --rm migrate",
+                "docker compose -f infra/docker/compose.yml up -d web",
+                'echo "Deploy complete."',
+              ],
+            },
+          },
+        ],
+      },
     });
 
     // --- ALB ---
@@ -553,6 +598,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     new cdk.CfnOutput(this, "Ec2InstanceId", {
       value: instance.instanceId,
       description: "EC2 instance ID (for SSM deploy commands)",
+    });
+    new cdk.CfnOutput(this, "DeployDocumentName", {
+      value: deployDocument.ref,
+      description: "SSM Document name for EC2 app deployment",
     });
   }
 }
