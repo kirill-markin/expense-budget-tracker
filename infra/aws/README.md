@@ -204,8 +204,8 @@ Edit `cdk.context.local.json` with your values:
 
 ```bash
 export AWS_PROFILE=expense-tracker
-npx cdk bootstrap   # first time only
-npx cdk deploy
+npx cdk bootstrap                       # first time only
+npx cdk deploy --require-approval never  # ~10-15 min
 ```
 
 After deploy completes, **create the DNS record** pointing to the ALB:
