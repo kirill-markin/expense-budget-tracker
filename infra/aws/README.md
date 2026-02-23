@@ -2,6 +2,21 @@
 
 Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and domain managed by Cloudflare.
 
+## Estimated cost
+
+| Item | Cost |
+|---|---|
+| Domain (`.com`, Cloudflare) | ~$10/year |
+| EC2 t3.small (24/7) | ~$15/month |
+| RDS t4g.micro (24/7) | ~$12/month |
+| NAT instance t4g.nano | ~$3/month |
+| ALB | ~$16/month |
+| Secrets Manager (2 secrets) | ~$1/month |
+| S3, CloudWatch, WAF, Lambda | ~$3/month |
+| **Total** | **~$10/year + ~$50/month** |
+
+Cloudflare (DNS, CDN, DDoS, edge SSL) is free. All prices are approximate for `eu-central-1` and may vary.
+
 ## Prerequisites
 
 Verify that all required tools are installed:
