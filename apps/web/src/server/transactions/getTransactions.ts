@@ -132,7 +132,7 @@ export const getTransactionsPage = async (
     OFFSET ${filter.offset}
   `;
 
-  const countParams: Array<unknown> = [reportCurrency];
+  const countParams: Array<unknown> = [];
   const countWhere = buildWhereClause(filter, countParams);
 
   const countQuery = `
