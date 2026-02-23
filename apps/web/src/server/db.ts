@@ -40,16 +40,18 @@ const ensureWorkspace = async (userId: string, workspaceId: string): Promise<voi
     );
 
     if (check.rows.length === 0) {
+      // Plain INSERTs — no ON CONFLICT because PostgreSQL requires SELECT
+      // visibility for conflict checks, which RLS blocks for new users.
       await client.query(
-        "INSERT INTO workspaces (workspace_id, name) VALUES ($1, $1) ON CONFLICT (workspace_id) DO NOTHING",
+        "INSERT INTO workspaces (workspace_id, name) VALUES ($1, $1)",
         [workspaceId],
       );
       await client.query(
-        "INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2) ON CONFLICT (workspace_id, user_id) DO NOTHING",
+        "INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2)",
         [workspaceId, userId],
       );
       await client.query(
-        "INSERT INTO workspace_settings (workspace_id, reporting_currency) VALUES ($1, 'USD') ON CONFLICT (workspace_id) DO NOTHING",
+        "INSERT INTO workspace_settings (workspace_id, reporting_currency) VALUES ($1, 'USD')",
         [workspaceId],
       );
     }
@@ -58,6 +60,12 @@ const ensureWorkspace = async (userId: string, workspaceId: string): Promise<voi
     provisionedWorkspaces.add(workspaceId);
   } catch (err) {
     await client.query("ROLLBACK");
+    // Concurrent request already provisioned this workspace — treat as success.
+    const code = err instanceof Error && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+    if (code === "23505") {
+      provisionedWorkspaces.add(workspaceId);
+      return;
+    }
     throw err;
   } finally {
     client.release();
