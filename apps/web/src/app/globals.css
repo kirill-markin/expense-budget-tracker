@@ -155,6 +155,16 @@ a:hover {
   display: flex;
   align-items: flex-start;
 }
+.budget-scroll thead {
+  cursor: grab;
+}
+.budget-scroll.budget-dragging thead {
+  cursor: grabbing;
+}
+.budget-scroll.budget-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
 
 .budget-table {
   border-collapse: collapse;

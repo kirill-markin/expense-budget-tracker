@@ -1154,6 +1154,42 @@ export const BudgetTable = (props: Props): ReactElement => {
     };
   }, [loadLeft, loadRight]);
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el === null) return;
+    const thead = el.querySelector<HTMLElement>("thead");
+    if (thead === null) return;
+
+    let startX = 0;
+    let startScrollLeft = 0;
+
+    const onMouseMove = (e: MouseEvent): void => {
+      el.scrollLeft = startScrollLeft - (e.pageX - startX);
+    };
+
+    const onMouseUp = (): void => {
+      el.classList.remove("budget-dragging");
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    const onMouseDown = (e: MouseEvent): void => {
+      e.preventDefault();
+      startX = e.pageX;
+      startScrollLeft = el.scrollLeft;
+      el.classList.add("budget-dragging");
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    };
+
+    thead.addEventListener("mousedown", onMouseDown);
+    return () => {
+      thead.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
+
   if (months.length === 0) {
     return <p className="budget-empty">No budget data yet.</p>;
   }
