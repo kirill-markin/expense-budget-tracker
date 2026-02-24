@@ -39,8 +39,8 @@ if [ "$TRACKING_EXISTS" != "1" ]; then
     echo "Bootstrap: existing database detected, seeding schema_migrations..."
     for f in "$ROOT_DIR"/db/migrations/*.sql; do
       BASENAME=$(basename "$f")
-      psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME" -c \
-        "INSERT INTO schema_migrations (filename) VALUES (:'fname') ON CONFLICT DO NOTHING"
+      echo "INSERT INTO schema_migrations (filename) VALUES (:'fname') ON CONFLICT DO NOTHING" \
+        | psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME"
       echo "  Recorded $BASENAME as already applied"
     done
   fi
@@ -49,15 +49,16 @@ fi
 echo "Running migrations..."
 for f in "$ROOT_DIR"/db/migrations/*.sql; do
   BASENAME=$(basename "$f")
-  ALREADY=$(psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME" -tAc "SELECT 1 FROM schema_migrations WHERE filename = :'fname'")
+  ALREADY=$(echo "SELECT 1 FROM schema_migrations WHERE filename = :'fname'" \
+    | psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME" -tA)
   if [ "$ALREADY" = "1" ]; then
     echo "  Skipping $BASENAME (already applied)"
     continue
   fi
   echo "  Applying $BASENAME"
   psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
-  psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME" -c \
-    "INSERT INTO schema_migrations (filename) VALUES (:'fname')"
+  echo "INSERT INTO schema_migrations (filename) VALUES (:'fname')" \
+    | psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME"
 done
 
 echo "Applying views..."
