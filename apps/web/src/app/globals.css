@@ -266,19 +266,22 @@ a:hover {
 }
 
 .budget-current-month {
-  border-left: 2px solid var(--text);
-  border-right: 2px solid var(--text);
-  box-shadow: inset 0 2px 0 0 var(--text);
+  box-shadow:
+    inset 2px 0 0 0 var(--text),
+    inset -2px 0 0 0 var(--text),
+    inset 0 2px 0 0 var(--text);
 }
 .budget-cm-plan {
-  border-left: 2px solid var(--text);
+  box-shadow: inset 2px 0 0 0 var(--text);
 }
 .budget-cm-actual {
-  border-right: 2px solid var(--text);
+  box-shadow: inset -2px 0 0 0 var(--text);
 }
-tbody tr:last-child .budget-cm-plan,
+tbody tr:last-child .budget-cm-plan {
+  box-shadow: inset 2px 0 0 0 var(--text), inset 0 -2px 0 0 var(--text);
+}
 tbody tr:last-child .budget-cm-actual {
-  box-shadow: inset 0 -2px 0 0 var(--text);
+  box-shadow: inset -2px 0 0 0 var(--text), inset 0 -2px 0 0 var(--text);
 }
 
 .budget-year-total {
