@@ -233,6 +233,17 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       securityGroups: [ecsSg],
     });
 
+    // Auto-scaling: 1–3 tasks, scale on CPU. Hard cap at 3 to limit cost.
+    const scaling = webService.autoScaleTaskCount({
+      minCapacity: 1,
+      maxCapacity: 3,
+    });
+    scaling.scaleOnCpuUtilization("CpuScaling", {
+      targetUtilizationPercent: 70,
+      scaleInCooldown: cdk.Duration.minutes(10),
+      scaleOutCooldown: cdk.Duration.minutes(3),
+    });
+
     // --- Migration Task Definition (one-off, not a service) ---
     const migrateTaskDef = new ecs.FargateTaskDefinition(this, "MigrateTask", {
       cpu: 256,
@@ -444,6 +455,25 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       evaluationPeriods: 3,
       alarmDescription: "ECS memory above 80% for 15 minutes",
       treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+    }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+    // ECS scale-out alert: fires when running more than 1 task (auto-scaling kicked in)
+    new cloudwatch.Alarm(this, "EcsScaleOutAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: "AWS/ECS",
+        metricName: "RunningTaskCount",
+        dimensionsMap: {
+          ClusterName: cluster.clusterName,
+          ServiceName: webService.serviceName,
+        },
+        period: cdk.Duration.minutes(1),
+        statistic: "Maximum",
+      }),
+      threshold: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      evaluationPeriods: 1,
+      alarmDescription: "ECS auto-scaled beyond 1 task — check traffic and cost",
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
     // RDS DB connections > 80% of max (t4g.micro max ~85 connections)

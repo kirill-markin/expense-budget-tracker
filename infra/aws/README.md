@@ -54,7 +54,7 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.nano for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
-- **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, desiredCount=1, no auto-scaling) + one-off migration task definition
+- **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate) + Cognito authentication (JWT via ALB auth action)
 - **Cognito User Pool** — managed auth with custom login domain (`auth.yourdomain.com`), no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
