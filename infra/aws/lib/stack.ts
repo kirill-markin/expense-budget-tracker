@@ -33,7 +33,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
     const githubRepo = this.node.tryGetContext("githubRepo") as string;
 
-    // imageTag: passed by CI/CD (git SHA), defaults to "latest" for first deploy / manual runs
+    // imageTag: defaults to "latest" (CI pushes images tagged "latest" + SHA, then force-new-deployment).
+    // Pass -c imageTag=<sha> for manual rollback to a specific version.
     const imageTag = (this.node.tryGetContext("imageTag") as string | undefined) ?? "latest";
 
     const appDomain = `app.${baseDomain}`;

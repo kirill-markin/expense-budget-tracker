@@ -319,10 +319,10 @@ After first deploy:
    - **Secret** `CDK_CONTEXT` — contents of `cdk.context.local.json`
    - **Variable** `AWS_REGION` — target region (e.g. `eu-central-1`)
 3. Every push to `main` will automatically:
-   - Build and push Docker images to ECR (tagged with git SHA)
-   - `cdk deploy -c imageTag=<sha>` — update infrastructure, Lambda, and ECS task definitions with the new image
+   - `cdk deploy` — update infrastructure, Lambda, and IAM permissions
+   - Build and push Docker images to ECR (tagged with git SHA + `latest`)
    - Run migration ECS task (one-off Fargate task)
-   - ECS service updated by CDK (new task definition revision with the SHA-tagged image)
+   - Restart ECS service (`force-new-deployment` picks up the new `latest` image)
 
 No AWS keys stored in GitHub — uses OIDC federation.
 
