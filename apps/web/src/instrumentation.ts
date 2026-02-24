@@ -5,7 +5,7 @@
  * - AUTH_MODE is "none" or "proxy"
  * - AUTH_PROXY_HEADER, COGNITO_DOMAIN, COGNITO_CLIENT_ID are set when AUTH_MODE=proxy
  * - Warns when AUTH_MODE=none with non-localhost HOST
- * - DATABASE_URL is set
+ * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (proxy/ECS)
  *
  * Throws with all collected errors on misconfiguration. Skipped in dev.
  */
@@ -44,9 +44,11 @@ export const register = (): void => {
     }
   }
 
-  const databaseUrl = process.env.DATABASE_URL;
-  if (databaseUrl === undefined || databaseUrl === "") {
-    errors.push("DATABASE_URL must be set in production");
+  if (authMode === "proxy") {
+    if (!process.env.DB_HOST) errors.push("DB_HOST must be set when AUTH_MODE=proxy");
+    if (!process.env.DB_PASSWORD) errors.push("DB_PASSWORD must be set when AUTH_MODE=proxy");
+  } else {
+    if (!process.env.DATABASE_URL) errors.push("DATABASE_URL must be set in production");
   }
 
   if (errors.length > 0) {
