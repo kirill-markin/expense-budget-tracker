@@ -11,8 +11,12 @@
  */
 import pg from "pg";
 
+// AUTH_MODE=proxy means production behind ALB + Cognito → always RDS → always SSL.
+const ssl = process.env.AUTH_MODE === "proxy" ? { rejectUnauthorized: false } : false;
+
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl,
 });
 
 /** Workspace IDs already verified to exist in this process. */

@@ -224,7 +224,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       `DB_USER=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["username"])')`,
       `DB_PASS=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
       `APP_PASS=$(aws secretsmanager get-secret-value --secret-id expense-tracker/app-db-password --query SecretString --output text | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
-      `echo "MIGRATION_DATABASE_URL=postgresql://\${DB_USER}:\${DB_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker" > .env`,
+      `echo "MIGRATION_DATABASE_URL=postgresql://\${DB_USER}:\${DB_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker?sslmode=require" > .env`,
       `echo "APP_DB_PASSWORD=\${APP_PASS}" >> .env`,
       `echo "DATABASE_URL=postgresql://app:\${APP_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker" >> .env`,
       'echo "AUTH_MODE=proxy" >> .env',
