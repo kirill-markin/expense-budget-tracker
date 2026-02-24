@@ -181,6 +181,25 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       "chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
     ];
 
+    // Shared .env generation commands (used by UserData and SSM Deploy Document).
+    // Reads secrets from Secrets Manager and writes .env at repo root.
+    // Re-run on every deploy so config changes take effect without instance recreation.
+    const writeEnvCommands: ReadonlyArray<string> = [
+      `DB_SECRET=$(aws secretsmanager get-secret-value --secret-id expense-tracker/db-credentials --query SecretString --output text)`,
+      `DB_USER=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["username"])')`,
+      `DB_PASS=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
+      `APP_PASS=$(aws secretsmanager get-secret-value --secret-id expense-tracker/app-db-password --query SecretString --output text | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
+      `echo "MIGRATION_DATABASE_URL=postgresql://\${DB_USER}:\${DB_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker?sslmode=require" > .env`,
+      `echo "APP_DB_PASSWORD=\${APP_PASS}" >> .env`,
+      `echo "DATABASE_URL=postgresql://app:\${APP_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker" >> .env`,
+      'echo "AUTH_MODE=proxy" >> .env',
+      'echo "AUTH_PROXY_HEADER=x-amzn-oidc-data" >> .env',
+      'echo "HOST=0.0.0.0" >> .env',
+      `echo "CORS_ORIGIN=https://${appDomain}" >> .env`,
+      `echo "COGNITO_DOMAIN=${authDomain}" >> .env`,
+      `echo "COGNITO_CLIENT_ID=${userPoolClient.userPoolClientId}" >> .env`,
+    ];
+
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       "#!/bin/bash",
@@ -219,20 +238,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       "cd /home/ec2-user",
       `git clone https://github.com/${githubRepo}.git app`,
       "cd app",
-      // Write .env from Secrets Manager (owner role for migrations, app role for web)
-      `DB_SECRET=$(aws secretsmanager get-secret-value --secret-id expense-tracker/db-credentials --query SecretString --output text)`,
-      `DB_USER=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["username"])')`,
-      `DB_PASS=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
-      `APP_PASS=$(aws secretsmanager get-secret-value --secret-id expense-tracker/app-db-password --query SecretString --output text | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
-      `echo "MIGRATION_DATABASE_URL=postgresql://\${DB_USER}:\${DB_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker?sslmode=require" > .env`,
-      `echo "APP_DB_PASSWORD=\${APP_PASS}" >> .env`,
-      `echo "DATABASE_URL=postgresql://app:\${APP_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker" >> .env`,
-      'echo "AUTH_MODE=proxy" >> .env',
-      'echo "AUTH_PROXY_HEADER=x-amzn-oidc-data" >> .env',
-      'echo "HOST=0.0.0.0" >> .env',
-      `echo "CORS_ORIGIN=https://${appDomain}" >> .env`,
-      `echo "COGNITO_DOMAIN=${authDomain}" >> .env`,
-      `echo "COGNITO_CLIENT_ID=${userPoolClient.userPoolClientId}" >> .env`,
+      ...writeEnvCommands,
       // Run migrations (creates app role with APP_DB_PASSWORD) and start web
       // --env-file .env: compose project dir is infra/docker/ (from -f), but .env is at repo root
       // --no-deps: skip starting the postgres service (compose.yml defines it for local dev; on AWS we use RDS)
@@ -287,6 +293,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                 "fi",
                 "",
                 "git pull origin main",
+                ...writeEnvCommands,
                 "docker compose --env-file .env -f infra/docker/compose.yml build",
                 "docker compose --env-file .env -f infra/docker/compose.yml run --no-deps --rm migrate",
                 "docker compose --env-file .env -f infra/docker/compose.yml up --no-deps -d web",
