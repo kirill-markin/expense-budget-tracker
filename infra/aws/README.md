@@ -7,7 +7,7 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | Item | Cost | Why |
 |---|---|---|
 | Domain (`.com`, Cloudflare) | ~$10/year | Custom domain for the app (`app.yourdomain.com`) |
-| EC2 t3.small (24/7) | ~$15/month | Runs Next.js web app + site in Docker |
+| EC2 t3.small (24/7) | ~$15/month | Runs Next.js web app in Docker |
 | RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
 | NAT instance t4g.nano | ~$3/month | Outbound internet for Lambda in private subnet (FX rate fetching) |
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, Cognito auth integration, health checks |
@@ -36,13 +36,12 @@ If anything is missing:
 
 ```
 Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Docker) → RDS
-                                                  │                    │
-                                                  │  domain.com ──────▶ site:3001 (no auth)
-                                                  │  app.* ───────────▶ web:3000  (Cognito)
-                                                  │  auth.* ──────────▶ Cognito hosted UI
-                                                  │                    │
                                                   │                    ↓
                                                   │              Lambda (FX rates)
+                                                  │
+                                                  ├─ domain.com ──────▶ 302 redirect to app.*
+                                                  ├─ app.* ───────────▶ Cognito auth → web:3000
+                                                  └─ auth.* ──────────▶ Cognito hosted UI
 ```
 
 **Cloudflare** handles domain registration, DNS, CDN caching, DDoS protection, and edge TLS.
@@ -54,7 +53,7 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Do
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.nano for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
-- **EC2** (t3.small) running Docker Compose: web app + public site (Next.js)
+- **EC2** (t3.small) running Docker Compose: web app (Next.js)
 - **ALB** with HTTPS (Cloudflare Origin Certificate) + Cognito authentication (JWT via ALB auth action)
 - **Cognito User Pool** — managed auth with custom login domain (`auth.yourdomain.com`), no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
@@ -68,7 +67,7 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Do
 **On Cloudflare (via scripts):**
 
 - Domain registration
-- DNS CNAME `@` root domain (proxied) pointing to ALB — public site
+- DNS CNAME `@` root domain (proxied) pointing to ALB — redirects to `app.*`
 - DNS CNAME `app.*` (proxied) pointing to ALB — authenticated app
 - DNS CNAME `auth.*` (DNS-only) pointing to Cognito CloudFront
 - Origin Certificate for ALB HTTPS (imported into ACM)
@@ -262,27 +261,12 @@ Edit `cdk.context.local.json` with your values:
 | `authCertificateArn` | ACM certificate ARN from step 3e (public cert in `us-east-1` for `auth.myfinance.com`) |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
-| `siteRepo` | *(optional)* Git URL of a custom site repo (see below) |
 
 #### Custom public site (optional)
 
-By default, the root domain (`myfinance.com`) serves a redirect stub from `apps/site/`.
-To replace it with your own site:
+By default, the root domain (`myfinance.com`) redirects to `app.myfinance.com` via an ALB rule — no extra container or code needed.
 
-**On AWS:** add `siteRepo` to `cdk.context.local.json`:
-```json
-{
-  "siteRepo": "https://github.com/your-user/my-custom-site.git"
-}
-```
-CDK clones it to EC2 on first boot and CI/CD pulls updates on each deploy. No manual steps.
-
-**Without AWS (Hetzner, local, etc.):** set `SITE_PATH` in `.env`:
-```bash
-SITE_PATH=../my-custom-site make up
-```
-
-**Contract:** your repo must have a `Dockerfile` that listens on `PORT` (default `3001`) and accepts `APP_DOMAIN` env var (URL of the authenticated app, e.g. `https://app.myfinance.com`).
+To serve your own site on the root domain, deploy it independently (Vercel, Cloudflare Pages, your own server, etc.) and update the Cloudflare DNS CNAME for `@` (root) to point to your site's hosting instead of the ALB. This repo does not manage the public site — they are fully independent.
 
 ### 5. Bootstrap and deploy
 
@@ -333,11 +317,11 @@ No AWS keys stored in GitHub — uses OIDC federation.
 
 ## Domain routing
 
-Three domains, two containers on the same EC2 instance:
-
-- `domain.com` → ALB host-header rule → site container (port 3001, no auth)
-- `app.domain.com` → ALB default action → Cognito auth → web container (port 3000)
+- `domain.com` → ALB → 302 redirect to `app.domain.com` (no container, just an ALB rule)
+- `app.domain.com` → ALB → Cognito auth → web container (port 3000)
 - `auth.domain.com` → Cognito hosted UI (CloudFront)
+
+To serve your own site on `domain.com`, point its DNS to your site's hosting (Vercel, etc.). The ALB redirect becomes irrelevant since traffic no longer reaches it.
 
 ## Auth flow
 

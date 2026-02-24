@@ -32,10 +32,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     // SSH access via SSM Session Manager (no key pair needed)
     const alertEmail = this.node.tryGetContext("alertEmail") as string;
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
-    // Optional: git URL of a custom public site repo (replaces the default apps/site/ stub).
-    // If set, EC2 clones it on first boot and CI/CD pulls it on each deploy.
-    // The repo must have a Dockerfile that listens on PORT (default 3001) and accepts APP_DOMAIN env var.
-    const siteRepo = this.node.tryGetContext("siteRepo") as string | undefined;
 
     const appDomain = `app.${baseDomain}`;
     const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
@@ -77,7 +73,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       description: "EC2: allow traffic from ALB",
     });
     ec2Sg.addIngressRule(albSg, ec2.Port.tcp(3000), "ALB to web app");
-    ec2Sg.addIngressRule(albSg, ec2.Port.tcp(3001), "ALB to site");
 
     const dbSg = new ec2.SecurityGroup(this, "DbSg", {
       vpc,
@@ -231,18 +226,12 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       'echo "CORS_ORIGIN=*" >> .env',
       `echo "COGNITO_DOMAIN=${authDomain}" >> .env`,
       `echo "COGNITO_CLIENT_ID=${userPoolClient.userPoolClientId}" >> .env`,
-      `echo "APP_DOMAIN=https://${appDomain}" >> .env`,
-      // Clone custom site repo if configured
-      ...(siteRepo ? [
-        `git clone ${siteRepo} /home/ec2-user/custom-site`,
-        'echo "SITE_PATH=/home/ec2-user/custom-site" >> .env',
-      ] : []),
-      // Run migrations (creates app role with APP_DB_PASSWORD) and start web + site
+      // Run migrations (creates app role with APP_DB_PASSWORD) and start web
       // --env-file .env: compose project dir is infra/docker/ (from -f), but .env is at repo root
       "docker compose --env-file .env -f infra/docker/compose.yml up -d postgres",
       "sleep 5",
       "docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate",
-      "docker compose --env-file .env -f infra/docker/compose.yml up -d web site",
+      "docker compose --env-file .env -f infra/docker/compose.yml up -d web",
     );
 
     const ec2Role = new iam.Role(this, "Ec2Role", {
@@ -294,10 +283,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                 "fi",
                 "",
                 "git pull origin main",
-                "if [ -d /home/ec2-user/custom-site ]; then cd /home/ec2-user/custom-site && git pull origin main && cd /home/ec2-user/app; fi",
                 "docker compose --env-file .env -f infra/docker/compose.yml build",
                 "docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate",
-                "docker compose --env-file .env -f infra/docker/compose.yml up -d web site",
+                "docker compose --env-file .env -f infra/docker/compose.yml up -d web",
                 'echo "Deploy complete."',
               ],
             },
@@ -334,18 +322,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       },
     });
 
-    const siteTargetGroup = new elbv2.ApplicationTargetGroup(this, "SiteTg", {
-      vpc,
-      port: 3001,
-      protocol: elbv2.ApplicationProtocol.HTTP,
-      targets: [new elbv2_targets.InstanceTarget(instance, 3001)],
-      healthCheck: {
-        path: "/",
-        healthyHttpCodes: "200-399",
-        interval: cdk.Duration.seconds(30),
-      },
-    });
-
     // ALB listeners: HTTPS + Cognito auth, HTTP → HTTPS redirect
     const httpsListener = alb.addListener("HttpsListener", {
       port: 443,
@@ -365,11 +341,16 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       action: elbv2.ListenerAction.forward([targetGroup]),
     });
 
-    // Route base domain to site (no auth)
-    httpsListener.addAction("SiteRoute", {
+    // Base domain → redirect to app subdomain (no container needed).
+    // To serve your own site on the root domain, point its DNS elsewhere
+    // and this rule becomes irrelevant.
+    httpsListener.addAction("SiteRedirect", {
       priority: 2,
       conditions: [elbv2.ListenerCondition.hostHeaders([baseDomain])],
-      action: elbv2.ListenerAction.forward([siteTargetGroup]),
+      action: elbv2.ListenerAction.redirect({
+        host: appDomain,
+        permanent: false,
+      }),
     });
 
     alb.addListener("HttpRedirect", {
@@ -589,13 +570,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- Outputs ---
-    new cdk.CfnOutput(this, "SiteUrl", {
-      value: `https://${baseDomain}`,
-      description: "Public site URL",
-    });
     new cdk.CfnOutput(this, "AppUrl", {
       value: `https://${appDomain}`,
-      description: "Application URL",
+      description: "Application URL (base domain redirects here)",
     });
     new cdk.CfnOutput(this, "AlbDns", {
       value: alb.loadBalancerDnsName,

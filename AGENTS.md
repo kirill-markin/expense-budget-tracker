@@ -19,8 +19,7 @@ Open-source personal finance tracker: expenses, budgets, balances, transfers, an
 
 1. **web** (`apps/web/`) — Next.js app. UI dashboards and API routes for transactions, balances, budget, and FX data. SQL via `pg.Pool`.
 2. **worker** (`apps/worker/`) — TypeScript process that fetches daily exchange rates from ECB, CBR, and NBS into `exchange_rates`. Runs on a schedule (Docker) or as a Lambda (AWS).
-3. **site** (`apps/site/`) — Public site for the root domain. Default: redirect to app. Independent Next.js app, replaceable via `SITE_PATH`.
-4. **Postgres** — single source of truth. Schema in `db/migrations/`, views in `db/views/`, reference queries in `db/queries/`.
+3. **Postgres** — single source of truth. Schema in `db/migrations/`, views in `db/views/`, reference queries in `db/queries/`.
 
 ## Key paths
 
@@ -35,8 +34,7 @@ Open-source personal finance tracker: expenses, budgets, balances, transfers, an
 | `db/views/` | Postgres views (`accounts`) |
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |
 | `apps/web/src/server/demo/data.ts` | Static demo data for demo mode (no DB needed) |
-| `apps/site/` | Public site (default: redirect to app). Replace via `SITE_PATH` env var |
-| `infra/docker/compose.yml` | Local Docker Compose (Postgres + migrate + web + worker + site) |
+| `infra/docker/compose.yml` | Local Docker Compose (Postgres + migrate + web + worker) |
 | `infra/aws/` | AWS CDK stack (EC2, RDS, ALB/Cognito, Lambda, WAF) |
 | `scripts/migrate.sh` | Runs all migrations + views against `DATABASE_URL` |
 | `.env.example` | Environment variables reference |

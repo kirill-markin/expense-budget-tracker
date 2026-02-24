@@ -18,13 +18,6 @@ This runs `docker compose -f infra/docker/compose.yml up -d`, which starts:
 2. **migrate** — init container that runs `scripts/migrate.sh` (all migrations + views).
 3. **web** — Next.js app on `http://localhost:3000`.
 4. **worker** — TypeScript FX rate fetcher on a daily schedule.
-5. **site** — Public site on `http://localhost:3001`. Default: redirects to `localhost:3000`.
-
-To use a custom site instead of the default stub, set `SITE_PATH` to the directory containing your site's Dockerfile:
-
-```bash
-SITE_PATH=../my-custom-site make up
-```
 
 ### Demo mode
 

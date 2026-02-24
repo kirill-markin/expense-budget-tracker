@@ -5,16 +5,10 @@ Self-hosted open-source personal finance expense and budget tracker with balance
 ## Quick start
 
 ```bash
-make up    # start Postgres, run migrations, start web + worker + site
+make up    # start Postgres, run migrations, start web + worker
 ```
 
-Open `http://localhost:3000` (app) or `http://localhost:3001` (public site).
-
-To use a custom site instead of the default redirect stub:
-
-```bash
-SITE_PATH=../my-custom-site make up
-```
+Open `http://localhost:3000`.
 
 ### Demo mode
 
