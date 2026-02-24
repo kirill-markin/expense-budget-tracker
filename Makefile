@@ -22,5 +22,5 @@ test:
 	$(COMPOSE) run --rm worker npm test
 
 lint:
-	$(COMPOSE) run --rm web npm run lint
-	$(COMPOSE) run --rm worker npm run lint
+	cd apps/web && npm run lint
+	cd apps/worker && npm run lint
