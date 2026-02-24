@@ -24,6 +24,7 @@ type Props = Readonly<{
   monthEndBalances: Readonly<Record<string, number>>;
   initialMonthFrom: string;
   initialMonthTo: string;
+  reportingCurrency: string;
 }>;
 
 type CellValue = Readonly<{
@@ -851,7 +852,7 @@ const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 };
 
 export const BudgetTable = (props: Props): ReactElement => {
-  const { conversionWarnings, initialMonthFrom, initialMonthTo } = props;
+  const { conversionWarnings, initialMonthFrom, initialMonthTo, reportingCurrency } = props;
   const [maskLevel, setMaskLevel] = useState<MaskLevel>("hidden");
   const { commentedCells, fetchRange: fetchCommentRange, updateCell: updateCommentCell } = useCommentPresence(initialMonthFrom, initialMonthTo);
   const { toastMessage, copyToClipboard } = useCopyToast();
@@ -1253,7 +1254,7 @@ export const BudgetTable = (props: Props): ReactElement => {
           <strong>Currency conversion unavailable</strong>
           <span>
             No exchange rates found for: {currencyList}. Amounts in {conversionWarnings.length === 1 ? "this currency" : "these currencies"} cannot
-            be converted to USD. Cells mixing unconvertible currencies are highlighted in red.
+            be converted to {reportingCurrency}. Cells mixing unconvertible currencies are highlighted in red.
           </span>
         </div>
       )}

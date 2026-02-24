@@ -13,6 +13,7 @@ type Props = Readonly<{
   accounts: ReadonlyArray<AccountRow>;
   totals: ReadonlyArray<CurrencyTotal>;
   conversionWarnings: ReadonlyArray<ConversionWarning>;
+  reportingCurrency: string;
 }>;
 
 type SortDir = "asc" | "desc";
@@ -109,7 +110,7 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
 };
 
 export const BalancesTable = (props: Props): ReactElement => {
-  const { accounts, totals, conversionWarnings } = props;
+  const { accounts, totals, conversionWarnings, reportingCurrency } = props;
   const { maskLevel, setMaskLevel } = useDataMask();
   const maskClass = maskLevel === "all" ? "" : " data-masked";
   const { toastMessage, copyToClipboard } = useCopyToast();
@@ -229,7 +230,7 @@ export const BalancesTable = (props: Props): ReactElement => {
           <strong>Currency conversion unavailable</strong>
           <span>
             No exchange rates found for: {currencyList}. Amounts in {conversionWarnings.length === 1 ? "this currency" : "these currencies"} cannot
-            be converted to USD. Rows with missing rates are highlighted in red.
+            be converted to {reportingCurrency}. Rows with missing rates are highlighted in red.
           </span>
         </div>
       )}
@@ -246,7 +247,7 @@ export const BalancesTable = (props: Props): ReactElement => {
               {thTotals("Total +", "balancePositive", true)}
               {thTotals("Total -", "balanceNegative", true)}
               {thTotals("Balance", "balance", true)}
-              {thTotals("USD equivalent", "balanceUsd", true)}
+              {thTotals(`${reportingCurrency} equivalent`, "balanceUsd", true)}
             </tr>
           </thead>
           <tbody>
@@ -262,7 +263,7 @@ export const BalancesTable = (props: Props): ReactElement => {
               </tr>
             ))}
             <tr className="txn-row txn-row-total">
-              <td className="txn-cell txn-cell-bold">Total (USD)</td>
+              <td className="txn-cell txn-cell-bold">Total ({reportingCurrency})</td>
               <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{displayAmount(totalPositiveUsd)}</td>
               <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{displayAmount(totalNegativeUsd)}</td>
               <td className="txn-cell" />
@@ -296,7 +297,7 @@ export const BalancesTable = (props: Props): ReactElement => {
               {thAccounts("Account", "accountId", false)}
               {thAccounts("Currency", "currency", false)}
               {thAccounts("Balance", "balance", true)}
-              {thAccounts("Balance USD", "balanceUsd", true)}
+              {thAccounts(`Balance ${reportingCurrency}`, "balanceUsd", true)}
               <th
                 className="txn-th txn-th-sortable"
                 onClick={() => toggleAccountsSort("lastTransactionTs")}

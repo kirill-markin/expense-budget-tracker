@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 
 import { isDemoMode } from "@/lib/demoMode";
 import { getBalancesSummary } from "@/server/balances/getBalancesSummary";
+import { getReportCurrency } from "@/server/reportCurrency";
 import { getDemoBalancesSummary } from "@/server/demo/data";
 import { BalancesTable } from "@/ui/tables/BalancesTable";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
@@ -14,15 +15,18 @@ async function BalancesData() {
 
   if (demo) {
     const { accounts, totals, conversionWarnings } = getDemoBalancesSummary();
-    return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} />;
+    return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} reportingCurrency="USD" />;
   }
 
   const headersList = await headers();
   const userId = headersList.get("x-user-id") ?? "local";
   const workspaceId = headersList.get("x-workspace-id") ?? "local";
-  const { accounts, totals, conversionWarnings } = await getBalancesSummary(userId, workspaceId);
+  const [{ accounts, totals, conversionWarnings }, reportingCurrency] = await Promise.all([
+    getBalancesSummary(userId, workspaceId),
+    getReportCurrency(userId, workspaceId),
+  ]);
 
-  return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} />;
+  return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} reportingCurrency={reportingCurrency} />;
 }
 
 export default function BalancesDashboardPage() {

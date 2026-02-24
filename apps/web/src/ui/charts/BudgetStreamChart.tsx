@@ -11,6 +11,7 @@ import type { BudgetRow } from "@/server/budget/getBudgetGrid";
 type Props = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
   maskLevel: MaskLevel;
+  reportingCurrency: string;
 }>;
 
 type MonthRecord = { readonly date: Date; readonly [key: string]: number | Date };
@@ -123,7 +124,7 @@ const findClosestDateIndex = (
 };
 
 export const BudgetStreamChart = (props: Props): ReactElement => {
-  const { rows, maskLevel } = props;
+  const { rows, maskLevel, reportingCurrency } = props;
   const masked = maskLevel === "hidden";
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -427,7 +428,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
             />
 
             <text x={margin.left} y={margin.top - 10} fill="#898989" fontSize={11}>
-              USD
+              {reportingCurrency}
             </text>
             <text x={margin.left} y={yScale(0) - 6} fill="#898989" fontSize={10}>
               Income
@@ -496,7 +497,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
             </>
           )}
           {hover.hasUnconvertible && (
-            <div className="stream-tooltip-warn">* some currencies not converted to USD</div>
+            <div className="stream-tooltip-warn">* some currencies not converted to {reportingCurrency}</div>
           )}
         </div>
       )}

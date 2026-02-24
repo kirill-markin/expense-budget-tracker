@@ -18,13 +18,14 @@ type Props = Readonly<{
   initialRows: ReadonlyArray<BudgetRow>;
   initialMonthFrom: string;
   initialMonthTo: string;
+  reportingCurrency: string;
 }>;
 
 const buildUrl = (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): string =>
   `/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}&planFrom=${planFrom}&actualTo=${actualTo}`;
 
 export const BudgetStreamDashboard = (props: Props): ReactElement => {
-  const { initialRows, initialMonthFrom, initialMonthTo } = props;
+  const { initialRows, initialMonthFrom, initialMonthTo, reportingCurrency } = props;
 
   const [monthFrom, setMonthFrom] = useState<string>(initialMonthFrom);
   const [monthTo, setMonthTo] = useState<string>(initialMonthTo);
@@ -109,7 +110,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       {loading && <LoadingIndicator />}
 
       {!loading && error === null && (
-        <BudgetStreamChart rows={rows} maskLevel={maskLevel} />
+        <BudgetStreamChart rows={rows} maskLevel={maskLevel} reportingCurrency={reportingCurrency} />
       )}
     </>
   );

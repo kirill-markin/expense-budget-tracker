@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { offsetMonth, getCurrentMonth } from "@/lib/monthUtils";
 import { isDemoMode } from "@/lib/demoMode";
 import { getBudgetGrid } from "@/server/budget/getBudgetGrid";
+import { getReportCurrency } from "@/server/reportCurrency";
 import { getDemoBudgetGrid } from "@/server/demo/data";
 import { BudgetStreamDashboard } from "@/ui/charts/BudgetStreamDashboard";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
@@ -25,6 +26,7 @@ async function BudgetStreamData() {
         initialRows={rows}
         initialMonthFrom={monthFrom}
         initialMonthTo={monthTo}
+        reportingCurrency="USD"
       />
     );
   }
@@ -33,13 +35,17 @@ async function BudgetStreamData() {
   const userId = headersList.get("x-user-id") ?? "local";
   const workspaceId = headersList.get("x-workspace-id") ?? "local";
 
-  const { rows } = await getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth);
+  const [{ rows }, reportingCurrency] = await Promise.all([
+    getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth),
+    getReportCurrency(userId, workspaceId),
+  ]);
 
   return (
     <BudgetStreamDashboard
       initialRows={rows}
       initialMonthFrom={monthFrom}
       initialMonthTo={monthTo}
+      reportingCurrency={reportingCurrency}
     />
   );
 }

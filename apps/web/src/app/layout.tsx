@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 
 import { isDemoMode } from "@/lib/demoMode";
+import { getReportCurrency } from "@/server/reportCurrency";
 import { AccountMenu } from "@/ui/AccountMenu";
+import { CurrencySelector } from "@/ui/CurrencySelector";
 import { DemoModeToggle } from "@/ui/DemoModeToggle";
 
 import "./globals.css";
@@ -14,6 +17,14 @@ export const metadata: Metadata = {
 export default async function RootLayout(props: Readonly<{ children: React.ReactNode }>) {
   const { children } = props;
   const demo = await isDemoMode();
+
+  let reportingCurrency = "USD";
+  if (!demo) {
+    const headersList = await headers();
+    const userId = headersList.get("x-user-id") ?? "local";
+    const workspaceId = headersList.get("x-workspace-id") ?? "local";
+    reportingCurrency = await getReportCurrency(userId, workspaceId);
+  }
 
   return (
     <html lang="en">
@@ -35,6 +46,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
           <a href="/transactions">Transactions</a>
           <a href="/balances">Balances</a>
           <a href="/dashboards">Dashboard</a>
+          <CurrencySelector initialCurrency={reportingCurrency} />
         </nav>
         {children}
       </body>
