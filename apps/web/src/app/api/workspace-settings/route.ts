@@ -15,7 +15,7 @@ export const GET = async (request: Request): Promise<Response> => {
   try {
     const [reportingCurrency, availableCurrencies] = await Promise.all([
       getReportCurrency(userId, workspaceId),
-      getAvailableCurrencies(userId, workspaceId),
+      getAvailableCurrencies(),
     ]);
     return Response.json({ reportingCurrency, availableCurrencies });
   } catch (error) {

@@ -22,10 +22,14 @@ async function SettingsData() {
 
   const [reportingCurrency, availableCurrencies] = await Promise.all([
     getReportCurrency(userId, workspaceId),
-    getAvailableCurrencies(userId, workspaceId),
+    getAvailableCurrencies(),
   ]);
 
-  return <WorkspaceSettings reportingCurrency={reportingCurrency} availableCurrencies={availableCurrencies} />;
+  const currencies = availableCurrencies.includes(reportingCurrency)
+    ? availableCurrencies
+    : [...availableCurrencies, reportingCurrency].toSorted();
+
+  return <WorkspaceSettings reportingCurrency={reportingCurrency} availableCurrencies={currencies} />;
 }
 
 export default function SettingsPage() {

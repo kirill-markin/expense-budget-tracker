@@ -4,14 +4,14 @@
  * Queries exchange_rates for all distinct base currencies that have at least
  * one rate stored, then adds USD (the implicit quote currency).
  * The result is the set of currencies a workspace can use for reporting.
+ *
+ * Uses query() (no RLS context) because exchange_rates is a global table.
  */
-import { queryAs } from "@/server/db";
+import { query } from "@/server/db";
 
 /** Returns sorted array of currency codes that have exchange rates available. */
-export const getAvailableCurrencies = async (userId: string, workspaceId: string): Promise<ReadonlyArray<string>> => {
-  const result = await queryAs(
-    userId,
-    workspaceId,
+export const getAvailableCurrencies = async (): Promise<ReadonlyArray<string>> => {
+  const result = await query(
     "SELECT DISTINCT base_currency FROM exchange_rates ORDER BY base_currency",
     [],
   );

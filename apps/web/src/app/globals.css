@@ -1030,8 +1030,6 @@ tbody tr:last-child .budget-cm-actual {
 .currency-label {
   margin-left: auto;
   font-size: 12px;
-  padding: 4px 8px;
-  border: 1px solid var(--panel-border);
   color: var(--muted);
   letter-spacing: 0.5px;
 }
