@@ -28,12 +28,6 @@ async function TransactionsData() {
 export default function TransactionsDashboardPage() {
   return (
     <main className="container">
-      <nav className="breadcrumbs">
-        <a href="/">Home</a>
-        <span className="breadcrumbs-sep">/</span>
-        <span>Transactions</span>
-      </nav>
-
       <section className="panel">
         <h1 className="title">Transactions</h1>
 

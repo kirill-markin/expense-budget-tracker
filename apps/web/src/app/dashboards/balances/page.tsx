@@ -28,12 +28,6 @@ async function BalancesData() {
 export default function BalancesDashboardPage() {
   return (
     <main className="container">
-      <nav className="breadcrumbs">
-        <a href="/">Home</a>
-        <span className="breadcrumbs-sep">/</span>
-        <span>Balances</span>
-      </nav>
-
       <section className="panel">
         <h1 className="title">Balances</h1>
 

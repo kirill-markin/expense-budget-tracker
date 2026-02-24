@@ -47,14 +47,8 @@ async function BudgetStreamData() {
 export default function BudgetStreamPage() {
   return (
     <main className="container">
-      <nav className="breadcrumbs">
-        <a href="/">Home</a>
-        <span className="breadcrumbs-sep">/</span>
-        <span>Budget Stream</span>
-      </nav>
-
       <section className="panel">
-        <h1 className="title">Budget Stream</h1>
+        <h1 className="title">Dashboard</h1>
 
         <Suspense fallback={<LoadingIndicator />}>
           <BudgetStreamData />

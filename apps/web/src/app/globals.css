@@ -101,9 +101,13 @@ a:hover {
 .nav {
   display: flex;
   gap: 12px;
-  margin: 0 0 18px;
+  padding: 0 16px 12px;
   align-items: center;
   flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 50;
 }
 
 .badge {

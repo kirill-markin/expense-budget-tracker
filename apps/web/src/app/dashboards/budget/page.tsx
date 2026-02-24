@@ -54,12 +54,6 @@ async function BudgetData() {
 export default function BudgetDashboardPage() {
   return (
     <main className="container">
-      <nav className="breadcrumbs">
-        <a href="/">Home</a>
-        <span className="breadcrumbs-sep">/</span>
-        <span>Budget</span>
-      </nav>
-
       <section className="panel">
         <h1 className="title">Budget</h1>
 

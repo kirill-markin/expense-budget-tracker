@@ -24,12 +24,18 @@ export default async function RootLayout(props: Readonly<{ children: React.React
           </div>
         )}
         <header className="topbar">
-          <a href="/" className="topbar-brand">expense-budget-tracker</a>
+          <a href="/" className="topbar-brand">Expense Budget Tracker</a>
           <div className="topbar-actions">
             <DemoModeToggle isDemoMode={demo} />
             <AccountMenu authEnabled={process.env.AUTH_MODE === "proxy"} />
           </div>
         </header>
+        <nav className="nav">
+          <a href="/dashboards/budget">Budget</a>
+          <a href="/dashboards/budget-stream">Dashboard</a>
+          <a href="/dashboards/transactions">Transactions</a>
+          <a href="/dashboards/balances">Balances</a>
+        </nav>
         {children}
       </body>
     </html>
