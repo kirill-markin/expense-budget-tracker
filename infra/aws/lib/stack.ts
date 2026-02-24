@@ -344,7 +344,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     // Base domain → redirect to app subdomain (no container needed).
     // To serve your own site on the root domain, point its DNS elsewhere
     // and this rule becomes irrelevant.
-    httpsListener.addAction("SiteRedirect", {
+    httpsListener.addAction("SiteRoute", {
       priority: 2,
       conditions: [elbv2.ListenerCondition.hostHeaders([baseDomain])],
       action: elbv2.ListenerAction.redirect({
