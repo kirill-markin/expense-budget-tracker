@@ -510,12 +510,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
-    if (db.secret) {
-      db.secret.grantRead(fxFetcher);
-      fxFetcher.addEnvironment("DB_SECRET_ARN", db.secret.secretArn);
-      fxFetcher.addEnvironment("DB_HOST", db.dbInstanceEndpointAddress);
-      fxFetcher.addEnvironment("DB_NAME", "tracker");
-    }
+    appDbSecret.grantRead(fxFetcher);
+    fxFetcher.addEnvironment("DB_SECRET_ARN", appDbSecret.secretArn);
+    fxFetcher.addEnvironment("DB_HOST", db.dbInstanceEndpointAddress);
+    fxFetcher.addEnvironment("DB_NAME", "tracker");
 
     // EventBridge: daily at 08:00 UTC
     new events.Rule(this, "FxSchedule", {
