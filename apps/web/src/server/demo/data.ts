@@ -48,6 +48,11 @@ const PATTERNS: ReadonlyArray<Pattern> = [
   { account: "checking-usd", currency: "USD", kind: "spend",  category: "Big purchases", counterparty: "Apple Store",   amount: -1800, jitter: 300, day: 20, every: 11, offset: 2 },
   { account: "checking-usd", currency: "USD", kind: "spend",  category: "Big purchases", counterparty: "IKEA",          amount: -950,  jitter: 200, day: 10, every: 11, offset: 9 },
   { account: "checking-usd", currency: "USD", kind: "spend",  category: "Gifts",         counterparty: "Amazon",        amount: -120,  jitter: 50,  day: 14, every: 3, offset: 1 },
+  { account: "checking-usd", currency: "USD", kind: "income", category: "Other",         counterparty: "Cash Back",     amount: 35,    jitter: 15,  day: 25, every: 2, offset: 1 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Other",         counterparty: "Misc Purchase", amount: -45,   jitter: 20,  day: 19, every: 2, offset: 0 },
+  { account: "checking-eur", currency: "EUR", kind: "spend",  category: "Other",         counterparty: "Misc",          amount: -25,   jitter: 10,  day: 23, every: 4, offset: 2 },
+  { account: "checking-usd", currency: "USD", kind: "income", category: "Adjustment",    counterparty: "Balance correction", amount: 22, jitter: 12, day: 28, every: 6, offset: 3 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Adjustment",    counterparty: "Balance correction", amount: -15, jitter: 8, day: 28, every: 6, offset: 0 },
 ];
 
 type Transfer = Readonly<{
@@ -77,6 +82,10 @@ const BUDGET_PLAN: ReadonlyArray<Readonly<{ direction: string; category: string;
   { direction: "spend",  category: "Future taxes",    planned: 800 },
   { direction: "spend",  category: "Big purchases",   planned: 300 },
   { direction: "spend",  category: "Gifts",           planned: 100 },
+  { direction: "income", category: "Other",            planned: 20 },
+  { direction: "spend",  category: "Other",            planned: 50 },
+  { direction: "income", category: "Adjustment",       planned: 0 },
+  { direction: "spend",  category: "Adjustment",       planned: 0 },
 ];
 
 const ACCOUNT_CURRENCIES: Readonly<Record<string, string>> = {
@@ -108,6 +117,7 @@ const noteFor = (category: string, monthAbbr: string): string | null => {
   if (category === "Subscriptions") return "Monthly plan";
   if (category === "Future taxes") return `${monthAbbr} estimated taxes`;
   if (category === "Gifts") return "Gift";
+  if (category === "Adjustment") return "Balance correction";
   return null;
 };
 
