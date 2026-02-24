@@ -1,64 +1,260 @@
 /**
- * Static demo data for demo mode. All values are pre-computed from the
- * equivalent of db/seeds/demo.sql. No database access.
- *
- * Each exported function matches the return type of its real server counterpart.
+ * Dynamic demo data generator. Data is generated relative to the current month
+ * so the demo always looks fresh. To adjust: edit PATTERNS, TRANSFERS, or BUDGET_PLAN.
  */
-import type { AccountRow, BalancesSummaryResult, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
-import type { BudgetGridResult, BudgetRow, CumulativeBefore } from "@/server/budget/getBudgetGrid";
+import type { AccountRow, BalancesSummaryResult, CurrencyTotal } from "@/server/balances/getBalancesSummary";
+import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
 import type { FxBreakdownResult, FxBreakdownRow } from "@/server/budget/getFxBreakdown";
 import type { AccountOption, LedgerEntry, TransactionsFilter, TransactionsPage } from "@/server/transactions/getTransactions";
-import { generateMonthRange } from "@/lib/monthUtils";
+import { generateMonthRange, getCurrentMonth, offsetMonth } from "@/lib/monthUtils";
 
 // ---------------------------------------------------------------------------
-// Raw demo entries (sorted by ts DESC — default for transactions)
+// Config — edit these to change demo content
 // ---------------------------------------------------------------------------
 
-const DEMO_ENTRIES: ReadonlyArray<LedgerEntry> = [
-  { entryId: "e016", eventId: "ev016", ts: "2026-02-12T09:30:00.000Z", accountId: "checking-usd", amount: -200, amountUsd: -200, currency: "USD", kind: "spend", category: "utilities", counterparty: "Electric Co", note: "Feb electricity" },
-  { entryId: "e015", eventId: "ev015", ts: "2026-02-10T16:45:00.000Z", accountId: "checking-gbp", amount: -30, amountUsd: -37.2, currency: "GBP", kind: "spend", category: "subscriptions", counterparty: "Streaming Co", note: "Monthly plan" },
-  { entryId: "e022", eventId: "ev022", ts: "2026-02-08T08:00:00.000Z", accountId: "checking-usd", amount: -500, amountUsd: -500, currency: "USD", kind: "transfer", category: null, counterparty: null, note: "To GBP account" },
-  { entryId: "e023", eventId: "ev022", ts: "2026-02-08T08:00:00.000Z", accountId: "checking-gbp", amount: 400, amountUsd: 496, currency: "GBP", kind: "transfer", category: null, counterparty: null, note: "From USD account" },
-  { entryId: "e002", eventId: "ev002", ts: "2026-02-05T09:00:00.000Z", accountId: "checking-usd", amount: 5000, amountUsd: 5000, currency: "USD", kind: "income", category: "salary", counterparty: "Employer Inc", note: "Feb salary" },
-  { entryId: "e014", eventId: "ev014", ts: "2026-02-01T11:00:00.000Z", accountId: "checking-usd", amount: -1500, amountUsd: -1500, currency: "USD", kind: "spend", category: "rent", counterparty: "Landlord LLC", note: "Feb rent" },
-  { entryId: "e013", eventId: "ev013", ts: "2026-01-22T20:00:00.000Z", accountId: "checking-usd", amount: -85, amountUsd: -85, currency: "USD", kind: "spend", category: "dining", counterparty: "Restaurant", note: "Dinner" },
-  { entryId: "e003", eventId: "ev003", ts: "2026-01-20T12:00:00.000Z", accountId: "checking-eur", amount: 800, amountUsd: 823.2, currency: "EUR", kind: "income", category: "freelance", counterparty: "Client GmbH", note: "Consulting" },
-  { entryId: "e012", eventId: "ev012", ts: "2026-01-15T14:20:00.000Z", accountId: "checking-eur", amount: -45, amountUsd: -46.31, currency: "EUR", kind: "spend", category: "transport", counterparty: "Deutsche Bahn", note: "Train ticket" },
-  { entryId: "e011", eventId: "ev011", ts: "2026-01-12T10:00:00.000Z", accountId: "checking-usd", amount: -1500, amountUsd: -1500, currency: "USD", kind: "spend", category: "rent", counterparty: "Landlord LLC", note: "Jan rent" },
-  { entryId: "e020", eventId: "ev020", ts: "2026-01-10T08:00:00.000Z", accountId: "checking-usd", amount: -2000, amountUsd: -2000, currency: "USD", kind: "transfer", category: null, counterparty: null, note: "To savings" },
-  { entryId: "e021", eventId: "ev020", ts: "2026-01-10T08:00:00.000Z", accountId: "savings-usd", amount: 2000, amountUsd: 2000, currency: "USD", kind: "transfer", category: null, counterparty: null, note: "From checking" },
-  { entryId: "e010", eventId: "ev010", ts: "2026-01-08T18:30:00.000Z", accountId: "checking-usd", amount: -120.5, amountUsd: -120.5, currency: "USD", kind: "spend", category: "groceries", counterparty: "Whole Foods", note: null },
-  { entryId: "e001", eventId: "ev001", ts: "2026-01-05T09:00:00.000Z", accountId: "checking-usd", amount: 5000, amountUsd: 5000, currency: "USD", kind: "income", category: "salary", counterparty: "Employer Inc", note: "Jan salary" },
+const FX: Readonly<Record<string, number>> = { USD: 1, EUR: 1.029, GBP: 1.24 };
+const PAST_MONTHS = 12;
+const FUTURE_MONTHS = 12;
+
+type Pattern = Readonly<{
+  account: string;
+  currency: string;
+  kind: "income" | "spend";
+  category: string;
+  counterparty: string;
+  amount: number;
+  jitter: number;
+  day: number;
+  every: number;
+  offset: number;
+}>;
+
+// Each pattern fires when (monthIndex % every === offset). monthIndex 0 = oldest, 11 = current.
+const PATTERNS: ReadonlyArray<Pattern> = [
+  { account: "checking-usd", currency: "USD", kind: "income", category: "salary",       counterparty: "Employer Inc",  amount: 5000,  jitter: 0,   day: 5,  every: 1, offset: 0 },
+  { account: "checking-eur", currency: "EUR", kind: "income", category: "freelance",     counterparty: "Client GmbH",  amount: 800,   jitter: 200, day: 20, every: 3, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "rent",          counterparty: "Landlord LLC",  amount: -1500, jitter: 0,   day: 1,  every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "groceries",     counterparty: "Whole Foods",   amount: -150,  jitter: 50,  day: 8,  every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "dining",        counterparty: "Restaurant",    amount: -80,   jitter: 30,  day: 18, every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "utilities",     counterparty: "Electric Co",   amount: -180,  jitter: 40,  day: 12, every: 1, offset: 0 },
+  { account: "checking-gbp", currency: "GBP", kind: "spend",  category: "subscriptions", counterparty: "Streaming Co",  amount: -30,   jitter: 0,   day: 10, every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "transport",     counterparty: "Uber",          amount: -45,   jitter: 20,  day: 16, every: 2, offset: 0 },
+  { account: "checking-eur", currency: "EUR", kind: "spend",  category: "transport",     counterparty: "Deutsche Bahn", amount: -40,   jitter: 10,  day: 15, every: 2, offset: 1 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "entertainment", counterparty: "Cinema",        amount: -100,  jitter: 30,  day: 22, every: 3, offset: 1 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "healthcare",    counterparty: "City Medical",  amount: -200,  jitter: 80,  day: 20, every: 4, offset: 2 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "clothing",      counterparty: "Nordstrom",     amount: -180,  jitter: 70,  day: 25, every: 4, offset: 0 },
 ];
+
+type Transfer = Readonly<{
+  from: string; to: string;
+  fromCur: string; toCur: string;
+  fromAmt: number; toAmt: number;
+  day: number; every: number; offset: number;
+}>;
+
+const TRANSFERS: ReadonlyArray<Transfer> = [
+  { from: "checking-usd", to: "savings-usd",  fromCur: "USD", toCur: "USD", fromAmt: -2000, toAmt: 2000, day: 15, every: 3, offset: 1 },
+  { from: "checking-usd", to: "checking-gbp", fromCur: "USD", toCur: "GBP", fromAmt: -500,  toAmt: 400,  day: 8,  every: 6, offset: 3 },
+];
+
+const BUDGET_PLAN: ReadonlyArray<Readonly<{ direction: string; category: string; planned: number }>> = [
+  { direction: "income", category: "salary",       planned: 5000 },
+  { direction: "income", category: "freelance",    planned: 500 },
+  { direction: "spend",  category: "rent",          planned: 1500 },
+  { direction: "spend",  category: "groceries",     planned: 400 },
+  { direction: "spend",  category: "dining",         planned: 200 },
+  { direction: "spend",  category: "utilities",      planned: 200 },
+  { direction: "spend",  category: "subscriptions",  planned: 50 },
+  { direction: "spend",  category: "transport",      planned: 100 },
+  { direction: "spend",  category: "entertainment",  planned: 100 },
+  { direction: "spend",  category: "healthcare",     planned: 150 },
+  { direction: "spend",  category: "clothing",       planned: 200 },
+];
+
+const ACCOUNT_CURRENCIES: Readonly<Record<string, string>> = {
+  "checking-usd": "USD", "checking-eur": "EUR", "checking-gbp": "GBP", "savings-usd": "USD",
+};
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+const MONTH_ABBRS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const hash = (s: string): number => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return h;
+};
+
+const vary = (month: string, idx: number, range: number): number =>
+  range === 0 ? 0 : (Math.abs(hash(`${month}${idx}`)) % (range * 2 + 1)) - range;
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+const noteFor = (category: string, monthAbbr: string): string | null => {
+  if (category === "salary") return `${monthAbbr} salary`;
+  if (category === "rent") return `${monthAbbr} rent`;
+  if (category === "utilities") return `${monthAbbr} electricity`;
+  if (category === "freelance") return "Consulting";
+  if (category === "subscriptions") return "Monthly plan";
+  return null;
+};
+
+// ---------------------------------------------------------------------------
+// Generator (memoized per month)
+// ---------------------------------------------------------------------------
+
+type DemoData = Readonly<{
+  entries: ReadonlyArray<LedgerEntry>;
+  accounts: ReadonlyArray<AccountRow>;
+  totals: ReadonlyArray<CurrencyTotal>;
+  budgetRows: ReadonlyArray<BudgetRow>;
+  monthEndBalances: Readonly<Record<string, number>>;
+  currencyNative: Readonly<Record<string, Readonly<Record<string, number>>>>;
+}>;
+
+let cached: { month: string; data: DemoData } | null = null;
+
+const generate = (): DemoData => {
+  const now = getCurrentMonth();
+  if (cached !== null && cached.month === now) return cached.data;
+
+  const pastMonths = Array.from({ length: PAST_MONTHS }, (_, i) => offsetMonth(now, i - PAST_MONTHS + 1));
+  const entries: Array<LedgerEntry> = [];
+  const actuals = new Map<string, number>();
+  const accBal: Record<string, number> = { "checking-usd": 0, "checking-eur": 0, "checking-gbp": 0, "savings-usd": 0 };
+  const monthEndBal: Record<string, number> = {};
+  const curNative: Record<string, Record<string, number>> = {};
+  let entryN = 0;
+  let eventN = 0;
+
+  monthEndBal[offsetMonth(pastMonths[0], -1)] = 0;
+  curNative[offsetMonth(pastMonths[0], -1)] = { USD: 0, EUR: 0, GBP: 0 };
+
+  for (let mi = 0; mi < pastMonths.length; mi++) {
+    const month = pastMonths[mi];
+    const [y, m] = month.split("-").map(Number);
+    const abbr = MONTH_ABBRS[m - 1];
+
+    for (let pi = 0; pi < PATTERNS.length; pi++) {
+      const p = PATTERNS[pi];
+      if (mi % p.every !== p.offset) continue;
+      const amount = p.amount + vary(month, pi, p.jitter);
+      const rate = FX[p.currency] ?? 1;
+      const amountUsd = round2(amount * rate);
+      entries.push({
+        entryId: `d${String(++entryN).padStart(3, "0")}`,
+        eventId: `ev${String(++eventN).padStart(3, "0")}`,
+        ts: new Date(Date.UTC(y, m - 1, Math.min(p.day, 28), 9 + (pi % 12))).toISOString(),
+        accountId: p.account, amount, amountUsd, currency: p.currency,
+        kind: p.kind, category: p.category, counterparty: p.counterparty, note: noteFor(p.category, abbr),
+      });
+      accBal[p.account] = round2((accBal[p.account] ?? 0) + amount);
+      const key = `${month}|${p.kind}|${p.category}`;
+      actuals.set(key, round2((actuals.get(key) ?? 0) + amountUsd));
+    }
+
+    let transferNet = 0;
+    for (let ti = 0; ti < TRANSFERS.length; ti++) {
+      const t = TRANSFERS[ti];
+      if (mi % t.every !== t.offset) continue;
+      const evId = `ev${String(++eventN).padStart(3, "0")}`;
+      const ts = new Date(Date.UTC(y, m - 1, Math.min(t.day, 28), 8)).toISOString();
+      const fromUsd = round2(t.fromAmt * (FX[t.fromCur] ?? 1));
+      const toUsd = round2(t.toAmt * (FX[t.toCur] ?? 1));
+      entries.push(
+        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.from, amount: t.fromAmt, amountUsd: fromUsd, currency: t.fromCur, kind: "transfer", category: null, counterparty: null, note: `To ${t.to}` },
+        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.to, amount: t.toAmt, amountUsd: toUsd, currency: t.toCur, kind: "transfer", category: null, counterparty: null, note: `From ${t.from}` },
+      );
+      accBal[t.from] = round2((accBal[t.from] ?? 0) + t.fromAmt);
+      accBal[t.to] = round2((accBal[t.to] ?? 0) + t.toAmt);
+      transferNet = round2(transferNet + fromUsd + toUsd);
+    }
+    actuals.set(`${month}|transfer|`, round2((actuals.get(`${month}|transfer|`) ?? 0) + transferNet));
+
+    let totalUsd = 0;
+    const nativeBal: Record<string, number> = { USD: 0, EUR: 0, GBP: 0 };
+    for (const [acc, bal] of Object.entries(accBal)) {
+      const cur = ACCOUNT_CURRENCIES[acc] ?? "USD";
+      nativeBal[cur] = round2((nativeBal[cur] ?? 0) + bal);
+      totalUsd = round2(totalUsd + bal * (FX[cur] ?? 1));
+    }
+    monthEndBal[month] = totalUsd;
+    curNative[month] = nativeBal;
+  }
+
+  entries.sort((a, b) => (a.ts > b.ts ? -1 : a.ts < b.ts ? 1 : 0));
+
+  // Account rows
+  const accounts: ReadonlyArray<AccountRow> = Object.entries(ACCOUNT_CURRENCIES)
+    .map(([accountId, currency]) => {
+      const balance = round2(accBal[accountId] ?? 0);
+      return {
+        accountId, currency, status: "active" as const, balance,
+        balanceUsd: round2(balance * (FX[currency] ?? 1)),
+        lastTransactionTs: entries.find((e) => e.accountId === accountId)?.ts ?? null,
+        overdue: false,
+      };
+    })
+    .sort((a, b) => a.accountId.localeCompare(b.accountId));
+
+  // Currency totals
+  const curMap: Record<string, { balance: number; usd: number }> = {};
+  for (const acc of accounts) {
+    const prev = curMap[acc.currency] ?? { balance: 0, usd: 0 };
+    curMap[acc.currency] = { balance: round2(prev.balance + acc.balance), usd: round2(prev.usd + (acc.balanceUsd ?? 0)) };
+  }
+  const totals: ReadonlyArray<CurrencyTotal> = Object.entries(curMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([currency, { balance, usd }]) => ({
+      currency, balance,
+      balancePositive: balance > 0 ? balance : 0,
+      balanceNegative: balance < 0 ? balance : 0,
+      balanceUsd: usd, hasUnconvertible: false,
+    }));
+
+  // Budget rows (past months with actuals + future months plan-only)
+  const allBudgetMonths = [...pastMonths, ...Array.from({ length: FUTURE_MONTHS }, (_, i) => offsetMonth(now, i + 1))];
+  const budgetRows: Array<BudgetRow> = [];
+  for (const month of allBudgetMonths) {
+    const isPast = month <= now;
+    for (const bp of BUDGET_PLAN) {
+      const key = `${month}|${bp.direction}|${bp.category}`;
+      const raw = actuals.get(key) ?? 0;
+      const actual = bp.direction === "spend" ? Math.abs(raw) : raw;
+      if (bp.planned === 0 && actual === 0) continue;
+      budgetRows.push({
+        month, direction: bp.direction, category: bp.category,
+        plannedBase: bp.planned, plannedModifier: 0, planned: bp.planned,
+        actual: isPast ? round2(actual) : 0, hasUnconvertible: false,
+      });
+    }
+    budgetRows.push({
+      month, direction: "transfer", category: "",
+      plannedBase: 0, plannedModifier: 0, planned: 0,
+      actual: isPast ? round2(actuals.get(`${month}|transfer|`) ?? 0) : 0,
+      hasUnconvertible: false,
+    });
+  }
+
+  const data: DemoData = { entries, accounts, totals, budgetRows, monthEndBalances: monthEndBal, currencyNative: curNative };
+  cached = { month: now, data };
+  return data;
+};
 
 // ---------------------------------------------------------------------------
 // Balances
 // ---------------------------------------------------------------------------
 
-const DEMO_ACCOUNTS: ReadonlyArray<AccountRow> = [
-  { accountId: "checking-eur", currency: "EUR", status: "active", balance: 755, balanceUsd: 786.71, lastTransactionTs: "2026-01-20T12:00:00.000Z", overdue: false },
-  { accountId: "checking-gbp", currency: "GBP", status: "active", balance: 370, balanceUsd: 464.35, lastTransactionTs: "2026-02-10T16:45:00.000Z", overdue: false },
-  { accountId: "checking-usd", currency: "USD", status: "active", balance: 4094.5, balanceUsd: 4094.5, lastTransactionTs: "2026-02-12T09:30:00.000Z", overdue: false },
-  { accountId: "savings-usd", currency: "USD", status: "active", balance: 2000, balanceUsd: 2000, lastTransactionTs: null, overdue: false },
-];
-
-const DEMO_TOTALS: ReadonlyArray<CurrencyTotal> = [
-  { currency: "EUR", balance: 755, balancePositive: 755, balanceNegative: 0, balanceUsd: 786.71, hasUnconvertible: false },
-  { currency: "GBP", balance: 370, balancePositive: 370, balanceNegative: 0, balanceUsd: 464.35, hasUnconvertible: false },
-  { currency: "USD", balance: 6094.5, balancePositive: 6094.5, balanceNegative: 0, balanceUsd: 6094.5, hasUnconvertible: false },
-];
-
-const DEMO_CONVERSION_WARNINGS: ReadonlyArray<ConversionWarning> = [];
-
-export const getDemoBalancesSummary = (): BalancesSummaryResult => ({
-  accounts: DEMO_ACCOUNTS,
-  totals: DEMO_TOTALS,
-  conversionWarnings: DEMO_CONVERSION_WARNINGS,
-});
+export const getDemoBalancesSummary = (): BalancesSummaryResult => {
+  const { accounts, totals } = generate();
+  return { accounts, totals, conversionWarnings: [] };
+};
 
 // ---------------------------------------------------------------------------
-// Transactions (with client-side filter/sort/paginate)
+// Transactions
 // ---------------------------------------------------------------------------
 
 const SORT_ACCESSORS: Readonly<Record<string, (e: LedgerEntry) => string | number>> = {
@@ -83,18 +279,12 @@ const applyFilter = (entries: ReadonlyArray<LedgerEntry>, filter: TransactionsFi
     const to = filter.dateTo + "T23:59:59.999999";
     result = result.filter((e) => e.ts < to);
   }
-  if (filter.accountId !== null) {
-    result = result.filter((e) => e.accountId === filter.accountId);
-  }
-  if (filter.kind !== null) {
-    result = result.filter((e) => e.kind === filter.kind);
-  }
+  if (filter.accountId !== null) result = result.filter((e) => e.accountId === filter.accountId);
+  if (filter.kind !== null) result = result.filter((e) => e.kind === filter.kind);
   if (filter.category !== null) {
-    if (filter.category === "") {
-      result = result.filter((e) => e.category === null);
-    } else {
-      result = result.filter((e) => e.category === filter.category);
-    }
+    result = filter.category === ""
+      ? result.filter((e) => e.category === null)
+      : result.filter((e) => e.category === filter.category);
   }
   return result;
 };
@@ -104,60 +294,23 @@ const applySort = (entries: ReadonlyArray<LedgerEntry>, sortKey: string, sortDir
   const sorted = [...entries].sort((a, b) => {
     const va = accessor(a);
     const vb = accessor(b);
-    if (va < vb) return -1;
-    if (va > vb) return 1;
-    return 0;
+    return va < vb ? -1 : va > vb ? 1 : 0;
   });
   return sortDir === "desc" ? sorted.reverse() : sorted;
 };
 
 export const getDemoTransactionsPage = (filter: TransactionsFilter): TransactionsPage => {
-  const filtered = applyFilter(DEMO_ENTRIES, filter);
+  const filtered = applyFilter(generate().entries, filter);
   const sorted = applySort(filtered, filter.sortKey, filter.sortDir);
-  const page = sorted.slice(filter.offset, filter.offset + filter.limit);
-  return { entries: page, total: filtered.length };
+  return { entries: sorted.slice(filter.offset, filter.offset + filter.limit), total: filtered.length };
 };
 
-export const getDemoAccounts = (): ReadonlyArray<AccountOption> => [
-  { accountId: "checking-eur" },
-  { accountId: "checking-gbp" },
-  { accountId: "checking-usd" },
-  { accountId: "savings-usd" },
-];
+export const getDemoAccounts = (): ReadonlyArray<AccountOption> =>
+  Object.keys(ACCOUNT_CURRENCIES).sort().map((accountId) => ({ accountId }));
 
 // ---------------------------------------------------------------------------
 // Budget grid
 // ---------------------------------------------------------------------------
-
-const DEMO_BUDGET_ROWS: ReadonlyArray<BudgetRow> = [
-  // Jan 2026
-  { month: "2026-01", direction: "income", category: "freelance", plannedBase: 500, plannedModifier: 0, planned: 500, actual: 823.2, hasUnconvertible: false },
-  { month: "2026-01", direction: "income", category: "salary", plannedBase: 5000, plannedModifier: 0, planned: 5000, actual: 5000, hasUnconvertible: false },
-  { month: "2026-01", direction: "spend", category: "dining", plannedBase: 200, plannedModifier: 0, planned: 200, actual: 85, hasUnconvertible: false },
-  { month: "2026-01", direction: "spend", category: "groceries", plannedBase: 400, plannedModifier: -100, planned: 300, actual: 120.5, hasUnconvertible: false },
-  { month: "2026-01", direction: "spend", category: "rent", plannedBase: 1500, plannedModifier: 0, planned: 1500, actual: 1500, hasUnconvertible: false },
-  { month: "2026-01", direction: "spend", category: "transport", plannedBase: 100, plannedModifier: 0, planned: 100, actual: 46.31, hasUnconvertible: false },
-  { month: "2026-01", direction: "transfer", category: "", plannedBase: 0, plannedModifier: 0, planned: 0, actual: 0, hasUnconvertible: false },
-  // Feb 2026
-  { month: "2026-02", direction: "income", category: "salary", plannedBase: 5000, plannedModifier: 0, planned: 5000, actual: 5000, hasUnconvertible: false },
-  { month: "2026-02", direction: "spend", category: "groceries", plannedBase: 400, plannedModifier: 0, planned: 400, actual: 0, hasUnconvertible: false },
-  { month: "2026-02", direction: "spend", category: "rent", plannedBase: 1500, plannedModifier: 0, planned: 1500, actual: 1500, hasUnconvertible: false },
-  { month: "2026-02", direction: "spend", category: "subscriptions", plannedBase: 50, plannedModifier: 0, planned: 50, actual: 37.2, hasUnconvertible: false },
-  { month: "2026-02", direction: "spend", category: "utilities", plannedBase: 250, plannedModifier: 0, planned: 250, actual: 200, hasUnconvertible: false },
-  { month: "2026-02", direction: "transfer", category: "", plannedBase: 0, plannedModifier: 0, planned: 0, actual: -4, hasUnconvertible: false },
-];
-
-const DEMO_CUMULATIVE_BEFORE: CumulativeBefore = {
-  incomeActual: 0,
-  spendActual: 0,
-  transferActual: 0,
-};
-
-const DEMO_MONTH_END_BALANCES: Readonly<Record<string, number>> = {
-  "2025-12": 0,
-  "2026-01": 5071.39,
-  "2026-02": 7345.56,
-};
 
 export const getDemoBudgetGrid = (
   monthFrom: string,
@@ -165,41 +318,35 @@ export const getDemoBudgetGrid = (
   _planFrom: string,
   _actualTo: string,
 ): BudgetGridResult => {
+  const { budgetRows, monthEndBalances } = generate();
   const months = new Set(generateMonthRange(monthFrom, monthTo));
-  const rows = DEMO_BUDGET_ROWS.filter((r) => months.has(r.month));
   return {
-    rows,
+    rows: budgetRows.filter((r) => months.has(r.month)),
     conversionWarnings: [],
-    cumulativeBefore: DEMO_CUMULATIVE_BEFORE,
-    monthEndBalances: DEMO_MONTH_END_BALANCES,
+    cumulativeBefore: { incomeActual: 0, spendActual: 0, transferActual: 0 },
+    monthEndBalances,
   };
 };
 
 // ---------------------------------------------------------------------------
-// Budget comments
+// Budget comments (relative to current month)
 // ---------------------------------------------------------------------------
 
-type CommentEntry = Readonly<{
-  month: string;
-  direction: string;
-  category: string;
-  comment: string;
-}>;
-
-const DEMO_COMMENTS: ReadonlyArray<CommentEntry> = [
-  { month: "2026-01", direction: "spend", category: "groceries", comment: "Reduced budget due to travel" },
-  { month: "2026-02", direction: "spend", category: "utilities", comment: "Expected higher bill this month" },
+const COMMENT_TEMPLATES: ReadonlyArray<Readonly<{ monthOffset: number; direction: string; category: string; comment: string }>> = [
+  { monthOffset: -1, direction: "spend", category: "groceries", comment: "Reduced budget due to travel" },
+  { monthOffset: 0, direction: "spend", category: "utilities", comment: "Expected higher bill this month" },
 ];
 
-export const getDemoLatestComment = (params: Readonly<{ month: string; direction: string; category: string }>): string | null => {
-  const match = DEMO_COMMENTS.find(
-    (c) => c.month === params.month && c.direction === params.direction && c.category === params.category,
-  );
-  return match?.comment ?? null;
+const resolveComments = (): ReadonlyArray<Readonly<{ month: string; direction: string; category: string; comment: string }>> => {
+  const now = getCurrentMonth();
+  return COMMENT_TEMPLATES.map((c) => ({ month: offsetMonth(now, c.monthOffset), direction: c.direction, category: c.category, comment: c.comment }));
 };
 
+export const getDemoLatestComment = (params: Readonly<{ month: string; direction: string; category: string }>): string | null =>
+  resolveComments().find((c) => c.month === params.month && c.direction === params.direction && c.category === params.category)?.comment ?? null;
+
 export const getDemoCommentedCells = (params: Readonly<{ monthFrom: string; monthTo: string }>): ReadonlyArray<CommentedCell> =>
-  DEMO_COMMENTS
+  resolveComments()
     .filter((c) => c.month >= params.monthFrom && c.month <= params.monthTo)
     .map((c) => ({ month: c.month, direction: c.direction, category: c.category }));
 
@@ -207,12 +354,20 @@ export const getDemoCommentedCells = (params: Readonly<{ monthFrom: string; mont
 // FX breakdown
 // ---------------------------------------------------------------------------
 
-const DEMO_FX_ROWS: ReadonlyArray<FxBreakdownRow> = [
-  { currency: "USD", openNative: 0, openRate: 1, openUsd: 0, deltaNative: 4794.5, closeNative: 4794.5, closeRate: 1, closeUsd: 4794.5, changeUsd: 4794.5 },
-  { currency: "EUR", openNative: 0, openRate: 1.0386, openUsd: 0, deltaNative: 755, closeNative: 755, closeRate: 1.035, closeUsd: 781.43, changeUsd: 781.43 },
-  { currency: "GBP", openNative: 0, openRate: 1.253, openUsd: 0, deltaNative: 0, closeNative: 0, closeRate: 1.24, closeUsd: 0, changeUsd: 0 },
-];
-
-export const getDemoFxBreakdown = (_month: string): FxBreakdownResult => ({
-  rows: DEMO_FX_ROWS,
-});
+export const getDemoFxBreakdown = (month: string): FxBreakdownResult => {
+  const { currencyNative } = generate();
+  const prev = offsetMonth(month, -1);
+  const open = currencyNative[prev] ?? { USD: 0, EUR: 0, GBP: 0 };
+  const close = currencyNative[month] ?? open;
+  const rows: ReadonlyArray<FxBreakdownRow> = (["USD", "EUR", "GBP"] as const).map((cur) => {
+    const rate = FX[cur] ?? 1;
+    const o = open[cur] ?? 0;
+    const c = close[cur] ?? 0;
+    return {
+      currency: cur, openNative: o, openRate: rate, openUsd: round2(o * rate),
+      deltaNative: round2(c - o), closeNative: c, closeRate: rate,
+      closeUsd: round2(c * rate), changeUsd: round2((c - o) * rate),
+    };
+  });
+  return { rows };
+};
