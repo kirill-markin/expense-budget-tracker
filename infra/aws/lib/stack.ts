@@ -37,6 +37,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     // Pass -c imageTag=<sha> for manual rollback to a specific version.
     const imageTag = (this.node.tryGetContext("imageTag") as string | undefined) ?? "latest";
 
+    // desiredCount: override with -c desiredCount=0 for first deploy (ECR repos empty,
+    // CloudFormation would hang waiting for tasks). bootstrap-ecr.sh uses this.
+    const desiredCount = Number(this.node.tryGetContext("desiredCount") ?? 1);
+
     const appDomain = `app.${baseDomain}`;
     const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
 
@@ -231,10 +235,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const webService = new ecs.FargateService(this, "WebService", {
       cluster,
       taskDefinition: webTaskDef,
-      desiredCount: 1,
+      desiredCount,
       assignPublicIp: false,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [ecsSg],
+      circuitBreaker: { enable: true },
     });
 
     // Auto-scaling: 1–3 tasks, scale on CPU. Hard cap at 3 to limit cost.

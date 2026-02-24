@@ -7,9 +7,10 @@
 #
 # What it does:
 #   1. CDK bootstrap (idempotent — safe to re-run)
-#   2. CDK deploy (creates VPC, RDS, ECR, ECS, ALB, etc.)
+#   2. CDK deploy with desiredCount=0 (creates all resources; ECS service has
+#      no tasks so CloudFormation doesn't hang waiting for missing images)
 #   3. Build and push web + migrate Docker images to ECR
-#   4. CDK deploy again (ECS picks up the images)
+#   4. CDK deploy again with desiredCount=1 (ECS starts tasks with the images)
 #
 # Required env vars:
 #   AWS_PROFILE — AWS CLI profile for the target account
@@ -52,10 +53,13 @@ cd "$CDK_DIR"
 npm ci --silent
 npx cdk bootstrap --region "$REGION"
 
-# --- Step 2: First CDK deploy (creates ECR repos, ECS service with no images) ---
+# --- Step 2: CDK deploy with desiredCount=0 ---
+# ECR repos are empty at this point. desiredCount=0 means CloudFormation
+# creates the ECS service with 0 tasks, so it reaches steady state immediately
+# and doesn't hang waiting for images that don't exist yet.
 echo ""
-echo "=== CDK deploy (infrastructure) ==="
-npx cdk deploy --all --require-approval never
+echo "=== CDK deploy (infrastructure, no tasks) ==="
+npx cdk deploy --all --require-approval never -c desiredCount=0
 
 # --- Step 3: Read stack outputs ---
 get_output() {
@@ -92,9 +96,11 @@ docker push "${WEB_REPO}:latest"
 echo "Pushing migrate image..."
 docker push "${MIGRATE_REPO}:latest"
 
-# --- Step 5: Redeploy so ECS picks up the images ---
+# --- Step 5: CDK deploy with desiredCount=1 (default) ---
+# Images are now in ECR. This deploy updates the service to desiredCount=1,
+# ECS starts tasks and pulls the images successfully.
 echo ""
-echo "=== CDK deploy (with images) ==="
+echo "=== CDK deploy (start service) ==="
 npx cdk deploy --all --require-approval never
 
 echo ""
