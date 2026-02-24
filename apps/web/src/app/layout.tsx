@@ -31,10 +31,10 @@ export default async function RootLayout(props: Readonly<{ children: React.React
           </div>
         </header>
         <nav className="nav">
-          <a href="/dashboards">Dashboard</a>
           <a href="/budget">Budget</a>
           <a href="/transactions">Transactions</a>
           <a href="/balances">Balances</a>
+          <a href="/dashboards">Dashboard</a>
         </nav>
         {children}
       </body>
