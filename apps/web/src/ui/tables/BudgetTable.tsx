@@ -1115,7 +1115,7 @@ export const BudgetTable = (props: Props): ReactElement => {
     el.scrollLeft += monthRect.left - containerRect.left - stickyWidth;
   }, [currentMonth]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     scrollToCurrentMonth();
   }, [scrollToCurrentMonth]);
 
