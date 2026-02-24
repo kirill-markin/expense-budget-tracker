@@ -28,25 +28,11 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Install worker deps (Lambda bundle references ../../apps/worker/)
-      - name: Install dependencies
-        run: |
-          npm ci --prefix apps/worker
-          npm ci --prefix infra/aws
-
-      # Deploy infrastructure + Lambda (creates ECR repos, ECS cluster, etc.)
-      - name: CDK deploy
-        working-directory: infra/aws
-        env:
-          CDK_CONTEXT: ${{ secrets.CDK_CONTEXT }}
-        run: |
-          echo "$CDK_CONTEXT" > cdk.context.local.json
-          npx cdk deploy --all --require-approval never
-
-      # Read stack outputs for image URIs and ECS resource names
+      # Read stack outputs (ECR repo URIs, ECS resource names).
+      # Outputs exist after the very first CDK deploy; on subsequent runs the
+      # role already has ECR/ECS permissions from the previous deploy.
       - name: Read stack outputs
         id: outputs
         run: |
@@ -63,7 +49,7 @@ jobs:
           echo "migrate_task=$(get_output MigrateTaskDefArn)" >> "$GITHUB_OUTPUT"
           echo "migrate_sg=$(get_output MigrateSecurityGroupId)" >> "$GITHUB_OUTPUT"
 
-      # Build and push Docker images (tagged with git SHA for rollback)
+      # Build and push Docker images first — CDK deploy references them by tag
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -92,6 +78,24 @@ jobs:
           platforms: linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Install worker deps (Lambda bundle references ../../apps/worker/)
+      - name: Install dependencies
+        run: |
+          npm ci --prefix apps/worker
+          npm ci --prefix infra/aws
+
+      # Deploy infrastructure + Lambda.
+      # imageTag tells CDK which image to put in the task definition — CDK creates
+      # a new task definition revision and updates the ECS service in one step.
+      - name: CDK deploy
+        working-directory: infra/aws
+        env:
+          CDK_CONTEXT: ${{ secrets.CDK_CONTEXT }}
+        run: |
+          echo "$CDK_CONTEXT" > cdk.context.local.json
+          npx cdk deploy --all --require-approval never \
+            -c imageTag=${{ github.sha }}
 
       # Run database migrations as a one-off ECS task
       - name: Run migrations
@@ -136,23 +140,3 @@ jobs:
           SERVICE: ${{ steps.outputs.outputs.service }}
           MIGRATE_TASK: ${{ steps.outputs.outputs.migrate_task }}
           MIGRATE_SG: ${{ steps.outputs.outputs.migrate_sg }}
-
-      # Update ECS service with new web image
-      - name: Deploy web service
-        run: |
-          aws ecs update-service \
-            --cluster "$CLUSTER" \
-            --service "$SERVICE" \
-            --force-new-deployment \
-            --query "service.serviceName" \
-            --output text
-
-          echo "Waiting for service stability..."
-          aws ecs wait services-stable \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE"
-
-          echo "Deployment complete."
-        env:
-          CLUSTER: ${{ steps.outputs.outputs.cluster }}
-          SERVICE: ${{ steps.outputs.outputs.service }}

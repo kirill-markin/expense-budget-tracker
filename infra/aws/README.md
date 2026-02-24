@@ -269,13 +269,20 @@ By default, the root domain (`myfinance.com`) redirects to `app.myfinance.com` v
 
 To serve your own site on the root domain, deploy it independently (Vercel, Cloudflare Pages, your own server, etc.) and update the Cloudflare DNS CNAME for `@` (root) to point to your site's hosting instead of the ALB. This repo does not manage the public site — they are fully independent.
 
-### 5. Bootstrap and deploy
+### 5. Bootstrap and first deploy
 
 ```bash
 export AWS_PROFILE=expense-tracker
-npx cdk bootstrap                       # first time only
-npx cdk deploy --require-approval never  # ~10-15 min
+bash scripts/bootstrap-ecr.sh --region eu-central-1  # ~15-20 min
 ```
+
+The script handles the full first-time deployment:
+1. `cdk bootstrap` (one-time CDK setup)
+2. `cdk deploy` (creates VPC, RDS, ECR, ECS, ALB, etc.)
+3. Builds and pushes Docker images (web + migrate) to ECR
+4. `cdk deploy` again so ECS picks up the images
+
+After this one-time bootstrap, all subsequent deploys happen automatically via CI/CD on push to `main`.
 
 After deploy completes, **create the DNS record** pointing to the ALB and configure SSL:
 
@@ -303,18 +310,19 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
 
 ## CI/CD (automatic deploys on push)
 
-CDK creates an IAM OIDC role for GitHub Actions.
+CDK creates an IAM OIDC role for GitHub Actions. Requires step 5 (first deploy + initial image push) to be completed first — CI/CD reads stack outputs and pushes to existing ECR repos.
 
 After first deploy:
 1. Copy `GithubDeployRoleArn` from CDK outputs
 2. In GitHub repo settings, add:
    - **Secret** `AWS_DEPLOY_ROLE_ARN` — the role ARN from step 1
+   - **Secret** `CDK_CONTEXT` — contents of `cdk.context.local.json`
    - **Variable** `AWS_REGION` — target region (e.g. `eu-central-1`)
 3. Every push to `main` will automatically:
-   - `cdk deploy` — update infrastructure + Lambda
    - Build and push Docker images to ECR (tagged with git SHA)
+   - `cdk deploy -c imageTag=<sha>` — update infrastructure, Lambda, and ECS task definitions with the new image
    - Run migration ECS task (one-off Fargate task)
-   - Update ECS service with new image (rolling deployment)
+   - ECS service updated by CDK (new task definition revision with the SHA-tagged image)
 
 No AWS keys stored in GitHub — uses OIDC federation.
 

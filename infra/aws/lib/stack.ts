@@ -33,6 +33,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
     const githubRepo = this.node.tryGetContext("githubRepo") as string;
 
+    // imageTag: passed by CI/CD (git SHA), defaults to "latest" for first deploy / manual runs
+    const imageTag = (this.node.tryGetContext("imageTag") as string | undefined) ?? "latest";
+
     const appDomain = `app.${baseDomain}`;
     const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
 
@@ -196,7 +199,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     webTaskDef.addContainer("web", {
-      image: ecs.ContainerImage.fromEcrRepository(webRepo, "latest"),
+      image: ecs.ContainerImage.fromEcrRepository(webRepo, imageTag),
       portMappings: [{ containerPort: 8080 }],
       environment: {
         AUTH_MODE: "proxy",
@@ -262,7 +265,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
 
     // Migration needs the DB owner (tracker) credentials to run DDL + create the app role.
     migrateTaskDef.addContainer("migrate", {
-      image: ecs.ContainerImage.fromEcrRepository(migrateRepo, "latest"),
+      image: ecs.ContainerImage.fromEcrRepository(migrateRepo, imageTag),
       environment: {
         DB_HOST: db.dbInstanceEndpointAddress,
         DB_NAME: "tracker",
@@ -577,7 +580,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
               new iam.PolicyStatement({
                 sid: "EcrPush",
                 actions: [
-                  "ecr:GetAuthorizationToken",
                   "ecr:BatchCheckLayerAvailability",
                   "ecr:GetDownloadUrlForLayer",
                   "ecr:BatchGetImage",
