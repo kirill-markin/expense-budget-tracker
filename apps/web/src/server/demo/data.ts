@@ -32,18 +32,22 @@ type Pattern = Readonly<{
 
 // Each pattern fires when (monthIndex % every === offset). monthIndex 0 = oldest, 11 = current.
 const PATTERNS: ReadonlyArray<Pattern> = [
-  { account: "checking-usd", currency: "USD", kind: "income", category: "salary",       counterparty: "Employer Inc",  amount: 5000,  jitter: 0,   day: 5,  every: 1, offset: 0 },
-  { account: "checking-eur", currency: "EUR", kind: "income", category: "freelance",     counterparty: "Client GmbH",  amount: 800,   jitter: 200, day: 20, every: 3, offset: 0 },
-  { account: "checking-usd", currency: "USD", kind: "spend",  category: "rent",          counterparty: "Landlord LLC",  amount: -1500, jitter: 0,   day: 1,  every: 1, offset: 0 },
-  { account: "checking-usd", currency: "USD", kind: "spend",  category: "groceries",     counterparty: "Whole Foods",   amount: -150,  jitter: 50,  day: 8,  every: 1, offset: 0 },
-  { account: "checking-usd", currency: "USD", kind: "spend",  category: "dining",        counterparty: "Restaurant",    amount: -80,   jitter: 30,  day: 18, every: 1, offset: 0 },
-  { account: "checking-usd", currency: "USD", kind: "spend",  category: "utilities",     counterparty: "Electric Co",   amount: -180,  jitter: 40,  day: 12, every: 1, offset: 0 },
-  { account: "checking-gbp", currency: "GBP", kind: "spend",  category: "subscriptions", counterparty: "Streaming Co",  amount: -30,   jitter: 0,   day: 10, every: 1, offset: 0 },
-  { account: "checking-usd", currency: "USD", kind: "spend",  category: "transport",     counterparty: "Uber",          amount: -45,   jitter: 20,  day: 16, every: 2, offset: 0 },
-  { account: "checking-eur", currency: "EUR", kind: "spend",  category: "transport",     counterparty: "Deutsche Bahn", amount: -40,   jitter: 10,  day: 15, every: 2, offset: 1 },
-  { account: "checking-usd", currency: "USD", kind: "spend",  category: "entertainment", counterparty: "Cinema",        amount: -100,  jitter: 30,  day: 22, every: 3, offset: 1 },
-  { account: "checking-usd", currency: "USD", kind: "spend",  category: "healthcare",    counterparty: "City Medical",  amount: -200,  jitter: 80,  day: 20, every: 4, offset: 2 },
-  { account: "checking-usd", currency: "USD", kind: "spend",  category: "clothing",      counterparty: "Nordstrom",     amount: -180,  jitter: 70,  day: 25, every: 4, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "income", category: "Salary",        counterparty: "Employer Inc",  amount: 5000,  jitter: 0,   day: 5,  every: 1, offset: 0 },
+  { account: "checking-eur", currency: "EUR", kind: "income", category: "Freelance",     counterparty: "Client GmbH",   amount: 800,   jitter: 200, day: 20, every: 3, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Rent",          counterparty: "Landlord LLC",  amount: -1500, jitter: 0,   day: 1,  every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Groceries",     counterparty: "Whole Foods",   amount: -150,  jitter: 50,  day: 8,  every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Dining",        counterparty: "Restaurant",    amount: -80,   jitter: 30,  day: 18, every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Utilities",     counterparty: "Electric Co",   amount: -180,  jitter: 40,  day: 12, every: 1, offset: 0 },
+  { account: "checking-gbp", currency: "GBP", kind: "spend",  category: "Subscriptions", counterparty: "Streaming Co",  amount: -30,   jitter: 0,   day: 10, every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Transport",     counterparty: "Uber",          amount: -45,   jitter: 20,  day: 16, every: 2, offset: 0 },
+  { account: "checking-eur", currency: "EUR", kind: "spend",  category: "Transport",     counterparty: "Deutsche Bahn", amount: -40,   jitter: 10,  day: 15, every: 2, offset: 1 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Entertainment", counterparty: "Cinema",        amount: -100,  jitter: 30,  day: 22, every: 3, offset: 1 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Healthcare",    counterparty: "City Medical",  amount: -200,  jitter: 80,  day: 20, every: 4, offset: 2 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Clothing",      counterparty: "Nordstrom",     amount: -180,  jitter: 70,  day: 25, every: 4, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Future taxes",  counterparty: "IRS estimated", amount: -800,  jitter: 0,   day: 15, every: 1, offset: 0 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Big purchases", counterparty: "Apple Store",   amount: -1800, jitter: 300, day: 20, every: 11, offset: 2 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Big purchases", counterparty: "IKEA",          amount: -950,  jitter: 200, day: 10, every: 11, offset: 9 },
+  { account: "checking-usd", currency: "USD", kind: "spend",  category: "Gifts",         counterparty: "Amazon",        amount: -120,  jitter: 50,  day: 14, every: 3, offset: 1 },
 ];
 
 type Transfer = Readonly<{
@@ -59,17 +63,20 @@ const TRANSFERS: ReadonlyArray<Transfer> = [
 ];
 
 const BUDGET_PLAN: ReadonlyArray<Readonly<{ direction: string; category: string; planned: number }>> = [
-  { direction: "income", category: "salary",       planned: 5000 },
-  { direction: "income", category: "freelance",    planned: 500 },
-  { direction: "spend",  category: "rent",          planned: 1500 },
-  { direction: "spend",  category: "groceries",     planned: 400 },
-  { direction: "spend",  category: "dining",         planned: 200 },
-  { direction: "spend",  category: "utilities",      planned: 200 },
-  { direction: "spend",  category: "subscriptions",  planned: 50 },
-  { direction: "spend",  category: "transport",      planned: 100 },
-  { direction: "spend",  category: "entertainment",  planned: 100 },
-  { direction: "spend",  category: "healthcare",     planned: 150 },
-  { direction: "spend",  category: "clothing",       planned: 200 },
+  { direction: "income", category: "Salary",        planned: 5000 },
+  { direction: "income", category: "Freelance",     planned: 500 },
+  { direction: "spend",  category: "Rent",           planned: 1500 },
+  { direction: "spend",  category: "Groceries",      planned: 400 },
+  { direction: "spend",  category: "Dining",          planned: 200 },
+  { direction: "spend",  category: "Utilities",       planned: 200 },
+  { direction: "spend",  category: "Subscriptions",   planned: 50 },
+  { direction: "spend",  category: "Transport",       planned: 100 },
+  { direction: "spend",  category: "Entertainment",   planned: 100 },
+  { direction: "spend",  category: "Healthcare",      planned: 150 },
+  { direction: "spend",  category: "Clothing",        planned: 200 },
+  { direction: "spend",  category: "Future taxes",    planned: 800 },
+  { direction: "spend",  category: "Big purchases",   planned: 300 },
+  { direction: "spend",  category: "Gifts",           planned: 100 },
 ];
 
 const ACCOUNT_CURRENCIES: Readonly<Record<string, string>> = {
@@ -94,11 +101,13 @@ const vary = (month: string, idx: number, range: number): number =>
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 const noteFor = (category: string, monthAbbr: string): string | null => {
-  if (category === "salary") return `${monthAbbr} salary`;
-  if (category === "rent") return `${monthAbbr} rent`;
-  if (category === "utilities") return `${monthAbbr} electricity`;
-  if (category === "freelance") return "Consulting";
-  if (category === "subscriptions") return "Monthly plan";
+  if (category === "Salary") return `${monthAbbr} salary`;
+  if (category === "Rent") return `${monthAbbr} rent`;
+  if (category === "Utilities") return `${monthAbbr} electricity`;
+  if (category === "Freelance") return "Consulting";
+  if (category === "Subscriptions") return "Monthly plan";
+  if (category === "Future taxes") return `${monthAbbr} estimated taxes`;
+  if (category === "Gifts") return "Gift";
   return null;
 };
 
@@ -333,8 +342,8 @@ export const getDemoBudgetGrid = (
 // ---------------------------------------------------------------------------
 
 const COMMENT_TEMPLATES: ReadonlyArray<Readonly<{ monthOffset: number; direction: string; category: string; comment: string }>> = [
-  { monthOffset: -1, direction: "spend", category: "groceries", comment: "Reduced budget due to travel" },
-  { monthOffset: 0, direction: "spend", category: "utilities", comment: "Expected higher bill this month" },
+  { monthOffset: -1, direction: "spend", category: "Groceries", comment: "Reduced budget due to travel" },
+  { monthOffset: 0, direction: "spend", category: "Utilities", comment: "Expected higher bill this month" },
 ];
 
 const resolveComments = (): ReadonlyArray<Readonly<{ month: string; direction: string; category: string; comment: string }>> => {
