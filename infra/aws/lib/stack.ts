@@ -233,10 +233,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       `echo "COGNITO_CLIENT_ID=${userPoolClient.userPoolClientId}" >> .env`,
       // Run migrations (creates app role with APP_DB_PASSWORD) and start web
       // --env-file .env: compose project dir is infra/docker/ (from -f), but .env is at repo root
-      "docker compose --env-file .env -f infra/docker/compose.yml up -d postgres",
-      "sleep 5",
-      "docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate",
-      "docker compose --env-file .env -f infra/docker/compose.yml up -d web",
+      // --no-deps: skip starting the postgres service (compose.yml defines it for local dev; on AWS we use RDS)
+      "docker compose --env-file .env -f infra/docker/compose.yml run --no-deps --rm migrate",
+      "docker compose --env-file .env -f infra/docker/compose.yml up --no-deps -d web",
       "chown -R ec2-user:ec2-user /home/ec2-user/app",
     );
 
@@ -287,8 +286,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                 "",
                 "git pull origin main",
                 "docker compose --env-file .env -f infra/docker/compose.yml build",
-                "docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate",
-                "docker compose --env-file .env -f infra/docker/compose.yml up -d web",
+                "docker compose --env-file .env -f infra/docker/compose.yml run --no-deps --rm migrate",
+                "docker compose --env-file .env -f infra/docker/compose.yml up --no-deps -d web",
                 "",
                 "# Wait for health check (up to 60s)",
                 "for i in $(seq 1 30); do",

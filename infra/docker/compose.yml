@@ -1,3 +1,7 @@
+# Local dev: `make up` starts all services (postgres + migrate + web + worker).
+# AWS (EC2): only migrate + web run via `--no-deps`; postgres is RDS,
+# and DATABASE_URL / MIGRATION_DATABASE_URL come from .env (--env-file).
+
 services:
   postgres:
     image: postgres:18
@@ -22,8 +26,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      MIGRATION_DATABASE_URL: postgresql://tracker:tracker@postgres:5432/tracker
-      APP_DB_PASSWORD: app
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql://tracker:tracker@postgres:5432/tracker}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-app}
     volumes:
       - ../../scripts:/scripts:ro
       - ../../db:/db:ro
@@ -38,7 +42,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://app:app@postgres:5432/tracker
+      DATABASE_URL: ${DATABASE_URL:-postgresql://app:app@postgres:5432/tracker}
       HOST: "0.0.0.0"
       PORT: "3000"
       AUTH_MODE: ${AUTH_MODE:-none}
