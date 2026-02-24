@@ -966,6 +966,8 @@ tbody tr:last-child .budget-cm-actual {
 }
 
 .account-menu-btn {
+  display: inline-flex;
+  align-items: center;
   font-size: 12px;
   padding: 4px 10px;
   border: 1px solid var(--panel-border);
@@ -973,7 +975,6 @@ tbody tr:last-child .budget-cm-actual {
   color: var(--muted);
   cursor: pointer;
   font-family: inherit;
-  line-height: 1;
 }
 
 .account-menu-btn:hover {
