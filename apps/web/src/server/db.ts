@@ -12,12 +12,14 @@
 import pg from "pg";
 
 // AUTH_MODE=proxy means production behind ALB + Cognito → always RDS → always SSL.
+// In proxy mode, construct the URL from individual env vars (ECS injects DB_PASSWORD from Secrets Manager).
+const connectionString = process.env.AUTH_MODE === "proxy"
+  ? `postgresql://${process.env.DB_USER}:${encodeURIComponent(process.env.DB_PASSWORD!)}@${process.env.DB_HOST}:5432/${process.env.DB_NAME}`
+  : process.env.DATABASE_URL;
+
 const ssl = process.env.AUTH_MODE === "proxy" ? { rejectUnauthorized: false } : false;
 
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl,
-});
+const pool = new pg.Pool({ connectionString, ssl });
 
 /** Workspace IDs already verified to exist in this process. */
 const provisionedWorkspaces = new Set<string>();

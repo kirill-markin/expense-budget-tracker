@@ -125,4 +125,4 @@ Details in `apps/web/src/proxy.ts`.
 ## Deployment profiles
 
 1. **Local** — Docker Compose: Postgres + web + worker + migrate init container. See `docs/deployment.md`.
-2. **AWS** — CDK stack: EC2 + RDS + ALB/Cognito + Lambda + WAF + monitoring. The root domain (`domain.com`) redirects to `app.domain.com` via ALB rule. To serve your own site on the root domain, deploy it independently and point DNS there. See `infra/aws/README.md`.
+2. **AWS** — CDK stack: ECS Fargate + RDS + ALB/Cognito + Lambda + WAF + monitoring. Images built in CI, pushed to ECR. The root domain (`domain.com`) redirects to `app.domain.com` via ALB rule. To serve your own site on the root domain, deploy it independently and point DNS there. See `infra/aws/README.md`.

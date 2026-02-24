@@ -1,9 +1,10 @@
 import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
+import * as ecr from "aws-cdk-lib/aws-ecr";
+import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as elbv2_actions from "aws-cdk-lib/aws-elasticloadbalancingv2-actions";
-import * as elbv2_targets from "aws-cdk-lib/aws-elasticloadbalancingv2-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambda_nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as events from "aws-cdk-lib/aws-events";
@@ -11,7 +12,6 @@ import * as events_targets from "aws-cdk-lib/aws-events-targets";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as iam from "aws-cdk-lib/aws-iam";
-import * as ssm from "aws-cdk-lib/aws-ssm";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatch_actions from "aws-cdk-lib/aws-cloudwatch-actions";
@@ -44,9 +44,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     // --- VPC ---
     // NAT instance (t4g.nano ~$3/mo) instead of managed NAT Gateway (~$35/mo).
     // Trade-off: no HA, no auto-recovery, limited bandwidth (~5 Gbps burst).
-    // Acceptable for a pet project where only the Lambda FX fetcher uses NAT
-    // (a few KB/day). To switch to managed NAT Gateway, remove natGatewayProvider
-    // and keep only: natGateways: 1,
+    // Acceptable for a pet project where only the Lambda FX fetcher and ECS tasks use NAT
+    // (a few KB/day + ECR image pulls). To switch to managed NAT Gateway, remove
+    // natGatewayProvider and keep only: natGateways: 1,
     const natProvider = ec2.NatProvider.instanceV2({
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
     });
@@ -68,17 +68,17 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), "HTTP");
     albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "HTTPS");
 
-    const ec2Sg = new ec2.SecurityGroup(this, "Ec2Sg", {
+    const ecsSg = new ec2.SecurityGroup(this, "EcsSg", {
       vpc,
-      description: "EC2: allow traffic from ALB",
+      description: "ECS: allow traffic from ALB",
     });
-    ec2Sg.addIngressRule(albSg, ec2.Port.tcp(3000), "ALB to web app");
+    ecsSg.addIngressRule(albSg, ec2.Port.tcp(8080), "ALB to web app");
 
     const dbSg = new ec2.SecurityGroup(this, "DbSg", {
       vpc,
-      description: "RDS: allow traffic from EC2 and Lambda",
+      description: "RDS: allow traffic from ECS and Lambda",
     });
-    dbSg.addIngressRule(ec2Sg, ec2.Port.tcp(5432), "EC2 to Postgres");
+    dbSg.addIngressRule(ecsSg, ec2.Port.tcp(5432), "ECS to Postgres");
 
     const lambdaSg = new ec2.SecurityGroup(this, "LambdaSg", {
       vpc,
@@ -164,161 +164,115 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       },
     });
 
-    // --- EC2 Instance (Docker Compose runtime) ---
-    const ec2LogGroup = new logs.LogGroup(this, "Ec2LogGroup", {
-      logGroupName: "/expense-tracker/ec2",
+    // --- ECR Repositories ---
+    const webRepo = new ecr.Repository(this, "WebRepo", {
+      repositoryName: "expense-tracker/web",
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      lifecycleRules: [{ maxImageCount: 10 }],
+    });
+
+    const migrateRepo = new ecr.Repository(this, "MigrateRepo", {
+      repositoryName: "expense-tracker/migrate",
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      lifecycleRules: [{ maxImageCount: 5 }],
+    });
+
+    // --- ECS Cluster + Web Service ---
+    const cluster = new ecs.Cluster(this, "Cluster", { vpc });
+
+    const webTaskDef = new ecs.FargateTaskDefinition(this, "WebTask", {
+      cpu: 512,
+      memoryLimitMiB: 1024,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+
+    const webLogGroup = new logs.LogGroup(this, "WebLogGroup", {
+      logGroupName: "/expense-tracker/web",
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // Shared Buildx install commands (used by UserData and SSM Deploy Document).
-    // Version pinned to avoid GitHub API rate limits and unexpected upgrades during provisioning.
-    const buildxVersion = "v0.21.0";
-    const installBuildxCommands: ReadonlyArray<string> = [
-      'ARCH=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")',
-      `BUILDX_VER="${buildxVersion}"`,
-      'curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VER}/buildx-${BUILDX_VER}.linux-${ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-buildx',
-      "chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
-    ];
-
-    // Shared .env generation commands (used by UserData and SSM Deploy Document).
-    // Reads secrets from Secrets Manager and writes .env at repo root.
-    // Re-run on every deploy so config changes take effect without instance recreation.
-    const writeEnvCommands: ReadonlyArray<string> = [
-      `DB_SECRET=$(aws secretsmanager get-secret-value --secret-id expense-tracker/db-credentials --query SecretString --output text)`,
-      `DB_USER=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["username"])')`,
-      `DB_PASS=$(echo "$DB_SECRET" | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
-      `APP_PASS=$(aws secretsmanager get-secret-value --secret-id expense-tracker/app-db-password --query SecretString --output text | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')`,
-      `echo "MIGRATION_DATABASE_URL=postgresql://\${DB_USER}:\${DB_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker?sslmode=require" > .env`,
-      `echo "APP_DB_PASSWORD=\${APP_PASS}" >> .env`,
-      `echo "DATABASE_URL=postgresql://app:\${APP_PASS}@${db.dbInstanceEndpointAddress}:5432/tracker" >> .env`,
-      'echo "AUTH_MODE=proxy" >> .env',
-      'echo "AUTH_PROXY_HEADER=x-amzn-oidc-data" >> .env',
-      'echo "HOST=0.0.0.0" >> .env',
-      `echo "CORS_ORIGIN=https://${appDomain}" >> .env`,
-      `echo "COGNITO_DOMAIN=${authDomain}" >> .env`,
-      `echo "COGNITO_CLIENT_ID=${userPoolClient.userPoolClientId}" >> .env`,
-    ];
-
-    const userData = ec2.UserData.forLinux();
-    userData.addCommands(
-      "#!/bin/bash",
-      "set -euo pipefail",
-      // Install Docker + CloudWatch agent
-      "dnf update -y",
-      "dnf install -y docker git amazon-cloudwatch-agent",
-      "systemctl enable docker && systemctl start docker",
-      "usermod -aG docker ec2-user",
-      // Configure CloudWatch agent for Docker logs
-      `cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWEOF'`,
-      JSON.stringify({
-        logs: {
-          logs_collected: {
-            files: {
-              collect_list: [
-                {
-                  file_path: "/var/lib/docker/containers/*/*.log",
-                  log_group_name: ec2LogGroup.logGroupName,
-                  log_stream_name: "{instance_id}/docker",
-                  timestamp_format: "%Y-%m-%dT%H:%M:%S",
-                },
-              ],
-            },
-          },
-        },
+    webTaskDef.addContainer("web", {
+      image: ecs.ContainerImage.fromEcrRepository(webRepo, "latest"),
+      portMappings: [{ containerPort: 8080 }],
+      environment: {
+        AUTH_MODE: "proxy",
+        AUTH_PROXY_HEADER: "x-amzn-oidc-data",
+        HOST: "0.0.0.0",
+        CORS_ORIGIN: `https://${appDomain}`,
+        COGNITO_DOMAIN: authDomain,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        DB_HOST: db.dbInstanceEndpointAddress,
+        DB_NAME: "tracker",
+        DB_USER: "app",
+      },
+      secrets: {
+        DB_PASSWORD: ecs.Secret.fromSecretsManager(appDbSecret, "password"),
+      },
+      logging: ecs.LogDrivers.awsLogs({
+        logGroup: webLogGroup,
+        streamPrefix: "web",
       }),
-      "CWEOF",
-      "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json",
-      // Install Docker Compose plugin + Buildx (compose v2 requires buildx 0.17+)
-      "mkdir -p /usr/local/lib/docker/cli-plugins",
-      'curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose',
-      "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose",
-      ...installBuildxCommands,
-      // Clone repo and start
-      "cd /home/ec2-user",
-      `git clone https://github.com/${githubRepo}.git app`,
-      "cd app",
-      ...writeEnvCommands,
-      // Run migrations (creates app role with APP_DB_PASSWORD) and start web
-      // --env-file .env: compose project dir is infra/docker/ (from -f), but .env is at repo root
-      // --no-deps: skip starting the postgres service (compose.yml defines it for local dev; on AWS we use RDS)
-      "docker compose --env-file .env -f infra/docker/compose.yml run --no-deps --rm migrate",
-      "docker compose --env-file .env -f infra/docker/compose.yml up --no-deps -d web",
-      "chown -R ec2-user:ec2-user /home/ec2-user/app",
-    );
-
-    const ec2Role = new iam.Role(this, "Ec2Role", {
-      assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore"),
-        iam.ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy"),
-      ],
-    });
-    db.secret?.grantRead(ec2Role);
-    appDbSecret.grantRead(ec2Role);
-
-    const instance = new ec2.Instance(this, "WebServer", {
-      vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
-      machineImage: ec2.MachineImage.latestAmazonLinux2023(),
-      securityGroup: ec2Sg,
-      userData,
-      role: ec2Role,
-    });
-
-    // --- SSM Deploy Document (triggered by CI/CD to update app on EC2) ---
-    const deployDocument = new ssm.CfnDocument(this, "DeployDocument", {
-      documentType: "Command",
-      updateMethod: "NewVersion",
-      content: {
-        schemaVersion: "2.2",
-        description: "Pull latest code, build, migrate, and restart the app on EC2.",
-        mainSteps: [
-          {
-            action: "aws:runShellScript",
-            name: "deploy",
-            inputs: {
-              timeoutSeconds: "300",
-              runCommand: [
-                "set -euo pipefail",
-                "cd /home/ec2-user/app",
-                "",
-                "# Install/upgrade Docker Buildx if missing or too old (compose v2 requires 0.17+)",
-                'if ! docker buildx version 2>/dev/null | grep -qE "v0\\.(1[7-9]|[2-9][0-9])|v[1-9]"; then',
-                '  echo "Installing Docker Buildx (need >= 0.17.0)..."',
-                "  mkdir -p /usr/local/lib/docker/cli-plugins",
-                ...installBuildxCommands.map((cmd: string) => `  ${cmd}`),
-                '  echo "Buildx $(docker buildx version) installed."',
-                "fi",
-                "",
-                "git pull origin main",
-                ...writeEnvCommands,
-                "docker compose --env-file .env -f infra/docker/compose.yml build",
-                "docker compose --env-file .env -f infra/docker/compose.yml run --no-deps --rm migrate",
-                "docker compose --env-file .env -f infra/docker/compose.yml up --no-deps -d web",
-                "",
-                "# Wait for health check (up to 60s)",
-                "for i in $(seq 1 30); do",
-                "  if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then",
-                '    echo "Health check passed."',
-                "    break",
-                "  fi",
-                '  if [ "$i" = "30" ]; then',
-                '    echo "ERROR: Health check failed after 30 attempts"',
-                "    docker compose --env-file .env -f infra/docker/compose.yml logs web",
-                "    exit 1",
-                "  fi",
-                "  sleep 2",
-                "done",
-                "",
-                'echo "Deploy complete."',
-              ],
-            },
-          },
-        ],
+      healthCheck: {
+        command: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"],
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(5),
+        retries: 3,
       },
     });
+
+    const webService = new ecs.FargateService(this, "WebService", {
+      cluster,
+      taskDefinition: webTaskDef,
+      desiredCount: 1,
+      assignPublicIp: false,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [ecsSg],
+    });
+
+    // --- Migration Task Definition (one-off, not a service) ---
+    const migrateTaskDef = new ecs.FargateTaskDefinition(this, "MigrateTask", {
+      cpu: 256,
+      memoryLimitMiB: 512,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+
+    const migrateLogGroup = new logs.LogGroup(this, "MigrateLogGroup", {
+      logGroupName: "/expense-tracker/migrate",
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // Migration needs the DB owner (tracker) credentials to run DDL + create the app role.
+    migrateTaskDef.addContainer("migrate", {
+      image: ecs.ContainerImage.fromEcrRepository(migrateRepo, "latest"),
+      environment: {
+        DB_HOST: db.dbInstanceEndpointAddress,
+        DB_NAME: "tracker",
+      },
+      secrets: {
+        DB_USER: ecs.Secret.fromSecretsManager(db.secret!, "username"),
+        DB_PASSWORD: ecs.Secret.fromSecretsManager(db.secret!, "password"),
+        APP_DB_PASSWORD: ecs.Secret.fromSecretsManager(appDbSecret, "password"),
+      },
+      logging: ecs.LogDrivers.awsLogs({
+        logGroup: migrateLogGroup,
+        streamPrefix: "migrate",
+      }),
+    });
+
+    // Migration task runs in private subnets with access to RDS
+    const migrateSg = new ec2.SecurityGroup(this, "MigrateSg", {
+      vpc,
+      description: "ECS migrate task: access to RDS",
+    });
+    dbSg.addIngressRule(migrateSg, ec2.Port.tcp(5432), "Migrate task to Postgres");
 
     // --- ALB ---
     const alb = new elbv2.ApplicationLoadBalancer(this, "Alb", {
@@ -339,14 +293,15 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
 
     const targetGroup = new elbv2.ApplicationTargetGroup(this, "WebTg", {
       vpc,
-      port: 3000,
+      port: 8080,
       protocol: elbv2.ApplicationProtocol.HTTP,
-      targets: [new elbv2_targets.InstanceTarget(instance, 3000)],
+      targetType: elbv2.TargetType.IP,
       healthCheck: {
         path: "/api/health",
         interval: cdk.Duration.seconds(30),
       },
     });
+    webService.attachToApplicationTargetGroup(targetGroup);
 
     // ALB listeners: HTTPS + Cognito auth, HTTP → HTTPS redirect
     const httpsListener = alb.addListener("HttpsListener", {
@@ -467,18 +422,27 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
-    // EC2 CPU > 80%
-    new cloudwatch.Alarm(this, "Ec2CpuAlarm", {
-      metric: new cloudwatch.Metric({
-        namespace: "AWS/EC2",
-        metricName: "CPUUtilization",
-        dimensionsMap: { InstanceId: instance.instanceId },
+    // ECS CPU > 80% for 15 minutes
+    new cloudwatch.Alarm(this, "EcsCpuAlarm", {
+      metric: webService.metricCpuUtilization({
         period: cdk.Duration.minutes(5),
         statistic: "Average",
       }),
       threshold: 80,
       evaluationPeriods: 3,
-      alarmDescription: "EC2 CPU above 80% for 15 minutes",
+      alarmDescription: "ECS CPU above 80% for 15 minutes",
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+    }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+    // ECS Memory > 80% for 15 minutes
+    new cloudwatch.Alarm(this, "EcsMemoryAlarm", {
+      metric: webService.metricMemoryUtilization({
+        period: cdk.Duration.minutes(5),
+        statistic: "Average",
+      }),
+      threshold: 80,
+      evaluationPeriods: 3,
+      alarmDescription: "ECS memory above 80% for 15 minutes",
       treatMissingData: cloudwatch.TreatMissingData.BREACHING,
     }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
@@ -581,18 +545,54 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                 resources: [this.stackId],
               }),
               new iam.PolicyStatement({
-                sid: "SsmSendDeploy",
-                actions: ["ssm:SendCommand"],
+                sid: "EcrPush",
+                actions: [
+                  "ecr:GetAuthorizationToken",
+                  "ecr:BatchCheckLayerAvailability",
+                  "ecr:GetDownloadUrlForLayer",
+                  "ecr:BatchGetImage",
+                  "ecr:PutImage",
+                  "ecr:InitiateLayerUpload",
+                  "ecr:UploadLayerPart",
+                  "ecr:CompleteLayerUpload",
+                ],
+                resources: [webRepo.repositoryArn, migrateRepo.repositoryArn],
+              }),
+              new iam.PolicyStatement({
+                sid: "EcrLogin",
+                actions: ["ecr:GetAuthorizationToken"],
+                resources: ["*"],
+              }),
+              new iam.PolicyStatement({
+                sid: "EcsDeploy",
+                actions: [
+                  "ecs:RunTask",
+                  "ecs:DescribeTasks",
+                  "ecs:UpdateService",
+                  "ecs:DescribeServices",
+                ],
+                resources: ["*"],
+              }),
+              new iam.PolicyStatement({
+                sid: "PassEcsRoles",
+                actions: ["iam:PassRole"],
                 resources: [
-                  `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:document/${deployDocument.ref}`,
-                  `arn:aws:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:instance/${instance.instanceId}`,
+                  webTaskDef.taskRole.roleArn,
+                  webTaskDef.executionRole!.roleArn,
+                  migrateTaskDef.taskRole.roleArn,
+                  migrateTaskDef.executionRole!.roleArn,
                 ],
               }),
               new iam.PolicyStatement({
-                sid: "SsmGetInvocation",
-                actions: ["ssm:GetCommandInvocation"],
-                // AWS does not support resource-level permissions for this action
-                resources: ["*"],
+                sid: "EcsWaitLogs",
+                actions: [
+                  "logs:GetLogEvents",
+                  "logs:FilterLogEvents",
+                ],
+                resources: [
+                  migrateLogGroup.logGroupArn,
+                  `${migrateLogGroup.logGroupArn}:*`,
+                ],
               }),
             ],
           }),
@@ -648,17 +648,29 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       value: accessLogsBucket.bucketName,
       description: "S3 bucket for ALB access logs",
     });
-    new cdk.CfnOutput(this, "Ec2LogGroupName", {
-      value: ec2LogGroup.logGroupName,
-      description: "CloudWatch log group for EC2 Docker logs",
+    new cdk.CfnOutput(this, "WebRepoUri", {
+      value: webRepo.repositoryUri,
+      description: "ECR repository URI for web image",
     });
-    new cdk.CfnOutput(this, "Ec2InstanceId", {
-      value: instance.instanceId,
-      description: "EC2 instance ID (for SSM deploy commands)",
+    new cdk.CfnOutput(this, "MigrateRepoUri", {
+      value: migrateRepo.repositoryUri,
+      description: "ECR repository URI for migrate image",
     });
-    new cdk.CfnOutput(this, "DeployDocumentName", {
-      value: deployDocument.ref,
-      description: "SSM Document name for EC2 app deployment",
+    new cdk.CfnOutput(this, "EcsClusterName", {
+      value: cluster.clusterName,
+      description: "ECS cluster name",
+    });
+    new cdk.CfnOutput(this, "EcsServiceName", {
+      value: webService.serviceName,
+      description: "ECS web service name",
+    });
+    new cdk.CfnOutput(this, "MigrateTaskDefArn", {
+      value: migrateTaskDef.taskDefinitionArn,
+      description: "ECS task definition ARN for migrations",
+    });
+    new cdk.CfnOutput(this, "MigrateSecurityGroupId", {
+      value: migrateSg.securityGroupId,
+      description: "Security group ID for migration tasks",
     });
   }
 }

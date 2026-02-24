@@ -27,13 +27,17 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
       # Install worker deps (Lambda bundle references ../../apps/worker/)
       - name: Install dependencies
         run: |
           npm ci --prefix apps/worker
           npm ci --prefix infra/aws
 
-      # Deploy infrastructure + Lambda
+      # Deploy infrastructure + Lambda (creates ECR repos, ECS cluster, etc.)
       - name: CDK deploy
         working-directory: infra/aws
         env:
@@ -42,51 +46,113 @@ jobs:
           echo "$CDK_CONTEXT" > cdk.context.local.json
           npx cdk deploy --all --require-approval never
 
-      # Deploy app code to EC2 via SSM Document (defined in CDK stack)
-      - name: Update app on EC2
+      # Read stack outputs for image URIs and ECS resource names
+      - name: Read stack outputs
+        id: outputs
         run: |
-          INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name ExpenseBudgetTracker \
-            --query "Stacks[0].Outputs[?OutputKey=='Ec2InstanceId'].OutputValue" \
+          get_output() {
+            aws cloudformation describe-stacks \
+              --stack-name ExpenseBudgetTracker \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" \
+              --output text
+          }
+          echo "web_repo=$(get_output WebRepoUri)" >> "$GITHUB_OUTPUT"
+          echo "migrate_repo=$(get_output MigrateRepoUri)" >> "$GITHUB_OUTPUT"
+          echo "cluster=$(get_output EcsClusterName)" >> "$GITHUB_OUTPUT"
+          echo "service=$(get_output EcsServiceName)" >> "$GITHUB_OUTPUT"
+          echo "migrate_task=$(get_output MigrateTaskDefArn)" >> "$GITHUB_OUTPUT"
+          echo "migrate_sg=$(get_output MigrateSecurityGroupId)" >> "$GITHUB_OUTPUT"
+
+      # Build and push Docker images (tagged with git SHA for rollback)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/web
+          file: apps/web/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.outputs.outputs.web_repo }}:${{ github.sha }}
+            ${{ steps.outputs.outputs.web_repo }}:latest
+          platforms: linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push migrate image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.migrate
+          push: true
+          tags: |
+            ${{ steps.outputs.outputs.migrate_repo }}:${{ github.sha }}
+            ${{ steps.outputs.outputs.migrate_repo }}:latest
+          platforms: linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Run database migrations as a one-off ECS task
+      - name: Run migrations
+        run: |
+          # Get private subnets from the ECS service's network config
+          SUBNETS=$(aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE" \
+            --query "services[0].networkConfiguration.awsvpcConfiguration.subnets" \
+            --output text | tr '\t' ',')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$MIGRATE_TASK" \
+            --launch-type FARGATE \
+            --platform-version LATEST \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$MIGRATE_SG],assignPublicIp=DISABLED}" \
+            --query "tasks[0].taskArn" \
             --output text)
 
-          DEPLOY_DOC=$(aws cloudformation describe-stacks \
-            --stack-name ExpenseBudgetTracker \
-            --query "Stacks[0].Outputs[?OutputKey=='DeployDocumentName'].OutputValue" \
+          echo "Migration task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[0].exitCode" \
             --output text)
 
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name "$DEPLOY_DOC" \
-            --timeout-seconds 300 \
-            --query "Command.CommandId" \
-            --output text)
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "ERROR: Migration task failed with exit code $EXIT_CODE"
+            echo "Check CloudWatch logs at /expense-tracker/migrate"
+            exit 1
+          fi
 
-          echo "SSM Command ID: $COMMAND_ID (document: $DEPLOY_DOC)"
+          echo "Migrations completed successfully."
+        env:
+          CLUSTER: ${{ steps.outputs.outputs.cluster }}
+          SERVICE: ${{ steps.outputs.outputs.service }}
+          MIGRATE_TASK: ${{ steps.outputs.outputs.migrate_task }}
+          MIGRATE_SG: ${{ steps.outputs.outputs.migrate_sg }}
 
-          # Wait for command (up to 5 min)
-          for i in $(seq 1 30); do
-            STATUS=$(aws ssm get-command-invocation \
-              --command-id "$COMMAND_ID" \
-              --instance-id "$INSTANCE_ID" \
-              --query "Status" --output text 2>/dev/null || echo "Pending")
-            case "$STATUS" in
-              Success) break ;;
-              Failed|TimedOut|Cancelled)
-                echo "SSM command $STATUS"
-                aws ssm get-command-invocation \
-                  --command-id "$COMMAND_ID" \
-                  --instance-id "$INSTANCE_ID" \
-                  --query "[StandardOutputContent, StandardErrorContent]" \
-                  --output text
-                exit 1 ;;
-            esac
-            sleep 10
-          done
-
-          # Print output
-          aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --query "[Status, StandardOutputContent, StandardErrorContent]" \
+      # Update ECS service with new web image
+      - name: Deploy web service
+        run: |
+          aws ecs update-service \
+            --cluster "$CLUSTER" \
+            --service "$SERVICE" \
+            --force-new-deployment \
+            --query "service.serviceName" \
             --output text
+
+          echo "Waiting for service stability..."
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE"
+
+          echo "Deployment complete."
+        env:
+          CLUSTER: ${{ steps.outputs.outputs.cluster }}
+          SERVICE: ${{ steps.outputs.outputs.service }}

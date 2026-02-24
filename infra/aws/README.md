@@ -7,12 +7,12 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | Item | Cost | Why |
 |---|---|---|
 | Domain (`.com`, Cloudflare) | ~$10/year | Custom domain for the app (`app.yourdomain.com`) |
-| EC2 t3.small (24/7) | ~$15/month | Runs Next.js web app in Docker |
+| ECS Fargate (0.5 vCPU / 1 GB ARM64, 24/7) | ~$13/month | Runs Next.js web app container |
 | RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
-| NAT instance t4g.nano | ~$3/month | Outbound internet for Lambda in private subnet (FX rate fetching) |
+| NAT instance t4g.nano | ~$3/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, Cognito auth integration, health checks |
 | S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs (S3), container and alarm monitoring (CloudWatch), rate limiting and SQLi/XSS protection (WAF), daily FX rate fetching (Lambda) |
-| **Total** | **~$10/year + ~$49/month** | |
+| **Total** | **~$10/year + ~$47/month** | |
 
 Cloudflare (DNS, CDN, DDoS, edge SSL) is free. All prices are approximate for `eu-central-1` and may vary.
 
@@ -35,12 +35,12 @@ If anything is missing:
 ## Architecture
 
 ```
-Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Docker) → RDS
-                                                  │                    ↓
-                                                  │              Lambda (FX rates)
+Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Fargate → RDS
+                                                  │                      ↓
+                                                  │                Lambda (FX rates)
                                                   │
                                                   ├─ domain.com ──────▶ 302 redirect to app.*
-                                                  ├─ app.* ───────────▶ Cognito auth → web:3000
+                                                  ├─ app.* ───────────▶ Cognito auth → web:8080
                                                   └─ auth.* ──────────▶ Cognito hosted UI
 ```
 
@@ -53,16 +53,17 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Do
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.nano for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
-- **EC2** (t3.small) running Docker Compose: web app (Next.js)
+- **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
+- **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, desiredCount=1, no auto-scaling) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate) + Cognito authentication (JWT via ALB auth action)
 - **Cognito User Pool** — managed auth with custom login domain (`auth.yourdomain.com`), no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
-- **CloudWatch Alarms + SNS** — alerts on ALB 5xx, EC2 CPU, DB connections, DB storage, Lambda errors
+- **CloudWatch Alarms + SNS** — alerts on ALB 5xx, ECS CPU/memory, DB connections, DB storage, Lambda errors
 - **S3** — ALB access logs (90-day retention)
-- **CloudWatch Logs** — Docker container logs from EC2 (30-day retention), Lambda logs (automatic)
+- **CloudWatch Logs** — ECS web container logs `/expense-tracker/web` (30-day retention), migration logs `/expense-tracker/migrate`, Lambda logs (automatic)
 - **AWS Backup** — daily backup plan with 35-day retention for RDS
-- **GitHub Actions OIDC** — CI/CD role for push-to-deploy
+- **GitHub Actions OIDC** — CI/CD role for push-to-deploy (ECR push + ECS deploy)
 
 **On Cloudflare (via scripts):**
 
@@ -311,14 +312,16 @@ After first deploy:
    - **Variable** `AWS_REGION` — target region (e.g. `eu-central-1`)
 3. Every push to `main` will automatically:
    - `cdk deploy` — update infrastructure + Lambda
-   - SSM command to EC2 — `git pull` + `docker compose build` + migrate + restart
+   - Build and push Docker images to ECR (tagged with git SHA)
+   - Run migration ECS task (one-off Fargate task)
+   - Update ECS service with new image (rolling deployment)
 
 No AWS keys stored in GitHub — uses OIDC federation.
 
 ## Domain routing
 
 - `domain.com` → ALB → 302 redirect to `app.domain.com` (no container, just an ALB rule)
-- `app.domain.com` → ALB → Cognito auth → web container (port 3000)
+- `app.domain.com` → ALB → Cognito auth → ECS Fargate web container (port 8080)
 - `auth.domain.com` → Cognito hosted UI (CloudFront)
 
 To serve your own site on `domain.com`, point its DNS to your site's hosting (Vercel, etc.). The ALB redirect becomes irrelevant since traffic no longer reaches it.
@@ -333,17 +336,29 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 
 ## Monitoring
 
-- **Alarms**: ALB 5xx (>5 in 5min), EC2 CPU (>80% for 15min), DB connections (>80%), DB storage (<2GB), Lambda errors
+- **Alarms**: ALB 5xx (>5 in 5min), ECS CPU (>80% for 15min), ECS memory (>80% for 15min), DB connections (>80%), DB storage (<2GB), Lambda errors
 - **Access logs**: S3 bucket with all HTTP requests, 90-day retention
-- **Container logs**: CloudWatch Logs `/expense-tracker/ec2`, 30-day retention
+- **Container logs**: CloudWatch Logs `/expense-tracker/web` and `/expense-tracker/migrate`, 30-day retention
 - **Lambda logs**: CloudWatch Logs (automatic), searchable in console
 
-## Shell access to EC2
+## Container access
 
-SSM Session Manager — no key pair needed, no open ports, audit log included:
+Use ECS Exec to open a shell in the running web container:
 
 ```bash
-aws ssm start-session --target <instance-id> --profile expense-tracker
+aws ecs execute-command \
+  --cluster <EcsClusterName from output> \
+  --task <task-id> \
+  --container web \
+  --interactive \
+  --command "/bin/sh" \
+  --profile expense-tracker
+```
+
+To find the running task ID:
+
+```bash
+aws ecs list-tasks --cluster <EcsClusterName> --service-name <EcsServiceName> --profile expense-tracker
 ```
 
 ## Tear down

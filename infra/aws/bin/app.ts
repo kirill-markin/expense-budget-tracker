@@ -53,5 +53,5 @@ new ExpenseBudgetTrackerStack(app, "ExpenseBudgetTracker", {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region,
   },
-  description: "Self-hosted expense & budget tracker: EC2 + RDS + ALB + Cognito + WAF + Lambda",
+  description: "Self-hosted expense & budget tracker: ECS Fargate + RDS + ALB + Cognito + WAF + Lambda",
 });

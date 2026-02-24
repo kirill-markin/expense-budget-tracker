@@ -35,7 +35,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |
 | `apps/web/src/server/demo/data.ts` | Static demo data for demo mode (no DB needed) |
 | `infra/docker/compose.yml` | Local Docker Compose (Postgres + migrate + web + worker) |
-| `infra/aws/` | AWS CDK stack (EC2, RDS, ALB/Cognito, Lambda, WAF) |
+| `infra/aws/` | AWS CDK stack (ECS Fargate, RDS, ALB/Cognito, Lambda, WAF) |
 | `scripts/migrate.sh` | Runs all migrations + views against `DATABASE_URL` |
 | `.env.example` | Environment variables reference |
 
@@ -45,7 +45,7 @@ Before querying AWS resources, read `infra/aws/cdk.context.local.json` first —
 
 - **CDK context**: `infra/aws/cdk.context.local.json`
 - **CDK stack name**: `ExpenseBudgetTracker`
-- **CI/CD**: GitHub Actions on push to `main`, deploys CDK + updates EC2 via SSM. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
+- **CI/CD**: GitHub Actions on push to `main`, deploys CDK + builds/pushes Docker images to ECR + runs ECS migration task + updates ECS service. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
 
 ## Reference
 

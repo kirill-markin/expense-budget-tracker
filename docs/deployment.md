@@ -44,7 +44,7 @@ Full AWS deployment guide is in [`infra/aws/README.md`](../infra/aws/README.md).
 
 We recommend deploying into a **dedicated AWS account** (the AWS equivalent of a GCP project) for complete isolation of resources, billing, and IAM. See step 1 in the AWS README for setup instructions.
 
-Summary: CDK stack deploys VPC, EC2 (Docker Compose), RDS Postgres (private), ALB with Cognito auth + Cloudflare Origin Certificate, WAF, Lambda for FX fetchers, CloudWatch monitoring, and S3 access logs. DNS is managed via Cloudflare (domain registration, CNAME to ALB, CDN, edge SSL).
+Summary: CDK stack deploys VPC, ECS Fargate (web app), RDS Postgres (private), ALB with Cognito auth + Cloudflare Origin Certificate, WAF, Lambda for FX fetchers, CloudWatch monitoring, and S3 access logs. Docker images are built in CI and pushed to ECR. DNS is managed via Cloudflare (domain registration, CNAME to ALB, CDN, edge SSL).
 
 ```bash
 cd infra/aws
