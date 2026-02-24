@@ -43,8 +43,15 @@ fi
 
 echo "ALB DNS: ${ALB_DNS}"
 
+# --- Get zone name for fully qualified lookups ---
+ZONE_NAME=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["name"])')
+
+APP_FQDN="${SUBDOMAIN}.${ZONE_NAME}"
+
 # --- Check if record already exists ---
-EXISTING=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${SUBDOMAIN}&type=CNAME" \
+EXISTING=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${APP_FQDN}&type=CNAME" \
   -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
   -H "Content-Type: application/json")
 
@@ -84,54 +91,49 @@ fi
 echo ""
 echo "DNS record set: ${SUBDOMAIN} -> ${ALB_DNS} (Cloudflare proxied)"
 
-# --- Root domain CNAME (site container) ---
-# Cloudflare CNAME flattening handles apex domain automatically.
-# Remove placeholder A record (192.0.2.1) if left over from setup-auth-domain.sh.
+# --- Root domain → ALB redirect (domain.com → app.domain.com) ---
+# By default, the ALB returns a 302 redirect to app.* for the root domain.
+# If you serve your own site on the root domain, skip this section —
+# just point root DNS to your site's hosting instead.
 echo ""
-echo "Setting up root domain CNAME -> ${ALB_DNS}..."
 
-# Get zone name (base domain) from Cloudflare
-ZONE_NAME=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-  -H "Content-Type: application/json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["name"])')
-
-# Delete placeholder A record if it exists
-PLACEHOLDER=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${ZONE_NAME}&type=A&content=192.0.2.1" \
+# Check if root domain already has a non-placeholder record
+ROOT_ANY=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${ZONE_NAME}" \
   -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
   -H "Content-Type: application/json")
 
-PLACEHOLDER_COUNT=$(echo "$PLACEHOLDER" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
+ROOT_RECORDS=$(echo "$ROOT_ANY" | python3 -c '
+import sys, json
+records = json.load(sys.stdin).get("result", [])
+root = [r for r in records if r["type"] in ("A", "AAAA", "CNAME")]
+for r in root:
+    print("{} {}".format(r["type"], r["content"]))
+')
 
-if [[ "$PLACEHOLDER_COUNT" -gt 0 ]]; then
-  PLACEHOLDER_ID=$(echo "$PLACEHOLDER" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0]["id"])')
-  echo "Deleting placeholder A record (192.0.2.1)..."
-  curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${PLACEHOLDER_ID}" \
-    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-    -H "Content-Type: application/json" > /dev/null
-fi
-
-# Create or update root domain CNAME
-ROOT_EXISTING=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${ZONE_NAME}&type=CNAME" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-  -H "Content-Type: application/json")
-
-ROOT_EXISTING_COUNT=$(echo "$ROOT_EXISTING" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
-
-if [[ "$ROOT_EXISTING_COUNT" -gt 0 ]]; then
-  ROOT_RECORD_ID=$(echo "$ROOT_EXISTING" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0]["id"])')
-  echo "Updating existing root CNAME record..."
-  curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${ROOT_RECORD_ID}" \
-    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-    -H "Content-Type: application/json" \
-    --data "{
-      \"type\": \"CNAME\",
-      \"name\": \"@\",
-      \"content\": \"${ALB_DNS}\",
-      \"ttl\": 1,
-      \"proxied\": true
-    }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+# If a non-placeholder record exists, skip (user manages root domain themselves)
+if echo "$ROOT_RECORDS" | grep -qv "192.0.2.1" 2>/dev/null && [[ -n "$ROOT_RECORDS" ]]; then
+  echo "Root domain already has DNS records — skipping (managed externally):"
+  echo "$ROOT_RECORDS" | sed 's/^/  /'
+  echo "To use the ALB redirect instead, remove the existing root record in Cloudflare and re-run."
 else
-  echo "Creating root CNAME: @ -> ${ALB_DNS} (proxied)..."
+  echo "Setting up root domain CNAME -> ${ALB_DNS} (redirect to app.*)..."
+
+  # Delete placeholder A record (192.0.2.1) if left over from setup-auth-domain.sh
+  PLACEHOLDER=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${ZONE_NAME}&type=A&content=192.0.2.1" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Content-Type: application/json")
+
+  PLACEHOLDER_COUNT=$(echo "$PLACEHOLDER" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
+
+  if [[ "$PLACEHOLDER_COUNT" -gt 0 ]]; then
+    PLACEHOLDER_ID=$(echo "$PLACEHOLDER" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0]["id"])')
+    echo "Deleting placeholder A record (192.0.2.1)..."
+    curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${PLACEHOLDER_ID}" \
+      -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+      -H "Content-Type: application/json" > /dev/null
+  fi
+
+  # Create root CNAME → ALB (Cloudflare CNAME flattening handles apex automatically)
   curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
     -H "Content-Type: application/json" \
@@ -142,9 +144,9 @@ else
       \"ttl\": 1,
       \"proxied\": true
     }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
-fi
 
-echo "Root domain DNS: ${ZONE_NAME} -> ${ALB_DNS} (Cloudflare proxied)"
+  echo "Root domain DNS: ${ZONE_NAME} -> ${ALB_DNS} (Cloudflare proxied, redirects to app.*)"
+fi
 
 # --- Set SSL/TLS mode to Full (Strict) ---
 echo "Setting SSL/TLS mode to Full (Strict)..."
