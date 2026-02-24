@@ -1,19 +1,23 @@
 import { isDemoModeFromRequest } from "@/lib/demoMode";
+import { getAvailableCurrencies } from "@/server/getAvailableCurrencies";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { updateReportCurrency } from "@/server/updateReportCurrency";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 export const GET = async (request: Request): Promise<Response> => {
   if (isDemoModeFromRequest(request)) {
-    return Response.json({ reportingCurrency: "USD" });
+    return Response.json({ reportingCurrency: "USD", availableCurrencies: ["EUR", "GBP", "USD"] });
   }
 
   const userId = extractUserId(request);
   const workspaceId = extractWorkspaceId(request);
 
   try {
-    const reportingCurrency = await getReportCurrency(userId, workspaceId);
-    return Response.json({ reportingCurrency });
+    const [reportingCurrency, availableCurrencies] = await Promise.all([
+      getReportCurrency(userId, workspaceId),
+      getAvailableCurrencies(userId, workspaceId),
+    ]);
+    return Response.json({ reportingCurrency, availableCurrencies });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return new Response(`Database query failed: ${message}`, { status: 500 });

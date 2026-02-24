@@ -1025,82 +1025,78 @@ tbody tr:last-child .budget-cm-actual {
   background: rgba(0, 0, 0, 0.02);
 }
 
-/* Currency selector */
+/* Currency label in nav */
 
-.currency-selector-wrap {
-  position: relative;
+.currency-label {
   margin-left: auto;
-}
-
-.currency-selector-btn {
-  font-family: inherit;
   font-size: 12px;
   padding: 4px 8px;
   border: 1px solid var(--panel-border);
-  background: var(--bg);
   color: var(--muted);
-  cursor: pointer;
   letter-spacing: 0.5px;
 }
 
-.currency-selector-btn:hover {
-  color: var(--text);
-  border-color: var(--text);
+/* Workspace settings */
+
+.settings-form {
+  margin-top: 16px;
 }
 
-.currency-selector-dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
-  padding: 8px;
-  background: var(--bg);
-  border: 1px solid var(--panel-border);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  z-index: 200;
+.settings-row {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 360px;
+}
+
+.settings-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings-control {
+  display: flex;
+  gap: 8px;
   align-items: center;
 }
 
-.currency-selector-input {
-  width: 48px;
+.settings-select {
   font-family: inherit;
-  font-size: 12px;
-  padding: 4px 6px;
+  font-size: 13px;
+  padding: 6px 8px;
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--text);
-  text-transform: uppercase;
+  min-width: 100px;
 }
 
-.currency-selector-save {
+.settings-save {
   font-family: inherit;
   font-size: 12px;
-  padding: 4px 8px;
+  padding: 6px 12px;
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--muted);
   cursor: pointer;
 }
 
-.currency-selector-save:hover {
+.settings-save:hover {
   color: var(--text);
   border-color: var(--text);
 }
 
-.currency-selector-save:disabled {
+.settings-save:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.currency-selector-error {
+.settings-error {
   color: red;
-  font-size: 11px;
-  position: absolute;
-  top: 100%;
-  right: 0;
-  white-space: nowrap;
-  margin-top: 2px;
+  font-size: 12px;
+}
+
+.settings-saved {
+  color: green;
+  font-size: 12px;
 }
 

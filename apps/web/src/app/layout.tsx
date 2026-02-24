@@ -46,6 +46,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
           <a href="/transactions">Transactions</a>
           <a href="/balances">Balances</a>
           <a href="/dashboards">Dashboard</a>
+          <a href="/settings">Settings</a>
           <CurrencySelector initialCurrency={reportingCurrency} />
         </nav>
         {children}
