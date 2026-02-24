@@ -68,16 +68,17 @@ for f in "$ROOT_DIR"/db/views/*.sql; do
 done
 
 echo "Creating app role..."
-psql "$MIGRATION_DATABASE_URL" <<SQL
-DO \$\$
+# Password passed via psql variable (:'app_pass') to avoid SQL injection from special characters.
+psql "$MIGRATION_DATABASE_URL" -v "app_pass=$APP_DB_PASSWORD" <<'SQL'
+DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN
-    CREATE ROLE app WITH LOGIN PASSWORD '${APP_DB_PASSWORD}';
-  ELSE
-    ALTER ROLE app WITH PASSWORD '${APP_DB_PASSWORD}';
+    CREATE ROLE app WITH LOGIN;
   END IF;
 END
-\$\$;
+$$;
+
+ALTER ROLE app WITH PASSWORD :'app_pass';
 
 GRANT CONNECT ON DATABASE tracker TO app;
 GRANT USAGE ON SCHEMA public TO app;

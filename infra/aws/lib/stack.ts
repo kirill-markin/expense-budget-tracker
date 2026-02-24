@@ -29,9 +29,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
 
     // --- Context parameters (domainName, certificateArn, region validated in bin/app.ts) ---
     const baseDomain = this.node.tryGetContext("domainName") as string;
-    // SSH access via SSM Session Manager (no key pair needed)
     const alertEmail = this.node.tryGetContext("alertEmail") as string;
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
+    const githubRepo = this.node.tryGetContext("githubRepo") as string;
 
     const appDomain = `app.${baseDomain}`;
     const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
@@ -171,10 +171,12 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // Shared Buildx install commands (used by UserData and SSM Deploy Document)
+    // Shared Buildx install commands (used by UserData and SSM Deploy Document).
+    // Version pinned to avoid GitHub API rate limits and unexpected upgrades during provisioning.
+    const buildxVersion = "v0.21.0";
     const installBuildxCommands: ReadonlyArray<string> = [
       'ARCH=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")',
-      'BUILDX_VER=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)[\'tag_name\'])")',
+      `BUILDX_VER="${buildxVersion}"`,
       'curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VER}/buildx-${BUILDX_VER}.linux-${ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-buildx',
       "chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
     ];
@@ -215,7 +217,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       ...installBuildxCommands,
       // Clone repo and start
       "cd /home/ec2-user",
-      "git clone https://github.com/kirill-markin/expense-budget-tracker.git app",
+      `git clone https://github.com/${githubRepo}.git app`,
       "cd app",
       // Write .env from Secrets Manager (owner role for migrations, app role for web)
       `DB_SECRET=$(aws secretsmanager get-secret-value --secret-id expense-tracker/db-credentials --query SecretString --output text)`,
@@ -251,7 +253,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
 
     const instance = new ec2.Instance(this, "WebServer", {
       vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       securityGroup: ec2Sg,
@@ -539,7 +541,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- GitHub Actions OIDC (CI/CD) ---
-    const githubRepo = this.node.tryGetContext("githubRepo") as string;
     {
       const oidcProvider = new iam.OpenIdConnectProvider(this, "GithubOidc", {
         url: "https://token.actions.githubusercontent.com",
