@@ -1338,9 +1338,9 @@ export const BudgetTable = (props: Props): ReactElement => {
                       if (col.kind === "year-total") {
                         const yd = yearComputed.get(col.year);
                         if (yd === undefined) {
-                          return (
-                            <td key={`total-${col.year}`} colSpan={col.year === currentYear ? 2 : 1} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>
-                          );
+                          return col.year === currentYear
+                            ? <Fragment key={`total-${col.year}`}><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td></Fragment>
+                            : <td key={`total-${col.year}`} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>;
                         }
                         const yearSub = useFilteredSubtotals ? yd.filteredSpendSubtotal : (yd.directionSubtotals.get(block.direction) ?? zeroCellValue);
                         const isTainted = yd.taintedDirections.has(block.direction);
@@ -1391,9 +1391,9 @@ export const BudgetTable = (props: Props): ReactElement => {
                         if (col.kind === "year-total") {
                           const yd = yearComputed.get(col.year);
                           if (yd === undefined) {
-                            return (
-                              <td key={`total-${col.year}`} colSpan={col.year === currentYear ? 2 : 1} className="budget-cell budget-year-total budget-year-loading">&hellip;</td>
-                            );
+                            return col.year === currentYear
+                              ? <Fragment key={`total-${col.year}`}><td className="budget-cell budget-year-total budget-year-loading">&hellip;</td><td className="budget-cell budget-year-total budget-year-loading">&hellip;</td></Fragment>
+                              : <td key={`total-${col.year}`} className="budget-cell budget-year-total budget-year-loading">&hellip;</td>;
                           }
                           const yearCell = yd.directionCategoryTotals.get(block.direction)?.get(category) ?? zeroCellValue;
                           const isTainted = yd.taintedCategories.has(`${block.direction}::${category}`);
@@ -1484,9 +1484,9 @@ export const BudgetTable = (props: Props): ReactElement => {
                       if (col.kind === "year-total") {
                         const yd = yearComputed.get(col.year);
                         if (yd === undefined) {
-                          return (
-                            <td key={`total-${col.year}`} colSpan={col.year === currentYear ? 2 : 1} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>
-                          );
+                          return col.year === currentYear
+                            ? <Fragment key={`total-${col.year}`}><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td></Fragment>
+                            : <td key={`total-${col.year}`} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>;
                         }
                         const taintedClass = yd.anyTainted ? " budget-error" : "";
                         if (col.year < currentYear) {
@@ -1528,9 +1528,9 @@ export const BudgetTable = (props: Props): ReactElement => {
                       if (col.kind === "year-total") {
                         const yd = yearComputed.get(col.year);
                         if (yd === undefined) {
-                          return (
-                            <td key={`total-${col.year}`} colSpan={col.year === currentYear ? 2 : 1} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>
-                          );
+                          return col.year === currentYear
+                            ? <Fragment key={`total-${col.year}`}><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td></Fragment>
+                            : <td key={`total-${col.year}`} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>;
                         }
                         const fxVal = yd.yearFxAdjust;
                         if (col.year < currentYear) {
@@ -1584,9 +1584,9 @@ export const BudgetTable = (props: Props): ReactElement => {
                       if (col.kind === "year-total") {
                         const yd = yearComputed.get(col.year);
                         if (yd === undefined) {
-                          return (
-                            <td key={`total-${col.year}`} colSpan={col.year === currentYear ? 2 : 1} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>
-                          );
+                          return col.year === currentYear
+                            ? <Fragment key={`total-${col.year}`}><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td></Fragment>
+                            : <td key={`total-${col.year}`} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>;
                         }
                         const bal = yd.decemberBalance;
                         const taintedClass = bal.isTainted ? " budget-error" : "";
