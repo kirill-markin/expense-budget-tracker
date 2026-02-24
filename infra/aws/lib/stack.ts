@@ -491,9 +491,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
-      environment: {
-        DATABASE_URL: "placeholder",
-      },
+      environment: {},
       bundling: {
         minify: true,
         sourceMap: true,
@@ -546,16 +544,28 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
             },
           },
         ),
-        managedPolicies: [
-          iam.ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess"),
-        ],
+        inlinePolicies: {
+          CdkDeploy: new iam.PolicyDocument({
+            statements: [
+              new iam.PolicyStatement({
+                sid: "AssumeCdkRoles",
+                actions: ["sts:AssumeRole"],
+                resources: [`arn:aws:iam::${cdk.Aws.ACCOUNT_ID}:role/cdk-*`],
+              }),
+              new iam.PolicyStatement({
+                sid: "ReadStackOutputs",
+                actions: ["cloudformation:DescribeStacks"],
+                resources: ["*"],
+              }),
+              new iam.PolicyStatement({
+                sid: "Ec2Deploy",
+                actions: ["ssm:SendCommand", "ssm:GetCommandInvocation"],
+                resources: ["*"],
+              }),
+            ],
+          }),
+        },
       });
-
-      // Allow GitHub Actions to send SSM commands to EC2
-      deployRole.addToPolicy(new iam.PolicyStatement({
-        actions: ["ssm:SendCommand", "ssm:GetCommandInvocation"],
-        resources: ["*"],
-      }));
 
       new cdk.CfnOutput(this, "GithubDeployRoleArn", {
         value: deployRole.roleArn,

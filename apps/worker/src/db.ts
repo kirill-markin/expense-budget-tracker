@@ -1,18 +1,25 @@
 /**
  * Postgres connection pool and query helper.
  *
- * A single pg.Pool is created on first import using DATABASE_URL.
- * All server modules share this pool for connection reuse.
+ * Pool is created lazily on first query. In Lambda, the connection string
+ * is resolved from Secrets Manager (async), so eager creation is not possible.
  */
 
 import pg from "pg";
-import { DATABASE_URL } from "./config";
+import { getDatabaseUrl } from "./config";
 
-const pool = new pg.Pool({
-  connectionString: DATABASE_URL,
-});
+let pool: pg.Pool | undefined;
 
-export const query = (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>
-  pool.query(text, params as Array<unknown>);
+async function getPool(): Promise<pg.Pool> {
+  if (!pool) {
+    pool = new pg.Pool({ connectionString: await getDatabaseUrl() });
+  }
+  return pool;
+}
 
-export const endPool = (): Promise<void> => pool.end();
+export const query = async (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>
+  (await getPool()).query(text, params as Array<unknown>);
+
+export const endPool = async (): Promise<void> => {
+  if (pool) await pool.end();
+};

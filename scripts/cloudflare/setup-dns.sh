@@ -28,6 +28,13 @@ done
 : "${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN env var}"
 : "${CLOUDFLARE_ZONE_ID:?Set CLOUDFLARE_ZONE_ID env var}"
 
+# --- Verify CDK stack exists ---
+if ! aws cloudformation describe-stacks --stack-name "$STACK_NAME" &>/dev/null; then
+  echo "ERROR: CloudFormation stack '${STACK_NAME}' not found." >&2
+  echo "Run 'npx cdk deploy' first (see infra/aws/README.md step 5)." >&2
+  exit 1
+fi
+
 # --- Get ALB DNS from CloudFormation outputs ---
 echo "Reading ALB DNS from CloudFormation stack '${STACK_NAME}'..."
 
