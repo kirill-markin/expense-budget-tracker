@@ -3,22 +3,29 @@
 ## System overview
 
 ```
+                    ┌────────────────────┐
+                    │  Site (Next.js)    │  domain.com (port 3001, no auth)
+                    │  Public pages      │
+                    └────────────────────┘
+
 ┌─────────────┐     ┌────────────────────┐     ┌──────────────┐
-│ Browser UI  │────▶│  Next.js (web)     │────▶│  Postgres 18 │
+│ Browser UI  │────▶│  Web (Next.js)     │────▶│  Postgres 18 │
 │             │◀────│  API routes + SSR  │◀────│  (RLS)       │
 └─────────────┘     └────────────────────┘     └──────────────┘
-                                                     ▲
-                    ┌────────────────────┐             │
-                    │  Worker (TS)       │─────────────┘
+                     app.domain.com              ▲
+                     (port 3000, Cognito)         │
+                    ┌────────────────────┐        │
+                    │  Worker (TS)       │────────┘
                     │  FX rate fetchers  │
                     └────────────────────┘
 ```
 
-Three components, one database:
+Four components, one database:
 
-1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool` with per-request RLS context.
+1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool` with per-request RLS context. Runs on `app.domain.com` behind Cognito auth.
 2. **worker** (`apps/worker/`) — TypeScript process that fetches daily exchange rates from ECB, CBR, and NBS and inserts them into `exchange_rates`. Runs on a schedule (local Docker) or as a Lambda (AWS).
-3. **Postgres** — single source of truth. Seven tables (six with RLS), one view.
+3. **site** (`apps/site/`) — Independent Next.js app for the root domain (`domain.com`). Default: redirects to `app.*`. Replaceable via the `SITE_PATH` env var (point to any directory with a Dockerfile). No auth, no database.
+4. **Postgres** — single source of truth. Seven tables (six with RLS), one view.
 
 ## Data model
 
@@ -124,5 +131,5 @@ Details in `apps/web/src/proxy.ts`.
 
 ## Deployment profiles
 
-1. **Local** — Docker Compose: Postgres + web + worker + migrate init container. See `docs/deployment.md`.
-2. **AWS** — CDK stack: EC2 + RDS + ALB/Cognito + Lambda + WAF + monitoring. See `infra/aws/README.md`.
+1. **Local** — Docker Compose: Postgres + web + worker + site + migrate init container. See `docs/deployment.md`.
+2. **AWS** — CDK stack: EC2 + RDS + ALB/Cognito + Lambda + WAF + monitoring. Three domains: `domain.com` (site, no auth), `app.domain.com` (app, Cognito), `auth.domain.com` (Cognito hosted UI). See `infra/aws/README.md`.

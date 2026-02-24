@@ -69,5 +69,19 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Public site (root domain). Default: redirect stub from apps/site/.
+  # To use a custom site locally: set SITE_PATH in .env to a directory with a Dockerfile.
+  # On AWS: set "siteRepo" in cdk.context.local.json — CDK handles SITE_PATH automatically.
+  site:
+    build:
+      context: ${SITE_PATH:-../../apps/site}
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      APP_DOMAIN: "http://localhost:3000"
+      PORT: "3001"
+      HOST: "0.0.0.0"
+
 volumes:
   pgdata:

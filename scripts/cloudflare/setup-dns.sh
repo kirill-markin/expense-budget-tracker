@@ -9,7 +9,7 @@
 #
 # Usage:
 #   export CLOUDFLARE_API_TOKEN="..." CLOUDFLARE_ZONE_ID="..." AWS_PROFILE=expense-tracker
-#   bash scripts/cloudflare/setup-dns.sh --subdomain app --stack-name ExpenseBudgetTracker
+#   bash scripts/cloudflare/setup-dns.sh --stack-name ExpenseBudgetTracker --auth-domain auth.yourdomain.com
 
 set -euo pipefail
 
@@ -19,7 +19,6 @@ STACK_NAME="ExpenseBudgetTracker"
 AUTH_DOMAIN=""
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --subdomain) SUBDOMAIN="$2"; shift 2 ;;
     --stack-name) STACK_NAME="$2"; shift 2 ;;
     --auth-domain) AUTH_DOMAIN="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -84,6 +83,68 @@ fi
 
 echo ""
 echo "DNS record set: ${SUBDOMAIN} -> ${ALB_DNS} (Cloudflare proxied)"
+
+# --- Root domain CNAME (site container) ---
+# Cloudflare CNAME flattening handles apex domain automatically.
+# Remove placeholder A record (192.0.2.1) if left over from setup-auth-domain.sh.
+echo ""
+echo "Setting up root domain CNAME -> ${ALB_DNS}..."
+
+# Get zone name (base domain) from Cloudflare
+ZONE_NAME=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["name"])')
+
+# Delete placeholder A record if it exists
+PLACEHOLDER=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${ZONE_NAME}&type=A&content=192.0.2.1" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json")
+
+PLACEHOLDER_COUNT=$(echo "$PLACEHOLDER" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
+
+if [[ "$PLACEHOLDER_COUNT" -gt 0 ]]; then
+  PLACEHOLDER_ID=$(echo "$PLACEHOLDER" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0]["id"])')
+  echo "Deleting placeholder A record (192.0.2.1)..."
+  curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${PLACEHOLDER_ID}" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Content-Type: application/json" > /dev/null
+fi
+
+# Create or update root domain CNAME
+ROOT_EXISTING=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${ZONE_NAME}&type=CNAME" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json")
+
+ROOT_EXISTING_COUNT=$(echo "$ROOT_EXISTING" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
+
+if [[ "$ROOT_EXISTING_COUNT" -gt 0 ]]; then
+  ROOT_RECORD_ID=$(echo "$ROOT_EXISTING" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0]["id"])')
+  echo "Updating existing root CNAME record..."
+  curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${ROOT_RECORD_ID}" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "{
+      \"type\": \"CNAME\",
+      \"name\": \"@\",
+      \"content\": \"${ALB_DNS}\",
+      \"ttl\": 1,
+      \"proxied\": true
+    }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+else
+  echo "Creating root CNAME: @ -> ${ALB_DNS} (proxied)..."
+  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "{
+      \"type\": \"CNAME\",
+      \"name\": \"@\",
+      \"content\": \"${ALB_DNS}\",
+      \"ttl\": 1,
+      \"proxied\": true
+    }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+fi
+
+echo "Root domain DNS: ${ZONE_NAME} -> ${ALB_DNS} (Cloudflare proxied)"
 
 # --- Set SSL/TLS mode to Full (Strict) ---
 echo "Setting SSL/TLS mode to Full (Strict)..."

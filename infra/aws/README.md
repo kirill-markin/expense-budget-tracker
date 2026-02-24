@@ -7,7 +7,7 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | Item | Cost | Why |
 |---|---|---|
 | Domain (`.com`, Cloudflare) | ~$10/year | Custom domain for the app (`app.yourdomain.com`) |
-| EC2 t3.small (24/7) | ~$15/month | Runs Next.js web app in Docker |
+| EC2 t3.small (24/7) | ~$15/month | Runs Next.js web app + site in Docker |
 | RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
 | NAT instance t4g.nano | ~$3/month | Outbound internet for Lambda in private subnet (FX rate fetching) |
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, Cognito auth integration, health checks |
@@ -36,8 +36,13 @@ If anything is missing:
 
 ```
 Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Docker) → RDS
-                                                                       ↓
-                                                                 Lambda (FX rates)
+                                                  │                    │
+                                                  │  domain.com ──────▶ site:3001 (no auth)
+                                                  │  app.* ───────────▶ web:3000  (Cognito)
+                                                  │  auth.* ──────────▶ Cognito hosted UI
+                                                  │                    │
+                                                  │                    ↓
+                                                  │              Lambda (FX rates)
 ```
 
 **Cloudflare** handles domain registration, DNS, CDN caching, DDoS protection, and edge TLS.
@@ -49,7 +54,7 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Do
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.nano for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
-- **EC2** (t3.small) running Docker Compose: web app (Next.js)
+- **EC2** (t3.small) running Docker Compose: web app + public site (Next.js)
 - **ALB** with HTTPS (Cloudflare Origin Certificate) + Cognito authentication (JWT via ALB auth action)
 - **Cognito User Pool** — managed auth with custom login domain (`auth.yourdomain.com`), no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
@@ -63,7 +68,8 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → EC2 (Do
 **On Cloudflare (via scripts):**
 
 - Domain registration
-- DNS CNAME `app.*` (proxied) pointing to ALB
+- DNS CNAME `@` root domain (proxied) pointing to ALB — public site
+- DNS CNAME `app.*` (proxied) pointing to ALB — authenticated app
 - DNS CNAME `auth.*` (DNS-only) pointing to Cognito CloudFront
 - Origin Certificate for ALB HTTPS (imported into ACM)
 - ACM validation CNAME for auth domain certificate
@@ -234,7 +240,7 @@ bash scripts/cloudflare/setup-auth-domain.sh \
 
 The script requests the certificate, validates it via Cloudflare DNS, and waits for it to be issued. It prints the **auth certificate ARN** — you need this for step 4.
 
-If your root domain (`yourdomain.com`) does not have an A record yet, the script automatically creates a Cloudflare-proxied placeholder (`192.0.2.1`). This is required because Cognito validates that the parent domain resolves before allowing a custom subdomain. Replace the placeholder with a real server IP when you deploy a landing page on the root domain.
+If your root domain (`yourdomain.com`) does not have an A record yet, the script automatically creates a Cloudflare-proxied placeholder (`192.0.2.1`). This is required because Cognito validates that the parent domain resolves before allowing a custom subdomain. The `setup-dns.sh` script (step 5) replaces this placeholder with the real ALB CNAME.
 
 > **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal. Do not delete it.
 
@@ -252,11 +258,31 @@ Edit `cdk.context.local.json` with your values:
 |---|---|
 | `region` | AWS region, e.g. `eu-central-1` |
 | `domainName` | Your domain, e.g. `myfinance.com` |
-| `subdomain` | Subdomain prefix for the app, e.g. `app` → `app.myfinance.com` |
 | `certificateArn` | ACM certificate ARN from step 3d (Cloudflare Origin Cert) |
 | `authCertificateArn` | ACM certificate ARN from step 3e (public cert in `us-east-1` for `auth.myfinance.com`) |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
+| `siteRepo` | *(optional)* Git URL of a custom site repo (see below) |
+
+#### Custom public site (optional)
+
+By default, the root domain (`myfinance.com`) serves a redirect stub from `apps/site/`.
+To replace it with your own site:
+
+**On AWS:** add `siteRepo` to `cdk.context.local.json`:
+```json
+{
+  "siteRepo": "https://github.com/your-user/my-custom-site.git"
+}
+```
+CDK clones it to EC2 on first boot and CI/CD pulls updates on each deploy. No manual steps.
+
+**Without AWS (Hetzner, local, etc.):** set `SITE_PATH` in `.env`:
+```bash
+SITE_PATH=../my-custom-site make up
+```
+
+**Contract:** your repo must have a `Dockerfile` that listens on `PORT` (default `3001`) and accepts `APP_DOMAIN` env var (URL of the authenticated app, e.g. `https://app.myfinance.com`).
 
 ### 5. Bootstrap and deploy
 
@@ -272,12 +298,11 @@ After deploy completes, **create the DNS record** pointing to the ALB and config
 set -a; source scripts/cloudflare/.env; set +a
 
 bash scripts/cloudflare/setup-dns.sh \
-  --subdomain app \
   --stack-name ExpenseBudgetTracker \
   --auth-domain auth.yourdomain.com
 ```
 
-The script creates the app DNS CNAME (proxied via Cloudflare), sets SSL/TLS to Full (Strict), and creates the auth CNAME (DNS-only, pointing to Cognito's CloudFront distribution).
+The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Cloudflare), sets SSL/TLS to Full (Strict), and creates the auth CNAME (DNS-only, pointing to Cognito's CloudFront distribution).
 
 ### 6. Post-deploy
 
@@ -305,6 +330,14 @@ After first deploy:
    - SSM command to EC2 — `git pull` + `docker compose build` + migrate + restart
 
 No AWS keys stored in GitHub — uses OIDC federation.
+
+## Domain routing
+
+Three domains, two containers on the same EC2 instance:
+
+- `domain.com` → ALB host-header rule → site container (port 3001, no auth)
+- `app.domain.com` → ALB default action → Cognito auth → web container (port 3000)
+- `auth.domain.com` → Cognito hosted UI (CloudFront)
 
 ## Auth flow
 
