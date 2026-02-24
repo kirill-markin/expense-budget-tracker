@@ -44,7 +44,7 @@ async function BudgetStreamData() {
   );
 }
 
-export default function BudgetStreamPage() {
+export default function DashboardPage() {
   return (
     <main className="container">
       <section className="panel">
