@@ -47,10 +47,15 @@ if [[ ! -f "${CDK_DIR}/cdk.context.local.json" ]]; then
   exit 1
 fi
 
-# --- Step 1: CDK bootstrap (idempotent) ---
-echo "=== CDK bootstrap ==="
+# --- Step 0: Install dependencies ---
+echo "=== Install dependencies ==="
+cd "$ROOT_DIR"
+npm ci --silent --prefix apps/worker
 cd "$CDK_DIR"
 npm ci --silent
+
+# --- Step 1: CDK bootstrap (idempotent) ---
+echo "=== CDK bootstrap ==="
 npx cdk bootstrap --region "$REGION"
 
 # --- Step 2: CDK deploy with desiredCount=0 ---
@@ -84,11 +89,11 @@ echo "=== Build and push Docker images ==="
 aws ecr get-login-password --region "$REGION" | \
   docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
-echo "Building web image..."
-docker build -t "${WEB_REPO}:latest" "${ROOT_DIR}/apps/web"
+echo "Building web image (linux/arm64)..."
+docker build --platform linux/arm64 -t "${WEB_REPO}:latest" "${ROOT_DIR}/apps/web"
 
-echo "Building migrate image..."
-docker build -t "${MIGRATE_REPO}:latest" -f "${ROOT_DIR}/infra/docker/Dockerfile.migrate" "${ROOT_DIR}"
+echo "Building migrate image (linux/arm64)..."
+docker build --platform linux/arm64 -t "${MIGRATE_REPO}:latest" -f "${ROOT_DIR}/infra/docker/Dockerfile.migrate" "${ROOT_DIR}"
 
 echo "Pushing web image..."
 docker push "${WEB_REPO}:latest"

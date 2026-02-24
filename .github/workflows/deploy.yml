@@ -13,7 +13,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -27,45 +27,33 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # Fail fast if bootstrap hasn't been run yet.
+      # bootstrap-ecr.sh must be run once before CI can deploy.
+      - name: Verify ECR repos exist
+        run: |
+          if ! aws ecr describe-repositories \
+            --repository-names expense-tracker/web expense-tracker/migrate \
+            --query 'repositories[*].repositoryName' \
+            --output text 2>/dev/null; then
+            echo "ERROR: ECR repositories not found."
+            echo "Run 'bash scripts/bootstrap-ecr.sh --region $AWS_REGION' first (see infra/aws/README.md step 5)."
+            exit 1
+          fi
+          echo "ECR repos found — proceeding with deploy."
+
       # Install worker deps (Lambda bundle references ../../apps/worker/)
       - name: Install dependencies
         run: |
           npm ci --prefix apps/worker
           npm ci --prefix infra/aws
 
-      # Detect first deploy: ECR repo doesn't exist or has no images.
-      # First deploy needs desiredCount=0 so CloudFormation doesn't hang
-      # waiting for images that haven't been pushed yet.
-      - name: Check if first deploy
-        id: check
-        run: |
-          IMAGE_COUNT=$(aws ecr describe-images \
-            --repository-name expense-tracker/web \
-            --query 'length(imageDetails)' \
-            --output text 2>/dev/null || echo "0")
-          if [ "$IMAGE_COUNT" = "0" ] || [ "$IMAGE_COUNT" = "None" ]; then
-            echo "first_deploy=true" >> "$GITHUB_OUTPUT"
-            echo "First deploy detected (no images in ECR)"
-          else
-            echo "first_deploy=false" >> "$GITHUB_OUTPUT"
-            echo "Existing deploy detected ($IMAGE_COUNT images in ECR)"
-          fi
-
-      # Deploy infrastructure. On first deploy, use desiredCount=0 so
-      # CloudFormation creates the ECS service with 0 tasks (no images yet).
       - name: CDK deploy
         working-directory: infra/aws
         env:
           CDK_CONTEXT: ${{ secrets.CDK_CONTEXT }}
-          FIRST_DEPLOY: ${{ steps.check.outputs.first_deploy }}
         run: |
           echo "$CDK_CONTEXT" > cdk.context.local.json
-          if [ "$FIRST_DEPLOY" = "true" ]; then
-            echo "First deploy: desiredCount=0 (images not in ECR yet)"
-            npx cdk deploy --all --require-approval never -c desiredCount=0
-          else
-            npx cdk deploy --all --require-approval never
-          fi
+          npx cdk deploy --all --require-approval never
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -86,7 +74,7 @@ jobs:
           echo "migrate_task=$(get_output MigrateTaskDefArn)" >> "$GITHUB_OUTPUT"
           echo "migrate_sg=$(get_output MigrateSecurityGroupId)" >> "$GITHUB_OUTPUT"
 
-      # Build and push Docker images (tagged with git SHA for rollback + "latest" for ECS)
+      # Build and push Docker images (tagged with git SHA for rollback + "latest" for ECS).
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -115,18 +103,6 @@ jobs:
           platforms: linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # First deploy only: now that images are in ECR, redeploy with
-      # desiredCount=1 so ECS starts tasks and pulls the images.
-      - name: CDK deploy (activate service)
-        if: steps.check.outputs.first_deploy == 'true'
-        working-directory: infra/aws
-        env:
-          CDK_CONTEXT: ${{ secrets.CDK_CONTEXT }}
-        run: |
-          echo "$CDK_CONTEXT" > cdk.context.local.json
-          echo "Activating service: desiredCount=1 (images now in ECR)"
-          npx cdk deploy --all --require-approval never
 
       # Run database migrations as a one-off ECS task
       - name: Run migrations
