@@ -149,7 +149,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       allocatedStorage: 20,
       maxAllocatedStorage: 50,
       backupRetention: cdk.Duration.days(7),
-      deletionProtection: false,
+      deletionProtection: true,
       removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
     });
 
@@ -170,6 +170,14 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+
+    // Shared Buildx install commands (used by UserData and SSM Deploy Document)
+    const installBuildxCommands: ReadonlyArray<string> = [
+      'ARCH=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")',
+      'BUILDX_VER=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)[\'tag_name\'])")',
+      'curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VER}/buildx-${BUILDX_VER}.linux-${ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-buildx',
+      "chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
+    ];
 
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
@@ -204,10 +212,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       "mkdir -p /usr/local/lib/docker/cli-plugins",
       'curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose',
       "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose",
-      'ARCH=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")',
-      'BUILDX_VER=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)[\'tag_name\'])")',
-      'curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VER}/buildx-${BUILDX_VER}.linux-${ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-buildx',
-      "chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
+      ...installBuildxCommands,
       // Clone repo and start
       "cd /home/ec2-user",
       "git clone https://github.com/kirill-markin/expense-budget-tracker.git app",
@@ -223,7 +228,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       'echo "AUTH_MODE=proxy" >> .env',
       'echo "AUTH_PROXY_HEADER=x-amzn-oidc-data" >> .env',
       'echo "HOST=0.0.0.0" >> .env',
-      'echo "CORS_ORIGIN=*" >> .env',
+      `echo "CORS_ORIGIN=https://${appDomain}" >> .env`,
       `echo "COGNITO_DOMAIN=${authDomain}" >> .env`,
       `echo "COGNITO_CLIENT_ID=${userPoolClient.userPoolClientId}" >> .env`,
       // Run migrations (creates app role with APP_DB_PASSWORD) and start web
@@ -232,6 +237,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       "sleep 5",
       "docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate",
       "docker compose --env-file .env -f infra/docker/compose.yml up -d web",
+      "chown -R ec2-user:ec2-user /home/ec2-user/app",
     );
 
     const ec2Role = new iam.Role(this, "Ec2Role", {
@@ -274,11 +280,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                 "# Install/upgrade Docker Buildx if missing or too old (compose v2 requires 0.17+)",
                 'if ! docker buildx version 2>/dev/null | grep -qE "v0\\.(1[7-9]|[2-9][0-9])|v[1-9]"; then',
                 '  echo "Installing Docker Buildx (need >= 0.17.0)..."',
-                '  ARCH=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")',
-                '  BUILDX_VER=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)[\'tag_name\'])")',
-                '  mkdir -p /usr/local/lib/docker/cli-plugins',
-                '  curl -SL "https://github.com/docker/buildx/releases/download/${BUILDX_VER}/buildx-${BUILDX_VER}.linux-${ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-buildx',
-                "  chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
+                "  mkdir -p /usr/local/lib/docker/cli-plugins",
+                ...installBuildxCommands.map((cmd: string) => `  ${cmd}`),
                 '  echo "Buildx $(docker buildx version) installed."',
                 "fi",
                 "",
@@ -286,6 +289,21 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                 "docker compose --env-file .env -f infra/docker/compose.yml build",
                 "docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate",
                 "docker compose --env-file .env -f infra/docker/compose.yml up -d web",
+                "",
+                "# Wait for health check (up to 60s)",
+                "for i in $(seq 1 30); do",
+                "  if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then",
+                '    echo "Health check passed."',
+                "    break",
+                "  fi",
+                '  if [ "$i" = "30" ]; then',
+                '    echo "ERROR: Health check failed after 30 attempts"',
+                "    docker compose --env-file .env -f infra/docker/compose.yml logs web",
+                "    exit 1",
+                "  fi",
+                "  sleep 2",
+                "done",
+                "",
                 'echo "Deploy complete."',
               ],
             },
@@ -553,11 +571,20 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
               new iam.PolicyStatement({
                 sid: "ReadStackOutputs",
                 actions: ["cloudformation:DescribeStacks"],
-                resources: ["*"],
+                resources: [this.stackId],
               }),
               new iam.PolicyStatement({
-                sid: "Ec2Deploy",
-                actions: ["ssm:SendCommand", "ssm:GetCommandInvocation"],
+                sid: "SsmSendDeploy",
+                actions: ["ssm:SendCommand"],
+                resources: [
+                  `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:document/${deployDocument.ref}`,
+                  `arn:aws:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:instance/${instance.instanceId}`,
+                ],
+              }),
+              new iam.PolicyStatement({
+                sid: "SsmGetInvocation",
+                actions: ["ssm:GetCommandInvocation"],
+                // AWS does not support resource-level permissions for this action
                 resources: ["*"],
               }),
             ],

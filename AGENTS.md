@@ -1,6 +1,6 @@
 # expense-budget-tracker
 
-Open-source personal finance tracker: expenses, budgets, balances, transfers, and multi-currency reporting on Postgres.
+Open-source expense and budget tracker: expenses, budgets, balances, transfers, and multi-currency reporting on Postgres.
 
 ## Rules
 
