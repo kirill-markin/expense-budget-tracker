@@ -11,6 +11,13 @@ name: Deploy to AWS
 on:
   push:
     branches: [main]
+    paths:
+      - 'apps/**'
+      - 'db/migrations/**'
+      - 'db/views/**'
+      - 'infra/**'
+      - 'scripts/migrate.sh'
+      - '.github/workflows/deploy.yml'
 
 permissions:
   id-token: write
