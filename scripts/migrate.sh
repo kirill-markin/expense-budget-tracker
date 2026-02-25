@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run all Postgres migrations and views, then create the app role for RLS.
 #
-# Required env vars:
-#   MIGRATION_DATABASE_URL — owner role (tracker), used for DDL and role creation.
+# Connection — one of:
+#   MIGRATION_DATABASE_URL — full connection string (local Docker Compose).
+#   PGHOST/PGUSER/PGPASSWORD/PGDATABASE/PGSSLMODE — native libpq vars (ECS via entrypoint).
 #
 # Optional env vars:
 #   APP_DB_PASSWORD — password for the app role (default: 'app').
@@ -12,8 +13,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [ -z "${MIGRATION_DATABASE_URL:-}" ]; then
-  echo "ERROR: MIGRATION_DATABASE_URL is not set" >&2
+# run_psql: call psql with the connection string if set, otherwise rely on PG* env vars.
+run_psql() {
+  if [[ -n "${MIGRATION_DATABASE_URL:-}" ]]; then
+    psql "$MIGRATION_DATABASE_URL" "$@"
+  else
+    psql "$@"
+  fi
+}
+
+if [[ -z "${MIGRATION_DATABASE_URL:-}" && -z "${PGHOST:-}" ]]; then
+  echo "ERROR: Set MIGRATION_DATABASE_URL or PGHOST/PGUSER/PGPASSWORD/PGDATABASE" >&2
   exit 1
 fi
 
@@ -22,10 +32,10 @@ APP_DB_PASSWORD="${APP_DB_PASSWORD:-app}"
 # Create migration tracking table (idempotent).
 # If this is an existing database (tables already created by prior deploys),
 # seed the tracking table so migrations are not re-applied.
-TRACKING_EXISTS=$(psql "$MIGRATION_DATABASE_URL" -tAc \
+TRACKING_EXISTS=$(run_psql -tAc \
   "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'schema_migrations'")
 
-psql "$MIGRATION_DATABASE_URL" -q <<SQL
+run_psql -q <<SQL
 CREATE TABLE IF NOT EXISTS schema_migrations (
   filename TEXT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -33,14 +43,14 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 SQL
 
 if [ "$TRACKING_EXISTS" != "1" ]; then
-  HAS_TABLES=$(psql "$MIGRATION_DATABASE_URL" -tAc \
+  HAS_TABLES=$(run_psql -tAc \
     "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'workspaces'")
   if [ "$HAS_TABLES" = "1" ]; then
     echo "Bootstrap: existing database detected, seeding schema_migrations..."
     for f in "$ROOT_DIR"/db/migrations/*.sql; do
       BASENAME=$(basename "$f")
       echo "INSERT INTO schema_migrations (filename) VALUES (:'fname') ON CONFLICT DO NOTHING" \
-        | psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME"
+        | run_psql -v "fname=$BASENAME"
       echo "  Recorded $BASENAME as already applied"
     done
   fi
@@ -50,26 +60,26 @@ echo "Running migrations..."
 for f in "$ROOT_DIR"/db/migrations/*.sql; do
   BASENAME=$(basename "$f")
   ALREADY=$(echo "SELECT 1 FROM schema_migrations WHERE filename = :'fname'" \
-    | psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME" -tA)
+    | run_psql -v "fname=$BASENAME" -tA)
   if [ "$ALREADY" = "1" ]; then
     echo "  Skipping $BASENAME (already applied)"
     continue
   fi
   echo "  Applying $BASENAME"
-  psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+  run_psql -v ON_ERROR_STOP=1 -f "$f"
   echo "INSERT INTO schema_migrations (filename) VALUES (:'fname')" \
-    | psql "$MIGRATION_DATABASE_URL" -v "fname=$BASENAME"
+    | run_psql -v "fname=$BASENAME"
 done
 
 echo "Applying views..."
 for f in "$ROOT_DIR"/db/views/*.sql; do
   echo "  Applying $(basename "$f")"
-  psql "$MIGRATION_DATABASE_URL" -f "$f"
+  run_psql -f "$f"
 done
 
 echo "Creating app role..."
 # Password passed via psql variable (:'app_pass') to avoid SQL injection from special characters.
-psql "$MIGRATION_DATABASE_URL" -v "app_pass=$APP_DB_PASSWORD" <<'SQL'
+run_psql -v "app_pass=$APP_DB_PASSWORD" <<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN

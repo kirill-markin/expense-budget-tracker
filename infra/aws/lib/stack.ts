@@ -22,6 +22,7 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as backup from "aws-cdk-lib/aws-backup";
 import { Construct } from "constructs";
 import * as path from "path";
+import * as fs from "fs";
 
 export class ExpenseBudgetTrackerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -62,14 +63,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
 
     // --- Security Groups ---
     // ALB only accepts traffic from Cloudflare edge servers.
-    // Source: https://www.cloudflare.com/ips/ (review quarterly)
-    const cloudflareCidrs = [
-      "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22",
-      "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
-      "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22",
-      "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
-      "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
-    ];
+    // IPs loaded from cloudflare-ips.json — run scripts/update-cloudflare-ips.sh to refresh.
+    const cfIpsPath = path.join(__dirname, "../cloudflare-ips.json");
+    const cfIpsData = JSON.parse(fs.readFileSync(cfIpsPath, "utf8")) as { ipv4_cidrs: string[] };
+    const cloudflareCidrs = cfIpsData.ipv4_cidrs;
     const albSg = new ec2.SecurityGroup(this, "AlbSg", {
       vpc,
       description: "ALB: allow HTTP/HTTPS from Cloudflare only",

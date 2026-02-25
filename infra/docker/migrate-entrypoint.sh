@@ -1,5 +1,10 @@
 #!/bin/bash
 set -euo pipefail
-# DB_PASSWORD is safe for URL embedding — RDS secret excludes special characters.
-export MIGRATION_DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:5432/${DB_NAME}?sslmode=require"
+# Use native libpq env vars — no URL assembly, no special-character encoding risks.
+export PGUSER="$DB_USER"
+export PGPASSWORD="$DB_PASSWORD"
+export PGHOST="$DB_HOST"
+export PGPORT=5432
+export PGDATABASE="$DB_NAME"
+export PGSSLMODE=require
 exec bash /scripts/migrate.sh

@@ -80,39 +80,9 @@ MIGRATE_SG=$(get_output MigrateSecurityGroupId)
 # --- Step 5: Run database migrations ---
 echo ""
 echo "=== Run database migrations ==="
-SUBNETS=$(aws ecs describe-services \
-  --cluster "$CLUSTER" \
-  --services "$SERVICE" \
-  --region "$REGION" \
-  --query "services[0].networkConfiguration.awsvpcConfiguration.subnets" \
-  --output text | tr '\t' ',')
-
-TASK_ARN=$(aws ecs run-task \
-  --cluster "$CLUSTER" \
-  --task-definition "$MIGRATE_TASK" \
-  --launch-type FARGATE \
-  --platform-version LATEST \
-  --region "$REGION" \
-  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$MIGRATE_SG],assignPublicIp=DISABLED}" \
-  --query "tasks[0].taskArn" \
-  --output text)
-
-echo "Migration task: $TASK_ARN"
-aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN" --region "$REGION"
-
-EXIT_CODE=$(aws ecs describe-tasks \
-  --cluster "$CLUSTER" \
-  --tasks "$TASK_ARN" \
-  --region "$REGION" \
-  --query "tasks[0].containers[0].exitCode" \
-  --output text)
-
-if [ "$EXIT_CODE" != "0" ]; then
-  echo "ERROR: Migration task failed with exit code $EXIT_CODE" >&2
-  echo "Check CloudWatch logs at /expense-tracker/migrate" >&2
-  exit 1
-fi
-echo "Migrations completed successfully."
+CLUSTER="$CLUSTER" SERVICE="$SERVICE" MIGRATE_TASK="$MIGRATE_TASK" MIGRATE_SG="$MIGRATE_SG" \
+  AWS_REGION="$REGION" \
+  bash "${SCRIPT_DIR}/run-migration-task.sh"
 
 echo ""
 echo "=== Bootstrap complete ==="

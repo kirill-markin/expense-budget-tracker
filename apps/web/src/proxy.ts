@@ -41,17 +41,50 @@ const addSecurityHeaders = (response: NextResponse): void => {
   }
 };
 
+/**
+ * CSRF check for mutating requests (POST/PUT/DELETE/PATCH).
+ *
+ * Defence layers (checked in order, per OWASP CSRF Prevention Cheat Sheet):
+ *   1. Sec-Fetch-Site — set by all modern browsers; "cross-site" is always blocked.
+ *   2. Origin header  — present on most browser POST/PUT/DELETE requests.
+ *   3. Referer header — fallback when Origin is missing (privacy redirects, old browsers).
+ *   4. If none of the above are present, the request is blocked (fail-safe).
+ *
+ * This is a defence-in-depth measure. In AUTH_MODE=proxy the ALB Cognito auth
+ * layer is the primary gate; CSRF prevents authenticated session misuse.
+ */
 const checkCsrf = (request: NextRequest): boolean => {
   const method = request.method;
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
 
-  const origin = request.headers.get("origin");
-  if (origin === null) return true;
-
   const allowedOrigin = process.env.CORS_ORIGIN ?? "";
   if (allowedOrigin === "") return true;
 
-  return origin === allowedOrigin;
+  // 1. Sec-Fetch-Site (modern browsers, ~98%+ global coverage)
+  const secFetchSite = request.headers.get("sec-fetch-site");
+  if (secFetchSite !== null) {
+    return secFetchSite === "same-origin" || secFetchSite === "same-site" || secFetchSite === "none";
+  }
+
+  // 2. Origin header
+  const origin = request.headers.get("origin");
+  if (origin !== null) {
+    return origin === allowedOrigin;
+  }
+
+  // 3. Referer header — extract origin portion for comparison
+  const referer = request.headers.get("referer");
+  if (referer !== null) {
+    try {
+      const refererOrigin = new URL(referer).origin;
+      return refererOrigin === allowedOrigin;
+    } catch {
+      return false;
+    }
+  }
+
+  // No browser identity headers present — block (fail-safe).
+  return false;
 };
 
 /**

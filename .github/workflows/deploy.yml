@@ -17,6 +17,7 @@ on:
       - 'db/views/**'
       - 'infra/**'
       - 'scripts/migrate.sh'
+      - 'scripts/run-migration-task.sh'
       - '.github/workflows/deploy.yml'
 
 permissions:
@@ -48,6 +49,12 @@ jobs:
           npm ci --prefix apps/worker
           npm ci --prefix infra/aws
 
+      # Refresh Cloudflare edge IP ranges so the ALB security group stays current.
+      # Best-effort: if the API is unreachable, the committed cloudflare-ips.json is used.
+      - name: Update Cloudflare IPs
+        continue-on-error: true
+        run: bash scripts/update-cloudflare-ips.sh
+
       # CDK builds Docker images (fromAsset), pushes to bootstrap ECR,
       # and updates all infrastructure in one pass.
       - name: CDK deploy
@@ -74,41 +81,7 @@ jobs:
 
       # Run database migrations as a one-off ECS task
       - name: Run migrations
-        run: |
-          SUBNETS=$(aws ecs describe-services \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE" \
-            --query "services[0].networkConfiguration.awsvpcConfiguration.subnets" \
-            --output text | tr '\t' ',')
-
-          TASK_ARN=$(aws ecs run-task \
-            --cluster "$CLUSTER" \
-            --task-definition "$MIGRATE_TASK" \
-            --launch-type FARGATE \
-            --platform-version LATEST \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$MIGRATE_SG],assignPublicIp=DISABLED}" \
-            --query "tasks[0].taskArn" \
-            --output text)
-
-          echo "Migration task: $TASK_ARN"
-
-          aws ecs wait tasks-stopped \
-            --cluster "$CLUSTER" \
-            --tasks "$TASK_ARN"
-
-          EXIT_CODE=$(aws ecs describe-tasks \
-            --cluster "$CLUSTER" \
-            --tasks "$TASK_ARN" \
-            --query "tasks[0].containers[0].exitCode" \
-            --output text)
-
-          if [ "$EXIT_CODE" != "0" ]; then
-            echo "ERROR: Migration task failed with exit code $EXIT_CODE"
-            echo "Check CloudWatch logs at /expense-tracker/migrate"
-            exit 1
-          fi
-
-          echo "Migrations completed successfully."
+        run: bash scripts/run-migration-task.sh
         env:
           CLUSTER: ${{ steps.outputs.outputs.cluster }}
           SERVICE: ${{ steps.outputs.outputs.service }}
