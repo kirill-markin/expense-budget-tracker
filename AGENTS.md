@@ -28,7 +28,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `apps/web/src/app/api/` | Next.js API routes (budget-grid, transactions, balances-summary, etc.) |
 | `apps/web/src/server/` | Server-side data functions (budget, balances, transactions) |
 | `apps/web/src/ui/` | React components: tables, charts, hooks |
-| `apps/web/src/middleware.ts` | Auth proxy logic (`AUTH_MODE` env var) |
+| `apps/web/src/proxy.ts` | Auth proxy logic (`AUTH_MODE` env var) |
 | `apps/worker/src/fetchers/` | FX rate fetchers: `ecb.ts`, `cbr.ts`, `nbs.ts` |
 | `db/migrations/` | Postgres migrations (applied in order by `scripts/migrate.sh`) |
 | `db/views/` | Postgres views (`accounts`) |

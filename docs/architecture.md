@@ -74,7 +74,7 @@ Data isolation using Postgres Row Level Security with workspace membership check
 
 ### How it works
 
-1. **Web app**: middleware.ts extracts user identity (`AUTH_MODE=none` → `"local"`, `AUTH_MODE=proxy` → JWT `sub` claim) and forwards it as `x-user-id` and `x-workspace-id` headers.
+1. **Web app**: proxy.ts extracts user identity (`AUTH_MODE=none` → `"local"`, `AUTH_MODE=proxy` → JWT `sub` claim) and forwards it as `x-user-id` and `x-workspace-id` headers.
 2. **db.ts**: `queryAs(userId, workspaceId, sql, params)` wraps each query in `BEGIN` → `SET LOCAL app.user_id` → `SET LOCAL app.workspace_id` → query → `COMMIT`. RLS policies check workspace membership via `workspace_members` and filter by `workspace_id = current_setting('app.workspace_id')`.
 3. **Direct access**: users get their own Postgres role with `ALTER ROLE user_xxx SET app.user_id TO 'cognito-sub'`. When `app.workspace_id` is not set, RLS allows access to all workspaces the user is a member of.
 
@@ -120,7 +120,7 @@ Zero built-in auth logic. Two modes controlled by `AUTH_MODE` env var:
 - `none` (default) — no authentication. App binds to `127.0.0.1`, userId is hardcoded to `"local"`, workspaceId is `"local"`. All data belongs to this single workspace.
 - `proxy` — trusts a JWT header set by the reverse proxy (ALB + Cognito). Extracts `sub` claim as userId. In v1, workspaceId = userId (each user has a default workspace matching their user ID). Returns 401 if the header is missing or malformed. Open registration: anyone can sign up via Cognito — each user gets an isolated workspace via RLS.
 
-Details in `apps/web/src/middleware.ts`.
+Details in `apps/web/src/proxy.ts`.
 
 ## Deployment profiles
 

@@ -1,5 +1,6 @@
 /**
- * Next.js middleware: auth gate, user identity extraction, CSRF check, security headers.
+ * Next.js proxy: auth gate, user identity extraction, CSRF check, security headers.
+ * (Renamed from middleware.ts — the "middleware" convention was deprecated in Next.js 16.)
  *
  * AUTH_MODE=none  — all requests pass; userId is hardcoded to 'local'.
  * AUTH_MODE=proxy — requires a JWT header named by AUTH_PROXY_HEADER (e.g. x-amzn-oidc-data);
@@ -114,7 +115,7 @@ const forwardWithIdentity = (request: NextRequest, userId: string, workspaceId: 
   return response;
 };
 
-export const middleware = (request: NextRequest): NextResponse => {
+export const proxy = (request: NextRequest): NextResponse => {
   const { pathname } = request.nextUrl;
 
   if (!checkCsrf(request)) {

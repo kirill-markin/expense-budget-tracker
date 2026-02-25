@@ -10,7 +10,7 @@
  * The password is visible only in the POST/PUT response body; GET always
  * returns password: null.
  *
- * Authorization: userId/workspaceId come from headers set by middleware (ALB +
+ * Authorization: userId/workspaceId come from headers set by proxy (ALB +
  * Cognito in prod, local defaults in dev). Workspace membership is enforced
  * by the SECURITY DEFINER SQL functions.
  *
