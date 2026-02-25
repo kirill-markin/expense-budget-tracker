@@ -63,3 +63,11 @@ export const NBS_API_BASE_URL: string = "https://kurs.resenje.org/api/v1";
 
 // Maximum number of daily rates per single API request.
 export const NBS_MAX_COUNT: number = 1000;
+
+// ---------------------------------------------------------------------------
+// NBU (National Bank of Ukraine)
+// ---------------------------------------------------------------------------
+
+// National Bank of Ukraine — official exchange rates API.
+// Docs: https://bank.gov.ua/en/open-data/api-dev
+export const NBU_BASE_URL: string = "https://bank.gov.ua/NBU_Exchange/exchange_site";
