@@ -169,6 +169,7 @@ a:hover {
 .budget-table {
   border-collapse: collapse;
   font-size: 13px;
+  line-height: 20px;
   white-space: nowrap;
   min-width: 100%;
 }
@@ -225,7 +226,7 @@ a:hover {
 }
 
 .budget-direction-label {
-  padding: 6px 10px;
+  padding: 4px 10px;
   font-weight: 650;
 }
 
