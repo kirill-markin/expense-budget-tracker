@@ -24,7 +24,9 @@ RUN addgroup --system --gid 1001 nodejs && \
 # so that NODE_EXTRA_CA_CERTS (set in CDK) lets Node.js verify the
 # RDS certificate without disabling validation (rejectUnauthorized:false).
 # Bundle URL: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html
-ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-global-bundle.pem
+# Docker ADD from URL creates files as root:root with 600 permissions.
+# chmod so the non-root nextjs user can read it at runtime.
+ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-global-bundle.pem
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
