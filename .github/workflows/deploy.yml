@@ -39,9 +39,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect changed paths
+        id: changes
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            migrations:
+              - 'db/migrations/**'
+              - 'db/views/**'
+              - 'scripts/migrate.sh'
+              - 'scripts/run-migration-task.sh'
+            worker:
+              - 'apps/worker/**'
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: 'npm'
+          cache-dependency-path: |
+            apps/worker/package-lock.json
+            infra/aws/package-lock.json
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -73,6 +91,7 @@ jobs:
 
       - name: Read stack outputs
         id: outputs
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.migrations == 'true' || steps.changes.outputs.worker == 'true'
         run: |
           get_output() {
             aws cloudformation describe-stacks \
@@ -88,6 +107,7 @@ jobs:
 
       # Run database migrations as a one-off ECS task
       - name: Run migrations
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.migrations == 'true'
         run: bash scripts/run-migration-task.sh
         env:
           CLUSTER: ${{ steps.outputs.outputs.cluster }}
@@ -97,6 +117,7 @@ jobs:
 
       # Ensure exchange rates are up to date (idempotent — ON CONFLICT DO NOTHING)
       - name: Seed exchange rates
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.worker == 'true'
         run: |
           RESPONSE=$(mktemp)
           aws lambda invoke \
