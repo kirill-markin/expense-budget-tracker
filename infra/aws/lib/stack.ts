@@ -620,6 +620,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                   `${migrateLogGroup.logGroupArn}:*`,
                 ],
               }),
+              new iam.PolicyStatement({
+                sid: "InvokeFxFetcher",
+                actions: ["lambda:InvokeFunction"],
+                resources: [fxFetcher.functionArn],
+              }),
             ],
           }),
         },
