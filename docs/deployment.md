@@ -57,8 +57,8 @@ export AWS_PROFILE=expense-tracker
 bash scripts/bootstrap.sh --region eu-central-1
 ```
 
-The script runs `cdk bootstrap` (prepares the AWS account) then `cdk deploy` (creates everything), then runs database migrations.
+The script runs `cdk bootstrap` (prepares the AWS account) then `cdk deploy` (creates everything), then runs database migrations, then invokes the FX fetcher Lambda to seed exchange rates.
 
 **CI/CD (all subsequent deploys):** `.github/workflows/deploy.yml`
 
-Triggered on every push to `main`. Runs the same `cdk deploy` to update infrastructure and images, then runs migrations.
+Triggered on every push to `main`. Runs the same `cdk deploy` to update infrastructure and images, then runs migrations, then invokes the FX fetcher Lambda to ensure exchange rates are up to date.

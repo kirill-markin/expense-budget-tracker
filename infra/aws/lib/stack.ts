@@ -690,5 +690,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       value: migrateSg.securityGroupId,
       description: "Security group ID for migration tasks",
     });
+    new cdk.CfnOutput(this, "FxFetcherFunctionName", {
+      value: fxFetcher.functionName,
+      description: "Lambda function name for FX rate fetcher",
+    });
   }
 }

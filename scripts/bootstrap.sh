@@ -84,9 +84,22 @@ CLUSTER="$CLUSTER" SERVICE="$SERVICE" MIGRATE_TASK="$MIGRATE_TASK" MIGRATE_SG="$
   AWS_REGION="$REGION" \
   bash "${SCRIPT_DIR}/run-migration-task.sh"
 
+# --- Step 6: Seed exchange rates ---
+# Invoke the FX fetcher Lambda so the currency dropdown is populated immediately
+# instead of waiting for the next scheduled run (08:00 UTC).
+echo ""
+echo "=== Seed exchange rates ==="
+FX_FUNCTION=$(get_output FxFetcherFunctionName)
+aws lambda invoke \
+  --function-name "$FX_FUNCTION" \
+  --region "$REGION" \
+  --cli-read-timeout 300 \
+  /dev/null
+echo "Exchange rates seeded."
+
 echo ""
 echo "=== Bootstrap complete ==="
-echo "ECS service is running. Database migrations applied."
+echo "ECS service is running. Database migrations applied. Exchange rates seeded."
 echo ""
 echo "Next steps:"
 echo "  1. Run scripts/cloudflare/setup-dns.sh to create DNS records (see README step 5)"

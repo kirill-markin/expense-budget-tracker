@@ -78,6 +78,7 @@ jobs:
           echo "service=$(get_output EcsServiceName)" >> "$GITHUB_OUTPUT"
           echo "migrate_task=$(get_output MigrateTaskDefArn)" >> "$GITHUB_OUTPUT"
           echo "migrate_sg=$(get_output MigrateSecurityGroupId)" >> "$GITHUB_OUTPUT"
+          echo "fx_function=$(get_output FxFetcherFunctionName)" >> "$GITHUB_OUTPUT"
 
       # Run database migrations as a one-off ECS task
       - name: Run migrations
@@ -87,3 +88,14 @@ jobs:
           SERVICE: ${{ steps.outputs.outputs.service }}
           MIGRATE_TASK: ${{ steps.outputs.outputs.migrate_task }}
           MIGRATE_SG: ${{ steps.outputs.outputs.migrate_sg }}
+
+      # Ensure exchange rates are up to date (idempotent — ON CONFLICT DO NOTHING)
+      - name: Seed exchange rates
+        run: |
+          aws lambda invoke \
+            --function-name "$FX_FUNCTION" \
+            --cli-read-timeout 300 \
+            /dev/null
+          echo "Exchange rates seeded."
+        env:
+          FX_FUNCTION: ${{ steps.outputs.outputs.fx_function }}
