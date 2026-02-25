@@ -18,16 +18,16 @@ export const POST = async (request: Request): Promise<Response> => {
 
   const { entryId, category, note } = body;
 
-  if (typeof entryId !== "string" || entryId.length === 0) {
-    return new Response("Invalid entryId. Expected non-empty string", { status: 400 });
+  if (typeof entryId !== "string" || entryId.length === 0 || entryId.length > 200) {
+    return new Response("Invalid entryId. Expected non-empty string (max 200 chars)", { status: 400 });
   }
 
-  if (category !== null && typeof category !== "string") {
-    return new Response("Invalid category. Expected string or null", { status: 400 });
+  if (category !== null && (typeof category !== "string" || category.length > 200)) {
+    return new Response("Invalid category. Expected string (max 200 chars) or null", { status: 400 });
   }
 
-  if (note !== null && typeof note !== "string") {
-    return new Response("Invalid note. Expected string or null", { status: 400 });
+  if (note !== null && (typeof note !== "string" || note.length > 1000)) {
+    return new Response("Invalid note. Expected string (max 1000 chars) or null", { status: 400 });
   }
 
   if (isDemoModeFromRequest(request)) {

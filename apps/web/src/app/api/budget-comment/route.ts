@@ -21,8 +21,8 @@ export const GET = async (request: Request): Promise<Response> => {
     return new Response("Invalid direction. Expected 'income' or 'spend'", { status: 400 });
   }
 
-  if (typeof category !== "string" || category.length === 0) {
-    return new Response("Invalid category. Expected non-empty string", { status: 400 });
+  if (typeof category !== "string" || category.length === 0 || category.length > 200) {
+    return new Response("Invalid category. Expected non-empty string (max 200 chars)", { status: 400 });
   }
 
   if (isDemoModeFromRequest(request)) {
@@ -66,12 +66,12 @@ export const POST = async (request: Request): Promise<Response> => {
     return new Response("Invalid direction. Expected 'income' or 'spend'", { status: 400 });
   }
 
-  if (typeof category !== "string" || category.length === 0) {
-    return new Response("Invalid category. Expected non-empty string", { status: 400 });
+  if (typeof category !== "string" || category.length === 0 || category.length > 200) {
+    return new Response("Invalid category. Expected non-empty string (max 200 chars)", { status: 400 });
   }
 
-  if (typeof comment !== "string") {
-    return new Response("Invalid comment. Expected string", { status: 400 });
+  if (typeof comment !== "string" || comment.length > 2000) {
+    return new Response("Invalid comment. Expected string (max 2000 chars)", { status: 400 });
   }
 
   if (isDemoModeFromRequest(request)) {

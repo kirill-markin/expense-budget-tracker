@@ -33,12 +33,35 @@ export const GET = async (request: Request): Promise<Response> => {
     return new Response("sortDir must be asc or desc", { status: 400 });
   }
 
+  const dateFrom = params.get("dateFrom");
+  const dateTo = params.get("dateTo");
+  const accountId = params.get("accountId");
+  const kindFilter = params.get("kind");
+  const categoryFilter = params.get("category");
+
+  const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+  if (dateFrom !== null && !DATE_PATTERN.test(dateFrom)) {
+    return new Response("dateFrom must be YYYY-MM-DD", { status: 400 });
+  }
+  if (dateTo !== null && !DATE_PATTERN.test(dateTo)) {
+    return new Response("dateTo must be YYYY-MM-DD", { status: 400 });
+  }
+  if (accountId !== null && accountId.length > 200) {
+    return new Response("accountId too long (max 200 chars)", { status: 400 });
+  }
+  if (kindFilter !== null && kindFilter.length > 20) {
+    return new Response("kind too long (max 20 chars)", { status: 400 });
+  }
+  if (categoryFilter !== null && categoryFilter.length > 200) {
+    return new Response("category too long (max 200 chars)", { status: 400 });
+  }
+
   const filter: TransactionsFilter = {
-    dateFrom: params.get("dateFrom"),
-    dateTo: params.get("dateTo"),
-    accountId: params.get("accountId"),
-    kind: params.get("kind"),
-    category: params.get("category"),
+    dateFrom,
+    dateTo,
+    accountId,
+    kind: kindFilter,
+    category: categoryFilter,
     sortKey: sortKeyRaw,
     sortDir: sortDirRaw,
     limit: limitRaw,

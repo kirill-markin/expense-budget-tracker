@@ -32,8 +32,8 @@ export const POST = async (request: Request): Promise<Response> => {
     return new Response("Invalid direction. Expected 'income' or 'spend'", { status: 400 });
   }
 
-  if (typeof category !== "string" || category.length === 0) {
-    return new Response("Invalid category. Expected non-empty string", { status: 400 });
+  if (typeof category !== "string" || category.length === 0 || category.length > 200) {
+    return new Response("Invalid category. Expected non-empty string (max 200 chars)", { status: 400 });
   }
 
   if (typeof kind !== "string" || !VALID_KINDS.has(kind)) {
