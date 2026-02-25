@@ -104,6 +104,12 @@ TO app;
 GRANT SELECT, INSERT ON TABLE workspaces, workspace_members TO app;
 GRANT SELECT, INSERT ON TABLE exchange_rates TO app;
 GRANT SELECT ON TABLE accounts TO app;
+-- Direct access: app needs SELECT to display credentials in UI,
+-- and EXECUTE on SECURITY DEFINER functions that manage Postgres roles.
+GRANT SELECT ON TABLE direct_access_roles TO app;
+GRANT EXECUTE ON FUNCTION provision_direct_access(TEXT, TEXT) TO app;
+GRANT EXECUTE ON FUNCTION revoke_direct_access(TEXT) TO app;
+GRANT EXECUTE ON FUNCTION rotate_direct_access_password(TEXT, TEXT) TO app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app;
 SQL
 
