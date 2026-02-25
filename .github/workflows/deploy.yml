@@ -3,6 +3,7 @@
 # Uses the same `cdk deploy` as the bootstrap script.
 # CDK builds Docker images (via fromAsset), pushes them to the bootstrap ECR,
 # and updates all infrastructure. Migrations run as a one-off ECS task after deploy.
+# Exchange rates are refreshed by invoking the FX fetcher Lambda.
 #
 # Requires bootstrap (scripts/bootstrap.sh) to have been run first.
 # See docs/deployment.md for details.
