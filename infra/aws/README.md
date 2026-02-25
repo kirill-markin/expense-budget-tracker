@@ -273,7 +273,7 @@ To serve your own site on the root domain, deploy it independently (Vercel, Clou
 
 ```bash
 export AWS_PROFILE=expense-tracker
-bash scripts/bootstrap-ecr.sh --region eu-central-1  # ~15-20 min
+bash scripts/bootstrap.sh --region eu-central-1  # ~15-20 min
 ```
 
 The script handles the full first-time deployment:
@@ -299,7 +299,7 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
 ### 6. Post-deploy
 
 1. **Confirm SNS email** — check the `alertEmail` inbox for a message from "AWS Notifications" with subject "AWS Notification - Subscription Confirmation". Click the "Confirm subscription" link inside. Without this, CloudWatch alarm notifications will not be delivered
-2. **Visit your domain** — Cognito sign-up/login page appears. Self-registration is enabled
+2. **Visit your domain** — Cognito sign-up/login page appears. Open registration: anyone can sign up with email. Each user gets an isolated workspace via RLS — no shared data between users
 3. To create users via CLI instead:
    ```bash
    aws cognito-idp admin-create-user \

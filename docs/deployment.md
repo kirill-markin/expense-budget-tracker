@@ -44,13 +44,21 @@ Full AWS deployment guide is in [`infra/aws/README.md`](../infra/aws/README.md).
 
 We recommend deploying into a **dedicated AWS account** (the AWS equivalent of a GCP project) for complete isolation of resources, billing, and IAM. See step 1 in the AWS README for setup instructions.
 
-Summary: CDK stack deploys VPC, ECS Fargate (web app), RDS Postgres (private), ALB with Cognito auth + Cloudflare Origin Certificate, WAF, Lambda for FX fetchers, CloudWatch monitoring, and S3 access logs. Docker images are built in CI and pushed to ECR. DNS is managed via Cloudflare (domain registration, CNAME to ALB, CDN, edge SSL).
+Summary: CDK stack deploys VPC, ECS Fargate (web app), RDS Postgres (private), ALB with Cognito auth + Cloudflare Origin Certificate, WAF, Lambda for FX fetchers, CloudWatch monitoring, and S3 access logs. Docker images are built by CDK (via `fromAsset`) and pushed to the CDK bootstrap ECR repo. DNS is managed via Cloudflare (domain registration, CNAME to ALB, CDN, edge SSL). Open registration: anyone can sign up with email, each user gets an isolated workspace via RLS.
+
+### Bootstrap and CI/CD
+
+Both bootstrap and CI/CD use the same method: `cdk deploy`. CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates/updates all infrastructure in one pass. Migrations run as a one-off ECS task after deploy.
+
+**Bootstrap (first deploy, one-time):** `scripts/bootstrap.sh`
 
 ```bash
-cd infra/aws
-npm install
-cp cdk.context.local.example.json cdk.context.local.json
-# edit cdk.context.local.json with your values
-AWS_PROFILE=expense-tracker npx cdk bootstrap   # first time only
-AWS_PROFILE=expense-tracker npx cdk deploy
+export AWS_PROFILE=expense-tracker
+bash scripts/bootstrap.sh --region eu-central-1
 ```
+
+The script runs `cdk bootstrap` (prepares the AWS account) then `cdk deploy` (creates everything), then runs database migrations.
+
+**CI/CD (all subsequent deploys):** `.github/workflows/deploy.yml`
+
+Triggered on every push to `main`. Runs the same `cdk deploy` to update infrastructure and images, then runs migrations.

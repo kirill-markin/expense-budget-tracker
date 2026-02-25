@@ -1,3 +1,11 @@
+# CI/CD — triggered on push to main.
+#
+# Uses the same `cdk deploy` as the bootstrap script.
+# CDK builds Docker images (via fromAsset), pushes them to the bootstrap ECR,
+# and updates all infrastructure. Migrations run as a one-off ECS task after deploy.
+#
+# Requires bootstrap (scripts/bootstrap.sh) to have been run first.
+# See docs/deployment.md for details.
 name: Deploy to AWS
 
 on:
@@ -27,26 +35,14 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Fail fast if bootstrap hasn't been run yet.
-      # bootstrap-ecr.sh must be run once before CI can deploy.
-      - name: Verify ECR repos exist
-        run: |
-          if ! aws ecr describe-repositories \
-            --repository-names expense-tracker/web expense-tracker/migrate \
-            --query 'repositories[*].repositoryName' \
-            --output text 2>/dev/null; then
-            echo "ERROR: ECR repositories not found."
-            echo "Run 'bash scripts/bootstrap-ecr.sh --region $AWS_REGION' first (see infra/aws/README.md step 5)."
-            exit 1
-          fi
-          echo "ECR repos found — proceeding with deploy."
-
       # Install worker deps (Lambda bundle references ../../apps/worker/)
       - name: Install dependencies
         run: |
           npm ci --prefix apps/worker
           npm ci --prefix infra/aws
 
+      # CDK builds Docker images (fromAsset), pushes to bootstrap ECR,
+      # and updates all infrastructure in one pass.
       - name: CDK deploy
         working-directory: infra/aws
         env:
@@ -54,9 +50,6 @@ jobs:
         run: |
           echo "$CDK_CONTEXT" > cdk.context.local.json
           npx cdk deploy --all --require-approval never
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Read stack outputs
         id: outputs
@@ -67,42 +60,10 @@ jobs:
               --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" \
               --output text
           }
-          echo "web_repo=$(get_output WebRepoUri)" >> "$GITHUB_OUTPUT"
-          echo "migrate_repo=$(get_output MigrateRepoUri)" >> "$GITHUB_OUTPUT"
           echo "cluster=$(get_output EcsClusterName)" >> "$GITHUB_OUTPUT"
           echo "service=$(get_output EcsServiceName)" >> "$GITHUB_OUTPUT"
           echo "migrate_task=$(get_output MigrateTaskDefArn)" >> "$GITHUB_OUTPUT"
           echo "migrate_sg=$(get_output MigrateSecurityGroupId)" >> "$GITHUB_OUTPUT"
-
-      # Build and push Docker images (tagged with git SHA for rollback + "latest" for ECS).
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push web image
-        uses: docker/build-push-action@v6
-        with:
-          context: apps/web
-          file: apps/web/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.outputs.outputs.web_repo }}:${{ github.sha }}
-            ${{ steps.outputs.outputs.web_repo }}:latest
-          platforms: linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push migrate image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infra/docker/Dockerfile.migrate
-          push: true
-          tags: |
-            ${{ steps.outputs.outputs.migrate_repo }}:${{ github.sha }}
-            ${{ steps.outputs.outputs.migrate_repo }}:latest
-          platforms: linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       # Run database migrations as a one-off ECS task
       - name: Run migrations
@@ -146,23 +107,3 @@ jobs:
           SERVICE: ${{ steps.outputs.outputs.service }}
           MIGRATE_TASK: ${{ steps.outputs.outputs.migrate_task }}
           MIGRATE_SG: ${{ steps.outputs.outputs.migrate_sg }}
-
-      # Restart ECS service to pick up the freshly pushed images
-      - name: Deploy web service
-        run: |
-          aws ecs update-service \
-            --cluster "$CLUSTER" \
-            --service "$SERVICE" \
-            --force-new-deployment \
-            --query "service.serviceName" \
-            --output text
-
-          echo "Waiting for service stability..."
-          aws ecs wait services-stable \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE"
-
-          echo "Deployment complete."
-        env:
-          CLUSTER: ${{ steps.outputs.outputs.cluster }}
-          SERVICE: ${{ steps.outputs.outputs.service }}

@@ -1,7 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
-import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
+import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as elbv2_actions from "aws-cdk-lib/aws-elasticloadbalancingv2-actions";
@@ -33,14 +33,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
     const githubRepo = this.node.tryGetContext("githubRepo") as string;
 
-    // imageTag: defaults to "latest" (CI pushes images tagged "latest" + SHA, then force-new-deployment).
-    // Pass -c imageTag=<sha> for manual rollback to a specific version.
-    const imageTag = (this.node.tryGetContext("imageTag") as string | undefined) ?? "latest";
-
-    // desiredCount: override with -c desiredCount=0 for first deploy (ECR repos empty,
-    // CloudFormation would hang waiting for tasks). bootstrap-ecr.sh uses this.
-    const desiredCount = Number(this.node.tryGetContext("desiredCount") ?? 1);
-
     const appDomain = `app.${baseDomain}`;
     const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
 
@@ -69,12 +61,23 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     // --- Security Groups ---
+    // ALB only accepts traffic from Cloudflare edge servers.
+    // Source: https://www.cloudflare.com/ips/ (review quarterly)
+    const cloudflareCidrs = [
+      "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22",
+      "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+      "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22",
+      "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+      "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    ];
     const albSg = new ec2.SecurityGroup(this, "AlbSg", {
       vpc,
-      description: "ALB: allow HTTP/HTTPS from internet",
+      description: "ALB: allow HTTP/HTTPS from Cloudflare only",
     });
-    albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), "HTTP");
-    albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "HTTPS");
+    for (const cidr of cloudflareCidrs) {
+      albSg.addIngressRule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(80), `CF ${cidr}`);
+      albSg.addIngressRule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), `CF ${cidr}`);
+    }
 
     const ecsSg = new ec2.SecurityGroup(this, "EcsSg", {
       vpc,
@@ -103,6 +106,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     );
 
     // --- Cognito User Pool ---
+    // Open registration: any user can sign up with email.
+    // Each user gets an isolated workspace via RLS — no shared data.
     const userPool = new cognito.UserPool(this, "UserPool", {
       userPoolName: "expense-tracker-users",
       selfSignUpEnabled: true,
@@ -142,6 +147,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     // --- RDS Postgres ---
     const dbCredentials = rds.Credentials.fromGeneratedSecret("tracker", {
       secretName: "expense-tracker/db-credentials",
+      excludeCharacters: " %+~`#$&*()|[]{}:;<>?!/@\"\\",
     });
 
     const db = new rds.DatabaseInstance(this, "Db", {
@@ -172,20 +178,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       },
     });
 
-    // --- ECR Repositories ---
-    const webRepo = new ecr.Repository(this, "WebRepo", {
-      repositoryName: "expense-tracker/web",
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      lifecycleRules: [{ maxImageCount: 10 }],
-    });
-
-    const migrateRepo = new ecr.Repository(this, "MigrateRepo", {
-      repositoryName: "expense-tracker/migrate",
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      lifecycleRules: [{ maxImageCount: 5 }],
-    });
-
     // --- ECS Cluster + Web Service ---
+    // Docker images are built and pushed by CDK via fromAsset() — no manual ECR repos needed.
+    // CDK uses the bootstrap ECR repo (cdk-hnb659fds-container-assets-*) for image storage.
     const cluster = new ecs.Cluster(this, "Cluster", { vpc });
 
     const webTaskDef = new ecs.FargateTaskDefinition(this, "WebTask", {
@@ -204,7 +199,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     webTaskDef.addContainer("web", {
-      image: ecs.ContainerImage.fromEcrRepository(webRepo, imageTag),
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../../apps/web"), {
+        platform: Platform.LINUX_ARM64,
+      }),
       portMappings: [{ containerPort: 8080 }],
       environment: {
         AUTH_MODE: "proxy",
@@ -229,13 +226,14 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
         retries: 3,
+        startPeriod: cdk.Duration.seconds(60),
       },
     });
 
     const webService = new ecs.FargateService(this, "WebService", {
       cluster,
       taskDefinition: webTaskDef,
-      desiredCount,
+      desiredCount: 1,
       assignPublicIp: false,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [ecsSg],
@@ -271,7 +269,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
 
     // Migration needs the DB owner (tracker) credentials to run DDL + create the app role.
     migrateTaskDef.addContainer("migrate", {
-      image: ecs.ContainerImage.fromEcrRepository(migrateRepo, imageTag),
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../.."), {
+        file: "infra/docker/Dockerfile.migrate",
+        platform: Platform.LINUX_ARM64,
+        exclude: [".git", "**/node_modules", "apps", "docs", ".next"],
+      }),
       environment: {
         DB_HOST: db.dbInstanceEndpointAddress,
         DB_NAME: "tracker",
@@ -584,39 +586,28 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
                 resources: [this.stackId],
               }),
               new iam.PolicyStatement({
-                sid: "EcrPush",
-                actions: [
-                  "ecr:BatchCheckLayerAvailability",
-                  "ecr:GetDownloadUrlForLayer",
-                  "ecr:BatchGetImage",
-                  "ecr:PutImage",
-                  "ecr:InitiateLayerUpload",
-                  "ecr:UploadLayerPart",
-                  "ecr:CompleteLayerUpload",
-                ],
-                resources: [webRepo.repositoryArn, migrateRepo.repositoryArn],
+                sid: "EcsDescribeServices",
+                actions: ["ecs:DescribeServices"],
+                resources: [webService.serviceArn],
               }),
               new iam.PolicyStatement({
-                sid: "EcrLogin",
-                actions: ["ecr:GetAuthorizationToken"],
-                resources: ["*"],
+                sid: "EcsRunMigration",
+                actions: ["ecs:RunTask"],
+                resources: [
+                  `arn:aws:ecs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:task-definition/${migrateTaskDef.family}:*`,
+                ],
               }),
               new iam.PolicyStatement({
-                sid: "EcsDeploy",
-                actions: [
-                  "ecs:RunTask",
-                  "ecs:DescribeTasks",
-                  "ecs:UpdateService",
-                  "ecs:DescribeServices",
+                sid: "EcsDescribeTasks",
+                actions: ["ecs:DescribeTasks"],
+                resources: [
+                  `arn:aws:ecs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:task/${cluster.clusterName}/*`,
                 ],
-                resources: ["*"],
               }),
               new iam.PolicyStatement({
                 sid: "PassEcsRoles",
                 actions: ["iam:PassRole"],
                 resources: [
-                  webTaskDef.taskRole.roleArn,
-                  webTaskDef.executionRole!.roleArn,
                   migrateTaskDef.taskRole.roleArn,
                   migrateTaskDef.executionRole!.roleArn,
                 ],
@@ -685,14 +676,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     new cdk.CfnOutput(this, "AccessLogsBucket", {
       value: accessLogsBucket.bucketName,
       description: "S3 bucket for ALB access logs",
-    });
-    new cdk.CfnOutput(this, "WebRepoUri", {
-      value: webRepo.repositoryUri,
-      description: "ECR repository URI for web image",
-    });
-    new cdk.CfnOutput(this, "MigrateRepoUri", {
-      value: migrateRepo.repositoryUri,
-      description: "ECR repository URI for migrate image",
     });
     new cdk.CfnOutput(this, "EcsClusterName", {
       value: cluster.clusterName,
