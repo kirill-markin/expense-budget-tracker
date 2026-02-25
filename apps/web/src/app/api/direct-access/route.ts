@@ -13,6 +13,10 @@
  * Authorization: userId/workspaceId come from headers set by middleware (ALB +
  * Cognito in prod, local defaults in dev). Workspace membership is enforced
  * by the SECURITY DEFINER SQL functions.
+ *
+ * Error handling: detailed errors are logged server-side only. Clients receive
+ * a generic message to avoid leaking workspace IDs, membership info, or
+ * internal SQL state.
  */
 import { isDemoModeFromRequest } from "@/lib/demoMode";
 import {
@@ -22,6 +26,12 @@ import {
   rotateDirectAccessPassword,
 } from "@/server/directAccess";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
+
+const logAndRespond = (label: string, error: unknown): Response => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error("direct-access %s: %s", label, message);
+  return new Response("Operation failed", { status: 500 });
+};
 
 export const GET = async (request: Request): Promise<Response> => {
   if (isDemoModeFromRequest(request)) {
@@ -35,8 +45,7 @@ export const GET = async (request: Request): Promise<Response> => {
     const credentials = await getDirectAccessCredentials(userId, workspaceId);
     return Response.json({ credentials });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Database query failed: ${message}`, { status: 500 });
+    return logAndRespond("GET", error);
   }
 };
 
@@ -52,8 +61,7 @@ export const POST = async (request: Request): Promise<Response> => {
     const credentials = await provisionDirectAccess(userId, workspaceId);
     return Response.json({ credentials });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Provisioning failed: ${message}`, { status: 500 });
+    return logAndRespond("POST", error);
   }
 };
 
@@ -69,8 +77,7 @@ export const DELETE = async (request: Request): Promise<Response> => {
     await revokeDirectAccess(userId, workspaceId);
     return Response.json({ revoked: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Revocation failed: ${message}`, { status: 500 });
+    return logAndRespond("DELETE", error);
   }
 };
 
@@ -86,7 +93,6 @@ export const PUT = async (request: Request): Promise<Response> => {
     const credentials = await rotateDirectAccessPassword(userId, workspaceId);
     return Response.json({ credentials });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Password rotation failed: ${message}`, { status: 500 });
+    return logAndRespond("PUT", error);
   }
 };
