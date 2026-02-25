@@ -83,34 +83,19 @@ for f in "$ROOT_DIR"/db/views/*.sql; do
   run_psql -f "$f"
 done
 
-echo "Creating app role..."
+echo "Setting app role password..."
+# Role and GRANTs are created by migration 0010_app_role_grants.sql.
 # Password passed via psql variable (:'app_pass') to avoid SQL injection from special characters.
 run_psql -v "app_pass=$APP_DB_PASSWORD" <<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN
-    CREATE ROLE app WITH LOGIN;
+    RAISE EXCEPTION 'Role app does not exist. Run migrations first.';
   END IF;
 END
 $$;
 
 ALTER ROLE app WITH PASSWORD :'app_pass';
-
-GRANT CONNECT ON DATABASE tracker TO app;
-GRANT USAGE ON SCHEMA public TO app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-  ledger_entries, budget_lines, budget_comments, workspace_settings
-TO app;
-GRANT SELECT, INSERT ON TABLE workspaces, workspace_members TO app;
-GRANT SELECT, INSERT ON TABLE exchange_rates TO app;
-GRANT SELECT ON TABLE accounts TO app;
--- Direct access: app needs SELECT to display credentials in UI,
--- and EXECUTE on SECURITY DEFINER functions that manage Postgres roles.
-GRANT SELECT ON TABLE direct_access_roles TO app;
-GRANT EXECUTE ON FUNCTION provision_direct_access(TEXT, TEXT) TO app;
-GRANT EXECUTE ON FUNCTION revoke_direct_access(TEXT) TO app;
-GRANT EXECUTE ON FUNCTION rotate_direct_access_password(TEXT, TEXT) TO app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app;
 SQL
 
 echo "Migrations complete."

@@ -32,6 +32,7 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
+  STACK_NAME: ExpenseBudgetTracker
 
 jobs:
   deploy:
@@ -95,7 +96,7 @@ jobs:
         run: |
           get_output() {
             aws cloudformation describe-stacks \
-              --stack-name ExpenseBudgetTracker \
+              --stack-name ${{ env.STACK_NAME }} \
               --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" \
               --output text
           }
@@ -118,6 +119,7 @@ jobs:
       # Ensure exchange rates are up to date (idempotent — ON CONFLICT DO NOTHING)
       - name: Seed exchange rates
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.worker == 'true'
+        continue-on-error: true
         run: |
           RESPONSE=$(mktemp)
           aws lambda invoke \

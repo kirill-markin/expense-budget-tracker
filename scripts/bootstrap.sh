@@ -99,9 +99,8 @@ aws lambda invoke \
   --output json \
   "$RESPONSE" > /tmp/invoke-meta.json
 if grep -q '"FunctionError"' /tmp/invoke-meta.json; then
-  echo "ERROR: FX fetcher Lambda failed:" >&2
+  echo "WARNING: FX fetcher Lambda failed (rates will sync on next scheduled run):" >&2
   cat "$RESPONSE" >&2
-  exit 1
 fi
 echo "Exchange rates seeded."
 

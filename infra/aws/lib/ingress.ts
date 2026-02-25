@@ -107,6 +107,30 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
     },
     rules: [
       {
+        name: "AuthRateLimit",
+        priority: 0,
+        action: { block: {} },
+        statement: {
+          rateBasedStatement: {
+            limit: 100,
+            aggregateKeyType: "IP",
+            scopeDownStatement: {
+              byteMatchStatement: {
+                fieldToMatch: { uriPath: {} },
+                positionalConstraint: "STARTS_WITH",
+                searchString: "/oauth2/",
+                textTransformations: [{ priority: 0, type: "LOWERCASE" }],
+              },
+            },
+          },
+        },
+        visibilityConfig: {
+          sampledRequestsEnabled: true,
+          cloudWatchMetricsEnabled: true,
+          metricName: "expense-tracker-auth-rate-limit",
+        },
+      },
+      {
         name: "RateLimit",
         priority: 1,
         action: { block: {} },

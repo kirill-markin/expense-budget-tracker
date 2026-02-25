@@ -13,6 +13,14 @@ import pg from "pg";
 
 // AUTH_MODE=proxy means production behind ALB + Cognito → always RDS → always SSL.
 // In proxy mode, construct the URL from individual env vars (ECS injects DB_PASSWORD from Secrets Manager).
+if (process.env.AUTH_MODE === "proxy") {
+  const required = ["DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME"] as const;
+  const missing = required.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    throw new Error(`Missing required env vars for proxy mode: ${missing.join(", ")}`);
+  }
+}
+
 const connectionString = process.env.AUTH_MODE === "proxy"
   ? `postgresql://${process.env.DB_USER}:${encodeURIComponent(process.env.DB_PASSWORD!)}@${process.env.DB_HOST}:5432/${process.env.DB_NAME}`
   : process.env.DATABASE_URL;
