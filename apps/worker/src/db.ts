@@ -23,5 +23,8 @@ export const query = async (text: string, params: ReadonlyArray<unknown>): Promi
   (await getPool()).query(text, params as Array<unknown>);
 
 export const endPool = async (): Promise<void> => {
-  if (pool) await pool.end();
+  if (pool) {
+    await pool.end();
+    pool = undefined;
+  }
 };
