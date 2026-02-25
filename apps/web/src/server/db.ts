@@ -17,7 +17,7 @@ const connectionString = process.env.AUTH_MODE === "proxy"
   ? `postgresql://${process.env.DB_USER}:${encodeURIComponent(process.env.DB_PASSWORD!)}@${process.env.DB_HOST}:5432/${process.env.DB_NAME}`
   : process.env.DATABASE_URL;
 
-const ssl = process.env.AUTH_MODE === "proxy" ? { rejectUnauthorized: false } : false;
+const ssl = process.env.AUTH_MODE === "proxy" ? true : false;
 
 const pool = new pg.Pool({ connectionString, ssl });
 
