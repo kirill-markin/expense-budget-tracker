@@ -20,6 +20,11 @@ on:
       - 'scripts/migrate.sh'
       - 'scripts/run-migration-task.sh'
       - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
 
 permissions:
   id-token: write
