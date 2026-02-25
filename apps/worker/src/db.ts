@@ -12,7 +12,9 @@ let pool: pg.Pool | undefined;
 
 async function getPool(): Promise<pg.Pool> {
   if (!pool) {
-    pool = new pg.Pool({ connectionString: await getDatabaseUrl() });
+    const connectionString = await getDatabaseUrl();
+    const ssl = process.env.DB_SECRET_ARN ? { rejectUnauthorized: false } : false;
+    pool = new pg.Pool({ connectionString, ssl });
   }
   return pool;
 }

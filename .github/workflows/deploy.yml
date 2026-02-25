@@ -93,10 +93,17 @@ jobs:
       # Ensure exchange rates are up to date (idempotent — ON CONFLICT DO NOTHING)
       - name: Seed exchange rates
         run: |
+          RESPONSE=$(mktemp)
           aws lambda invoke \
             --function-name "$FX_FUNCTION" \
             --cli-read-timeout 300 \
-            /dev/null
+            --output json \
+            "$RESPONSE" > /tmp/invoke-meta.json
+          if grep -q '"FunctionError"' /tmp/invoke-meta.json; then
+            echo "Lambda invocation failed:"
+            cat "$RESPONSE"
+            exit 1
+          fi
           echo "Exchange rates seeded."
         env:
           FX_FUNCTION: ${{ steps.outputs.outputs.fx_function }}
