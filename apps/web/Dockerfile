@@ -29,4 +29,7 @@ EXPOSE 8080
 ENV PORT=8080
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+# Shell form: HOSTNAME= overrides the ECS Fargate-injected HOSTNAME
+# (ECS sets HOSTNAME to the task ID, breaking Next.js localhost binding).
+# See https://github.com/vercel/next.js/issues/58657
+CMD HOSTNAME="0.0.0.0" node server.js

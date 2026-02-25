@@ -9,10 +9,10 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | Domain (`.com`, Cloudflare) | ~$10/year | Custom domain for the app (`app.yourdomain.com`) |
 | ECS Fargate (0.5 vCPU / 1 GB ARM64, 24/7) | ~$13/month | Runs Next.js web app container |
 | RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
-| NAT instance t4g.nano | ~$3/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
+| NAT instance t4g.micro | ~$6/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, Cognito auth integration, health checks |
 | S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs (S3), container and alarm monitoring (CloudWatch), rate limiting and SQLi/XSS protection (WAF), daily FX rate fetching (Lambda) |
-| **Total** | **~$10/year + ~$47/month** | |
+| **Total** | **~$10/year + ~$50/month** | |
 
 Cloudflare (DNS, CDN, DDoS, edge SSL) is free. All prices are approximate for `eu-central-1` and may vary.
 
@@ -51,7 +51,7 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
 
 **On AWS (via CDK):**
 
-- **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.nano for cost savings)
+- **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.micro for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition

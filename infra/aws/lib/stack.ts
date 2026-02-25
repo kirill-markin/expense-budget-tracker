@@ -42,13 +42,13 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     );
 
     // --- VPC ---
-    // NAT instance (t4g.nano ~$3/mo) instead of managed NAT Gateway (~$35/mo).
+    // NAT instance (t4g.micro ~$6/mo) instead of managed NAT Gateway (~$35/mo).
     // Trade-off: no HA, no auto-recovery, limited bandwidth (~5 Gbps burst).
     // Acceptable for a pet project where only the Lambda FX fetcher and ECS tasks use NAT
     // (a few KB/day + ECR image pulls). To switch to managed NAT Gateway, remove
     // natGatewayProvider and keep only: natGateways: 1,
     const natProvider = ec2.NatProvider.instanceV2({
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO),
     });
     const vpc = new ec2.Vpc(this, "Vpc", {
       maxAzs: 2,
@@ -206,7 +206,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       environment: {
         AUTH_MODE: "proxy",
         AUTH_PROXY_HEADER: "x-amzn-oidc-data",
-        HOST: "0.0.0.0",
+        HOSTNAME: "0.0.0.0",
         CORS_ORIGIN: `https://${appDomain}`,
         COGNITO_DOMAIN: authDomain,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
@@ -222,7 +222,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
         streamPrefix: "web",
       }),
       healthCheck: {
-        command: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"],
+        command: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1"],
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
         retries: 3,
@@ -272,7 +272,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../.."), {
         file: "infra/docker/Dockerfile.migrate",
         platform: Platform.LINUX_ARM64,
-        exclude: [".git", "**/node_modules", "apps", "docs", ".next"],
+        exclude: [".git", "**/node_modules", "**/cdk.out", "apps", "docs", ".next"],
       }),
       environment: {
         DB_HOST: db.dbInstanceEndpointAddress,
