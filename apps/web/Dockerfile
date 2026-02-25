@@ -19,6 +19,13 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
+# RDS certificates are signed by Amazon's own CA which is NOT in the
+# standard Node.js trust store. Download the official AWS RDS CA bundle
+# so that NODE_EXTRA_CA_CERTS (set in CDK) lets Node.js verify the
+# RDS certificate without disabling validation (rejectUnauthorized:false).
+# Bundle URL: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html
+ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-global-bundle.pem
+
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static

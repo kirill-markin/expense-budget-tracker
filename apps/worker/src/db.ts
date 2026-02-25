@@ -13,7 +13,10 @@ let pool: pg.Pool | undefined;
 async function getPool(): Promise<pg.Pool> {
   if (!pool) {
     const connectionString = await getDatabaseUrl();
-    const ssl = process.env.DB_SECRET_ARN ? { rejectUnauthorized: false } : false;
+    // ssl:true enables full certificate verification. RDS certs are signed by
+    // Amazon's CA (not in Node.js defaults), so NODE_EXTRA_CA_CERTS must point
+    // to the RDS CA bundle (set in CDK, bundle downloaded during Lambda bundling).
+    const ssl = process.env.DB_SECRET_ARN ? true : false;
     pool = new pg.Pool({ connectionString, ssl });
   }
   return pool;

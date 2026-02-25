@@ -210,6 +210,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
         DB_HOST: db.dbInstanceEndpointAddress,
         DB_NAME: "tracker",
         DB_USER: "app",
+        // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
+        // Points to the CA bundle downloaded in apps/web/Dockerfile.
+        NODE_EXTRA_CA_CERTS: "/app/rds-global-bundle.pem",
       },
       secrets: {
         DB_PASSWORD: ecs.Secret.fromSecretsManager(appDbSecret, "password"),
@@ -519,10 +522,24 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
-      environment: {},
+      environment: {
+        // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
+        // Points to the CA bundle downloaded by afterBundling hook below.
+        // Lambda bundles are extracted to /var/task/ at runtime.
+        NODE_EXTRA_CA_CERTS: "/var/task/rds-global-bundle.pem",
+      },
       bundling: {
         minify: true,
         sourceMap: true,
+        // Download the RDS CA bundle into the Lambda deployment package
+        // so Node.js can verify RDS certificates via NODE_EXTRA_CA_CERTS.
+        commandHooks: {
+          beforeBundling: () => [],
+          beforeInstall: () => [],
+          afterBundling: (_inputDir: string, outputDir: string) => [
+            `curl -sfo ${outputDir}/rds-global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem`,
+          ],
+        },
       },
     });
 

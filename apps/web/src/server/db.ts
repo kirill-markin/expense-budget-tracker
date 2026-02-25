@@ -17,6 +17,9 @@ const connectionString = process.env.AUTH_MODE === "proxy"
   ? `postgresql://${process.env.DB_USER}:${encodeURIComponent(process.env.DB_PASSWORD!)}@${process.env.DB_HOST}:5432/${process.env.DB_NAME}`
   : process.env.DATABASE_URL;
 
+// ssl:true enables full certificate verification. RDS certs are signed by
+// Amazon's CA (not in Node.js defaults), so NODE_EXTRA_CA_CERTS must point
+// to the RDS CA bundle (set in CDK, bundle downloaded in Dockerfile).
 const ssl = process.env.AUTH_MODE === "proxy" ? true : false;
 
 const pool = new pg.Pool({ connectionString, ssl });
