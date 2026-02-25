@@ -8,6 +8,7 @@
 # CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates
 # all resources (ECS, RDS, ALB, etc.) in a single command.
 # Migrations are run via a one-off ECS task after the deploy.
+# Exchange rates are seeded by invoking the FX fetcher Lambda.
 #
 # Required env vars:
 #   AWS_PROFILE — AWS CLI profile for the target account
