@@ -27,6 +27,12 @@ if [[ -z "${MIGRATION_DATABASE_URL:-}" && -z "${PGHOST:-}" ]]; then
   exit 1
 fi
 
+# In production (PGHOST mode), APP_DB_PASSWORD must come from Secrets Manager.
+# Locally (MIGRATION_DATABASE_URL mode), default to 'app' for Docker Compose.
+if [[ -n "${PGHOST:-}" && -z "${APP_DB_PASSWORD:-}" ]]; then
+  echo "ERROR: APP_DB_PASSWORD is required in production (PGHOST mode)" >&2
+  exit 1
+fi
 APP_DB_PASSWORD="${APP_DB_PASSWORD:-app}"
 
 # Create migration tracking table (idempotent).
