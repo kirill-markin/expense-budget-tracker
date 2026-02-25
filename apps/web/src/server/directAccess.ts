@@ -2,13 +2,33 @@
  * Direct database access: provision, revoke, and rotate per-workspace Postgres
  * credentials so users can connect with psql, DBeaver, or LLM agents.
  *
+ * Show-once credential model: passwords are generated server-side and returned
+ * only in the provision/rotate response. We never store plaintext passwords —
+ * Postgres handles authentication internally (pg_authid stores the hash).
+ *
  * Security: all functions use queryAs() which sets app.user_id and
  * app.workspace_id in a transaction. The SQL SECURITY DEFINER functions
  * verify workspace membership before any privileged operation (CREATE ROLE,
  * ALTER ROLE, DROP ROLE). Passwords are generated server-side via
- * crypto.randomUUID() and never accepted from the client.
+ * crypto.randomBytes() and never accepted from the client.
  */
 import crypto from "node:crypto";
+
+/** Generate a 32-char alphanumeric password (a-z, A-Z, 0-9). ~190 bits of entropy, safe to paste in terminals and connection strings without escaping. Uses rejection sampling to avoid modulo bias (256 % 62 != 0). */
+const generatePassword = (): string => {
+  const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const limit = 248; // largest multiple of 62 that fits in a byte (62 * 4 = 248)
+  const chars: Array<string> = [];
+  while (chars.length < 32) {
+    const bytes = crypto.randomBytes(32);
+    for (const b of bytes) {
+      if (b < limit && chars.length < 32) {
+        chars.push(alphabet[b % alphabet.length]);
+      }
+    }
+  }
+  return chars.join("");
+};
 
 import { queryAs } from "@/server/db";
 
@@ -17,11 +37,11 @@ export type DirectAccessCredentials = Readonly<{
   port: number;
   database: string;
   username: string;
-  password: string;
+  password: string | null;
   sslmode: string;
 }>;
 
-const buildCredentials = (username: string, password: string): DirectAccessCredentials => ({
+const buildCredentials = (username: string, password: string | null): DirectAccessCredentials => ({
   host: process.env.DB_HOST ?? "localhost",
   port: 5432,
   database: process.env.DB_NAME ?? "tracker",
@@ -30,7 +50,7 @@ const buildCredentials = (username: string, password: string): DirectAccessCrede
   sslmode: process.env.AUTH_MODE === "proxy" ? "require" : "disable",
 });
 
-/** Fetch existing credentials for a workspace. Returns null if not provisioned. RLS on direct_access_roles ensures the user can only see their own workspaces. */
+/** Check if direct access is provisioned. Returns credentials without password (show-once model). */
 export const getDirectAccessCredentials = async (
   userId: string,
   workspaceId: string,
@@ -38,7 +58,7 @@ export const getDirectAccessCredentials = async (
   const result = await queryAs(
     userId,
     workspaceId,
-    "SELECT pg_role, pg_password FROM direct_access_roles WHERE workspace_id = $1",
+    "SELECT pg_role FROM direct_access_roles WHERE workspace_id = $1",
     [workspaceId],
   );
 
@@ -46,16 +66,16 @@ export const getDirectAccessCredentials = async (
     return null;
   }
 
-  const row = result.rows[0] as { pg_role: string; pg_password: string };
-  return buildCredentials(row.pg_role, row.pg_password);
+  const row = result.rows[0] as { pg_role: string };
+  return buildCredentials(row.pg_role, null);
 };
 
-/** Create a Postgres role (ws_<workspace_id>) with a random password. Idempotent — returns existing credentials if already provisioned. The SQL function runs as SECURITY DEFINER to execute CREATE ROLE. */
+/** Create a Postgres role with a random password. Returns credentials with the password — this is the only time the password is visible. Idempotent: if already provisioned, returns credentials without password (cannot recover it). */
 export const provisionDirectAccess = async (
   userId: string,
   workspaceId: string,
 ): Promise<DirectAccessCredentials> => {
-  const password = crypto.randomUUID();
+  const password = generatePassword();
 
   const result = await queryAs(
     userId,
@@ -66,17 +86,20 @@ export const provisionDirectAccess = async (
 
   const pgRole = (result.rows[0] as { pg_role: string }).pg_role;
 
-  // If the role already existed, provision_direct_access returns it but ignores
-  // the new password. Fetch the stored password for the response.
-  const creds = await queryAs(
+  // Check if the role was just created or already existed.
+  // If it already existed, provision_direct_access ignored the new password
+  // and we cannot recover the original — return null password.
+  const mapping = await queryAs(
     userId,
     workspaceId,
-    "SELECT pg_password FROM direct_access_roles WHERE pg_role = $1",
+    "SELECT created_at FROM direct_access_roles WHERE pg_role = $1",
     [pgRole],
   );
 
-  const storedPassword = (creds.rows[0] as { pg_password: string }).pg_password;
-  return buildCredentials(pgRole, storedPassword);
+  const createdAt = new Date((mapping.rows[0] as { created_at: string }).created_at);
+  const justCreated = Date.now() - createdAt.getTime() < 5000;
+
+  return buildCredentials(pgRole, justCreated ? password : null);
 };
 
 /** Terminate active connections, revoke all grants, and drop the Postgres role. The SQL function runs as SECURITY DEFINER to execute DROP ROLE. */
@@ -92,12 +115,12 @@ export const revokeDirectAccess = async (
   );
 };
 
-/** Generate a new random password and update the Postgres role. The SQL function runs as SECURITY DEFINER to execute ALTER ROLE. */
+/** Generate a new random password and update the Postgres role. Returns credentials with the new password — this is the only time it is visible. */
 export const rotateDirectAccessPassword = async (
   userId: string,
   workspaceId: string,
 ): Promise<DirectAccessCredentials> => {
-  const newPassword = crypto.randomUUID();
+  const newPassword = generatePassword();
 
   await queryAs(
     userId,

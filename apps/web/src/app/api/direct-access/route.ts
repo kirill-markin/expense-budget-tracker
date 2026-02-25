@@ -1,10 +1,14 @@
 /**
- * Direct database access credential management.
+ * Direct database access credential management (show-once model).
  *
- * GET    — fetch current credentials (or null if not provisioned)
- * POST   — provision new credentials (idempotent)
+ * GET    — check if provisioned; returns credentials WITHOUT password
+ * POST   — provision new credentials; returns password (one-time only)
  * DELETE — revoke credentials and drop the Postgres role
- * PUT    — rotate password (generates new server-side, never from client)
+ * PUT    — rotate password; returns new password (one-time only)
+ *
+ * Passwords are never stored — Postgres handles auth internally (pg_authid).
+ * The password is visible only in the POST/PUT response body; GET always
+ * returns password: null.
  *
  * Authorization: userId/workspaceId come from headers set by middleware (ALB +
  * Cognito in prod, local defaults in dev). Workspace membership is enforced
