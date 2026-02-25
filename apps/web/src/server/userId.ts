@@ -1,5 +1,5 @@
 /**
- * Extract resolved user and workspace IDs from internal headers set by proxy.ts.
+ * Extract resolved user and workspace IDs from internal headers set by middleware.ts.
  * Throws if a header is missing — indicates a proxy misconfiguration.
  */
 

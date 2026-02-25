@@ -49,6 +49,11 @@ const ensureWorkspace = async (userId: string, workspaceId: string): Promise<voi
     );
 
     if (check.rows.length === 0) {
+      if (workspaceId !== userId) {
+        throw new Error(
+          `User ${userId} is not a member of workspace ${workspaceId}`,
+        );
+      }
       // Plain INSERTs — no ON CONFLICT because PostgreSQL requires SELECT
       // visibility for conflict checks, which RLS blocks for new users.
       await client.query(

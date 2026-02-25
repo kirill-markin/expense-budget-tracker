@@ -1,5 +1,5 @@
 /**
- * Next.js request proxy: auth gate, user identity extraction, CSRF check, security headers.
+ * Next.js middleware: auth gate, user identity extraction, CSRF check, security headers.
  *
  * AUTH_MODE=none  — all requests pass; userId is hardcoded to 'local'.
  * AUTH_MODE=proxy — requires a JWT header named by AUTH_PROXY_HEADER (e.g. x-amzn-oidc-data);
@@ -114,7 +114,7 @@ const forwardWithIdentity = (request: NextRequest, userId: string, workspaceId: 
   return response;
 };
 
-export const proxy = (request: NextRequest): NextResponse => {
+export const middleware = (request: NextRequest): NextResponse => {
   const { pathname } = request.nextUrl;
 
   if (!checkCsrf(request)) {
@@ -160,8 +160,10 @@ export const proxy = (request: NextRequest): NextResponse => {
     return response;
   }
 
-  // v1: each user's default workspace = their user_id
-  const workspaceId = userId;
+  const workspaceCookie = request.cookies.get("workspace")?.value;
+  const workspaceId = (workspaceCookie !== undefined && workspaceCookie !== "")
+    ? workspaceCookie
+    : userId;
   return forwardWithIdentity(request, userId, workspaceId);
 };
 

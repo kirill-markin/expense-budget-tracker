@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 
 import { isDemoMode } from "@/lib/demoMode";
+import { listWorkspaces, type WorkspaceSummary } from "@/server/listWorkspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { AccountMenu } from "@/ui/AccountMenu";
 import { CurrencySelector } from "@/ui/CurrencySelector";
@@ -18,12 +19,19 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   const { children } = props;
   const demo = await isDemoMode();
 
+  const authEnabled = process.env.AUTH_MODE === "proxy";
   let reportingCurrency = "USD";
+  let workspaces: ReadonlyArray<WorkspaceSummary> = [];
+  let currentWorkspaceId = "";
   if (!demo) {
     const headersList = await headers();
     const userId = headersList.get("x-user-id") ?? "local";
     const workspaceId = headersList.get("x-workspace-id") ?? "local";
+    currentWorkspaceId = workspaceId;
     reportingCurrency = await getReportCurrency(userId, workspaceId);
+    if (authEnabled) {
+      workspaces = await listWorkspaces(userId, workspaceId);
+    }
   }
 
   return (
@@ -38,7 +46,11 @@ export default async function RootLayout(props: Readonly<{ children: React.React
           <a href="/" className="topbar-brand">Expense Budget Tracker</a>
           <div className="topbar-actions">
             <DemoModeToggle isDemoMode={demo} />
-            <AccountMenu authEnabled={process.env.AUTH_MODE === "proxy"} />
+            <AccountMenu
+              authEnabled={authEnabled}
+              workspaces={workspaces}
+              currentWorkspaceId={currentWorkspaceId}
+            />
           </div>
         </header>
         <nav className="nav">

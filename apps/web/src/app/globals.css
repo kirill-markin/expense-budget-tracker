@@ -1000,7 +1000,7 @@ tbody tr:last-child .budget-cm-actual {
   top: 100%;
   right: 0;
   margin-top: 4px;
-  min-width: 120px;
+  min-width: 180px;
   background: var(--bg);
   border: 1px solid var(--panel-border);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
@@ -1023,6 +1023,55 @@ tbody tr:last-child .budget-cm-actual {
 .account-menu-item:hover {
   color: var(--text);
   background: rgba(0, 0, 0, 0.02);
+}
+
+.account-menu-item-active {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.account-menu-item-create {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.account-menu-section-label {
+  padding: 6px 12px 2px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.account-menu-separator {
+  border-top: 1px solid var(--panel-border);
+  margin: 4px 0;
+}
+
+.account-menu-create-form {
+  padding: 4px 8px;
+}
+
+.account-menu-create-input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.account-menu-create-input:focus {
+  outline: none;
+  border-color: var(--text);
+}
+
+.account-menu-error {
+  padding: 2px 0;
+  font-size: 11px;
+  color: #c0392b;
 }
 
 /* Currency label in nav */
