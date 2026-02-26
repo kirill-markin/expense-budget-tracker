@@ -84,7 +84,7 @@ for f in "$ROOT_DIR"/db/views/*.sql; do
 done
 
 echo "Setting app role password..."
-# Role and GRANTs are created by migration 0010_app_role_grants.sql.
+# Role and GRANTs are created by migration 0003_app_role_grants.sql.
 # Password passed via psql variable (:'app_pass') to avoid SQL injection from special characters.
 run_psql -v "app_pass=$APP_DB_PASSWORD" <<'SQL'
 DO $$
