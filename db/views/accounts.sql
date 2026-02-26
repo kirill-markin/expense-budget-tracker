@@ -12,3 +12,6 @@ SELECT
   MIN(inserted_at) AS inserted_at
 FROM ledger_entries
 GROUP BY account_id;
+
+-- Grant after view creation (can't live in migrations — view doesn't exist yet).
+GRANT SELECT ON accounts TO app;

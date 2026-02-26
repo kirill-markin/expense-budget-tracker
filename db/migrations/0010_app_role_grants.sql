@@ -20,7 +20,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
 TO app;
 GRANT SELECT, INSERT ON TABLE workspaces, workspace_members TO app;
 GRANT SELECT, INSERT ON TABLE exchange_rates TO app;
-GRANT SELECT ON TABLE accounts TO app;
+-- accounts is a view created after migrations (db/views/accounts.sql);
+-- its grant lives in that file to avoid ordering issues.
 -- Direct access: app needs SELECT to display credentials in UI,
 -- and EXECUTE on SECURITY DEFINER functions that manage Postgres roles.
 GRANT SELECT ON TABLE direct_access_roles TO app;
