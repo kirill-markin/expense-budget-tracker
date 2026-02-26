@@ -1,6 +1,13 @@
 -- Reference queries for the budget grid dashboard.
 -- Parameters: $1 = report_currency, $2 = month_from, $3 = month_to,
 --             $4 = plan_from, $5 = actual_to
+--
+-- Performance: all FX rate lookups use LATERAL + LIMIT 1 instead of the old
+-- rate_ranges CTE. The old pattern materialized the entire exchange_rates table
+-- (filtered by quote_currency) with a LEAD() window function, then did a
+-- non-equi range join — O(N×M). LATERAL does one backward index scan per row
+-- via idx_exchange_rates_quote_base_date (quote_currency, base_currency,
+-- rate_date) INCLUDE (rate).
 
 -- QUERY: main budget grid — planned (base + modifier) vs actual per month/direction/category.
 WITH latest_plans AS (
@@ -25,13 +32,6 @@ planned AS (
   WHERE rn = 1
   GROUP BY 1, 2, 3
 ),
-rate_ranges AS (
-  SELECT
-    base_currency, rate_date, rate,
-    LEAD(rate_date) OVER (PARTITION BY base_currency ORDER BY rate_date) AS next_rate_date
-  FROM exchange_rates
-  WHERE quote_currency = $1
-),
 actual AS (
   SELECT
     to_char(le.ts::date, 'YYYY-MM') AS month,
@@ -52,10 +52,14 @@ actual AS (
     END) AS actual,
     bool_or(le.currency != $1 AND r.rate IS NULL) AS has_unconvertible
   FROM ledger_entries le
-  LEFT JOIN rate_ranges r
-    ON r.base_currency = le.currency
-    AND le.ts::date >= r.rate_date
-    AND (le.ts::date < r.next_rate_date OR r.next_rate_date IS NULL)
+  LEFT JOIN LATERAL (
+    SELECT rate FROM exchange_rates
+    WHERE quote_currency = $1
+      AND base_currency = le.currency
+      AND rate_date <= le.ts::date
+    ORDER BY rate_date DESC
+    LIMIT 1
+  ) r ON true
   WHERE le.ts::date >= to_date($2, 'YYYY-MM')
     AND le.ts::date < (LEAST(to_date($3, 'YYYY-MM'), to_date($5, 'YYYY-MM')) + interval '1 month')::date
   GROUP BY 1, 2, 3
@@ -78,14 +82,7 @@ ORDER BY month, direction, category;
 
 -- CUMULATIVE_BALANCE_QUERY: actual totals before the loaded month range, by direction.
 -- Parameters: $1 = report_currency, $2 = month_from
-WITH rate_ranges AS (
-  SELECT
-    base_currency, rate_date, rate,
-    LEAD(rate_date) OVER (PARTITION BY base_currency ORDER BY rate_date) AS next_rate_date
-  FROM exchange_rates
-  WHERE quote_currency = $1
-),
-actual_before AS (
+WITH actual_before AS (
   SELECT
     le.kind AS direction,
     SUM(CASE WHEN le.kind = 'transfer' THEN
@@ -102,10 +99,14 @@ actual_before AS (
       END)
     END) AS total
   FROM ledger_entries le
-  LEFT JOIN rate_ranges r
-    ON r.base_currency = le.currency
-    AND le.ts::date >= r.rate_date
-    AND (le.ts::date < r.next_rate_date OR r.next_rate_date IS NULL)
+  LEFT JOIN LATERAL (
+    SELECT rate FROM exchange_rates
+    WHERE quote_currency = $1
+      AND base_currency = le.currency
+      AND rate_date <= le.ts::date
+    ORDER BY rate_date DESC
+    LIMIT 1
+  ) r ON true
   WHERE le.ts::date < to_date($2, 'YYYY-MM')
   GROUP BY direction
 )
@@ -140,14 +141,19 @@ ORDER BY dc.currency;
 
 -- MONTH_END_BALANCES_QUERY: portfolio balance in report currency at each month-end (mark-to-market).
 -- Parameters: $1 = report_currency, $2 = month_from, $3 = actual_to
+--
+-- Uses le.currency directly instead of JOIN accounts view. The accounts view
+-- does MODE() WITHIN GROUP over the entire ledger_entries table to derive the
+-- "canonical" currency per account — this triggers a redundant full scan of
+-- ledger_entries plus a hash join back to itself. Each ledger entry already
+-- carries its own currency.
 WITH
 monthly_deltas AS (
   SELECT
     to_char(le.ts::date, 'YYYY-MM') AS month,
-    a.currency,
+    le.currency,
     SUM(le.amount::double precision) AS delta
   FROM ledger_entries le
-  JOIN accounts a ON a.account_id = le.account_id
   GROUP BY 1, 2
 ),
 all_months AS (
@@ -174,12 +180,6 @@ running_balances AS (
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     ) AS balance
   FROM full_grid
-),
-rate_ranges AS (
-  SELECT base_currency, rate_date, rate,
-    LEAD(rate_date) OVER (PARTITION BY base_currency ORDER BY rate_date) AS next_rate_date
-  FROM exchange_rates
-  WHERE quote_currency = $1
 )
 SELECT
   rb.month,
@@ -189,11 +189,14 @@ SELECT
     ELSE NULL
   END)::numeric, 2) AS balance_report
 FROM running_balances rb
-LEFT JOIN rate_ranges rr
-  ON rr.base_currency = rb.currency
-  AND (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date >= rr.rate_date
-  AND ((date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date < rr.next_rate_date
-       OR rr.next_rate_date IS NULL)
+LEFT JOIN LATERAL (
+  SELECT rate FROM exchange_rates
+  WHERE quote_currency = $1
+    AND base_currency = rb.currency
+    AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
+  ORDER BY rate_date DESC
+  LIMIT 1
+) rr ON true
 WHERE rb.month >= to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
   AND rb.month <= $3
 GROUP BY rb.month
