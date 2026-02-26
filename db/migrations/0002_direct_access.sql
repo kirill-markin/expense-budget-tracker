@@ -316,6 +316,8 @@ BEGIN
   );
 
   -- Grant SELECT on reference/membership tables.
+  -- NOTE: roles provisioned before exchange_rates and accounts were in this
+  -- list are missing these grants. Migration 0004 retroactively fixes them.
   EXECUTE format(
     'GRANT SELECT ON TABLE workspaces, workspace_members, exchange_rates, accounts, direct_access_roles TO %I',
     v_role
