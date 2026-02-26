@@ -12,6 +12,8 @@ import { Construct } from "constructs";
 export interface OutputsProps {
   appDomain: string;
   alb: elbv2.ApplicationLoadBalancer;
+  nlb: elbv2.NetworkLoadBalancer;
+  dbDomain: string;
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
   userPool: cognito.UserPool;
@@ -82,5 +84,13 @@ export function outputs(scope: Construct, props: OutputsProps): void {
   new cdk.CfnOutput(scope, "FxFetcherFunctionName", {
     value: props.fxFetcher.functionName,
     description: "Lambda function name for FX rate fetcher",
+  });
+  new cdk.CfnOutput(scope, "NlbDns", {
+    value: props.nlb.loadBalancerDnsName,
+    description: "NLB DNS name (for Cloudflare CNAME setup)",
+  });
+  new cdk.CfnOutput(scope, "DirectDbHost", {
+    value: props.dbDomain,
+    description: "User-facing hostname for direct DB access",
   });
 }

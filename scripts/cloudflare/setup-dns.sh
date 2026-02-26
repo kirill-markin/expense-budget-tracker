@@ -155,6 +155,58 @@ else
   echo "Root domain DNS: ${ZONE_NAME} -> ${ALB_DNS} (Cloudflare proxied, redirects to app.*)"
 fi
 
+# --- Direct DB access: db.* CNAME -> NLB (DNS-only, not proxied) ---
+# Cloudflare proxy only handles HTTP/HTTPS; TCP:5432 requires DNS-only mode.
+echo ""
+echo "Setting up direct DB access DNS record..."
+
+NLB_DNS=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='NlbDns'].OutputValue" \
+  --output text)
+
+if [[ -z "$NLB_DNS" || "$NLB_DNS" == "None" ]]; then
+  echo "WARNING: Could not find NlbDns output in stack ${STACK_NAME}. Skipping db.* DNS." >&2
+else
+  echo "NLB DNS: ${NLB_DNS}"
+  DB_FQDN="db.${ZONE_NAME}"
+
+  DB_EXISTING=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${DB_FQDN}&type=CNAME" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Content-Type: application/json")
+
+  DB_EXISTING_COUNT=$(echo "$DB_EXISTING" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
+
+  if [[ "$DB_EXISTING_COUNT" -gt 0 ]]; then
+    DB_RECORD_ID=$(echo "$DB_EXISTING" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0]["id"])')
+    echo "Updating existing db CNAME record (${DB_RECORD_ID})..."
+    curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${DB_RECORD_ID}" \
+      -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data "{
+        \"type\": \"CNAME\",
+        \"name\": \"db\",
+        \"content\": \"${NLB_DNS}\",
+        \"ttl\": 300,
+        \"proxied\": false
+      }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+  else
+    echo "Creating CNAME record: db -> ${NLB_DNS} (DNS-only)..."
+    curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+      -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data "{
+        \"type\": \"CNAME\",
+        \"name\": \"db\",
+        \"content\": \"${NLB_DNS}\",
+        \"ttl\": 300,
+        \"proxied\": false
+      }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+  fi
+
+  echo "DB DNS record set: db.${ZONE_NAME} -> ${NLB_DNS} (DNS-only, not proxied)"
+fi
+
 # --- Set SSL/TLS mode to Full (Strict) ---
 echo "Setting SSL/TLS mode to Full (Strict)..."
 

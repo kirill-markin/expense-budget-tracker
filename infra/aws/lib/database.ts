@@ -20,6 +20,19 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     excludeCharacters: " %+~`#$&*()|[]{}:;<>?!/@\"\\",
   });
 
+  // Audit connections and enforce SSL (critical when Postgres is internet-facing via NLB).
+  // Note: rds.force_ssl requires RDS reboot on first apply (~1-2 min downtime).
+  const parameterGroup = new rds.ParameterGroup(scope, "DbParams", {
+    engine: rds.DatabaseInstanceEngine.postgres({
+      version: rds.PostgresEngineVersion.VER_18,
+    }),
+    parameters: {
+      "log_connections": "1",
+      "log_disconnections": "1",
+      "rds.force_ssl": "1",
+    },
+  });
+
   const db = new rds.DatabaseInstance(scope, "Db", {
     engine: rds.DatabaseInstanceEngine.postgres({
       version: rds.PostgresEngineVersion.VER_18,
@@ -30,6 +43,7 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     securityGroups: [props.dbSg],
     credentials: dbCredentials,
     databaseName: "tracker",
+    parameterGroup,
     allocatedStorage: 20,
     maxAllocatedStorage: 50,
     storageEncrypted: true,

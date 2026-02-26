@@ -102,6 +102,42 @@ ALTER ROLE user_alice SET app.workspace_id TO 'workspace-id-here';
 
 For read-only access (dashboards), grant only `SELECT`.
 
+## Direct database access
+
+```
+psql / DBeaver / LLM agent
+        │
+        ▼
+db.domain.com:5432
+        │
+        ▼
+   NLB (TCP pass-through)
+        │
+        ▼
+   RDS Postgres
+```
+
+Internet-facing NLB routes TCP:5432 directly to RDS. No PgBouncer — RDS locks `pg_shadow`/`pg_authid` behind `rdsadmin`, so `auth_query` cannot work.
+
+### Security layers
+
+| Layer | Protection |
+|---|---|
+| SCRAM-SHA-256 | Password hashing (Postgres default) |
+| `rds.force_ssl` | Rejects plaintext connections |
+| `CONNECTION LIMIT 5` | Per-role connection cap |
+| `statement_timeout 30s` | Prevents runaway queries |
+| RLS | Workspace-scoped data isolation |
+| CloudWatch alarm | Alert on >20 active NLB flows |
+
+### DNS
+
+`db.domain.com` is a Cloudflare CNAME pointing to the NLB. **DNS-only mode** (not proxied) — Cloudflare proxy only handles HTTP/HTTPS; TCP:5432 requires DNS-only.
+
+### Cost
+
+~$21-26/mo (NLB fixed ~$16 + NLCU ~$5-10 for light BI usage).
+
 ## Multi-currency conversion
 
 All amounts are stored in native currency only. No precomputed `amount_usd` column.

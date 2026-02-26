@@ -42,7 +42,7 @@ export type DirectAccessCredentials = Readonly<{
 }>;
 
 const buildCredentials = (username: string, password: string | null): DirectAccessCredentials => ({
-  host: process.env.DB_HOST ?? "localhost",
+  host: process.env.DIRECT_ACCESS_HOST ?? process.env.DB_HOST ?? "localhost",
   port: 5432,
   database: process.env.DB_NAME ?? "tracker",
   username,
