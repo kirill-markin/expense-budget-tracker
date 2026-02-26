@@ -32,6 +32,7 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     databaseName: "tracker",
     allocatedStorage: 20,
     maxAllocatedStorage: 50,
+    storageEncrypted: true,
     backupRetention: cdk.Duration.days(7),
     deletionProtection: true,
     removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
