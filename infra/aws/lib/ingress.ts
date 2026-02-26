@@ -96,16 +96,13 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   });
 
   // --- AWS WAF ---
-  // Rate limiting is intentionally NOT done here. All traffic arrives from Cloudflare
-  // edge servers, so WAF sees Cloudflare IPs — not real client IPs. IP-based rate
-  // limiting would group all clients behind the same Cloudflare PoP together,
-  // making it both ineffective (attackers share the bucket with legitimate users)
-  // and dangerous (could block an entire PoP).
-  //
-  // Rate limiting is covered by other layers:
-  //   - Cloudflare: built-in DDoS protection, sees real client IPs natively.
+  // Rate limiting is intentionally NOT done here. Default aggregateKeyType "IP" sees
+  // Cloudflare edge IPs, not real clients — useless behind a reverse proxy.
+  // FORWARDED_IP with CF-Connecting-IP header would work (ALB SG guarantees only
+  // Cloudflare can set it), but rate limiting is already handled by other layers:
+  //   - Cloudflare: DDoS protection + rate limiting rules, sees real IPs natively.
   //   - Cognito: built-in throttling on auth endpoints (/oauth2/*).
-  //   - ALB security group: only accepts traffic from Cloudflare edge IPs (networking.ts).
+  //   - ALB security group: only accepts Cloudflare edge IPs (networking.ts).
   //
   // WAF is kept for managed rule sets (SQLi, XSS, known bad inputs) which inspect
   // request content and work correctly regardless of source IP.
