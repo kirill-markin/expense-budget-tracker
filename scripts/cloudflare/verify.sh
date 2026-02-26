@@ -88,6 +88,23 @@ else
   echo "  OK: SSL/TLS mode is Full (Strict)"
 fi
 
+# --- Cache bypass rule ---
+echo ""
+echo "Checking cache bypass rule..."
+CACHE_RULESET=$(cf_api "rulesets/phases/http_request_cache_settings/entrypoint" 2>/dev/null || echo '{"result":{"rules":[]}}')
+CACHE_RULE_COUNT=$(echo "$CACHE_RULESET" | python3 -c '
+import sys, json
+rules = json.load(sys.stdin).get("result", {}).get("rules", [])
+bypass = [r for r in rules if r.get("action_parameters", {}).get("cache") == False]
+print(len(bypass))
+')
+if [[ "$CACHE_RULE_COUNT" -eq 0 ]]; then
+  echo "FAIL: No cache bypass rule found — Cloudflare may cache ALB auth redirects" >&2
+  ERRORS=$((ERRORS + 1))
+else
+  echo "  OK: Cache bypass rule active (${CACHE_RULE_COUNT} rule(s))"
+fi
+
 # --- Cross-check with CloudFormation stack (optional) ---
 if [[ -n "$STACK_NAME" ]]; then
   echo ""

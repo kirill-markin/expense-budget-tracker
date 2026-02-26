@@ -3,7 +3,7 @@
 # Run once after the first CDK deploy.
 #
 # Required env vars:
-#   CLOUDFLARE_API_TOKEN  — API token with Zone:DNS:Edit, Zone:SSL and Certificates:Edit, Zone:Zone Settings:Edit
+#   CLOUDFLARE_API_TOKEN  — API token with Zone:DNS:Edit, Zone:SSL and Certificates:Edit, Zone:Zone Settings:Edit, Zone:Cache Rules:Edit
 #   CLOUDFLARE_ZONE_ID    — Zone ID from Cloudflare dashboard
 #   AWS_PROFILE           — AWS CLI profile for the target account
 #
@@ -227,6 +227,39 @@ if [[ "$SSL_SUCCESS" == "True" ]]; then
 else
   echo "WARNING: Could not set SSL/TLS mode via API. Set it manually:" >&2
   echo "  Cloudflare Dashboard > SSL/TLS > Overview > Full (Strict)" >&2
+fi
+
+# --- Bypass Cloudflare cache for app ---
+# ALB Cognito auth uses session cookies + state parameters in 302 redirects.
+# If Cloudflare caches the redirect, the state/cookie pair breaks for subsequent
+# users → "AuthInvalidStateParam" → 401. The app is fully dynamic, so edge
+# caching provides no benefit.
+echo ""
+echo "Setting up cache bypass rule for app..."
+
+CACHE_EXPRESSION="(http.host eq \"${APP_FQDN}\" or http.host eq \"${ZONE_NAME}\")"
+
+CACHE_RESULT=$(curl -s -X PUT \
+  "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/rulesets/phases/http_request_cache_settings/entrypoint" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"rules\": [{
+      \"expression\": \"${CACHE_EXPRESSION}\",
+      \"description\": \"Bypass cache for app — dynamic content with ALB Cognito auth\",
+      \"action\": \"set_cache_settings\",
+      \"action_parameters\": {
+        \"cache\": false
+      }
+    }]
+  }")
+
+CACHE_SUCCESS=$(echo "$CACHE_RESULT" | python3 -c 'import sys,json; print(json.load(sys.stdin)["success"])')
+if [[ "$CACHE_SUCCESS" == "True" ]]; then
+  echo "Cache bypass rule set for ${APP_FQDN} and ${ZONE_NAME}."
+else
+  echo "WARNING: Could not set cache bypass rule via API. Set it manually:" >&2
+  echo "  Cloudflare Dashboard > Caching > Cache Rules > Bypass Cache for app.*" >&2
 fi
 
 # --- Custom auth domain CNAME (optional) ---

@@ -39,6 +39,10 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `scripts/migrate.sh` | Runs all migrations + views against `DATABASE_URL` |
 | `.env.example` | Environment variables reference |
 
+## Cloudflare
+
+Cloudflare credentials are in `scripts/cloudflare/.env` (gitignored, local only). Scripts in `scripts/cloudflare/` manage DNS, SSL, and cache rules via the Cloudflare API.
+
 ## AWS deployment
 
 Before querying AWS resources, read `infra/aws/cdk.context.local.json` first — it contains the region, domain, certificate ARNs, and all account-specific settings. Then check `~/.aws/config` for the AWS CLI profile that targets the same account and region. Always use the matching `--profile` and `--region` flags.

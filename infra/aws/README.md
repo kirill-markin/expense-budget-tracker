@@ -78,7 +78,8 @@ psql / DBeaver → db.domain.com:5432 → NLB (TCP) → RDS
 - DNS CNAME `db.*` (DNS-only) pointing to NLB — direct Postgres access
 - Origin Certificate for ALB HTTPS (imported into ACM)
 - ACM validation CNAME for auth domain certificate
-- Edge SSL, CDN, DDoS protection (automatic with proxied DNS)
+- Cache bypass rule for `app.*` and root domain (ALB Cognito auth requires uncached redirects)
+- Edge SSL, DDoS protection (automatic with proxied DNS)
 
 ## Step-by-step setup
 
@@ -152,11 +153,12 @@ Go to https://dash.cloudflare.com/profile/api-tokens → **Create Token**:
 
 - Template: **"Edit zone DNS"**
 - Zone Resources: Include → Specific zone → your domain
-- **Important:** click "+ Add more" and add two more permissions:
+- **Important:** click "+ Add more" and add three more permissions:
   - **Zone → SSL and Certificates → Edit** (for Origin Certificate creation)
   - **Zone → Zone Settings → Edit** (for setting SSL mode to Full Strict)
+  - **Zone → Cache Rules → Edit** (for disabling edge cache on the app subdomain)
 
-The token needs all three permissions (DNS + SSL + Zone Settings). Missing any will cause script failures.
+The token needs all four permissions (DNS + SSL + Zone Settings + Cache Rules). Missing any will cause script failures.
 
 Copy the token and save it in your password manager along with the Zone ID from step 3c.
 
