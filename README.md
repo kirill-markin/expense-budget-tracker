@@ -7,8 +7,12 @@ Self-hosted open-source expense and budget tracker with balances, transfers, and
 ## Quick start
 
 ```bash
+git clone https://github.com/kirill-markin/expense-budget-tracker.git
+cd expense-budget-tracker
 make up    # start Postgres, run migrations, start web + worker
 ```
+
+Requires [Docker](https://docs.docker.com/get-docker/).
 
 Open `http://localhost:3000`.
 
