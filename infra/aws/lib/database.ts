@@ -27,8 +27,8 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
       version: rds.PostgresEngineVersion.VER_18,
     }),
     parameters: {
-      "log_connections": "1",
-      "log_disconnections": "1",
+      "log_connections": "all",
+      "log_disconnections": "all",
       "rds.force_ssl": "1",
     },
   });
