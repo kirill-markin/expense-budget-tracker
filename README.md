@@ -4,6 +4,8 @@ Self-hosted open-source expense and budget tracker with balances, transfers, and
 
 ![Budget view](docs/budget-screenshot.jpg)
 
+**Live demo:** [expense-budget-tracker.com](https://expense-budget-tracker.com/)
+
 ## Features
 
 - **Fully open-source** — all code is available, deploy on your own servers with full control over your data
