@@ -120,18 +120,6 @@ jobs:
       - name: Seed exchange rates
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.worker == 'true'
         continue-on-error: true
-        run: |
-          RESPONSE=$(mktemp)
-          aws lambda invoke \
-            --function-name "$FX_FUNCTION" \
-            --cli-read-timeout 300 \
-            --output json \
-            "$RESPONSE" > /tmp/invoke-meta.json
-          if grep -q '"FunctionError"' /tmp/invoke-meta.json; then
-            echo "Lambda invocation failed:"
-            cat "$RESPONSE"
-            exit 1
-          fi
-          echo "Exchange rates seeded."
+        run: bash scripts/invoke-fx-fetcher.sh
         env:
           FX_FUNCTION: ${{ steps.outputs.outputs.fx_function }}

@@ -91,18 +91,9 @@ CLUSTER="$CLUSTER" SERVICE="$SERVICE" MIGRATE_TASK="$MIGRATE_TASK" MIGRATE_SG="$
 echo ""
 echo "=== Seed exchange rates ==="
 FX_FUNCTION=$(get_output FxFetcherFunctionName)
-RESPONSE=$(mktemp)
-aws lambda invoke \
-  --function-name "$FX_FUNCTION" \
-  --region "$REGION" \
-  --cli-read-timeout 300 \
-  --output json \
-  "$RESPONSE" > /tmp/invoke-meta.json
-if grep -q '"FunctionError"' /tmp/invoke-meta.json; then
-  echo "WARNING: FX fetcher Lambda failed (rates will sync on next scheduled run):" >&2
-  cat "$RESPONSE" >&2
-fi
-echo "Exchange rates seeded."
+FX_FUNCTION="$FX_FUNCTION" AWS_REGION="$REGION" \
+  bash "${SCRIPT_DIR}/invoke-fx-fetcher.sh" || \
+  echo "WARNING: FX seeding failed (rates will sync on next scheduled run)" >&2
 
 echo ""
 echo "=== Bootstrap complete ==="

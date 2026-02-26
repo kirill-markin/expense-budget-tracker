@@ -38,8 +38,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   const accessLogsBucket = new s3.Bucket(scope, "AlbAccessLogs", {
     bucketName: `expense-tracker-alb-logs-${cdk.Aws.ACCOUNT_ID}`,
     lifecycleRules: [{ expiration: cdk.Duration.days(90) }],
-    removalPolicy: cdk.RemovalPolicy.DESTROY,
-    autoDeleteObjects: true,
+    removalPolicy: cdk.RemovalPolicy.RETAIN,
     enforceSSL: true,
   });
   alb.logAccessLogs(accessLogsBucket);
