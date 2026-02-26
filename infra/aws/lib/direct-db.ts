@@ -11,14 +11,16 @@
  *
  * Cost: ~$21-26/mo (NLB fixed ~$16 + NLCU ~$5-10 for light BI usage).
  *
- * Caveat: CfnTargetGroup registers RDS by hostname, which CloudFormation
- * resolves to a single IP at deploy time. If RDS fails over to a different AZ,
- * the target IP becomes stale until the next CDK deploy. Acceptable for a
- * single-user project; for HA, add a Lambda that updates targets on RDS events.
+ * IP lookup: NLB target groups require an IP, not a hostname. An
+ * AwsCustomResource calls EC2 describeNetworkInterfaces to find the RDS ENI's
+ * private IP at deploy time. If RDS fails over to a different AZ, the target
+ * IP becomes stale until the next CDK deploy. Acceptable for a single-user
+ * project; for HA, add a Lambda that updates targets on RDS event notifications.
  */
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as rds from "aws-cdk-lib/aws-rds";
+import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 
 export interface DirectDbProps {
@@ -50,7 +52,34 @@ export function directDb(scope: Construct, props: DirectDbProps): DirectDbResult
     securityGroups: [nlbSg],
   });
 
-  // --- Target Group (IP type, RDS registered by hostname) ---
+  // --- Resolve RDS private IP via ENI lookup ---
+  // NLB target groups require an IP address, not a DNS hostname.
+  // The dbSg is dedicated to RDS — filtering by group-id returns its ENI.
+  const describeCall: cr.AwsSdkCall = {
+    service: "EC2",
+    action: "describeNetworkInterfaces",
+    parameters: {
+      Filters: [
+        { Name: "group-id", Values: [props.dbSg.securityGroupId] },
+        { Name: "status", Values: ["in-use"] },
+      ],
+    },
+    physicalResourceId: cr.PhysicalResourceId.of("rds-eni-ip"),
+    outputPaths: ["NetworkInterfaces.0.PrivateIpAddress"],
+  };
+
+  const rdsIpLookup = new cr.AwsCustomResource(scope, "RdsIpLookup", {
+    onCreate: describeCall,
+    onUpdate: describeCall,
+    policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
+      resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE,
+    }),
+  });
+  rdsIpLookup.node.addDependency(props.db);
+
+  const rdsIp = rdsIpLookup.getResponseField("NetworkInterfaces.0.PrivateIpAddress");
+
+  // --- Target Group (IP type, resolved RDS IP) ---
   const cfnTg = new elbv2.CfnTargetGroup(scope, "DbNlbTg", {
     name: "db-nlb-tg",
     protocol: "TCP",
@@ -60,7 +89,7 @@ export function directDb(scope: Construct, props: DirectDbProps): DirectDbResult
     healthCheckProtocol: "TCP",
     healthCheckPort: "5432",
     targets: [{
-      id: props.db.dbInstanceEndpointAddress,
+      id: rdsIp,
       port: 5432,
       availabilityZone: "all",
     }],
