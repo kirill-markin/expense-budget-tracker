@@ -80,6 +80,10 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     },
   });
 
+  // Near-zero-downtime rolling update: with the ECS defaults (minHealthyPercent=100%,
+  // maxPercent=200%) a new task starts alongside the old one. ALB routes traffic to
+  // both until the new task is healthy, then drains the old one (deregistration delay 300s).
+  // The only source of user-visible delay is database migrations that lock tables.
   const webService = new ecs.FargateService(scope, "WebService", {
     cluster,
     taskDefinition: webTaskDef,
