@@ -23,6 +23,13 @@ export const GET = async (request: Request): Promise<Response> => {
 
   const userId = extractUserId(request);
   const workspaceId = extractWorkspaceId(request);
-  const result = await getFxBreakdown(userId, workspaceId, month);
-  return Response.json(result);
+
+  try {
+    const result = await getFxBreakdown(userId, workspaceId, month);
+    return Response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("fx-breakdown GET: %s", message);
+    return new Response("Database query failed", { status: 500 });
+  }
 };

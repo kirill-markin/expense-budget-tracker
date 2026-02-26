@@ -30,6 +30,13 @@ export const GET = async (request: Request): Promise<Response> => {
 
   const userId = extractUserId(request);
   const workspaceId = extractWorkspaceId(request);
-  const grid = await getBudgetGrid(userId, workspaceId, monthFrom, monthTo, planFrom, actualTo);
-  return Response.json(grid);
+
+  try {
+    const grid = await getBudgetGrid(userId, workspaceId, monthFrom, monthTo, planFrom, actualTo);
+    return Response.json(grid);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("budget-grid GET: %s", message);
+    return new Response("Database query failed", { status: 500 });
+  }
 };

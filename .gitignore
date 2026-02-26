@@ -12,7 +12,7 @@ cdk.out/
 yarn.lock
 
 # Environment
-.env
+**/.env
 
 # CDK local/cached context (account-specific, auto-generated)
 cdk.context.local.json

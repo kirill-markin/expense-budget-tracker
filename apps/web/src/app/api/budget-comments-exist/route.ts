@@ -34,6 +34,7 @@ export const GET = async (request: Request): Promise<Response> => {
     return Response.json({ cells });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Database query failed: ${message}`, { status: 500 });
+    console.error("budget-comments-exist GET: %s", message);
+    return new Response("Database query failed", { status: 500 });
   }
 };

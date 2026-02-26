@@ -74,6 +74,9 @@ const addSecurityHeaders = (response: NextResponse, nonce: string): void => {
  *
  * This is a defence-in-depth measure. In AUTH_MODE=proxy the ALB Cognito auth
  * layer is the primary gate; CSRF prevents authenticated session misuse.
+ *
+ * Rate limiting is handled at the infrastructure level (Cloudflare + AWS WAF
+ * managed rule sets) and is not duplicated here.
  */
 const checkCsrf = (request: NextRequest): boolean => {
   const method = request.method;
@@ -111,7 +114,11 @@ const checkCsrf = (request: NextRequest): boolean => {
 
 /**
  * Decode the ALB-injected OIDC JWT payload without signature verification.
- * ALB already verified the token before forwarding — we only need the claims.
+ *
+ * Security invariant: the ALB verifies the JWT signature before forwarding
+ * the request (ALB → ECS private subnet, no public access). The app only
+ * needs to extract the `sub` claim. If the app were ever exposed without
+ * ALB, this function would need full signature verification.
  */
 const extractSubFromJwt = (jwt: string): string => {
   const parts = jwt.split(".");
@@ -181,11 +188,14 @@ export const proxy = (request: NextRequest): NextResponse => {
     userId = extractSubFromJwt(jwtValue);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const response = new NextResponse(`Invalid auth token: ${message}`, { status: 401 });
+    console.error("proxy auth: %s", message);
+    const response = new NextResponse("Invalid auth token", { status: 401 });
     addSecurityHeaders(response, nonce);
     return response;
   }
 
+  // Workspace cookie is set client-side. RLS enforces workspace membership
+  // at the database level — setting this to a foreign workspace gives no access.
   const workspaceCookie = request.cookies.get("workspace")?.value;
   const workspaceId = (workspaceCookie !== undefined && workspaceCookie !== "")
     ? workspaceCookie

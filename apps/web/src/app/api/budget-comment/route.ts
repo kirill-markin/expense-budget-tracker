@@ -37,7 +37,8 @@ export const GET = async (request: Request): Promise<Response> => {
     return Response.json({ comment });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Database query failed: ${message}`, { status: 500 });
+    console.error("budget-comment GET: %s", message);
+    return new Response("Database query failed", { status: 500 });
   }
 };
 
@@ -86,6 +87,7 @@ export const POST = async (request: Request): Promise<Response> => {
     return Response.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Database insert failed: ${message}`, { status: 500 });
+    console.error("budget-comment POST: %s", message);
+    return new Response("Database insert failed", { status: 500 });
   }
 };

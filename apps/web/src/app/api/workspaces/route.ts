@@ -52,7 +52,8 @@ export const POST = async (request: Request): Promise<Response> => {
   } catch (err) {
     await client.query("ROLLBACK");
     const message = err instanceof Error ? err.message : String(err);
-    return new Response(`Failed to create workspace: ${message}`, { status: 500 });
+    console.error("workspaces POST: %s", message);
+    return new Response("Failed to create workspace", { status: 500 });
   } finally {
     client.release();
   }

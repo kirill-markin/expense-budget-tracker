@@ -61,7 +61,8 @@ export const POST = async (request: Request): Promise<Response> => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Database insert failed: ${message}`, { status: 500 });
+    console.error("budget-plan POST: %s", message);
+    return new Response("Database insert failed", { status: 500 });
   }
 
   return Response.json({ ok: true });

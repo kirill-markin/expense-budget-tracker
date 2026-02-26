@@ -45,7 +45,8 @@ export const POST = async (request: Request): Promise<Response> => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Database update failed: ${message}`, { status: 500 });
+    console.error("transactions-update POST: %s", message);
+    return new Response("Database update failed", { status: 500 });
   }
 
   return Response.json({ ok: true });

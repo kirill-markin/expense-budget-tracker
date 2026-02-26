@@ -10,6 +10,13 @@ export const GET = async (request: Request): Promise<Response> => {
 
   const userId = extractUserId(request);
   const workspaceId = extractWorkspaceId(request);
-  const summary = await getBalancesSummary(userId, workspaceId);
-  return Response.json(summary);
+
+  try {
+    const summary = await getBalancesSummary(userId, workspaceId);
+    return Response.json(summary);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("balances-summary GET: %s", message);
+    return new Response("Database query failed", { status: 500 });
+  }
 };

@@ -4,6 +4,7 @@
  * Called once by Next.js on server boot. Checks:
  * - AUTH_MODE is "none" or "proxy"
  * - AUTH_PROXY_HEADER, COGNITO_DOMAIN, COGNITO_CLIENT_ID are set when AUTH_MODE=proxy
+ * - CORS_ORIGIN is set when AUTH_MODE=proxy (required for CSRF protection)
  * - Warns when AUTH_MODE=none with non-localhost HOST
  * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (proxy/ECS)
  *
@@ -32,6 +33,10 @@ export const register = (): void => {
     const cognitoClientId = process.env.COGNITO_CLIENT_ID;
     if (cognitoClientId === undefined || cognitoClientId === "") {
       errors.push("COGNITO_CLIENT_ID must be set when AUTH_MODE=proxy");
+    }
+    const corsOrigin = process.env.CORS_ORIGIN;
+    if (corsOrigin === undefined || corsOrigin === "") {
+      errors.push("CORS_ORIGIN must be set when AUTH_MODE=proxy (required for CSRF protection)");
     }
   }
 

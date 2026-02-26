@@ -74,6 +74,13 @@ export const GET = async (request: Request): Promise<Response> => {
 
   const userId = extractUserId(request);
   const workspaceId = extractWorkspaceId(request);
-  const page = await getTransactionsPage(userId, workspaceId, filter);
-  return Response.json(page);
+
+  try {
+    const page = await getTransactionsPage(userId, workspaceId, filter);
+    return Response.json(page);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("transactions GET: %s", message);
+    return new Response("Database query failed", { status: 500 });
+  }
 };

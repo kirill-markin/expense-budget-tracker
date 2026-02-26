@@ -20,7 +20,8 @@ export const GET = async (request: Request): Promise<Response> => {
     return Response.json({ reportingCurrency, availableCurrencies });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Database query failed: ${message}`, { status: 500 });
+    console.error("workspace-settings GET: %s", message);
+    return new Response("Database query failed", { status: 500 });
   }
 };
 
@@ -54,6 +55,7 @@ export const PUT = async (request: Request): Promise<Response> => {
     return Response.json({ reportingCurrency: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(`Database update failed: ${message}`, { status: 500 });
+    console.error("workspace-settings PUT: %s", message);
+    return new Response("Database update failed", { status: 500 });
   }
 };
