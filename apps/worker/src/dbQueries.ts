@@ -39,7 +39,7 @@ export async function getRateDateRanges(
   return ranges;
 }
 
-/** Insert rows into Postgres using a single batch INSERT. Returns count of inserted rows. */
+/** Insert rows into Postgres using a single batch INSERT. Returns count of actually inserted rows. */
 export async function insertRows(rows: ExchangeRateRow[]): Promise<number> {
   if (rows.length === 0) {
     return 0;
@@ -51,11 +51,15 @@ export async function insertRows(rows: ExchangeRateRow[]): Promise<number> {
     values.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`);
     params.push(rows[i].base_currency, rows[i].quote_currency, rows[i].rate_date, rows[i].rate);
   }
-  await query(
+  const result = await query(
     "INSERT INTO exchange_rates (base_currency, quote_currency, rate_date, rate) " +
     "VALUES " + values.join(", ") + " " +
     "ON CONFLICT (base_currency, quote_currency, rate_date) DO NOTHING",
     params,
   );
-  return rows.length;
+  const inserted = result.rowCount ?? 0;
+  if (inserted === 0 && rows.length > 0) {
+    console.warn("INSERT returned 0 affected rows", { attempted: rows.length });
+  }
+  return inserted;
 }
