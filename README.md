@@ -23,6 +23,22 @@ make up          # start Postgres, run migrations, start web + worker
 
 Open `http://localhost:3000`.
 
+## Usage with AI agents
+
+1. **Settings → Direct Database Access → Generate credentials** — copy the connection string (shown once)
+2. **Give the connection string to your AI agent** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://openai.com/index/codex/), or any agent that can run SQL
+3. **Send the agent screenshots, CSV files, or PDF bank statements** — it parses them and inserts transactions into the database
+4. **Open the web UI** — view actual spending by category and plan the budget for the next month
+
+Example SQL the agent runs:
+
+```sql
+INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, category, counterparty, note)
+VALUES
+  ('evt-001', '2025-03-15 12:30:00+00', 'chase-checking', -42.50, 'USD', 'spend', 'groceries', 'Whole Foods', 'Weekly groceries'),
+  ('evt-002', '2025-03-15 09:00:00+00', 'chase-checking', -5.75,  'USD', 'spend', 'coffee',    'Blue Bottle',  NULL);
+```
+
 ## Documentation
 
 - [Deployment](docs/deployment.md) — local Docker Compose and AWS CDK setup
