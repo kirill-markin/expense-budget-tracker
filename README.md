@@ -27,3 +27,7 @@ Open `http://localhost:3000`.
 - [AWS deployment](infra/aws/README.md) — full AWS CDK guide
 
 - [Architecture](docs/architecture.md) — system overview, data model, multi-currency design
+
+## License
+
+[MIT](LICENSE)
