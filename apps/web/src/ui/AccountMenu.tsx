@@ -66,6 +66,15 @@ export const AccountMenu = (props: Props): ReactElement | null => {
     }
   }, [isCreating]);
 
+  useEffect(() => {
+    if (!authEnabled || currentWorkspaceId === "") return;
+    const match = document.cookie.match(/(?:^|;\s*)workspace=([^;]*)/);
+    const cookieValue = match ? decodeURIComponent(match[1]) : "";
+    if (cookieValue !== "" && cookieValue !== currentWorkspaceId) {
+      document.cookie = `workspace=${currentWorkspaceId};path=/;max-age=31536000;samesite=lax`;
+    }
+  }, [authEnabled, currentWorkspaceId]);
+
   const handleSwitch = useCallback((workspaceId: string): void => {
     document.cookie = `workspace=${workspaceId};path=/;max-age=31536000;samesite=lax`;
     window.location.reload();

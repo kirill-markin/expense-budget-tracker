@@ -96,6 +96,19 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   });
 
   // --- AWS WAF ---
+  // Rate limiting is intentionally NOT done here. All traffic arrives from Cloudflare
+  // edge servers, so WAF sees Cloudflare IPs — not real client IPs. IP-based rate
+  // limiting would group all clients behind the same Cloudflare PoP together,
+  // making it both ineffective (attackers share the bucket with legitimate users)
+  // and dangerous (could block an entire PoP).
+  //
+  // Rate limiting is covered by other layers:
+  //   - Cloudflare: built-in DDoS protection, sees real client IPs natively.
+  //   - Cognito: built-in throttling on auth endpoints (/oauth2/*).
+  //   - ALB security group: only accepts traffic from Cloudflare edge IPs (networking.ts).
+  //
+  // WAF is kept for managed rule sets (SQLi, XSS, known bad inputs) which inspect
+  // request content and work correctly regardless of source IP.
   const waf = new wafv2.CfnWebACL(scope, "Waf", {
     scope: "REGIONAL",
     defaultAction: { allow: {} },
@@ -106,48 +119,8 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
     },
     rules: [
       {
-        name: "AuthRateLimit",
-        priority: 0,
-        action: { block: {} },
-        statement: {
-          rateBasedStatement: {
-            limit: 100,
-            aggregateKeyType: "IP",
-            scopeDownStatement: {
-              byteMatchStatement: {
-                fieldToMatch: { uriPath: {} },
-                positionalConstraint: "STARTS_WITH",
-                searchString: "/oauth2/",
-                textTransformations: [{ priority: 0, type: "LOWERCASE" }],
-              },
-            },
-          },
-        },
-        visibilityConfig: {
-          sampledRequestsEnabled: true,
-          cloudWatchMetricsEnabled: true,
-          metricName: "expense-tracker-auth-rate-limit",
-        },
-      },
-      {
-        name: "RateLimit",
-        priority: 1,
-        action: { block: {} },
-        statement: {
-          rateBasedStatement: {
-            limit: 1000,
-            aggregateKeyType: "IP",
-          },
-        },
-        visibilityConfig: {
-          sampledRequestsEnabled: true,
-          cloudWatchMetricsEnabled: true,
-          metricName: "expense-tracker-rate-limit",
-        },
-      },
-      {
         name: "AWSManagedCommonRules",
-        priority: 2,
+        priority: 0,
         overrideAction: { none: {} },
         statement: {
           managedRuleGroupStatement: {
@@ -163,7 +136,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
       },
       {
         name: "AWSManagedKnownBadInputs",
-        priority: 3,
+        priority: 1,
         overrideAction: { none: {} },
         statement: {
           managedRuleGroupStatement: {

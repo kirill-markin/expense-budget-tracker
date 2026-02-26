@@ -26,9 +26,14 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   if (!demo) {
     const headersList = await headers();
     const userId = headersList.get("x-user-id") ?? "local";
-    const workspaceId = headersList.get("x-workspace-id") ?? "local";
+    let workspaceId = headersList.get("x-workspace-id") ?? "local";
+    try {
+      reportingCurrency = await getReportCurrency(userId, workspaceId);
+    } catch {
+      workspaceId = userId;
+      reportingCurrency = await getReportCurrency(userId, workspaceId);
+    }
     currentWorkspaceId = workspaceId;
-    reportingCurrency = await getReportCurrency(userId, workspaceId);
     if (authEnabled) {
       workspaces = await listWorkspaces(userId, workspaceId);
     }
