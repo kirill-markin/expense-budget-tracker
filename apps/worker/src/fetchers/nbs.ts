@@ -10,9 +10,9 @@
  * So 1 RSD = 1/98.9309 USD, i.e. rate = 1 / exchange_middle.
  */
 
-import { NBS_API_BASE_URL, NBS_MAX_COUNT } from "../config";
+import { NBS_API_BASE_URL, NBS_EARLIEST_DATE, NBS_MAX_COUNT } from "../config";
 import { addDays, daysBetween, todayIso } from "../dateUtils";
-import { getEarliestTransactionDate, getRateDateRanges, insertRows } from "../dbQueries";
+import { getRateDateRanges, insertRows } from "../dbQueries";
 import type { ExchangeRateRow, DateRange, FetcherResult } from "../types";
 
 const CURRENCY = "RSD";
@@ -149,18 +149,17 @@ function filterNewRows(
 export async function run(): Promise<FetcherResult> {
   const dateRanges = await getRateDateRanges([CURRENCY]);
   const existingRange = dateRanges[CURRENCY];
-  const targetStart = await getEarliestTransactionDate();
 
   let start: string;
   if (existingRange) {
-    const needsBackfill = existingRange.min_date > targetStart;
+    const needsBackfill = existingRange.min_date > NBS_EARLIEST_DATE;
     if (needsBackfill) {
-      start = targetStart;
+      start = NBS_EARLIEST_DATE;
     } else {
       start = addDays(existingRange.max_date, 1);
     }
   } else {
-    start = targetStart;
+    start = NBS_EARLIEST_DATE;
   }
 
   const end = todayIso();

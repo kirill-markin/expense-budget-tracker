@@ -9,6 +9,7 @@ import { run as runEcb } from "./fetchers/ecb";
 import { run as runCbr } from "./fetchers/cbr";
 import { run as runNbs } from "./fetchers/nbs";
 import { run as runNbu } from "./fetchers/nbu";
+import { run as runUsdt } from "./fetchers/usdt";
 import { endPool } from "./db";
 
 export async function handler(): Promise<{ statusCode: number; body: string }> {
@@ -18,6 +19,7 @@ export async function handler(): Promise<{ statusCode: number; body: string }> {
       cbr: await runCbr(),
       nbs: await runNbs(),
       nbu: await runNbu(),
+      usdt: await runUsdt(),
     };
 
     console.log("All fetchers complete:", JSON.stringify(results));

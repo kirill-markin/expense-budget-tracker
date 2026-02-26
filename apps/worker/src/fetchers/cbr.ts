@@ -11,9 +11,9 @@
  */
 
 import { XMLParser } from "fast-xml-parser";
-import { CBR_BASE_URL, CBR_USD_ID } from "../config";
+import { CBR_BASE_URL, CBR_EARLIEST_DATE, CBR_USD_ID } from "../config";
 import { addDays, todayIso, formatDdMmYyyy } from "../dateUtils";
-import { getEarliestTransactionDate, getRateDateRanges, insertRows } from "../dbQueries";
+import { getRateDateRanges, insertRows } from "../dbQueries";
 import type { ExchangeRateRow, DateRange, FetcherResult } from "../types";
 
 const CURRENCY = "RUB";
@@ -157,18 +157,17 @@ function filterNewRows(
 export async function run(): Promise<FetcherResult> {
   const dateRanges = await getRateDateRanges([CURRENCY]);
   const existingRange = dateRanges[CURRENCY];
-  const targetStart = await getEarliestTransactionDate();
 
   let start: string;
   if (existingRange) {
-    const needsBackfill = existingRange.min_date > targetStart;
+    const needsBackfill = existingRange.min_date > CBR_EARLIEST_DATE;
     if (needsBackfill) {
-      start = targetStart;
+      start = CBR_EARLIEST_DATE;
     } else {
       start = addDays(existingRange.max_date, 1);
     }
   } else {
-    start = targetStart;
+    start = CBR_EARLIEST_DATE;
   }
 
   const end = todayIso();

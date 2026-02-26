@@ -16,6 +16,7 @@ import { run as runEcb } from "./fetchers/ecb";
 import { run as runCbr } from "./fetchers/cbr";
 import { run as runNbs } from "./fetchers/nbs";
 import { run as runNbu } from "./fetchers/nbu";
+import { run as runUsdt } from "./fetchers/usdt";
 
 async function runFetcher(name: string, fetcherFn: () => Promise<unknown>): Promise<void> {
   console.log(`Starting ${name} fetch`);
@@ -28,12 +29,14 @@ async function runAll(): Promise<void> {
   await runFetcher("CBR", runCbr);
   await runFetcher("NBS", runNbs);
   await runFetcher("NBU", runNbu);
+  await runFetcher("USDT", runUsdt);
 }
 
 cron.schedule("0 8 * * *", () => { runFetcher("ECB", runEcb); }, { timezone: "UTC" });
 cron.schedule("5 8 * * *", () => { runFetcher("CBR", runCbr); }, { timezone: "UTC" });
 cron.schedule("10 8 * * *", () => { runFetcher("NBS", runNbs); }, { timezone: "UTC" });
 cron.schedule("15 8 * * *", () => { runFetcher("NBU", runNbu); }, { timezone: "UTC" });
+cron.schedule("20 8 * * *", () => { runFetcher("USDT", runUsdt); }, { timezone: "UTC" });
 
 console.log("Scheduler started. Running initial fetch...");
 runAll()

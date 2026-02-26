@@ -41,6 +41,8 @@ export async function getDatabaseUrl(): Promise<string> {
 // RSD is fetched separately via NBS (National Bank of Serbia).
 export const ECB_CURRENCIES: string[] = ["BGN", "EUR", "GBP", "TRY"];
 
+export const ECB_EARLIEST_DATE: string = "1999-01-04";
+
 export const ECB_BASE_URL: string = "https://data-api.ecb.europa.eu/service/data/EXR";
 
 // ---------------------------------------------------------------------------
@@ -50,6 +52,8 @@ export const ECB_BASE_URL: string = "https://data-api.ecb.europa.eu/service/data
 // Bank of Russia internal ID for USD.
 // Full list: https://www.cbr.ru/scripts/XML_valFull.asp
 export const CBR_USD_ID: string = "R01235";
+
+export const CBR_EARLIEST_DATE: string = "1992-07-01";
 
 export const CBR_BASE_URL: string = "https://www.cbr.ru/scripts/XML_dynamic.asp";
 
@@ -62,6 +66,8 @@ export const CBR_BASE_URL: string = "https://www.cbr.ru/scripts/XML_dynamic.asp"
 export const NBS_API_BASE_URL: string = "https://kurs.resenje.org/api/v1";
 
 // Maximum number of daily rates per single API request.
+export const NBS_EARLIEST_DATE: string = "2003-01-01";
+
 export const NBS_MAX_COUNT: number = 1000;
 
 // ---------------------------------------------------------------------------
@@ -70,4 +76,6 @@ export const NBS_MAX_COUNT: number = 1000;
 
 // National Bank of Ukraine — official exchange rates API.
 // Docs: https://bank.gov.ua/en/open-data/api-dev
+export const NBU_EARLIEST_DATE: string = "1996-01-06";
+
 export const NBU_BASE_URL: string = "https://bank.gov.ua/NBU_Exchange/exchange_site";

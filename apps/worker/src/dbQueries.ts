@@ -3,20 +3,7 @@
  */
 
 import { query } from "./db";
-import { addDays, todayIso } from "./dateUtils";
 import type { ExchangeRateRow, DateRange } from "./types";
-
-/** Query the earliest transaction date from ledger_entries. */
-export async function getEarliestTransactionDate(): Promise<string> {
-  const result = await query(
-    "SELECT MIN(ts::date)::text AS min_date FROM ledger_entries",
-    [],
-  );
-  if (result.rows[0]?.min_date) {
-    return result.rows[0].min_date;
-  }
-  return addDays(todayIso(), -30);
-}
 
 /** Query min and max rate_date per base_currency already in Postgres. */
 export async function getRateDateRanges(

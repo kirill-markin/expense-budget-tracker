@@ -6,9 +6,9 @@
  * and inserts missing dates into exchange_rates.
  */
 
-import { ECB_BASE_URL, ECB_CURRENCIES } from "../config";
+import { ECB_BASE_URL, ECB_CURRENCIES, ECB_EARLIEST_DATE } from "../config";
 import { addDays, todayIso } from "../dateUtils";
-import { getEarliestTransactionDate, getRateDateRanges, insertRows } from "../dbQueries";
+import { getRateDateRanges, insertRows } from "../dbQueries";
 import type { ExchangeRateRow, DateRange, FetcherResult } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -188,16 +188,15 @@ function filterNewRows(
 export async function run(): Promise<FetcherResult> {
   const ecbCurrencies = determineEcbCurrencies(ECB_CURRENCIES);
   const dateRanges = await getRateDateRanges(ECB_CURRENCIES);
-  const targetStart = await getEarliestTransactionDate();
 
   const allCurrenciesPresent = ECB_CURRENCIES.every((c) => c in dateRanges);
   const needsBackfill =
     !allCurrenciesPresent ||
-    Object.values(dateRanges).some((r) => r.min_date > targetStart);
+    Object.values(dateRanges).some((r) => r.min_date > ECB_EARLIEST_DATE);
 
   let start: string;
   if (needsBackfill) {
-    start = targetStart;
+    start = ECB_EARLIEST_DATE;
   } else {
     const earliestMax = Object.values(dateRanges)
       .map((r) => r.max_date)
