@@ -1148,3 +1148,41 @@ tbody tr:last-child .budget-cm-actual {
   font-size: 12px;
 }
 
+/* Direct access code block */
+
+.settings-codeblock {
+  position: relative;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  max-width: 600px;
+}
+
+.settings-codeblock pre {
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.settings-codeblock-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.settings-codeblock-copy:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+

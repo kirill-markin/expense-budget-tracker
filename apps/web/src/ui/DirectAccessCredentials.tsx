@@ -81,7 +81,7 @@ export const DirectAccessCredentials = (props: Props): ReactElement => {
   }, []);
 
   const handleCopy = useCallback((): void => {
-    if (credentials === null || credentials.password === null) return;
+    if (credentials === null) return;
     navigator.clipboard.writeText(formatCredentials(credentials)).then(() => {
       setCopied(true);
       setTimeout(() => { setCopied(false); }, 2000);
@@ -115,23 +115,17 @@ export const DirectAccessCredentials = (props: Props): ReactElement => {
           Copy the password now — it will not be shown again.
         </p>
       )}
-      <textarea
-        className="settings-textarea"
-        readOnly
-        rows={9}
-        value={formatCredentials(credentials)}
-      />
+      <div className="settings-codeblock">
+        <button
+          className="settings-codeblock-copy"
+          type="button"
+          onClick={handleCopy}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+        <pre>{formatCredentials(credentials)}</pre>
+      </div>
       <div className="settings-control">
-        {passwordVisible && (
-          <button
-            className="settings-save"
-            type="button"
-            onClick={handleCopy}
-            disabled={loading}
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
-        )}
         <button
           className="settings-save"
           type="button"
