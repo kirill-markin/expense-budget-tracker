@@ -18,6 +18,12 @@
 --
 -- Role names are opaque (ws_ + md5 hash) to prevent workspace_id enumeration
 -- via pg_roles system catalog.
+--
+-- System catalog visibility (pg_roles, pg_user, pg_proc, information_schema):
+-- intentionally left at Postgres defaults. On RDS/Aurora these objects are owned
+-- by the bootstrap superuser (rdsadmin) and REVOKE from a non-superuser is a
+-- silent no-op. Data protection comes from RLS policies and table-level GRANTs,
+-- not catalog hiding.
 
 -- ==========================================================================
 -- 1. Mapping table
