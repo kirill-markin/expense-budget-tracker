@@ -98,7 +98,10 @@ export const getTransactionsPage = async (
   filter: TransactionsFilter,
 ): Promise<TransactionsPage> => {
   const reportCurrency = await getReportCurrency(userId, workspaceId);
-  const sortColumn = SORT_COLUMNS[filter.sortKey] ?? "ts";
+  const sortColumn = SORT_COLUMNS[filter.sortKey];
+  if (sortColumn === undefined) {
+    throw new Error(`Invalid sortKey: ${filter.sortKey}`);
+  }
   const sortDir = filter.sortDir === "asc" ? "ASC" : "DESC";
 
   const entriesParams: Array<unknown> = [reportCurrency];
@@ -128,8 +131,8 @@ export const getTransactionsPage = async (
       AND (le.ts::date < r.next_rate_date OR r.next_rate_date IS NULL)
     ${entriesWhere}
     ORDER BY ${sortColumn} ${sortDir}
-    LIMIT ${filter.limit}
-    OFFSET ${filter.offset}
+    LIMIT $${entriesParams.push(filter.limit)}
+    OFFSET $${entriesParams.push(filter.offset)}
   `;
 
   const countParams: Array<unknown> = [];
