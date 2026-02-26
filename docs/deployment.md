@@ -19,10 +19,6 @@ This runs `docker compose -f infra/docker/compose.yml up -d`, which starts:
 3. **web** — Next.js app on `http://localhost:3000`.
 4. **worker** — TypeScript FX rate fetcher on a daily schedule.
 
-### Demo mode
-
-To preview dashboards without a database, set `DEMO_MODE=true` in the environment or click "Try Demo" in the topbar. Demo mode serves static sample data and discards all writes.
-
 ### Stop
 
 ```bash
