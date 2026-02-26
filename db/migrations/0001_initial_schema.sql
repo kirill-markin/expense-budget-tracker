@@ -37,8 +37,6 @@ CREATE TABLE ledger_entries (
   PRIMARY KEY (entry_id)
 );
 
--- Worker runs MIN(ts) without RLS context.
-CREATE INDEX idx_ledger_entries_ts ON ledger_entries (ts);
 -- event_id point lookups on INSERT dedup.
 CREATE INDEX idx_ledger_entries_event ON ledger_entries (event_id);
 -- Workspace-prefixed composites for RLS + business filters.
@@ -48,6 +46,8 @@ CREATE INDEX idx_le_ws_account_ts
     ON ledger_entries (workspace_id, account_id, ts);
 CREATE INDEX idx_le_ws_kind_cat_ts
     ON ledger_entries (workspace_id, kind, category, ts);
+CREATE INDEX idx_le_ws_category_ts
+    ON ledger_entries (workspace_id, category, ts);
 CREATE INDEX idx_le_ws_account_covering
     ON ledger_entries (workspace_id, account_id)
     INCLUDE (currency, inserted_at);
