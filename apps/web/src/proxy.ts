@@ -32,7 +32,27 @@ const SECURITY_HEADERS: ReadonlyArray<[string, string]> = [
   ["Permissions-Policy", "camera=(), microphone=(), geolocation=()"],
 ];
 
-const addSecurityHeaders = (response: NextResponse): void => {
+const buildCsp = (nonce: string): string => {
+  const isDev = process.env.NODE_ENV === "development";
+  const origin = process.env.CORS_ORIGIN ?? "";
+  const directives: Array<string> = [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    `style-src 'self' 'nonce-${nonce}'`,
+    "img-src 'self' blob: data:",
+    "font-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ];
+  if (origin.startsWith("https://")) {
+    directives.push("upgrade-insecure-requests");
+  }
+  return directives.join("; ");
+};
+
+const addSecurityHeaders = (response: NextResponse, nonce: string): void => {
   for (const [key, value] of SECURITY_HEADERS) {
     response.headers.set(key, value);
   }
@@ -40,6 +60,7 @@ const addSecurityHeaders = (response: NextResponse): void => {
   if (origin.startsWith("https://")) {
     response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
   }
+  response.headers.set("Content-Security-Policy", buildCsp(nonce));
 };
 
 /**
@@ -106,48 +127,52 @@ const extractSubFromJwt = (jwt: string): string => {
   return sub;
 };
 
-const forwardWithIdentity = (request: NextRequest, userId: string, workspaceId: string): NextResponse => {
+const forwardWithIdentity = (request: NextRequest, userId: string, workspaceId: string, nonce: string): NextResponse => {
+  const csp = buildCsp(nonce);
   const headers = new Headers(request.headers);
   headers.set(USER_ID_HEADER, userId);
   headers.set(WORKSPACE_ID_HEADER, workspaceId);
+  headers.set("x-nonce", nonce);
+  headers.set("Content-Security-Policy", csp);
   const response = NextResponse.next({ request: { headers } });
-  addSecurityHeaders(response);
+  addSecurityHeaders(response, nonce);
   return response;
 };
 
 export const proxy = (request: NextRequest): NextResponse => {
   const { pathname } = request.nextUrl;
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
   if (!checkCsrf(request)) {
     const response = new NextResponse("CSRF origin mismatch", { status: 403 });
-    addSecurityHeaders(response);
+    addSecurityHeaders(response, nonce);
     return response;
   }
 
   const authMode = getAuthMode();
 
   if (authMode === "none") {
-    return forwardWithIdentity(request, LOCAL_USER_ID, LOCAL_WORKSPACE_ID);
+    return forwardWithIdentity(request, LOCAL_USER_ID, LOCAL_WORKSPACE_ID, nonce);
   }
 
   // AUTH_MODE=proxy — health check is exempt from auth
   if (pathname === "/api/health") {
     const response = NextResponse.next();
-    addSecurityHeaders(response);
+    addSecurityHeaders(response, nonce);
     return response;
   }
 
   const headerName = process.env.AUTH_PROXY_HEADER ?? "";
   if (headerName === "") {
     const response = new NextResponse("Server misconfigured: AUTH_PROXY_HEADER not set", { status: 500 });
-    addSecurityHeaders(response);
+    addSecurityHeaders(response, nonce);
     return response;
   }
 
   const jwtValue = request.headers.get(headerName);
   if (jwtValue === null || jwtValue === "") {
     const response = new NextResponse("Unauthorized", { status: 401 });
-    addSecurityHeaders(response);
+    addSecurityHeaders(response, nonce);
     return response;
   }
 
@@ -157,7 +182,7 @@ export const proxy = (request: NextRequest): NextResponse => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const response = new NextResponse(`Invalid auth token: ${message}`, { status: 401 });
-    addSecurityHeaders(response);
+    addSecurityHeaders(response, nonce);
     return response;
   }
 
@@ -165,7 +190,7 @@ export const proxy = (request: NextRequest): NextResponse => {
   const workspaceId = (workspaceCookie !== undefined && workspaceCookie !== "")
     ? workspaceCookie
     : userId;
-  return forwardWithIdentity(request, userId, workspaceId);
+  return forwardWithIdentity(request, userId, workspaceId, nonce);
 };
 
 export const config = {
