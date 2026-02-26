@@ -45,6 +45,16 @@ export type TransactionsPage = Readonly<{
   total: number;
 }>;
 
+// PostgreSQL resolves simple names in ORDER BY to output-column aliases, but
+// names inside expressions (like ABS(...)) are resolved against input columns
+// only. So "ABS(amount_report)" fails because amount_report is a SELECT alias,
+// not a real column. We inline the full CASE expression for computed sorts.
+// The $1 placeholder is the report currency, same as in the main SELECT.
+const AMOUNT_REPORT_EXPR =
+  "CASE WHEN le.currency = $1 THEN le.amount::double precision" +
+  " WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision" +
+  " ELSE NULL END";
+
 const SORT_COLUMNS: Readonly<Record<string, string>> = {
   ts: "ts",
   accountId: "account_id",
@@ -54,7 +64,7 @@ const SORT_COLUMNS: Readonly<Record<string, string>> = {
   category: "category",
   counterparty: "counterparty",
   amountAbs: "ABS(amount)",
-  amountUsdAbs: "ABS(amount_report)",
+  amountUsdAbs: `ABS(${AMOUNT_REPORT_EXPR})`,
 };
 
 const buildWhereClause = (
