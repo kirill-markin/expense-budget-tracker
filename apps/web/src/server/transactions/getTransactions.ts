@@ -1,8 +1,8 @@
 /**
  * Paginated ledger entry queries for the transactions dashboard.
  *
- * Fetches entries with runtime FX conversion via a LEFT JOIN on exchange_rates
- * using date-range matching (rate valid from rate_date until next_rate_date).
+ * Fetches entries with runtime FX conversion via LATERAL index lookup on
+ * exchange_rates (one backward scan per row via idx_exchange_rates_quote_base_date).
  * Supports filtering by date range, account, kind, and category, with
  * configurable sort and pagination. The report-currency amount is computed
  * at read time — no precomputed amount_usd column.
@@ -108,13 +108,6 @@ export const getTransactionsPage = async (
   const entriesWhere = buildWhereClause(filter, entriesParams);
 
   const entriesQuery = `
-    WITH rate_ranges AS (
-      SELECT
-        base_currency, rate_date, rate,
-        LEAD(rate_date) OVER (PARTITION BY base_currency ORDER BY rate_date) AS next_rate_date
-      FROM exchange_rates
-      WHERE quote_currency = $1
-    )
     SELECT
       le.entry_id, le.event_id, le.ts, le.account_id,
       le.amount::double precision AS amount,
@@ -125,10 +118,17 @@ export const getTransactionsPage = async (
       END AS amount_report,
       le.currency, le.kind, le.category, le.counterparty, le.note
     FROM ledger_entries le
-    LEFT JOIN rate_ranges r
-      ON r.base_currency = le.currency
-      AND le.ts::date >= r.rate_date
-      AND (le.ts::date < r.next_rate_date OR r.next_rate_date IS NULL)
+    -- LATERAL: one backward index scan per row via idx_exchange_rates_quote_base_date,
+    -- replacing the old rate_ranges CTE that materialized the entire exchange_rates
+    -- table and did an O(N×M) non-equi range join.
+    LEFT JOIN LATERAL (
+      SELECT rate FROM exchange_rates
+      WHERE quote_currency = $1
+        AND base_currency = le.currency
+        AND rate_date <= le.ts::date
+      ORDER BY rate_date DESC
+      LIMIT 1
+    ) r ON true
     ${entriesWhere}
     ORDER BY ${sortColumn} ${sortDir}
     LIMIT $${entriesParams.push(filter.limit)}

@@ -1,14 +1,16 @@
 -- Reference query for the per-currency FX breakdown panel.
 -- Parameters: $1 = report_currency, $2 = month (YYYY-MM)
+--
+-- Uses le.currency directly (not the accounts view) and LATERAL index lookups
+-- for FX rates (not the rate_ranges CTE). See budget_grid.sql header for rationale.
 
 WITH
 monthly_deltas AS (
   SELECT
     to_char(le.ts::date, 'YYYY-MM') AS month,
-    a.currency,
+    le.currency,
     SUM(le.amount::double precision) AS delta
   FROM ledger_entries le
-  JOIN accounts a ON a.account_id = le.account_id
   GROUP BY 1, 2
 ),
 all_months AS (
@@ -37,36 +39,32 @@ running_balances AS (
     delta
   FROM full_grid
 ),
-rate_ranges AS (
-  SELECT base_currency, rate_date, rate,
-    LEAD(rate_date) OVER (PARTITION BY base_currency ORDER BY rate_date) AS next_rate_date
-  FROM exchange_rates
-  WHERE quote_currency = $1
-),
-prev_month_str AS (
-  SELECT to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM') AS val
-),
 prev AS (
   SELECT rb.currency, rb.balance,
     CASE WHEN rb.currency = $1 THEN 1.0 ELSE rr.rate::double precision END AS rate
   FROM running_balances rb
-  CROSS JOIN prev_month_str pm
-  LEFT JOIN rate_ranges rr
-    ON rr.base_currency = rb.currency
-    AND (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date >= rr.rate_date
-    AND ((date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date < rr.next_rate_date
-         OR rr.next_rate_date IS NULL)
-  WHERE rb.month = pm.val
+  LEFT JOIN LATERAL (
+    SELECT rate FROM exchange_rates
+    WHERE quote_currency = $1
+      AND base_currency = rb.currency
+      AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
+    ORDER BY rate_date DESC
+    LIMIT 1
+  ) rr ON true
+  WHERE rb.month = to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
 ),
 curr AS (
   SELECT rb.currency, rb.balance, rb.delta,
     CASE WHEN rb.currency = $1 THEN 1.0 ELSE rr.rate::double precision END AS rate
   FROM running_balances rb
-  LEFT JOIN rate_ranges rr
-    ON rr.base_currency = rb.currency
-    AND (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date >= rr.rate_date
-    AND ((date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date < rr.next_rate_date
-         OR rr.next_rate_date IS NULL)
+  LEFT JOIN LATERAL (
+    SELECT rate FROM exchange_rates
+    WHERE quote_currency = $1
+      AND base_currency = rb.currency
+      AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
+    ORDER BY rate_date DESC
+    LIMIT 1
+  ) rr ON true
   WHERE rb.month = $2
 )
 SELECT

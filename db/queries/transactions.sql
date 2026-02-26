@@ -1,15 +1,11 @@
 -- Reference queries for the transactions dashboard.
 -- Parameters: $1 = report_currency, $2..N = dynamic filters (see WHERE clause)
+--
+-- FX rate lookup uses LATERAL + LIMIT 1 instead of the old rate_ranges CTE.
+-- One backward index scan per row via idx_exchange_rates_quote_base_date.
 
 -- ENTRIES_QUERY: paginated ledger entries with runtime FX conversion.
 -- Parameters: $1 = report_currency; filters and sort injected dynamically.
-WITH rate_ranges AS (
-  SELECT
-    base_currency, rate_date, rate,
-    LEAD(rate_date) OVER (PARTITION BY base_currency ORDER BY rate_date) AS next_rate_date
-  FROM exchange_rates
-  WHERE quote_currency = $1
-)
 SELECT
   le.entry_id, le.event_id, le.ts, le.account_id,
   le.amount::double precision AS amount,
@@ -20,10 +16,14 @@ SELECT
   END AS amount_report,
   le.currency, le.kind, le.category, le.counterparty, le.note
 FROM ledger_entries le
-LEFT JOIN rate_ranges r
-  ON r.base_currency = le.currency
-  AND le.ts::date >= r.rate_date
-  AND (le.ts::date < r.next_rate_date OR r.next_rate_date IS NULL)
+LEFT JOIN LATERAL (
+  SELECT rate FROM exchange_rates
+  WHERE quote_currency = $1
+    AND base_currency = le.currency
+    AND rate_date <= le.ts::date
+  ORDER BY rate_date DESC
+  LIMIT 1
+) r ON true
 -- WHERE <dynamic filters: le.ts >= $2, le.ts < $3, le.account_id = $4, etc.>
 ORDER BY le.ts DESC
 LIMIT 50 OFFSET 0;
