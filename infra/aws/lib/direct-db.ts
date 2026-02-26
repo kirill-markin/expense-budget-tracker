@@ -91,7 +91,6 @@ export function directDb(scope: Construct, props: DirectDbProps): DirectDbResult
     targets: [{
       id: rdsIp,
       port: 5432,
-      availabilityZone: "all",
     }],
   });
 
