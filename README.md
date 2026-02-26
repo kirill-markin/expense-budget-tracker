@@ -14,6 +14,7 @@ Open `http://localhost:3000`.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — system overview, data model, multi-currency design
 - [Deployment](docs/deployment.md) — local Docker Compose and AWS CDK setup
 - [AWS deployment](infra/aws/README.md) — full AWS CDK guide
+
+- [Architecture](docs/architecture.md) — system overview, data model, multi-currency design
