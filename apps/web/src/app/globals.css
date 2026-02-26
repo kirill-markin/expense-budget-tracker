@@ -409,10 +409,12 @@ tbody tr:last-child .budget-cm-actual {
 .budget-popover-input::-webkit-inner-spin-button,
 .budget-popover-input::-webkit-outer-spin-button {
   -webkit-appearance: none;
+  appearance: none;
   margin: 0;
 }
 .budget-popover-input {
   -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 .budget-popover-divider {
