@@ -2,6 +2,8 @@
 
 Self-hosted open-source expense and budget tracker with balances, transfers, and multi-currency reporting on Postgres.
 
+![Budget view](docs/budget-screenshot.jpg)
+
 ## Quick start
 
 ```bash
