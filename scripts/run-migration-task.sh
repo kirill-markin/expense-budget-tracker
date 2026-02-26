@@ -43,10 +43,31 @@ TASK_ARN=$(aws ecs run-task \
 
 echo "Migration task: $TASK_ARN"
 
-aws ecs wait tasks-stopped \
-  "${REGION_FLAG[@]}" \
-  --cluster "$CLUSTER" \
-  --tasks "$TASK_ARN"
+TIMEOUT=600   # 10 minutes
+INTERVAL=15   # seconds between polls
+ELAPSED=0
+
+while true; do
+  STATUS=$(aws ecs describe-tasks \
+    "${REGION_FLAG[@]}" \
+    --cluster "$CLUSTER" \
+    --tasks "$TASK_ARN" \
+    --query "tasks[0].lastStatus" \
+    --output text)
+
+  if [ "$STATUS" = "STOPPED" ]; then
+    break
+  fi
+
+  if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+    echo "ERROR: Migration task timed out after ${TIMEOUT}s (status: $STATUS)" >&2
+    echo "Check CloudWatch logs at /expense-tracker/migrate" >&2
+    exit 1
+  fi
+
+  sleep "$INTERVAL"
+  ELAPSED=$((ELAPSED + INTERVAL))
+done
 
 EXIT_CODE=$(aws ecs describe-tasks \
   "${REGION_FLAG[@]}" \

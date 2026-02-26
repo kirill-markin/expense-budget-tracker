@@ -315,9 +315,18 @@ CDK creates an IAM OIDC role for GitHub Actions. Requires step 5 (first deploy +
 After first deploy:
 1. Copy `GithubDeployRoleArn` from CDK outputs
 2. In GitHub repo settings, add:
-   - **Secret** `AWS_DEPLOY_ROLE_ARN` — the role ARN from step 1
-   - **Secret** `CDK_CONTEXT` — contents of `cdk.context.local.json`
-   - **Variable** `AWS_REGION` — target region (e.g. `eu-central-1`)
+
+   **Secrets** (Settings → Secrets and variables → Actions → Secrets):
+   - `AWS_DEPLOY_ROLE_ARN` — the role ARN from step 1
+   - `CDK_CERTIFICATE_ARN` — ACM certificate ARN (Cloudflare Origin Cert, from step 3d)
+   - `CDK_AUTH_CERTIFICATE_ARN` — ACM certificate ARN in us-east-1 (auth domain, from step 3e)
+
+   **Variables** (Settings → Secrets and variables → Actions → Variables):
+   - `AWS_REGION` — target region (e.g. `eu-central-1`)
+   - `CDK_DOMAIN_NAME` — your domain (e.g. `myfinance.com`)
+   - `CDK_ALERT_EMAIL` — email for CloudWatch alarm notifications
+   - `CDK_GITHUB_REPO` — GitHub repo (e.g. `user/expense-budget-tracker`)
+
 3. Every push to `main` will automatically:
    - `cdk deploy` — update infrastructure, Lambda, and IAM permissions
    - Build and push Docker images to ECR (tagged with git SHA + `latest`)

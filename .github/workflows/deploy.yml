@@ -37,6 +37,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -77,17 +78,29 @@ jobs:
       # Refresh Cloudflare edge IP ranges so the ALB security group stays current.
       # Best-effort: if the API is unreachable, the committed cloudflare-ips.json is used.
       - name: Update Cloudflare IPs
+        id: cloudflare
         continue-on-error: true
         run: bash scripts/update-cloudflare-ips.sh
+
+      - name: Warn on stale Cloudflare IPs
+        if: steps.cloudflare.outcome == 'failure'
+        run: echo "::warning::Cloudflare IP update failed — ALB security group uses committed cloudflare-ips.json which may be stale"
 
       # CDK builds Docker images (fromAsset), pushes to bootstrap ECR,
       # and updates all infrastructure in one pass.
       - name: CDK deploy
         working-directory: infra/aws
-        env:
-          CDK_CONTEXT: ${{ secrets.CDK_CONTEXT }}
         run: |
-          echo "$CDK_CONTEXT" > cdk.context.local.json
+          cat > cdk.context.local.json <<CTXEOF
+          {
+            "region": "${{ vars.AWS_REGION }}",
+            "domainName": "${{ vars.CDK_DOMAIN_NAME }}",
+            "certificateArn": "${{ secrets.CDK_CERTIFICATE_ARN }}",
+            "authCertificateArn": "${{ secrets.CDK_AUTH_CERTIFICATE_ARN }}",
+            "alertEmail": "${{ vars.CDK_ALERT_EMAIL }}",
+            "githubRepo": "${{ vars.CDK_GITHUB_REPO }}"
+          }
+          CTXEOF
           npx cdk deploy --all --require-approval never
 
       - name: Read stack outputs
