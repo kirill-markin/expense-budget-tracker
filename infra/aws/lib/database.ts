@@ -28,7 +28,7 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     }),
     parameters: {
       "log_connections": "all",
-      "log_disconnections": "all",
+      "log_disconnections": "1",
       "rds.force_ssl": "1",
     },
   });
