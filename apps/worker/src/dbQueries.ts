@@ -26,27 +26,34 @@ export async function getRateDateRanges(
   return ranges;
 }
 
-/** Insert rows into Postgres using a single batch INSERT. Returns count of actually inserted rows. */
+// Max rows per INSERT to stay well within PostgreSQL's 65535 parameter limit.
+const INSERT_BATCH_SIZE = 1000;
+
+/** Insert rows into Postgres in batches. Returns total count of actually inserted rows. */
 export async function insertRows(rows: ExchangeRateRow[]): Promise<number> {
   if (rows.length === 0) {
     return 0;
   }
-  const values: string[] = [];
-  const params: unknown[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const offset = i * 4;
-    values.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`);
-    params.push(rows[i].base_currency, rows[i].quote_currency, rows[i].rate_date, rows[i].rate);
+  let totalInserted = 0;
+  for (let batchStart = 0; batchStart < rows.length; batchStart += INSERT_BATCH_SIZE) {
+    const batch = rows.slice(batchStart, batchStart + INSERT_BATCH_SIZE);
+    const values: string[] = [];
+    const params: unknown[] = [];
+    for (let i = 0; i < batch.length; i++) {
+      const offset = i * 4;
+      values.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`);
+      params.push(batch[i].base_currency, batch[i].quote_currency, batch[i].rate_date, batch[i].rate);
+    }
+    const result = await query(
+      "INSERT INTO exchange_rates (base_currency, quote_currency, rate_date, rate) " +
+      "VALUES " + values.join(", ") + " " +
+      "ON CONFLICT (base_currency, quote_currency, rate_date) DO NOTHING",
+      params,
+    );
+    totalInserted += result.rowCount ?? 0;
   }
-  const result = await query(
-    "INSERT INTO exchange_rates (base_currency, quote_currency, rate_date, rate) " +
-    "VALUES " + values.join(", ") + " " +
-    "ON CONFLICT (base_currency, quote_currency, rate_date) DO NOTHING",
-    params,
-  );
-  const inserted = result.rowCount ?? 0;
-  if (inserted === 0 && rows.length > 0) {
+  if (totalInserted === 0 && rows.length > 0) {
     console.warn("INSERT returned 0 affected rows", { attempted: rows.length });
   }
-  return inserted;
+  return totalInserted;
 }
