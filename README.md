@@ -7,7 +7,7 @@ Self-hosted open-source expense and budget tracker with balances, transfers, and
 ## Features
 
 - **Fully open-source** — all code is available, deploy on your own servers with full control over your data
-- **Direct Postgres access** — connect your LLM with database credentials and let it query, analyze, and manage your financial data directly, bypassing the app and UI
+- **Direct Postgres access** — connect your LLM with database credentials and let it query, analyze, and manage your financial data directly, bypassing the app and UI. Minimal, flat table structure designed to be hard to misuse — ideal for AI agents
 - **Budget and transaction UI** — built-in interface for budgeting, browsing transactions, and tracking balances across accounts and currencies
 
 ## Quick start
