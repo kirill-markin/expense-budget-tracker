@@ -3,7 +3,7 @@
 import { hierarchy, scaleOrdinal, schemeTableau10, treemap } from "d3";
 import type { HierarchyRectangularNode } from "d3";
 import type { ReactElement } from "react";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { isCategoryVisible } from "@/lib/dataMask";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
@@ -26,9 +26,8 @@ type RectNode = HierarchyRectangularNode<TreemapDatum>;
 
 const WIDTH = 900;
 const HEIGHT = 600;
-const CATEGORY_PADDING_TOP = 20;
-const MIN_LABEL_WIDTH = 32;
-const MIN_LABEL_HEIGHT = 14;
+const CATEGORY_HEADER_H = 18;
+const CATEGORY_PADDING_TOP = CATEGORY_HEADER_H + 4;
 
 const formatTotal = (value: number, currency: string): string =>
   `${Math.round(value).toLocaleString("en-US")} ${currency}`;
@@ -45,6 +44,9 @@ const lightenColor = (hex: string, factor: number): string => {
   const lb = Math.round(b + (255 - b) * factor);
   return `rgb(${lr},${lg},${lb})`;
 };
+
+const estimateTextWidth = (text: string, fontSize: number): number =>
+  text.length * fontSize * 0.62;
 
 const computeFontSize = (w: number, h: number): number => {
   const area = w * h;
@@ -69,8 +71,11 @@ const buildHierarchy = (
     }
   }
 
-  const children: ReadonlyArray<TreemapDatum> = Array.from(groups.entries())
-    .map(([cat, catEntries]) => ({
+  return {
+    name: "root",
+    category: null,
+    counterparty: null,
+    children: Array.from(groups.entries()).map(([cat, catEntries]) => ({
       name: cat,
       category: cat,
       counterparty: null,
@@ -82,21 +87,32 @@ const buildHierarchy = (
           counterparty: e.counterparty,
           leafValue: Math.abs(e.amountUsd ?? 0),
         })),
-    }))
-    .sort((a, b) => {
-      const totalA = a.children?.reduce((s, c) => s + (c.leafValue ?? 0), 0) ?? 0;
-      const totalB = b.children?.reduce((s, c) => s + (c.leafValue ?? 0), 0) ?? 0;
-      return totalB - totalA;
-    });
+    })),
+  };
+};
 
-  return { name: "root", category: null, counterparty: null, children };
+const sumActiveTotal = (
+  entries: ReadonlyArray<LedgerEntry>,
+  allowlist: ReadonlySet<string> | null,
+  disabled: ReadonlySet<string>,
+): number => {
+  let total = 0;
+  for (const e of entries) {
+    if (e.amountUsd === null) continue;
+    const cat = e.category ?? "Uncategorized";
+    if (allowlist !== null && !isCategoryVisible(allowlist, cat)) continue;
+    if (disabled.has(cat)) continue;
+    total += Math.abs(e.amountUsd);
+  }
+  return total;
 };
 
 export const ExpenseTreemapChart = (props: Props): ReactElement => {
   const { entries, allowlist, reportingCurrency } = props;
   const masked = allowlist !== null && allowlist.size === 0;
+  const [disabled, setDisabled] = useState<ReadonlySet<string>>(new Set());
 
-  const { categoryNodes, colorScale, grandTotal } = useMemo(() => {
+  const { categoryNodes, colorScale } = useMemo(() => {
     const data = buildHierarchy(entries, allowlist);
     const categories = (data.children ?? []).map((c) => c.name);
     const cs = scaleOrdinal<string, string>().domain(categories).range(schemeTableau10);
@@ -111,18 +127,28 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
       .paddingInner(2)
       .paddingOuter(3);
 
-    layout(root as unknown as HierarchyRectangularNode<TreemapDatum>);
-
-    const total = entries.reduce((sum, e) => {
-      if (e.amountUsd === null) return sum;
-      const cat = e.category ?? "Uncategorized";
-      if (allowlist !== null && !isCategoryVisible(allowlist, cat)) return sum;
-      return sum + Math.abs(e.amountUsd);
-    }, 0);
+    layout(root as unknown as RectNode);
 
     const rn = root as unknown as RectNode;
-    return { categoryNodes: rn.children ?? [], colorScale: cs, grandTotal: total };
+    return { categoryNodes: rn.children ?? [], colorScale: cs };
   }, [entries, allowlist]);
+
+  const activeTotal = useMemo(
+    () => sumActiveTotal(entries, allowlist, disabled),
+    [entries, allowlist, disabled],
+  );
+
+  const handleCategoryClick = useCallback((catName: string): void => {
+    setDisabled((prev) => {
+      const next = new Set(prev);
+      if (next.has(catName)) {
+        next.delete(catName);
+      } else {
+        next.add(catName);
+      }
+      return next;
+    });
+  }, []);
 
   if (categoryNodes.length === 0 && !masked) {
     return (
@@ -140,21 +166,33 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
     <>
       {!masked && (
         <div className="treemap-total">
-          {formatTotal(grandTotal, reportingCurrency)}
+          {formatTotal(activeTotal, reportingCurrency)}
         </div>
       )}
 
       <div className={`treemap-wrap${masked ? " data-masked" : ""}`}>
         <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Expense treemap">
           {!masked && categoryNodes.map((catNode, ci) => {
-            const color = colorScale(catNode.data.name);
+            const catName = catNode.data.name;
+            const color = colorScale(catName);
             const cw = catNode.x1 - catNode.x0;
             const ch = catNode.y1 - catNode.y0;
             const catTotal = catNode.value ?? 0;
-            const clipId = `treemap-clip-${ci}`;
+            const isDisabled = disabled.has(catName);
+            const clipId = `tm-clip-${ci}`;
+            const showHeader = cw > 40 && ch > CATEGORY_PADDING_TOP;
+
+            const headerText = `${catName} — ${formatTotal(catTotal, reportingCurrency)}`;
+            const headerFits = estimateTextWidth(headerText, 11) < cw - 8;
+            const headerLabel = headerFits ? headerText : catName;
 
             return (
-              <g key={catNode.data.name}>
+              <g
+                key={catName}
+                opacity={isDisabled ? 0.2 : 1}
+                style={{ cursor: "pointer" }}
+                onClick={() => handleCategoryClick(catName)}
+              >
                 <defs>
                   <clipPath id={clipId}>
                     <rect x={catNode.x0} y={catNode.y0} width={cw} height={ch} />
@@ -162,66 +200,61 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                 </defs>
 
                 <g clipPath={`url(#${clipId})`}>
-                  {/* Category background */}
+                  {/* Category background fills entire area */}
                   <rect
                     x={catNode.x0}
                     y={catNode.y0}
                     width={cw}
                     height={ch}
                     fill={lightenColor(color, 0.88)}
-                    stroke={lightenColor(color, 0.55)}
+                    stroke={lightenColor(color, 0.5)}
                     strokeWidth={1}
                   />
 
-                  {/* Category header label */}
-                  {cw > 50 && ch > CATEGORY_PADDING_TOP && (
-                    <text
-                      x={catNode.x0 + 4}
-                      y={catNode.y0 + 14}
-                      fill="#333"
-                      fontSize={11}
-                      fontWeight="600"
-                    >
-                      {catNode.data.name} — {formatTotal(catTotal, reportingCurrency)}
-                    </text>
-                  )}
-
-                  {/* Transaction sub-rectangles */}
+                  {/* Transaction sub-rectangles (rendered in padding-excluded zone) */}
                   {(catNode.children ?? []).map((leaf, li) => {
+                    const lx = leaf.x0;
+                    const ly = leaf.y0;
                     const lw = leaf.x1 - leaf.x0;
                     const lh = leaf.y1 - leaf.y0;
                     const val = leaf.value ?? 0;
                     const fontSize = computeFontSize(lw, lh);
-                    const showAmount = lw > MIN_LABEL_WIDTH && lh > MIN_LABEL_HEIGHT;
-                    const showCounterparty = lh > 30 && lw > 50 && leaf.data.counterparty !== null;
+                    const amountStr = formatAmount(val);
+                    const amountFits = estimateTextWidth(amountStr, fontSize) < lw - 6
+                      && fontSize + 4 < lh;
+                    const cpFits = amountFits
+                      && lh > fontSize + 18
+                      && lw > 40
+                      && leaf.data.counterparty !== null
+                      && estimateTextWidth(leaf.data.counterparty ?? "", 9) < lw - 6;
 
                     return (
-                      <g key={`${catNode.data.name}-${li}`}>
+                      <g key={`${catName}-${li}`}>
                         <rect
-                          x={leaf.x0}
-                          y={leaf.y0}
+                          x={lx}
+                          y={ly}
                           width={lw}
                           height={lh}
                           fill={lightenColor(color, 0.72)}
-                          stroke={lightenColor(color, 0.5)}
+                          stroke={lightenColor(color, 0.45)}
                           strokeWidth={0.5}
                         />
-                        {showAmount && (
+                        {amountFits && (
                           <text
-                            x={leaf.x0 + 3}
-                            y={leaf.y0 + fontSize + 2}
+                            x={lx + 3}
+                            y={ly + fontSize + 2}
                             fill="#222"
                             fontSize={fontSize}
                             fontWeight="500"
                           >
-                            {formatAmount(val)}
+                            {amountStr}
                           </text>
                         )}
-                        {showCounterparty && (
+                        {cpFits && (
                           <text
-                            x={leaf.x0 + 3}
-                            y={leaf.y0 + fontSize + 14}
-                            fill="#666"
+                            x={lx + 3}
+                            y={ly + fontSize + 14}
+                            fill="#555"
                             fontSize={9}
                           >
                             {leaf.data.counterparty}
@@ -230,6 +263,28 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                       </g>
                     );
                   })}
+
+                  {/* Category header — rendered LAST so it draws on top of children */}
+                  {showHeader && (
+                    <>
+                      <rect
+                        x={catNode.x0}
+                        y={catNode.y0}
+                        width={cw}
+                        height={CATEGORY_HEADER_H}
+                        fill={lightenColor(color, 0.75)}
+                      />
+                      <text
+                        x={catNode.x0 + 4}
+                        y={catNode.y0 + 13}
+                        fill="#111"
+                        fontSize={11}
+                        fontWeight="700"
+                      >
+                        {headerLabel}
+                      </text>
+                    </>
+                  )}
                 </g>
               </g>
             );
