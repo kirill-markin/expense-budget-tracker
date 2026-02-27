@@ -207,11 +207,14 @@ const generate = (): DemoData => {
   entries.sort((a, b) => (a.ts > b.ts ? -1 : a.ts < b.ts ? 1 : 0));
 
   // Account rows
+  const DEMO_LIQUIDITY: Readonly<Record<string, string>> = { "savings-usd": "medium" };
+
   const accounts: ReadonlyArray<AccountRow> = Object.entries(ACCOUNT_CURRENCIES)
     .map(([accountId, currency]) => {
       const balance = round2(accBal[accountId] ?? 0);
       return {
-        accountId, currency, status: "active" as const, balance,
+        accountId, currency, liquidity: DEMO_LIQUIDITY[accountId] ?? "high",
+        status: "active" as const, balance,
         balanceUsd: round2(balance * (FX[currency] ?? 1)),
         lastTransactionTs: entries.find((e) => e.accountId === accountId)?.ts ?? null,
         overdue: false,

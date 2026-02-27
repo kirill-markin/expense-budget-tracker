@@ -17,6 +17,7 @@ import { type StalenessInput, isAccountOverdue } from "@/server/balances/account
 export type AccountRow = Readonly<{
   accountId: string;
   currency: string;
+  liquidity: string;
   status: string;
   balance: number;
   balanceUsd: number | null;
@@ -173,6 +174,10 @@ const STALENESS_QUERY = `
   LEFT JOIN stats s ON s.account_id = c.account_id
 `;
 
+const METADATA_QUERY = `
+  SELECT account_id, liquidity FROM account_metadata
+`;
+
 const WARNINGS_QUERY = `
   WITH data_currencies AS (
     SELECT DISTINCT currency
@@ -195,12 +200,21 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
   const reportCurrency = await getReportCurrency(userId, workspaceId);
 
   return withUserContext(userId, workspaceId, async (q) => {
-    const [accountResult, totalResult, warningResult, stalenessResult] = await Promise.all([
+    const [accountResult, totalResult, warningResult, stalenessResult, metadataResult] = await Promise.all([
       q(ACCOUNTS_QUERY, [reportCurrency]),
       q(TOTALS_QUERY, [reportCurrency]),
       q(WARNINGS_QUERY, [reportCurrency]),
       q(STALENESS_QUERY, []),
+      q(METADATA_QUERY, []),
     ]);
+
+    const liquidityMap = new Map<string, string>();
+    for (const row of metadataResult.rows as ReadonlyArray<{
+      account_id: string;
+      liquidity: string;
+    }>) {
+      liquidityMap.set(row.account_id, row.liquidity);
+    }
 
     const stalenessMap = new Map<string, StalenessInput>();
     for (const row of stalenessResult.rows as ReadonlyArray<{
@@ -238,6 +252,7 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
         return {
           accountId: row.account_id,
           currency: row.currency,
+          liquidity: liquidityMap.get(row.account_id) ?? "high",
           status: computeAccountStatus(Number(row.balance), lastTransactionTs),
           balance: Number(row.balance),
           balanceUsd: row.balance_report !== null ? Number(row.balance_report) : null,

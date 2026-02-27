@@ -1,13 +1,14 @@
 "use client";
 
 import { type ReactElement } from "react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 
 import type { AccountRow, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
+import { CellSelectOverlay } from "./CellSelectOverlay";
 import { formatAmount, sortIndicator } from "./format";
 
 type Props = Readonly<{
@@ -21,7 +22,13 @@ type SortDir = "asc" | "desc";
 
 type TotalsSortKey = "currency" | "balance" | "balancePositive" | "balanceNegative" | "balanceUsd";
 
-type AccountsSortKey = "accountId" | "currency" | "balance" | "balanceUsd" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
+type AccountsSortKey = "accountId" | "currency" | "liquidity" | "balance" | "balanceUsd" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
+
+type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
+
+const LIQUIDITY_OPTIONS: ReadonlyArray<string> = ["high", "medium", "low"];
+
+const LIQUIDITY_ORDER: Readonly<Record<string, number>> = { high: 0, medium: 1, low: 2 };
 
 const formatDate = (isoString: string): string => {
   const date = new Date(isoString);
@@ -72,6 +79,9 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
     case "currency":
       cmp = a.currency.localeCompare(b.currency);
       break;
+    case "liquidity":
+      cmp = (LIQUIDITY_ORDER[a.liquidity] ?? 0) - (LIQUIDITY_ORDER[b.liquidity] ?? 0);
+      break;
     case "balance":
       cmp = a.balance - b.balance;
       break;
@@ -100,11 +110,26 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
   return dir === "asc" ? cmp : -cmp;
 };
 
+const saveLiquidity = async (accountId: string, liquidity: string): Promise<void> => {
+  const response = await fetch("/api/account-metadata", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, liquidity }),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to save liquidity: ${response.status}`);
+  }
+};
+
 export const BalancesTable = (props: Props): ReactElement => {
-  const { accounts, totals, conversionWarnings, reportingCurrency } = props;
+  const { accounts: accountsProp, totals, conversionWarnings, reportingCurrency } = props;
   const { effectiveAllowlist } = useFilteredMode();
   const maskClass = effectiveAllowlist !== null ? " data-masked" : "";
+  const isMasked = effectiveAllowlist !== null;
   const { toastMessage, copyToClipboard } = useCopyToast();
+
+  const [localAccounts, setLocalAccounts] = useState<ReadonlyArray<AccountRow>>(accountsProp);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [totalsSortKey, setTotalsSortKey] = useState<TotalsSortKey>("balanceUsd");
   const [totalsSortDir, setTotalsSortDir] = useState<SortDir>("desc");
@@ -116,7 +141,42 @@ export const BalancesTable = (props: Props): ReactElement => {
   const [overdueInfoOpen, setOverdueInfoOpen] = useState<boolean>(false);
   const [showInactive, setShowInactive] = useState<boolean>(false);
 
+  const [liquidityOpen, setLiquidityOpen] = useState<string | null>(null);
+  const [liquidityRect, setLiquidityRect] = useState<Rect | null>(null);
+  const liquidityCellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
+
   const displayAmount = formatAmount;
+
+  const handleLiquidityClick = useCallback((accountId: string): void => {
+    const cell = liquidityCellRefs.current.get(accountId);
+    if (cell === undefined) return;
+    const r = cell.getBoundingClientRect();
+    setLiquidityRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    setLiquidityOpen(accountId);
+  }, []);
+
+  const handleLiquiditySelect = useCallback((accountId: string, oldLiquidity: string, value: string | null): void => {
+    setLiquidityOpen(null);
+    setLiquidityRect(null);
+    if (value === null || value === oldLiquidity) return;
+
+    setLocalAccounts((prev) =>
+      prev.map((a) => a.accountId === accountId ? { ...a, liquidity: value } : a),
+    );
+    setSaveError(null);
+
+    saveLiquidity(accountId, value).catch((err) => {
+      setLocalAccounts((prev) =>
+        prev.map((a) => a.accountId === accountId ? { ...a, liquidity: oldLiquidity } : a),
+      );
+      setSaveError(err instanceof Error ? err.message : String(err));
+    });
+  }, []);
+
+  const handleLiquidityClose = useCallback((): void => {
+    setLiquidityOpen(null);
+    setLiquidityRect(null);
+  }, []);
 
   const toggleTotalsSort = (key: TotalsSortKey): void => {
     if (totalsSortKey === key) {
@@ -142,12 +202,12 @@ export const BalancesTable = (props: Props): ReactElement => {
   );
 
   const inactiveCount = useMemo<number>(
-    () => accounts.filter((a) => a.status !== "active").length,
-    [accounts],
+    () => localAccounts.filter((a) => a.status !== "active").length,
+    [localAccounts],
   );
 
   const sortedAccounts = useMemo<ReadonlyArray<AccountRow>>(() => {
-    const filtered = showInactive ? accounts : accounts.filter((a) => a.status === "active");
+    const filtered = showInactive ? localAccounts : localAccounts.filter((a) => a.status === "active");
     return [...filtered].sort((a, b) => {
       if (showInactive) {
         const aInactive = a.status !== "active" ? 1 : 0;
@@ -156,7 +216,7 @@ export const BalancesTable = (props: Props): ReactElement => {
       }
       return compareAccounts(a, b, accountsSortKey, accountsSortDir);
     });
-  }, [accounts, accountsSortKey, accountsSortDir, showInactive]);
+  }, [localAccounts, accountsSortKey, accountsSortDir, showInactive]);
 
   const totalUsd = useMemo<number | null>(() => {
     let sum = 0;
@@ -190,7 +250,7 @@ export const BalancesTable = (props: Props): ReactElement => {
     return sum;
   }, [totals]);
 
-  if (accounts.length === 0) {
+  if (localAccounts.length === 0) {
     return <p className="txn-empty">No account data yet.</p>;
   }
 
@@ -223,6 +283,12 @@ export const BalancesTable = (props: Props): ReactElement => {
             No exchange rates found for: {currencyList}. Amounts in {conversionWarnings.length === 1 ? "this currency" : "these currencies"} cannot
             be converted to {reportingCurrency}. Rows with missing rates are highlighted in red.
           </span>
+        </div>
+      )}
+      {saveError !== null && (
+        <div className="budget-alert">
+          <strong>Save failed</strong>
+          <span>{saveError}</span>
         </div>
       )}
       <h2 className="txn-section-title">Totals</h2>
@@ -283,6 +349,7 @@ export const BalancesTable = (props: Props): ReactElement => {
             <tr>
               {thAccounts("Account", "accountId", false)}
               {thAccounts("Currency", "currency", false)}
+              {thAccounts("Liquidity", "liquidity", false)}
               {thAccounts("Balance", "balance", true)}
               {thAccounts(`Balance ${reportingCurrency}`, "balanceUsd", true)}
               <th
@@ -338,6 +405,26 @@ export const BalancesTable = (props: Props): ReactElement => {
                     {a.accountId}
                   </td>
                   <td className={`txn-cell${maskClass}`}>{a.currency}</td>
+                  <td
+                    ref={(el) => {
+                      if (el !== null) liquidityCellRefs.current.set(a.accountId, el);
+                      else liquidityCellRefs.current.delete(a.accountId);
+                    }}
+                    className={`txn-cell${isMasked ? "" : " drilldown-editable drilldown-editable-select"}${maskClass}`}
+                    onClick={isMasked ? undefined : () => handleLiquidityClick(a.accountId)}
+                  >
+                    {a.liquidity}
+                    {liquidityOpen === a.accountId && liquidityRect !== null && (
+                      <CellSelectOverlay
+                        options={LIQUIDITY_OPTIONS}
+                        currentValue={a.liquidity}
+                        allowEmpty={false}
+                        rect={liquidityRect}
+                        onSelect={(value) => handleLiquiditySelect(a.accountId, a.liquidity, value)}
+                        onClose={handleLiquidityClose}
+                      />
+                    )}
+                  </td>
                   <td className={`txn-cell txn-cell-right${maskClass}`}>{displayAmount(a.balance)}</td>
                   <td className={`txn-cell txn-cell-right${maskClass}`}>
                     {a.balanceUsd !== null ? formatAmount(a.balanceUsd) : "\u2014"}
