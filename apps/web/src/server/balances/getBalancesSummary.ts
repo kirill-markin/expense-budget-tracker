@@ -5,7 +5,7 @@
  * 1. ACCOUNTS — per-account balance in native + report currency, last non-transfer timestamp.
  * 2. TOTALS — aggregated balance per currency with positive/negative split.
  * 3. WARNINGS — currencies present in data but missing exchange rates.
- * 4. STALENESS — P75 inter-transaction gap stats for overdue detection.
+ * 4. STALENESS — MAX inter-transaction gap stats for overdue detection.
  *
  * FX conversion uses the latest available rate per currency from exchange_rates.
  * Accounts are classified as active/inactive based on balance and 90-day activity.
@@ -145,7 +145,7 @@ const STALENESS_QUERY = `
   ),
   stats AS (
     SELECT account_id,
-      percentile_cont(0.75) WITHIN GROUP (ORDER BY gap_days) AS p75_recent_gap_days
+      MAX(gap_days) AS max_recent_gap_days
     FROM nonzero_gaps
     WHERE rn <= 20
     GROUP BY account_id
@@ -167,7 +167,7 @@ const STALENESS_QUERY = `
     c.account_id,
     c.total_non_transfer_txns,
     COALESCE(c30.recent_non_transfer_txns_30d, 0) AS recent_non_transfer_txns_30d,
-    s.p75_recent_gap_days
+    s.max_recent_gap_days
   FROM counts c
   LEFT JOIN counts_30d c30 ON c30.account_id = c.account_id
   LEFT JOIN stats s ON s.account_id = c.account_id
@@ -207,12 +207,12 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
       account_id: string;
       total_non_transfer_txns: string;
       recent_non_transfer_txns_30d: string;
-      p75_recent_gap_days: number | null;
+      max_recent_gap_days: number | null;
     }>) {
       stalenessMap.set(row.account_id, {
         totalNonTransferTxns: Number(row.total_non_transfer_txns),
         recentNonTransferTxns30d: Number(row.recent_non_transfer_txns_30d),
-        p75RecentGapDays: row.p75_recent_gap_days !== null ? Number(row.p75_recent_gap_days) : null,
+        maxRecentGapDays: row.max_recent_gap_days !== null ? Number(row.max_recent_gap_days) : null,
         daysSinceLast: null,
       });
     }

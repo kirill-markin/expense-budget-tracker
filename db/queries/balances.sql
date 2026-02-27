@@ -93,7 +93,7 @@ nonzero_gaps AS (
 ),
 stats AS (
   SELECT account_id,
-    percentile_cont(0.75) WITHIN GROUP (ORDER BY gap_days) AS p75_recent_gap_days
+    MAX(gap_days) AS max_recent_gap_days
   FROM nonzero_gaps
   WHERE rn <= 20
   GROUP BY account_id
@@ -115,7 +115,7 @@ SELECT
   c.account_id,
   c.total_non_transfer_txns,
   COALESCE(c30.recent_non_transfer_txns_30d, 0) AS recent_non_transfer_txns_30d,
-  s.p75_recent_gap_days
+  s.max_recent_gap_days
 FROM counts c
 LEFT JOIN counts_30d c30 ON c30.account_id = c.account_id
 LEFT JOIN stats s ON s.account_id = c.account_id;

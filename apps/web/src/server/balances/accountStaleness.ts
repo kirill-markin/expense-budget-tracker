@@ -5,55 +5,52 @@
  * detects when an account's silence is unusual *for that specific account*
  * based on its recent transaction rhythm.
  *
- * Algorithm — "Overdue P75, last 20":
+ * Algorithm — "Overdue MAX, last 20":
  *
- * 1. Compute the 75th percentile (P75) of the last 20 non-zero
- *    inter-transaction gaps for each account (excluding transfers and
- *    same-day entries). Using "last 20" instead of full history makes the
- *    algorithm adapt when an account changes its usage pattern (e.g. from
- *    daily to monthly).
+ * 1. Compute the maximum of the last 20 non-zero inter-transaction gaps
+ *    for each account (excluding transfers and same-day entries).
+ *    Using "last 20" instead of full history makes the algorithm adapt
+ *    when an account changes its usage pattern (e.g. from daily to monthly).
  *
  * 2. Flag the account as overdue when ALL conditions hold:
  *    - totalNonTransferTxns >= 5  — enough history to establish a pattern
  *    - recentNonTransferTxns30d >= 4  — still actively used in the last month
- *    - p75RecentGapDays > 0 and <= 90  — normally active, not quarterly/annual
- *    - daysSinceLast > p75RecentGapDays * 2  — silence is 2x the usual rhythm
- *    - daysSinceLast >= 7  — minimum absolute threshold (avoid weekend noise)
+ *    - maxRecentGapDays > 0 and <= 90  — normally active, not quarterly/annual
+ *    - daysSinceLast > maxRecentGapDays * 1.5  — silence is 1.5x the longest recent gap
+ *    - daysSinceLast >= 2  — minimum absolute threshold
  *
- * Why P75 and not median: many accounts have multiple transactions on the
- * same day (batch imports), so the median gap is often 0 even after
- * filtering same-day entries. P75 captures the "typical rhythm between
- * distinct active days" more reliably.
+ * Why MAX instead of P75: P75 only captures 75% of natural variation, so
+ * accounts with occasional long gaps (e.g. 14-day gaps) get false positives
+ * when P75 is much lower (~7d). MAX tolerates the full range of observed gaps.
  *
- * Why multiplier of 2: balances between sensitivity and noise. In practice,
- * 2x correctly flags accounts like b_tinkoff_rub (P75=6d, silent 17d)
- * while not flagging b_bunq_eur_main (P75=14d, silent 14d).
+ * Why multiplier of 1.5: MAX is already more tolerant than P75, so a lower
+ * multiplier still avoids noise while catching genuine staleness faster.
  */
 
 export type StalenessInput = Readonly<{
   totalNonTransferTxns: number;
   recentNonTransferTxns30d: number;
-  p75RecentGapDays: number | null;
+  maxRecentGapDays: number | null;
   daysSinceLast: number | null;
 }>;
 
 const MIN_TXNS = 5;
 const MIN_RECENT_TXNS_30D = 4;
 const MAX_NORMAL_GAP_DAYS = 90;
-const OVERDUE_MULTIPLIER = 2;
-const MIN_ABSOLUTE_DAYS = 7;
+const OVERDUE_MULTIPLIER = 1.5;
+const MIN_ABSOLUTE_DAYS = 2;
 
 export function isAccountOverdue(input: StalenessInput): boolean {
-  const { totalNonTransferTxns, recentNonTransferTxns30d, p75RecentGapDays, daysSinceLast } = input;
+  const { totalNonTransferTxns, recentNonTransferTxns30d, maxRecentGapDays, daysSinceLast } = input;
 
   if (daysSinceLast === null) return false;
-  if (p75RecentGapDays === null) return false;
+  if (maxRecentGapDays === null) return false;
   if (totalNonTransferTxns < MIN_TXNS) return false;
   if (recentNonTransferTxns30d < MIN_RECENT_TXNS_30D) return false;
-  if (p75RecentGapDays <= 0) return false;
-  if (p75RecentGapDays > MAX_NORMAL_GAP_DAYS) return false;
+  if (maxRecentGapDays <= 0) return false;
+  if (maxRecentGapDays > MAX_NORMAL_GAP_DAYS) return false;
   if (daysSinceLast < MIN_ABSOLUTE_DAYS) return false;
-  if (daysSinceLast <= p75RecentGapDays * OVERDUE_MULTIPLIER) return false;
+  if (daysSinceLast <= maxRecentGapDays * OVERDUE_MULTIPLIER) return false;
 
   return true;
 }

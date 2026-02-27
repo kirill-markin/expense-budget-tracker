@@ -272,8 +272,8 @@ export const BalancesTable = (props: Props): ReactElement => {
         </span>
         {overdueInfoOpen && (
           <div className="txn-info-popup">
-            Red = account had regular activity, but current silence is 2x longer than
-            its recent rhythm. May need new transactions added.
+            Red = account had regular activity, but current silence is 1.5x longer than
+            its longest recent gap. May need new transactions added.
           </div>
         )}
       </h2>
