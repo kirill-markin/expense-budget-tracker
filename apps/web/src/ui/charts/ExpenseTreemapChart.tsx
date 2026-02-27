@@ -122,9 +122,9 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
 
     const layout = treemap<TreemapDatum>()
       .size([WIDTH, HEIGHT])
-      .paddingTop(PAD_TOP)
+      .paddingOuter(3)
       .paddingInner(2)
-      .paddingOuter(3);
+      .paddingTop(PAD_TOP);
 
     layout(root as unknown as RectNode);
 
