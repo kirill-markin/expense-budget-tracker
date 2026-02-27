@@ -1,32 +1,29 @@
 "use client";
 
 import { type ReactElement } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { AccountOption, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { DataMaskToggle } from "@/ui/DataMaskToggle";
 import { useDataMask } from "@/ui/hooks/useDataMask";
 
+import { DataTable } from "./data-table/DataTable";
+import type { ColumnDef, PageResult, SortState } from "./data-table/types";
+import { useInfiniteScroll } from "./data-table/useInfiniteScroll";
+import { EditableAmount } from "./EditableAmount";
+import { EditableCategory } from "./EditableCategory";
+import { EditableDateTime } from "./EditableDateTime";
+import { EditableKind } from "./EditableKind";
+import { EditableText } from "./EditableText";
+
 type Props = Readonly<{
   accounts: ReadonlyArray<AccountOption>;
+  categories: ReadonlyArray<string>;
 }>;
-
-type SortDir = "asc" | "desc";
 
 type SortKey = "ts" | "accountId" | "amount" | "currency" | "kind" | "category" | "counterparty";
 
 const PAGE_SIZE = 100;
-
-const formatAmount = (value: number): string => {
-  if (value === 0) return "0";
-  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
-
-const formatDateTime = (isoString: string): string => {
-  const date = new Date(isoString);
-  return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
-    + " " + date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-};
 
 const toDateInputValue = (date: Date): string => {
   const y = date.getFullYear();
@@ -35,17 +32,12 @@ const toDateInputValue = (date: Date): string => {
   return `${y}-${m}-${d}`;
 };
 
-const sortIndicator = (active: boolean, dir: SortDir): string => {
-  if (!active) return "";
-  return dir === "asc" ? " \u2191" : " \u2193";
-};
-
 const buildUrl = (
   dateFrom: string,
   dateTo: string,
   selectedAccount: string,
   sortKey: SortKey,
-  sortDir: SortDir,
+  sortDir: "asc" | "desc",
   limit: number,
   offset: number,
 ): string => {
@@ -60,8 +52,29 @@ const buildUrl = (
   return `/api/transactions?${params.toString()}`;
 };
 
+const saveEntry = async (entry: LedgerEntry): Promise<void> => {
+  const response = await fetch("/api/transactions/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      entryId: entry.entryId,
+      category: entry.category,
+      note: entry.note,
+      counterparty: entry.counterparty,
+      kind: entry.kind,
+      ts: entry.ts,
+      accountId: entry.accountId,
+      amount: entry.amount,
+      currency: entry.currency,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Update failed: ${response.status} ${await response.text()}`);
+  }
+};
+
 export const TransactionsRawTable = (props: Props): ReactElement => {
-  const { accounts } = props;
+  const { accounts, categories } = props;
   const { maskLevel, setMaskLevel } = useDataMask();
   const maskClass = maskLevel === "all" ? "" : " data-masked";
 
@@ -73,104 +86,223 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   const [selectedAccount, setSelectedAccount] = useState<string>("");
 
   const [sortKey, setSortKey] = useState<SortKey>("ts");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  const [entries, setEntries] = useState<ReadonlyArray<LedgerEntry>>([]);
-  const [total, setTotal] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [loadingMore, setLoadingMore] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const fetchIdRef = useRef<number>(0);
-
-  const fetchPage = useCallback(async (
-    offset: number,
-    append: boolean,
-    currentFetchId: number,
-  ): Promise<void> => {
-    const url = buildUrl(dateFrom, dateTo, selectedAccount, sortKey, sortDir, PAGE_SIZE, offset);
+  const fetchPage = async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
+    const url = buildUrl(dateFrom, dateTo, selectedAccount, sortKey, sortDir, limit, offset);
     const response = await fetch(url);
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`${response.status}: ${text}`);
     }
     const page: TransactionsPage = await response.json();
+    return { items: page.entries, total: page.total };
+  };
 
-    if (fetchIdRef.current !== currentFetchId) return;
+  const scroll = useInfiniteScroll<LedgerEntry>(
+    fetchPage,
+    PAGE_SIZE,
+    [dateFrom, dateTo, selectedAccount, sortKey, sortDir],
+  );
 
-    if (append) {
-      setEntries((prev) => [...prev, ...page.entries]);
-    } else {
-      setEntries(page.entries);
-    }
-    setTotal(page.total);
-  }, [dateFrom, dateTo, selectedAccount, sortKey, sortDir]);
-
-  useEffect(() => {
-    const fetchId = ++fetchIdRef.current;
-    setLoading(true);
-    setError(null);
-    setEntries([]);
-    setTotal(0);
-
-    fetchPage(0, false, fetchId)
-      .catch((err: unknown) => {
-        if (fetchIdRef.current !== fetchId) return;
-        setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (fetchIdRef.current !== fetchId) return;
-        setLoading(false);
-      });
-  }, [fetchPage]);
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    const observer = new IntersectionObserver(
-      (intersections) => {
-        if (!intersections[0].isIntersecting) return;
-        if (loadingMore || loading) return;
-        if (entries.length >= total) return;
-
-        const fetchId = fetchIdRef.current;
-        setLoadingMore(true);
-        fetchPage(entries.length, true, fetchId)
-          .catch((err: unknown) => {
-            if (fetchIdRef.current !== fetchId) return;
-            setError(err instanceof Error ? err.message : String(err));
-          })
-          .finally(() => {
-            if (fetchIdRef.current !== fetchId) return;
-            setLoadingMore(false);
-          });
-      },
-      { rootMargin: "200px" },
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [entries.length, total, loading, loadingMore, fetchPage]);
-
-  const toggleSort = (key: SortKey): void => {
-    if (sortKey === key) {
+  const toggleSort = (key: string): void => {
+    const typedKey = key as SortKey;
+    if (sortKey === typedKey) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
-      setSortKey(key);
-      setSortDir(key === "amount" ? "desc" : "asc");
+      setSortKey(typedKey);
+      setSortDir(typedKey === "amount" ? "desc" : "asc");
     }
   };
 
-  const th = (label: string, key: SortKey, rightAlign: boolean): ReactElement => (
-    <th
-      className={`txn-th txn-th-sortable${rightAlign ? " txn-th-right" : ""}`}
-      onClick={() => toggleSort(key)}
-    >
-      {label}{sortIndicator(sortKey === key, sortDir)}
-    </th>
-  );
+  const sort: SortState = { key: sortKey, dir: sortDir };
+
+  const optimisticUpdate = (
+    entryId: string,
+    patch: Partial<LedgerEntry>,
+    rollback: Partial<LedgerEntry>,
+  ): void => {
+    const entry = scroll.rows.find((e) => e.entryId === entryId);
+    if (entry === undefined) return;
+
+    const updated = { ...entry, ...patch };
+    scroll.setRows((prev) =>
+      prev.map((e) => (e.entryId === entryId ? updated : e)),
+    );
+
+    saveEntry(updated).catch((err: unknown) => {
+      scroll.setRows((prev) =>
+        prev.map((e) => (e.entryId === entryId ? { ...e, ...rollback } : e)),
+      );
+      scroll.setError(err instanceof Error ? err.message : String(err));
+    });
+  };
+
+  const handleCategoryChange = (entryId: string, newCategory: string | null, oldCategory: string | null): void => {
+    optimisticUpdate(entryId, { category: newCategory }, { category: oldCategory });
+  };
+
+  const handleNoteCommit = (entryId: string, newNote: string | null, oldNote: string | null): void => {
+    optimisticUpdate(entryId, { note: newNote }, { note: oldNote });
+  };
+
+  const handleCounterpartyCommit = (entryId: string, newCounterparty: string | null, oldCounterparty: string | null): void => {
+    optimisticUpdate(entryId, { counterparty: newCounterparty }, { counterparty: oldCounterparty });
+  };
+
+  const handleKindChange = (entryId: string, newKind: string, oldKind: string): void => {
+    optimisticUpdate(entryId, { kind: newKind }, { kind: oldKind });
+  };
+
+  const handleDateTimeCommit = (entryId: string, newTs: string, oldTs: string): void => {
+    optimisticUpdate(entryId, { ts: newTs }, { ts: oldTs });
+  };
+
+  const handleAccountCommit = (entryId: string, newValue: string | null, oldValue: string | null): void => {
+    if (newValue === null) return;
+    optimisticUpdate(entryId, { accountId: newValue }, { accountId: oldValue ?? "" });
+  };
+
+  const handleAmountCommit = (entryId: string, newAmount: number, oldAmount: number): void => {
+    optimisticUpdate(entryId, { amount: newAmount }, { amount: oldAmount });
+  };
+
+  const handleCurrencyCommit = (entryId: string, newValue: string | null, oldValue: string | null): void => {
+    if (newValue === null) return;
+    optimisticUpdate(entryId, { currency: newValue }, { currency: oldValue ?? "" });
+  };
+
+  const columns = useMemo((): ReadonlyArray<ColumnDef<LedgerEntry>> => {
+    const editableDateCol: ColumnDef<LedgerEntry> = {
+      key: "date",
+      header: "Date",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableDateTime
+          key="date"
+          entryId={row.entryId}
+          currentValue={row.ts}
+          maskClass={maskClass}
+          onDateTimeCommit={handleDateTimeCommit}
+        />
+      ),
+      rightAlign: false,
+      sortKey: "ts",
+    };
+
+    const editableAccountCol: ColumnDef<LedgerEntry> = {
+      key: "account",
+      header: "Account",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableText
+          key="account"
+          entryId={row.entryId}
+          currentValue={row.accountId}
+          maskClass={maskClass}
+          onCommit={handleAccountCommit}
+        />
+      ),
+      rightAlign: false,
+      sortKey: "accountId",
+    };
+
+    const editableAmountCol: ColumnDef<LedgerEntry> = {
+      key: "amount",
+      header: "Amount",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableAmount
+          key="amount"
+          entryId={row.entryId}
+          currentValue={row.amount}
+          maskClass={maskClass}
+          onAmountCommit={handleAmountCommit}
+        />
+      ),
+      rightAlign: true,
+      sortKey: "amount",
+    };
+
+    const editableCurrencyCol: ColumnDef<LedgerEntry> = {
+      key: "currency",
+      header: "Currency",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableText
+          key="currency"
+          entryId={row.entryId}
+          currentValue={row.currency}
+          maskClass={maskClass}
+          onCommit={handleCurrencyCommit}
+        />
+      ),
+      rightAlign: false,
+      sortKey: "currency",
+    };
+
+    const editableKindCol: ColumnDef<LedgerEntry> = {
+      key: "kind",
+      header: "Kind",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableKind
+          key="kind"
+          entry={row}
+          maskClass={maskClass}
+          onKindChange={handleKindChange}
+        />
+      ),
+      rightAlign: false,
+      sortKey: "kind",
+    };
+
+    const editableCategoryCol: ColumnDef<LedgerEntry> = {
+      key: "category",
+      header: "Category",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableCategory
+          key="category"
+          entry={row}
+          categories={categories}
+          maskClass={maskClass}
+          onCategoryChange={handleCategoryChange}
+        />
+      ),
+      rightAlign: false,
+      sortKey: "category",
+    };
+
+    const editableCounterpartyCol: ColumnDef<LedgerEntry> = {
+      key: "counterparty",
+      header: "Counterparty",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableText
+          key="counterparty"
+          entryId={row.entryId}
+          currentValue={row.counterparty}
+          maskClass={maskClass}
+          onCommit={handleCounterpartyCommit}
+        />
+      ),
+      rightAlign: false,
+      sortKey: "counterparty",
+    };
+
+    const editableNoteCol: ColumnDef<LedgerEntry> = {
+      key: "note",
+      header: "Note",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableText
+          key="note"
+          entryId={row.entryId}
+          currentValue={row.note}
+          maskClass={maskClass}
+          onCommit={handleNoteCommit}
+          cellClass="txn-cell-note"
+        />
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    return [editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol];
+  }, [maskClass, categories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -206,9 +338,9 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
             ))}
           </select>
         </label>
-        {!loading && (
+        {!scroll.loading && (
           <span className="txn-filter-count">
-            {entries.length} of {total} entries
+            {scroll.rows.length} of {scroll.total} entries
           </span>
         )}
       </div>
@@ -217,54 +349,25 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
         <DataMaskToggle maskLevel={maskLevel} setMaskLevel={setMaskLevel} showSpendOption={true} />
       </div>
 
-      {error !== null && (
+      {scroll.error !== null && (
         <div className="budget-alert">
           <strong>Failed to load transactions</strong>
-          <span>{error}</span>
+          <span>{scroll.error}</span>
         </div>
       )}
 
       <div className="txn-scroll">
-        <table className="txn-table">
-          <thead>
-            <tr>
-              {th("Date", "ts", false)}
-              {th("Account", "accountId", false)}
-              {th("Amount", "amount", true)}
-              {th("Currency", "currency", false)}
-              {th("Kind", "kind", false)}
-              {th("Category", "category", false)}
-              {th("Counterparty", "counterparty", false)}
-              <th className="txn-th">Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((e, idx) => (
-              <tr key={`${e.entryId}-${idx}`} className="txn-row">
-                <td className="txn-cell txn-cell-mono">{formatDateTime(e.ts)}</td>
-                <td className={`txn-cell${maskClass}`}>{e.accountId}</td>
-                <td className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(e.amount)}</td>
-                <td className={`txn-cell${maskClass}`}>{e.currency}</td>
-                <td className={`txn-cell${maskClass}`}>{e.kind}</td>
-                <td className={`txn-cell${maskClass}`}>{e.category ?? "\u2014"}</td>
-                <td className={`txn-cell${maskClass}`}>{e.counterparty ?? "\u2014"}</td>
-                <td className={`txn-cell txn-cell-note${maskClass}`}>{e.note ?? ""}</td>
-              </tr>
-            ))}
-            {!loading && entries.length === 0 && (
-              <tr>
-                <td className="txn-cell" colSpan={8} style={{ textAlign: "center", color: "var(--muted)" }}>
-                  No entries match the selected filters.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div ref={sentinelRef} className="txn-scroll-sentinel">
-        {loading && <span className="loading-indicator">Loading<span className="loading-dots" /></span>}
-        {loadingMore && <span className="loading-indicator">Loading more<span className="loading-dots" /></span>}
+        <DataTable<LedgerEntry>
+          columns={columns}
+          rows={scroll.rows}
+          rowKey={(row, idx) => `${row.entryId}-${idx}`}
+          sort={sort}
+          onSort={toggleSort}
+          emptyMessage="No entries match the selected filters."
+          loading={scroll.loading}
+          loadingMore={scroll.loadingMore}
+          sentinelRef={scroll.sentinelRef}
+        />
       </div>
     </>
   );

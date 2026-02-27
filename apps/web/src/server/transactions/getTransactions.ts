@@ -202,3 +202,13 @@ export const getAccounts = async (userId: string, workspaceId: string): Promise<
     accountId: row.account_id,
   }));
 };
+
+export const getCategories = async (userId: string, workspaceId: string): Promise<ReadonlyArray<string>> => {
+  const result = await queryAs(
+    userId,
+    workspaceId,
+    "SELECT DISTINCT category FROM ledger_entries WHERE category IS NOT NULL ORDER BY category",
+    [],
+  );
+  return result.rows.map((row: { category: string }) => row.category);
+};

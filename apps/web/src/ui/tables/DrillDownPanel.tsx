@@ -1,9 +1,19 @@
 "use client";
 
 import { type ReactElement } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
+
+import { DataTable } from "./data-table/DataTable";
+import type { ColumnDef, PageResult } from "./data-table/types";
+import { useInfiniteScroll } from "./data-table/useInfiniteScroll";
+import { EditableAmount } from "./EditableAmount";
+import { EditableCategory } from "./EditableCategory";
+import { EditableDateTime } from "./EditableDateTime";
+import { EditableKind } from "./EditableKind";
+import { EditableText } from "./EditableText";
+import { usdColumn } from "./transactionColumns";
 
 export type DrillDownFilter = Readonly<{
   dateFrom: string;
@@ -18,23 +28,7 @@ type Props = Readonly<{
   onClose: (dirty: boolean) => void;
 }>;
 
-type EditingCell = Readonly<{
-  entryId: string;
-  field: "category" | "note";
-}>;
-
 const PAGE_SIZE = 100;
-
-const formatAmount = (value: number): string => {
-  if (value === 0) return "0";
-  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
-
-const formatDateTime = (isoString: string): string => {
-  const date = new Date(isoString);
-  return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
-    + " " + date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-};
 
 const buildUrl = (
   filter: DrillDownFilter,
@@ -65,15 +59,21 @@ const buildSubtitle = (filter: DrillDownFilter): string => {
   return `${filter.dateFrom} \u2013 ${filter.dateTo}`;
 };
 
-const saveEntry = async (
-  entryId: string,
-  category: string | null,
-  note: string | null,
-): Promise<void> => {
+const saveEntry = async (entry: LedgerEntry): Promise<void> => {
   const response = await fetch("/api/transactions/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ entryId, category, note }),
+    body: JSON.stringify({
+      entryId: entry.entryId,
+      category: entry.category,
+      note: entry.note,
+      counterparty: entry.counterparty,
+      kind: entry.kind,
+      ts: entry.ts,
+      accountId: entry.accountId,
+      amount: entry.amount,
+      currency: entry.currency,
+    }),
   });
   if (!response.ok) {
     throw new Error(`Update failed: ${response.status} ${await response.text()}`);
@@ -83,21 +83,10 @@ const saveEntry = async (
 export const DrillDownPanel = (props: Props): ReactElement => {
   const { filter, categories, onClose } = props;
 
-  const [entries, setEntries] = useState<ReadonlyArray<LedgerEntry>>([]);
-  const [total, setTotal] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [loadingMore, setLoadingMore] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
-  const [editValue, setEditValue] = useState<string>("");
-
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const fetchIdRef = useRef<number>(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const dirtyRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -126,76 +115,18 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     };
   }, [isDragging]);
 
-  const fetchPage = useCallback(async (
-    offset: number,
-    append: boolean,
-    currentFetchId: number,
-  ): Promise<void> => {
-    const url = buildUrl(filter, PAGE_SIZE, offset);
+  const fetchPage = async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
+    const url = buildUrl(filter, limit, offset);
     const response = await fetch(url);
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`${response.status}: ${text}`);
     }
     const page: TransactionsPage = await response.json();
+    return { items: page.entries, total: page.total };
+  };
 
-    if (fetchIdRef.current !== currentFetchId) return;
-
-    if (append) {
-      setEntries((prev) => [...prev, ...page.entries]);
-    } else {
-      setEntries(page.entries);
-    }
-    setTotal(page.total);
-  }, [filter]);
-
-  useEffect(() => {
-    const fetchId = ++fetchIdRef.current;
-    setLoading(true);
-    setError(null);
-    setEntries([]);
-    setTotal(0);
-    setEditingCell(null);
-
-    fetchPage(0, false, fetchId)
-      .catch((err: unknown) => {
-        if (fetchIdRef.current !== fetchId) return;
-        setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (fetchIdRef.current !== fetchId) return;
-        setLoading(false);
-      });
-  }, [fetchPage]);
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    const observer = new IntersectionObserver(
-      (intersections) => {
-        if (!intersections[0].isIntersecting) return;
-        if (loadingMore || loading) return;
-        if (entries.length >= total) return;
-
-        const fetchId = fetchIdRef.current;
-        setLoadingMore(true);
-        fetchPage(entries.length, true, fetchId)
-          .catch((err: unknown) => {
-            if (fetchIdRef.current !== fetchId) return;
-            setError(err instanceof Error ? err.message : String(err));
-          })
-          .finally(() => {
-            if (fetchIdRef.current !== fetchId) return;
-            setLoadingMore(false);
-          });
-      },
-      { rootMargin: "200px" },
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [entries.length, total, loading, loadingMore, fetchPage]);
+  const scroll = useInfiniteScroll<LedgerEntry>(fetchPage, PAGE_SIZE, [filter]);
 
   const closePanel = useCallback((): void => {
     onClose(dirtyRef.current);
@@ -204,147 +135,204 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
-        if (editingCell !== null) {
-          setEditingCell(null);
-        } else {
-          closePanel();
-        }
+        closePanel();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closePanel, editingCell]);
+  }, [closePanel]);
 
-  useEffect(() => {
-    if (editingCell !== null && inputRef.current !== null) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editingCell]);
-
-  const startEditing = (entryId: string, field: "category" | "note", currentValue: string | null): void => {
-    setEditingCell({ entryId, field });
-    setEditValue(currentValue ?? "");
-  };
-
-  const commitEdit = (entryId: string, field: "category" | "note"): void => {
-    const entry = entries.find((e) => e.entryId === entryId);
+  const optimisticUpdate = (
+    entryId: string,
+    patch: Partial<LedgerEntry>,
+    rollback: Partial<LedgerEntry>,
+  ): void => {
+    const entry = scroll.rows.find((e) => e.entryId === entryId);
     if (entry === undefined) return;
-
-    const trimmed = editValue.trim();
-    const newValue = trimmed.length > 0 ? trimmed : null;
-    const oldValue = field === "category" ? entry.category : entry.note;
-
-    setEditingCell(null);
-
-    if (newValue === oldValue) return;
-
-    const newCategory = field === "category" ? newValue : entry.category;
-    const newNote = field === "note" ? newValue : entry.note;
-
-    setEntries((prev) =>
-      prev.map((e) =>
-        e.entryId === entryId
-          ? { ...e, category: newCategory, note: newNote }
-          : e,
-      ),
-    );
-
-    saveEntry(entryId, newCategory, newNote).catch((err: unknown) => {
-      setEntries((prev) =>
-        prev.map((e) =>
-          e.entryId === entryId
-            ? { ...e, [field]: oldValue }
-            : e,
-        ),
-      );
-      setError(err instanceof Error ? err.message : String(err));
-    });
-  };
-
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, entryId: string, field: "category" | "note"): void => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commitEdit(entryId, field);
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      setEditingCell(null);
-    }
-  };
-
-  const isEditing = (entryId: string, field: "category" | "note"): boolean =>
-    editingCell !== null && editingCell.entryId === entryId && editingCell.field === field;
-
-  const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>, entryId: string): void => {
-    const entry = entries.find((en) => en.entryId === entryId);
-    if (entry === undefined) return;
-
-    const newValue = e.target.value.length > 0 ? e.target.value : null;
-    const oldValue = entry.category;
-
-    if (newValue === oldValue) return;
 
     dirtyRef.current = true;
 
-    setEntries((prev) =>
-      prev.map((en) =>
-        en.entryId === entryId ? { ...en, category: newValue } : en,
-      ),
+    const updated = { ...entry, ...patch };
+    scroll.setRows((prev) =>
+      prev.map((e) => (e.entryId === entryId ? updated : e)),
     );
 
-    saveEntry(entryId, newValue, entry.note).catch((err: unknown) => {
-      setEntries((prev) =>
-        prev.map((en) =>
-          en.entryId === entryId ? { ...en, category: oldValue } : en,
-        ),
+    saveEntry(updated).catch((err: unknown) => {
+      scroll.setRows((prev) =>
+        prev.map((e) => (e.entryId === entryId ? { ...e, ...rollback } : e)),
       );
-      setError(err instanceof Error ? err.message : String(err));
+      scroll.setError(err instanceof Error ? err.message : String(err));
     });
   };
 
-  const renderCategoryCell = (entry: LedgerEntry): ReactElement => (
-    <td className="txn-cell">
-      <select
-        className="drilldown-input"
-        value={entry.category ?? ""}
-        onChange={(e) => handleCategoryChange(e, entry.entryId)}
-      >
-        <option value="">{"\u2014"}</option>
-        {categories.map((cat) => (
-          <option key={cat} value={cat}>{cat}</option>
-        ))}
-      </select>
-    </td>
-  );
-
-  const renderNoteCell = (entry: LedgerEntry): ReactElement => {
-    if (isEditing(entry.entryId, "note")) {
-      return (
-        <td className="txn-cell txn-cell-note">
-          <input
-            ref={inputRef}
-            className="drilldown-input"
-            type="text"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={() => commitEdit(entry.entryId, "note")}
-            onKeyDown={(e) => handleInputKeyDown(e, entry.entryId, "note")}
-          />
-        </td>
-      );
-    }
-
-    return (
-      <td
-        className="txn-cell txn-cell-note drilldown-editable"
-        onClick={() => startEditing(entry.entryId, "note", entry.note)}
-      >
-        {entry.note ?? "\u2014"}
-      </td>
-    );
+  const handleCategoryChange = (entryId: string, newCategory: string | null, oldCategory: string | null): void => {
+    optimisticUpdate(entryId, { category: newCategory }, { category: oldCategory });
   };
+
+  const handleNoteCommit = (entryId: string, newNote: string | null, oldNote: string | null): void => {
+    optimisticUpdate(entryId, { note: newNote }, { note: oldNote });
+  };
+
+  const handleCounterpartyCommit = (entryId: string, newCounterparty: string | null, oldCounterparty: string | null): void => {
+    optimisticUpdate(entryId, { counterparty: newCounterparty }, { counterparty: oldCounterparty });
+  };
+
+  const handleKindChange = (entryId: string, newKind: string, oldKind: string): void => {
+    optimisticUpdate(entryId, { kind: newKind }, { kind: oldKind });
+  };
+
+  const handleDateTimeCommit = (entryId: string, newTs: string, oldTs: string): void => {
+    optimisticUpdate(entryId, { ts: newTs }, { ts: oldTs });
+  };
+
+  const handleAccountCommit = (entryId: string, newValue: string | null, oldValue: string | null): void => {
+    if (newValue === null) return;
+    optimisticUpdate(entryId, { accountId: newValue }, { accountId: oldValue ?? "" });
+  };
+
+  const handleAmountCommit = (entryId: string, newAmount: number, oldAmount: number): void => {
+    optimisticUpdate(entryId, { amount: newAmount }, { amount: oldAmount });
+  };
+
+  const handleCurrencyCommit = (entryId: string, newValue: string | null, oldValue: string | null): void => {
+    if (newValue === null) return;
+    optimisticUpdate(entryId, { currency: newValue }, { currency: oldValue ?? "" });
+  };
+
+  const columns = useMemo((): ReadonlyArray<ColumnDef<LedgerEntry>> => {
+    const editableDateCol: ColumnDef<LedgerEntry> = {
+      key: "date",
+      header: "Date",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableDateTime
+          key="date"
+          entryId={row.entryId}
+          currentValue={row.ts}
+          maskClass=""
+          onDateTimeCommit={handleDateTimeCommit}
+        />
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    const editableAccountCol: ColumnDef<LedgerEntry> = {
+      key: "account",
+      header: "Account",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableText
+          key="account"
+          entryId={row.entryId}
+          currentValue={row.accountId}
+          maskClass=""
+          onCommit={handleAccountCommit}
+        />
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    const editableAmountCol: ColumnDef<LedgerEntry> = {
+      key: "amount",
+      header: "Amount",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableAmount
+          key="amount"
+          entryId={row.entryId}
+          currentValue={row.amount}
+          maskClass=""
+          onAmountCommit={handleAmountCommit}
+        />
+      ),
+      rightAlign: true,
+      sortKey: null,
+    };
+
+    const editableCurrencyCol: ColumnDef<LedgerEntry> = {
+      key: "currency",
+      header: "Currency",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableText
+          key="currency"
+          entryId={row.entryId}
+          currentValue={row.currency}
+          maskClass=""
+          onCommit={handleCurrencyCommit}
+        />
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    const editableKindCol: ColumnDef<LedgerEntry> = {
+      key: "kind",
+      header: "Kind",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableKind
+          key="kind"
+          entry={row}
+          maskClass=""
+          onKindChange={handleKindChange}
+        />
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    const editableCategoryCol: ColumnDef<LedgerEntry> = {
+      key: "category",
+      header: "Category",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableCategory
+          key="category"
+          entry={row}
+          categories={categories}
+          maskClass=""
+          onCategoryChange={handleCategoryChange}
+        />
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    const editableCounterpartyCol: ColumnDef<LedgerEntry> = {
+      key: "counterparty",
+      header: "Counterparty",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableText
+          key="counterparty"
+          entryId={row.entryId}
+          currentValue={row.counterparty}
+          maskClass=""
+          onCommit={handleCounterpartyCommit}
+        />
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    const editableNoteCol: ColumnDef<LedgerEntry> = {
+      key: "note",
+      header: "Note",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <EditableText
+          key="note"
+          entryId={row.entryId}
+          currentValue={row.note}
+          maskClass=""
+          onCommit={handleNoteCommit}
+          cellClass="txn-cell-note"
+        />
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    return [
+      editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, usdColumn(),
+      editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol,
+    ];
+  }, [categories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -364,62 +352,31 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           </button>
         </div>
 
-        {!loading && (
+        {!scroll.loading && (
           <div className="drilldown-count">
-            {total} {total === 1 ? "entry" : "entries"}
+            {scroll.total} {scroll.total === 1 ? "entry" : "entries"}
           </div>
         )}
 
-        {error !== null && (
+        {scroll.error !== null && (
           <div className="budget-alert" style={{ margin: "8px 16px" }}>
             <strong>Failed to load transactions</strong>
-            <span>{error}</span>
+            <span>{scroll.error}</span>
           </div>
         )}
 
         <div className="drilldown-body">
-          <table className="txn-table">
-            <thead>
-              <tr>
-                <th className="txn-th">Date</th>
-                <th className="txn-th">Account</th>
-                <th className="txn-th txn-th-right">Amount</th>
-                <th className="txn-th">Currency</th>
-                <th className="txn-th txn-th-right">USD</th>
-                <th className="txn-th">Kind</th>
-                <th className="txn-th">Category</th>
-                <th className="txn-th">Counterparty</th>
-                <th className="txn-th">Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((e, idx) => (
-                <tr key={`${e.entryId}-${idx}`} className="txn-row">
-                  <td className="txn-cell txn-cell-mono">{formatDateTime(e.ts)}</td>
-                  <td className="txn-cell">{e.accountId}</td>
-                  <td className="txn-cell txn-cell-right">{formatAmount(e.amount)}</td>
-                  <td className="txn-cell">{e.currency}</td>
-                  <td className="txn-cell txn-cell-right">{e.amountUsd !== null ? formatAmount(e.amountUsd) : "\u2014"}</td>
-                  <td className="txn-cell">{e.kind}</td>
-                  {renderCategoryCell(e)}
-                  <td className="txn-cell">{e.counterparty ?? "\u2014"}</td>
-                  {renderNoteCell(e)}
-                </tr>
-              ))}
-              {!loading && entries.length === 0 && (
-                <tr>
-                  <td className="txn-cell" colSpan={9} style={{ textAlign: "center", color: "var(--muted)" }}>
-                    No entries found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
-          <div ref={sentinelRef} className="txn-scroll-sentinel">
-            {loading && <span className="loading-indicator">Loading<span className="loading-dots" /></span>}
-            {loadingMore && <span className="loading-indicator">Loading more<span className="loading-dots" /></span>}
-          </div>
+          <DataTable<LedgerEntry>
+            columns={columns}
+            rows={scroll.rows}
+            rowKey={(row, idx) => `${row.entryId}-${idx}`}
+            sort={null}
+            onSort={null}
+            emptyMessage="No entries found."
+            loading={scroll.loading}
+            loadingMore={scroll.loadingMore}
+            sentinelRef={scroll.sentinelRef}
+          />
         </div>
       </div>
     </>

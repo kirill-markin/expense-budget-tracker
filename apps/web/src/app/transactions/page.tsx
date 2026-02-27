@@ -2,8 +2,8 @@ import { Suspense } from "react";
 import { headers } from "next/headers";
 
 import { isDemoMode } from "@/lib/demoMode";
-import { getAccounts } from "@/server/transactions/getTransactions";
-import { getDemoAccounts } from "@/server/demo/data";
+import { getAccounts, getCategories } from "@/server/transactions/getTransactions";
+import { getDemoAccounts, getDemoCategories } from "@/server/demo/data";
 import { TransactionsRawTable } from "@/ui/tables/TransactionsRawTable";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
@@ -14,15 +14,19 @@ async function TransactionsData() {
 
   if (demo) {
     const accounts = getDemoAccounts();
-    return <TransactionsRawTable accounts={accounts} />;
+    const categories = getDemoCategories();
+    return <TransactionsRawTable accounts={accounts} categories={categories} />;
   }
 
   const headersList = await headers();
   const userId = headersList.get("x-user-id") ?? "local";
   const workspaceId = headersList.get("x-workspace-id") ?? "local";
-  const accounts = await getAccounts(userId, workspaceId);
+  const [accounts, categories] = await Promise.all([
+    getAccounts(userId, workspaceId),
+    getCategories(userId, workspaceId),
+  ]);
 
-  return <TransactionsRawTable accounts={accounts} />;
+  return <TransactionsRawTable accounts={accounts} categories={categories} />;
 }
 
 export default function TransactionsDashboardPage() {

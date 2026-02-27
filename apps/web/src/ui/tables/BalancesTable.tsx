@@ -9,6 +9,8 @@ import type { AccountRow, ConversionWarning, CurrencyTotal } from "@/server/bala
 import { DataMaskToggle } from "@/ui/DataMaskToggle";
 import { useDataMask } from "@/ui/hooks/useDataMask";
 
+import { formatAmount, sortIndicator } from "./format";
+
 type Props = Readonly<{
   accounts: ReadonlyArray<AccountRow>;
   totals: ReadonlyArray<CurrencyTotal>;
@@ -21,11 +23,6 @@ type SortDir = "asc" | "desc";
 type TotalsSortKey = "currency" | "balance" | "balancePositive" | "balanceNegative" | "balanceUsd";
 
 type AccountsSortKey = "accountId" | "currency" | "balance" | "balanceUsd" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
-
-const formatAmount = (value: number): string => {
-  if (value === 0) return "0";
-  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
 
 const formatDate = (isoString: string): string => {
   const date = new Date(isoString);
@@ -43,11 +40,6 @@ const daysAgoLabel = (days: number): string => {
   if (days === 0) return "today";
   if (days === 1) return "1 day ago";
   return `${days} days ago`;
-};
-
-const sortIndicator = (active: boolean, dir: SortDir): string => {
-  if (!active) return "";
-  return dir === "asc" ? " \u2191" : " \u2193";
 };
 
 const compareTotals = (a: CurrencyTotal, b: CurrencyTotal, key: TotalsSortKey, dir: SortDir): number => {

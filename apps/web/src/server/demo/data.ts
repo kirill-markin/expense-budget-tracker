@@ -327,6 +327,14 @@ export const getDemoTransactionsPage = (filter: TransactionsFilter): Transaction
 export const getDemoAccounts = (): ReadonlyArray<AccountOption> =>
   Object.keys(ACCOUNT_CURRENCIES).sort().map((accountId) => ({ accountId }));
 
+export const getDemoCategories = (): ReadonlyArray<string> => {
+  const set = new Set<string>();
+  for (const entry of generate().entries) {
+    if (entry.category !== null) set.add(entry.category);
+  }
+  return [...set].sort();
+};
+
 // ---------------------------------------------------------------------------
 // Budget grid
 // ---------------------------------------------------------------------------

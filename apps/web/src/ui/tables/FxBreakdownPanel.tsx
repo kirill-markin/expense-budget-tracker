@@ -5,15 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBreakdown";
 
+import { formatAmount } from "./format";
+
 type Props = Readonly<{
   month: string;
   onClose: () => void;
 }>;
-
-const formatAmount = (value: number): string => {
-  if (value === 0) return "0";
-  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
 
 const formatRate = (value: number): string => {
   if (value === 0) return "—";
