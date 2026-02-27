@@ -71,6 +71,17 @@ const buildSubtitle = (filter: DrillDownFilter): string => {
   return `${filter.dateFrom} \u2013 ${filter.dateTo}`;
 };
 
+const deleteEntry = async (entryId: string): Promise<void> => {
+  const response = await fetch("/api/transactions/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entryId }),
+  });
+  if (!response.ok) {
+    throw new Error(`Delete failed: ${response.status} ${await response.text()}`);
+  }
+};
+
 const saveEntry = async (entry: LedgerEntry): Promise<void> => {
   const response = await fetch("/api/transactions/update", {
     method: "POST",
@@ -213,6 +224,24 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     optimisticUpdate(entryId, { currency: newValue }, { currency: oldValue ?? "" });
   };
 
+  const handleDelete = (entryId: string): void => {
+    if (!window.confirm("Delete this transaction? This cannot be undone.")) return;
+
+    const entry = scroll.rows.find((e) => e.entryId === entryId);
+    if (entry === undefined) return;
+
+    dirtyRef.current = true;
+    const rowIndex = scroll.rows.indexOf(entry);
+    scroll.setRows((prev) => prev.filter((e) => e.entryId !== entryId));
+    scroll.setTotal((prev) => prev - 1);
+
+    deleteEntry(entryId).catch((err: unknown) => {
+      scroll.setRows((prev) => [...prev.slice(0, rowIndex), entry, ...prev.slice(rowIndex)]);
+      scroll.setTotal((prev) => prev + 1);
+      scroll.setError(err instanceof Error ? err.message : String(err));
+    });
+  };
+
   const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = (() => {
     const editableDateCol: ColumnDef<LedgerEntry> = {
       key: "date",
@@ -346,10 +375,28 @@ export const DrillDownPanel = (props: Props): ReactElement => {
       sortKey: null,
     };
 
+    const deleteCol: ColumnDef<LedgerEntry> = {
+      key: "delete",
+      header: "",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <span className="txn-cell-delete">
+          <button
+            type="button"
+            className="txn-delete-btn"
+            onClick={() => handleDelete(row.entryId)}
+          >
+            &#x2715;
+          </button>
+        </span>
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
     return [
       editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol,
       { ...usdColumn(), sortKey: "amountUsdAbs" },
-      editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol,
+      editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol, deleteCol,
     ];
   })();
 

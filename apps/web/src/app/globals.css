@@ -947,6 +947,32 @@ tbody tr:last-child .budget-cm-actual {
   text-overflow: ellipsis;
 }
 
+.txn-cell-delete {
+  width: 24px;
+  display: inline-block;
+  text-align: center;
+}
+
+.txn-delete-btn {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  line-height: 1;
+}
+
+.txn-row:hover .txn-delete-btn {
+  opacity: 1;
+}
+
+.txn-delete-btn:hover {
+  color: #c0392b;
+}
+
 .txn-scroll-sentinel {
   min-height: 1px;
   padding: 8px 0;

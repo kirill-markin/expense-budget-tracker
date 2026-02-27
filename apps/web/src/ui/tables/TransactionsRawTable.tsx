@@ -55,6 +55,17 @@ const buildUrl = (
   return `/api/transactions?${params.toString()}`;
 };
 
+const deleteEntry = async (entryId: string): Promise<void> => {
+  const response = await fetch("/api/transactions/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entryId }),
+  });
+  if (!response.ok) {
+    throw new Error(`Delete failed: ${response.status} ${await response.text()}`);
+  }
+};
+
 const saveEntry = async (entry: LedgerEntry): Promise<void> => {
   const response = await fetch("/api/transactions/update", {
     method: "POST",
@@ -165,6 +176,23 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   const handleCurrencyCommit = (entryId: string, newValue: string | null, oldValue: string | null): void => {
     if (newValue === null) return;
     optimisticUpdate(entryId, { currency: newValue }, { currency: oldValue ?? "" });
+  };
+
+  const handleDelete = (entryId: string): void => {
+    if (!window.confirm("Delete this transaction? This cannot be undone.")) return;
+
+    const entry = scroll.rows.find((e) => e.entryId === entryId);
+    if (entry === undefined) return;
+
+    const rowIndex = scroll.rows.indexOf(entry);
+    scroll.setRows((prev) => prev.filter((e) => e.entryId !== entryId));
+    scroll.setTotal((prev) => prev - 1);
+
+    deleteEntry(entryId).catch((err: unknown) => {
+      scroll.setRows((prev) => [...prev.slice(0, rowIndex), entry, ...prev.slice(rowIndex)]);
+      scroll.setTotal((prev) => prev + 1);
+      scroll.setError(err instanceof Error ? err.message : String(err));
+    });
   };
 
   const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = (() => {
@@ -300,7 +328,25 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
       sortKey: null,
     };
 
-    return [editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol];
+    const deleteCol: ColumnDef<LedgerEntry> = {
+      key: "delete",
+      header: "",
+      renderCell: (row: LedgerEntry): ReactElement => (
+        <span className="txn-cell-delete">
+          <button
+            type="button"
+            className="txn-delete-btn"
+            onClick={() => handleDelete(row.entryId)}
+          >
+            &#x2715;
+          </button>
+        </span>
+      ),
+      rightAlign: false,
+      sortKey: null,
+    };
+
+    return [editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol, deleteCol];
   })();
 
   return (

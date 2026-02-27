@@ -75,5 +75,5 @@ export const useInfiniteScroll = <T>(
     return () => observer.disconnect();
   }, [rows.length, total, loading, loadingMore, stableFetchPage, pageSize]);
 
-  return { rows, total, loading, loadingMore, error, sentinelRef, setRows, setError };
+  return { rows, total, loading, loadingMore, error, sentinelRef, setRows, setTotal, setError };
 };

@@ -42,5 +42,6 @@ export type InfiniteScrollState<T> = Readonly<{
   error: string | null;
   sentinelRef: RefObject<HTMLDivElement | null>;
   setRows: React.Dispatch<React.SetStateAction<ReadonlyArray<T>>>;
+  setTotal: React.Dispatch<React.SetStateAction<number>>;
   setError: React.Dispatch<React.SetStateAction<string | null>>;
 }>;
