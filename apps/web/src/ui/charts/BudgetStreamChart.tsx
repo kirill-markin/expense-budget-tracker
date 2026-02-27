@@ -11,6 +11,7 @@ type Props = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
   allowlist: ReadonlySet<string> | null;
   reportingCurrency: string;
+  onMonthClick: (month: string) => void;
 }>;
 
 type MonthRecord = { readonly date: Date; readonly [key: string]: number | Date };
@@ -123,7 +124,7 @@ const findClosestDateIndex = (
 };
 
 export const BudgetStreamChart = (props: Props): ReactElement => {
-  const { rows, allowlist, reportingCurrency } = props;
+  const { rows, allowlist, reportingCurrency, onMonthClick } = props;
   const masked = allowlist !== null && allowlist.size === 0;
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -294,6 +295,24 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
     setHover(null);
   };
 
+  const handleClick = (event: React.MouseEvent<SVGSVGElement>): void => {
+    const svg = svgRef.current;
+    if (svg === null) return;
+
+    const pt = svg.createSVGPoint();
+    pt.x = event.clientX;
+    pt.y = event.clientY;
+    const ctm = svg.getScreenCTM();
+    if (ctm === null) return;
+    const svgPt = pt.matrixTransform(ctm.inverse());
+
+    if (svgPt.x < margin.left || svgPt.x > width - margin.right) return;
+
+    const idx = findClosestDateIndex(uniqueDates, (d) => xScale(d), svgPt.x);
+    const date = uniqueDates[idx];
+    onMonthClick(formatMonthToYYYYMM(date));
+  };
+
   return (
     <>
       {!masked && (
@@ -329,8 +348,10 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           viewBox={`0 0 ${width} ${height}`}
           role="img"
           aria-label="Budget streamgraph"
+          style={!masked ? { cursor: "pointer" } : undefined}
           onMouseMove={!masked ? handleMouseMove : undefined}
           onMouseLeave={!masked ? handleMouseLeave : undefined}
+          onClick={!masked ? handleClick : undefined}
         >
           {!masked && (
           <>

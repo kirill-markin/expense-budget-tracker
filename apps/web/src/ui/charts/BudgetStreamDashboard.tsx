@@ -135,6 +135,17 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       });
   }, [fetchTreemapData]);
 
+  const handleStreamMonthClick = useCallback((month: string): void => {
+    const [y, m] = month.split("-").map(Number);
+    const last = new Date(y, m, 0).getDate();
+    setDrillDownFilter({
+      dateFrom: `${month}-01`,
+      dateTo: `${month}-${String(last).padStart(2, "0")}`,
+      direction: null,
+      category: null,
+    });
+  }, []);
+
   const handleCellClick = useCallback((category: string): void => {
     setDrillDownFilter({
       dateFrom: `${monthFrom}-01`,
@@ -194,7 +205,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       {loading && <LoadingIndicator />}
 
       {!loading && error === null && (
-        <BudgetStreamChart rows={rows} allowlist={effectiveAllowlist} reportingCurrency={reportingCurrency} />
+        <BudgetStreamChart rows={rows} allowlist={effectiveAllowlist} reportingCurrency={reportingCurrency} onMonthClick={handleStreamMonthClick} />
       )}
 
       <h2 className="treemap-heading">Expense Map</h2>

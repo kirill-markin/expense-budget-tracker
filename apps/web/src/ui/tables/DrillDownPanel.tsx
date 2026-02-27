@@ -18,7 +18,7 @@ import { usdColumn } from "./transactionColumns";
 export type DrillDownFilter = Readonly<{
   dateFrom: string;
   dateTo: string;
-  direction: string;
+  direction: string | null;
   category: string | null;
 }>;
 
@@ -39,7 +39,9 @@ const buildUrl = (
   const params = new URLSearchParams();
   params.set("dateFrom", filter.dateFrom);
   params.set("dateTo", filter.dateTo);
-  params.set("kind", filter.direction);
+  if (filter.direction !== null) {
+    params.set("kind", filter.direction);
+  }
   if (filter.category !== null) {
     params.set("category", filter.category);
   }
@@ -52,6 +54,7 @@ const buildUrl = (
 
 const buildTitle = (filter: DrillDownFilter): string => {
   const category = filter.category ?? "All categories";
+  if (filter.direction === null) return category;
   const direction = filter.direction.charAt(0).toUpperCase() + filter.direction.slice(1);
   return `${direction} \u2014 ${category}`;
 };
