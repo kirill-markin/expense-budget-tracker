@@ -5,11 +5,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getCurrentMonth } from "@/lib/monthUtils";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
-import type { LedgerEntry } from "@/server/transactions/getTransactions";
+import type { LedgerEntry, FieldHints } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 import { BudgetStreamChart } from "@/ui/charts/BudgetStreamChart";
 import { ExpenseTreemapChart } from "@/ui/charts/ExpenseTreemapChart";
+import { DrillDownPanel } from "@/ui/tables/DrillDownPanel";
+import type { DrillDownFilter } from "@/ui/tables/DrillDownPanel";
 
 type BudgetGridResponse = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -26,6 +28,8 @@ type Props = Readonly<{
   initialMonthTo: string;
   reportingCurrency: string;
 }>;
+
+const EMPTY_HINTS: FieldHints = { accounts: [], currencies: [], counterparties: [], notes: [] };
 
 const buildBudgetUrl = (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): string =>
   `/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}&planFrom=${planFrom}&actualTo=${actualTo}`;
@@ -49,12 +53,21 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
   const [error, setError] = useState<string | null>(null);
   const [treemapEntries, setTreemapEntries] = useState<ReadonlyArray<LedgerEntry>>([]);
   const [treemapLoading, setTreemapLoading] = useState<boolean>(true);
+  const [drillDownFilter, setDrillDownFilter] = useState<DrillDownFilter | null>(null);
   const { effectiveAllowlist } = useFilteredMode();
 
   const currentMonth = useMemo(() => getCurrentMonth(), []);
   const fetchIdRef = useRef<number>(0);
   const treemapFetchIdRef = useRef<number>(0);
   const isInitialRef = useRef<boolean>(true);
+
+  const treemapCategories = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of treemapEntries) {
+      if (e.category !== null) set.add(e.category);
+    }
+    return Array.from(set).sort();
+  }, [treemapEntries]);
 
   const fetchBudgetData = useCallback(async (currentFetchId: number): Promise<void> => {
     const url = buildBudgetUrl(monthFrom, monthTo, currentMonth, currentMonth);
@@ -122,6 +135,32 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       });
   }, [fetchTreemapData]);
 
+  const handleCellClick = useCallback((category: string): void => {
+    setDrillDownFilter({
+      dateFrom: `${monthFrom}-01`,
+      dateTo: lastDayOfMonth(monthTo),
+      direction: "spend",
+      category,
+    });
+  }, [monthFrom, monthTo]);
+
+  const handleDrillDownClose = useCallback((dirty: boolean): void => {
+    setDrillDownFilter(null);
+    if (!dirty) return;
+    // Refetch treemap data if transactions were edited
+    const fetchId = ++treemapFetchIdRef.current;
+    setTreemapLoading(true);
+    fetchTreemapData(fetchId)
+      .catch(() => {
+        if (treemapFetchIdRef.current !== fetchId) return;
+        setTreemapEntries([]);
+      })
+      .finally(() => {
+        if (treemapFetchIdRef.current !== fetchId) return;
+        setTreemapLoading(false);
+      });
+  }, [fetchTreemapData]);
+
   return (
     <>
       <div className="txn-filters">
@@ -167,6 +206,16 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
           entries={treemapEntries}
           allowlist={effectiveAllowlist}
           reportingCurrency={reportingCurrency}
+          onCellClick={handleCellClick}
+        />
+      )}
+
+      {drillDownFilter !== null && (
+        <DrillDownPanel
+          filter={drillDownFilter}
+          categories={treemapCategories}
+          hints={EMPTY_HINTS}
+          onClose={handleDrillDownClose}
         />
       )}
     </>

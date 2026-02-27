@@ -1098,6 +1098,40 @@ tbody tr:last-child .budget-cm-actual {
   margin-bottom: 8px;
 }
 
+.treemap-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 100;
+  background: rgba(20, 20, 20, 0.92);
+  color: #fff;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 260px;
+  white-space: nowrap;
+}
+
+.treemap-tooltip-amount {
+  font-weight: 700;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.treemap-tooltip-converted {
+  font-size: 11px;
+  color: #aaa;
+  font-variant-numeric: tabular-nums;
+}
+
+.treemap-tooltip-row {
+  margin-top: 2px;
+}
+
+.treemap-tooltip-muted {
+  color: #aaa;
+  font-size: 11px;
+}
+
 /* Account menu */
 
 .topbar-actions {
