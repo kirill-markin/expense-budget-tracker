@@ -27,10 +27,7 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
 
   const [visibilityMode, setVisibilityModeState] = useState<VisibilityMode>(() => {
     if (isDemoMode) return "real";
-    if (typeof window === "undefined") return "real";
-    const stored = localStorage.getItem(STORAGE_MODE_KEY);
-    if (stored === "filtered") return "filtered";
-    return "real";
+    return "filtered";
   });
 
   const [allowedCategories, setAllowedCategories] = useState<ReadonlySet<string>>(new Set());
@@ -70,6 +67,39 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     if (isDemoMode) return;
     localStorage.setItem(STORAGE_MODE_KEY, visibilityMode);
   }, [visibilityMode, isDemoMode]);
+
+  // Auto-switch to filtered: on tab hide and after 2 min inactivity
+  useEffect(() => {
+    if (isDemoMode) return;
+
+    const switchToFiltered = (): void => setVisibilityModeState("filtered");
+
+    const handleVisibilityChange = (): void => {
+      if (document.hidden) switchToFiltered();
+    };
+
+    const INACTIVITY_MS = 2 * 60 * 1000;
+    let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resetInactivityTimer = (): void => {
+      if (inactivityTimer !== null) clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(switchToFiltered, INACTIVITY_MS);
+    };
+
+    const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    ACTIVITY_EVENTS.forEach((evt) =>
+      document.addEventListener(evt, resetInactivityTimer, { passive: true }),
+    );
+    resetInactivityTimer();
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      ACTIVITY_EVENTS.forEach((evt) => document.removeEventListener(evt, resetInactivityTimer));
+      if (inactivityTimer !== null) clearTimeout(inactivityTimer);
+    };
+  }, [isDemoMode]);
 
   const effectiveAllowlist: ReadonlySet<string> | null =
     !isDemoMode && visibilityMode === "filtered" ? allowedCategories : null;
