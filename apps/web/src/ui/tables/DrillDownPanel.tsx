@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactElement } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 
@@ -200,7 +200,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     optimisticUpdate(entryId, { currency: newValue }, { currency: oldValue ?? "" });
   };
 
-  const columns = useMemo((): ReadonlyArray<ColumnDef<LedgerEntry>> => {
+  const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = (() => {
     const editableDateCol: ColumnDef<LedgerEntry> = {
       key: "date",
       header: "Date",
@@ -337,7 +337,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
       editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, usdColumn(),
       editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol,
     ];
-  }, [categories, hints]); // eslint-disable-line react-hooks/exhaustive-deps
+  })();
 
   return (
     <>

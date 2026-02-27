@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactElement } from "react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
@@ -177,7 +177,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     optimisticUpdate(entryId, { currency: newValue }, { currency: oldValue ?? "" });
   };
 
-  const columns = useMemo((): ReadonlyArray<ColumnDef<LedgerEntry>> => {
+  const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = (() => {
     const editableDateCol: ColumnDef<LedgerEntry> = {
       key: "date",
       header: "Date",
@@ -311,7 +311,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     };
 
     return [editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol];
-  }, [effectiveAllowlist, categories, hints]); // eslint-disable-line react-hooks/exhaustive-deps
+  })();
 
   return (
     <>
