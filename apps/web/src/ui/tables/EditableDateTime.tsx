@@ -1,7 +1,10 @@
 import { type ReactElement } from "react";
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
 import { formatDateTime } from "./format";
+
+type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 type Props = Readonly<{
   entryId: string;
@@ -29,7 +32,9 @@ export const EditableDateTime = (props: Props): ReactElement => {
 
   const [editing, setEditing] = useState<boolean>(false);
   const [editValue, setEditValue] = useState<string>("");
+  const [rect, setRect] = useState<Rect | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const cellRef = useRef<HTMLTableCellElement | null>(null);
 
   useEffect(() => {
     if (editing && inputRef.current !== null) {
@@ -38,12 +43,16 @@ export const EditableDateTime = (props: Props): ReactElement => {
   }, [editing]);
 
   const startEditing = (): void => {
+    if (cellRef.current === null) return;
+    const r = cellRef.current.getBoundingClientRect();
+    setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     setEditValue(toDatetimeLocalValue(currentValue));
     setEditing(true);
   };
 
   const commitEdit = (): void => {
     setEditing(false);
+    setRect(null);
     if (editValue.length === 0) return;
     const newTs = fromDatetimeLocalValue(editValue);
     if (newTs === currentValue) return;
@@ -59,33 +68,39 @@ export const EditableDateTime = (props: Props): ReactElement => {
       e.preventDefault();
       e.stopPropagation();
       setEditing(false);
+      setRect(null);
     }
   };
-
-  if (editing) {
-    return (
-      <td className={`txn-cell txn-cell-mono${maskClass}`}>
-        <input
-          ref={inputRef}
-          className="drilldown-input"
-          type="datetime-local"
-          value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
-          onBlur={commitEdit}
-          onKeyDown={handleKeyDown}
-        />
-      </td>
-    );
-  }
 
   const isMasked = maskClass.length > 0;
 
   return (
     <td
+      ref={cellRef}
       className={`txn-cell txn-cell-mono${isMasked ? "" : " drilldown-editable"}${maskClass}`}
       onClick={isMasked ? undefined : startEditing}
     >
       {formatDateTime(currentValue)}
+      {editing && rect !== null && createPortal(
+        <input
+          ref={inputRef}
+          className="cell-editor-overlay"
+          type="datetime-local"
+          value={editValue}
+          style={{
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+            fontSize: "12px",
+          }}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={commitEdit}
+          onKeyDown={handleKeyDown}
+        />,
+        document.body,
+      )}
     </td>
   );
 };

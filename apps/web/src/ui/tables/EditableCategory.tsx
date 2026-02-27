@@ -1,6 +1,10 @@
-import { type ReactElement } from "react";
+import { type ReactElement, useRef, useState } from "react";
 
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
+
+import { CellSelectOverlay } from "./CellSelectOverlay";
+
+type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 type Props = Readonly<{
   entry: LedgerEntry;
@@ -12,30 +16,48 @@ type Props = Readonly<{
 export const EditableCategory = (props: Props): ReactElement => {
   const { entry, categories, maskClass, onCategoryChange } = props;
 
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>): void => {
-    const newValue = e.target.value.length > 0 ? e.target.value : null;
-    if (newValue === entry.category) return;
-    onCategoryChange(entry.entryId, newValue, entry.category);
+  const [open, setOpen] = useState<boolean>(false);
+  const [rect, setRect] = useState<Rect | null>(null);
+  const cellRef = useRef<HTMLTableCellElement | null>(null);
+
+  const isMasked = maskClass.length > 0;
+
+  const handleClick = (): void => {
+    if (cellRef.current === null) return;
+    const r = cellRef.current.getBoundingClientRect();
+    setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    setOpen(true);
   };
 
-  if (maskClass.length > 0) {
-    return (
-      <td className={`txn-cell${maskClass}`}>{entry.category ?? "\u2014"}</td>
-    );
-  }
+  const handleSelect = (value: string | null): void => {
+    setOpen(false);
+    setRect(null);
+    if (value === entry.category) return;
+    onCategoryChange(entry.entryId, value, entry.category);
+  };
+
+  const handleClose = (): void => {
+    setOpen(false);
+    setRect(null);
+  };
 
   return (
-    <td className="txn-cell">
-      <select
-        className="drilldown-input"
-        value={entry.category ?? ""}
-        onChange={handleChange}
-      >
-        <option value="">{"\u2014"}</option>
-        {categories.map((cat) => (
-          <option key={cat} value={cat}>{cat}</option>
-        ))}
-      </select>
+    <td
+      ref={cellRef}
+      className={`txn-cell${isMasked ? "" : " drilldown-editable"}${maskClass}`}
+      onClick={isMasked ? undefined : handleClick}
+    >
+      {entry.category ?? "\u2014"}
+      {open && rect !== null && (
+        <CellSelectOverlay
+          options={categories}
+          currentValue={entry.category}
+          allowEmpty={true}
+          rect={rect}
+          onSelect={handleSelect}
+          onClose={handleClose}
+        />
+      )}
     </td>
   );
 };

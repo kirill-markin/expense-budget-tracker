@@ -1,6 +1,10 @@
-import { type ReactElement } from "react";
+import { type ReactElement, useRef, useState } from "react";
 
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
+
+import { CellSelectOverlay } from "./CellSelectOverlay";
+
+type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 const KIND_OPTIONS: ReadonlyArray<string> = ["income", "spend", "transfer"];
 
@@ -13,29 +17,49 @@ type Props = Readonly<{
 export const EditableKind = (props: Props): ReactElement => {
   const { entry, maskClass, onKindChange } = props;
 
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>): void => {
-    const newValue = e.target.value;
-    if (newValue === entry.kind) return;
-    onKindChange(entry.entryId, newValue, entry.kind);
+  const [open, setOpen] = useState<boolean>(false);
+  const [rect, setRect] = useState<Rect | null>(null);
+  const cellRef = useRef<HTMLTableCellElement | null>(null);
+
+  const isMasked = maskClass.length > 0;
+
+  const handleClick = (): void => {
+    if (cellRef.current === null) return;
+    const r = cellRef.current.getBoundingClientRect();
+    setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    setOpen(true);
   };
 
-  if (maskClass.length > 0) {
-    return (
-      <td className={`txn-cell${maskClass}`}>{entry.kind}</td>
-    );
-  }
+  const handleSelect = (value: string | null): void => {
+    setOpen(false);
+    setRect(null);
+    if (value === null) return;
+    if (value === entry.kind) return;
+    onKindChange(entry.entryId, value, entry.kind);
+  };
+
+  const handleClose = (): void => {
+    setOpen(false);
+    setRect(null);
+  };
 
   return (
-    <td className="txn-cell">
-      <select
-        className="drilldown-input"
-        value={entry.kind}
-        onChange={handleChange}
-      >
-        {KIND_OPTIONS.map((k) => (
-          <option key={k} value={k}>{k}</option>
-        ))}
-      </select>
+    <td
+      ref={cellRef}
+      className={`txn-cell${isMasked ? "" : " drilldown-editable"}${maskClass}`}
+      onClick={isMasked ? undefined : handleClick}
+    >
+      {entry.kind}
+      {open && rect !== null && (
+        <CellSelectOverlay
+          options={KIND_OPTIONS}
+          currentValue={entry.kind}
+          allowEmpty={false}
+          rect={rect}
+          onSelect={handleSelect}
+          onClose={handleClose}
+        />
+      )}
     </td>
   );
 };

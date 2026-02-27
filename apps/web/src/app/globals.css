@@ -685,6 +685,77 @@ tbody tr:last-child .budget-cm-actual {
   outline: none;
 }
 
+.cell-editor-overlay {
+  position: fixed;
+  z-index: 200;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  white-space: nowrap;
+  background: var(--bg);
+  color: var(--text);
+  border: none;
+  outline: none;
+  box-shadow: 0 0 0 1px var(--panel-border), 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-sizing: border-box;
+}
+
+.cell-select-overlay {
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--panel-border), 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-sizing: border-box;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.cell-select-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.cell-select-options {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.cell-select-option {
+  display: block;
+  width: 100%;
+  padding: 4px 10px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cell-select-option:hover,
+.cell-select-option-highlight {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.cell-select-option-active {
+  font-weight: 650;
+}
+
 .data-masked {
   user-select: none;
   color: transparent !important;
