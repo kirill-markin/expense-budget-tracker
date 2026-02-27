@@ -67,6 +67,11 @@ export type BudgetGridResult = Readonly<{
    * Balance row to reality and derive the per-month FX adjustment.
    */
   monthEndBalances: Readonly<Record<string, number>>;
+  /**
+   * Month-end balances broken down by liquidity tier ("high" | "medium" | "low").
+   * Keyed by "YYYY-MM" → liquidity → balance in report currency.
+   */
+  monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }>;
 
 const QUERY = `
@@ -206,12 +211,16 @@ const MONTH_END_BALANCES_QUERY = `
     -- the "canonical" currency per account — this triggers a redundant full scan
     -- of ledger_entries plus a hash join back to itself. Each ledger entry already
     -- carries its own currency, so we use it directly.
+    -- LEFT JOIN account_metadata to get per-account liquidity tier.
     SELECT
       to_char(le.ts::date, 'YYYY-MM') AS month,
       le.currency,
+      COALESCE(am.liquidity, 'high') AS liquidity,
       SUM(le.amount::double precision) AS delta
     FROM ledger_entries le
-    GROUP BY 1, 2
+    LEFT JOIN account_metadata am
+      ON am.account_id = le.account_id AND am.workspace_id = le.workspace_id
+    GROUP BY 1, 2, 3
   ),
   all_months AS (
     SELECT to_char(d::date, 'YYYY-MM') AS month
@@ -221,25 +230,26 @@ const MONTH_END_BALANCES_QUERY = `
       interval '1 month'
     ) d
   ),
-  currencies AS (
-    SELECT DISTINCT currency FROM monthly_deltas
+  currency_liquidities AS (
+    SELECT DISTINCT currency, liquidity FROM monthly_deltas
   ),
   full_grid AS (
-    SELECT m.month, c.currency, COALESCE(d.delta, 0) AS delta
+    SELECT m.month, cl.currency, cl.liquidity, COALESCE(d.delta, 0) AS delta
     FROM all_months m
-    CROSS JOIN currencies c
-    LEFT JOIN monthly_deltas d ON d.month = m.month AND d.currency = c.currency
+    CROSS JOIN currency_liquidities cl
+    LEFT JOIN monthly_deltas d ON d.month = m.month AND d.currency = cl.currency AND d.liquidity = cl.liquidity
   ),
   running_balances AS (
-    SELECT month, currency,
+    SELECT month, currency, liquidity,
       SUM(delta) OVER (
-        PARTITION BY currency ORDER BY month
+        PARTITION BY currency, liquidity ORDER BY month
         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
       ) AS balance
     FROM full_grid
   )
   SELECT
     rb.month,
+    rb.liquidity,
     ROUND(SUM(CASE
       WHEN rb.currency = $1 THEN rb.balance
       WHEN rr.rate IS NOT NULL THEN rb.balance * rr.rate::double precision
@@ -259,8 +269,8 @@ const MONTH_END_BALANCES_QUERY = `
   ) rr ON true
   WHERE rb.month >= to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
     AND rb.month <= $3
-  GROUP BY rb.month
-  ORDER BY rb.month
+  GROUP BY rb.month, rb.liquidity
+  ORDER BY rb.month, rb.liquidity
 `;
 
 type CumulativeRaw = Readonly<{
@@ -287,8 +297,14 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
   const cumulative: CumulativeRaw = cumulativeResult.rows[0] as CumulativeRaw;
 
   const monthEndBalances: Record<string, number> = {};
-  for (const row of balanceResult.rows as ReadonlyArray<{ month: string; balance_report: string }>) {
-    monthEndBalances[row.month] = Number(row.balance_report);
+  const monthEndBalancesByLiquidity: Record<string, Record<string, number>> = {};
+  for (const row of balanceResult.rows as ReadonlyArray<{ month: string; liquidity: string; balance_report: string }>) {
+    const value = Number(row.balance_report);
+    monthEndBalances[row.month] = (monthEndBalances[row.month] ?? 0) + value;
+    if (!(row.month in monthEndBalancesByLiquidity)) {
+      monthEndBalancesByLiquidity[row.month] = {};
+    }
+    monthEndBalancesByLiquidity[row.month][row.liquidity] = value;
   }
 
   return {
@@ -312,5 +328,6 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
       transferActual: Number(cumulative.transfer_actual),
     },
     monthEndBalances,
+    monthEndBalancesByLiquidity,
   };
 };

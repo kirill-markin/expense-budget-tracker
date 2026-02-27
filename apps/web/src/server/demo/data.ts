@@ -131,6 +131,7 @@ type DemoData = Readonly<{
   totals: ReadonlyArray<CurrencyTotal>;
   budgetRows: ReadonlyArray<BudgetRow>;
   monthEndBalances: Readonly<Record<string, number>>;
+  monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   currencyNative: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }>;
 
@@ -145,11 +146,15 @@ const generate = (): DemoData => {
   const actuals = new Map<string, number>();
   const accBal: Record<string, number> = { "checking-usd": 0, "checking-eur": 0, "checking-gbp": 0, "savings-usd": 0 };
   const monthEndBal: Record<string, number> = {};
+  const monthEndBalByLiq: Record<string, Record<string, number>> = {};
   const curNative: Record<string, Record<string, number>> = {};
   let entryN = 0;
   let eventN = 0;
 
+  const DEMO_LIQUIDITY: Readonly<Record<string, string>> = { "savings-usd": "medium" };
+
   monthEndBal[offsetMonth(pastMonths[0], -1)] = 0;
+  monthEndBalByLiq[offsetMonth(pastMonths[0], -1)] = { high: 0 };
   curNative[offsetMonth(pastMonths[0], -1)] = { USD: 0, EUR: 0, GBP: 0 };
 
   for (let mi = 0; mi < pastMonths.length; mi++) {
@@ -195,20 +200,23 @@ const generate = (): DemoData => {
 
     let totalUsd = 0;
     const nativeBal: Record<string, number> = { USD: 0, EUR: 0, GBP: 0 };
+    const liqBal: Record<string, number> = {};
     for (const [acc, bal] of Object.entries(accBal)) {
       const cur = ACCOUNT_CURRENCIES[acc] ?? "USD";
+      const liq = DEMO_LIQUIDITY[acc] ?? "high";
+      const balUsd = round2(bal * (FX[cur] ?? 1));
       nativeBal[cur] = round2((nativeBal[cur] ?? 0) + bal);
-      totalUsd = round2(totalUsd + bal * (FX[cur] ?? 1));
+      totalUsd = round2(totalUsd + balUsd);
+      liqBal[liq] = round2((liqBal[liq] ?? 0) + balUsd);
     }
     monthEndBal[month] = totalUsd;
+    monthEndBalByLiq[month] = liqBal;
     curNative[month] = nativeBal;
   }
 
   entries.sort((a, b) => (a.ts > b.ts ? -1 : a.ts < b.ts ? 1 : 0));
 
   // Account rows
-  const DEMO_LIQUIDITY: Readonly<Record<string, string>> = { "savings-usd": "medium" };
-
   const accounts: ReadonlyArray<AccountRow> = Object.entries(ACCOUNT_CURRENCIES)
     .map(([accountId, currency]) => {
       const balance = round2(accBal[accountId] ?? 0);
@@ -261,7 +269,7 @@ const generate = (): DemoData => {
     });
   }
 
-  const data: DemoData = { entries, accounts, totals, budgetRows, monthEndBalances: monthEndBal, currencyNative: curNative };
+  const data: DemoData = { entries, accounts, totals, budgetRows, monthEndBalances: monthEndBal, monthEndBalancesByLiquidity: monthEndBalByLiq, currencyNative: curNative };
   cached = { month: now, data };
   return data;
 };
@@ -368,13 +376,14 @@ export const getDemoBudgetGrid = (
   _planFrom: string,
   _actualTo: string,
 ): BudgetGridResult => {
-  const { budgetRows, monthEndBalances } = generate();
+  const { budgetRows, monthEndBalances, monthEndBalancesByLiquidity } = generate();
   const months = new Set(generateMonthRange(monthFrom, monthTo));
   return {
     rows: budgetRows.filter((r) => months.has(r.month)),
     conversionWarnings: [],
     cumulativeBefore: { incomeActual: 0, spendActual: 0, transferActual: 0 },
     monthEndBalances,
+    monthEndBalancesByLiquidity,
   };
 };
 

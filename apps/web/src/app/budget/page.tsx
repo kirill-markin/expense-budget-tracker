@@ -22,7 +22,7 @@ async function BudgetData() {
   const monthTo = offsetMonth(currentMonth, INITIAL_FUTURE_MONTHS);
 
   if (demo) {
-    const { rows, conversionWarnings, cumulativeBefore, monthEndBalances } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
+    const { rows, conversionWarnings, cumulativeBefore, monthEndBalances, monthEndBalancesByLiquidity } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
     const hints = getDemoFieldHints();
     return (
       <BudgetTable
@@ -30,6 +30,7 @@ async function BudgetData() {
         conversionWarnings={conversionWarnings}
         cumulativeBefore={cumulativeBefore}
         monthEndBalances={monthEndBalances}
+        monthEndBalancesByLiquidity={monthEndBalancesByLiquidity}
         initialMonthFrom={monthFrom}
         initialMonthTo={monthTo}
         reportingCurrency="USD"
@@ -42,7 +43,7 @@ async function BudgetData() {
   const userId = headersList.get("x-user-id") ?? "local";
   const workspaceId = headersList.get("x-workspace-id") ?? "local";
 
-  const [{ rows, conversionWarnings, cumulativeBefore, monthEndBalances }, reportingCurrency, hints] = await Promise.all([
+  const [{ rows, conversionWarnings, cumulativeBefore, monthEndBalances, monthEndBalancesByLiquidity }, reportingCurrency, hints] = await Promise.all([
     getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth),
     getReportCurrency(userId, workspaceId),
     getFieldHints(userId, workspaceId),
@@ -54,6 +55,7 @@ async function BudgetData() {
       conversionWarnings={conversionWarnings}
       cumulativeBefore={cumulativeBefore}
       monthEndBalances={monthEndBalances}
+      monthEndBalancesByLiquidity={monthEndBalancesByLiquidity}
       initialMonthFrom={monthFrom}
       initialMonthTo={monthTo}
       reportingCurrency={reportingCurrency}

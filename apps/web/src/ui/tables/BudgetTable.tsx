@@ -23,6 +23,7 @@ type Props = Readonly<{
   conversionWarnings: ReadonlyArray<ConversionWarning>;
   cumulativeBefore: CumulativeBefore;
   monthEndBalances: Readonly<Record<string, number>>;
+  monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   initialMonthFrom: string;
   initialMonthTo: string;
   reportingCurrency: string;
@@ -338,7 +339,7 @@ const computeAllowedSubtotals = (
 /**
  * Result of fetching a full year's budget data from the server.
  */
-type YearFetchResult = Readonly<{ rows: ReadonlyArray<BudgetRow>; cumulativeBefore: CumulativeBefore; monthEndBalances: Readonly<Record<string, number>> }>;
+type YearFetchResult = Readonly<{ rows: ReadonlyArray<BudgetRow>; cumulativeBefore: CumulativeBefore; monthEndBalances: Readonly<Record<string, number>>; monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>> }>;
 
 /**
  * Pre-computed yearly totals fetched from the server.
@@ -353,6 +354,8 @@ type YearTotalComputed = Readonly<{
   /** Sum of per-month FX adjustments for all months in this year. */
   yearFxAdjust: number;
   decemberBalance: CumulativeBalance;
+  /** December balance per liquidity tier, for year-total column. */
+  decemberBalancesByLiquidity: Readonly<Record<string, number>>;
   taintedCategories: ReadonlySet<string>;
   taintedDirections: ReadonlySet<string>;
   anyTainted: boolean;
@@ -368,6 +371,7 @@ const computeYearTotal = (
   rows: ReadonlyArray<BudgetRow>,
   cumulativeBefore: CumulativeBefore,
   monthEndBalances: Readonly<Record<string, number>>,
+  monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>,
   year: string,
   currentMonth: string,
   allowlist: ReadonlySet<string> | null,
@@ -436,6 +440,8 @@ const computeYearTotal = (
     yearFxAdjust += val;
   }
 
+  const decemberBalancesByLiquidity = monthEndBalancesByLiquidity[`${year}-12`] ?? {};
+
   return {
     directionCategoryTotals,
     directionSubtotals,
@@ -443,6 +449,7 @@ const computeYearTotal = (
     remainder,
     yearFxAdjust,
     decemberBalance,
+    decemberBalancesByLiquidity,
     taintedCategories,
     taintedDirections,
     anyTainted,
@@ -873,6 +880,7 @@ export const BudgetTable = (props: Props): ReactElement => {
   const [loadedTo, setLoadedTo] = useState<string>(initialMonthTo);
   const [cumBefore, setCumBefore] = useState<CumulativeBefore>(props.cumulativeBefore);
   const [meb, setMeb] = useState<Readonly<Record<string, number>>>(props.monthEndBalances);
+  const [mebByLiq, setMebByLiq] = useState<Readonly<Record<string, Readonly<Record<string, number>>>>>(props.monthEndBalancesByLiquidity);
   const [isLoadingLeft, setIsLoadingLeft] = useState<boolean>(false);
   const [isLoadingRight, setIsLoadingRight] = useState<boolean>(false);
   const [pendingSaves, setPendingSaves] = useState<number>(0);
@@ -958,6 +966,24 @@ export const BudgetTable = (props: Props): ReactElement => {
     [months, incomeSubtotals, spendSubtotals, transferSubtotals, meb, currentMonth],
   );
 
+  const LIQUIDITY_ORDER: ReadonlyArray<string> = ["high", "medium", "low"];
+  const LIQUIDITY_LABELS: Readonly<Record<string, string>> = { high: "Balance (high)", medium: "Balance (medium)", low: "Balance (low)" };
+
+  const liquidityTiers = useMemo<ReadonlyArray<string>>(() => {
+    const tiers = new Set<string>();
+    for (const liqMap of Object.values(mebByLiq)) {
+      for (const [liq, val] of Object.entries(liqMap)) {
+        if (val !== 0) tiers.add(liq);
+      }
+    }
+    return LIQUIDITY_ORDER.filter((l) => tiers.has(l));
+  }, [mebByLiq]);
+
+  const hasLiquidityBreakdown = useMemo<boolean>(
+    () => liquidityTiers.length > 1 || (liquidityTiers.length === 1 && liquidityTiers[0] !== "high"),
+    [liquidityTiers],
+  );
+
   const [yearFetchResults, setYearFetchResults] = useState<ReadonlyMap<string, YearFetchResult>>(new Map());
   const yearFetchingRef = useRef<Set<string>>(new Set());
 
@@ -970,7 +996,7 @@ export const BudgetTable = (props: Props): ReactElement => {
       yearFetchingRef.current.add(year);
       fetchBudgetRange(`${year}-01`, `${year}-12`, `${year}-01`, currentMonth)
         .then((result) => {
-          setYearFetchResults((prev) => new Map([...prev, [year, { rows: result.rows, cumulativeBefore: result.cumulativeBefore, monthEndBalances: result.monthEndBalances }]]));
+          setYearFetchResults((prev) => new Map([...prev, [year, { rows: result.rows, cumulativeBefore: result.cumulativeBefore, monthEndBalances: result.monthEndBalances, monthEndBalancesByLiquidity: result.monthEndBalancesByLiquidity }]]));
         })
         .catch((error) => console.error(error))
         .finally(() => {
@@ -982,7 +1008,7 @@ export const BudgetTable = (props: Props): ReactElement => {
   const yearComputed = useMemo<ReadonlyMap<string, YearTotalComputed>>(() => {
     const result = new Map<string, YearTotalComputed>();
     for (const [year, data] of yearFetchResults) {
-      result.set(year, computeYearTotal(data.rows, data.cumulativeBefore, data.monthEndBalances, year, currentMonth, effectiveAllowlist));
+      result.set(year, computeYearTotal(data.rows, data.cumulativeBefore, data.monthEndBalances, data.monthEndBalancesByLiquidity, year, currentMonth, effectiveAllowlist));
     }
     return result;
   }, [yearFetchResults, currentMonth, effectiveAllowlist]);
@@ -1029,6 +1055,7 @@ export const BudgetTable = (props: Props): ReactElement => {
         setAllRows(result.rows);
         setCumBefore(result.cumulativeBefore);
         setMeb(result.monthEndBalances);
+        setMebByLiq(result.monthEndBalancesByLiquidity);
       })
       .catch((error) => console.error(error));
 
@@ -1074,6 +1101,7 @@ export const BudgetTable = (props: Props): ReactElement => {
       });
       setLoadedFrom(newFrom);
       setMeb((prev) => ({ ...prev, ...result.monthEndBalances }));
+      setMebByLiq((prev) => ({ ...prev, ...result.monthEndBalancesByLiquidity }));
       fetchCommentRange(newFrom, newTo);
     } finally {
       isLoadingLeftRef.current = false;
@@ -1094,6 +1122,7 @@ export const BudgetTable = (props: Props): ReactElement => {
       setAllRows((prev) => [...prev, ...result.rows]);
       setLoadedTo(newTo);
       setMeb((prev) => ({ ...prev, ...result.monthEndBalances }));
+      setMebByLiq((prev) => ({ ...prev, ...result.monthEndBalancesByLiquidity }));
       fetchCommentRange(newFrom, newTo);
     } finally {
       isLoadingRightRef.current = false;
@@ -1624,6 +1653,49 @@ export const BudgetTable = (props: Props): ReactElement => {
                       );
                     })}
                   </tr>
+
+                  {hasLiquidityBreakdown && liquidityTiers.map((liq) => (
+                    <tr key={`bal-${liq}`} className="budget-category-row">
+                      <td className={`budget-category-label budget-sticky-col${derivedMaskClass}`}>{LIQUIDITY_LABELS[liq] ?? liq}</td>
+                      <td className="budget-left-spacer" />
+                      {columnSequence.map((col) => {
+                        if (col.kind === "year-total") {
+                          const yd = yearComputed.get(col.year);
+                          if (yd === undefined) {
+                            return col.year === currentYear
+                              ? <Fragment key={`total-${col.year}`}><td className="budget-cell budget-year-total budget-year-loading">&hellip;</td><td className="budget-cell budget-year-total budget-year-loading">&hellip;</td></Fragment>
+                              : <td key={`total-${col.year}`} className="budget-cell budget-year-total budget-year-loading">&hellip;</td>;
+                          }
+                          const liqVal = yd.decemberBalancesByLiquidity[liq] ?? 0;
+                          if (col.year < currentYear) {
+                            return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqVal)}</td>;
+                          }
+                          if (col.year > currentYear) {
+                            return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>&mdash;</td>;
+                          }
+                          return (
+                            <Fragment key={`total-${col.year}`}>
+                              <td className={`budget-cell budget-year-total${derivedMaskClass}`}>&mdash;</td>
+                              <td className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqVal)}</td>
+                            </Fragment>
+                          );
+                        }
+                        const liqVal = mebByLiq[col.month]?.[liq] ?? 0;
+                        if (isFutureMonth(col.month, currentMonth)) {
+                          return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>&mdash;</td>;
+                        }
+                        if (isPastMonth(col.month, currentMonth)) {
+                          return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>{formatAmount(liqVal)}</td>;
+                        }
+                        return (
+                          <Fragment key={col.month}>
+                            <td className={`budget-cell budget-cm-plan${derivedMaskClass}`}>&mdash;</td>
+                            <td className={`budget-cell budget-cm-actual${derivedMaskClass}`}>{formatAmount(liqVal)}</td>
+                          </Fragment>
+                        );
+                      })}
+                    </tr>
+                  ))}
                 </>
               );
             })()}
