@@ -7,8 +7,9 @@ import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import { DataTable } from "./data-table/DataTable";
-import type { ColumnDef, PageResult, SortState } from "./data-table/types";
+import type { ColumnDef, PageResult } from "./data-table/types";
 import { useInfiniteScroll } from "./data-table/useInfiniteScroll";
+import { useTableSort } from "./data-table/useTableSort";
 import { EditableAmount } from "./EditableAmount";
 import { EditableCategory } from "./EditableCategory";
 import { EditableDateTime } from "./EditableDateTime";
@@ -24,6 +25,8 @@ type Props = Readonly<{
 type SortKey = "ts" | "accountId" | "amount" | "currency" | "kind" | "category" | "counterparty";
 
 const PAGE_SIZE = 100;
+
+const SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = { amount: "desc" };
 
 const toDateInputValue = (date: Date): string => {
   const y = date.getFullYear();
@@ -90,11 +93,10 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   const [dateTo, setDateTo] = useState<string>(toDateInputValue(now));
   const [selectedAccount, setSelectedAccount] = useState<string>("");
 
-  const [sortKey, setSortKey] = useState<SortKey>("ts");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const { sort, onSort } = useTableSort("single", "ts", "desc", SORT_DEFAULTS);
 
   const fetchPage = async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
-    const url = buildUrl(dateFrom, dateTo, selectedAccount, sortKey, sortDir, limit, offset);
+    const url = buildUrl(dateFrom, dateTo, selectedAccount, sort[0].key as SortKey, sort[0].dir, limit, offset);
     const response = await fetch(url);
     if (!response.ok) {
       const text = await response.text();
@@ -107,20 +109,8 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   const scroll = useInfiniteScroll<LedgerEntry>(
     fetchPage,
     PAGE_SIZE,
-    [dateFrom, dateTo, selectedAccount, sortKey, sortDir],
+    [dateFrom, dateTo, selectedAccount, sort[0].key, sort[0].dir],
   );
-
-  const toggleSort = (key: string): void => {
-    const typedKey = key as SortKey;
-    if (sortKey === typedKey) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
-    } else {
-      setSortKey(typedKey);
-      setSortDir(typedKey === "amount" ? "desc" : "asc");
-    }
-  };
-
-  const sort: SortState = { key: sortKey, dir: sortDir };
 
   const optimisticUpdate = (
     entryId: string,
@@ -367,7 +357,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           rows={scroll.rows}
           rowKey={(row, idx) => `${row.entryId}-${idx}`}
           sort={sort}
-          onSort={toggleSort}
+          onSort={onSort}
           emptyMessage="No entries match the selected filters."
           loading={scroll.loading}
           loadingMore={scroll.loadingMore}

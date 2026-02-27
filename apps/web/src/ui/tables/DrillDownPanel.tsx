@@ -8,6 +8,7 @@ import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transac
 import { DataTable } from "./data-table/DataTable";
 import type { ColumnDef, PageResult } from "./data-table/types";
 import { useInfiniteScroll } from "./data-table/useInfiniteScroll";
+import { useTableSort } from "./data-table/useTableSort";
 import { EditableAmount } from "./EditableAmount";
 import { EditableCategory } from "./EditableCategory";
 import { EditableDateTime } from "./EditableDateTime";
@@ -31,8 +32,15 @@ type Props = Readonly<{
 
 const PAGE_SIZE = 100;
 
+const DRILLDOWN_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
+  amount: "desc",
+  amountUsdAbs: "desc",
+};
+
 const buildUrl = (
   filter: DrillDownFilter,
+  sortKey: string,
+  sortDir: string,
   limit: number,
   offset: number,
 ): string => {
@@ -45,8 +53,8 @@ const buildUrl = (
   if (filter.category !== null) {
     params.set("category", filter.category);
   }
-  params.set("sortKey", "amountUsdAbs");
-  params.set("sortDir", "desc");
+  params.set("sortKey", sortKey);
+  params.set("sortDir", sortDir);
   params.set("limit", String(limit));
   params.set("offset", String(offset));
   return `/api/transactions?${params.toString()}`;
@@ -90,6 +98,8 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
+  const { sort, onSort } = useTableSort("single", "amountUsdAbs", "desc", DRILLDOWN_SORT_DEFAULTS);
+
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dirtyRef = useRef<boolean>(false);
 
@@ -120,7 +130,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   }, [isDragging]);
 
   const fetchPage = async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
-    const url = buildUrl(filter, limit, offset);
+    const url = buildUrl(filter, sort[0].key, sort[0].dir, limit, offset);
     const response = await fetch(url);
     if (!response.ok) {
       const text = await response.text();
@@ -130,7 +140,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     return { items: page.entries, total: page.total };
   };
 
-  const scroll = useInfiniteScroll<LedgerEntry>(fetchPage, PAGE_SIZE, [filter]);
+  const scroll = useInfiniteScroll<LedgerEntry>(fetchPage, PAGE_SIZE, [filter, sort[0].key, sort[0].dir]);
 
   const closePanel = useCallback((): void => {
     onClose(dirtyRef.current);
@@ -217,7 +227,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         />
       ),
       rightAlign: false,
-      sortKey: null,
+      sortKey: "ts",
     };
 
     const editableAccountCol: ColumnDef<LedgerEntry> = {
@@ -234,7 +244,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         />
       ),
       rightAlign: false,
-      sortKey: null,
+      sortKey: "accountId",
     };
 
     const editableAmountCol: ColumnDef<LedgerEntry> = {
@@ -250,7 +260,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         />
       ),
       rightAlign: true,
-      sortKey: null,
+      sortKey: "amount",
     };
 
     const editableCurrencyCol: ColumnDef<LedgerEntry> = {
@@ -267,7 +277,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         />
       ),
       rightAlign: false,
-      sortKey: null,
+      sortKey: "currency",
     };
 
     const editableKindCol: ColumnDef<LedgerEntry> = {
@@ -282,7 +292,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         />
       ),
       rightAlign: false,
-      sortKey: null,
+      sortKey: "kind",
     };
 
     const editableCategoryCol: ColumnDef<LedgerEntry> = {
@@ -298,7 +308,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         />
       ),
       rightAlign: false,
-      sortKey: null,
+      sortKey: "category",
     };
 
     const editableCounterpartyCol: ColumnDef<LedgerEntry> = {
@@ -315,7 +325,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         />
       ),
       rightAlign: false,
-      sortKey: null,
+      sortKey: "counterparty",
     };
 
     const editableNoteCol: ColumnDef<LedgerEntry> = {
@@ -337,7 +347,8 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     };
 
     return [
-      editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, usdColumn(),
+      editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol,
+      { ...usdColumn(), sortKey: "amountUsdAbs" },
       editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol,
     ];
   })();
@@ -378,8 +389,8 @@ export const DrillDownPanel = (props: Props): ReactElement => {
             columns={columns}
             rows={scroll.rows}
             rowKey={(row, idx) => `${row.entryId}-${idx}`}
-            sort={null}
-            onSort={null}
+            sort={sort}
+            onSort={onSort}
             emptyMessage="No entries found."
             loading={scroll.loading}
             loadingMore={scroll.loadingMore}

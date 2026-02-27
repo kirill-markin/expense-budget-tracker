@@ -9,7 +9,10 @@ import type { AccountRow, ConversionWarning, CurrencyTotal } from "@/server/bala
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import { CellSelectOverlay } from "./CellSelectOverlay";
-import { formatAmount, sortIndicator } from "./format";
+import { DataTable } from "./data-table/DataTable";
+import type { ColumnDef } from "./data-table/types";
+import { useTableSort } from "./data-table/useTableSort";
+import { formatAmount } from "./format";
 
 type Props = Readonly<{
   accounts: ReadonlyArray<AccountRow>;
@@ -17,8 +20,6 @@ type Props = Readonly<{
   conversionWarnings: ReadonlyArray<ConversionWarning>;
   reportingCurrency: string;
 }>;
-
-type SortDir = "asc" | "desc";
 
 type TotalsSortKey = "currency" | "balance" | "balancePositive" | "balanceNegative" | "balanceUsd";
 
@@ -29,6 +30,26 @@ type Rect = Readonly<{ top: number; left: number; width: number; height: number 
 const LIQUIDITY_OPTIONS: ReadonlyArray<string> = ["high", "medium", "low"];
 
 const LIQUIDITY_ORDER: Readonly<Record<string, number>> = { high: 0, medium: 1, low: 2 };
+
+const TOTALS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
+  currency: "asc",
+  balancePositive: "desc",
+  balanceNegative: "desc",
+  balance: "desc",
+  balanceUsd: "desc",
+};
+
+const ACCOUNTS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
+  accountId: "asc",
+  currency: "asc",
+  liquidity: "asc",
+  balance: "desc",
+  balanceUsd: "desc",
+  lastTransactionTs: "asc",
+  daysAgo: "asc",
+  status: "asc",
+  freshness: "desc",
+};
 
 const formatDate = (isoString: string): string => {
   const date = new Date(isoString);
@@ -48,7 +69,7 @@ const daysAgoLabel = (days: number): string => {
   return `${days} days ago`;
 };
 
-const compareTotals = (a: CurrencyTotal, b: CurrencyTotal, key: TotalsSortKey, dir: SortDir): number => {
+const compareTotals = (a: CurrencyTotal, b: CurrencyTotal, key: TotalsSortKey, dir: "asc" | "desc"): number => {
   let cmp = 0;
   switch (key) {
     case "currency":
@@ -70,7 +91,7 @@ const compareTotals = (a: CurrencyTotal, b: CurrencyTotal, key: TotalsSortKey, d
   return dir === "asc" ? cmp : -cmp;
 };
 
-const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir: SortDir): number => {
+const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir: "asc" | "desc"): number => {
   let cmp = 0;
   switch (key) {
     case "accountId":
@@ -102,7 +123,6 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
       const aOverdue = a.overdue ? 1 : 0;
       const bOverdue = b.overdue ? 1 : 0;
       cmp = aOverdue - bOverdue;
-      // tiebreaker: highest USD balance first
       if (cmp === 0) cmp = (a.balanceUsd ?? -Infinity) - (b.balanceUsd ?? -Infinity);
       break;
     }
@@ -131,11 +151,9 @@ export const BalancesTable = (props: Props): ReactElement => {
   const [localAccounts, setLocalAccounts] = useState<ReadonlyArray<AccountRow>>(accountsProp);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [totalsSortKey, setTotalsSortKey] = useState<TotalsSortKey>("balanceUsd");
-  const [totalsSortDir, setTotalsSortDir] = useState<SortDir>("desc");
+  const totalsSort = useTableSort("multi", "balanceUsd", "desc", TOTALS_SORT_DEFAULTS);
+  const accountsSort = useTableSort("multi", "freshness", "desc", ACCOUNTS_SORT_DEFAULTS);
 
-  const [accountsSortKey, setAccountsSortKey] = useState<AccountsSortKey>("freshness");
-  const [accountsSortDir, setAccountsSortDir] = useState<SortDir>("desc");
   const [lastTxInfoOpen, setLastTxInfoOpen] = useState<boolean>(false);
   const [statusInfoOpen, setStatusInfoOpen] = useState<boolean>(false);
   const [overdueInfoOpen, setOverdueInfoOpen] = useState<boolean>(false);
@@ -144,8 +162,6 @@ export const BalancesTable = (props: Props): ReactElement => {
   const [liquidityOpen, setLiquidityOpen] = useState<string | null>(null);
   const [liquidityRect, setLiquidityRect] = useState<Rect | null>(null);
   const liquidityCellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
-
-  const displayAmount = formatAmount;
 
   const handleLiquidityClick = useCallback((accountId: string): void => {
     const cell = liquidityCellRefs.current.get(accountId);
@@ -178,27 +194,15 @@ export const BalancesTable = (props: Props): ReactElement => {
     setLiquidityRect(null);
   }, []);
 
-  const toggleTotalsSort = (key: TotalsSortKey): void => {
-    if (totalsSortKey === key) {
-      setTotalsSortDir(totalsSortDir === "asc" ? "desc" : "asc");
-    } else {
-      setTotalsSortKey(key);
-      setTotalsSortDir(key === "currency" ? "asc" : "desc");
-    }
-  };
-
-  const toggleAccountsSort = (key: AccountsSortKey): void => {
-    if (accountsSortKey === key) {
-      setAccountsSortDir(accountsSortDir === "asc" ? "desc" : "asc");
-    } else {
-      setAccountsSortKey(key);
-      setAccountsSortDir(key === "balance" || key === "balanceUsd" || key === "freshness" ? "desc" : "asc");
-    }
-  };
-
   const sortedTotals = useMemo<ReadonlyArray<CurrencyTotal>>(
-    () => [...totals].filter((t) => t.balance !== 0).sort((a, b) => compareTotals(a, b, totalsSortKey, totalsSortDir)),
-    [totals, totalsSortKey, totalsSortDir],
+    () => [...totals].filter((t) => t.balance !== 0).sort((a, b) => {
+      for (const entry of totalsSort.sort) {
+        const cmp = compareTotals(a, b, entry.key as TotalsSortKey, entry.dir);
+        if (cmp !== 0) return cmp;
+      }
+      return 0;
+    }),
+    [totals, totalsSort.sort],
   );
 
   const inactiveCount = useMemo<number>(
@@ -214,9 +218,13 @@ export const BalancesTable = (props: Props): ReactElement => {
         const bInactive = b.status !== "active" ? 1 : 0;
         if (aInactive !== bInactive) return aInactive - bInactive;
       }
-      return compareAccounts(a, b, accountsSortKey, accountsSortDir);
+      for (const entry of accountsSort.sort) {
+        const cmp = compareAccounts(a, b, entry.key as AccountsSortKey, entry.dir);
+        if (cmp !== 0) return cmp;
+      }
+      return 0;
     });
-  }, [localAccounts, accountsSortKey, accountsSortDir, showInactive]);
+  }, [localAccounts, accountsSort.sort, showInactive]);
 
   const totalUsd = useMemo<number | null>(() => {
     let sum = 0;
@@ -256,23 +264,226 @@ export const BalancesTable = (props: Props): ReactElement => {
 
   const currencyList = conversionWarnings.map((w) => w.currency).join(", ");
 
-  const thTotals = (label: string, key: TotalsSortKey, rightAlign: boolean): ReactElement => (
-    <th
-      className={`txn-th txn-th-sortable${rightAlign ? " txn-th-right" : ""}`}
-      onClick={() => toggleTotalsSort(key)}
-    >
-      {label}{sortIndicator(totalsSortKey === key, totalsSortDir)}
-    </th>
-  );
+  const totalsColumns: ReadonlyArray<ColumnDef<CurrencyTotal>> = [
+    {
+      key: "currency",
+      header: "Currency",
+      renderCell: (t: CurrencyTotal): ReactElement => (
+        <td key="currency" className={`txn-cell${maskClass}`}>{t.currency}</td>
+      ),
+      rightAlign: false,
+      sortKey: "currency",
+    },
+    {
+      key: "balancePositive",
+      header: "Total +",
+      renderCell: (t: CurrencyTotal): ReactElement => (
+        <td key="balancePositive" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balancePositive)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balancePositive",
+    },
+    {
+      key: "balanceNegative",
+      header: "Total -",
+      renderCell: (t: CurrencyTotal): ReactElement => (
+        <td key="balanceNegative" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balanceNegative)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balanceNegative",
+    },
+    {
+      key: "balance",
+      header: "Balance",
+      renderCell: (t: CurrencyTotal): ReactElement => (
+        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balance)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balance",
+    },
+    {
+      key: "balanceUsd",
+      header: `${reportingCurrency} equivalent`,
+      renderCell: (t: CurrencyTotal): ReactElement => (
+        <td key="balanceUsd" className={`txn-cell txn-cell-right${maskClass} ${t.hasUnconvertible ? "budget-error" : ""}`}>
+          {t.balanceUsd !== null ? formatAmount(t.balanceUsd) : "\u2014"}
+        </td>
+      ),
+      rightAlign: true,
+      sortKey: "balanceUsd",
+    },
+  ];
 
-  const thAccounts = (label: string, key: AccountsSortKey, rightAlign: boolean): ReactElement => (
-    <th
-      className={`txn-th txn-th-sortable${rightAlign ? " txn-th-right" : ""}`}
-      onClick={() => toggleAccountsSort(key)}
-    >
-      {label}{sortIndicator(accountsSortKey === key, accountsSortDir)}
-    </th>
-  );
+  const totalsFooterRows: ReadonlyArray<ReactElement> = [
+    <tr key="total" className="txn-row txn-row-total">
+      <td className="txn-cell txn-cell-bold">Total ({reportingCurrency})</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalPositiveUsd)}</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalNegativeUsd)}</td>
+      <td className="txn-cell" />
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>
+        {totalUsd !== null ? formatAmount(totalUsd) : "\u2014"}
+      </td>
+    </tr>,
+  ];
+
+  const accountsColumns: ReadonlyArray<ColumnDef<AccountRow>> = [
+    {
+      key: "accountId",
+      header: "Account",
+      renderCell: (a: AccountRow): ReactElement => (
+        <td key="accountId" className={`txn-cell txn-cell-mono copyable-cell${maskClass}`} onClick={() => copyToClipboard(a.accountId)}>
+          {a.accountId}
+        </td>
+      ),
+      rightAlign: false,
+      sortKey: "accountId",
+    },
+    {
+      key: "currency",
+      header: "Currency",
+      renderCell: (a: AccountRow): ReactElement => (
+        <td key="currency" className={`txn-cell${maskClass}`}>{a.currency}</td>
+      ),
+      rightAlign: false,
+      sortKey: "currency",
+    },
+    {
+      key: "liquidity",
+      header: "Liquidity",
+      renderCell: (a: AccountRow): ReactElement => (
+        <td
+          key="liquidity"
+          ref={(el) => {
+            if (el !== null) liquidityCellRefs.current.set(a.accountId, el);
+            else liquidityCellRefs.current.delete(a.accountId);
+          }}
+          className={`txn-cell${isMasked ? "" : " drilldown-editable drilldown-editable-select"}${maskClass}`}
+          onClick={isMasked ? undefined : () => handleLiquidityClick(a.accountId)}
+        >
+          {a.liquidity}
+          {liquidityOpen === a.accountId && liquidityRect !== null && (
+            <CellSelectOverlay
+              options={LIQUIDITY_OPTIONS}
+              currentValue={a.liquidity}
+              allowEmpty={false}
+              rect={liquidityRect}
+              onSelect={(value) => handleLiquiditySelect(a.accountId, a.liquidity, value)}
+              onClose={handleLiquidityClose}
+            />
+          )}
+        </td>
+      ),
+      rightAlign: false,
+      sortKey: "liquidity",
+    },
+    {
+      key: "balance",
+      header: "Balance",
+      renderCell: (a: AccountRow): ReactElement => (
+        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(a.balance)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balance",
+    },
+    {
+      key: "balanceUsd",
+      header: `Balance ${reportingCurrency}`,
+      renderCell: (a: AccountRow): ReactElement => (
+        <td key="balanceUsd" className={`txn-cell txn-cell-right${maskClass}`}>
+          {a.balanceUsd !== null ? formatAmount(a.balanceUsd) : "\u2014"}
+        </td>
+      ),
+      rightAlign: true,
+      sortKey: "balanceUsd",
+    },
+    {
+      key: "lastTransactionTs",
+      header: (
+        <span style={{ position: "relative" }}>
+          Last transaction
+          <span
+            className="txn-info-icon"
+            onClick={(e) => { e.stopPropagation(); setLastTxInfoOpen(!lastTxInfoOpen); }}
+          >
+            &#9432;
+          </span>
+          {lastTxInfoOpen && (
+            <div className="txn-info-popup">
+              Last transaction excluding transfers.
+            </div>
+          )}
+        </span>
+      ),
+      renderCell: (a: AccountRow): ReactElement => {
+        const isStale = a.overdue && a.status === "active";
+        return (
+          <td key="lastTx" className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>
+            {a.lastTransactionTs !== null ? formatDate(a.lastTransactionTs) : "\u2014"}
+          </td>
+        );
+      },
+      rightAlign: false,
+      sortKey: "lastTransactionTs",
+    },
+    {
+      key: "daysAgo",
+      header: "Days ago",
+      renderCell: (a: AccountRow): ReactElement => {
+        const days = a.lastTransactionTs !== null ? daysAgo(a.lastTransactionTs) : null;
+        const isStale = a.overdue && a.status === "active";
+        return (
+          <td key="daysAgo" className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>
+            {days !== null ? daysAgoLabel(days) : "\u2014"}
+          </td>
+        );
+      },
+      rightAlign: false,
+      sortKey: "daysAgo",
+    },
+    {
+      key: "status",
+      header: (
+        <span style={{ position: "relative" }}>
+          Status
+          <span
+            className="txn-info-icon"
+            onClick={(e) => { e.stopPropagation(); setStatusInfoOpen(!statusInfoOpen); }}
+          >
+            &#9432;
+          </span>
+          {statusInfoOpen && (
+            <div className="txn-info-popup">
+              Inactive = balance is 0 and last transaction was more than 3 months ago.
+            </div>
+          )}
+        </span>
+      ),
+      renderCell: (a: AccountRow): ReactElement => {
+        const isInactive = a.status === "inactive";
+        return (
+          <td key="status" className={`txn-cell${maskClass} ${isInactive ? "txn-status-inactive" : ""}`}>{a.status}</td>
+        );
+      },
+      rightAlign: false,
+      sortKey: "status",
+    },
+    {
+      key: "freshness",
+      header: "Freshness",
+      renderCell: (a: AccountRow): ReactElement => {
+        const isStale = a.overdue && a.status === "active";
+        return (
+          <td key="freshness" className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>{isStale ? "overdue" : "\u2014"}</td>
+        );
+      },
+      rightAlign: false,
+      sortKey: "freshness",
+    },
+  ];
+
+  const accountRowClassName = (a: AccountRow): string => {
+    return a.status === "inactive" ? "txn-row txn-row-inactive" : "txn-row";
+  };
 
   return (
     <>
@@ -293,39 +504,18 @@ export const BalancesTable = (props: Props): ReactElement => {
       )}
       <h2 className="txn-section-title">Totals</h2>
       <div className="txn-scroll">
-        <table className="txn-table">
-          <thead>
-            <tr>
-              {thTotals("Currency", "currency", false)}
-              {thTotals("Total +", "balancePositive", true)}
-              {thTotals("Total -", "balanceNegative", true)}
-              {thTotals("Balance", "balance", true)}
-              {thTotals(`${reportingCurrency} equivalent`, "balanceUsd", true)}
-            </tr>
-          </thead>
-          <tbody>
-            {sortedTotals.map((t) => (
-              <tr key={t.currency} className="txn-row">
-                <td className={`txn-cell${maskClass}`}>{t.currency}</td>
-                <td className={`txn-cell txn-cell-right${maskClass}`}>{displayAmount(t.balancePositive)}</td>
-                <td className={`txn-cell txn-cell-right${maskClass}`}>{displayAmount(t.balanceNegative)}</td>
-                <td className={`txn-cell txn-cell-right${maskClass}`}>{displayAmount(t.balance)}</td>
-                <td className={`txn-cell txn-cell-right${maskClass} ${t.hasUnconvertible ? "budget-error" : ""}`}>
-                  {t.balanceUsd !== null ? formatAmount(t.balanceUsd) : "\u2014"}
-                </td>
-              </tr>
-            ))}
-            <tr className="txn-row txn-row-total">
-              <td className="txn-cell txn-cell-bold">Total ({reportingCurrency})</td>
-              <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{displayAmount(totalPositiveUsd)}</td>
-              <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{displayAmount(totalNegativeUsd)}</td>
-              <td className="txn-cell" />
-              <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>
-                {totalUsd !== null ? formatAmount(totalUsd) : "\u2014"}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <DataTable<CurrencyTotal>
+          columns={totalsColumns}
+          rows={sortedTotals}
+          rowKey={(t) => t.currency}
+          sort={totalsSort.sort}
+          onSort={totalsSort.onSort}
+          emptyMessage="No currency totals."
+          loading={false}
+          loadingMore={false}
+          sentinelRef={null}
+          footerRows={totalsFooterRows}
+        />
       </div>
 
       <h2 className="txn-section-title" style={{ position: "relative", display: "inline-block" }}>
@@ -344,104 +534,18 @@ export const BalancesTable = (props: Props): ReactElement => {
         )}
       </h2>
       <div className="txn-scroll">
-        <table className="txn-table">
-          <thead>
-            <tr>
-              {thAccounts("Account", "accountId", false)}
-              {thAccounts("Currency", "currency", false)}
-              {thAccounts("Liquidity", "liquidity", false)}
-              {thAccounts("Balance", "balance", true)}
-              {thAccounts(`Balance ${reportingCurrency}`, "balanceUsd", true)}
-              <th
-                className="txn-th txn-th-sortable"
-                onClick={() => toggleAccountsSort("lastTransactionTs")}
-                style={{ position: "relative" }}
-              >
-                Last transaction
-                <span
-                  className="txn-info-icon"
-                  onClick={(e) => { e.stopPropagation(); setLastTxInfoOpen(!lastTxInfoOpen); }}
-                >
-                  &#9432;
-                </span>
-                {lastTxInfoOpen && (
-                  <div className="txn-info-popup">
-                    Last transaction excluding transfers.
-                  </div>
-                )}
-                {sortIndicator(accountsSortKey === "lastTransactionTs", accountsSortDir)}
-              </th>
-              {thAccounts("Days ago", "daysAgo", false)}
-              <th
-                className="txn-th txn-th-sortable"
-                onClick={() => toggleAccountsSort("status")}
-                style={{ position: "relative" }}
-              >
-                Status
-                <span
-                  className="txn-info-icon"
-                  onClick={(e) => { e.stopPropagation(); setStatusInfoOpen(!statusInfoOpen); }}
-                >
-                  &#9432;
-                </span>
-                {statusInfoOpen && (
-                  <div className="txn-info-popup">
-                    Inactive = balance is 0 and last transaction was more than 3 months ago.
-                  </div>
-                )}
-                {sortIndicator(accountsSortKey === "status", accountsSortDir)}
-              </th>
-              {thAccounts("Freshness", "freshness", false)}
-            </tr>
-          </thead>
-          <tbody>
-            {sortedAccounts.map((a) => {
-              const days = a.lastTransactionTs !== null ? daysAgo(a.lastTransactionTs) : null;
-              const isStale = a.overdue && a.status === "active";
-              const isInactive = a.status === "inactive";
-              return (
-                <tr key={a.accountId} className={`txn-row ${isInactive ? "txn-row-inactive" : ""}`}>
-                  <td className={`txn-cell txn-cell-mono copyable-cell${maskClass}`} onClick={() => copyToClipboard(a.accountId)}>
-                    {a.accountId}
-                  </td>
-                  <td className={`txn-cell${maskClass}`}>{a.currency}</td>
-                  <td
-                    ref={(el) => {
-                      if (el !== null) liquidityCellRefs.current.set(a.accountId, el);
-                      else liquidityCellRefs.current.delete(a.accountId);
-                    }}
-                    className={`txn-cell${isMasked ? "" : " drilldown-editable drilldown-editable-select"}${maskClass}`}
-                    onClick={isMasked ? undefined : () => handleLiquidityClick(a.accountId)}
-                  >
-                    {a.liquidity}
-                    {liquidityOpen === a.accountId && liquidityRect !== null && (
-                      <CellSelectOverlay
-                        options={LIQUIDITY_OPTIONS}
-                        currentValue={a.liquidity}
-                        allowEmpty={false}
-                        rect={liquidityRect}
-                        onSelect={(value) => handleLiquiditySelect(a.accountId, a.liquidity, value)}
-                        onClose={handleLiquidityClose}
-                      />
-                    )}
-                  </td>
-                  <td className={`txn-cell txn-cell-right${maskClass}`}>{displayAmount(a.balance)}</td>
-                  <td className={`txn-cell txn-cell-right${maskClass}`}>
-                    {a.balanceUsd !== null ? formatAmount(a.balanceUsd) : "\u2014"}
-                  </td>
-                  <td className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>
-                    {a.lastTransactionTs !== null ? formatDate(a.lastTransactionTs) : "\u2014"}
-                  </td>
-                  <td className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>
-                    {days !== null ? daysAgoLabel(days) : "\u2014"}
-                  </td>
-                  <td className={`txn-cell${maskClass} ${isInactive ? "txn-status-inactive" : ""}`}>{a.status}</td>
-                  <td className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>{isStale ? "overdue" : "\u2014"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <DataTable<AccountRow>
+          columns={accountsColumns}
+          rows={sortedAccounts}
+          rowKey={(a) => a.accountId}
+          sort={accountsSort.sort}
+          onSort={accountsSort.onSort}
+          emptyMessage="No account data."
+          loading={false}
+          loadingMore={false}
+          sentinelRef={null}
+          rowClassName={accountRowClassName}
+        />
       </div>
       {inactiveCount > 0 && (
         <button

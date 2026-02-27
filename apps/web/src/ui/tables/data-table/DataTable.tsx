@@ -1,10 +1,17 @@
 import { type ReactElement } from "react";
 
 import { sortIndicator } from "../format";
-import type { DataTableProps } from "./types";
+import type { DataTableProps, SortEntry } from "./types";
+
+const findSortEntry = (sort: ReadonlyArray<SortEntry> | null, sortKey: string | null): { entry: SortEntry; position: number } | null => {
+  if (sort === null || sortKey === null) return null;
+  const idx = sort.findIndex((s) => s.key === sortKey);
+  if (idx === -1) return null;
+  return { entry: sort[idx], position: idx + 1 };
+};
 
 export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
-  const { columns, rows, rowKey, sort, onSort, emptyMessage, loading, loadingMore, sentinelRef } = props;
+  const { columns, rows, rowKey, sort, onSort, emptyMessage, loading, loadingMore, sentinelRef, footerRows, rowClassName } = props;
 
   return (
     <>
@@ -13,14 +20,14 @@ export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
           <tr>
             {columns.map((col) => {
               const sortable = col.sortKey !== null && onSort !== null;
-              const active = sort !== null && col.sortKey === sort.key;
+              const found = findSortEntry(sort, col.sortKey);
               return (
                 <th
                   key={col.key}
                   className={`txn-th${sortable ? " txn-th-sortable" : ""}${col.rightAlign ? " txn-th-right" : ""}`}
                   onClick={sortable ? () => onSort(col.sortKey!) : undefined}
                 >
-                  {col.header}{active ? sortIndicator(true, sort.dir) : ""}
+                  {col.header}{found !== null ? sortIndicator(true, found.entry.dir, found.position) : ""}
                 </th>
               );
             })}
@@ -28,7 +35,7 @@ export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
         </thead>
         <tbody>
           {rows.map((row, idx) => (
-            <tr key={rowKey(row, idx)} className="txn-row">
+            <tr key={rowKey(row, idx)} className={rowClassName !== undefined ? rowClassName(row, idx) : "txn-row"}>
               {columns.map((col) => col.renderCell(row, idx))}
             </tr>
           ))}
@@ -39,13 +46,16 @@ export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
               </td>
             </tr>
           )}
+          {footerRows !== undefined && footerRows}
         </tbody>
       </table>
 
-      <div ref={sentinelRef} className="txn-scroll-sentinel">
-        {loading && <span className="loading-indicator">Loading<span className="loading-dots" /></span>}
-        {loadingMore && <span className="loading-indicator">Loading more<span className="loading-dots" /></span>}
-      </div>
+      {sentinelRef !== null && (
+        <div ref={sentinelRef} className="txn-scroll-sentinel">
+          {loading && <span className="loading-indicator">Loading<span className="loading-dots" /></span>}
+          {loadingMore && <span className="loading-indicator">Loading more<span className="loading-dots" /></span>}
+        </div>
+      )}
     </>
   );
 };

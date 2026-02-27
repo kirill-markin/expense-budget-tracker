@@ -2,16 +2,18 @@ import type { ReactElement, RefObject } from "react";
 
 export type ColumnDef<T> = Readonly<{
   key: string;
-  header: string;
+  header: string | ReactElement;
   renderCell: (row: T, rowIndex: number) => ReactElement;
   rightAlign: boolean;
   sortKey: string | null;
 }>;
 
-export type SortState = Readonly<{
+export type SortEntry = Readonly<{
   key: string;
   dir: "asc" | "desc";
 }>;
+
+export type SortState = ReadonlyArray<SortEntry>;
 
 export type DataTableProps<T> = Readonly<{
   columns: ReadonlyArray<ColumnDef<T>>;
@@ -22,7 +24,9 @@ export type DataTableProps<T> = Readonly<{
   emptyMessage: string;
   loading: boolean;
   loadingMore: boolean;
-  sentinelRef: RefObject<HTMLDivElement | null>;
+  sentinelRef: RefObject<HTMLDivElement | null> | null;
+  footerRows?: ReadonlyArray<ReactElement>;
+  rowClassName?: (row: T, index: number) => string;
 }>;
 
 export type PageResult<T> = Readonly<{

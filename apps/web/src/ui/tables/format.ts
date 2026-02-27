@@ -9,7 +9,9 @@ export const formatDateTime = (isoString: string): string => {
     + " " + date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
 };
 
-export const sortIndicator = (active: boolean, dir: "asc" | "desc"): string => {
+export const sortIndicator = (active: boolean, dir: "asc" | "desc", position?: number): string => {
   if (!active) return "";
-  return dir === "asc" ? " \u2191" : " \u2193";
+  const arrow = dir === "asc" ? "\u2191" : "\u2193";
+  if (position !== undefined && position > 1) return ` ${position}${arrow}`;
+  return ` ${arrow}`;
 };
