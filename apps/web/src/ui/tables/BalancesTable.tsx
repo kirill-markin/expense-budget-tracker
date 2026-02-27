@@ -23,6 +23,16 @@ type Props = Readonly<{
 
 type TotalsSortKey = "currency" | "balance" | "balancePositive" | "balanceNegative" | "balanceUsd";
 
+type LiquidityTotal = Readonly<{
+  liquidity: string;
+  balance: number;
+  balancePositive: number;
+  balanceNegative: number;
+  accountCount: number;
+}>;
+
+type LiquiditySortKey = "liquidity" | "balance" | "balancePositive" | "balanceNegative" | "accountCount";
+
 type AccountsSortKey = "accountId" | "currency" | "liquidity" | "balance" | "balanceUsd" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
@@ -37,6 +47,14 @@ const TOTALS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   balanceNegative: "desc",
   balance: "desc",
   balanceUsd: "desc",
+};
+
+const LIQUIDITY_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
+  liquidity: "asc",
+  balancePositive: "desc",
+  balanceNegative: "desc",
+  balance: "desc",
+  accountCount: "desc",
 };
 
 const ACCOUNTS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
@@ -86,6 +104,28 @@ const compareTotals = (a: CurrencyTotal, b: CurrencyTotal, key: TotalsSortKey, d
       break;
     case "balanceUsd":
       cmp = (a.balanceUsd ?? -Infinity) - (b.balanceUsd ?? -Infinity);
+      break;
+  }
+  return dir === "asc" ? cmp : -cmp;
+};
+
+const compareLiquidityTotals = (a: LiquidityTotal, b: LiquidityTotal, key: LiquiditySortKey, dir: "asc" | "desc"): number => {
+  let cmp = 0;
+  switch (key) {
+    case "liquidity":
+      cmp = (LIQUIDITY_ORDER[a.liquidity] ?? 0) - (LIQUIDITY_ORDER[b.liquidity] ?? 0);
+      break;
+    case "balance":
+      cmp = a.balance - b.balance;
+      break;
+    case "balancePositive":
+      cmp = a.balancePositive - b.balancePositive;
+      break;
+    case "balanceNegative":
+      cmp = a.balanceNegative - b.balanceNegative;
+      break;
+    case "accountCount":
+      cmp = a.accountCount - b.accountCount;
       break;
   }
   return dir === "asc" ? cmp : -cmp;
@@ -152,6 +192,7 @@ export const BalancesTable = (props: Props): ReactElement => {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const totalsSort = useTableSort("multi", "balanceUsd", "desc", TOTALS_SORT_DEFAULTS);
+  const liquiditySort = useTableSort("multi", "liquidity", "asc", LIQUIDITY_SORT_DEFAULTS);
   const accountsSort = useTableSort("multi", "freshness", "desc", ACCOUNTS_SORT_DEFAULTS);
 
   const [lastTxInfoOpen, setLastTxInfoOpen] = useState<boolean>(false);
@@ -204,6 +245,40 @@ export const BalancesTable = (props: Props): ReactElement => {
     }),
     [totals, totalsSort.sort],
   );
+
+  const sortedLiquidityTotals = useMemo<ReadonlyArray<LiquidityTotal>>(() => {
+    const groups = new Map<string, { balance: number; balancePositive: number; balanceNegative: number; accountCount: number }>();
+    for (const a of localAccounts) {
+      if (a.status !== "active") continue;
+      const usd = a.balanceUsd ?? 0;
+      const existing = groups.get(a.liquidity);
+      if (existing !== undefined) {
+        existing.balance += usd;
+        if (usd > 0) existing.balancePositive += usd;
+        if (usd < 0) existing.balanceNegative += usd;
+        existing.accountCount += 1;
+      } else {
+        groups.set(a.liquidity, {
+          balance: usd,
+          balancePositive: usd > 0 ? usd : 0,
+          balanceNegative: usd < 0 ? usd : 0,
+          accountCount: 1,
+        });
+      }
+    }
+    const rows: Array<LiquidityTotal> = [];
+    for (const [liquidity, g] of groups) {
+      if (g.accountCount === 0) continue;
+      rows.push({ liquidity, balance: g.balance, balancePositive: g.balancePositive, balanceNegative: g.balanceNegative, accountCount: g.accountCount });
+    }
+    return rows.sort((a, b) => {
+      for (const entry of liquiditySort.sort) {
+        const cmp = compareLiquidityTotals(a, b, entry.key as LiquiditySortKey, entry.dir);
+        if (cmp !== 0) return cmp;
+      }
+      return 0;
+    });
+  }, [localAccounts, liquiditySort.sort]);
 
   const inactiveCount = useMemo<number>(
     () => localAccounts.filter((a) => a.status !== "active").length,
@@ -323,6 +398,66 @@ export const BalancesTable = (props: Props): ReactElement => {
       <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>
         {totalUsd !== null ? formatAmount(totalUsd) : "\u2014"}
       </td>
+    </tr>,
+  ];
+
+  const liquidityColumns: ReadonlyArray<ColumnDef<LiquidityTotal>> = [
+    {
+      key: "liquidity",
+      header: "Liquidity",
+      renderCell: (t: LiquidityTotal): ReactElement => (
+        <td key="liquidity" className={`txn-cell${maskClass}`}>{t.liquidity}</td>
+      ),
+      rightAlign: false,
+      sortKey: "liquidity",
+    },
+    {
+      key: "balancePositive",
+      header: "Total +",
+      renderCell: (t: LiquidityTotal): ReactElement => (
+        <td key="balancePositive" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balancePositive)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balancePositive",
+    },
+    {
+      key: "balanceNegative",
+      header: "Total -",
+      renderCell: (t: LiquidityTotal): ReactElement => (
+        <td key="balanceNegative" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balanceNegative)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balanceNegative",
+    },
+    {
+      key: "balance",
+      header: "Balance",
+      renderCell: (t: LiquidityTotal): ReactElement => (
+        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balance)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balance",
+    },
+    {
+      key: "accountCount",
+      header: "Accounts",
+      renderCell: (t: LiquidityTotal): ReactElement => (
+        <td key="accountCount" className={`txn-cell txn-cell-right${maskClass}`}>{t.accountCount}</td>
+      ),
+      rightAlign: true,
+      sortKey: "accountCount",
+    },
+  ];
+
+  const liquidityFooterRows: ReadonlyArray<ReactElement> = [
+    <tr key="total" className="txn-row txn-row-total">
+      <td className="txn-cell txn-cell-bold">Total ({reportingCurrency})</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalPositiveUsd)}</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalNegativeUsd)}</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>
+        {totalUsd !== null ? formatAmount(totalUsd) : "\u2014"}
+      </td>
+      <td className="txn-cell" />
     </tr>,
   ];
 
@@ -502,7 +637,7 @@ export const BalancesTable = (props: Props): ReactElement => {
           <span>{saveError}</span>
         </div>
       )}
-      <h2 className="txn-section-title">Totals</h2>
+      <h2 className="txn-section-title">By currency</h2>
       <div className="txn-scroll">
         <DataTable<CurrencyTotal>
           columns={totalsColumns}
@@ -515,6 +650,22 @@ export const BalancesTable = (props: Props): ReactElement => {
           loadingMore={false}
           sentinelRef={null}
           footerRows={totalsFooterRows}
+        />
+      </div>
+
+      <h2 className="txn-section-title">By liquidity</h2>
+      <div className="txn-scroll">
+        <DataTable<LiquidityTotal>
+          columns={liquidityColumns}
+          rows={sortedLiquidityTotals}
+          rowKey={(t) => t.liquidity}
+          sort={liquiditySort.sort}
+          onSort={liquiditySort.onSort}
+          emptyMessage="No liquidity data."
+          loading={false}
+          loadingMore={false}
+          sentinelRef={null}
+          footerRows={liquidityFooterRows}
         />
       </div>
 
