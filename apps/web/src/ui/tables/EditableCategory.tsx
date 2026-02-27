@@ -44,7 +44,7 @@ export const EditableCategory = (props: Props): ReactElement => {
   return (
     <td
       ref={cellRef}
-      className={`txn-cell${isMasked ? "" : " drilldown-editable"}${maskClass}`}
+      className={`txn-cell${isMasked ? "" : " drilldown-editable drilldown-editable-select"}${maskClass}`}
       onClick={isMasked ? undefined : handleClick}
     >
       {entry.category ?? "\u2014"}

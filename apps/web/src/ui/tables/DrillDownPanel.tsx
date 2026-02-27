@@ -3,7 +3,7 @@
 import { type ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
+import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 
 import { DataTable } from "./data-table/DataTable";
 import type { ColumnDef, PageResult } from "./data-table/types";
@@ -25,6 +25,7 @@ export type DrillDownFilter = Readonly<{
 type Props = Readonly<{
   filter: DrillDownFilter;
   categories: ReadonlyArray<string>;
+  hints: FieldHints;
   onClose: (dirty: boolean) => void;
 }>;
 
@@ -81,7 +82,7 @@ const saveEntry = async (entry: LedgerEntry): Promise<void> => {
 };
 
 export const DrillDownPanel = (props: Props): ReactElement => {
-  const { filter, categories, onClose } = props;
+  const { filter, categories, hints, onClose } = props;
 
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -226,6 +227,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           currentValue={row.accountId}
           maskClass=""
           onCommit={handleAccountCommit}
+          hints={hints.accounts}
         />
       ),
       rightAlign: false,
@@ -258,6 +260,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           currentValue={row.currency}
           maskClass=""
           onCommit={handleCurrencyCommit}
+          hints={hints.currencies}
         />
       ),
       rightAlign: false,
@@ -305,6 +308,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           currentValue={row.counterparty}
           maskClass=""
           onCommit={handleCounterpartyCommit}
+          hints={hints.counterparties}
         />
       ),
       rightAlign: false,
@@ -322,6 +326,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           maskClass=""
           onCommit={handleNoteCommit}
           cellClass="txn-cell-note"
+          hints={hints.notes}
         />
       ),
       rightAlign: false,
@@ -332,7 +337,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
       editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, usdColumn(),
       editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol,
     ];
-  }, [categories]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [categories, hints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>

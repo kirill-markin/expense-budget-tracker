@@ -5,7 +5,8 @@ import { offsetMonth, getCurrentMonth } from "@/lib/monthUtils";
 import { isDemoMode } from "@/lib/demoMode";
 import { getBudgetGrid } from "@/server/budget/getBudgetGrid";
 import { getReportCurrency } from "@/server/reportCurrency";
-import { getDemoBudgetGrid } from "@/server/demo/data";
+import { getFieldHints } from "@/server/transactions/getTransactions";
+import { getDemoBudgetGrid, getDemoFieldHints } from "@/server/demo/data";
 import { BudgetTable } from "@/ui/tables/BudgetTable";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
@@ -22,6 +23,7 @@ async function BudgetData() {
 
   if (demo) {
     const { rows, conversionWarnings, cumulativeBefore, monthEndBalances } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
+    const hints = getDemoFieldHints();
     return (
       <BudgetTable
         rows={rows}
@@ -31,6 +33,7 @@ async function BudgetData() {
         initialMonthFrom={monthFrom}
         initialMonthTo={monthTo}
         reportingCurrency="USD"
+        hints={hints}
       />
     );
   }
@@ -39,9 +42,10 @@ async function BudgetData() {
   const userId = headersList.get("x-user-id") ?? "local";
   const workspaceId = headersList.get("x-workspace-id") ?? "local";
 
-  const [{ rows, conversionWarnings, cumulativeBefore, monthEndBalances }, reportingCurrency] = await Promise.all([
+  const [{ rows, conversionWarnings, cumulativeBefore, monthEndBalances }, reportingCurrency, hints] = await Promise.all([
     getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth),
     getReportCurrency(userId, workspaceId),
+    getFieldHints(userId, workspaceId),
   ]);
 
   return (
@@ -53,6 +57,7 @@ async function BudgetData() {
       initialMonthFrom={monthFrom}
       initialMonthTo={monthTo}
       reportingCurrency={reportingCurrency}
+      hints={hints}
     />
   );
 }

@@ -46,7 +46,7 @@ export const EditableKind = (props: Props): ReactElement => {
   return (
     <td
       ref={cellRef}
-      className={`txn-cell${isMasked ? "" : " drilldown-editable"}${maskClass}`}
+      className={`txn-cell${isMasked ? "" : " drilldown-editable drilldown-editable-select"}${maskClass}`}
       onClick={isMasked ? undefined : handleClick}
     >
       {entry.kind}

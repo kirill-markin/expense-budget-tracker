@@ -212,3 +212,28 @@ export const getCategories = async (userId: string, workspaceId: string): Promis
   );
   return result.rows.map((row: { category: string }) => row.category);
 };
+
+export type FieldHints = Readonly<{
+  accounts: ReadonlyArray<string>;
+  currencies: ReadonlyArray<string>;
+  counterparties: ReadonlyArray<string>;
+  notes: ReadonlyArray<string>;
+}>;
+
+const HINTS_SQL = (col: string): string =>
+  `SELECT DISTINCT ${col} FROM ledger_entries WHERE ts >= NOW() - INTERVAL '60 days' AND ${col} IS NOT NULL ORDER BY ${col}`;
+
+export const getFieldHints = async (userId: string, workspaceId: string): Promise<FieldHints> => {
+  const [accounts, currencies, counterparties, notes] = await Promise.all([
+    queryAs(userId, workspaceId, HINTS_SQL("account_id"), []),
+    queryAs(userId, workspaceId, HINTS_SQL("currency"), []),
+    queryAs(userId, workspaceId, HINTS_SQL("counterparty"), []),
+    queryAs(userId, workspaceId, HINTS_SQL("note"), []),
+  ]);
+  return {
+    accounts: accounts.rows.map((r: { account_id: string }) => r.account_id),
+    currencies: currencies.rows.map((r: { currency: string }) => r.currency),
+    counterparties: counterparties.rows.map((r: { counterparty: string }) => r.counterparty),
+    notes: notes.rows.map((r: { note: string }) => r.note),
+  };
+};

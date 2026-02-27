@@ -4,6 +4,7 @@ import { Fragment, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import type { FieldHints } from "@/server/transactions/getTransactions";
 import type { MaskLevel, CellVisibility } from "@/lib/dataMask";
 import { SENSITIVE_SPEND_CATEGORIES, getCellVisibility } from "@/lib/dataMask";
 import { offsetMonth, getCurrentMonth, generateMonthRange, getYear, getYearMonths } from "@/lib/monthUtils";
@@ -25,6 +26,7 @@ type Props = Readonly<{
   initialMonthFrom: string;
   initialMonthTo: string;
   reportingCurrency: string;
+  hints: FieldHints;
 }>;
 
 type CellValue = Readonly<{
@@ -852,7 +854,7 @@ const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 };
 
 export const BudgetTable = (props: Props): ReactElement => {
-  const { conversionWarnings, initialMonthFrom, initialMonthTo, reportingCurrency } = props;
+  const { conversionWarnings, initialMonthFrom, initialMonthTo, reportingCurrency, hints } = props;
   const [maskLevel, setMaskLevel] = useState<MaskLevel>("hidden");
   const { commentedCells, fetchRange: fetchCommentRange, updateCell: updateCommentCell } = useCommentPresence(initialMonthFrom, initialMonthTo);
   const { toastMessage, copyToClipboard } = useCopyToast();
@@ -1625,7 +1627,7 @@ export const BudgetTable = (props: Props): ReactElement => {
       </div>
       {toastMessage !== null && <div className="copy-toast">{toastMessage}</div>}
       {drillDownFilter !== null && (
-        <DrillDownPanel filter={drillDownFilter} categories={allCategories} onClose={handleDrillDownClose} />
+        <DrillDownPanel filter={drillDownFilter} categories={allCategories} hints={hints} onClose={handleDrillDownClose} />
       )}
       {fxBreakdownMonth !== null && (
         <FxBreakdownPanel month={fxBreakdownMonth} onClose={() => setFxBreakdownMonth(null)} />

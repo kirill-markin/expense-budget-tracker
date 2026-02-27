@@ -673,6 +673,15 @@ tbody tr:last-child .budget-cm-actual {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+.drilldown-editable-select::after {
+  content: " \25BE";
+  color: var(--muted);
+  font-size: 10px;
+  opacity: 0;
+}
+.drilldown-editable-select:hover::after {
+  opacity: 1;
+}
 
 .drilldown-input {
   font-family: inherit;

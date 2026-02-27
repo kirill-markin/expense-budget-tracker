@@ -3,7 +3,7 @@
 import { type ReactElement } from "react";
 import { useMemo, useState } from "react";
 
-import type { AccountOption, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
+import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { DataMaskToggle } from "@/ui/DataMaskToggle";
 import { useDataMask } from "@/ui/hooks/useDataMask";
 
@@ -19,6 +19,7 @@ import { EditableText } from "./EditableText";
 type Props = Readonly<{
   accounts: ReadonlyArray<AccountOption>;
   categories: ReadonlyArray<string>;
+  hints: FieldHints;
 }>;
 
 type SortKey = "ts" | "accountId" | "amount" | "currency" | "kind" | "category" | "counterparty";
@@ -74,7 +75,7 @@ const saveEntry = async (entry: LedgerEntry): Promise<void> => {
 };
 
 export const TransactionsRawTable = (props: Props): ReactElement => {
-  const { accounts, categories } = props;
+  const { accounts, categories, hints } = props;
   const { maskLevel, setMaskLevel } = useDataMask();
   const maskClass = maskLevel === "all" ? "" : " data-masked";
 
@@ -199,6 +200,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           currentValue={row.accountId}
           maskClass={maskClass}
           onCommit={handleAccountCommit}
+          hints={hints.accounts}
         />
       ),
       rightAlign: false,
@@ -231,6 +233,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           currentValue={row.currency}
           maskClass={maskClass}
           onCommit={handleCurrencyCommit}
+          hints={hints.currencies}
         />
       ),
       rightAlign: false,
@@ -278,6 +281,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           currentValue={row.counterparty}
           maskClass={maskClass}
           onCommit={handleCounterpartyCommit}
+          hints={hints.counterparties}
         />
       ),
       rightAlign: false,
@@ -295,6 +299,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           maskClass={maskClass}
           onCommit={handleNoteCommit}
           cellClass="txn-cell-note"
+          hints={hints.notes}
         />
       ),
       rightAlign: false,
@@ -302,7 +307,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     };
 
     return [editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol];
-  }, [maskClass, categories]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [maskClass, categories, hints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>

@@ -6,7 +6,7 @@ import type { AccountRow, BalancesSummaryResult, CurrencyTotal } from "@/server/
 import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
 import type { FxBreakdownResult, FxBreakdownRow } from "@/server/budget/getFxBreakdown";
-import type { AccountOption, LedgerEntry, TransactionsFilter, TransactionsPage } from "@/server/transactions/getTransactions";
+import type { AccountOption, FieldHints, LedgerEntry, TransactionsFilter, TransactionsPage } from "@/server/transactions/getTransactions";
 import { generateMonthRange, getCurrentMonth, offsetMonth } from "@/lib/monthUtils";
 
 // ---------------------------------------------------------------------------
@@ -333,6 +333,26 @@ export const getDemoCategories = (): ReadonlyArray<string> => {
     if (entry.category !== null) set.add(entry.category);
   }
   return [...set].sort();
+};
+
+export const getDemoFieldHints = (): FieldHints => {
+  const entries = generate().entries;
+  const accounts = new Set<string>();
+  const currencies = new Set<string>();
+  const counterparties = new Set<string>();
+  const notes = new Set<string>();
+  for (const e of entries) {
+    accounts.add(e.accountId);
+    currencies.add(e.currency);
+    if (e.counterparty !== null) counterparties.add(e.counterparty);
+    if (e.note !== null) notes.add(e.note);
+  }
+  return {
+    accounts: [...accounts].sort(),
+    currencies: [...currencies].sort(),
+    counterparties: [...counterparties].sort(),
+    notes: [...notes].sort(),
+  };
 };
 
 // ---------------------------------------------------------------------------

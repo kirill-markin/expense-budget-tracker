@@ -2,6 +2,8 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { CellComboOverlay } from "./CellComboOverlay";
+
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 type Props = Readonly<{
@@ -10,10 +12,11 @@ type Props = Readonly<{
   maskClass: string;
   onCommit: (entryId: string, newValue: string | null, oldValue: string | null) => void;
   cellClass?: string;
+  hints?: ReadonlyArray<string>;
 }>;
 
 export const EditableText = (props: Props): ReactElement => {
-  const { entryId, currentValue, maskClass, onCommit, cellClass } = props;
+  const { entryId, currentValue, maskClass, onCommit, cellClass, hints } = props;
   const tdClass = cellClass !== undefined ? `txn-cell ${cellClass}` : "txn-cell";
 
   const [editing, setEditing] = useState<boolean>(false);
@@ -59,7 +62,20 @@ export const EditableText = (props: Props): ReactElement => {
     }
   };
 
+  const handleComboCommit = (value: string | null): void => {
+    setEditing(false);
+    setRect(null);
+    if (value === currentValue) return;
+    onCommit(entryId, value, currentValue);
+  };
+
+  const handleComboClose = (): void => {
+    setEditing(false);
+    setRect(null);
+  };
+
   const isMasked = maskClass.length > 0;
+  const hasHints = hints !== undefined && hints.length > 0;
 
   return (
     <td
@@ -68,7 +84,16 @@ export const EditableText = (props: Props): ReactElement => {
       onClick={isMasked ? undefined : startEditing}
     >
       {currentValue ?? "\u2014"}
-      {editing && rect !== null && createPortal(
+      {editing && rect !== null && hasHints && (
+        <CellComboOverlay
+          hints={hints}
+          currentValue={currentValue}
+          rect={rect}
+          onCommit={handleComboCommit}
+          onClose={handleComboClose}
+        />
+      )}
+      {editing && rect !== null && !hasHints && createPortal(
         <input
           ref={inputRef}
           className="cell-editor-overlay"
