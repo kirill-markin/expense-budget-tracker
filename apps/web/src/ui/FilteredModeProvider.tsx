@@ -26,17 +26,21 @@ type ProviderProps = Readonly<{
 export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
   const { isDemoMode, children } = props;
 
-  const [visibilityMode, setVisibilityModeState] = useState<VisibilityMode>(() => {
-    if (isDemoMode) return "all";
-    if (typeof window === "undefined") return "filtered";
+  const [visibilityMode, setVisibilityModeState] = useState<VisibilityMode>(
+    isDemoMode ? "all" : "filtered",
+  );
+
+  // Restore saved mode from localStorage after hydration
+  useEffect(() => {
+    if (isDemoMode) return;
     const savedMode = localStorage.getItem(STORAGE_MODE_KEY) as VisibilityMode | null;
     const lastActiveStr = localStorage.getItem(STORAGE_LAST_ACTIVE_KEY);
-    if (savedMode === null || lastActiveStr === null) return "filtered";
+    if (savedMode === null || lastActiveStr === null) return;
     const elapsed = Date.now() - Number(lastActiveStr);
     const TWO_MINUTES_MS = 2 * 60 * 1000;
-    if (elapsed >= TWO_MINUTES_MS) return "filtered";
-    return savedMode;
-  });
+    if (elapsed >= TWO_MINUTES_MS) return;
+    setVisibilityModeState(savedMode);
+  }, [isDemoMode]);
 
   const [allowedCategories, setAllowedCategories] = useState<ReadonlySet<string>>(new Set());
   const [allCategories, setAllCategories] = useState<ReadonlyArray<string>>([]);
