@@ -1070,6 +1070,34 @@ tbody tr:last-child .budget-cm-actual {
   margin-top: 4px;
 }
 
+/* Expense treemap */
+
+.treemap-heading {
+  margin-top: 32px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.treemap-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.treemap-wrap svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.treemap-total {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+
 /* Account menu */
 
 .topbar-actions {

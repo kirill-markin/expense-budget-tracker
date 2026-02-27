@@ -5,12 +5,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getCurrentMonth } from "@/lib/monthUtils";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
+import type { LedgerEntry } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 import { BudgetStreamChart } from "@/ui/charts/BudgetStreamChart";
+import { ExpenseTreemapChart } from "@/ui/charts/ExpenseTreemapChart";
 
 type BudgetGridResponse = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
+}>;
+
+type TransactionsResponse = Readonly<{
+  entries: ReadonlyArray<LedgerEntry>;
+  total: number;
 }>;
 
 type Props = Readonly<{
@@ -20,8 +27,17 @@ type Props = Readonly<{
   reportingCurrency: string;
 }>;
 
-const buildUrl = (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): string =>
+const buildBudgetUrl = (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): string =>
   `/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}&planFrom=${planFrom}&actualTo=${actualTo}`;
+
+const lastDayOfMonth = (month: string): string => {
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return `${month}-${String(lastDay).padStart(2, "0")}`;
+};
+
+const buildTreemapUrl = (monthFrom: string, monthTo: string): string =>
+  `/api/transactions?dateFrom=${monthFrom}-01&dateTo=${lastDayOfMonth(monthTo)}&kind=spend&limit=500&sortKey=amountUsdAbs&sortDir=desc`;
 
 export const BudgetStreamDashboard = (props: Props): ReactElement => {
   const { initialRows, initialMonthFrom, initialMonthTo, reportingCurrency } = props;
@@ -31,14 +47,17 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
   const [rows, setRows] = useState<ReadonlyArray<BudgetRow>>(initialRows);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [treemapEntries, setTreemapEntries] = useState<ReadonlyArray<LedgerEntry>>([]);
+  const [treemapLoading, setTreemapLoading] = useState<boolean>(true);
   const { effectiveAllowlist } = useFilteredMode();
 
   const currentMonth = useMemo(() => getCurrentMonth(), []);
   const fetchIdRef = useRef<number>(0);
+  const treemapFetchIdRef = useRef<number>(0);
   const isInitialRef = useRef<boolean>(true);
 
-  const fetchData = useCallback(async (currentFetchId: number): Promise<void> => {
-    const url = buildUrl(monthFrom, monthTo, currentMonth, currentMonth);
+  const fetchBudgetData = useCallback(async (currentFetchId: number): Promise<void> => {
+    const url = buildBudgetUrl(monthFrom, monthTo, currentMonth, currentMonth);
     const response = await fetch(url);
     if (!response.ok) {
       const text = await response.text();
@@ -49,8 +68,23 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
     if (fetchIdRef.current !== currentFetchId) return;
 
     setRows(data.rows);
+  }, [monthFrom, monthTo, currentMonth]);
+
+  const fetchTreemapData = useCallback(async (currentFetchId: number): Promise<void> => {
+    const url = buildTreemapUrl(monthFrom, monthTo);
+    const response = await fetch(url);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`${response.status}: ${text}`);
+    }
+    const data: TransactionsResponse = await response.json();
+
+    if (treemapFetchIdRef.current !== currentFetchId) return;
+
+    setTreemapEntries(data.entries);
   }, [monthFrom, monthTo]);
 
+  // Fetch budget grid data on month change
   useEffect(() => {
     if (isInitialRef.current) {
       isInitialRef.current = false;
@@ -61,7 +95,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
     setLoading(true);
     setError(null);
 
-    fetchData(fetchId)
+    fetchBudgetData(fetchId)
       .catch((err: unknown) => {
         if (fetchIdRef.current !== fetchId) return;
         setError(err instanceof Error ? err.message : String(err));
@@ -70,7 +104,23 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
         if (fetchIdRef.current !== fetchId) return;
         setLoading(false);
       });
-  }, [fetchData]);
+  }, [fetchBudgetData]);
+
+  // Fetch treemap transaction data on month change
+  useEffect(() => {
+    const fetchId = ++treemapFetchIdRef.current;
+    setTreemapLoading(true);
+
+    fetchTreemapData(fetchId)
+      .catch(() => {
+        if (treemapFetchIdRef.current !== fetchId) return;
+        setTreemapEntries([]);
+      })
+      .finally(() => {
+        if (treemapFetchIdRef.current !== fetchId) return;
+        setTreemapLoading(false);
+      });
+  }, [fetchTreemapData]);
 
   return (
     <>
@@ -106,6 +156,18 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
 
       {!loading && error === null && (
         <BudgetStreamChart rows={rows} allowlist={effectiveAllowlist} reportingCurrency={reportingCurrency} />
+      )}
+
+      <h2 className="treemap-heading">Expense Map</h2>
+
+      {treemapLoading && <LoadingIndicator />}
+
+      {!treemapLoading && (
+        <ExpenseTreemapChart
+          entries={treemapEntries}
+          allowlist={effectiveAllowlist}
+          reportingCurrency={reportingCurrency}
+        />
       )}
     </>
   );
