@@ -41,24 +41,20 @@ a:hover {
   font-weight: 600;
 }
 
-.filtered-category-picker {
-  background: var(--panel);
-  border-bottom: 1px solid var(--panel-border);
-  padding: 8px 16px;
+.filtered-cats-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.filtered-cats-list {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
   font-size: 13px;
 }
 
-.filtered-picker-actions {
-  width: 100%;
-  display: flex;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.filtered-picker-item {
+.filtered-cats-item {
   display: flex;
   align-items: center;
   gap: 4px;

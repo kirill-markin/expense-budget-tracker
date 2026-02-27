@@ -8,13 +8,12 @@ type FilteredModeContextValue = Readonly<{
   visibilityMode: VisibilityMode;
   setVisibilityMode: (mode: VisibilityMode) => void;
   allowedCategories: ReadonlySet<string>;
-  setAllowedCategories: (cats: ReadonlySet<string>) => void;
   effectiveAllowlist: ReadonlySet<string> | null;
   allCategories: ReadonlyArray<string>;
+  categoriesLoading: boolean;
 }>;
 
 const STORAGE_MODE_KEY = "expense-tracker-visibility-mode";
-const STORAGE_CATS_KEY = "expense-tracker-allowed-categories";
 
 const FilteredModeContext = createContext<FilteredModeContextValue | null>(null);
 
@@ -34,21 +33,9 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     return "real";
   });
 
-  const [allowedCategories, setAllowedCategoriesState] = useState<ReadonlySet<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    const stored = localStorage.getItem(STORAGE_CATS_KEY);
-    if (stored !== null) {
-      try {
-        const parsed: unknown = JSON.parse(stored);
-        if (Array.isArray(parsed)) return new Set(parsed as ReadonlyArray<string>);
-      } catch {
-        // ignore
-      }
-    }
-    return new Set();
-  });
-
+  const [allowedCategories, setAllowedCategories] = useState<ReadonlySet<string>>(new Set());
   const [allCategories, setAllCategories] = useState<ReadonlyArray<string>>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState<boolean>(true);
 
   useEffect(() => {
     fetch("/api/categories")
@@ -60,22 +47,29 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
       .catch((err: unknown) => console.error("Failed to fetch categories:", err));
   }, []);
 
+  useEffect(() => {
+    fetch("/api/workspace-settings")
+      .then((res) => {
+        if (!res.ok) throw new Error(`Workspace settings API: ${res.status}`);
+        return res.json() as Promise<{ filteredCategories: ReadonlyArray<string> | null }>;
+      })
+      .then((data) => {
+        if (data.filteredCategories !== null) {
+          setAllowedCategories(new Set(data.filteredCategories));
+        }
+      })
+      .catch((err: unknown) => console.error("Failed to fetch filtered categories:", err))
+      .finally(() => setCategoriesLoading(false));
+  }, []);
+
   const setVisibilityMode = (mode: VisibilityMode): void => {
     setVisibilityModeState(mode);
-  };
-
-  const setAllowedCategories = (cats: ReadonlySet<string>): void => {
-    setAllowedCategoriesState(cats);
   };
 
   useEffect(() => {
     if (isDemoMode) return;
     localStorage.setItem(STORAGE_MODE_KEY, visibilityMode);
   }, [visibilityMode, isDemoMode]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_CATS_KEY, JSON.stringify([...allowedCategories]));
-  }, [allowedCategories]);
 
   const effectiveAllowlist: ReadonlySet<string> | null =
     !isDemoMode && visibilityMode === "filtered" ? allowedCategories : null;
@@ -84,9 +78,9 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     visibilityMode: isDemoMode ? "real" : visibilityMode,
     setVisibilityMode,
     allowedCategories,
-    setAllowedCategories,
     effectiveAllowlist,
     allCategories,
+    categoriesLoading,
   };
 
   return (
