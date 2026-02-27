@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { FieldHints } from "@/server/transactions/getTransactions";
-import { getCellVisibility } from "@/lib/dataMask";
+import { getCellVisibility, type CellVisibility } from "@/lib/dataMask";
 import { offsetMonth, getCurrentMonth, generateMonthRange, getYear, getYearMonths } from "@/lib/monthUtils";
 import type { BudgetRow, ConversionWarning, CumulativeBefore, BudgetGridResult } from "@/server/budget/getBudgetGrid";
 import { useCommentPresence } from "@/ui/hooks/useCommentPresence";
@@ -1333,8 +1333,10 @@ export const BudgetTable = (props: Props): ReactElement => {
           </thead>
           <tbody>
             {blocks.map((block) => {
-              const dirVis = getCellVisibility(effectiveAllowlist, null);
               const useFilteredSubtotals = effectiveAllowlist !== null;
+              // Direction rows show filtered subtotals (only allowed categories) in
+              // filtered mode, so they are always safe to display unmasked.
+              const dirVis: CellVisibility = { showData: true, maskClass: "" };
 
               return (
                 <Fragment key={block.direction}>
