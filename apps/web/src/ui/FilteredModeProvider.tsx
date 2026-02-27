@@ -14,6 +14,7 @@ type FilteredModeContextValue = Readonly<{
 }>;
 
 const STORAGE_MODE_KEY = "expense-tracker-visibility-mode";
+const STORAGE_LAST_ACTIVE_KEY = "expense-tracker-last-active-ts";
 
 const FilteredModeContext = createContext<FilteredModeContextValue | null>(null);
 
@@ -27,7 +28,14 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
 
   const [visibilityMode, setVisibilityModeState] = useState<VisibilityMode>(() => {
     if (isDemoMode) return "all";
-    return "filtered";
+    if (typeof window === "undefined") return "filtered";
+    const savedMode = localStorage.getItem(STORAGE_MODE_KEY) as VisibilityMode | null;
+    const lastActiveStr = localStorage.getItem(STORAGE_LAST_ACTIVE_KEY);
+    if (savedMode === null || lastActiveStr === null) return "filtered";
+    const elapsed = Date.now() - Number(lastActiveStr);
+    const TWO_MINUTES_MS = 2 * 60 * 1000;
+    if (elapsed >= TWO_MINUTES_MS) return "filtered";
+    return savedMode;
   });
 
   const [allowedCategories, setAllowedCategories] = useState<ReadonlySet<string>>(new Set());
@@ -74,16 +82,28 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
 
     const switchToFiltered = (): void => setVisibilityModeState("filtered");
 
-    const handleVisibilityChange = (): void => {
-      if (document.hidden) switchToFiltered();
-    };
-
     const INACTIVITY_MS = 2 * 60 * 1000;
     let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
 
     const resetInactivityTimer = (): void => {
       if (inactivityTimer !== null) clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(switchToFiltered, INACTIVITY_MS);
+      localStorage.setItem(STORAGE_LAST_ACTIVE_KEY, String(Date.now()));
+    };
+
+    const handleVisibilityChange = (): void => {
+      if (document.hidden) {
+        localStorage.setItem(STORAGE_LAST_ACTIVE_KEY, String(Date.now()));
+      } else {
+        const lastActiveStr = localStorage.getItem(STORAGE_LAST_ACTIVE_KEY);
+        if (lastActiveStr !== null) {
+          const elapsed = Date.now() - Number(lastActiveStr);
+          if (elapsed >= INACTIVITY_MS) {
+            switchToFiltered();
+          }
+        }
+        resetInactivityTimer();
+      }
     };
 
     const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
