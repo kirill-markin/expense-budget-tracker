@@ -37,7 +37,7 @@ type HoverInfo = Readonly<{
 const WIDTH = 900;
 const HEIGHT = 600;
 const HEADER_H = 18;
-const PAD_TOP = HEADER_H + 6;
+const PAD_TOP = HEADER_H + 20;
 
 const fmtTotal = (value: number, currency: string): string =>
   `${Math.round(value).toLocaleString("en-US")} ${currency}`;
