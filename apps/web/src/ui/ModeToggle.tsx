@@ -12,9 +12,9 @@ export const ModeToggle = (props: Props): ReactElement => {
   const { isDemoMode } = props;
   const { visibilityMode, setVisibilityMode } = useFilteredMode();
 
-  const activeMode: "real" | "filtered" | "demo" = isDemoMode ? "demo" : visibilityMode;
+  const activeMode: "all" | "filtered" | "demo" = isDemoMode ? "demo" : visibilityMode;
 
-  const switchTo = (target: "real" | "filtered" | "demo"): void => {
+  const switchTo = (target: "all" | "filtered" | "demo"): void => {
     if (target === activeMode) return;
 
     if (target === "demo") {
@@ -31,18 +31,18 @@ export const ModeToggle = (props: Props): ReactElement => {
       return;
     }
 
-    // Real ↔ Filtered: instant, no reload
+    // All ↔ Filtered: instant, no reload
     setVisibilityMode(target);
   };
 
   return (
     <div className="data-mask-segmented">
       <button
-        className={`data-mask-seg${activeMode === "real" ? " data-mask-seg-active" : ""}`}
+        className={`data-mask-seg${activeMode === "all" ? " data-mask-seg-active" : ""}`}
         type="button"
-        onClick={() => switchTo("real")}
+        onClick={() => switchTo("all")}
       >
-        Real
+        All
       </button>
       <button
         className={`data-mask-seg${activeMode === "filtered" ? " data-mask-seg-active" : ""}`}

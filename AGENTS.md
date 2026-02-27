@@ -60,7 +60,7 @@ For UI/frontend work, run the Next.js dev server directly — no Docker needed:
 cd apps/web && npm run dev
 ```
 
-Toggle **Demo mode** via the Real/Demo button in the UI header (sets a `demo=true` browser cookie). Demo mode serves all data from `apps/web/src/server/demo/data.ts` in-memory — no Postgres required. This gives instant hot reload on code changes.
+Toggle **Demo mode** via the All/Demo button in the UI header (sets a `demo=true` browser cookie). Demo mode serves all data from `apps/web/src/server/demo/data.ts` in-memory — no Postgres required. This gives instant hot reload on code changes.
 
 Use `make dev` (Docker Compose) only when you need a real database — e.g. testing migrations, SQL queries, or the worker. Docker runs a production Next.js build, so every code change requires `docker compose -f infra/docker/compose.yml build web` to take effect.
 

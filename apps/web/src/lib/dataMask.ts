@@ -2,7 +2,7 @@ export type CellVisibility = Readonly<{ showData: boolean; maskClass: string }>;
 
 /**
  * Returns visibility for a cell given the current allowlist.
- * allowlist=null means "show all" (Real mode).
+ * allowlist=null means "show all" (All mode).
  * allowlist !== null && category === null means aggregate row (Remainder/Balance) — always masked.
  * allowlist !== null && allowlist.has(category) — visible.
  * allowlist !== null && !allowlist.has(category) — masked.

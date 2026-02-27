@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
 
-type VisibilityMode = "real" | "filtered";
+type VisibilityMode = "all" | "filtered";
 
 type FilteredModeContextValue = Readonly<{
   visibilityMode: VisibilityMode;
@@ -26,7 +26,7 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
   const { isDemoMode, children } = props;
 
   const [visibilityMode, setVisibilityModeState] = useState<VisibilityMode>(() => {
-    if (isDemoMode) return "real";
+    if (isDemoMode) return "all";
     return "filtered";
   });
 
@@ -105,7 +105,7 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     !isDemoMode && visibilityMode === "filtered" ? allowedCategories : null;
 
   const value: FilteredModeContextValue = {
-    visibilityMode: isDemoMode ? "real" : visibilityMode,
+    visibilityMode: isDemoMode ? "all" : visibilityMode,
     setVisibilityMode,
     allowedCategories,
     effectiveAllowlist,
