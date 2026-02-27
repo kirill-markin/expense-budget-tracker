@@ -6,7 +6,9 @@ import { listWorkspaces, type WorkspaceSummary } from "@/server/listWorkspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { AccountMenu } from "@/ui/AccountMenu";
 import { CurrencySelector } from "@/ui/CurrencySelector";
-import { DemoModeToggle } from "@/ui/DemoModeToggle";
+import { FilteredBanner } from "@/ui/FilteredBanner";
+import { FilteredModeProvider } from "@/ui/FilteredModeProvider";
+import { ModeToggle } from "@/ui/ModeToggle";
 
 import "./globals.css";
 
@@ -24,49 +26,56 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   let workspaces: ReadonlyArray<WorkspaceSummary> = [];
   let currentWorkspaceId = "";
   if (!demo) {
-    const headersList = await headers();
-    const userId = headersList.get("x-user-id") ?? "local";
-    let workspaceId = headersList.get("x-workspace-id") ?? "local";
     try {
-      reportingCurrency = await getReportCurrency(userId, workspaceId);
-    } catch {
-      workspaceId = userId;
-      reportingCurrency = await getReportCurrency(userId, workspaceId);
-    }
-    currentWorkspaceId = workspaceId;
-    if (authEnabled) {
-      workspaces = await listWorkspaces(userId, workspaceId);
+      const headersList = await headers();
+      const userId = headersList.get("x-user-id") ?? "local";
+      let workspaceId = headersList.get("x-workspace-id") ?? "local";
+      try {
+        reportingCurrency = await getReportCurrency(userId, workspaceId);
+      } catch {
+        workspaceId = userId;
+        reportingCurrency = await getReportCurrency(userId, workspaceId);
+      }
+      currentWorkspaceId = workspaceId;
+      if (authEnabled) {
+        workspaces = await listWorkspaces(userId, workspaceId);
+      }
+    } catch (err) {
+      console.error("Layout DB unavailable, using defaults: %s", err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
     <html lang="en">
       <body>
-        {demo && (
-          <div className="demo-banner">
-            Demo mode — data is static, writes are discarded
-          </div>
-        )}
-        <header className="topbar">
-          <a href="/" className="topbar-brand">Expense Budget Tracker</a>
-          <div className="topbar-actions">
-            <DemoModeToggle isDemoMode={demo} />
-            <AccountMenu
-              authEnabled={authEnabled}
-              workspaces={workspaces}
-              currentWorkspaceId={currentWorkspaceId}
-            />
-          </div>
-        </header>
-        <nav className="nav">
-          <a href="/budget">Budget</a>
-          <a href="/transactions">Transactions</a>
-          <a href="/balances">Balances</a>
-          <a href="/dashboards">Dashboard</a>
-          <a href="/settings">Settings</a>
-          <CurrencySelector initialCurrency={reportingCurrency} />
-        </nav>
-        {children}
+        <FilteredModeProvider isDemoMode={demo}>
+          {demo && (
+            <div className="demo-banner">
+              Demo mode — data is static, writes are discarded
+            </div>
+          )}
+          <FilteredBanner />
+          <header className="topbar">
+            <a href="/" className="topbar-brand">Expense Budget Tracker</a>
+            <div className="topbar-actions">
+              <ModeToggle isDemoMode={demo} />
+              <AccountMenu
+                authEnabled={authEnabled}
+                workspaces={workspaces}
+                currentWorkspaceId={currentWorkspaceId}
+              />
+            </div>
+          </header>
+          <nav className="nav">
+            <a href="/budget">Budget</a>
+            <a href="/transactions">Transactions</a>
+            <a href="/balances">Balances</a>
+            <a href="/dashboards">Dashboard</a>
+            <a href="/settings">Settings</a>
+            <CurrencySelector initialCurrency={reportingCurrency} />
+          </nav>
+          {children}
+        </FilteredModeProvider>
       </body>
     </html>
   );

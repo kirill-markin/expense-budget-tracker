@@ -6,8 +6,7 @@ import { useMemo, useState } from "react";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 
 import type { AccountRow, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
-import { DataMaskToggle } from "@/ui/DataMaskToggle";
-import { useDataMask } from "@/ui/hooks/useDataMask";
+import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import { formatAmount, sortIndicator } from "./format";
 
@@ -103,8 +102,8 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
 
 export const BalancesTable = (props: Props): ReactElement => {
   const { accounts, totals, conversionWarnings, reportingCurrency } = props;
-  const { maskLevel, setMaskLevel } = useDataMask();
-  const maskClass = maskLevel === "all" ? "" : " data-masked";
+  const { effectiveAllowlist } = useFilteredMode();
+  const maskClass = effectiveAllowlist !== null ? " data-masked" : "";
   const { toastMessage, copyToClipboard } = useCopyToast();
 
   const [totalsSortKey, setTotalsSortKey] = useState<TotalsSortKey>("balanceUsd");
@@ -226,10 +225,6 @@ export const BalancesTable = (props: Props): ReactElement => {
           </span>
         </div>
       )}
-      <div className="data-mask-toggle">
-        <DataMaskToggle maskLevel={maskLevel} setMaskLevel={setMaskLevel} showSpendOption={false} />
-      </div>
-
       <h2 className="txn-section-title">Totals</h2>
       <div className="txn-scroll">
         <table className="txn-table">

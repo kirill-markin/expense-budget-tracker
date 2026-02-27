@@ -5,10 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getCurrentMonth } from "@/lib/monthUtils";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
-import { DataMaskToggle } from "@/ui/DataMaskToggle";
+import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 import { BudgetStreamChart } from "@/ui/charts/BudgetStreamChart";
-import { useDataMask } from "@/ui/hooks/useDataMask";
 
 type BudgetGridResponse = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -32,7 +31,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
   const [rows, setRows] = useState<ReadonlyArray<BudgetRow>>(initialRows);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const { maskLevel, setMaskLevel } = useDataMask();
+  const { effectiveAllowlist } = useFilteredMode();
 
   const currentMonth = useMemo(() => getCurrentMonth(), []);
   const fetchIdRef = useRef<number>(0);
@@ -75,10 +74,6 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className="data-mask-toggle">
-        <DataMaskToggle maskLevel={maskLevel} setMaskLevel={setMaskLevel} showSpendOption={true} />
-      </div>
-
       <div className="txn-filters">
         <label className="txn-filter-label">
           From
@@ -110,7 +105,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       {loading && <LoadingIndicator />}
 
       {!loading && error === null && (
-        <BudgetStreamChart rows={rows} maskLevel={maskLevel} reportingCurrency={reportingCurrency} />
+        <BudgetStreamChart rows={rows} allowlist={effectiveAllowlist} reportingCurrency={reportingCurrency} />
       )}
     </>
   );

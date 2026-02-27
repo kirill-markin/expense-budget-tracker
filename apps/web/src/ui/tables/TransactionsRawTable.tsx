@@ -4,8 +4,7 @@ import { type ReactElement } from "react";
 import { useMemo, useState } from "react";
 
 import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
-import { DataMaskToggle } from "@/ui/DataMaskToggle";
-import { useDataMask } from "@/ui/hooks/useDataMask";
+import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import { DataTable } from "./data-table/DataTable";
 import type { ColumnDef, PageResult, SortState } from "./data-table/types";
@@ -76,8 +75,13 @@ const saveEntry = async (entry: LedgerEntry): Promise<void> => {
 
 export const TransactionsRawTable = (props: Props): ReactElement => {
   const { accounts, categories, hints } = props;
-  const { maskLevel, setMaskLevel } = useDataMask();
-  const maskClass = maskLevel === "all" ? "" : " data-masked";
+  const { effectiveAllowlist } = useFilteredMode();
+
+  const getMaskClass = (category: string | null): string => {
+    if (effectiveAllowlist === null) return "";
+    if (category !== null && effectiveAllowlist.has(category)) return "";
+    return " data-masked";
+  };
 
   const now = new Date();
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
@@ -182,7 +186,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           key="date"
           entryId={row.entryId}
           currentValue={row.ts}
-          maskClass={maskClass}
+          maskClass={getMaskClass(row.category)}
           onDateTimeCommit={handleDateTimeCommit}
         />
       ),
@@ -198,7 +202,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           key="account"
           entryId={row.entryId}
           currentValue={row.accountId}
-          maskClass={maskClass}
+          maskClass={getMaskClass(row.category)}
           onCommit={handleAccountCommit}
           hints={hints.accounts}
         />
@@ -215,7 +219,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           key="amount"
           entryId={row.entryId}
           currentValue={row.amount}
-          maskClass={maskClass}
+          maskClass={getMaskClass(row.category)}
           onAmountCommit={handleAmountCommit}
         />
       ),
@@ -231,7 +235,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           key="currency"
           entryId={row.entryId}
           currentValue={row.currency}
-          maskClass={maskClass}
+          maskClass={getMaskClass(row.category)}
           onCommit={handleCurrencyCommit}
           hints={hints.currencies}
         />
@@ -247,7 +251,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
         <EditableKind
           key="kind"
           entry={row}
-          maskClass={maskClass}
+          maskClass={getMaskClass(row.category)}
           onKindChange={handleKindChange}
         />
       ),
@@ -263,7 +267,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           key="category"
           entry={row}
           categories={categories}
-          maskClass={maskClass}
+          maskClass={getMaskClass(row.category)}
           onCategoryChange={handleCategoryChange}
         />
       ),
@@ -279,7 +283,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           key="counterparty"
           entryId={row.entryId}
           currentValue={row.counterparty}
-          maskClass={maskClass}
+          maskClass={getMaskClass(row.category)}
           onCommit={handleCounterpartyCommit}
           hints={hints.counterparties}
         />
@@ -296,7 +300,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           key="note"
           entryId={row.entryId}
           currentValue={row.note}
-          maskClass={maskClass}
+          maskClass={getMaskClass(row.category)}
           onCommit={handleNoteCommit}
           cellClass="txn-cell-note"
           hints={hints.notes}
@@ -307,7 +311,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     };
 
     return [editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol, editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol];
-  }, [maskClass, categories, hints]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveAllowlist, categories, hints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -348,10 +352,6 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
             {scroll.rows.length} of {scroll.total} entries
           </span>
         )}
-      </div>
-
-      <div className="data-mask-toggle">
-        <DataMaskToggle maskLevel={maskLevel} setMaskLevel={setMaskLevel} showSpendOption={true} />
       </div>
 
       {scroll.error !== null && (

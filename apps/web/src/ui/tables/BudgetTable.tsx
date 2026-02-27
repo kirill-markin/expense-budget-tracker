@@ -5,12 +5,12 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { FieldHints } from "@/server/transactions/getTransactions";
-import type { MaskLevel, CellVisibility } from "@/lib/dataMask";
-import { SENSITIVE_SPEND_CATEGORIES, getCellVisibility } from "@/lib/dataMask";
+import { getCellVisibility } from "@/lib/dataMask";
 import { offsetMonth, getCurrentMonth, generateMonthRange, getYear, getYearMonths } from "@/lib/monthUtils";
 import type { BudgetRow, ConversionWarning, CumulativeBefore, BudgetGridResult } from "@/server/budget/getBudgetGrid";
 import { useCommentPresence } from "@/ui/hooks/useCommentPresence";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
+import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { DrillDownPanel, type DrillDownFilter } from "@/ui/tables/DrillDownPanel";
 import { FxBreakdownPanel } from "@/ui/tables/FxBreakdownPanel";
 
@@ -84,14 +84,14 @@ const formatFxAmount = (value: number): string => {
  * Groups budget rows into DirectionBlocks with per-month subtotals.
  * Categories are sorted by effective value for the current year (descending):
  * past months use actual, current and future months use planned.
- * In "spend-only" mask mode, visible (non-sensitive) spend categories
+ * When an allowlist is active, visible (allowed) categories
  * are sorted first, then masked ones — each group by effective value.
  */
 const buildBlocks = (
   rows: ReadonlyArray<BudgetRow>,
   months: ReadonlyArray<string>,
   currentMonth: string,
-  maskLevel: MaskLevel,
+  allowlist: ReadonlySet<string> | null,
 ): ReadonlyArray<DirectionBlock> => {
   const cellMap = new Map<string, Map<string, CellValue>>();
   const categorySet = new Map<string, Set<string>>();
@@ -126,8 +126,9 @@ const buildBlocks = (
     .map((dir) => {
       const cells = cellMap.get(dir)!;
       const unsortedCategories = Array.from(categorySet.get(dir)!);
-      const maskedCategories: ReadonlySet<string> =
-        maskLevel === "spend-only" && dir === "spend" ? SENSITIVE_SPEND_CATEGORIES : new Set();
+      const maskedCategories: ReadonlySet<string> = allowlist !== null
+        ? new Set(unsortedCategories.filter((c) => !allowlist.has(c)))
+        : new Set();
       const categories = sortCategoriesByEffectiveValue(unsortedCategories, cells, currentYearMonths, currentMonth, maskedCategories);
 
       const subtotals = new Map<string, CellValue>();
@@ -307,22 +308,23 @@ const computeFxAdjustments = (
 };
 
 /**
- * Computes spend subtotals excluding SENSITIVE_SPEND_CATEGORIES.
- * Used in "spend-only" mask mode to show only non-sensitive category totals.
+ * Computes subtotals for a direction block including only allowed categories.
+ * Used in filtered mode to show partial but accurate direction subtotals.
  */
-const computeFilteredSpendSubtotals = (
-  spendBlock: DirectionBlock,
+const computeAllowedSubtotals = (
+  block: DirectionBlock,
   months: ReadonlyArray<string>,
+  allowlist: ReadonlySet<string>,
 ): ReadonlyMap<string, CellValue> => {
   const result = new Map<string, CellValue>();
-  const visibleCategories = spendBlock.categories.filter((c) => !SENSITIVE_SPEND_CATEGORIES.has(c));
+  const visibleCategories = block.categories.filter((c) => allowlist.has(c));
   for (const month of months) {
     let baseSum = 0;
     let modSum = 0;
     let plannedSum = 0;
     let actualSum = 0;
     for (const cat of visibleCategories) {
-      const cell = lookupCell(spendBlock.cells, month, cat);
+      const cell = lookupCell(block.cells, month, cat);
       baseSum += cell.plannedBase;
       modSum += cell.plannedModifier;
       plannedSum += cell.planned;
@@ -346,7 +348,7 @@ type YearFetchResult = Readonly<{ rows: ReadonlyArray<BudgetRow>; cumulativeBefo
 type YearTotalComputed = Readonly<{
   directionCategoryTotals: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
   directionSubtotals: ReadonlyMap<string, CellValue>;
-  filteredSpendSubtotal: CellValue;
+  filteredSubtotals: ReadonlyMap<string, CellValue>;
   remainder: CellValue;
   /** Sum of per-month FX adjustments for all months in this year. */
   yearFxAdjust: number;
@@ -368,10 +370,10 @@ const computeYearTotal = (
   monthEndBalances: Readonly<Record<string, number>>,
   year: string,
   currentMonth: string,
-  maskLevel: MaskLevel,
+  allowlist: ReadonlySet<string> | null,
 ): YearTotalComputed => {
   const yearMonths = getYearMonths(year);
-  const blocks = buildBlocks(rows, yearMonths, currentMonth, maskLevel);
+  const blocks = buildBlocks(rows, yearMonths, currentMonth, allowlist);
 
   const directionSubtotals = new Map<string, CellValue>();
   const directionCategoryTotals = new Map<string, ReadonlyMap<string, CellValue>>();
@@ -388,11 +390,15 @@ const computeYearTotal = (
     directionCategoryTotals.set(block.direction, catTotals);
   }
 
-  const spendBlock = blocks.find((b) => b.direction === "spend");
-  let filteredSpendSubtotal = zeroCellValue;
-  if (spendBlock !== undefined) {
-    const filtered = computeFilteredSpendSubtotals(spendBlock, yearMonths);
-    filteredSpendSubtotal = sumCellValuesOverMonths(yearMonths, (m) => filtered.get(m) ?? zeroCellValue);
+  const filteredSubtotals = new Map<string, CellValue>();
+  if (allowlist !== null) {
+    for (const block of blocks) {
+      const filtered = computeAllowedSubtotals(block, yearMonths, allowlist);
+      filteredSubtotals.set(
+        block.direction,
+        sumCellValuesOverMonths(yearMonths, (m) => filtered.get(m) ?? zeroCellValue),
+      );
+    }
   }
 
   const incSub = directionSubtotals.get("income") ?? zeroCellValue;
@@ -433,7 +439,7 @@ const computeYearTotal = (
   return {
     directionCategoryTotals,
     directionSubtotals,
-    filteredSpendSubtotal,
+    filteredSubtotals,
     remainder,
     yearFxAdjust,
     decemberBalance,
@@ -855,7 +861,7 @@ const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
 export const BudgetTable = (props: Props): ReactElement => {
   const { conversionWarnings, initialMonthFrom, initialMonthTo, reportingCurrency, hints } = props;
-  const [maskLevel, setMaskLevel] = useState<MaskLevel>("hidden");
+  const { effectiveAllowlist } = useFilteredMode();
   const { commentedCells, fetchRange: fetchCommentRange, updateCell: updateCommentCell } = useCommentPresence(initialMonthFrom, initialMonthTo);
   const { toastMessage, copyToClipboard } = useCopyToast();
 
@@ -887,7 +893,7 @@ export const BudgetTable = (props: Props): ReactElement => {
     [loadedFrom, loadedTo],
   );
 
-  const blocks = useMemo(() => buildBlocks(allRows, months, currentMonth, maskLevel), [allRows, months, currentMonth, maskLevel]);
+  const blocks = useMemo(() => buildBlocks(allRows, months, currentMonth, effectiveAllowlist), [allRows, months, currentMonth, effectiveAllowlist]);
 
   const columnSequence = useMemo<ReadonlyArray<ColumnEntry>>(
     () => buildColumnSequence(months),
@@ -902,11 +908,14 @@ export const BudgetTable = (props: Props): ReactElement => {
     return [...set].sort();
   }, [blocks]);
 
-  const spendSubtotalsFiltered = useMemo<ReadonlyMap<string, CellValue>>(() => {
-    const spendBlock = blocks.find((b) => b.direction === "spend");
-    if (spendBlock === undefined) return new Map();
-    return computeFilteredSpendSubtotals(spendBlock, months);
-  }, [blocks, months]);
+  const filteredSubtotalsMap = useMemo<ReadonlyMap<string, ReadonlyMap<string, CellValue>>>(() => {
+    if (effectiveAllowlist === null) return new Map();
+    const result = new Map<string, ReadonlyMap<string, CellValue>>();
+    for (const block of blocks) {
+      result.set(block.direction, computeAllowedSubtotals(block, months, effectiveAllowlist));
+    }
+    return result;
+  }, [blocks, months, effectiveAllowlist]);
 
   const incomeSubtotals = blocks.find((b) => b.direction === "income")?.subtotals;
   const spendSubtotals = blocks.find((b) => b.direction === "spend")?.subtotals;
@@ -973,10 +982,10 @@ export const BudgetTable = (props: Props): ReactElement => {
   const yearComputed = useMemo<ReadonlyMap<string, YearTotalComputed>>(() => {
     const result = new Map<string, YearTotalComputed>();
     for (const [year, data] of yearFetchResults) {
-      result.set(year, computeYearTotal(data.rows, data.cumulativeBefore, data.monthEndBalances, year, currentMonth, maskLevel));
+      result.set(year, computeYearTotal(data.rows, data.cumulativeBefore, data.monthEndBalances, year, currentMonth, effectiveAllowlist));
     }
     return result;
-  }, [yearFetchResults, currentMonth, maskLevel]);
+  }, [yearFetchResults, currentMonth, effectiveAllowlist]);
 
   const handlePlanSave = useCallback((month: string, direction: string, category: string, kind: "base" | "modifier", value: number): void => {
     setAllRows((prev) => {
@@ -1261,11 +1270,6 @@ export const BudgetTable = (props: Props): ReactElement => {
         </div>
       )}
       <div className="data-mask-toggle">
-        <div className="data-mask-segmented">
-          <button className={`data-mask-seg${maskLevel === "hidden" ? " data-mask-seg-active" : ""}`} type="button" onClick={() => setMaskLevel("hidden")}>Hidden</button>
-          <button className={`data-mask-seg${maskLevel === "spend-only" ? " data-mask-seg-active" : ""}`} type="button" onClick={() => setMaskLevel("spend-only")}>Spend</button>
-          <button className={`data-mask-seg${maskLevel === "all" ? " data-mask-seg-active" : ""}`} type="button" onClick={() => setMaskLevel("all")}>All</button>
-        </div>
         <button className="data-mask-btn" type="button" onClick={scrollToCurrentMonth}>Today</button>
         {pendingSaves > 0 && <span className="budget-sync-status">Syncing&hellip;</span>}
       </div>
@@ -1329,8 +1333,8 @@ export const BudgetTable = (props: Props): ReactElement => {
           </thead>
           <tbody>
             {blocks.map((block) => {
-              const dirVis = getCellVisibility(maskLevel, block.direction, null);
-              const useFilteredSubtotals = maskLevel === "spend-only" && block.direction === "spend";
+              const dirVis = getCellVisibility(effectiveAllowlist, null);
+              const useFilteredSubtotals = effectiveAllowlist !== null;
 
               return (
                 <Fragment key={block.direction}>
@@ -1345,7 +1349,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                             ? <Fragment key={`total-${col.year}`}><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td><td className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td></Fragment>
                             : <td key={`total-${col.year}`} className="budget-cell budget-cell-subtotal budget-year-total budget-year-loading">&hellip;</td>;
                         }
-                        const yearSub = useFilteredSubtotals ? yd.filteredSpendSubtotal : (yd.directionSubtotals.get(block.direction) ?? zeroCellValue);
+                        const yearSub = useFilteredSubtotals ? (yd.filteredSubtotals.get(block.direction) ?? zeroCellValue) : (yd.directionSubtotals.get(block.direction) ?? zeroCellValue);
                         const isTainted = yd.taintedDirections.has(block.direction);
                         const taintedClass = isTainted ? " budget-error" : "";
                         const isActualOver = col.year >= currentYear && yearSub.actual > yearSub.planned && yearSub.planned > 0 && block.direction === "spend";
@@ -1373,7 +1377,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                           </Fragment>
                         );
                       }
-                      const sub = (useFilteredSubtotals ? spendSubtotalsFiltered.get(col.month) : block.subtotals.get(col.month)) ?? zeroCellValue;
+                      const sub = (useFilteredSubtotals ? filteredSubtotalsMap.get(block.direction)?.get(col.month) : block.subtotals.get(col.month)) ?? zeroCellValue;
                       const isTainted = taintedDirectionMonths.has(`${block.direction}::${col.month}`);
                       const isActualOver = !isPastMonth(col.month, currentMonth) && sub.actual > sub.planned && sub.planned > 0 && block.direction === "spend";
                       return (
@@ -1384,7 +1388,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                     })}
                   </tr>
                   {block.categories.filter((c) => c !== "" || block.categories.length > 1).map((category) => {
-                    const catVis = getCellVisibility(maskLevel, block.direction, category);
+                    const catVis = getCellVisibility(effectiveAllowlist, category);
 
                     return (
                     <tr key={category} className="budget-category-row">
@@ -1477,7 +1481,7 @@ export const BudgetTable = (props: Props): ReactElement => {
             })}
 
             {(() => {
-              const derivedMaskClass = getCellVisibility(maskLevel, "income", null).maskClass;
+              const derivedMaskClass = getCellVisibility(effectiveAllowlist, null).maskClass;
               return (
                 <>
                   <tr className="budget-direction-row">

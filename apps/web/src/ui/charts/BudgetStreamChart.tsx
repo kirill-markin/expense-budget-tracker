@@ -4,13 +4,12 @@ import { area, curveMonotoneX, max, scaleLinear, scaleOrdinal, scaleTime, scheme
 import type { ReactElement } from "react";
 import { useMemo, useRef, useState } from "react";
 
-import type { MaskLevel } from "@/lib/dataMask";
-import { isDirectionVisible, isCategoryVisible } from "@/lib/dataMask";
+import { isCategoryVisible } from "@/lib/dataMask";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
 
 type Props = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
-  maskLevel: MaskLevel;
+  allowlist: ReadonlySet<string> | null;
   reportingCurrency: string;
 }>;
 
@@ -124,25 +123,23 @@ const findClosestDateIndex = (
 };
 
 export const BudgetStreamChart = (props: Props): ReactElement => {
-  const { rows, maskLevel, reportingCurrency } = props;
-  const masked = maskLevel === "hidden";
+  const { rows, allowlist, reportingCurrency } = props;
+  const masked = allowlist !== null && allowlist.size === 0;
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
 
   const { incomeCategories, spendCategories, incomeData, spendData } = useMemo(() => {
-    const ic = isDirectionVisible(maskLevel, "income")
+    const ic = allowlist === null
       ? collectCategories(rows, "income")
-      : [];
-    const sc = isDirectionVisible(maskLevel, "spend")
-      ? collectCategories(rows, "spend").filter(
-          (cat) => isCategoryVisible(maskLevel, "spend", cat),
-        )
-      : [];
+      : collectCategories(rows, "income").filter((cat) => isCategoryVisible(allowlist, cat));
+    const sc = allowlist === null
+      ? collectCategories(rows, "spend")
+      : collectCategories(rows, "spend").filter((cat) => isCategoryVisible(allowlist, cat));
     const id = ic.length > 0 ? pivotByMonth(rows, "income", ic) : [];
     const sd = sc.length > 0 ? pivotByMonth(rows, "spend", sc) : [];
     return { incomeCategories: ic, spendCategories: sc, incomeData: id, spendData: sd };
-  }, [rows, maskLevel]);
+  }, [rows, allowlist]);
 
   const width = 900;
   const height = 520;
