@@ -294,6 +294,72 @@ export const computeCumulativeBalances = (
 };
 
 /**
+ * Projects cumulative balance per liquidity tier for each month.
+ * Past months: use actual monthEndBalancesByLiquidity when available.
+ * Current & future months: route the planned budget delta entirely to "high";
+ * "medium" and "low" stay frozen at their last known actual values.
+ */
+export const computeCumulativeBalancesByLiquidity = (
+  months: ReadonlyArray<string>,
+  incomeSubtotals: ReadonlyMap<string, CellValue> | undefined,
+  spendSubtotals: ReadonlyMap<string, CellValue> | undefined,
+  transferSubtotals: ReadonlyMap<string, CellValue> | undefined,
+  currentMonth: string,
+  monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>,
+): ReadonlyMap<string, Readonly<Record<string, number>>> => {
+  const result = new Map<string, Readonly<Record<string, number>>>();
+  const running: Record<string, number> = {};
+
+  // Seed from the month before the range if available.
+  if (months.length > 0) {
+    const monthBeforeRange = offsetMonth(months[0], -1);
+    const seed = monthEndBalancesByLiquidity[monthBeforeRange];
+    if (seed !== undefined) {
+      for (const [tier, val] of Object.entries(seed)) {
+        running[tier] = val;
+      }
+    }
+  }
+
+  for (const month of months) {
+    if (month < currentMonth) {
+      // Past month: replace running state with actual data.
+      const actual = monthEndBalancesByLiquidity[month];
+      if (actual !== undefined) {
+        for (const key of Object.keys(running)) {
+          if (!(key in actual)) running[key] = 0;
+        }
+        for (const [tier, val] of Object.entries(actual)) {
+          running[tier] = val;
+        }
+      } else {
+        // No actual data — route budget delta to "high".
+        const inc = incomeSubtotals?.get(month) ?? zeroCellValue;
+        const spd = spendSubtotals?.get(month) ?? zeroCellValue;
+        const txf = transferSubtotals?.get(month) ?? zeroCellValue;
+        const delta = inc.actual - spd.actual + txf.actual;
+        running["high"] = (running["high"] ?? 0) + delta;
+      }
+    } else if (month === currentMonth) {
+      const inc = incomeSubtotals?.get(month) ?? zeroCellValue;
+      const spd = spendSubtotals?.get(month) ?? zeroCellValue;
+      const txf = transferSubtotals?.get(month) ?? zeroCellValue;
+      const delta = inc.planned - spd.planned + txf.actual;
+      running["high"] = (running["high"] ?? 0) + delta;
+    } else {
+      // Future month: delta goes to "high", medium/low frozen.
+      const inc = incomeSubtotals?.get(month) ?? zeroCellValue;
+      const spd = spendSubtotals?.get(month) ?? zeroCellValue;
+      const txf = transferSubtotals?.get(month) ?? zeroCellValue;
+      const delta = inc.planned - spd.planned + txf.actual;
+      running["high"] = (running["high"] ?? 0) + delta;
+    }
+    result.set(month, { ...running });
+  }
+  return result;
+};
+
+/**
  * Computes the per-month FX adjustment: the difference between the actual
  * portfolio value change and the budget-computed change for that month.
  *
@@ -371,8 +437,10 @@ export type YearTotalComputed = Readonly<{
   /** Sum of per-month FX adjustments for all months in this year. */
   yearFxAdjust: number;
   decemberBalance: CumulativeBalance;
-  /** December balance per liquidity tier, for year-total column. */
+  /** December balance per liquidity tier (actual), for year-total column. */
   decemberBalancesByLiquidity: Readonly<Record<string, number>>;
+  /** December balance per liquidity tier (projected plan), for year-total column. */
+  decemberBalancesByLiquidityPlan: Readonly<Record<string, number>>;
   taintedCategories: ReadonlySet<string>;
   taintedDirections: ReadonlySet<string>;
   anyTainted: boolean;
@@ -459,6 +527,9 @@ export const computeYearTotal = (
 
   const decemberBalancesByLiquidity = monthEndBalancesByLiquidity[`${year}-12`] ?? {};
 
+  const projectedLiqMap = computeCumulativeBalancesByLiquidity(yearMonths, inc, spd, txf, currentMonth, monthEndBalancesByLiquidity);
+  const decemberBalancesByLiquidityPlan = projectedLiqMap.get(`${year}-12`) ?? {};
+
   return {
     directionCategoryTotals,
     directionSubtotals,
@@ -467,6 +538,7 @@ export const computeYearTotal = (
     yearFxAdjust,
     decemberBalance,
     decemberBalancesByLiquidity,
+    decemberBalancesByLiquidityPlan,
     taintedCategories,
     taintedDirections,
     anyTainted,

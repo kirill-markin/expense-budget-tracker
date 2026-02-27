@@ -13,7 +13,7 @@ import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { DrillDownPanel, type DrillDownFilter } from "@/ui/tables/DrillDownPanel";
 import { FxBreakdownPanel } from "@/ui/tables/FxBreakdownPanel";
 import type { CellValue, ColumnEntry, CumulativeBalance, YearFetchResult, YearTotalComputed } from "@/ui/tables/budgetTableLogic";
-import { zeroCellValue, LIQUIDITY_ORDER, LIQUIDITY_LABELS, lookupCell, formatAmount, formatFxAmount, buildBlocks, buildColumnSequence, computeCumulativeBalances, computeFxAdjustments, computeAllowedSubtotals, computeYearTotal, isPastMonth, isFutureMonth, monthToDateFrom, monthToDateTo, getTargetFillMonths } from "@/ui/tables/budgetTableLogic";
+import { zeroCellValue, LIQUIDITY_ORDER, LIQUIDITY_LABELS, lookupCell, formatAmount, formatFxAmount, buildBlocks, buildColumnSequence, computeCumulativeBalances, computeCumulativeBalancesByLiquidity, computeFxAdjustments, computeAllowedSubtotals, computeYearTotal, isPastMonth, isFutureMonth, monthToDateFrom, monthToDateTo, getTargetFillMonths } from "@/ui/tables/budgetTableLogic";
 import { fetchBudgetRange } from "@/ui/tables/budgetTableApi";
 import { BudgetPlanCell } from "@/ui/tables/BudgetPlanCell";
 
@@ -145,6 +145,11 @@ export const BudgetTable = (props: Props): ReactElement => {
   const hasLiquidityBreakdown = useMemo<boolean>(
     () => liquidityTiers.length > 1 || (liquidityTiers.length === 1 && liquidityTiers[0] !== "high"),
     [liquidityTiers],
+  );
+
+  const projectedLiqBalances = useMemo<ReadonlyMap<string, Readonly<Record<string, number>>>>(
+    () => computeCumulativeBalancesByLiquidity(months, incomeSubtotals, spendSubtotals, transferSubtotals, currentMonth, mebByLiq),
+    [months, incomeSubtotals, spendSubtotals, transferSubtotals, currentMonth, mebByLiq],
   );
 
   const [yearFetchResults, setYearFetchResults] = useState<ReadonlyMap<string, YearFetchResult>>(new Map());
@@ -830,29 +835,31 @@ export const BudgetTable = (props: Props): ReactElement => {
                               : <td key={`total-${col.year}`} className="budget-cell budget-year-total budget-year-loading">&hellip;</td>;
                           }
                           const liqVal = yd.decemberBalancesByLiquidity[liq] ?? 0;
+                          const liqPlan = yd.decemberBalancesByLiquidityPlan[liq] ?? 0;
                           if (col.year < currentYear) {
                             return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqVal)}</td>;
                           }
                           if (col.year > currentYear) {
-                            return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>&mdash;</td>;
+                            return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqPlan)}</td>;
                           }
                           return (
                             <Fragment key={`total-${col.year}`}>
-                              <td className={`budget-cell budget-year-total${derivedMaskClass}`}>&mdash;</td>
+                              <td className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqPlan)}</td>
                               <td className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqVal)}</td>
                             </Fragment>
                           );
                         }
                         const liqVal = mebByLiq[col.month]?.[liq] ?? 0;
+                        const projectedLiqVal = projectedLiqBalances.get(col.month)?.[liq] ?? 0;
                         if (isFutureMonth(col.month, currentMonth)) {
-                          return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>&mdash;</td>;
+                          return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>{formatAmount(projectedLiqVal)}</td>;
                         }
                         if (isPastMonth(col.month, currentMonth)) {
                           return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>{formatAmount(liqVal)}</td>;
                         }
                         return (
                           <Fragment key={col.month}>
-                            <td className={`budget-cell budget-cm-plan${derivedMaskClass}`}>&mdash;</td>
+                            <td className={`budget-cell budget-cm-plan${derivedMaskClass}`}>{formatAmount(projectedLiqVal)}</td>
                             <td className={`budget-cell budget-cm-actual${derivedMaskClass}`}>{formatAmount(liqVal)}</td>
                           </Fragment>
                         );
