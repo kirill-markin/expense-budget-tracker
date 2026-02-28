@@ -724,6 +724,17 @@ tbody tr:last-child .budget-cm-actual {
   outline: none;
 }
 
+@media (max-width: 768px) {
+  .drilldown-panel {
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  .drilldown-resize-handle {
+    display: none;
+  }
+}
+
 .cell-editor-overlay {
   position: fixed;
   z-index: 200;
