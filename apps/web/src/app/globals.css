@@ -1666,6 +1666,15 @@ tbody tr:last-child .budget-cm-actual {
 
 @media (max-width: 768px) {
   .chat-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100% !important;
+    height: 100%;
+    z-index: 100;
+  }
+
+  .chat-resize-handle {
     display: none;
   }
 }

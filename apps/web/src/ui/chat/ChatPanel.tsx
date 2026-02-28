@@ -337,7 +337,7 @@ export const ChatPanel = (props: Props): ReactElement => {
             className="chat-close-btn"
             onClick={() => setIsOpen(false)}
           >
-            &times;
+            &laquo;
           </button>
         )}
       </div>
