@@ -10,6 +10,7 @@ import { getReportCurrency } from "@/server/reportCurrency";
 import { getCategories } from "@/server/transactions/getTransactions";
 import { ApiKeyManager } from "@/ui/ApiKeyManager";
 import { FilteredCategorySettings } from "@/ui/FilteredCategorySettings";
+import { MfaSetup } from "@/ui/MfaSetup";
 import { WorkspaceSettings } from "@/ui/WorkspaceSettings";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
@@ -73,6 +74,11 @@ async function ApiKeyData() {
   return <ApiKeyManager initialKeys={initialKeys} />;
 }
 
+async function MfaData() {
+  const authEnabled = (process.env.AUTH_MODE ?? "none") === "proxy";
+  return <MfaSetup authEnabled={authEnabled} />;
+}
+
 export default function SettingsPage() {
   return (
     <main className="container">
@@ -97,6 +103,14 @@ export default function SettingsPage() {
 
         <Suspense fallback={<LoadingIndicator />}>
           <ApiKeyData />
+        </Suspense>
+      </section>
+
+      <section className="panel">
+        <h1 className="title">Two-Factor Authentication</h1>
+
+        <Suspense fallback={<LoadingIndicator />}>
+          <MfaData />
         </Suspense>
       </section>
 

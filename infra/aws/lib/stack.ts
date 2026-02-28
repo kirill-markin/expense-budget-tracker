@@ -42,6 +42,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       ecsSg: net.ecsSg,
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
+      workerDbSecret: dbResult.workerDbSecret,
       openaiApiKeySecret: dbResult.openaiApiKeySecret,
       anthropicApiKeySecret: dbResult.anthropicApiKeySecret,
       authDomain,
@@ -63,7 +64,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       vpc: net.vpc,
       lambdaSg: net.lambdaSg,
       db: dbResult.db,
-      appDbSecret: dbResult.appDbSecret,
+      workerDbSecret: dbResult.workerDbSecret,
     });
     const api = apiGateway(this, {
       vpc: net.vpc,

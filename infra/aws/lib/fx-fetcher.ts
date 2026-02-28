@@ -12,7 +12,7 @@ export interface FxFetcherProps {
   vpc: ec2.Vpc;
   lambdaSg: ec2.SecurityGroup;
   db: rds.DatabaseInstance;
-  appDbSecret: cdk.aws_secretsmanager.Secret;
+  workerDbSecret: cdk.aws_secretsmanager.Secret;
 }
 
 export interface FxFetcherResult {
@@ -51,8 +51,8 @@ export function fxFetcher(scope: Construct, props: FxFetcherProps): FxFetcherRes
     },
   });
 
-  props.appDbSecret.grantRead(fn);
-  fn.addEnvironment("DB_SECRET_ARN", props.appDbSecret.secretArn);
+  props.workerDbSecret.grantRead(fn);
+  fn.addEnvironment("DB_SECRET_ARN", props.workerDbSecret.secretArn);
   fn.addEnvironment("DB_HOST", props.db.dbInstanceEndpointAddress);
   fn.addEnvironment("DB_NAME", "tracker");
 

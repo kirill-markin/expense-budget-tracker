@@ -20,6 +20,27 @@ const isDml = (sql: string): boolean => {
   return first !== undefined && ALLOWED_FIRST_KEYWORDS.has(first);
 };
 
+/** Returns true if sql contains a semicolon outside of single-quoted strings. */
+const hasMultipleStatements = (sql: string): boolean => {
+  let inString = false;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (ch === "'" && !inString) {
+      inString = true;
+    } else if (ch === "'" && inString) {
+      // PostgreSQL escapes quotes as '' inside strings
+      if (i + 1 < sql.length && sql[i + 1] === "'") {
+        i++;
+      } else {
+        inString = false;
+      }
+    } else if (ch === ";" && !inString) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const json = (statusCode: number, body: Record<string, unknown>): APIGatewayProxyResult => ({
   statusCode,
   headers: { "content-type": "application/json" },
@@ -52,11 +73,15 @@ export const handler = async (
     return json(400, { error: "Only SELECT, WITH, INSERT, UPDATE, DELETE statements are allowed" });
   }
 
+  if (hasMultipleStatements(sql)) {
+    return json(400, { error: "Multiple statements (semicolons) are not allowed" });
+  }
+
   try {
     await query("BEGIN", []);
-    await query(`SET LOCAL app.user_id = '${userId}'`, []);
-    await query(`SET LOCAL app.workspace_id = '${workspaceId}'`, []);
-    await query(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}'`, []);
+    await query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    await query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+    await query("SELECT set_config('statement_timeout', $1, true)", [String(STATEMENT_TIMEOUT_MS)]);
     const result = await query(sql, []);
     await query("COMMIT", []);
 

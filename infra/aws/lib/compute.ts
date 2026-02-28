@@ -12,6 +12,7 @@ export interface ComputeProps {
   ecsSg: ec2.SecurityGroup;
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
+  workerDbSecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
   anthropicApiKeySecret: cdk.aws_secretsmanager.Secret;
   authDomain: string;
@@ -59,6 +60,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       CORS_ORIGIN: `https://${props.appDomain}`,
       COGNITO_DOMAIN: props.authDomain,
       COGNITO_CLIENT_ID: props.userPoolClientId,
+      COGNITO_REGION: cdk.Aws.REGION,
       DB_HOST: props.db.dbInstanceEndpointAddress,
 
       DB_NAME: "tracker",
@@ -141,6 +143,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_USER: ecs.Secret.fromSecretsManager(props.db.secret!, "username"),
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.db.secret!, "password"),
       APP_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
+      WORKER_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.workerDbSecret, "password"),
     },
     logging: ecs.LogDrivers.awsLogs({
       logGroup: migrateLogGroup,

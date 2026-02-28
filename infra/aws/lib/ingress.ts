@@ -63,6 +63,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
       userPool: props.userPool,
       userPoolClient: props.userPoolClient,
       userPoolDomain: props.userPoolDomain,
+      scope: "openid email profile aws.cognito.signin.user.admin",
       next: elbv2.ListenerAction.forward([targetGroup]),
     }),
   });

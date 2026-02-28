@@ -31,6 +31,11 @@ export function auth(scope: Construct, props: AuthProps): AuthResult {
       requireDigits: true,
       requireSymbols: false,
     },
+    mfa: cognito.Mfa.OPTIONAL,
+    mfaSecondFactor: {
+      sms: false,
+      otp: true,
+    },
     removalPolicy: cdk.RemovalPolicy.RETAIN,
   });
 
@@ -45,7 +50,7 @@ export function auth(scope: Construct, props: AuthProps): AuthResult {
     generateSecret: true,
     oAuth: {
       flows: { authorizationCodeGrant: true },
-      scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
+      scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE, cognito.OAuthScope.COGNITO_ADMIN],
       callbackUrls: [props.callbackUrl],
       logoutUrls: [`https://${props.appDomain}/`],
     },
