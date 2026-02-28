@@ -116,11 +116,12 @@ a:hover {
 
 .panel {
   background: var(--panel);
-  padding: 16px;
+  padding: 16px 0 16px 16px;
 }
 
 .title {
   margin: 0 0 6px;
+  padding-right: 16px;
   font-size: 20px;
   font-weight: 650;
   letter-spacing: 0.2px;
@@ -819,6 +820,7 @@ tbody tr:last-child .budget-cm-actual {
 
 .txn-scroll {
   overflow-x: auto;
+  padding-right: 16px;
   margin-bottom: 24px;
 }
 
@@ -934,6 +936,7 @@ tbody tr:last-child .budget-cm-actual {
   gap: 16px;
   align-items: flex-end;
   flex-wrap: wrap;
+  padding-right: 16px;
   margin-bottom: 12px;
 }
 
