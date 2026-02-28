@@ -8,6 +8,7 @@ export default function HomePage() {
           <li><a href="/transactions">Transactions</a></li>
           <li><a href="/balances">Balances</a></li>
           <li><a href="/dashboards">Dashboard</a></li>
+          <li><a href="/chat">Chat</a></li>
         </ul>
       </section>
     </main>
