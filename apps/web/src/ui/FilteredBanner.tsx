@@ -12,11 +12,10 @@ export const FilteredBanner = (): ReactElement | null => {
 
   return (
     <div className="demo-banner">
-      Filtered mode — only selected categories are visible
-      {" "}
+      Filtered mode<span className="demo-banner-detail"> — only selected categories are visible</span>
       <Link
         href="/settings"
-        className="data-mask-seg"
+        className="demo-banner-detail data-mask-seg"
         style={{ fontSize: 11, padding: "1px 8px", marginLeft: 8, textDecoration: "none" }}
       >
         Settings

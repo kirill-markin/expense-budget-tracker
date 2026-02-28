@@ -109,6 +109,10 @@ a:hover {
   text-decoration: none;
 }
 
+.brand-short {
+  display: none;
+}
+
 .container {
   width: 100%;
   padding: 0;
@@ -1831,3 +1835,33 @@ tbody tr:last-child .budget-cm-actual {
   }
 }
 
+/* Mobile layout */
+@media (max-width: 768px) {
+  .demo-banner-detail {
+    display: none;
+  }
+
+  .brand-full {
+    display: none;
+  }
+
+  .brand-short {
+    display: inline;
+  }
+
+  .panel {
+    padding-left: 0;
+  }
+
+  .title,
+  .subtitle,
+  .txn-filters,
+  .data-mask-toggle {
+    padding-left: 16px;
+  }
+
+  .txn-scroll,
+  .budget-scroll {
+    padding-left: 16px;
+  }
+}

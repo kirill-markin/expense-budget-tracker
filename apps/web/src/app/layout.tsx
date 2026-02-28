@@ -56,12 +56,15 @@ export default async function RootLayout(props: Readonly<{ children: React.React
           <div className="header-sticky">
             {demo && (
               <div className="demo-banner">
-                Demo mode — data is static, writes are discarded
+                Demo mode<span className="demo-banner-detail"> — data is static, writes are discarded</span>
               </div>
             )}
             <FilteredBanner />
             <header className="topbar">
-              <a href="/" className="topbar-brand">Expense Budget Tracker</a>
+              <a href="/" className="topbar-brand">
+                <span className="brand-full">Expense Budget Tracker</span>
+                <span className="brand-short">EBT</span>
+              </a>
               <div className="topbar-actions">
                 <ModeToggle isDemoMode={demo} />
                 <AccountMenu
