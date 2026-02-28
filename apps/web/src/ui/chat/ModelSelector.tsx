@@ -14,7 +14,7 @@ const VENDOR_LABELS: Record<ChatModelVendor, string> = {
   anthropic: "Anthropic",
 };
 
-const VENDOR_ORDER: ReadonlyArray<ChatModelVendor> = ["openai", "anthropic"];
+const VENDOR_ORDER: ReadonlyArray<ChatModelVendor> = ["anthropic", "openai"];
 
 export const ModelSelector = (props: Props): ReactElement => {
   const { value, onChange, disabled } = props;
