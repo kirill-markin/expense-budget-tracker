@@ -57,17 +57,27 @@ a:hover {
 
 .filtered-cats-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
+  flex-direction: column;
+  gap: 4px;
   font-size: 13px;
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .filtered-cats-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   cursor: pointer;
   white-space: nowrap;
+  padding: 2px 0;
+}
+
+.filtered-cats-item input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
 }
 
 .demo-toggle {
@@ -1340,7 +1350,7 @@ tbody tr:last-child .budget-cm-actual {
 
 .settings-save {
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   padding: 6px 12px;
   border: 1px solid var(--panel-border);
   background: var(--bg);
@@ -1404,6 +1414,73 @@ tbody tr:last-child .budget-cm-actual {
 .settings-codeblock-copy:hover {
   color: var(--text);
   border-color: var(--text);
+}
+
+.settings-input {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  min-width: 100px;
+}
+
+.settings-input:focus {
+  border-color: var(--text);
+}
+
+.settings-input::placeholder {
+  color: var(--muted);
+}
+
+.settings-warning {
+  font-size: 13px;
+  color: #c0392b;
+  margin-bottom: 8px;
+}
+
+.settings-save--danger {
+  color: #c0392b;
+  border-color: #c0392b;
+}
+
+.settings-save--danger:hover {
+  color: #a93226;
+  border-color: #a93226;
+}
+
+.settings-row-wide {
+  max-width: none;
+}
+
+.settings-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.settings-table th {
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 650;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.settings-table td {
+  padding: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-table tr:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Panel dividers on settings page */
+
+.container > .panel + .panel {
+  border-top: 1px solid var(--panel-border);
 }
 
 /* Chat panel */

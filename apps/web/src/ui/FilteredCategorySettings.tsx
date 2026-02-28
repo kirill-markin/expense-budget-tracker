@@ -62,7 +62,7 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
 
   return (
     <div className="settings-form">
-      <div className="settings-row" style={{ maxWidth: "none" }}>
+      <div className="settings-row settings-row-wide">
         <label className="settings-label">
           Filtered Categories
         </label>

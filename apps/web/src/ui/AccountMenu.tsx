@@ -173,6 +173,14 @@ export const AccountMenu = (props: Props): ReactElement | null => {
           <button
             className="account-menu-item"
             type="button"
+            onClick={() => { window.location.href = "/account/mfa"; }}
+          >
+            Two-Factor Auth
+          </button>
+          <div className="account-menu-separator" />
+          <button
+            className="account-menu-item"
+            type="button"
             onClick={handleLogout}
           >
             Logout
