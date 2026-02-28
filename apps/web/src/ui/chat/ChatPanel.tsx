@@ -55,7 +55,13 @@ const buildContentParts = (
   return parts;
 };
 
-const sanitizeErrorText = (raw: string): string => {
+// 90 MB — safely under Cloudflare (100 MB) and Next.js proxyClientMaxBodySize (100 MB)
+const MAX_BODY_BYTES = 90 * 1024 * 1024;
+
+const sanitizeErrorText = (status: number, raw: string): string => {
+  if (raw.trim().length === 0 && status === 500) {
+    return "Request too large — try sending fewer attachments or smaller images";
+  }
   if (raw.includes("<html") || raw.includes("<!DOCTYPE")) {
     const titleMatch = raw.match(/<title>([^<]+)<\/title>/i);
     if (titleMatch !== null) return titleMatch[1];
@@ -266,17 +272,28 @@ export const ChatPanel = (props: Props): ReactElement => {
       { role: "user" as const, content: contentParts },
     ];
 
+    const requestBody = JSON.stringify({ model: selectedModel, messages: allMessages });
+
+    if (requestBody.length > MAX_BODY_BYTES) {
+      const sizeMb = (requestBody.length / (1024 * 1024)).toFixed(1);
+      const limitMb = (MAX_BODY_BYTES / (1024 * 1024)).toFixed(0);
+      markAssistantError(`Request too large (${sizeMb} MB, limit ${limitMb} MB). Try sending fewer attachments or smaller images.`);
+      setIsStreaming(false);
+      abortRef.current = null;
+      return;
+    }
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: selectedModel, messages: allMessages }),
+        body: requestBody,
         signal: abortController.signal,
       });
 
       if (!response.ok) {
         const rawError = await response.text();
-        markAssistantError(`Error ${response.status}: ${sanitizeErrorText(rawError)}`);
+        markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError)}`);
         setIsStreaming(false);
         return;
       }
