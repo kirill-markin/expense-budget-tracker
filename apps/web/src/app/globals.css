@@ -1721,5 +1721,9 @@ tbody tr:last-child .budget-cm-actual {
   .chat-resize-handle {
     display: none;
   }
+
+  .chat-textarea {
+    font-size: 16px;
+  }
 }
 
