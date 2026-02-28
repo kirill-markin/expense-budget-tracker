@@ -5,6 +5,8 @@ import type {
   ChatStreamEvent,
   ContentPart,
   FileContentPart,
+  TextContentPart,
+  ImageContentPart,
 } from "@/server/chat/types";
 import {
   buildSystemInstructions,
@@ -57,7 +59,7 @@ const uploadFiles = async (
 };
 
 const mapUserPart = (
-  part: ContentPart,
+  part: TextContentPart | ImageContentPart | FileContentPart,
   fileIds: Map<string, string>,
 ): BetaContentBlockParam => {
   switch (part.type) {
@@ -136,7 +138,9 @@ const buildMessages = (
     if (i === lastUserIdx) {
       result.push({
         role: "user",
-        content: msg.content.map((p) => mapUserPart(p, fileIds)),
+        content: msg.content
+          .filter((p): p is TextContentPart | ImageContentPart | FileContentPart => p.type !== "tool_call")
+          .map((p) => mapUserPart(p, fileIds)),
       });
     } else {
       result.push({ role: "user", content: summarizeContent(msg.content) });
@@ -274,7 +278,7 @@ export async function* streamAgentResponse(
           const toolStatus = result.is_error ? "error" : "completed";
           log({ domain: "chat", action: "tool_call", vendor: "anthropic", tool: block.name, status: toolStatus, durationMs: Date.now() - toolStart });
           toolResults.push(result);
-          yield { type: "tool_call", name: block.name, status: "completed" };
+          yield { type: "tool_call", name: block.name, status: "completed", input: JSON.stringify(block.input) };
         }
       }
 

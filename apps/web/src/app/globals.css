@@ -1568,6 +1568,60 @@ tbody tr:last-child .budget-cm-actual {
   75% { content: "..."; }
 }
 
+.chat-tool-call {
+  display: block;
+  border: 1px solid var(--panel-border);
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.chat-tool-call-summary {
+  padding: 4px 8px;
+  cursor: pointer;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+}
+
+.chat-tool-call-summary::before {
+  content: "\25B6";
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 9px;
+  transition: transform 0.15s ease;
+}
+
+.chat-tool-call[open] > .chat-tool-call-summary::before {
+  transform: rotate(90deg);
+}
+
+.chat-tool-call-summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-tool-call-started {
+  border-style: dashed;
+  animation: toolCallPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes toolCallPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.chat-tool-call-input {
+  margin: 0;
+  padding: 6px 8px;
+  border-top: 1px solid var(--panel-border);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 .chat-input-area {
   border-top: 1px solid var(--panel-border);
   padding: 8px 12px;

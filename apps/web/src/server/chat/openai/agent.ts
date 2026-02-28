@@ -4,6 +4,9 @@ import type {
   ChatMessage,
   ChatStreamEvent,
   ContentPart,
+  TextContentPart,
+  ImageContentPart,
+  FileContentPart,
 } from "@/server/chat/types";
 import {
   buildSystemInstructions,
@@ -31,7 +34,7 @@ const buildOpenaiInstructions = (timezone: string): string =>
   "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate." +
   "\nYou also have web search. Use it to look up current exchange rates, financial news, tax rules, or any other real-time information.";
 
-const mapUserPart = (part: ContentPart): UserContentPart => {
+const mapUserPart = (part: TextContentPart | ImageContentPart | FileContentPart): UserContentPart => {
   switch (part.type) {
     case "text":
       return { type: "input_text", text: part.text };
@@ -87,7 +90,12 @@ const buildInput = (
     }
 
     if (i === lastUserIdx) {
-      result.push({ role: "user", content: msg.content.map(mapUserPart) });
+      result.push({
+        role: "user",
+        content: msg.content
+          .filter((p): p is TextContentPart | ImageContentPart | FileContentPart => p.type !== "tool_call")
+          .map(mapUserPart),
+      });
     } else {
       result.push({ role: "user", content: summarizeContent(msg.content) });
     }
@@ -132,6 +140,7 @@ export async function* streamAgentResponse(
   });
 
   let activeToolName: string | null = null;
+  let activeToolInput: string | null = null;
   let toolStart = 0;
   let toolCalls = 0;
 
@@ -146,6 +155,9 @@ export async function* streamAgentResponse(
           activeToolName = event.item.rawItem.type === "function_call"
             ? event.item.rawItem.name
             : event.item.rawItem.type;
+          activeToolInput = event.item.rawItem.type === "function_call"
+            ? (event.item.rawItem.arguments ?? null)
+            : null;
           toolStart = Date.now();
           log({ domain: "chat", action: "tool_call", vendor: "openai", tool: activeToolName, status: "started" });
           yield { type: "tool_call", name: activeToolName, status: "started" };
@@ -153,8 +165,9 @@ export async function* streamAgentResponse(
           const name = activeToolName ?? "tool";
           log({ domain: "chat", action: "tool_call", vendor: "openai", tool: name, status: "completed", durationMs: Date.now() - toolStart });
           toolCalls++;
-          yield { type: "tool_call", name, status: "completed" };
+          yield { type: "tool_call", name, status: "completed", input: activeToolInput ?? undefined };
           activeToolName = null;
+          activeToolInput = null;
         }
       }
     }

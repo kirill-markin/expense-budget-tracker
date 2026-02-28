@@ -79,15 +79,65 @@ const parseSSELine = (line: string): ChatStreamEvent | null => {
   }
 };
 
-const renderMessageContent = (msg: StoredMessage): string => {
-  const textParts = msg.content.filter((p) => p.type === "text");
-  const fileParts = msg.content.filter((p) => p.type === "file" || p.type === "image");
-  let result = textParts.map((p) => (p.type === "text" ? p.text : "")).join("");
-  if (fileParts.length > 0) {
-    const fileNames = fileParts.map((p) => (p.type === "file" ? p.fileName : "[image]"));
-    result = `[${fileNames.join(", ")}]\n${result}`;
+const formatToolLabel = (name: string): string => {
+  if (name === "query_database") return "Database query";
+  if (name === "code_execution" || name === "code_interpreter") return "Code execution";
+  if (name === "web_search") return "Web search";
+  return name;
+};
+
+const formatToolInput = (name: string, input: string | null): string | null => {
+  if (input === null) return null;
+  if (name === "query_database") {
+    try {
+      const parsed = JSON.parse(input) as Record<string, unknown>;
+      if (typeof parsed.sql === "string") return parsed.sql;
+    } catch {
+      // fall through
+    }
   }
-  return result;
+  return input;
+};
+
+const renderMessageContent = (msg: StoredMessage): ReactElement => {
+  const fileParts = msg.content.filter((p) => p.type === "file" || p.type === "image");
+  const filePrefix = fileParts.length > 0
+    ? `[${fileParts.map((p) => (p.type === "file" ? p.fileName : "[image]")).join(", ")}]\n`
+    : "";
+
+  const elements: Array<ReactElement> = [];
+  let fileHeaderAdded = false;
+
+  for (let i = 0; i < msg.content.length; i++) {
+    const part = msg.content[i];
+    if (part.type === "text") {
+      const text = !fileHeaderAdded && filePrefix.length > 0
+        ? filePrefix + part.text
+        : part.text;
+      fileHeaderAdded = true;
+      elements.push(<span key={`t-${i}`}>{text}</span>);
+    } else if (part.type === "tool_call") {
+      const label = formatToolLabel(part.name);
+      const displayInput = formatToolInput(part.name, part.input);
+      elements.push(
+        <details
+          key={`tc-${i}`}
+          className={`chat-tool-call${part.status === "started" ? " chat-tool-call-started" : ""}`}
+        >
+          <summary className="chat-tool-call-summary">{label}</summary>
+          {displayInput !== null && (
+            <pre className="chat-tool-call-input">{displayInput}</pre>
+          )}
+        </details>,
+      );
+    }
+  }
+
+  if (!fileHeaderAdded && filePrefix.length > 0) {
+    elements.unshift(<span key="fp">{filePrefix}</span>);
+  }
+
+  return <>{elements}</>;
 };
 
 const MIN_WIDTH = 280;
@@ -103,6 +153,8 @@ export const ChatPanel = (props: Props): ReactElement => {
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
+    appendToolCall,
+    completeToolCall,
     finalizeAssistant,
     markAssistantError,
     clearHistory,
@@ -112,7 +164,6 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL_ID);
   const [pendingAttachments, setPendingAttachments] = useState<ReadonlyArray<PendingAttachment>>([]);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
-  const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -344,20 +395,15 @@ export const ChatPanel = (props: Props): ReactElement => {
             receivedContent = true;
             appendAssistantChunk(event.text);
           } else if (event.type === "tool_call") {
+            receivedContent = true;
             if (event.status === "started") {
-              const label = event.name === "query_database"
-                ? "Querying database..."
-                : event.name === "code_execution" || event.name === "code_interpreter"
-                  ? "Running code..."
-                  : `Running ${event.name}...`;
-              setToolStatus(label);
+              appendToolCall(event.name);
             } else {
-              setToolStatus(null);
+              completeToolCall(event.name, event.input ?? null);
             }
           } else if (event.type === "error") {
             markAssistantError(event.message);
             setIsStreaming(false);
-            setToolStatus(null);
             return;
           } else if (event.type === "done") {
             break;
@@ -380,7 +426,6 @@ export const ChatPanel = (props: Props): ReactElement => {
     }
 
     setIsStreaming(false);
-    setToolStatus(null);
     abortRef.current = null;
   }, [
     isStreaming,
@@ -391,6 +436,8 @@ export const ChatPanel = (props: Props): ReactElement => {
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
+    appendToolCall,
+    completeToolCall,
     finalizeAssistant,
     markAssistantError,
   ]);
@@ -438,7 +485,6 @@ export const ChatPanel = (props: Props): ReactElement => {
                 abortRef.current = null;
               }
               setIsStreaming(false);
-              setToolStatus(null);
               clearHistory();
             }}
           >
@@ -482,13 +528,16 @@ export const ChatPanel = (props: Props): ReactElement => {
               className={`chat-msg chat-msg-${msg.role}${msg.isError ? " chat-msg-error" : ""}`}
             >
               {renderMessageContent(msg)}
-              {isLastAssistant && (
-                <span className="chat-streaming-indicator">
-                  {toolStatus !== null ? toolStatus : (
+              {isLastAssistant && (() => {
+                const lastPart = msg.content.length > 0 ? msg.content[msg.content.length - 1] : undefined;
+                const isToolRunning = lastPart !== undefined && lastPart.type === "tool_call" && lastPart.status === "started";
+                if (isToolRunning) return null;
+                return (
+                  <span className="chat-streaming-indicator">
                     <span className="chat-dots" />
-                  )}
-                </span>
-              )}
+                  </span>
+                );
+              })()}
             </div>
           );
         })}
