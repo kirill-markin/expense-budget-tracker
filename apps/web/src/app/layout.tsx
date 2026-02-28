@@ -51,32 +51,34 @@ export default async function RootLayout(props: Readonly<{ children: React.React
     <html lang="en">
       <body>
         <FilteredModeProvider isDemoMode={demo}>
-          {demo && (
-            <div className="demo-banner">
-              Demo mode — data is static, writes are discarded
-            </div>
-          )}
-          <FilteredBanner />
-          <header className="topbar">
-            <a href="/" className="topbar-brand">Expense Budget Tracker</a>
-            <div className="topbar-actions">
-              <ModeToggle isDemoMode={demo} />
-              <AccountMenu
-                authEnabled={authEnabled}
-                workspaces={workspaces}
-                currentWorkspaceId={currentWorkspaceId}
-              />
-            </div>
-          </header>
-          <nav className="nav">
-            <a href="/budget">Budget</a>
-            <a href="/transactions">Transactions</a>
-            <a href="/balances">Balances</a>
-            <a href="/dashboards">Dashboard</a>
-            <a href="/settings">Settings</a>
-            <a href="/chat">Chat</a>
-            <CurrencySelector initialCurrency={reportingCurrency} />
-          </nav>
+          <div className="header-sticky">
+            {demo && (
+              <div className="demo-banner">
+                Demo mode — data is static, writes are discarded
+              </div>
+            )}
+            <FilteredBanner />
+            <header className="topbar">
+              <a href="/" className="topbar-brand">Expense Budget Tracker</a>
+              <div className="topbar-actions">
+                <ModeToggle isDemoMode={demo} />
+                <AccountMenu
+                  authEnabled={authEnabled}
+                  workspaces={workspaces}
+                  currentWorkspaceId={currentWorkspaceId}
+                />
+              </div>
+            </header>
+            <nav className="nav">
+              <a href="/budget">Budget</a>
+              <a href="/transactions">Transactions</a>
+              <a href="/balances">Balances</a>
+              <a href="/dashboards">Dashboard</a>
+              <a href="/settings">Settings</a>
+              <a href="/chat">Chat</a>
+              <CurrencySelector initialCurrency={reportingCurrency} />
+            </nav>
+          </div>
           <ChatLayoutProvider>
             <ChatLayoutShell>
               {children}

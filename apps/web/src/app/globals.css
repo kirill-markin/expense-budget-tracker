@@ -15,12 +15,16 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 a {
@@ -77,6 +81,13 @@ a:hover {
   border-color: var(--text);
 }
 
+.header-sticky {
+  flex-shrink: 0;
+  z-index: 50;
+  background: var(--bg);
+  border-bottom: 1px solid var(--panel-border);
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -96,13 +107,11 @@ a:hover {
 
 .container {
   width: 100%;
-  padding: 24px 16px 56px;
+  padding: 0;
 }
 
 .panel {
   background: var(--panel);
-  border: 1px solid var(--panel-border);
-  border-radius: 0;
   padding: 16px;
 }
 
@@ -125,10 +134,6 @@ a:hover {
   padding: 0 16px 12px;
   align-items: center;
   flex-wrap: wrap;
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-  z-index: 50;
 }
 
 .badge {
@@ -1381,12 +1386,15 @@ tbody tr:last-child .budget-cm-actual {
 
 .chat-layout-shell {
   display: flex;
+  flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .chat-main-content {
   flex: 1;
   min-width: 0;
+  overflow-y: auto;
 }
 
 .chat-sidebar {
@@ -1395,9 +1403,6 @@ tbody tr:last-child .budget-cm-actual {
   border-right: 1px solid var(--panel-border);
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 80px);
-  position: sticky;
-  top: 80px;
   background: var(--bg);
   z-index: 60;
 }
@@ -1408,7 +1413,6 @@ tbody tr:last-child .budget-cm-actual {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 80px);
   background: var(--bg);
 }
 
