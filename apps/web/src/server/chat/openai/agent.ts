@@ -165,7 +165,9 @@ export async function* streamAgentResponse(
           const name = activeToolName ?? "tool";
           log({ domain: "chat", action: "tool_call", vendor: "openai", tool: name, status: "completed", durationMs: Date.now() - toolStart });
           toolCalls++;
-          yield { type: "tool_call", name, status: "completed", input: activeToolInput ?? undefined };
+          const rawOutput = event.item.output;
+          const toolOutput = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
+          yield { type: "tool_call", name, status: "completed", input: activeToolInput ?? undefined, output: toolOutput };
           activeToolName = null;
           activeToolInput = null;
         }

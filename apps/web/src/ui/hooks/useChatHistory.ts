@@ -16,7 +16,7 @@ type ChatHistoryState = Readonly<{
   startAssistantMessage: () => void;
   appendAssistantChunk: (text: string) => void;
   appendToolCall: (name: string) => void;
-  completeToolCall: (name: string, input: string | null) => void;
+  completeToolCall: (name: string, input: string | null, output: string | null) => void;
   finalizeAssistant: () => void;
   markAssistantError: (errorText: string) => void;
   clearHistory: () => void;
@@ -96,13 +96,13 @@ export const useChatHistory = (): ChatHistoryState => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
       if (last.role !== "assistant") return prev;
-      const part: ContentPart = { type: "tool_call", name, status: "started", input: null };
+      const part: ContentPart = { type: "tool_call", name, status: "started", input: null, output: null };
       const updated: StoredMessage = { ...last, content: [...last.content, part] };
       return [...prev.slice(0, -1), updated];
     });
   }, []);
 
-  const completeToolCall = useCallback((name: string, input: string | null): void => {
+  const completeToolCall = useCallback((name: string, input: string | null, output: string | null): void => {
     setMessages((prev) => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
@@ -111,7 +111,7 @@ export const useChatHistory = (): ChatHistoryState => {
       const updatedContent: ReadonlyArray<ContentPart> = [...last.content].reverse().map((p) => {
         if (!found && p.type === "tool_call" && p.name === name && p.status === "started") {
           found = true;
-          return { ...p, status: "completed" as const, input };
+          return { ...p, status: "completed" as const, input, output };
         }
         return p;
       }).reverse();

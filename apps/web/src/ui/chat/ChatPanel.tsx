@@ -99,6 +99,28 @@ const formatToolInput = (name: string, input: string | null): string | null => {
   return input;
 };
 
+const MAX_OUTPUT_DISPLAY_LENGTH = 10_000;
+
+const formatToolOutput = (name: string, output: string | null): string | null => {
+  if (output === null) return null;
+  if (name === "query_database") {
+    try {
+      const parsed = JSON.parse(output) as unknown;
+      const pretty = JSON.stringify(parsed, null, 2);
+      if (pretty.length > MAX_OUTPUT_DISPLAY_LENGTH) {
+        return pretty.slice(0, MAX_OUTPUT_DISPLAY_LENGTH) + "\n[truncated]";
+      }
+      return pretty;
+    } catch {
+      // fall through
+    }
+  }
+  if (output.length > MAX_OUTPUT_DISPLAY_LENGTH) {
+    return output.slice(0, MAX_OUTPUT_DISPLAY_LENGTH) + "\n[truncated]";
+  }
+  return output;
+};
+
 const renderMessageContent = (msg: StoredMessage): ReactElement => {
   const fileParts = msg.content.filter((p) => p.type === "file" || p.type === "image");
   const filePrefix = fileParts.length > 0
@@ -119,6 +141,7 @@ const renderMessageContent = (msg: StoredMessage): ReactElement => {
     } else if (part.type === "tool_call") {
       const label = formatToolLabel(part.name);
       const displayInput = formatToolInput(part.name, part.input);
+      const displayOutput = formatToolOutput(part.name, part.output ?? null);
       elements.push(
         <details
           key={`tc-${i}`}
@@ -127,6 +150,9 @@ const renderMessageContent = (msg: StoredMessage): ReactElement => {
           <summary className="chat-tool-call-summary">{label}</summary>
           {displayInput !== null && (
             <pre className="chat-tool-call-input">{displayInput}</pre>
+          )}
+          {displayOutput !== null && (
+            <pre className="chat-tool-call-output">{displayOutput}</pre>
           )}
         </details>,
       );
@@ -397,7 +423,7 @@ export const ChatPanel = (props: Props): ReactElement => {
             if (event.status === "started") {
               appendToolCall(event.name);
             } else {
-              completeToolCall(event.name, event.input ?? null);
+              completeToolCall(event.name, event.input ?? null, event.output ?? null);
             }
           } else if (event.type === "error") {
             markAssistantError(event.message);

@@ -23,6 +23,7 @@ export type ToolCallContentPart = Readonly<{
   name: string;
   status: "started" | "completed";
   input: string | null;
+  output: string | null;
 }>;
 
 export type ContentPart = TextContentPart | ImageContentPart | FileContentPart | ToolCallContentPart;
@@ -34,6 +35,6 @@ export type ChatMessage = Readonly<{
 
 export type ChatStreamEvent =
   | Readonly<{ type: "delta"; text: string }>
-  | Readonly<{ type: "tool_call"; name: string; status: "started" | "completed"; input?: string }>
+  | Readonly<{ type: "tool_call"; name: string; status: "started" | "completed"; input?: string; output?: string }>
   | Readonly<{ type: "done" }>
   | Readonly<{ type: "error"; message: string }>;

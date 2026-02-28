@@ -278,7 +278,8 @@ export async function* streamAgentResponse(
           const toolStatus = result.is_error ? "error" : "completed";
           log({ domain: "chat", action: "tool_call", vendor: "anthropic", tool: block.name, status: toolStatus, durationMs: Date.now() - toolStart });
           toolResults.push(result);
-          yield { type: "tool_call", name: block.name, status: "completed", input: JSON.stringify(block.input) };
+          const toolOutput = typeof result.content === "string" ? result.content : JSON.stringify(result.content);
+          yield { type: "tool_call", name: block.name, status: "completed", input: JSON.stringify(block.input), output: toolOutput };
         }
       }
 
