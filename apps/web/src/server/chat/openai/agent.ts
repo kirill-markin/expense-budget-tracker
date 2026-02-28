@@ -6,7 +6,7 @@ import type {
   ContentPart,
 } from "@/server/chat/types";
 import {
-  SYSTEM_INSTRUCTIONS,
+  buildSystemInstructions,
   extractText,
   summarizeContent,
 } from "@/server/chat/shared";
@@ -26,8 +26,8 @@ type InputMessage =
   | { role: "user"; content: string | ReadonlyArray<UserContentPart> }
   | { role: "assistant"; content: ReadonlyArray<AssistantContentPart> };
 
-const OPENAI_SYSTEM_INSTRUCTIONS =
-  SYSTEM_INSTRUCTIONS +
+const buildOpenaiInstructions = (timezone: string): string =>
+  buildSystemInstructions(timezone) +
   "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate." +
   "\nYou also have web search. Use it to look up current exchange rates, financial news, tax rules, or any other real-time information.";
 
@@ -100,6 +100,7 @@ export type StreamAgentParams = Readonly<{
   model: string;
   userId: string;
   workspaceId: string;
+  timezone: string;
 }>;
 
 export async function* streamAgentResponse(
@@ -107,7 +108,7 @@ export async function* streamAgentResponse(
 ): AsyncGenerator<ChatStreamEvent> {
   const agent = new Agent<AgentContext>({
     name: "Expense Assistant",
-    instructions: OPENAI_SYSTEM_INSTRUCTIONS,
+    instructions: buildOpenaiInstructions(params.timezone),
     model: params.model,
     tools: [pgQueryTool, codeInterpreterTool(), webSearchTool({ searchContextSize: "medium" })],
   });

@@ -5,6 +5,7 @@ import { extractUserId, extractWorkspaceId } from "@/server/userId";
 type ChatRequestBody = Readonly<{
   messages: ReadonlyArray<ChatMessage>;
   model: string;
+  timezone: string;
 }>;
 
 type StreamAgentParams = Readonly<{
@@ -12,6 +13,7 @@ type StreamAgentParams = Readonly<{
   model: string;
   userId: string;
   workspaceId: string;
+  timezone: string;
 }>;
 
 type AgentModule = {
@@ -73,6 +75,7 @@ export const POST = async (request: Request): Promise<Response> => {
           messages: body.messages,
           userId,
           workspaceId,
+          timezone: body.timezone,
         })) {
           const line = `data: ${JSON.stringify(event)}\n\n`;
           controller.enqueue(encoder.encode(line));

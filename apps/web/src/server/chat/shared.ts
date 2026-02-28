@@ -4,7 +4,27 @@ import { withUserContext } from "@/server/db";
 export const MAX_ROWS = 100;
 export const STATEMENT_TIMEOUT_MS = 10_000;
 
-export const SYSTEM_INSTRUCTIONS = `You are a financial assistant for an expense tracker app.
+const formatDatetime = (timezone: string): string => {
+  const now = new Date();
+  const utc = now.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
+  const local = now.toLocaleString("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  });
+  return `Current datetime — UTC: ${utc} | User local (${timezone}): ${local}`;
+};
+
+export const buildSystemInstructions = (timezone: string): string =>
+  `${BASE_SYSTEM_INSTRUCTIONS}\n\n${formatDatetime(timezone)}`;
+
+const BASE_SYSTEM_INSTRUCTIONS = `You are a financial assistant for an expense tracker app.
 You have access to the user's expense database via the query_database tool.
 You can read data (SELECT) and write data (INSERT, UPDATE, DELETE).
 Before any write operation (INSERT, UPDATE, DELETE), you MUST first describe the exact changes you plan to make and wait for the user's explicit confirmation. Only execute the write after the user approves. Read queries (SELECT) do not require confirmation.

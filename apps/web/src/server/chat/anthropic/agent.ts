@@ -7,7 +7,7 @@ import type {
   FileContentPart,
 } from "@/server/chat/types";
 import {
-  SYSTEM_INSTRUCTIONS,
+  buildSystemInstructions,
   extractText,
   summarizeContent,
 } from "@/server/chat/shared";
@@ -27,6 +27,7 @@ export type StreamAgentParams = Readonly<{
   model: string;
   userId: string;
   workspaceId: string;
+  timezone: string;
 }>;
 
 const isUploadableFile = (part: ContentPart): part is FileContentPart =>
@@ -200,7 +201,7 @@ export async function* streamAgentResponse(
       const stream = client.beta.messages.stream({
         model: params.model,
         max_tokens: MAX_TOKENS,
-        system: SYSTEM_INSTRUCTIONS,
+        system: buildSystemInstructions(params.timezone),
         messages,
         tools: [
           DB_TOOL,

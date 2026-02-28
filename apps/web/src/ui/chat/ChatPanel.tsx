@@ -272,7 +272,11 @@ export const ChatPanel = (props: Props): ReactElement => {
       { role: "user" as const, content: contentParts },
     ];
 
-    const requestBody = JSON.stringify({ model: selectedModel, messages: allMessages });
+    const requestBody = JSON.stringify({
+      model: selectedModel,
+      messages: allMessages,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
 
     if (requestBody.length > MAX_BODY_BYTES) {
       const sizeMb = (requestBody.length / (1024 * 1024)).toFixed(1);
