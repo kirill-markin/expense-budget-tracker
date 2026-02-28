@@ -2,12 +2,14 @@ import { Suspense } from "react";
 import { headers } from "next/headers";
 
 import { isDemoMode } from "@/lib/demoMode";
+import { listApiKeys } from "@/server/apiKeys";
 import { getDirectAccessCredentials } from "@/server/directAccess";
 import { getDemoCategories } from "@/server/demo/data";
 import { getFilteredCategories } from "@/server/filteredCategories";
 import { getAvailableCurrencies } from "@/server/getAvailableCurrencies";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { getCategories } from "@/server/transactions/getTransactions";
+import { ApiKeyManager } from "@/ui/ApiKeyManager";
 import { DirectAccessCredentials } from "@/ui/DirectAccessCredentials";
 import { FilteredCategorySettings } from "@/ui/FilteredCategorySettings";
 import { WorkspaceSettings } from "@/ui/WorkspaceSettings";
@@ -57,6 +59,22 @@ async function FilteredCategoriesData() {
   return <FilteredCategorySettings filteredCategories={filteredCategories} allCategories={allCategories} />;
 }
 
+async function ApiKeyData() {
+  const demo = await isDemoMode();
+
+  if (demo) {
+    return null;
+  }
+
+  const headersList = await headers();
+  const userId = headersList.get("x-user-id") ?? "local";
+  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+
+  const initialKeys = await listApiKeys(userId, workspaceId);
+
+  return <ApiKeyManager initialKeys={initialKeys} />;
+}
+
 async function DirectAccessData() {
   const demo = await isDemoMode();
 
@@ -89,6 +107,14 @@ export default function SettingsPage() {
 
         <Suspense fallback={<LoadingIndicator />}>
           <FilteredCategoriesData />
+        </Suspense>
+      </section>
+
+      <section className="panel">
+        <h1 className="title">API Keys</h1>
+
+        <Suspense fallback={<LoadingIndicator />}>
+          <ApiKeyData />
         </Suspense>
       </section>
 

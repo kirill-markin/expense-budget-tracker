@@ -138,6 +138,45 @@ Internet-facing NLB routes TCP:5432 directly to RDS. No PgBouncer — RDS locks 
 
 ~$21-26/mo (NLB fixed ~$16 + NLCU ~$5-10 for light BI usage).
 
+## SQL Query API
+
+```
+curl / LLM agent
+      │
+      ▼
+POST /api/sql
+Authorization: Bearer ebt_...
+      │
+      ▼
+Next.js (validates key, resolves identity)
+      │
+      ▼
+Postgres (same app role + RLS as web app)
+```
+
+HTTP alternative to direct database access. Users generate an API key in Settings, pass it as a Bearer token, and send SQL in a JSON body. Uses the same `app` role and RLS enforcement as the web application — `withUserContext()` sets `app.user_id` and `app.workspace_id` per transaction.
+
+### Security
+
+| Concern | Mitigation |
+|---|---|
+| Key storage | SHA-256 hash only, plaintext never stored |
+| Workspace isolation | Same RLS via `withUserContext()` as all other routes |
+| SQL injection / DDL | Keyword whitelist: only SELECT/WITH/INSERT/UPDATE/DELETE |
+| Resource exhaustion | `statement_timeout = 30s`, 100-row limit, WAF rate limiting |
+| CSRF | Skipped for Bearer token requests (not session-based) |
+| Stale keys | `last_used_at` tracking, manual revocation |
+| Member removal | Auto-revoke trigger deletes all keys for removed user |
+
+### Usage
+
+```bash
+curl -X POST https://app.example.com/api/sql \
+  -H "Authorization: Bearer ebt_a7Bk9mNpQ2xR4wYz1cDfGhJvLs8tUeWi5o..." \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM ledger_entries ORDER BY ts DESC LIMIT 10"}'
+```
+
 ## Multi-currency conversion
 
 All amounts are stored in native currency only. No precomputed `amount_usd` column.

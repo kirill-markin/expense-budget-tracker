@@ -33,6 +33,9 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `db/migrations/` | Postgres migrations (applied in order by `scripts/migrate.sh`) |
 | `db/views/` | Postgres views (`accounts`) |
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |
+| `apps/web/src/server/apiKeys.ts` | API key generation, hashing, CRUD, validation |
+| `apps/web/src/app/api/api-keys/route.ts` | API key management endpoints (GET/POST/DELETE) |
+| `apps/web/src/app/api/sql/route.ts` | SQL query endpoint (Bearer token auth) |
 | `apps/web/src/server/demo/data.ts` | Static demo data for demo mode (no DB needed) |
 | `apps/web/src/lib/demoMode.ts` | Demo mode check: activated by `demo=true` browser cookie (toggled via UI button), no env var needed |
 | `infra/docker/compose.yml` | Local Docker Compose (Postgres + migrate + web + worker) |

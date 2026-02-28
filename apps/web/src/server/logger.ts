@@ -11,7 +11,11 @@ type ChatEvent =
 type ApiEvent =
   | Readonly<{ domain: "api"; action: "error"; route: string; method: string; error: string }>;
 
-type LogEvent = ChatEvent | ApiEvent;
+type SqlApiEvent =
+  | Readonly<{ domain: "sql-api"; action: "query"; durationMs: number; rowCount: number }>
+  | Readonly<{ domain: "sql-api"; action: "error"; error: string }>;
+
+type LogEvent = ChatEvent | ApiEvent | SqlApiEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

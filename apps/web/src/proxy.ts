@@ -150,6 +150,17 @@ export const proxy = (request: NextRequest): NextResponse => {
   const { pathname } = request.nextUrl;
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
+  // API key auth for /api/sql — bypass CSRF and JWT (non-browser clients).
+  // The route handler validates the key and sets identity internally.
+  if (pathname === "/api/sql") {
+    const authHeader = request.headers.get("authorization");
+    if (authHeader !== null && authHeader.startsWith("Bearer ebt_")) {
+      const response = NextResponse.next();
+      addSecurityHeaders(response, nonce);
+      return response;
+    }
+  }
+
   if (!checkCsrf(request)) {
     const response = new NextResponse("CSRF origin mismatch", { status: 403 });
     addSecurityHeaders(response, nonce);
