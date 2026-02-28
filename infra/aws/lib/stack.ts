@@ -7,6 +7,7 @@ import { database } from "./database";
 import { compute } from "./compute";
 import { ingress } from "./ingress";
 import { fxFetcher } from "./fx-fetcher";
+import { apiGateway } from "./api-gateway";
 import { monitoring } from "./monitoring";
 import { ciCd } from "./ci-cd";
 import { backupPlan } from "./backup";
@@ -22,6 +23,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
     const githubRepo = this.node.tryGetContext("githubRepo") as string;
     const authCertificateArn = this.node.tryGetContext("authCertificateArn") as string;
+    const apiCertificateArn = this.node.tryGetContext("apiCertificateArn") as string | undefined;
 
     const appDomain = `app.${baseDomain}`;
     const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
@@ -63,6 +65,14 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
     });
+    const api = apiGateway(this, {
+      vpc: net.vpc,
+      lambdaSg: net.lambdaSg,
+      db: dbResult.db,
+      appDbSecret: dbResult.appDbSecret,
+      baseDomain,
+      apiCertificateArn,
+    });
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,
@@ -70,6 +80,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       cluster: comp.cluster,
       db: dbResult.db,
       fxFetcher: fx.fxFetcher,
+      restApi: api.restApi,
+      authorizerFn: api.authorizerFn,
+      sqlApiFn: api.sqlApiFn,
     });
     ciCd(this, {
       stackId: this.stackId,
@@ -95,6 +108,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       migrateTaskDef: comp.migrateTaskDef,
       migrateSg: net.migrateSg,
       fxFetcher: fx.fxFetcher,
+      restApi: api.restApi,
+      authorizerFn: api.authorizerFn,
+      sqlApiFn: api.sqlApiFn,
     });
   }
 }

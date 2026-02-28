@@ -1,15 +1,13 @@
 /**
- * API key management: generate, validate, list, and revoke API keys
- * for the SQL query endpoint.
+ * API key management: generate, list, and revoke API keys for the SQL API.
  *
  * Key format: ebt_ + 40 alphanumeric chars (~238 bits entropy).
  * Storage: SHA-256 hash only — plaintext never stored.
- * Validation uses a SECURITY DEFINER function (validate_api_key) that
- * bypasses RLS because at validation time identity is unknown.
+ * Validation is handled by the Lambda Authorizer (apps/sql-api).
  */
 import crypto from "node:crypto";
 
-import { query, queryAs } from "@/server/db";
+import { queryAs } from "@/server/db";
 
 // -- Key generation --------------------------------------------------------
 
@@ -44,11 +42,6 @@ export type ApiKeyRow = Readonly<{
   label: string;
   createdAt: string;
   lastUsedAt: string | null;
-}>;
-
-export type ApiKeyIdentity = Readonly<{
-  userId: string;
-  workspaceId: string;
 }>;
 
 // -- CRUD ------------------------------------------------------------------
@@ -117,33 +110,3 @@ export const revokeApiKey = async (
   );
 };
 
-// -- Validation ------------------------------------------------------------
-
-/** Validate an API key and return the associated identity, or null. */
-export const validateApiKey = async (
-  key: string,
-): Promise<ApiKeyIdentity | null> => {
-  const keyHash = hashKey(key);
-
-  const result = await query(
-    "SELECT * FROM validate_api_key($1)",
-    [keyHash],
-  );
-
-  if (result.rows.length === 0) {
-    return null;
-  }
-
-  const row = result.rows[0] as { user_id: string; workspace_id: string };
-  return { userId: row.user_id, workspaceId: row.workspace_id };
-};
-
-/** Fire-and-forget update of last_used_at. Non-blocking — errors are ignored. */
-export const touchApiKeyUsage = (keyHash: string): void => {
-  query(
-    "UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1",
-    [keyHash],
-  ).catch(() => {
-    // Intentionally swallowed — usage tracking is best-effort.
-  });
-};

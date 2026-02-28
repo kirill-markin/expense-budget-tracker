@@ -61,7 +61,7 @@ export function networking(scope: Construct): NetworkingResult {
 
   const lambdaSg = new ec2.SecurityGroup(scope, "LambdaSg", {
     vpc,
-    description: "Lambda: FX fetchers",
+    description: "Lambda: FX fetchers, SQL API",
   });
   dbSg.addIngressRule(lambdaSg, ec2.Port.tcp(5432), "Lambda to Postgres");
 

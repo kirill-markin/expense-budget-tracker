@@ -3,6 +3,7 @@
   "domainName": "myfinance.com",
   "certificateArn": "arn:aws:acm:eu-central-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "authCertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "apiCertificateArn": "arn:aws:acm:eu-central-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "alertEmail": "your-email@gmail.com",
   "githubRepo": "your-github-user/expense-budget-tracker"
 }

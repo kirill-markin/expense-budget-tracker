@@ -210,6 +210,58 @@ else
   echo "  Cloudflare Dashboard > Caching > Cache Rules > Bypass Cache for app.*" >&2
 fi
 
+# --- API Gateway custom domain CNAME (optional) ---
+# Created only when apiCertificateArn is set in CDK context (custom domain for machine clients).
+API_DOMAIN_TARGET=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiCustomDomain'].OutputValue" \
+  --output text 2>/dev/null || true)
+
+if [[ -n "$API_DOMAIN_TARGET" && "$API_DOMAIN_TARGET" != "None" ]]; then
+  API_FQDN="api.${ZONE_NAME}"
+  echo ""
+  echo "Setting up API Gateway CNAME: ${API_FQDN} -> ${API_DOMAIN_TARGET}..."
+
+  API_EXISTING=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${API_FQDN}&type=CNAME" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Content-Type: application/json")
+
+  API_EXISTING_COUNT=$(echo "$API_EXISTING" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
+
+  if [[ "$API_EXISTING_COUNT" -gt 0 ]]; then
+    API_RECORD_ID=$(echo "$API_EXISTING" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0]["id"])')
+    echo "Updating existing API CNAME record..."
+    curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${API_RECORD_ID}" \
+      -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data "{
+        \"type\": \"CNAME\",
+        \"name\": \"api\",
+        \"content\": \"${API_DOMAIN_TARGET}\",
+        \"ttl\": 1,
+        \"proxied\": true
+      }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+  else
+    echo "Creating CNAME: api -> ${API_DOMAIN_TARGET} (proxied)..."
+    curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+      -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data "{
+        \"type\": \"CNAME\",
+        \"name\": \"api\",
+        \"content\": \"${API_DOMAIN_TARGET}\",
+        \"ttl\": 1,
+        \"proxied\": true
+      }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+  fi
+
+  echo "API domain ready: https://${API_FQDN}/sql"
+else
+  echo ""
+  echo "No ApiCustomDomain output found — skipping API CNAME."
+  echo "  Set apiCertificateArn in cdk.context.local.json and redeploy to enable custom domain."
+fi
+
 # --- Custom auth domain CNAME (optional) ---
 if [[ -n "$AUTH_DOMAIN" ]]; then
   echo ""

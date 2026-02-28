@@ -12,6 +12,7 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | NAT instance t4g.micro | ~$6/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, Cognito auth integration, health checks |
 | S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs (S3), container and alarm monitoring (CloudWatch), rate limiting and SQLi/XSS protection (WAF), daily FX rate fetching (Lambda) |
+| API Gateway (REST API) + Lambda | ~$0/month | SQL API for machine clients with per-key rate limiting; REST API pricing ($3.50/M requests) is negligible at low volume |
 | **Total** | **~$10/year + ~$50/month** | |
 
 Cloudflare (DNS, CDN, DDoS, edge SSL) is free. All prices are approximate for `eu-central-1` and may vary.
@@ -42,6 +43,10 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
                                                   ├─ domain.com ──────▶ 302 redirect to app.*
                                                   ├─ app.* ───────────▶ Cognito auth → web:8080
                                                   └─ auth.* ──────────▶ Cognito hosted UI
+
+Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL Lambda → RDS
+                         │
+                         └─ api.* ──────────▶ POST /sql (ebt_ Bearer token auth)
 ```
 
 **Cloudflare** handles domain registration, DNS, CDN caching, DDoS protection, and edge TLS.
@@ -60,7 +65,8 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
 - **Cognito User Pool** — managed auth with custom login domain (`auth.yourdomain.com`), no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
-- **CloudWatch Alarms + SNS** — alerts on ALB 5xx, ECS CPU/memory, ECS scale-out, DB connections, DB storage, Lambda errors
+- **API Gateway** (REST API) + two Lambdas (authorizer + SQL executor) for machine client SQL API; per-key rate limiting via Usage Plans, 5-min auth cache
+- **CloudWatch Alarms + SNS** — alerts on ALB 5xx, API Gateway 5xx, ECS CPU/memory, ECS scale-out, DB connections, DB storage, Lambda errors
 - **S3** — ALB access logs (90-day retention)
 - **CloudWatch Logs** — ECS web container logs `/expense-tracker/web` (30-day retention), migration logs `/expense-tracker/migrate`, Lambda logs (automatic)
 - **AWS Backup** — daily backup plan with 35-day retention for RDS
@@ -247,6 +253,23 @@ If your root domain (`yourdomain.com`) does not have an A record yet, the script
 
 > **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal. Do not delete it.
 
+#### 3f. Create API domain certificate (~5-30 min wait)
+
+The SQL API for machine clients (LLM agents, scripts) uses a custom domain (`api.yourdomain.com`). This requires a public ACM certificate in your deployment region. API Gateway custom domains do not accept Cloudflare Origin Certificates — only publicly trusted certificates.
+
+```bash
+set -a; source scripts/cloudflare/.env; set +a
+export AWS_PROFILE=expense-tracker
+
+bash scripts/cloudflare/setup-api-domain.sh \
+  --domain yourdomain.com \
+  --region eu-central-1
+```
+
+The script requests the certificate, validates it via Cloudflare DNS, and waits for it to be issued. It prints the **API certificate ARN** — you need this for step 4.
+
+> **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal. Do not delete it.
+
 ### 4. Configure the stack
 
 ```bash
@@ -263,6 +286,7 @@ Edit `cdk.context.local.json` with your values:
 | `domainName` | Your domain, e.g. `myfinance.com` |
 | `certificateArn` | ACM certificate ARN from step 3d (Cloudflare Origin Cert) |
 | `authCertificateArn` | ACM certificate ARN from step 3e (public cert in `us-east-1` for `auth.myfinance.com`) |
+| `apiCertificateArn` | ACM certificate ARN from step 3f (public cert for `api.myfinance.com`) |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
 
@@ -344,6 +368,7 @@ After first deploy:
    - `AWS_DEPLOY_ROLE_ARN` — the role ARN from step 1
    - `CDK_CERTIFICATE_ARN` — ACM certificate ARN (Cloudflare Origin Cert, from step 3d)
    - `CDK_AUTH_CERTIFICATE_ARN` — ACM certificate ARN in us-east-1 (auth domain, from step 3e)
+   - `CDK_API_CERTIFICATE_ARN` — ACM certificate ARN (public cert for API domain, from step 3f)
 
    **Variables** (Settings → Secrets and variables → Actions → Variables):
    - `AWS_REGION` — target region (e.g. `eu-central-1`)
@@ -376,7 +401,7 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 
 ## Monitoring
 
-- **Alarms**: ALB 5xx (>5 in 5min), ECS CPU (>80% for 15min), ECS memory (>80% for 15min), ECS scale-out (>1 task), DB connections (>80%), DB storage (<2GB), Lambda errors
+- **Alarms**: ALB 5xx (>5 in 5min), API Gateway 5xx (>5 in 5min), ECS CPU (>80% for 15min), ECS memory (>80% for 15min), ECS scale-out (>1 task), DB connections (>80%), DB storage (<2GB), Lambda errors (FX fetcher, SQL API authorizer, SQL API executor)
 - **Access logs**: S3 bucket with all HTTP requests, 90-day retention
 - **Container logs**: CloudWatch Logs `/expense-tracker/web` and `/expense-tracker/migrate`, 30-day retention
 - **Lambda logs**: CloudWatch Logs (automatic), searchable in console

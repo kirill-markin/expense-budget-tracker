@@ -5,6 +5,7 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
@@ -23,6 +24,9 @@ export interface OutputsProps {
   migrateTaskDef: ecs.FargateTaskDefinition;
   migrateSg: ec2.SecurityGroup;
   fxFetcher: lambda.IFunction;
+  restApi: apigw.RestApi;
+  authorizerFn: lambda.IFunction;
+  sqlApiFn: lambda.IFunction;
 }
 
 export function outputs(scope: Construct, props: OutputsProps): void {
@@ -82,5 +86,21 @@ export function outputs(scope: Construct, props: OutputsProps): void {
   new cdk.CfnOutput(scope, "FxFetcherFunctionName", {
     value: props.fxFetcher.functionName,
     description: "Lambda function name for FX rate fetcher",
+  });
+  new cdk.CfnOutput(scope, "ApiGatewayUrl", {
+    value: props.restApi.url,
+    description: "API Gateway invoke URL (machine clients)",
+  });
+  new cdk.CfnOutput(scope, "ApiGatewayId", {
+    value: props.restApi.restApiId,
+    description: "REST API ID",
+  });
+  new cdk.CfnOutput(scope, "SqlApiFunctionName", {
+    value: props.sqlApiFn.functionName,
+    description: "Lambda function name for SQL API executor",
+  });
+  new cdk.CfnOutput(scope, "AuthorizerFunctionName", {
+    value: props.authorizerFn.functionName,
+    description: "Lambda function name for SQL API authorizer",
   });
 }

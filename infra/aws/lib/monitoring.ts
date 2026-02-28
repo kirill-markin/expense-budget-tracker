@@ -3,6 +3,7 @@ import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatch_actions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as sns from "aws-cdk-lib/aws-sns";
@@ -16,6 +17,9 @@ export interface MonitoringProps {
   cluster: ecs.Cluster;
   db: rds.DatabaseInstance;
   fxFetcher: lambda.IFunction;
+  restApi: apigw.RestApi;
+  authorizerFn: lambda.IFunction;
+  sqlApiFn: lambda.IFunction;
 }
 
 export interface MonitoringResult {
@@ -121,6 +125,45 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 1,
     evaluationPeriods: 1,
     alarmDescription: "FX fetcher Lambda had errors",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // API Gateway 5xx errors
+  new cloudwatch.Alarm(scope, "ApiGateway5xxAlarm", {
+    metric: new cloudwatch.Metric({
+      namespace: "AWS/ApiGateway",
+      metricName: "5XXError",
+      dimensionsMap: { ApiName: props.restApi.restApiName },
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 5,
+    evaluationPeriods: 1,
+    alarmDescription: "API Gateway returned 5+ server errors in 5 minutes",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // SQL API Authorizer Lambda errors
+  new cloudwatch.Alarm(scope, "AuthorizerLambdaErrorAlarm", {
+    metric: props.authorizerFn.metricErrors({
+      period: cdk.Duration.hours(1),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "SQL API authorizer Lambda had errors",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // SQL API executor Lambda errors
+  new cloudwatch.Alarm(scope, "SqlApiLambdaErrorAlarm", {
+    metric: props.sqlApiFn.metricErrors({
+      period: cdk.Duration.hours(1),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "SQL API executor Lambda had errors",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 

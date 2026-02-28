@@ -61,6 +61,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             apps/worker/package-lock.json
+            apps/sql-api/package-lock.json
             infra/aws/package-lock.json
 
       - name: Configure AWS credentials (OIDC)
@@ -73,6 +74,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci --prefix apps/worker
+          npm ci --prefix apps/sql-api
           npm ci --prefix infra/aws
 
       # Refresh Cloudflare edge IP ranges so the ALB security group stays current.
@@ -97,6 +99,7 @@ jobs:
             "domainName": "${{ vars.CDK_DOMAIN_NAME }}",
             "certificateArn": "${{ secrets.CDK_CERTIFICATE_ARN }}",
             "authCertificateArn": "${{ secrets.CDK_AUTH_CERTIFICATE_ARN }}",
+            "apiCertificateArn": "${{ secrets.CDK_API_CERTIFICATE_ARN }}",
             "alertEmail": "${{ vars.CDK_ALERT_EMAIL }}",
             "githubRepo": "${{ vars.CDK_GITHUB_REPO }}"
           }
