@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type DragEvent,
   type KeyboardEvent,
   type ReactElement,
 } from "react";
@@ -13,7 +14,7 @@ import { DEFAULT_MODEL_ID } from "@/lib/chatModels";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { ModelSelector } from "./ModelSelector";
-import { FileAttachment, type PendingAttachment } from "./FileAttachment";
+import { FileAttachment, readFileAsBase64, type PendingAttachment } from "./FileAttachment";
 
 type Props = Readonly<{
   mode: "sidebar" | "fullscreen";
@@ -97,8 +98,10 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [pendingAttachments, setPendingAttachments] = useState<ReadonlyArray<PendingAttachment>>([]);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement>(null);
+  const dragCounterRef = useRef<number>(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const isNearBottomRef = useRef<boolean>(true);
@@ -188,6 +191,43 @@ export const ChatPanel = (props: Props): ReactElement => {
   const removeAttachment = useCallback((index: number): void => {
     setPendingAttachments((prev) => [...prev.slice(0, index), ...prev.slice(index + 1)]);
   }, []);
+
+  const handleDragEnter = useCallback((e: DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    if (dragCounterRef.current === 1) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current === 0) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+  }, []);
+
+  const handleDrop = useCallback(async (e: DragEvent<HTMLDivElement>): Promise<void> => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+
+    const files = e.dataTransfer.files;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const base64Data = await readFileAsBase64(file);
+      handleAttach({
+        fileName: file.name,
+        mediaType: file.type || "application/octet-stream",
+        base64Data,
+      });
+    }
+  }, [handleAttach]);
 
   const sendMessage = useCallback(async (): Promise<void> => {
     if (isStreaming) return;
@@ -318,7 +358,15 @@ export const ChatPanel = (props: Props): ReactElement => {
   const sidebarStyle = mode === "sidebar" ? { width: localWidth } : undefined;
 
   return (
-    <div className={rootClass} style={sidebarStyle}>
+    <div
+      className={rootClass}
+      style={sidebarStyle}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={(e) => void handleDrop(e)}
+    >
+      {isDragOver && <div className="chat-drop-overlay">Drop files here</div>}
       {mode === "sidebar" && (
         <div
           className={`chat-resize-handle${isDragging ? " dragging" : ""}`}

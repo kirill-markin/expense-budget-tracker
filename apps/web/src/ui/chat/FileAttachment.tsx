@@ -14,7 +14,7 @@ type Props = Readonly<{
 
 const ACCEPTED_TYPES = "image/*,.pdf,.txt,.csv,.json,.xml,.xlsx,.xls,.md,.html,.py,.js,.ts,.yaml,.yml,.sql,.log,.docx";
 
-const readFileAsBase64 = (file: File): Promise<string> =>
+export const readFileAsBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
