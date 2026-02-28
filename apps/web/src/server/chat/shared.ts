@@ -147,7 +147,7 @@ Pre-question checklist for EVERY entry:
 - non-posted rows filtered out? Skip preauth, declined, cancelled rows
 - transfer complete? Source + destination accounts, both amounts. Cross-currency → MUST ask destination amount
 - internal conversion? Currency conversions within one provider = transfer between its currency accounts — always include
-- date/time clear?
+- date/time complete? If any part is missing (day, month, or year), infer the date closest to today. If the result is >60 days from today, ask the user to confirm
 - not a duplicate?
 
 CRITICAL: Collect ALL unclear points across ALL entries, then ask EVERYTHING in a single numbered list. NEVER ask questions piecemeal across multiple messages.
