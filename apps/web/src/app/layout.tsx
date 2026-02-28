@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
+import { readChatCookies } from "@/lib/chatCookies";
 import { isDemoMode } from "@/lib/demoMode";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/listWorkspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
@@ -22,6 +23,7 @@ export const metadata: Metadata = {
 export default async function RootLayout(props: Readonly<{ children: React.ReactNode }>) {
   const { children } = props;
   const demo = await isDemoMode();
+  const { chatOpen, chatWidth } = await readChatCookies();
 
   const authEnabled = process.env.AUTH_MODE === "proxy";
   let reportingCurrency = "USD";
@@ -79,7 +81,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
               <CurrencySelector initialCurrency={reportingCurrency} />
             </nav>
           </div>
-          <ChatLayoutProvider>
+          <ChatLayoutProvider initialChatOpen={chatOpen} initialChatWidth={chatWidth}>
             <ChatLayoutShell>
               {children}
             </ChatLayoutShell>

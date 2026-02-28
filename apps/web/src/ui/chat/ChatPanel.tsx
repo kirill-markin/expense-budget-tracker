@@ -74,9 +74,14 @@ const renderMessageContent = (msg: StoredMessage): string => {
   return result;
 };
 
+const MIN_WIDTH = 280;
+const MAX_WIDTH = 600;
+
 export const ChatPanel = (props: Props): ReactElement => {
   const { mode } = props;
-  const { setIsOpen } = useChatLayout();
+  const { setIsOpen, chatWidth, setChatWidth } = useChatLayout();
+  const [localWidth, setLocalWidth] = useState<number>(chatWidth);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const {
     messages,
     appendUserMessage,
@@ -99,6 +104,33 @@ export const ChatPanel = (props: Props): ReactElement => {
   const isNearBottomRef = useRef<boolean>(true);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingScrollRef = useRef<boolean>(false);
+
+  // Resize drag logic
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent): void => {
+      const newWidth = Math.max(MIN_WIDTH, Math.min(e.clientX, MAX_WIDTH));
+      setLocalWidth(newWidth);
+    };
+
+    const handleMouseUp = (): void => {
+      setIsDragging(false);
+      setChatWidth(localWidth);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isDragging, localWidth, setChatWidth]);
 
   // Restore model from localStorage
   useEffect(() => {
@@ -287,9 +319,16 @@ export const ChatPanel = (props: Props): ReactElement => {
   };
 
   const rootClass = mode === "sidebar" ? "chat-sidebar" : "chat-sidebar-fullscreen";
+  const sidebarStyle = mode === "sidebar" ? { width: localWidth } : undefined;
 
   return (
-    <div className={rootClass}>
+    <div className={rootClass} style={sidebarStyle}>
+      {mode === "sidebar" && (
+        <div
+          className={`chat-resize-handle${isDragging ? " dragging" : ""}`}
+          onMouseDown={(e) => { e.preventDefault(); setIsDragging(true); }}
+        />
+      )}
       <div className="chat-header">
         <span className="chat-header-title">AI Chat</span>
         {mode === "sidebar" && (
