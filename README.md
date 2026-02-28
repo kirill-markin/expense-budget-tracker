@@ -46,6 +46,18 @@ VALUES
 
 - [Architecture](docs/architecture.md) — system overview, data model, multi-currency design
 
+## Security considerations
+
+The hosted demo at [expense-budget-tracker.com](https://expense-budget-tracker.com/) has known limitations you should be aware of:
+
+1. **Demo instance data visibility.** Kirill Markin (the maintainer) has full access to the demo instance database. If you want complete privacy, deploy on your own infrastructure — the project is fully open-source and self-hostable. If you are fine with the maintainer potentially seeing your data, use a secondary email without your real name — but understand that it is hard to fully hide data from the server owner.
+
+2. **Postgres port is exposed publicly.** To allow external BI tools (Metabase, Grafana, Tableau, etc.) to connect directly, the AWS-managed Postgres instance has its port open to the internet. Credentials are auto-generated long passwords that are not stored anywhere after initial creation, and row-level security is enforced per user. Still, exposing a database port publicly is not a best practice — this is a known trade-off under active consideration.
+
+3. **Maintainer uses this for his own finances.** Kirill Markin stores his own real financial data on the same infrastructure. This means the service is actively maintained and kept secure — the maintainer has direct skin in the game.
+
+For maximum security, self-host the stack on your own AWS account using the included [CDK deployment guide](infra/aws/README.md).
+
 ## License
 
 [MIT](LICENSE)
