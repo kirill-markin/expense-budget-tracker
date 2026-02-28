@@ -1853,15 +1853,11 @@ tbody tr:last-child .budget-cm-actual {
     padding-left: 0;
   }
 
-  .title,
-  .subtitle,
-  .txn-filters,
-  .data-mask-toggle {
+  .panel > * {
     padding-left: 16px;
   }
 
-  .txn-scroll,
-  .budget-scroll {
-    padding-left: 16px;
+  .panel > .budget-scroll {
+    padding-left: 0;
   }
 }
