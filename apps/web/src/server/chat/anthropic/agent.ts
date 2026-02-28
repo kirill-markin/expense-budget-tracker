@@ -11,6 +11,7 @@ import {
   extractText,
   summarizeContent,
 } from "@/server/chat/shared";
+import { log } from "@/server/logger";
 import { CODE_EXECUTION_TOOL, DB_TOOL, TOOL_NAME, executeTool } from "./tools";
 
 type BetaContentBlockParam = Anthropic.Beta.Messages.BetaContentBlockParam;
@@ -182,13 +183,20 @@ export async function* streamAgentResponse(
   params: StreamAgentParams,
 ): AsyncGenerator<ChatStreamEvent> {
   const client = new Anthropic();
+  const requestStart = Date.now();
+  const hasAttachments = params.messages.some((m) =>
+    m.content.some((p) => p.type !== "text"),
+  );
+  log({ domain: "chat", action: "request", vendor: "anthropic", model: params.model, messageCount: params.messages.length, hasAttachments });
 
   try {
     const fileIds = await uploadFiles(client, params.messages);
     const messages = buildMessages(params.messages, fileIds);
     let containerId: string | undefined;
+    let completedTurns = 0;
 
     for (let turn = 0; turn < MAX_TURNS; turn++) {
+      log({ domain: "chat", action: "turn_start", vendor: "anthropic", turn });
       const stream = client.beta.messages.stream({
         model: params.model,
         max_tokens: MAX_TOKENS,
@@ -242,7 +250,10 @@ export async function* streamAgentResponse(
         }
       }
 
+      completedTurns = turn + 1;
+
       if (finalMessage.stop_reason !== "tool_use") {
+        log({ domain: "chat", action: "response", vendor: "anthropic", turns: completedTurns, stopReason: finalMessage.stop_reason ?? "unknown", durationMs: Date.now() - requestStart });
         yield { type: "done" };
         return;
       }
@@ -250,6 +261,8 @@ export async function* streamAgentResponse(
       const toolResults: Array<Anthropic.Beta.Messages.BetaToolResultBlockParam> = [];
       for (const block of finalMessage.content) {
         if (block.type === "tool_use") {
+          log({ domain: "chat", action: "tool_call", vendor: "anthropic", tool: block.name, status: "started" });
+          const toolStart = Date.now();
           const result = await executeTool(
             block.id,
             block.name,
@@ -257,6 +270,8 @@ export async function* streamAgentResponse(
             params.userId,
             params.workspaceId,
           );
+          const toolStatus = result.is_error ? "error" : "completed";
+          log({ domain: "chat", action: "tool_call", vendor: "anthropic", tool: block.name, status: toolStatus, durationMs: Date.now() - toolStart });
           toolResults.push(result);
           yield { type: "tool_call", name: block.name, status: "completed" };
         }
@@ -265,9 +280,11 @@ export async function* streamAgentResponse(
       messages.push({ role: "user", content: toolResults });
     }
 
+    log({ domain: "chat", action: "response", vendor: "anthropic", turns: completedTurns, stopReason: "max_turns", durationMs: Date.now() - requestStart });
     yield { type: "done" };
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    log({ domain: "chat", action: "error", vendor: "anthropic", error: errorMessage });
     yield { type: "error", message: errorMessage };
   }
 }

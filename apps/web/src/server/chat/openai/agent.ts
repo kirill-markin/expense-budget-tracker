@@ -10,6 +10,7 @@ import {
   extractText,
   summarizeContent,
 } from "@/server/chat/shared";
+import { log } from "@/server/logger";
 import { pgQueryTool, type AgentContext } from "./tools";
 
 // Agents SDK protocol format — NOT the Responses API wire format.
@@ -117,6 +118,11 @@ export async function* streamAgentResponse(
   };
 
   const input = buildInput(params.messages);
+  const hasAttachments = params.messages.some((m) =>
+    m.content.some((p) => p.type !== "text"),
+  );
+  log({ domain: "chat", action: "request", vendor: "openai", model: params.model, messageCount: params.messages.length, hasAttachments });
+  const requestStart = Date.now();
 
   const result = await run(agent, input as Parameters<typeof run>[1], {
     stream: true,
@@ -125,23 +131,38 @@ export async function* streamAgentResponse(
   });
 
   let activeToolName: string | null = null;
+  let toolStart = 0;
+  let toolCalls = 0;
 
-  for await (const event of result) {
-    if (event.type === "raw_model_stream_event") {
-      if (event.data.type === "output_text_delta") {
-        yield { type: "delta", text: event.data.delta };
-      }
-    } else if (event.type === "run_item_stream_event") {
-      if (event.name === "tool_called" && event.item.type === "tool_call_item") {
-        activeToolName = event.item.rawItem.type === "function_call"
-          ? event.item.rawItem.name
-          : event.item.rawItem.type;
-        yield { type: "tool_call", name: activeToolName, status: "started" };
-      } else if (event.name === "tool_output" && event.item.type === "tool_call_output_item") {
-        yield { type: "tool_call", name: activeToolName ?? "tool", status: "completed" };
-        activeToolName = null;
+  try {
+    for await (const event of result) {
+      if (event.type === "raw_model_stream_event") {
+        if (event.data.type === "output_text_delta") {
+          yield { type: "delta", text: event.data.delta };
+        }
+      } else if (event.type === "run_item_stream_event") {
+        if (event.name === "tool_called" && event.item.type === "tool_call_item") {
+          activeToolName = event.item.rawItem.type === "function_call"
+            ? event.item.rawItem.name
+            : event.item.rawItem.type;
+          toolStart = Date.now();
+          log({ domain: "chat", action: "tool_call", vendor: "openai", tool: activeToolName, status: "started" });
+          yield { type: "tool_call", name: activeToolName, status: "started" };
+        } else if (event.name === "tool_output" && event.item.type === "tool_call_output_item") {
+          const name = activeToolName ?? "tool";
+          log({ domain: "chat", action: "tool_call", vendor: "openai", tool: name, status: "completed", durationMs: Date.now() - toolStart });
+          toolCalls++;
+          yield { type: "tool_call", name, status: "completed" };
+          activeToolName = null;
+        }
       }
     }
+
+    log({ domain: "chat", action: "response", vendor: "openai", turns: toolCalls, stopReason: "done", durationMs: Date.now() - requestStart });
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    log({ domain: "chat", action: "error", vendor: "openai", error: errorMessage });
+    throw err;
   }
 
   yield { type: "done" };

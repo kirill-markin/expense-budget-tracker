@@ -64,6 +64,10 @@ Toggle **Demo mode** via the All/Demo button in the UI header (sets a `demo=true
 
 Use `make dev` (Docker Compose) only when you need a real database — e.g. testing migrations, SQL queries, or the worker. Docker runs a production Next.js build, so every code change requires `docker compose -f infra/docker/compose.yml build web` to take effect.
 
+## Logging
+
+Server-side structured logger: `apps/web/src/server/logger.ts`. Use `log()` for all server events — never raw `console.log`. Add new event types to the `LogEvent` union.
+
 ## Reference
 
 - [docs/architecture.md](docs/architecture.md) — system overview, data model, multi-currency design, auth model
