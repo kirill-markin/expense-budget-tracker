@@ -17,7 +17,8 @@ const clampWidth = (value: number): number =>
 /** Read chat layout cookies. For Server Components. */
 export const readChatCookies = async (): Promise<ChatCookies> => {
   const cookieStore = await cookies();
-  const chatOpen = cookieStore.get(CHAT_OPEN_COOKIE)?.value === "true";
+  const chatOpenRaw = cookieStore.get(CHAT_OPEN_COOKIE)?.value;
+  const chatOpen = chatOpenRaw !== "false";
 
   const rawWidth = cookieStore.get(CHAT_WIDTH_COOKIE)?.value;
   const parsed = rawWidth !== undefined ? Number(rawWidth) : NaN;
