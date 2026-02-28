@@ -5,6 +5,8 @@ import { isDemoMode } from "@/lib/demoMode";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/listWorkspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { AccountMenu } from "@/ui/AccountMenu";
+import { ChatLayoutProvider } from "@/ui/chat/ChatLayoutProvider";
+import { ChatLayoutShell } from "@/ui/chat/ChatLayoutShell";
 import { CurrencySelector } from "@/ui/CurrencySelector";
 import { FilteredBanner } from "@/ui/FilteredBanner";
 import { FilteredModeProvider } from "@/ui/FilteredModeProvider";
@@ -72,9 +74,14 @@ export default async function RootLayout(props: Readonly<{ children: React.React
             <a href="/balances">Balances</a>
             <a href="/dashboards">Dashboard</a>
             <a href="/settings">Settings</a>
+            <a href="/chat">Chat</a>
             <CurrencySelector initialCurrency={reportingCurrency} />
           </nav>
-          {children}
+          <ChatLayoutProvider>
+            <ChatLayoutShell>
+              {children}
+            </ChatLayoutShell>
+          </ChatLayoutProvider>
         </FilteredModeProvider>
       </body>
     </html>
