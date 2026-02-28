@@ -14,7 +14,7 @@ import { DEFAULT_MODEL_ID } from "@/lib/chatModels";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { ModelSelector } from "./ModelSelector";
-import { FileAttachment, readFileAsBase64, type PendingAttachment } from "./FileAttachment";
+import { FileAttachment, readFileAsBase64, checkFileSize, type PendingAttachment } from "./FileAttachment";
 
 type Props = Readonly<{
   mode: "sidebar" | "fullscreen";
@@ -53,6 +53,15 @@ const buildContentParts = (
   }
 
   return parts;
+};
+
+const sanitizeErrorText = (raw: string): string => {
+  if (raw.includes("<html") || raw.includes("<!DOCTYPE")) {
+    const titleMatch = raw.match(/<title>([^<]+)<\/title>/i);
+    if (titleMatch !== null) return titleMatch[1];
+    return "Request blocked by firewall";
+  }
+  return raw;
 };
 
 const parseSSELine = (line: string): ChatStreamEvent | null => {
@@ -220,6 +229,11 @@ export const ChatPanel = (props: Props): ReactElement => {
     const files = e.dataTransfer.files;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const sizeError = checkFileSize(file);
+      if (sizeError !== null) {
+        alert(sizeError);
+        continue;
+      }
       const base64Data = await readFileAsBase64(file);
       handleAttach({
         fileName: file.name,
@@ -261,8 +275,8 @@ export const ChatPanel = (props: Props): ReactElement => {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        markAssistantError(`Error ${response.status}: ${errorText}`);
+        const rawError = await response.text();
+        markAssistantError(`Error ${response.status}: ${sanitizeErrorText(rawError)}`);
         setIsStreaming(false);
         return;
       }
@@ -276,9 +290,18 @@ export const ChatPanel = (props: Props): ReactElement => {
 
       const decoder = new TextDecoder();
       let buffer = "";
+      let receivedContent = false;
+      const STREAM_TIMEOUT_MS = 6 * 60 * 1000;
 
       while (true) {
-        const { done, value } = await reader.read();
+        const timeout = new Promise<never>((_, reject) => {
+          const id = setTimeout(() => {
+            reject(new Error("No response from AI model — please try again"));
+            abortController.abort();
+          }, STREAM_TIMEOUT_MS);
+          abortController.signal.addEventListener("abort", () => clearTimeout(id));
+        });
+        const { done, value } = await Promise.race([reader.read(), timeout]);
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -293,6 +316,7 @@ export const ChatPanel = (props: Props): ReactElement => {
           if (event === null) continue;
 
           if (event.type === "delta") {
+            receivedContent = true;
             appendAssistantChunk(event.text);
           } else if (event.type === "tool_call") {
             if (event.status === "started") {
@@ -316,7 +340,11 @@ export const ChatPanel = (props: Props): ReactElement => {
         }
       }
 
-      finalizeAssistant();
+      if (receivedContent) {
+        finalizeAssistant();
+      } else {
+        markAssistantError("Empty response from AI model — please try again");
+      }
     } catch (err) {
       if (abortController.signal.aborted) {
         finalizeAssistant();

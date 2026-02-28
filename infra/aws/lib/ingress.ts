@@ -123,6 +123,12 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
           managedRuleGroupStatement: {
             vendorName: "AWS",
             name: "AWSManagedRulesCommonRuleSet",
+            excludedRules: [
+              // SizeRestrictions_BODY blocks requests with body > 8 KB.
+              // The /api/chat endpoint sends base64-encoded images (several MB).
+              // Cloudflare enforces its own upload limits upstream.
+              { name: "SizeRestrictions_BODY" },
+            ],
           },
         },
         visibilityConfig: {

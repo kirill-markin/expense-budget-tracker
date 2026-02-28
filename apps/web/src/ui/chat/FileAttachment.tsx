@@ -14,6 +14,17 @@ type Props = Readonly<{
 
 const ACCEPTED_TYPES = "image/*,.pdf,.txt,.csv,.json,.xml,.xlsx,.xls,.md,.html,.py,.js,.ts,.yaml,.yml,.sql,.log,.docx";
 
+export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+
+export const checkFileSize = (file: File): string | null => {
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+    const limitMb = (MAX_FILE_SIZE_BYTES / (1024 * 1024)).toFixed(0);
+    return `File "${file.name}" is too large (${sizeMb} MB). Maximum allowed size is ${limitMb} MB.`;
+  }
+  return null;
+};
+
 export const readFileAsBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -37,6 +48,11 @@ export const FileAttachment = (props: Props): ReactElement => {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const sizeError = checkFileSize(file);
+      if (sizeError !== null) {
+        alert(sizeError);
+        continue;
+      }
       const base64Data = await readFileAsBase64(file);
       onAttach({
         fileName: file.name,
