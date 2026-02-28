@@ -48,6 +48,8 @@ CREATE POLICY workspace_isolation ON account_metadata
   );
 
 -- Layer 2 (RESTRICTIVE): Postgres-role-based, blocks GUC spoofing.
+-- NOTE: role_restriction and direct_access policies below were removed in
+-- 0008_remove_direct_access.sql (ws_xxx roles no longer exist).
 CREATE POLICY role_restriction ON account_metadata AS RESTRICTIVE
   USING (
     current_user = 'app'
@@ -86,6 +88,7 @@ CREATE POLICY direct_access ON account_metadata
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE account_metadata TO app;
 
 -- Update provision_direct_access to include account_metadata for new roles.
+-- NOTE: This function was dropped in 0008_remove_direct_access.sql.
 CREATE OR REPLACE FUNCTION provision_direct_access(
   p_workspace_id TEXT,
   p_password TEXT
@@ -146,6 +149,7 @@ END;
 $$;
 
 -- Retroactive grants for existing direct access roles.
+-- NOTE: No-op on new installs — ws_xxx roles removed in 0008_remove_direct_access.sql.
 DO $$
 DECLARE
   r RECORD;

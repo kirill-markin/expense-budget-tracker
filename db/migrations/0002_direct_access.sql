@@ -460,3 +460,9 @@ CREATE TRIGGER trg_revoke_direct_access_on_member_removal
   AFTER DELETE ON workspace_members
   FOR EACH ROW
   EXECUTE FUNCTION on_workspace_member_removed();
+
+-- NOTE: All objects from this migration (direct_access_roles table, ws_xxx roles,
+-- triggers, functions, RESTRICTIVE and direct_access RLS policies) were removed
+-- in 0008_remove_direct_access.sql. The SQL Query API (api_keys + /api/sql)
+-- replaced direct Postgres connections. get_user_workspace_ids() is kept — it is
+-- still used by the api_keys RLS policy.

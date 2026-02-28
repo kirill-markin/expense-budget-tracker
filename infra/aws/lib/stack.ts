@@ -10,7 +10,6 @@ import { fxFetcher } from "./fx-fetcher";
 import { monitoring } from "./monitoring";
 import { ciCd } from "./ci-cd";
 import { backupPlan } from "./backup";
-import { directDb } from "./direct-db";
 import { outputs } from "./outputs";
 
 export class ExpenseBudgetTrackerStack extends cdk.Stack {
@@ -33,17 +32,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       this, "Certificate", certificateArn,
     );
 
-    const dbDomain = `db.${baseDomain}`;
-
     const net = networking(this);
     const authResult = auth(this, { appDomain, callbackUrl, authCertificateArn, authDomain });
     const dbResult = database(this, { vpc: net.vpc, dbSg: net.dbSg });
-    const directDbResult = directDb(this, {
-      vpc: net.vpc,
-      dbSg: net.dbSg,
-      db: dbResult.db,
-      baseDomain,
-    });
     const comp = compute(this, {
       vpc: net.vpc,
       ecsSg: net.ecsSg,
@@ -54,7 +45,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       authDomain,
       userPoolClientId: authResult.userPoolClient.userPoolClientId,
       appDomain,
-      directAccessHost: dbDomain,
     });
     const ing = ingress(this, {
       vpc: net.vpc,
@@ -76,7 +66,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,
-      nlb: directDbResult.nlb,
       webService: comp.webService,
       cluster: comp.cluster,
       db: dbResult.db,
@@ -95,8 +84,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     outputs(this, {
       appDomain,
       alb: ing.alb,
-      nlb: directDbResult.nlb,
-      dbDomain,
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
       userPool: authResult.userPool,

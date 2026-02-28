@@ -64,79 +64,25 @@ ledger_entries                                 comment
 
 Data isolation using Postgres Row Level Security with workspace membership checks.
 
-### Three database roles
+### Two database roles
 
 | Role | Used by | RLS | Purpose |
 |---|---|---|---|
 | `tracker` (owner) | `migrate.sh` only | Bypassed (table owner) | DDL, creates tables/policies/roles |
 | `app` | Web app | Enforced | `SET LOCAL app.user_id` + `app.workspace_id` per transaction |
-| `user_xxx` | Direct DB access | Enforced | `ALTER ROLE ... SET app.user_id` + `app.workspace_id` statically |
 
 ### How it works
 
 1. **Web app**: proxy.ts extracts user identity (`AUTH_MODE=none` → `"local"`, `AUTH_MODE=proxy` → JWT `sub` claim) and forwards it as `x-user-id` and `x-workspace-id` headers.
 2. **db.ts**: `queryAs(userId, workspaceId, sql, params)` wraps each query in `BEGIN` → `SET LOCAL app.user_id` → `SET LOCAL app.workspace_id` → query → `COMMIT`. RLS policies check workspace membership via `workspace_members` and filter by `workspace_id = current_setting('app.workspace_id')`.
-3. **Direct access**: users get their own Postgres role with `ALTER ROLE user_xxx SET app.user_id TO 'cognito-sub'`. When `app.workspace_id` is not set, RLS allows access to all workspaces the user is a member of.
 
 ### RLS policy design
 
-Each data table uses a dual-condition policy:
-- **Security**: `workspace_id IN (SELECT wm.workspace_id FROM workspace_members wm WHERE wm.user_id = current_setting('app.user_id'))` — ensures the user is a member.
-- **Performance**: `workspace_id = current_setting('app.workspace_id')` — narrows to the active workspace (skipped when `app.workspace_id` is NULL, for direct DB users).
+RLS policies check workspace membership via `app.user_id` and filter by `app.workspace_id`. Each data table has a PERMISSIVE policy that verifies the user is a member of the workspace and narrows to the active workspace.
 
-### User provisioning (direct DB access)
+### Programmatic access
 
-Run as the `tracker` owner role:
-
-```sql
-CREATE ROLE user_alice LOGIN PASSWORD 'strong-random-password';
-GRANT CONNECT ON DATABASE tracker TO user_alice;
-GRANT USAGE ON SCHEMA public TO user_alice;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-  ledger_entries, budget_lines, budget_comments, workspace_settings TO user_alice;
-GRANT SELECT, INSERT ON TABLE workspaces, workspace_members TO user_alice;
-GRANT SELECT ON TABLE exchange_rates TO user_alice;
-ALTER ROLE user_alice SET app.user_id TO 'cognito-sub-uuid-here';
-ALTER ROLE user_alice SET app.workspace_id TO 'workspace-id-here';
-```
-
-For read-only access (dashboards), grant only `SELECT`.
-
-## Direct database access
-
-```
-psql / DBeaver / LLM agent
-        │
-        ▼
-db.domain.com:5432
-        │
-        ▼
-   NLB (TCP pass-through)
-        │
-        ▼
-   RDS Postgres
-```
-
-Internet-facing NLB routes TCP:5432 directly to RDS. No PgBouncer — RDS locks `pg_shadow`/`pg_authid` behind `rdsadmin`, so `auth_query` cannot work.
-
-### Security layers
-
-| Layer | Protection |
-|---|---|
-| SCRAM-SHA-256 | Password hashing (Postgres default) |
-| `rds.force_ssl` | Rejects plaintext connections |
-| `CONNECTION LIMIT 5` | Per-role connection cap |
-| `statement_timeout 30s` | Prevents runaway queries |
-| RLS | Workspace-scoped data isolation |
-| CloudWatch alarm | Alert on >20 active NLB flows |
-
-### DNS
-
-`db.domain.com` is a Cloudflare CNAME pointing to the NLB. **DNS-only mode** (not proxied) — Cloudflare proxy only handles HTTP/HTTPS; TCP:5432 requires DNS-only.
-
-### Cost
-
-~$21-26/mo (NLB fixed ~$16 + NLCU ~$5-10 for light BI usage).
+For programmatic access (LLM agents, scripts, dashboards), generate an API key in Settings and use the SQL Query API endpoint.
 
 ## SQL Query API
 
@@ -154,7 +100,7 @@ Next.js (validates key, resolves identity)
 Postgres (same app role + RLS as web app)
 ```
 
-HTTP alternative to direct database access. Users generate an API key in Settings, pass it as a Bearer token, and send SQL in a JSON body. Uses the same `app` role and RLS enforcement as the web application — `withUserContext()` sets `app.user_id` and `app.workspace_id` per transaction.
+The recommended way for LLM agents, scripts, and external tools to query the database. Users generate an API key in Settings, pass it as a Bearer token, and send SQL in a JSON body. Uses the same `app` role and RLS enforcement as the web application — `withUserContext()` sets `app.user_id` and `app.workspace_id` per transaction.
 
 ### Security
 

@@ -22,7 +22,7 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     excludeCharacters: " %+~`#$&*()|[]{}:;<>?!/@\"\\",
   });
 
-  // Audit connections and enforce SSL (critical when Postgres is internet-facing via NLB).
+  // Audit connections and enforce SSL.
   // Note: rds.force_ssl requires RDS reboot on first apply (~1-2 min downtime).
   const parameterGroup = new rds.ParameterGroup(scope, "DbParams", {
     engine: rds.DatabaseInstanceEngine.postgres({

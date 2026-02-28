@@ -1,9 +1,7 @@
 -- API keys: Bearer token authentication for the SQL query API endpoint.
 --
--- Replaces the need for direct Postgres credentials (NLB on port 5432) with
--- standard HTTP: users generate an API key, pass it as a Bearer token, and
--- send SQL in a JSON body. Simpler for LLM agents (just curl), cheaper
--- (no NLB), and easier to control.
+-- Users generate an API key, pass it as a Bearer token, and send SQL in a
+-- JSON body via POST /api/sql.
 --
 -- Key format: ebt_ + 40 alphanumeric chars (~238 bits entropy).
 -- Storage: SHA-256 hash only — plaintext never stored.
@@ -43,6 +41,8 @@ CREATE POLICY app_access ON api_keys
   );
 
 -- RESTRICTIVE: same current_user guard as other tables.
+-- NOTE: This policy was removed in 0008_remove_direct_access.sql
+-- (ws_xxx roles no longer exist, current_user = 'app' is always true).
 CREATE POLICY role_restriction ON api_keys AS RESTRICTIVE
   USING (
     current_user = 'app'

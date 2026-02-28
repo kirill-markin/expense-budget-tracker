@@ -1,5 +1,5 @@
 /**
- * API key management endpoints (JWT-authenticated, same pattern as direct-access).
+ * API key management endpoints (JWT-authenticated).
  *
  * GET    — list keys for the current user in the active workspace
  * POST   — create a new key; returns the full key (show-once)

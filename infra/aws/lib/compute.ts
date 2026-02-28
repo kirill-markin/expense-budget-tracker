@@ -17,7 +17,6 @@ export interface ComputeProps {
   authDomain: string;
   userPoolClientId: string;
   appDomain: string;
-  directAccessHost: string;
 }
 
 export interface ComputeResult {
@@ -61,7 +60,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       COGNITO_DOMAIN: props.authDomain,
       COGNITO_CLIENT_ID: props.userPoolClientId,
       DB_HOST: props.db.dbInstanceEndpointAddress,
-      DIRECT_ACCESS_HOST: props.directAccessHost,
+
       DB_NAME: "tracker",
       DB_USER: "app",
       // RDS certs are signed by Amazon's CA, not in the Node.js trust store.

@@ -11,9 +11,8 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
 | NAT instance t4g.micro | ~$6/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, Cognito auth integration, health checks |
-| NLB | ~$21-26/month | Direct DB access (TCP:5432) for psql, DBeaver, LLM agents |
 | S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs (S3), container and alarm monitoring (CloudWatch), rate limiting and SQLi/XSS protection (WAF), daily FX rate fetching (Lambda) |
-| **Total** | **~$10/year + ~$71-76/month** | |
+| **Total** | **~$10/year + ~$50/month** | |
 
 Cloudflare (DNS, CDN, DDoS, edge SSL) is free. All prices are approximate for `eu-central-1` and may vary.
 
@@ -43,8 +42,6 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
                                                   ├─ domain.com ──────▶ 302 redirect to app.*
                                                   ├─ app.* ───────────▶ Cognito auth → web:8080
                                                   └─ auth.* ──────────▶ Cognito hosted UI
-
-psql / DBeaver → db.domain.com:5432 → NLB (TCP) → RDS
 ```
 
 **Cloudflare** handles domain registration, DNS, CDN caching, DDoS protection, and edge TLS.
@@ -63,8 +60,7 @@ psql / DBeaver → db.domain.com:5432 → NLB (TCP) → RDS
 - **Cognito User Pool** — managed auth with custom login domain (`auth.yourdomain.com`), no auth code in the app
 - **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
-- **NLB** (Network Load Balancer) — internet-facing, TCP:5432, routes to RDS for direct DB access (psql, DBeaver, LLM agents)
-- **CloudWatch Alarms + SNS** — alerts on ALB 5xx, ECS CPU/memory, DB connections, DB storage, Lambda errors, NLB unhealthy targets, NLB connection flood
+- **CloudWatch Alarms + SNS** — alerts on ALB 5xx, ECS CPU/memory, ECS scale-out, DB connections, DB storage, Lambda errors
 - **S3** — ALB access logs (90-day retention)
 - **CloudWatch Logs** — ECS web container logs `/expense-tracker/web` (30-day retention), migration logs `/expense-tracker/migrate`, Lambda logs (automatic)
 - **AWS Backup** — daily backup plan with 35-day retention for RDS
@@ -76,7 +72,6 @@ psql / DBeaver → db.domain.com:5432 → NLB (TCP) → RDS
 - DNS CNAME `@` root domain (proxied) pointing to ALB — redirects to `app.*`
 - DNS CNAME `app.*` (proxied) pointing to ALB — authenticated app
 - DNS CNAME `auth.*` (DNS-only) pointing to Cognito CloudFront
-- DNS CNAME `db.*` (DNS-only) pointing to NLB — direct Postgres access
 - Origin Certificate for ALB HTTPS (imported into ACM)
 - ACM validation CNAME for auth domain certificate
 - Cache bypass rule for `app.*` and root domain (ALB Cognito auth requires uncached redirects)
@@ -369,8 +364,6 @@ No AWS keys stored in GitHub — uses OIDC federation.
 - `domain.com` → ALB → 302 redirect to `app.domain.com` (no container, just an ALB rule)
 - `app.domain.com` → ALB → Cognito auth → ECS Fargate web container (port 8080)
 - `auth.domain.com` → Cognito hosted UI (CloudFront)
-- `db.domain.com:5432` → NLB (TCP) → RDS (DNS-only, not proxied — Cloudflare proxy only handles HTTP/HTTPS)
-
 To serve your own site on `domain.com`, point its DNS to your site's hosting (Vercel, etc.). The ALB redirect becomes irrelevant since traffic no longer reaches it.
 
 ## Auth flow
@@ -383,7 +376,7 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 
 ## Monitoring
 
-- **Alarms**: ALB 5xx (>5 in 5min), ECS CPU (>80% for 15min), ECS memory (>80% for 15min), DB connections (>80%), DB storage (<2GB), Lambda errors, NLB unhealthy targets, NLB active flows (>20 for 10min)
+- **Alarms**: ALB 5xx (>5 in 5min), ECS CPU (>80% for 15min), ECS memory (>80% for 15min), ECS scale-out (>1 task), DB connections (>80%), DB storage (<2GB), Lambda errors
 - **Access logs**: S3 bucket with all HTTP requests, 90-day retention
 - **Container logs**: CloudWatch Logs `/expense-tracker/web` and `/expense-tracker/migrate`, 30-day retention
 - **Lambda logs**: CloudWatch Logs (automatic), searchable in console

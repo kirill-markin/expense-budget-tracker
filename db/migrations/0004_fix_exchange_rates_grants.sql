@@ -4,6 +4,9 @@
 -- exchange_rates was in the GRANT list — or whose GRANT failed due to the
 -- accounts view not existing — permanently lack these permissions.
 -- GRANT is idempotent: a no-op if the privilege already exists.
+--
+-- NOTE: direct_access_roles and ws_xxx roles were removed in
+-- 0008_remove_direct_access.sql. This loop is a no-op on new installs.
 
 DO $$
 DECLARE

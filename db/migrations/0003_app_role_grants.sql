@@ -24,6 +24,8 @@ GRANT SELECT, INSERT ON TABLE exchange_rates TO app;
 -- its grant lives in that file to avoid ordering issues.
 -- Direct access: app needs SELECT to display credentials in UI,
 -- and EXECUTE on SECURITY DEFINER functions that manage Postgres roles.
+-- NOTE: These grants are now no-ops — the table and functions were dropped
+-- in 0008_remove_direct_access.sql.
 GRANT SELECT ON TABLE direct_access_roles TO app;
 GRANT EXECUTE ON FUNCTION provision_direct_access(TEXT, TEXT) TO app;
 GRANT EXECUTE ON FUNCTION revoke_direct_access(TEXT) TO app;

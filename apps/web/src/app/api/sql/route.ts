@@ -10,7 +10,7 @@
  * validated, identity is resolved, and the query runs with full RLS via
  * withUserContext().
  *
- * Timeout: 30s (matching direct access — heavier analytical queries).
+ * Timeout: 30s (heavier analytical queries).
  * Row limit: 100 (same as chat).
  */
 import { hashKey, touchApiKeyUsage, validateApiKey } from "@/server/apiKeys";

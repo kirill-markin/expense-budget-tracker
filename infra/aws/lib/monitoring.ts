@@ -12,7 +12,6 @@ import { Construct } from "constructs";
 export interface MonitoringProps {
   alertEmail: string;
   alb: elbv2.ApplicationLoadBalancer;
-  nlb: elbv2.NetworkLoadBalancer;
   webService: ecs.FargateService;
   cluster: ecs.Cluster;
   db: rds.DatabaseInstance;
@@ -122,42 +121,6 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 1,
     evaluationPeriods: 1,
     alarmDescription: "FX fetcher Lambda had errors",
-    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
-
-  // NLB unhealthy targets (direct DB access is down)
-  const nlbFullName = props.nlb.loadBalancerFullName;
-  new cloudwatch.Alarm(scope, "NlbUnhealthyAlarm", {
-    metric: new cloudwatch.Metric({
-      namespace: "AWS/NetworkELB",
-      metricName: "UnHealthyHostCount",
-      dimensionsMap: {
-        TargetGroup: "targetgroup/db-nlb-tg",
-        LoadBalancer: nlbFullName,
-      },
-      period: cdk.Duration.minutes(1),
-      statistic: "Maximum",
-    }),
-    threshold: 1,
-    evaluationPeriods: 1,
-    alarmDescription: "NLB target (RDS) is unhealthy — direct DB access is down",
-    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
-
-  // NLB active flow count > 20 for 10 min (connection flood detection)
-  new cloudwatch.Alarm(scope, "NlbActiveFlowAlarm", {
-    metric: new cloudwatch.Metric({
-      namespace: "AWS/NetworkELB",
-      metricName: "ActiveFlowCount",
-      dimensionsMap: {
-        LoadBalancer: nlbFullName,
-      },
-      period: cdk.Duration.minutes(5),
-      statistic: "Average",
-    }),
-    threshold: 20,
-    evaluationPeriods: 2,
-    alarmDescription: "NLB active connections above 20 for 10 min — possible connection flood",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
