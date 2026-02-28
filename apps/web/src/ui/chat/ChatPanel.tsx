@@ -14,7 +14,7 @@ import { DEFAULT_MODEL_ID } from "@/lib/chatModels";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { ModelSelector } from "./ModelSelector";
-import { FileAttachment, readFileAsBase64, checkFileSize, type PendingAttachment } from "./FileAttachment";
+import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
 
 type Props = Readonly<{
   mode: "sidebar" | "fullscreen";
@@ -240,12 +240,8 @@ export const ChatPanel = (props: Props): ReactElement => {
         alert(sizeError);
         continue;
       }
-      const base64Data = await readFileAsBase64(file);
-      handleAttach({
-        fileName: file.name,
-        mediaType: file.type || "application/octet-stream",
-        base64Data,
-      });
+      const attachment = await prepareAttachment(file);
+      handleAttach(attachment);
     }
   }, [handleAttach]);
 

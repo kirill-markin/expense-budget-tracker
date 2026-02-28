@@ -25,7 +25,7 @@ export const checkFileSize = (file: File): string | null => {
   return null;
 };
 
-export const readFileAsBase64 = (file: File): Promise<string> =>
+const readFileAsBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -37,6 +37,46 @@ export const readFileAsBase64 = (file: File): Promise<string> =>
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+
+const IMAGE_COMPRESS_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+const compressImage = (file: File): Promise<{ base64Data: string; mediaType: string }> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      if (ctx === null) {
+        reject(new Error(`Canvas 2D context unavailable — cannot compress image: ${file.name}`));
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      const base64 = dataUrl.split(",")[1];
+      resolve({ base64Data: base64, mediaType: "image/jpeg" });
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error(`Failed to load image: ${file.name}`));
+    };
+
+    img.src = url;
+  });
+
+export const prepareAttachment = async (file: File): Promise<PendingAttachment> => {
+  if (IMAGE_COMPRESS_TYPES.has(file.type)) {
+    const { base64Data, mediaType } = await compressImage(file);
+    return { fileName: file.name, mediaType, base64Data };
+  }
+  const base64Data = await readFileAsBase64(file);
+  return { fileName: file.name, mediaType: file.type || "application/octet-stream", base64Data };
+};
 
 export const FileAttachment = (props: Props): ReactElement => {
   const { onAttach } = props;
@@ -53,12 +93,8 @@ export const FileAttachment = (props: Props): ReactElement => {
         alert(sizeError);
         continue;
       }
-      const base64Data = await readFileAsBase64(file);
-      onAttach({
-        fileName: file.name,
-        mediaType: file.type || "application/octet-stream",
-        base64Data,
-      });
+      const attachment = await prepareAttachment(file);
+      onAttach(attachment);
     }
 
     // Reset input so the same file can be attached again
