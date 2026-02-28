@@ -315,7 +315,7 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
      --username you@example.com \
      --temporary-password 'TempPass123!'
    ```
-4. **Set AI API keys** — the AI chat feature requires OpenAI and/or Anthropic API keys. CDK creates placeholder secrets in AWS Secrets Manager; replace them with real keys:
+4. **Set AI API keys (first deploy only)** — the AI chat feature requires OpenAI and/or Anthropic API keys. CDK creates placeholder secrets in AWS Secrets Manager on the first deploy; replace them with real keys once:
    ```bash
    aws secretsmanager put-secret-value \
      --secret-id expense-tracker/openai-api-key \
@@ -327,7 +327,7 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
      --secret-string 'sk-ant-...' \
      --profile expense-tracker
    ```
-   After updating, restart the ECS service to pick up the new values:
+   Then restart the ECS service to pick up the new values:
    ```bash
    aws ecs update-service \
      --cluster <EcsClusterName from output> \
@@ -335,7 +335,7 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
      --force-new-deployment \
      --profile expense-tracker
    ```
-   Both keys are optional — chat models from vendors without a configured key will return a clear error.
+   This is a one-time step. Subsequent deploys reuse the same secrets — CDK does not overwrite values that are already set. Both keys are optional — chat models from vendors without a configured key will return a clear error.
 
 ## CI/CD (automatic deploys on push)
 
