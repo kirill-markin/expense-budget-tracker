@@ -21,6 +21,7 @@ export type DrillDownFilter = Readonly<{
   dateTo: string;
   direction: string | null;
   category: string | null;
+  categories: ReadonlyArray<string> | null;
 }>;
 
 type Props = Readonly<{
@@ -53,6 +54,11 @@ const buildUrl = (
   if (filter.category !== null) {
     params.set("category", filter.category);
   }
+  if (filter.categories !== null) {
+    for (const cat of filter.categories) {
+      params.append("categories", cat);
+    }
+  }
   params.set("sortKey", sortKey);
   params.set("sortDir", sortDir);
   params.set("limit", String(limit));
@@ -61,10 +67,16 @@ const buildUrl = (
 };
 
 const buildTitle = (filter: DrillDownFilter): string => {
-  const category = filter.category ?? "All categories";
-  if (filter.direction === null) return category;
+  if (filter.category !== null) {
+    const category = filter.category === "" ? "Uncategorized" : filter.category;
+    if (filter.direction === null) return category;
+    const direction = filter.direction.charAt(0).toUpperCase() + filter.direction.slice(1);
+    return `${direction} \u2014 ${category}`;
+  }
+  if (filter.direction === null) return "All categories";
   const direction = filter.direction.charAt(0).toUpperCase() + filter.direction.slice(1);
-  return `${direction} \u2014 ${category}`;
+  if (filter.categories !== null) return direction;
+  return `${direction} \u2014 All categories`;
 };
 
 const buildSubtitle = (filter: DrillDownFilter): string => {

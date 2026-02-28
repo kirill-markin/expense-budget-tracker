@@ -143,6 +143,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       dateTo: `${month}-${String(last).padStart(2, "0")}`,
       direction: null,
       category: null,
+      categories: null,
     });
   }, []);
 
@@ -152,6 +153,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       dateTo: lastDayOfMonth(monthTo),
       direction: "spend",
       category,
+      categories: null,
     });
   }, [monthFrom, monthTo]);
 

@@ -531,6 +531,8 @@ export const BudgetTable = (props: Props): ReactElement => {
           <tbody>
             {blocks.map((block) => {
               const useFilteredSubtotals = effectiveAllowlist !== null;
+              const allowedCategoriesArray: ReadonlyArray<string> | null =
+                effectiveAllowlist !== null ? [...effectiveAllowlist] : null;
               // Direction rows show filtered subtotals (only allowed categories) in
               // filtered mode, so they are always safe to display unmasked.
               const dirVis: CellVisibility = { showData: true, maskClass: "" };
@@ -557,7 +559,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                             <td
                               key={`total-${col.year}`}
                               className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}${dirVis.showData ? " budget-cell-clickable" : ""}`}
-                              onClick={dirVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category: null }) : undefined}
+                              onClick={dirVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category: null, categories: allowedCategoriesArray }) : undefined}
                             >{formatAmount(yearSub.actual)}</td>
                           );
                         }
@@ -571,7 +573,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                             <td className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}`}>{formatAmount(yearSub.planned)}</td>
                             <td
                               className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}${isActualOver ? " budget-over" : ""}${dirVis.showData ? " budget-cell-clickable" : ""}`}
-                              onClick={dirVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category: null }) : undefined}
+                              onClick={dirVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category: null, categories: allowedCategoriesArray }) : undefined}
                             >{formatAmount(yearSub.actual)}</td>
                           </Fragment>
                         );
@@ -581,7 +583,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                       const isActualOver = !isPastMonth(col.month, currentMonth) && sub.actual > sub.planned && sub.planned > 0 && block.direction === "spend";
                       return (
                         <Fragment key={col.month}>
-                          {renderMonthCells(col.month, sub.planned, sub.actual, isTainted, false, isActualOver, true, dirVis.maskClass, dirVis.showData ? () => setDrillDownFilter({ dateFrom: monthToDateFrom(col.month), dateTo: monthToDateTo(col.month), direction: block.direction, category: null }) : null)}
+                          {renderMonthCells(col.month, sub.planned, sub.actual, isTainted, false, isActualOver, true, dirVis.maskClass, dirVis.showData ? () => setDrillDownFilter({ dateFrom: monthToDateFrom(col.month), dateTo: monthToDateTo(col.month), direction: block.direction, category: null, categories: allowedCategoriesArray }) : null)}
                         </Fragment>
                       );
                     })}
@@ -610,7 +612,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                               <td
                                 key={`total-${col.year}`}
                                 className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}${catVis.showData ? " budget-cell-clickable" : ""}`}
-                                onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category }) : undefined}
+                                onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category, categories: null }) : undefined}
                               >{formatAmount(yearCell.actual)}</td>
                             );
                           }
@@ -624,7 +626,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                               <td className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}`}>{formatAmount(yearCell.planned)}</td>
                               <td
                                 className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}${isActualOver ? " budget-over" : ""}${catVis.showData ? " budget-cell-clickable" : ""}`}
-                                onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category }) : undefined}
+                                onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category, categories: null }) : undefined}
                               >{formatAmount(yearCell.actual)}</td>
                             </Fragment>
                           );
@@ -664,7 +666,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                             {!isFuture && (
                               <td
                                 className={`budget-cell${isCurrent ? " budget-cm-actual" : ""}${catVis.maskClass}${taintedClass}${isActualOver ? " budget-over" : ""}${catVis.showData ? " budget-cell-clickable" : ""}`}
-                                onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: monthToDateFrom(col.month), dateTo: monthToDateTo(col.month), direction: block.direction, category }) : undefined}
+                                onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: monthToDateFrom(col.month), dateTo: monthToDateTo(col.month), direction: block.direction, category, categories: null }) : undefined}
                               >
                                 {formatAmount(cell.actual)}
                               </td>

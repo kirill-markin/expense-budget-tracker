@@ -316,6 +316,18 @@ const applyFilter = (entries: ReadonlyArray<LedgerEntry>, filter: TransactionsFi
       ? result.filter((e) => e.category === null)
       : result.filter((e) => e.category === filter.category);
   }
+  if (filter.categories !== null) {
+    if (filter.categories.length === 0) {
+      result = [];
+    } else {
+      const catSet = new Set(filter.categories);
+      const includeUncategorized = catSet.has("");
+      result = result.filter((e) =>
+        (e.category !== null && catSet.has(e.category)) ||
+        (e.category === null && includeUncategorized),
+      );
+    }
+  }
   return result;
 };
 

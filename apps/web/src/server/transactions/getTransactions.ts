@@ -34,6 +34,7 @@ export type TransactionsFilter = Readonly<{
   accountId: string | null;
   kind: string | null;
   category: string | null;
+  categories: ReadonlyArray<string> | null;
   sortKey: string;
   sortDir: "asc" | "desc";
   limit: number;
@@ -95,6 +96,23 @@ const buildWhereClause = (
     } else {
       params.push(filter.category);
       conditions.push(`le.category = $${params.length}`);
+    }
+  }
+  if (filter.categories !== null) {
+    if (filter.categories.length === 0) {
+      conditions.push("FALSE");
+    } else {
+      const hasUncategorized = filter.categories.includes("");
+      const named = filter.categories.filter((c) => c !== "");
+      const parts: Array<string> = [];
+      if (named.length > 0) {
+        params.push(named);
+        parts.push(`le.category = ANY($${params.length})`);
+      }
+      if (hasUncategorized) {
+        parts.push("le.category IS NULL");
+      }
+      conditions.push(parts.length === 1 ? parts[0] : `(${parts.join(" OR ")})`);
     }
   }
 

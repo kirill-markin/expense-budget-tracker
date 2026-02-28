@@ -38,6 +38,7 @@ export const GET = async (request: Request): Promise<Response> => {
   const accountId = params.get("accountId");
   const kindFilter = params.get("kind");
   const categoryFilter = params.get("category");
+  const categoriesRaw = params.getAll("categories");
 
   const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
   if (dateFrom !== null && !DATE_PATTERN.test(dateFrom)) {
@@ -55,6 +56,11 @@ export const GET = async (request: Request): Promise<Response> => {
   if (categoryFilter !== null && categoryFilter.length > 200) {
     return new Response("category too long (max 200 chars)", { status: 400 });
   }
+  for (const cat of categoriesRaw) {
+    if (cat.length > 200) {
+      return new Response("categories entry too long (max 200 chars)", { status: 400 });
+    }
+  }
 
   const filter: TransactionsFilter = {
     dateFrom,
@@ -62,6 +68,7 @@ export const GET = async (request: Request): Promise<Response> => {
     accountId,
     kind: kindFilter,
     category: categoryFilter,
+    categories: categoriesRaw.length > 0 ? categoriesRaw : null,
     sortKey: sortKeyRaw,
     sortDir: sortDirRaw,
     limit: limitRaw,
