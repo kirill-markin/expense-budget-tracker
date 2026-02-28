@@ -231,13 +231,6 @@ export const ChatPanel = (props: Props): ReactElement => {
   // Throttled auto-scroll: batches scroll updates during streaming
   useEffect(() => {
     if (!isNearBottomRef.current) return;
-    // First scroll after mount (page navigation, history load) — jump instantly
-    const behavior: ScrollBehavior = initialScrollDoneRef.current
-      ? "smooth"
-      : "instant";
-    if (!initialScrollDoneRef.current) {
-      initialScrollDoneRef.current = true;
-    }
     if (isStreaming) {
       // During streaming, throttle to once per 300ms
       if (pendingScrollRef.current) return;
@@ -250,10 +243,15 @@ export const ChatPanel = (props: Props): ReactElement => {
         }
       }, 300);
     } else {
-      // Not streaming — scroll immediately (new user message, history load)
       const el = messagesRef.current;
       if (el !== null) {
+        // First scroll with actual messages (after localStorage load) — jump instantly;
+        // subsequent scrolls (new user message, streaming done) — animate smoothly
+        const behavior: ScrollBehavior = initialScrollDoneRef.current ? "smooth" : "instant";
         el.scrollTo({ top: el.scrollHeight, behavior });
+        if (!initialScrollDoneRef.current && messages.length > 0) {
+          initialScrollDoneRef.current = true;
+        }
       }
     }
   }, [messages, isStreaming]);
