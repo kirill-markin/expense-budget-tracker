@@ -122,6 +122,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   const isNearBottomRef = useRef<boolean>(true);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingScrollRef = useRef<boolean>(false);
+  const initialScrollDoneRef = useRef<boolean>(false);
 
   // Resize drag logic
   useEffect(() => {
@@ -179,6 +180,13 @@ export const ChatPanel = (props: Props): ReactElement => {
   // Throttled auto-scroll: batches scroll updates during streaming
   useEffect(() => {
     if (!isNearBottomRef.current) return;
+    // First scroll after mount (page navigation, history load) — jump instantly
+    const behavior: ScrollBehavior = initialScrollDoneRef.current
+      ? "smooth"
+      : "instant";
+    if (!initialScrollDoneRef.current) {
+      initialScrollDoneRef.current = true;
+    }
     if (isStreaming) {
       // During streaming, throttle to once per 300ms
       if (pendingScrollRef.current) return;
@@ -194,7 +202,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       // Not streaming — scroll immediately (new user message, history load)
       const el = messagesRef.current;
       if (el !== null) {
-        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+        el.scrollTo({ top: el.scrollHeight, behavior });
       }
     }
   }, [messages, isStreaming]);
