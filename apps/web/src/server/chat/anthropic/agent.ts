@@ -169,6 +169,9 @@ const blockToParam = (block: BetaContentBlock): BetaContentBlockParam => {
       input: block.input,
     };
   }
+  if (block.type === "web_search_tool_result") {
+    return block as unknown as BetaContentBlockParam;
+  }
   if (CODE_EXECUTION_RESULT_TYPES.has(block.type)) {
     return block as unknown as BetaContentBlockParam;
   }
@@ -191,7 +194,15 @@ export async function* streamAgentResponse(
         max_tokens: MAX_TOKENS,
         system: SYSTEM_INSTRUCTIONS,
         messages,
-        tools: [DB_TOOL, CODE_EXECUTION_TOOL],
+        tools: [
+          DB_TOOL,
+          CODE_EXECUTION_TOOL,
+          {
+            type: "web_search_20250305",
+            name: "web_search",
+            max_uses: 5,
+          },
+        ],
         betas: [FILES_BETA],
         container: containerId,
       });
@@ -203,6 +214,9 @@ export async function* streamAgentResponse(
           }
           if (event.content_block.type === "server_tool_use") {
             yield { type: "tool_call", name: event.content_block.name, status: "started" };
+          }
+          if (event.content_block.type === "web_search_tool_result") {
+            yield { type: "tool_call", name: "web_search", status: "completed" };
           }
         }
 

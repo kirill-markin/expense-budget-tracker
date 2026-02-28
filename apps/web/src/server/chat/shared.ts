@@ -11,7 +11,8 @@ Before any write operation (INSERT, UPDATE, DELETE), you MUST first describe the
 When inserting rows, always include the workspace_id column.
 When the user asks about their finances, write SQL queries to fetch the data.
 Present results clearly with formatting.
-Be concise and direct. If a query returns no data, say so clearly.`;
+Be concise and direct. If a query returns no data, say so clearly.
+You also have web search. Use it to look up current exchange rates, financial news, tax rules, or any other real-time information when the user's question goes beyond the data in the database.`;
 
 export const TOOL_DESCRIPTION = `Execute a SQL statement (SELECT, INSERT, UPDATE, DELETE) against the expense tracker database.
 Tables: ledger_entries (ts, account_id, amount, currency, kind, category, counterparty, note, workspace_id),

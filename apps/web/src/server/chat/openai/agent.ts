@@ -1,5 +1,5 @@
 import { Agent, run } from "@openai/agents";
-import { codeInterpreterTool } from "@openai/agents-openai";
+import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import type {
   ChatMessage,
   ChatStreamEvent,
@@ -27,7 +27,8 @@ type InputMessage =
 
 const OPENAI_SYSTEM_INSTRUCTIONS =
   SYSTEM_INSTRUCTIONS +
-  "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate.";
+  "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate." +
+  "\nYou also have web search. Use it to look up current exchange rates, financial news, tax rules, or any other real-time information.";
 
 const mapUserPart = (part: ContentPart): UserContentPart => {
   switch (part.type) {
@@ -107,7 +108,7 @@ export async function* streamAgentResponse(
     name: "Expense Assistant",
     instructions: OPENAI_SYSTEM_INSTRUCTIONS,
     model: params.model,
-    tools: [pgQueryTool, codeInterpreterTool()],
+    tools: [pgQueryTool, codeInterpreterTool(), webSearchTool({ searchContextSize: "medium" })],
   });
 
   const context: AgentContext = {
