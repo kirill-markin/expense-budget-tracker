@@ -728,7 +728,9 @@ tbody tr:last-child .budget-cm-actual {
 @media (max-width: 768px) {
   .drilldown-panel {
     width: 100% !important;
+    max-width: 100% !important;
     min-width: 0;
+    left: 0;
   }
 
   .drilldown-resize-handle {
