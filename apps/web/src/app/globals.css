@@ -1633,8 +1633,10 @@ tbody tr:last-child .budget-cm-actual {
   font-size: 12px;
   padding: 2px 6px;
   border: 1px solid var(--panel-border);
+  border-radius: 0;
   background: var(--bg);
   color: var(--muted);
+  appearance: none;
 }
 
 .chat-model-label {
