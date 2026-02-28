@@ -258,7 +258,7 @@ export const ChatPanel = (props: Props): ReactElement => {
             if (event.status === "started") {
               const label = event.name === "query_database"
                 ? "Querying database..."
-                : event.name === "code_interpreter"
+                : event.name === "code_execution" || event.name === "code_interpreter"
                   ? "Running code..."
                   : `Running ${event.name}...`;
               setToolStatus(label);
@@ -385,7 +385,7 @@ export const ChatPanel = (props: Props): ReactElement => {
           </div>
         )}
         <div className="chat-controls">
-          <ModelSelector value={selectedModel} onChange={handleModelChange} disabled={messages.length > 0 || isStreaming} />
+          <ModelSelector value={selectedModel} onChange={handleModelChange} locked={messages.length > 0 || isStreaming} />
           <FileAttachment onAttach={handleAttach} />
           <button
             type="button"

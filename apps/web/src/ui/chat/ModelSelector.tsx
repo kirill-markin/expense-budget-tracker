@@ -6,7 +6,7 @@ import { CHAT_MODELS, type ChatModelVendor } from "@/lib/chatModels";
 type Props = Readonly<{
   value: string;
   onChange: (modelId: string) => void;
-  disabled: boolean;
+  locked: boolean;
 }>;
 
 const VENDOR_LABELS: Record<ChatModelVendor, string> = {
@@ -17,14 +17,18 @@ const VENDOR_LABELS: Record<ChatModelVendor, string> = {
 const VENDOR_ORDER: ReadonlyArray<ChatModelVendor> = ["anthropic", "openai"];
 
 export const ModelSelector = (props: Props): ReactElement => {
-  const { value, onChange, disabled } = props;
+  const { value, onChange, locked } = props;
+
+  if (locked) {
+    const model = CHAT_MODELS.find((m) => m.id === value);
+    return <span className="chat-model-label">{model?.label ?? value}</span>;
+  }
 
   return (
     <select
       className="chat-model-select"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
     >
       {VENDOR_ORDER.map((vendor) => {
         const models = CHAT_MODELS.filter((m) => m.vendor === vendor);

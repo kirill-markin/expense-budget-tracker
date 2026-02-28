@@ -1600,6 +1600,13 @@ tbody tr:last-child .budget-cm-actual {
   color: var(--muted);
 }
 
+.chat-model-label {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  color: var(--muted);
+}
+
 .chat-attach-btn {
   font-family: inherit;
   font-size: 12px;
