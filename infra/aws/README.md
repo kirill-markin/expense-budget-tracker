@@ -56,6 +56,7 @@ psql / DBeaver → db.domain.com:5432 → NLB (TCP) → RDS
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.micro for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
+- **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key, Anthropic API key
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate) + Cognito authentication (JWT via ALB auth action)
@@ -314,6 +315,27 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
      --username you@example.com \
      --temporary-password 'TempPass123!'
    ```
+4. **Set AI API keys** — the AI chat feature requires OpenAI and/or Anthropic API keys. CDK creates placeholder secrets in AWS Secrets Manager; replace them with real keys:
+   ```bash
+   aws secretsmanager put-secret-value \
+     --secret-id expense-tracker/openai-api-key \
+     --secret-string 'sk-...' \
+     --profile expense-tracker
+
+   aws secretsmanager put-secret-value \
+     --secret-id expense-tracker/anthropic-api-key \
+     --secret-string 'sk-ant-...' \
+     --profile expense-tracker
+   ```
+   After updating, restart the ECS service to pick up the new values:
+   ```bash
+   aws ecs update-service \
+     --cluster <EcsClusterName from output> \
+     --service <EcsServiceName from output> \
+     --force-new-deployment \
+     --profile expense-tracker
+   ```
+   Both keys are optional — chat models from vendors without a configured key will return a clear error.
 
 ## CI/CD (automatic deploys on push)
 

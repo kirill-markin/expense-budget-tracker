@@ -49,6 +49,8 @@ services:
       AUTH_PROXY_HEADER: ${AUTH_PROXY_HEADER:-}
       COGNITO_DOMAIN: ${COGNITO_DOMAIN:-}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
