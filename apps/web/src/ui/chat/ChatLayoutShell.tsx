@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import type { ReactElement, ReactNode } from "react";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { ChatPanel } from "./ChatPanel";
@@ -12,14 +13,16 @@ type Props = Readonly<{
 export const ChatLayoutShell = (props: Props): ReactElement => {
   const { children } = props;
   const { isOpen } = useChatLayout();
+  const pathname = usePathname();
+  const isFullscreenChat = pathname === "/chat";
 
   return (
     <div className="chat-layout-shell">
-      {isOpen && <ChatPanel mode="sidebar" />}
+      {!isFullscreenChat && isOpen && <ChatPanel mode="sidebar" />}
       <div className="chat-main-content">
         {children}
       </div>
-      {!isOpen && <ChatToggle />}
+      {!isFullscreenChat && !isOpen && <ChatToggle />}
     </div>
   );
 };
