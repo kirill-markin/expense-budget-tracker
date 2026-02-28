@@ -1,5 +1,4 @@
-import { streamAgentResponse } from "@/server/chat/openai/agent";
-import type { ChatMessage } from "@/server/chat/types";
+import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
 import { CHAT_MODELS } from "@/lib/chatModels";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -7,6 +6,24 @@ type ChatRequestBody = Readonly<{
   messages: ReadonlyArray<ChatMessage>;
   model: string;
 }>;
+
+type StreamAgentParams = Readonly<{
+  messages: ReadonlyArray<ChatMessage>;
+  model: string;
+  userId: string;
+  workspaceId: string;
+}>;
+
+type AgentModule = {
+  streamAgentResponse: (
+    params: StreamAgentParams,
+  ) => AsyncGenerator<ChatStreamEvent>;
+};
+
+const ENV_KEY_BY_VENDOR: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+};
 
 export const POST = async (request: Request): Promise<Response> => {
   const body: ChatRequestBody = await request.json();
@@ -20,10 +37,15 @@ export const POST = async (request: Request): Promise<Response> => {
     return new Response("messages array is empty", { status: 400 });
   }
 
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (openaiKey === undefined || openaiKey === "") {
-    console.error("chat POST: OPENAI_API_KEY environment variable is not set");
-    return new Response("OPENAI_API_KEY environment variable is not set", { status: 500 });
+  const envKey = ENV_KEY_BY_VENDOR[validModel.vendor];
+  if (envKey === undefined) {
+    return new Response(`Unsupported vendor: ${validModel.vendor}`, { status: 400 });
+  }
+
+  const apiKey = process.env[envKey];
+  if (apiKey === undefined || apiKey === "") {
+    console.error("chat POST: %s environment variable is not set", envKey);
+    return new Response(`${envKey} environment variable is not set`, { status: 500 });
   }
 
   let userId: string;
@@ -37,11 +59,16 @@ export const POST = async (request: Request): Promise<Response> => {
     return new Response(message, { status: 401 });
   }
 
+  const agentModule: AgentModule =
+    validModel.vendor === "anthropic"
+      ? await import("@/server/chat/anthropic/agent")
+      : await import("@/server/chat/openai/agent");
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const event of streamAgentResponse({
+        for await (const event of agentModule.streamAgentResponse({
           model: body.model,
           messages: body.messages,
           userId,

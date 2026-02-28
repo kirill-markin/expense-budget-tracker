@@ -5,6 +5,11 @@ import type {
   ChatStreamEvent,
   ContentPart,
 } from "@/server/chat/types";
+import {
+  SYSTEM_INSTRUCTIONS,
+  extractText,
+  summarizeContent,
+} from "@/server/chat/shared";
 import { pgQueryTool, type AgentContext } from "./tools";
 
 // Agents SDK protocol format — NOT the Responses API wire format.
@@ -20,14 +25,9 @@ type InputMessage =
   | { role: "user"; content: string | ReadonlyArray<UserContentPart> }
   | { role: "assistant"; content: ReadonlyArray<AssistantContentPart> };
 
-const SYSTEM_INSTRUCTIONS = `You are a financial assistant for an expense tracker app.
-You have access to the user's expense database via the query_database tool and a code interpreter for analysis.
-You can read data (SELECT) and write data (INSERT, UPDATE, DELETE) — for example, adding transactions, updating budgets, or deleting entries.
-Before any write operation (INSERT, UPDATE, DELETE), you MUST first describe the exact changes you plan to make and wait for the user's explicit confirmation. Only execute the write after the user approves. Read queries (SELECT) do not require confirmation.
-When inserting rows, always include the workspace_id column.
-When the user asks about their finances, write SQL queries to fetch the data.
-Present results clearly with formatting. Use the code interpreter for calculations, charts, or file analysis.
-Be concise and direct. If a query returns no data, say so clearly.`;
+const OPENAI_SYSTEM_INSTRUCTIONS =
+  SYSTEM_INSTRUCTIONS +
+  "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate.";
 
 const mapUserPart = (part: ContentPart): UserContentPart => {
   switch (part.type) {
@@ -45,26 +45,6 @@ const mapUserPart = (part: ContentPart): UserContentPart => {
         filename: part.fileName,
       };
   }
-};
-
-const extractText = (content: ReadonlyArray<ContentPart>): string =>
-  content
-    .filter((p) => p.type === "text")
-    .map((p) => (p.type === "text" ? p.text : ""))
-    .join("");
-
-const summarizeContent = (content: ReadonlyArray<ContentPart>): string => {
-  const parts: Array<string> = [];
-  for (const p of content) {
-    if (p.type === "text") {
-      parts.push(p.text);
-    } else if (p.type === "image") {
-      parts.push("[attached image]");
-    } else if (p.type === "file") {
-      parts.push(`[attached file: ${p.fileName}]`);
-    }
-  }
-  return parts.join("\n");
 };
 
 const buildInput = (
@@ -125,7 +105,7 @@ export async function* streamAgentResponse(
 ): AsyncGenerator<ChatStreamEvent> {
   const agent = new Agent<AgentContext>({
     name: "Expense Assistant",
-    instructions: SYSTEM_INSTRUCTIONS,
+    instructions: OPENAI_SYSTEM_INSTRUCTIONS,
     model: params.model,
     tools: [pgQueryTool, codeInterpreterTool()],
   });

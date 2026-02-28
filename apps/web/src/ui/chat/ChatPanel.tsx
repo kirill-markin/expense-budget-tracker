@@ -385,7 +385,7 @@ export const ChatPanel = (props: Props): ReactElement => {
           </div>
         )}
         <div className="chat-controls">
-          <ModelSelector value={selectedModel} onChange={handleModelChange} />
+          <ModelSelector value={selectedModel} onChange={handleModelChange} disabled={messages.length > 0 || isStreaming} />
           <FileAttachment onAttach={handleAttach} />
           <button
             type="button"
