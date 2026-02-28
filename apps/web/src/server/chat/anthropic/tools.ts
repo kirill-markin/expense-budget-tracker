@@ -1,39 +1,55 @@
-import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
+import Anthropic from "@anthropic-ai/sdk";
 import { TOOL_DESCRIPTION, execQuery } from "@/server/chat/shared";
 
-type McpServer = ReturnType<typeof createSdkMcpServer>;
+export const TOOL_NAME = "query_database";
 
-export const MCP_SERVER_NAME = "expense-tracker-db";
-export const MCP_TOOL_NAME = "query_database";
-export const QUALIFIED_TOOL_NAME = `mcp__${MCP_SERVER_NAME}__${MCP_TOOL_NAME}`;
+export const DB_TOOL: Anthropic.Tool = {
+  name: TOOL_NAME,
+  description: TOOL_DESCRIPTION,
+  input_schema: {
+    type: "object",
+    properties: {
+      sql: {
+        type: "string",
+        description: "SQL statement to execute (SELECT, INSERT, UPDATE, DELETE)",
+      },
+    },
+    required: ["sql"],
+  },
+};
 
-export const createDbMcpServer = (
+export const executeTool = async (
+  toolUseId: string,
+  toolName: string,
+  toolInput: unknown,
   userId: string,
   workspaceId: string,
-): McpServer =>
-  createSdkMcpServer({
-    name: MCP_SERVER_NAME,
-    version: "1.0.0",
-    tools: [
-      tool(
-        MCP_TOOL_NAME,
-        TOOL_DESCRIPTION,
-        {
-          sql: z.string().describe("SQL statement to execute (SELECT, INSERT, UPDATE, DELETE)"),
-        },
-        async (args: { sql: string }) => {
-          try {
-            const result = await execQuery(args.sql, userId, workspaceId);
-            return { content: [{ type: "text" as const, text: result.json }] };
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            return {
-              isError: true,
-              content: [{ type: "text" as const, text: message }],
-            };
-          }
-        },
-      ),
-    ],
-  });
+): Promise<Anthropic.ToolResultBlockParam> => {
+  if (toolName !== TOOL_NAME) {
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content: `Unknown tool: ${toolName}`,
+      is_error: true,
+    };
+  }
+
+  const input = toolInput as { sql: string };
+
+  try {
+    const result = await execQuery(input.sql, userId, workspaceId);
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content: result.json,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content: message,
+      is_error: true,
+    };
+  }
+};

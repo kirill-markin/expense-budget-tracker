@@ -1,16 +1,18 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
+import Anthropic from "@anthropic-ai/sdk";
+import type {
+  ChatMessage,
+  ChatStreamEvent,
+  ContentPart,
+} from "@/server/chat/types";
 import {
   SYSTEM_INSTRUCTIONS,
   extractText,
   summarizeContent,
 } from "@/server/chat/shared";
-import {
-  createDbMcpServer,
-  QUALIFIED_TOOL_NAME,
-  MCP_SERVER_NAME,
-  MCP_TOOL_NAME,
-} from "./tools";
+import { DB_TOOL, TOOL_NAME, executeTool } from "./tools";
+
+const MAX_TOKENS = 8192;
+const MAX_TURNS = 10;
 
 export type StreamAgentParams = Readonly<{
   messages: ReadonlyArray<ChatMessage>;
@@ -19,55 +21,125 @@ export type StreamAgentParams = Readonly<{
   workspaceId: string;
 }>;
 
-const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
-
-const stripMcpPrefix = (name: string): string =>
-  name.startsWith(MCP_TOOL_PREFIX)
-    ? name.slice(MCP_TOOL_PREFIX.length)
-    : name;
-
-const buildPromptText = (messages: ReadonlyArray<ChatMessage>): string => {
-  const parts: Array<string> = [];
-  for (const msg of messages) {
-    const prefix = msg.role === "user" ? "User" : "Assistant";
-    const text =
-      msg.role === "assistant"
-        ? extractText(msg.content)
-        : summarizeContent(msg.content);
-    parts.push(`${prefix}: ${text}`);
+const mapUserPart = (
+  part: ContentPart,
+): Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam => {
+  switch (part.type) {
+    case "text":
+      return { type: "text", text: part.text };
+    case "image":
+      return {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: part.mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+          data: part.base64Data,
+        },
+      };
+    case "file":
+      if (part.mediaType === "application/pdf") {
+        return {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: part.base64Data,
+          },
+          title: part.fileName,
+        };
+      }
+      return {
+        type: "document",
+        source: {
+          type: "text",
+          media_type: "text/plain",
+          data: Buffer.from(part.base64Data, "base64").toString("utf-8"),
+        },
+        title: part.fileName,
+      };
   }
-  return parts.join("\n\n");
+};
+
+const buildMessages = (
+  messages: ReadonlyArray<ChatMessage>,
+): Array<Anthropic.MessageParam> => {
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+
+  const result: Array<Anthropic.MessageParam> = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    if (msg.role === "assistant") {
+      result.push({
+        role: "assistant",
+        content: [{ type: "text", text: extractText(msg.content) }],
+      });
+      continue;
+    }
+
+    const hasAttachments = msg.content.some((p) => p.type !== "text");
+
+    if (!hasAttachments) {
+      const text = extractText(msg.content);
+      result.push({ role: "user", content: text });
+      continue;
+    }
+
+    if (i === lastUserIdx) {
+      result.push({ role: "user", content: msg.content.map(mapUserPart) });
+    } else {
+      result.push({ role: "user", content: summarizeContent(msg.content) });
+    }
+  }
+  return result;
+};
+
+const blockToParam = (
+  block: Anthropic.ContentBlock,
+): Anthropic.ContentBlockParam => {
+  if (block.type === "text") {
+    return { type: "text", text: block.text };
+  }
+  if (block.type === "tool_use") {
+    return {
+      type: "tool_use",
+      id: block.id,
+      name: block.name,
+      input: block.input,
+    };
+  }
+  return { type: "text", text: "" };
 };
 
 export async function* streamAgentResponse(
   params: StreamAgentParams,
 ): AsyncGenerator<ChatStreamEvent> {
-  const mcpServer = createDbMcpServer(params.userId, params.workspaceId);
-
-  const promptText = buildPromptText(params.messages);
-
-  const abortController = new AbortController();
-
-  const stream = query({
-    prompt: promptText,
-    options: {
-      model: params.model,
-      systemPrompt: SYSTEM_INSTRUCTIONS,
-      mcpServers: { [MCP_SERVER_NAME]: mcpServer },
-      allowedTools: [QUALIFIED_TOOL_NAME],
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
-      persistSession: false,
-      maxTurns: 10,
-      includePartialMessages: true,
-      abortController,
-    },
-  });
+  const client = new Anthropic();
+  const messages = buildMessages(params.messages);
 
   try {
-    for await (const message of stream) {
-      if (message.type === "stream_event") {
-        const event = message.event;
+    for (let turn = 0; turn < MAX_TURNS; turn++) {
+      const stream = client.messages.stream({
+        model: params.model,
+        max_tokens: MAX_TOKENS,
+        system: SYSTEM_INSTRUCTIONS,
+        messages,
+        tools: [DB_TOOL],
+      });
+
+      for await (const event of stream) {
+        if (
+          event.type === "content_block_start" &&
+          event.content_block.type === "tool_use"
+        ) {
+          yield { type: "tool_call", name: event.content_block.name, status: "started" };
+        }
 
         if (
           event.type === "content_block_delta" &&
@@ -75,40 +147,36 @@ export async function* streamAgentResponse(
         ) {
           yield { type: "delta", text: event.delta.text };
         }
-
-        if (
-          event.type === "content_block_start" &&
-          event.content_block.type === "tool_use"
-        ) {
-          yield {
-            type: "tool_call",
-            name: stripMcpPrefix(event.content_block.name),
-            status: "started",
-          };
-        }
       }
 
-      if (message.type === "assistant") {
-        for (const block of message.message.content) {
-          if (block.type === "tool_use") {
-            yield {
-              type: "tool_call",
-              name: stripMcpPrefix(block.name),
-              status: "completed",
-            };
-          }
-        }
-      }
+      const finalMessage = await stream.finalMessage();
 
-      if (message.type === "result") {
-        if (message.subtype === "success") {
-          yield { type: "done" };
-        } else {
-          const errorText = message.errors?.join("; ") ?? "Unknown error";
-          yield { type: "error", message: errorText };
-        }
+      messages.push({
+        role: "assistant",
+        content: finalMessage.content.map(blockToParam),
+      });
+
+      if (finalMessage.stop_reason !== "tool_use") {
+        yield { type: "done" };
         return;
       }
+
+      const toolResults: Array<Anthropic.ToolResultBlockParam> = [];
+      for (const block of finalMessage.content) {
+        if (block.type === "tool_use") {
+          const result = await executeTool(
+            block.id,
+            block.name,
+            block.input,
+            params.userId,
+            params.workspaceId,
+          );
+          toolResults.push(result);
+          yield { type: "tool_call", name: block.name, status: "completed" };
+        }
+      }
+
+      messages.push({ role: "user", content: toolResults });
     }
 
     yield { type: "done" };
