@@ -74,11 +74,18 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
     action: elbv2.ListenerAction.forward([targetGroup]),
   });
 
+  // SQL API bypass: /api/sql uses its own Bearer token auth (API keys)
+  httpsListener.addAction("SqlApiBypass", {
+    priority: 2,
+    conditions: [elbv2.ListenerCondition.pathPatterns(["/api/sql"])],
+    action: elbv2.ListenerAction.forward([targetGroup]),
+  });
+
   // Base domain → redirect to app subdomain (no container needed).
   // To serve your own site on the root domain, point its DNS elsewhere
   // and this rule becomes irrelevant.
   httpsListener.addAction("SiteRoute", {
-    priority: 2,
+    priority: 3,
     conditions: [elbv2.ListenerCondition.hostHeaders([props.baseDomain])],
     action: elbv2.ListenerAction.redirect({
       host: props.appDomain,
