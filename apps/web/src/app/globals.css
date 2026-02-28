@@ -1487,8 +1487,23 @@ tbody tr:last-child .budget-cm-actual {
 .chat-empty {
   color: var(--muted);
   font-size: 12px;
-  text-align: center;
   padding: 24px 0;
+}
+
+.chat-empty-title {
+  font-weight: 650;
+  margin-bottom: 4px;
+}
+
+.chat-empty-title:not(:first-child) {
+  margin-top: 12px;
+}
+
+.chat-empty-list {
+  margin: 0;
+  padding-left: 16px;
+  list-style: disc;
+  line-height: 1.6;
 }
 
 .chat-msg {

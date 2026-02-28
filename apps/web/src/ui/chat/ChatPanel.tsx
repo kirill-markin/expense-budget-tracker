@@ -357,7 +357,20 @@ export const ChatPanel = (props: Props): ReactElement => {
 
       <div className="chat-messages" ref={messagesRef}>
         {messages.length === 0 && (
-          <div className="chat-empty">No messages yet. Start a conversation.</div>
+          <div className="chat-empty">
+            <p className="chat-empty-title">What can AI do?</p>
+            <ul className="chat-empty-list">
+              <li>Categorize transactions from a bank statement and save them to the database</li>
+              <li>Extract missing transactions from app screenshots and add them to the database</li>
+              <li>Fill in the budget plan for the remaining months based on past spending</li>
+            </ul>
+            <p className="chat-empty-title">You can attach:</p>
+            <ul className="chat-empty-list">
+              <li>PDF bank statement</li>
+              <li>CSV export from your bank</li>
+              <li>Screenshots from a banking app</li>
+            </ul>
+          </div>
         )}
         {messages.map((msg, i) => {
           const isLastAssistant =
