@@ -1445,6 +1445,12 @@ tbody tr:last-child .budget-cm-actual {
   flex-shrink: 0;
 }
 
+.chat-header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
 .chat-header-title {
   font-size: 12px;
   font-weight: 650;
@@ -1458,7 +1464,7 @@ tbody tr:last-child .budget-cm-actual {
   border: 1px solid var(--panel-border);
   padding: 2px 8px;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
   color: var(--muted);
   line-height: 1;
@@ -1550,6 +1556,10 @@ tbody tr:last-child .budget-cm-actual {
   align-items: flex-end;
 }
 
+.chat-input-area > .chat-textarea {
+  width: 100%;
+}
+
 .chat-textarea {
   flex: 1;
   resize: none;
@@ -1559,8 +1569,9 @@ tbody tr:last-child .budget-cm-actual {
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--text);
+  field-sizing: content;
   min-height: 36px;
-  max-height: 120px;
+  max-height: 480px;
   outline: none;
 }
 
@@ -1592,7 +1603,14 @@ tbody tr:last-child .budget-cm-actual {
 .chat-controls {
   display: flex;
   gap: 6px;
-  align-items: center;
+  align-items: stretch;
+}
+
+.chat-controls-right {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  margin-left: auto;
 }
 
 .chat-model-select {

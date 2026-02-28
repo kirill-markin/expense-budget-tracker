@@ -312,10 +312,6 @@ export const ChatPanel = (props: Props): ReactElement => {
   // Auto-resize textarea
   const handleInput = (value: string): void => {
     setInputText(value);
-    const el = textareaRef.current;
-    if (el === null) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   };
 
   const rootClass = mode === "sidebar" ? "chat-sidebar" : "chat-sidebar-fullscreen";
@@ -331,15 +327,32 @@ export const ChatPanel = (props: Props): ReactElement => {
       )}
       <div className="chat-header">
         <span className="chat-header-title">AI Chat</span>
-        {mode === "sidebar" && (
+        <div className="chat-header-actions">
           <button
             type="button"
             className="chat-close-btn"
-            onClick={() => setIsOpen(false)}
+            onClick={() => {
+              if (abortRef.current !== null) {
+                abortRef.current.abort();
+                abortRef.current = null;
+              }
+              setIsStreaming(false);
+              setToolStatus(null);
+              clearHistory();
+            }}
           >
-            &laquo;
+            Clear
           </button>
-        )}
+          {mode === "sidebar" && (
+            <button
+              type="button"
+              className="chat-close-btn"
+              onClick={() => setIsOpen(false)}
+            >
+              &laquo;
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="chat-messages" ref={messagesRef}>
@@ -384,43 +397,28 @@ export const ChatPanel = (props: Props): ReactElement => {
             ))}
           </div>
         )}
+        <textarea
+          ref={textareaRef}
+          className="chat-textarea"
+          placeholder="Type a message..."
+          value={inputText}
+          onChange={(e) => handleInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          rows={1}
+        />
         <div className="chat-controls">
           <ModelSelector value={selectedModel} onChange={handleModelChange} locked={messages.length > 0 || isStreaming} />
-          <FileAttachment onAttach={handleAttach} />
-          <button
-            type="button"
-            className="chat-attach-btn"
-            onClick={() => {
-              if (abortRef.current !== null) {
-                abortRef.current.abort();
-                abortRef.current = null;
-              }
-              setIsStreaming(false);
-              setToolStatus(null);
-              clearHistory();
-            }}
-          >
-            Clear
-          </button>
-        </div>
-        <div className="chat-input-row">
-          <textarea
-            ref={textareaRef}
-            className="chat-textarea"
-            placeholder="Type a message..."
-            value={inputText}
-            onChange={(e) => handleInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={1}
-          />
-          <button
-            type="button"
-            className="chat-send-btn"
-            disabled={isStreaming}
-            onClick={() => void sendMessage()}
-          >
-            Send
-          </button>
+          <div className="chat-controls-right">
+            <FileAttachment onAttach={handleAttach} />
+            <button
+              type="button"
+              className="chat-send-btn"
+              disabled={isStreaming}
+              onClick={() => void sendMessage()}
+            >
+              Send
+            </button>
+          </div>
         </div>
       </div>
     </div>
