@@ -33,7 +33,7 @@ Open `http://localhost:3000`.
 Example request the agent sends:
 
 ```bash
-curl -X POST https://app.example.com/api/sql \
+curl -X POST https://api.expense-budget-tracker.com/v1/sql \
   -H "Authorization: Bearer ebt_..." \
   -H "Content-Type: application/json" \
   -d '{"sql": "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, category, counterparty, note) VALUES ('"'"'evt-001'"'"', '"'"'2025-03-15 12:30:00+00'"'"', '"'"'chase-checking'"'"', -42.50, '"'"'USD'"'"', '"'"'spend'"'"', '"'"'groceries'"'"', '"'"'Whole Foods'"'"', '"'"'Weekly groceries'"'"')"}'

@@ -17,7 +17,7 @@
 Four components, one database:
 
 1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool` with per-request RLS context.
-2. **sql-api** (`apps/sql-api/`) — Two AWS Lambdas behind API Gateway (HTTP API) for machine clients. Lambda Authorizer validates `ebt_` Bearer tokens; SQL executor runs queries with RLS context. Separate from the web stack — no ALB involved.
+2. **sql-api** (`apps/sql-api/`) — Two AWS Lambdas behind API Gateway (REST API) for machine clients. Lambda Authorizer validates `ebt_` Bearer tokens; SQL executor runs queries with RLS context. Separate from the web stack — no ALB involved.
 3. **worker** (`apps/worker/`) — TypeScript process that fetches daily exchange rates from ECB, CBR, and NBS and inserts them into `exchange_rates`. Runs on a schedule (local Docker) or as a Lambda (AWS).
 4. **Postgres** — single source of truth. Seven tables (six with RLS), one view.
 
@@ -102,7 +102,7 @@ The SQL API runs on API Gateway (REST API) with its own domain (`api.example.com
 curl / LLM agent
       │
       ▼
-POST https://api.example.com/sql
+POST https://api.example.com/v1/sql
 Authorization: Bearer ebt_...
       │
       ▼
@@ -132,7 +132,7 @@ Users generate an API key in Settings, pass it as a Bearer token, and send SQL i
 ### Usage
 
 ```bash
-curl -X POST https://api.example.com/sql \
+curl -X POST https://api.example.com/v1/sql \
   -H "Authorization: Bearer ebt_a7Bk9mNpQ2xR4wYz1cDfGhJvLs8tUeWi5o..." \
   -H "Content-Type: application/json" \
   -d '{"sql": "SELECT * FROM ledger_entries ORDER BY ts DESC LIMIT 10"}'

@@ -46,7 +46,7 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
 
 Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL Lambda → RDS
                          │
-                         └─ api.* ──────────▶ POST /sql (ebt_ Bearer token auth)
+                         └─ api.* ──────────▶ POST /v1/sql (ebt_ Bearer token auth)
 ```
 
 **Cloudflare** handles domain registration, DNS, CDN caching, DDoS protection, and edge TLS.

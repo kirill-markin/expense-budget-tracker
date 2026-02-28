@@ -15,7 +15,7 @@ type CreatedKey = Readonly<{
 }>;
 
 const formatCurlExample = (key: string): string =>
-  `curl -X POST https://YOUR_DOMAIN/api/sql \\
+  `curl -X POST https://api.YOUR_DOMAIN/v1/sql \\
   -H "Authorization: Bearer ${key}" \\
   -H "Content-Type: application/json" \\
   -d '{"sql": "SELECT * FROM ledger_entries ORDER BY ts DESC LIMIT 10"}'`;

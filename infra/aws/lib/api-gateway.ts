@@ -135,6 +135,7 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
       domainName: apiDomainName,
       certificate,
       endpointType: apigw.EndpointType.REGIONAL,
+      basePath: "v1",
     });
 
     new cdk.CfnOutput(scope, "ApiCustomDomain", {
