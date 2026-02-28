@@ -3,6 +3,11 @@ import { TOOL_DESCRIPTION, execQuery } from "@/server/chat/shared";
 
 export const TOOL_NAME = "query_database";
 
+export const CODE_EXECUTION_TOOL: Anthropic.Beta.Messages.BetaCodeExecutionTool20250825 = {
+  type: "code_execution_20250825",
+  name: "code_execution",
+};
+
 export const DB_TOOL: Anthropic.Tool = {
   name: TOOL_NAME,
   description: TOOL_DESCRIPTION,
