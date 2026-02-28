@@ -390,7 +390,15 @@ export const ChatPanel = (props: Props): ReactElement => {
           <button
             type="button"
             className="chat-attach-btn"
-            onClick={clearHistory}
+            onClick={() => {
+              if (abortRef.current !== null) {
+                abortRef.current.abort();
+                abortRef.current = null;
+              }
+              setIsStreaming(false);
+              setToolStatus(null);
+              clearHistory();
+            }}
           >
             Clear
           </button>
