@@ -1,0 +1,98 @@
+import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
+import { CHAT_MODELS } from "@/lib/chatModels";
+import { extractUserId, extractWorkspaceId } from "@/server/userId";
+
+type ChatRequestBody = Readonly<{
+  messages: ReadonlyArray<ChatMessage>;
+  model: string;
+}>;
+
+type StreamAgentParams = Readonly<{
+  messages: ReadonlyArray<ChatMessage>;
+  model: string;
+  userId: string;
+  workspaceId: string;
+}>;
+
+type AgentModule = {
+  streamAgentResponse: (
+    params: StreamAgentParams,
+  ) => AsyncGenerator<ChatStreamEvent>;
+};
+
+const ENV_KEY_BY_VENDOR: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+};
+
+export const POST = async (request: Request): Promise<Response> => {
+  const body: ChatRequestBody = await request.json();
+
+  const validModel = CHAT_MODELS.find((m) => m.id === body.model);
+  if (validModel === undefined) {
+    return new Response(`Unknown model: ${body.model}`, { status: 400 });
+  }
+
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    return new Response("messages array is empty", { status: 400 });
+  }
+
+  const envKey = ENV_KEY_BY_VENDOR[validModel.vendor];
+  if (envKey === undefined) {
+    return new Response(`Unsupported vendor: ${validModel.vendor}`, { status: 400 });
+  }
+
+  const apiKey = process.env[envKey];
+  if (apiKey === undefined || apiKey === "") {
+    console.error("chat POST: %s environment variable is not set", envKey);
+    return new Response(`${envKey} environment variable is not set`, { status: 500 });
+  }
+
+  let userId: string;
+  let workspaceId: string;
+  try {
+    userId = extractUserId(request);
+    workspaceId = extractWorkspaceId(request);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("chat POST: auth header extraction failed: %s", message);
+    return new Response(message, { status: 401 });
+  }
+
+  const agentModule: AgentModule =
+    validModel.vendor === "anthropic"
+      ? await import("@/server/chat/anthropic/agent")
+      : await import("@/server/chat/openai/agent");
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const event of agentModule.streamAgentResponse({
+          model: body.model,
+          messages: body.messages,
+          userId,
+          workspaceId,
+        })) {
+          const line = `data: ${JSON.stringify(event)}\n\n`;
+          controller.enqueue(encoder.encode(line));
+          if (event.type === "done") break;
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("chat POST: stream error: %s", message);
+        const errorLine = `data: ${JSON.stringify({ type: "error", message })}\n\n`;
+        controller.enqueue(encoder.encode(errorLine));
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+};

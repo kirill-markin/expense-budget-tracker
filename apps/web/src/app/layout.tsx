@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
+import { readChatCookies } from "@/lib/chatCookies";
 import { isDemoMode } from "@/lib/demoMode";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/listWorkspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { AccountMenu } from "@/ui/AccountMenu";
+import { ChatLayoutProvider } from "@/ui/chat/ChatLayoutProvider";
+import { ChatLayoutShell } from "@/ui/chat/ChatLayoutShell";
 import { CurrencySelector } from "@/ui/CurrencySelector";
 import { FilteredBanner } from "@/ui/FilteredBanner";
 import { FilteredModeProvider } from "@/ui/FilteredModeProvider";
@@ -20,6 +23,7 @@ export const metadata: Metadata = {
 export default async function RootLayout(props: Readonly<{ children: React.ReactNode }>) {
   const { children } = props;
   const demo = await isDemoMode();
+  const { chatOpen, chatWidth } = await readChatCookies();
 
   const authEnabled = process.env.AUTH_MODE === "proxy";
   let reportingCurrency = "USD";
@@ -49,32 +53,39 @@ export default async function RootLayout(props: Readonly<{ children: React.React
     <html lang="en">
       <body>
         <FilteredModeProvider isDemoMode={demo}>
-          {demo && (
-            <div className="demo-banner">
-              Demo mode — data is static, writes are discarded
-            </div>
-          )}
-          <FilteredBanner />
-          <header className="topbar">
-            <a href="/" className="topbar-brand">Expense Budget Tracker</a>
-            <div className="topbar-actions">
-              <ModeToggle isDemoMode={demo} />
-              <AccountMenu
-                authEnabled={authEnabled}
-                workspaces={workspaces}
-                currentWorkspaceId={currentWorkspaceId}
-              />
-            </div>
-          </header>
-          <nav className="nav">
-            <a href="/budget">Budget</a>
-            <a href="/transactions">Transactions</a>
-            <a href="/balances">Balances</a>
-            <a href="/dashboards">Dashboard</a>
-            <a href="/settings">Settings</a>
-            <CurrencySelector initialCurrency={reportingCurrency} />
-          </nav>
-          {children}
+          <div className="header-sticky">
+            {demo && (
+              <div className="demo-banner">
+                Demo mode — data is static, writes are discarded
+              </div>
+            )}
+            <FilteredBanner />
+            <header className="topbar">
+              <a href="/" className="topbar-brand">Expense Budget Tracker</a>
+              <div className="topbar-actions">
+                <ModeToggle isDemoMode={demo} />
+                <AccountMenu
+                  authEnabled={authEnabled}
+                  workspaces={workspaces}
+                  currentWorkspaceId={currentWorkspaceId}
+                />
+              </div>
+            </header>
+            <nav className="nav">
+              <a href="/budget">Budget</a>
+              <a href="/transactions">Transactions</a>
+              <a href="/balances">Balances</a>
+              <a href="/dashboards">Dashboard</a>
+              <a href="/settings">Settings</a>
+              <a href="/chat">Chat</a>
+              <CurrencySelector initialCurrency={reportingCurrency} />
+            </nav>
+          </div>
+          <ChatLayoutProvider initialChatOpen={chatOpen} initialChatWidth={chatWidth}>
+            <ChatLayoutShell>
+              {children}
+            </ChatLayoutShell>
+          </ChatLayoutProvider>
         </FilteredModeProvider>
       </body>
     </html>

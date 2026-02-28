@@ -12,6 +12,8 @@ export interface ComputeProps {
   ecsSg: ec2.SecurityGroup;
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
+  openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
+  anthropicApiKeySecret: cdk.aws_secretsmanager.Secret;
   authDomain: string;
   userPoolClientId: string;
   appDomain: string;
@@ -68,6 +70,8 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     },
     secrets: {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
+      OPENAI_API_KEY: ecs.Secret.fromSecretsManager(props.openaiApiKeySecret),
+      ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(props.anthropicApiKeySecret),
     },
     logging: ecs.LogDrivers.awsLogs({
       logGroup: webLogGroup,

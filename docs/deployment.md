@@ -53,7 +53,7 @@ export AWS_PROFILE=expense-tracker
 bash scripts/bootstrap.sh --region eu-central-1
 ```
 
-The script runs `cdk bootstrap` (prepares the AWS account) then `cdk deploy` (creates everything), then runs database migrations, then invokes the FX fetcher Lambda to seed exchange rates.
+The script runs `cdk bootstrap` (prepares the AWS account) then `cdk deploy` (creates everything), then runs database migrations, then invokes the FX fetcher Lambda to seed exchange rates. After the first deploy, set AI API keys in Secrets Manager and restart ECS — see step 6.4 in [`infra/aws/README.md`](../infra/aws/README.md#6-post-deploy).
 
 **CI/CD (all subsequent deploys):** `.github/workflows/deploy.yml`
 
