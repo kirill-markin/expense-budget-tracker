@@ -19,3 +19,7 @@ export interface FetcherResult {
   latest_date: string;
   missing_currencies?: string[];
 }
+
+export type FetcherOutcome =
+  | { status: "ok"; result: FetcherResult }
+  | { status: "error"; error: string };
