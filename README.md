@@ -1,4 +1,4 @@
-# expense-budget-tracker
+# Expense Budget Tracker
 
 Self-hosted open-source expense and budget tracker with balances, transfers, and multi-currency reporting on Postgres.
 
