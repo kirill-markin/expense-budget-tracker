@@ -10,6 +10,7 @@
  * downstream route handlers. /api/health is always exempt from auth.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { AlbJwtVerifier } from "aws-jwt-verify";
 
 type AuthMode = "none" | "proxy";
 
@@ -112,22 +113,25 @@ const checkCsrf = (request: NextRequest): boolean => {
   return false;
 };
 
-/**
- * Decode the ALB-injected OIDC JWT payload without signature verification.
- *
- * Security invariant: the ALB verifies the JWT signature before forwarding
- * the request (ALB → ECS private subnet, no public access). The app only
- * needs to extract the `sub` claim. If the app were ever exposed without
- * ALB, this function would need full signature verification.
- */
-const extractSubFromJwt = (jwt: string): string => {
-  const parts = jwt.split(".");
-  if (parts.length !== 3) {
-    throw new Error("Malformed JWT: expected 3 parts");
+let verifier: ReturnType<typeof AlbJwtVerifier.create> | undefined;
+
+const getVerifier = (): ReturnType<typeof AlbJwtVerifier.create> => {
+  if (verifier !== undefined) return verifier;
+  const albArn = process.env.ALB_ARN ?? "";
+  const issuer = process.env.COGNITO_ISSUER ?? "";
+  const clientId = process.env.COGNITO_CLIENT_ID ?? "";
+  if (albArn === "" || issuer === "" || clientId === "") {
+    throw new Error(
+      "JWT verification misconfigured: ALB_ARN, COGNITO_ISSUER, and COGNITO_CLIENT_ID are required",
+    );
   }
-  const payload = Buffer.from(parts[1], "base64url").toString("utf8");
-  const claims = JSON.parse(payload) as Record<string, unknown>;
-  const sub = claims["sub"];
+  verifier = AlbJwtVerifier.create({ albArn, issuer, clientId });
+  return verifier;
+};
+
+const verifyAndExtractSub = async (jwt: string): Promise<string> => {
+  const payload = await getVerifier().verify(jwt);
+  const sub = payload.sub;
   if (typeof sub !== "string" || sub.length === 0) {
     throw new Error("JWT payload missing sub claim");
   }
@@ -146,7 +150,7 @@ const forwardWithIdentity = (request: NextRequest, userId: string, workspaceId: 
   return response;
 };
 
-export const proxy = (request: NextRequest): NextResponse => {
+export const proxy = async (request: NextRequest): Promise<NextResponse> => {
   const { pathname } = request.nextUrl;
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
@@ -185,7 +189,7 @@ export const proxy = (request: NextRequest): NextResponse => {
 
   let userId: string;
   try {
-    userId = extractSubFromJwt(jwtValue);
+    userId = await verifyAndExtractSub(jwtValue);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("proxy auth: %s", message);

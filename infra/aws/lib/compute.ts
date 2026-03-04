@@ -23,6 +23,7 @@ export interface ComputeProps {
 export interface ComputeResult {
   cluster: ecs.Cluster;
   webService: ecs.FargateService;
+  webContainer: ecs.ContainerDefinition;
   migrateTaskDef: ecs.FargateTaskDefinition;
   migrateLogGroup: logs.LogGroup;
 }
@@ -48,11 +49,12 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     removalPolicy: cdk.RemovalPolicy.DESTROY,
   });
 
-  webTaskDef.addContainer("web", {
+  const webContainer = webTaskDef.addContainer("web", {
     image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../../apps/web"), {
       platform: Platform.LINUX_ARM64,
     }),
     portMappings: [{ containerPort: 8080 }],
+    // Full list of ECS env vars is also documented in .env.example
     environment: {
       AUTH_MODE: "proxy",
       AUTH_PROXY_HEADER: "x-amzn-oidc-data",
@@ -151,5 +153,5 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     }),
   });
 
-  return { cluster, webService, migrateTaskDef, migrateLogGroup };
+  return { cluster, webService, webContainer, migrateTaskDef, migrateLogGroup };
 }

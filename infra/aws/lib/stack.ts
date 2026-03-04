@@ -60,6 +60,12 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       baseDomain,
       appDomain,
     });
+    comp.webContainer.addEnvironment("ALB_ARN", ing.alb.loadBalancerArn);
+    comp.webContainer.addEnvironment(
+      "COGNITO_ISSUER",
+      `https://cognito-idp.${cdk.Aws.REGION}.amazonaws.com/${authResult.userPool.userPoolId}`,
+    );
+
     const fx = fxFetcher(this, {
       vpc: net.vpc,
       lambdaSg: net.lambdaSg,
