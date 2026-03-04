@@ -208,7 +208,9 @@ export const ChatPanel = (props: Props): ReactElement => {
     if (!isDragging) return;
 
     const handleMouseMove = (e: MouseEvent): void => {
-      const newWidth = Math.max(MIN_WIDTH, Math.min(e.clientX, MAX_WIDTH));
+      const isRtl = document.documentElement.dir === "rtl";
+      const rawWidth = isRtl ? window.innerWidth - e.clientX : e.clientX;
+      const newWidth = Math.max(MIN_WIDTH, Math.min(rawWidth, MAX_WIDTH));
       setLocalWidth(newWidth);
     };
 

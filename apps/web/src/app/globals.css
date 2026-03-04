@@ -130,12 +130,14 @@ a:hover {
 
 .panel {
   background: var(--panel);
-  padding: 16px 0 16px 16px;
+  padding-block: 16px;
+  padding-inline-start: 16px;
+  padding-inline-end: 0;
 }
 
 .title {
   margin: 0 0 6px;
-  padding-right: 16px;
+  padding-inline-end: 16px;
   font-size: 20px;
   font-weight: 650;
   letter-spacing: 0.2px;
@@ -228,7 +230,7 @@ a:hover {
 
 .budget-th-sub {
   padding: 2px 10px 6px;
-  text-align: right;
+  text-align: end;
   font-size: 11px;
   font-weight: 400;
   color: var(--muted);
@@ -237,7 +239,7 @@ a:hover {
 
 .budget-sticky-col {
   position: sticky;
-  left: 0;
+  inset-inline-start: 0;
   background: var(--panel);
   z-index: 10;
 }
@@ -252,7 +254,7 @@ a:hover {
   content: "";
   position: absolute;
   top: 0;
-  right: -1px;
+  inset-inline-end: -1px;
   bottom: 0;
   width: 1px;
   background: var(--panel-border);
@@ -286,7 +288,7 @@ a:hover {
 
 .budget-cell {
   padding: 4px 10px;
-  text-align: right;
+  text-align: end;
   font-variant-numeric: tabular-nums;
   min-width: 90px;
 }
@@ -340,14 +342,27 @@ tbody tr:last-child .budget-cm-actual {
   box-shadow: inset -2px 0 0 0 var(--text), inset 0 -2px 0 0 var(--text);
 }
 
+[dir="rtl"] .budget-cm-plan {
+  box-shadow: inset -2px 0 0 0 var(--text);
+}
+[dir="rtl"] .budget-cm-actual {
+  box-shadow: inset 2px 0 0 0 var(--text);
+}
+[dir="rtl"] tbody tr:last-child .budget-cm-plan {
+  box-shadow: inset -2px 0 0 0 var(--text), inset 0 -2px 0 0 var(--text);
+}
+[dir="rtl"] tbody tr:last-child .budget-cm-actual {
+  box-shadow: inset 2px 0 0 0 var(--text), inset 0 -2px 0 0 var(--text);
+}
+
 .budget-year-total {
   background: var(--text);
   color: var(--bg);
-  border-right: 2px solid var(--panel-border);
+  border-inline-end: 2px solid var(--panel-border);
 }
 
 .budget-year-total:has(+ .budget-year-total) {
-  border-right: none;
+  border-inline-end: none;
 }
 
 .budget-year-total.budget-over {
@@ -387,7 +402,7 @@ tbody tr:last-child .budget-cm-actual {
   display: inline-block;
   width: 0;
   height: 0;
-  margin-right: 5px;
+  margin-inline-end: 5px;
   vertical-align: middle;
 }
 .budget-icon-good {
@@ -446,7 +461,7 @@ tbody tr:last-child .budget-cm-actual {
   color: var(--text);
   font-family: inherit;
   font-size: inherit;
-  text-align: right;
+  text-align: end;
 }
 .budget-popover-input:focus {
   outline-color: var(--text);
@@ -475,7 +490,7 @@ tbody tr:last-child .budget-cm-actual {
 
 .budget-popover-total-value {
   flex: 1;
-  text-align: right;
+  text-align: end;
   font-weight: 650;
 }
 
@@ -488,7 +503,7 @@ tbody tr:last-child .budget-cm-actual {
   color: var(--text);
   font-family: inherit;
   font-size: 12px;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -570,10 +585,10 @@ tbody tr:last-child .budget-cm-actual {
   color: var(--muted);
   cursor: pointer;
   font-family: inherit;
-  margin-left: -1px;
+  margin-inline-start: -1px;
 }
 .data-mask-seg:first-child {
-  margin-left: 0;
+  margin-inline-start: 0;
 }
 .data-mask-seg:not(.data-mask-seg-active):hover {
   color: var(--text);
@@ -592,7 +607,7 @@ tbody tr:last-child .budget-cm-actual {
 .budget-sync-status {
   font-size: 12px;
   color: var(--muted);
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .copyable-cell {
@@ -606,7 +621,7 @@ tbody tr:last-child .budget-cm-actual {
 .copy-toast {
   position: fixed;
   bottom: 16px;
-  right: 16px;
+  inset-inline-end: 16px;
   padding: 8px 14px;
   background: var(--text);
   color: var(--bg);
@@ -634,13 +649,13 @@ tbody tr:last-child .budget-cm-actual {
 .drilldown-panel {
   position: fixed;
   top: 0;
-  right: 0;
+  inset-inline-end: 0;
   bottom: 0;
   width: 70vw;
   max-width: 95vw;
   min-width: 320px;
   background: var(--bg);
-  border-left: 1px solid var(--panel-border);
+  border-inline-start: 1px solid var(--panel-border);
   z-index: 101;
   display: flex;
   flex-direction: column;
@@ -650,7 +665,7 @@ tbody tr:last-child .budget-cm-actual {
 .drilldown-resize-handle {
   position: absolute;
   top: 0;
-  left: -3px;
+  inset-inline-start: -3px;
   bottom: 0;
   width: 6px;
   cursor: col-resize;
@@ -744,7 +759,7 @@ tbody tr:last-child .budget-cm-actual {
     width: 100% !important;
     max-width: 100% !important;
     min-width: 0;
-    left: 0;
+    inset-inline-start: 0;
   }
 
   .drilldown-resize-handle {
@@ -809,7 +824,7 @@ tbody tr:last-child .budget-cm-actual {
   color: var(--text);
   font-family: inherit;
   font-size: 13px;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -836,7 +851,7 @@ tbody tr:last-child .budget-cm-actual {
 
 .txn-scroll {
   overflow-x: auto;
-  padding-right: 16px;
+  padding-inline-end: 16px;
   margin-bottom: 24px;
 }
 
@@ -855,13 +870,13 @@ tbody tr:last-child .budget-cm-actual {
 
 .txn-th {
   padding: 6px 10px;
-  text-align: left;
+  text-align: start;
   font-weight: 650;
   border-bottom: 1px solid var(--panel-border);
 }
 
 .txn-th-right {
-  text-align: right;
+  text-align: end;
 }
 
 .txn-th-sortable {
@@ -891,7 +906,7 @@ tbody tr:last-child .budget-cm-actual {
 }
 
 .txn-cell-right {
-  text-align: right;
+  text-align: end;
   min-width: 90px;
 }
 
@@ -914,7 +929,7 @@ tbody tr:last-child .budget-cm-actual {
 
 .txn-info-icon {
   display: inline-block;
-  margin-left: 4px;
+  margin-inline-start: 4px;
   font-size: 11px;
   color: var(--muted);
   cursor: pointer;
@@ -928,7 +943,7 @@ tbody tr:last-child .budget-cm-actual {
 .txn-info-popup {
   position: absolute;
   top: 100%;
-  left: 0;
+  inset-inline-start: 0;
   z-index: 10;
   margin-top: 4px;
   padding: 8px 12px;
@@ -952,7 +967,7 @@ tbody tr:last-child .budget-cm-actual {
   gap: 16px;
   align-items: flex-end;
   flex-wrap: wrap;
-  padding-right: 16px;
+  padding-inline-end: 16px;
   margin-bottom: 12px;
 }
 
@@ -1125,7 +1140,7 @@ tbody tr:last-child .budget-cm-actual {
 }
 
 .stream-tooltip-value {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1229,7 +1244,7 @@ tbody tr:last-child .budget-cm-actual {
 .account-menu-dropdown {
   position: absolute;
   top: 100%;
-  right: 0;
+  inset-inline-end: 0;
   margin-top: 4px;
   min-width: 180px;
   background: var(--bg);
@@ -1247,7 +1262,7 @@ tbody tr:last-child .budget-cm-actual {
   color: var(--muted);
   font-family: inherit;
   font-size: 12px;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -1308,7 +1323,7 @@ tbody tr:last-child .budget-cm-actual {
 /* Currency label in nav */
 
 .currency-label {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 0.5px;
@@ -1414,7 +1429,7 @@ tbody tr:last-child .budget-cm-actual {
 .settings-codeblock-copy {
   position: absolute;
   top: 8px;
-  right: 8px;
+  inset-inline-end: 8px;
   font-family: inherit;
   font-size: 11px;
   padding: 2px 8px;
@@ -1476,7 +1491,7 @@ tbody tr:last-child .budget-cm-actual {
 
 .settings-table th {
   padding: 6px 10px;
-  text-align: left;
+  text-align: start;
   font-weight: 650;
   border-bottom: 1px solid var(--panel-border);
 }
@@ -1514,7 +1529,7 @@ tbody tr:last-child .budget-cm-actual {
 .chat-sidebar {
   width: 360px;
   flex-shrink: 0;
-  border-right: 1px solid var(--panel-border);
+  border-inline-end: 1px solid var(--panel-border);
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -1525,7 +1540,7 @@ tbody tr:last-child .budget-cm-actual {
 .chat-resize-handle {
   position: absolute;
   top: 0;
-  right: -3px;
+  inset-inline-end: -3px;
   bottom: 0;
   width: 6px;
   cursor: col-resize;
@@ -1612,7 +1627,7 @@ tbody tr:last-child .budget-cm-actual {
 
 .chat-empty-list {
   margin: 0;
-  padding-left: 16px;
+  padding-inline-start: 16px;
   list-style: disc;
   line-height: 1.6;
 }
@@ -1685,7 +1700,7 @@ tbody tr:last-child .budget-cm-actual {
 .chat-tool-call-summary::before {
   content: "\25B6";
   display: inline-block;
-  margin-right: 6px;
+  margin-inline-end: 6px;
   font-size: 9px;
   transition: transform 0.15s ease;
 }
@@ -1804,7 +1819,7 @@ tbody tr:last-child .budget-cm-actual {
   display: flex;
   gap: 6px;
   align-items: stretch;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .chat-model-select {
@@ -1890,7 +1905,7 @@ tbody tr:last-child .budget-cm-actual {
 .chat-toggle-floating {
   position: fixed;
   bottom: 16px;
-  left: 16px;
+  inset-inline-start: 16px;
   z-index: 60;
   font-family: inherit;
   font-size: 12px;
@@ -1910,7 +1925,7 @@ tbody tr:last-child .budget-cm-actual {
   .chat-sidebar {
     position: fixed;
     top: 0;
-    left: 0;
+    inset-inline-start: 0;
     width: 100% !important;
     height: 100%;
     z-index: 100;
@@ -1940,14 +1955,14 @@ tbody tr:last-child .budget-cm-actual {
   }
 
   .panel {
-    padding-left: 0;
+    padding-inline-start: 0;
   }
 
   .panel > * {
-    padding-left: 16px;
+    padding-inline-start: 16px;
   }
 
   .panel > .budget-scroll {
-    padding-left: 0;
+    padding-inline-start: 0;
   }
 }

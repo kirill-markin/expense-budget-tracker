@@ -132,7 +132,8 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     if (!isDragging) return;
 
     const handleMouseMove = (e: MouseEvent): void => {
-      const newWidth = window.innerWidth - e.clientX;
+      const isRtl = document.documentElement.dir === "rtl";
+      const newWidth = isRtl ? e.clientX : window.innerWidth - e.clientX;
       const clamped = Math.max(320, Math.min(newWidth, window.innerWidth * 0.95));
       setPanelWidth(clamped);
     };

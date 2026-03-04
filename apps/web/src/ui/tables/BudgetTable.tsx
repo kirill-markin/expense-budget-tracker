@@ -39,6 +39,7 @@ export const BudgetTable = (props: Props): ReactElement => {
   const { effectiveAllowlist } = useFilteredMode();
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
+  const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
   const { commentedCells, fetchRange: fetchCommentRange, updateCell: updateCommentCell } = useCommentPresence(initialMonthFrom, initialMonthTo);
   const { toastMessage, copyToClipboard } = useCopyToast();
 
@@ -310,7 +311,7 @@ export const BudgetTable = (props: Props): ReactElement => {
     if (el === null) return;
 
     const delta = el.scrollWidth - prevScrollWidthRef.current;
-    el.scrollLeft += delta;
+    el.scrollLeft += isRtl ? -delta : delta;
   });
 
   const scrollToCurrentMonth = useCallback(() => {
@@ -320,12 +321,7 @@ export const BudgetTable = (props: Props): ReactElement => {
     const monthEl = el.querySelector<HTMLElement>(`[data-month="${currentMonth}"]`);
     if (monthEl === null) return;
 
-    const containerRect = el.getBoundingClientRect();
-    const monthRect = monthEl.getBoundingClientRect();
-    const stickyCol = el.querySelector<HTMLElement>(".budget-sticky-col");
-    const stickyWidth = stickyCol !== null ? stickyCol.offsetWidth : 0;
-
-    el.scrollLeft += monthRect.left - containerRect.left - stickyWidth;
+    monthEl.scrollIntoView({ inline: "start", block: "nearest" });
   }, [currentMonth]);
 
   useLayoutEffect(() => {
@@ -351,10 +347,12 @@ export const BudgetTable = (props: Props): ReactElement => {
       if (rafId !== 0) return;
       rafId = requestAnimationFrame(() => {
         rafId = 0;
-        if (el.scrollLeft < SCROLL_THRESHOLD) {
+        const scrollStart = isRtl ? -el.scrollLeft : el.scrollLeft;
+        const scrollEnd = el.scrollWidth - Math.abs(el.scrollLeft) - el.clientWidth;
+        if (scrollStart < SCROLL_THRESHOLD) {
           void loadLeft();
         }
-        if (el.scrollWidth - el.scrollLeft - el.clientWidth < SCROLL_THRESHOLD) {
+        if (scrollEnd < SCROLL_THRESHOLD) {
           void loadRight();
         }
       });

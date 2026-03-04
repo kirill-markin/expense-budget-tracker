@@ -14,6 +14,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Prefer non-interactive terminal commands.
 - Schema changes via migrations only: add a new file in `db/migrations/`, do not edit already-applied migrations.
 - CI/CD is GitHub Actions on push to `main` (`.github/workflows/deploy.yml`).
+- **RTL support**: the app supports RTL languages (Arabic, Farsi, Hebrew). In CSS, always use CSS logical properties instead of physical directional ones — `inset-inline-start`/`inset-inline-end` instead of `left`/`right`, `margin-inline-start`/`margin-inline-end` instead of `margin-left`/`margin-right`, `padding-inline-start`/`padding-inline-end` instead of `padding-left`/`padding-right`, `border-inline-start`/`border-inline-end` instead of `border-left`/`border-right`, `text-align: start`/`end` instead of `text-align: left`/`right`. Use `[dir="rtl"]` overrides only for properties without logical equivalents (e.g. `box-shadow`). In JS, account for RTL when working with `scrollLeft`, element positioning, or resize handlers.
 
 ## Components
 
