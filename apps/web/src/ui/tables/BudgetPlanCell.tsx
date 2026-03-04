@@ -2,6 +2,7 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useFormat } from "@/ui/FormatProvider";
 import { formatAmount, isDecember } from "@/ui/tables/budgetTableLogic";
 import { postBudgetPlan, postBudgetPlanFill, fetchComment, postComment } from "@/ui/tables/budgetTableApi";
 
@@ -30,6 +31,7 @@ export type BudgetPlanCellProps = Readonly<{
 export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const { month, direction, category, plannedBase, plannedModifier, planned, hasComment, showData, maskClass, taintedClass, isPlanOver, cmClass, onPlanSave, onFillMonths, onCommentPresenceChange, onSyncStart, onSyncEnd } = props;
 
+  const { numberFormat } = useFormat();
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [baseInput, setBaseInput] = useState<string>("");
   const [modifierInput, setModifierInput] = useState<string>("");
@@ -219,7 +221,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       {showData && plannedModifier !== 0 && (
         <span className={`budget-icon-modifier ${modifierIconClass}`} />
       )}
-      {formatAmount(planned)}
+      {formatAmount(planned, numberFormat)}
       {isOpen && createPortal(
         <div
           ref={popoverRef}
@@ -250,7 +252,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           <div className="budget-popover-divider" />
           <div className="budget-popover-total">
             <span className="budget-popover-label">Total</span>
-            <span className="budget-popover-total-value">{formatAmount(computedTotal)}</span>
+            <span className="budget-popover-total-value">{formatAmount(computedTotal, numberFormat)}</span>
           </div>
           {canFill && (
             <>

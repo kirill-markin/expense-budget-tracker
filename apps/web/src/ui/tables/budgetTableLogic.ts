@@ -1,3 +1,4 @@
+import type { NumberFormat } from "@/lib/locale";
 import { offsetMonth, getYear, getYearMonths } from "@/lib/monthUtils";
 import type { BudgetRow, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 
@@ -35,10 +36,16 @@ export const lookupCell = (cells: ReadonlyMap<string, CellValue>, month: string,
   return cells.get(cellKey(month, category)) ?? zeroCellValue;
 };
 
-export const formatAmount = (value: number): string => {
+const NUMBER_FORMAT_LOCALE: Readonly<Record<NumberFormat, string>> = {
+  "1,234.56": "en-US",
+  "1 234,56": "ru-RU",
+  "1.234,56": "de-DE",
+};
+
+export const formatAmount = (value: number, numberFormat: NumberFormat): string => {
   const rounded = Math.round(value);
   if (rounded === 0) return "0";
-  return rounded.toLocaleString("en-US");
+  return rounded.toLocaleString(NUMBER_FORMAT_LOCALE[numberFormat]);
 };
 
 /**
@@ -48,11 +55,11 @@ export const formatAmount = (value: number): string => {
  *   negative display = book underestimated (FX gain)
  * Always shows an explicit +/- prefix.
  */
-export const formatFxAmount = (value: number): string => {
+export const formatFxAmount = (value: number, numberFormat: NumberFormat): string => {
   const display = Math.round(-value);
   if (display === 0) return "0";
   const prefix = display > 0 ? "+" : "";
-  return prefix + display.toLocaleString("en-US");
+  return prefix + display.toLocaleString(NUMBER_FORMAT_LOCALE[numberFormat]);
 };
 
 /**

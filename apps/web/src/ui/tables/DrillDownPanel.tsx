@@ -4,6 +4,7 @@ import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
+import { useFormat } from "@/ui/FormatProvider";
 
 import { DataTable } from "./data-table/DataTable";
 import type { ColumnDef, PageResult } from "./data-table/types";
@@ -117,6 +118,7 @@ const saveEntry = async (entry: LedgerEntry): Promise<void> => {
 
 export const DrillDownPanel = (props: Props): ReactElement => {
   const { filter, categories, hints, onClose } = props;
+  const { numberFormat } = useFormat();
 
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -407,7 +409,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
 
     return [
       editableDateCol, editableAccountCol, editableAmountCol, editableCurrencyCol,
-      { ...usdColumn(), sortKey: "amountUsdAbs" },
+      { ...usdColumn(numberFormat), sortKey: "amountUsdAbs" },
       editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol, deleteCol,
     ];
   })();

@@ -3,10 +3,14 @@
 import { type ReactElement } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 
+import { useTranslation } from "react-i18next";
+
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 
 import type { AccountRow, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
+
+import { useFormat } from "@/ui/FormatProvider";
 
 import { CellSelectOverlay } from "./CellSelectOverlay";
 import { DataTable } from "./data-table/DataTable";
@@ -81,10 +85,10 @@ const daysAgo = (isoString: string): number => {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 };
 
-const daysAgoLabel = (days: number): string => {
-  if (days === 0) return "today";
-  if (days === 1) return "1 day ago";
-  return `${days} days ago`;
+const daysAgoLabel = (days: number, t: (key: string, opts?: Record<string, string | number>) => string): string => {
+  if (days === 0) return t("balances.daysAgoToday");
+  if (days === 1) return t("balances.daysAgoOne");
+  return t("balances.daysAgoMany", { count: days });
 };
 
 const compareTotals = (a: CurrencyTotal, b: CurrencyTotal, key: TotalsSortKey, dir: "asc" | "desc"): number => {
@@ -184,6 +188,8 @@ const saveLiquidity = async (accountId: string, liquidity: string): Promise<void
 export const BalancesTable = (props: Props): ReactElement => {
   const { accounts: accountsProp, totals, conversionWarnings, reportingCurrency } = props;
   const { effectiveAllowlist } = useFilteredMode();
+  const { numberFormat } = useFormat();
+  const { t } = useTranslation();
   const maskClass = effectiveAllowlist !== null ? " data-masked" : "";
   const isMasked = effectiveAllowlist !== null;
   const { toastMessage, copyToClipboard } = useCopyToast();
@@ -334,7 +340,7 @@ export const BalancesTable = (props: Props): ReactElement => {
   }, [totals]);
 
   if (localAccounts.length === 0) {
-    return <p className="txn-empty">No account data yet.</p>;
+    return <p className="txn-empty">{t("balances.noData")}</p>;
   }
 
   const currencyList = conversionWarnings.map((w) => w.currency).join(", ");
@@ -342,7 +348,7 @@ export const BalancesTable = (props: Props): ReactElement => {
   const totalsColumns: ReadonlyArray<ColumnDef<CurrencyTotal>> = [
     {
       key: "currency",
-      header: "Currency",
+      header: t("table.currency"),
       renderCell: (t: CurrencyTotal): ReactElement => (
         <td key="currency" className={`txn-cell${maskClass}`}>{t.currency}</td>
       ),
@@ -351,37 +357,37 @@ export const BalancesTable = (props: Props): ReactElement => {
     },
     {
       key: "balancePositive",
-      header: "Total +",
-      renderCell: (t: CurrencyTotal): ReactElement => (
-        <td key="balancePositive" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balancePositive)}</td>
+      header: t("balances.totalPlus"),
+      renderCell: (row: CurrencyTotal): ReactElement => (
+        <td key="balancePositive" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(row.balancePositive, numberFormat)}</td>
       ),
       rightAlign: true,
       sortKey: "balancePositive",
     },
     {
       key: "balanceNegative",
-      header: "Total -",
-      renderCell: (t: CurrencyTotal): ReactElement => (
-        <td key="balanceNegative" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balanceNegative)}</td>
+      header: t("balances.totalMinus"),
+      renderCell: (row: CurrencyTotal): ReactElement => (
+        <td key="balanceNegative" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(row.balanceNegative, numberFormat)}</td>
       ),
       rightAlign: true,
       sortKey: "balanceNegative",
     },
     {
       key: "balance",
-      header: "Balance",
-      renderCell: (t: CurrencyTotal): ReactElement => (
-        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balance)}</td>
+      header: t("balances.balance"),
+      renderCell: (row: CurrencyTotal): ReactElement => (
+        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(row.balance, numberFormat)}</td>
       ),
       rightAlign: true,
       sortKey: "balance",
     },
     {
       key: "balanceUsd",
-      header: `${reportingCurrency} equivalent`,
-      renderCell: (t: CurrencyTotal): ReactElement => (
-        <td key="balanceUsd" className={`txn-cell txn-cell-right${maskClass} ${t.hasUnconvertible ? "budget-error" : ""}`}>
-          {t.balanceUsd !== null ? formatAmount(t.balanceUsd) : "\u2014"}
+      header: t("balances.equivalent", { currency: reportingCurrency }),
+      renderCell: (row: CurrencyTotal): ReactElement => (
+        <td key="balanceUsd" className={`txn-cell txn-cell-right${maskClass} ${row.hasUnconvertible ? "budget-error" : ""}`}>
+          {row.balanceUsd !== null ? formatAmount(row.balanceUsd, numberFormat) : "\u2014"}
         </td>
       ),
       rightAlign: true,
@@ -391,12 +397,12 @@ export const BalancesTable = (props: Props): ReactElement => {
 
   const totalsFooterRows: ReadonlyArray<ReactElement> = [
     <tr key="total" className="txn-row txn-row-total">
-      <td className="txn-cell txn-cell-bold">Total ({reportingCurrency})</td>
-      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalPositiveUsd)}</td>
-      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalNegativeUsd)}</td>
+      <td className="txn-cell txn-cell-bold">{t("balances.total", { currency: reportingCurrency })}</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalPositiveUsd, numberFormat)}</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalNegativeUsd, numberFormat)}</td>
       <td className="txn-cell" />
       <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>
-        {totalUsd !== null ? formatAmount(totalUsd) : "\u2014"}
+        {totalUsd !== null ? formatAmount(totalUsd, numberFormat) : "\u2014"}
       </td>
     </tr>,
   ];
@@ -404,45 +410,45 @@ export const BalancesTable = (props: Props): ReactElement => {
   const liquidityColumns: ReadonlyArray<ColumnDef<LiquidityTotal>> = [
     {
       key: "liquidity",
-      header: "Liquidity",
-      renderCell: (t: LiquidityTotal): ReactElement => (
-        <td key="liquidity" className={`txn-cell${maskClass}`}>{t.liquidity}</td>
+      header: t("balances.liquidity"),
+      renderCell: (row: LiquidityTotal): ReactElement => (
+        <td key="liquidity" className={`txn-cell${maskClass}`}>{row.liquidity}</td>
       ),
       rightAlign: false,
       sortKey: "liquidity",
     },
     {
       key: "balancePositive",
-      header: "Total +",
-      renderCell: (t: LiquidityTotal): ReactElement => (
-        <td key="balancePositive" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balancePositive)}</td>
+      header: t("balances.totalPlus"),
+      renderCell: (row: LiquidityTotal): ReactElement => (
+        <td key="balancePositive" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(row.balancePositive, numberFormat)}</td>
       ),
       rightAlign: true,
       sortKey: "balancePositive",
     },
     {
       key: "balanceNegative",
-      header: "Total -",
-      renderCell: (t: LiquidityTotal): ReactElement => (
-        <td key="balanceNegative" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balanceNegative)}</td>
+      header: t("balances.totalMinus"),
+      renderCell: (row: LiquidityTotal): ReactElement => (
+        <td key="balanceNegative" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(row.balanceNegative, numberFormat)}</td>
       ),
       rightAlign: true,
       sortKey: "balanceNegative",
     },
     {
       key: "balance",
-      header: "Balance",
-      renderCell: (t: LiquidityTotal): ReactElement => (
-        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(t.balance)}</td>
+      header: t("balances.balance"),
+      renderCell: (row: LiquidityTotal): ReactElement => (
+        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(row.balance, numberFormat)}</td>
       ),
       rightAlign: true,
       sortKey: "balance",
     },
     {
       key: "accountCount",
-      header: "Accounts",
-      renderCell: (t: LiquidityTotal): ReactElement => (
-        <td key="accountCount" className={`txn-cell txn-cell-right${maskClass}`}>{t.accountCount}</td>
+      header: t("balances.accountCount"),
+      renderCell: (row: LiquidityTotal): ReactElement => (
+        <td key="accountCount" className={`txn-cell txn-cell-right${maskClass}`}>{row.accountCount}</td>
       ),
       rightAlign: true,
       sortKey: "accountCount",
@@ -451,11 +457,11 @@ export const BalancesTable = (props: Props): ReactElement => {
 
   const liquidityFooterRows: ReadonlyArray<ReactElement> = [
     <tr key="total" className="txn-row txn-row-total">
-      <td className="txn-cell txn-cell-bold">Total ({reportingCurrency})</td>
-      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalPositiveUsd)}</td>
-      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalNegativeUsd)}</td>
+      <td className="txn-cell txn-cell-bold">{t("balances.total", { currency: reportingCurrency })}</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalPositiveUsd, numberFormat)}</td>
+      <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>{formatAmount(totalNegativeUsd, numberFormat)}</td>
       <td className={`txn-cell txn-cell-right txn-cell-bold${maskClass}`}>
-        {totalUsd !== null ? formatAmount(totalUsd) : "\u2014"}
+        {totalUsd !== null ? formatAmount(totalUsd, numberFormat) : "\u2014"}
       </td>
       <td className="txn-cell" />
     </tr>,
@@ -464,7 +470,7 @@ export const BalancesTable = (props: Props): ReactElement => {
   const accountsColumns: ReadonlyArray<ColumnDef<AccountRow>> = [
     {
       key: "accountId",
-      header: "Account",
+      header: t("table.account"),
       renderCell: (a: AccountRow): ReactElement => (
         <td key="accountId" className={`txn-cell txn-cell-mono copyable-cell${maskClass}`} onClick={() => copyToClipboard(a.accountId)}>
           {a.accountId}
@@ -475,7 +481,7 @@ export const BalancesTable = (props: Props): ReactElement => {
     },
     {
       key: "currency",
-      header: "Currency",
+      header: t("table.currency"),
       renderCell: (a: AccountRow): ReactElement => (
         <td key="currency" className={`txn-cell${maskClass}`}>{a.currency}</td>
       ),
@@ -484,7 +490,7 @@ export const BalancesTable = (props: Props): ReactElement => {
     },
     {
       key: "liquidity",
-      header: "Liquidity",
+      header: t("balances.liquidity"),
       renderCell: (a: AccountRow): ReactElement => (
         <td
           key="liquidity"
@@ -513,19 +519,19 @@ export const BalancesTable = (props: Props): ReactElement => {
     },
     {
       key: "balance",
-      header: "Balance",
+      header: t("balances.balance"),
       renderCell: (a: AccountRow): ReactElement => (
-        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(a.balance)}</td>
+        <td key="balance" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(a.balance, numberFormat)}</td>
       ),
       rightAlign: true,
       sortKey: "balance",
     },
     {
       key: "balanceUsd",
-      header: `Balance ${reportingCurrency}`,
+      header: t("balances.balanceCurrency", { currency: reportingCurrency }),
       renderCell: (a: AccountRow): ReactElement => (
         <td key="balanceUsd" className={`txn-cell txn-cell-right${maskClass}`}>
-          {a.balanceUsd !== null ? formatAmount(a.balanceUsd) : "\u2014"}
+          {a.balanceUsd !== null ? formatAmount(a.balanceUsd, numberFormat) : "\u2014"}
         </td>
       ),
       rightAlign: true,
@@ -535,7 +541,7 @@ export const BalancesTable = (props: Props): ReactElement => {
       key: "lastTransactionTs",
       header: (
         <span style={{ position: "relative" }}>
-          Last transaction
+          {t("balances.lastTransaction")}
           <span
             className="txn-info-icon"
             onClick={(e) => { e.stopPropagation(); setLastTxInfoOpen(!lastTxInfoOpen); }}
@@ -544,7 +550,7 @@ export const BalancesTable = (props: Props): ReactElement => {
           </span>
           {lastTxInfoOpen && (
             <div className="txn-info-popup">
-              Last transaction excluding transfers.
+              {t("balances.lastTransactionInfo")}
             </div>
           )}
         </span>
@@ -562,13 +568,13 @@ export const BalancesTable = (props: Props): ReactElement => {
     },
     {
       key: "daysAgo",
-      header: "Days ago",
+      header: t("balances.daysAgo"),
       renderCell: (a: AccountRow): ReactElement => {
         const days = a.lastTransactionTs !== null ? daysAgo(a.lastTransactionTs) : null;
         const isStale = a.overdue && a.status === "active";
         return (
           <td key="daysAgo" className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>
-            {days !== null ? daysAgoLabel(days) : "\u2014"}
+            {days !== null ? daysAgoLabel(days, t) : "\u2014"}
           </td>
         );
       },
@@ -579,7 +585,7 @@ export const BalancesTable = (props: Props): ReactElement => {
       key: "status",
       header: (
         <span style={{ position: "relative" }}>
-          Status
+          {t("balances.status")}
           <span
             className="txn-info-icon"
             onClick={(e) => { e.stopPropagation(); setStatusInfoOpen(!statusInfoOpen); }}
@@ -588,7 +594,7 @@ export const BalancesTable = (props: Props): ReactElement => {
           </span>
           {statusInfoOpen && (
             <div className="txn-info-popup">
-              Inactive = balance is 0 and last transaction was more than 3 months ago.
+              {t("balances.statusInfo")}
             </div>
           )}
         </span>
@@ -604,11 +610,11 @@ export const BalancesTable = (props: Props): ReactElement => {
     },
     {
       key: "freshness",
-      header: "Freshness",
+      header: t("balances.freshness"),
       renderCell: (a: AccountRow): ReactElement => {
         const isStale = a.overdue && a.status === "active";
         return (
-          <td key="freshness" className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>{isStale ? "overdue" : "\u2014"}</td>
+          <td key="freshness" className={`txn-cell${maskClass} ${isStale ? "txn-stale" : ""}`}>{isStale ? t("balances.freshnessOverdue") : "\u2014"}</td>
         );
       },
       rightAlign: false,
@@ -624,28 +630,31 @@ export const BalancesTable = (props: Props): ReactElement => {
     <>
       {conversionWarnings.length > 0 && (
         <div className="budget-alert">
-          <strong>Currency conversion unavailable</strong>
+          <strong>{t("balances.conversionTitle")}</strong>
           <span>
-            No exchange rates found for: {currencyList}. Amounts in {conversionWarnings.length === 1 ? "this currency" : "these currencies"} cannot
-            be converted to {reportingCurrency}. Rows with missing rates are highlighted in red.
+            {t("balances.conversionMessage", {
+              currencies: currencyList,
+              qualifier: conversionWarnings.length === 1 ? t("balances.conversionSingular") : t("balances.conversionPlural"),
+              currency: reportingCurrency,
+            })}
           </span>
         </div>
       )}
       {saveError !== null && (
         <div className="budget-alert">
-          <strong>Save failed</strong>
+          <strong>{t("balances.saveFailed")}</strong>
           <span>{saveError}</span>
         </div>
       )}
-      <h2 className="txn-section-title">By currency</h2>
+      <h2 className="txn-section-title">{t("balances.byCurrency")}</h2>
       <div className="txn-scroll">
         <DataTable<CurrencyTotal>
           columns={totalsColumns}
           rows={sortedTotals}
-          rowKey={(t) => t.currency}
+          rowKey={(row) => row.currency}
           sort={totalsSort.sort}
           onSort={totalsSort.onSort}
-          emptyMessage="No currency totals."
+          emptyMessage={t("balances.noCurrencyTotals")}
           loading={false}
           loadingMore={false}
           sentinelRef={null}
@@ -653,15 +662,15 @@ export const BalancesTable = (props: Props): ReactElement => {
         />
       </div>
 
-      <h2 className="txn-section-title">By liquidity</h2>
+      <h2 className="txn-section-title">{t("balances.byLiquidity")}</h2>
       <div className="txn-scroll">
         <DataTable<LiquidityTotal>
           columns={liquidityColumns}
           rows={sortedLiquidityTotals}
-          rowKey={(t) => t.liquidity}
+          rowKey={(row) => row.liquidity}
           sort={liquiditySort.sort}
           onSort={liquiditySort.onSort}
-          emptyMessage="No liquidity data."
+          emptyMessage={t("balances.noLiquidityData")}
           loading={false}
           loadingMore={false}
           sentinelRef={null}
@@ -670,7 +679,7 @@ export const BalancesTable = (props: Props): ReactElement => {
       </div>
 
       <h2 className="txn-section-title" style={{ position: "relative", display: "inline-block" }}>
-        Accounts
+        {t("balances.accounts")}
         <span
           className="txn-info-icon"
           onClick={() => setOverdueInfoOpen(!overdueInfoOpen)}
@@ -679,8 +688,7 @@ export const BalancesTable = (props: Props): ReactElement => {
         </span>
         {overdueInfoOpen && (
           <div className="txn-info-popup">
-            Red = account had regular activity, but current silence is 1.5x longer than
-            its longest recent gap. May need new transactions added.
+            {t("balances.overdueInfo")}
           </div>
         )}
       </h2>
@@ -691,7 +699,7 @@ export const BalancesTable = (props: Props): ReactElement => {
           rowKey={(a) => a.accountId}
           sort={accountsSort.sort}
           onSort={accountsSort.onSort}
-          emptyMessage="No account data."
+          emptyMessage={t("balances.noAccountData")}
           loading={false}
           loadingMore={false}
           sentinelRef={null}
@@ -705,8 +713,8 @@ export const BalancesTable = (props: Props): ReactElement => {
           onClick={() => setShowInactive(!showInactive)}
         >
           {showInactive
-            ? `Hide ${inactiveCount} inactive accounts`
-            : `Show ${inactiveCount} inactive accounts`}
+            ? t("balances.hideInactive", { count: inactiveCount })
+            : t("balances.showInactive", { count: inactiveCount })}
         </button>
       )}
       {toastMessage !== null && <div className="copy-toast">{toastMessage}</div>}

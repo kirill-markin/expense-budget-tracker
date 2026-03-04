@@ -2,6 +2,7 @@
 
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { getCurrentMonth } from "@/lib/monthUtils";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
@@ -45,6 +46,7 @@ const buildTreemapUrl = (monthFrom: string, monthTo: string): string =>
 
 export const BudgetStreamDashboard = (props: Props): ReactElement => {
   const { initialRows, initialMonthFrom, initialMonthTo, reportingCurrency } = props;
+  const { t } = useTranslation();
 
   const [monthFrom, setMonthFrom] = useState<string>(initialMonthFrom);
   const [monthTo, setMonthTo] = useState<string>(initialMonthTo);
@@ -178,7 +180,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
     <>
       <div className="txn-filters">
         <label className="txn-filter-label">
-          From
+          {t("common.from")}
           <input
             type="month"
             className="txn-filter-input"
@@ -187,7 +189,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
           />
         </label>
         <label className="txn-filter-label">
-          To
+          {t("common.to")}
           <input
             type="month"
             className="txn-filter-input"
@@ -199,7 +201,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
 
       {error !== null && (
         <div className="budget-alert">
-          <strong>Failed to load budget data</strong>
+          <strong>{t("chart.failedToLoad")}</strong>
           <span>{error}</span>
         </div>
       )}
@@ -210,7 +212,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
         <BudgetStreamChart rows={rows} allowlist={effectiveAllowlist} reportingCurrency={reportingCurrency} onMonthClick={handleStreamMonthClick} />
       )}
 
-      <h2 className="treemap-heading">Expense Map</h2>
+      <h2 className="treemap-heading">{t("chart.expenseMap")}</h2>
 
       {treemapLoading && <LoadingIndicator />}
 

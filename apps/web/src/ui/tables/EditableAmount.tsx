@@ -2,6 +2,8 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { useFormat } from "@/ui/FormatProvider";
+
 import { formatAmount } from "./format";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
@@ -15,6 +17,7 @@ type Props = Readonly<{
 
 export const EditableAmount = (props: Props): ReactElement => {
   const { entryId, currentValue, maskClass, onAmountCommit } = props;
+  const { numberFormat } = useFormat();
 
   const [editing, setEditing] = useState<boolean>(false);
   const [editValue, setEditValue] = useState<string>("");
@@ -67,7 +70,7 @@ export const EditableAmount = (props: Props): ReactElement => {
       className={`txn-cell txn-cell-right${isMasked ? "" : " drilldown-editable"}${maskClass}`}
       onClick={isMasked ? undefined : startEditing}
     >
-      {formatAmount(currentValue)}
+      {formatAmount(currentValue, numberFormat)}
       {editing && rect !== null && createPortal(
         <input
           ref={inputRef}

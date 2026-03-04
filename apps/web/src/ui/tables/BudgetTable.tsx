@@ -2,6 +2,7 @@
 
 import { Fragment, type ReactElement } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { FieldHints } from "@/server/transactions/getTransactions";
 import { getCellVisibility, type CellVisibility } from "@/lib/dataMask";
@@ -10,10 +11,11 @@ import type { BudgetRow, ConversionWarning, CumulativeBefore } from "@/server/bu
 import { useCommentPresence } from "@/ui/hooks/useCommentPresence";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
+import { useFormat } from "@/ui/FormatProvider";
 import { DrillDownPanel, type DrillDownFilter } from "@/ui/tables/DrillDownPanel";
 import { FxBreakdownPanel } from "@/ui/tables/FxBreakdownPanel";
 import type { CellValue, ColumnEntry, CumulativeBalance, YearFetchResult, YearTotalComputed } from "@/ui/tables/budgetTableLogic";
-import { zeroCellValue, LIQUIDITY_ORDER, LIQUIDITY_LABELS, lookupCell, formatAmount, formatFxAmount, buildBlocks, buildColumnSequence, computeCumulativeBalances, computeCumulativeBalancesByLiquidity, computeFxAdjustments, computeAllowedSubtotals, computeYearTotal, isPastMonth, isFutureMonth, monthToDateFrom, monthToDateTo, getTargetFillMonths } from "@/ui/tables/budgetTableLogic";
+import { zeroCellValue, LIQUIDITY_ORDER, lookupCell, formatAmount, formatFxAmount, buildBlocks, buildColumnSequence, computeCumulativeBalances, computeCumulativeBalancesByLiquidity, computeFxAdjustments, computeAllowedSubtotals, computeYearTotal, isPastMonth, isFutureMonth, monthToDateFrom, monthToDateTo, getTargetFillMonths } from "@/ui/tables/budgetTableLogic";
 import { fetchBudgetRange } from "@/ui/tables/budgetTableApi";
 import { BudgetPlanCell } from "@/ui/tables/BudgetPlanCell";
 
@@ -35,6 +37,8 @@ type Props = Readonly<{
 export const BudgetTable = (props: Props): ReactElement => {
   const { conversionWarnings, initialMonthFrom, initialMonthTo, reportingCurrency, hints } = props;
   const { effectiveAllowlist } = useFilteredMode();
+  const { numberFormat } = useFormat();
+  const { t } = useTranslation();
   const { commentedCells, fetchRange: fetchCommentRange, updateCell: updateCommentCell } = useCommentPresence(initialMonthFrom, initialMonthTo);
   const { toastMessage, copyToClipboard } = useCopyToast();
 
@@ -400,7 +404,7 @@ export const BudgetTable = (props: Props): ReactElement => {
   }, []);
 
   if (months.length === 0) {
-    return <p className="budget-empty">No budget data yet.</p>;
+    return <p className="budget-empty">{t("budget.noData")}</p>;
   }
 
   const currencyList = conversionWarnings.map((w) => w.currency).join(", ");
@@ -425,7 +429,7 @@ export const BudgetTable = (props: Props): ReactElement => {
           className={`budget-cell${subtotalClass}${localMaskClass}${taintedClass}${clickableClass}`}
           onClick={onActualClick ?? undefined}
         >
-          {formatAmount(actual)}
+          {formatAmount(actual, numberFormat)}
         </td>
       );
     }
@@ -433,7 +437,7 @@ export const BudgetTable = (props: Props): ReactElement => {
     if (isFutureMonth(month, currentMonth)) {
       return (
         <td className={`budget-cell${subtotalClass}${localMaskClass}${taintedClass}${isPlanOver ? " budget-over" : ""}`}>
-          {formatAmount(planned)}
+          {formatAmount(planned, numberFormat)}
         </td>
       );
     }
@@ -443,13 +447,13 @@ export const BudgetTable = (props: Props): ReactElement => {
     return (
       <Fragment>
         <td className={`budget-cell budget-cm-plan${subtotalClass}${localMaskClass}${taintedClass}${isPlanOver ? " budget-over" : ""}`}>
-          {formatAmount(planned)}
+          {formatAmount(planned, numberFormat)}
         </td>
         <td
           className={`budget-cell budget-cm-actual${subtotalClass}${localMaskClass}${taintedClass}${isActualOver ? " budget-over" : ""}${clickableClass}`}
           onClick={onActualClick ?? undefined}
         >
-          {formatAmount(actual)}
+          {formatAmount(actual, numberFormat)}
         </td>
       </Fragment>
     );
@@ -459,28 +463,31 @@ export const BudgetTable = (props: Props): ReactElement => {
     <>
       {conversionWarnings.length > 0 && (
         <div className="budget-alert">
-          <strong>Currency conversion unavailable</strong>
+          <strong>{t("budget.conversionTitle")}</strong>
           <span>
-            No exchange rates found for: {currencyList}. Amounts in {conversionWarnings.length === 1 ? "this currency" : "these currencies"} cannot
-            be converted to {reportingCurrency}. Cells mixing unconvertible currencies are highlighted in red.
+            {t("budget.conversionMessage", {
+              currencies: currencyList,
+              qualifier: conversionWarnings.length === 1 ? t("budget.conversionSingular") : t("budget.conversionPlural"),
+              currency: reportingCurrency,
+            })}
           </span>
         </div>
       )}
       <div className="data-mask-toggle">
-        <button className="data-mask-btn" type="button" onClick={scrollToCurrentMonth}>Today</button>
-        {pendingSaves > 0 && <span className="budget-sync-status">Syncing&hellip;</span>}
+        <button className="data-mask-btn" type="button" onClick={scrollToCurrentMonth}>{t("common.today")}</button>
+        {pendingSaves > 0 && <span className="budget-sync-status">{t("common.syncing")}</span>}
       </div>
       <div className="budget-scroll" ref={scrollRef}>
         <table className="budget-table">
           <thead>
             <tr>
-              <th className="budget-th budget-sticky-col">Category</th>
-              <th className="budget-left-spacer" rowSpan={2}>{isLoadingLeft ? "Loading\u2026" : ""}</th>
+              <th className="budget-th budget-sticky-col">{t("budget.category")}</th>
+              <th className="budget-left-spacer" rowSpan={2}>{isLoadingLeft ? t("common.loading") : ""}</th>
               {columnSequence.map((col) => {
                 if (col.kind === "year-total") {
                   return (
                     <th key={`total-${col.year}`} className="budget-th budget-year-total" colSpan={col.year === currentYear ? 2 : 1}>
-                      Total {col.year}
+                      {t("budget.total")} {col.year}
                     </th>
                   );
                 }
@@ -540,7 +547,7 @@ export const BudgetTable = (props: Props): ReactElement => {
               return (
                 <Fragment key={block.direction}>
                   <tr className="budget-direction-row">
-                    <td className="budget-direction-label budget-sticky-col">{block.label}</td>
+                    <td className="budget-direction-label budget-sticky-col">{t(`budget.direction${block.direction.charAt(0).toUpperCase()}${block.direction.slice(1)}`)}</td>
                     <td className="budget-left-spacer" />
                     {columnSequence.map((col) => {
                       if (col.kind === "year-total") {
@@ -560,21 +567,21 @@ export const BudgetTable = (props: Props): ReactElement => {
                               key={`total-${col.year}`}
                               className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}${dirVis.showData ? " budget-cell-clickable" : ""}`}
                               onClick={dirVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category: null, categories: allowedCategoriesArray }) : undefined}
-                            >{formatAmount(yearSub.actual)}</td>
+                            >{formatAmount(yearSub.actual, numberFormat)}</td>
                           );
                         }
                         if (col.year > currentYear) {
                           return (
-                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}`}>{formatAmount(yearSub.planned)}</td>
+                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}`}>{formatAmount(yearSub.planned, numberFormat)}</td>
                           );
                         }
                         return (
                           <Fragment key={`total-${col.year}`}>
-                            <td className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}`}>{formatAmount(yearSub.planned)}</td>
+                            <td className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}`}>{formatAmount(yearSub.planned, numberFormat)}</td>
                             <td
                               className={`budget-cell budget-cell-subtotal budget-year-total${dirVis.maskClass}${taintedClass}${isActualOver ? " budget-over" : ""}${dirVis.showData ? " budget-cell-clickable" : ""}`}
                               onClick={dirVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category: null, categories: allowedCategoriesArray }) : undefined}
-                            >{formatAmount(yearSub.actual)}</td>
+                            >{formatAmount(yearSub.actual, numberFormat)}</td>
                           </Fragment>
                         );
                       }
@@ -613,21 +620,21 @@ export const BudgetTable = (props: Props): ReactElement => {
                                 key={`total-${col.year}`}
                                 className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}${catVis.showData ? " budget-cell-clickable" : ""}`}
                                 onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category, categories: null }) : undefined}
-                              >{formatAmount(yearCell.actual)}</td>
+                              >{formatAmount(yearCell.actual, numberFormat)}</td>
                             );
                           }
                           if (col.year > currentYear) {
                             return (
-                              <td key={`total-${col.year}`} className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}`}>{formatAmount(yearCell.planned)}</td>
+                              <td key={`total-${col.year}`} className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}`}>{formatAmount(yearCell.planned, numberFormat)}</td>
                             );
                           }
                           return (
                             <Fragment key={`total-${col.year}`}>
-                              <td className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}`}>{formatAmount(yearCell.planned)}</td>
+                              <td className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}`}>{formatAmount(yearCell.planned, numberFormat)}</td>
                               <td
                                 className={`budget-cell budget-year-total${catVis.maskClass}${taintedClass}${isActualOver ? " budget-over" : ""}${catVis.showData ? " budget-cell-clickable" : ""}`}
                                 onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: `${col.year}-01-01`, dateTo: `${col.year}-12-31`, direction: block.direction, category, categories: null }) : undefined}
-                              >{formatAmount(yearCell.actual)}</td>
+                              >{formatAmount(yearCell.actual, numberFormat)}</td>
                             </Fragment>
                           );
                         }
@@ -668,7 +675,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                                 className={`budget-cell${isCurrent ? " budget-cm-actual" : ""}${catVis.maskClass}${taintedClass}${isActualOver ? " budget-over" : ""}${catVis.showData ? " budget-cell-clickable" : ""}`}
                                 onClick={catVis.showData ? () => setDrillDownFilter({ dateFrom: monthToDateFrom(col.month), dateTo: monthToDateTo(col.month), direction: block.direction, category, categories: null }) : undefined}
                               >
-                                {formatAmount(cell.actual)}
+                                {formatAmount(cell.actual, numberFormat)}
                               </td>
                             )}
                           </Fragment>
@@ -686,7 +693,7 @@ export const BudgetTable = (props: Props): ReactElement => {
               return (
                 <>
                   <tr className="budget-direction-row">
-                    <td className="budget-direction-label budget-sticky-col">Remainder</td>
+                    <td className="budget-direction-label budget-sticky-col">{t("budget.remainder")}</td>
                     <td className="budget-left-spacer" />
                     {columnSequence.map((col) => {
                       if (col.kind === "year-total") {
@@ -699,18 +706,18 @@ export const BudgetTable = (props: Props): ReactElement => {
                         const taintedClass = yd.anyTainted ? " budget-error" : "";
                         if (col.year < currentYear) {
                           return (
-                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${yd.remainder.actual < 0 ? " budget-over" : ""}`}>{formatAmount(yd.remainder.actual)}</td>
+                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${yd.remainder.actual < 0 ? " budget-over" : ""}`}>{formatAmount(yd.remainder.actual, numberFormat)}</td>
                           );
                         }
                         if (col.year > currentYear) {
                           return (
-                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${yd.remainder.planned < 0 ? " budget-over" : ""}`}>{formatAmount(yd.remainder.planned)}</td>
+                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${yd.remainder.planned < 0 ? " budget-over" : ""}`}>{formatAmount(yd.remainder.planned, numberFormat)}</td>
                           );
                         }
                         return (
                           <Fragment key={`total-${col.year}`}>
-                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${yd.remainder.planned < 0 ? " budget-over" : ""}`}>{formatAmount(yd.remainder.planned)}</td>
-                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${yd.remainder.actual < 0 ? " budget-over" : ""}`}>{formatAmount(yd.remainder.actual)}</td>
+                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${yd.remainder.planned < 0 ? " budget-over" : ""}`}>{formatAmount(yd.remainder.planned, numberFormat)}</td>
+                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${yd.remainder.actual < 0 ? " budget-over" : ""}`}>{formatAmount(yd.remainder.actual, numberFormat)}</td>
                           </Fragment>
                         );
                       }
@@ -730,7 +737,7 @@ export const BudgetTable = (props: Props): ReactElement => {
 
                   {/* FX adjust row: per-month difference between real portfolio change and budget delta */}
                   <tr className="budget-category-row">
-                    <td className="budget-category-label budget-sticky-col">FX adjust</td>
+                    <td className="budget-category-label budget-sticky-col">{t("budget.fxAdjust")}</td>
                     <td className="budget-left-spacer" />
                     {columnSequence.map((col) => {
                       if (col.kind === "year-total") {
@@ -742,7 +749,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                         }
                         const fxVal = yd.yearFxAdjust;
                         if (col.year < currentYear) {
-                          return <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}`}>{formatFxAmount(fxVal)}</td>;
+                          return <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}`}>{formatFxAmount(fxVal, numberFormat)}</td>;
                         }
                         if (col.year > currentYear) {
                           return <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}`} />;
@@ -750,7 +757,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                         return (
                           <Fragment key={`total-${col.year}`}>
                             <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}`} />
-                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}`}>{formatFxAmount(fxVal)}</td>
+                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}`}>{formatFxAmount(fxVal, numberFormat)}</td>
                           </Fragment>
                         );
                       }
@@ -761,24 +768,24 @@ export const BudgetTable = (props: Props): ReactElement => {
                       if (isPastMonth(col.month, currentMonth)) {
                         return (
                           <td key={col.month} className={`budget-cell budget-cell-subtotal${derivedMaskClass}${fxClickable ? " budget-cell-clickable" : ""}`} onClick={fxClickable ? () => setFxBreakdownMonth(col.month) : undefined}>
-                            {formatFxAmount(fxValue)}
+                            {formatFxAmount(fxValue, numberFormat)}
                           </td>
                         );
                       }
                       if (isFuture) {
                         return (
                           <td key={col.month} className={`budget-cell budget-cell-subtotal${derivedMaskClass}`}>
-                            {formatFxAmount(0)}
+                            {formatFxAmount(0, numberFormat)}
                           </td>
                         );
                       }
                       return (
                         <Fragment key={col.month}>
                           <td className={`budget-cell budget-cm-plan budget-cell-subtotal${derivedMaskClass}`}>
-                            {formatFxAmount(0)}
+                            {formatFxAmount(0, numberFormat)}
                           </td>
                           <td className={`budget-cell budget-cm-actual budget-cell-subtotal${derivedMaskClass}${fxClickable ? " budget-cell-clickable" : ""}`} onClick={fxClickable ? () => setFxBreakdownMonth(col.month) : undefined}>
-                            {formatFxAmount(fxValue)}
+                            {formatFxAmount(fxValue, numberFormat)}
                           </td>
                         </Fragment>
                       );
@@ -786,7 +793,7 @@ export const BudgetTable = (props: Props): ReactElement => {
                   </tr>
 
                   <tr className="budget-direction-row">
-                    <td className="budget-direction-label budget-sticky-col">Balance</td>
+                    <td className="budget-direction-label budget-sticky-col">{t("budget.balance")}</td>
                     <td className="budget-left-spacer" />
                     {columnSequence.map((col) => {
                       if (col.kind === "year-total") {
@@ -800,18 +807,18 @@ export const BudgetTable = (props: Props): ReactElement => {
                         const taintedClass = bal.isTainted ? " budget-error" : "";
                         if (col.year < currentYear) {
                           return (
-                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${bal.actual < 0 ? " budget-over" : ""}`}>{formatAmount(bal.actual)}</td>
+                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${bal.actual < 0 ? " budget-over" : ""}`}>{formatAmount(bal.actual, numberFormat)}</td>
                           );
                         }
                         if (col.year > currentYear) {
                           return (
-                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${bal.plan < 0 ? " budget-over" : ""}`}>{formatAmount(bal.plan)}</td>
+                            <td key={`total-${col.year}`} className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${bal.plan < 0 ? " budget-over" : ""}`}>{formatAmount(bal.plan, numberFormat)}</td>
                           );
                         }
                         return (
                           <Fragment key={`total-${col.year}`}>
-                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${bal.plan < 0 ? " budget-over" : ""}`}>{formatAmount(bal.plan)}</td>
-                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${bal.actual < 0 ? " budget-over" : ""}`}>{formatAmount(bal.actual)}</td>
+                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${bal.plan < 0 ? " budget-over" : ""}`}>{formatAmount(bal.plan, numberFormat)}</td>
+                            <td className={`budget-cell budget-cell-subtotal budget-year-total${derivedMaskClass}${taintedClass}${bal.actual < 0 ? " budget-over" : ""}`}>{formatAmount(bal.actual, numberFormat)}</td>
                           </Fragment>
                         );
                       }
@@ -826,7 +833,7 @@ export const BudgetTable = (props: Props): ReactElement => {
 
                   {hasLiquidityBreakdown && liquidityTiers.map((liq) => (
                     <tr key={`bal-${liq}`} className="budget-category-row">
-                      <td className={`budget-category-label budget-sticky-col${derivedMaskClass}`}>{LIQUIDITY_LABELS[liq] ?? liq}</td>
+                      <td className={`budget-category-label budget-sticky-col${derivedMaskClass}`}>{t(`budget.liquidity${liq.charAt(0).toUpperCase()}${liq.slice(1)}`)}</td>
                       <td className="budget-left-spacer" />
                       {columnSequence.map((col) => {
                         if (col.kind === "year-total") {
@@ -839,30 +846,30 @@ export const BudgetTable = (props: Props): ReactElement => {
                           const liqVal = yd.decemberBalancesByLiquidity[liq] ?? 0;
                           const liqPlan = yd.decemberBalancesByLiquidityPlan[liq] ?? 0;
                           if (col.year < currentYear) {
-                            return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqVal)}</td>;
+                            return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqVal, numberFormat)}</td>;
                           }
                           if (col.year > currentYear) {
-                            return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqPlan)}</td>;
+                            return <td key={`total-${col.year}`} className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqPlan, numberFormat)}</td>;
                           }
                           return (
                             <Fragment key={`total-${col.year}`}>
-                              <td className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqPlan)}</td>
-                              <td className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqVal)}</td>
+                              <td className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqPlan, numberFormat)}</td>
+                              <td className={`budget-cell budget-year-total${derivedMaskClass}`}>{formatAmount(liqVal, numberFormat)}</td>
                             </Fragment>
                           );
                         }
                         const liqVal = mebByLiq[col.month]?.[liq] ?? 0;
                         const projectedLiqVal = projectedLiqBalances.get(col.month)?.[liq] ?? 0;
                         if (isFutureMonth(col.month, currentMonth)) {
-                          return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>{formatAmount(projectedLiqVal)}</td>;
+                          return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>{formatAmount(projectedLiqVal, numberFormat)}</td>;
                         }
                         if (isPastMonth(col.month, currentMonth)) {
-                          return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>{formatAmount(liqVal)}</td>;
+                          return <td key={col.month} className={`budget-cell${derivedMaskClass}`}>{formatAmount(liqVal, numberFormat)}</td>;
                         }
                         return (
                           <Fragment key={col.month}>
-                            <td className={`budget-cell budget-cm-plan${derivedMaskClass}`}>{formatAmount(projectedLiqVal)}</td>
-                            <td className={`budget-cell budget-cm-actual${derivedMaskClass}`}>{formatAmount(liqVal)}</td>
+                            <td className={`budget-cell budget-cm-plan${derivedMaskClass}`}>{formatAmount(projectedLiqVal, numberFormat)}</td>
+                            <td className={`budget-cell budget-cm-actual${derivedMaskClass}`}>{formatAmount(liqVal, numberFormat)}</td>
                           </Fragment>
                         );
                       })}
@@ -873,7 +880,7 @@ export const BudgetTable = (props: Props): ReactElement => {
             })()}
           </tbody>
         </table>
-        <div className="budget-loading-edge">{isLoadingRight ? "Loading\u2026" : ""}</div>
+        <div className="budget-loading-edge">{isLoadingRight ? t("common.loading") : ""}</div>
       </div>
       {toastMessage !== null && <div className="copy-toast">{toastMessage}</div>}
       {drillDownFilter !== null && (

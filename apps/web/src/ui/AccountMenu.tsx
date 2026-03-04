@@ -1,6 +1,7 @@
 "use client";
 
 import { type FormEvent, type ReactElement, useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 type WorkspaceSummary = Readonly<{
   workspaceId: string;
@@ -15,6 +16,7 @@ type Props = Readonly<{
 
 export const AccountMenu = (props: Props): ReactElement | null => {
   const { authEnabled, workspaces, currentWorkspaceId } = props;
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [isCreating, setIsCreating] = useState<boolean>(false);
   const [newName, setNewName] = useState<string>("");
@@ -133,7 +135,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
         <div ref={menuRef} className="account-menu-dropdown">
           {workspaces.length > 0 && (
             <>
-              <div className="account-menu-section-label">Workspaces</div>
+              <div className="account-menu-section-label">{t("account.workspaces")}</div>
               {workspaces.map((ws) => (
                 <button
                   key={ws.workspaceId}
@@ -152,7 +154,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
               type="button"
               onClick={() => setIsCreating(true)}
             >
-              + New workspace
+              {t("account.newWorkspace")}
             </button>
           )}
           {isCreating && (
@@ -161,7 +163,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
                 ref={inputRef}
                 className="account-menu-create-input"
                 type="text"
-                placeholder="Workspace name"
+                placeholder={t("account.workspaceName")}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 disabled={submitting}
@@ -175,7 +177,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
             type="button"
             onClick={() => { window.location.href = "/account/mfa"; }}
           >
-            Two-Factor Auth
+            {t("account.twoFactorAuth")}
           </button>
           <div className="account-menu-separator" />
           <button
@@ -183,7 +185,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
             type="button"
             onClick={handleLogout}
           >
-            Logout
+            {t("account.logout")}
           </button>
         </div>
       )}

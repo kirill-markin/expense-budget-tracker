@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
@@ -11,6 +12,7 @@ type Props = Readonly<{
 export const ModeToggle = (props: Props): ReactElement => {
   const { isDemoMode } = props;
   const { visibilityMode, setVisibilityMode } = useFilteredMode();
+  const { t } = useTranslation();
 
   const activeMode: "all" | "filtered" | "demo" = isDemoMode ? "demo" : visibilityMode;
 
@@ -42,21 +44,21 @@ export const ModeToggle = (props: Props): ReactElement => {
         type="button"
         onClick={() => switchTo("all")}
       >
-        All
+        {t("mode.all")}
       </button>
       <button
         className={`data-mask-seg${activeMode === "filtered" ? " data-mask-seg-active" : ""}`}
         type="button"
         onClick={() => switchTo("filtered")}
       >
-        Filtered
+        {t("mode.filtered")}
       </button>
       <button
         className={`data-mask-seg${activeMode === "demo" ? " data-mask-seg-active" : ""}`}
         type="button"
         onClick={() => switchTo("demo")}
       >
-        Demo
+        {t("mode.demo")}
       </button>
     </div>
   );

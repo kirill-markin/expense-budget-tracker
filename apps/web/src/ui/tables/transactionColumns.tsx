@@ -1,23 +1,30 @@
 import { type ReactElement } from "react";
 
+import type { NumberFormat, DateFormat } from "@/lib/locale";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
 import type { ColumnDef } from "./data-table/types";
 import { formatAmount, formatDateTime } from "./format";
 
-export const buildTransactionColumns = (maskClass: string): Record<string, ColumnDef<LedgerEntry>> => ({
+type FormatParams = Readonly<{
+  numberFormat: NumberFormat;
+  dateFormat: DateFormat;
+  t: (key: string) => string;
+}>;
+
+export const buildTransactionColumns = (maskClass: string, fmt: FormatParams): Record<string, ColumnDef<LedgerEntry>> => ({
   date: {
     key: "date",
-    header: "Date",
+    header: fmt.t("table.date"),
     renderCell: (row: LedgerEntry): ReactElement => (
-      <td key="date" className="txn-cell txn-cell-mono">{formatDateTime(row.ts)}</td>
+      <td key="date" className="txn-cell txn-cell-mono">{formatDateTime(row.ts, fmt.dateFormat)}</td>
     ),
     rightAlign: false,
     sortKey: "ts",
   },
   account: {
     key: "account",
-    header: "Account",
+    header: fmt.t("table.account"),
     renderCell: (row: LedgerEntry): ReactElement => (
       <td key="account" className={`txn-cell${maskClass}`}>{row.accountId}</td>
     ),
@@ -26,16 +33,16 @@ export const buildTransactionColumns = (maskClass: string): Record<string, Colum
   },
   amount: {
     key: "amount",
-    header: "Amount",
+    header: fmt.t("table.amount"),
     renderCell: (row: LedgerEntry): ReactElement => (
-      <td key="amount" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(row.amount)}</td>
+      <td key="amount" className={`txn-cell txn-cell-right${maskClass}`}>{formatAmount(row.amount, fmt.numberFormat)}</td>
     ),
     rightAlign: true,
     sortKey: "amount",
   },
   currency: {
     key: "currency",
-    header: "Currency",
+    header: fmt.t("table.currency"),
     renderCell: (row: LedgerEntry): ReactElement => (
       <td key="currency" className={`txn-cell${maskClass}`}>{row.currency}</td>
     ),
@@ -44,7 +51,7 @@ export const buildTransactionColumns = (maskClass: string): Record<string, Colum
   },
   kind: {
     key: "kind",
-    header: "Kind",
+    header: fmt.t("table.kind"),
     renderCell: (row: LedgerEntry): ReactElement => (
       <td key="kind" className={`txn-cell${maskClass}`}>{row.kind}</td>
     ),
@@ -53,7 +60,7 @@ export const buildTransactionColumns = (maskClass: string): Record<string, Colum
   },
   category: {
     key: "category",
-    header: "Category",
+    header: fmt.t("table.category"),
     renderCell: (row: LedgerEntry): ReactElement => (
       <td key="category" className={`txn-cell${maskClass}`}>{row.category ?? "\u2014"}</td>
     ),
@@ -62,7 +69,7 @@ export const buildTransactionColumns = (maskClass: string): Record<string, Colum
   },
   counterparty: {
     key: "counterparty",
-    header: "Counterparty",
+    header: fmt.t("table.counterparty"),
     renderCell: (row: LedgerEntry): ReactElement => (
       <td key="counterparty" className={`txn-cell${maskClass}`}>{row.counterparty ?? "\u2014"}</td>
     ),
@@ -71,7 +78,7 @@ export const buildTransactionColumns = (maskClass: string): Record<string, Colum
   },
   note: {
     key: "note",
-    header: "Note",
+    header: fmt.t("table.note"),
     renderCell: (row: LedgerEntry): ReactElement => (
       <td key="note" className={`txn-cell txn-cell-note${maskClass}`}>{row.note ?? ""}</td>
     ),
@@ -80,12 +87,12 @@ export const buildTransactionColumns = (maskClass: string): Record<string, Colum
   },
 });
 
-export const usdColumn = (): ColumnDef<LedgerEntry> => ({
+export const usdColumn = (numberFormat: NumberFormat): ColumnDef<LedgerEntry> => ({
   key: "amountUsd",
   header: "USD",
   renderCell: (row: LedgerEntry): ReactElement => (
     <td key="amountUsd" className="txn-cell txn-cell-right">
-      {row.amountUsd !== null ? formatAmount(row.amountUsd) : "\u2014"}
+      {row.amountUsd !== null ? formatAmount(row.amountUsd, numberFormat) : "\u2014"}
     </td>
   ),
   rightAlign: true,

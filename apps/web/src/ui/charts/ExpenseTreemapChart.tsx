@@ -4,6 +4,7 @@ import { hierarchy, scaleOrdinal, schemeTableau10, treemap } from "d3";
 import type { HierarchyRectangularNode } from "d3";
 import type { ReactElement } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { isCategoryVisible } from "@/lib/dataMask";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
@@ -69,12 +70,13 @@ const cellFontSize = (w: number, h: number): number =>
 const buildHierarchy = (
   entries: ReadonlyArray<LedgerEntry>,
   allowlist: ReadonlySet<string> | null,
+  uncategorizedLabel: string,
 ): TreemapDatum => {
   const groups = new Map<string, Array<LedgerEntry>>();
 
   for (const entry of entries) {
     if (entry.amountUsd === null) continue;
-    const cat = entry.category ?? "Uncategorized";
+    const cat = entry.category ?? uncategorizedLabel;
     if (allowlist !== null && !isCategoryVisible(allowlist, cat)) continue;
     const existing = groups.get(cat);
     if (existing !== undefined) {
@@ -107,12 +109,14 @@ const buildHierarchy = (
 
 export const ExpenseTreemapChart = (props: Props): ReactElement => {
   const { entries, allowlist, reportingCurrency, onCellClick } = props;
+  const { t } = useTranslation();
   const masked = allowlist !== null && allowlist.size === 0;
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
 
+  const uncategorizedLabel = t("chart.uncategorized");
   const { categoryNodes, colorScale, grandTotal } = useMemo(() => {
-    const data = buildHierarchy(entries, allowlist);
+    const data = buildHierarchy(entries, allowlist, uncategorizedLabel);
     const categories = (data.children ?? []).map((c) => c.name);
     const cs = scaleOrdinal<string, string>().domain(categories).range(schemeTableau10);
 
@@ -131,14 +135,14 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
     let total = 0;
     for (const e of entries) {
       if (e.amountUsd === null) continue;
-      const cat = e.category ?? "Uncategorized";
+      const cat = e.category ?? uncategorizedLabel;
       if (allowlist !== null && !isCategoryVisible(allowlist, cat)) continue;
       total += Math.abs(e.amountUsd);
     }
 
     const rn = root as unknown as RectNode;
     return { categoryNodes: rn.children ?? [], colorScale: cs, grandTotal: total };
-  }, [entries, allowlist]);
+  }, [entries, allowlist, uncategorizedLabel]);
 
   const handleLeafEnter = useCallback((event: React.MouseEvent, entry: LedgerEntry): void => {
     const wrap = wrapRef.current;
@@ -164,7 +168,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
       <div className="treemap-wrap">
         <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Expense treemap">
           <text x={WIDTH / 2} y={HEIGHT / 2} textAnchor="middle" fill="#898989" fontSize={14}>
-            No spend data for the selected period.
+            {t("chart.noSpendData")}
           </text>
         </svg>
       </div>
@@ -312,7 +316,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
               <div className="treemap-tooltip-row">{hover.entry.counterparty}</div>
             )}
             <div className="treemap-tooltip-row treemap-tooltip-muted">
-              {hover.entry.category ?? "Uncategorized"} · {fmtDate(hover.entry.ts)}
+              {hover.entry.category ?? uncategorizedLabel} · {fmtDate(hover.entry.ts)}
             </div>
             {hover.entry.note !== null && (
               <div className="treemap-tooltip-row treemap-tooltip-muted">{hover.entry.note}</div>

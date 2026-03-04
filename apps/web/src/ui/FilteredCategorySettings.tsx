@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactElement, useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 type Props = Readonly<{
   filteredCategories: ReadonlyArray<string> | null;
@@ -9,6 +10,7 @@ type Props = Readonly<{
 
 export const FilteredCategorySettings = (props: Props): ReactElement => {
   const { filteredCategories, allCategories } = props;
+  const { t } = useTranslation();
   const [selected, setSelected] = useState<ReadonlySet<string>>(
     new Set(filteredCategories ?? []),
   );
@@ -64,14 +66,14 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
     <div className="settings-form">
       <div className="settings-row settings-row-wide">
         <label className="settings-label">
-          Filtered Categories
+          {t("settings.filteredCategoriesLabel")}
         </label>
         <p className="settings-label" style={{ margin: 0 }}>
-          Categories visible in Filtered mode. Leave empty to show all.
+          {t("settings.filteredCategoriesHint")}
         </p>
         <div className="filtered-cats-actions">
-          <button type="button" className="data-mask-seg" onClick={selectAll}>Select all</button>
-          <button type="button" className="data-mask-seg" onClick={clearAll}>Clear</button>
+          <button type="button" className="data-mask-seg" onClick={selectAll}>{t("settings.selectAll")}</button>
+          <button type="button" className="data-mask-seg" onClick={clearAll}>{t("settings.clear")}</button>
         </div>
         <div className="filtered-cats-list">
           {allCategories.map((cat) => (
@@ -85,7 +87,7 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
             </label>
           ))}
           {allCategories.length === 0 && (
-            <span className="settings-label">No categories found in ledger.</span>
+            <span className="settings-label">{t("settings.noCategories")}</span>
           )}
         </div>
         <div className="settings-control">
@@ -95,11 +97,11 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
             onClick={handleSave}
             disabled={saving || !dirty}
           >
-            {saving ? "Saving..." : "Save"}
+            {saving ? t("common.saving") : t("common.save")}
           </button>
         </div>
         {error !== null && <div className="settings-error">{error}</div>}
-        {saved && <div className="settings-saved">Saved</div>}
+        {saved && <div className="settings-saved">{t("common.saved")}</div>}
       </div>
     </div>
   );

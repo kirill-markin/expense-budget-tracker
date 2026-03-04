@@ -2,6 +2,8 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { useFormat } from "@/ui/FormatProvider";
+
 import { formatDateTime } from "./format";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
@@ -29,6 +31,7 @@ const fromDatetimeLocalValue = (localValue: string): string => {
 
 export const EditableDateTime = (props: Props): ReactElement => {
   const { entryId, currentValue, maskClass, onDateTimeCommit } = props;
+  const { dateFormat } = useFormat();
 
   const [editing, setEditing] = useState<boolean>(false);
   const [editValue, setEditValue] = useState<string>("");
@@ -80,7 +83,7 @@ export const EditableDateTime = (props: Props): ReactElement => {
       className={`txn-cell txn-cell-mono${isMasked ? "" : " drilldown-editable"}${maskClass}`}
       onClick={isMasked ? undefined : startEditing}
     >
-      {formatDateTime(currentValue)}
+      {formatDateTime(currentValue, dateFormat)}
       {editing && rect !== null && createPortal(
         <input
           ref={inputRef}

@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactElement, useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { ApiKeyRow } from "@/server/apiKeys";
 
@@ -32,6 +33,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
   const [label, setLabel] = useState<string>("");
+  const { t } = useTranslation();
 
   const handleCreate = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -102,7 +104,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
       {createdKey !== null && (
         <>
           <p className="settings-warning">
-            Copy the API key now — it will not be shown again.
+            {t("apiKeys.copyWarning")}
           </p>
           <div className="settings-codeblock">
             <button
@@ -110,12 +112,12 @@ export const ApiKeyManager = (props: Props): ReactElement => {
               type="button"
               onClick={handleCopy}
             >
-              {copied ? "Copied" : "Copy"}
+              {copied ? t("apiKeys.copied") : t("apiKeys.copy")}
             </button>
             <pre>{createdKey.key}</pre>
           </div>
           <details>
-            <summary>Example curl command</summary>
+            <summary>{t("apiKeys.exampleCurl")}</summary>
             <div className="settings-codeblock">
               <pre>{formatCurlExample(createdKey.key)}</pre>
             </div>
@@ -128,7 +130,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
         <input
           type="text"
           className="settings-input"
-          placeholder="Label (optional, e.g. Claude Code agent)"
+          placeholder={t("apiKeys.labelPlaceholder")}
           value={label}
           onChange={(e) => { setLabel(e.target.value); }}
           maxLength={200}
@@ -139,7 +141,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
           onClick={handleCreate}
           disabled={loading}
         >
-          {loading ? "Generating..." : "Generate API key"}
+          {loading ? t("apiKeys.generating") : t("apiKeys.generate")}
         </button>
       </div>
 
@@ -148,10 +150,10 @@ export const ApiKeyManager = (props: Props): ReactElement => {
         <table className="settings-table">
           <thead>
             <tr>
-              <th>Prefix</th>
-              <th>Label</th>
-              <th>Created</th>
-              <th>Last used</th>
+              <th>{t("apiKeys.prefix")}</th>
+              <th>{t("apiKeys.label")}</th>
+              <th>{t("apiKeys.created")}</th>
+              <th>{t("apiKeys.lastUsed")}</th>
               <th></th>
             </tr>
           </thead>
@@ -159,9 +161,9 @@ export const ApiKeyManager = (props: Props): ReactElement => {
             {keys.map((k) => (
               <tr key={k.id}>
                 <td><code>{k.keyPrefix}...</code></td>
-                <td>{k.label || "—"}</td>
+                <td>{k.label || "\u2014"}</td>
                 <td>{formatDate(k.createdAt)}</td>
-                <td>{k.lastUsedAt !== null ? formatDate(k.lastUsedAt) : "Never"}</td>
+                <td>{k.lastUsedAt !== null ? formatDate(k.lastUsedAt) : t("apiKeys.never")}</td>
                 <td>
                   <button
                     className="settings-save settings-save--danger"
@@ -169,7 +171,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
                     onClick={() => { handleRevoke(k.id); }}
                     disabled={loading}
                   >
-                    Revoke
+                    {t("apiKeys.revoke")}
                   </button>
                 </td>
               </tr>
@@ -179,7 +181,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
       )}
 
       {keys.length === 0 && createdKey === null && (
-        <p>Generate an API key to query the database via HTTP instead of direct Postgres access.</p>
+        <p>{t("apiKeys.emptyState")}</p>
       )}
 
       {error !== null && <div className="settings-error">{error}</div>}

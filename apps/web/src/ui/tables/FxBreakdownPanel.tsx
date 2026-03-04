@@ -4,6 +4,7 @@ import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBreakdown";
+import { useFormat } from "@/ui/FormatProvider";
 
 import { formatAmount } from "./format";
 
@@ -25,6 +26,7 @@ const formatNative = (value: number): string => {
 
 export const FxBreakdownPanel = (props: Props): ReactElement => {
   const { month, onClose } = props;
+  const { numberFormat } = useFormat();
 
   const [rows, setRows] = useState<ReadonlyArray<FxBreakdownRow>>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -143,12 +145,12 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                   <td className="txn-cell txn-cell-mono">{row.currency}</td>
                   <td className="txn-cell txn-cell-right">{formatNative(row.openNative)}</td>
                   <td className="txn-cell txn-cell-right">{formatRate(row.openRate)}</td>
-                  <td className="txn-cell txn-cell-right">{formatAmount(row.openUsd)}</td>
+                  <td className="txn-cell txn-cell-right">{formatAmount(row.openUsd, numberFormat)}</td>
                   <td className="txn-cell txn-cell-right">{formatNative(row.deltaNative)}</td>
                   <td className="txn-cell txn-cell-right">{formatNative(row.closeNative)}</td>
                   <td className="txn-cell txn-cell-right">{formatRate(row.closeRate)}</td>
-                  <td className="txn-cell txn-cell-right">{formatAmount(row.closeUsd)}</td>
-                  <td className={`txn-cell txn-cell-right${row.changeUsd < 0 ? " budget-over" : ""}`}>{formatAmount(row.changeUsd)}</td>
+                  <td className="txn-cell txn-cell-right">{formatAmount(row.closeUsd, numberFormat)}</td>
+                  <td className={`txn-cell txn-cell-right${row.changeUsd < 0 ? " budget-over" : ""}`}>{formatAmount(row.changeUsd, numberFormat)}</td>
                 </tr>
               ))}
               {!loading && rows.length === 0 && (
@@ -165,12 +167,12 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                   <td className="txn-cell">Total</td>
                   <td className="txn-cell" />
                   <td className="txn-cell" />
-                  <td className="txn-cell txn-cell-right">{formatAmount(rows.reduce((s, r) => s + r.openUsd, 0))}</td>
+                  <td className="txn-cell txn-cell-right">{formatAmount(rows.reduce((s, r) => s + r.openUsd, 0), numberFormat)}</td>
                   <td className="txn-cell" />
                   <td className="txn-cell" />
                   <td className="txn-cell" />
-                  <td className="txn-cell txn-cell-right">{formatAmount(rows.reduce((s, r) => s + r.closeUsd, 0))}</td>
-                  <td className={`txn-cell txn-cell-right${totalChange < 0 ? " budget-over" : ""}`}>{formatAmount(totalChange)}</td>
+                  <td className="txn-cell txn-cell-right">{formatAmount(rows.reduce((s, r) => s + r.closeUsd, 0), numberFormat)}</td>
+                  <td className={`txn-cell txn-cell-right${totalChange < 0 ? " budget-over" : ""}`}>{formatAmount(totalChange, numberFormat)}</td>
                 </tr>
               </tfoot>
             )}

@@ -3,6 +3,7 @@
 import { area, curveMonotoneX, max, scaleLinear, scaleOrdinal, scaleTime, schemeTableau10, stack } from "d3";
 import type { ReactElement } from "react";
 import { useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { isCategoryVisible } from "@/lib/dataMask";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
@@ -108,9 +109,13 @@ const formatMonthToYYYYMM = (date: Date): string => {
   return `${y}-${m}`;
 };
 
-const formatMonth = (date: Date): string => {
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const m = months[date.getUTCMonth()];
+const MONTH_KEYS: ReadonlyArray<string> = [
+  "month.jan", "month.feb", "month.mar", "month.apr", "month.may", "month.jun",
+  "month.jul", "month.aug", "month.sep", "month.oct", "month.nov", "month.dec",
+];
+
+const formatMonth = (date: Date, t: (key: string) => string): string => {
+  const m = t(MONTH_KEYS[date.getUTCMonth()]);
   const y = String(date.getUTCFullYear()).slice(2);
   return `${m} '${y}`;
 };
@@ -134,6 +139,7 @@ const findClosestDateIndex = (
 
 export const BudgetStreamChart = (props: Props): ReactElement => {
   const { rows, allowlist, reportingCurrency, onMonthClick } = props;
+  const { t } = useTranslation();
   const masked = allowlist !== null && allowlist.size === 0;
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -170,7 +176,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
     return (
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Budget streamgraph">
         <text x={width / 2} y={height / 2} textAnchor="middle" fill="#898989" fontSize={14}>
-          No data for the selected period.
+          {t("chart.noData")}
         </text>
       </svg>
     );
@@ -289,7 +295,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
     const hasUnconvertible = rows.some((r) => r.month === monthStr && r.hasUnconvertible);
 
     setHover({
-      monthLabel: formatMonth(date),
+      monthLabel: formatMonth(date, t),
       svgX: x,
       pxLeft,
       flipLeft,
@@ -329,7 +335,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
         <div className="stream-legend">
           {incomeCategories.length > 0 && (
             <>
-              <span className="stream-legend-heading">Income:</span>
+              <span className="stream-legend-heading">{t("chart.income")}:</span>
               {incomeCategories.map((cat) => (
                 <span key={`legend-income-${cat}`} className="stream-legend-item">
                   <span className="stream-legend-swatch" style={{ background: colorScale(cat) }} />
@@ -340,7 +346,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           )}
           {spendCategories.length > 0 && (
             <>
-              <span className="stream-legend-heading">Spend:</span>
+              <span className="stream-legend-heading">{t("chart.spend")}:</span>
               {spendCategories.map((cat) => (
                 <span key={`legend-spend-${cat}`} className="stream-legend-item">
                   <span className="stream-legend-swatch" style={{ background: colorScale(cat) }} />
@@ -420,7 +426,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                     fill="#898989"
                     fontSize={11}
                   >
-                    {formatMonth(tick)}
+                    {formatMonth(tick, t)}
                   </text>
                 </g>
               );
@@ -459,10 +465,10 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
               {reportingCurrency}
             </text>
             <text x={margin.left} y={yScale(0) - 6} fill="#898989" fontSize={10}>
-              Income
+              {t("chart.income")}
             </text>
             <text x={margin.left} y={yScale(0) + 14} fill="#898989" fontSize={10}>
-              Spend
+              {t("chart.spend")}
             </text>
 
             {hover !== null && (
@@ -499,7 +505,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           {hover.incomeItems.length > 0 && (
             <>
               <div className="stream-tooltip-section">
-                Income: {formatAmountFull(hover.incomeTotal)}
+                {t("chart.income")}: {formatAmountFull(hover.incomeTotal)}
               </div>
               {hover.incomeItems.map((item) => (
                 <div key={`tip-i-${item.category}`} className="stream-tooltip-row">
@@ -513,7 +519,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           {hover.spendItems.length > 0 && (
             <>
               <div className="stream-tooltip-section">
-                Spend: {formatAmountFull(hover.spendTotal)}
+                {t("chart.spend")}: {formatAmountFull(hover.spendTotal)}
               </div>
               {hover.spendItems.map((item) => (
                 <div key={`tip-s-${item.category}`} className="stream-tooltip-row">
@@ -525,7 +531,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
             </>
           )}
           {hover.hasUnconvertible && (
-            <div className="stream-tooltip-warn">* some currencies not converted to {reportingCurrency}</div>
+            <div className="stream-tooltip-warn">{t("chart.unconvertibleWarning", { currency: reportingCurrency })}</div>
           )}
         </div>
       )}
