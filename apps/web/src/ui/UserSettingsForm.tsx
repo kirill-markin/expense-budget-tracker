@@ -107,6 +107,11 @@ export const UserSettingsForm = (props: Props): ReactElement => {
               <option key={fmt} value={fmt}>{fmt}</option>
             ))}
           </select>
+        </div>
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-control">
           <button className="settings-save" type="button" onClick={handleSave} disabled={saving || !dirty}>
             {saving ? t("common.saving") : t("common.save")}
           </button>

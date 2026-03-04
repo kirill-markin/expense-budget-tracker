@@ -1318,6 +1318,9 @@ tbody tr:last-child .budget-cm-actual {
 
 .settings-form {
   margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .settings-row {

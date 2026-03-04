@@ -104,6 +104,11 @@ export const WorkspaceSettings = (props: Props): ReactElement => {
             onChange={(e) => { setTimezone(e.target.value); setSaved(false); }}>
             {timezones.map((tz) => (<option key={tz} value={tz}>{tz}</option>))}
           </select>
+        </div>
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-control">
           <button className="settings-save" type="button" onClick={handleSave} disabled={saving || !dirty}>
             {saving ? t("common.saving") : t("common.save")}
           </button>
