@@ -2,6 +2,7 @@
 
 import { type ReactElement } from "react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
@@ -89,6 +90,7 @@ const saveEntry = async (entry: LedgerEntry): Promise<void> => {
 
 export const TransactionsRawTable = (props: Props): ReactElement => {
   const { accounts, categories, hints } = props;
+  const { t } = useTranslation();
   const { effectiveAllowlist } = useFilteredMode();
 
   const getMaskClass = (category: string | null): string => {
@@ -179,7 +181,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   };
 
   const handleDelete = (entryId: string): void => {
-    if (!window.confirm("Delete this transaction? This cannot be undone.")) return;
+    if (!window.confirm(t("txn.deleteConfirm"))) return;
 
     const entry = scroll.rows.find((e) => e.entryId === entryId);
     if (entry === undefined) return;
@@ -353,7 +355,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     <>
       <div className="txn-filters">
         <label className="txn-filter-label">
-          From
+          {t("common.from")}
           <input
             type="date"
             className="txn-filter-input"
@@ -362,7 +364,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           />
         </label>
         <label className="txn-filter-label">
-          To
+          {t("common.to")}
           <input
             type="date"
             className="txn-filter-input"
@@ -371,13 +373,13 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           />
         </label>
         <label className="txn-filter-label">
-          Account
+          {t("table.account")}
           <select
             className="txn-filter-input"
             value={selectedAccount}
             onChange={(e) => setSelectedAccount(e.target.value)}
           >
-            <option value="">All</option>
+            <option value="">{t("mode.all")}</option>
             {accounts.map((a) => (
               <option key={a.accountId} value={a.accountId}>{a.accountId}</option>
             ))}
@@ -385,14 +387,14 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
         </label>
         {!scroll.loading && (
           <span className="txn-filter-count">
-            {scroll.rows.length} of {scroll.total} entries
+            {t("txn.countLabel", { shown: scroll.rows.length, total: scroll.total })}
           </span>
         )}
       </div>
 
       {scroll.error !== null && (
         <div className="budget-alert">
-          <strong>Failed to load transactions</strong>
+          <strong>{t("txn.failedToLoad")}</strong>
           <span>{scroll.error}</span>
         </div>
       )}
@@ -404,7 +406,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           rowKey={(row, idx) => `${row.entryId}-${idx}`}
           sort={sort}
           onSort={onSort}
-          emptyMessage="No entries match the selected filters."
+          emptyMessage={t("txn.noMatch")}
           loading={scroll.loading}
           loadingMore={scroll.loadingMore}
           sentinelRef={scroll.sentinelRef}

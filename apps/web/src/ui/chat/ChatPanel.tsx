@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
   type ReactElement,
 } from "react";
+import { useTranslation } from "react-i18next";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { DEFAULT_MODEL_ID } from "@/lib/chatModels";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
@@ -58,14 +59,14 @@ const buildContentParts = (
 // 90 MB — safely under Cloudflare (100 MB) and Next.js proxyClientMaxBodySize (100 MB)
 const MAX_BODY_BYTES = 90 * 1024 * 1024;
 
-const sanitizeErrorText = (status: number, raw: string): string => {
+const sanitizeErrorText = (status: number, raw: string, t: (key: string) => string): string => {
   if (raw.trim().length === 0 && status === 500) {
-    return "Request too large — try sending fewer attachments or smaller images";
+    return t("chat.errorTooLarge").replace("{{sizeMb}}", "?").replace("{{limitMb}}", "?");
   }
   if (raw.includes("<html") || raw.includes("<!DOCTYPE")) {
     const titleMatch = raw.match(/<title>([^<]+)<\/title>/i);
     if (titleMatch !== null) return titleMatch[1];
-    return "Request blocked by firewall";
+    return t("chat.errorBlocked");
   }
   return raw;
 };
@@ -79,10 +80,10 @@ const parseSSELine = (line: string): ChatStreamEvent | null => {
   }
 };
 
-const formatToolLabel = (name: string): string => {
-  if (name === "query_database") return "Database query";
-  if (name === "code_execution" || name === "code_interpreter") return "Code execution";
-  if (name === "web_search") return "Web search";
+const formatToolLabel = (name: string, t: (key: string) => string): string => {
+  if (name === "query_database") return t("chat.toolDbQuery");
+  if (name === "code_execution" || name === "code_interpreter") return t("chat.toolCodeExec");
+  if (name === "web_search") return t("chat.toolWebSearch");
   return name;
 };
 
@@ -121,7 +122,7 @@ const formatToolOutput = (name: string, output: string | null): string | null =>
   return output;
 };
 
-const renderMessageContent = (msg: StoredMessage): ReactElement => {
+const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): ReactElement => {
   const fileParts = msg.content.filter((p) => p.type === "file" || p.type === "image");
   const filePrefix = fileParts.length > 0
     ? `[${fileParts.map((p) => (p.type === "file" ? p.fileName : "[image]")).join(", ")}]\n`
@@ -139,7 +140,7 @@ const renderMessageContent = (msg: StoredMessage): ReactElement => {
       fileHeaderAdded = true;
       elements.push(<span key={`t-${i}`}>{text}</span>);
     } else if (part.type === "tool_call") {
-      const label = formatToolLabel(part.name);
+      const label = formatToolLabel(part.name, t);
       const displayInput = formatToolInput(part.name, part.input);
       const displayOutput = formatToolOutput(part.name, part.output ?? null);
       elements.push(
@@ -171,6 +172,7 @@ const MAX_WIDTH = 600;
 
 export const ChatPanel = (props: Props): ReactElement => {
   const { mode } = props;
+  const { t } = useTranslation();
   const { setIsOpen, chatWidth, setChatWidth } = useChatLayout();
   const [localWidth, setLocalWidth] = useState<number>(chatWidth);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -360,7 +362,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     if (requestBody.length > MAX_BODY_BYTES) {
       const sizeMb = (requestBody.length / (1024 * 1024)).toFixed(1);
       const limitMb = (MAX_BODY_BYTES / (1024 * 1024)).toFixed(0);
-      markAssistantError(`Request too large (${sizeMb} MB, limit ${limitMb} MB). Try sending fewer attachments or smaller images.`);
+      markAssistantError(t("chat.errorTooLarge", { sizeMb, limitMb }));
       setIsStreaming(false);
       abortRef.current = null;
       return;
@@ -376,14 +378,14 @@ export const ChatPanel = (props: Props): ReactElement => {
 
       if (!response.ok) {
         const rawError = await response.text();
-        markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError)}`);
+        markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError, t)}`);
         setIsStreaming(false);
         return;
       }
 
       const reader = response.body?.getReader();
       if (reader === undefined) {
-        markAssistantError("No response stream available");
+        markAssistantError(t("chat.errorNoResponse"));
         setIsStreaming(false);
         return;
       }
@@ -438,14 +440,14 @@ export const ChatPanel = (props: Props): ReactElement => {
       if (receivedContent) {
         finalizeAssistant();
       } else {
-        markAssistantError("Empty response from AI model — please try again");
+        markAssistantError(t("chat.errorEmptyResponse"));
       }
     } catch (err) {
       if (abortController.signal.aborted) {
         finalizeAssistant();
       } else {
         const message = err instanceof Error ? err.message : String(err);
-        markAssistantError(`Request failed: ${message}`);
+        markAssistantError(t("chat.errorFailed", { message }));
       }
     }
 
@@ -464,6 +466,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     completeToolCall,
     finalizeAssistant,
     markAssistantError,
+    t,
   ]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -490,7 +493,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       onDragOver={handleDragOver}
       onDrop={(e) => void handleDrop(e)}
     >
-      {isDragOver && <div className="chat-drop-overlay">Drop files here</div>}
+      {isDragOver && <div className="chat-drop-overlay">{t("chat.dropFiles")}</div>}
       {mode === "sidebar" && (
         <div
           className={`chat-resize-handle${isDragging ? " dragging" : ""}`}
@@ -498,7 +501,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         />
       )}
       <div className="chat-header">
-        <span className="chat-header-title">AI Chat</span>
+        <span className="chat-header-title">{t("chat.title")}</span>
         <div className="chat-header-actions">
           <button
             type="button"
@@ -512,7 +515,7 @@ export const ChatPanel = (props: Props): ReactElement => {
               clearHistory();
             }}
           >
-            Clear
+            {t("chat.clear")}
           </button>
           {mode === "sidebar" && (
             <button
@@ -529,17 +532,17 @@ export const ChatPanel = (props: Props): ReactElement => {
       <div className="chat-messages" ref={messagesRef}>
         {messages.length === 0 && (
           <div className="chat-empty">
-            <p className="chat-empty-title">What can AI do?</p>
+            <p className="chat-empty-title">{t("chat.emptyTitle")}</p>
             <ul className="chat-empty-list">
-              <li>Categorize transactions from a bank statement and save them to the database</li>
-              <li>Extract missing transactions from app screenshots and add them to the database</li>
-              <li>Fill in the budget plan for the remaining months based on past spending</li>
+              <li>{t("chat.example1")}</li>
+              <li>{t("chat.example2")}</li>
+              <li>{t("chat.example3")}</li>
             </ul>
-            <p className="chat-empty-title">You can attach:</p>
+            <p className="chat-empty-title">{t("chat.attachTitle")}</p>
             <ul className="chat-empty-list">
-              <li>PDF bank statement</li>
-              <li>CSV export from your bank</li>
-              <li>Screenshots from a banking app</li>
+              <li>{t("chat.attachPdf")}</li>
+              <li>{t("chat.attachCsv")}</li>
+              <li>{t("chat.attachScreenshots")}</li>
             </ul>
           </div>
         )}
@@ -551,7 +554,7 @@ export const ChatPanel = (props: Props): ReactElement => {
               key={`${msg.timestamp}-${i}`}
               className={`chat-msg chat-msg-${msg.role}${msg.isError ? " chat-msg-error" : ""}`}
             >
-              {renderMessageContent(msg)}
+              {renderMessageContent(msg, t)}
               {isLastAssistant && (() => {
                 const lastPart = msg.content.length > 0 ? msg.content[msg.content.length - 1] : undefined;
                 const isToolRunning = lastPart !== undefined && lastPart.type === "tool_call" && lastPart.status === "started";
@@ -587,7 +590,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         <textarea
           ref={textareaRef}
           className="chat-textarea"
-          placeholder="Type a message..."
+          placeholder={t("chat.placeholder")}
           value={inputText}
           onChange={(e) => handleInput(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -603,7 +606,7 @@ export const ChatPanel = (props: Props): ReactElement => {
               disabled={isStreaming}
               onClick={() => void sendMessage()}
             >
-              Send
+              {t("chat.send")}
             </button>
           </div>
         </div>

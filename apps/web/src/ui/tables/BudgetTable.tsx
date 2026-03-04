@@ -508,28 +508,28 @@ export const BudgetTable = (props: Props): ReactElement => {
               {columnSequence.map((col) => {
                 if (col.kind === "year-total") {
                   if (col.year < currentYear) {
-                    return <th key={`total-${col.year}`} className="budget-th-sub budget-year-total">Actual</th>;
+                    return <th key={`total-${col.year}`} className="budget-th-sub budget-year-total">{t("budget.actual")}</th>;
                   }
                   if (col.year > currentYear) {
-                    return <th key={`total-${col.year}`} className="budget-th-sub budget-year-total">Plan</th>;
+                    return <th key={`total-${col.year}`} className="budget-th-sub budget-year-total">{t("budget.plan")}</th>;
                   }
                   return (
                     <Fragment key={`total-${col.year}`}>
-                      <th className="budget-th-sub budget-year-total">Plan</th>
-                      <th className="budget-th-sub budget-year-total">Actual</th>
+                      <th className="budget-th-sub budget-year-total">{t("budget.plan")}</th>
+                      <th className="budget-th-sub budget-year-total">{t("budget.actual")}</th>
                     </Fragment>
                   );
                 }
                 if (isPastMonth(col.month, currentMonth)) {
-                  return <th key={col.month} className="budget-th-sub">Actual</th>;
+                  return <th key={col.month} className="budget-th-sub">{t("budget.actual")}</th>;
                 }
                 if (isFutureMonth(col.month, currentMonth)) {
-                  return <th key={col.month} className="budget-th-sub">Plan</th>;
+                  return <th key={col.month} className="budget-th-sub">{t("budget.plan")}</th>;
                 }
                 return (
                   <Fragment key={col.month}>
-                    <th className="budget-th-sub budget-cm-plan">Plan</th>
-                    <th className="budget-th-sub budget-cm-actual">Actual</th>
+                    <th className="budget-th-sub budget-cm-plan">{t("budget.plan")}</th>
+                    <th className="budget-th-sub budget-cm-actual">{t("budget.actual")}</th>
                   </Fragment>
                 );
               })}

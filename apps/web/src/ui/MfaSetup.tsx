@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactElement, useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 type MfaStatus = Readonly<{ enabled: boolean; available: boolean }>;
 type SetupResponse = Readonly<{ secretCode: string; totpUri: string }>;
@@ -11,6 +12,7 @@ type Props = Readonly<{
 
 export const MfaSetup = (props: Props): ReactElement | null => {
   const { authEnabled } = props;
+  const { t } = useTranslation();
   const [status, setStatus] = useState<MfaStatus | null>(null);
   const [setup, setSetup] = useState<SetupResponse | null>(null);
   const [code, setCode] = useState<string>("");
@@ -47,7 +49,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
 
   const handleVerify = useCallback(async (): Promise<void> => {
     if (!/^\d{6}$/.test(code)) {
-      setError("Enter a 6-digit code");
+      setError(t("mfa.codeError"));
       return;
     }
     setLoading(true);
@@ -65,7 +67,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
       setStatus({ enabled: true, available: true });
       setSetup(null);
       setCode("");
-      setSuccess("MFA enabled");
+      setSuccess(t("mfa.enabled"));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -84,7 +86,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
         return;
       }
       setStatus({ enabled: false, available: true });
-      setSuccess("MFA disabled");
+      setSuccess(t("mfa.disabled"));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -98,7 +100,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
     <div className="settings-form">
       {status.enabled && setup === null && (
         <div className="settings-row">
-          <div className="settings-label">TOTP authenticator is active</div>
+          <div className="settings-label">{t("mfa.active")}</div>
           <div className="settings-control">
             <button
               className="settings-save settings-save--danger"
@@ -106,7 +108,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
               onClick={handleDisable}
               disabled={loading}
             >
-              {loading ? "Disabling..." : "Disable MFA"}
+              {loading ? t("mfa.disabling") : t("mfa.disable")}
             </button>
           </div>
         </div>
@@ -115,7 +117,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
       {!status.enabled && setup === null && (
         <div className="settings-row">
           <div className="settings-label">
-            Protect your account with a TOTP authenticator app
+            {t("mfa.setupHelp")}
           </div>
           <div className="settings-control">
             <button
@@ -124,7 +126,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
               onClick={handleSetup}
               disabled={loading}
             >
-              {loading ? "Loading..." : "Setup MFA"}
+              {loading ? t("mfa.setupLoading") : t("mfa.setup")}
             </button>
           </div>
         </div>
@@ -133,7 +135,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
       {setup !== null && (
         <div className="settings-row">
           <div className="settings-label">
-            Add this key to your authenticator app (Google Authenticator, 1Password, etc.)
+            {t("mfa.addKeyHelp")}
           </div>
           <div className="settings-codeblock">
             <code>{setup.secretCode}</code>
@@ -145,7 +147,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
               inputMode="numeric"
               pattern="[0-9]*"
               maxLength={6}
-              placeholder="6-digit code"
+              placeholder={t("mfa.codePlaceholder")}
               value={code}
               onChange={(e) => { setCode(e.target.value); setError(""); }}
               disabled={loading}
@@ -156,7 +158,7 @@ export const MfaSetup = (props: Props): ReactElement | null => {
               onClick={handleVerify}
               disabled={loading || code.length !== 6}
             >
-              {loading ? "Verifying..." : "Verify"}
+              {loading ? t("mfa.verifying") : t("mfa.verify")}
             </button>
           </div>
         </div>

@@ -1363,6 +1363,16 @@ tbody tr:last-child .budget-cm-actual {
   border-color: var(--text);
 }
 
+.settings-save:not(:disabled) {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+.settings-save:not(:disabled):hover {
+  opacity: 0.85;
+}
+
 .settings-save:disabled {
   opacity: 0.5;
   cursor: default;

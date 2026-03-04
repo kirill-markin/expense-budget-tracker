@@ -1,6 +1,7 @@
 import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useFormat } from "@/ui/FormatProvider";
 import { formatAmount, isDecember } from "@/ui/tables/budgetTableLogic";
@@ -32,6 +33,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const { month, direction, category, plannedBase, plannedModifier, planned, hasComment, showData, maskClass, taintedClass, isPlanOver, cmClass, onPlanSave, onFillMonths, onCommentPresenceChange, onSyncStart, onSyncEnd } = props;
 
   const { numberFormat } = useFormat();
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [baseInput, setBaseInput] = useState<string>("");
   const [modifierInput, setModifierInput] = useState<string>("");
@@ -229,7 +231,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           style={{ top: popoverPos.top, left: popoverPos.left }}
         >
           <label className="budget-popover-field">
-            <span className="budget-popover-label">Adjust</span>
+            <span className="budget-popover-label">{t("budget.popoverAdjust")}</span>
             <input
               ref={adjustInputRef}
               type="number"
@@ -240,7 +242,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
             />
           </label>
           <label className="budget-popover-field">
-            <span className="budget-popover-label">Base</span>
+            <span className="budget-popover-label">{t("budget.popoverBase")}</span>
             <input
               type="number"
               className="budget-popover-input"
@@ -251,7 +253,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           </label>
           <div className="budget-popover-divider" />
           <div className="budget-popover-total">
-            <span className="budget-popover-label">Total</span>
+            <span className="budget-popover-label">{t("budget.popoverTotal")}</span>
             <span className="budget-popover-total-value">{formatAmount(computedTotal, numberFormat)}</span>
           </div>
           {canFill && (
@@ -262,18 +264,18 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
                 className="budget-popover-fill-btn"
                 onClick={handleFill}
               >
-                Fill months &rarr;
+                {t("budget.popoverFill")}
               </button>
             </>
           )}
           <div className="budget-popover-divider" />
           {isLoadingComment
-            ? <span className="budget-popover-loading">Loading&hellip;</span>
+            ? <span className="budget-popover-loading">{t("common.loading")}</span>
             : (
               <textarea
                 className="budget-popover-comment"
                 rows={2}
-                placeholder="Note"
+                placeholder={t("budget.popoverNote")}
                 value={commentInput}
                 onChange={(e) => setCommentInput(e.target.value)}
               />

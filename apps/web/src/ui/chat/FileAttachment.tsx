@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, type ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 
 export type PendingAttachment = Readonly<{
   fileName: string;
@@ -80,6 +81,7 @@ export const prepareAttachment = async (file: File): Promise<PendingAttachment> 
 
 export const FileAttachment = (props: Props): ReactElement => {
   const { onAttach } = props;
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleChange = async (): Promise<void> => {
@@ -118,7 +120,7 @@ export const FileAttachment = (props: Props): ReactElement => {
         className="chat-attach-btn"
         onClick={() => inputRef.current?.click()}
       >
-        Attach
+        {t("chat.attach")}
       </button>
     </>
   );
