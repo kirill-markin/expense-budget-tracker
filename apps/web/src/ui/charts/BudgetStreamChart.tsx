@@ -57,6 +57,7 @@ const pivotByMonth = (
   rows: ReadonlyArray<BudgetRow>,
   direction: string,
   categories: ReadonlyArray<string>,
+  allMonths: ReadonlyArray<string>,
 ): ReadonlyArray<MonthRecord> => {
   const map = new Map<string, Record<string, number>>();
 
@@ -73,6 +74,14 @@ const pivotByMonth = (
       map.set(row.month, entry);
     }
     entry[row.category] = (entry[row.category] ?? 0) + row.actual;
+  }
+
+  for (const m of allMonths) {
+    if (!map.has(m)) {
+      const entry: Record<string, number> = {};
+      for (const cat of categories) entry[cat] = 0;
+      map.set(m, entry);
+    }
   }
 
   const months = Array.from(map.keys()).sort();
@@ -131,14 +140,15 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
   const [hover, setHover] = useState<HoverInfo | null>(null);
 
   const { incomeCategories, spendCategories, incomeData, spendData } = useMemo(() => {
+    const allMonths = Array.from(new Set(rows.map((r) => r.month))).sort();
     const ic = allowlist === null
       ? collectCategories(rows, "income")
       : collectCategories(rows, "income").filter((cat) => isCategoryVisible(allowlist, cat));
     const sc = allowlist === null
       ? collectCategories(rows, "spend")
       : collectCategories(rows, "spend").filter((cat) => isCategoryVisible(allowlist, cat));
-    const id = ic.length > 0 ? pivotByMonth(rows, "income", ic) : [];
-    const sd = sc.length > 0 ? pivotByMonth(rows, "spend", sc) : [];
+    const id = ic.length > 0 ? pivotByMonth(rows, "income", ic, allMonths) : [];
+    const sd = sc.length > 0 ? pivotByMonth(rows, "spend", sc, allMonths) : [];
     return { incomeCategories: ic, spendCategories: sc, incomeData: id, spendData: sd };
   }, [rows, allowlist]);
 
