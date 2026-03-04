@@ -4,6 +4,7 @@ import ar from "./ar.json";
 import en from "./en.json";
 import es from "./es.json";
 import fa from "./fa.json";
+import he from "./he.json";
 import ru from "./ru.json";
 import uk from "./uk.json";
 import zh from "./zh.json";
@@ -18,6 +19,7 @@ const bundles: Readonly<Record<SupportedLocale, TranslationBundle>> = {
   fa: fa as TranslationBundle,
   zh: zh as TranslationBundle,
   ar: ar as TranslationBundle,
+  he: he as TranslationBundle,
 };
 
 /** Direct key lookup for server components. Falls back to English on missing key. */

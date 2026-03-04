@@ -7,6 +7,7 @@ import ar from "./ar.json";
 import en from "./en.json";
 import es from "./es.json";
 import fa from "./fa.json";
+import he from "./he.json";
 import ru from "./ru.json";
 import uk from "./uk.json";
 import zh from "./zh.json";
@@ -30,6 +31,7 @@ export const initI18n = (locale: SupportedLocale): i18n => {
       fa: { translation: fa },
       zh: { translation: zh },
       ar: { translation: ar },
+      he: { translation: he },
     },
   });
 

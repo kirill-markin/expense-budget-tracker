@@ -1,6 +1,6 @@
-export type SupportedLocale = "en" | "ru" | "es" | "uk" | "fa" | "zh" | "ar";
+export type SupportedLocale = "en" | "ru" | "es" | "uk" | "fa" | "zh" | "ar" | "he";
 
-export const SUPPORTED_LOCALES: ReadonlyArray<SupportedLocale> = ["en", "ru", "es", "uk", "fa", "zh", "ar"];
+export const SUPPORTED_LOCALES: ReadonlyArray<SupportedLocale> = ["en", "ru", "es", "uk", "fa", "zh", "ar", "he"];
 
 export const LOCALE_LABELS: Readonly<Record<SupportedLocale, string>> = {
   en: "English",
@@ -10,9 +10,10 @@ export const LOCALE_LABELS: Readonly<Record<SupportedLocale, string>> = {
   fa: "فارسی",
   zh: "中文",
   ar: "العربية",
+  he: "עברית",
 };
 
-export const RTL_LOCALES: ReadonlySet<SupportedLocale> = new Set(["fa", "ar"]);
+export const RTL_LOCALES: ReadonlySet<SupportedLocale> = new Set(["fa", "ar", "he"]);
 
 export type NumberFormat = "1,234.56" | "1 234,56" | "1.234,56";
 
