@@ -321,8 +321,20 @@ export const BudgetTable = (props: Props): ReactElement => {
     const monthEl = el.querySelector<HTMLElement>(`[data-month="${currentMonth}"]`);
     if (monthEl === null) return;
 
-    monthEl.scrollIntoView({ inline: "start", block: "nearest" });
-  }, [currentMonth]);
+    const containerRect = el.getBoundingClientRect();
+    const monthRect = monthEl.getBoundingClientRect();
+    const stickyCol = el.querySelector<HTMLElement>(".budget-sticky-col");
+    const stickyWidth = stickyCol !== null ? stickyCol.offsetWidth : 0;
+    const borderOffset = 2;
+
+    if (isRtl) {
+      const stickyEnd = containerRect.right - stickyWidth;
+      el.scrollLeft -= stickyEnd - monthRect.right - borderOffset;
+    } else {
+      const stickyEnd = containerRect.left + stickyWidth;
+      el.scrollLeft += monthRect.left - stickyEnd - borderOffset;
+    }
+  }, [currentMonth, isRtl]);
 
   useLayoutEffect(() => {
     scrollToCurrentMonth();
