@@ -26,7 +26,9 @@ export function auth(scope: Construct, props: AuthProps): AuthResult {
   });
 
   // Essentials tier required for USER_AUTH + EMAIL_OTP (no L2 support yet)
-  (userPool.node.defaultChild as cdk.CfnResource).addPropertyOverride("UserPoolTier", "ESSENTIALS");
+  const cfnUserPool = userPool.node.defaultChild as cdk.CfnResource;
+  cfnUserPool.addPropertyOverride("UserPoolTier", "ESSENTIALS");
+  cfnUserPool.addPropertyOverride("Policies.SignInPolicy.AllowedFirstAuthFactors", ["EMAIL_OTP"]);
 
   const userPoolClient = userPool.addClient("AppClient", {
     generateSecret: false,
