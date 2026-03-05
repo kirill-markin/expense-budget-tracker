@@ -43,6 +43,7 @@ export const renderLoginPage = (locale: string, redirectUri: string): string => 
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>${escapeHtml(t(locale, "title"))}</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='96' fill='%23232323'/%3E%3Cpath d='M256 80v352' stroke='%23fff' stroke-width='40' stroke-linecap='round'/%3E%3Cpath d='M336 176c0-44-36-72-80-72s-80 28-80 72c0 48 40 64 80 80s80 32 80 80c0 44-36 72-80 72s-80-28-80-72' stroke='%23fff' stroke-width='40' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
   <style>
     :root {
       --bg: #ffffff;
