@@ -33,7 +33,8 @@ async function UserSettingsData() {
   const headersList = await headers();
   const userId = extractUserIdFromHeaders(headersList);
   const workspaceId = extractWorkspaceIdFromHeaders(headersList);
-  const settings = await getUserSettings(userId, workspaceId);
+  const initialLocale = await getLocaleCookie();
+  const settings = await getUserSettings(userId, workspaceId, initialLocale);
 
   return <UserSettingsForm locale={settings.locale} numberFormat={settings.numberFormat} dateFormat={settings.dateFormat} />;
 }
@@ -123,7 +124,8 @@ export default async function SettingsPage() {
       const headersList = await headers();
       const userId = extractUserIdFromHeaders(headersList);
       const workspaceId = extractWorkspaceIdFromHeaders(headersList);
-      const settings = await getUserSettings(userId, workspaceId);
+      const initialLocale = await getLocaleCookie();
+      const settings = await getUserSettings(userId, workspaceId, initialLocale);
       locale = settings.locale;
     } catch {
       locale = await getLocaleCookie();

@@ -57,7 +57,8 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       if (authEnabled) {
         workspaces = await listWorkspaces(userId, workspaceId);
       }
-      const userSettings = await getUserSettings(userId, workspaceId);
+      const initialLocale = await getLocaleCookie();
+      const userSettings = await getUserSettings(userId, workspaceId, initialLocale);
       locale = userSettings.locale;
       numberFormat = userSettings.numberFormat;
       dateFormat = userSettings.dateFormat;

@@ -60,9 +60,15 @@ app.get("/login", (c) => {
     return c.text("Invalid redirect_uri", 400);
   }
 
-  const locale = parseLocale(c.req.header("accept-language") ?? null);
+  const langParam = c.req.query("lang") ?? "";
+  const locale: Locale = (SUPPORTED_LOCALES as ReadonlyArray<string>).includes(langParam)
+    ? (langParam as Locale)
+    : parseLocale(c.req.header("accept-language") ?? null);
+
+  const domain = process.env.COOKIE_DOMAIN ?? "";
   const html = renderLoginPage(locale, redirectUri);
 
+  c.header("Set-Cookie", `locale=${locale}; Domain=${domain}; Path=/; Max-Age=31536000; Secure; SameSite=Lax`);
   return c.html(html);
 });
 

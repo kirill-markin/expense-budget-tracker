@@ -1,5 +1,6 @@
 import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS, SUPPORTED_LOCALES, NUMBER_FORMATS, DATE_FORMATS, type SupportedLocale, type NumberFormat, type DateFormat } from "@/lib/locale";
+import { getLocaleFromRequest } from "@/lib/localeCookie";
 import { log } from "@/server/logger";
 import { getUserSettings, updateUserSettings } from "@/server/userSettings";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
@@ -10,8 +11,9 @@ export const GET = async (request: Request): Promise<Response> => {
   }
   const userId = extractUserId(request);
   const workspaceId = extractWorkspaceId(request);
+  const initialLocale = getLocaleFromRequest(request);
   try {
-    const settings = await getUserSettings(userId, workspaceId);
+    const settings = await getUserSettings(userId, workspaceId, initialLocale);
     return Response.json(settings);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -65,13 +67,14 @@ export const PUT = async (request: Request): Promise<Response> => {
 
   const userId = extractUserId(request);
   const workspaceId = extractWorkspaceId(request);
+  const initialLocale = getLocaleFromRequest(request);
   try {
     const updates: Record<string, unknown> = {};
     if (hasLocale) updates.locale = locale as SupportedLocale;
     if (hasNumberFormat) updates.numberFormat = numberFormat as NumberFormat;
     if (hasDateFormat) updates.dateFormat = dateFormat as DateFormat;
 
-    const result = await updateUserSettings(userId, workspaceId, updates as Partial<Pick<typeof DEFAULT_USER_SETTINGS, "locale" | "numberFormat" | "dateFormat">>);
+    const result = await updateUserSettings(userId, workspaceId, updates as Partial<Pick<typeof DEFAULT_USER_SETTINGS, "locale" | "numberFormat" | "dateFormat">>, initialLocale);
     const responseHeaders = new Headers({ "Content-Type": "application/json" });
     if (hasLocale) {
       responseHeaders.set("Set-Cookie", `locale=${result.locale}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`);

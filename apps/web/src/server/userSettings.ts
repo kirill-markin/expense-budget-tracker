@@ -21,8 +21,8 @@ const parseDateFormat = (raw: string): DateFormat => {
   return DEFAULT_USER_SETTINGS.dateFormat;
 };
 
-export const getUserSettings = async (userId: string, workspaceId: string): Promise<UserSettings> => {
-  await ensureUserSettings(userId, workspaceId);
+export const getUserSettings = async (userId: string, workspaceId: string, initialLocale: SupportedLocale): Promise<UserSettings> => {
+  await ensureUserSettings(userId, workspaceId, initialLocale);
   const result = await queryAs(
     userId,
     workspaceId,
@@ -44,8 +44,9 @@ export const updateUserSettings = async (
   userId: string,
   workspaceId: string,
   settings: Partial<Pick<UserSettings, "locale" | "numberFormat" | "dateFormat">>,
+  initialLocale: SupportedLocale,
 ): Promise<UserSettings> => {
-  await ensureUserSettings(userId, workspaceId);
+  await ensureUserSettings(userId, workspaceId, initialLocale);
 
   const setClauses: Array<string> = [];
   const params: Array<unknown> = [userId];
@@ -68,7 +69,7 @@ export const updateUserSettings = async (
   }
 
   if (setClauses.length === 0) {
-    return getUserSettings(userId, workspaceId);
+    return getUserSettings(userId, workspaceId, initialLocale);
   }
 
   const result = await queryAs(
@@ -94,7 +95,7 @@ import { getPool } from "@/server/db";
 
 const provisionedUsers = new Set<string>();
 
-const ensureUserSettings = async (userId: string, workspaceId: string): Promise<void> => {
+const ensureUserSettings = async (userId: string, workspaceId: string, initialLocale: SupportedLocale): Promise<void> => {
   if (provisionedUsers.has(userId)) return;
   const pool = getPool();
   const client = await pool.connect();
@@ -103,8 +104,8 @@ const ensureUserSettings = async (userId: string, workspaceId: string): Promise<
     await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
     await client.query(
-      "INSERT INTO user_settings (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
-      [userId],
+      "INSERT INTO user_settings (user_id, locale) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
+      [userId, initialLocale],
     );
     await client.query("COMMIT");
     provisionedUsers.add(userId);

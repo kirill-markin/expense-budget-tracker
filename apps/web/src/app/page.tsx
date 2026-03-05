@@ -16,7 +16,8 @@ export default async function HomePage() {
       const headersList = await headers();
       const userId = extractUserIdFromHeaders(headersList);
       const workspaceId = extractWorkspaceIdFromHeaders(headersList);
-      const settings = await getUserSettings(userId, workspaceId);
+      const initialLocale = await getLocaleCookie();
+      const settings = await getUserSettings(userId, workspaceId, initialLocale);
       locale = settings.locale;
     } catch {
       locale = await getLocaleCookie();

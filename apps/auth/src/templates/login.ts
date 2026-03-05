@@ -19,6 +19,19 @@ const escapeHtml = (str: string): string =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+const LOCALE_LABELS: Readonly<Record<string, string>> = {
+  en: "English",
+  ru: "Русский",
+  es: "Español",
+  uk: "Українська",
+  fa: "فارسی",
+  zh: "中文",
+  ar: "العربية",
+  he: "עברית",
+};
+
+const SUPPORTED_LOCALES = ["en", "es", "zh", "ru", "uk", "fa", "ar", "he"] as const;
+
 export const renderLoginPage = (locale: string, redirectUri: string): string => {
   const dir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
   const lang = locale;
@@ -139,6 +152,22 @@ export const renderLoginPage = (locale: string, redirectUri: string): string => 
       margin: 0 0 16px;
     }
 
+    .login-lang {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 16px;
+    }
+
+    .login-lang select {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--panel-border);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 4px 6px;
+      cursor: pointer;
+    }
+
     .hidden { display: none; }
 
     @media (max-width: 768px) {
@@ -158,6 +187,11 @@ export const renderLoginPage = (locale: string, redirectUri: string): string => 
 <body>
   <div class="login-page">
     <div class="login-card">
+      <div class="login-lang">
+        <select id="lang-select">
+          ${SUPPORTED_LOCALES.map((l) => `<option value="${l}"${l === locale ? " selected" : ""}>${escapeHtml(LOCALE_LABELS[l])}</option>`).join("\n          ")}
+        </select>
+      </div>
       <h1 class="login-title">${escapeHtml(t(locale, "title"))}</h1>
 
       <div id="step-email">
@@ -180,6 +214,11 @@ export const renderLoginPage = (locale: string, redirectUri: string): string => 
   <script>
     (function() {
       var redirectUri = ${JSON.stringify(redirectUri)};
+
+      document.getElementById("lang-select").addEventListener("change", function() {
+        window.location.href = "/login?redirect_uri=" + encodeURIComponent(redirectUri) + "&lang=" + this.value;
+      });
+
       var csrfToken = "";
       var sendingLabel = ${JSON.stringify(t(locale, "sending"))};
       var sendCodeLabel = ${JSON.stringify(t(locale, "sendCode"))};
