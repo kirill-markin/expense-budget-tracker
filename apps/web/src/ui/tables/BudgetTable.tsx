@@ -325,7 +325,7 @@ export const BudgetTable = (props: Props): ReactElement => {
     const monthRect = monthEl.getBoundingClientRect();
     const stickyCol = el.querySelector<HTMLElement>(".budget-sticky-col");
     const stickyWidth = stickyCol !== null ? stickyCol.offsetWidth : 0;
-    const borderOffset = 2;
+    const borderOffset = 0;
 
     if (isRtl) {
       const stickyEnd = containerRect.right - stickyWidth;
