@@ -74,7 +74,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
 
   // auth.* → forward to auth service
   httpsListener.addAction("AuthRoute", {
-    priority: 1,
+    priority: 10,
     conditions: [elbv2.ListenerCondition.hostHeaders([props.authDomain])],
     action: elbv2.ListenerAction.forward([authTargetGroup]),
   });
@@ -83,7 +83,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   // To serve your own site on the root domain, point its DNS elsewhere
   // and this rule becomes irrelevant.
   httpsListener.addAction("SiteRoute", {
-    priority: 2,
+    priority: 20,
     conditions: [elbv2.ListenerCondition.hostHeaders([props.baseDomain])],
     action: elbv2.ListenerAction.redirect({
       host: props.appDomain,
