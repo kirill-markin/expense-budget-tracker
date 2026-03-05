@@ -75,7 +75,10 @@ app.get("/login", (c) => {
     : parseLocale(c.req.header("accept-language") ?? null);
 
   const domain = process.env.COOKIE_DOMAIN ?? "";
-  const html = renderLoginPage(locale, redirectUri);
+  const websiteUrl = domain.startsWith(".")
+    ? `https://${domain.slice(1)}`
+    : `https://${domain}`;
+  const html = renderLoginPage(locale, redirectUri, websiteUrl);
 
   c.header("Set-Cookie", `locale=${locale}; Domain=${domain}; Path=/; Max-Age=31536000; Secure; SameSite=Lax`);
   return c.html(html);

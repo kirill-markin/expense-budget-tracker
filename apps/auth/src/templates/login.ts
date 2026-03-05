@@ -32,7 +32,7 @@ const LOCALE_LABELS: Readonly<Record<string, string>> = {
 
 const SUPPORTED_LOCALES = ["en", "es", "zh", "ru", "uk", "fa", "ar", "he"] as const;
 
-export const renderLoginPage = (locale: string, redirectUri: string): string => {
+export const renderLoginPage = (locale: string, redirectUri: string, websiteUrl: string): string => {
   const dir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
   const lang = locale;
 
@@ -171,6 +171,26 @@ export const renderLoginPage = (locale: string, redirectUri: string): string => 
 
     .hidden { display: none; }
 
+    .login-header {
+      position: fixed;
+      top: 0;
+      inset-inline-start: 0;
+      inset-inline-end: 0;
+      padding: 12px 16px;
+      z-index: 10;
+    }
+
+    .login-header a {
+      color: var(--text);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .login-header a:hover {
+      opacity: 0.7;
+    }
+
     @media (max-width: 768px) {
       .login-page { padding: 0; }
       .login-card {
@@ -187,6 +207,9 @@ export const renderLoginPage = (locale: string, redirectUri: string): string => 
 </head>
 <body>
   <div class="login-page">
+    <header class="login-header">
+      <a href="${escapeHtml(websiteUrl)}">Expense Budget Tracker</a>
+    </header>
     <div class="login-card">
       <div class="login-lang">
         <select id="lang-select">
