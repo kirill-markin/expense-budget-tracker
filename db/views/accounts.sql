@@ -15,3 +15,12 @@ GROUP BY account_id;
 
 -- Grant after view creation (can't live in migrations — view doesn't exist yet).
 GRANT SELECT ON accounts TO app;
+
+-- Grant to api_sql_executor if the role exists (created by migration 0012).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'api_sql_executor') THEN
+    EXECUTE 'GRANT SELECT ON accounts TO api_sql_executor';
+  END IF;
+END
+$$;

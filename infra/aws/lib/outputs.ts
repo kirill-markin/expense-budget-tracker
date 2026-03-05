@@ -16,7 +16,6 @@ export interface OutputsProps {
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
   userPool: cognito.UserPool;
-  userPoolDomain: cognito.UserPoolDomain;
   alertTopic: sns.Topic;
   accessLogsBucket: s3.Bucket;
   cluster: ecs.Cluster;
@@ -54,10 +53,6 @@ export function outputs(scope: Construct, props: OutputsProps): void {
   new cdk.CfnOutput(scope, "CognitoUserPoolId", {
     value: props.userPool.userPoolId,
     description: "Cognito User Pool ID — create users here",
-  });
-  new cdk.CfnOutput(scope, "CognitoDomain", {
-    value: props.userPoolDomain.domainName,
-    description: "Cognito hosted UI domain prefix",
   });
   new cdk.CfnOutput(scope, "AlertTopicArn", {
     value: props.alertTopic.topicArn,

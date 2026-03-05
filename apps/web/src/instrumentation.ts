@@ -2,11 +2,12 @@
  * Production startup validation.
  *
  * Called once by Next.js on server boot. Checks:
- * - AUTH_MODE is "none" or "proxy"
- * - AUTH_PROXY_HEADER, COGNITO_DOMAIN, COGNITO_CLIENT_ID are set when AUTH_MODE=proxy
- * - CORS_ORIGIN is set when AUTH_MODE=proxy (required for CSRF protection)
+ * - AUTH_MODE is "none" or "cognito"
+ * - COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID, COGNITO_REGION are set when AUTH_MODE=cognito
+ * - CORS_ORIGIN is set when AUTH_MODE=cognito (required for CSRF protection)
+ * - AUTH_DOMAIN is set when AUTH_MODE=cognito (auth service subdomain)
  * - Warns when AUTH_MODE=none with non-localhost HOST
- * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (proxy/ECS)
+ * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (cognito/ECS)
  *
  * Throws with all collected errors on misconfiguration. Skipped in dev.
  */
@@ -17,26 +18,30 @@ export const register = (): void => {
 
   const authMode = process.env.AUTH_MODE ?? "none";
 
-  if (authMode !== "none" && authMode !== "proxy") {
-    errors.push(`Invalid AUTH_MODE="${authMode}". Expected "none" or "proxy"`);
+  if (authMode !== "none" && authMode !== "cognito") {
+    errors.push(`Invalid AUTH_MODE="${authMode}". Expected "none" or "cognito"`);
   }
 
-  if (authMode === "proxy") {
-    const proxyHeader = process.env.AUTH_PROXY_HEADER;
-    if (proxyHeader === undefined || proxyHeader === "") {
-      errors.push("AUTH_PROXY_HEADER must be set when AUTH_MODE=proxy");
-    }
-    const cognitoDomain = process.env.COGNITO_DOMAIN;
-    if (cognitoDomain === undefined || cognitoDomain === "") {
-      errors.push("COGNITO_DOMAIN must be set when AUTH_MODE=proxy");
+  if (authMode === "cognito") {
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId === undefined || userPoolId === "") {
+      errors.push("COGNITO_USER_POOL_ID must be set when AUTH_MODE=cognito");
     }
     const cognitoClientId = process.env.COGNITO_CLIENT_ID;
     if (cognitoClientId === undefined || cognitoClientId === "") {
-      errors.push("COGNITO_CLIENT_ID must be set when AUTH_MODE=proxy");
+      errors.push("COGNITO_CLIENT_ID must be set when AUTH_MODE=cognito");
+    }
+    const cognitoRegion = process.env.COGNITO_REGION;
+    if (cognitoRegion === undefined || cognitoRegion === "") {
+      errors.push("COGNITO_REGION must be set when AUTH_MODE=cognito");
     }
     const corsOrigin = process.env.CORS_ORIGIN;
     if (corsOrigin === undefined || corsOrigin === "") {
-      errors.push("CORS_ORIGIN must be set when AUTH_MODE=proxy (required for CSRF protection)");
+      errors.push("CORS_ORIGIN must be set when AUTH_MODE=cognito (required for CSRF protection)");
+    }
+    const authDomain = process.env.AUTH_DOMAIN;
+    if (authDomain === undefined || authDomain === "") {
+      errors.push("AUTH_DOMAIN must be set when AUTH_MODE=cognito (auth service subdomain)");
     }
   }
 
@@ -49,9 +54,9 @@ export const register = (): void => {
     }
   }
 
-  if (authMode === "proxy") {
-    if (!process.env.DB_HOST) errors.push("DB_HOST must be set when AUTH_MODE=proxy");
-    if (!process.env.DB_PASSWORD) errors.push("DB_PASSWORD must be set when AUTH_MODE=proxy");
+  if (authMode === "cognito") {
+    if (!process.env.DB_HOST) errors.push("DB_HOST must be set when AUTH_MODE=cognito");
+    if (!process.env.DB_PASSWORD) errors.push("DB_PASSWORD must be set when AUTH_MODE=cognito");
   } else {
     if (!process.env.DATABASE_URL) errors.push("DATABASE_URL must be set in production");
   }

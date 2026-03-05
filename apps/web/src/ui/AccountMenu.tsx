@@ -73,17 +73,19 @@ export const AccountMenu = (props: Props): ReactElement | null => {
     const match = document.cookie.match(/(?:^|;\s*)workspace=([^;]*)/);
     const cookieValue = match ? decodeURIComponent(match[1]) : "";
     if (cookieValue !== "" && cookieValue !== currentWorkspaceId) {
-      document.cookie = `workspace=${currentWorkspaceId};path=/;max-age=31536000;samesite=lax`;
+      document.cookie = `workspace=${currentWorkspaceId};path=/;max-age=31536000;samesite=lax;secure`;
     }
   }, [authEnabled, currentWorkspaceId]);
 
   const handleSwitch = useCallback((workspaceId: string): void => {
-    document.cookie = `workspace=${workspaceId};path=/;max-age=31536000;samesite=lax`;
+    document.cookie = `workspace=${workspaceId};path=/;max-age=31536000;samesite=lax;secure`;
     window.location.reload();
   }, []);
 
   const handleLogout = useCallback((): void => {
-    window.location.href = "/api/auth/logout";
+    fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+      window.location.href = "/";
+    });
   }, []);
 
   const handleCreate = useCallback(async (e: FormEvent): Promise<void> => {
@@ -171,14 +173,6 @@ export const AccountMenu = (props: Props): ReactElement | null => {
               {error !== "" && <div className="account-menu-error">{error}</div>}
             </form>
           )}
-          <div className="account-menu-separator" />
-          <button
-            className="account-menu-item"
-            type="button"
-            onClick={() => { window.location.href = "/account/mfa"; }}
-          >
-            {t("account.twoFactorAuth")}
-          </button>
           <div className="account-menu-separator" />
           <button
             className="account-menu-item"

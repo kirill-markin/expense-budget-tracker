@@ -1,6 +1,10 @@
 /**
  * Extract resolved user and workspace IDs from internal headers set by proxy.ts.
  * Throws if a header is missing — indicates a proxy misconfiguration.
+ *
+ * Two overloads:
+ *   extractUserId(request)             — for API route handlers (Request object)
+ *   extractUserIdFromHeaders(headers)  — for page components (Headers from await headers())
  */
 
 const USER_ID_HEADER = "x-user-id";
@@ -16,6 +20,22 @@ export const extractUserId = (request: Request): string => {
 
 export const extractWorkspaceId = (request: Request): string => {
   const workspaceId = request.headers.get(WORKSPACE_ID_HEADER);
+  if (workspaceId === null || workspaceId === "") {
+    throw new Error(`Missing ${WORKSPACE_ID_HEADER} header — proxy misconfiguration`);
+  }
+  return workspaceId;
+};
+
+export const extractUserIdFromHeaders = (headersList: Headers): string => {
+  const userId = headersList.get(USER_ID_HEADER);
+  if (userId === null || userId === "") {
+    throw new Error(`Missing ${USER_ID_HEADER} header — proxy misconfiguration`);
+  }
+  return userId;
+};
+
+export const extractWorkspaceIdFromHeaders = (headersList: Headers): string => {
+  const workspaceId = headersList.get(WORKSPACE_ID_HEADER);
   if (workspaceId === null || workspaceId === "") {
     throw new Error(`Missing ${WORKSPACE_ID_HEADER} header — proxy misconfiguration`);
   }

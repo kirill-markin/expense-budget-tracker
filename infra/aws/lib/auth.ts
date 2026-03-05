@@ -1,18 +1,14 @@
 import * as cdk from "aws-cdk-lib";
 import * as cognito from "aws-cdk-lib/aws-cognito";
-import * as acm from "aws-cdk-lib/aws-certificatemanager";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
 export interface AuthProps {
-  appDomain: string;
-  callbackUrl: string;
-  authCertificateArn: string;
-  authDomain: string;
+  preSignUpFn: lambda.Function;
 }
 
 export interface AuthResult {
   userPool: cognito.UserPool;
-  userPoolDomain: cognito.UserPoolDomain;
   userPoolClient: cognito.UserPoolClient;
 }
 
@@ -25,39 +21,27 @@ export function auth(scope: Construct, props: AuthProps): AuthResult {
     selfSignUpEnabled: true,
     signInAliases: { email: true },
     autoVerify: { email: true },
-    passwordPolicy: {
-      minLength: 12,
-      requireUppercase: true,
-      requireDigits: true,
-      requireSymbols: false,
-    },
-    mfa: cognito.Mfa.OPTIONAL,
-    mfaSecondFactor: {
-      sms: false,
-      otp: true,
-    },
+    lambdaTriggers: { preSignUp: props.preSignUpFn },
     removalPolicy: cdk.RemovalPolicy.RETAIN,
   });
 
-  const authCertificate = acm.Certificate.fromCertificateArn(
-    scope, "AuthCertificate", props.authCertificateArn,
-  );
-  const userPoolDomain = userPool.addDomain("CognitoDomain", {
-    customDomain: { domainName: props.authDomain, certificate: authCertificate },
-  });
+  // Essentials tier required for USER_AUTH + EMAIL_OTP (no L2 support yet)
+  (userPool.node.defaultChild as cdk.CfnResource).addPropertyOverride("UserPoolTier", "ESSENTIALS");
 
-  const userPoolClient = userPool.addClient("AlbClient", {
-    generateSecret: true,
-    oAuth: {
-      flows: { authorizationCodeGrant: true },
-      scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE, cognito.OAuthScope.COGNITO_ADMIN],
-      callbackUrls: [props.callbackUrl],
-      logoutUrls: [`https://${props.appDomain}/`],
-    },
+  const userPoolClient = userPool.addClient("AppClient", {
+    generateSecret: false,
     supportedIdentityProviders: [
       cognito.UserPoolClientIdentityProvider.COGNITO,
     ],
+    refreshTokenValidity: cdk.Duration.days(7),
+    enableTokenRevocation: true,
   });
 
-  return { userPool, userPoolDomain, userPoolClient };
+  // CDK L2 doesn't expose USER_AUTH auth flow — override via L1
+  (userPoolClient.node.defaultChild as cdk.CfnResource).addPropertyOverride(
+    "ExplicitAuthFlows",
+    ["ALLOW_USER_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
+  );
+
+  return { userPool, userPoolClient };
 }

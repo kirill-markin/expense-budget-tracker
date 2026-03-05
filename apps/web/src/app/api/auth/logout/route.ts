@@ -1,37 +1,38 @@
-import { NextResponse } from "next/server";
+/**
+ * Logout endpoint. Revokes the refresh token server-side, clears all auth and
+ * legacy ALB cookies, returns JSON.
+ *
+ * Uses POST to prevent CSRF-based forced logout via image tags or navigation.
+ */
+import { cookies } from "next/headers";
+import { revokeRefreshToken } from "@/server/cognitoAuth";
+import { clearAuthCookies } from "@/server/cookies";
 
-const getRequiredEnv = (name: string): string => {
-  const value = process.env[name];
-  if (value === undefined || value === "") {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-  return value;
-};
-
-export const GET = (request: Request): Response => {
+export const POST = async (): Promise<Response> => {
   const authMode = process.env.AUTH_MODE ?? "none";
-  if (authMode !== "proxy") {
-    return new Response("Logout not available: AUTH_MODE is not proxy", { status: 400 });
+  if (authMode !== "cognito") {
+    return Response.json({ error: "Logout not available: AUTH_MODE is not cognito" }, { status: 400 });
   }
 
-  const cognitoDomain = getRequiredEnv("COGNITO_DOMAIN");
-  const cognitoClientId = getRequiredEnv("COGNITO_CLIENT_ID");
+  // Revoke refresh token server-side (best-effort, never blocks logout)
+  const jar = await cookies();
+  const refreshToken = jar.get("refresh")?.value ?? "";
+  if (refreshToken !== "") {
+    await revokeRefreshToken(refreshToken);
+  }
 
-  // Build the public origin from ALB-forwarded headers (request.url is the internal container address)
-  const proto = request.headers.get("x-forwarded-proto") ?? "https";
-  const host = request.headers.get("host") ?? "";
-  const logoutRedirect = `${proto}://${host}/`;
-  const logoutUrl = `https://${cognitoDomain}/logout?client_id=${cognitoClientId}&logout_uri=${encodeURIComponent(logoutRedirect)}`;
+  const headers = new Headers();
+  headers.set("Content-Type", "application/json");
 
-  const response = NextResponse.redirect(logoutUrl);
+  clearAuthCookies(headers);
 
-  // Clear ALB session cookies (ALB splits large JWTs across cookies 0-2)
+  // Clear legacy ALB session cookies
   for (let i = 0; i <= 2; i++) {
-    response.headers.append(
+    headers.append(
       "Set-Cookie",
       `AWSELBAuthSessionCookie-${i}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly`,
     );
   }
 
-  return response;
+  return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
 };

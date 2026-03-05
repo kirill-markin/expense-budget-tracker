@@ -10,7 +10,7 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | ECS Fargate (0.5 vCPU / 1 GB ARM64, 24/7) | ~$13/month | Runs Next.js web app container |
 | RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
 | NAT instance t4g.micro | ~$6/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
-| ALB | ~$16/month | HTTPS termination with Origin Certificate, Cognito auth integration, health checks |
+| ALB | ~$16/month | HTTPS termination with Origin Certificate, health checks |
 | S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs (S3), container and alarm monitoring (CloudWatch), rate limiting and SQLi/XSS protection (WAF), daily FX rate fetching (Lambda) |
 | API Gateway (REST API) + Lambda | ~$0/month | SQL API for machine clients with per-key rate limiting; REST API pricing ($3.50/M requests) is negligible at low volume |
 | **Total** | **~$10/year + ~$50/month** | |
@@ -41,8 +41,7 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
                                                   │                Lambda (FX rates)
                                                   │
                                                   ├─ domain.com ──────▶ 302 redirect to app.*
-                                                  ├─ app.* ───────────▶ Cognito auth → web:8080
-                                                  └─ auth.* ──────────▶ Cognito hosted UI
+                                                  └─ app.* ───────────▶ web:8080 (Cognito Email OTP)
 
 Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL Lambda → RDS
                          │
@@ -61,9 +60,9 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL 
 - **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key, Anthropic API key
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
-- **ALB** with HTTPS (Cloudflare Origin Certificate) + Cognito authentication (JWT via ALB auth action)
-- **Cognito User Pool** — managed auth with custom login domain (`auth.yourdomain.com`), no auth code in the app
-- **AWS WAF** on ALB — rate limiting (1000 req/5min per IP), SQLi/XSS protection, common threat rules
+- **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS
+- **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth, managed by the app directly (no Hosted UI)
+- **AWS WAF** on ALB — SQLi/XSS protection, common threat rules (rate limiting handled by Cloudflare)
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
 - **API Gateway** (REST API) + two Lambdas (authorizer + SQL executor) for machine client SQL API; per-key rate limiting via Usage Plans, 5-min auth cache
 - **CloudWatch Alarms + SNS** — alerts on ALB 5xx, API Gateway 5xx, ECS CPU/memory, ECS scale-out, DB connections, DB storage, Lambda errors
@@ -77,10 +76,8 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL 
 - Domain registration
 - DNS CNAME `@` root domain (proxied) pointing to ALB — redirects to `app.*`
 - DNS CNAME `app.*` (proxied) pointing to ALB — authenticated app
-- DNS CNAME `auth.*` (DNS-only) pointing to Cognito CloudFront
 - Origin Certificate for ALB HTTPS (imported into ACM)
-- ACM validation CNAME for auth domain certificate
-- Cache bypass rule for `app.*` and root domain (ALB Cognito auth requires uncached redirects)
+- Cache bypass rule for `app.*` and root domain (fully dynamic app, no edge caching benefit)
 - Edge SSL, DDoS protection (automatic with proxied DNS)
 
 ## Step-by-step setup
@@ -235,25 +232,7 @@ The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the A
 
 > **Why Origin Certificate?** Cloudflare Origin Certificates are free, long-lived (15 years), and trusted by Cloudflare's edge servers. Since all traffic flows through Cloudflare proxy, browsers see Cloudflare's edge certificate (Universal SSL, free). The Origin Certificate secures the connection between Cloudflare and your ALB.
 
-#### 3e. Create auth domain certificate (~5-30 min wait)
-
-The login page uses a custom domain (`auth.yourdomain.com`). This requires a public ACM certificate in `us-east-1` (Cognito uses CloudFront under the hood).
-
-```bash
-set -a; source scripts/cloudflare/.env; set +a
-export AWS_PROFILE=expense-tracker
-
-bash scripts/cloudflare/setup-auth-domain.sh \
-  --domain yourdomain.com
-```
-
-The script requests the certificate, validates it via Cloudflare DNS, and waits for it to be issued. It prints the **auth certificate ARN** — you need this for step 4.
-
-If your root domain (`yourdomain.com`) does not have an A record yet, the script automatically creates a Cloudflare-proxied placeholder (`192.0.2.1`). This is required because Cognito validates that the parent domain resolves before allowing a custom subdomain. The `setup-dns.sh` script (step 5) replaces this placeholder with the real ALB CNAME.
-
-> **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal. Do not delete it.
-
-#### 3f. Create API domain certificate (~5-30 min wait)
+#### 3e. Create API domain certificate (~5-30 min wait)
 
 The SQL API for machine clients (LLM agents, scripts) uses a custom domain (`api.yourdomain.com`). This requires a public ACM certificate in your deployment region. API Gateway custom domains do not accept Cloudflare Origin Certificates — only publicly trusted certificates.
 
@@ -285,8 +264,7 @@ Edit `cdk.context.local.json` with your values:
 | `region` | AWS region, e.g. `eu-central-1` |
 | `domainName` | Your domain, e.g. `myfinance.com` |
 | `certificateArn` | ACM certificate ARN from step 3d (Cloudflare Origin Cert) |
-| `authCertificateArn` | ACM certificate ARN from step 3e (public cert in `us-east-1` for `auth.myfinance.com`) |
-| `apiCertificateArn` | ACM certificate ARN from step 3f (public cert for `api.myfinance.com`) |
+| `apiCertificateArn` | ACM certificate ARN from step 3e (public cert for `api.myfinance.com`) |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
 
@@ -317,23 +295,16 @@ After deploy completes, **create the DNS record** pointing to the ALB and config
 set -a; source scripts/cloudflare/.env; set +a
 
 bash scripts/cloudflare/setup-dns.sh \
-  --stack-name ExpenseBudgetTracker \
-  --auth-domain auth.yourdomain.com
+  --stack-name ExpenseBudgetTracker
 ```
 
-The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Cloudflare), sets SSL/TLS to Full (Strict), and creates the auth CNAME (DNS-only, pointing to Cognito's CloudFront distribution).
+The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Cloudflare), sets SSL/TLS to Full (Strict), and configures cache bypass.
 
 ### 6. Post-deploy
 
 1. **Confirm SNS email** — check the `alertEmail` inbox for a message from "AWS Notifications" with subject "AWS Notification - Subscription Confirmation". Click the "Confirm subscription" link inside. Without this, CloudWatch alarm notifications will not be delivered
-2. **Visit your domain** — Cognito sign-up/login page appears. Open registration: anyone can sign up with email. Each user gets an isolated workspace via RLS — no shared data between users
-3. To create users via CLI instead:
-   ```bash
-   aws cognito-idp admin-create-user \
-     --user-pool-id <CognitoUserPoolId from output> \
-     --username you@example.com \
-     --temporary-password 'TempPass123!'
-   ```
+2. **Visit your domain** — Email OTP login page appears. Open registration: anyone can sign up with email. Each user gets an isolated workspace via RLS — no shared data between users
+3. **Session encryption key** — CDK auto-generates a cryptographically random 32-byte hex key in Secrets Manager (`expense-tracker/session-encryption-key`). It encrypts the OTP session cookie (Cognito session + email + CSRF token) with AES-256-GCM during the login flow. Rotating this key invalidates only in-flight OTP sessions (users mid-login must request a new code). To rotate: `aws secretsmanager put-secret-value --secret-id expense-tracker/session-encryption-key --secret-string "$(openssl rand -hex 32)" --profile expense-tracker`, then restart the auth ECS service
 4. **Set AI API keys (first deploy only)** — the AI chat feature requires OpenAI and/or Anthropic API keys. CDK creates placeholder secrets in AWS Secrets Manager on the first deploy; replace them with real keys once:
    ```bash
    aws secretsmanager put-secret-value \
@@ -356,6 +327,65 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
    ```
    This is a one-time step. Subsequent deploys reuse the same secrets — CDK does not overwrite values that are already set. Both keys are optional — chat models from vendors without a configured key will return a clear error.
 
+### 7. Configure SES for OTP emails (when needed)
+
+Cognito uses its built-in email sender by default, which caps at **~50 emails/day**. This is enough for early use. When you hit the limit, Cognito returns `LimitExceededException` and users cannot log in until the next day.
+
+To remove the limit, switch Cognito to send via Amazon SES:
+
+#### 7a. Verify your domain in SES
+
+```bash
+aws sesv2 create-email-identity \
+  --email-identity yourdomain.com \
+  --profile expense-tracker
+```
+
+SES will return DKIM tokens. Add them as CNAME records in Cloudflare:
+
+```bash
+# SES prints 3 DKIM tokens — add each as a CNAME in Cloudflare DNS:
+# Name: <token>._domainkey.yourdomain.com
+# Target: <token>.dkim.amazonses.com
+# Proxy status: DNS only (grey cloud)
+```
+
+Wait for verification (usually a few minutes):
+
+```bash
+aws sesv2 get-email-identity \
+  --email-identity yourdomain.com \
+  --query 'DkimAttributes.Status' \
+  --profile expense-tracker
+# Expected: "SUCCESS"
+```
+
+#### 7b. Request SES production access
+
+By default SES is in **sandbox mode** (can only send to verified emails). Request production access:
+
+1. Go to **AWS Console → SES → Account dashboard → Request production access**
+2. Fill in:
+   - **Mail type**: Transactional
+   - **Use case**: "One-time login codes (OTP) for a web application. No marketing emails."
+   - **Expected volume**: your estimate (e.g. "under 100/day")
+
+Approval is usually within 24 hours.
+
+#### 7c. Update CDK to use SES
+
+Add SES email configuration to the Cognito User Pool in `infra/aws/lib/auth.ts`:
+
+```typescript
+email: cognito.UserPoolEmail.withSES({
+  fromEmail: "noreply@yourdomain.com",
+  fromName: "Expense Tracker",
+  sesRegion: "<your-region>",
+}),
+```
+
+Deploy the change. After this, Cognito sends OTP emails through SES with no daily limit.
+
 ## CI/CD (automatic deploys on push)
 
 CDK creates an IAM OIDC role for GitHub Actions. Requires step 5 (first deploy + initial image push) to be completed first — CI/CD reads stack outputs and pushes to existing ECR repos.
@@ -367,8 +397,7 @@ After first deploy:
    **Secrets** (Settings → Secrets and variables → Actions → Secrets):
    - `AWS_DEPLOY_ROLE_ARN` — the role ARN from step 1
    - `CDK_CERTIFICATE_ARN` — ACM certificate ARN (Cloudflare Origin Cert, from step 3d)
-   - `CDK_AUTH_CERTIFICATE_ARN` — ACM certificate ARN in us-east-1 (auth domain, from step 3e)
-   - `CDK_API_CERTIFICATE_ARN` — ACM certificate ARN (public cert for API domain, from step 3f)
+   - `CDK_API_CERTIFICATE_ARN` — ACM certificate ARN (public cert for API domain, from step 3e)
 
    **Variables** (Settings → Secrets and variables → Actions → Variables):
    - `AWS_REGION` — target region (e.g. `eu-central-1`)
@@ -387,17 +416,18 @@ No AWS keys stored in GitHub — uses OIDC federation.
 ## Domain routing
 
 - `domain.com` → ALB → 302 redirect to `app.domain.com` (no container, just an ALB rule)
-- `app.domain.com` → ALB → Cognito auth → ECS Fargate web container (port 8080)
-- `auth.domain.com` → Cognito hosted UI (CloudFront)
+- `app.domain.com` → ALB → ECS Fargate web container (port 8080)
 To serve your own site on `domain.com`, point its DNS to your site's hosting (Vercel, etc.). The ALB redirect becomes irrelevant since traffic no longer reaches it.
 
 ## Auth flow
 
-1. User visits the app → Cloudflare edge → ALB redirects to Cognito hosted UI
-2. User logs in → Cognito issues JWT
-3. ALB validates JWT → sets `x-amzn-oidc-data` header
-4. App reads the header (`AUTH_MODE=proxy`) → user is authenticated
-5. `/api/health` bypasses auth (for ALB health checks)
+1. User visits the app → Cloudflare edge → ALB → Next.js proxy
+2. Unauthenticated users are redirected to `auth.*` (Email OTP form)
+3. User enters email → auth service calls Cognito `InitiateAuth` (EMAIL_OTP) → OTP sent to email
+4. User enters 8-digit code → auth service calls Cognito `RespondToAuthChallenge` → receives tokens
+5. Auth service sets `session` + `refresh` cookies (Domain=baseDomain), JS redirects to app
+6. App verifies IdToken from `session` cookie via `CognitoJwtVerifier` (`AUTH_MODE=cognito`)
+7. `/api/health` bypasses auth (for ALB health checks)
 
 ## Monitoring
 

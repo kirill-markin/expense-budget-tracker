@@ -8,6 +8,7 @@ import { getLocaleCookie } from "@/lib/localeCookie";
 import { t } from "@/i18n/serverT";
 import { getBudgetGrid } from "@/server/budget/getBudgetGrid";
 import { getReportCurrency } from "@/server/reportCurrency";
+import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getFieldHints } from "@/server/transactions/getTransactions";
 import { getUserSettings } from "@/server/userSettings";
 import { getDemoBudgetGrid, getDemoFieldHints } from "@/server/demo/data";
@@ -44,8 +45,8 @@ async function BudgetData() {
   }
 
   const headersList = await headers();
-  const userId = headersList.get("x-user-id") ?? "local";
-  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const userId = extractUserIdFromHeaders(headersList);
+  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
 
   const [{ rows, conversionWarnings, cumulativeBefore, monthEndBalances, monthEndBalancesByLiquidity }, reportingCurrency, hints] = await Promise.all([
     getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth),
@@ -76,8 +77,8 @@ export default async function BudgetDashboardPage() {
   } else {
     try {
       const headersList = await headers();
-      const userId = headersList.get("x-user-id") ?? "local";
-      const workspaceId = headersList.get("x-workspace-id") ?? "local";
+      const userId = extractUserIdFromHeaders(headersList);
+      const workspaceId = extractWorkspaceIdFromHeaders(headersList);
       const settings = await getUserSettings(userId, workspaceId);
       locale = settings.locale;
     } catch {

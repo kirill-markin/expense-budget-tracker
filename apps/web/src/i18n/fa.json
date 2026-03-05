@@ -18,7 +18,6 @@
   "account.workspaces": "فضاهای کاری",
   "account.newWorkspace": "+ فضای کاری جدید",
   "account.workspaceName": "نام فضای کاری",
-  "account.twoFactorAuth": "احراز هویت دو مرحله‌ای",
   "account.logout": "خروج",
   "settings.userSettings": "تنظیمات کاربر",
   "settings.workspaceSettings": "تنظیمات فضای کاری",
@@ -175,18 +174,5 @@
   "txn.countLabel": "{{shown}} از {{total}} رکورد",
   "txn.failedToLoad": "بارگذاری تراکنش‌ها ناموفق بود",
   "txn.noMatch": "رکوردی با فیلترهای انتخاب شده مطابقت ندارد.",
-  "txn.deleteConfirm": "این تراکنش حذف شود؟ این عمل قابل بازگشت نیست.",
-  "mfa.active": "احراز هویت TOTP فعال است",
-  "mfa.disable": "غیرفعال کردن MFA",
-  "mfa.disabling": "در حال غیرفعال کردن...",
-  "mfa.setup": "راه‌اندازی MFA",
-  "mfa.setupLoading": "در حال بارگذاری...",
-  "mfa.setupHelp": "حساب خود را با اپلیکیشن احراز هویت TOTP محافظت کنید",
-  "mfa.addKeyHelp": "این کلید را به اپلیکیشن احراز هویت خود اضافه کنید (Google Authenticator، 1Password و غیره)",
-  "mfa.codePlaceholder": "کد ۶ رقمی",
-  "mfa.codeError": "کد ۶ رقمی وارد کنید",
-  "mfa.verify": "تأیید",
-  "mfa.verifying": "در حال تأیید...",
-  "mfa.enabled": "MFA فعال شد",
-  "mfa.disabled": "MFA غیرفعال شد"
+  "txn.deleteConfirm": "این تراکنش حذف شود؟ این عمل قابل بازگشت نیست."
 }

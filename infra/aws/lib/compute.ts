@@ -13,17 +13,20 @@ export interface ComputeProps {
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
   workerDbSecret: cdk.aws_secretsmanager.Secret;
+  sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
   anthropicApiKeySecret: cdk.aws_secretsmanager.Secret;
-  authDomain: string;
+  userPoolId: string;
   userPoolClientId: string;
   appDomain: string;
+  authDomain: string;
 }
 
 export interface ComputeResult {
   cluster: ecs.Cluster;
   webService: ecs.FargateService;
   webContainer: ecs.ContainerDefinition;
+  authService: ecs.FargateService;
   migrateTaskDef: ecs.FargateTaskDefinition;
   migrateLogGroup: logs.LogGroup;
 }
@@ -56,15 +59,15 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     portMappings: [{ containerPort: 8080 }],
     // Full list of ECS env vars is also documented in .env.example
     environment: {
-      AUTH_MODE: "proxy",
-      AUTH_PROXY_HEADER: "x-amzn-oidc-data",
+      AUTH_MODE: "cognito",
       HOSTNAME: "0.0.0.0",
       CORS_ORIGIN: `https://${props.appDomain}`,
-      COGNITO_DOMAIN: props.authDomain,
+      AUTH_DOMAIN: props.authDomain,
+      COOKIE_DOMAIN: `.${props.appDomain.split(".").slice(1).join(".")}`,
+      COGNITO_USER_POOL_ID: props.userPoolId,
       COGNITO_CLIENT_ID: props.userPoolClientId,
       COGNITO_REGION: cdk.Aws.REGION,
       DB_HOST: props.db.dbInstanceEndpointAddress,
-
       DB_NAME: "tracker",
       DB_USER: "app",
       // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
@@ -73,6 +76,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     },
     secrets: {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
+      SESSION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(props.sessionEncryptionKeySecret),
       OPENAI_API_KEY: ecs.Secret.fromSecretsManager(props.openaiApiKeySecret),
       ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(props.anthropicApiKeySecret),
     },
@@ -114,6 +118,60 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     scaleOutCooldown: cdk.Duration.minutes(3),
   });
 
+  // --- Auth Service ---
+  const authTaskDef = new ecs.FargateTaskDefinition(scope, "AuthTask", {
+    cpu: 256,
+    memoryLimitMiB: 512,
+    runtimePlatform: {
+      cpuArchitecture: ecs.CpuArchitecture.ARM64,
+      operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+    },
+  });
+
+  const authLogGroup = new logs.LogGroup(scope, "AuthLogGroup", {
+    logGroupName: "/expense-tracker/auth",
+    retention: logs.RetentionDays.ONE_MONTH,
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+  });
+
+  authTaskDef.addContainer("auth", {
+    image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../../apps/auth"), {
+      platform: Platform.LINUX_ARM64,
+    }),
+    portMappings: [{ containerPort: 8081 }],
+    environment: {
+      PORT: "8081",
+      COGNITO_CLIENT_ID: props.userPoolClientId,
+      COGNITO_REGION: cdk.Aws.REGION,
+      ALLOWED_REDIRECT_URIS: `https://${props.appDomain}`,
+      COOKIE_DOMAIN: `.${props.appDomain.split(".").slice(1).join(".")}`,
+    },
+    secrets: {
+      SESSION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(props.sessionEncryptionKeySecret),
+    },
+    logging: ecs.LogDrivers.awsLogs({
+      logGroup: authLogGroup,
+      streamPrefix: "auth",
+    }),
+    healthCheck: {
+      command: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8081/health || exit 1"],
+      interval: cdk.Duration.seconds(30),
+      timeout: cdk.Duration.seconds(5),
+      retries: 3,
+      startPeriod: cdk.Duration.seconds(60),
+    },
+  });
+
+  const authService = new ecs.FargateService(scope, "AuthService", {
+    cluster,
+    taskDefinition: authTaskDef,
+    desiredCount: 1,
+    assignPublicIp: false,
+    vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+    securityGroups: [props.ecsSg],
+    circuitBreaker: { enable: true },
+  });
+
   // --- Migration Task Definition (one-off, not a service) ---
   const migrateTaskDef = new ecs.FargateTaskDefinition(scope, "MigrateTask", {
     cpu: 256,
@@ -153,5 +211,5 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     }),
   });
 
-  return { cluster, webService, webContainer, migrateTaskDef, migrateLogGroup };
+  return { cluster, webService, webContainer, authService, migrateTaskDef, migrateLogGroup };
 }

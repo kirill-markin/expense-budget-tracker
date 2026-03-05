@@ -18,7 +18,6 @@
   "account.workspaces": "مساحات العمل",
   "account.newWorkspace": "+ مساحة عمل جديدة",
   "account.workspaceName": "اسم مساحة العمل",
-  "account.twoFactorAuth": "المصادقة الثنائية",
   "account.logout": "تسجيل الخروج",
   "settings.userSettings": "إعدادات المستخدم",
   "settings.workspaceSettings": "إعدادات مساحة العمل",
@@ -175,18 +174,5 @@
   "txn.countLabel": "{{shown}} من {{total}} سجل",
   "txn.failedToLoad": "فشل تحميل المعاملات",
   "txn.noMatch": "لا توجد سجلات تطابق المرشحات المحددة.",
-  "txn.deleteConfirm": "حذف هذه المعاملة؟ لا يمكن التراجع عن هذا الإجراء.",
-  "mfa.active": "مصادق TOTP نشط",
-  "mfa.disable": "تعطيل MFA",
-  "mfa.disabling": "جارٍ التعطيل...",
-  "mfa.setup": "إعداد MFA",
-  "mfa.setupLoading": "جارٍ التحميل...",
-  "mfa.setupHelp": "احمِ حسابك بتطبيق مصادقة TOTP",
-  "mfa.addKeyHelp": "أضف هذا المفتاح إلى تطبيق المصادقة (Google Authenticator، 1Password، إلخ)",
-  "mfa.codePlaceholder": "رمز من 6 أرقام",
-  "mfa.codeError": "أدخل رمزاً من 6 أرقام",
-  "mfa.verify": "تحقق",
-  "mfa.verifying": "جارٍ التحقق...",
-  "mfa.enabled": "تم تفعيل MFA",
-  "mfa.disabled": "تم تعطيل MFA"
+  "txn.deleteConfirm": "حذف هذه المعاملة؟ لا يمكن التراجع عن هذا الإجراء."
 }

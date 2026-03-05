@@ -98,7 +98,6 @@ jobs:
             "region": "${{ vars.AWS_REGION }}",
             "domainName": "${{ vars.CDK_DOMAIN_NAME }}",
             "certificateArn": "${{ secrets.CDK_CERTIFICATE_ARN }}",
-            "authCertificateArn": "${{ secrets.CDK_AUTH_CERTIFICATE_ARN }}",
             "apiCertificateArn": "${{ secrets.CDK_API_CERTIFICATE_ARN }}",
             "alertEmail": "${{ vars.CDK_ALERT_EMAIL }}",
             "githubRepo": "${{ vars.CDK_GITHUB_REPO }}"

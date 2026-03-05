@@ -12,8 +12,6 @@ export interface DatabaseResult {
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
   workerDbSecret: cdk.aws_secretsmanager.Secret;
-  openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
-  anthropicApiKeySecret: cdk.aws_secretsmanager.Secret;
 }
 
 export function database(scope: Construct, props: DatabaseProps): DatabaseResult {
@@ -77,16 +75,5 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     },
   });
 
-  // --- AI API key secrets (user sets real values in Secrets Manager after deploy) ---
-  const openaiApiKeySecret = new cdk.aws_secretsmanager.Secret(scope, "OpenAiApiKey", {
-    secretName: "expense-tracker/openai-api-key",
-    generateSecretString: { excludePunctuation: true, passwordLength: 32 },
-  });
-
-  const anthropicApiKeySecret = new cdk.aws_secretsmanager.Secret(scope, "AnthropicApiKey", {
-    secretName: "expense-tracker/anthropic-api-key",
-    generateSecretString: { excludePunctuation: true, passwordLength: 32 },
-  });
-
-  return { db, appDbSecret, workerDbSecret, openaiApiKeySecret, anthropicApiKeySecret };
+  return { db, appDbSecret, workerDbSecret };
 }

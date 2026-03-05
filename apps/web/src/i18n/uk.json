@@ -18,7 +18,6 @@
   "account.workspaces": "Робочі простори",
   "account.newWorkspace": "+ Новий простір",
   "account.workspaceName": "Назва простору",
-  "account.twoFactorAuth": "Двофакторна автентифікація",
   "account.logout": "Вихід",
   "settings.userSettings": "Налаштування користувача",
   "settings.workspaceSettings": "Налаштування простору",
@@ -175,18 +174,5 @@
   "txn.countLabel": "{{shown}} з {{total}} записів",
   "txn.failedToLoad": "Не вдалося завантажити операції",
   "txn.noMatch": "Немає записів, що відповідають обраним фільтрам.",
-  "txn.deleteConfirm": "Видалити цю операцію? Цю дію не можна скасувати.",
-  "mfa.active": "TOTP автентифікатор активний",
-  "mfa.disable": "Вимкнути MFA",
-  "mfa.disabling": "Вимкнення...",
-  "mfa.setup": "Налаштувати MFA",
-  "mfa.setupLoading": "Завантаження...",
-  "mfa.setupHelp": "Захистіть обліковий запис за допомогою TOTP додатку-автентифікатора",
-  "mfa.addKeyHelp": "Додайте цей ключ у додаток-автентифікатор (Google Authenticator, 1Password тощо)",
-  "mfa.codePlaceholder": "6-значний код",
-  "mfa.codeError": "Введіть 6-значний код",
-  "mfa.verify": "Підтвердити",
-  "mfa.verifying": "Перевірка...",
-  "mfa.enabled": "MFA увімкнено",
-  "mfa.disabled": "MFA вимкнено"
+  "txn.deleteConfirm": "Видалити цю операцію? Цю дію не можна скасувати."
 }

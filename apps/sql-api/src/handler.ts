@@ -6,7 +6,7 @@
  */
 
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import { query } from "./db";
+import { withTransaction } from "./db";
 
 const MAX_ROWS = 100;
 const STATEMENT_TIMEOUT_MS = 30_000;
@@ -77,18 +77,20 @@ export const handler = async (
     return json(400, { error: "Multiple statements (semicolons) are not allowed" });
   }
 
+  const containsSetConfig = (s: string): boolean => /\bset_config\b/i.test(s);
+
+  if (containsSetConfig(sql)) {
+    return json(400, { error: "set_config() calls are not allowed" });
+  }
+
   try {
-    await query("BEGIN", []);
-    await query("SELECT set_config('app.user_id', $1, true)", [userId]);
-    await query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
-    await query("SELECT set_config('statement_timeout', $1, true)", [String(STATEMENT_TIMEOUT_MS)]);
-    const result = await query(sql, []);
-    await query("COMMIT", []);
+    const result = await withTransaction(userId, workspaceId, STATEMENT_TIMEOUT_MS, async (queryFn) => {
+      return queryFn(sql, []);
+    });
 
     const rows = result.rows.slice(0, MAX_ROWS);
     return json(200, { rows, rowCount: rows.length });
   } catch (error) {
-    await query("ROLLBACK", []).catch(() => {});
     const message = error instanceof Error ? error.message : String(error);
     return json(500, { error: message });
   }

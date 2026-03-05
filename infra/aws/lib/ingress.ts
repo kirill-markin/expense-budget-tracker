@@ -2,8 +2,6 @@ import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
-import * as elbv2_actions from "aws-cdk-lib/aws-elasticloadbalancingv2-actions";
-import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
@@ -14,11 +12,10 @@ export interface IngressProps {
   albSg: ec2.SecurityGroup;
   certificate: acm.ICertificate;
   webService: ecs.FargateService;
-  userPool: cognito.UserPool;
-  userPoolClient: cognito.UserPoolClient;
-  userPoolDomain: cognito.UserPoolDomain;
+  authService: ecs.FargateService;
   baseDomain: string;
   appDomain: string;
+  authDomain: string;
 }
 
 export interface IngressResult {
@@ -55,31 +52,38 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   });
   props.webService.attachToApplicationTargetGroup(targetGroup);
 
-  // ALB listeners: HTTPS + Cognito auth, HTTP → HTTPS redirect
+  // ALB listeners: HTTPS forwards to app, HTTP → HTTPS redirect
   const httpsListener = alb.addListener("HttpsListener", {
     port: 443,
     certificates: [props.certificate],
-    defaultAction: new elbv2_actions.AuthenticateCognitoAction({
-      userPool: props.userPool,
-      userPoolClient: props.userPoolClient,
-      userPoolDomain: props.userPoolDomain,
-      scope: "openid email profile aws.cognito.signin.user.admin",
-      next: elbv2.ListenerAction.forward([targetGroup]),
-    }),
+    defaultAction: elbv2.ListenerAction.forward([targetGroup]),
   });
 
-  // Health check bypass: /api/health without auth
-  httpsListener.addAction("HealthBypass", {
+  // Auth service target group (port 8081)
+  const authTargetGroup = new elbv2.ApplicationTargetGroup(scope, "AuthTg", {
+    vpc: props.vpc,
+    port: 8081,
+    protocol: elbv2.ApplicationProtocol.HTTP,
+    targetType: elbv2.TargetType.IP,
+    healthCheck: {
+      path: "/health",
+      interval: cdk.Duration.seconds(30),
+    },
+  });
+  props.authService.attachToApplicationTargetGroup(authTargetGroup);
+
+  // auth.* → forward to auth service
+  httpsListener.addAction("AuthRoute", {
     priority: 1,
-    conditions: [elbv2.ListenerCondition.pathPatterns(["/api/health"])],
-    action: elbv2.ListenerAction.forward([targetGroup]),
+    conditions: [elbv2.ListenerCondition.hostHeaders([props.authDomain])],
+    action: elbv2.ListenerAction.forward([authTargetGroup]),
   });
 
   // Base domain → redirect to app subdomain (no container needed).
   // To serve your own site on the root domain, point its DNS elsewhere
   // and this rule becomes irrelevant.
   httpsListener.addAction("SiteRoute", {
-    priority: 3,
+    priority: 2,
     conditions: [elbv2.ListenerCondition.hostHeaders([props.baseDomain])],
     action: elbv2.ListenerAction.redirect({
       host: props.appDomain,

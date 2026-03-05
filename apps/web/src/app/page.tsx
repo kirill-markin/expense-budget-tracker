@@ -2,6 +2,7 @@ import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
 import { t } from "@/i18n/serverT";
+import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getUserSettings } from "@/server/userSettings";
 import { headers } from "next/headers";
 
@@ -13,8 +14,8 @@ export default async function HomePage() {
   } else {
     try {
       const headersList = await headers();
-      const userId = headersList.get("x-user-id") ?? "local";
-      const workspaceId = headersList.get("x-workspace-id") ?? "local";
+      const userId = extractUserIdFromHeaders(headersList);
+      const workspaceId = extractWorkspaceIdFromHeaders(headersList);
       const settings = await getUserSettings(userId, workspaceId);
       locale = settings.locale;
     } catch {

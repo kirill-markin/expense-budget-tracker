@@ -15,7 +15,12 @@ type SqlApiEvent =
   | Readonly<{ domain: "sql-api"; action: "query"; durationMs: number; rowCount: number }>
   | Readonly<{ domain: "sql-api"; action: "error"; error: string }>;
 
-type LogEvent = ChatEvent | ApiEvent | SqlApiEvent;
+type AuthEvent =
+  | Readonly<{ domain: "auth"; action: "refresh" }>
+  | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
+  | Readonly<{ domain: "auth"; action: "error"; error: string }>;
+
+type LogEvent = ChatEvent | ApiEvent | SqlApiEvent | AuthEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

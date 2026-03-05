@@ -18,7 +18,6 @@
   "account.workspaces": "סביבות עבודה",
   "account.newWorkspace": "+ סביבת עבודה חדשה",
   "account.workspaceName": "שם סביבת העבודה",
-  "account.twoFactorAuth": "אימות דו-שלבי",
   "account.logout": "התנתקות",
   "settings.userSettings": "הגדרות משתמש",
   "settings.workspaceSettings": "הגדרות סביבת עבודה",
@@ -175,18 +174,5 @@
   "txn.countLabel": "{{shown}} מתוך {{total}} רשומות",
   "txn.failedToLoad": "טעינת תנועות נכשלה",
   "txn.noMatch": "אין רשומות התואמות למסננים שנבחרו.",
-  "txn.deleteConfirm": "למחוק תנועה זו? לא ניתן לבטל פעולה זו.",
-  "mfa.active": "מאמת TOTP פעיל",
-  "mfa.disable": "השבת MFA",
-  "mfa.disabling": "משבית...",
-  "mfa.setup": "הגדרת MFA",
-  "mfa.setupLoading": "טוען...",
-  "mfa.setupHelp": "הגן על חשבונך באמצעות אפליקציית מאמת TOTP",
-  "mfa.addKeyHelp": "הוסף מפתח זה לאפליקציית המאמת שלך (Google Authenticator, 1Password וכו׳)",
-  "mfa.codePlaceholder": "קוד בן 6 ספרות",
-  "mfa.codeError": "הזן קוד בן 6 ספרות",
-  "mfa.verify": "אמת",
-  "mfa.verifying": "מאמת...",
-  "mfa.enabled": "MFA הופעל",
-  "mfa.disabled": "MFA הושבת"
+  "txn.deleteConfirm": "למחוק תנועה זו? לא ניתן לבטל פעולה זו."
 }

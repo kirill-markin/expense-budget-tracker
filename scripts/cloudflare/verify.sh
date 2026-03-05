@@ -59,7 +59,7 @@ echo ""
 # --- DNS records ---
 echo "Checking DNS records..."
 check_dns "app.${ZONE_NAME}" "CNAME" "App subdomain"
-check_dns "auth.${ZONE_NAME}" "CNAME" "Auth subdomain (Cognito)"
+check_dns "auth.${ZONE_NAME}" "CNAME" "Auth subdomain"
 
 # Root domain — could be A or CNAME (CNAME flattening)
 ROOT_RECORDS=$(cf_api "dns_records?name=${ZONE_NAME}")

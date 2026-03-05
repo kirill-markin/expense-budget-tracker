@@ -18,7 +18,6 @@
   "account.workspaces": "Workspaces",
   "account.newWorkspace": "+ New workspace",
   "account.workspaceName": "Workspace name",
-  "account.twoFactorAuth": "Two-Factor Auth",
   "account.logout": "Logout",
   "settings.userSettings": "User Settings",
   "settings.workspaceSettings": "Workspace Settings",
@@ -175,18 +174,5 @@
   "txn.countLabel": "{{shown}} of {{total}} entries",
   "txn.failedToLoad": "Failed to load transactions",
   "txn.noMatch": "No entries match the selected filters.",
-  "txn.deleteConfirm": "Delete this transaction? This cannot be undone.",
-  "mfa.active": "TOTP authenticator is active",
-  "mfa.disable": "Disable MFA",
-  "mfa.disabling": "Disabling...",
-  "mfa.setup": "Setup MFA",
-  "mfa.setupLoading": "Loading...",
-  "mfa.setupHelp": "Protect your account with a TOTP authenticator app",
-  "mfa.addKeyHelp": "Add this key to your authenticator app (Google Authenticator, 1Password, etc.)",
-  "mfa.codePlaceholder": "6-digit code",
-  "mfa.codeError": "Enter a 6-digit code",
-  "mfa.verify": "Verify",
-  "mfa.verifying": "Verifying...",
-  "mfa.enabled": "MFA enabled",
-  "mfa.disabled": "MFA disabled"
+  "txn.deleteConfirm": "Delete this transaction? This cannot be undone."
 }

@@ -18,7 +18,6 @@
   "account.workspaces": "Espacios de trabajo",
   "account.newWorkspace": "+ Nuevo espacio",
   "account.workspaceName": "Nombre del espacio",
-  "account.twoFactorAuth": "Autenticación de dos factores",
   "account.logout": "Cerrar sesión",
   "settings.userSettings": "Configuración de usuario",
   "settings.workspaceSettings": "Configuración del espacio",
@@ -175,18 +174,5 @@
   "txn.countLabel": "{{shown}} de {{total}} registros",
   "txn.failedToLoad": "Error al cargar transacciones",
   "txn.noMatch": "No hay registros que coincidan con los filtros seleccionados.",
-  "txn.deleteConfirm": "¿Eliminar esta transacción? Esta acción no se puede deshacer.",
-  "mfa.active": "Autenticador TOTP está activo",
-  "mfa.disable": "Desactivar MFA",
-  "mfa.disabling": "Desactivando...",
-  "mfa.setup": "Configurar MFA",
-  "mfa.setupLoading": "Cargando...",
-  "mfa.setupHelp": "Protege tu cuenta con una aplicación de autenticación TOTP",
-  "mfa.addKeyHelp": "Agrega esta clave a tu aplicación de autenticación (Google Authenticator, 1Password, etc.)",
-  "mfa.codePlaceholder": "Código de 6 dígitos",
-  "mfa.codeError": "Ingresa un código de 6 dígitos",
-  "mfa.verify": "Verificar",
-  "mfa.verifying": "Verificando...",
-  "mfa.enabled": "MFA activada",
-  "mfa.disabled": "MFA desactivada"
+  "txn.deleteConfirm": "¿Eliminar esta transacción? Esta acción no se puede deshacer."
 }

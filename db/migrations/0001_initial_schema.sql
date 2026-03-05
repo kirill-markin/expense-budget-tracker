@@ -180,7 +180,7 @@ CREATE POLICY workspace_member_access ON workspaces
   USING (workspace_id IN (SELECT wm.workspace_id FROM workspace_members wm WHERE wm.user_id = current_setting('app.user_id', true)));
 
 -- Allow users to self-provision their own workspace.
--- In AUTH_MODE=proxy, app.workspace_id is set server-side to the user's
+-- In AUTH_MODE=cognito, app.workspace_id is set server-side to the user's
 -- Cognito sub (trusted). This INSERT-only policy lets the auto-provisioning
 -- code create a workspace row matching that value before any membership exists.
 CREATE POLICY workspace_self_provision ON workspaces

@@ -74,7 +74,7 @@ Data isolation using Postgres Row Level Security with workspace membership check
 
 ### How it works
 
-1. **Web app**: proxy.ts extracts user identity (`AUTH_MODE=none` → `"local"`, `AUTH_MODE=proxy` → JWT `sub` claim) and forwards it as `x-user-id` and `x-workspace-id` headers.
+1. **Web app**: proxy.ts extracts user identity (`AUTH_MODE=none` → `"local"`, `AUTH_MODE=cognito` → JWT `sub` claim from `session` cookie) and forwards it as `x-user-id` and `x-workspace-id` headers.
 2. **db.ts**: `queryAs(userId, workspaceId, sql, params)` wraps each query in `BEGIN` → `SET LOCAL app.user_id` → `SET LOCAL app.workspace_id` → query → `COMMIT`. RLS policies check workspace membership via `workspace_members` and filter by `workspace_id = current_setting('app.workspace_id')`.
 
 ### RLS policy design
@@ -91,7 +91,7 @@ Machine clients (LLM agents, scripts, dashboards) use a separate path from the b
 
 ```
 Machine: Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL Lambda → RDS
-Browser: Cloudflare → ALB → Cognito → ECS (Next.js) → RDS
+Browser: Cloudflare → ALB → ECS (Next.js, Cognito Email OTP) → RDS
 ```
 
 The SQL API runs on API Gateway (REST API) with its own domain (`api.example.com`), fully separate from the ALB. This provides per-key rate limiting via Usage Plans (10 req/s, 10k req/day per key), auth at the gateway (Lambda Authorizer with 5-min cache), CloudWatch metrics per endpoint, and a clean boundary for future machine-facing services.
@@ -154,7 +154,7 @@ Conversion to the reporting currency happens at read time via SQL joins:
 Zero built-in auth logic. Two modes controlled by `AUTH_MODE` env var:
 
 - `none` (default) — no authentication. App binds to `127.0.0.1`, userId is hardcoded to `"local"`, workspaceId is `"local"`. All data belongs to this single workspace.
-- `proxy` — trusts a JWT header set by the reverse proxy (ALB + Cognito). Extracts `sub` claim as userId. In v1, workspaceId = userId (each user has a default workspace matching their user ID). Returns 401 if the header is missing or malformed. Open registration: anyone can sign up via Cognito — each user gets an isolated workspace via RLS.
+- `cognito` — passwordless Email OTP via Cognito (Essentials tier, USER_AUTH + EMAIL_OTP). Auth is handled by a standalone Hono service on `auth.*`. IdToken is stored in `session` cookie (Domain=baseDomain), verified by `CognitoJwtVerifier` in the web app. Extracts `sub` claim as userId. workspaceId defaults to userId (each user has a default workspace matching their user ID). Redirects to `auth.*/login` if the cookie is missing or invalid. Open registration: anyone can sign up via Cognito — each user gets an isolated workspace via RLS.
 
 Details in `apps/web/src/proxy.ts`.
 

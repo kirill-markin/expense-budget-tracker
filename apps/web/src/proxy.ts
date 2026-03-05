@@ -2,27 +2,61 @@
  * Next.js proxy: auth gate, user identity extraction, CSRF check, security headers.
  * (Renamed from middleware.ts — the "middleware" convention was deprecated in Next.js 16.)
  *
- * AUTH_MODE=none  — all requests pass; userId is hardcoded to 'local'.
- * AUTH_MODE=proxy — requires a JWT header named by AUTH_PROXY_HEADER (e.g. x-amzn-oidc-data);
- *                   decodes it to extract the Cognito `sub` claim as userId.
+ * AUTH_MODE=none    — all requests pass; userId is hardcoded to 'local'.
+ * AUTH_MODE=cognito — reads IdToken from `session` cookie, verifies via CognitoJwtVerifier,
+ *                     extracts the `sub` claim as userId. Unauthenticated users are
+ *                     redirected to the auth service (auth.*) for login.
+ *                     Expired tokens are refreshed inline (no GET redirect).
  *
  * The resolved userId is forwarded as x-user-id and x-workspace-id headers to all
  * downstream route handlers. /api/health is always exempt from auth.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { AlbJwtVerifier } from "aws-jwt-verify";
+import { JwtExpiredError } from "aws-jwt-verify/error";
+import { getJwtVerifier, refreshTokens } from "@/server/cognitoAuth";
+import { log } from "@/server/logger";
+import { clearAuthCookies } from "@/server/cookies";
 
-type AuthMode = "none" | "proxy";
+type AuthMode = "none" | "cognito";
 
 const LOCAL_USER_ID = "local";
 const LOCAL_WORKSPACE_ID = "local";
 const USER_ID_HEADER = "x-user-id";
 const WORKSPACE_ID_HEADER = "x-workspace-id";
+const WORKSPACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+const PUBLIC_PATHS: ReadonlyArray<string> = [
+  "/api/auth/logout",
+  "/api/health",
+];
+
+const getAuthDomain = (): string => {
+  const domain = process.env.AUTH_DOMAIN ?? "";
+  if (domain === "") throw new Error("AUTH_DOMAIN is not configured");
+  return domain;
+};
+
+const buildAuthRedirectUrl = (request: NextRequest): URL => {
+  const authDomain = getAuthDomain();
+  const corsOrigin = process.env.CORS_ORIGIN ?? request.nextUrl.origin;
+  const protocol = corsOrigin.startsWith("https://") ? "https" : "http";
+  const loginUrl = new URL(`${protocol}://${authDomain}/login`);
+  const returnPath = request.nextUrl.pathname + request.nextUrl.search;
+  const redirectUri = returnPath !== "/" ? `${corsOrigin}${returnPath}` : corsOrigin;
+  loginUrl.searchParams.set("redirect_uri", redirectUri);
+  return loginUrl;
+};
 
 const getAuthMode = (): AuthMode => {
   const raw = process.env.AUTH_MODE ?? "none";
-  if (raw === "none" || raw === "proxy") return raw;
-  throw new Error(`Invalid AUTH_MODE: ${raw}. Expected "none" or "proxy"`);
+  if (raw === "none") return raw;
+  if (raw === "cognito") {
+    if ((process.env.CORS_ORIGIN ?? "") === "") {
+      throw new Error("CORS_ORIGIN must be set when AUTH_MODE=cognito");
+    }
+    return raw;
+  }
+  throw new Error(`Invalid AUTH_MODE: ${raw}. Expected "none" or "cognito"`);
 };
 
 const SECURITY_HEADERS: ReadonlyArray<[string, string]> = [
@@ -40,11 +74,14 @@ const buildCsp = (nonce: string): string => {
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
+    "style-src-elem 'self'",
     "img-src 'self' blob: data:",
     "font-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
+    "connect-src 'self'",
+    "frame-src 'none'",
     "frame-ancestors 'none'",
   ];
   if (origin.startsWith("https://")) {
@@ -53,7 +90,7 @@ const buildCsp = (nonce: string): string => {
   return directives.join("; ");
 };
 
-const addSecurityHeaders = (response: NextResponse, nonce: string): void => {
+const addSecurityHeaders = (response: NextResponse, nonce: string, csp?: string): void => {
   for (const [key, value] of SECURITY_HEADERS) {
     response.headers.set(key, value);
   }
@@ -61,7 +98,7 @@ const addSecurityHeaders = (response: NextResponse, nonce: string): void => {
   if (origin.startsWith("https://")) {
     response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
   }
-  response.headers.set("Content-Security-Policy", buildCsp(nonce));
+  response.headers.set("Content-Security-Policy", csp ?? buildCsp(nonce));
 };
 
 /**
@@ -73,8 +110,8 @@ const addSecurityHeaders = (response: NextResponse, nonce: string): void => {
  *   3. Referer header — fallback when Origin is missing (privacy redirects, old browsers).
  *   4. If none of the above are present, the request is blocked (fail-safe).
  *
- * This is a defence-in-depth measure. In AUTH_MODE=proxy the ALB Cognito auth
- * layer is the primary gate; CSRF prevents authenticated session misuse.
+ * The check runs at the top of proxy() — before the public-path bypass — so all
+ * paths (including /api/auth/* and /login) are CSRF-protected.
  *
  * Rate limiting is handled at the infrastructure level (Cloudflare + AWS WAF
  * managed rule sets) and is not duplicated here.
@@ -113,24 +150,8 @@ const checkCsrf = (request: NextRequest): boolean => {
   return false;
 };
 
-let verifier: ReturnType<typeof AlbJwtVerifier.create> | undefined;
-
-const getVerifier = (): ReturnType<typeof AlbJwtVerifier.create> => {
-  if (verifier !== undefined) return verifier;
-  const albArn = process.env.ALB_ARN ?? "";
-  const issuer = process.env.COGNITO_ISSUER ?? "";
-  const clientId = process.env.COGNITO_CLIENT_ID ?? "";
-  if (albArn === "" || issuer === "" || clientId === "") {
-    throw new Error(
-      "JWT verification misconfigured: ALB_ARN, COGNITO_ISSUER, and COGNITO_CLIENT_ID are required",
-    );
-  }
-  verifier = AlbJwtVerifier.create({ albArn, issuer, clientId });
-  return verifier;
-};
-
 const verifyAndExtractSub = async (jwt: string): Promise<string> => {
-  const payload = await getVerifier().verify(jwt);
+  const payload = await getJwtVerifier().verify(jwt);
   const sub = payload.sub;
   if (typeof sub !== "string" || sub.length === 0) {
     throw new Error("JWT payload missing sub claim");
@@ -146,6 +167,30 @@ const forwardWithIdentity = (request: NextRequest, userId: string, workspaceId: 
   headers.set("x-nonce", nonce);
   headers.set("Content-Security-Policy", csp);
   const response = NextResponse.next({ request: { headers } });
+  addSecurityHeaders(response, nonce, csp);
+  return response;
+};
+
+const isPublicPath = (pathname: string): boolean =>
+  PUBLIC_PATHS.includes(pathname);
+
+const resolveWorkspaceId = (request: NextRequest, userId: string): string => {
+  const workspaceCookie = request.cookies.get("workspace")?.value;
+  return (workspaceCookie !== undefined && workspaceCookie !== "" && WORKSPACE_ID_RE.test(workspaceCookie))
+    ? workspaceCookie
+    : userId;
+};
+
+const buildCookieHeader = (name: string, value: string, maxAge: number): string => {
+  const cookieDomain = process.env.COOKIE_DOMAIN ?? "";
+  const domainAttr = cookieDomain !== "" ? `; Domain=${cookieDomain}` : "";
+  return `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax${domainAttr}`;
+};
+
+const redirectToAuth = (request: NextRequest, nonce: string): NextResponse => {
+  const redirectUrl = buildAuthRedirectUrl(request);
+  const response = NextResponse.redirect(redirectUrl);
+  clearAuthCookies(response.headers);
   addSecurityHeaders(response, nonce);
   return response;
 };
@@ -166,44 +211,71 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
     return forwardWithIdentity(request, LOCAL_USER_ID, LOCAL_WORKSPACE_ID, nonce);
   }
 
-  // AUTH_MODE=proxy — health check is exempt from auth
-  if (pathname === "/api/health") {
-    const response = NextResponse.next();
-    addSecurityHeaders(response, nonce);
+  // AUTH_MODE=cognito — public paths are exempt from auth (CSRF already checked above)
+  if (isPublicPath(pathname)) {
+    const csp = buildCsp(nonce);
+    const headers = new Headers(request.headers);
+    headers.delete(USER_ID_HEADER);
+    headers.delete(WORKSPACE_ID_HEADER);
+    headers.set("x-nonce", nonce);
+    headers.set("Content-Security-Policy", csp);
+    const response = NextResponse.next({ request: { headers } });
+    addSecurityHeaders(response, nonce, csp);
     return response;
   }
 
-  const headerName = process.env.AUTH_PROXY_HEADER ?? "";
-  if (headerName === "") {
-    const response = new NextResponse("Server misconfigured: AUTH_PROXY_HEADER not set", { status: 500 });
-    addSecurityHeaders(response, nonce);
-    return response;
-  }
+  const sessionCookie = request.cookies.get("session")?.value ?? "";
 
-  const jwtValue = request.headers.get(headerName);
-  if (jwtValue === null || jwtValue === "") {
-    const response = new NextResponse("Unauthorized", { status: 401 });
+  if (sessionCookie === "") {
+    const redirectUrl = buildAuthRedirectUrl(request);
+    const response = NextResponse.redirect(redirectUrl);
     addSecurityHeaders(response, nonce);
     return response;
   }
 
   let userId: string;
   try {
-    userId = await verifyAndExtractSub(jwtValue);
+    userId = await verifyAndExtractSub(sessionCookie);
   } catch (err) {
+    // Token expired — refresh inline instead of GET redirect
+    if (err instanceof JwtExpiredError) {
+      const refreshCookie = request.cookies.get("refresh")?.value ?? "";
+      if (refreshCookie === "") {
+        return redirectToAuth(request, nonce);
+      }
+
+      let tokens: Awaited<ReturnType<typeof refreshTokens>>;
+      try {
+        tokens = await refreshTokens(refreshCookie);
+      } catch {
+        return redirectToAuth(request, nonce);
+      }
+
+      let refreshedUserId: string;
+      try {
+        refreshedUserId = await verifyAndExtractSub(tokens.idToken);
+      } catch {
+        return redirectToAuth(request, nonce);
+      }
+
+      const workspaceId = resolveWorkspaceId(request, refreshedUserId);
+      const response = forwardWithIdentity(request, refreshedUserId, workspaceId, nonce);
+      response.headers.append("Set-Cookie", buildCookieHeader("session", tokens.idToken, 3600));
+      if (tokens.refreshToken !== undefined) {
+        response.headers.append("Set-Cookie", buildCookieHeader("refresh", tokens.refreshToken, 604800));
+      }
+      return response;
+    }
+
+    // Token invalid — clear cookies and redirect to auth service
     const message = err instanceof Error ? err.message : String(err);
-    console.error("proxy auth: %s", message);
-    const response = new NextResponse("Invalid auth token", { status: 401 });
-    addSecurityHeaders(response, nonce);
-    return response;
+    log({ domain: "auth", action: "proxy_auth_error", error: message });
+    return redirectToAuth(request, nonce);
   }
 
   // Workspace cookie is set client-side. RLS enforces workspace membership
   // at the database level — setting this to a foreign workspace gives no access.
-  const workspaceCookie = request.cookies.get("workspace")?.value;
-  const workspaceId = (workspaceCookie !== undefined && workspaceCookie !== "")
-    ? workspaceCookie
-    : userId;
+  const workspaceId = resolveWorkspaceId(request, userId);
   return forwardWithIdentity(request, userId, workspaceId, nonce);
 };
 

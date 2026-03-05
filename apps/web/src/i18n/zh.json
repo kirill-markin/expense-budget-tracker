@@ -18,7 +18,6 @@
   "account.workspaces": "工作区",
   "account.newWorkspace": "+ 新建工作区",
   "account.workspaceName": "工作区名称",
-  "account.twoFactorAuth": "双因素认证",
   "account.logout": "退出",
   "settings.userSettings": "用户设置",
   "settings.workspaceSettings": "工作区设置",
@@ -175,18 +174,5 @@
   "txn.countLabel": "{{shown}} / {{total}} 条记录",
   "txn.failedToLoad": "加载交易失败",
   "txn.noMatch": "没有符合所选筛选条件的记录。",
-  "txn.deleteConfirm": "删除此交易？此操作无法撤销。",
-  "mfa.active": "TOTP 身份验证器已激活",
-  "mfa.disable": "停用 MFA",
-  "mfa.disabling": "停用中...",
-  "mfa.setup": "设置 MFA",
-  "mfa.setupLoading": "加载中...",
-  "mfa.setupHelp": "使用 TOTP 身份验证器应用保护您的账户",
-  "mfa.addKeyHelp": "将此密钥添加到您的身份验证器应用（Google Authenticator、1Password 等）",
-  "mfa.codePlaceholder": "6 位验证码",
-  "mfa.codeError": "请输入 6 位验证码",
-  "mfa.verify": "验证",
-  "mfa.verifying": "验证中...",
-  "mfa.enabled": "MFA 已启用",
-  "mfa.disabled": "MFA 已停用"
+  "txn.deleteConfirm": "删除此交易？此操作无法撤销。"
 }

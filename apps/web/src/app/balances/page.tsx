@@ -7,6 +7,7 @@ import { getLocaleCookie } from "@/lib/localeCookie";
 import { t } from "@/i18n/serverT";
 import { getBalancesSummary } from "@/server/balances/getBalancesSummary";
 import { getReportCurrency } from "@/server/reportCurrency";
+import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getUserSettings } from "@/server/userSettings";
 import { getDemoBalancesSummary } from "@/server/demo/data";
 import { BalancesTable } from "@/ui/tables/BalancesTable";
@@ -23,8 +24,8 @@ async function BalancesData() {
   }
 
   const headersList = await headers();
-  const userId = headersList.get("x-user-id") ?? "local";
-  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const userId = extractUserIdFromHeaders(headersList);
+  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
   const [{ accounts, totals, conversionWarnings }, reportingCurrency] = await Promise.all([
     getBalancesSummary(userId, workspaceId),
     getReportCurrency(userId, workspaceId),
@@ -41,8 +42,8 @@ export default async function BalancesDashboardPage() {
   } else {
     try {
       const headersList = await headers();
-      const userId = headersList.get("x-user-id") ?? "local";
-      const workspaceId = headersList.get("x-workspace-id") ?? "local";
+      const userId = extractUserIdFromHeaders(headersList);
+      const workspaceId = extractWorkspaceIdFromHeaders(headersList);
       const settings = await getUserSettings(userId, workspaceId);
       locale = settings.locale;
     } catch {

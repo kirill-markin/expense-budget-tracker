@@ -3,7 +3,9 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
 import { networking } from "./networking";
 import { auth } from "./auth";
+import { preSignUp } from "./pre-signup";
 import { database } from "./database";
+import { secrets } from "./secrets";
 import { compute } from "./compute";
 import { ingress } from "./ingress";
 import { fxFetcher } from "./fx-fetcher";
@@ -22,11 +24,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const alertEmail = this.node.tryGetContext("alertEmail") as string;
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
     const githubRepo = this.node.tryGetContext("githubRepo") as string;
-    const authCertificateArn = this.node.tryGetContext("authCertificateArn") as string;
     const apiCertificateArn = this.node.tryGetContext("apiCertificateArn") as string | undefined;
 
     const appDomain = `app.${baseDomain}`;
-    const callbackUrl = `https://${appDomain}/oauth2/idpresponse`;
     const authDomain = `auth.${baseDomain}`;
 
     // --- TLS Certificate (pre-created Cloudflare Origin Cert imported into ACM) ---
@@ -35,36 +35,34 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     );
 
     const net = networking(this);
-    const authResult = auth(this, { appDomain, callbackUrl, authCertificateArn, authDomain });
+    const preSignUpFn = preSignUp(this);
+    const authResult = auth(this, { preSignUpFn });
     const dbResult = database(this, { vpc: net.vpc, dbSg: net.dbSg });
+    const sec = secrets(this);
     const comp = compute(this, {
       vpc: net.vpc,
       ecsSg: net.ecsSg,
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
       workerDbSecret: dbResult.workerDbSecret,
-      openaiApiKeySecret: dbResult.openaiApiKeySecret,
-      anthropicApiKeySecret: dbResult.anthropicApiKeySecret,
-      authDomain,
+      sessionEncryptionKeySecret: sec.sessionEncryptionKeySecret,
+      openaiApiKeySecret: sec.openaiApiKeySecret,
+      anthropicApiKeySecret: sec.anthropicApiKeySecret,
+      userPoolId: authResult.userPool.userPoolId,
       userPoolClientId: authResult.userPoolClient.userPoolClientId,
       appDomain,
+      authDomain,
     });
     const ing = ingress(this, {
       vpc: net.vpc,
       albSg: net.albSg,
       certificate,
       webService: comp.webService,
-      userPool: authResult.userPool,
-      userPoolClient: authResult.userPoolClient,
-      userPoolDomain: authResult.userPoolDomain,
+      authService: comp.authService,
       baseDomain,
       appDomain,
+      authDomain,
     });
-    comp.webContainer.addEnvironment("ALB_ARN", ing.alb.loadBalancerArn);
-    comp.webContainer.addEnvironment(
-      "COGNITO_ISSUER",
-      `https://cognito-idp.${cdk.Aws.REGION}.amazonaws.com/${authResult.userPool.userPoolId}`,
-    );
 
     const fx = fxFetcher(this, {
       vpc: net.vpc,
@@ -107,7 +105,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
       userPool: authResult.userPool,
-      userPoolDomain: authResult.userPoolDomain,
       alertTopic: mon.alertTopic,
       accessLogsBucket: ing.accessLogsBucket,
       cluster: comp.cluster,

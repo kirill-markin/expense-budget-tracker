@@ -70,7 +70,7 @@ Use `make dev` (Docker Compose) only when you need a real database — e.g. test
 
 ## Logging
 
-Server-side structured logger: `apps/web/src/server/logger.ts`. Use `log()` for all server events — never raw `console.log`. Add new event types to the `LogEvent` union.
+Server-side structured logger: `apps/web/src/server/logger.ts`. Use `log()` for all server events — never raw `console.log` or `console.error`. Add new event types to the `LogEvent` union.
 
 ## Reference
 

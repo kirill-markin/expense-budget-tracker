@@ -6,6 +6,7 @@ import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
 import { t } from "@/i18n/serverT";
 import { getAccounts, getCategories, getFieldHints } from "@/server/transactions/getTransactions";
+import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getUserSettings } from "@/server/userSettings";
 import { getDemoAccounts, getDemoCategories, getDemoFieldHints } from "@/server/demo/data";
 import { TransactionsRawTable } from "@/ui/tables/TransactionsRawTable";
@@ -24,8 +25,8 @@ async function TransactionsData() {
   }
 
   const headersList = await headers();
-  const userId = headersList.get("x-user-id") ?? "local";
-  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const userId = extractUserIdFromHeaders(headersList);
+  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
   const [accounts, categories, hints] = await Promise.all([
     getAccounts(userId, workspaceId),
     getCategories(userId, workspaceId),
@@ -43,8 +44,8 @@ export default async function TransactionsDashboardPage() {
   } else {
     try {
       const headersList = await headers();
-      const userId = headersList.get("x-user-id") ?? "local";
-      const workspaceId = headersList.get("x-workspace-id") ?? "local";
+      const userId = extractUserIdFromHeaders(headersList);
+      const workspaceId = extractWorkspaceIdFromHeaders(headersList);
       const settings = await getUserSettings(userId, workspaceId);
       locale = settings.locale;
     } catch {

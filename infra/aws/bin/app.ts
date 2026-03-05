@@ -33,11 +33,6 @@ if (!certificateArn) {
   throw new Error("Missing required context: 'certificateArn'. Set it in cdk.context.local.json (ACM certificate ARN — run scripts/cloudflare/setup-certificate.sh first)");
 }
 
-const authCertificateArn = app.node.tryGetContext("authCertificateArn") as string | undefined;
-if (!authCertificateArn) {
-  throw new Error("Missing required context: 'authCertificateArn'. Set it in cdk.context.local.json (ACM certificate ARN in us-east-1 — run scripts/cloudflare/setup-auth-domain.sh first)");
-}
-
 const alertEmail = app.node.tryGetContext("alertEmail") as string | undefined;
 if (!alertEmail) {
   throw new Error("Missing required context: 'alertEmail'. Set it in cdk.context.local.json (email for CloudWatch alarm notifications)");

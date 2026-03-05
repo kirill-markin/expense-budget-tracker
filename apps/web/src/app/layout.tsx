@@ -10,6 +10,7 @@ import { t } from "@/i18n/serverT";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/listWorkspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { getUserSettings } from "@/server/userSettings";
+import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { AccountMenu } from "@/ui/AccountMenu";
 import { ChatLayoutProvider } from "@/ui/chat/ChatLayoutProvider";
 import { ChatLayoutShell } from "@/ui/chat/ChatLayoutShell";
@@ -31,7 +32,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   const demo = await isDemoMode();
   const { chatOpen, chatWidth } = await readChatCookies();
 
-  const authEnabled = process.env.AUTH_MODE === "proxy";
+  const authEnabled = process.env.AUTH_MODE === "cognito";
   let reportingCurrency = "USD";
   let workspaces: ReadonlyArray<WorkspaceSummary> = [];
   let currentWorkspaceId = "";
@@ -44,8 +45,8 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   } else {
     try {
       const headersList = await headers();
-      const userId = headersList.get("x-user-id") ?? "local";
-      let workspaceId = headersList.get("x-workspace-id") ?? "local";
+      const userId = extractUserIdFromHeaders(headersList);
+      let workspaceId = extractWorkspaceIdFromHeaders(headersList);
       try {
         reportingCurrency = await getReportCurrency(userId, workspaceId);
       } catch {

@@ -239,6 +239,28 @@ export const isDml = (sql: string): boolean => {
   return first !== undefined && ALLOWED_FIRST_KEYWORDS.has(first);
 };
 
+/** Returns true if sql contains a semicolon outside of single-quoted strings. */
+const hasMultipleStatements = (sql: string): boolean => {
+  let inString = false;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (ch === "'" && !inString) {
+      inString = true;
+    } else if (ch === "'" && inString) {
+      if (i + 1 < sql.length && sql[i + 1] === "'") {
+        i++;
+      } else {
+        inString = false;
+      }
+    } else if (ch === ";" && !inString) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const containsSetConfig = (sql: string): boolean => /\bset_config\b/i.test(sql);
+
 export type QueryResult = Readonly<{
   json: string;
 }>;
@@ -250,6 +272,14 @@ export const execQuery = async (
 ): Promise<QueryResult> => {
   if (!isDml(sql)) {
     throw new Error("Only SELECT, WITH, INSERT, UPDATE, DELETE statements are allowed");
+  }
+
+  if (hasMultipleStatements(sql)) {
+    throw new Error("Multiple statements (semicolons) are not allowed");
+  }
+
+  if (containsSetConfig(sql)) {
+    throw new Error("set_config() calls are not allowed");
   }
 
   const result = await withUserContext(userId, workspaceId, async (queryFn) => {

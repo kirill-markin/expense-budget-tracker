@@ -10,6 +10,7 @@ import { getDemoCategories } from "@/server/demo/data";
 import { getFilteredCategories } from "@/server/filteredCategories";
 import { getAvailableCurrencies } from "@/server/getAvailableCurrencies";
 import { getReportCurrency } from "@/server/reportCurrency";
+import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getCategories } from "@/server/transactions/getTransactions";
 import { getUserSettings } from "@/server/userSettings";
 import { queryAs } from "@/server/db";
@@ -30,8 +31,8 @@ async function UserSettingsData() {
   }
 
   const headersList = await headers();
-  const userId = headersList.get("x-user-id") ?? "local";
-  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const userId = extractUserIdFromHeaders(headersList);
+  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
   const settings = await getUserSettings(userId, workspaceId);
 
   return <UserSettingsForm locale={settings.locale} numberFormat={settings.numberFormat} dateFormat={settings.dateFormat} />;
@@ -45,8 +46,8 @@ async function SettingsData() {
   }
 
   const headersList = await headers();
-  const userId = headersList.get("x-user-id") ?? "local";
-  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const userId = extractUserIdFromHeaders(headersList);
+  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
 
   const [reportingCurrency, availableCurrencies] = await Promise.all([
     getReportCurrency(userId, workspaceId),
@@ -85,8 +86,8 @@ async function FilteredCategoriesData() {
   }
 
   const headersList = await headers();
-  const userId = headersList.get("x-user-id") ?? "local";
-  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const userId = extractUserIdFromHeaders(headersList);
+  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
 
   const [filteredCategories, allCategories] = await Promise.all([
     getFilteredCategories(userId, workspaceId),
@@ -104,8 +105,8 @@ async function ApiKeyData() {
   }
 
   const headersList = await headers();
-  const userId = headersList.get("x-user-id") ?? "local";
-  const workspaceId = headersList.get("x-workspace-id") ?? "local";
+  const userId = extractUserIdFromHeaders(headersList);
+  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
 
   const initialKeys = await listApiKeys(userId, workspaceId);
 
@@ -120,8 +121,8 @@ export default async function SettingsPage() {
   } else {
     try {
       const headersList = await headers();
-      const userId = headersList.get("x-user-id") ?? "local";
-      const workspaceId = headersList.get("x-workspace-id") ?? "local";
+      const userId = extractUserIdFromHeaders(headersList);
+      const workspaceId = extractWorkspaceIdFromHeaders(headersList);
       const settings = await getUserSettings(userId, workspaceId);
       locale = settings.locale;
     } catch {

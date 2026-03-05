@@ -18,7 +18,6 @@
   "account.workspaces": "Рабочие пространства",
   "account.newWorkspace": "+ Новое пространство",
   "account.workspaceName": "Название пространства",
-  "account.twoFactorAuth": "Двухфакторная аутентификация",
   "account.logout": "Выход",
   "settings.userSettings": "Настройки пользователя",
   "settings.workspaceSettings": "Настройки пространства",
@@ -175,18 +174,5 @@
   "txn.countLabel": "{{shown}} из {{total}} записей",
   "txn.failedToLoad": "Не удалось загрузить операции",
   "txn.noMatch": "Нет записей, соответствующих выбранным фильтрам.",
-  "txn.deleteConfirm": "Удалить эту операцию? Это действие нельзя отменить.",
-  "mfa.active": "TOTP аутентификатор активен",
-  "mfa.disable": "Отключить MFA",
-  "mfa.disabling": "Отключение...",
-  "mfa.setup": "Настроить MFA",
-  "mfa.setupLoading": "Загрузка...",
-  "mfa.setupHelp": "Защитите аккаунт с помощью TOTP приложения-аутентификатора",
-  "mfa.addKeyHelp": "Добавьте этот ключ в приложение-аутентификатор (Google Authenticator, 1Password и т.д.)",
-  "mfa.codePlaceholder": "6-значный код",
-  "mfa.codeError": "Введите 6-значный код",
-  "mfa.verify": "Подтвердить",
-  "mfa.verifying": "Проверка...",
-  "mfa.enabled": "MFA включена",
-  "mfa.disabled": "MFA отключена"
+  "txn.deleteConfirm": "Удалить эту операцию? Это действие нельзя отменить."
 }

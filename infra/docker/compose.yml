@@ -47,9 +47,11 @@ services:
       HOST: "0.0.0.0"
       PORT: "3000"
       AUTH_MODE: ${AUTH_MODE:-none}
-      AUTH_PROXY_HEADER: ${AUTH_PROXY_HEADER:-}
-      COGNITO_DOMAIN: ${COGNITO_DOMAIN:-}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
+      COGNITO_REGION: ${COGNITO_REGION:-}
+      AUTH_DOMAIN: ${AUTH_DOMAIN:-localhost:8081}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     depends_on:
@@ -59,6 +61,26 @@ services:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  auth:
+    build:
+      context: ../../apps/auth
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      PORT: "8081"
+      ALLOWED_REDIRECT_URIS: ${ALLOWED_REDIRECT_URIS:-http://localhost:3000}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
+      COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
+      COGNITO_REGION: ${COGNITO_REGION:-}
+      SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
