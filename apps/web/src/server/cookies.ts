@@ -14,4 +14,9 @@ export const clearAuthCookies = (headers: Headers): void => {
       `${name}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax${domainAttr}`,
     );
   }
+  // Clear the UI indicator cookie (no HttpOnly — must match how it was set)
+  headers.append(
+    "Set-Cookie",
+    `logged_in=; Path=/; Max-Age=0; Secure; SameSite=Lax${domainAttr}`,
+  );
 };

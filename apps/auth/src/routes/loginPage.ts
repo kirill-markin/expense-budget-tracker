@@ -7,6 +7,7 @@
  * Only the origin is validated against ALLOWED_REDIRECT_URIS.
  */
 import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
 import { renderLoginPage } from "../templates/login.js";
 
 const app = new Hono();
@@ -58,6 +59,14 @@ app.get("/login", (c) => {
 
   if (!isAllowedRedirectUri(redirectUri)) {
     return c.text("Invalid redirect_uri", 400);
+  }
+
+  // If the user already has a session, skip the login form and redirect.
+  // Real JWT verification happens on app.* — if the session is expired,
+  // the proxy refreshes it or clears cookies and sends the user back here.
+  const sessionCookie = getCookie(c, "session") ?? "";
+  if (sessionCookie !== "") {
+    return c.redirect(redirectUri, 302);
   }
 
   const langParam = c.req.query("lang") ?? "";

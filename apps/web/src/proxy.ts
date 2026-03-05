@@ -264,6 +264,10 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
       if (tokens.refreshToken !== undefined) {
         response.headers.append("Set-Cookie", buildCookieHeader("refresh", tokens.refreshToken, 604800));
       }
+      // Refresh the UI indicator cookie (no HttpOnly)
+      const cookieDomain = process.env.COOKIE_DOMAIN ?? "";
+      const domainAttr = cookieDomain !== "" ? `; Domain=${cookieDomain}` : "";
+      response.headers.append("Set-Cookie", `logged_in=1; Path=/; Max-Age=604800; Secure; SameSite=Lax${domainAttr}`);
       return response;
     }
 
