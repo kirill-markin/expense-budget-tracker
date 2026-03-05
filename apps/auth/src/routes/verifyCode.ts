@@ -1,8 +1,9 @@
 /**
  * Email OTP verification endpoint. Reads the OTP session from an HMAC-signed
  * cookie, validates the 8-digit code via Cognito RespondToAuthChallenge,
- * and on success sets session + refresh + logged_in cookies with
- * Domain=COOKIE_DOMAIN so they are visible on app.* and the marketing site.
+ * and on success sets session (35d) + refresh (35d) + logged_in (35d)
+ * cookies with Domain=COOKIE_DOMAIN so they are visible on app.* and
+ * the marketing site.
  *
  * Returns { ok: true } on success — client JS redirects to redirect_uri.
  *
