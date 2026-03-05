@@ -46,13 +46,13 @@ export const POST = async (request: NextRequest): Promise<Response> => {
 
   headers.append(
     "Set-Cookie",
-    `session=${encodeURIComponent(tokens.idToken)}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax${domainAttr}`,
+    `session=${encodeURIComponent(tokens.idToken)}; Path=/; Max-Age=3024000; HttpOnly; Secure; SameSite=Lax${domainAttr}`,
   );
 
   if (tokens.refreshToken !== undefined) {
     headers.append(
       "Set-Cookie",
-      `refresh=${encodeURIComponent(tokens.refreshToken)}; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax${domainAttr}`,
+      `refresh=${encodeURIComponent(tokens.refreshToken)}; Path=/; Max-Age=3024000; HttpOnly; Secure; SameSite=Lax${domainAttr}`,
     );
   }
 

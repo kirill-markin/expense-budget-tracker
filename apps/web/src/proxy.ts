@@ -260,14 +260,14 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
 
       const workspaceId = resolveWorkspaceId(request, refreshedUserId);
       const response = forwardWithIdentity(request, refreshedUserId, workspaceId, nonce);
-      response.headers.append("Set-Cookie", buildCookieHeader("session", tokens.idToken, 3600));
+      response.headers.append("Set-Cookie", buildCookieHeader("session", tokens.idToken, 3024000));
       if (tokens.refreshToken !== undefined) {
-        response.headers.append("Set-Cookie", buildCookieHeader("refresh", tokens.refreshToken, 604800));
+        response.headers.append("Set-Cookie", buildCookieHeader("refresh", tokens.refreshToken, 3024000));
       }
       // Refresh the UI indicator cookie (no HttpOnly)
       const cookieDomain = process.env.COOKIE_DOMAIN ?? "";
       const domainAttr = cookieDomain !== "" ? `; Domain=${cookieDomain}` : "";
-      response.headers.append("Set-Cookie", `logged_in=1; Path=/; Max-Age=604800; Secure; SameSite=Lax${domainAttr}`);
+      response.headers.append("Set-Cookie", `logged_in=1; Path=/; Max-Age=3024000; Secure; SameSite=Lax${domainAttr}`);
       return response;
     }
 
