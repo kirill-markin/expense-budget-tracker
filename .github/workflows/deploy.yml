@@ -2,7 +2,8 @@
 #
 # Uses the same `cdk deploy` as the bootstrap script.
 # CDK builds Docker images (via fromAsset), pushes them to the bootstrap ECR,
-# and updates all infrastructure. Migrations run as a one-off ECS task after deploy.
+# and updates all infrastructure. /api/live is used only for infra health checks.
+# Migrations run as a one-off ECS task after deploy, then /api/health confirms DB readiness.
 # Exchange rates are refreshed by invoking the FX fetcher Lambda.
 #
 # Requires bootstrap (scripts/bootstrap.sh) to have been run first.
@@ -19,6 +20,7 @@ on:
       - 'infra/**'
       - 'scripts/migrate.sh'
       - 'scripts/run-migration-task.sh'
+      - 'scripts/check-web-readiness.sh'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -52,6 +54,7 @@ jobs:
               - 'db/views/**'
               - 'scripts/migrate.sh'
               - 'scripts/run-migration-task.sh'
+              - 'scripts/check-web-readiness.sh'
             worker:
               - 'apps/worker/**'
 
@@ -107,7 +110,6 @@ jobs:
 
       - name: Read stack outputs
         id: outputs
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.migrations == 'true' || steps.changes.outputs.worker == 'true'
         run: |
           get_output() {
             aws cloudformation describe-stacks \
@@ -119,6 +121,7 @@ jobs:
           echo "service=$(get_output EcsServiceName)" >> "$GITHUB_OUTPUT"
           echo "migrate_task=$(get_output MigrateTaskDefArn)" >> "$GITHUB_OUTPUT"
           echo "migrate_sg=$(get_output MigrateSecurityGroupId)" >> "$GITHUB_OUTPUT"
+          echo "alb_dns=$(get_output AlbDns)" >> "$GITHUB_OUTPUT"
           echo "fx_function=$(get_output FxFetcherFunctionName)" >> "$GITHUB_OUTPUT"
 
       # Run database migrations as a one-off ECS task
@@ -130,6 +133,11 @@ jobs:
           SERVICE: ${{ steps.outputs.outputs.service }}
           MIGRATE_TASK: ${{ steps.outputs.outputs.migrate_task }}
           MIGRATE_SG: ${{ steps.outputs.outputs.migrate_sg }}
+
+      - name: Confirm web readiness
+        run: bash scripts/check-web-readiness.sh
+        env:
+          ALB_DNS: ${{ steps.outputs.outputs.alb_dns }}
 
       # Ensure exchange rates are up to date (idempotent — ON CONFLICT DO NOTHING)
       - name: Seed exchange rates

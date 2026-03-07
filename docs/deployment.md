@@ -44,7 +44,7 @@ Summary: CDK stack deploys VPC, ECS Fargate (web app), RDS Postgres (private), A
 
 ### Bootstrap and CI/CD
 
-Both bootstrap and CI/CD use the same method: `cdk deploy`. CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates/updates all infrastructure in one pass. Migrations run as a one-off ECS task after deploy.
+Both bootstrap and CI/CD use the same method: `cdk deploy`. CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates/updates all infrastructure in one pass. `/api/live` is used only for ECS/ALB liveness. Database migrations run as a one-off ECS task after deploy, and `/api/health` is checked after deploy to confirm DB readiness.
 
 **Bootstrap (first deploy, one-time):** `scripts/bootstrap.sh`
 
@@ -53,8 +53,10 @@ export AWS_PROFILE=expense-tracker
 bash scripts/bootstrap.sh --region eu-central-1
 ```
 
-The script runs `cdk bootstrap` (prepares the AWS account) then `cdk deploy` (creates everything), then runs database migrations, then invokes the FX fetcher Lambda to seed exchange rates. After the first deploy, set AI API keys in Secrets Manager and restart ECS — see step 6.4 in [`infra/aws/README.md`](../infra/aws/README.md#6-post-deploy).
+The script runs `cdk bootstrap` (prepares the AWS account), then `cdk deploy` (creates everything), then runs database migrations, then checks `/api/health` through the ALB DNS name to confirm DB readiness, then invokes the FX fetcher Lambda to seed exchange rates. After the first deploy, set AI API keys in Secrets Manager and restart ECS — see step 6.4 in [`infra/aws/README.md`](../infra/aws/README.md#6-post-deploy).
 
 **CI/CD (all subsequent deploys):** `.github/workflows/deploy.yml`
 
-Triggered on every push to `main`. Runs the same `cdk deploy` to update infrastructure and images, then runs migrations, then invokes the FX fetcher Lambda to ensure exchange rates are up to date.
+Triggered on every push to `main`. Runs the same `cdk deploy` to update infrastructure and images, then runs migrations when needed, then checks `/api/health` through the ALB DNS name to confirm DB readiness, then invokes the FX fetcher Lambda when worker code changes.
+
+Schema changes in this pipeline must remain backward-compatible for at least one deploy. If a change requires “migrate before new web code serves traffic”, use a separate two-phase rollout instead of the default pipeline.

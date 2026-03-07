@@ -2,7 +2,7 @@
  * Postgres connection pool and query helpers.
  *
  * query()           — bare pool.query, no RLS context. Used only for global
- *                     tables (exchange_rates) and health checks.
+ *                     tables (exchange_rates) and readiness checks.
  * queryAs()         — single statement in a transaction with app.user_id and
  *                     app.workspace_id set.
  * withUserContext() — multiple statements in one transaction with app.user_id

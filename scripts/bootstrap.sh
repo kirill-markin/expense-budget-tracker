@@ -7,7 +7,8 @@
 # Both bootstrap and CI/CD use the same method: `cdk deploy`.
 # CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates
 # all resources (ECS, RDS, ALB, etc.) in a single command.
-# Migrations are run via a one-off ECS task after the deploy.
+# /api/live is used only for infrastructure health checks. Migrations are run
+# via a one-off ECS task after the deploy, then /api/health confirms DB readiness.
 # Exchange rates are seeded by invoking the FX fetcher Lambda.
 #
 # Required env vars:
@@ -77,6 +78,7 @@ CLUSTER=$(get_output EcsClusterName)
 SERVICE=$(get_output EcsServiceName)
 MIGRATE_TASK=$(get_output MigrateTaskDefArn)
 MIGRATE_SG=$(get_output MigrateSecurityGroupId)
+ALB_DNS=$(get_output AlbDns)
 
 # --- Step 5: Run database migrations ---
 echo ""
@@ -85,7 +87,12 @@ CLUSTER="$CLUSTER" SERVICE="$SERVICE" MIGRATE_TASK="$MIGRATE_TASK" MIGRATE_SG="$
   AWS_REGION="$REGION" \
   bash "${SCRIPT_DIR}/run-migration-task.sh"
 
-# --- Step 6: Seed exchange rates ---
+# --- Step 6: Confirm web readiness ---
+echo ""
+echo "=== Confirm web readiness ==="
+ALB_DNS="$ALB_DNS" bash "${SCRIPT_DIR}/check-web-readiness.sh"
+
+# --- Step 7: Seed exchange rates ---
 # Invoke the FX fetcher Lambda so the currency dropdown is populated immediately
 # instead of waiting for the next scheduled run (08:00 UTC).
 echo ""
@@ -97,7 +104,7 @@ FX_FUNCTION="$FX_FUNCTION" AWS_REGION="$REGION" \
 
 echo ""
 echo "=== Bootstrap complete ==="
-echo "ECS service is running. Database migrations applied. Exchange rates seeded."
+echo "ECS service is live. Database readiness confirmed. Exchange rates seeded."
 echo ""
 echo "Next steps:"
 echo "  1. Run scripts/cloudflare/setup-dns.sh to create DNS records (see README step 5)"

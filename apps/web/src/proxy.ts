@@ -9,7 +9,7 @@
  *                     Expired tokens are refreshed inline (no GET redirect).
  *
  * The resolved userId is forwarded as x-user-id and x-workspace-id headers to all
- * downstream route handlers. /api/health is always exempt from auth.
+ * downstream route handlers. /api/live and /api/health are always exempt from auth.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { JwtExpiredError } from "aws-jwt-verify/error";
@@ -33,6 +33,7 @@ const CSRF_TOKEN_RE = /^[0-9a-f]{64}$/;
 
 const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/auth/logout",
+  "/api/live",
   "/api/health",
 ];
 

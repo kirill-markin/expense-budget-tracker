@@ -60,7 +60,7 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL 
 - **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key, Anthropic API key
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
-- **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS
+- **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
 - **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth, managed by the app directly (no Hosted UI)
 - **AWS WAF** on ALB — SQLi/XSS protection, common threat rules (rate limiting handled by Cloudflare)
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
@@ -285,9 +285,18 @@ The script handles the full first-time deployment:
 1. `cdk bootstrap` (one-time CDK setup)
 2. `cdk deploy` (creates VPC, RDS, ECR, ECS, ALB, etc.)
 3. Builds and pushes Docker images (web + migrate) to ECR
-4. `cdk deploy` again so ECS picks up the images
+4. Runs the migration ECS task
+5. Calls `/api/health` through the ALB DNS name until DB readiness succeeds
+6. Seeds exchange rates
 
 After this one-time bootstrap, all subsequent deploys happen automatically via CI/CD on push to `main`.
+
+Infrastructure liveness and database readiness are intentionally separate:
+
+- `GET /api/live` returns 200 without touching Postgres and is used by ECS container health checks and the ALB target group.
+- `GET /api/health` runs a DB query and is used only as a post-deploy readiness check.
+
+Because the default pipeline still updates the ECS service before optional migrations run, schema changes must remain backward-compatible for at least one deploy. If a change requires “migrate before new code receives traffic”, use a separate two-phase rollout instead of the default pipeline.
 
 After deploy completes, **create the DNS record** pointing to the ALB and configure SSL:
 
@@ -427,7 +436,7 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 4. User enters 8-digit code → auth service calls Cognito `RespondToAuthChallenge` → receives tokens
 5. Auth service sets `session` + `refresh` cookies (Domain=baseDomain), JS redirects to app
 6. App verifies IdToken from `session` cookie via `CognitoJwtVerifier` (`AUTH_MODE=cognito`)
-7. `/api/health` bypasses auth (for ALB health checks)
+7. `/api/live` and `/api/health` bypass auth; `/api/live` is for ALB/ECS liveness and `/api/health` is for post-deploy DB readiness
 
 ## Monitoring
 

@@ -161,4 +161,4 @@ Details in `apps/web/src/proxy.ts`.
 ## Deployment profiles
 
 1. **Local** — Docker Compose: Postgres + web + worker + migrate init container. See `docs/deployment.md`.
-2. **AWS** — CDK stack: ECS Fargate + RDS + ALB/Cognito + Lambda + WAF + monitoring. Images built in CI, pushed to ECR. The root domain (`domain.com`) redirects to `app.domain.com` via ALB rule. To serve your own site on the root domain, deploy it independently and point DNS there. See `infra/aws/README.md`.
+2. **AWS** — CDK stack: ECS Fargate + RDS + ALB/Cognito + Lambda + WAF + monitoring. Images built in CI, pushed to ECR. `/api/live` is used for ECS and ALB liveness, while `/api/health` stays DB-backed and is checked after deploy to confirm readiness. The root domain (`domain.com`) redirects to `app.domain.com` via ALB rule. To serve your own site on the root domain, deploy it independently and point DNS there. Schema changes must stay backward-compatible for at least one deploy unless you use a separate two-phase rollout. See `infra/aws/README.md`.

@@ -46,7 +46,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
     protocol: elbv2.ApplicationProtocol.HTTP,
     targetType: elbv2.TargetType.IP,
     healthCheck: {
-      path: "/api/health",
+      path: "/api/live",
       interval: cdk.Duration.seconds(30),
     },
   });
