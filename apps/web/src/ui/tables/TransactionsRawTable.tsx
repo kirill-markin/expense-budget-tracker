@@ -4,6 +4,7 @@ import { type ReactElement } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { fetchWithCsrf } from "@/lib/csrf";
 import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
@@ -57,7 +58,7 @@ const buildUrl = (
 };
 
 const deleteEntry = async (entryId: string): Promise<void> => {
-  const response = await fetch("/api/transactions/delete", {
+  const response = await fetchWithCsrf("/api/transactions/delete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ entryId }),
@@ -68,7 +69,7 @@ const deleteEntry = async (entryId: string): Promise<void> => {
 };
 
 const saveEntry = async (entry: LedgerEntry): Promise<void> => {
-  const response = await fetch("/api/transactions/update", {
+  const response = await fetchWithCsrf("/api/transactions/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

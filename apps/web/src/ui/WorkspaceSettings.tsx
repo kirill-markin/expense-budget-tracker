@@ -3,6 +3,8 @@
 import { type ReactElement, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { fetchWithCsrf } from "@/lib/csrf";
+
 type Props = Readonly<{
   reportingCurrency: string;
   availableCurrencies: ReadonlyArray<string>;
@@ -45,7 +47,7 @@ export const WorkspaceSettings = (props: Props): ReactElement => {
     if (firstDayOfWeek !== props.firstDayOfWeek) body.firstDayOfWeek = firstDayOfWeek;
     if (timezone !== props.timezone) body.timezone = timezone;
 
-    const response = await fetch("/api/workspace-settings", {
+    const response = await fetchWithCsrf("/api/workspace-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

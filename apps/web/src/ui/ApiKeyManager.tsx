@@ -3,6 +3,7 @@
 import { type ReactElement, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { fetchWithCsrf } from "@/lib/csrf";
 import type { ApiKeyRow } from "@/server/apiKeys";
 
 type Props = Readonly<{
@@ -39,7 +40,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/api-keys", {
+      const response = await fetchWithCsrf("/api/api-keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label }),
@@ -69,7 +70,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/api-keys", {
+      const response = await fetchWithCsrf("/api/api-keys", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: keyId }),

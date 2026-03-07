@@ -26,7 +26,10 @@ const USER_ID_HEADER = "x-user-id";
 const WORKSPACE_ID_HEADER = "x-workspace-id";
 const USER_EMAIL_HEADER = "x-user-email";
 const USER_EMAIL_VERIFIED_HEADER = "x-user-email-verified";
+const CSRF_COOKIE_NAME = "__Host-csrf";
+const CSRF_HEADER_NAME = "x-csrf-token";
 const WORKSPACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CSRF_TOKEN_RE = /^[0-9a-f]{64}$/;
 
 const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/auth/logout",
@@ -108,13 +111,13 @@ const addSecurityHeaders = (response: NextResponse, nonce: string, csp?: string)
  * CSRF check for mutating requests (POST/PUT/DELETE/PATCH).
  *
  * Defence layers (checked in order, per OWASP CSRF Prevention Cheat Sheet):
- *   1. Sec-Fetch-Site — set by all modern browsers; "cross-site" is always blocked.
- *   2. Origin header  — present on most browser POST/PUT/DELETE requests.
- *   3. Referer header — fallback when Origin is missing (privacy redirects, old browsers).
- *   4. If none of the above are present, the request is blocked (fail-safe).
+ *   1. Sec-Fetch-Site — "cross-site" is always blocked.
+ *   2. Origin header  — must match the exact app origin.
+ *   3. Referer header — exact-origin fallback when Origin is missing.
+ *   4. Double-submit token — X-CSRF-Token must match the app-scoped cookie.
  *
  * The check runs at the top of proxy() — before the public-path bypass — so all
- * paths (including /api/auth/* and /login) are CSRF-protected.
+ * mutating paths (including /api/auth/*) are CSRF-protected.
  *
  * Rate limiting is handled at the infrastructure level (Cloudflare + AWS WAF
  * managed rule sets) and is not duplicated here.
@@ -123,22 +126,31 @@ const checkCsrf = (request: NextRequest): boolean => {
   const method = request.method;
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
 
-  const allowedOrigin = process.env.CORS_ORIGIN ?? "";
-  if (allowedOrigin === "") return true;
-
-  // 1. Sec-Fetch-Site (modern browsers, ~98%+ global coverage)
-  const secFetchSite = request.headers.get("sec-fetch-site");
-  if (secFetchSite !== null) {
-    return secFetchSite === "same-origin" || secFetchSite === "same-site" || secFetchSite === "none";
+  const csrfCookie = request.cookies.get(CSRF_COOKIE_NAME)?.value ?? "";
+  const csrfHeader = request.headers.get(CSRF_HEADER_NAME) ?? "";
+  if (
+    !CSRF_TOKEN_RE.test(csrfCookie)
+    || !CSRF_TOKEN_RE.test(csrfHeader)
+    || csrfCookie !== csrfHeader
+  ) {
+    return false;
   }
 
-  // 2. Origin header
+  const allowedOrigin = process.env.CORS_ORIGIN ?? "";
+  const secFetchSite = request.headers.get("sec-fetch-site");
+  if (secFetchSite === "cross-site") {
+    return false;
+  }
+
+  if (allowedOrigin === "") {
+    return true;
+  }
+
   const origin = request.headers.get("origin");
   if (origin !== null) {
     return origin === allowedOrigin;
   }
 
-  // 3. Referer header — extract origin portion for comparison
   const referer = request.headers.get("referer");
   if (referer !== null) {
     try {
@@ -148,8 +160,6 @@ const checkCsrf = (request: NextRequest): boolean => {
       return false;
     }
   }
-
-  // No browser identity headers present — block (fail-safe).
   return false;
 };
 
@@ -192,6 +202,7 @@ const forwardWithIdentity = (
   headers.set("Content-Security-Policy", csp);
   const response = NextResponse.next({ request: { headers } });
   addSecurityHeaders(response, nonce, csp);
+  maybeAttachCsrfCookie(request, response);
   return response;
 };
 
@@ -211,6 +222,20 @@ const buildCookieHeader = (name: string, value: string, maxAge: number): string 
   return `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax${domainAttr}`;
 };
 
+const generateCsrfToken = (): string =>
+  `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+
+const buildCsrfCookieHeader = (token: string, maxAge: number): string =>
+  `${CSRF_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; Secure; SameSite=Strict`;
+
+const maybeAttachCsrfCookie = (request: NextRequest, response: NextResponse): void => {
+  const existingToken = request.cookies.get(CSRF_COOKIE_NAME)?.value ?? "";
+  if (CSRF_TOKEN_RE.test(existingToken)) {
+    return;
+  }
+  response.headers.append("Set-Cookie", buildCsrfCookieHeader(generateCsrfToken(), 3024000));
+};
+
 const redirectToAuth = (request: NextRequest, nonce: string): NextResponse => {
   const redirectUrl = buildAuthRedirectUrl(request);
   const response = NextResponse.redirect(redirectUrl);
@@ -224,7 +249,7 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
   if (!checkCsrf(request)) {
-    const response = new NextResponse("CSRF origin mismatch", { status: 403 });
+    const response = new NextResponse("CSRF validation failed", { status: 403 });
     addSecurityHeaders(response, nonce);
     return response;
   }

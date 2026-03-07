@@ -10,6 +10,8 @@ import {
   type ReactElement,
 } from "react";
 import { useTranslation } from "react-i18next";
+
+import { fetchWithCsrf } from "@/lib/csrf";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { DEFAULT_MODEL_ID } from "@/lib/chatModels";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
@@ -371,7 +373,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     }
 
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetchWithCsrf("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: requestBody,

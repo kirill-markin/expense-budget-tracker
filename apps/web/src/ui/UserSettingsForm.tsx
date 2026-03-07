@@ -3,6 +3,7 @@
 import { type ReactElement, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { fetchWithCsrf } from "@/lib/csrf";
 import { type SupportedLocale, type NumberFormat, type DateFormat, SUPPORTED_LOCALES, LOCALE_LABELS, NUMBER_FORMATS, DATE_FORMATS } from "@/lib/locale";
 
 type Props = Readonly<{
@@ -32,7 +33,7 @@ export const UserSettingsForm = (props: Props): ReactElement => {
     if (numberFormat !== props.numberFormat) body.numberFormat = numberFormat;
     if (dateFormat !== props.dateFormat) body.dateFormat = dateFormat;
 
-    const response = await fetch("/api/user-settings", {
+    const response = await fetchWithCsrf("/api/user-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

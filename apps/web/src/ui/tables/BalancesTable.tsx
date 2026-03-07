@@ -5,6 +5,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useTranslation } from "react-i18next";
 
+import { fetchWithCsrf } from "@/lib/csrf";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 
 import type { AccountRow, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
@@ -175,7 +176,7 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
 };
 
 const saveLiquidity = async (accountId: string, liquidity: string): Promise<void> => {
-  const response = await fetch("/api/account-metadata", {
+  const response = await fetchWithCsrf("/api/account-metadata", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ accountId, liquidity }),

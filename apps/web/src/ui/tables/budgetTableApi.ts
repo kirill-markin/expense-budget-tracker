@@ -1,3 +1,4 @@
+import { fetchWithCsrf } from "@/lib/csrf";
 import type { BudgetGridResult } from "@/server/budget/getBudgetGrid";
 
 export const fetchBudgetRange = async (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): Promise<BudgetGridResult> => {
@@ -16,7 +17,7 @@ export const postBudgetPlan = async (params: {
   kind: "base" | "modifier";
   plannedValue: number;
 }): Promise<void> => {
-  const response = await fetch("/api/budget-plan", {
+  const response = await fetchWithCsrf("/api/budget-plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -32,7 +33,7 @@ export const postBudgetPlanFill = async (params: {
   category: string;
   baseValue: number;
 }): Promise<void> => {
-  const response = await fetch("/api/budget-plan-fill", {
+  const response = await fetchWithCsrf("/api/budget-plan-fill", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -58,7 +59,7 @@ export const postComment = async (params: {
   category: string;
   comment: string;
 }): Promise<void> => {
-  const response = await fetch("/api/budget-comment", {
+  const response = await fetchWithCsrf("/api/budget-comment", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),

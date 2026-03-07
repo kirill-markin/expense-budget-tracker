@@ -3,6 +3,8 @@
 import { type ReactElement, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { fetchWithCsrf } from "@/lib/csrf";
+
 type Props = Readonly<{
   filteredCategories: ReadonlyArray<string> | null;
   allCategories: ReadonlyArray<string>;
@@ -47,7 +49,7 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
     setError(null);
     setSaved(false);
     const payload = selected.size === 0 ? null : [...selected];
-    const response = await fetch("/api/workspace-settings", {
+    const response = await fetchWithCsrf("/api/workspace-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filteredCategories: payload }),

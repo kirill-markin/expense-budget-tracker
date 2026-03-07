@@ -3,6 +3,8 @@
 import { type FormEvent, type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { fetchWithCsrf } from "@/lib/csrf";
+
 type WorkspaceSummary = Readonly<{
   workspaceId: string;
   name: string;
@@ -83,7 +85,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
   }, []);
 
   const handleLogout = useCallback((): void => {
-    fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+    fetchWithCsrf("/api/auth/logout", { method: "POST" }).finally(() => {
       window.location.href = "/";
     });
   }, []);
@@ -97,7 +99,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
     setError("");
 
     try {
-      const response = await fetch("/api/workspaces", {
+      const response = await fetchWithCsrf("/api/workspaces", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmed }),

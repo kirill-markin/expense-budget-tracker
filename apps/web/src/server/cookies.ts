@@ -4,6 +4,7 @@
  */
 
 const AUTH_COOKIE_NAMES: ReadonlyArray<string> = ["session", "refresh"];
+const APP_CSRF_COOKIE_NAME = "__Host-csrf";
 
 export const clearAuthCookies = (headers: Headers): void => {
   const cookieDomain = process.env.COOKIE_DOMAIN ?? "";
@@ -18,5 +19,9 @@ export const clearAuthCookies = (headers: Headers): void => {
   headers.append(
     "Set-Cookie",
     `logged_in=; Path=/; Max-Age=0; Secure; SameSite=Lax${domainAttr}`,
+  );
+  headers.append(
+    "Set-Cookie",
+    `${APP_CSRF_COOKIE_NAME}=; Path=/; Max-Age=0; Secure; SameSite=Strict`,
   );
 };
