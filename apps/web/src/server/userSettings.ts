@@ -22,7 +22,6 @@ const parseDateFormat = (raw: string): DateFormat => {
 };
 
 export const getUserSettings = async (userId: string, workspaceId: string, initialLocale: SupportedLocale): Promise<UserSettings> => {
-  await ensureUserSettings(userId, workspaceId, initialLocale);
   const result = await queryAs(
     userId,
     workspaceId,
@@ -46,8 +45,6 @@ export const updateUserSettings = async (
   settings: Partial<Pick<UserSettings, "locale" | "numberFormat" | "dateFormat">>,
   initialLocale: SupportedLocale,
 ): Promise<UserSettings> => {
-  await ensureUserSettings(userId, workspaceId, initialLocale);
-
   const setClauses: Array<string> = [];
   const params: Array<unknown> = [userId];
   let idx = 2;
@@ -89,35 +86,4 @@ export const updateUserSettings = async (
     numberFormat: parseNumberFormat(row.number_format),
     dateFormat: parseDateFormat(row.date_format),
   };
-};
-
-import { getPool } from "@/server/db";
-
-const provisionedUsers = new Set<string>();
-
-const ensureUserSettings = async (userId: string, workspaceId: string, initialLocale: SupportedLocale): Promise<void> => {
-  if (provisionedUsers.has(userId)) return;
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
-    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
-    await client.query(
-      "INSERT INTO user_settings (user_id, locale) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
-      [userId, initialLocale],
-    );
-    await client.query("COMMIT");
-    provisionedUsers.add(userId);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    const code = err instanceof Error && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
-    if (code === "23505") {
-      provisionedUsers.add(userId);
-      return;
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
 };

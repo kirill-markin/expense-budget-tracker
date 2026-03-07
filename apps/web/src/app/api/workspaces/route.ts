@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { getPool } from "@/server/db";
+import { ensureUserProvisioned, getPool } from "@/server/db";
 import { extractUserId } from "@/server/userId";
 
 type PostBody = Readonly<{
@@ -27,6 +27,8 @@ export const POST = async (request: Request): Promise<Response> => {
 
   const userId = extractUserId(request);
   const workspaceId = crypto.randomUUID();
+
+  await ensureUserProvisioned(userId, userId);
 
   const client = await getPool().connect();
   try {

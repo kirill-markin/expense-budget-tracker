@@ -16,6 +16,7 @@ import { JwtExpiredError } from "aws-jwt-verify/error";
 import { getJwtVerifier, refreshTokens } from "@/server/cognitoAuth";
 import { log } from "@/server/logger";
 import { clearAuthCookies } from "@/server/cookies";
+import { LOCAL_USER_EMAIL } from "@/server/users";
 
 type AuthMode = "none" | "cognito";
 
@@ -23,6 +24,8 @@ const LOCAL_USER_ID = "local";
 const LOCAL_WORKSPACE_ID = "local";
 const USER_ID_HEADER = "x-user-id";
 const WORKSPACE_ID_HEADER = "x-workspace-id";
+const USER_EMAIL_HEADER = "x-user-email";
+const USER_EMAIL_VERIFIED_HEADER = "x-user-email-verified";
 const WORKSPACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const PUBLIC_PATHS: ReadonlyArray<string> = [
@@ -150,20 +153,41 @@ const checkCsrf = (request: NextRequest): boolean => {
   return false;
 };
 
-const verifyAndExtractSub = async (jwt: string): Promise<string> => {
+type VerifiedIdentity = Readonly<{
+  userId: string;
+  email: string;
+  emailVerified: boolean;
+}>;
+
+const verifyAndExtractIdentity = async (jwt: string): Promise<VerifiedIdentity> => {
   const payload = await getJwtVerifier().verify(jwt);
   const sub = payload.sub;
   if (typeof sub !== "string" || sub.length === 0) {
     throw new Error("JWT payload missing sub claim");
   }
-  return sub;
+  const email = "email" in payload ? payload.email : undefined;
+  if (typeof email !== "string" || email.length === 0) {
+    throw new Error("JWT payload missing email claim");
+  }
+  const emailVerifiedClaim = "email_verified" in payload ? payload.email_verified : undefined;
+  if (typeof emailVerifiedClaim !== "boolean") {
+    throw new Error("JWT payload missing boolean email_verified claim");
+  }
+  return { userId: sub, email, emailVerified: emailVerifiedClaim };
 };
 
-const forwardWithIdentity = (request: NextRequest, userId: string, workspaceId: string, nonce: string): NextResponse => {
+const forwardWithIdentity = (
+  request: NextRequest,
+  identity: VerifiedIdentity,
+  workspaceId: string,
+  nonce: string,
+): NextResponse => {
   const csp = buildCsp(nonce);
   const headers = new Headers(request.headers);
-  headers.set(USER_ID_HEADER, userId);
+  headers.set(USER_ID_HEADER, identity.userId);
   headers.set(WORKSPACE_ID_HEADER, workspaceId);
+  headers.set(USER_EMAIL_HEADER, identity.email);
+  headers.set(USER_EMAIL_VERIFIED_HEADER, identity.emailVerified ? "true" : "false");
   headers.set("x-nonce", nonce);
   headers.set("Content-Security-Policy", csp);
   const response = NextResponse.next({ request: { headers } });
@@ -208,7 +232,12 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
   const authMode = getAuthMode();
 
   if (authMode === "none") {
-    return forwardWithIdentity(request, LOCAL_USER_ID, LOCAL_WORKSPACE_ID, nonce);
+    return forwardWithIdentity(
+      request,
+      { userId: LOCAL_USER_ID, email: LOCAL_USER_EMAIL, emailVerified: true },
+      LOCAL_WORKSPACE_ID,
+      nonce,
+    );
   }
 
   // AUTH_MODE=cognito — public paths are exempt from auth (CSRF already checked above)
@@ -217,6 +246,8 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
     const headers = new Headers(request.headers);
     headers.delete(USER_ID_HEADER);
     headers.delete(WORKSPACE_ID_HEADER);
+    headers.delete(USER_EMAIL_HEADER);
+    headers.delete(USER_EMAIL_VERIFIED_HEADER);
     headers.set("x-nonce", nonce);
     headers.set("Content-Security-Policy", csp);
     const response = NextResponse.next({ request: { headers } });
@@ -233,9 +264,9 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
     return response;
   }
 
-  let userId: string;
+  let identity: VerifiedIdentity;
   try {
-    userId = await verifyAndExtractSub(sessionCookie);
+    identity = await verifyAndExtractIdentity(sessionCookie);
   } catch (err) {
     // Token expired — refresh inline instead of GET redirect
     if (err instanceof JwtExpiredError) {
@@ -251,15 +282,15 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
         return redirectToAuth(request, nonce);
       }
 
-      let refreshedUserId: string;
+      let refreshedIdentity: VerifiedIdentity;
       try {
-        refreshedUserId = await verifyAndExtractSub(tokens.idToken);
+        refreshedIdentity = await verifyAndExtractIdentity(tokens.idToken);
       } catch {
         return redirectToAuth(request, nonce);
       }
 
-      const workspaceId = resolveWorkspaceId(request, refreshedUserId);
-      const response = forwardWithIdentity(request, refreshedUserId, workspaceId, nonce);
+      const workspaceId = resolveWorkspaceId(request, refreshedIdentity.userId);
+      const response = forwardWithIdentity(request, refreshedIdentity, workspaceId, nonce);
       response.headers.append("Set-Cookie", buildCookieHeader("session", tokens.idToken, 3024000));
       if (tokens.refreshToken !== undefined) {
         response.headers.append("Set-Cookie", buildCookieHeader("refresh", tokens.refreshToken, 3024000));
@@ -279,8 +310,8 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
 
   // Workspace cookie is set client-side. RLS enforces workspace membership
   // at the database level — setting this to a foreign workspace gives no access.
-  const workspaceId = resolveWorkspaceId(request, userId);
-  return forwardWithIdentity(request, userId, workspaceId, nonce);
+  const workspaceId = resolveWorkspaceId(request, identity.userId);
+  return forwardWithIdentity(request, identity, workspaceId, nonce);
 };
 
 export const config = {
