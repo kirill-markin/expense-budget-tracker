@@ -105,7 +105,9 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
   const authorizer = new apigw.TokenAuthorizer(scope, "SqlApiAuth", {
     handler: authorizerFn,
     identitySource: "method.request.header.Authorization",
-    resultsCacheTtl: cdk.Duration.minutes(5),
+    // Disable API Gateway authorizer caching so key revocation takes effect
+    // on the next request instead of after a cache window expires.
+    resultsCacheTtl: cdk.Duration.seconds(0),
   });
 
   // --- Route: POST /sql ---

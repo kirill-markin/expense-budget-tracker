@@ -64,7 +64,7 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL 
 - **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth, managed by the app directly (no Hosted UI)
 - **AWS WAF** on ALB — SQLi/XSS protection, common threat rules (rate limiting handled by Cloudflare)
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
-- **API Gateway** (REST API) + two Lambdas (authorizer + SQL executor) for machine client SQL API; per-key rate limiting via Usage Plans, 5-min auth cache
+- **API Gateway** (REST API) + two Lambdas (authorizer + SQL executor) for machine client SQL API; per-key rate limiting via Usage Plans, no auth cache (revoked keys stop working on the next request)
 - **CloudWatch Alarms + SNS** — alerts on ALB 5xx, API Gateway 5xx, ECS CPU/memory, ECS scale-out, DB connections, DB storage, Lambda errors
 - **S3** — ALB access logs (90-day retention)
 - **CloudWatch Logs** — ECS web container logs `/expense-tracker/web` (30-day retention), migration logs `/expense-tracker/migrate`, Lambda logs (automatic)
