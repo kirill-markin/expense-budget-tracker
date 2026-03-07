@@ -194,19 +194,9 @@ export const ensureUserProvisioned = async (userId: string, workspaceId: string)
             `User ${userId} is not a member of workspace ${workspaceId}`,
           );
         }
-        // Plain INSERTs — no ON CONFLICT because PostgreSQL requires SELECT
-        // visibility for conflict checks, which RLS blocks for new users.
         await client.query(
-          "INSERT INTO workspaces (workspace_id, name) VALUES ($1, $1)",
-          [workspaceId],
-        );
-        await client.query(
-          "INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2)",
-          [workspaceId, userId],
-        );
-        await client.query(
-          "INSERT INTO workspace_settings (workspace_id, reporting_currency) VALUES ($1, 'USD')",
-          [workspaceId],
+          "SELECT provision_personal_workspace_for_current_user()",
+          [],
         );
       }
       const settingsCheck = await client.query(

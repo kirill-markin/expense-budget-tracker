@@ -1,6 +1,4 @@
-import crypto from "node:crypto";
-
-import { ensureUserProvisioned, getPool } from "@/server/db";
+import { queryAs } from "@/server/db";
 import { extractUserId } from "@/server/userId";
 
 type PostBody = Readonly<{
@@ -26,37 +24,21 @@ export const POST = async (request: Request): Promise<Response> => {
   }
 
   const userId = extractUserId(request);
-  const workspaceId = crypto.randomUUID();
-
-  await ensureUserProvisioned(userId, userId);
-
-  const client = await getPool().connect();
   try {
-    await client.query("BEGIN");
-    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
-    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
-
-    await client.query(
-      "INSERT INTO workspaces (workspace_id, name) VALUES ($1, $2)",
-      [workspaceId, trimmedName],
+    const result = await queryAs(
+      userId,
+      userId,
+      "SELECT workspace_id, name FROM create_workspace_for_current_user($1)",
+      [trimmedName],
     );
-    await client.query(
-      "INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2)",
-      [workspaceId, userId],
-    );
-    await client.query(
-      "INSERT INTO workspace_settings (workspace_id, reporting_currency) VALUES ($1, 'USD')",
-      [workspaceId],
-    );
-
-    await client.query("COMMIT");
-    return Response.json({ workspaceId, name: trimmedName });
+    if (result.rows.length !== 1) {
+      throw new Error(`create_workspace_for_current_user returned ${result.rows.length} rows`);
+    }
+    const row = result.rows[0] as { workspace_id: string; name: string };
+    return Response.json({ workspaceId: row.workspace_id, name: row.name });
   } catch (err) {
-    await client.query("ROLLBACK");
     const message = err instanceof Error ? err.message : String(err);
     console.error("workspaces POST: %s", message);
     return new Response("Failed to create workspace", { status: 500 });
-  } finally {
-    client.release();
   }
 };
