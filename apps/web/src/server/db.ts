@@ -8,6 +8,8 @@
  * withUserContext() — multiple statements in one transaction with app.user_id
  *                     and app.workspace_id. The callback receives a bound
  *                     queryFn sharing one client.
+ * withRestrictedUserContext() — same as withUserContext(), but user SQL runs
+ *                     as api_sql_executor after the RLS context is set.
  */
 import pg from "pg";
 import { headers } from "next/headers";
@@ -283,6 +285,37 @@ export const withUserContext = async <T>(
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+    const boundQuery: QueryFn = (text, params) =>
+      client.query(text, params as Array<unknown>);
+    const result = await callback(boundQuery);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Execute multiple statements in one transaction with app.user_id and
+ * app.workspace_id set, then switch to the restricted SQL role.
+ */
+export const withRestrictedUserContext = async <T>(
+  userId: string,
+  workspaceId: string,
+  statementTimeoutMs: number,
+  callback: (queryFn: QueryFn) => Promise<T>,
+): Promise<T> => {
+  await ensureUserProvisioned(userId, workspaceId);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+    await client.query("SELECT set_config('statement_timeout', $1, true)", [String(statementTimeoutMs)]);
+    await client.query("SET LOCAL ROLE api_sql_executor");
     const boundQuery: QueryFn = (text, params) =>
       client.query(text, params as Array<unknown>);
     const result = await callback(boundQuery);
