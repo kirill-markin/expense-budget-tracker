@@ -5,6 +5,7 @@ import { readChatCookies } from "@/lib/chatCookies";
 import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS, RTL_LOCALES, type SupportedLocale } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
+import { NAV_LINKS } from "@/lib/navigation";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import { t } from "@/i18n/serverT";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/listWorkspaces";
@@ -96,12 +97,9 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                   </div>
                 </header>
                 <nav className="nav">
-                  <a href="/budget">{t(locale, "nav.budget")}</a>
-                  <a href="/transactions">{t(locale, "nav.transactions")}</a>
-                  <a href="/balances">{t(locale, "nav.balances")}</a>
-                  <a href="/dashboards">{t(locale, "nav.dashboards")}</a>
-                  <a href="/settings">{t(locale, "nav.settings")}</a>
-                  <a href="/chat">{t(locale, "nav.chat")}</a>
+                  {NAV_LINKS.map((link) => (
+                    <a key={link.href} href={link.href}>{t(locale, link.labelKey)}</a>
+                  ))}
                   <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
                 </nav>
               </div>
