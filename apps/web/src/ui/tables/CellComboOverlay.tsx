@@ -81,7 +81,7 @@ export const CellComboOverlay = (props: Props): ReactElement => {
     <div
       ref={overlayRef}
       className="cell-select-overlay"
-      style={{ top: rect.top + rect.height, left: rect.left, minWidth: rect.width }}
+      style={{ top: rect.top, left: rect.left, minWidth: rect.width }}
     >
       <input
         ref={inputRef}
