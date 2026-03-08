@@ -29,6 +29,12 @@ type InputMessage =
   | { role: "user"; content: string | ReadonlyArray<UserContentPart> }
   | { role: "assistant"; content: ReadonlyArray<AssistantContentPart> };
 
+type MessageOutputContentPart =
+  | { type: "output_text"; text: string }
+  | { type: "refusal"; refusal: string }
+  | { type: "audio"; audio: string | { id: string }; format?: string | null; transcript?: string | null }
+  | { type: "image"; image: string };
+
 const buildOpenaiInstructions = (timezone: string): string =>
   buildSystemInstructions(timezone) +
   "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate." +
@@ -103,6 +109,29 @@ const buildInput = (
   return result;
 };
 
+const extractMessageOutputText = (
+  item: { rawItem: { content: ReadonlyArray<MessageOutputContentPart> } },
+): string =>
+  item.rawItem.content.reduce(
+    (text: string, part) => (part.type === "output_text" ? text + part.text : text),
+    "",
+  );
+
+const getUnsentMessageOutputText = (
+  fullText: string,
+  streamedText: string,
+): string => {
+  if (streamedText.length === 0) {
+    return fullText;
+  }
+
+  if (!fullText.startsWith(streamedText)) {
+    throw new Error("OpenAI message output does not match streamed text prefix");
+  }
+
+  return fullText.slice(streamedText.length);
+};
+
 export type StreamAgentParams = Readonly<{
   messages: ReadonlyArray<ChatMessage>;
   model: string;
@@ -143,15 +172,34 @@ export async function* streamAgentResponse(
   let activeToolInput: string | null = null;
   let toolStart = 0;
   let toolCalls = 0;
+  let streamedText = "";
+  const emittedMessageOutputIds = new Set<string>();
 
   try {
     for await (const event of result) {
       if (event.type === "raw_model_stream_event") {
         if (event.data.type === "output_text_delta") {
+          streamedText += event.data.delta;
           yield { type: "delta", text: event.data.delta };
         }
       } else if (event.type === "run_item_stream_event") {
-        if (event.name === "tool_called" && event.item.type === "tool_call_item") {
+        if (event.name === "message_output_created" && event.item.type === "message_output_item") {
+          const messageId = event.item.rawItem.id;
+          if (messageId !== undefined && emittedMessageOutputIds.has(messageId)) {
+            continue;
+          }
+
+          const messageText = extractMessageOutputText(event.item);
+          const unsentText = getUnsentMessageOutputText(messageText, streamedText);
+          if (unsentText.length > 0) {
+            streamedText += unsentText;
+            yield { type: "delta", text: unsentText };
+          }
+
+          if (messageId !== undefined) {
+            emittedMessageOutputIds.add(messageId);
+          }
+        } else if (event.name === "tool_called" && event.item.type === "tool_call_item") {
           activeToolName = event.item.rawItem.type === "function_call"
             ? event.item.rawItem.name
             : event.item.rawItem.type;
