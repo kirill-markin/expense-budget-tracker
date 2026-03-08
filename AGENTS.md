@@ -12,69 +12,75 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Raise explicit, actionable errors with context.
 - Keep changes minimal and scoped to the current request.
 - Prefer non-interactive terminal commands.
-- Schema changes via migrations only: add a new file in `db/migrations/`, do not edit already-applied migrations.
+- Change schema via new files in `db/migrations/` only; never edit already-applied migrations.
 - CI/CD is GitHub Actions on push to `main` (`.github/workflows/deploy.yml`).
-- **RTL support**: the app supports RTL languages (Arabic, Farsi, Hebrew). In CSS, always use CSS logical properties instead of physical directional ones — `inset-inline-start`/`inset-inline-end` instead of `left`/`right`, `margin-inline-start`/`margin-inline-end` instead of `margin-left`/`margin-right`, `padding-inline-start`/`padding-inline-end` instead of `padding-left`/`padding-right`, `border-inline-start`/`border-inline-end` instead of `border-left`/`border-right`, `text-align: start`/`end` instead of `text-align: left`/`right`. Use `[dir="rtl"]` overrides only for properties without logical equivalents (e.g. `box-shadow`). In JS, account for RTL when working with `scrollLeft`, element positioning, or resize handlers.
+- RTL support is required:
+  - In CSS, use logical properties such as `inset-inline-start`/`end`, `margin-inline-start`/`end`, `padding-inline-start`/`end`, `border-inline-start`/`end`, and `text-align: start`/`end` instead of physical left/right variants.
+  - Use `[dir="rtl"]` overrides only when no logical equivalent exists (for example `box-shadow`).
+  - In JS, account for RTL when handling `scrollLeft`, element positioning, and resize logic.
 
 ## Components
 
-1. **web** (`apps/web/`) — Next.js app. UI dashboards and API routes for transactions, balances, budget, and FX data. SQL via `pg.Pool`.
-2. **worker** (`apps/worker/`) — TypeScript process that fetches daily exchange rates from ECB, CBR, and NBS into `exchange_rates`. Runs on a schedule (Docker) or as a Lambda (AWS).
-3. **Postgres** — single source of truth. Schema in `db/migrations/`, views in `db/views/`, reference queries in `db/queries/`.
+- `apps/web/`: Next.js app with UI dashboards and API routes for transactions, balances, budget, and FX data; SQL via `pg.Pool`
+- `apps/worker/`: TypeScript process that fetches daily ECB, CBR, and NBS exchange rates into `exchange_rates`; runs on a schedule (Docker) or as AWS Lambda
+- Postgres: single source of truth; schema in `db/migrations/`, views in `db/views/`, reference SQL in `db/queries/`
 
-## Key paths
+## Key Paths
 
 | Path | Description |
-|---|---|
-| `apps/web/src/app/api/` | Next.js API routes (budget-grid, transactions, balances-summary, etc.) |
-| `apps/web/src/server/` | Server-side data functions (budget, balances, transactions) |
+| --- | --- |
+| `apps/web/src/app/api/` | Next.js API routes (`budget-grid`, `transactions`, `balances-summary`, and others) |
+| `apps/web/src/server/` | Server-side data functions for budget, balances, and transactions |
 | `apps/web/src/ui/` | React components: tables, charts, hooks |
-| `apps/web/src/proxy.ts` | Auth proxy logic (`AUTH_MODE` env var) |
+| `apps/web/src/proxy.ts` | Auth proxy logic controlled by `AUTH_MODE` |
 | `apps/worker/src/fetchers/` | FX rate fetchers: `ecb.ts`, `cbr.ts`, `nbs.ts` |
-| `db/migrations/` | Postgres migrations (applied in order by `scripts/migrate.sh`) |
-| `db/views/` | Postgres views (`accounts`) |
+| `db/migrations/` | Postgres migrations applied in order by `scripts/migrate.sh` |
+| `db/views/` | Postgres views such as `accounts` |
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |
 | `apps/web/src/server/apiKeys.ts` | API key generation, hashing, CRUD |
-| `apps/web/src/app/api/api-keys/route.ts` | API key management endpoints (GET/POST/DELETE) |
+| `apps/web/src/app/api/api-keys/route.ts` | API key management endpoints (`GET`/`POST`/`DELETE`) |
 | `apps/sql-api/` | SQL API Lambda handlers (authorizer + executor) for API Gateway |
-| `apps/web/src/server/demo/data.ts` | Static demo data for demo mode (no DB needed) |
-| `apps/web/src/lib/demoMode.ts` | Demo mode check: activated by `demo=true` browser cookie (toggled via UI button), no env var needed |
-| `infra/docker/compose.yml` | Local Docker Compose (Postgres + migrate + web + worker) |
-| `infra/aws/` | AWS CDK stack (ECS Fargate, RDS, ALB/Cognito, API Gateway, Lambda, WAF) |
-| `scripts/migrate.sh` | Runs all migrations + views against `DATABASE_URL` |
-| `.env.example` | Environment variables reference |
+| `apps/web/src/server/demo/data.ts` | Static demo data for demo mode without a DB |
+| `apps/web/src/lib/demoMode.ts` | Demo mode check; enabled by `demo=true` browser cookie toggled in the UI, no env var needed |
+| `infra/docker/compose.yml` | Local Docker Compose for Postgres, migrate, web, and worker |
+| `infra/aws/` | AWS CDK stack for ECS Fargate, RDS, ALB/Cognito, API Gateway, Lambda, and WAF |
+| `scripts/migrate.sh` | Runs migrations and views against `DATABASE_URL` |
+| `.env.example` | Environment variable reference |
 
 ## Cloudflare
 
-Cloudflare credentials are in `scripts/cloudflare/.env` (gitignored, local only). Scripts in `scripts/cloudflare/` manage DNS, SSL, and cache rules via the Cloudflare API.
+Cloudflare credentials are stored locally in `scripts/cloudflare/.env` (gitignored). Scripts in `scripts/cloudflare/` manage DNS, SSL, and cache rules via the Cloudflare API.
 
-## AWS deployment
+## AWS Deployment
 
-Before querying AWS resources, read `infra/aws/cdk.context.local.json` first — it contains the region, domain, certificate ARNs, and all account-specific settings. Then check `~/.aws/config` for the AWS CLI profile that targets the same account and region. Always use the matching `--profile` and `--region` flags.
+Before querying AWS resources:
+1. Read `infra/aws/cdk.context.local.json` for region, domain, certificate ARNs, and account-specific settings.
+2. Check `~/.aws/config` for the CLI profile targeting the same account and region.
+3. Always use matching `--profile` and `--region` flags.
 
-- **CDK context**: `infra/aws/cdk.context.local.json`
-- **CDK stack name**: `ExpenseBudgetTracker`
-- **CI/CD**: GitHub Actions on push to `main`, deploys CDK + builds/pushes Docker images to ECR + runs ECS migration task + updates ECS service. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
+- CDK context: `infra/aws/cdk.context.local.json`
+- CDK stack name: `ExpenseBudgetTracker`
+- CI/CD: on push to `main`, GitHub Actions deploys CDK, builds and pushes Docker images to ECR, runs the ECS migration task, and updates the ECS service. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
 
-## Local development
+## Local Development
 
-For UI/frontend work, run the Next.js dev server directly — no Docker needed:
+For UI work, run the Next.js dev server directly:
 
 ```bash
 cd apps/web && npm run dev
 ```
 
-Toggle **Demo mode** via the All/Demo button in the UI header (sets a `demo=true` browser cookie). Demo mode serves all data from `apps/web/src/server/demo/data.ts` in-memory — no Postgres required. This gives instant hot reload on code changes.
+Toggle Demo mode with the All/Demo button in the header. It sets a `demo=true` browser cookie and serves data from `apps/web/src/server/demo/data.ts` in memory, so no Postgres is required and code changes hot-reload immediately.
 
-Use `make dev` (Docker Compose) only when you need a real database — e.g. testing migrations, SQL queries, or the worker. Docker runs a production Next.js build, so every code change requires `docker compose -f infra/docker/compose.yml build web` to take effect.
+Use `make dev` (Docker Compose) only when you need a real database, such as for migrations, SQL queries, or the worker. Docker runs a production Next.js build, so each code change requires `docker compose -f infra/docker/compose.yml build web`.
 
 ## Logging
 
-Server-side structured logger: `apps/web/src/server/logger.ts`. Use `log()` for all server events — never raw `console.log` or `console.error`. Add new event types to the `LogEvent` union.
+Use the structured server logger in `apps/web/src/server/logger.ts`. Log through `log()` only; never use raw `console.log` or `console.error`. Add new event types to the `LogEvent` union.
 
 ## Reference
 
-- [docs/architecture.md](docs/architecture.md) — system overview, data model, multi-currency design, auth model
-- [docs/deployment.md](docs/deployment.md) — local Docker Compose and AWS CDK setup
-- [infra/aws/README.md](infra/aws/README.md) — full AWS CDK deployment guide
-- [Makefile](Makefile) — `make up`, `make down`, `make migrate`, `make test`, `make lint`
+- [docs/architecture.md](docs/architecture.md) - system overview, data model, multi-currency design, auth model
+- [docs/deployment.md](docs/deployment.md) - local Docker Compose and AWS CDK setup
+- [infra/aws/README.md](infra/aws/README.md) - full AWS CDK deployment guide
+- [Makefile](Makefile) - `make up`, `make down`, `make migrate`, `make test`, `make lint`
