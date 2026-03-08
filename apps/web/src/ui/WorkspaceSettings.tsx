@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
 
+import styles from "@/ui/SettingsForm.module.css";
+
 type Props = Readonly<{
   reportingCurrency: string;
   availableCurrencies: ReadonlyArray<string>;
@@ -70,25 +72,25 @@ export const WorkspaceSettings = (props: Props): ReactElement => {
   }, [selected, firstDayOfWeek, timezone, reportingCurrency, props.firstDayOfWeek, props.timezone]);
 
   return (
-    <div className="settings-form">
-      <div className="settings-row">
-        <label className="settings-label" htmlFor="reporting-currency">
+    <div className={styles.form}>
+      <div className={styles.row}>
+        <label className={styles.label} htmlFor="reporting-currency">
           {t("settings.reportingCurrency")}
         </label>
-        <div className="settings-control">
-          <select id="reporting-currency" className="settings-select" value={selected}
+        <div className={styles.control}>
+          <select id="reporting-currency" className={styles.select} value={selected}
             onChange={(e) => { setSelected(e.target.value); setSaved(false); }}>
             {availableCurrencies.map((c) => (<option key={c} value={c}>{c}</option>))}
           </select>
         </div>
       </div>
 
-      <div className="settings-row">
-        <label className="settings-label" htmlFor="first-day-of-week">
+      <div className={styles.row}>
+        <label className={styles.label} htmlFor="first-day-of-week">
           {t("settings.firstDayOfWeek")}
         </label>
-        <div className="settings-control">
-          <select id="first-day-of-week" className="settings-select" value={firstDayOfWeek}
+        <div className={styles.control}>
+          <select id="first-day-of-week" className={styles.select} value={firstDayOfWeek}
             onChange={(e) => { setFirstDayOfWeek(Number(e.target.value)); setSaved(false); }}>
             {DAY_KEYS.map((key, i) => (
               <option key={i + 1} value={i + 1}>{t(key)}</option>
@@ -97,26 +99,26 @@ export const WorkspaceSettings = (props: Props): ReactElement => {
         </div>
       </div>
 
-      <div className="settings-row">
-        <label className="settings-label" htmlFor="timezone">
+      <div className={styles.row}>
+        <label className={styles.label} htmlFor="timezone">
           {t("settings.timezone")}
         </label>
-        <div className="settings-control">
-          <select id="timezone" className="settings-select" value={timezone}
+        <div className={styles.control}>
+          <select id="timezone" className={styles.select} value={timezone}
             onChange={(e) => { setTimezone(e.target.value); setSaved(false); }}>
             {timezones.map((tz) => (<option key={tz} value={tz}>{tz}</option>))}
           </select>
         </div>
       </div>
 
-      <div className="settings-row">
-        <div className="settings-control">
-          <button className="settings-save" type="button" onClick={handleSave} disabled={saving || !dirty}>
+      <div className={styles.row}>
+        <div className={styles.control}>
+          <button className={styles.save} type="button" onClick={handleSave} disabled={saving || !dirty}>
             {saving ? t("common.saving") : t("common.save")}
           </button>
         </div>
-        {error !== null && <div className="settings-error">{error}</div>}
-        {saved && <div className="settings-saved">{t("common.saved")}</div>}
+        {error !== null && <div className={styles.error}>{error}</div>}
+        {saved && <div className={styles.saved}>{t("common.saved")}</div>}
       </div>
     </div>
   );

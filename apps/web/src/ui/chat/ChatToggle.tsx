@@ -3,6 +3,7 @@
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useChatLayout } from "./ChatLayoutProvider";
+import styles from "./ChatPanel.module.css";
 
 export const ChatToggle = (): ReactElement => {
   const { t } = useTranslation();
@@ -11,7 +12,7 @@ export const ChatToggle = (): ReactElement => {
   return (
     <button
       type="button"
-      className="chat-toggle-floating"
+      className={styles.toggleFloating}
       onClick={() => setIsOpen(true)}
     >
       {t("chat.title")}

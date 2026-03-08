@@ -12,12 +12,14 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
+import { cn } from "@/lib/cn";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { DEFAULT_MODEL_ID } from "@/lib/chatModels";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { ModelSelector } from "./ModelSelector";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
+import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
   mode: "sidebar" | "fullscreen";
@@ -148,14 +150,14 @@ const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): R
       elements.push(
         <details
           key={`tc-${i}`}
-          className={`chat-tool-call${part.status === "started" ? " chat-tool-call-started" : ""}`}
+          className={cn(styles.toolCall, part.status === "started" ? styles.toolCallStarted : "")}
         >
-          <summary className="chat-tool-call-summary">{label}</summary>
+          <summary className={styles.toolCallSummary}>{label}</summary>
           {displayInput !== null && (
-            <pre className="chat-tool-call-input">{displayInput}</pre>
+            <pre className={styles.toolCallInput}>{displayInput}</pre>
           )}
           {displayOutput !== null && (
-            <pre className="chat-tool-call-output">{displayOutput}</pre>
+            <pre className={styles.toolCallOutput}>{displayOutput}</pre>
           )}
         </details>,
       );
@@ -485,7 +487,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     setInputText(value);
   };
 
-  const rootClass = mode === "sidebar" ? "chat-sidebar" : "chat-sidebar-fullscreen";
+  const rootClass = mode === "sidebar" ? styles.sidebar : styles.sidebarFullscreen;
   const sidebarStyle = mode === "sidebar" ? { width: localWidth } : undefined;
 
   return (
@@ -497,19 +499,19 @@ export const ChatPanel = (props: Props): ReactElement => {
       onDragOver={handleDragOver}
       onDrop={(e) => void handleDrop(e)}
     >
-      {isDragOver && <div className="chat-drop-overlay">{t("chat.dropFiles")}</div>}
+      {isDragOver && <div className={styles.dropOverlay}>{t("chat.dropFiles")}</div>}
       {mode === "sidebar" && (
         <div
-          className={`chat-resize-handle${isDragging ? " dragging" : ""}`}
+          className={cn(styles.resizeHandle, isDragging ? styles.resizeHandleDragging : "")}
           onMouseDown={(e) => { e.preventDefault(); setIsDragging(true); }}
         />
       )}
-      <div className="chat-header">
-        <span className="chat-header-title">{t("chat.title")}</span>
-        <div className="chat-header-actions">
+      <div className={styles.header}>
+        <span className={styles.headerTitle}>{t("chat.title")}</span>
+        <div className={styles.headerActions}>
           <button
             type="button"
-            className="chat-close-btn"
+            className={styles.closeButton}
             onClick={() => {
               if (abortRef.current !== null) {
                 abortRef.current.abort();
@@ -524,7 +526,7 @@ export const ChatPanel = (props: Props): ReactElement => {
           {mode === "sidebar" && (
             <button
               type="button"
-              className="chat-close-btn"
+              className={styles.closeButton}
               onClick={() => setIsOpen(false)}
             >
               &laquo;
@@ -533,17 +535,17 @@ export const ChatPanel = (props: Props): ReactElement => {
         </div>
       </div>
 
-      <div className="chat-messages" ref={messagesRef}>
+      <div className={styles.messages} ref={messagesRef}>
         {messages.length === 0 && (
-          <div className="chat-empty">
-            <p className="chat-empty-title">{t("chat.emptyTitle")}</p>
-            <ul className="chat-empty-list">
+          <div className={styles.empty}>
+            <p className={styles.emptyTitle}>{t("chat.emptyTitle")}</p>
+            <ul className={styles.emptyList}>
               <li>{t("chat.example1")}</li>
               <li>{t("chat.example2")}</li>
               <li>{t("chat.example3")}</li>
             </ul>
-            <p className="chat-empty-title">{t("chat.attachTitle")}</p>
-            <ul className="chat-empty-list">
+            <p className={styles.emptyTitle}>{t("chat.attachTitle")}</p>
+            <ul className={styles.emptyList}>
               <li>{t("chat.attachPdf")}</li>
               <li>{t("chat.attachCsv")}</li>
               <li>{t("chat.attachScreenshots")}</li>
@@ -556,7 +558,11 @@ export const ChatPanel = (props: Props): ReactElement => {
           return (
             <div
               key={`${msg.timestamp}-${i}`}
-              className={`chat-msg chat-msg-${msg.role}${msg.isError ? " chat-msg-error" : ""}`}
+              className={cn(
+                styles.message,
+                msg.role === "user" ? styles.messageUser : styles.messageAssistant,
+                msg.isError ? styles.messageError : "",
+              )}
             >
               {renderMessageContent(msg, t)}
               {isLastAssistant && (() => {
@@ -564,8 +570,8 @@ export const ChatPanel = (props: Props): ReactElement => {
                 const isToolRunning = lastPart !== undefined && lastPart.type === "tool_call" && lastPart.status === "started";
                 if (isToolRunning) return null;
                 return (
-                  <span className="chat-streaming-indicator">
-                    <span className="chat-dots" />
+                  <span className={styles.streamingIndicator}>
+                    <span className={styles.dots} />
                   </span>
                 );
               })()}
@@ -574,15 +580,15 @@ export const ChatPanel = (props: Props): ReactElement => {
         })}
       </div>
 
-      <div className="chat-input-area">
+      <div className={styles.inputArea}>
         {pendingAttachments.length > 0 && (
-          <div className="chat-attachment-preview">
+          <div className={styles.attachmentPreview}>
             {pendingAttachments.map((att, i) => (
-              <span key={`${att.fileName}-${i}`} className="chat-attachment-chip">
+              <span key={`${att.fileName}-${i}`} className={styles.attachmentChip}>
                 {att.fileName}
                 <button
                   type="button"
-                  className="chat-attachment-remove"
+                  className={styles.attachmentRemove}
                   onClick={() => removeAttachment(i)}
                 >
                   &times;
@@ -593,20 +599,20 @@ export const ChatPanel = (props: Props): ReactElement => {
         )}
         <textarea
           ref={textareaRef}
-          className="chat-textarea"
+          className={styles.textarea}
           placeholder={t("chat.placeholder")}
           value={inputText}
           onChange={(e) => handleInput(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={1}
         />
-        <div className="chat-controls">
+        <div className={styles.controls}>
           <ModelSelector value={selectedModel} onChange={handleModelChange} locked={messages.length > 0 || isStreaming} />
-          <div className="chat-controls-right">
+          <div className={styles.controlsRight}>
             <FileAttachment onAttach={handleAttach} />
             <button
               type="button"
-              className="chat-send-btn"
+              className={styles.sendButton}
               disabled={isStreaming}
               onClick={() => void sendMessage()}
             >

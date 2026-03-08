@@ -1,0 +1,6 @@
+.label {
+  margin-inline-start: auto;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.5px;
+}

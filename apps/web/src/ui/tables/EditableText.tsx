@@ -2,7 +2,10 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { cn } from "@/lib/cn";
+
 import { CellComboOverlay } from "./CellComboOverlay";
+import styles from "./TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
@@ -18,7 +21,7 @@ type Props = Readonly<{
 
 export const EditableText = (props: Props): ReactElement => {
   const { entryId, currentValue, maskClass, onCommit, cellClass, hints, allowEmptyString } = props;
-  const tdClass = cellClass !== undefined ? `txn-cell ${cellClass}` : "txn-cell";
+  const tdClass = cn(styles.cell, cellClass);
 
   const [editing, setEditing] = useState<boolean>(false);
   const [editValue, setEditValue] = useState<string>("");
@@ -82,7 +85,7 @@ export const EditableText = (props: Props): ReactElement => {
   return (
     <td
       ref={cellRef}
-      className={`${tdClass}${isMasked ? "" : " drilldown-editable"}${maskClass}`}
+      className={cn(tdClass, !isMasked ? styles.editable : "", maskClass)}
       onClick={isMasked ? undefined : startEditing}
     >
       {currentValue === null || currentValue.length === 0 ? "\u2014" : currentValue}
@@ -98,7 +101,7 @@ export const EditableText = (props: Props): ReactElement => {
       {editing && rect !== null && !hasHints && createPortal(
         <input
           ref={inputRef}
-          className="cell-editor-overlay"
+          className={styles.editorOverlay}
           type="text"
           value={editValue}
           style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }}

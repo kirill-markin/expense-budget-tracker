@@ -2,6 +2,7 @@
 
 import type { ReactElement } from "react";
 import { CHAT_MODELS, type ChatModelVendor } from "@/lib/chatModels";
+import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
   value: string;
@@ -21,12 +22,12 @@ export const ModelSelector = (props: Props): ReactElement => {
 
   if (locked) {
     const model = CHAT_MODELS.find((m) => m.id === value);
-    return <span className="chat-model-label">{model?.label ?? value}</span>;
+    return <span className={styles.modelLabel}>{model?.label ?? value}</span>;
   }
 
   return (
     <select
-      className="chat-model-select"
+      className={styles.modelSelect}
       value={value}
       onChange={(e) => onChange(e.target.value)}
     >

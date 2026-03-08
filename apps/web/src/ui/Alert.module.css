@@ -1,0 +1,12 @@
+.alert {
+  border: 1px solid #c0392b;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #c0392b;
+}
+
+.alert strong {
+  display: block;
+  margin-bottom: 4px;
+}

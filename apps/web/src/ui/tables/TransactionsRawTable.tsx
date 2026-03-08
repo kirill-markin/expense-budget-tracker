@@ -4,11 +4,14 @@ import { type ReactElement } from "react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { cn } from "@/lib/cn";
 import { fetchWithCsrf } from "@/lib/csrf";
 import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
+import alertStyles from "@/ui/Alert.module.css";
 
 import { DataTable } from "./data-table/DataTable";
+import tableStyles from "./TableUi.module.css";
 import type { ColumnDef, PageResult } from "./data-table/types";
 import { useInfiniteScroll } from "./data-table/useInfiniteScroll";
 import { useTableSort } from "./data-table/useTableSort";
@@ -411,7 +414,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           currentValue={row.note}
           maskClass={getMaskClass(row.category)}
           onCommit={handleNoteCommit}
-          cellClass="txn-cell-note"
+          cellClass={tableStyles.cellNote}
           hints={hints.notes}
         />
       ),
@@ -423,10 +426,10 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
       key: "delete",
       header: "",
       renderCell: (row: LedgerEntry): ReactElement => (
-        <span className="txn-cell-delete">
+        <span className={tableStyles.cellDelete}>
           <button
             type="button"
-            className="txn-delete-btn"
+            className={tableStyles.deleteButton}
             onClick={() => handleDelete(row.entryId)}
           >
             &#x2715;
@@ -448,29 +451,29 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className="txn-filters">
-        <label className="txn-filter-label">
+      <div className={tableStyles.filters}>
+        <label className={tableStyles.filterLabel}>
           {t("common.from")}
           <input
             type="date"
-            className="txn-filter-input"
+            className={tableStyles.filterInput}
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
           />
         </label>
-        <label className="txn-filter-label">
+        <label className={tableStyles.filterLabel}>
           {t("common.to")}
           <input
             type="date"
-            className="txn-filter-input"
+            className={tableStyles.filterInput}
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
           />
         </label>
-        <label className="txn-filter-label">
+        <label className={tableStyles.filterLabel}>
           {t("table.account")}
           <select
-            className="txn-filter-input"
+            className={tableStyles.filterInput}
             value={selectedAccount}
             onChange={(e) => setSelectedAccount(e.target.value)}
           >
@@ -481,23 +484,23 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           </select>
         </label>
         {!scroll.loading && (
-          <span className="txn-filter-count">
+          <span className={tableStyles.filterCount}>
             {t("txn.countLabel", { shown: rows.length, total: scroll.total })}
           </span>
         )}
-        <button type="button" className="txn-add-row-btn" onClick={handleAddRow}>
+        <button type="button" className={tableStyles.addRowButton} onClick={handleAddRow}>
           {t("txn.addRow")}
         </button>
       </div>
 
       {errorMessage !== null && (
-        <div className="budget-alert">
+        <div className={alertStyles.alert}>
           <strong>{errorTitle}</strong>
           <span>{errorMessage}</span>
         </div>
       )}
 
-      <div className="txn-scroll">
+      <div className={tableStyles.scroll}>
         <DataTable<LedgerEntry>
           columns={columns}
           rows={rows}

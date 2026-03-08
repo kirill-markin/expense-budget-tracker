@@ -6,8 +6,10 @@ import type { ReactElement } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { cn } from "@/lib/cn";
 import { isCategoryVisible } from "@/lib/dataMask";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
+import styles from "@/ui/charts/ExpenseTreemapChart.module.css";
 
 type Props = Readonly<{
   entries: ReadonlyArray<LedgerEntry>;
@@ -165,7 +167,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
 
   if (categoryNodes.length === 0 && !masked) {
     return (
-      <div className="treemap-wrap">
+      <div className={styles.wrap}>
         <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Expense treemap">
           <text x={WIDTH / 2} y={HEIGHT / 2} textAnchor="middle" fill="#898989" fontSize={14}>
             {t("chart.noSpendData")}
@@ -178,12 +180,12 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
   return (
     <>
       {!masked && (
-        <div className="treemap-total">
+        <div className={styles.total}>
           {fmtTotal(grandTotal, reportingCurrency)}
         </div>
       )}
 
-      <div ref={wrapRef} className={`treemap-wrap${masked ? " data-masked" : ""}`}>
+      <div ref={wrapRef} className={cn(styles.wrap, masked ? "data-masked" : "")}>
         <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Expense treemap">
           {!masked && categoryNodes.map((catNode, ci) => {
             const catName = catNode.data.name;
@@ -297,29 +299,29 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
         {/* Hover tooltip */}
         {hover !== null && (
           <div
-            className="treemap-tooltip"
+            className={styles.tooltip}
             style={{
               left: `${hover.pxLeft}px`,
               top: `${hover.pxTop}px`,
               transform: `translate(${hover.flipLeft ? "calc(-100% - 8px)" : "8px"}, ${hover.flipUp ? "calc(-100% - 8px)" : "8px"})`,
             }}
           >
-            <div className="treemap-tooltip-amount">
+            <div className={styles.tooltipAmount}>
               {fmtCurrency(Math.abs(hover.entry.amount), hover.entry.currency)}
             </div>
             {hover.entry.amountUsd !== null && hover.entry.currency !== reportingCurrency && (
-              <div className="treemap-tooltip-converted">
+              <div className={styles.tooltipConverted}>
                 ≈ {fmtCurrency(Math.abs(hover.entry.amountUsd), reportingCurrency)}
               </div>
             )}
             {hover.entry.counterparty !== null && (
-              <div className="treemap-tooltip-row">{hover.entry.counterparty}</div>
+              <div className={styles.tooltipRow}>{hover.entry.counterparty}</div>
             )}
-            <div className="treemap-tooltip-row treemap-tooltip-muted">
+            <div className={cn(styles.tooltipRow, styles.tooltipMuted)}>
               {hover.entry.category ?? uncategorizedLabel} · {fmtDate(hover.entry.ts)}
             </div>
             {hover.entry.note !== null && (
-              <div className="treemap-tooltip-row treemap-tooltip-muted">{hover.entry.note}</div>
+              <div className={cn(styles.tooltipRow, styles.tooltipMuted)}>{hover.entry.note}</div>
             )}
           </div>
         )}

@@ -1,0 +1,405 @@
+.scroll {
+  overflow-x: auto;
+  padding-inline-end: 16px;
+  margin-bottom: 24px;
+}
+
+.sectionTitle {
+  margin: 24px 0 8px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.table {
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+  min-width: 100%;
+}
+
+.headCell {
+  padding: 6px 10px;
+  text-align: start;
+  font-weight: 650;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.headCellRight {
+  text-align: end;
+}
+
+.headCellSortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.headCellSortable:hover {
+  color: var(--muted);
+}
+
+.row:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.rowTotal {
+  border-top: 1px solid var(--panel-border);
+}
+
+.rowInactive {
+  opacity: 0.5;
+}
+
+.cell {
+  padding: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cellRight {
+  text-align: end;
+  min-width: 90px;
+}
+
+.cellBold {
+  font-weight: 650;
+}
+
+.cellMono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.stale {
+  color: #c0392b;
+}
+
+.statusInactive {
+  color: var(--muted);
+}
+
+.infoIcon {
+  display: inline-block;
+  margin-inline-start: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.infoIcon:hover {
+  color: var(--text);
+}
+
+.infoPopup {
+  position: absolute;
+  top: 100%;
+  inset-inline-start: 0;
+  z-index: 10;
+  margin-top: 4px;
+  padding: 8px 12px;
+  max-width: 280px;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: normal;
+  color: #f0f0f0;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.filters {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding-inline-end: 16px;
+  margin-bottom: 12px;
+}
+
+.filterLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.filterInput {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.filterCount {
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 4px;
+}
+
+.addRowButton {
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.addRowButton:hover {
+  border-color: var(--text);
+}
+
+.cellNote {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cellDelete {
+  width: 24px;
+  display: inline-block;
+  text-align: center;
+}
+
+.deleteButton {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  line-height: 1;
+}
+
+.row:hover .deleteButton {
+  opacity: 1;
+}
+
+.deleteButton:hover {
+  color: #c0392b;
+}
+
+.scrollSentinel {
+  min-height: 1px;
+  padding: 8px 0;
+}
+
+.overlayBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 100;
+}
+
+.sidePanel {
+  position: fixed;
+  top: 0;
+  inset-inline-end: 0;
+  bottom: 0;
+  width: 70vw;
+  max-width: 95vw;
+  min-width: 320px;
+  background: var(--bg);
+  border-inline-start: 1px solid var(--panel-border);
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelResizeHandle {
+  position: absolute;
+  top: 0;
+  inset-inline-start: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 102;
+}
+
+.panelResizeHandle:hover,
+.panelResizeHandleDragging {
+  background: var(--panel-border);
+  opacity: 0.4;
+}
+
+.panelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--panel-border);
+  flex-shrink: 0;
+}
+
+.panelHeaderActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.panelTitle {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.panelSubtitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.panelCloseButton {
+  background: none;
+  border: 1px solid var(--panel-border);
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.panelCloseButton:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.panelCount {
+  padding: 8px 16px 0;
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.panelBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.editable {
+  cursor: pointer;
+}
+
+.editable:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.editableSelect::after {
+  content: " \25BE";
+  color: var(--muted);
+  font-size: 10px;
+  opacity: 0;
+}
+
+.editableSelect:hover::after {
+  opacity: 1;
+}
+
+.input {
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  padding: 1px 4px;
+  width: 100%;
+  outline: none;
+}
+
+.editorOverlay {
+  position: fixed;
+  z-index: 200;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  white-space: nowrap;
+  background: var(--bg);
+  color: var(--text);
+  border: none;
+  outline: none;
+  box-shadow: 0 0 0 1px var(--panel-border), 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-sizing: border-box;
+}
+
+.selectOverlay {
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--panel-border), 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-sizing: border-box;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.selectSearch {
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.selectOptions {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.selectOption {
+  display: block;
+  width: 100%;
+  padding: 4px 10px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.selectOption:hover,
+.selectOptionHighlight {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.selectOptionActive {
+  font-weight: 650;
+}
+
+@media (max-width: 768px) {
+  .sidePanel {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0;
+    inset-inline-start: 0;
+  }
+
+  .panelResizeHandle {
+    display: none;
+  }
+}

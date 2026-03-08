@@ -4,11 +4,14 @@ import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { cn } from "@/lib/cn";
 import { fetchWithCsrf } from "@/lib/csrf";
 import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFormat } from "@/ui/FormatProvider";
+import alertStyles from "@/ui/Alert.module.css";
 
 import { DataTable } from "./data-table/DataTable";
+import tableStyles from "./TableUi.module.css";
 import type { ColumnDef, PageResult } from "./data-table/types";
 import { useInfiniteScroll } from "./data-table/useInfiniteScroll";
 import { useTableSort } from "./data-table/useTableSort";
@@ -475,7 +478,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           currentValue={row.note}
           maskClass=""
           onCommit={handleNoteCommit}
-          cellClass="txn-cell-note"
+          cellClass={tableStyles.cellNote}
           hints={hints.notes}
         />
       ),
@@ -487,10 +490,10 @@ export const DrillDownPanel = (props: Props): ReactElement => {
       key: "delete",
       header: "",
       renderCell: (row: LedgerEntry): ReactElement => (
-        <span className="txn-cell-delete">
+        <span className={tableStyles.cellDelete}>
           <button
             type="button"
-            className="txn-delete-btn"
+            className={tableStyles.deleteButton}
             onClick={() => handleDelete(row.entryId)}
           >
             &#x2715;
@@ -516,41 +519,41 @@ export const DrillDownPanel = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className="drilldown-overlay" onClick={closePanel} />
-      <div className="drilldown-panel" ref={panelRef} style={panelWidth !== null ? { width: panelWidth } : undefined}>
+      <div className={tableStyles.overlayBackdrop} onClick={closePanel} />
+      <div className={tableStyles.sidePanel} ref={panelRef} style={panelWidth !== null ? { width: panelWidth } : undefined}>
         <div
-          className={`drilldown-resize-handle${isDragging ? " dragging" : ""}`}
+          className={cn(tableStyles.panelResizeHandle, isDragging ? tableStyles.panelResizeHandleDragging : "")}
           onMouseDown={(e) => { e.preventDefault(); setIsDragging(true); }}
         />
-        <div className="drilldown-header">
+        <div className={tableStyles.panelHeader}>
           <div>
-            <div className="drilldown-title">{buildTitle(filter)}</div>
-            <div className="drilldown-subtitle">{buildSubtitle(filter)}</div>
+            <div className={tableStyles.panelTitle}>{buildTitle(filter)}</div>
+            <div className={tableStyles.panelSubtitle}>{buildSubtitle(filter)}</div>
           </div>
-          <div className="drilldown-header-actions">
-            <button className="txn-add-row-btn" type="button" onClick={handleAddRow}>
+          <div className={tableStyles.panelHeaderActions}>
+            <button className={tableStyles.addRowButton} type="button" onClick={handleAddRow}>
               {t("txn.addRow")}
             </button>
-            <button className="drilldown-close" type="button" onClick={closePanel}>
+            <button className={tableStyles.panelCloseButton} type="button" onClick={closePanel}>
               &times;
             </button>
           </div>
         </div>
 
         {!scroll.loading && (
-          <div className="drilldown-count">
+          <div className={tableStyles.panelCount}>
             {scroll.total} {scroll.total === 1 ? "entry" : "entries"}
           </div>
         )}
 
         {errorMessage !== null && (
-          <div className="budget-alert" style={{ margin: "8px 16px" }}>
+          <div className={alertStyles.alert} style={{ margin: "8px 16px" }}>
             <strong>{errorTitle}</strong>
             <span>{errorMessage}</span>
           </div>
         )}
 
-        <div className="drilldown-body">
+        <div className={tableStyles.panelBody}>
           <DataTable<LedgerEntry>
             columns={columns}
             rows={rows}

@@ -1,8 +1,10 @@
 import { type ReactElement, useRef, useState } from "react";
 
+import { cn } from "@/lib/cn";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
 import { CellSelectOverlay } from "./CellSelectOverlay";
+import styles from "./TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
@@ -44,7 +46,7 @@ export const EditableCategory = (props: Props): ReactElement => {
   return (
     <td
       ref={cellRef}
-      className={`txn-cell${isMasked ? "" : " drilldown-editable drilldown-editable-select"}${maskClass}`}
+      className={cn(styles.cell, !isMasked ? styles.editable : "", !isMasked ? styles.editableSelect : "", maskClass)}
       onClick={isMasked ? undefined : handleClick}
     >
       {entry.category ?? "\u2014"}

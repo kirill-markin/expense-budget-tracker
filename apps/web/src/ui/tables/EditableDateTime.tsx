@@ -2,9 +2,11 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { cn } from "@/lib/cn";
 import { useFormat } from "@/ui/FormatProvider";
 
 import { formatDateTime } from "./format";
+import styles from "./TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
@@ -80,14 +82,14 @@ export const EditableDateTime = (props: Props): ReactElement => {
   return (
     <td
       ref={cellRef}
-      className={`txn-cell txn-cell-mono${isMasked ? "" : " drilldown-editable"}${maskClass}`}
+      className={cn(styles.cell, styles.cellMono, !isMasked ? styles.editable : "", maskClass)}
       onClick={isMasked ? undefined : startEditing}
     >
       {formatDateTime(currentValue, dateFormat)}
       {editing && rect !== null && createPortal(
         <input
           ref={inputRef}
-          className="cell-editor-overlay"
+          className={styles.editorOverlay}
           type="datetime-local"
           value={editValue}
           style={{

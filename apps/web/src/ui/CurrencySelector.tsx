@@ -1,5 +1,7 @@
 import type { ReactElement } from "react";
 
+import styles from "./CurrencySelector.module.css";
+
 type Props = Readonly<{
   initialCurrency: string;
   titleText: string;
@@ -10,7 +12,7 @@ export const CurrencySelector = (props: Props): ReactElement => {
   const { initialCurrency, titleText } = props;
 
   return (
-    <span className="currency-label" title={titleText}>
+    <span className={styles.label} title={titleText}>
       {initialCurrency}
     </span>
   );

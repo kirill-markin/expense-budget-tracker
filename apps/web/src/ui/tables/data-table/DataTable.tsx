@@ -1,6 +1,9 @@
 import { type ReactElement } from "react";
 
+import { cn } from "@/lib/cn";
+
 import { sortIndicator } from "../format";
+import styles from "../TableUi.module.css";
 import type { DataTableProps, SortEntry } from "./types";
 
 const findSortEntry = (sort: ReadonlyArray<SortEntry> | null, sortKey: string | null): { entry: SortEntry; position: number } | null => {
@@ -15,7 +18,7 @@ export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
 
   return (
     <>
-      <table className="txn-table">
+      <table className={styles.table}>
         <thead>
           <tr>
             {columns.map((col) => {
@@ -24,7 +27,11 @@ export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
               return (
                 <th
                   key={col.key}
-                  className={`txn-th${sortable ? " txn-th-sortable" : ""}${col.rightAlign ? " txn-th-right" : ""}`}
+                  className={cn(
+                    styles.headCell,
+                    sortable ? styles.headCellSortable : "",
+                    col.rightAlign ? styles.headCellRight : "",
+                  )}
                   onClick={sortable ? () => onSort(col.sortKey!) : undefined}
                 >
                   {col.header}{found !== null ? sortIndicator(true, found.entry.dir, found.position) : ""}
@@ -35,13 +42,13 @@ export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
         </thead>
         <tbody>
           {rows.map((row, idx) => (
-            <tr key={rowKey(row, idx)} className={rowClassName !== undefined ? rowClassName(row, idx) : "txn-row"}>
+            <tr key={rowKey(row, idx)} className={rowClassName !== undefined ? rowClassName(row, idx) : styles.row}>
               {columns.map((col) => col.renderCell(row, idx))}
             </tr>
           ))}
           {!loading && rows.length === 0 && (
             <tr>
-              <td className="txn-cell" colSpan={columns.length} style={{ textAlign: "center", color: "var(--muted)" }}>
+              <td className={styles.cell} colSpan={columns.length} style={{ textAlign: "center", color: "var(--muted)" }}>
                 {emptyMessage}
               </td>
             </tr>
@@ -51,7 +58,7 @@ export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
       </table>
 
       {sentinelRef !== null && (
-        <div ref={sentinelRef} className="txn-scroll-sentinel">
+        <div ref={sentinelRef} className={styles.scrollSentinel}>
           {loading && <span className="loading-indicator">Loading<span className="loading-dots" /></span>}
           {loadingMore && <span className="loading-indicator">Loading more<span className="loading-dots" /></span>}
         </div>

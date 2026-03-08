@@ -3,9 +3,11 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { cn } from "@/lib/cn";
 import { useFormat } from "@/ui/FormatProvider";
 import { formatAmount, isDecember } from "@/ui/tables/budgetTableLogic";
 import { postBudgetPlan, postBudgetPlanFill, fetchComment, postComment } from "@/ui/tables/budgetTableApi";
+import styles from "@/ui/tables/BudgetTable.module.css";
 
 const POPOVER_WIDTH = 240;
 
@@ -211,69 +213,69 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const canFill = !isDecember(month);
 
   const modifierIconClass = direction === "income"
-    ? (plannedModifier > 0 ? "budget-icon-good" : "budget-icon-bad")
-    : (plannedModifier > 0 ? "budget-icon-bad-up" : "budget-icon-good-down");
+    ? (plannedModifier > 0 ? styles.iconGood : styles.iconBad)
+    : (plannedModifier > 0 ? styles.iconBadUp : styles.iconGoodDown);
 
   return (
     <td
       ref={cellRef}
-      className={`budget-cell budget-cell-editable${cmClass}${maskClass}${taintedClass}${isPlanOver ? " budget-over" : ""}`}
+      className={cn(styles.cell, styles.cellEditable, cmClass, maskClass, taintedClass, isPlanOver ? styles.over : "")}
       onClick={isOpen ? undefined : openPopover}
     >
       {showData && plannedModifier !== 0 && (
-        <span className={`budget-icon-modifier ${modifierIconClass}`} />
+        <span className={cn(styles.iconModifier, modifierIconClass)} />
       )}
       {formatAmount(planned, numberFormat)}
       {isOpen && createPortal(
         <div
           ref={popoverRef}
-          className="budget-popover"
+          className={styles.popover}
           style={{ top: popoverPos.top, left: popoverPos.left }}
         >
-          <label className="budget-popover-field">
-            <span className="budget-popover-label">{t("budget.popoverAdjust")}</span>
+          <label className={styles.popoverField}>
+            <span className={styles.popoverLabel}>{t("budget.popoverAdjust")}</span>
             <input
               ref={adjustInputRef}
               type="number"
-              className="budget-popover-input"
+              className={styles.popoverInput}
               value={modifierInput}
               onChange={(e) => setModifierInput(e.target.value)}
               onKeyDown={handleModifierKeyDown}
             />
           </label>
-          <label className="budget-popover-field">
-            <span className="budget-popover-label">{t("budget.popoverBase")}</span>
+          <label className={styles.popoverField}>
+            <span className={styles.popoverLabel}>{t("budget.popoverBase")}</span>
             <input
               type="number"
-              className="budget-popover-input"
+              className={styles.popoverInput}
               value={baseInput}
               onChange={(e) => setBaseInput(e.target.value)}
               onKeyDown={handleBaseKeyDown}
             />
           </label>
-          <div className="budget-popover-divider" />
-          <div className="budget-popover-total">
-            <span className="budget-popover-label">{t("budget.popoverTotal")}</span>
-            <span className="budget-popover-total-value">{formatAmount(computedTotal, numberFormat)}</span>
+          <div className={styles.popoverDivider} />
+          <div className={styles.popoverTotal}>
+            <span className={styles.popoverLabel}>{t("budget.popoverTotal")}</span>
+            <span className={styles.popoverTotalValue}>{formatAmount(computedTotal, numberFormat)}</span>
           </div>
           {canFill && (
             <>
-              <div className="budget-popover-divider" />
+              <div className={styles.popoverDivider} />
               <button
                 type="button"
-                className="budget-popover-fill-btn"
+                className={styles.popoverFillButton}
                 onClick={handleFill}
               >
                 {t("budget.popoverFill")}
               </button>
             </>
           )}
-          <div className="budget-popover-divider" />
+          <div className={styles.popoverDivider} />
           {isLoadingComment
-            ? <span className="budget-popover-loading">{t("common.loading")}</span>
+            ? <span className={styles.popoverLoading}>{t("common.loading")}</span>
             : (
               <textarea
-                className="budget-popover-comment"
+                className={styles.popoverComment}
                 rows={2}
                 placeholder={t("budget.popoverNote")}
                 value={commentInput}

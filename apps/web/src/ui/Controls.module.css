@@ -1,0 +1,33 @@
+.segmented {
+  display: inline-flex;
+}
+
+.segment {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  margin-inline-start: -1px;
+}
+
+.segment:first-child {
+  margin-inline-start: 0;
+}
+
+.segment:hover {
+  color: var(--text);
+  border-color: var(--text);
+  z-index: 1;
+  position: relative;
+}
+
+.segmentActive {
+  color: var(--bg);
+  border-color: var(--text);
+  background: var(--text);
+  z-index: 1;
+  position: relative;
+}

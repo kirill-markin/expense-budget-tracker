@@ -4,6 +4,10 @@ import { type ReactElement, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
+import { cn } from "@/lib/cn";
+
+import controlStyles from "@/ui/Controls.module.css";
+import settingsStyles from "@/ui/SettingsForm.module.css";
 
 type Props = Readonly<{
   filteredCategories: ReadonlyArray<string> | null;
@@ -65,21 +69,21 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
   }, [selected]);
 
   return (
-    <div className="settings-form">
-      <div className="settings-row settings-row-wide">
-        <label className="settings-label">
+    <div className={settingsStyles.form}>
+      <div className={cn(settingsStyles.row, settingsStyles.rowWide)}>
+        <label className={settingsStyles.label}>
           {t("settings.filteredCategoriesLabel")}
         </label>
-        <p className="settings-label" style={{ margin: 0 }}>
+        <p className={settingsStyles.label} style={{ margin: 0 }}>
           {t("settings.filteredCategoriesHint")}
         </p>
-        <div className="filtered-cats-actions">
-          <button type="button" className="data-mask-seg" onClick={selectAll}>{t("settings.selectAll")}</button>
-          <button type="button" className="data-mask-seg" onClick={clearAll}>{t("settings.clear")}</button>
+        <div className={settingsStyles.filteredActions}>
+          <button type="button" className={controlStyles.segment} onClick={selectAll}>{t("settings.selectAll")}</button>
+          <button type="button" className={controlStyles.segment} onClick={clearAll}>{t("settings.clear")}</button>
         </div>
-        <div className="filtered-cats-list">
+        <div className={settingsStyles.filteredList}>
           {allCategories.map((cat) => (
-            <label key={cat} className="filtered-cats-item">
+            <label key={cat} className={settingsStyles.filteredItem}>
               <input
                 type="checkbox"
                 checked={selected.has(cat)}
@@ -89,12 +93,12 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
             </label>
           ))}
           {allCategories.length === 0 && (
-            <span className="settings-label">{t("settings.noCategories")}</span>
+            <span className={settingsStyles.label}>{t("settings.noCategories")}</span>
           )}
         </div>
-        <div className="settings-control">
+        <div className={settingsStyles.control}>
           <button
-            className="settings-save"
+            className={settingsStyles.save}
             type="button"
             onClick={handleSave}
             disabled={saving || !dirty}
@@ -102,8 +106,8 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
             {saving ? t("common.saving") : t("common.save")}
           </button>
         </div>
-        {error !== null && <div className="settings-error">{error}</div>}
-        {saved && <div className="settings-saved">{t("common.saved")}</div>}
+        {error !== null && <div className={settingsStyles.error}>{error}</div>}
+        {saved && <div className={settingsStyles.saved}>{t("common.saved")}</div>}
       </div>
     </div>
   );

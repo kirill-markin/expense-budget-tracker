@@ -3,8 +3,11 @@
 import { type ReactElement, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { cn } from "@/lib/cn";
 import { fetchWithCsrf } from "@/lib/csrf";
 import type { ApiKeyRow } from "@/server/apiKeys";
+
+import settingsStyles from "@/ui/SettingsForm.module.css";
 
 type Props = Readonly<{
   initialKeys: ReadonlyArray<ApiKeyRow>;
@@ -100,16 +103,16 @@ export const ApiKeyManager = (props: Props): ReactElement => {
   }, [createdKey]);
 
   return (
-    <div className="settings-form">
+    <div className={settingsStyles.form}>
       {/* Key just created — show-once display */}
       {createdKey !== null && (
         <>
-          <p className="settings-warning">
+          <p className={settingsStyles.warning}>
             {t("apiKeys.copyWarning")}
           </p>
-          <div className="settings-codeblock">
+          <div className={settingsStyles.codeblock}>
             <button
-              className="settings-codeblock-copy"
+              className={settingsStyles.codeblockCopy}
               type="button"
               onClick={handleCopy}
             >
@@ -119,7 +122,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
           </div>
           <details>
             <summary>{t("apiKeys.exampleCurl")}</summary>
-            <div className="settings-codeblock">
+            <div className={settingsStyles.codeblock}>
               <pre>{formatCurlExample(createdKey.key)}</pre>
             </div>
           </details>
@@ -127,17 +130,17 @@ export const ApiKeyManager = (props: Props): ReactElement => {
       )}
 
       {/* Create new key */}
-      <div className="settings-control">
+      <div className={settingsStyles.control}>
         <input
           type="text"
-          className="settings-input"
+          className={settingsStyles.input}
           placeholder={t("apiKeys.labelPlaceholder")}
           value={label}
           onChange={(e) => { setLabel(e.target.value); }}
           maxLength={200}
         />
         <button
-          className="settings-save"
+          className={settingsStyles.save}
           type="button"
           onClick={handleCreate}
           disabled={loading}
@@ -148,7 +151,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
 
       {/* Key list */}
       {keys.length > 0 && (
-        <table className="settings-table">
+        <table className={settingsStyles.table}>
           <thead>
             <tr>
               <th>{t("apiKeys.prefix")}</th>
@@ -167,7 +170,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
                 <td>{k.lastUsedAt !== null ? formatDate(k.lastUsedAt) : t("apiKeys.never")}</td>
                 <td>
                   <button
-                    className="settings-save settings-save--danger"
+                    className={cn(settingsStyles.save, settingsStyles.saveDanger)}
                     type="button"
                     onClick={() => { handleRevoke(k.id); }}
                     disabled={loading}
@@ -185,7 +188,7 @@ export const ApiKeyManager = (props: Props): ReactElement => {
         <p>{t("apiKeys.emptyState")}</p>
       )}
 
-      {error !== null && <div className="settings-error">{error}</div>}
+      {error !== null && <div className={settingsStyles.error}>{error}</div>}
     </div>
   );
 };

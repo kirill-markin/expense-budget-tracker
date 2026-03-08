@@ -2,6 +2,9 @@
 
 import type { ReactElement } from "react";
 
+import alertStyles from "@/ui/Alert.module.css";
+import controlsStyles from "@/ui/Controls.module.css";
+
 type Props = Readonly<{
   error: Error;
   reset: () => void;
@@ -13,11 +16,11 @@ export default function GlobalError(props: Props): ReactElement {
   return (
     <main className="container">
       <section className="panel">
-        <div className="budget-alert">
+        <div className={alertStyles.alert}>
           <strong>Failed to load page</strong>
           <span>{error.message}</span>
         </div>
-        <button className="data-mask-btn" type="button" onClick={reset}>
+        <button className={controlsStyles.segment} type="button" onClick={reset}>
           Retry
         </button>
       </section>

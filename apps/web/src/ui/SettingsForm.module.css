@@ -1,0 +1,194 @@
+.form {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 360px;
+}
+
+.rowWide {
+  max-width: none;
+}
+
+.label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.select,
+.input {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  min-width: 100px;
+}
+
+.input::placeholder {
+  color: var(--muted);
+}
+
+.select:focus,
+.input:focus {
+  border-color: var(--text);
+}
+
+.save {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.save:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.save:not(:disabled) {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+.save:not(:disabled):hover {
+  opacity: 0.85;
+}
+
+.save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.saveDanger {
+  color: #c0392b;
+  border-color: #c0392b;
+}
+
+.saveDanger:hover {
+  color: #a93226;
+  border-color: #a93226;
+}
+
+.error {
+  color: red;
+  font-size: 12px;
+}
+
+.saved {
+  color: green;
+  font-size: 12px;
+}
+
+.warning {
+  font-size: 13px;
+  color: #c0392b;
+  margin-bottom: 8px;
+}
+
+.codeblock {
+  position: relative;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  max-width: 600px;
+}
+
+.codeblock pre {
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.codeblockCopy {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 8px;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.codeblockCopy:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.table {
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.table th {
+  padding: 6px 10px;
+  text-align: start;
+  font-weight: 650;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.table td {
+  padding: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table tr:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.filteredActions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.filteredList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.filteredItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 2px 0;
+}
+
+.filteredItem input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}

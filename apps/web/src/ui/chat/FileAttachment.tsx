@@ -2,6 +2,7 @@
 
 import { useRef, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import styles from "./ChatPanel.module.css";
 
 export type PendingAttachment = Readonly<{
   fileName: string;
@@ -117,7 +118,7 @@ export const FileAttachment = (props: Props): ReactElement => {
       />
       <button
         type="button"
-        className="chat-attach-btn"
+        className={styles.attachButton}
         onClick={() => inputRef.current?.click()}
       >
         {t("chat.attach")}

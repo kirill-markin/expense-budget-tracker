@@ -3,10 +3,14 @@
 import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { cn } from "@/lib/cn";
 import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBreakdown";
 import { useFormat } from "@/ui/FormatProvider";
+import alertStyles from "@/ui/Alert.module.css";
 
 import { formatAmount } from "./format";
+import budgetStyles from "./BudgetTable.module.css";
+import tableStyles from "./TableUi.module.css";
 
 type Props = Readonly<{
   month: string;
@@ -101,61 +105,61 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className="drilldown-overlay" onClick={closePanel} />
-      <div className="drilldown-panel" ref={panelRef} style={panelWidth !== null ? { width: panelWidth } : undefined}>
+      <div className={tableStyles.overlayBackdrop} onClick={closePanel} />
+      <div className={tableStyles.sidePanel} ref={panelRef} style={panelWidth !== null ? { width: panelWidth } : undefined}>
         <div
-          className={`drilldown-resize-handle${isDragging ? " dragging" : ""}`}
+          className={cn(tableStyles.panelResizeHandle, isDragging ? tableStyles.panelResizeHandleDragging : "")}
           onMouseDown={(e) => { e.preventDefault(); setIsDragging(true); }}
         />
-        <div className="drilldown-header">
+        <div className={tableStyles.panelHeader}>
           <div>
-            <div className="drilldown-title">FX Breakdown</div>
-            <div className="drilldown-subtitle">{month}</div>
+            <div className={tableStyles.panelTitle}>FX Breakdown</div>
+            <div className={tableStyles.panelSubtitle}>{month}</div>
           </div>
-          <button className="drilldown-close" type="button" onClick={closePanel}>
+          <button className={tableStyles.panelCloseButton} type="button" onClick={closePanel}>
             &times;
           </button>
         </div>
 
         {error !== null && (
-          <div className="budget-alert" style={{ margin: "8px 16px" }}>
+          <div className={alertStyles.alert} style={{ margin: "8px 16px" }}>
             <strong>Failed to load FX breakdown</strong>
             <span>{error}</span>
           </div>
         )}
 
-        <div className="drilldown-body">
-          <table className="txn-table">
+        <div className={tableStyles.panelBody}>
+          <table className={tableStyles.table}>
             <thead>
               <tr>
-                <th className="txn-th">Currency</th>
-                <th className="txn-th txn-th-right">Open</th>
-                <th className="txn-th txn-th-right">Rate</th>
-                <th className="txn-th txn-th-right">Open USD</th>
-                <th className="txn-th txn-th-right">Delta</th>
-                <th className="txn-th txn-th-right">Close</th>
-                <th className="txn-th txn-th-right">Rate</th>
-                <th className="txn-th txn-th-right">Close USD</th>
-                <th className="txn-th txn-th-right">Change USD</th>
+                <th className={tableStyles.headCell}>Currency</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Open</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Open USD</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Delta</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Close</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Close USD</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Change USD</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.currency} className="txn-row">
-                  <td className="txn-cell txn-cell-mono">{row.currency}</td>
-                  <td className="txn-cell txn-cell-right">{formatNative(row.openNative)}</td>
-                  <td className="txn-cell txn-cell-right">{formatRate(row.openRate)}</td>
-                  <td className="txn-cell txn-cell-right">{formatAmount(row.openUsd, numberFormat)}</td>
-                  <td className="txn-cell txn-cell-right">{formatNative(row.deltaNative)}</td>
-                  <td className="txn-cell txn-cell-right">{formatNative(row.closeNative)}</td>
-                  <td className="txn-cell txn-cell-right">{formatRate(row.closeRate)}</td>
-                  <td className="txn-cell txn-cell-right">{formatAmount(row.closeUsd, numberFormat)}</td>
-                  <td className={`txn-cell txn-cell-right${row.changeUsd < 0 ? " budget-over" : ""}`}>{formatAmount(row.changeUsd, numberFormat)}</td>
+                <tr key={row.currency} className={tableStyles.row}>
+                  <td className={cn(tableStyles.cell, tableStyles.cellMono)}>{row.currency}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.openNative)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.openRate)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.openUsd, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.deltaNative)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeUsd, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight, row.changeUsd < 0 ? budgetStyles.over : "")}>{formatAmount(row.changeUsd, numberFormat)}</td>
                 </tr>
               ))}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td className="txn-cell" colSpan={9} style={{ textAlign: "center", color: "var(--muted)" }}>
+                  <td className={tableStyles.cell} colSpan={9} style={{ textAlign: "center", color: "var(--muted)" }}>
                     No data for this month.
                   </td>
                 </tr>
@@ -163,23 +167,23 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
             </tbody>
             {rows.length > 0 && (
               <tfoot>
-                <tr className="txn-row" style={{ fontWeight: 600 }}>
-                  <td className="txn-cell">Total</td>
-                  <td className="txn-cell" />
-                  <td className="txn-cell" />
-                  <td className="txn-cell txn-cell-right">{formatAmount(rows.reduce((s, r) => s + r.openUsd, 0), numberFormat)}</td>
-                  <td className="txn-cell" />
-                  <td className="txn-cell" />
-                  <td className="txn-cell" />
-                  <td className="txn-cell txn-cell-right">{formatAmount(rows.reduce((s, r) => s + r.closeUsd, 0), numberFormat)}</td>
-                  <td className={`txn-cell txn-cell-right${totalChange < 0 ? " budget-over" : ""}`}>{formatAmount(totalChange, numberFormat)}</td>
+                <tr className={tableStyles.row} style={{ fontWeight: 600 }}>
+                  <td className={tableStyles.cell}>Total</td>
+                  <td className={tableStyles.cell} />
+                  <td className={tableStyles.cell} />
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.openUsd, 0), numberFormat)}</td>
+                  <td className={tableStyles.cell} />
+                  <td className={tableStyles.cell} />
+                  <td className={tableStyles.cell} />
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.closeUsd, 0), numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight, totalChange < 0 ? budgetStyles.over : "")}>{formatAmount(totalChange, numberFormat)}</td>
                 </tr>
               </tfoot>
             )}
           </table>
 
           {loading && (
-            <span className="loading-indicator">Loading<span className="loading-dots" /></span>
+            <span className={budgetStyles.loadingEdge}>Loading</span>
           )}
         </div>
       </div>

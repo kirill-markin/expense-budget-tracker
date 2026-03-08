@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 import { fetchWithCsrf } from "@/lib/csrf";
 import { type SupportedLocale, type NumberFormat, type DateFormat, SUPPORTED_LOCALES, LOCALE_LABELS, NUMBER_FORMATS, DATE_FORMATS } from "@/lib/locale";
 
+import styles from "@/ui/SettingsForm.module.css";
+
 type Props = Readonly<{
   locale: SupportedLocale;
   numberFormat: NumberFormat;
@@ -56,15 +58,15 @@ export const UserSettingsForm = (props: Props): ReactElement => {
   }, [locale, numberFormat, dateFormat, props.locale, props.numberFormat, props.dateFormat]);
 
   return (
-    <div className="settings-form">
-      <div className="settings-row">
-        <label className="settings-label" htmlFor="user-locale">
+    <div className={styles.form}>
+      <div className={styles.row}>
+        <label className={styles.label} htmlFor="user-locale">
           {t("settings.language")}
         </label>
-        <div className="settings-control">
+        <div className={styles.control}>
           <select
             id="user-locale"
-            className="settings-select"
+            className={styles.select}
             value={locale}
             onChange={(e) => { setLocale(e.target.value as SupportedLocale); setSaved(false); }}
           >
@@ -75,14 +77,14 @@ export const UserSettingsForm = (props: Props): ReactElement => {
         </div>
       </div>
 
-      <div className="settings-row">
-        <label className="settings-label" htmlFor="user-number-format">
+      <div className={styles.row}>
+        <label className={styles.label} htmlFor="user-number-format">
           {t("settings.numberFormat")}
         </label>
-        <div className="settings-control">
+        <div className={styles.control}>
           <select
             id="user-number-format"
-            className="settings-select"
+            className={styles.select}
             value={numberFormat}
             onChange={(e) => { setNumberFormat(e.target.value as NumberFormat); setSaved(false); }}
           >
@@ -93,14 +95,14 @@ export const UserSettingsForm = (props: Props): ReactElement => {
         </div>
       </div>
 
-      <div className="settings-row">
-        <label className="settings-label" htmlFor="user-date-format">
+      <div className={styles.row}>
+        <label className={styles.label} htmlFor="user-date-format">
           {t("settings.dateFormat")}
         </label>
-        <div className="settings-control">
+        <div className={styles.control}>
           <select
             id="user-date-format"
-            className="settings-select"
+            className={styles.select}
             value={dateFormat}
             onChange={(e) => { setDateFormat(e.target.value as DateFormat); setSaved(false); }}
           >
@@ -111,14 +113,14 @@ export const UserSettingsForm = (props: Props): ReactElement => {
         </div>
       </div>
 
-      <div className="settings-row">
-        <div className="settings-control">
-          <button className="settings-save" type="button" onClick={handleSave} disabled={saving || !dirty}>
+      <div className={styles.row}>
+        <div className={styles.control}>
+          <button className={styles.save} type="button" onClick={handleSave} disabled={saving || !dirty}>
             {saving ? t("common.saving") : t("common.save")}
           </button>
         </div>
-        {error !== null && <div className="settings-error">{error}</div>}
-        {saved && <div className="settings-saved">{t("common.saved")}</div>}
+        {error !== null && <div className={styles.error}>{error}</div>}
+        {saved && <div className={styles.saved}>{t("common.saved")}</div>}
       </div>
     </div>
   );

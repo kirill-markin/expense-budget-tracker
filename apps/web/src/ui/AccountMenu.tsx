@@ -4,6 +4,9 @@ import { type FormEvent, type ReactElement, useCallback, useEffect, useRef, useS
 import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
+import { cn } from "@/lib/cn";
+
+import styles from "./AccountMenu.module.css";
 
 type WorkspaceSummary = Readonly<{
   workspaceId: string;
@@ -124,10 +127,10 @@ export const AccountMenu = (props: Props): ReactElement | null => {
   if (!authEnabled) return null;
 
   return (
-    <div className="account-menu-wrap">
+    <div className={styles.wrap}>
       <button
         ref={buttonRef}
-        className="account-menu-btn"
+        className={styles.button}
         type="button"
         onClick={toggle}
         aria-expanded={isOpen}
@@ -136,14 +139,14 @@ export const AccountMenu = (props: Props): ReactElement | null => {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M20 21a8 8 0 0 0-16 0" /></svg>
       </button>
       {isOpen && (
-        <div ref={menuRef} className="account-menu-dropdown">
+        <div ref={menuRef} className={styles.dropdown}>
           {workspaces.length > 0 && (
             <>
-              <div className="account-menu-section-label">{t("account.workspaces")}</div>
+              <div className={styles.sectionLabel}>{t("account.workspaces")}</div>
               {workspaces.map((ws) => (
                 <button
                   key={ws.workspaceId}
-                  className={`account-menu-item${ws.workspaceId === currentWorkspaceId ? " account-menu-item-active" : ""}`}
+                  className={cn(styles.item, ws.workspaceId === currentWorkspaceId ? styles.itemActive : "")}
                   type="button"
                   onClick={() => handleSwitch(ws.workspaceId)}
                 >
@@ -154,7 +157,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
           )}
           {!isCreating && (
             <button
-              className="account-menu-item account-menu-item-create"
+              className={cn(styles.item, styles.itemCreate)}
               type="button"
               onClick={() => setIsCreating(true)}
             >
@@ -162,22 +165,22 @@ export const AccountMenu = (props: Props): ReactElement | null => {
             </button>
           )}
           {isCreating && (
-            <form className="account-menu-create-form" onSubmit={handleCreate}>
+            <form className={styles.createForm} onSubmit={handleCreate}>
               <input
                 ref={inputRef}
-                className="account-menu-create-input"
+                className={styles.createInput}
                 type="text"
                 placeholder={t("account.workspaceName")}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 disabled={submitting}
               />
-              {error !== "" && <div className="account-menu-error">{error}</div>}
+              {error !== "" && <div className={styles.error}>{error}</div>}
             </form>
           )}
-          <div className="account-menu-separator" />
+          <div className={styles.separator} />
           <button
-            className="account-menu-item"
+            className={styles.item}
             type="button"
             onClick={handleLogout}
           >

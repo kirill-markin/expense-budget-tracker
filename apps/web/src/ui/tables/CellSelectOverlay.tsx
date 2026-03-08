@@ -2,6 +2,10 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { cn } from "@/lib/cn";
+
+import styles from "./TableUi.module.css";
+
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 type Props = Readonly<{
@@ -73,29 +77,30 @@ export const CellSelectOverlay = (props: Props): ReactElement => {
   const overlay = (
     <div
       ref={overlayRef}
-      className="cell-select-overlay"
+      className={styles.selectOverlay}
       style={{ top: rect.top, left: rect.left, minWidth: rect.width }}
     >
       <input
         ref={searchRef}
-        className="cell-select-search"
+        className={styles.selectSearch}
         type="text"
         value={search}
         placeholder="Search..."
         onChange={handleSearchChange}
         onKeyDown={handleKeyDown}
       />
-      <div className="cell-select-options">
+      <div className={styles.selectOptions}>
         {filtered.map((item, i) => {
           const isActive = item.value === currentValue;
           const isHighlight = i === highlightIndex;
-          let cls = "cell-select-option";
-          if (isActive) cls += " cell-select-option-active";
-          if (isHighlight) cls += " cell-select-option-highlight";
           return (
             <button
               key={item.key}
-              className={cls}
+              className={cn(
+                styles.selectOption,
+                isActive ? styles.selectOptionActive : "",
+                isHighlight ? styles.selectOptionHighlight : "",
+              )}
               type="button"
               onMouseEnter={() => setHighlightIndex(i)}
               onClick={() => onSelect(item.value)}

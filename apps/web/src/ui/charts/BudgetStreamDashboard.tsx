@@ -5,14 +5,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { getCurrentMonth } from "@/lib/monthUtils";
+import alertStyles from "@/ui/Alert.module.css";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { LedgerEntry, FieldHints } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 import { BudgetStreamChart } from "@/ui/charts/BudgetStreamChart";
 import { ExpenseTreemapChart } from "@/ui/charts/ExpenseTreemapChart";
+import treemapStyles from "@/ui/charts/ExpenseTreemapChart.module.css";
 import { DrillDownPanel } from "@/ui/tables/DrillDownPanel";
 import type { DrillDownFilter } from "@/ui/tables/DrillDownPanel";
+import tableStyles from "@/ui/tables/TableUi.module.css";
 
 type BudgetGridResponse = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -178,21 +181,21 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className="txn-filters">
-        <label className="txn-filter-label">
+      <div className={tableStyles.filters}>
+        <label className={tableStyles.filterLabel}>
           {t("common.from")}
           <input
             type="month"
-            className="txn-filter-input"
+            className={tableStyles.filterInput}
             value={monthFrom}
             onChange={(e) => setMonthFrom(e.target.value)}
           />
         </label>
-        <label className="txn-filter-label">
+        <label className={tableStyles.filterLabel}>
           {t("common.to")}
           <input
             type="month"
-            className="txn-filter-input"
+            className={tableStyles.filterInput}
             value={monthTo}
             onChange={(e) => setMonthTo(e.target.value)}
           />
@@ -200,7 +203,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       </div>
 
       {error !== null && (
-        <div className="budget-alert">
+        <div className={alertStyles.alert}>
           <strong>{t("chart.failedToLoad")}</strong>
           <span>{error}</span>
         </div>
@@ -212,7 +215,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
         <BudgetStreamChart rows={rows} allowlist={effectiveAllowlist} reportingCurrency={reportingCurrency} onMonthClick={handleStreamMonthClick} />
       )}
 
-      <h2 className="treemap-heading">{t("chart.expenseMap")}</h2>
+      <h2 className={treemapStyles.heading}>{t("chart.expenseMap")}</h2>
 
       {treemapLoading && <LoadingIndicator />}
 

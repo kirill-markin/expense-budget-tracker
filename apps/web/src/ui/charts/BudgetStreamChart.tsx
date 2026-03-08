@@ -5,8 +5,10 @@ import type { ReactElement } from "react";
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { cn } from "@/lib/cn";
 import { isCategoryVisible } from "@/lib/dataMask";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
+import styles from "@/ui/charts/BudgetStreamChart.module.css";
 
 type Props = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -332,13 +334,13 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
   return (
     <>
       {!masked && (
-        <div className="stream-legend">
+        <div className={styles.legend}>
           {incomeCategories.length > 0 && (
             <>
-              <span className="stream-legend-heading">{t("chart.income")}:</span>
+              <span className={styles.legendHeading}>{t("chart.income")}:</span>
               {incomeCategories.map((cat) => (
-                <span key={`legend-income-${cat}`} className="stream-legend-item">
-                  <span className="stream-legend-swatch" style={{ background: colorScale(cat) }} />
+                <span key={`legend-income-${cat}`} className={styles.legendItem}>
+                  <span className={styles.legendSwatch} style={{ background: colorScale(cat) }} />
                   {cat}
                 </span>
               ))}
@@ -346,10 +348,10 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           )}
           {spendCategories.length > 0 && (
             <>
-              <span className="stream-legend-heading">{t("chart.spend")}:</span>
+              <span className={styles.legendHeading}>{t("chart.spend")}:</span>
               {spendCategories.map((cat) => (
-                <span key={`legend-spend-${cat}`} className="stream-legend-item">
-                  <span className="stream-legend-swatch" style={{ background: colorScale(cat) }} />
+                <span key={`legend-spend-${cat}`} className={styles.legendItem}>
+                  <span className={styles.legendSwatch} style={{ background: colorScale(cat) }} />
                   {cat}
                 </span>
               ))}
@@ -358,7 +360,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
         </div>
       )}
 
-      <div ref={wrapRef} className={`stream-chart-wrap${masked ? " data-masked" : ""}`}>
+      <div ref={wrapRef} className={cn(styles.chartWrap, masked ? "data-masked" : "")}>
         <svg
           ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
@@ -489,49 +491,49 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
 
       {hover !== null && !masked && (
         <div
-          className="stream-tooltip"
+          className={styles.tooltip}
           style={{
             left: `${hover.pxLeft}px`,
             top: 0,
             transform: hover.flipLeft ? "translateX(calc(-100% - 8px))" : "translateX(8px)",
           }}
         >
-          <div className="stream-tooltip-title">
+          <div className={styles.tooltipTitle}>
             {hover.monthLabel}
             {hover.hasUnconvertible && (
-              <span className="stream-tooltip-warn"> *</span>
+              <span className={styles.tooltipWarn}> *</span>
             )}
           </div>
           {hover.incomeItems.length > 0 && (
             <>
-              <div className="stream-tooltip-section">
+              <div className={styles.tooltipSection}>
                 {t("chart.income")}: {formatAmountFull(hover.incomeTotal)}
               </div>
               {hover.incomeItems.map((item) => (
-                <div key={`tip-i-${item.category}`} className="stream-tooltip-row">
-                  <span className="stream-legend-swatch" style={{ background: item.color }} />
+                <div key={`tip-i-${item.category}`} className={styles.tooltipRow}>
+                  <span className={styles.legendSwatch} style={{ background: item.color }} />
                   <span>{item.category}</span>
-                  <span className="stream-tooltip-value">{formatAmountFull(item.value)}</span>
+                  <span className={styles.tooltipValue}>{formatAmountFull(item.value)}</span>
                 </div>
               ))}
             </>
           )}
           {hover.spendItems.length > 0 && (
             <>
-              <div className="stream-tooltip-section">
+              <div className={styles.tooltipSection}>
                 {t("chart.spend")}: {formatAmountFull(hover.spendTotal)}
               </div>
               {hover.spendItems.map((item) => (
-                <div key={`tip-s-${item.category}`} className="stream-tooltip-row">
-                  <span className="stream-legend-swatch" style={{ background: item.color }} />
+                <div key={`tip-s-${item.category}`} className={styles.tooltipRow}>
+                  <span className={styles.legendSwatch} style={{ background: item.color }} />
                   <span>{item.category}</span>
-                  <span className="stream-tooltip-value">{formatAmountFull(item.value)}</span>
+                  <span className={styles.tooltipValue}>{formatAmountFull(item.value)}</span>
                 </div>
               ))}
             </>
           )}
           {hover.hasUnconvertible && (
-            <div className="stream-tooltip-warn">{t("chart.unconvertibleWarning", { currency: reportingCurrency })}</div>
+            <div className={styles.tooltipWarn}>{t("chart.unconvertibleWarning", { currency: reportingCurrency })}</div>
           )}
         </div>
       )}

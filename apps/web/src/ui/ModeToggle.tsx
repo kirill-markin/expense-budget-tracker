@@ -3,7 +3,10 @@
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import { cn } from "@/lib/cn";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
+
+import styles from "./Controls.module.css";
 
 type Props = Readonly<{
   isDemoMode: boolean;
@@ -38,23 +41,23 @@ export const ModeToggle = (props: Props): ReactElement => {
   };
 
   return (
-    <div className="data-mask-segmented">
+    <div className={styles.segmented}>
       <button
-        className={`data-mask-seg${activeMode === "all" ? " data-mask-seg-active" : ""}`}
+        className={cn(styles.segment, activeMode === "all" ? styles.segmentActive : "")}
         type="button"
         onClick={() => switchTo("all")}
       >
         {t("mode.all")}
       </button>
       <button
-        className={`data-mask-seg${activeMode === "filtered" ? " data-mask-seg-active" : ""}`}
+        className={cn(styles.segment, activeMode === "filtered" ? styles.segmentActive : "")}
         type="button"
         onClick={() => switchTo("filtered")}
       >
         {t("mode.filtered")}
       </button>
       <button
-        className={`data-mask-seg${activeMode === "demo" ? " data-mask-seg-active" : ""}`}
+        className={cn(styles.segment, activeMode === "demo" ? styles.segmentActive : "")}
         type="button"
         onClick={() => switchTo("demo")}
       >

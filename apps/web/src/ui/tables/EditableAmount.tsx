@@ -2,9 +2,11 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { cn } from "@/lib/cn";
 import { useFormat } from "@/ui/FormatProvider";
 
 import { formatAmount } from "./format";
+import styles from "./TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
@@ -67,14 +69,14 @@ export const EditableAmount = (props: Props): ReactElement => {
   return (
     <td
       ref={cellRef}
-      className={`txn-cell txn-cell-right${isMasked ? "" : " drilldown-editable"}${maskClass}`}
+      className={cn(styles.cell, styles.cellRight, !isMasked ? styles.editable : "", maskClass)}
       onClick={isMasked ? undefined : startEditing}
     >
       {formatAmount(currentValue, numberFormat)}
       {editing && rect !== null && createPortal(
         <input
           ref={inputRef}
-          className="cell-editor-overlay"
+          className={styles.editorOverlay}
           type="text"
           inputMode="decimal"
           value={editValue}
