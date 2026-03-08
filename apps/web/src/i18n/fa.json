@@ -173,6 +173,8 @@
   "chat.errorFailed": "خطای درخواست: {{message}}",
   "txn.countLabel": "{{shown}} از {{total}} رکورد",
   "txn.failedToLoad": "بارگذاری تراکنش‌ها ناموفق بود",
+  "txn.failedToCreate": "ایجاد تراکنش ناموفق بود",
+  "txn.addRow": "افزودن ردیف",
   "txn.noMatch": "رکوردی با فیلترهای انتخاب شده مطابقت ندارد.",
   "txn.deleteConfirm": "این تراکنش حذف شود؟ این عمل قابل بازگشت نیست."
 }

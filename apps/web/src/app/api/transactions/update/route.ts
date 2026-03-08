@@ -50,16 +50,16 @@ export const POST = async (request: Request): Promise<Response> => {
     return new Response("Invalid ts. Expected ISO 8601 date string", { status: 400 });
   }
 
-  if (typeof accountId !== "string" || accountId.length === 0 || accountId.length > 200) {
-    return new Response("Invalid accountId. Expected non-empty string (max 200 chars)", { status: 400 });
+  if (typeof accountId !== "string" || accountId.length > 200) {
+    return new Response("Invalid accountId. Expected string (max 200 chars)", { status: 400 });
   }
 
   if (typeof amount !== "number" || !Number.isFinite(amount)) {
     return new Response("Invalid amount. Expected finite number", { status: 400 });
   }
 
-  if (typeof currency !== "string" || currency.length === 0 || currency.length > 10) {
-    return new Response("Invalid currency. Expected non-empty string (max 10 chars)", { status: 400 });
+  if (typeof currency !== "string" || currency.length > 10) {
+    return new Response("Invalid currency. Expected string (max 10 chars)", { status: 400 });
   }
 
   if (isDemoModeFromRequest(request)) {

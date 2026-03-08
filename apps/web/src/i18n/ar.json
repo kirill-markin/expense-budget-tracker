@@ -173,6 +173,8 @@
   "chat.errorFailed": "فشل الطلب: {{message}}",
   "txn.countLabel": "{{shown}} من {{total}} سجل",
   "txn.failedToLoad": "فشل تحميل المعاملات",
+  "txn.failedToCreate": "فشل إنشاء المعاملة",
+  "txn.addRow": "إضافة صف",
   "txn.noMatch": "لا توجد سجلات تطابق المرشحات المحددة.",
   "txn.deleteConfirm": "حذف هذه المعاملة؟ لا يمكن التراجع عن هذا الإجراء."
 }

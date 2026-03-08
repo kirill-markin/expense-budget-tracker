@@ -13,10 +13,11 @@ type Props = Readonly<{
   onCommit: (entryId: string, newValue: string | null, oldValue: string | null) => void;
   cellClass?: string;
   hints?: ReadonlyArray<string>;
+  allowEmptyString?: boolean;
 }>;
 
 export const EditableText = (props: Props): ReactElement => {
-  const { entryId, currentValue, maskClass, onCommit, cellClass, hints } = props;
+  const { entryId, currentValue, maskClass, onCommit, cellClass, hints, allowEmptyString } = props;
   const tdClass = cellClass !== undefined ? `txn-cell ${cellClass}` : "txn-cell";
 
   const [editing, setEditing] = useState<boolean>(false);
@@ -44,7 +45,7 @@ export const EditableText = (props: Props): ReactElement => {
     setEditing(false);
     setRect(null);
     const trimmed = editValue.trim();
-    const newValue = trimmed.length > 0 ? trimmed : null;
+    const newValue = trimmed.length > 0 ? trimmed : (allowEmptyString ? "" : null);
     if (newValue === currentValue) return;
     onCommit(entryId, newValue, currentValue);
   };
@@ -65,8 +66,9 @@ export const EditableText = (props: Props): ReactElement => {
   const handleComboCommit = (value: string | null): void => {
     setEditing(false);
     setRect(null);
-    if (value === currentValue) return;
-    onCommit(entryId, value, currentValue);
+    const nextValue = value === null && allowEmptyString ? "" : value;
+    if (nextValue === currentValue) return;
+    onCommit(entryId, nextValue, currentValue);
   };
 
   const handleComboClose = (): void => {
@@ -83,7 +85,7 @@ export const EditableText = (props: Props): ReactElement => {
       className={`${tdClass}${isMasked ? "" : " drilldown-editable"}${maskClass}`}
       onClick={isMasked ? undefined : startEditing}
     >
-      {currentValue ?? "\u2014"}
+      {currentValue === null || currentValue.length === 0 ? "\u2014" : currentValue}
       {editing && rect !== null && hasHints && (
         <CellComboOverlay
           hints={hints}

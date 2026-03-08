@@ -173,6 +173,8 @@
   "chat.errorFailed": "Error en la solicitud: {{message}}",
   "txn.countLabel": "{{shown}} de {{total}} registros",
   "txn.failedToLoad": "Error al cargar transacciones",
+  "txn.failedToCreate": "Error al crear la transacción",
+  "txn.addRow": "Añadir fila",
   "txn.noMatch": "No hay registros que coincidan con los filtros seleccionados.",
   "txn.deleteConfirm": "¿Eliminar esta transacción? Esta acción no se puede deshacer."
 }

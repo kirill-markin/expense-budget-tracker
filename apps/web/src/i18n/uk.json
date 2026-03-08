@@ -173,6 +173,8 @@
   "chat.errorFailed": "Помилка запиту: {{message}}",
   "txn.countLabel": "{{shown}} з {{total}} записів",
   "txn.failedToLoad": "Не вдалося завантажити операції",
+  "txn.failedToCreate": "Не вдалося створити операцію",
+  "txn.addRow": "Додати рядок",
   "txn.noMatch": "Немає записів, що відповідають обраним фільтрам.",
   "txn.deleteConfirm": "Видалити цю операцію? Цю дію не можна скасувати."
 }

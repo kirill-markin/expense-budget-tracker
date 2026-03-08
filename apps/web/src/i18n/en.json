@@ -173,6 +173,8 @@
   "chat.errorFailed": "Request failed: {{message}}",
   "txn.countLabel": "{{shown}} of {{total}} entries",
   "txn.failedToLoad": "Failed to load transactions",
+  "txn.failedToCreate": "Failed to create transaction",
+  "txn.addRow": "Add row",
   "txn.noMatch": "No entries match the selected filters.",
   "txn.deleteConfirm": "Delete this transaction? This cannot be undone."
 }

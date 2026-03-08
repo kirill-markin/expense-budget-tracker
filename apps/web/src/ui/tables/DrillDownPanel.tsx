@@ -2,6 +2,7 @@
 
 import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
 import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
@@ -32,8 +33,19 @@ type Props = Readonly<{
   hints: FieldHints;
   onClose: (dirty: boolean) => void;
 }>;
+type CreateLedgerEntryRequest = Readonly<{
+  ts: string;
+  accountId: string;
+  amount: number;
+  currency: string;
+  kind: string;
+  category: string | null;
+  counterparty: string | null;
+  note: string | null;
+}>;
 
 const PAGE_SIZE = 100;
+const CREATE_ERROR_PREFIX = "__create__:";
 
 const DRILLDOWN_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   amount: "desc",
@@ -85,6 +97,29 @@ const buildSubtitle = (filter: DrillDownFilter): string => {
   return `${filter.dateFrom} \u2013 ${filter.dateTo}`;
 };
 
+const toLocalNoonIso = (dateValue: string): string => {
+  return new Date(`${dateValue}T12:00`).toISOString();
+};
+
+const mergeRows = (
+  createdRows: ReadonlyArray<LedgerEntry>,
+  fetchedRows: ReadonlyArray<LedgerEntry>,
+): ReadonlyArray<LedgerEntry> => {
+  const seen = new Set<string>();
+  const merged: Array<LedgerEntry> = [];
+  for (const row of createdRows) {
+    if (seen.has(row.entryId)) continue;
+    seen.add(row.entryId);
+    merged.push(row);
+  }
+  for (const row of fetchedRows) {
+    if (seen.has(row.entryId)) continue;
+    seen.add(row.entryId);
+    merged.push(row);
+  }
+  return merged;
+};
+
 const deleteEntry = async (entryId: string): Promise<void> => {
   const response = await fetchWithCsrf("/api/transactions/delete", {
     method: "POST",
@@ -117,12 +152,26 @@ const saveEntry = async (entry: LedgerEntry): Promise<void> => {
   }
 };
 
+const createEntry = async (entry: CreateLedgerEntryRequest): Promise<LedgerEntry> => {
+  const response = await fetchWithCsrf("/api/transactions/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(entry),
+  });
+  if (!response.ok) {
+    throw new Error(`Create failed: ${response.status} ${await response.text()}`);
+  }
+  return await response.json() as LedgerEntry;
+};
+
 export const DrillDownPanel = (props: Props): ReactElement => {
   const { filter, categories, hints, onClose } = props;
   const { numberFormat } = useFormat();
+  const { t } = useTranslation();
 
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [createdRows, setCreatedRows] = useState<ReadonlyArray<LedgerEntry>>([]);
 
   const { sort, onSort } = useTableSort("single", "amountUsdAbs", "desc", DRILLDOWN_SORT_DEFAULTS);
 
@@ -168,10 +217,16 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   };
 
   const scroll = useInfiniteScroll<LedgerEntry>(fetchPage, PAGE_SIZE, [filter, sort[0].key, sort[0].dir]);
+  const rows = mergeRows(createdRows, scroll.rows);
+  const categoriesKey = filter.categories?.join("\u0001") ?? "";
 
   const closePanel = useCallback((): void => {
     onClose(dirtyRef.current);
   }, [onClose]);
+
+  useEffect(() => {
+    setCreatedRows([]);
+  }, [filter.dateFrom, filter.dateTo, filter.direction, filter.category, categoriesKey, sort[0].key, sort[0].dir]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
@@ -183,77 +238,112 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [closePanel]);
 
+  const replaceEntry = (entry: LedgerEntry): void => {
+    setCreatedRows((prev) => prev.map((item) => (item.entryId === entry.entryId ? entry : item)));
+    scroll.setRows((prev) => prev.map((item) => (item.entryId === entry.entryId ? entry : item)));
+  };
+
   const optimisticUpdate = (
     entryId: string,
     patch: Partial<LedgerEntry>,
-    rollback: Partial<LedgerEntry>,
   ): void => {
-    const entry = scroll.rows.find((e) => e.entryId === entryId);
+    const entry = rows.find((e) => e.entryId === entryId);
     if (entry === undefined) return;
 
     dirtyRef.current = true;
 
     const updated = { ...entry, ...patch };
-    scroll.setRows((prev) =>
-      prev.map((e) => (e.entryId === entryId ? updated : e)),
-    );
+    replaceEntry(updated);
 
     saveEntry(updated).catch((err: unknown) => {
-      scroll.setRows((prev) =>
-        prev.map((e) => (e.entryId === entryId ? { ...e, ...rollback } : e)),
-      );
+      replaceEntry(entry);
       scroll.setError(err instanceof Error ? err.message : String(err));
     });
   };
 
   const handleCategoryChange = (entryId: string, newCategory: string | null, oldCategory: string | null): void => {
-    optimisticUpdate(entryId, { category: newCategory }, { category: oldCategory });
+    void oldCategory;
+    optimisticUpdate(entryId, { category: newCategory });
   };
 
   const handleNoteCommit = (entryId: string, newNote: string | null, oldNote: string | null): void => {
-    optimisticUpdate(entryId, { note: newNote }, { note: oldNote });
+    void oldNote;
+    optimisticUpdate(entryId, { note: newNote });
   };
 
   const handleCounterpartyCommit = (entryId: string, newCounterparty: string | null, oldCounterparty: string | null): void => {
-    optimisticUpdate(entryId, { counterparty: newCounterparty }, { counterparty: oldCounterparty });
+    void oldCounterparty;
+    optimisticUpdate(entryId, { counterparty: newCounterparty });
   };
 
   const handleKindChange = (entryId: string, newKind: string, oldKind: string): void => {
-    optimisticUpdate(entryId, { kind: newKind }, { kind: oldKind });
+    void oldKind;
+    optimisticUpdate(entryId, { kind: newKind });
   };
 
   const handleDateTimeCommit = (entryId: string, newTs: string, oldTs: string): void => {
-    optimisticUpdate(entryId, { ts: newTs }, { ts: oldTs });
+    void oldTs;
+    optimisticUpdate(entryId, { ts: newTs });
   };
 
   const handleAccountCommit = (entryId: string, newValue: string | null, oldValue: string | null): void => {
-    if (newValue === null) return;
-    optimisticUpdate(entryId, { accountId: newValue }, { accountId: oldValue ?? "" });
+    void oldValue;
+    optimisticUpdate(entryId, { accountId: newValue ?? "" });
   };
 
   const handleAmountCommit = (entryId: string, newAmount: number, oldAmount: number): void => {
-    optimisticUpdate(entryId, { amount: newAmount }, { amount: oldAmount });
+    void oldAmount;
+    optimisticUpdate(entryId, { amount: newAmount });
   };
 
   const handleCurrencyCommit = (entryId: string, newValue: string | null, oldValue: string | null): void => {
-    if (newValue === null) return;
-    optimisticUpdate(entryId, { currency: newValue }, { currency: oldValue ?? "" });
+    void oldValue;
+    optimisticUpdate(entryId, { currency: newValue ?? "" });
+  };
+
+  const handleAddRow = (): void => {
+    scroll.setError(null);
+    const request: CreateLedgerEntryRequest = {
+      ts: toLocalNoonIso(filter.dateTo),
+      accountId: "",
+      amount: 0,
+      currency: "",
+      kind: filter.direction ?? "spend",
+      category: filter.category === null ? null : (filter.category === "" ? null : filter.category),
+      counterparty: null,
+      note: null,
+    };
+
+    createEntry(request)
+      .then((entry) => {
+        dirtyRef.current = true;
+        setCreatedRows((prev) => [entry, ...prev.filter((item) => item.entryId !== entry.entryId)]);
+        scroll.setTotal((prev) => prev + 1);
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        scroll.setError(`${CREATE_ERROR_PREFIX}${message}`);
+      });
   };
 
   const handleDelete = (entryId: string): void => {
-    if (!window.confirm("Delete this transaction? This cannot be undone.")) return;
+    if (!window.confirm(t("txn.deleteConfirm"))) return;
 
-    const entry = scroll.rows.find((e) => e.entryId === entryId);
+    const entry = rows.find((e) => e.entryId === entryId);
     if (entry === undefined) return;
 
     dirtyRef.current = true;
-    const rowIndex = scroll.rows.indexOf(entry);
+    const prevCreatedRows = createdRows;
+    const prevFetchedRows = scroll.rows;
+    const prevTotal = scroll.total;
+    setCreatedRows((prev) => prev.filter((e) => e.entryId !== entryId));
     scroll.setRows((prev) => prev.filter((e) => e.entryId !== entryId));
     scroll.setTotal((prev) => prev - 1);
 
     deleteEntry(entryId).catch((err: unknown) => {
-      scroll.setRows((prev) => [...prev.slice(0, rowIndex), entry, ...prev.slice(rowIndex)]);
-      scroll.setTotal((prev) => prev + 1);
+      setCreatedRows(prevCreatedRows);
+      scroll.setRows(prevFetchedRows);
+      scroll.setTotal(prevTotal);
       scroll.setError(err instanceof Error ? err.message : String(err));
     });
   };
@@ -286,6 +376,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           maskClass=""
           onCommit={handleAccountCommit}
           hints={hints.accounts}
+          allowEmptyString={true}
         />
       ),
       rightAlign: false,
@@ -319,6 +410,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           maskClass=""
           onCommit={handleCurrencyCommit}
           hints={hints.currencies}
+          allowEmptyString={true}
         />
       ),
       rightAlign: false,
@@ -415,6 +507,12 @@ export const DrillDownPanel = (props: Props): ReactElement => {
       editableKindCol, editableCategoryCol, editableCounterpartyCol, editableNoteCol, deleteCol,
     ];
   })();
+  const errorTitle = scroll.error !== null && scroll.error.startsWith(CREATE_ERROR_PREFIX)
+    ? t("txn.failedToCreate")
+    : t("txn.failedToLoad");
+  const errorMessage = scroll.error !== null && scroll.error.startsWith(CREATE_ERROR_PREFIX)
+    ? scroll.error.slice(CREATE_ERROR_PREFIX.length)
+    : scroll.error;
 
   return (
     <>
@@ -429,9 +527,14 @@ export const DrillDownPanel = (props: Props): ReactElement => {
             <div className="drilldown-title">{buildTitle(filter)}</div>
             <div className="drilldown-subtitle">{buildSubtitle(filter)}</div>
           </div>
-          <button className="drilldown-close" type="button" onClick={closePanel}>
-            &times;
-          </button>
+          <div className="drilldown-header-actions">
+            <button className="txn-add-row-btn" type="button" onClick={handleAddRow}>
+              {t("txn.addRow")}
+            </button>
+            <button className="drilldown-close" type="button" onClick={closePanel}>
+              &times;
+            </button>
+          </div>
         </div>
 
         {!scroll.loading && (
@@ -440,21 +543,21 @@ export const DrillDownPanel = (props: Props): ReactElement => {
           </div>
         )}
 
-        {scroll.error !== null && (
+        {errorMessage !== null && (
           <div className="budget-alert" style={{ margin: "8px 16px" }}>
-            <strong>Failed to load transactions</strong>
-            <span>{scroll.error}</span>
+            <strong>{errorTitle}</strong>
+            <span>{errorMessage}</span>
           </div>
         )}
 
         <div className="drilldown-body">
           <DataTable<LedgerEntry>
             columns={columns}
-            rows={scroll.rows}
-            rowKey={(row, idx) => `${row.entryId}-${idx}`}
+            rows={rows}
+            rowKey={(row) => row.entryId}
             sort={sort}
             onSort={onSort}
-            emptyMessage="No entries found."
+            emptyMessage={t("txn.noMatch")}
             loading={scroll.loading}
             loadingMore={scroll.loadingMore}
             sentinelRef={scroll.sentinelRef}

@@ -173,6 +173,8 @@
   "chat.errorFailed": "Ошибка запроса: {{message}}",
   "txn.countLabel": "{{shown}} из {{total}} записей",
   "txn.failedToLoad": "Не удалось загрузить операции",
+  "txn.failedToCreate": "Не удалось создать операцию",
+  "txn.addRow": "Добавить строку",
   "txn.noMatch": "Нет записей, соответствующих выбранным фильтрам.",
   "txn.deleteConfirm": "Удалить эту операцию? Это действие нельзя отменить."
 }

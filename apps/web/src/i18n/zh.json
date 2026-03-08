@@ -173,6 +173,8 @@
   "chat.errorFailed": "请求失败：{{message}}",
   "txn.countLabel": "{{shown}} / {{total}} 条记录",
   "txn.failedToLoad": "加载交易失败",
+  "txn.failedToCreate": "创建交易失败",
+  "txn.addRow": "新增行",
   "txn.noMatch": "没有符合所选筛选条件的记录。",
   "txn.deleteConfirm": "删除此交易？此操作无法撤销。"
 }

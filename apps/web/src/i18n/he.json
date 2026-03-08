@@ -173,6 +173,8 @@
   "chat.errorFailed": "הבקשה נכשלה: {{message}}",
   "txn.countLabel": "{{shown}} מתוך {{total}} רשומות",
   "txn.failedToLoad": "טעינת תנועות נכשלה",
+  "txn.failedToCreate": "יצירת התנועה נכשלה",
+  "txn.addRow": "הוסף שורה",
   "txn.noMatch": "אין רשומות התואמות למסננים שנבחרו.",
   "txn.deleteConfirm": "למחוק תנועה זו? לא ניתן לבטל פעולה זו."
 }
