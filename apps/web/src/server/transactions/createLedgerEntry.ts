@@ -63,7 +63,8 @@ export const createLedgerEntry = async (
           kind,
           category,
           counterparty,
-          note
+          note,
+          workspace_id
         )
         VALUES (
           gen_random_uuid()::text,
@@ -74,7 +75,8 @@ export const createLedgerEntry = async (
           $6,
           $7,
           $8,
-          $9
+          $9,
+          $10
         )
         RETURNING entry_id, event_id, ts, account_id, amount, currency, kind, category, counterparty, note
       )
@@ -114,6 +116,7 @@ export const createLedgerEntry = async (
       params.category,
       params.counterparty,
       params.note,
+      workspaceId,
     ],
   );
 
