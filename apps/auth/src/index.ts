@@ -12,6 +12,7 @@ import health from "./routes/health.js";
 import sendCode from "./routes/sendCode.js";
 import verifyCode from "./routes/verifyCode.js";
 import loginPage from "./routes/loginPage.js";
+import robots from "./routes/robots.js";
 
 const validateEnv = (): void => {
   const errors: Array<string> = [];
@@ -49,6 +50,7 @@ app.route("/", health);
 app.route("/", sendCode);
 app.route("/", verifyCode);
 app.route("/", loginPage);
+app.route("/", robots);
 
 const port = parseInt(process.env.PORT ?? "8081", 10);
 
