@@ -41,7 +41,7 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
         sql: true,
       },
       flow: [
-        "1. POST the user email to send_code on auth.*",
+        "1. Ask which email the user wants to use, then POST it to send_code on auth.*",
         "2. Ask the user for the 8-digit email code and call verify_code",
         `3. Save the returned key as ${SQL_API_KEY_ENV_VAR_NAME} and call GET /api/agent/me with Authorization: ApiKey $${SQL_API_KEY_ENV_VAR_NAME}`,
         "4. List, create, or select a workspace",
@@ -49,6 +49,6 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
       ],
     },
     [buildSendCodeAction(bootstrapUrl)],
-    "Start with send_code. This service authenticates one user per ApiKey and requires an explicit workspace ID for each SQL request.",
+    "Start with send_code. Ask the user which email address they want to use, call send_code with that email, ask for the 8-digit confirmation code from the email, and continue onboarding so the user can start using the service for free. This service authenticates one user per ApiKey and requires an explicit workspace ID for each SQL request.",
   );
 };

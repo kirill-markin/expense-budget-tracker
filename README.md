@@ -25,6 +25,8 @@ Open `http://localhost:3000`.
 
 ## Usage with AI agents
 
+The discovery response tells agents to ask for the user's email first, and the same email OTP flow covers both signup and login.
+
 1. **Settings → API Keys → Create key** — copy the key (shown once)
 2. **Give the key to your AI agent** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://openai.com/index/codex/), or any agent that can call HTTP APIs
 3. **Send the agent screenshots, CSV files, or PDF bank statements** — it parses them and inserts transactions via the SQL API
