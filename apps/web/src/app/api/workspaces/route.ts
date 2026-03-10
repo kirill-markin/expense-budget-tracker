@@ -1,4 +1,4 @@
-import { queryAs } from "@/server/db";
+import { createWorkspaceForCurrentUser } from "@/server/workspaces";
 import { extractUserId } from "@/server/userId";
 
 type PostBody = Readonly<{
@@ -25,17 +25,8 @@ export const POST = async (request: Request): Promise<Response> => {
 
   const userId = extractUserId(request);
   try {
-    const result = await queryAs(
-      userId,
-      userId,
-      "SELECT workspace_id, name FROM create_workspace_for_current_user($1)",
-      [trimmedName],
-    );
-    if (result.rows.length !== 1) {
-      throw new Error(`create_workspace_for_current_user returned ${result.rows.length} rows`);
-    }
-    const row = result.rows[0] as { workspace_id: string; name: string };
-    return Response.json({ workspaceId: row.workspace_id, name: row.name });
+    const workspace = await createWorkspaceForCurrentUser(userId, userId, trimmedName);
+    return Response.json({ workspaceId: workspace.workspaceId, name: workspace.name });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("workspaces POST: %s", message);

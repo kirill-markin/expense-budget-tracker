@@ -8,6 +8,7 @@
 # Optional env vars:
 #   APP_DB_PASSWORD    — password for the app role (default: 'app').
 #   WORKER_DB_PASSWORD — password for the worker role (default: 'worker').
+#   AUTH_DB_PASSWORD   — password for the auth_service role (default: 'auth_service').
 
 set -euo pipefail
 
@@ -38,8 +39,13 @@ if [[ -n "${PGHOST:-}" && -z "${WORKER_DB_PASSWORD:-}" ]]; then
   echo "ERROR: WORKER_DB_PASSWORD is required in production (PGHOST mode)" >&2
   exit 1
 fi
+if [[ -n "${PGHOST:-}" && -z "${AUTH_DB_PASSWORD:-}" ]]; then
+  echo "ERROR: AUTH_DB_PASSWORD is required in production (PGHOST mode)" >&2
+  exit 1
+fi
 APP_DB_PASSWORD="${APP_DB_PASSWORD:-app}"
 WORKER_DB_PASSWORD="${WORKER_DB_PASSWORD:-worker}"
+AUTH_DB_PASSWORD="${AUTH_DB_PASSWORD:-auth_service}"
 
 # Create migration tracking table (idempotent).
 # If this is an existing database (tables already created by prior deploys),
@@ -116,6 +122,19 @@ END
 $$;
 
 ALTER ROLE worker WITH PASSWORD :'worker_pass';
+SQL
+
+echo "Setting auth_service role password..."
+run_psql -v "auth_pass=$AUTH_DB_PASSWORD" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auth_service') THEN
+    RAISE EXCEPTION 'Role auth_service does not exist. Run migrations first.';
+  END IF;
+END
+$$;
+
+ALTER ROLE auth_service WITH PASSWORD :'auth_pass';
 SQL
 
 echo "Migrations complete."

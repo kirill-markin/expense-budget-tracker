@@ -6,6 +6,8 @@
 type AuthEvent =
   | Readonly<{ domain: "auth"; action: "send_code"; maskedEmail: string }>
   | Readonly<{ domain: "auth"; action: "send_code_error"; error: string }>
+  | Readonly<{ domain: "auth"; action: "agent_send_code"; maskedEmail: string; decision: "allowed" | "suppressed_email_limit" | "blocked_ip_limit" }>
+  | Readonly<{ domain: "auth"; action: "agent_verify_code_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "verify_code"; maskedEmail: string }>
   | Readonly<{ domain: "auth"; action: "verify_code_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "otp_sweep_error"; error: string }>

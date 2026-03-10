@@ -14,7 +14,9 @@ import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/serve
 import { getCategories } from "@/server/transactions/getTransactions";
 import { getUserSettings } from "@/server/userSettings";
 import { queryAs } from "@/server/db";
+import { listAgentConnections } from "@/server/agentConnections";
 import { ApiKeyManager } from "@/ui/ApiKeyManager";
+import { AgentConnectionsManager } from "@/ui/AgentConnectionsManager";
 import { FilteredCategorySettings } from "@/ui/FilteredCategorySettings";
 import { UserSettingsForm } from "@/ui/UserSettingsForm";
 import { WorkspaceSettings } from "@/ui/WorkspaceSettings";
@@ -114,6 +116,21 @@ async function ApiKeyData() {
   return <ApiKeyManager initialKeys={initialKeys} />;
 }
 
+async function AgentConnectionsData() {
+  const demo = await isDemoMode();
+
+  if (demo) {
+    return null;
+  }
+
+  const headersList = await headers();
+  const userId = extractUserIdFromHeaders(headersList);
+  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
+  const connections = await listAgentConnections(userId, workspaceId);
+
+  return <AgentConnectionsManager initialConnections={connections} />;
+}
+
 export default async function SettingsPage() {
   const demo = await isDemoMode();
   let locale = DEFAULT_USER_SETTINGS.locale;
@@ -159,6 +176,13 @@ export default async function SettingsPage() {
         <h1 className="title">{t(locale, "settings.apiKeys")}</h1>
         <Suspense fallback={<LoadingIndicator />}>
           <ApiKeyData />
+        </Suspense>
+      </section>
+
+      <section className="panel">
+        <h1 className="title">Agent Connections</h1>
+        <Suspense fallback={<LoadingIndicator />}>
+          <AgentConnectionsData />
         </Suspense>
       </section>
     </main>

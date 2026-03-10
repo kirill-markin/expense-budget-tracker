@@ -11,6 +11,7 @@ export interface DatabaseProps {
 export interface DatabaseResult {
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
+  authDbSecret: cdk.aws_secretsmanager.Secret;
   workerDbSecret: cdk.aws_secretsmanager.Secret;
 }
 
@@ -64,6 +65,17 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     },
   });
 
+  // --- Auth service DB role secret (OTP limiter + agent keys only) ---
+  const authDbSecret = new cdk.aws_secretsmanager.Secret(scope, "AuthDbSecret", {
+    secretName: "expense-tracker/auth-db-password",
+    generateSecretString: {
+      secretStringTemplate: JSON.stringify({ username: "auth_service" }),
+      generateStringKey: "password",
+      excludePunctuation: true,
+      passwordLength: 32,
+    },
+  });
+
   // --- Worker DB role secret (exchange rate fetcher) ---
   const workerDbSecret = new cdk.aws_secretsmanager.Secret(scope, "WorkerDbSecret", {
     secretName: "expense-tracker/worker-db-password",
@@ -75,5 +87,5 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     },
   });
 
-  return { db, appDbSecret, workerDbSecret };
+  return { db, appDbSecret, authDbSecret, workerDbSecret };
 }

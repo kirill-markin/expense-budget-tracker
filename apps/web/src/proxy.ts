@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { JwtExpiredError } from "aws-jwt-verify/error";
 import { getJwtVerifier, refreshTokens } from "@/server/cognitoAuth";
+import { hasApiKeyAuthorization } from "@/server/authHeader";
 import { log } from "@/server/logger";
 import { clearAuthCookies } from "@/server/cookies";
 import { LOCAL_USER_EMAIL } from "@/server/users";
@@ -126,6 +127,9 @@ const addSecurityHeaders = (response: NextResponse, nonce: string, csp?: string)
 const checkCsrf = (request: NextRequest): boolean => {
   const method = request.method;
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
+  if (request.nextUrl.pathname.startsWith("/api/agent/") && hasApiKeyAuthorization(request.headers.get("authorization"))) {
+    return true;
+  }
 
   const csrfCookie = request.cookies.get(CSRF_COOKIE_NAME)?.value ?? "";
   const csrfHeader = request.headers.get(CSRF_HEADER_NAME) ?? "";
@@ -268,6 +272,20 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
 
   // AUTH_MODE=cognito — public paths are exempt from auth (CSRF already checked above)
   if (isPublicPath(pathname)) {
+    const csp = buildCsp(nonce);
+    const headers = new Headers(request.headers);
+    headers.delete(USER_ID_HEADER);
+    headers.delete(WORKSPACE_ID_HEADER);
+    headers.delete(USER_EMAIL_HEADER);
+    headers.delete(USER_EMAIL_VERIFIED_HEADER);
+    headers.set("x-nonce", nonce);
+    headers.set("Content-Security-Policy", csp);
+    const response = NextResponse.next({ request: { headers } });
+    addSecurityHeaders(response, nonce, csp);
+    return response;
+  }
+
+  if (pathname.startsWith("/api/agent/") && hasApiKeyAuthorization(request.headers.get("authorization"))) {
     const csp = buildCsp(nonce);
     const headers = new Headers(request.headers);
     headers.delete(USER_ID_HEADER);

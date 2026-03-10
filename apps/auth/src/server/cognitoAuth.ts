@@ -26,6 +26,11 @@ type TokenResult = Readonly<{
   expiresIn: number;
 }>;
 
+type AgentIdentity = Readonly<{
+  userId: string;
+  email: string;
+}>;
+
 const getRegion = (): string => {
   const region = process.env.COGNITO_REGION ?? "";
   if (region === "") throw new Error("COGNITO_REGION is not configured");
@@ -142,4 +147,31 @@ export const verifyEmailOtp = async (
     refreshToken: authResult.RefreshToken as string,
     expiresIn: authResult.ExpiresIn as number,
   };
+};
+
+/**
+ * Read user identity from a Cognito IdToken received directly from Cognito.
+ *
+ * The token is trusted here because it comes from the HTTPS response of
+ * RespondToAuthChallenge rather than from an untrusted client.
+ */
+export const extractIdentityFromIdToken = (idToken: string): AgentIdentity => {
+  const parts = idToken.split(".");
+  if (parts.length !== 3) {
+    throw new Error("Invalid IdToken format");
+  }
+
+  const payload = JSON.parse(Buffer.from(parts[1] ?? "", "base64url").toString("utf8")) as Record<string, unknown>;
+  const userId = payload.sub;
+  const email = payload.email;
+
+  if (typeof userId !== "string" || userId === "") {
+    throw new Error("IdToken missing sub claim");
+  }
+
+  if (typeof email !== "string" || email === "") {
+    throw new Error("IdToken missing email claim");
+  }
+
+  return { userId, email };
 };

@@ -44,6 +44,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       ecsSg: net.ecsSg,
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
+      authDbSecret: dbResult.authDbSecret,
       workerDbSecret: dbResult.workerDbSecret,
       sessionEncryptionKeySecret: sec.sessionEncryptionKeySecret,
       openaiApiKeySecret: sec.openaiApiKeySecret,

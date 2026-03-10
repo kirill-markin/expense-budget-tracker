@@ -12,6 +12,7 @@ export interface ComputeProps {
   ecsSg: ec2.SecurityGroup;
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
+  authDbSecret: cdk.aws_secretsmanager.Secret;
   workerDbSecret: cdk.aws_secretsmanager.Secret;
   sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
@@ -146,8 +147,13 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       COGNITO_REGION: cdk.Aws.REGION,
       ALLOWED_REDIRECT_URIS: `https://${props.appDomain}`,
       COOKIE_DOMAIN: `.${props.appDomain.split(".").slice(1).join(".")}`,
+      DB_HOST: props.db.dbInstanceEndpointAddress,
+      DB_NAME: "tracker",
+      DB_USER: "auth_service",
+      NODE_EXTRA_CA_CERTS: "/app/rds-global-bundle.pem",
     },
     secrets: {
+      DB_PASSWORD: ecs.Secret.fromSecretsManager(props.authDbSecret, "password"),
       SESSION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(props.sessionEncryptionKeySecret),
     },
     logging: ecs.LogDrivers.awsLogs({
@@ -204,6 +210,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_USER: ecs.Secret.fromSecretsManager(props.db.secret!, "username"),
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.db.secret!, "password"),
       APP_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
+      AUTH_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.authDbSecret, "password"),
       WORKER_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.workerDbSecret, "password"),
     },
     logging: ecs.LogDrivers.awsLogs({

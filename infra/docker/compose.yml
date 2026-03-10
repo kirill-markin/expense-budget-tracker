@@ -28,6 +28,7 @@ services:
     environment:
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql://tracker:tracker@postgres:5432/tracker}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-app}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-auth_service}
       WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-worker}
     volumes:
       - ../../scripts:/scripts:ro
@@ -78,6 +79,7 @@ services:
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
       COGNITO_REGION: ${COGNITO_REGION:-}
+      AUTH_DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql://auth_service:${AUTH_DB_PASSWORD:-auth_service}@postgres:5432/tracker}
       SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]

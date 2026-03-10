@@ -16,6 +16,8 @@ WORKDIR /app
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 auth
 
+ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-global-bundle.pem
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 

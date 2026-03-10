@@ -8,7 +8,7 @@ import { getLocaleCookie } from "@/lib/localeCookie";
 import { NAV_LINKS } from "@/lib/navigation";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import { t } from "@/i18n/serverT";
-import { listWorkspaces, type WorkspaceSummary } from "@/server/listWorkspaces";
+import { listWorkspaces, type WorkspaceSummary } from "@/server/workspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { getUserSettings } from "@/server/userSettings";
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";

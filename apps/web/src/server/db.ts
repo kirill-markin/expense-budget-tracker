@@ -158,21 +158,11 @@ const getCurrentIdentity = async (): Promise<UserIdentity> => {
   };
 };
 
-/**
- * Ensure the current user identity mirror and required personal rows exist.
- *
- * Uses in-memory caches for stable rows (workspace membership and user settings)
- * but always upserts the users row so active identities stay synchronized.
- *
- * Personal workspaces keep the existing invariant `workspace_id = user_id`.
- * Non-personal workspaces are never auto-created here; they must already have a
- * membership row or the request fails explicitly.
- */
-export const ensureUserProvisioned = async (userId: string, workspaceId: string): Promise<void> => {
-  const identity = await getCurrentIdentity();
-  if (identity.userId !== userId) {
-    throw new Error(`Identity header mismatch: expected user ${userId}, got ${identity.userId}`);
-  }
+const ensureProvisionedIdentity = async (
+  identity: UserIdentity,
+  workspaceId: string,
+): Promise<void> => {
+  const userId = identity.userId;
   const initialLocale = await getLocaleCookie();
   const membershipKey = getMembershipCacheKey(userId, workspaceId);
   const shouldCacheMembership = !provisionedMemberships.has(membershipKey);
@@ -192,15 +182,11 @@ export const ensureUserProvisioned = async (userId: string, workspaceId: string)
 
       if (check.rows.length === 0) {
         if (workspaceId !== userId) {
-          throw new Error(
-            `User ${userId} is not a member of workspace ${workspaceId}`,
-          );
+          throw new Error(`User ${userId} is not a member of workspace ${workspaceId}`);
         }
-        await client.query(
-          "SELECT provision_personal_workspace_for_current_user()",
-          [],
-        );
+        await client.query("SELECT provision_personal_workspace_for_current_user()", []);
       }
+
       const settingsCheck = await client.query(
         "SELECT 1 FROM workspace_settings WHERE workspace_id = $1",
         [workspaceId],
@@ -238,6 +224,35 @@ export const ensureUserProvisioned = async (userId: string, workspaceId: string)
   }
 };
 
+/**
+ * Ensure the current user identity mirror and required personal rows exist.
+ *
+ * Uses in-memory caches for stable rows (workspace membership and user settings)
+ * but always upserts the users row so active identities stay synchronized.
+ *
+ * Personal workspaces keep the existing invariant `workspace_id = user_id`.
+ * Non-personal workspaces are never auto-created here; they must already have a
+ * membership row or the request fails explicitly.
+ */
+export const ensureUserProvisioned = async (userId: string, workspaceId: string): Promise<void> => {
+  const identity = await getCurrentIdentity();
+  if (identity.userId !== userId) {
+    throw new Error(`Identity header mismatch: expected user ${userId}, got ${identity.userId}`);
+  }
+  await ensureProvisionedIdentity(identity, workspaceId);
+};
+
+/**
+ * Ensure a trusted non-session identity is provisioned for app-side agent
+ * routes. The caller is responsible for validating the identity first.
+ */
+export const ensureTrustedIdentityProvisioned = async (
+  identity: UserIdentity,
+  workspaceId: string,
+): Promise<void> => {
+  await ensureProvisionedIdentity(identity, workspaceId);
+};
+
 /** Execute a query without RLS context (global tables only). */
 export const query = (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>
   pool.query(text, params as Array<unknown>);
@@ -256,6 +271,30 @@ export const queryAs = async (
   try {
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+    const result = await client.query(text, params as Array<unknown>);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+/** Execute a single SQL statement for a trusted non-session identity. */
+export const queryAsTrustedIdentity = async (
+  identity: UserIdentity,
+  workspaceId: string,
+  text: string,
+  params: ReadonlyArray<unknown>,
+): Promise<pg.QueryResult> => {
+  await ensureTrustedIdentityProvisioned(identity, workspaceId);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [identity.userId]);
     await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
     const result = await client.query(text, params as Array<unknown>);
     await client.query("COMMIT");
