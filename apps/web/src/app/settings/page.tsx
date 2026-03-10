@@ -102,7 +102,7 @@ async function AgentConnectionsData() {
   const demo = await isDemoMode();
 
   if (demo) {
-    return null;
+    return <AgentConnectionsManager initialConnections={[]} />;
   }
 
   const headersList = await headers();
@@ -155,7 +155,7 @@ export default async function SettingsPage() {
       </section>
 
       <section className="panel">
-        <h1 className="title">Agent Connections</h1>
+        <h1 className="title">{t(locale, "settings.agentProgramAccess")}</h1>
         <Suspense fallback={<LoadingIndicator />}>
           <AgentConnectionsData />
         </Suspense>
