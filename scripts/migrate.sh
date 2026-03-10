@@ -84,15 +84,20 @@ for f in "$ROOT_DIR"/db/migrations/*.sql; do
     continue
   fi
   echo "  Applying $BASENAME"
-  run_psql -v ON_ERROR_STOP=1 -f "$f"
-  echo "INSERT INTO schema_migrations (filename) VALUES (:'fname')" \
-    | run_psql -v "fname=$BASENAME"
+  # Apply the migration and record it in the same transaction so a failed file
+  # never leaves schema changes without the tracking row.
+  run_psql -v ON_ERROR_STOP=1 -v "fname=$BASENAME" <<SQL
+BEGIN;
+\i $f
+INSERT INTO schema_migrations (filename) VALUES (:'fname');
+COMMIT;
+SQL
 done
 
 echo "Applying views..."
 for f in "$ROOT_DIR"/db/views/*.sql; do
   echo "  Applying $(basename "$f")"
-  run_psql -f "$f"
+  run_psql -v ON_ERROR_STOP=1 -f "$f"
 done
 
 echo "Setting app role password..."
