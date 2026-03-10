@@ -1,0 +1,216 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Expense Budget Tracker API",
+    "version": "v1",
+    "description": "Machine-facing API for expense-budget-tracker."
+  },
+  "servers": [
+    {
+      "url": "https://api.expense-budget-tracker.com/v1",
+      "description": "Canonical API host"
+    },
+    {
+      "url": "https://auth.expense-budget-tracker.com",
+      "description": "Auth bootstrap host"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "API discovery index",
+        "responses": {
+          "200": {
+            "description": "Discovery envelope"
+          }
+        }
+      }
+    },
+    "/agent": {
+      "get": {
+        "summary": "Agent discovery",
+        "responses": {
+          "200": {
+            "description": "Discovery envelope"
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON document"
+          }
+        }
+      }
+    },
+    "/swagger.json": {
+      "get": {
+        "summary": "OpenAPI document alias",
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON document"
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "summary": "Load account context",
+        "security": [
+          {
+            "ApiKeyHeader": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Account envelope"
+          }
+        }
+      }
+    },
+    "/workspaces": {
+      "get": {
+        "summary": "List workspaces",
+        "security": [
+          {
+            "ApiKeyHeader": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace list envelope"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create workspace",
+        "security": [
+          {
+            "ApiKeyHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace created envelope"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/select": {
+      "post": {
+        "summary": "Validate and select workspace for later SQL",
+        "security": [
+          {
+            "ApiKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace ready envelope"
+          }
+        }
+      }
+    },
+    "/sql": {
+      "post": {
+        "summary": "Execute restricted SQL",
+        "security": [
+          {
+            "ApiKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sql"],
+                "properties": {
+                  "sql": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SQL result envelope"
+          }
+        }
+      }
+    },
+    "/api/agent/send-code": {
+      "post": {
+        "summary": "Start OTP login",
+        "responses": {
+          "200": {
+            "description": "OTP challenge created"
+          }
+        }
+      }
+    },
+    "/api/agent/verify-code": {
+      "post": {
+        "summary": "Finish OTP login and mint ApiKey",
+        "responses": {
+          "200": {
+            "description": "ApiKey issued"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Send the full header value as: ApiKey <key>."
+      }
+    }
+  }
+}

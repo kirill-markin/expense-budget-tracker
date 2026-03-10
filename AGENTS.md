@@ -10,6 +10,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Use strict typing across functions, variables, and collections.
 - Avoid fallback logic unless explicitly requested.
 - Raise explicit, actionable errors with context.
+- Machine API documentation is intentionally duplicated across the discovery envelope (`actions` and `instructions`) and the published specs (`/v1/openapi.json`, `/v1/swagger.json`, `api/openapi.yaml`). When changing the machine API, keep all of these in sync in the same change.
 - Keep changes minimal and scoped to the current request.
 - Prefer non-interactive terminal commands.
 - Change schema via new files in `db/migrations/` only; never edit already-applied migrations.
@@ -28,8 +29,8 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 ## Supported Clients
 
 - Web app: supported
-- Terminal / AI agents: full functionality is supported through the agent API flow starting at `GET https://app.expense-budget-tracker.com/api/agent` (the discovery response includes the next-step instructions for signup/login and email OTP onboarding)
-- Direct HTTP clients and scripts: supported through `POST https://api.expense-budget-tracker.com/v1/sql` with a manually created Bearer API key
+- Terminal / AI agents: full functionality is supported through the canonical machine API entrypoint `GET https://api.expense-budget-tracker.com/v1/` (the discovery response includes the next-step instructions for signup/login and email OTP onboarding)
+- Direct HTTP clients and scripts: supported through the same `https://api.expense-budget-tracker.com/v1` surface with `Authorization: ApiKey <key>`
 
 ## Key Paths
 

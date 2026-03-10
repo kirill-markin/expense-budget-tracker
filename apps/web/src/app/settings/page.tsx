@@ -5,7 +5,6 @@ import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
 import { t } from "@/i18n/serverT";
-import { listApiKeys } from "@/server/apiKeys";
 import { getDemoCategories } from "@/server/demo/data";
 import { getFilteredCategories } from "@/server/filteredCategories";
 import { getAvailableCurrencies } from "@/server/getAvailableCurrencies";
@@ -15,7 +14,6 @@ import { getCategories } from "@/server/transactions/getTransactions";
 import { getUserSettings } from "@/server/userSettings";
 import { queryAs } from "@/server/db";
 import { listAgentConnections } from "@/server/agentConnections";
-import { ApiKeyManager } from "@/ui/ApiKeyManager";
 import { AgentConnectionsManager } from "@/ui/AgentConnectionsManager";
 import { FilteredCategorySettings } from "@/ui/FilteredCategorySettings";
 import { UserSettingsForm } from "@/ui/UserSettingsForm";
@@ -100,22 +98,6 @@ async function FilteredCategoriesData() {
   return <FilteredCategorySettings filteredCategories={filteredCategories} allCategories={allCategories} />;
 }
 
-async function ApiKeyData() {
-  const demo = await isDemoMode();
-
-  if (demo) {
-    return null;
-  }
-
-  const headersList = await headers();
-  const userId = extractUserIdFromHeaders(headersList);
-  const workspaceId = extractWorkspaceIdFromHeaders(headersList);
-
-  const initialKeys = await listApiKeys(userId, workspaceId);
-
-  return <ApiKeyManager initialKeys={initialKeys} />;
-}
-
 async function AgentConnectionsData() {
   const demo = await isDemoMode();
 
@@ -169,13 +151,6 @@ export default async function SettingsPage() {
         <h1 className="title">{t(locale, "settings.filteredCategories")}</h1>
         <Suspense fallback={<LoadingIndicator />}>
           <FilteredCategoriesData />
-        </Suspense>
-      </section>
-
-      <section className="panel">
-        <h1 className="title">{t(locale, "settings.apiKeys")}</h1>
-        <Suspense fallback={<LoadingIndicator />}>
-          <ApiKeyData />
         </Suspense>
       </section>
 

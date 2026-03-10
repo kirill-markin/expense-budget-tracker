@@ -8,6 +8,10 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "..",
+    "baseUrl": "..",
+    "paths": {
+      "@/*": ["web/src/*"]
+    },
     "resolveJsonModule": true,
     "declaration": true,
     "sourceMap": true

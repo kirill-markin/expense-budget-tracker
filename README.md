@@ -25,18 +25,20 @@ Open `http://localhost:3000`.
 
 ## Usage with AI agents
 
-The discovery response tells agents to ask for the user's email first, and the same email OTP flow covers both signup and login.
+Start at `GET https://api.expense-budget-tracker.com/v1/`. The discovery response tells agents to ask for the user's email first, and the same email OTP flow covers both signup and login.
 
-1. **Settings → API Keys → Create key** — copy the key (shown once)
-2. **Give the key to your AI agent** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://openai.com/index/codex/), or any agent that can call HTTP APIs
-3. **Send the agent screenshots, CSV files, or PDF bank statements** — it parses them and inserts transactions via the SQL API
-4. **Open the web UI** — view actual spending by category and plan the budget for the next month
+1. **Open `GET https://api.expense-budget-tracker.com/v1/` in your agent** — it will discover the OTP onboarding flow automatically
+2. **Complete email OTP login** — the auth service returns a long-lived `ApiKey`
+3. **Give the key to your AI agent** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://openai.com/index/codex/), or any agent that can call HTTP APIs
+4. **Send the agent screenshots, CSV files, or PDF bank statements** — it parses them and inserts transactions via the SQL API
+5. **Open the web UI** — view actual spending by category and plan the budget for the next month
 
 Example request the agent sends:
 
 ```bash
 curl -X POST https://api.expense-budget-tracker.com/v1/sql \
-  -H "Authorization: Bearer ebt_..." \
+  -H "Authorization: ApiKey ebta_..." \
+  -H "X-Workspace-Id: workspace-id" \
   -H "Content-Type: application/json" \
   -d '{"sql": "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, category, counterparty, note) VALUES ('"'"'evt-001'"'"', '"'"'2025-03-15 12:30:00+00'"'"', '"'"'chase-checking'"'"', -42.50, '"'"'USD'"'"', '"'"'spend'"'"', '"'"'groceries'"'"', '"'"'Whole Foods'"'"', '"'"'Weekly groceries'"'"')"}'
 ```

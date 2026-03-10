@@ -43,9 +43,9 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
                                                   ├─ domain.com ──────▶ 302 redirect to app.*
                                                   └─ app.* ───────────▶ web:8080 (Cognito Email OTP)
 
-Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL Lambda → RDS
+Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → Machine API Lambda → RDS
                          │
-                         └─ api.* ──────────▶ POST /v1/sql (ebt_ Bearer token auth)
+                         └─ api.* ──────────▶ GET /v1/ + authenticated /v1/* (ApiKey auth)
 ```
 
 **Cloudflare** handles domain registration, DNS, CDN caching, DDoS protection, and edge TLS.

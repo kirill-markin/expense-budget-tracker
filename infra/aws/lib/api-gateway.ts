@@ -41,6 +41,8 @@ const lambdaBundling: lambda_nodejs.BundlingOptions = {
     beforeInstall: () => [],
     afterBundling: (_inputDir: string, outputDir: string) => [
       `curl -sfo ${outputDir}/rds-global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem`,
+      `mkdir -p ${outputDir}/api`,
+      `cp ${path.join(_inputDir, "api/openapi.yaml")} ${outputDir}/api/openapi.yaml`,
     ],
   },
 };
@@ -89,6 +91,8 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
   sqlApiFn.addEnvironment("DB_SECRET_ARN", props.appDbSecret.secretArn);
   sqlApiFn.addEnvironment("DB_HOST", props.db.dbInstanceEndpointAddress);
   sqlApiFn.addEnvironment("DB_NAME", "tracker");
+  sqlApiFn.addEnvironment("PUBLIC_API_BASE_URL", `https://api.${props.baseDomain}/v1`);
+  sqlApiFn.addEnvironment("PUBLIC_AUTH_BASE_URL", `https://auth.${props.baseDomain}`);
 
   // --- REST API ---
   const restApi = new apigw.RestApi(scope, "SqlRestApi", {
@@ -109,6 +113,38 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
     // on the next request instead of after a cache window expires.
     resultsCacheTtl: cdk.Duration.seconds(0),
   });
+
+  restApi.root.addMethod("GET", new apigw.LambdaIntegration(sqlApiFn));
+
+  const agentResource = restApi.root.addResource("agent");
+  agentResource.addMethod("GET", new apigw.LambdaIntegration(sqlApiFn));
+
+  restApi.root.addResource("openapi.json").addMethod("GET", new apigw.LambdaIntegration(sqlApiFn));
+  restApi.root.addResource("swagger.json").addMethod("GET", new apigw.LambdaIntegration(sqlApiFn));
+
+  const meResource = restApi.root.addResource("me");
+  meResource.addMethod("GET", new apigw.LambdaIntegration(sqlApiFn), {
+    authorizer,
+    authorizationType: apigw.AuthorizationType.CUSTOM,
+  });
+
+  const workspacesResource = restApi.root.addResource("workspaces");
+  workspacesResource.addMethod("GET", new apigw.LambdaIntegration(sqlApiFn), {
+    authorizer,
+    authorizationType: apigw.AuthorizationType.CUSTOM,
+  });
+  workspacesResource.addMethod("POST", new apigw.LambdaIntegration(sqlApiFn), {
+    authorizer,
+    authorizationType: apigw.AuthorizationType.CUSTOM,
+  });
+
+  workspacesResource
+    .addResource("{workspaceId}")
+    .addResource("select")
+    .addMethod("POST", new apigw.LambdaIntegration(sqlApiFn), {
+      authorizer,
+      authorizationType: apigw.AuthorizationType.CUSTOM,
+    });
 
   // --- Route: POST /sql ---
   const sqlResource = restApi.root.addResource("sql");

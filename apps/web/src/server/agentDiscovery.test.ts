@@ -9,18 +9,26 @@ test("buildAgentDiscoveryEnvelope points agents to ask for email before send_cod
   const envelope = buildAgentDiscoveryEnvelope(new Request("https://app.example.com/api/agent"));
 
   assert.equal(envelope.ok, true);
-  assert.deepEqual(envelope.actions, [{
-    name: "send_code",
-    method: "POST",
-    url: "https://auth.example.com/api/agent/send-code",
-    input: { email: "string" },
-    auth: "none",
-  }]);
-  const flow = envelope.data["flow"];
-  assert.ok(Array.isArray(flow));
-  assert.equal(flow[0], "1. Ask which email the user wants to use, then POST it to send_code on auth.*");
-  assert.match(envelope.instructions, /Ask the user which email address they want to use/);
-  assert.match(envelope.instructions, /start using the service for free/);
+  assert.deepEqual(envelope.actions, [
+    {
+      name: "send_code",
+      method: "POST",
+      url: "https://auth.example.com/api/agent/send-code",
+      input: { email: "string" },
+      auth: "none",
+    },
+    {
+      name: "openapi",
+      method: "GET",
+      url: "https://api.example.com/v1/openapi.json",
+      auth: "none",
+    },
+  ]);
+  assert.deepEqual(envelope.data["docs"], {
+    openapiUrl: "https://api.example.com/v1/openapi.json",
+    swaggerUrl: "https://api.example.com/v1/swagger.json",
+  });
+  assert.match(String(envelope.instructions), /https:\/\/api\.example\.com\/v1\/me/);
 });
 
 test("buildAgentDiscoveryEnvelope falls back to the request origin when auth env is missing", () => {
@@ -29,11 +37,19 @@ test("buildAgentDiscoveryEnvelope falls back to the request origin when auth env
 
   const envelope = buildAgentDiscoveryEnvelope(new Request("https://app.example.com/api/agent"));
 
-  assert.deepEqual(envelope.actions, [{
-    name: "send_code",
-    method: "POST",
-    url: "https://app.example.com/api/agent/send-code",
-    input: { email: "string" },
-    auth: "none",
-  }]);
+  assert.deepEqual(envelope.actions, [
+    {
+      name: "send_code",
+      method: "POST",
+      url: "https://app.example.com/api/agent/send-code",
+      input: { email: "string" },
+      auth: "none",
+    },
+    {
+      name: "openapi",
+      method: "GET",
+      url: "https://api.example.com/v1/openapi.json",
+      auth: "none",
+    },
+  ]);
 });

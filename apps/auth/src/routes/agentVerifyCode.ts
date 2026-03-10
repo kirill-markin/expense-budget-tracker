@@ -21,6 +21,16 @@ import { log, maskEmail } from "../server/logger.js";
 
 const CODE_RE = /^\d{8}$/;
 
+const getPublicApiBaseUrl = (requestUrl: string): string => {
+  const configuredApiBaseUrl = process.env.PUBLIC_API_BASE_URL;
+  if (configuredApiBaseUrl !== undefined && configuredApiBaseUrl !== "") {
+    return configuredApiBaseUrl.endsWith("/") ? configuredApiBaseUrl.slice(0, -1) : configuredApiBaseUrl;
+  }
+
+  const url = new URL(requestUrl);
+  return `${url.protocol}//${url.host.replace(/^auth\./u, "api.")}/v1`;
+};
+
 type CognitoFailure = Error & Readonly<{
   cognitoType?: string;
 }>;
@@ -183,6 +193,7 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
       await dependencies.markAgentOtpChallengeUsed(challenge.email, challenge.cognitoSession, dependencies.now());
       const identity = dependencies.extractIdentityFromIdToken(tokens.idToken);
       const connection = await dependencies.createAgentConnection(identity.userId, identity.email, label);
+      const apiBaseUrl = getPublicApiBaseUrl(c.req.url);
 
       return c.json(
         buildSuccessEnvelope(
@@ -194,8 +205,8 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
             },
             apiKey: connection.apiKey,
           },
-          [buildLoadAccountAction()],
-          "Store this long-lived API key now and do not rely on chat history alone. A new dialog or session on the same machine will not have this key unless it was saved outside this conversation. Prefer exporting it first as EXPENSE_BUDGET_TRACKER_API_KEY; if needed, save it in a local .env file or another local file, but ask the user for permission before writing to .env or any file. At minimum, save it somewhere persistent outside chat memory. Example: export EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>' && curl -H 'Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY' https://app.expense-budget-tracker.com/api/agent/me. Next, call load_account.",
+          [buildLoadAccountAction(apiBaseUrl)],
+          `Store this long-lived API key now and do not rely on chat history alone. A new dialog or session on the same machine will not have this key unless it was saved outside this conversation. Prefer exporting it first as EXPENSE_BUDGET_TRACKER_API_KEY; if needed, save it in a local .env file or another local file, but ask the user for permission before writing to .env or any file. At minimum, save it somewhere persistent outside chat memory. Example: export EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>' && curl -H 'Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY' ${apiBaseUrl}/me. Next, call load_account.`,
         ),
         200,
       );

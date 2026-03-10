@@ -1,8 +1,8 @@
 /**
  * Lambda Authorizer for API Gateway (REST API, TOKEN type).
  *
- * Validates ebt_ Bearer tokens against the database using the same
- * SECURITY DEFINER function (validate_api_key) as the web app.
+ * Validates agent ApiKey tokens against the database using the same
+ * SECURITY DEFINER function (auth.validate_agent_api_key) as the web app.
  * Returns an IAM policy + context with usageIdentifierKey for per-key
  * throttling via Usage Plans.
  *
@@ -11,11 +11,30 @@
 
 import crypto from "node:crypto";
 import type { APIGatewayTokenAuthorizerEvent, APIGatewayAuthorizerResult } from "aws-lambda";
-import { normalizePrefixedCrockfordToken } from "../../web/src/server/crockford";
+import { normalizeCrockfordToken } from "../../web/src/server/crockford";
 import { query } from "./db";
 
-const hashKey = (key: string): string =>
-  crypto.createHash("sha256").update(key).digest("hex");
+type AuthorizerDependencies = Readonly<{
+  query: typeof query;
+}>;
+
+type AgentApiKeyRow = Readonly<{
+  connection_id: string;
+  user_id: string;
+  email: string | null;
+  key_hash: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  label: string;
+  created_at: string;
+}>;
+
+const KEY_PREFIX = "EBTA";
+const KEY_ID_LENGTH = 8;
+const SECRET_LENGTH = 26;
+
+const hashSecret = (secret: string): string =>
+  crypto.createHash("sha256").update(secret).digest("hex");
 
 const denyPolicy = (methodArn: string): APIGatewayAuthorizerResult => ({
   principalId: "anonymous",
@@ -27,45 +46,67 @@ const denyPolicy = (methodArn: string): APIGatewayAuthorizerResult => ({
 
 export const handler = async (
   event: APIGatewayTokenAuthorizerEvent,
-): Promise<APIGatewayAuthorizerResult> => {
-  const token = event.authorizationToken ?? "";
-  if (!token.startsWith("Bearer ")) {
-    return denyPolicy(event.methodArn);
-  }
+): Promise<APIGatewayAuthorizerResult> => createAuthorizerHandler({ query })(event);
 
-  let normalizedKey: string;
-  try {
-    normalizedKey = normalizePrefixedCrockfordToken(token.slice("Bearer ".length), "ebt_", 26, "SQL API key");
-  } catch {
-    return denyPolicy(event.methodArn);
-  }
-  const keyHash = hashKey(normalizedKey);
+export const createAuthorizerHandler = (
+  dependencies: AuthorizerDependencies,
+): ((event: APIGatewayTokenAuthorizerEvent) => Promise<APIGatewayAuthorizerResult>) => {
+  return async (event: APIGatewayTokenAuthorizerEvent): Promise<APIGatewayAuthorizerResult> => {
+    const token = event.authorizationToken ?? "";
+    if (!token.startsWith("ApiKey ")) {
+      return denyPolicy(event.methodArn);
+    }
 
-  const result = await query("SELECT * FROM validate_api_key($1)", [keyHash]);
-  if (result.rows.length === 0) {
-    return denyPolicy(event.methodArn);
-  }
+    const credentials = token.slice("ApiKey ".length).replace(/[\s-]/g, "").toUpperCase();
+    const parts = credentials.split("_");
+    if (parts.length !== 3 || parts[0] !== KEY_PREFIX) {
+      return denyPolicy(event.methodArn);
+    }
 
-  const row = result.rows[0] as { user_id: string; workspace_id: string };
+    let keyId = "";
+    let secret = "";
+    try {
+      keyId = normalizeCrockfordToken(parts[1] ?? "", "agent ApiKey keyId");
+      secret = normalizeCrockfordToken(parts[2] ?? "", "agent ApiKey secret");
+    } catch {
+      return denyPolicy(event.methodArn);
+    }
 
-  // Fire-and-forget: update last_used_at for usage tracking
-  query("UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1", [keyHash]).catch(() => {});
+    if (keyId.length !== KEY_ID_LENGTH || secret.length !== SECRET_LENGTH) {
+      return denyPolicy(event.methodArn);
+    }
 
-  // Allow all methods on this API — cache applies to the whole API per token
-  const arnParts = event.methodArn.split(":");
-  const apiGatewayArnParts = arnParts[5].split("/");
-  const resourceArn = `${arnParts.slice(0, 5).join(":")}:${apiGatewayArnParts[0]}/${apiGatewayArnParts[1]}/*`;
+    const result = await dependencies.query("SELECT * FROM auth.validate_agent_api_key($1)", [keyId]);
+    if (result.rows.length !== 1) {
+      return denyPolicy(event.methodArn);
+    }
 
-  return {
-    principalId: row.user_id,
-    policyDocument: {
-      Version: "2012-10-17",
-      Statement: [{ Action: "execute-api:Invoke", Effect: "Allow", Resource: resourceArn }],
-    },
-    context: {
-      userId: row.user_id,
-      workspaceId: row.workspace_id,
-    },
-    usageIdentifierKey: keyHash,
+    const row = result.rows[0] as AgentApiKeyRow;
+    if (row.revoked_at !== null || row.email === null || row.email === "" || row.key_hash !== hashSecret(secret)) {
+      return denyPolicy(event.methodArn);
+    }
+
+    dependencies.query("SELECT auth.touch_agent_api_key_usage($1)", [row.connection_id]).catch(() => {});
+
+    const arnParts = event.methodArn.split(":");
+    const apiGatewayArnParts = arnParts[5].split("/");
+    const resourceArn = `${arnParts.slice(0, 5).join(":")}:${apiGatewayArnParts[0]}/${apiGatewayArnParts[1]}/*`;
+
+    return {
+      principalId: row.user_id,
+      policyDocument: {
+        Version: "2012-10-17",
+        Statement: [{ Action: "execute-api:Invoke", Effect: "Allow", Resource: resourceArn }],
+      },
+      context: {
+        userId: row.user_id,
+        email: row.email,
+        connectionId: row.connection_id,
+        label: row.label,
+        createdAt: String(row.created_at),
+        lastUsedAt: row.last_used_at === null ? "" : String(row.last_used_at),
+      },
+      usageIdentifierKey: row.connection_id,
+    };
   };
 };

@@ -2,11 +2,22 @@
  * Discovery document for terminal-first agent onboarding.
  */
 import { buildSendCodeAction, buildSuccessEnvelope, type AgentEnvelope } from "@/server/agentEnvelope";
-import { SQL_API_KEY_ENV_VAR_NAME } from "@/server/apiKeys";
 
 const SERVICE_NAME = "Expense Budget Tracker Agent API";
 const SERVICE_VERSION = "v1";
 const SERVICE_DESCRIPTION = "Terminal-first onboarding for AI agents with ApiKey authentication and explicit workspace selection.";
+const AGENT_API_KEY_ENV_VAR_NAME = "EXPENSE_BUDGET_TRACKER_API_KEY";
+
+const getApiBaseUrl = (request: Request): string => {
+  const requestUrl = new URL(request.url);
+  const configuredOrigin = process.env.CORS_ORIGIN ?? "";
+
+  if (configuredOrigin !== "") {
+    return `${new URL(configuredOrigin).protocol}//api.${process.env.AUTH_DOMAIN?.replace(/^auth\./u, "") ?? requestUrl.host.replace(/^app\./u, "")}/v1`;
+  }
+
+  return `${requestUrl.protocol}//${requestUrl.host.replace(/^app\./u, "api.")}/v1`;
+};
 
 const getBootstrapUrl = (request: Request): string => {
   const requestUrl = new URL(request.url);
@@ -23,6 +34,7 @@ const getBootstrapUrl = (request: Request): string => {
 
 export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => {
   const bootstrapUrl = getBootstrapUrl(request);
+  const apiBaseUrl = getApiBaseUrl(request);
 
   return buildSuccessEnvelope(
     {
@@ -35,20 +47,26 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
         bootstrapUrl,
         scheme: "Authorization: ApiKey <key>",
       },
+      apiBaseUrl,
+      docs: {
+        openapiUrl: `${apiBaseUrl}/openapi.json`,
+        swaggerUrl: `${apiBaseUrl}/swagger.json`,
+      },
       capabilities: {
         onboarding: true,
         workspaceSetup: true,
         sql: true,
       },
-      flow: [
-        "1. Ask which email the user wants to use, then POST it to send_code on auth.*",
-        "2. Ask the user for the 8-digit email code and call verify_code",
-        `3. Save the returned key as ${SQL_API_KEY_ENV_VAR_NAME} and call GET /api/agent/me with Authorization: ApiKey $${SQL_API_KEY_ENV_VAR_NAME}`,
-        "4. List, create, or select a workspace",
-        "5. Execute SQL with POST /api/agent/sql and X-Workspace-Id",
-      ],
     },
-    [buildSendCodeAction(bootstrapUrl)],
-    "Start with send_code. Ask the user which email address they want to use, call send_code with that email, ask for the 8-digit confirmation code from the email, and continue onboarding so the user can start using the service for free. This service authenticates one user per ApiKey and requires an explicit workspace ID for each SQL request.",
+    [
+      buildSendCodeAction(bootstrapUrl),
+      {
+        name: "openapi",
+        method: "GET",
+        url: `${apiBaseUrl}/openapi.json`,
+        auth: "none",
+      },
+    ],
+    `Start with send_code. After login, export the returned key as ${AGENT_API_KEY_ENV_VAR_NAME}, then call ${apiBaseUrl}/me and ${apiBaseUrl}/workspaces before SQL.`,
   );
 };

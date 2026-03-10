@@ -17,7 +17,7 @@
 Four components, one database:
 
 1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool` with per-request RLS context.
-2. **sql-api** (`apps/sql-api/`) — Two AWS Lambdas behind API Gateway (REST API) for machine clients. Lambda Authorizer validates `ebt_` Bearer tokens; SQL executor runs queries with RLS context. Separate from the web stack — no ALB involved.
+2. **sql-api** (`apps/sql-api/`) — Two AWS Lambdas behind API Gateway (REST API) for machine clients. Lambda Authorizer validates `ApiKey` agent tokens; the handler serves discovery, workspace setup, and SQL with the same v1 machine surface. Separate from the web stack — no ALB involved.
 3. **worker** (`apps/worker/`) — TypeScript process that fetches daily exchange rates from ECB, CBR, and NBS and inserts them into `exchange_rates`. Runs on a schedule (local Docker) or as a Lambda (AWS).
 4. **Postgres** — single source of truth. Seven tables (six with RLS), one view.
 
@@ -83,7 +83,7 @@ RLS policies check workspace membership via `app.user_id` and filter by `app.wor
 
 ### Programmatic access
 
-For programmatic access (LLM agents, scripts, dashboards), generate an API key in Settings and use the SQL Query API endpoint.
+For programmatic access (LLM agents, scripts, dashboards), start from `GET /v1/`, complete email OTP onboarding, and use the returned agent `ApiKey`.
 
 ## API Gateway (machine clients)
 
@@ -102,8 +102,12 @@ The SQL API runs on API Gateway (REST API) with its own domain (`api.example.com
 curl / LLM agent
       │
       ▼
+GET https://api.example.com/v1/
+Authorization: none
+...
 POST https://api.example.com/v1/sql
-Authorization: Bearer ebt_...
+Authorization: ApiKey ebta_...
+X-Workspace-Id: workspace-id
       │
       ▼
 API Gateway → Lambda Authorizer (validates key, resolves identity)
@@ -115,7 +119,7 @@ SQL Lambda (sets RLS context, executes query)
 Postgres (same app role + RLS as web app)
 ```
 
-Users generate an API key in Settings, pass it as a Bearer token, and send SQL in a JSON body. Uses the same `app` role and RLS enforcement as the web application — `SET LOCAL app.user_id` and `app.workspace_id` per transaction.
+Agents start from `GET /v1/`, complete email OTP on `auth.*`, store the returned ApiKey, load `/v1/me`, list or create `/v1/workspaces`, and send SQL to `/v1/sql`. The SQL execution path uses the same `app` role and RLS enforcement as the web application — `SET LOCAL app.user_id` and `app.workspace_id` per transaction.
 
 ### Security
 
@@ -133,7 +137,8 @@ Users generate an API key in Settings, pass it as a Bearer token, and send SQL i
 
 ```bash
 curl -X POST https://api.example.com/v1/sql \
-  -H "Authorization: Bearer ebt_a7Bk9mNpQ2xR4wYz1cDfGhJvLs8tUeWi5o..." \
+  -H "Authorization: ApiKey ebta_ABCD1234_0123456789ABCDEFGHJKMNPQRS" \
+  -H "X-Workspace-Id: workspace-id" \
   -H "Content-Type: application/json" \
   -d '{"sql": "SELECT * FROM ledger_entries ORDER BY ts DESC LIMIT 10"}'
 ```

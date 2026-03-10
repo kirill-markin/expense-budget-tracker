@@ -38,10 +38,10 @@ export const buildVerifyCodeAction = (): AgentAction => ({
   auth: "none",
 });
 
-export const buildLoadAccountAction = (): AgentAction => ({
+export const buildLoadAccountAction = (apiBaseUrl: string): AgentAction => ({
   name: "load_account",
   method: "GET",
-  url: "/api/agent/me",
+  url: `${apiBaseUrl}/me`,
   auth: "ApiKey",
 });
 
