@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Context } from "hono";
+import { normalizeCrockfordToken } from "../server/crockford.js";
 import { createAgentSendCodeApp } from "./agentSendCode.js";
 import { createSendCodeApp } from "./sendCode.js";
-import { verify } from "../server/crypto.js";
 import type { OtpSendDecision } from "../server/otpRateLimit.js";
 
 process.env.SESSION_ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -66,6 +66,9 @@ const createAgentSendCodeTestApp = (
   getClientIp: (_context: Context) => "203.0.113.10",
   initiateEmailOtp,
   checkAndRecordOtpSendDecision: async () => decision,
+  createAgentOtpChallenge: async (_normalizedEmail: string, cognitoSession: string) => `HANDLE-${cognitoSession}`,
+  reissueLatestAgentOtpChallenge: async () => "HANDLE-REISSUED",
+  now: () => 123_456,
 });
 
 test("browser send-code returns csrf token and otp cookie when allowed", async () => {
@@ -113,12 +116,10 @@ test("agent send-code returns success envelope without Cognito call when email-l
 
   const response = await app.request(makeJsonRequest("/api/agent/send-code", { email: "user@example.com" }));
   const body = await response.json() as { ok: boolean; data: { otpSessionToken: string } };
-  const payload = JSON.parse(verify(body.data.otpSessionToken)) as { s: string; e: string; t: number };
 
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
-  assert.equal(payload.s, "");
-  assert.equal(payload.e, "user@example.com");
+  assert.equal(body.data.otpSessionToken, "HANDLE-REISSUED");
   assert.deepEqual(initiateStub.calls, []);
 });
 
@@ -128,12 +129,10 @@ test("agent send-code calls Cognito and returns otp session token when allowed",
 
   const response = await app.request(makeJsonRequest("/api/agent/send-code", { email: "user@example.com" }));
   const body = await response.json() as { ok: boolean; data: { otpSessionToken: string } };
-  const payload = JSON.parse(verify(body.data.otpSessionToken)) as { s: string; e: string; t: number };
 
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
-  assert.equal(payload.s, "session-for:user@example.com");
-  assert.equal(payload.e, "user@example.com");
+  assert.equal(body.data.otpSessionToken, "HANDLE-session-for:user@example.com");
   assert.deepEqual(initiateStub.calls, ["user@example.com"]);
 });
 
@@ -162,6 +161,9 @@ test("agent and browser send-code routes share limiter state when they use the s
     getClientIp: (_context: Context) => "203.0.113.10",
     initiateEmailOtp: initiateStub.initiateEmailOtp,
     checkAndRecordOtpSendDecision: sharedLimiter,
+    createAgentOtpChallenge: async (_normalizedEmail: string, cognitoSession: string) => `HANDLE-${cognitoSession}`,
+    reissueLatestAgentOtpChallenge: async () => "HANDLE-REISSUED",
+    now: () => 123_456,
   });
   const browserApp = createSendCodeApp({
     delay: noopDelay,
@@ -183,4 +185,8 @@ test("agent and browser send-code routes share limiter state when they use the s
   assert.equal(fourthResponse.status, 429);
   assert.equal(fourthBody.error, "Too many requests — please wait before trying again");
   assert.deepEqual(initiateStub.calls, ["user@example.com", "user@example.com", "user@example.com"]);
+});
+
+test("normalizeCrockfordToken strips separators and uppercases tokens", () => {
+  assert.equal(normalizeCrockfordToken("ab cd-ef", "otpSessionToken"), "ABCDEF");
 });

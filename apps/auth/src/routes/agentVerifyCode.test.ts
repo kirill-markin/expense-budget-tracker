@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import app from "./agentVerifyCode.js";
-import { sign } from "../server/crypto.js";
-
-process.env.SESSION_ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+import { createAgentVerifyCodeApp } from "./agentVerifyCode.js";
 
 const makeJsonRequest = (body: Readonly<Record<string, string>>): Request =>
   new Request("http://localhost/api/agent/verify-code", {
@@ -13,11 +10,22 @@ const makeJsonRequest = (body: Readonly<Record<string, string>>): Request =>
   });
 
 test("agent verify-code logs rejected expired otp session before Cognito verification", async () => {
-  const otpSessionToken = sign(JSON.stringify({
-    s: "",
-    e: "user@example.com",
-    t: Date.now(),
-  }));
+  const app = createAgentVerifyCodeApp({
+    lookupAgentOtpChallenge: async () => ({ status: "expired", email: "user@example.com" }),
+    verifyEmailOtp: async () => {
+      throw new Error("verifyEmailOtp should not be called");
+    },
+    markAgentOtpChallengeUsed: async () => Promise.resolve(),
+    extractIdentityFromIdToken: () => ({ userId: "user-1", email: "user@example.com" }),
+    createAgentConnection: async () => ({
+      connectionId: "connection-1",
+      createdAt: "2026-03-10T00:00:00.000Z",
+      label: "codex-desktop",
+      apiKey: "ebta_ABCDEFGH_0123456789ABCDEFGHJKMNPQRS",
+    }),
+    now: () => 123_456,
+  });
+
   const loggedEvents: Array<string> = [];
   const originalConsoleLog = console.log;
   console.log = (...args: ReadonlyArray<unknown>): void => {
@@ -27,7 +35,7 @@ test("agent verify-code logs rejected expired otp session before Cognito verific
   try {
     const response = await app.request(makeJsonRequest({
       code: "12345678",
-      otpSessionToken,
+      otpSessionToken: "OTP-SESSION",
       label: "codex-desktop",
     }));
     const body = await response.json() as { error: { code: string } };
@@ -41,4 +49,41 @@ test("agent verify-code logs rejected expired otp session before Cognito verific
   } finally {
     console.log = originalConsoleLog;
   }
+});
+
+test("agent verify-code returns env-var guidance with the new key", async () => {
+  const app = createAgentVerifyCodeApp({
+    lookupAgentOtpChallenge: async () => ({
+      status: "active",
+      email: "user@example.com",
+      cognitoSession: "session-1",
+    }),
+    verifyEmailOtp: async () => ({
+      idToken: "header.payload.signature",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+    }),
+    markAgentOtpChallengeUsed: async () => Promise.resolve(),
+    extractIdentityFromIdToken: () => ({ userId: "user-1", email: "user@example.com" }),
+    createAgentConnection: async () => ({
+      connectionId: "connection-1",
+      createdAt: "2026-03-10T00:00:00.000Z",
+      label: "codex-desktop",
+      apiKey: "ebta_ABCDEFGH_0123456789ABCDEFGHJKMNPQRS",
+    }),
+    now: () => 123_456,
+  });
+
+  const response = await app.request(makeJsonRequest({
+    code: "12345678",
+    otpSessionToken: "OTP-SESSION",
+    label: "codex-desktop",
+  }));
+  const body = await response.json() as { ok: boolean; instructions: string; data: { apiKey: string } };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.data.apiKey, "ebta_ABCDEFGH_0123456789ABCDEFGHJKMNPQRS");
+  assert.match(body.instructions, /EXPENSE_BUDGET_TRACKER_API_KEY/);
 });

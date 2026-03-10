@@ -1,30 +1,37 @@
 /**
  * Agent OTP verification.
  *
- * Exchanges a valid Email OTP challenge for a long-lived agent API key instead
- * of browser session cookies. The returned key is shown once and must be
- * stored by the terminal client.
+ * Resolves a short opaque OTP handle to the server-side Cognito session, then
+ * exchanges a valid Email OTP challenge for a long-lived agent API key.
  */
 import { Hono } from "hono";
-import { createAgentConnection } from "../server/agentApiKeys.js";
+import {
+  lookupAgentOtpChallenge,
+  markAgentOtpChallengeUsed,
+  type AgentOtpChallengeLookup,
+} from "../server/agentOtpChallenges.js";
+import { createAgentConnection, type AgentConnectionResult } from "../server/agentApiKeys.js";
 import { buildErrorEnvelope, buildLoadAccountAction, buildSuccessEnvelope } from "../server/agentEnvelope.js";
-import { extractIdentityFromIdToken, verifyEmailOtp } from "../server/cognitoAuth.js";
-import { verify } from "../server/crypto.js";
+import {
+  extractIdentityFromIdToken,
+  verifyEmailOtp,
+  type TokenResult,
+} from "../server/cognitoAuth.js";
 import { log, maskEmail } from "../server/logger.js";
 
-const app = new Hono();
-
 const CODE_RE = /^\d{8}$/;
-const OTP_TTL_MS = 180_000;
-
-type AgentOtpPayload = Readonly<{
-  s: string;
-  e: string;
-  t: number;
-}>;
 
 type CognitoFailure = Error & Readonly<{
   cognitoType?: string;
+}>;
+
+type AgentVerifyCodeDependencies = Readonly<{
+  lookupAgentOtpChallenge: (otpSessionToken: string, nowMs: number) => Promise<AgentOtpChallengeLookup>;
+  verifyEmailOtp: (email: string, code: string, session: string) => Promise<TokenResult>;
+  markAgentOtpChallengeUsed: (normalizedEmail: string, cognitoSession: string, nowMs: number) => Promise<void>;
+  extractIdentityFromIdToken: (idToken: string) => Readonly<{ userId: string; email: string }>;
+  createAgentConnection: (userId: string, email: string, label: string) => Promise<AgentConnectionResult>;
+  now: () => number;
 }>;
 
 const logRejectedAttempt = (
@@ -86,120 +93,142 @@ const mapVerifyError = (error: unknown): Readonly<{
   };
 };
 
-app.post("/api/agent/verify-code", async (c) => {
-  let body: { code?: string; otpSessionToken?: string; label?: string };
-  try {
-    body = await c.req.json<{ code?: string; otpSessionToken?: string; label?: string }>();
-  } catch {
-    return c.json(
-      buildErrorEnvelope(
-        {},
-        [],
-        "Send code, otpSessionToken, and label as JSON, then retry.",
-        "invalid_request",
-        "Invalid request body",
-      ),
-      400,
-    );
-  }
+/**
+ * Builds the agent verify-code route with injectable dependencies so the OTP
+ * and key flows can be tested without live Cognito or Postgres calls.
+ */
+export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependencies): Hono => {
+  const app = new Hono();
 
-  const code = typeof body.code === "string" ? body.code.trim() : "";
-  const otpSessionToken = typeof body.otpSessionToken === "string" ? body.otpSessionToken : "";
-  const label = typeof body.label === "string" ? body.label.trim() : "";
+  app.post("/api/agent/verify-code", async (c) => {
+    let body: { code?: string; otpSessionToken?: string; label?: string };
+    try {
+      body = await c.req.json<{ code?: string; otpSessionToken?: string; label?: string }>();
+    } catch {
+      return c.json(
+        buildErrorEnvelope(
+          {},
+          [],
+          "Send code, otpSessionToken, and label as JSON, then retry.",
+          "invalid_request",
+          "Invalid request body",
+        ),
+        400,
+      );
+    }
 
-  if (!CODE_RE.test(code)) {
-    logRejectedAttempt("invalid_code", "");
-    return c.json(
-      buildErrorEnvelope(
-        { field: "code", expected: "8-digit code" },
-        [],
-        "Enter the 8-digit code from the user's email and retry.",
-        "invalid_code",
-        "Enter an 8-digit code",
-      ),
-      400,
-    );
-  }
+    const code = typeof body.code === "string" ? body.code.trim() : "";
+    const otpSessionToken = typeof body.otpSessionToken === "string" ? body.otpSessionToken : "";
+    const label = typeof body.label === "string" ? body.label.trim() : "";
 
-  if (label === "" || label.length > 200) {
-    logRejectedAttempt("invalid_label", "");
-    return c.json(
-      buildErrorEnvelope(
-        { field: "label", expected: "1-200 characters", maxLength: 200 },
-        [],
-        "Provide a non-empty connection label up to 200 characters.",
-        "invalid_label",
-        "Invalid connection label",
-      ),
-      400,
-    );
-  }
+    if (!CODE_RE.test(code)) {
+      logRejectedAttempt("invalid_code", "");
+      return c.json(
+        buildErrorEnvelope(
+          { field: "code", expected: "8-digit code" },
+          [],
+          "Enter the 8-digit code from the user's email and retry.",
+          "invalid_code",
+          "Enter an 8-digit code",
+        ),
+        400,
+      );
+    }
 
-  let payload: AgentOtpPayload;
-  try {
-    payload = JSON.parse(verify(otpSessionToken)) as AgentOtpPayload;
-  } catch {
-    logRejectedAttempt("invalid_otp_session", "");
-    return c.json(
-      buildErrorEnvelope(
-        { field: "otpSessionToken", expected: "token from send-code" },
-        [],
-        "The OTP session is invalid or expired. Start again with send-code.",
-        "invalid_otp_session",
-        "Invalid OTP session token",
-      ),
-      400,
-    );
-  }
+    if (label === "" || label.length > 200) {
+      logRejectedAttempt("invalid_label", "");
+      return c.json(
+        buildErrorEnvelope(
+          { field: "label", expected: "1-200 characters", maxLength: 200 },
+          [],
+          "Provide a non-empty connection label up to 200 characters.",
+          "invalid_label",
+          "Invalid connection label",
+        ),
+        400,
+      );
+    }
 
-  if (Date.now() - payload.t > OTP_TTL_MS || payload.s === "") {
-    logRejectedAttempt("expired_otp_session", payload.e);
-    return c.json(
-      buildErrorEnvelope(
-        { field: "otpSessionToken", expected: "fresh token from send-code" },
-        [],
-        "The OTP session is expired. Start again with send-code.",
-        "expired_otp_session",
-        "OTP session expired",
-      ),
-      400,
-    );
-  }
+    const challenge = await dependencies.lookupAgentOtpChallenge(otpSessionToken, dependencies.now());
+    if (challenge.status === "invalid") {
+      logRejectedAttempt("invalid_otp_session", "");
+      return c.json(
+        buildErrorEnvelope(
+          { field: "otpSessionToken", expected: "token from send-code" },
+          [],
+          "The OTP session is invalid or expired. Start again with send-code.",
+          "invalid_otp_session",
+          "Invalid OTP session token",
+        ),
+        400,
+      );
+    }
 
-  try {
-    const tokens = await verifyEmailOtp(payload.e, code, payload.s);
-    const identity = extractIdentityFromIdToken(tokens.idToken);
-    const connection = await createAgentConnection(identity.userId, identity.email, label);
+    if (challenge.status === "expired" || challenge.status === "used") {
+      logRejectedAttempt("expired_otp_session", challenge.email);
+      return c.json(
+        buildErrorEnvelope(
+          { field: "otpSessionToken", expected: "fresh token from send-code" },
+          [],
+          "The OTP session is expired. Start again with send-code.",
+          "expired_otp_session",
+          "OTP session expired",
+        ),
+        400,
+      );
+    }
 
-    return c.json(
-      buildSuccessEnvelope(
-        {
-          connection: {
-            connectionId: connection.connectionId,
-            label: connection.label,
-            createdAt: connection.createdAt,
+    try {
+      const tokens = await dependencies.verifyEmailOtp(challenge.email, code, challenge.cognitoSession);
+      await dependencies.markAgentOtpChallengeUsed(challenge.email, challenge.cognitoSession, dependencies.now());
+      const identity = dependencies.extractIdentityFromIdToken(tokens.idToken);
+      const connection = await dependencies.createAgentConnection(identity.userId, identity.email, label);
+
+      return c.json(
+        buildSuccessEnvelope(
+          {
+            connection: {
+              connectionId: connection.connectionId,
+              label: connection.label,
+              createdAt: connection.createdAt,
+            },
+            apiKey: connection.apiKey,
           },
-          apiKey: connection.apiKey,
-        },
-        [buildLoadAccountAction()],
-        "Store the API key securely. It will not be shown again. Use Authorization: ApiKey <key>.",
-      ),
-      200,
-    );
-  } catch (error) {
-    const mapped = mapVerifyError(error);
-    log({ domain: "auth", action: "agent_verify_code_error", error: error instanceof Error ? error.message : String(error) });
-    return c.json(
-      buildErrorEnvelope(
-        mapped.data,
-        [],
-        mapped.instructions,
-        mapped.code,
-        mapped.message,
-      ),
-      { status: mapped.status },
-    );
-  }
+          [buildLoadAccountAction()],
+          "Store the API key securely. Export it once as EXPENSE_BUDGET_TRACKER_API_KEY and reuse Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY instead of retyping the key in each request.",
+        ),
+        200,
+      );
+    } catch (error) {
+      const mapped = mapVerifyError(error);
+      log({
+        domain: "auth",
+        action: "agent_verify_code_error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return c.json(
+        buildErrorEnvelope(
+          mapped.data,
+          [],
+          mapped.instructions,
+          mapped.code,
+          mapped.message,
+        ),
+        { status: mapped.status },
+      );
+    }
+  });
+
+  return app;
+};
+
+const app = createAgentVerifyCodeApp({
+  lookupAgentOtpChallenge,
+  verifyEmailOtp,
+  markAgentOtpChallengeUsed,
+  extractIdentityFromIdToken,
+  createAgentConnection,
+  now: () => Date.now(),
 });
 
 export default app;

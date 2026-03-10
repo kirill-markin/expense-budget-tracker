@@ -6,7 +6,13 @@
  * DELETE — revoke a key by ID
  */
 import { isDemoModeFromRequest } from "@/lib/demoMode";
-import { createApiKey, listApiKeys, revokeApiKey } from "@/server/apiKeys";
+import {
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  SQL_API_KEY_ENV_VAR_NAME,
+  SQL_API_KEY_INSTRUCTIONS,
+} from "@/server/apiKeys";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 const logAndRespond = (label: string, error: unknown): Response => {
@@ -51,7 +57,11 @@ export const POST = async (request: Request): Promise<Response> => {
 
   try {
     const result = await createApiKey(userId, workspaceId, label);
-    return Response.json(result);
+    return Response.json({
+      ...result,
+      envVarName: SQL_API_KEY_ENV_VAR_NAME,
+      instructions: SQL_API_KEY_INSTRUCTIONS,
+    });
   } catch (error) {
     return logAndRespond("POST", error);
   }

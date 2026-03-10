@@ -97,7 +97,7 @@ export const POST = async (request: Request): Promise<Response> => {
         400,
         error.code,
         error.message,
-        "Fix the SQL statement and retry. Use only supported relations and send Authorization: ApiKey <key> together with X-Workspace-Id: <workspaceId>.",
+        "Fix the SQL statement and retry. Use only supported relations and send Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY together with X-Workspace-Id: <workspaceId>.",
         { allowedRelations: getAgentSqlAllowedRelations() },
         [],
       );

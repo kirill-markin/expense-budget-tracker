@@ -12,6 +12,6 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "../web/src/server/sql/**/*.ts"],
+  "include": ["src/**/*.ts", "../web/src/server/sql/**/*.ts", "../web/src/server/crockford.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -2,6 +2,7 @@
  * Discovery document for terminal-first agent onboarding.
  */
 import { buildSendCodeAction, buildSuccessEnvelope, type AgentEnvelope } from "@/server/agentEnvelope";
+import { SQL_API_KEY_ENV_VAR_NAME } from "@/server/apiKeys";
 
 const SERVICE_NAME = "Expense Budget Tracker Agent API";
 const SERVICE_VERSION = "v1";
@@ -42,7 +43,7 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
       flow: [
         "1. POST the user email to send_code on auth.*",
         "2. Ask the user for the 8-digit email code and call verify_code",
-        "3. Call GET /api/agent/me with Authorization: ApiKey <key>",
+        `3. Save the returned key as ${SQL_API_KEY_ENV_VAR_NAME} and call GET /api/agent/me with Authorization: ApiKey $${SQL_API_KEY_ENV_VAR_NAME}`,
         "4. List, create, or select a workspace",
         "5. Execute SQL with POST /api/agent/sql and X-Workspace-Id",
       ],

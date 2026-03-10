@@ -7,10 +7,10 @@
  */
 import { randomInt } from "node:crypto";
 import { Hono, type Context } from "hono";
+import { createAgentOtpChallenge, reissueLatestAgentOtpChallenge } from "../server/agentOtpChallenges.js";
 import { buildErrorEnvelope, buildSuccessEnvelope, buildVerifyCodeAction } from "../server/agentEnvelope.js";
 import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp } from "../server/cognitoAuth.js";
-import { sign } from "../server/crypto.js";
 import { log, maskEmail } from "../server/logger.js";
 import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otpRateLimit.js";
 
@@ -29,6 +29,9 @@ type AgentSendCodeDependencies = Readonly<{
   getClientIp: (context: Context) => string;
   initiateEmailOtp: (email: string) => Promise<Readonly<{ session: string }>>;
   checkAndRecordOtpSendDecision: (normalizedEmail: string, requestIp: string) => Promise<OtpSendDecision>;
+  createAgentOtpChallenge: (normalizedEmail: string, cognitoSession: string, nowMs: number) => Promise<string>;
+  reissueLatestAgentOtpChallenge: (normalizedEmail: string, nowMs: number) => Promise<string | null>;
+  now: () => number;
 }>;
 
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
@@ -99,13 +102,27 @@ export const createAgentSendCodeApp = (dependencies: AgentSendCodeDependencies):
       );
     }
 
-    let session = "";
+    let otpSessionToken = "";
     try {
       if (decision === "allowed") {
         const [result] = await Promise.all([dependencies.initiateEmailOtp(email), dependencies.delay()]);
-        session = result.session;
-      } else {
+        otpSessionToken = await dependencies.createAgentOtpChallenge(email, result.session, dependencies.now());
+      } else if (decision === "blocked_email_limit") {
         await dependencies.delay();
+        const reissuedChallenge = await dependencies.reissueLatestAgentOtpChallenge(email, dependencies.now());
+        if (reissuedChallenge === null) {
+          return c.json(
+            buildErrorEnvelope(
+              {},
+              [],
+              "Too many recent codes for this email. Wait before trying again.",
+              "rate_limited",
+              "Too many OTP requests for this email",
+            ),
+            429,
+          );
+        }
+        otpSessionToken = reissuedChallenge;
       }
     } catch (error) {
       log({ domain: "auth", action: "send_code_error", error: error instanceof Error ? error.message : String(error) });
@@ -122,12 +139,6 @@ export const createAgentSendCodeApp = (dependencies: AgentSendCodeDependencies):
     }
 
     log({ domain: "auth", action: "agent_send_code", maskedEmail: maskEmail(email), decision });
-
-    const otpSessionToken = sign(JSON.stringify({
-      s: session,
-      e: email,
-      t: Date.now(),
-    }));
 
     return c.json(
       buildSuccessEnvelope(
@@ -147,6 +158,9 @@ const app = createAgentSendCodeApp({
   getClientIp,
   initiateEmailOtp,
   checkAndRecordOtpSendDecision,
+  createAgentOtpChallenge,
+  reissueLatestAgentOtpChallenge,
+  now: () => Date.now(),
 });
 
 export default app;

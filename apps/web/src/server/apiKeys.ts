@@ -1,38 +1,42 @@
 /**
  * API key management: generate, list, and revoke API keys for the SQL API.
  *
- * Key format: ebt_ + 40 alphanumeric chars (~238 bits entropy).
+ * Key format: ebt_ + 26 Crockford Base32 chars (~130 bits entropy).
  * Storage: SHA-256 hash only — plaintext never stored.
  * Validation is handled by the Lambda Authorizer (apps/sql-api).
  */
-import crypto from "node:crypto";
-
 import { queryAs } from "@/server/db";
+import {
+  createCrockfordToken,
+  hashOpaqueToken,
+  normalizePrefixedCrockfordToken,
+} from "@/server/crockford";
 
 // -- Key generation --------------------------------------------------------
 
-const ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const KEY_PREFIX = "ebt_";
-const KEY_BODY_LENGTH = 40;
-const REJECTION_LIMIT = 248; // largest multiple of 62 that fits in a byte
+const KEY_BODY_LENGTH = 26;
+const KEY_PREFIX_LENGTH = 8;
+export const SQL_API_KEY_ENV_VAR_NAME = "EXPENSE_BUDGET_TRACKER_API_KEY";
+export const SQL_API_KEY_INSTRUCTIONS = `Store the API key securely. Export it once as ${SQL_API_KEY_ENV_VAR_NAME} and reuse Authorization: Bearer $${SQL_API_KEY_ENV_VAR_NAME} instead of retyping the key in each request.`;
 
-/** Generate an API key: ebt_ + 40 random alphanumeric chars. */
+/** Generate an API key: ebt_ + 26 Crockford Base32 chars. */
 export const generateApiKey = (): string => {
-  const chars: Array<string> = [];
-  while (chars.length < KEY_BODY_LENGTH) {
-    const bytes = crypto.randomBytes(KEY_BODY_LENGTH);
-    for (const b of bytes) {
-      if (b < REJECTION_LIMIT && chars.length < KEY_BODY_LENGTH) {
-        chars.push(ALPHABET[b % ALPHABET.length]);
-      }
-    }
-  }
-  return KEY_PREFIX + chars.join("");
+  return KEY_PREFIX + createCrockfordToken(KEY_BODY_LENGTH);
 };
 
-/** SHA-256 hex digest of the full key. */
+/**
+ * Normalizes a SQL API key before hashing or matching it. The parser ignores
+ * hyphens and spaces inside the Crockford body so callers can reuse human-read
+ * forms without reformatting them.
+ */
+export const normalizeApiKey = (key: string): string => {
+  return normalizePrefixedCrockfordToken(key, KEY_PREFIX, KEY_BODY_LENGTH, "SQL API key");
+};
+
+/** SHA-256 hex digest of the normalized full key. */
 export const hashKey = (key: string): string =>
-  crypto.createHash("sha256").update(key).digest("hex");
+  hashOpaqueToken(normalizeApiKey(key));
 
 // -- Types -----------------------------------------------------------------
 
@@ -81,7 +85,7 @@ export const createApiKey = async (
 ): Promise<Readonly<{ id: string; key: string; keyPrefix: string }>> => {
   const key = generateApiKey();
   const keyHash = hashKey(key);
-  const keyPrefix = key.slice(0, 8);
+  const keyPrefix = key.slice(0, KEY_PREFIX_LENGTH);
 
   const result = await queryAs(
     userId,
@@ -109,4 +113,3 @@ export const revokeApiKey = async (
     [keyId, workspaceId, userId],
   );
 };
-

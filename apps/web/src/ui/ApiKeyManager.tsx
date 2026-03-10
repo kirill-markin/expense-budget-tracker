@@ -17,11 +17,13 @@ type CreatedKey = Readonly<{
   id: string;
   key: string;
   keyPrefix: string;
+  envVarName?: string;
+  instructions?: string;
 }>;
 
-const formatCurlExample = (key: string): string =>
+const formatCurlExample = (envVarName: string): string =>
   `curl -X POST https://api.YOUR_DOMAIN/v1/sql \\
-  -H "Authorization: Bearer ${key}" \\
+  -H "Authorization: Bearer $${envVarName}" \\
   -H "Content-Type: application/json" \\
   -d '{"sql": "SELECT * FROM ledger_entries ORDER BY ts DESC LIMIT 10"}'`;
 
@@ -120,10 +122,13 @@ export const ApiKeyManager = (props: Props): ReactElement => {
             </button>
             <pre>{createdKey.key}</pre>
           </div>
+          {createdKey.instructions !== undefined && (
+            <p>{createdKey.instructions}</p>
+          )}
           <details>
             <summary>{t("apiKeys.exampleCurl")}</summary>
             <div className={settingsStyles.codeblock}>
-              <pre>{formatCurlExample(createdKey.key)}</pre>
+              <pre>{formatCurlExample(createdKey.envVarName ?? "EXPENSE_BUDGET_TRACKER_API_KEY")}</pre>
             </div>
           </details>
         </>

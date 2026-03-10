@@ -5,26 +5,12 @@
  * keys and are stored separately from workspace-scoped machine tokens.
  */
 import crypto from "node:crypto";
+import { createCrockfordToken } from "./crockford.js";
 import { withTransaction } from "./db.js";
 
-const ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const REJECTION_LIMIT = 248;
-const KEY_ID_LENGTH = 20;
-const SECRET_LENGTH = 40;
-const KEY_PREFIX = "ebt_agent_live";
-
-const randomString = (length: number): string => {
-  const chars: Array<string> = [];
-  while (chars.length < length) {
-    const bytes = crypto.randomBytes(length);
-    for (const byte of bytes) {
-      if (byte < REJECTION_LIMIT && chars.length < length) {
-        chars.push(ALPHABET[byte % ALPHABET.length]);
-      }
-    }
-  }
-  return chars.join("");
-};
+const KEY_ID_LENGTH = 8;
+const SECRET_LENGTH = 26;
+const KEY_PREFIX = "ebta";
 
 const hashSecret = (secret: string): string =>
   crypto.createHash("sha256").update(secret).digest("hex");
@@ -46,8 +32,8 @@ export const createAgentConnection = async (
     throw new Error("Agent connection label must be 1-200 characters");
   }
 
-  const keyId = randomString(KEY_ID_LENGTH);
-  const secret = randomString(SECRET_LENGTH);
+  const keyId = createCrockfordToken(KEY_ID_LENGTH);
+  const secret = createCrockfordToken(SECRET_LENGTH);
   const keyHash = hashSecret(secret);
   const apiKey = `${KEY_PREFIX}_${keyId}_${secret}`;
 

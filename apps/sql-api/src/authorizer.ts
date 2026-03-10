@@ -11,6 +11,7 @@
 
 import crypto from "node:crypto";
 import type { APIGatewayTokenAuthorizerEvent, APIGatewayAuthorizerResult } from "aws-lambda";
+import { normalizePrefixedCrockfordToken } from "../../web/src/server/crockford";
 import { query } from "./db";
 
 const hashKey = (key: string): string =>
@@ -28,12 +29,17 @@ export const handler = async (
   event: APIGatewayTokenAuthorizerEvent,
 ): Promise<APIGatewayAuthorizerResult> => {
   const token = event.authorizationToken ?? "";
-  if (!token.startsWith("Bearer ebt_")) {
+  if (!token.startsWith("Bearer ")) {
     return denyPolicy(event.methodArn);
   }
 
-  const key = token.slice("Bearer ".length);
-  const keyHash = hashKey(key);
+  let normalizedKey: string;
+  try {
+    normalizedKey = normalizePrefixedCrockfordToken(token.slice("Bearer ".length), "ebt_", 26, "SQL API key");
+  } catch {
+    return denyPolicy(event.methodArn);
+  }
+  const keyHash = hashKey(normalizedKey);
 
   const result = await query("SELECT * FROM validate_api_key($1)", [keyHash]);
   if (result.rows.length === 0) {
