@@ -86,4 +86,11 @@ test("agent verify-code returns env-var guidance with the new key", async () => 
   assert.equal(body.ok, true);
   assert.equal(body.data.apiKey, "ebta_ABCDEFGH_0123456789ABCDEFGHJKMNPQRS");
   assert.match(body.instructions, /EXPENSE_BUDGET_TRACKER_API_KEY/);
+  assert.match(body.instructions, /do not rely on chat history alone/i);
+  assert.match(body.instructions, /saved outside this conversation/i);
+  assert.match(body.instructions, /new dialog or session on the same machine/i);
+  assert.match(body.instructions, /ask the user for permission before writing to \.env or any file/i);
+  assert.match(body.instructions, /export EXPENSE_BUDGET_TRACKER_API_KEY=/);
+  assert.match(body.instructions, /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
+  assert.match(body.instructions, /load_account/);
 });
