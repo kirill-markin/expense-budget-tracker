@@ -38,7 +38,6 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
         onboarding: true,
         workspaceSetup: true,
         sql: true,
-        chat: false,
       },
       flow: [
         "1. POST the user email to send_code on auth.*",
@@ -49,6 +48,6 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
       ],
     },
     [buildSendCodeAction(bootstrapUrl)],
-    "Start with send_code. This service authenticates one user per ApiKey, requires an explicit workspace ID for each SQL request, and does not support chat yet.",
+    "Start with send_code. This service authenticates one user per ApiKey and requires an explicit workspace ID for each SQL request.",
   );
 };
