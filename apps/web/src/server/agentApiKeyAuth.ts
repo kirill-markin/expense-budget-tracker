@@ -22,7 +22,7 @@ type KeyLookupRow = Readonly<{
   created_at: string;
 }>;
 
-type AgentAuthError = Error & {
+export type AgentAuthError = Error & {
   code: string;
   status: number;
 };

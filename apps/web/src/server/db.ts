@@ -367,3 +367,34 @@ export const withRestrictedUserContext = async <T>(
     client.release();
   }
 };
+
+/**
+ * Execute multiple statements for a trusted non-session identity, then switch
+ * to the restricted SQL role.
+ */
+export const withRestrictedTrustedIdentityContext = async <T>(
+  identity: UserIdentity,
+  workspaceId: string,
+  statementTimeoutMs: number,
+  callback: (queryFn: QueryFn) => Promise<T>,
+): Promise<T> => {
+  await ensureTrustedIdentityProvisioned(identity, workspaceId);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [identity.userId]);
+    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+    await client.query("SELECT set_config('statement_timeout', $1, true)", [String(statementTimeoutMs)]);
+    await client.query("SET LOCAL ROLE api_sql_executor");
+    const boundQuery: QueryFn = (text, params) =>
+      client.query(text, params as Array<unknown>);
+    const result = await callback(boundQuery);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+};

@@ -49,7 +49,7 @@ app.post("/api/agent/send-code", async (c) => {
   if (!EMAIL_RE.test(email) || email.length > 256) {
     return c.json(
       buildErrorEnvelope(
-        {},
+        { field: "email", expected: "valid email address" },
         [],
         "Provide a valid email address and retry.",
         "invalid_email",
@@ -68,7 +68,7 @@ app.post("/api/agent/send-code", async (c) => {
     log({ domain: "auth", action: "error", error: error instanceof Error ? error.message : String(error) });
     return c.json(
       buildErrorEnvelope(
-        {},
+        { retryable: true },
         [],
         "Agent auth is temporarily unavailable. Retry in a moment.",
         "agent_send_unavailable",
@@ -103,10 +103,10 @@ app.post("/api/agent/send-code", async (c) => {
     log({ domain: "auth", action: "send_code_error", error: error instanceof Error ? error.message : String(error) });
     return c.json(
       buildErrorEnvelope(
-        {},
+        { retryable: true },
         [],
-        "The code could not be sent. Retry in a moment.",
-        "agent_send_failed",
+        "The auth backend is temporarily unavailable. Retry in a moment.",
+        "auth_backend_unavailable",
         "Failed to send code",
       ),
       500,

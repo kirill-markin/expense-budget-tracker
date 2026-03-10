@@ -5,8 +5,9 @@
  * workspace. This endpoint only verifies membership and returns the ready
  * workspace context for subsequent requests.
  */
-import { buildErrorEnvelope, buildSuccessEnvelope } from "@/server/agentEnvelope";
+import { buildErrorEnvelope, buildRunSqlAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
+import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
 import { getWorkspaceForTrustedIdentity } from "@/server/workspaces";
 
 type RouteContext = Readonly<{
@@ -19,15 +20,13 @@ export const POST = async (_request: Request, context: RouteContext): Promise<Re
   const { workspaceId } = await context.params;
 
   if (workspaceId.trim() === "") {
-    return Response.json(
-      buildErrorEnvelope(
-        {},
-        [],
-        "Provide a workspaceId path parameter and retry.",
-        "invalid_workspace_id",
-        "Workspace ID is required",
-      ),
-      { status: 400 },
+    return jsonAgentError(
+      400,
+      "invalid_workspace_id",
+      "Workspace ID is required",
+      "Provide a workspaceId path parameter and retry.",
+      { field: "workspaceId", expected: "non-empty string" },
+      [],
     );
   }
 
@@ -36,48 +35,38 @@ export const POST = async (_request: Request, context: RouteContext): Promise<Re
     const workspace = await getWorkspaceForTrustedIdentity(authenticated.identity, workspaceId);
 
     if (workspace === null) {
-      return Response.json(
-        buildErrorEnvelope(
-          {},
-          [],
-          "The workspace does not belong to this user.",
-          "workspace_not_found",
-          "Workspace not found",
-        ),
-        { status: 404 },
+      return jsonAgentError(
+        404,
+        "workspace_not_found",
+        "Workspace not found",
+        "Call GET /api/agent/workspaces first and select one of the returned workspaceId values.",
+        {},
+        [],
       );
     }
 
     return Response.json(
       buildSuccessEnvelope(
-        { workspace },
-        [],
-        "Workspace is ready. Later data endpoints will require the workspace ID explicitly.",
+        {
+          workspace,
+          sqlRequest: {
+            header: "X-Workspace-Id",
+            workspaceId: workspace.workspaceId,
+          },
+        },
+        [buildRunSqlAction()],
+        "Workspace is ready. This does not create server-side session state. Reuse the same workspace ID in X-Workspace-Id for future SQL requests.",
       ),
     );
   } catch (error) {
     const authError = getAgentAuthError(error);
     if (authError !== null) {
-      return Response.json(
-        buildErrorEnvelope(
-          {},
-          [],
-          "Provide a valid ApiKey or create a new agent connection.",
-          authError.code,
-          authError.message,
-        ),
-        { status: authError.status },
-      );
+      return jsonAgentAuthError(authError);
     }
-    return Response.json(
-      buildErrorEnvelope(
-        {},
-        [],
-        "Workspace selection failed. Retry in a moment.",
-        "agent_workspace_select_failed",
-        error instanceof Error ? error.message : String(error),
-      ),
-      { status: 500 },
+    return jsonAgentUnavailable(
+      "agent_workspace_select_failed",
+      "Workspace selection failed",
+      "Retry in a moment. If needed, call GET /api/agent/workspaces again before selecting a workspace.",
     );
   }
 };

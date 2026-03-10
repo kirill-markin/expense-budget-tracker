@@ -23,6 +23,57 @@ type AgentOtpPayload = Readonly<{
   t: number;
 }>;
 
+type CognitoFailure = Error & Readonly<{
+  cognitoType?: string;
+}>;
+
+const mapVerifyError = (error: unknown): Readonly<{
+  status: 400 | 500;
+  code: string;
+  message: string;
+  instructions: string;
+  data: Readonly<Record<string, unknown>>;
+}> => {
+  const cognitoError = error as CognitoFailure;
+  if (cognitoError.cognitoType === "CodeMismatchException" || cognitoError.cognitoType === "NotAuthorizedException") {
+    return {
+      status: 400,
+      code: "invalid_code",
+      message: "The email code is incorrect",
+      instructions: "Ask the user for the latest 8-digit email code and retry verify-code.",
+      data: { field: "code", expected: "8-digit code" },
+    };
+  }
+
+  if (cognitoError.cognitoType === "ExpiredCodeException") {
+    return {
+      status: 400,
+      code: "expired_code",
+      message: "The email code has expired",
+      instructions: "Start again with send-code, then retry verify-code with the new code.",
+      data: { field: "code", expected: "fresh 8-digit code" },
+    };
+  }
+
+  if (cognitoError.cognitoType === "InvalidParameterException") {
+    return {
+      status: 400,
+      code: "invalid_otp_session",
+      message: "The OTP session is no longer valid",
+      instructions: "Start again with send-code, then retry verify-code.",
+      data: {},
+    };
+  }
+
+  return {
+    status: 500,
+    code: "verification_unavailable",
+    message: "OTP verification is temporarily unavailable",
+    instructions: "Retry in a moment. If the problem continues, start again with send-code.",
+    data: { retryable: true },
+  };
+};
+
 app.post("/api/agent/verify-code", async (c) => {
   let body: { code?: string; otpSessionToken?: string; label?: string };
   try {
@@ -47,7 +98,7 @@ app.post("/api/agent/verify-code", async (c) => {
   if (!CODE_RE.test(code)) {
     return c.json(
       buildErrorEnvelope(
-        {},
+        { field: "code", expected: "8-digit code" },
         [],
         "Enter the 8-digit code from the user's email and retry.",
         "invalid_code",
@@ -60,7 +111,7 @@ app.post("/api/agent/verify-code", async (c) => {
   if (label === "" || label.length > 200) {
     return c.json(
       buildErrorEnvelope(
-        {},
+        { field: "label", expected: "1-200 characters", maxLength: 200 },
         [],
         "Provide a non-empty connection label up to 200 characters.",
         "invalid_label",
@@ -76,7 +127,7 @@ app.post("/api/agent/verify-code", async (c) => {
   } catch {
     return c.json(
       buildErrorEnvelope(
-        {},
+        { field: "otpSessionToken", expected: "token from send-code" },
         [],
         "The OTP session is invalid or expired. Start again with send-code.",
         "invalid_otp_session",
@@ -89,7 +140,7 @@ app.post("/api/agent/verify-code", async (c) => {
   if (Date.now() - payload.t > OTP_TTL_MS || payload.s === "") {
     return c.json(
       buildErrorEnvelope(
-        {},
+        { field: "otpSessionToken", expected: "fresh token from send-code" },
         [],
         "The OTP session is expired. Start again with send-code.",
         "expired_otp_session",
@@ -120,17 +171,17 @@ app.post("/api/agent/verify-code", async (c) => {
       200,
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    log({ domain: "auth", action: "agent_verify_code_error", error: message });
+    const mapped = mapVerifyError(error);
+    log({ domain: "auth", action: "agent_verify_code_error", error: error instanceof Error ? error.message : String(error) });
     return c.json(
       buildErrorEnvelope(
-        {},
+        mapped.data,
         [],
-        "Verification failed. Check the code and retry, or start again with send-code.",
-        "verification_failed",
-        "Verification failed",
+        mapped.instructions,
+        mapped.code,
+        mapped.message,
       ),
-      400,
+      { status: mapped.status },
     );
   }
 });

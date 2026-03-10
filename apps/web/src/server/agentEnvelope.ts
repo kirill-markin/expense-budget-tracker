@@ -28,6 +28,14 @@ export const buildListWorkspacesAction = (): AgentAction => ({
   auth: "ApiKey",
 });
 
+export const buildSendCodeAction = (url: string): AgentAction => ({
+  name: "send_code",
+  method: "POST",
+  url,
+  input: { email: "string" },
+  auth: "none",
+});
+
 export const buildCreateWorkspaceAction = (): AgentAction => ({
   name: "create_workspace",
   method: "POST",
@@ -40,6 +48,14 @@ export const buildSelectWorkspaceAction = (): AgentAction => ({
   name: "select_workspace",
   method: "POST",
   urlTemplate: "/api/agent/workspaces/{workspaceId}/select",
+  auth: "ApiKey",
+});
+
+export const buildRunSqlAction = (): AgentAction => ({
+  name: "run_sql",
+  method: "POST",
+  url: "/api/agent/sql",
+  input: { sql: "string" },
   auth: "ApiKey",
 });
 

@@ -34,8 +34,10 @@ const CSRF_TOKEN_RE = /^[0-9a-f]{64}$/;
 
 const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/auth/logout",
+  "/api/agent",
   "/api/live",
   "/api/health",
+  "/.well-known/agent.json",
 ];
 
 const getAuthDomain = (): string => {

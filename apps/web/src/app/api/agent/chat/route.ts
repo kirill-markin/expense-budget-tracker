@@ -6,6 +6,7 @@
  */
 import { buildErrorEnvelope } from "@/server/agentEnvelope";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
+import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agentResponses";
 
 export const POST = async (request: Request): Promise<Response> => {
   try {
@@ -14,7 +15,7 @@ export const POST = async (request: Request): Promise<Response> => {
       buildErrorEnvelope(
         {},
         [],
-        "Agent data operations are not implemented yet. This route is reserved for a later change.",
+        "Agent chat is not implemented yet. Use POST /api/agent/sql for current data access.",
         "not_implemented",
         "Agent chat is not implemented yet",
       ),
@@ -23,26 +24,12 @@ export const POST = async (request: Request): Promise<Response> => {
   } catch (error) {
     const authError = getAgentAuthError(error);
     if (authError !== null) {
-      return Response.json(
-        buildErrorEnvelope(
-          {},
-          [],
-          "Provide a valid ApiKey or create a new agent connection.",
-          authError.code,
-          authError.message,
-        ),
-        { status: authError.status },
-      );
+      return jsonAgentAuthError(authError);
     }
-    return Response.json(
-      buildErrorEnvelope(
-        {},
-        [],
-        "Agent chat is temporarily unavailable.",
-        "agent_chat_failed",
-        error instanceof Error ? error.message : String(error),
-      ),
-      { status: 500 },
+    return jsonAgentUnavailable(
+      "agent_chat_failed",
+      "Agent chat is temporarily unavailable",
+      "Retry in a moment, or use POST /api/agent/sql for current data access.",
     );
   }
 };

@@ -7,6 +7,7 @@
 import { buildErrorEnvelope, buildListWorkspacesAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
 import { ensureTrustedIdentityProvisioned } from "@/server/db";
+import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agentResponses";
 
 export const GET = async (request: Request): Promise<Response> => {
   try {
@@ -28,32 +29,18 @@ export const GET = async (request: Request): Promise<Response> => {
           },
         },
         [buildListWorkspacesAction()],
-        "Load workspaces and choose one before requesting data operations.",
+        "The default personal workspace uses the same ID as the user account. Call list_workspaces next, then use an explicit workspace ID for each SQL request.",
       ),
     );
   } catch (error) {
     const authError = getAgentAuthError(error);
     if (authError !== null) {
-      return Response.json(
-        buildErrorEnvelope(
-          {},
-          [],
-          "Provide a valid ApiKey or create a new agent connection.",
-          authError.code,
-          authError.message,
-        ),
-        { status: authError.status },
-      );
+      return jsonAgentAuthError(authError);
     }
-    return Response.json(
-      buildErrorEnvelope(
-        {},
-        [],
-        "Agent setup is temporarily unavailable. Retry in a moment.",
-        "agent_me_failed",
-        error instanceof Error ? error.message : String(error),
-      ),
-      { status: 500 },
+    return jsonAgentUnavailable(
+      "agent_me_failed",
+      "Agent account loading is temporarily unavailable",
+      "Retry in a moment. After success, call GET /api/agent/workspaces before data access.",
     );
   }
 };
