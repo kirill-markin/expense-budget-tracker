@@ -1,15 +1,25 @@
 /**
- * DB-backed anti-abuse policy for agent OTP sends.
+ * DB-backed anti-abuse policy for OTP sends.
  *
- * Email-level limits suppress the actual send but still return a normal
- * success envelope so the route does not become an oracle. IP-level abuse is
- * blocked with an explicit 429 response.
+ * Email-level limits and IP-level limits share the same counters across all
+ * OTP send entry points so callers cannot bypass quotas by switching paths.
  */
 import { withTransaction } from "./db.js";
 
-export type AgentOtpDecision = "allowed" | "suppressed_email_limit" | "blocked_ip_limit";
+export type OtpSendDecision = "allowed" | "blocked_email_limit" | "blocked_ip_limit";
 
 type CountRow = Readonly<{ count: string }>;
+
+type OtpSendCounters = Readonly<{
+  emailPerMinute: number;
+  emailPerQuarterHour: number;
+  emailPerDay: number;
+  ipPerQuarterHour: number;
+  ipPerHour: number;
+  ipPerDay: number;
+  distinctEmailsPerHour: number;
+  distinctEmailsPerDay: number;
+}>;
 
 const readCount = async (
   queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<{ rows: Array<CountRow> }>,
@@ -24,10 +34,32 @@ const readCount = async (
   return Number.parseInt(row.count, 10);
 };
 
-export const checkAndRecordAgentOtpDecision = async (
+export const evaluateOtpSendDecision = (counters: OtpSendCounters): OtpSendDecision => {
+  if (
+    counters.ipPerQuarterHour >= 10
+    || counters.ipPerHour >= 30
+    || counters.ipPerDay >= 100
+    || counters.distinctEmailsPerHour >= 5
+    || counters.distinctEmailsPerDay >= 20
+  ) {
+    return "blocked_ip_limit";
+  }
+
+  if (
+    counters.emailPerMinute >= 1
+    || counters.emailPerQuarterHour >= 3
+    || counters.emailPerDay >= 10
+  ) {
+    return "blocked_email_limit";
+  }
+
+  return "allowed";
+};
+
+export const checkAndRecordOtpSendDecision = async (
   normalizedEmail: string,
   requestIp: string,
-): Promise<AgentOtpDecision> => {
+): Promise<OtpSendDecision> => {
   return withTransaction(async (queryFn) => {
     const [
       emailPerMinute,
@@ -42,7 +74,7 @@ export const checkAndRecordAgentOtpDecision = async (
       readCount(
         queryFn,
         `SELECT COUNT(*)::text AS count
-         FROM auth.agent_otp_send_events
+         FROM auth.otp_send_events
          WHERE normalized_email = $1
            AND created_at >= now() - INTERVAL '1 minute'`,
         [normalizedEmail],
@@ -50,7 +82,7 @@ export const checkAndRecordAgentOtpDecision = async (
       readCount(
         queryFn,
         `SELECT COUNT(*)::text AS count
-         FROM auth.agent_otp_send_events
+         FROM auth.otp_send_events
          WHERE normalized_email = $1
            AND created_at >= now() - INTERVAL '15 minutes'`,
         [normalizedEmail],
@@ -58,7 +90,7 @@ export const checkAndRecordAgentOtpDecision = async (
       readCount(
         queryFn,
         `SELECT COUNT(*)::text AS count
-         FROM auth.agent_otp_send_events
+         FROM auth.otp_send_events
          WHERE normalized_email = $1
            AND created_at >= now() - INTERVAL '1 day'`,
         [normalizedEmail],
@@ -66,7 +98,7 @@ export const checkAndRecordAgentOtpDecision = async (
       readCount(
         queryFn,
         `SELECT COUNT(*)::text AS count
-         FROM auth.agent_otp_send_events
+         FROM auth.otp_send_events
          WHERE request_ip = $1
            AND created_at >= now() - INTERVAL '15 minutes'`,
         [requestIp],
@@ -74,7 +106,7 @@ export const checkAndRecordAgentOtpDecision = async (
       readCount(
         queryFn,
         `SELECT COUNT(*)::text AS count
-         FROM auth.agent_otp_send_events
+         FROM auth.otp_send_events
          WHERE request_ip = $1
            AND created_at >= now() - INTERVAL '1 hour'`,
         [requestIp],
@@ -82,7 +114,7 @@ export const checkAndRecordAgentOtpDecision = async (
       readCount(
         queryFn,
         `SELECT COUNT(*)::text AS count
-         FROM auth.agent_otp_send_events
+         FROM auth.otp_send_events
          WHERE request_ip = $1
            AND created_at >= now() - INTERVAL '1 day'`,
         [requestIp],
@@ -90,7 +122,7 @@ export const checkAndRecordAgentOtpDecision = async (
       readCount(
         queryFn,
         `SELECT COUNT(DISTINCT normalized_email)::text AS count
-         FROM auth.agent_otp_send_events
+         FROM auth.otp_send_events
          WHERE request_ip = $1
            AND created_at >= now() - INTERVAL '1 hour'`,
         [requestIp],
@@ -98,35 +130,26 @@ export const checkAndRecordAgentOtpDecision = async (
       readCount(
         queryFn,
         `SELECT COUNT(DISTINCT normalized_email)::text AS count
-         FROM auth.agent_otp_send_events
+         FROM auth.otp_send_events
          WHERE request_ip = $1
            AND created_at >= now() - INTERVAL '1 day'`,
         [requestIp],
       ),
     ]);
 
-    let decision: AgentOtpDecision = "allowed";
-
-    if (
-      ipPerQuarterHour >= 10
-      || ipPerHour >= 30
-      || ipPerDay >= 100
-      || distinctEmailsPerHour >= 5
-      || distinctEmailsPerDay >= 20
-    ) {
-      decision = "blocked_ip_limit";
-    } else if (
-      emailPerMinute >= 1
-      || emailPerQuarterHour >= 3
-      || emailPerDay >= 10
-    ) {
-      // The email-level branch intentionally records the suppressed event and
-      // returns a normal success envelope to avoid exposing a send oracle.
-      decision = "suppressed_email_limit";
-    }
+    const decision = evaluateOtpSendDecision({
+      emailPerMinute,
+      emailPerQuarterHour,
+      emailPerDay,
+      ipPerQuarterHour,
+      ipPerHour,
+      ipPerDay,
+      distinctEmailsPerHour,
+      distinctEmailsPerDay,
+    });
 
     await queryFn(
-      `INSERT INTO auth.agent_otp_send_events (normalized_email, request_ip, decision)
+      `INSERT INTO auth.otp_send_events (normalized_email, request_ip, decision)
        VALUES ($1, $2, $3)`,
       [normalizedEmail, requestIp, decision],
     );

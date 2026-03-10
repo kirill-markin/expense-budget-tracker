@@ -1,12 +1,9 @@
 /**
  * Email OTP initiation endpoint. Accepts an email address, calls Cognito
  * InitiateAuth with EMAIL_OTP challenge, and stores the Cognito session
- * in an HMAC-signed cookie. No database needed.
+ * in an HMAC-signed cookie after shared app-level anti-abuse checks pass.
  *
  * Auto-creates the Cognito account if the user doesn't exist yet.
- *
- * Rate limiting is handled at the infrastructure level (Cloudflare + WAF +
- * Cognito built-in throttling) and is not duplicated here.
  *
  * A random delay (200–800 ms) is added before responding to equalise timing
  * between new and existing users, preventing email-existence enumeration.
@@ -14,13 +11,13 @@
  * Security: HMAC-signed cookie + CSRF token + 3-min TTL.
  */
 import { randomBytes, randomInt } from "node:crypto";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { setCookie } from "hono/cookie";
+import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp } from "../server/cognitoAuth.js";
 import { sign } from "../server/crypto.js";
 import { log, maskEmail } from "../server/logger.js";
-
-const app = new Hono();
+import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otpRateLimit.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -32,51 +29,93 @@ const jitterDelay = (): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-app.post("/api/send-code", async (c) => {
-  let body: { email?: string };
-  try {
-    body = await c.req.json<{ email?: string }>();
-  } catch {
-    return c.json({ error: "Invalid request body" }, 400);
-  }
+type SendCodeDependencies = Readonly<{
+  delay: () => Promise<void>;
+  createCsrfToken: () => string;
+  getClientIp: (context: Context) => string;
+  initiateEmailOtp: (email: string) => Promise<Readonly<{ session: string }>>;
+  checkAndRecordOtpSendDecision: (normalizedEmail: string, requestIp: string) => Promise<OtpSendDecision>;
+}>;
 
-  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 
-  if (!EMAIL_RE.test(email) || email.length > 256) {
-    return c.json({ error: "Invalid email" }, 400);
-  }
+const createCsrfToken = (): string => randomBytes(32).toString("hex");
 
-  let session: string;
-  try {
-    const [result] = await Promise.all([initiateEmailOtp(email), jitterDelay()]);
-    session = result.session;
-  } catch (err) {
-    log({ domain: "auth", action: "send_code_error", error: err instanceof Error ? err.message : String(err) });
-    return c.json({ error: "Failed to send code — please try again" }, 500);
-  }
+export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
+  const app = new Hono();
 
-  log({ domain: "auth", action: "send_code", maskedEmail: maskEmail(email) });
+  app.post("/api/send-code", async (c) => {
+    let body: { email?: string };
+    try {
+      body = await c.req.json<{ email?: string }>();
+    } catch {
+      return c.json({ error: "Invalid request body" }, 400);
+    }
 
-  const csrfToken = randomBytes(32).toString("hex");
+    const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
 
-  const payload = JSON.stringify({
-    s: session,
-    e: email,
-    csrf: csrfToken,
-    t: Date.now(),
+    if (!EMAIL_RE.test(email) || email.length > 256) {
+      return c.json({ error: "Invalid email" }, 400);
+    }
+
+    const requestIp = dependencies.getClientIp(c);
+
+    let decision: OtpSendDecision;
+    try {
+      decision = await dependencies.checkAndRecordOtpSendDecision(email, requestIp);
+    } catch (err) {
+      log({ domain: "auth", action: "error", error: err instanceof Error ? err.message : String(err) });
+      return c.json({ error: "Failed to send code — please try again" }, 500);
+    }
+
+    if (decision !== "allowed") {
+      await dependencies.delay();
+      log({ domain: "auth", action: "send_code_rate_limited", maskedEmail: maskEmail(email), decision });
+      return c.json({ error: "Too many requests — please wait before trying again" }, 429);
+    }
+
+    let session: string;
+    try {
+      const [result] = await Promise.all([dependencies.initiateEmailOtp(email), dependencies.delay()]);
+      session = result.session;
+    } catch (err) {
+      log({ domain: "auth", action: "send_code_error", error: err instanceof Error ? err.message : String(err) });
+      return c.json({ error: "Failed to send code — please try again" }, 500);
+    }
+
+    log({ domain: "auth", action: "send_code", maskedEmail: maskEmail(email) });
+
+    const csrfToken = dependencies.createCsrfToken();
+
+    const payload = JSON.stringify({
+      s: session,
+      e: email,
+      csrf: csrfToken,
+      t: Date.now(),
+    });
+
+    const signed = sign(payload);
+
+    setCookie(c, "otp_session", signed, {
+      path: "/",
+      maxAge: 180,
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+    });
+
+    return c.json({ ok: true, csrfToken });
   });
 
-  const signed = sign(payload);
+  return app;
+};
 
-  setCookie(c, "otp_session", signed, {
-    path: "/",
-    maxAge: 180,
-    httpOnly: true,
-    secure: true,
-    sameSite: "Strict",
-  });
-
-  return c.json({ ok: true, csrfToken });
+const app = createSendCodeApp({
+  delay: jitterDelay,
+  createCsrfToken,
+  getClientIp,
+  initiateEmailOtp,
+  checkAndRecordOtpSendDecision,
 });
 
 export default app;
