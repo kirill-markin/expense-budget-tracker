@@ -197,7 +197,7 @@ const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Record<st
         auth: "none",
       },
     ],
-    "Start with send_code. After login, call /me, then /workspaces before SQL.",
+    `Start with send_code. After login, call ${apiBaseUrl}/me, then ${apiBaseUrl}/workspaces before SQL.`,
   );
 };
 
@@ -512,7 +512,13 @@ export const createMachineApiHandler = (
         const message = error instanceof Error ? error.message : String(error);
         return json(
           500,
-          buildErrorEnvelope({ retryable: true }, [], "Retry /workspaces in a moment.", "agent_workspaces_failed", message),
+          buildErrorEnvelope(
+            { retryable: true },
+            [],
+            `Retry ${getApiBaseUrl(event)}/workspaces in a moment.`,
+            "agent_workspaces_failed",
+            message,
+          ),
         );
       }
     }
