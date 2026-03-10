@@ -25,6 +25,12 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - `apps/worker/`: TypeScript process that fetches daily ECB, CBR, and NBS exchange rates into `exchange_rates`; runs on a schedule (Docker) or as AWS Lambda
 - Postgres: single source of truth; schema in `db/migrations/`, views in `db/views/`, reference SQL in `db/queries/`
 
+## Supported Clients
+
+- Web app: supported
+- Terminal / AI agents: full functionality is supported through the agent API flow starting at `GET https://app.expense-budget-tracker.com/api/agent`
+- Direct HTTP clients and scripts: supported through `POST https://api.expense-budget-tracker.com/v1/sql` with a manually created Bearer API key
+
 ## Key Paths
 
 | Path | Description |
