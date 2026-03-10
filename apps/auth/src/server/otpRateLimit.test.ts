@@ -4,8 +4,8 @@ import { evaluateOtpSendDecision } from "./otpRateLimit.js";
 
 test("evaluateOtpSendDecision returns allowed below all thresholds", () => {
   const decision = evaluateOtpSendDecision({
-    emailPerMinute: 0,
-    emailPerQuarterHour: 2,
+    emailPerMinute: 2,
+    emailPerQuarterHour: 4,
     emailPerDay: 9,
     ipPerQuarterHour: 9,
     ipPerHour: 29,
@@ -20,7 +20,7 @@ test("evaluateOtpSendDecision returns allowed below all thresholds", () => {
 test("evaluateOtpSendDecision blocks at email thresholds", () => {
   assert.equal(
     evaluateOtpSendDecision({
-      emailPerMinute: 1,
+      emailPerMinute: 3,
       emailPerQuarterHour: 0,
       emailPerDay: 0,
       ipPerQuarterHour: 0,
@@ -35,7 +35,7 @@ test("evaluateOtpSendDecision blocks at email thresholds", () => {
   assert.equal(
     evaluateOtpSendDecision({
       emailPerMinute: 0,
-      emailPerQuarterHour: 3,
+      emailPerQuarterHour: 5,
       emailPerDay: 0,
       ipPerQuarterHour: 0,
       ipPerHour: 0,

@@ -46,8 +46,8 @@ export const evaluateOtpSendDecision = (counters: OtpSendCounters): OtpSendDecis
   }
 
   if (
-    counters.emailPerMinute >= 1
-    || counters.emailPerQuarterHour >= 3
+    counters.emailPerMinute >= 3
+    || counters.emailPerQuarterHour >= 5
     || counters.emailPerDay >= 10
   ) {
     return "blocked_email_limit";

@@ -10,7 +10,7 @@ import { createAgentConnection } from "../server/agentApiKeys.js";
 import { buildErrorEnvelope, buildLoadAccountAction, buildSuccessEnvelope } from "../server/agentEnvelope.js";
 import { extractIdentityFromIdToken, verifyEmailOtp } from "../server/cognitoAuth.js";
 import { verify } from "../server/crypto.js";
-import { log } from "../server/logger.js";
+import { log, maskEmail } from "../server/logger.js";
 
 const app = new Hono();
 
@@ -26,6 +26,18 @@ type AgentOtpPayload = Readonly<{
 type CognitoFailure = Error & Readonly<{
   cognitoType?: string;
 }>;
+
+const logRejectedAttempt = (
+  reason: "invalid_code" | "invalid_label" | "invalid_otp_session" | "expired_otp_session",
+  email: string,
+): void => {
+  log({
+    domain: "auth",
+    action: "agent_verify_code_rejected",
+    reason,
+    maskedEmail: email === "" ? "***" : maskEmail(email),
+  });
+};
 
 const mapVerifyError = (error: unknown): Readonly<{
   status: 400 | 500;
@@ -96,6 +108,7 @@ app.post("/api/agent/verify-code", async (c) => {
   const label = typeof body.label === "string" ? body.label.trim() : "";
 
   if (!CODE_RE.test(code)) {
+    logRejectedAttempt("invalid_code", "");
     return c.json(
       buildErrorEnvelope(
         { field: "code", expected: "8-digit code" },
@@ -109,6 +122,7 @@ app.post("/api/agent/verify-code", async (c) => {
   }
 
   if (label === "" || label.length > 200) {
+    logRejectedAttempt("invalid_label", "");
     return c.json(
       buildErrorEnvelope(
         { field: "label", expected: "1-200 characters", maxLength: 200 },
@@ -125,6 +139,7 @@ app.post("/api/agent/verify-code", async (c) => {
   try {
     payload = JSON.parse(verify(otpSessionToken)) as AgentOtpPayload;
   } catch {
+    logRejectedAttempt("invalid_otp_session", "");
     return c.json(
       buildErrorEnvelope(
         { field: "otpSessionToken", expected: "token from send-code" },
@@ -138,6 +153,7 @@ app.post("/api/agent/verify-code", async (c) => {
   }
 
   if (Date.now() - payload.t > OTP_TTL_MS || payload.s === "") {
+    logRejectedAttempt("expired_otp_session", payload.e);
     return c.json(
       buildErrorEnvelope(
         { field: "otpSessionToken", expected: "fresh token from send-code" },

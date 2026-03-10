@@ -42,7 +42,7 @@ const createSharedLimiter = (state: SharedLimiterState) => async (
   _requestIp: string,
 ): Promise<OtpSendDecision> => {
   const count = state.emailCounts.get(normalizedEmail) ?? 0;
-  const decision: OtpSendDecision = count >= 1 ? "blocked_email_limit" : "allowed";
+  const decision: OtpSendDecision = count >= 3 ? "blocked_email_limit" : "allowed";
   state.emailCounts.set(normalizedEmail, count + 1);
   return decision;
 };
@@ -172,11 +172,15 @@ test("agent and browser send-code routes share limiter state when they use the s
   });
 
   const firstResponse = await agentApp.request(makeJsonRequest("/api/agent/send-code", { email: "user@example.com" }));
-  const secondResponse = await browserApp.request(makeJsonRequest("/api/send-code", { email: "user@example.com" }));
-  const secondBody = await secondResponse.json() as { error: string };
+  const secondResponse = await agentApp.request(makeJsonRequest("/api/agent/send-code", { email: "user@example.com" }));
+  const thirdResponse = await agentApp.request(makeJsonRequest("/api/agent/send-code", { email: "user@example.com" }));
+  const fourthResponse = await browserApp.request(makeJsonRequest("/api/send-code", { email: "user@example.com" }));
+  const fourthBody = await fourthResponse.json() as { error: string };
 
   assert.equal(firstResponse.status, 200);
-  assert.equal(secondResponse.status, 429);
-  assert.equal(secondBody.error, "Too many requests — please wait before trying again");
-  assert.deepEqual(initiateStub.calls, ["user@example.com"]);
+  assert.equal(secondResponse.status, 200);
+  assert.equal(thirdResponse.status, 200);
+  assert.equal(fourthResponse.status, 429);
+  assert.equal(fourthBody.error, "Too many requests — please wait before trying again");
+  assert.deepEqual(initiateStub.calls, ["user@example.com", "user@example.com", "user@example.com"]);
 });
