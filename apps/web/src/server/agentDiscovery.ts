@@ -67,6 +67,6 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
         auth: "none",
       },
     ],
-    `Start with send_code. After login, export the returned key as ${AGENT_API_KEY_ENV_VAR_NAME}, then call ${apiBaseUrl}/me and ${apiBaseUrl}/workspaces before SQL.`,
+    `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as ${AGENT_API_KEY_ENV_VAR_NAME}='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me and ${apiBaseUrl}/workspaces before SQL. Example: curl -H 'Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME}' ${apiBaseUrl}/me.`,
   );
 };

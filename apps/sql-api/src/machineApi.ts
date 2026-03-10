@@ -197,7 +197,7 @@ const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Record<st
         auth: "none",
       },
     ],
-    `Start with send_code. After login, call ${apiBaseUrl}/me, then ${apiBaseUrl}/workspaces before SQL.`,
+    `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me and ${apiBaseUrl}/workspaces before SQL. Example: curl -H 'Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY' ${apiBaseUrl}/me.`,
   );
 };
 

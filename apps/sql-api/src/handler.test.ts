@@ -72,6 +72,12 @@ test("root discovery matches /agent", async () => {
   assert.equal(rootResponse.statusCode, 200);
   assert.equal(agentResponse.statusCode, 200);
   assert.deepEqual(JSON.parse(rootResponse.body), JSON.parse(agentResponse.body));
+
+  const body = JSON.parse(rootResponse.body) as { instructions: string };
+  assert.match(body.instructions, /Ask the user for their email address first/i);
+  assert.match(body.instructions, /same email OTP flow handles both signup and login/i);
+  assert.match(body.instructions, /\.env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>'/i);
+  assert.match(body.instructions, /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
 });
 
 test("openapi and swagger endpoints return the same document", async () => {

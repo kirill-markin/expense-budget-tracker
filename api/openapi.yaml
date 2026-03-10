@@ -19,6 +19,7 @@
     "/": {
       "get": {
         "summary": "API discovery index",
+        "description": "Start here for agent onboarding. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login.",
         "responses": {
           "200": {
             "description": "Discovery envelope"
@@ -29,6 +30,7 @@
     "/agent": {
       "get": {
         "summary": "Agent discovery",
+        "description": "Agent onboarding entrypoint. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login.",
         "responses": {
           "200": {
             "description": "Discovery envelope"
@@ -195,6 +197,7 @@
     "/api/agent/verify-code": {
       "post": {
         "summary": "Finish OTP login and mint ApiKey",
+        "description": "After a successful OTP verification, return a long-lived ApiKey and instruct the agent to save it outside chat memory, preferably in a local .env file as EXPENSE_BUDGET_TRACKER_API_KEY.",
         "responses": {
           "200": {
             "description": "ApiKey issued"

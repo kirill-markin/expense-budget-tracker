@@ -28,6 +28,10 @@ test("buildAgentDiscoveryEnvelope points agents to ask for email before send_cod
     openapiUrl: "https://api.example.com/v1/openapi.json",
     swaggerUrl: "https://api.example.com/v1/swagger.json",
   });
+  assert.match(String(envelope.instructions), /Ask the user for their email address first/i);
+  assert.match(String(envelope.instructions), /same email OTP flow handles both signup and login/i);
+  assert.match(String(envelope.instructions), /\.env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>'/i);
+  assert.match(String(envelope.instructions), /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
   assert.match(String(envelope.instructions), /https:\/\/api\.example\.com\/v1\/me/);
 });
 
