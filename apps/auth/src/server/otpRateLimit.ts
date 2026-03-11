@@ -9,6 +9,10 @@ import { withTransaction } from "./db.js";
 export type OtpSendDecision = "allowed" | "blocked_email_limit" | "blocked_ip_limit";
 
 type CountRow = Readonly<{ count: string }>;
+export type OtpRateLimitQueryFn = Parameters<Parameters<typeof withTransaction>[0]>[0];
+export type OtpRateLimitTransactionRunner = typeof withTransaction;
+type QueryFn = OtpRateLimitQueryFn;
+type TransactionRunner = OtpRateLimitTransactionRunner;
 
 type OtpSendCounters = Readonly<{
   emailPerMinute: number;
@@ -22,7 +26,7 @@ type OtpSendCounters = Readonly<{
 }>;
 
 const readCount = async (
-  queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<{ rows: Array<CountRow> }>,
+  queryFn: QueryFn,
   sql: string,
   params: ReadonlyArray<unknown>,
 ): Promise<number> => {
@@ -56,104 +60,118 @@ export const evaluateOtpSendDecision = (counters: OtpSendCounters): OtpSendDecis
   return "allowed";
 };
 
-export const checkAndRecordOtpSendDecision = async (
-  normalizedEmail: string,
-  requestIp: string,
-): Promise<OtpSendDecision> => {
-  return withTransaction(async (queryFn) => {
-    const [
-      emailPerMinute,
-      emailPerQuarterHour,
-      emailPerDay,
-      ipPerQuarterHour,
-      ipPerHour,
-      ipPerDay,
-      distinctEmailsPerHour,
-      distinctEmailsPerDay,
-    ] = await Promise.all([
-      readCount(
-        queryFn,
-        `SELECT COUNT(*)::text AS count
-         FROM auth.otp_send_events
-         WHERE normalized_email = $1
-           AND created_at >= now() - INTERVAL '1 minute'`,
-        [normalizedEmail],
-      ),
-      readCount(
-        queryFn,
-        `SELECT COUNT(*)::text AS count
-         FROM auth.otp_send_events
-         WHERE normalized_email = $1
-           AND created_at >= now() - INTERVAL '15 minutes'`,
-        [normalizedEmail],
-      ),
-      readCount(
-        queryFn,
-        `SELECT COUNT(*)::text AS count
-         FROM auth.otp_send_events
-         WHERE normalized_email = $1
-           AND created_at >= now() - INTERVAL '1 day'`,
-        [normalizedEmail],
-      ),
-      readCount(
-        queryFn,
-        `SELECT COUNT(*)::text AS count
-         FROM auth.otp_send_events
-         WHERE request_ip = $1
-           AND created_at >= now() - INTERVAL '15 minutes'`,
-        [requestIp],
-      ),
-      readCount(
-        queryFn,
-        `SELECT COUNT(*)::text AS count
-         FROM auth.otp_send_events
-         WHERE request_ip = $1
-           AND created_at >= now() - INTERVAL '1 hour'`,
-        [requestIp],
-      ),
-      readCount(
-        queryFn,
-        `SELECT COUNT(*)::text AS count
-         FROM auth.otp_send_events
-         WHERE request_ip = $1
-           AND created_at >= now() - INTERVAL '1 day'`,
-        [requestIp],
-      ),
-      readCount(
-        queryFn,
-        `SELECT COUNT(DISTINCT normalized_email)::text AS count
-         FROM auth.otp_send_events
-         WHERE request_ip = $1
-           AND created_at >= now() - INTERVAL '1 hour'`,
-        [requestIp],
-      ),
-      readCount(
-        queryFn,
-        `SELECT COUNT(DISTINCT normalized_email)::text AS count
-         FROM auth.otp_send_events
-         WHERE request_ip = $1
-           AND created_at >= now() - INTERVAL '1 day'`,
-        [requestIp],
-      ),
-    ]);
+export const createCheckAndRecordOtpSendDecision = (
+  runInTransaction: TransactionRunner,
+): ((normalizedEmail: string, requestIp: string) => Promise<OtpSendDecision>) => {
+  return async (
+    normalizedEmail: string,
+    requestIp: string,
+  ): Promise<OtpSendDecision> => {
+    return runInTransaction(async (queryFn) => {
+      const [
+        emailPerMinute,
+        emailPerQuarterHour,
+        emailPerDay,
+        ipPerQuarterHour,
+        ipPerHour,
+        ipPerDay,
+        distinctEmailsPerHour,
+        distinctEmailsPerDay,
+      ] = await Promise.all([
+        readCount(
+          queryFn,
+          `SELECT COUNT(*)::text AS count
+           FROM auth.otp_send_events
+           WHERE normalized_email = $1
+             AND decision = 'allowed'
+             AND created_at >= now() - INTERVAL '1 minute'`,
+          [normalizedEmail],
+        ),
+        readCount(
+          queryFn,
+          `SELECT COUNT(*)::text AS count
+           FROM auth.otp_send_events
+           WHERE normalized_email = $1
+             AND decision = 'allowed'
+             AND created_at >= now() - INTERVAL '15 minutes'`,
+          [normalizedEmail],
+        ),
+        readCount(
+          queryFn,
+          `SELECT COUNT(*)::text AS count
+           FROM auth.otp_send_events
+           WHERE normalized_email = $1
+             AND decision = 'allowed'
+             AND created_at >= now() - INTERVAL '1 day'`,
+          [normalizedEmail],
+        ),
+        readCount(
+          queryFn,
+          `SELECT COUNT(*)::text AS count
+           FROM auth.otp_send_events
+           WHERE request_ip = $1
+             AND decision = 'allowed'
+             AND created_at >= now() - INTERVAL '15 minutes'`,
+          [requestIp],
+        ),
+        readCount(
+          queryFn,
+          `SELECT COUNT(*)::text AS count
+           FROM auth.otp_send_events
+           WHERE request_ip = $1
+             AND decision = 'allowed'
+             AND created_at >= now() - INTERVAL '1 hour'`,
+          [requestIp],
+        ),
+        readCount(
+          queryFn,
+          `SELECT COUNT(*)::text AS count
+           FROM auth.otp_send_events
+           WHERE request_ip = $1
+             AND decision = 'allowed'
+             AND created_at >= now() - INTERVAL '1 day'`,
+          [requestIp],
+        ),
+        readCount(
+          queryFn,
+          `SELECT COUNT(DISTINCT normalized_email)::text AS count
+           FROM auth.otp_send_events
+           WHERE request_ip = $1
+             AND decision = 'allowed'
+             AND created_at >= now() - INTERVAL '1 hour'`,
+          [requestIp],
+        ),
+        readCount(
+          queryFn,
+          `SELECT COUNT(DISTINCT normalized_email)::text AS count
+           FROM auth.otp_send_events
+           WHERE request_ip = $1
+             AND decision = 'allowed'
+             AND created_at >= now() - INTERVAL '1 day'`,
+          [requestIp],
+        ),
+      ]);
 
-    const decision = evaluateOtpSendDecision({
-      emailPerMinute,
-      emailPerQuarterHour,
-      emailPerDay,
-      ipPerQuarterHour,
-      ipPerHour,
-      ipPerDay,
-      distinctEmailsPerHour,
-      distinctEmailsPerDay,
+      const decision = evaluateOtpSendDecision({
+        emailPerMinute,
+        emailPerQuarterHour,
+        emailPerDay,
+        ipPerQuarterHour,
+        ipPerHour,
+        ipPerDay,
+        distinctEmailsPerHour,
+        distinctEmailsPerDay,
+      });
+
+      await queryFn(
+        `INSERT INTO auth.otp_send_events (normalized_email, request_ip, decision)
+         VALUES ($1, $2, $3)`,
+        [normalizedEmail, requestIp, decision],
+      );
+
+      return decision;
     });
-
-    await queryFn(
-      `INSERT INTO auth.otp_send_events (normalized_email, request_ip, decision)
-       VALUES ($1, $2, $3)`,
-      [normalizedEmail, requestIp, decision],
-    );
-
-    return decision;
-  });
+  };
 };
+
+export const checkAndRecordOtpSendDecision = createCheckAndRecordOtpSendDecision(withTransaction);
