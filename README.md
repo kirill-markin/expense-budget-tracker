@@ -43,6 +43,8 @@ curl -X POST https://api.expense-budget-tracker.com/v1/sql \
   -d '{"sql": "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, category, counterparty, note) VALUES ('"'"'evt-001'"'"', '"'"'2025-03-15 12:30:00+00'"'"', '"'"'chase-checking'"'"', -42.50, '"'"'USD'"'"', '"'"'spend'"'"', '"'"'groceries'"'"', '"'"'Whole Foods'"'"', '"'"'Weekly groceries'"'"')"}'
 ```
 
+After `POST /v1/workspaces/{workspaceId}/select`, the API key remembers that workspace, so `X-Workspace-Id` becomes optional on later `/v1/sql` calls. If the user has exactly one workspace and no saved selection yet, the API auto-saves and uses that single workspace.
+
 ## Documentation
 
 - [Deployment](docs/deployment.md) — local Docker Compose and AWS CDK setup

@@ -4,7 +4,7 @@
  * GET lists the current user's workspaces. POST creates a new workspace using
  * the same backend helper as the human session flow.
  */
-import { buildCreateWorkspaceAction, buildErrorEnvelope, buildSelectWorkspaceAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
+import { buildCreateWorkspaceAction, buildSchemaAction, buildSelectWorkspaceAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
 import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
 import { createWorkspaceForTrustedIdentity, listWorkspacesForTrustedIdentity } from "@/server/workspaces";
@@ -20,13 +20,13 @@ export const GET = async (request: Request): Promise<Response> => {
     const instructions = workspaces.length === 0
       ? "No workspaces exist yet. Create one, then select it before running SQL."
       : workspaces.length === 1
-        ? "One workspace is available. Select it explicitly before running SQL."
-        : "Multiple workspaces are available. Choose one workspaceId explicitly before running SQL.";
+        ? "One workspace is available. Select it once to save it for this API key (or omit the header once and it will be auto-saved)."
+        : "Multiple workspaces are available. Choose one workspaceId and call select to save it for this API key.";
 
     return Response.json(
       buildSuccessEnvelope(
         { workspaces },
-        [buildSelectWorkspaceAction(), buildCreateWorkspaceAction()],
+        [buildSelectWorkspaceAction(), buildCreateWorkspaceAction(), buildSchemaAction()],
         instructions,
       ),
     );

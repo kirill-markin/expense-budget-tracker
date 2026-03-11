@@ -61,6 +61,7 @@
     "/me": {
       "get": {
         "summary": "Load account context",
+        "description": "Use this after login. The response instructions and actions guide the next calls: /workspaces, then /workspaces/{workspaceId}/select.",
         "security": [
           {
             "ApiKeyHeader": []
@@ -76,6 +77,7 @@
     "/workspaces": {
       "get": {
         "summary": "List workspaces",
+        "description": "Call this after /me to obtain workspaceId values. Then call /workspaces/{workspaceId}/select to save the workspace for subsequent SQL.",
         "security": [
           {
             "ApiKeyHeader": []
@@ -120,7 +122,8 @@
     },
     "/workspaces/{workspaceId}/select": {
       "post": {
-        "summary": "Validate and select workspace for later SQL",
+        "summary": "Validate and save workspace for later SQL",
+        "description": "Validates membership and saves the workspace for the current API key connection. After this, /sql can omit X-Workspace-Id unless you want to override the saved workspace.",
         "security": [
           {
             "ApiKeyHeader": []
@@ -143,9 +146,25 @@
         }
       }
     },
+    "/schema": {
+      "get": {
+        "summary": "List allowed relations and columns",
+        "security": [
+          {
+            "ApiKeyHeader": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schema envelope"
+          }
+        }
+      }
+    },
     "/sql": {
       "post": {
         "summary": "Execute restricted SQL",
+        "description": "Requires workspace context. Send X-Workspace-Id explicitly, or first call /workspaces/{workspaceId}/select to save a default for this API key.",
         "security": [
           {
             "ApiKeyHeader": []
@@ -155,10 +174,11 @@
           {
             "in": "header",
             "name": "X-Workspace-Id",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Optional after workspace selection. If omitted, the API uses the workspace saved by /workspaces/{workspaceId}/select for this API key. If the key has no saved workspace and the user has exactly one workspace, that workspace is auto-saved and used."
           }
         ],
         "requestBody": {

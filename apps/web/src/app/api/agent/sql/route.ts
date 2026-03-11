@@ -5,10 +5,11 @@
  * the stable agent envelope plus lightweight entity hints for known relations.
  */
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
-import { buildErrorEnvelope, buildSuccessEnvelope } from "@/server/agentEnvelope";
-import { API_KEY_INSTRUCTIONS, jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
+import { buildSuccessEnvelope } from "@/server/agentEnvelope";
+import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
 import { executeAgentSql, getAgentSqlAllowedRelations, getUserSqlExecutionMessage, isUserSqlExecutionError } from "@/server/agentSql";
 import { SqlPolicyError } from "@/server/sql/core";
+import { resolveWorkspaceIdForSql } from "@/server/agentWorkspaceSelection";
 
 type AgentSqlBody = Readonly<{
   sql?: unknown;
@@ -17,6 +18,45 @@ type AgentSqlBody = Readonly<{
 const getWorkspaceId = (request: Request): string => {
   const value = request.headers.get("x-workspace-id");
   return value === null ? "" : value.trim();
+};
+
+const isSchemaExplorationAttempt = (message: string): boolean =>
+  /information_schema|pg_catalog|pg_/iu.test(message);
+
+const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
+  if (error.code === "relation_not_allowed") {
+    if (isSchemaExplorationAttempt(error.message)) {
+      return "System catalogs are not queryable via /api/agent/sql. Use GET /api/agent/schema to inspect allowed relations and columns, then query only those relations. Example: SELECT * FROM accounts LIMIT 0.";
+    }
+
+    return "Relation is not exposed by policy. Use GET /api/agent/schema to see allowed relations, then retry.";
+  }
+
+  if (error.code === "unsupported_statement") {
+    return "Use one SQL statement of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
+  }
+
+  if (error.code === "multiple_statements_not_allowed") {
+    return "Send exactly one SQL statement per request. Remove semicolons and transaction wrappers.";
+  }
+
+  if (error.code === "set_config_not_allowed") {
+    return "Do not call set_config(). User and workspace context are managed by the API.";
+  }
+
+  if (error.code === "sql_comments_not_allowed") {
+    return "Remove SQL comments (`--` and `/* ... */`) and retry.";
+  }
+
+  if (error.code === "quoted_identifiers_not_allowed") {
+    return "Quoted identifiers are not allowed. Use unquoted lower_snake_case relation and column names.";
+  }
+
+  if (error.code === "dollar_quoted_strings_not_allowed") {
+    return "Dollar-quoted strings are not allowed. Use regular single-quoted literals.";
+  }
+
+  return "Fix the SQL statement and retry. Use only supported relations.";
 };
 
 export const POST = async (request: Request): Promise<Response> => {
@@ -46,20 +86,21 @@ export const POST = async (request: Request): Promise<Response> => {
     );
   }
 
-  const workspaceId = getWorkspaceId(request);
-  if (workspaceId === "") {
-    return jsonAgentError(
-      400,
-      "missing_workspace_id",
-      "Workspace ID is required",
-      "Send X-Workspace-Id: <workspaceId>. Call GET /api/agent/workspaces first if you do not know which workspace to use.",
-      { field: "X-Workspace-Id", expected: "workspaceId string" },
-      [],
-    );
-  }
-
   try {
     const authenticated = await authenticateAgentRequest(request);
+    const headerWorkspaceId = getWorkspaceId(request);
+    const workspaceId = await resolveWorkspaceIdForSql(authenticated, headerWorkspaceId);
+    if (workspaceId === null || workspaceId === "") {
+      return jsonAgentError(
+        400,
+        "missing_workspace_id",
+        "Workspace ID is required",
+        "Send X-Workspace-Id: <workspaceId>, or call POST /api/agent/workspaces/{workspaceId}/select once to save it for this API key.",
+        { field: "X-Workspace-Id", expected: "workspaceId string" },
+        [],
+      );
+    }
+
     const result = await executeAgentSql(authenticated, workspaceId, sql);
 
     if (result === null) {
@@ -67,7 +108,7 @@ export const POST = async (request: Request): Promise<Response> => {
         404,
         "workspace_not_found",
         "Workspace not found",
-        "Call GET /api/agent/workspaces first and use one of the returned workspaceId values in X-Workspace-Id.",
+        "Call GET /api/agent/workspaces, then select a valid workspace or pass X-Workspace-Id explicitly.",
         {},
         [],
       );
@@ -97,7 +138,7 @@ export const POST = async (request: Request): Promise<Response> => {
         400,
         error.code,
         error.message,
-        "Fix the SQL statement and retry. Use only supported relations and send Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY together with X-Workspace-Id: <workspaceId>.",
+        getSqlPolicyInstructions(error),
         { allowedRelations: getAgentSqlAllowedRelations() },
         [],
       );

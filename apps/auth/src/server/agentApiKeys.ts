@@ -39,11 +39,19 @@ export const createAgentConnection = async (
 
   return withTransaction(async (queryFn) => {
     await queryFn("SELECT auth.sync_authenticated_user($1, $2)", [userId, email]);
+    const workspaceResult = await queryFn(
+      "SELECT auth.get_single_workspace_id($1) AS workspace_id",
+      [userId],
+    );
+    const selectedWorkspaceId = workspaceResult.rows.length === 1
+      ? ((workspaceResult.rows[0] as { workspace_id: string | null }).workspace_id)
+      : null;
+
     const result = await queryFn(
-      `INSERT INTO auth.agent_api_keys (user_id, label, key_id, key_hash)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO auth.agent_api_keys (user_id, label, key_id, key_hash, selected_workspace_id)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING connection_id, created_at`,
-      [userId, trimmedLabel, keyId, keyHash],
+      [userId, trimmedLabel, keyId, keyHash, selectedWorkspaceId],
     );
 
     if (result.rows.length !== 1) {

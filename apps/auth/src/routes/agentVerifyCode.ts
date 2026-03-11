@@ -11,7 +11,14 @@ import {
   type AgentOtpChallengeLookup,
 } from "../server/agentOtpChallenges.js";
 import { createAgentConnection, type AgentConnectionResult } from "../server/agentApiKeys.js";
-import { buildErrorEnvelope, buildLoadAccountAction, buildSuccessEnvelope } from "../server/agentEnvelope.js";
+import {
+  buildErrorEnvelope,
+  buildListWorkspacesAction,
+  buildLoadAccountAction,
+  buildSchemaAction,
+  buildSelectWorkspaceAction,
+  buildSuccessEnvelope,
+} from "../server/agentEnvelope.js";
 import {
   extractIdentityFromIdToken,
   verifyEmailOtp,
@@ -205,8 +212,13 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
             },
             apiKey: connection.apiKey,
           },
-          [buildLoadAccountAction(apiBaseUrl)],
-          `Store this long-lived API key now and do not rely on chat history alone. A new dialog or session on the same machine will not have this key unless it was saved outside this conversation. Strongly recommend saving it in a local .env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>' and reusing it from there; ask the user for permission before writing to .env or any file. If the user does not allow file writes, export it in the current shell as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>' and also save it somewhere persistent outside chat memory. Example .env usage: curl -H 'Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY' ${apiBaseUrl}/me. Next, call load_account.`,
+          [
+            buildLoadAccountAction(apiBaseUrl),
+            buildListWorkspacesAction(apiBaseUrl),
+            buildSelectWorkspaceAction(apiBaseUrl),
+            buildSchemaAction(apiBaseUrl),
+          ],
+          `Store this long-lived API key now and do not rely on chat history alone. A new dialog or session on the same machine will not have this key unless it was saved outside this conversation. Strongly recommend saving it in a local .env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>' and reusing it from there; ask the user for permission before writing to .env or any file. If the user does not allow file writes, export it in the current shell as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>' and also save it somewhere persistent outside chat memory. Example .env usage: curl -H 'Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY' ${apiBaseUrl}/me. Then call ${apiBaseUrl}/workspaces and ${apiBaseUrl}/workspaces/{workspaceId}/select to set the default workspace for this API key before SQL. If only one workspace exists, it is auto-selected for this key.`,
         ),
         200,
       );

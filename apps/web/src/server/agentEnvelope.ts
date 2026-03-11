@@ -59,6 +59,13 @@ export const buildRunSqlAction = (): AgentAction => ({
   auth: "ApiKey",
 });
 
+export const buildSchemaAction = (): AgentAction => ({
+  name: "schema",
+  method: "GET",
+  url: "/api/agent/schema",
+  auth: "ApiKey",
+});
+
 export const buildSuccessEnvelope = (
   data: Readonly<Record<string, unknown>>,
   actions: ReadonlyArray<AgentAction>,

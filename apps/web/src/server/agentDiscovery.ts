@@ -55,6 +55,7 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
       capabilities: {
         onboarding: true,
         workspaceSetup: true,
+        schema: true,
         sql: true,
       },
     },
@@ -66,7 +67,13 @@ export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => 
         url: `${apiBaseUrl}/openapi.json`,
         auth: "none",
       },
+      {
+        name: "schema",
+        method: "GET",
+        url: `${apiBaseUrl}/schema`,
+        auth: "ApiKey",
+      },
     ],
-    `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as ${AGENT_API_KEY_ENV_VAR_NAME}='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me and ${apiBaseUrl}/workspaces before SQL. Example: curl -H 'Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME}' ${apiBaseUrl}/me.`,
+    `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as ${AGENT_API_KEY_ENV_VAR_NAME}='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me, ${apiBaseUrl}/workspaces, and ${apiBaseUrl}/workspaces/{workspaceId}/select before SQL. Use ${apiBaseUrl}/schema to inspect allowed relations/columns. Example: curl -H 'Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME}' ${apiBaseUrl}/me.`,
   );
 };

@@ -1,14 +1,14 @@
 /**
- * Agent workspace selection validator.
+ * Agent workspace selection endpoint.
  *
- * Selection is stateless in v1: the server does not persist an active
- * workspace. This endpoint only verifies membership and returns the ready
- * workspace context for subsequent requests.
+ * Validates membership and persists the selected workspace for the current
+ * agent API key connection.
  */
-import { buildErrorEnvelope, buildRunSqlAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
+import { buildRunSqlAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
 import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
 import { getWorkspaceForTrustedIdentity } from "@/server/workspaces";
+import { saveWorkspaceId } from "@/server/agentWorkspaceSelection";
 
 type RouteContext = Readonly<{
   params: Promise<{
@@ -44,6 +44,7 @@ export const POST = async (_request: Request, context: RouteContext): Promise<Re
         [],
       );
     }
+    await saveWorkspaceId(authenticated, workspace.workspaceId);
 
     return Response.json(
       buildSuccessEnvelope(
@@ -52,10 +53,11 @@ export const POST = async (_request: Request, context: RouteContext): Promise<Re
           sqlRequest: {
             header: "X-Workspace-Id",
             workspaceId: workspace.workspaceId,
+            optionalAfterSelection: true,
           },
         },
         [buildRunSqlAction()],
-        "Workspace is ready. This does not create server-side session state. Reuse the same workspace ID in X-Workspace-Id for future SQL requests.",
+        "Workspace saved for this API key. /api/agent/sql can omit X-Workspace-Id; send it only to override.",
       ),
     );
   } catch (error) {

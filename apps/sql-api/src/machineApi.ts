@@ -53,6 +53,27 @@ type EntityHints = Readonly<{
   related: ReadonlyArray<EntityHint>;
 }>;
 
+type SchemaColumnRow = Readonly<{
+  table_name: string;
+  column_name: string;
+  data_type: string;
+  udt_name: string;
+  is_nullable: "YES" | "NO";
+  column_default: string | null;
+}>;
+
+type SchemaColumn = Readonly<{
+  name: string;
+  type: string;
+  nullable: boolean;
+  defaultValue: string | null;
+}>;
+
+type SchemaRelation = Readonly<{
+  name: AllowedRelationName;
+  columns: ReadonlyArray<SchemaColumn>;
+}>;
+
 const SERVICE_NAME = "Expense Budget Tracker Agent API";
 const SERVICE_DESCRIPTION = "Machine API for onboarding, workspace setup, and restricted SQL.";
 const WORKSPACES_SQL = `SELECT w.workspace_id, w.name
@@ -60,6 +81,18 @@ const WORKSPACES_SQL = `SELECT w.workspace_id, w.name
   JOIN workspace_members wm ON wm.workspace_id = w.workspace_id
   WHERE wm.user_id = $1
   ORDER BY w.name`;
+const ALLOWED_RELATION_NAMES = getAllowedRelationNames();
+const AGENT_CONNECTION_SELECT_SQL = `SELECT selected_workspace_id
+  FROM auth.agent_api_keys
+  WHERE connection_id = $1
+    AND user_id = $2
+    AND revoked_at IS NULL`;
+const AGENT_CONNECTION_UPDATE_SQL = `UPDATE auth.agent_api_keys
+  SET selected_workspace_id = $1
+  WHERE connection_id = $2
+    AND user_id = $3
+    AND revoked_at IS NULL
+  RETURNING connection_id`;
 
 const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
   summary: string;
@@ -179,6 +212,7 @@ const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Record<st
       capabilities: [
         "Load account context",
         "Select a workspace",
+        "Inspect allowed SQL schema",
         "Run restricted SQL",
       ],
     },
@@ -196,8 +230,14 @@ const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Record<st
         url: `${apiBaseUrl}/openapi.json`,
         auth: "none",
       },
+      {
+        name: "schema",
+        method: "GET",
+        url: `${apiBaseUrl}/schema`,
+        auth: "ApiKey",
+      },
     ],
-    `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me and ${apiBaseUrl}/workspaces before SQL. Example: curl -H 'Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY' ${apiBaseUrl}/me.`,
+    `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me, ${apiBaseUrl}/workspaces, and ${apiBaseUrl}/workspaces/{workspaceId}/select before SQL. Use ${apiBaseUrl}/schema to inspect allowed relations/columns. Example: curl -H 'Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY' ${apiBaseUrl}/me.`,
   );
 };
 
@@ -319,6 +359,127 @@ const getWorkspace = async (
   };
 };
 
+const persistSelectedWorkspace = async (
+  dependencies: MachineApiDependencies,
+  authenticated: AuthenticatedContext,
+  workspaceId: string,
+): Promise<void> => {
+  const result = await dependencies.queryAsTrustedIdentity(
+    authenticated.identity,
+    authenticated.identity.userId,
+    AGENT_CONNECTION_UPDATE_SQL,
+    [workspaceId, authenticated.connectionId, authenticated.identity.userId],
+  );
+
+  if (result.rows.length !== 1) {
+    throw new Error(`Failed to persist selected workspace for connection ${authenticated.connectionId}`);
+  }
+};
+
+const getSelectedWorkspace = async (
+  dependencies: MachineApiDependencies,
+  authenticated: AuthenticatedContext,
+): Promise<string | null> => {
+  const result = await dependencies.queryAsTrustedIdentity(
+    authenticated.identity,
+    authenticated.identity.userId,
+    AGENT_CONNECTION_SELECT_SQL,
+    [authenticated.connectionId, authenticated.identity.userId],
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const row = result.rows[0] as { selected_workspace_id: string | null };
+  return row.selected_workspace_id;
+};
+
+const resolveSqlWorkspaceId = async (
+  dependencies: MachineApiDependencies,
+  authenticated: AuthenticatedContext,
+  headerWorkspaceId: string,
+): Promise<string | null> => {
+  if (headerWorkspaceId !== "") {
+    return headerWorkspaceId;
+  }
+
+  const savedWorkspaceId = await getSelectedWorkspace(dependencies, authenticated);
+  if (savedWorkspaceId !== null && savedWorkspaceId !== "") {
+    return savedWorkspaceId;
+  }
+
+  const workspaces = await listWorkspaces(dependencies, authenticated.identity);
+  if (workspaces.length !== 1) {
+    return null;
+  }
+
+  const onlyWorkspace = workspaces[0];
+  if (onlyWorkspace === undefined) {
+    throw new Error("Expected exactly one workspace, but none were found");
+  }
+
+  await persistSelectedWorkspace(dependencies, authenticated, onlyWorkspace.workspaceId);
+  return onlyWorkspace.workspaceId;
+};
+
+const loadAllowedSchema = async (
+  dependencies: MachineApiDependencies,
+  identity: UserIdentity,
+): Promise<ReadonlyArray<SchemaRelation>> => {
+  const result = await dependencies.queryAsTrustedIdentity(
+    identity,
+    identity.userId,
+    `SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = ANY($1::text[])
+     ORDER BY table_name, ordinal_position`,
+    [ALLOWED_RELATION_NAMES],
+  );
+
+  const grouped = new Map<AllowedRelationName, Array<SchemaColumn>>();
+  for (const relationName of ALLOWED_RELATION_NAMES) {
+    grouped.set(relationName, []);
+  }
+
+  for (const row of result.rows) {
+    const typedRow = row as SchemaColumnRow;
+    const relationName = typedRow.table_name as AllowedRelationName;
+    if (!grouped.has(relationName)) {
+      continue;
+    }
+
+    const columns = grouped.get(relationName);
+    if (columns === undefined) {
+      throw new Error(`Missing schema relation bucket for ${relationName}`);
+    }
+
+    const normalizedType = typedRow.data_type === "USER-DEFINED"
+      ? typedRow.udt_name
+      : typedRow.data_type;
+
+    columns.push({
+      name: typedRow.column_name,
+      type: normalizedType,
+      nullable: typedRow.is_nullable === "YES",
+      defaultValue: typedRow.column_default,
+    });
+  }
+
+  return ALLOWED_RELATION_NAMES.map((name) => {
+    const columns = grouped.get(name);
+    if (columns === undefined) {
+      throw new Error(`Missing schema relation ${name}`);
+    }
+
+    return {
+      name,
+      columns,
+    };
+  });
+};
+
 const buildEntityHints = (relations: ReadonlyArray<AllowedRelationName>): EntityHints | undefined => {
   if (relations.length === 0) {
     return undefined;
@@ -363,6 +524,48 @@ const getUserSqlExecutionMessage = (error: unknown): string => {
   return "The SQL statement could not be executed";
 };
 
+const isSchemaExplorationAttempt = (message: string): boolean =>
+  /information_schema|pg_catalog|pg_/iu.test(message);
+
+const getSqlPolicyInstructions = (
+  error: SqlPolicyError,
+  apiBaseUrl: string,
+): string => {
+  if (error.code === "relation_not_allowed") {
+    if (isSchemaExplorationAttempt(error.message)) {
+      return `System catalogs are not queryable via /sql. Use ${apiBaseUrl}/schema to inspect allowed relations and columns, then query only those relations. Example: SELECT * FROM accounts LIMIT 0.`;
+    }
+
+    return `Relation is not exposed by policy. Use ${apiBaseUrl}/schema to see allowed relations, then retry. Workspace context must be set via /workspaces/{workspaceId}/select or X-Workspace-Id.`;
+  }
+
+  if (error.code === "unsupported_statement") {
+    return "Use one SQL statement of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
+  }
+
+  if (error.code === "multiple_statements_not_allowed") {
+    return "Send exactly one SQL statement per request. Remove semicolons and transaction wrappers.";
+  }
+
+  if (error.code === "set_config_not_allowed") {
+    return "Do not call set_config(). User and workspace context are managed by the API.";
+  }
+
+  if (error.code === "sql_comments_not_allowed") {
+    return "Remove SQL comments (`--` and `/* ... */`) and retry.";
+  }
+
+  if (error.code === "quoted_identifiers_not_allowed") {
+    return "Quoted identifiers are not allowed. Use unquoted lower_snake_case relation and column names.";
+  }
+
+  if (error.code === "dollar_quoted_strings_not_allowed") {
+    return "Dollar-quoted strings are not allowed. Use regular single-quoted literals.";
+  }
+
+  return "Fix the SQL statement and retry. Use only supported relations.";
+};
+
 const runSql = async (
   dependencies: MachineApiDependencies,
   authenticated: AuthenticatedContext,
@@ -404,7 +607,7 @@ const runSql = async (
       },
     },
     [],
-    "Use X-Workspace-Id on every SQL request. Prefer SELECT first and only query supported relations.",
+    "Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first and only query supported relations.",
   );
 };
 
@@ -468,8 +671,18 @@ export const createMachineApiHandler = (
               method: "GET",
               url: `${getApiBaseUrl(event)}/workspaces`,
               auth: "ApiKey",
+            }, {
+              name: "select_workspace",
+              method: "POST",
+              urlTemplate: `${getApiBaseUrl(event)}/workspaces/{workspaceId}/select`,
+              auth: "ApiKey",
+            }, {
+              name: "schema",
+              method: "GET",
+              url: `${getApiBaseUrl(event)}/schema`,
+              auth: "ApiKey",
             }],
-            "Call /workspaces next, then choose a workspace ID for SQL.",
+            "Call /workspaces next, select a workspace once, then run SQL. Call /schema to inspect allowed relations and columns.",
           ),
         );
       } catch (error) {
@@ -477,6 +690,38 @@ export const createMachineApiHandler = (
         return json(
           500,
           buildErrorEnvelope({ retryable: true }, [], "Retry /me in a moment.", "agent_me_failed", message),
+        );
+      }
+    }
+
+    if (event.httpMethod === "GET" && path === "/schema") {
+      try {
+        const relations = await loadAllowedSchema(dependencies, authenticated.identity);
+        return json(
+          200,
+          buildSuccessEnvelope(
+            {
+              relations,
+              limits: {
+                maxRows: MAX_SQL_ROWS,
+                statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,
+              },
+            },
+            [{
+              name: "run_sql",
+              method: "POST",
+              url: `${getApiBaseUrl(event)}/sql`,
+              input: { sql: "string", "X-Workspace-Id": "optional string" },
+              auth: "ApiKey",
+            }],
+            "Schema includes only relations supported by /sql. Select a workspace once, then run SQL.",
+          ),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return json(
+          500,
+          buildErrorEnvelope({ retryable: true }, [], "Retry /schema in a moment.", "agent_schema_failed", message),
         );
       }
     }
@@ -505,7 +750,9 @@ export const createMachineApiHandler = (
             ],
             workspaces.length === 0
               ? "Create a workspace, then select it before SQL."
-              : "Choose a workspaceId before SQL.",
+              : workspaces.length === 1
+                ? "One workspace is available. Call /workspaces/{workspaceId}/select once to save it for this API key (or omit the header once and it will be auto-saved)."
+                : "Multiple workspaces are available. Choose a workspaceId and call /workspaces/{workspaceId}/select once to save it for this API key.",
           ),
         );
       } catch (error) {
@@ -586,6 +833,7 @@ export const createMachineApiHandler = (
             buildErrorEnvelope({}, [], "Call /workspaces first and use one returned workspaceId.", "workspace_not_found", "Workspace not found"),
           );
         }
+        await persistSelectedWorkspace(dependencies, authenticated, workspace.workspaceId);
 
         return json(
           200,
@@ -595,16 +843,17 @@ export const createMachineApiHandler = (
               sqlRequest: {
                 header: "X-Workspace-Id",
                 workspaceId: workspace.workspaceId,
+                optionalAfterSelection: true,
               },
             },
             [{
               name: "run_sql",
               method: "POST",
               url: `${getApiBaseUrl(event)}/sql`,
-              input: { sql: "string", "X-Workspace-Id": "string" },
+              input: { sql: "string", "X-Workspace-Id": "optional string" },
               auth: "ApiKey",
             }],
-            "Reuse this workspace ID in X-Workspace-Id for later SQL.",
+            "Workspace saved for this API key. /sql can now omit X-Workspace-Id; send the header only to override.",
           ),
         );
       } catch (error) {
@@ -630,11 +879,28 @@ export const createMachineApiHandler = (
         );
       }
 
-      const workspaceId = (event.headers["X-Workspace-Id"] ?? event.headers["x-workspace-id"] ?? "").trim();
-      if (workspaceId === "") {
+      const headerWorkspaceId = (event.headers["X-Workspace-Id"] ?? event.headers["x-workspace-id"] ?? "").trim();
+      let workspaceId: string | null;
+      try {
+        workspaceId = await resolveSqlWorkspaceId(dependencies, authenticated, headerWorkspaceId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return json(
+          500,
+          buildErrorEnvelope({ retryable: true }, [], "Retry SQL in a moment.", "agent_sql_failed", message),
+        );
+      }
+
+      if (workspaceId === null || workspaceId === "") {
         return json(
           400,
-          buildErrorEnvelope({ field: "X-Workspace-Id", expected: "workspaceId string" }, [], "Send X-Workspace-Id and retry.", "missing_workspace_id", "Workspace ID is required"),
+          buildErrorEnvelope(
+            { field: "X-Workspace-Id", expected: "workspaceId string" },
+            [],
+            "Send X-Workspace-Id, or call /workspaces/{workspaceId}/select once to save a default workspace for this API key.",
+            "missing_workspace_id",
+            "Workspace ID is required",
+          ),
         );
       }
 
@@ -655,7 +921,7 @@ export const createMachineApiHandler = (
             buildErrorEnvelope(
               { allowedRelations: getAllowedRelationNames() },
               [],
-              "Use only supported relations and keep sending X-Workspace-Id.",
+              getSqlPolicyInstructions(error, getApiBaseUrl(event)),
               error.code,
               error.message,
             ),

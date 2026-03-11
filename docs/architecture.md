@@ -119,7 +119,7 @@ SQL Lambda (sets RLS context, executes query)
 Postgres (same app role + RLS as web app)
 ```
 
-Agents start from `GET /v1/`, complete email OTP on `auth.*`, store the returned ApiKey, load `/v1/me`, list or create `/v1/workspaces`, and send SQL to `/v1/sql`. The SQL execution path uses the same `app` role and RLS enforcement as the web application — `SET LOCAL app.user_id` and `app.workspace_id` per transaction.
+Agents start from `GET /v1/`, complete email OTP on `auth.*`, store the returned ApiKey, load `/v1/me`, list or create `/v1/workspaces`, optionally inspect `/v1/schema`, select a workspace via `/v1/workspaces/{workspaceId}/select`, and send SQL to `/v1/sql`. `X-Workspace-Id` remains supported for explicit overrides, but is optional after a workspace is selected for that API key. The SQL execution path uses the same `app` role and RLS enforcement as the web application — `SET LOCAL app.user_id` and `app.workspace_id` per transaction.
 
 ### Security
 
@@ -142,6 +142,8 @@ curl -X POST https://api.example.com/v1/sql \
   -H "Content-Type: application/json" \
   -d '{"sql": "SELECT * FROM ledger_entries ORDER BY ts DESC LIMIT 10"}'
 ```
+
+`X-Workspace-Id` is optional if the same API key has already called `POST /v1/workspaces/{workspaceId}/select`. If no workspace is saved and exactly one workspace exists for the user, the API auto-saves and uses that workspace for the key.
 
 ## Multi-currency conversion
 

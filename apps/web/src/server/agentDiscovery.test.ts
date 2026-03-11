@@ -23,6 +23,12 @@ test("buildAgentDiscoveryEnvelope points agents to ask for email before send_cod
       url: "https://api.example.com/v1/openapi.json",
       auth: "none",
     },
+    {
+      name: "schema",
+      method: "GET",
+      url: "https://api.example.com/v1/schema",
+      auth: "ApiKey",
+    },
   ]);
   assert.deepEqual(envelope.data["docs"], {
     openapiUrl: "https://api.example.com/v1/openapi.json",
@@ -54,6 +60,12 @@ test("buildAgentDiscoveryEnvelope falls back to the request origin when auth env
       method: "GET",
       url: "https://api.example.com/v1/openapi.json",
       auth: "none",
+    },
+    {
+      name: "schema",
+      method: "GET",
+      url: "https://api.example.com/v1/schema",
+      auth: "ApiKey",
     },
   ]);
 });

@@ -80,7 +80,12 @@ test("agent verify-code returns env-var guidance with the new key", async () => 
     otpSessionToken: "OTP-SESSION",
     label: "codex-desktop",
   }));
-  const body = await response.json() as { ok: boolean; instructions: string; data: { apiKey: string } };
+  const body = await response.json() as {
+    ok: boolean;
+    instructions: string;
+    data: { apiKey: string };
+    actions: Array<{ name: string }>;
+  };
 
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
@@ -94,5 +99,12 @@ test("agent verify-code returns env-var guidance with the new key", async () => 
   assert.match(body.instructions, /ask the user for permission before writing to \.env or any file/i);
   assert.match(body.instructions, /If the user does not allow file writes, export it in the current shell/i);
   assert.match(body.instructions, /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
-  assert.match(body.instructions, /load_account/);
+  assert.match(body.instructions, /\/v1\/workspaces/);
+  assert.match(body.instructions, /\/workspaces\/\{workspaceId\}\/select/);
+  assert.deepEqual(body.actions.map((action) => action.name), [
+    "load_account",
+    "list_workspaces",
+    "select_workspace",
+    "schema",
+  ]);
 });

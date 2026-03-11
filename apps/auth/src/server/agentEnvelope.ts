@@ -45,6 +45,27 @@ export const buildLoadAccountAction = (apiBaseUrl: string): AgentAction => ({
   auth: "ApiKey",
 });
 
+export const buildListWorkspacesAction = (apiBaseUrl: string): AgentAction => ({
+  name: "list_workspaces",
+  method: "GET",
+  url: `${apiBaseUrl}/workspaces`,
+  auth: "ApiKey",
+});
+
+export const buildSelectWorkspaceAction = (apiBaseUrl: string): AgentAction => ({
+  name: "select_workspace",
+  method: "POST",
+  urlTemplate: `${apiBaseUrl}/workspaces/{workspaceId}/select`,
+  auth: "ApiKey",
+});
+
+export const buildSchemaAction = (apiBaseUrl: string): AgentAction => ({
+  name: "schema",
+  method: "GET",
+  url: `${apiBaseUrl}/schema`,
+  auth: "ApiKey",
+});
+
 export const buildSuccessEnvelope = (
   data: Readonly<Record<string, unknown>>,
   actions: ReadonlyArray<AgentAction>,

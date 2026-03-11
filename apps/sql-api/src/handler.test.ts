@@ -94,10 +94,31 @@ test("openapi and swagger endpoints return the same document", async () => {
 });
 
 test("authenticated machine routes return envelopes on canonical v1 paths", async () => {
+  let savedWorkspaceId: string | null = null;
+
   const handler = createMachineApiHandler({
     ensureTrustedIdentityProvisioned: async () => Promise.resolve(),
     loadOpenApiDocument: () => ({ openapi: "3.1.0" }),
     queryAsTrustedIdentity: async (_identity, _workspaceId, text, params) => {
+      if (text.includes("UPDATE auth.agent_api_keys")) {
+        savedWorkspaceId = String(params[0]);
+        return createQueryResult([{ connection_id: "connection-1" }]) as never;
+      }
+      if (text.includes("SELECT selected_workspace_id")) {
+        return createQueryResult([{ selected_workspace_id: savedWorkspaceId }]) as never;
+      }
+      if (text.includes("FROM information_schema.columns")) {
+        return createQueryResult([
+          {
+            table_name: "accounts",
+            column_name: "account_id",
+            data_type: "text",
+            udt_name: "text",
+            is_nullable: "NO",
+            column_default: null,
+          },
+        ]) as never;
+      }
       if (text.includes("FROM workspaces w") && text.includes("ORDER BY w.name")) {
         return createQueryResult([{ workspace_id: "workspace-1", name: "Main" }]) as never;
       }
@@ -116,6 +137,7 @@ test("authenticated machine routes return envelopes on canonical v1 paths", asyn
 
   const meResponse = await handler(createAuthenticatedEvent({ path: "/me", resource: "/me" }));
   const workspacesResponse = await handler(createAuthenticatedEvent({ path: "/workspaces", resource: "/workspaces" }));
+  const schemaResponse = await handler(createAuthenticatedEvent({ path: "/schema", resource: "/schema" }));
   const createWorkspaceResponse = await handler(createAuthenticatedEvent({
     httpMethod: "POST",
     path: "/workspaces",
@@ -134,20 +156,167 @@ test("authenticated machine routes return envelopes on canonical v1 paths", asyn
     resource: "/sql",
     headers: {
       Host: "api.example.com",
-      "X-Workspace-Id": "workspace-1",
     },
     body: JSON.stringify({ sql: "SELECT * FROM accounts LIMIT 1" }),
   }));
 
   assert.equal(meResponse.statusCode, 200);
   assert.equal(workspacesResponse.statusCode, 200);
+  assert.equal(schemaResponse.statusCode, 200);
   assert.equal(createWorkspaceResponse.statusCode, 200);
   assert.equal(selectWorkspaceResponse.statusCode, 200);
   assert.equal(sqlResponse.statusCode, 200);
 
   assert.equal(JSON.parse(meResponse.body).ok, true);
   assert.equal(JSON.parse(workspacesResponse.body).ok, true);
+  assert.equal(JSON.parse(schemaResponse.body).ok, true);
   assert.equal(JSON.parse(createWorkspaceResponse.body).ok, true);
   assert.equal(JSON.parse(selectWorkspaceResponse.body).ok, true);
   assert.equal(JSON.parse(sqlResponse.body).ok, true);
+  assert.deepEqual(
+    (JSON.parse(meResponse.body).actions as Array<{ name: string }>).map((action) => action.name),
+    ["list_workspaces", "select_workspace", "schema"],
+  );
+});
+
+test("sql without header and without saved workspace returns missing_workspace_id", async () => {
+  const handler = createMachineApiHandler({
+    ensureTrustedIdentityProvisioned: async () => Promise.resolve(),
+    loadOpenApiDocument: () => ({ openapi: "3.1.0" }),
+    queryAsTrustedIdentity: async (_identity, _workspaceId, text) => {
+      if (text.includes("SELECT selected_workspace_id")) {
+        return createQueryResult([{ selected_workspace_id: null }]) as never;
+      }
+      if (text.includes("FROM workspaces w") && text.includes("ORDER BY w.name")) {
+        return createQueryResult([
+          { workspace_id: "workspace-1", name: "Main" },
+          { workspace_id: "workspace-2", name: "Side" },
+        ]) as never;
+      }
+      throw new Error(`Unexpected SQL: ${text}`);
+    },
+    withRestrictedTrustedIdentityContext: async () => {
+      throw new Error("SQL should not execute when workspace is missing");
+    },
+  });
+
+  const sqlResponse = await handler(createAuthenticatedEvent({
+    httpMethod: "POST",
+    path: "/sql",
+    resource: "/sql",
+    headers: {
+      Host: "api.example.com",
+    },
+    body: JSON.stringify({ sql: "SELECT * FROM accounts LIMIT 1" }),
+  }));
+
+  assert.equal(sqlResponse.statusCode, 400);
+  assert.equal(JSON.parse(sqlResponse.body).error.code, "missing_workspace_id");
+});
+
+test("sql without header auto-selects when only one workspace exists", async () => {
+  let savedWorkspaceId: string | null = null;
+
+  const handler = createMachineApiHandler({
+    ensureTrustedIdentityProvisioned: async () => Promise.resolve(),
+    loadOpenApiDocument: () => ({ openapi: "3.1.0" }),
+    queryAsTrustedIdentity: async (_identity, _workspaceId, text, params) => {
+      if (text.includes("SELECT selected_workspace_id")) {
+        return createQueryResult([{ selected_workspace_id: null }]) as never;
+      }
+      if (text.includes("FROM workspaces w") && text.includes("ORDER BY w.name")) {
+        return createQueryResult([{ workspace_id: "workspace-1", name: "Main" }]) as never;
+      }
+      if (text.includes("UPDATE auth.agent_api_keys")) {
+        savedWorkspaceId = String(params[0]);
+        return createQueryResult([{ connection_id: "connection-1" }]) as never;
+      }
+      if (text.includes("WHERE w.workspace_id = $1")) {
+        return createQueryResult([{ workspace_id: String(params[0]), name: "Main" }]) as never;
+      }
+      throw new Error(`Unexpected SQL: ${text}`);
+    },
+    withRestrictedTrustedIdentityContext: async (_identity, workspaceId, _timeoutMs, callback) => {
+      assert.equal(workspaceId, "workspace-1");
+      return callback(async () => createQueryResult([{ account_id: "checking" }]));
+    },
+  });
+
+  const sqlResponse = await handler(createAuthenticatedEvent({
+    httpMethod: "POST",
+    path: "/sql",
+    resource: "/sql",
+    headers: {
+      Host: "api.example.com",
+    },
+    body: JSON.stringify({ sql: "SELECT * FROM accounts LIMIT 1" }),
+  }));
+
+  assert.equal(sqlResponse.statusCode, 200);
+  assert.equal(savedWorkspaceId, "workspace-1");
+});
+
+test("relation_not_allowed for information_schema points clients to /schema", async () => {
+  const handler = createMachineApiHandler({
+    ensureTrustedIdentityProvisioned: async () => Promise.resolve(),
+    loadOpenApiDocument: () => ({ openapi: "3.1.0" }),
+    queryAsTrustedIdentity: async (_identity, _workspaceId, text, params) => {
+      if (text.includes("WHERE w.workspace_id = $1")) {
+        return createQueryResult([{ workspace_id: String(params[0]), name: "Main" }]) as never;
+      }
+      throw new Error(`Unexpected SQL: ${text}`);
+    },
+    withRestrictedTrustedIdentityContext: async () => {
+      throw new Error("Policy should reject relation before execution");
+    },
+  });
+
+  const sqlResponse = await handler(createAuthenticatedEvent({
+    httpMethod: "POST",
+    path: "/sql",
+    resource: "/sql",
+    headers: {
+      Host: "api.example.com",
+      "X-Workspace-Id": "workspace-1",
+    },
+    body: JSON.stringify({ sql: "SELECT * FROM information_schema.columns LIMIT 1" }),
+  }));
+
+  assert.equal(sqlResponse.statusCode, 400);
+  const payload = JSON.parse(sqlResponse.body) as { error: { code: string }; instructions: string };
+  assert.equal(payload.error.code, "relation_not_allowed");
+  assert.match(payload.instructions, /\/schema/);
+  assert.match(payload.instructions, /System catalogs are not queryable/i);
+});
+
+test("unsupported_statement returns actionable transaction guidance", async () => {
+  const handler = createMachineApiHandler({
+    ensureTrustedIdentityProvisioned: async () => Promise.resolve(),
+    loadOpenApiDocument: () => ({ openapi: "3.1.0" }),
+    queryAsTrustedIdentity: async (_identity, _workspaceId, text, params) => {
+      if (text.includes("WHERE w.workspace_id = $1")) {
+        return createQueryResult([{ workspace_id: String(params[0]), name: "Main" }]) as never;
+      }
+      throw new Error(`Unexpected SQL: ${text}`);
+    },
+    withRestrictedTrustedIdentityContext: async () => {
+      throw new Error("Policy should reject statement before execution");
+    },
+  });
+
+  const sqlResponse = await handler(createAuthenticatedEvent({
+    httpMethod: "POST",
+    path: "/sql",
+    resource: "/sql",
+    headers: {
+      Host: "api.example.com",
+      "X-Workspace-Id": "workspace-1",
+    },
+    body: JSON.stringify({ sql: "BEGIN" }),
+  }));
+
+  assert.equal(sqlResponse.statusCode, 400);
+  const payload = JSON.parse(sqlResponse.body) as { error: { code: string }; instructions: string };
+  assert.equal(payload.error.code, "unsupported_statement");
+  assert.match(payload.instructions, /BEGIN\/COMMIT\/ROLLBACK/i);
 });

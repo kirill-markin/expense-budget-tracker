@@ -4,7 +4,7 @@
  * Authenticates ApiKey requests, provisions the personal workspace if needed,
  * and returns the current account context in the stable agent envelope.
  */
-import { buildErrorEnvelope, buildListWorkspacesAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
+import { buildListWorkspacesAction, buildSchemaAction, buildSelectWorkspaceAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
 import { ensureTrustedIdentityProvisioned } from "@/server/db";
 import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agentResponses";
@@ -28,8 +28,8 @@ export const GET = async (request: Request): Promise<Response> => {
             createdAt: authenticated.createdAt,
           },
         },
-        [buildListWorkspacesAction()],
-        "The default personal workspace uses the same ID as the user account. Call list_workspaces next, then use an explicit workspace ID for each SQL request.",
+        [buildListWorkspacesAction(), buildSelectWorkspaceAction(), buildSchemaAction()],
+        "The default personal workspace uses the same ID as the user account. Call list_workspaces, select one workspace for this API key, then run SQL. Use /api/agent/schema to inspect available columns.",
       ),
     );
   } catch (error) {

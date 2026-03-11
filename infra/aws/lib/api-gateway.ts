@@ -146,6 +146,12 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
       authorizationType: apigw.AuthorizationType.CUSTOM,
     });
 
+  const schemaResource = restApi.root.addResource("schema");
+  schemaResource.addMethod("GET", new apigw.LambdaIntegration(sqlApiFn), {
+    authorizer,
+    authorizationType: apigw.AuthorizationType.CUSTOM,
+  });
+
   // --- Route: POST /sql ---
   const sqlResource = restApi.root.addResource("sql");
   sqlResource.addMethod("POST", new apigw.LambdaIntegration(sqlApiFn), {
