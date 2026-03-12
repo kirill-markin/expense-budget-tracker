@@ -7,9 +7,10 @@
 import { cookies } from "next/headers";
 import { revokeRefreshToken } from "@/server/cognitoAuth";
 import { clearAuthCookies } from "@/server/cookies";
+import { getConfiguredAuthMode } from "@/server/authMode";
 
 export const POST = async (): Promise<Response> => {
-  const authMode = process.env.AUTH_MODE ?? "none";
+  const authMode = getConfiguredAuthMode(process.env);
   if (authMode !== "cognito") {
     return Response.json({ error: "Logout not available: AUTH_MODE is not cognito" }, { status: 400 });
   }

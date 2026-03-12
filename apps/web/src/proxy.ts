@@ -2,7 +2,7 @@
  * Next.js proxy: auth gate, user identity extraction, CSRF check, security headers.
  * (Renamed from middleware.ts — the "middleware" convention was deprecated in Next.js 16.)
  *
- * AUTH_MODE=none    — all requests pass; userId is hardcoded to 'local'.
+ * AUTH_MODE=none    — explicitly enabled local dev/test only; userId is hardcoded to 'local'.
  * AUTH_MODE=cognito — reads IdToken from `session` cookie, verifies via CognitoJwtVerifier,
  *                     extracts the `sub` claim as userId. Unauthenticated users are
  *                     redirected to the auth service (auth.*) for login.
@@ -18,8 +18,7 @@ import { hasApiKeyAuthorization } from "@/server/authHeader";
 import { log } from "@/server/logger";
 import { clearAuthCookies } from "@/server/cookies";
 import { LOCAL_USER_EMAIL } from "@/server/users";
-
-type AuthMode = "none" | "cognito";
+import { getConfiguredAuthMode, type AuthMode } from "@/server/authMode";
 
 const LOCAL_USER_ID = "local";
 const LOCAL_WORKSPACE_ID = "local";
@@ -58,15 +57,11 @@ const buildAuthRedirectUrl = (request: NextRequest): URL => {
 };
 
 const getAuthMode = (): AuthMode => {
-  const raw = process.env.AUTH_MODE ?? "none";
-  if (raw === "none") return raw;
-  if (raw === "cognito") {
-    if ((process.env.CORS_ORIGIN ?? "") === "") {
-      throw new Error("CORS_ORIGIN must be set when AUTH_MODE=cognito");
-    }
-    return raw;
+  const authMode = getConfiguredAuthMode(process.env);
+  if (authMode === "cognito" && (process.env.CORS_ORIGIN ?? "") === "") {
+    throw new Error("CORS_ORIGIN must be set when AUTH_MODE=cognito");
   }
-  throw new Error(`Invalid AUTH_MODE: ${raw}. Expected "none" or "cognito"`);
+  return authMode;
 };
 
 const SECURITY_HEADERS: ReadonlyArray<[string, string]> = [

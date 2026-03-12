@@ -74,7 +74,7 @@ Data isolation using Postgres Row Level Security with workspace membership check
 
 ### How it works
 
-1. **Web app**: proxy.ts extracts user identity (`AUTH_MODE=none` → `"local"`, `AUTH_MODE=cognito` → JWT `sub` claim from `session` cookie) and forwards it as `x-user-id` and `x-workspace-id` headers.
+1. **Web app**: proxy.ts extracts user identity (`AUTH_MODE=none` only for explicit local dev/test → `"local"`, `AUTH_MODE=cognito` → JWT `sub` claim from `session` cookie) and forwards it as `x-user-id` and `x-workspace-id` headers.
 2. **db.ts**: `queryAs(userId, workspaceId, sql, params)` wraps each query in `BEGIN` → `SET LOCAL app.user_id` → `SET LOCAL app.workspace_id` → query → `COMMIT`. RLS policies check workspace membership via `workspace_members` and filter by `workspace_id = current_setting('app.workspace_id')`.
 
 ### RLS policy design

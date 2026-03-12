@@ -47,7 +47,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://app:app@postgres:5432/tracker}
       HOST: "0.0.0.0"
       PORT: "3000"
-      AUTH_MODE: ${AUTH_MODE:-none}
+      AUTH_MODE: ${AUTH_MODE:?AUTH_MODE must be set explicitly}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
       COGNITO_REGION: ${COGNITO_REGION:-}

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3000} -H ${HOST:-127.0.0.1}",
     "lint": "tsc --noEmit",
-    "test": "node --import tsx --test src/server/agentDiscovery.test.ts"
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

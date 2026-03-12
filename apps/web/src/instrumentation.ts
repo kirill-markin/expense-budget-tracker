@@ -2,25 +2,22 @@
  * Production startup validation.
  *
  * Called once by Next.js on server boot. Checks:
- * - AUTH_MODE is "none" or "cognito"
+ * - AUTH_MODE is set explicitly to "none" or "cognito"
  * - COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID, COGNITO_REGION are set when AUTH_MODE=cognito
  * - CORS_ORIGIN is set when AUTH_MODE=cognito (required for CSRF protection)
  * - AUTH_DOMAIN is set when AUTH_MODE=cognito (auth service subdomain)
- * - Warns when AUTH_MODE=none with non-localhost HOST
+ * - AUTH_MODE=none is allowed only for explicit local dev/test
  * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (cognito/ECS)
  *
  * Throws with all collected errors on misconfiguration. Skipped in dev.
  */
+import { getAuthModeValidationErrors } from "@/server/authMode";
+
 export const register = (): void => {
   if (process.env.NODE_ENV !== "production") return;
 
-  const errors: Array<string> = [];
-
-  const authMode = process.env.AUTH_MODE ?? "none";
-
-  if (authMode !== "none" && authMode !== "cognito") {
-    errors.push(`Invalid AUTH_MODE="${authMode}". Expected "none" or "cognito"`);
-  }
+  const errors = Array.from(getAuthModeValidationErrors(process.env));
+  const authMode = process.env.AUTH_MODE;
 
   if (authMode === "cognito") {
     const userPoolId = process.env.COGNITO_USER_POOL_ID;
@@ -42,15 +39,6 @@ export const register = (): void => {
     const authDomain = process.env.AUTH_DOMAIN;
     if (authDomain === undefined || authDomain === "") {
       errors.push("AUTH_DOMAIN must be set when AUTH_MODE=cognito (auth service subdomain)");
-    }
-  }
-
-  if (authMode === "none") {
-    const host = process.env.HOST ?? "127.0.0.1";
-    if (host !== "127.0.0.1" && host !== "localhost") {
-      console.warn(
-        `WARNING: AUTH_MODE=none with HOST=${host}. The app has no authentication and should only bind to localhost`,
-      );
     }
   }
 
