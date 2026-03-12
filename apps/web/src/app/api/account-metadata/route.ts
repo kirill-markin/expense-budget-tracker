@@ -1,49 +1,37 @@
+import { z } from "zod";
+
 import { isDemoModeFromRequest } from "@/lib/demoMode";
+import { handleRoute } from "@/server/api/handleRoute";
+import { parseJsonBody } from "@/server/api/validation";
 import { upsertAccountMetadata } from "@/server/balances/upsertAccountMetadata";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
-type RequestBody = Readonly<{
-  accountId: unknown;
-  liquidity: unknown;
-}>;
+const accountMetadataBodySchema = z.object({
+  accountId: z.unknown().superRefine((value, ctx) => {
+    if (typeof value !== "string" || value.length === 0 || value.length > 200) {
+      ctx.addIssue({ code: "custom", message: "Invalid accountId. Expected non-empty string (max 200 chars)" });
+    }
+  }).transform((value): string => value as string),
+  liquidity: z.unknown().superRefine((value, ctx) => {
+    if (value !== "high" && value !== "medium" && value !== "low") {
+      ctx.addIssue({ code: "custom", message: "Invalid liquidity. Expected one of: high, medium, low" });
+    }
+  }).transform((value): string => value as string),
+});
 
-const VALID_LIQUIDITY: ReadonlyArray<string> = ["high", "medium", "low"];
+export const POST = async (request: Request): Promise<Response> =>
+  handleRoute(
+    { route: "/api/account-metadata", method: "POST", internalErrorMessage: "Database update failed" },
+    async (): Promise<Response> => {
+      const body = await parseJsonBody(request, accountMetadataBodySchema);
 
-export const POST = async (request: Request): Promise<Response> => {
-  let body: RequestBody;
-  try {
-    body = await request.json() as RequestBody;
-  } catch {
-    return new Response("Invalid JSON body", { status: 400 });
-  }
+      if (isDemoModeFromRequest(request)) {
+        return Response.json({ ok: true });
+      }
 
-  const { accountId, liquidity } = body;
-
-  if (typeof accountId !== "string" || accountId.length === 0 || accountId.length > 200) {
-    return new Response("Invalid accountId. Expected non-empty string (max 200 chars)", { status: 400 });
-  }
-
-  if (typeof liquidity !== "string" || !VALID_LIQUIDITY.includes(liquidity)) {
-    return new Response("Invalid liquidity. Expected one of: high, medium, low", { status: 400 });
-  }
-
-  if (isDemoModeFromRequest(request)) {
-    return Response.json({ ok: true });
-  }
-
-  const userId = extractUserId(request);
-  const workspaceId = extractWorkspaceId(request);
-
-  try {
-    await upsertAccountMetadata(userId, workspaceId, {
-      accountId: accountId as string,
-      liquidity: liquidity as string,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("account-metadata POST: %s", message);
-    return new Response("Database update failed", { status: 500 });
-  }
-
-  return Response.json({ ok: true });
-};
+      const userId = extractUserId(request);
+      const workspaceId = extractWorkspaceId(request);
+      await upsertAccountMetadata(userId, workspaceId, body);
+      return Response.json({ ok: true });
+    },
+  );

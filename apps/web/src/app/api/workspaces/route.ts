@@ -1,35 +1,29 @@
+import { z } from "zod";
+
+import { handleRoute } from "@/server/api/handleRoute";
+import { parseJsonBody } from "@/server/api/validation";
 import { createWorkspaceForCurrentUser } from "@/server/workspaces";
 import { extractUserId } from "@/server/userId";
 
-type PostBody = Readonly<{
-  name: unknown;
-}>;
+const createWorkspaceBodySchema = z.object({
+  name: z.unknown().superRefine((value, ctx) => {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      ctx.addIssue({ code: "custom", message: "name is required and must be a non-empty string" });
+      return;
+    }
+    if (value.trim().length > 100) {
+      ctx.addIssue({ code: "custom", message: "name must be 100 characters or fewer" });
+    }
+  }).transform((value): string => (value as string).trim()),
+});
 
-export const POST = async (request: Request): Promise<Response> => {
-  let body: PostBody;
-  try {
-    body = await request.json() as PostBody;
-  } catch {
-    return new Response("Invalid JSON body", { status: 400 });
-  }
-
-  const { name } = body;
-  if (typeof name !== "string" || name.trim().length === 0) {
-    return new Response("name is required and must be a non-empty string", { status: 400 });
-  }
-
-  const trimmedName = name.trim();
-  if (trimmedName.length > 100) {
-    return new Response("name must be 100 characters or fewer", { status: 400 });
-  }
-
-  const userId = extractUserId(request);
-  try {
-    const workspace = await createWorkspaceForCurrentUser(userId, userId, trimmedName);
-    return Response.json({ workspaceId: workspace.workspaceId, name: workspace.name });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("workspaces POST: %s", message);
-    return new Response("Failed to create workspace", { status: 500 });
-  }
-};
+export const POST = async (request: Request): Promise<Response> =>
+  handleRoute(
+    { route: "/api/workspaces", method: "POST", internalErrorMessage: "Failed to create workspace" },
+    async (): Promise<Response> => {
+      const body = await parseJsonBody(request, createWorkspaceBodySchema);
+      const userId = extractUserId(request);
+      const workspace = await createWorkspaceForCurrentUser(userId, userId, body.name);
+      return Response.json({ workspaceId: workspace.workspaceId, name: workspace.name });
+    },
+  );
