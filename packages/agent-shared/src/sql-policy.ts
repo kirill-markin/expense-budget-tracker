@@ -43,6 +43,18 @@ type SqlToken = Readonly<{
   lower: string;
 }>;
 
+type RelationReference = Readonly<{
+  relationName: string;
+  nextIndex: number;
+  isQualified: boolean;
+}>;
+
+type CteDefinition = Readonly<{
+  name: string;
+  bodyStartIndex: number;
+  bodyEndIndex: number;
+}>;
+
 type SqlPolicyErrorCode =
   | "unsupported_statement"
   | "multiple_statements_not_allowed"
@@ -186,68 +198,37 @@ const tokenizeSql = (sql: string): ReadonlyArray<SqlToken> => {
   return tokens;
 };
 
-const parseCteNames = (tokens: ReadonlyArray<SqlToken>): ReadonlySet<string> => {
-  const cteNames = new Set<string>();
-  if (tokens.length === 0 || tokens[0]?.lower !== "with") {
-    return cteNames;
+const findMatchingParen = (
+  tokens: ReadonlyArray<SqlToken>,
+  openIndex: number,
+  endIndex: number,
+): number => {
+  if (tokens[openIndex]?.value !== "(") {
+    fail("invalid_relation_reference", "Expected opening parenthesis");
   }
 
-  let i = 1;
-  if (tokens[i]?.lower === "recursive") {
-    i++;
+  let depth = 1;
+  for (let i = openIndex + 1; i < endIndex; i++) {
+    const token = tokens[i];
+    if (token?.value === "(") {
+      depth++;
+      continue;
+    }
+    if (token?.value === ")") {
+      depth--;
+      if (depth === 0) {
+        return i;
+      }
+    }
   }
 
-  while (i < tokens.length) {
-    const nameToken = tokens[i];
-    if (nameToken === undefined || nameToken.kind !== "word") {
-      break;
-    }
-    cteNames.add(nameToken.lower);
-    i++;
-
-    if (tokens[i]?.value === "(") {
-      let depth = 1;
-      i++;
-      while (i < tokens.length && depth > 0) {
-        if (tokens[i]?.value === "(") {
-          depth++;
-        }
-        if (tokens[i]?.value === ")") {
-          depth--;
-        }
-        i++;
-      }
-    }
-
-    if (tokens[i]?.lower !== "as" || tokens[i + 1]?.value !== "(") {
-      break;
-    }
-
-    i += 2;
-    let depth = 1;
-    while (i < tokens.length && depth > 0) {
-      if (tokens[i]?.value === "(") {
-        depth++;
-      }
-      if (tokens[i]?.value === ")") {
-        depth--;
-      }
-      i++;
-    }
-
-    if (tokens[i]?.value !== ",") {
-      break;
-    }
-    i++;
-  }
-
-  return cteNames;
+  return fail("invalid_relation_reference", "Expected closing parenthesis");
 };
 
 const parseRelationName = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
-): Readonly<{ relationName: string; nextIndex: number }> => {
+): RelationReference => {
   const first = tokens[startIndex];
   if (first === undefined || first.kind !== "word") {
     fail("invalid_relation_reference", "Expected a relation name after the SQL clause");
@@ -263,80 +244,122 @@ const parseRelationName = (
     return {
       relationName: second.lower,
       nextIndex: startIndex + 3,
+      isQualified: true,
     };
   }
 
   return {
     relationName: first.lower,
     nextIndex: startIndex + 1,
+    isQualified: false,
   };
 };
 
 const asAllowedRelationName = (value: string): AllowedRelationName => value as AllowedRelationName;
 
-const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationName> => {
-  assertSupportedSqlSyntax(sql);
-  const sanitizedSql = stripSingleQuotedStrings(sql);
-  const tokens = tokenizeSql(sanitizedSql);
-  const cteNames = parseCteNames(tokens);
-  const relations = new Set<AllowedRelationName>();
+const collectRelationReference = (
+  reference: RelationReference,
+  visibleCteNames: ReadonlySet<string>,
+  relations: Set<AllowedRelationName>,
+): void => {
+  if (reference.isQualified) {
+    if (!ALLOWED_RELATIONS.has(reference.relationName)) {
+      fail("relation_not_allowed", `Relation ${reference.relationName} is not allowed`);
+    }
+    relations.add(asAllowedRelationName(reference.relationName));
+    return;
+  }
 
+  if (visibleCteNames.has(reference.relationName)) {
+    return;
+  }
+
+  if (!ALLOWED_RELATIONS.has(reference.relationName)) {
+    fail("relation_not_allowed", `Relation ${reference.relationName} is not allowed`);
+  }
+
+  relations.add(asAllowedRelationName(reference.relationName));
+};
+
+const mergeRelations = (
+  target: Set<AllowedRelationName>,
+  source: ReadonlyArray<AllowedRelationName>,
+): void => {
+  for (const relation of source) {
+    target.add(relation);
+  }
+};
+
+const collectReferencedRelationsFromSegment = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+  visibleCteNames: ReadonlySet<string>,
+): ReadonlyArray<AllowedRelationName> => {
+  if (startIndex >= endIndex) {
+    return [];
+  }
+
+  if (tokens[startIndex]?.lower === "with") {
+    return collectReferencedRelationsFromWithClause(tokens, startIndex, endIndex, visibleCteNames);
+  }
+
+  const relations = new Set<AllowedRelationName>();
   let inSourceClause = false;
-  let sourceDepth = 0;
   let expectRelation = false;
 
-  for (let i = 0; i < tokens.length; i++) {
+  for (let i = startIndex; i < endIndex; i++) {
     const token = tokens[i];
     if (token === undefined) {
       continue;
     }
 
     if (token.kind === "punct") {
-      if (inSourceClause && sourceDepth === 0 && token.value === ",") {
-        expectRelation = true;
-        continue;
-      }
-
       if (token.value === "(") {
-        if (inSourceClause && expectRelation && sourceDepth === 0) {
+        if (inSourceClause && expectRelation) {
           expectRelation = false;
         }
-        sourceDepth++;
+        const closeIndex = findMatchingParen(tokens, i, endIndex);
+        mergeRelations(
+          relations,
+          collectReferencedRelationsFromSegment(tokens, i + 1, closeIndex, visibleCteNames),
+        );
+        i = closeIndex;
         continue;
       }
 
-      if (token.value === ")" && sourceDepth > 0) {
-        sourceDepth--;
+      if (inSourceClause && token.value === ",") {
+        expectRelation = true;
+        continue;
       }
       continue;
     }
 
     if (token.lower === "update" || token.lower === "into") {
-      const { relationName } = parseRelationName(tokens, i + 1);
-      if (!ALLOWED_RELATIONS.has(relationName)) {
-        fail("relation_not_allowed", `Relation ${relationName} is not allowed`);
+      const reference = parseRelationName(tokens, i + 1);
+      if (!ALLOWED_RELATIONS.has(reference.relationName)) {
+        fail("relation_not_allowed", `Relation ${reference.relationName} is not allowed`);
       }
-      relations.add(asAllowedRelationName(relationName));
+      relations.add(asAllowedRelationName(reference.relationName));
       continue;
     }
 
     if (token.lower === "delete" && tokens[i + 1]?.lower === "from") {
-      const { relationName } = parseRelationName(tokens, i + 2);
-      if (!ALLOWED_RELATIONS.has(relationName)) {
-        fail("relation_not_allowed", `Relation ${relationName} is not allowed`);
+      const reference = parseRelationName(tokens, i + 2);
+      if (!ALLOWED_RELATIONS.has(reference.relationName)) {
+        fail("relation_not_allowed", `Relation ${reference.relationName} is not allowed`);
       }
-      relations.add(asAllowedRelationName(relationName));
+      relations.add(asAllowedRelationName(reference.relationName));
       continue;
     }
 
     if (token.lower === "from") {
       inSourceClause = true;
-      sourceDepth = 0;
       expectRelation = true;
       continue;
     }
 
-    if (inSourceClause && sourceDepth === 0 && SOURCE_CLAUSE_END.has(token.lower)) {
+    if (inSourceClause && SOURCE_CLAUSE_END.has(token.lower)) {
       inSourceClause = false;
       expectRelation = false;
       continue;
@@ -351,18 +374,113 @@ const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationN
       continue;
     }
 
-    const { relationName, nextIndex } = parseRelationName(tokens, i);
-    if (!cteNames.has(relationName) && !ALLOWED_RELATIONS.has(relationName)) {
-      fail("relation_not_allowed", `Relation ${relationName} is not allowed`);
-    }
-    if (ALLOWED_RELATIONS.has(relationName)) {
-      relations.add(asAllowedRelationName(relationName));
-    }
+    const reference = parseRelationName(tokens, i);
+    collectRelationReference(reference, visibleCteNames, relations);
     expectRelation = false;
-    i = nextIndex - 1;
+    i = reference.nextIndex - 1;
   }
 
   return Array.from(relations);
+};
+
+const parseCteDefinitions = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): Readonly<{
+  ctes: ReadonlyArray<CteDefinition>;
+  mainQueryStartIndex: number;
+  isRecursive: boolean;
+}> => {
+  let index = startIndex + 1;
+  const isRecursive = tokens[index]?.lower === "recursive";
+  if (isRecursive) {
+    index++;
+  }
+
+  const ctes: Array<CteDefinition> = [];
+
+  while (index < endIndex) {
+    const nameToken = tokens[index];
+    if (nameToken === undefined || nameToken.kind !== "word") {
+      fail("invalid_relation_reference", "Expected a CTE name after WITH");
+    }
+    const name = nameToken.lower;
+    index++;
+
+    if (tokens[index]?.value === "(") {
+      index = findMatchingParen(tokens, index, endIndex) + 1;
+    }
+
+    if (tokens[index]?.lower !== "as" || tokens[index + 1]?.value !== "(") {
+      fail("invalid_relation_reference", `Expected AS (...) for CTE ${name}`);
+    }
+
+    const bodyOpenIndex = index + 1;
+    const bodyCloseIndex = findMatchingParen(tokens, bodyOpenIndex, endIndex);
+    ctes.push({
+      name,
+      bodyStartIndex: bodyOpenIndex + 1,
+      bodyEndIndex: bodyCloseIndex,
+    });
+
+    index = bodyCloseIndex + 1;
+    if (tokens[index]?.value === ",") {
+      index++;
+      continue;
+    }
+    break;
+  }
+
+  return {
+    ctes,
+    mainQueryStartIndex: index,
+    isRecursive,
+  };
+};
+
+const collectReferencedRelationsFromWithClause = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+  outerVisibleCteNames: ReadonlySet<string>,
+): ReadonlyArray<AllowedRelationName> => {
+  const { ctes, mainQueryStartIndex, isRecursive } = parseCteDefinitions(tokens, startIndex, endIndex);
+  const relations = new Set<AllowedRelationName>();
+  const visibleCteNames = new Set<string>(outerVisibleCteNames);
+
+  for (const cte of ctes) {
+    const visibleNamesForBody = new Set<string>(visibleCteNames);
+    if (isRecursive) {
+      visibleNamesForBody.add(cte.name);
+    }
+
+    mergeRelations(
+      relations,
+      collectReferencedRelationsFromSegment(
+        tokens,
+        cte.bodyStartIndex,
+        cte.bodyEndIndex,
+        visibleNamesForBody,
+      ),
+    );
+
+    visibleCteNames.add(cte.name);
+  }
+
+  mergeRelations(
+    relations,
+    collectReferencedRelationsFromSegment(tokens, mainQueryStartIndex, endIndex, visibleCteNames),
+  );
+
+  return Array.from(relations);
+};
+
+const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationName> => {
+  assertSupportedSqlSyntax(sql);
+  const sanitizedSql = stripSingleQuotedStrings(sql);
+  const tokens = tokenizeSql(sanitizedSql);
+  return collectReferencedRelationsFromSegment(tokens, 0, tokens.length, new Set<string>());
 };
 
 export const getAllowedRelationNames = (): ReadonlyArray<AllowedRelationName> => ALLOWED_RELATION_NAMES;

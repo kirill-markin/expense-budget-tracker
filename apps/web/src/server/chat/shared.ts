@@ -1,7 +1,8 @@
+import { MAX_SQL_ROWS, SqlPolicyError, validateExpenseSql } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ContentPart } from "@/server/chat/types";
 import { withRestrictedUserContext } from "@/server/db";
 
-export const MAX_ROWS = 100;
+export const MAX_ROWS = MAX_SQL_ROWS;
 export const STATEMENT_TIMEOUT_MS = 10_000;
 
 const formatDatetime = (timezone: string): string => {
@@ -232,304 +233,35 @@ kind: 'income' | 'spend' | 'transfer'. category: NULL for transfers.
 All data is workspace-scoped via RLS. INSERTs must include workspace_id.
 Only the listed tables and views are allowed. Internal relations are blocked.`;
 
-const ALLOWED_FIRST_KEYWORDS = new Set([
-  "SELECT", "WITH", "INSERT", "UPDATE", "DELETE",
-]);
-
-export const isDml = (sql: string): boolean => {
-  const first = sql.trimStart().split(/\s/)[0]?.toUpperCase();
-  return first !== undefined && ALLOWED_FIRST_KEYWORDS.has(first);
-};
-
-/** Returns true if sql contains a semicolon outside of single-quoted strings. */
-const hasMultipleStatements = (sql: string): boolean => {
-  let inString = false;
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i];
-    if (ch === "'" && !inString) {
-      inString = true;
-    } else if (ch === "'" && inString) {
-      if (i + 1 < sql.length && sql[i + 1] === "'") {
-        i++;
-      } else {
-        inString = false;
-      }
-    } else if (ch === ";" && !inString) {
-      return true;
-    }
+const toChatSqlError = (error: SqlPolicyError): Error => {
+  if (error.code === "unsupported_statement") {
+    return new Error("Only SELECT, WITH, INSERT, UPDATE, DELETE statements are allowed");
   }
-  return false;
-};
-
-const containsSetConfig = (sql: string): boolean => /\bset_config\b/i.test(sql);
-
-const ALLOWED_RELATIONS: ReadonlySet<string> = new Set([
-  "ledger_entries",
-  "budget_lines",
-  "budget_comments",
-  "exchange_rates",
-  "workspace_settings",
-  "account_metadata",
-  "accounts",
-]);
-
-const SOURCE_CLAUSE_END: ReadonlySet<string> = new Set([
-  "where",
-  "group",
-  "order",
-  "limit",
-  "offset",
-  "fetch",
-  "union",
-  "except",
-  "intersect",
-  "returning",
-  "having",
-  "window",
-]);
-
-type SqlToken = Readonly<{
-  kind: "word" | "punct";
-  value: string;
-  lower: string;
-}>;
-
-const assertSupportedSqlSyntax = (sql: string): void => {
-  if (sql.includes("--") || sql.includes("/*")) {
-    throw new Error("SQL comments are not allowed in chat queries");
+  if (error.code === "multiple_statements_not_allowed") {
+    return new Error("Multiple statements (semicolons) are not allowed");
   }
-  if (sql.includes("\"")) {
-    throw new Error("Quoted identifiers are not allowed in chat queries");
+  if (error.code === "set_config_not_allowed") {
+    return new Error("set_config() calls are not allowed");
   }
-  if (/\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$/u.test(sql)) {
-    throw new Error("Dollar-quoted strings are not allowed in chat queries");
+  if (error.code === "sql_comments_not_allowed") {
+    return new Error("SQL comments are not allowed in chat queries");
   }
-};
-
-const stripSingleQuotedStrings = (sql: string): string => {
-  let result = "";
-  let inString = false;
-
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i];
-    if (!inString) {
-      if (ch === "'") {
-        inString = true;
-        result += " ";
-      } else {
-        result += ch;
-      }
-      continue;
-    }
-
-    if (ch === "'" && i + 1 < sql.length && sql[i + 1] === "'") {
-      result += "  ";
-      i++;
-      continue;
-    }
-
-    if (ch === "'") {
-      inString = false;
-      result += " ";
-      continue;
-    }
-
-    result += " ";
+  if (error.code === "quoted_identifiers_not_allowed") {
+    return new Error("Quoted identifiers are not allowed in chat queries");
   }
-
-  if (inString) {
-    throw new Error("Unterminated SQL string literal");
+  if (error.code === "dollar_quoted_strings_not_allowed") {
+    return new Error("Dollar-quoted strings are not allowed in chat queries");
   }
-
-  return result;
-};
-
-const tokenizeSql = (sql: string): ReadonlyArray<SqlToken> => {
-  const tokens: Array<SqlToken> = [];
-
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i];
-
-    if (/\s/u.test(ch)) {
-      continue;
-    }
-
-    if (/[A-Za-z_]/u.test(ch)) {
-      let j = i + 1;
-      while (j < sql.length && /[A-Za-z0-9_]/u.test(sql[j])) {
-        j++;
-      }
-      const value = sql.slice(i, j);
-      tokens.push({ kind: "word", value, lower: value.toLowerCase() });
-      i = j - 1;
-      continue;
-    }
-
-    tokens.push({ kind: "punct", value: ch, lower: ch });
+  if (error.code === "unterminated_string_literal") {
+    return new Error("Unterminated SQL string literal");
   }
-
-  return tokens;
-};
-
-const parseCteNames = (tokens: ReadonlyArray<SqlToken>): ReadonlySet<string> => {
-  const cteNames = new Set<string>();
-  if (tokens.length === 0 || tokens[0]?.lower !== "with") {
-    return cteNames;
+  if (error.code === "invalid_relation_reference") {
+    return new Error("Expected relation name after SQL clause");
   }
-
-  let i = 1;
-  if (tokens[i]?.lower === "recursive") {
-    i++;
+  if (error.code === "relation_not_allowed") {
+    return new Error(`${error.message} in chat queries`);
   }
-
-  while (i < tokens.length) {
-    const nameToken = tokens[i];
-    if (nameToken === undefined || nameToken.kind !== "word") {
-      break;
-    }
-    cteNames.add(nameToken.lower);
-    i++;
-
-    if (tokens[i]?.value === "(") {
-      let depth = 1;
-      i++;
-      while (i < tokens.length && depth > 0) {
-        if (tokens[i]?.value === "(") depth++;
-        if (tokens[i]?.value === ")") depth--;
-        i++;
-      }
-    }
-
-    if (tokens[i]?.lower !== "as" || tokens[i + 1]?.value !== "(") {
-      break;
-    }
-
-    i += 2;
-    let depth = 1;
-    while (i < tokens.length && depth > 0) {
-      if (tokens[i]?.value === "(") depth++;
-      if (tokens[i]?.value === ")") depth--;
-      i++;
-    }
-
-    if (tokens[i]?.value !== ",") {
-      break;
-    }
-    i++;
-  }
-
-  return cteNames;
-};
-
-const parseRelationName = (
-  tokens: ReadonlyArray<SqlToken>,
-  startIndex: number,
-): Readonly<{ relationName: string; nextIndex: number }> => {
-  const first = tokens[startIndex];
-  if (first === undefined || first.kind !== "word") {
-    throw new Error("Expected relation name after SQL clause");
-  }
-
-  const dot = tokens[startIndex + 1];
-  const second = tokens[startIndex + 2];
-
-  if (dot?.value === ".") {
-    if (first.lower !== "public" || second?.kind !== "word") {
-      throw new Error(`Relation ${first.value}.${second?.value ?? ""} is not allowed in chat queries`);
-    }
-    return {
-      relationName: second.lower,
-      nextIndex: startIndex + 3,
-    };
-  }
-
-  return {
-    relationName: first.lower,
-    nextIndex: startIndex + 1,
-  };
-};
-
-const assertAllowedRelations = (sql: string): void => {
-  assertSupportedSqlSyntax(sql);
-  const sanitizedSql = stripSingleQuotedStrings(sql);
-  const tokens = tokenizeSql(sanitizedSql);
-  const cteNames = parseCteNames(tokens);
-
-  let inSourceClause = false;
-  let sourceDepth = 0;
-  let expectRelation = false;
-
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (token === undefined) {
-      continue;
-    }
-
-    if (token.kind === "punct") {
-      if (inSourceClause && sourceDepth === 0 && token.value === ",") {
-        expectRelation = true;
-        continue;
-      }
-
-      if (token.value === "(") {
-        if (inSourceClause && expectRelation && sourceDepth === 0) {
-          expectRelation = false;
-        }
-        sourceDepth++;
-        continue;
-      }
-
-      if (token.value === ")" && sourceDepth > 0) {
-        sourceDepth--;
-      }
-      continue;
-    }
-
-    if (token.lower === "update" || token.lower === "into") {
-      const { relationName } = parseRelationName(tokens, i + 1);
-      if (!ALLOWED_RELATIONS.has(relationName)) {
-        throw new Error(`Relation ${relationName} is not allowed in chat queries`);
-      }
-      continue;
-    }
-
-    if (token.lower === "delete" && tokens[i + 1]?.lower === "from") {
-      const { relationName } = parseRelationName(tokens, i + 2);
-      if (!ALLOWED_RELATIONS.has(relationName)) {
-        throw new Error(`Relation ${relationName} is not allowed in chat queries`);
-      }
-      continue;
-    }
-
-    if (token.lower === "from") {
-      inSourceClause = true;
-      sourceDepth = 0;
-      expectRelation = true;
-      continue;
-    }
-
-    if (inSourceClause && sourceDepth === 0 && SOURCE_CLAUSE_END.has(token.lower)) {
-      inSourceClause = false;
-      expectRelation = false;
-      continue;
-    }
-
-    if (inSourceClause && token.lower === "join") {
-      expectRelation = true;
-      continue;
-    }
-
-    if (!inSourceClause || !expectRelation) {
-      continue;
-    }
-
-    const { relationName, nextIndex } = parseRelationName(tokens, i);
-    if (!cteNames.has(relationName) && !ALLOWED_RELATIONS.has(relationName)) {
-      throw new Error(`Relation ${relationName} is not allowed in chat queries`);
-    }
-    expectRelation = false;
-    i = nextIndex - 1;
-  }
+  return new Error(error.message);
 };
 
 export type QueryResult = Readonly<{
@@ -541,26 +273,22 @@ export const execQuery = async (
   userId: string,
   workspaceId: string,
 ): Promise<QueryResult> => {
-  if (!isDml(sql)) {
-    throw new Error("Only SELECT, WITH, INSERT, UPDATE, DELETE statements are allowed");
+  let validatedSql: string;
+  try {
+    validatedSql = validateExpenseSql(sql).sql;
+  } catch (error) {
+    if (error instanceof SqlPolicyError) {
+      throw toChatSqlError(error);
+    }
+    throw error;
   }
-
-  if (hasMultipleStatements(sql)) {
-    throw new Error("Multiple statements (semicolons) are not allowed");
-  }
-
-  if (containsSetConfig(sql)) {
-    throw new Error("set_config() calls are not allowed");
-  }
-
-  assertAllowedRelations(sql);
 
   const result = await withRestrictedUserContext(
     userId,
     workspaceId,
     STATEMENT_TIMEOUT_MS,
     async (queryFn) => {
-    return queryFn(sql, []);
+      return queryFn(validatedSql, []);
     },
   );
 
