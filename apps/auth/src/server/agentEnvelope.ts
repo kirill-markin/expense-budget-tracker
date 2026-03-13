@@ -1,92 +1,28 @@
 /**
- * Shared response envelope for terminal-first agent auth endpoints.
- *
- * The strings live here so the flow is documented next to the implementation
- * instead of in a separate docs file.
+ * Thin auth-side facade over the shared machine-readable agent contract.
  */
-export type AgentAction = Readonly<{
-  name: string;
-  method: "GET" | "POST";
-  url?: string;
-  urlTemplate?: string;
-  input?: Readonly<Record<string, string>>;
-  auth?: "none" | "ApiKey";
-}>;
+import { createRequire } from "node:module";
 
-export type AgentEnvelope = Readonly<{
-  ok: boolean;
-  data: Readonly<Record<string, unknown>>;
-  actions: ReadonlyArray<AgentAction>;
-  instructions: string;
-  error?: Readonly<{
-    code: string;
-    message: string;
-  }>;
-}>;
+const require = createRequire(import.meta.url);
+const agentContract = require("../../../web/src/server/agentContract.js") as typeof import("../../../web/src/server/agentContract.js");
 
-export const VERIFY_CODE_INPUT: Readonly<Record<string, string>> = {
-  code: "string",
-  otpSessionToken: "string",
-  label: "string",
-};
+export type AgentAction = import("../../../web/src/server/agentContract.js").AgentAction;
+export type AgentEnvelope = import("../../../web/src/server/agentContract.js").AgentEnvelope;
+export const VERIFY_CODE_INPUT = agentContract.VERIFY_CODE_INPUT;
+export const buildErrorEnvelope = agentContract.buildErrorEnvelope;
+export const buildSuccessEnvelope = agentContract.buildSuccessEnvelope;
 
-export const buildVerifyCodeAction = (): AgentAction => ({
-  name: "verify_code",
-  method: "POST",
-  url: "/api/agent/verify-code",
-  input: VERIFY_CODE_INPUT,
-  auth: "none",
-});
+export const buildVerifyCodeAction = (): AgentAction =>
+  agentContract.buildVerifyCodeAction({ url: "/api/agent/verify-code" });
 
-export const buildLoadAccountAction = (apiBaseUrl: string): AgentAction => ({
-  name: "load_account",
-  method: "GET",
-  url: `${apiBaseUrl}/me`,
-  auth: "ApiKey",
-});
+export const buildLoadAccountAction = (apiBaseUrl: string): AgentAction =>
+  agentContract.buildLoadAccountAction({ baseUrl: apiBaseUrl, path: "/me" });
 
-export const buildListWorkspacesAction = (apiBaseUrl: string): AgentAction => ({
-  name: "list_workspaces",
-  method: "GET",
-  url: `${apiBaseUrl}/workspaces`,
-  auth: "ApiKey",
-});
+export const buildListWorkspacesAction = (apiBaseUrl: string): AgentAction =>
+  agentContract.buildListWorkspacesAction({ baseUrl: apiBaseUrl, path: "/workspaces" });
 
-export const buildSelectWorkspaceAction = (apiBaseUrl: string): AgentAction => ({
-  name: "select_workspace",
-  method: "POST",
-  urlTemplate: `${apiBaseUrl}/workspaces/{workspaceId}/select`,
-  auth: "ApiKey",
-});
+export const buildSelectWorkspaceAction = (apiBaseUrl: string): AgentAction =>
+  agentContract.buildSelectWorkspaceAction({ baseUrl: apiBaseUrl, path: "/workspaces/{workspaceId}/select" });
 
-export const buildSchemaAction = (apiBaseUrl: string): AgentAction => ({
-  name: "schema",
-  method: "GET",
-  url: `${apiBaseUrl}/schema`,
-  auth: "ApiKey",
-});
-
-export const buildSuccessEnvelope = (
-  data: Readonly<Record<string, unknown>>,
-  actions: ReadonlyArray<AgentAction>,
-  instructions: string,
-): AgentEnvelope => ({
-  ok: true,
-  data,
-  actions,
-  instructions,
-});
-
-export const buildErrorEnvelope = (
-  data: Readonly<Record<string, unknown>>,
-  actions: ReadonlyArray<AgentAction>,
-  instructions: string,
-  code: string,
-  message: string,
-): AgentEnvelope => ({
-  ok: false,
-  data,
-  actions,
-  instructions,
-  error: { code, message },
-});
+export const buildSchemaAction = (apiBaseUrl: string): AgentAction =>
+  agentContract.buildSchemaAction({ baseUrl: apiBaseUrl, path: "/schema" });

@@ -1,92 +1,39 @@
 /**
- * Shared machine-readable envelope for app-side agent setup endpoints.
+ * App-side wrappers over the shared machine-readable agent contract.
  */
-export type AgentAction = Readonly<{
-  name: string;
-  method: "GET" | "POST";
-  url?: string;
-  urlTemplate?: string;
-  input?: Readonly<Record<string, string>>;
-  auth?: "ApiKey" | "none";
-}>;
+import {
+  RUN_SQL_INPUT,
+  buildCreateWorkspaceAction as buildCreateWorkspaceActionBase,
+  buildErrorEnvelope,
+  buildListWorkspacesAction as buildListWorkspacesActionBase,
+  buildRunSqlAction as buildRunSqlActionBase,
+  buildSchemaAction as buildSchemaActionBase,
+  buildSelectWorkspaceAction as buildSelectWorkspaceActionBase,
+  buildSendCodeAction as buildSendCodeActionBase,
+  buildSuccessEnvelope,
+  type AgentAction,
+  type AgentEnvelope,
+} from "@/server/agentContract";
 
-export type AgentEnvelope = Readonly<{
-  ok: boolean;
-  data: Readonly<Record<string, unknown>>;
-  actions: ReadonlyArray<AgentAction>;
-  instructions: string;
-  error?: Readonly<{
-    code: string;
-    message: string;
-  }>;
-}>;
+const AGENT_API_BASE_PATH = "/api/agent";
 
-export const buildListWorkspacesAction = (): AgentAction => ({
-  name: "list_workspaces",
-  method: "GET",
-  url: "/api/agent/workspaces",
-  auth: "ApiKey",
-});
+export type { AgentAction, AgentEnvelope } from "@/server/agentContract";
+export { buildErrorEnvelope, buildSuccessEnvelope } from "@/server/agentContract";
 
-export const buildSendCodeAction = (url: string): AgentAction => ({
-  name: "send_code",
-  method: "POST",
-  url,
-  input: { email: "string" },
-  auth: "none",
-});
+export const buildListWorkspacesAction = (): AgentAction =>
+  buildListWorkspacesActionBase({ url: `${AGENT_API_BASE_PATH}/workspaces` });
 
-export const buildCreateWorkspaceAction = (): AgentAction => ({
-  name: "create_workspace",
-  method: "POST",
-  url: "/api/agent/workspaces",
-  input: { name: "string" },
-  auth: "ApiKey",
-});
+export const buildSendCodeAction = (url: string): AgentAction =>
+  buildSendCodeActionBase({ url });
 
-export const buildSelectWorkspaceAction = (): AgentAction => ({
-  name: "select_workspace",
-  method: "POST",
-  urlTemplate: "/api/agent/workspaces/{workspaceId}/select",
-  auth: "ApiKey",
-});
+export const buildCreateWorkspaceAction = (): AgentAction =>
+  buildCreateWorkspaceActionBase({ url: `${AGENT_API_BASE_PATH}/workspaces` });
 
-export const buildRunSqlAction = (): AgentAction => ({
-  name: "run_sql",
-  method: "POST",
-  url: "/api/agent/sql",
-  input: { sql: "string" },
-  auth: "ApiKey",
-});
+export const buildSelectWorkspaceAction = (): AgentAction =>
+  buildSelectWorkspaceActionBase({ url: `${AGENT_API_BASE_PATH}/workspaces/{workspaceId}/select` });
 
-export const buildSchemaAction = (): AgentAction => ({
-  name: "schema",
-  method: "GET",
-  url: "/api/agent/schema",
-  auth: "ApiKey",
-});
+export const buildRunSqlAction = (): AgentAction =>
+  buildRunSqlActionBase({ url: `${AGENT_API_BASE_PATH}/sql` }, RUN_SQL_INPUT);
 
-export const buildSuccessEnvelope = (
-  data: Readonly<Record<string, unknown>>,
-  actions: ReadonlyArray<AgentAction>,
-  instructions: string,
-): AgentEnvelope => ({
-  ok: true,
-  data,
-  actions,
-  instructions,
-});
-
-export const buildErrorEnvelope = (
-  data: Readonly<Record<string, unknown>>,
-  actions: ReadonlyArray<AgentAction>,
-  instructions: string,
-  code: string,
-  message: string,
-): AgentEnvelope => ({
-  ok: false,
-  data,
-  actions,
-  instructions,
-  error: { code, message },
-});
+export const buildSchemaAction = (): AgentAction =>
+  buildSchemaActionBase({ url: `${AGENT_API_BASE_PATH}/schema` });

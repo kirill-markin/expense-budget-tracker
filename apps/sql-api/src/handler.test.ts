@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { QueryResult } from "pg";
+import { buildAgentDiscoveryEnvelope } from "../../web/src/server/agentDiscoveryContract";
 import { createMachineApiHandler } from "./machineApi";
 
 const createQueryResult = (rows: ReadonlyArray<unknown>): QueryResult =>
@@ -78,6 +79,24 @@ test("root discovery matches /agent", async () => {
   assert.match(body.instructions, /same email OTP flow handles both signup and login/i);
   assert.match(body.instructions, /\.env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>'/i);
   assert.match(body.instructions, /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
+});
+
+test("root discovery matches the shared discovery contract", async () => {
+  const handler = createMachineApiHandler({
+    loadOpenApiDocument: () => ({ openapi: "3.1.0" }),
+  });
+
+  const response = await handler(createEvent({ path: "/", resource: "/" }));
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(
+    JSON.parse(response.body),
+    buildAgentDiscoveryEnvelope({
+      apiBaseUrl: "https://api.example.com/v1",
+      authBaseUrl: "https://auth.example.com",
+      bootstrapUrl: "https://auth.example.com/api/agent/send-code",
+    }),
+  );
 });
 
 test("openapi and swagger endpoints return the same document", async () => {

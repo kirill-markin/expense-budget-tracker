@@ -2,9 +2,10 @@
  * Shared response helpers for machine-facing agent endpoints.
  */
 import { type AgentAuthError } from "@/server/agentApiKeyAuth";
+import { AGENT_API_KEY_ENV_VAR_NAME } from "@/server/agentContract";
 import { buildErrorEnvelope, type AgentAction } from "@/server/agentEnvelope";
 
-export const API_KEY_INSTRUCTIONS = "Send Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY after exporting the key once, or create a new agent connection.";
+export const API_KEY_INSTRUCTIONS = `Send Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME} after exporting the key once, or create a new agent connection.`;
 
 export const jsonAgentError = (
   status: number,

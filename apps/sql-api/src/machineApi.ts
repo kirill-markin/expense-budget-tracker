@@ -2,6 +2,19 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { ensureTrustedIdentityProvisioned, queryAsTrustedIdentity, type UserIdentity, withRestrictedTrustedIdentityContext } from "./db";
 import { loadOpenApiDocument } from "./openapi";
 import {
+  AGENT_API_KEY_ENV_VAR_NAME,
+  RUN_SQL_WITH_WORKSPACE_INPUT,
+  buildCreateWorkspaceAction,
+  buildErrorEnvelope,
+  buildListWorkspacesAction,
+  buildLoadAccountAction,
+  buildRunSqlAction,
+  buildSchemaAction,
+  buildSelectWorkspaceAction,
+  buildSuccessEnvelope,
+} from "../../web/src/server/agentContract";
+import { buildAgentDiscoveryEnvelope } from "../../web/src/server/agentDiscoveryContract";
+import {
   executeExpenseSql,
   getAllowedRelationNames,
   MAX_SQL_ROWS,
@@ -16,15 +29,6 @@ type AuthenticatedContext = Readonly<{
   label: string;
   createdAt: string;
   lastUsedAt: string | null;
-}>;
-
-type AgentAction = Readonly<{
-  name: string;
-  method: "GET" | "POST";
-  url?: string;
-  urlTemplate?: string;
-  input?: Readonly<Record<string, string>>;
-  auth?: "none" | "ApiKey";
 }>;
 
 type MachineApiDependencies = Readonly<{
@@ -74,8 +78,6 @@ type SchemaRelation = Readonly<{
   columns: ReadonlyArray<SchemaColumn>;
 }>;
 
-const SERVICE_NAME = "Expense Budget Tracker Agent API";
-const SERVICE_DESCRIPTION = "Machine API for onboarding, workspace setup, and restricted SQL.";
 const WORKSPACES_SQL = `SELECT w.workspace_id, w.name
   FROM workspaces w
   JOIN workspace_members wm ON wm.workspace_id = w.workspace_id
@@ -136,31 +138,6 @@ const json = (statusCode: number, body: Readonly<Record<string, unknown>>): APIG
   body: JSON.stringify(body),
 });
 
-const buildSuccessEnvelope = (
-  data: Readonly<Record<string, unknown>>,
-  actions: ReadonlyArray<AgentAction>,
-  instructions: string,
-): Readonly<Record<string, unknown>> => ({
-  ok: true,
-  data,
-  actions,
-  instructions,
-});
-
-const buildErrorEnvelope = (
-  data: Readonly<Record<string, unknown>>,
-  actions: ReadonlyArray<AgentAction>,
-  instructions: string,
-  code: string,
-  message: string,
-): Readonly<Record<string, unknown>> => ({
-  ok: false,
-  data,
-  actions,
-  instructions,
-  error: { code, message },
-});
-
 const trimTrailingSlash = (value: string): string =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
@@ -192,53 +169,11 @@ const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Record<st
   const apiBaseUrl = getApiBaseUrl(event);
   const authBaseUrl = getAuthBaseUrl(event);
 
-  return buildSuccessEnvelope(
-    {
-      service: {
-        name: SERVICE_NAME,
-        version: "v1",
-        description: SERVICE_DESCRIPTION,
-      },
-      auth: {
-        bootstrapUrl: `${authBaseUrl}/api/agent/send-code`,
-        scheme: "Authorization: ApiKey <key>",
-      },
-      apiBaseUrl,
-      authBaseUrl,
-      docs: {
-        openapiUrl: `${apiBaseUrl}/openapi.json`,
-        swaggerUrl: `${apiBaseUrl}/swagger.json`,
-      },
-      capabilities: [
-        "Load account context",
-        "Select a workspace",
-        "Inspect allowed SQL schema",
-        "Run restricted SQL",
-      ],
-    },
-    [
-      {
-        name: "send_code",
-        method: "POST",
-        url: `${authBaseUrl}/api/agent/send-code`,
-        input: { email: "string" },
-        auth: "none",
-      },
-      {
-        name: "openapi",
-        method: "GET",
-        url: `${apiBaseUrl}/openapi.json`,
-        auth: "none",
-      },
-      {
-        name: "schema",
-        method: "GET",
-        url: `${apiBaseUrl}/schema`,
-        auth: "ApiKey",
-      },
-    ],
-    `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me, ${apiBaseUrl}/workspaces, and ${apiBaseUrl}/workspaces/{workspaceId}/select before SQL. Use ${apiBaseUrl}/schema to inspect allowed relations/columns. Example: curl -H 'Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY' ${apiBaseUrl}/me.`,
-  );
+  return buildAgentDiscoveryEnvelope({
+    apiBaseUrl,
+    authBaseUrl,
+    bootstrapUrl: `${authBaseUrl}/api/agent/send-code`,
+  });
 };
 
 const normalizePath = (event: APIGatewayProxyEvent): string => {
@@ -640,7 +575,7 @@ export const createMachineApiHandler = (
         buildErrorEnvelope(
           {},
           [],
-          "Send Authorization: ApiKey $EXPENSE_BUDGET_TRACKER_API_KEY.",
+          `Send Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME}.`,
           "missing_api_key",
           "Missing ApiKey authorization",
         ),
@@ -666,22 +601,11 @@ export const createMachineApiHandler = (
                 lastUsedAt: authenticated.lastUsedAt,
               },
             },
-            [{
-              name: "list_workspaces",
-              method: "GET",
-              url: `${getApiBaseUrl(event)}/workspaces`,
-              auth: "ApiKey",
-            }, {
-              name: "select_workspace",
-              method: "POST",
-              urlTemplate: `${getApiBaseUrl(event)}/workspaces/{workspaceId}/select`,
-              auth: "ApiKey",
-            }, {
-              name: "schema",
-              method: "GET",
-              url: `${getApiBaseUrl(event)}/schema`,
-              auth: "ApiKey",
-            }],
+            [
+              buildListWorkspacesAction({ baseUrl: getApiBaseUrl(event), path: "/workspaces" }),
+              buildSelectWorkspaceAction({ baseUrl: getApiBaseUrl(event), path: "/workspaces/{workspaceId}/select" }),
+              buildSchemaAction({ baseUrl: getApiBaseUrl(event), path: "/schema" }),
+            ],
             "Call /workspaces next, select a workspace once, then run SQL. Call /schema to inspect allowed relations and columns.",
           ),
         );
@@ -707,13 +631,9 @@ export const createMachineApiHandler = (
                 statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,
               },
             },
-            [{
-              name: "run_sql",
-              method: "POST",
-              url: `${getApiBaseUrl(event)}/sql`,
-              input: { sql: "string", "X-Workspace-Id": "optional string" },
-              auth: "ApiKey",
-            }],
+            [
+              buildRunSqlAction({ baseUrl: getApiBaseUrl(event), path: "/sql" }, RUN_SQL_WITH_WORKSPACE_INPUT),
+            ],
             "Schema includes only relations supported by /sql. Select a workspace once, then run SQL.",
           ),
         );
@@ -734,19 +654,8 @@ export const createMachineApiHandler = (
           buildSuccessEnvelope(
             { workspaces },
             [
-              {
-                name: "select_workspace",
-                method: "POST",
-                urlTemplate: `${getApiBaseUrl(event)}/workspaces/{workspaceId}/select`,
-                auth: "ApiKey",
-              },
-              {
-                name: "create_workspace",
-                method: "POST",
-                url: `${getApiBaseUrl(event)}/workspaces`,
-                input: { name: "string" },
-                auth: "ApiKey",
-              },
+              buildSelectWorkspaceAction({ baseUrl: getApiBaseUrl(event), path: "/workspaces/{workspaceId}/select" }),
+              buildCreateWorkspaceAction({ baseUrl: getApiBaseUrl(event), path: "/workspaces" }),
             ],
             workspaces.length === 0
               ? "Create a workspace, then select it before SQL."
@@ -798,12 +707,9 @@ export const createMachineApiHandler = (
           200,
           buildSuccessEnvelope(
             { workspace },
-            [{
-              name: "select_workspace",
-              method: "POST",
-              urlTemplate: `${getApiBaseUrl(event)}/workspaces/{workspaceId}/select`,
-              auth: "ApiKey",
-            }],
+            [
+              buildSelectWorkspaceAction({ baseUrl: getApiBaseUrl(event), path: "/workspaces/{workspaceId}/select" }),
+            ],
             "Workspace created. Select it before SQL.",
           ),
         );
@@ -846,13 +752,9 @@ export const createMachineApiHandler = (
                 optionalAfterSelection: true,
               },
             },
-            [{
-              name: "run_sql",
-              method: "POST",
-              url: `${getApiBaseUrl(event)}/sql`,
-              input: { sql: "string", "X-Workspace-Id": "optional string" },
-              auth: "ApiKey",
-            }],
+            [
+              buildRunSqlAction({ baseUrl: getApiBaseUrl(event), path: "/sql" }, RUN_SQL_WITH_WORKSPACE_INPUT),
+            ],
             "Workspace saved for this API key. /sql can now omit X-Workspace-Id; send the header only to override.",
           ),
         );

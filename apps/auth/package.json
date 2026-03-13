@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/write-web-dist-package.mjs",
     "test": "node --import tsx --test",
     "start": "node dist/index.js"
   },

@@ -101,10 +101,30 @@ test("agent verify-code returns env-var guidance with the new key", async () => 
   assert.match(body.instructions, /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
   assert.match(body.instructions, /\/v1\/workspaces/);
   assert.match(body.instructions, /\/workspaces\/\{workspaceId\}\/select/);
-  assert.deepEqual(body.actions.map((action) => action.name), [
-    "load_account",
-    "list_workspaces",
-    "select_workspace",
-    "schema",
+  assert.deepEqual(body.actions, [
+    {
+      name: "load_account",
+      method: "GET",
+      url: "http://localhost/v1/me",
+      auth: "ApiKey",
+    },
+    {
+      name: "list_workspaces",
+      method: "GET",
+      url: "http://localhost/v1/workspaces",
+      auth: "ApiKey",
+    },
+    {
+      name: "select_workspace",
+      method: "POST",
+      urlTemplate: "http://localhost/v1/workspaces/{workspaceId}/select",
+      auth: "ApiKey",
+    },
+    {
+      name: "schema",
+      method: "GET",
+      url: "http://localhost/v1/schema",
+      auth: "ApiKey",
+    },
   ]);
 });

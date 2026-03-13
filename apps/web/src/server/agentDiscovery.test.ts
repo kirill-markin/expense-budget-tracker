@@ -30,10 +30,21 @@ test("buildAgentDiscoveryEnvelope points agents to ask for email before send_cod
       auth: "ApiKey",
     },
   ]);
+  assert.deepEqual(envelope.data["auth"], {
+    bootstrapUrl: "https://auth.example.com/api/agent/send-code",
+    scheme: "Authorization: ApiKey <key>",
+  });
+  assert.equal(envelope.data["authBaseUrl"], "https://auth.example.com");
   assert.deepEqual(envelope.data["docs"], {
     openapiUrl: "https://api.example.com/v1/openapi.json",
     swaggerUrl: "https://api.example.com/v1/swagger.json",
   });
+  assert.deepEqual(envelope.data["capabilities"], [
+    "Load account context",
+    "Select a workspace",
+    "Inspect allowed SQL schema",
+    "Run restricted SQL",
+  ]);
   assert.match(String(envelope.instructions), /Ask the user for their email address first/i);
   assert.match(String(envelope.instructions), /same email OTP flow handles both signup and login/i);
   assert.match(String(envelope.instructions), /\.env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>'/i);
@@ -68,4 +79,5 @@ test("buildAgentDiscoveryEnvelope falls back to the request origin when auth env
       auth: "ApiKey",
     },
   ]);
+  assert.equal(envelope.data["authBaseUrl"], "https://app.example.com");
 });
