@@ -36,6 +36,15 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   // --- ECS Cluster + Web Service ---
   // Docker images are built and pushed by CDK via fromAsset() — no manual ECR repos needed.
   // CDK uses the bootstrap ECR repo (cdk-hnb659fds-container-assets-*) for image storage.
+  const serviceDeploymentProps = {
+    circuitBreaker: { enable: true, rollback: true },
+    minHealthyPercent: 100,
+    maxHealthyPercent: 200,
+    healthCheckGracePeriod: cdk.Duration.minutes(3),
+  } satisfies Pick<
+    ecs.FargateServiceProps,
+    "circuitBreaker" | "minHealthyPercent" | "maxHealthyPercent" | "healthCheckGracePeriod"
+  >;
   const rootDockerAssetExclude = [
     ".git",
     ".github",
@@ -116,7 +125,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     assignPublicIp: false,
     vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     securityGroups: [props.ecsSg],
-    circuitBreaker: { enable: true },
+    ...serviceDeploymentProps,
   });
 
   // Auto-scaling: 1–3 tasks, scale on CPU. Hard cap at 3 to limit cost.
@@ -188,7 +197,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     assignPublicIp: false,
     vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     securityGroups: [props.ecsSg],
-    circuitBreaker: { enable: true },
+    ...serviceDeploymentProps,
   });
 
   // --- Migration Task Definition (one-off, not a service) ---
