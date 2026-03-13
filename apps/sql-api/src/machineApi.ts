@@ -1,19 +1,16 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import { ensureTrustedIdentityProvisioned, queryAsTrustedIdentity, type UserIdentity, withRestrictedTrustedIdentityContext } from "./db";
-import { loadOpenApiDocument } from "./openapi";
 import {
   AGENT_API_KEY_ENV_VAR_NAME,
   RUN_SQL_WITH_WORKSPACE_INPUT,
   buildCreateWorkspaceAction,
   buildErrorEnvelope,
   buildListWorkspacesAction,
-  buildLoadAccountAction,
   buildRunSqlAction,
   buildSchemaAction,
   buildSelectWorkspaceAction,
   buildSuccessEnvelope,
-} from "../../web/src/server/agentContract";
-import { buildAgentDiscoveryEnvelope } from "../../web/src/server/agentDiscoveryContract";
+} from "@expense-budget-tracker/agent-shared";
+import { buildAgentDiscoveryEnvelope } from "@expense-budget-tracker/agent-shared/discovery";
 import {
   executeExpenseSql,
   getAllowedRelationNames,
@@ -21,7 +18,9 @@ import {
   SQL_STATEMENT_TIMEOUT_MS,
   SqlPolicyError,
   type AllowedRelationName,
-} from "../../web/src/server/sql/core";
+} from "@expense-budget-tracker/agent-shared/sql-policy";
+import { ensureTrustedIdentityProvisioned, queryAsTrustedIdentity, type UserIdentity, withRestrictedTrustedIdentityContext } from "./db.js";
+import { loadOpenApiDocument } from "./openapi.js";
 
 type AuthenticatedContext = Readonly<{
   identity: UserIdentity;

@@ -1,13 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 type OpenApiDocument = Readonly<Record<string, unknown>>;
+
+const currentFilePath = fileURLToPath(import.meta.url);
+const currentDirPath = path.dirname(currentFilePath);
 
 const findOpenApiPath = (): string => {
   const candidates = [
     path.resolve(process.cwd(), "api/openapi.yaml"),
     path.resolve(process.cwd(), "../../api/openapi.yaml"),
-    path.resolve(__dirname, "../../../api/openapi.yaml"),
+    path.resolve(currentDirPath, "../../../api/openapi.yaml"),
   ];
 
   for (const candidate of candidates) {

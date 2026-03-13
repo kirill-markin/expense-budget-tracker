@@ -1,0 +1,8 @@
+.git
+.github
+**/node_modules
+**/.next
+**/dist
+**/cdk.out
+**/.DS_Store
+infra/aws/cdk.context.local.json

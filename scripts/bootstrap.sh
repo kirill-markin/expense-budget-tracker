@@ -49,9 +49,8 @@ fi
 # --- Step 1: Install dependencies ---
 echo "=== Install dependencies ==="
 cd "$ROOT_DIR"
-npm ci --silent --prefix apps/worker
-cd "$CDK_DIR"
 npm ci --silent
+cd "$CDK_DIR"
 
 # --- Step 2: CDK bootstrap (idempotent) ---
 echo ""

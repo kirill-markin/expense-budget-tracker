@@ -1,15 +1,15 @@
 /**
  * Agent-facing SQL execution on app.* using the shared SQL policy.
  */
-import { withRestrictedTrustedIdentityContext } from "@/server/db";
-import { type AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
 import {
   executeExpenseSql,
   getAllowedRelationNames,
   MAX_SQL_ROWS,
   SQL_STATEMENT_TIMEOUT_MS,
   type AllowedRelationName,
-} from "@/server/sql/core";
+} from "@expense-budget-tracker/agent-shared/sql-policy";
+import { withRestrictedTrustedIdentityContext } from "@/server/db";
+import { type AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
 import { getWorkspaceForTrustedIdentity } from "@/server/workspaces";
 
 type EntityHint = Readonly<{

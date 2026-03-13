@@ -4,11 +4,11 @@
  * Uses the same restricted SQL policy as the API Gateway SQL API, but returns
  * the stable agent envelope plus lightweight entity hints for known relations.
  */
+import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
 import { buildSuccessEnvelope } from "@/server/agentEnvelope";
 import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
 import { executeAgentSql, getAgentSqlAllowedRelations, getUserSqlExecutionMessage, isUserSqlExecutionError } from "@/server/agentSql";
-import { SqlPolicyError } from "@/server/sql/core";
 import { resolveWorkspaceIdForSql } from "@/server/agentWorkspaceSelection";
 
 type AgentSqlBody = Readonly<{

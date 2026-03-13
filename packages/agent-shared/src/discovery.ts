@@ -9,7 +9,7 @@ import {
   buildSendCodeAction,
   buildSuccessEnvelope,
   type AgentEnvelope,
-} from "./agentContract";
+} from "./index.js";
 
 export const AGENT_DISCOVERY_SERVICE_NAME = "Expense Budget Tracker Agent API";
 export const AGENT_DISCOVERY_SERVICE_VERSION = "v1";

@@ -1,27 +1,18 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "..",
-    "baseUrl": "..",
-    "paths": {
-      "@/*": ["web/src/*"]
-    },
+    "rootDir": "src",
     "resolveJsonModule": true,
     "declaration": true,
     "sourceMap": true
   },
-  "include": [
-    "src/**/*.ts",
-    "../web/src/server/sql/**/*.ts",
-    "../web/src/server/crockford.ts",
-    "../web/src/server/agentContract.ts",
-    "../web/src/server/agentDiscoveryContract.ts"
-  ],
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

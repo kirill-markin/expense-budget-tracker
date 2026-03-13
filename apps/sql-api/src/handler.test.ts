@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildAgentDiscoveryEnvelope } from "@expense-budget-tracker/agent-shared/discovery";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { QueryResult } from "pg";
-import { buildAgentDiscoveryEnvelope } from "../../web/src/server/agentDiscoveryContract";
-import { createMachineApiHandler } from "./machineApi";
+import { createMachineApiHandler } from "./machineApi.js";
 
 const createQueryResult = (rows: ReadonlyArray<unknown>): QueryResult =>
   ({

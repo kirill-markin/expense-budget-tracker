@@ -3,9 +3,9 @@
  *
  * Returns only columns from relations allowed by the SQL policy.
  */
+import { getAllowedRelationNames, type AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { queryAsTrustedIdentity } from "@/server/db";
 import { type UserIdentity } from "@/server/users";
-import { getAllowedRelationNames, type AllowedRelationName } from "@/server/sql/core";
 
 type SchemaColumnRow = Readonly<{
   table_name: string;

@@ -1,8 +1,5 @@
 /**
  * Shared SQL policy for machine-facing database access.
- *
- * The same validation rules and relation allowlist are reused by the API
- * Gateway SQL API and the app-side agent SQL transport.
  */
 export const MAX_SQL_ROWS = 100;
 export const SQL_STATEMENT_TIMEOUT_MS = 30_000;
@@ -91,7 +88,6 @@ const fail = (code: SqlPolicyErrorCode, message: string): never => {
 const getFirstKeyword = (sql: string): string | undefined =>
   sql.trimStart().split(/\s/u)[0]?.toUpperCase();
 
-/** Returns true if sql contains a semicolon outside of single-quoted strings. */
 const hasMultipleStatements = (sql: string): boolean => {
   let inString = false;
   for (let i = 0; i < sql.length; i++) {

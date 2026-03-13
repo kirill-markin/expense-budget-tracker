@@ -38,8 +38,8 @@ services:
 
   web:
     build:
-      context: ../../apps/web
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/web/Dockerfile
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -68,8 +68,8 @@ services:
 
   auth:
     build:
-      context: ../../apps/auth
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/auth/Dockerfile
     restart: unless-stopped
     ports:
       - "8081:8081"

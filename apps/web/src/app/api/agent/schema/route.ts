@@ -3,11 +3,11 @@
  *
  * Returns only relations that are allowed by the restricted SQL policy.
  */
+import { MAX_SQL_ROWS, SQL_STATEMENT_TIMEOUT_MS } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
 import { buildRunSqlAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
 import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agentResponses";
 import { getAllowedSchemaRelations } from "@/server/agentSchema";
-import { MAX_SQL_ROWS, SQL_STATEMENT_TIMEOUT_MS } from "@/server/sql/core";
 
 export const GET = async (request: Request): Promise<Response> => {
   try {

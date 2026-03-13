@@ -1,5 +1,5 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import { createMachineApiHandler } from "./machineApi";
+import { createMachineApiHandler } from "./machineApi.js";
 
 const machineApiHandler = createMachineApiHandler();
 

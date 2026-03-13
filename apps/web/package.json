@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "prelint": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "pretest": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000} -H ${HOST:-127.0.0.1}",
@@ -10,6 +14,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
+    "@expense-budget-tracker/agent-shared": "0.1.0",
     "@anthropic-ai/sdk": "^0.78.0",
     "@openai/agents": "^0.5.4",
     "@openai/agents-openai": "^0.5.4",

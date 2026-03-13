@@ -40,9 +40,7 @@ export const normalizeCrockfordToken = (
 };
 
 /**
- * Normalizes a prefixed token whose body uses Crockford Base32. This keeps
- * public token formats easy to validate in packages that cannot share app-only
- * modules.
+ * Normalizes a prefixed token whose body uses Crockford Base32.
  */
 export const normalizePrefixedCrockfordToken = (
   value: string,

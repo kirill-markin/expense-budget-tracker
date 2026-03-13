@@ -13,12 +13,12 @@ import {
   buildSuccessEnvelope,
   type AgentAction,
   type AgentEnvelope,
-} from "@/server/agentContract";
+} from "@expense-budget-tracker/agent-shared";
 
 const AGENT_API_BASE_PATH = "/api/agent";
 
-export type { AgentAction, AgentEnvelope } from "@/server/agentContract";
-export { buildErrorEnvelope, buildSuccessEnvelope } from "@/server/agentContract";
+export type { AgentAction, AgentEnvelope } from "@expense-budget-tracker/agent-shared";
+export { buildErrorEnvelope, buildSuccessEnvelope } from "@expense-budget-tracker/agent-shared";
 
 export const buildListWorkspacesAction = (): AgentAction =>
   buildListWorkspacesActionBase({ url: `${AGENT_API_BASE_PATH}/workspaces` });

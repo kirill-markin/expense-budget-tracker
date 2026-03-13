@@ -5,8 +5,8 @@
  * direct unrestricted access to key rows.
  */
 import crypto from "node:crypto";
+import { normalizeCrockfordToken } from "@expense-budget-tracker/agent-shared/crockford";
 import { COGNITO_AUTHENTICATED_STATUS, type UserIdentity } from "@/server/users";
-import { normalizeCrockfordToken } from "@/server/crockford";
 import { query } from "@/server/db";
 import { parseAuthorizationHeader, type ParsedAuthorization } from "@/server/authHeader";
 

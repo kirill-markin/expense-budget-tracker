@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import type { QueryResult } from "pg";
-import { createAuthorizerHandler } from "./authorizer";
+import { createAuthorizerHandler } from "./authorizer.js";
 
 const hashSecret = (secret: string): string =>
   crypto.createHash("sha256").update(secret).digest("hex");

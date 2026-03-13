@@ -2,12 +2,17 @@
   "name": "expense-budget-tracker-sql-api",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
+    "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "prelint": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "pretest": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "test": "npm run build && node --test dist/sql-api/src/*.test.js"
+    "test": "npm run build && node --test dist/*.test.js"
   },
   "dependencies": {
+    "@expense-budget-tracker/agent-shared": "0.1.0",
     "@aws-sdk/client-secrets-manager": "^3.996.0",
     "pg": "^8.18.0"
   },

@@ -10,9 +10,9 @@
  */
 
 import crypto from "node:crypto";
+import { normalizeCrockfordToken } from "@expense-budget-tracker/agent-shared/crockford";
 import type { APIGatewayTokenAuthorizerEvent, APIGatewayAuthorizerResult } from "aws-lambda";
-import { normalizeCrockfordToken } from "../../web/src/server/crockford";
-import { query } from "./db";
+import { query } from "./db.js";
 
 type AuthorizerDependencies = Readonly<{
   query: typeof query;

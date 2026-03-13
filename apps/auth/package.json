@@ -4,12 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "pretest": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc && node scripts/write-web-dist-package.mjs",
+    "build": "tsc",
     "test": "node --import tsx --test",
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@expense-budget-tracker/agent-shared": "0.1.0",
     "@hono/node-server": "^1.14.0",
     "hono": "^4.7.0",
     "pg": "^8.20.0"

@@ -1,7 +1,7 @@
 /**
  * Discovery document for terminal-first agent onboarding.
  */
-import { buildAgentDiscoveryEnvelope as buildSharedAgentDiscoveryEnvelope } from "@/server/agentDiscoveryContract";
+import { buildAgentDiscoveryEnvelope as buildSharedAgentDiscoveryEnvelope } from "@expense-budget-tracker/agent-shared/discovery";
 import { type AgentEnvelope } from "@/server/agentEnvelope";
 
 const getApiBaseUrl = (request: Request): string => {

@@ -1,13 +1,10 @@
 /**
  * Thin auth-side facade over the shared machine-readable agent contract.
  */
-import { createRequire } from "node:module";
+import * as agentContract from "@expense-budget-tracker/agent-shared";
 
-const require = createRequire(import.meta.url);
-const agentContract = require("../../../web/src/server/agentContract.js") as typeof import("../../../web/src/server/agentContract.js");
-
-export type AgentAction = import("../../../web/src/server/agentContract.js").AgentAction;
-export type AgentEnvelope = import("../../../web/src/server/agentContract.js").AgentEnvelope;
+export type AgentAction = import("@expense-budget-tracker/agent-shared").AgentAction;
+export type AgentEnvelope = import("@expense-budget-tracker/agent-shared").AgentEnvelope;
 export const VERIFY_CODE_INPUT = agentContract.VERIFY_CODE_INPUT;
 export const buildErrorEnvelope = agentContract.buildErrorEnvelope;
 export const buildSuccessEnvelope = agentContract.buildSuccessEnvelope;

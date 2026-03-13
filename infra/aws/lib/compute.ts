@@ -36,6 +36,14 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   // --- ECS Cluster + Web Service ---
   // Docker images are built and pushed by CDK via fromAsset() — no manual ECR repos needed.
   // CDK uses the bootstrap ECR repo (cdk-hnb659fds-container-assets-*) for image storage.
+  const rootDockerAssetExclude = [
+    ".git",
+    ".github",
+    "**/node_modules",
+    "**/.next",
+    "**/dist",
+    "**/cdk.out",
+  ];
   const cluster = new ecs.Cluster(scope, "Cluster", { vpc: props.vpc });
 
   const webTaskDef = new ecs.FargateTaskDefinition(scope, "WebTask", {
@@ -54,7 +62,9 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   });
 
   const webContainer = webTaskDef.addContainer("web", {
-    image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../../apps/web"), {
+    image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../.."), {
+      file: "apps/web/Dockerfile",
+      exclude: rootDockerAssetExclude,
       platform: Platform.LINUX_ARM64,
     }),
     portMappings: [{ containerPort: 8080 }],
@@ -137,7 +147,9 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   });
 
   authTaskDef.addContainer("auth", {
-    image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../../apps/auth"), {
+    image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../.."), {
+      file: "apps/auth/Dockerfile",
+      exclude: rootDockerAssetExclude,
       platform: Platform.LINUX_ARM64,
     }),
     portMappings: [{ containerPort: 8081 }],

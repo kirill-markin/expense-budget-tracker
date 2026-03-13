@@ -6,7 +6,7 @@
  */
 
 import pg from "pg";
-import { getDatabaseUrl } from "./config";
+import { getDatabaseUrl } from "./config.js";
 
 export type UserIdentity = Readonly<{
   userId: string;

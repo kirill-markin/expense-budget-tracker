@@ -1,0 +1,9 @@
+{
+  "name": "expense-budget-tracker",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "infra/*"
+  ]
+}
