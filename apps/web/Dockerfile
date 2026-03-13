@@ -34,9 +34,11 @@ RUN addgroup --system --gid 1001 nodejs && \
 # chmod so the non-root nextjs user can read it at runtime.
 ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-global-bundle.pem
 
-COPY --from=builder /workspace/apps/web/public ./public
+COPY --from=builder /workspace/apps/web/public ./apps/web/public
 COPY --from=builder --chown=nextjs:nodejs /workspace/apps/web/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /workspace/apps/web/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /workspace/apps/web/.next/static ./apps/web/.next/static
+
+WORKDIR /app/apps/web
 
 USER nextjs
 
