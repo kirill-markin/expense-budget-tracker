@@ -75,6 +75,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build shared package
+        run: npm --workspace @expense-budget-tracker/agent-shared run build
+
       # Refresh Cloudflare edge IP ranges so the ALB security group stays current.
       # Best-effort: if the API is unreachable, the committed cloudflare-ips.json is used.
       - name: Update Cloudflare IPs

@@ -50,6 +50,11 @@ fi
 echo "=== Install dependencies ==="
 cd "$ROOT_DIR"
 npm ci --silent
+
+echo ""
+echo "=== Build shared package ==="
+npm --workspace @expense-budget-tracker/agent-shared run build
+
 cd "$CDK_DIR"
 
 # --- Step 2: CDK bootstrap (idempotent) ---
