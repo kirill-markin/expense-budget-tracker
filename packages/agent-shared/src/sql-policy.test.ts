@@ -24,6 +24,26 @@ test("validateExpenseSql allows a CTE that reads allowed relations", () => {
   assert.deepEqual(result.referencedRelations, ["accounts"]);
 });
 
+test("validateExpenseSql rejects TABLE syntax at the top level", () => {
+  assert.throws(
+    () => validateExpenseSql("TABLE accounts"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "unsupported_statement"
+      && error.message === "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed",
+  );
+});
+
+test("validateExpenseSql rejects TABLE syntax for a blocked qualified relation", () => {
+  assert.throws(
+    () => validateExpenseSql("TABLE public.users"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "unsupported_statement"
+      && error.message === "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed",
+  );
+});
+
 test("validateExpenseSql rejects CTE shadowing of a blocked relation", () => {
   assert.throws(
     () => validateExpenseSql("WITH workspace_members AS (SELECT * FROM workspace_members) SELECT * FROM accounts"),
@@ -41,6 +61,26 @@ test("validateExpenseSql rejects blocked relations referenced through JOIN insid
       error instanceof SqlPolicyError
       && error.code === "relation_not_allowed"
       && error.message === "Relation workspace_members is not allowed",
+  );
+});
+
+test("validateExpenseSql rejects blocked TABLE syntax inside a CTE", () => {
+  assert.throws(
+    () => validateExpenseSql("WITH recent AS (TABLE users) SELECT * FROM accounts"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "unsupported_statement"
+      && error.message === "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed",
+  );
+});
+
+test("validateExpenseSql rejects TABLE syntax inside a CTE even for allowed relations", () => {
+  assert.throws(
+    () => validateExpenseSql("WITH recent AS (TABLE accounts) SELECT * FROM recent"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "unsupported_statement"
+      && error.message === "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed",
   );
 });
 

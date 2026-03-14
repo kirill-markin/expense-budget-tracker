@@ -353,6 +353,10 @@ const collectReferencedRelationsFromSegment = (
       continue;
     }
 
+    if (token.lower === "table") {
+      fail("unsupported_statement", "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
+    }
+
     if (token.lower === "from") {
       inSourceClause = true;
       expectRelation = true;

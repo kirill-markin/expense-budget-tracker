@@ -235,7 +235,7 @@ Only the listed tables and views are allowed. Internal relations are blocked.`;
 
 const toChatSqlError = (error: SqlPolicyError): Error => {
   if (error.code === "unsupported_statement") {
-    return new Error("Only SELECT, WITH, INSERT, UPDATE, DELETE statements are allowed");
+    return new Error("Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
   }
   if (error.code === "multiple_statements_not_allowed") {
     return new Error("Multiple statements (semicolons) are not allowed");
