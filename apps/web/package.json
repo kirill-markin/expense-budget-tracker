@@ -14,15 +14,15 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@expense-budget-tracker/agent-shared": "0.1.0",
     "@anthropic-ai/sdk": "^0.78.0",
-    "@openai/agents": "^0.5.4",
-    "@openai/agents-openai": "^0.5.4",
+    "@expense-budget-tracker/agent-shared": "0.1.0",
+    "@openai/agents": "^0.7.1",
+    "@openai/agents-openai": "^0.7.1",
     "aws-jwt-verify": "^5.1.1",
     "d3": "^7.9.0",
     "i18next": "^25.8.14",
     "next": "16.1.6",
-    "openai": "^6.27.0",
+    "openai": "^6.29.0",
     "pg": "^8.18.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",
-    "@types/node": "^24.12.0",
+    "@types/node": "^25.5.0",
     "@types/pg": "^8.16.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
