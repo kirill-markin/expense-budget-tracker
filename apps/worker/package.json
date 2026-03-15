@@ -11,12 +11,12 @@
     "@aws-sdk/client-secrets-manager": "^3.1009.0",
     "fast-xml-parser": "^5.5.5",
     "node-cron": "^4.2.1",
-    "pg": "^8.18.0"
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/node-cron": "^3.0.11",
-    "@types/pg": "^8.16.0",
+    "@types/pg": "^8.18.0",
     "typescript": "^5.9.3"
   },
   "engines": {

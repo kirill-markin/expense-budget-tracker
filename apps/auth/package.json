@@ -14,14 +14,14 @@
   },
   "dependencies": {
     "@expense-budget-tracker/agent-shared": "0.1.0",
-    "@hono/node-server": "^1.14.0",
+    "@hono/node-server": "^1.19.11",
     "hono": "^4.12.8",
     "pg": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/pg": "^8.18.0",
-    "tsx": "^4.19.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "engines": {

@@ -14,12 +14,12 @@
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1009.0",
     "@expense-budget-tracker/agent-shared": "0.1.0",
-    "pg": "^8.18.0"
+    "pg": "^8.20.0"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.149",
+    "@types/aws-lambda": "^8.10.161",
     "@types/node": "^25.5.0",
-    "@types/pg": "^8.16.0",
+    "@types/pg": "^8.18.0",
     "typescript": "^5.9.3"
   },
   "engines": {
