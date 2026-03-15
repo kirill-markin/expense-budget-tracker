@@ -7,7 +7,7 @@
     "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "prelint": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "pretest": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "lint": "tsc --noEmit",
     "test": "npm run build && node --test dist/*.test.js"
   },
