@@ -259,7 +259,7 @@ export const handleSqlRoute = async (
       buildErrorEnvelope(
         { field: "sql", expected: "non-empty string" },
         [],
-        "Send a non-empty sql string.",
+        "Send a non-empty sql string. Semicolon-separated statements are allowed.",
         "missing_sql",
         "SQL is required",
       ),
@@ -307,7 +307,7 @@ export const handleSqlRoute = async (
       buildSuccessEnvelope(
         response,
         [],
-        "Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first and only query supported relations.",
+        "Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first, semicolon-separated statements are allowed, and only supported relations may be queried.",
       ),
     );
   } catch (error) {

@@ -57,7 +57,6 @@ type CteDefinition = Readonly<{
 
 type SqlPolicyErrorCode =
   | "unsupported_statement"
-  | "multiple_statements_not_allowed"
   | "set_config_not_allowed"
   | "sql_comments_not_allowed"
   | "quoted_identifiers_not_allowed"
@@ -77,20 +76,33 @@ export class SqlPolicyError extends Error {
 
 export type ValidatedExpenseSql = Readonly<{
   sql: string;
-  referencedRelations: ReadonlyArray<AllowedRelationName>;
+  statements: ReadonlyArray<ValidatedExpenseSqlStatement>;
 }>;
 
 export type RestrictedSqlResultRow = Readonly<Record<string, unknown>>;
 
 export type RestrictedSqlQueryResult = Readonly<{
+  command: string;
   rows: ReadonlyArray<RestrictedSqlResultRow>;
   rowCount: number | null;
 }>;
 
-export type ExecutedExpenseSql = Readonly<{
+export type ValidatedExpenseSqlStatement = Readonly<{
+  sql: string;
+  referencedRelations: ReadonlyArray<AllowedRelationName>;
+}>;
+
+export type ExecutedExpenseSqlStatement = Readonly<{
+  sql: string;
+  command: string;
   rows: ReadonlyArray<RestrictedSqlResultRow>;
   rowCount: number;
   referencedRelations: ReadonlyArray<AllowedRelationName>;
+}>;
+
+export type ExecutedExpenseSql = Readonly<{
+  sql: string;
+  statements: ReadonlyArray<ExecutedExpenseSqlStatement>;
 }>;
 
 const fail = (code: SqlPolicyErrorCode, message: string): never => {
@@ -100,23 +112,177 @@ const fail = (code: SqlPolicyErrorCode, message: string): never => {
 const getFirstKeyword = (sql: string): string | undefined =>
   sql.trimStart().split(/\s/u)[0]?.toUpperCase();
 
-const hasMultipleStatements = (sql: string): boolean => {
-  let inString = false;
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i];
-    if (ch === "'" && !inString) {
-      inString = true;
-    } else if (ch === "'" && inString) {
-      if (i + 1 < sql.length && sql[i + 1] === "'") {
-        i++;
-      } else {
-        inString = false;
-      }
-    } else if (ch === ";" && !inString) {
-      return true;
-    }
+const isWordStart = (value: string): boolean => /[A-Za-z_]/u.test(value);
+
+const isWordPart = (value: string): boolean => /[A-Za-z0-9_]/u.test(value);
+
+const readDollarQuoteTag = (
+  sql: string,
+  startIndex: number,
+): Readonly<{
+  tag: string;
+  nextIndex: number;
+}> | null => {
+  if (sql[startIndex] !== "$") {
+    return null;
   }
-  return false;
+
+  const next = sql[startIndex + 1];
+  if (next === "$") {
+    return {
+      tag: "$$",
+      nextIndex: startIndex + 2,
+    };
+  }
+
+  if (next === undefined || !isWordStart(next)) {
+    return null;
+  }
+
+  let index = startIndex + 2;
+  while (index < sql.length && isWordPart(sql[index])) {
+    index++;
+  }
+
+  if (sql[index] !== "$") {
+    return null;
+  }
+
+  return {
+    tag: sql.slice(startIndex, index + 1),
+    nextIndex: index + 1,
+  };
+};
+
+const splitSqlStatements = (sql: string): ReadonlyArray<string> => {
+  const statements: Array<string> = [];
+  let statementStartIndex = 0;
+  let index = 0;
+  let blockCommentDepth = 0;
+  let dollarQuoteTag: string | null = null;
+  let state:
+    | "plain"
+    | "single_quote"
+    | "double_quote"
+    | "line_comment"
+    | "block_comment"
+    | "dollar_quote" = "plain";
+
+  while (index < sql.length) {
+    const current = sql[index];
+    const next = sql[index + 1];
+
+    if (state === "single_quote") {
+      if (current === "'" && next === "'") {
+        index += 2;
+        continue;
+      }
+      if (current === "'") {
+        state = "plain";
+      }
+      index++;
+      continue;
+    }
+
+    if (state === "double_quote") {
+      if (current === "\"" && next === "\"") {
+        index += 2;
+        continue;
+      }
+      if (current === "\"") {
+        state = "plain";
+      }
+      index++;
+      continue;
+    }
+
+    if (state === "line_comment") {
+      if (current === "\n") {
+        state = "plain";
+      }
+      index++;
+      continue;
+    }
+
+    if (state === "block_comment") {
+      if (current === "/" && next === "*") {
+        blockCommentDepth++;
+        index += 2;
+        continue;
+      }
+      if (current === "*" && next === "/") {
+        blockCommentDepth--;
+        index += 2;
+        if (blockCommentDepth === 0) {
+          state = "plain";
+        }
+        continue;
+      }
+      index++;
+      continue;
+    }
+
+    if (state === "dollar_quote") {
+      if (dollarQuoteTag !== null && sql.startsWith(dollarQuoteTag, index)) {
+        index += dollarQuoteTag.length;
+        state = "plain";
+        dollarQuoteTag = null;
+        continue;
+      }
+      index++;
+      continue;
+    }
+
+    if (current === "'") {
+      state = "single_quote";
+      index++;
+      continue;
+    }
+
+    if (current === "\"") {
+      state = "double_quote";
+      index++;
+      continue;
+    }
+
+    if (current === "-" && next === "-") {
+      state = "line_comment";
+      index += 2;
+      continue;
+    }
+
+    if (current === "/" && next === "*") {
+      state = "block_comment";
+      blockCommentDepth = 1;
+      index += 2;
+      continue;
+    }
+
+    const dollarQuote = readDollarQuoteTag(sql, index);
+    if (dollarQuote !== null) {
+      state = "dollar_quote";
+      dollarQuoteTag = dollarQuote.tag;
+      index = dollarQuote.nextIndex;
+      continue;
+    }
+
+    if (current === ";") {
+      const statement = sql.slice(statementStartIndex, index).trim();
+      if (statement !== "") {
+        statements.push(statement);
+      }
+      statementStartIndex = index + 1;
+    }
+
+    index++;
+  }
+
+  const finalStatement = sql.slice(statementStartIndex).trim();
+  if (finalStatement !== "") {
+    statements.push(finalStatement);
+  }
+
+  return statements;
 };
 
 const containsSetConfig = (sql: string): boolean => /\bset_config\b/iu.test(sql);
@@ -489,24 +655,32 @@ const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationN
 
 export const getAllowedRelationNames = (): ReadonlyArray<AllowedRelationName> => ALLOWED_RELATION_NAMES;
 
-export const validateExpenseSql = (sql: string): ValidatedExpenseSql => {
-  const trimmedSql = sql.trim();
-  const firstKeyword = getFirstKeyword(trimmedSql);
+const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement => {
+  const firstKeyword = getFirstKeyword(sql);
   if (firstKeyword === undefined || !ALLOWED_FIRST_KEYWORDS.has(firstKeyword)) {
     fail("unsupported_statement", "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
   }
 
-  if (hasMultipleStatements(trimmedSql)) {
-    fail("multiple_statements_not_allowed", "Multiple statements are not allowed");
-  }
-
-  if (containsSetConfig(trimmedSql)) {
+  if (containsSetConfig(sql)) {
     fail("set_config_not_allowed", "set_config() calls are not allowed");
   }
 
   return {
+    sql,
+    referencedRelations: collectReferencedRelations(sql),
+  };
+};
+
+export const validateExpenseSql = (sql: string): ValidatedExpenseSql => {
+  const trimmedSql = sql.trim();
+  const statements = splitSqlStatements(trimmedSql).map(validateExpenseSqlStatement);
+  if (statements.length === 0) {
+    fail("unsupported_statement", "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
+  }
+
+  return {
     sql: trimmedSql,
-    referencedRelations: collectReferencedRelations(trimmedSql),
+    statements,
   };
 };
 
@@ -515,13 +689,23 @@ export const executeExpenseSql = async (
   execute: (validatedSql: string) => Promise<RestrictedSqlQueryResult>,
 ): Promise<ExecutedExpenseSql> => {
   const validated = validateExpenseSql(sql);
-  const result = await execute(validated.sql);
-  const rows = result.rows.slice(0, MAX_SQL_ROWS);
-  const rowCount = rows.length > 0 ? rows.length : (result.rowCount ?? 0);
+  const statements: Array<ExecutedExpenseSqlStatement> = [];
+
+  for (const statement of validated.statements) {
+    const result = await execute(statement.sql);
+    const rows = result.rows.slice(0, MAX_SQL_ROWS);
+    const rowCount = rows.length > 0 ? rows.length : (result.rowCount ?? 0);
+    statements.push({
+      sql: statement.sql,
+      command: result.command,
+      rows,
+      rowCount,
+      referencedRelations: statement.referencedRelations,
+    });
+  }
 
   return {
-    rows,
-    rowCount,
-    referencedRelations: validated.referencedRelations,
+    sql: validated.sql,
+    statements,
   };
 };

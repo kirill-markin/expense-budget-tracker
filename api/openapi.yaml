@@ -164,7 +164,7 @@
     "/sql": {
       "post": {
         "summary": "Execute restricted SQL",
-        "description": "Requires workspace context. Send X-Workspace-Id explicitly, or first call /workspaces/{workspaceId}/select to save a default for this API key.",
+        "description": "Requires workspace context. Send X-Workspace-Id explicitly, or first call /workspaces/{workspaceId}/select to save a default for this API key. The sql field may contain one or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons.",
         "security": [
           {
             "ApiKeyHeader": []
@@ -190,7 +190,8 @@
                 "required": ["sql"],
                 "properties": {
                   "sql": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "SQL script containing one or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons."
                   }
                 }
               }
@@ -199,7 +200,7 @@
         },
         "responses": {
           "200": {
-            "description": "SQL result envelope"
+            "description": "SQL result envelope with a statements array"
           }
         }
       }

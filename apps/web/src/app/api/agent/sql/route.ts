@@ -33,11 +33,7 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
   }
 
   if (error.code === "unsupported_statement") {
-    return "Use one SQL statement of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
-  }
-
-  if (error.code === "multiple_statements_not_allowed") {
-    return "Send exactly one SQL statement per request. Remove semicolons and transaction wrappers.";
+    return "Use one or more SQL statements of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
   }
 
   if (error.code === "set_config_not_allowed") {
@@ -117,14 +113,12 @@ export const POST = async (request: Request): Promise<Response> => {
     return Response.json(
       buildSuccessEnvelope(
         {
-          rows: result.rows,
-          rowCount: result.rowCount,
+          statements: result.statements,
           workspace: result.workspace,
-          ...(result.entityHints === undefined ? {} : { entityHints: result.entityHints }),
           limits: result.limits,
         },
         [],
-        "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available and results are capped.",
+        "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, and results are capped per statement.",
       ),
     );
   } catch (error) {

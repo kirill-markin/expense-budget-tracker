@@ -221,7 +221,7 @@ WHERE le.currency != 'USD'
 UNION ALL
 SELECT le.*, 1.0 AS to_usd, le.amount AS amount_usd FROM ledger_entries le WHERE le.currency = 'USD'`;
 
-export const TOOL_DESCRIPTION = `Execute a SQL statement (SELECT, INSERT, UPDATE, DELETE) against the expense tracker database.
+export const TOOL_DESCRIPTION = `Execute a SQL script against the expense tracker database. A script may contain one or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons.
 
 Tables:
 - ledger_entries (entry_id TEXT PK, event_id TEXT, ts TIMESTAMPTZ, account_id TEXT, amount NUMERIC, currency TEXT, kind TEXT, category TEXT, counterparty TEXT, note TEXT, external_id TEXT, workspace_id TEXT, inserted_at TIMESTAMPTZ)
@@ -236,14 +236,12 @@ Views:
 
 kind: 'income' | 'spend' | 'transfer'. category: NULL for transfers.
 All data is workspace-scoped via RLS. INSERTs must include workspace_id.
-Only the listed tables and views are allowed. Internal relations are blocked.`;
+Only the listed tables and views are allowed. Internal relations are blocked.
+The result is returned as JSON in the shape { "statements": [ ... ] }, one item per executed statement.`;
 
 const toChatSqlError = (error: SqlPolicyError): Error => {
   if (error.code === "unsupported_statement") {
     return new Error("Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
-  }
-  if (error.code === "multiple_statements_not_allowed") {
-    return new Error("Multiple statements (semicolons) are not allowed");
   }
   if (error.code === "set_config_not_allowed") {
     return new Error("set_config() calls are not allowed");
@@ -278,9 +276,9 @@ export const execQuery = async (
   userId: string,
   workspaceId: string,
 ): Promise<QueryResult> => {
-  let validatedSql: string;
+  let validated;
   try {
-    validatedSql = validateExpenseSql(sql).sql;
+    validated = validateExpenseSql(sql);
   } catch (error) {
     if (error instanceof SqlPolicyError) {
       throw toChatSqlError(error);
@@ -288,20 +286,28 @@ export const execQuery = async (
     throw error;
   }
 
-  const result = await withRestrictedUserContext(
+  const statements = await withRestrictedUserContext(
     userId,
     workspaceId,
     STATEMENT_TIMEOUT_MS,
     async (queryFn) => {
-      return queryFn(validatedSql, []);
+      const results: Array<Readonly<Record<string, unknown>>> = [];
+      for (const statement of validated.statements) {
+        const result = await queryFn(statement.sql, []);
+        const rows = result.rows.slice(0, MAX_ROWS);
+        results.push({
+          sql: statement.sql,
+          command: result.command,
+          rows,
+          rowCount: rows.length > 0 ? rows.length : (result.rowCount ?? 0),
+          referencedRelations: statement.referencedRelations,
+        });
+      }
+      return results;
     },
   );
 
-  const rows = result.rows.slice(0, MAX_ROWS);
-  if (rows.length > 0) {
-    return { json: JSON.stringify(rows) };
-  }
-  return { json: JSON.stringify({ rowCount: result.rowCount }) };
+  return { json: JSON.stringify({ statements }) };
 };
 
 export const extractText = (content: ReadonlyArray<ContentPart>): string =>

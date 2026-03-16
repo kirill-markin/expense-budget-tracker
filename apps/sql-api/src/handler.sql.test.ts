@@ -78,6 +78,75 @@ test("sql without header auto-selects when only one workspace exists", async () 
 
   assert.equal(sqlResponse.statusCode, 200);
   assert.equal(savedWorkspaceId, "workspace-1");
+  const payload = JSON.parse(sqlResponse.body) as {
+    data: {
+      statements: ReadonlyArray<Readonly<{ sql: string; command: string; rowCount: number }>>;
+    };
+  };
+  assert.equal(payload.data.statements.length, 1);
+  assert.equal(payload.data.statements[0]?.sql, "SELECT * FROM accounts LIMIT 1");
+  assert.equal(payload.data.statements[0]?.command, "SELECT");
+  assert.equal(payload.data.statements[0]?.rowCount, 1);
+});
+
+test("sql returns statements array for multi-statement scripts", async () => {
+  const handler = createMachineApiHandler({
+    ensureTrustedIdentityProvisioned: async () => Promise.resolve(),
+    loadOpenApiDocument: () => ({ openapi: "3.1.0" }),
+    queryAsTrustedIdentity: async (_identity, _workspaceId, text, params) => {
+      if (text.includes("WHERE w.workspace_id = $1")) {
+        return createQueryResult([{ workspace_id: String(params[0]), name: "Main" }]) as never;
+      }
+      throw new Error(`Unexpected SQL: ${text}`);
+    },
+    withRestrictedTrustedIdentityContext: async (_identity, workspaceId, _timeoutMs, callback) => {
+      assert.equal(workspaceId, "workspace-1");
+      return callback(async (text) => {
+        if (text === "SELECT * FROM accounts LIMIT 1") {
+          return createQueryResult([{ account_id: "checking" }]);
+        }
+        if (text === "SELECT 1") {
+          return createQueryResult([{ "?column?": 1 }]);
+        }
+        throw new Error(`Unexpected SQL: ${text}`);
+      });
+    },
+  });
+
+  const sqlResponse = await handler(createAuthenticatedEvent({
+    httpMethod: "POST",
+    path: "/sql",
+    resource: "/sql",
+    headers: {
+      Host: "api.example.com",
+      "X-Workspace-Id": "workspace-1",
+    },
+    body: JSON.stringify({ sql: "SELECT * FROM accounts LIMIT 1; SELECT 1;" }),
+  }));
+
+  assert.equal(sqlResponse.statusCode, 200);
+  const payload = JSON.parse(sqlResponse.body) as {
+    data: {
+      statements: ReadonlyArray<Readonly<{
+        sql: string;
+        command: string;
+        rowCount: number;
+        rows: ReadonlyArray<Readonly<Record<string, unknown>>>;
+        referencedRelations: ReadonlyArray<string>;
+      }>>;
+    };
+  };
+  assert.equal(payload.data.statements.length, 2);
+  assert.equal(payload.data.statements[0]?.sql, "SELECT * FROM accounts LIMIT 1");
+  assert.equal(payload.data.statements[0]?.command, "SELECT");
+  assert.equal(payload.data.statements[0]?.rowCount, 1);
+  assert.deepEqual(payload.data.statements[0]?.rows, [{ account_id: "checking" }]);
+  assert.deepEqual(payload.data.statements[0]?.referencedRelations, ["accounts"]);
+  assert.equal(payload.data.statements[1]?.sql, "SELECT 1");
+  assert.equal(payload.data.statements[1]?.command, "SELECT");
+  assert.equal(payload.data.statements[1]?.rowCount, 1);
+  assert.deepEqual(payload.data.statements[1]?.rows, [{ "?column?": 1 }]);
+  assert.deepEqual(payload.data.statements[1]?.referencedRelations, []);
 });
 
 test("relation_not_allowed for information_schema points clients to /schema", async () => {

@@ -43,7 +43,7 @@ test("buildAgentDiscoveryEnvelope points agents to ask for email before send_cod
     "Load account context",
     "Select a workspace",
     "Inspect allowed SQL schema",
-    "Run restricted SQL",
+    "Run restricted SQL scripts",
   ]);
   assert.match(String(envelope.instructions), /Ask the user for their email address first/i);
   assert.match(String(envelope.instructions), /same email OTP flow handles both signup and login/i);

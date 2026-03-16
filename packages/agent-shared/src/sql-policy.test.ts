@@ -14,14 +14,69 @@ test("getAllowedRelationNames returns the canonical relation list", () => {
   ]);
 });
 
-test("validateExpenseSql rejects multiple statements", () => {
-  assert.throws(() => validateExpenseSql("SELECT 1; SELECT 2"), (error: unknown) =>
-    error instanceof SqlPolicyError && error.code === "multiple_statements_not_allowed");
+test("validateExpenseSql splits multiple statements and ignores trailing semicolons", () => {
+  const result = validateExpenseSql(" SELECT 1 ; SELECT * FROM accounts LIMIT 1; ");
+
+  assert.equal(result.sql, "SELECT 1 ; SELECT * FROM accounts LIMIT 1;");
+  assert.deepEqual(
+    result.statements.map((statement) => statement.sql),
+    ["SELECT 1", "SELECT * FROM accounts LIMIT 1"],
+  );
+  assert.deepEqual(result.statements[0]?.referencedRelations, []);
+  assert.deepEqual(result.statements[1]?.referencedRelations, ["accounts"]);
+});
+
+test("validateExpenseSql does not split semicolons inside single-quoted strings", () => {
+  const result = validateExpenseSql("SELECT ';' AS marker; SELECT 'a; b' AS note");
+
+  assert.deepEqual(
+    result.statements.map((statement) => statement.sql),
+    ["SELECT ';' AS marker", "SELECT 'a; b' AS note"],
+  );
+});
+
+test("validateExpenseSql ignores empty statements between semicolons", () => {
+  const result = validateExpenseSql(";; SELECT * FROM accounts;;;SELECT 1;;");
+
+  assert.deepEqual(
+    result.statements.map((statement) => statement.sql),
+    ["SELECT * FROM accounts", "SELECT 1"],
+  );
+});
+
+test("validateExpenseSql reports quoted identifier errors even when semicolons appear inside them", () => {
+  assert.throws(
+    () => validateExpenseSql("SELECT \"semi;colon\" FROM accounts"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "quoted_identifiers_not_allowed"
+      && error.message === "Quoted identifiers are not allowed",
+  );
+});
+
+test("validateExpenseSql reports SQL comments errors even when semicolons appear inside comments", () => {
+  assert.throws(
+    () => validateExpenseSql("SELECT 1 /* semi;colon */"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "sql_comments_not_allowed"
+      && error.message === "SQL comments are not allowed",
+  );
+});
+
+test("validateExpenseSql reports dollar-quoted string errors even when semicolons appear inside them", () => {
+  assert.throws(
+    () => validateExpenseSql("SELECT $$semi;colon$$"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "dollar_quoted_strings_not_allowed"
+      && error.message === "Dollar-quoted strings are not allowed",
+  );
 });
 
 test("validateExpenseSql allows a CTE that reads allowed relations", () => {
   const result = validateExpenseSql("WITH recent AS (SELECT * FROM accounts) SELECT * FROM recent");
-  assert.deepEqual(result.referencedRelations, ["accounts"]);
+  assert.deepEqual(result.statements[0]?.referencedRelations, ["accounts"]);
 });
 
 test("validateExpenseSql rejects TABLE syntax at the top level", () => {
@@ -88,21 +143,75 @@ test("validateExpenseSql allows recursive CTE self-reference with allowed base r
   const result = validateExpenseSql(
     "WITH RECURSIVE recent(account_id) AS (SELECT account_id FROM accounts UNION ALL SELECT account_id FROM recent WHERE 1 = 0) SELECT * FROM recent",
   );
-  assert.deepEqual(result.referencedRelations, ["accounts"]);
+  assert.deepEqual(result.statements[0]?.referencedRelations, ["accounts"]);
 });
 
-test("executeExpenseSql returns referenced relations and trimmed sql", async () => {
+test("executeExpenseSql executes validated statements in order", async () => {
+  const executedSql: Array<string> = [];
+
   const result = await executeExpenseSql(
-    " SELECT * FROM accounts LIMIT 1 ",
+    " SELECT * FROM accounts LIMIT 1; SELECT 1; ",
     async (validatedSql) => {
-      assert.equal(validatedSql, "SELECT * FROM accounts LIMIT 1");
+      executedSql.push(validatedSql);
+      if (validatedSql === "SELECT * FROM accounts LIMIT 1") {
+        return {
+          command: "SELECT",
+          rows: [{ account_id: "checking" }],
+          rowCount: 1,
+        };
+      }
+
       return {
-        rows: [{ account_id: "checking" }],
+        command: "SELECT",
+        rows: [{ "?column?": 1 }],
         rowCount: 1,
       };
     },
   );
 
-  assert.equal(result.rowCount, 1);
-  assert.deepEqual(result.referencedRelations, ["accounts"]);
+  assert.equal(result.sql, "SELECT * FROM accounts LIMIT 1; SELECT 1;");
+  assert.deepEqual(executedSql, [
+    "SELECT * FROM accounts LIMIT 1",
+    "SELECT 1",
+  ]);
+  assert.deepEqual(result.statements, [
+    {
+      sql: "SELECT * FROM accounts LIMIT 1",
+      command: "SELECT",
+      rows: [{ account_id: "checking" }],
+      rowCount: 1,
+      referencedRelations: ["accounts"],
+    },
+    {
+      sql: "SELECT 1",
+      command: "SELECT",
+      rows: [{ "?column?": 1 }],
+      rowCount: 1,
+      referencedRelations: [],
+    },
+  ]);
+});
+
+test("executeExpenseSql validates the whole script before execution", async () => {
+  let executeCalls = 0;
+
+  await assert.rejects(
+    executeExpenseSql(
+      "SELECT * FROM accounts; TABLE users",
+      async () => {
+        executeCalls++;
+        return {
+          command: "SELECT",
+          rows: [],
+          rowCount: 0,
+        };
+      },
+    ),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "unsupported_statement"
+      && error.message === "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed",
+  );
+
+  assert.equal(executeCalls, 0);
 });

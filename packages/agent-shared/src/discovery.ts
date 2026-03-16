@@ -19,7 +19,7 @@ export const AGENT_DISCOVERY_CAPABILITIES: ReadonlyArray<string> = [
   "Load account context",
   "Select a workspace",
   "Inspect allowed SQL schema",
-  "Run restricted SQL",
+  "Run restricted SQL scripts",
 ];
 
 export type AgentDiscoveryParams = Readonly<{

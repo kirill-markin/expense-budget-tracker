@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSystemInstructions, execQuery } from "./shared";
+import { buildSystemInstructions, execQuery, TOOL_DESCRIPTION } from "./shared";
 
 test("execQuery rejects CTE shadowing of blocked relations before DB execution", async () => {
   await assert.rejects(
@@ -34,4 +34,9 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /Use plain text only/i);
   assert.match(instructions, /Do not use Markdown/i);
   assert.match(instructions, /Do not use .*tables/i);
+});
+
+test("TOOL_DESCRIPTION documents multi-statement scripts and statements output", () => {
+  assert.match(TOOL_DESCRIPTION, /one or more .* statements separated by semicolons/i);
+  assert.match(TOOL_DESCRIPTION, /"statements"/i);
 });

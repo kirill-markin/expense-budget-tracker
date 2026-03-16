@@ -22,14 +22,21 @@ export type EntityHints = Readonly<{
   related: ReadonlyArray<EntityHint>;
 }>;
 
-export type AgentSqlResult = Readonly<{
+type AgentSqlStatementResult = Readonly<{
+  sql: string;
+  command: string;
   rows: ReadonlyArray<Readonly<Record<string, unknown>>>;
   rowCount: number;
+  referencedRelations: ReadonlyArray<AllowedRelationName>;
+  entityHints?: EntityHints;
+}>;
+
+export type AgentSqlResult = Readonly<{
+  statements: ReadonlyArray<AgentSqlStatementResult>;
   workspace: Readonly<{
     workspaceId: string;
     name: string;
   }>;
-  entityHints?: EntityHints;
   limits: Readonly<{
     maxRows: number;
     statementTimeoutMs: number;
@@ -147,13 +154,19 @@ export const executeAgentSql = async (
     ),
   );
 
-  const entityHints = buildEntityHints(result.referencedRelations);
-
   return {
-    rows: result.rows,
-    rowCount: result.rowCount,
+    statements: result.statements.map((statement) => {
+      const entityHints = buildEntityHints(statement.referencedRelations);
+      return {
+        sql: statement.sql,
+        command: statement.command,
+        rows: statement.rows,
+        rowCount: statement.rowCount,
+        referencedRelations: statement.referencedRelations,
+        ...(entityHints === undefined ? {} : { entityHints }),
+      };
+    }),
     workspace,
-    ...(entityHints === undefined ? {} : { entityHints }),
     limits: {
       maxRows: MAX_SQL_ROWS,
       statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,

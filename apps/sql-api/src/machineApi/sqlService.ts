@@ -104,11 +104,7 @@ export const getSqlPolicyInstructions = (
   }
 
   if (error.code === "unsupported_statement") {
-    return "Use one SQL statement of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
-  }
-
-  if (error.code === "multiple_statements_not_allowed") {
-    return "Send exactly one SQL statement per request. Remove semicolons and transaction wrappers.";
+    return "Use one or more SQL statements of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
   }
 
   if (error.code === "set_config_not_allowed") {
@@ -150,6 +146,7 @@ export const runSql = async (
       async (queryFn) => {
         const queryResult = await queryFn(validatedSql, []);
         return {
+          command: queryResult.command,
           rows: queryResult.rows as ReadonlyArray<Readonly<Record<string, unknown>>>,
           rowCount: queryResult.rowCount,
         };
@@ -157,13 +154,19 @@ export const runSql = async (
     ),
   );
 
-  const entityHints = buildEntityHints(result.referencedRelations);
-
   return {
-    rows: result.rows,
-    rowCount: result.rowCount,
+    statements: result.statements.map((statement) => {
+      const entityHints = buildEntityHints(statement.referencedRelations);
+      return {
+        sql: statement.sql,
+        command: statement.command,
+        rows: statement.rows,
+        rowCount: statement.rowCount,
+        referencedRelations: statement.referencedRelations,
+        ...(entityHints === undefined ? {} : { entityHints }),
+      };
+    }),
     workspace,
-    ...(entityHints === undefined ? {} : { entityHints }),
     limits: {
       maxRows: MAX_SQL_ROWS,
       statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,

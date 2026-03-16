@@ -16,7 +16,7 @@ export const DB_TOOL: Anthropic.Tool = {
     properties: {
       sql: {
         type: "string",
-        description: "SQL statement to execute (SELECT, INSERT, UPDATE, DELETE)",
+        description: "SQL script to execute. One or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons.",
       },
     },
     required: ["sql"],

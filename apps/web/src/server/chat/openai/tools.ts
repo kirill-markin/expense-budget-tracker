@@ -11,7 +11,7 @@ export const pgQueryTool = tool({
   name: "query_database",
   description: TOOL_DESCRIPTION,
   parameters: z.object({
-    sql: z.string().describe("SQL statement to execute (SELECT, INSERT, UPDATE, DELETE)"),
+    sql: z.string().describe("SQL script to execute. One or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons."),
   }),
   execute: async (
     input: { sql: string },
