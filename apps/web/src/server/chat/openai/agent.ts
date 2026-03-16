@@ -2,6 +2,7 @@ import { Agent, run } from "@openai/agents";
 import type { ModelResponse } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
+import { CODE_INTERPRETER_CONTAINER_HEADER_NAME } from "@/lib/chatSession";
 import type {
   ChatMessage,
   ChatStreamEvent,
@@ -43,6 +44,8 @@ type HostedToolCallOutputItem = Readonly<{
   providerData?: Readonly<{
     type?: string;
     container_id?: string;
+    code?: string;
+    outputs?: unknown;
   }>;
 }>;
 
@@ -50,6 +53,25 @@ type SpreadsheetContainerRef = Readonly<{
   containerId: string;
   responseId?: string;
   requestId?: string;
+}>;
+
+type StartAgentResponseResult = Readonly<{
+  events: AsyncGenerator<ChatStreamEvent>;
+  responseHeaders?: Readonly<Record<string, string>>;
+}>;
+
+type OpenAIMessageOutputItem = Readonly<{
+  type: "message";
+  role?: string;
+  content?: ReadonlyArray<Readonly<{
+    type?: string;
+    text?: string;
+    annotations?: ReadonlyArray<Readonly<{
+      filename?: string;
+      path?: string;
+      file_id?: string;
+    }>>;
+  }>>;
 }>;
 
 const SPREADSHEET_MEDIA_TYPES = new Set([
@@ -67,10 +89,17 @@ const SPREADSHEET_EXTENSIONS = new Set([
   ".xlsx",
 ]);
 
-const buildOpenaiInstructions = (timezone: string): string =>
+const CODE_INTERPRETER_CONTAINER_PREFIX = "expense-chat";
+const CODE_INTERPRETER_CONTAINER_MINUTES = 20;
+const MAX_LOG_SNIPPET_LENGTH = 400;
+
+const buildOpenaiInstructions = (timezone: string, hasPersistentContainer: boolean): string =>
   buildSystemInstructions(timezone) +
   "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate." +
   "\nIf the user attaches a CSV or spreadsheet file, inspect it with the code interpreter before claiming the file is unavailable." +
+  (hasPersistentContainer
+    ? "\nFiles previously attached earlier in this same chat remain available through code execution while the current code interpreter container is active."
+    : "") +
   "\nYou also have web search. Use it to look up current exchange rates, financial news, tax rules, or any other real-time information.";
 
 const getLastUserMessage = (
@@ -111,6 +140,154 @@ export const getSpreadsheetAttachmentFileNames = (
 ): ReadonlyArray<string> =>
   attachments.filter(isSpreadsheetAttachment).map((part) => part.fileName);
 
+const truncateForLog = (value: string | null | undefined): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (value.length <= MAX_LOG_SNIPPET_LENGTH) {
+    return value;
+  }
+  return value.slice(0, MAX_LOG_SNIPPET_LENGTH) + "...[truncated]";
+};
+
+export const buildOpenAIContainerName = (chatSessionId: string): string =>
+  `${CODE_INTERPRETER_CONTAINER_PREFIX}-${chatSessionId}`;
+
+const getErrorStatus = (error: unknown): number | null => {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return null;
+  }
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+};
+
+export const isOpenAIContainerExpired = (
+  container: Awaited<ReturnType<OpenAI["containers"]["retrieve"]>>,
+): boolean => {
+  const minutes = container.expires_after?.minutes ?? CODE_INTERPRETER_CONTAINER_MINUTES;
+  const anchorSeconds = container.last_active_at ?? container.created_at;
+  return Date.now() >= (anchorSeconds + minutes * 60) * 1000;
+};
+
+export const shouldUseExplicitOpenAIContainer = (
+  attachments: ReadonlyArray<FileContentPart>,
+  codeInterpreterContainerId: string | null,
+): boolean => attachments.length > 0 || codeInterpreterContainerId !== null;
+
+const createOpenAIContainer = async (
+  client: OpenAI,
+  chatSessionId: string,
+  action: "code_interpreter_container_created" | "code_interpreter_container_recreated",
+  codeInterpreterContainerId: string | null,
+): Promise<string> => {
+  const containerName = buildOpenAIContainerName(chatSessionId);
+  const container = await client.containers.create({
+    name: containerName,
+    expires_after: {
+      anchor: "last_active_at",
+      minutes: CODE_INTERPRETER_CONTAINER_MINUTES,
+    },
+  });
+  log({
+    domain: "chat",
+    action,
+    vendor: "openai",
+    chatSessionId,
+    codeInterpreterContainerId,
+    effectiveContainerId: container.id,
+    containerName,
+  });
+  return container.id;
+};
+
+const resolveOpenAIContainer = async (
+  client: OpenAI,
+  chatSessionId: string,
+  codeInterpreterContainerId: string | null,
+): Promise<string> => {
+  if (codeInterpreterContainerId === null) {
+    return createOpenAIContainer(client, chatSessionId, "code_interpreter_container_created", null);
+  }
+
+  try {
+    const container = await client.containers.retrieve(codeInterpreterContainerId);
+    const expectedName = buildOpenAIContainerName(chatSessionId);
+
+    if (container.name !== expectedName) {
+      log({
+        domain: "chat",
+        action: "code_interpreter_container_session_mismatch",
+        vendor: "openai",
+        chatSessionId,
+        codeInterpreterContainerId,
+        effectiveContainerId: codeInterpreterContainerId,
+        containerName: container.name,
+        reason: `expected ${expectedName}`,
+      });
+      return createOpenAIContainer(client, chatSessionId, "code_interpreter_container_recreated", codeInterpreterContainerId);
+    }
+
+    if (container.status !== "active" || isOpenAIContainerExpired(container)) {
+      log({
+        domain: "chat",
+        action: "code_interpreter_container_expired",
+        vendor: "openai",
+        chatSessionId,
+        codeInterpreterContainerId,
+        effectiveContainerId: codeInterpreterContainerId,
+        containerName: container.name,
+        reason: container.status,
+      });
+      return createOpenAIContainer(client, chatSessionId, "code_interpreter_container_recreated", codeInterpreterContainerId);
+    }
+
+    log({
+      domain: "chat",
+      action: "code_interpreter_container_reused",
+      vendor: "openai",
+      chatSessionId,
+      codeInterpreterContainerId,
+      effectiveContainerId: codeInterpreterContainerId,
+      containerName: container.name,
+    });
+    return codeInterpreterContainerId;
+  } catch (error) {
+    if (getErrorStatus(error) === 404) {
+      log({
+        domain: "chat",
+        action: "code_interpreter_container_not_found",
+        vendor: "openai",
+        chatSessionId,
+        codeInterpreterContainerId,
+        effectiveContainerId: codeInterpreterContainerId,
+      });
+      return createOpenAIContainer(client, chatSessionId, "code_interpreter_container_recreated", codeInterpreterContainerId);
+    }
+    throw error;
+  }
+};
+
+const addFilesToOpenAIContainer = async (
+  client: OpenAI,
+  chatSessionId: string,
+  containerId: string,
+  attachments: ReadonlyArray<FileContentPart>,
+): Promise<void> => {
+  for (const attachment of attachments) {
+    const buffer = Buffer.from(attachment.base64Data, "base64");
+    const file = new File([buffer], attachment.fileName, { type: attachment.mediaType });
+    await client.containers.files.create(containerId, { file });
+    log({
+      domain: "chat",
+      action: "code_interpreter_container_file_added",
+      vendor: "openai",
+      chatSessionId,
+      effectiveContainerId: containerId,
+      attachmentFileName: attachment.fileName,
+    });
+  }
+};
+
 const isHostedCodeInterpreterOutput = (
   item: ModelResponse["output"][number],
 ): item is HostedToolCallOutputItem =>
@@ -146,6 +323,8 @@ export const extractCodeInterpreterContainers = (
 
 const verifySpreadsheetContainers = async (
   client: OpenAI,
+  chatSessionId: string,
+  effectiveContainerId: string | null,
   responses: ReadonlyArray<ModelResponse>,
   spreadsheetAttachmentFileNames: ReadonlyArray<string>,
 ): Promise<void> => {
@@ -177,6 +356,17 @@ const verifySpreadsheetContainers = async (
         containerId: container.containerId,
         containerFilePaths: files.data.map((file) => file.path),
       });
+      log({
+        domain: "chat",
+        action: "code_interpreter_container_inventory",
+        vendor: "openai",
+        chatSessionId,
+        effectiveContainerId: effectiveContainerId ?? container.containerId,
+        attachmentFileNames: spreadsheetAttachmentFileNames,
+        responseId: container.responseId,
+        requestId: container.requestId,
+        containerFilePaths: files.data.map((file) => file.path),
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log({
@@ -191,6 +381,24 @@ const verifySpreadsheetContainers = async (
       });
     }
   }
+};
+
+const listOpenAIContainerInventory = async (
+  client: OpenAI,
+  chatSessionId: string,
+  containerId: string,
+  attachmentFileNames: ReadonlyArray<string>,
+): Promise<void> => {
+  const files = await client.containers.files.list(containerId, { order: "asc" });
+  log({
+    domain: "chat",
+    action: "code_interpreter_container_inventory",
+    vendor: "openai",
+    chatSessionId,
+    effectiveContainerId: containerId,
+    attachmentFileNames,
+    containerFilePaths: files.data.map((file) => file.path),
+  });
 };
 
 const mapUserPart = (part: TextContentPart | ImageContentPart | FileContentPart): UserContentPart => {
@@ -291,22 +499,110 @@ export type StreamAgentParams = Readonly<{
   userId: string;
   workspaceId: string;
   timezone: string;
+  chatSessionId: string;
+  codeInterpreterContainerId: string | null;
 }>;
 
-export async function* streamAgentResponse(
+const getMessageOutputParts = (
+  item: ModelResponse["output"][number],
+): ReadonlyArray<NonNullable<OpenAIMessageOutputItem["content"]>[number]> => {
+  if (item.type !== "message" || !("content" in item)) {
+    return [];
+  }
+  const content = item.content;
+  return Array.isArray(content)
+    ? content as ReadonlyArray<NonNullable<OpenAIMessageOutputItem["content"]>[number]>
+    : [];
+};
+
+export const summarizeOpenAIResponse = (
+  responses: ReadonlyArray<ModelResponse>,
+  finalOutput: string | undefined,
+): Readonly<{
+  finalOutputItemTypes: ReadonlyArray<string>;
+  hasCodeInterpreterCall: boolean;
+  codeInterpreterCallCount: number;
+  codeSnippet: string | null;
+  outputSummary: string | null;
+  assistantTextSnippet: string | null;
+  containerFileCitations: ReadonlyArray<string>;
+}> => {
+  const latestResponse = responses.at(-1);
+  if (latestResponse === undefined) {
+    return {
+      finalOutputItemTypes: [],
+      hasCodeInterpreterCall: false,
+      codeInterpreterCallCount: 0,
+      codeSnippet: null,
+      outputSummary: null,
+      assistantTextSnippet: truncateForLog(finalOutput),
+      containerFileCitations: [],
+    };
+  }
+
+  const finalOutputItemTypes = latestResponse.output.map((item) => item.type ?? "unknown");
+  const codeInterpreterCalls = latestResponse.output.filter(isHostedCodeInterpreterOutput);
+  const firstCodeInterpreterCall = codeInterpreterCalls[0];
+  const outputSummary = firstCodeInterpreterCall === undefined
+    ? null
+    : truncateForLog(
+      JSON.stringify(
+        (firstCodeInterpreterCall.providerData as { outputs?: unknown } | undefined)?.outputs ?? null,
+      ),
+    );
+
+  const messageTextParts = latestResponse.output
+    .flatMap(getMessageOutputParts)
+    .filter((part) => part.type === "output_text")
+    .map((part) => part.text ?? "");
+  const containerFileCitations = latestResponse.output
+    .flatMap(getMessageOutputParts)
+    .flatMap((part) => part.annotations ?? [])
+    .map((annotation) => annotation.path ?? annotation.filename ?? annotation.file_id ?? JSON.stringify(annotation));
+
+  return {
+    finalOutputItemTypes,
+    hasCodeInterpreterCall: codeInterpreterCalls.length > 0,
+    codeInterpreterCallCount: codeInterpreterCalls.length,
+    codeSnippet: truncateForLog(firstCodeInterpreterCall?.providerData?.code),
+    outputSummary,
+    assistantTextSnippet: truncateForLog(finalOutput ?? messageTextParts.join("")),
+    containerFileCitations,
+  };
+};
+
+export const startAgentResponse = async (
   params: StreamAgentParams,
-): AsyncGenerator<ChatStreamEvent> {
+): Promise<StartAgentResponseResult> => {
+  const client = new OpenAI();
   const latestFileAttachments = getLatestUserFileAttachments(params.messages);
   const attachmentFileNames = latestFileAttachments.map((part) => part.fileName);
   const attachmentMediaTypes = latestFileAttachments.map((part) => part.mediaType);
   const spreadsheetAttachmentFileNames = getSpreadsheetAttachmentFileNames(latestFileAttachments);
+  const shouldUseExplicitContainer = shouldUseExplicitOpenAIContainer(
+    latestFileAttachments,
+    params.codeInterpreterContainerId,
+  );
+  const effectiveContainerId = shouldUseExplicitContainer
+    ? await resolveOpenAIContainer(client, params.chatSessionId, params.codeInterpreterContainerId)
+    : null;
   const forcedToolChoice = spreadsheetAttachmentFileNames.length > 0 ? "code_interpreter" : null;
+
+  if (effectiveContainerId !== null && latestFileAttachments.length > 0) {
+    await addFilesToOpenAIContainer(client, params.chatSessionId, effectiveContainerId, latestFileAttachments);
+    await listOpenAIContainerInventory(client, params.chatSessionId, effectiveContainerId, attachmentFileNames);
+  }
+
   const agent = new Agent<AgentContext>({
     name: "Expense Assistant",
-    instructions: buildOpenaiInstructions(params.timezone),
+    instructions: buildOpenaiInstructions(params.timezone, effectiveContainerId !== null),
     model: params.model,
     modelSettings: forcedToolChoice === null ? {} : { toolChoice: forcedToolChoice },
-    tools: [pgQueryTool, codeInterpreterTool(), webSearchTool({ searchContextSize: "medium" })],
+    tools: [
+      pgQueryTool,
+      effectiveContainerId === null ? codeInterpreterTool() : codeInterpreterTool({ container: effectiveContainerId }),
+      webSearchTool({ searchContextSize: "medium" }),
+    ],
   });
 
   const context: AgentContext = {
@@ -323,15 +619,17 @@ export async function* streamAgentResponse(
     action: "request",
     vendor: "openai",
     model: params.model,
+    chatSessionId: params.chatSessionId,
     messageCount: params.messages.length,
     hasAttachments,
+    attachmentCount: latestFileAttachments.length,
     attachmentFileNames,
     attachmentMediaTypes,
     spreadsheetAttachmentFileNames,
     forcedToolChoice,
+    codeInterpreterContainerId: params.codeInterpreterContainerId,
   });
   const requestStart = Date.now();
-  const verificationClient = spreadsheetAttachmentFileNames.length > 0 ? new OpenAI() : null;
 
   const result = await run(agent, input as Parameters<typeof run>[1], {
     stream: true,
@@ -339,70 +637,104 @@ export async function* streamAgentResponse(
     maxTurns: 10,
   });
 
-  let activeToolName: string | null = null;
-  let activeToolInput: string | null = null;
-  let toolStart = 0;
-  let toolCalls = 0;
-  let streamedText = "";
-  const emittedMessageOutputIds = new Set<string>();
+  const events = (async function* (): AsyncGenerator<ChatStreamEvent> {
+    let activeToolName: string | null = null;
+    let activeToolInput: string | null = null;
+    let toolStart = 0;
+    let toolCalls = 0;
+    let streamedText = "";
+    const emittedMessageOutputIds = new Set<string>();
 
-  try {
-    for await (const event of result) {
-      if (event.type === "raw_model_stream_event") {
-        if (event.data.type === "output_text_delta") {
-          streamedText += event.data.delta;
-          yield { type: "delta", text: event.data.delta };
-        }
-      } else if (event.type === "run_item_stream_event") {
-        if (event.name === "message_output_created" && event.item.type === "message_output_item") {
-          const messageId = event.item.rawItem.id;
-          if (messageId !== undefined && emittedMessageOutputIds.has(messageId)) {
-            continue;
-          }
+    try {
+      if (effectiveContainerId !== null) {
+        yield { type: "container_id", containerId: effectiveContainerId };
+      }
 
-          const messageText = extractMessageOutputText(event.item);
-          const unsentText = getUnsentMessageOutputText(messageText, streamedText);
-          if (unsentText.length > 0) {
-            streamedText += unsentText;
-            yield { type: "delta", text: unsentText };
+      for await (const event of result) {
+        if (event.type === "raw_model_stream_event") {
+          if (event.data.type === "output_text_delta") {
+            streamedText += event.data.delta;
+            yield { type: "delta", text: event.data.delta };
           }
+        } else if (event.type === "run_item_stream_event") {
+          if (event.name === "message_output_created" && event.item.type === "message_output_item") {
+            const messageId = event.item.rawItem.id;
+            if (messageId !== undefined && emittedMessageOutputIds.has(messageId)) {
+              continue;
+            }
 
-          if (messageId !== undefined) {
-            emittedMessageOutputIds.add(messageId);
+            const messageText = extractMessageOutputText(event.item);
+            const unsentText = getUnsentMessageOutputText(messageText, streamedText);
+            if (unsentText.length > 0) {
+              streamedText += unsentText;
+              yield { type: "delta", text: unsentText };
+            }
+
+            if (messageId !== undefined) {
+              emittedMessageOutputIds.add(messageId);
+            }
+          } else if (event.name === "tool_called" && event.item.type === "tool_call_item") {
+            activeToolName = event.item.rawItem.type === "function_call"
+              ? event.item.rawItem.name
+              : event.item.rawItem.type;
+            activeToolInput = event.item.rawItem.type === "function_call"
+              ? (event.item.rawItem.arguments ?? null)
+              : null;
+            toolStart = Date.now();
+            log({ domain: "chat", action: "tool_call", vendor: "openai", tool: activeToolName, status: "started" });
+            yield { type: "tool_call", name: activeToolName, status: "started" };
+          } else if (event.name === "tool_output" && event.item.type === "tool_call_output_item") {
+            const name = activeToolName ?? "tool";
+            log({ domain: "chat", action: "tool_call", vendor: "openai", tool: name, status: "completed", durationMs: Date.now() - toolStart });
+            toolCalls++;
+            const rawOutput = event.item.output;
+            const toolOutput = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
+            yield { type: "tool_call", name, status: "completed", input: activeToolInput ?? undefined, output: toolOutput };
+            activeToolName = null;
+            activeToolInput = null;
           }
-        } else if (event.name === "tool_called" && event.item.type === "tool_call_item") {
-          activeToolName = event.item.rawItem.type === "function_call"
-            ? event.item.rawItem.name
-            : event.item.rawItem.type;
-          activeToolInput = event.item.rawItem.type === "function_call"
-            ? (event.item.rawItem.arguments ?? null)
-            : null;
-          toolStart = Date.now();
-          log({ domain: "chat", action: "tool_call", vendor: "openai", tool: activeToolName, status: "started" });
-          yield { type: "tool_call", name: activeToolName, status: "started" };
-        } else if (event.name === "tool_output" && event.item.type === "tool_call_output_item") {
-          const name = activeToolName ?? "tool";
-          log({ domain: "chat", action: "tool_call", vendor: "openai", tool: name, status: "completed", durationMs: Date.now() - toolStart });
-          toolCalls++;
-          const rawOutput = event.item.output;
-          const toolOutput = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
-          yield { type: "tool_call", name, status: "completed", input: activeToolInput ?? undefined, output: toolOutput };
-          activeToolName = null;
-          activeToolInput = null;
         }
       }
+
+      if (spreadsheetAttachmentFileNames.length > 0) {
+        await verifySpreadsheetContainers(client, params.chatSessionId, effectiveContainerId, result.rawResponses, spreadsheetAttachmentFileNames);
+      } else if (effectiveContainerId !== null) {
+        await listOpenAIContainerInventory(client, params.chatSessionId, effectiveContainerId, attachmentFileNames);
+      }
+
+      const responseSummary = summarizeOpenAIResponse(
+        result.rawResponses,
+        typeof result.finalOutput === "string" ? result.finalOutput : undefined,
+      );
+      log({
+        domain: "chat",
+        action: "response_summary",
+        vendor: "openai",
+        chatSessionId: params.chatSessionId,
+        codeInterpreterContainerId: effectiveContainerId,
+        finalOutputItemTypes: responseSummary.finalOutputItemTypes,
+        hasCodeInterpreterCall: responseSummary.hasCodeInterpreterCall,
+        codeInterpreterCallCount: responseSummary.codeInterpreterCallCount,
+        codeSnippet: responseSummary.codeSnippet,
+        outputSummary: responseSummary.outputSummary,
+        assistantTextSnippet: responseSummary.assistantTextSnippet,
+        containerFileCitations: responseSummary.containerFileCitations,
+        stopReason: "done",
+      });
+      log({ domain: "chat", action: "response", vendor: "openai", turns: toolCalls, stopReason: "done", durationMs: Date.now() - requestStart });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log({ domain: "chat", action: "error", vendor: "openai", error: errorMessage });
+      throw err;
     }
 
-    if (verificationClient !== null) {
-      await verifySpreadsheetContainers(verificationClient, result.rawResponses, spreadsheetAttachmentFileNames);
-    }
+    yield { type: "done" };
+  })();
 
-    log({ domain: "chat", action: "response", vendor: "openai", turns: toolCalls, stopReason: "done", durationMs: Date.now() - requestStart });
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    log({ domain: "chat", action: "error", vendor: "openai", error: errorMessage });
-    throw err;
-  }
-
-  yield { type: "done" };
-}
+  return {
+    events,
+    responseHeaders: effectiveContainerId === null
+      ? undefined
+      : { [CODE_INTERPRETER_CONTAINER_HEADER_NAME]: effectiveContainerId },
+  };
+};

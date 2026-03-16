@@ -12,6 +12,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
+import { CODE_INTERPRETER_CONTAINER_HEADER_NAME } from "@/lib/chatSession";
 import { cn } from "@/lib/cn";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { DEFAULT_MODEL_ID } from "@/lib/chatModels";
@@ -183,6 +184,8 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const {
     messages,
+    chatSessionId,
+    codeInterpreterContainerId,
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
@@ -190,6 +193,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     completeToolCall,
     finalizeAssistant,
     markAssistantError,
+    setCodeInterpreterContainerId,
     clearHistory,
   } = useChatHistory(workspaceId);
 
@@ -364,6 +368,8 @@ export const ChatPanel = (props: Props): ReactElement => {
       model: selectedModel,
       messages: allMessages,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      chatSessionId,
+      codeInterpreterContainerId,
     });
 
     if (requestBody.length > MAX_BODY_BYTES) {
@@ -382,6 +388,11 @@ export const ChatPanel = (props: Props): ReactElement => {
         body: requestBody,
         signal: abortController.signal,
       });
+
+      const responseContainerId = response.headers.get(CODE_INTERPRETER_CONTAINER_HEADER_NAME);
+      if (responseContainerId !== null && responseContainerId.length > 0) {
+        setCodeInterpreterContainerId(responseContainerId);
+      }
 
       if (!response.ok) {
         const rawError = await response.text();
@@ -427,6 +438,8 @@ export const ChatPanel = (props: Props): ReactElement => {
           if (event.type === "delta") {
             receivedContent = true;
             appendAssistantChunk(event.text);
+          } else if (event.type === "container_id") {
+            setCodeInterpreterContainerId(event.containerId);
           } else if (event.type === "tool_call") {
             receivedContent = true;
             if (event.status === "started") {
@@ -466,6 +479,8 @@ export const ChatPanel = (props: Props): ReactElement => {
     pendingAttachments,
     selectedModel,
     messages,
+    chatSessionId,
+    codeInterpreterContainerId,
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
@@ -473,6 +488,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     completeToolCall,
     finalizeAssistant,
     markAssistantError,
+    setCodeInterpreterContainerId,
     t,
   ]);
 

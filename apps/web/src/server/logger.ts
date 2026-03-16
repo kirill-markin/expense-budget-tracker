@@ -1,5 +1,14 @@
 type ChatVendor = "anthropic" | "openai";
 type ToolStatus = "started" | "completed" | "error";
+type ContainerAction =
+  | "code_interpreter_container_created"
+  | "code_interpreter_container_reused"
+  | "code_interpreter_container_recreated"
+  | "code_interpreter_container_not_found"
+  | "code_interpreter_container_expired"
+  | "code_interpreter_container_session_mismatch"
+  | "code_interpreter_container_file_added"
+  | "code_interpreter_container_inventory";
 
 type ChatEvent =
   | Readonly<{
@@ -7,15 +16,34 @@ type ChatEvent =
     action: "request";
     vendor: ChatVendor;
     model: string;
+    chatSessionId: string;
     messageCount: number;
     hasAttachments: boolean;
+    attachmentCount?: number;
     attachmentFileNames?: ReadonlyArray<string>;
     attachmentMediaTypes?: ReadonlyArray<string>;
     spreadsheetAttachmentFileNames?: ReadonlyArray<string>;
     forcedToolChoice?: string | null;
+    codeInterpreterContainerId?: string | null;
   }>
   | Readonly<{ domain: "chat"; action: "turn_start"; vendor: ChatVendor; turn: number }>
   | Readonly<{ domain: "chat"; action: "tool_call"; vendor: ChatVendor; tool: string; status: ToolStatus; durationMs?: number }>
+  | Readonly<{
+    domain: "chat";
+    action: ContainerAction;
+    vendor: ChatVendor;
+    chatSessionId: string;
+    codeInterpreterContainerId?: string | null;
+    effectiveContainerId?: string | null;
+    containerName?: string;
+    reason?: string;
+    attachmentFileName?: string;
+    attachmentFileNames?: ReadonlyArray<string>;
+    providerFileId?: string;
+    containerFilePaths?: ReadonlyArray<string>;
+    responseId?: string;
+    requestId?: string;
+  }>
   | Readonly<{
     domain: "chat";
     action: "spreadsheet_container_verified";
@@ -43,6 +71,21 @@ type ChatEvent =
     requestId?: string;
     containerId?: string;
     error: string;
+  }>
+  | Readonly<{
+    domain: "chat";
+    action: "response_summary";
+    vendor: ChatVendor;
+    chatSessionId: string;
+    codeInterpreterContainerId?: string | null;
+    finalOutputItemTypes: ReadonlyArray<string>;
+    hasCodeInterpreterCall?: boolean;
+    codeInterpreterCallCount?: number;
+    codeSnippet?: string | null;
+    outputSummary?: string | null;
+    assistantTextSnippet?: string | null;
+    containerFileCitations?: ReadonlyArray<string>;
+    stopReason?: string;
   }>
   | Readonly<{ domain: "chat"; action: "response"; vendor: ChatVendor; turns: number; stopReason: string; durationMs: number }>
   | Readonly<{ domain: "chat"; action: "error"; vendor: ChatVendor; error: string }>;

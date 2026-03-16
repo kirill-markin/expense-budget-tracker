@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clearStoredMessages, loadStoredMessages, saveStoredMessages, type StoredMessage } from "./useChatHistory";
+import { clearStoredMessages, loadStoredChatState, loadStoredMessages, saveStoredChatState, saveStoredMessages, type StoredMessage } from "./useChatHistory";
 
 type StorageLike = Readonly<{
   getItem: (key: string) => string | null;
@@ -51,6 +51,39 @@ test("loadStoredMessages keeps legacy message arrays readable", () => {
   );
 
   assert.deepEqual(loadStoredMessages(storage, "workspace-a"), [createMessage("legacy")]);
+});
+
+test("loadStoredChatState migrates legacy stored envelopes with a fresh session id and null container id", () => {
+  const storage = createStorage();
+  storage.setItem(
+    "expense-tracker-chat-messages",
+    JSON.stringify({
+      workspaceId: "workspace-a",
+      messages: [createMessage("legacy-envelope")],
+    }),
+  );
+
+  const state = loadStoredChatState(storage, "workspace-a");
+
+  assert.equal(typeof state.chatSessionId, "string");
+  assert.notEqual(state.chatSessionId.length, 0);
+  assert.equal(state.codeInterpreterContainerId, null);
+  assert.deepEqual(state.messages, [createMessage("legacy-envelope")]);
+});
+
+test("saveStoredChatState persists chat session id and container id", () => {
+  const storage = createStorage();
+  saveStoredChatState(storage, "workspace-a", {
+    chatSessionId: "chat-1",
+    codeInterpreterContainerId: "container-1",
+    messages: [createMessage("hello")],
+  });
+
+  assert.deepEqual(loadStoredChatState(storage, "workspace-a"), {
+    chatSessionId: "chat-1",
+    codeInterpreterContainerId: "container-1",
+    messages: [createMessage("hello")],
+  });
 });
 
 test("clearStoredMessages removes persisted chat history", () => {

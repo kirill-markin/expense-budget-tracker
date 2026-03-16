@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createChatSessionId } from "@/lib/chatSession";
 import type { ContentPart } from "@/server/chat/types";
 
 export type StoredMessage = Readonly<{
@@ -12,6 +13,8 @@ export type StoredMessage = Readonly<{
 
 type ChatHistoryState = Readonly<{
   messages: ReadonlyArray<StoredMessage>;
+  chatSessionId: string;
+  codeInterpreterContainerId: string | null;
   appendUserMessage: (content: ReadonlyArray<ContentPart>) => void;
   startAssistantMessage: () => void;
   appendAssistantChunk: (text: string) => void;
@@ -19,11 +22,20 @@ type ChatHistoryState = Readonly<{
   completeToolCall: (name: string, input: string | null, output: string | null) => void;
   finalizeAssistant: () => void;
   markAssistantError: (errorText: string) => void;
+  setCodeInterpreterContainerId: (containerId: string | null) => void;
   clearHistory: () => void;
+}>;
+
+export type StoredChatState = Readonly<{
+  chatSessionId: string;
+  codeInterpreterContainerId: string | null;
+  messages: ReadonlyArray<StoredMessage>;
 }>;
 
 type StoredChatEnvelope = Readonly<{
   workspaceId: string;
+  chatSessionId?: string;
+  codeInterpreterContainerId?: string | null;
   messages: ReadonlyArray<StoredMessage>;
 }>;
 
@@ -39,24 +51,36 @@ const MAX_MESSAGES = 200;
 const getBrowserStorage = (): StorageLike | null =>
   typeof localStorage === "undefined" ? null : localStorage;
 
+const createEmptyStoredChatState = (): StoredChatState => ({
+  chatSessionId: createChatSessionId(),
+  codeInterpreterContainerId: null,
+  messages: [],
+});
+
 const isStoredMessageArray = (value: unknown): value is ReadonlyArray<StoredMessage> =>
   Array.isArray(value);
 
-export const loadStoredMessages = (
+export const loadStoredChatState = (
   storage: StorageLike | null,
   workspaceId: string,
-): ReadonlyArray<StoredMessage> => {
+): StoredChatState => {
   if (storage === null) {
-    return [];
+    return createEmptyStoredChatState();
   }
 
   try {
     const raw = storage.getItem(STORAGE_KEY);
-    if (raw === null) return [];
+    if (raw === null) {
+      return createEmptyStoredChatState();
+    }
 
     const parsed = JSON.parse(raw) as unknown;
     if (isStoredMessageArray(parsed)) {
-      return parsed.slice(-MAX_MESSAGES);
+      return {
+        chatSessionId: createChatSessionId(),
+        codeInterpreterContainerId: null,
+        messages: parsed.slice(-MAX_MESSAGES),
+      };
     }
     if (
       typeof parsed === "object"
@@ -66,18 +90,34 @@ export const loadStoredMessages = (
       && (parsed as { workspaceId?: unknown }).workspaceId === workspaceId
       && isStoredMessageArray((parsed as { messages?: unknown }).messages)
     ) {
-      return (parsed as StoredChatEnvelope).messages.slice(-MAX_MESSAGES);
+      const envelope = parsed as StoredChatEnvelope;
+      return {
+        chatSessionId: typeof envelope.chatSessionId === "string" && envelope.chatSessionId.length > 0
+          ? envelope.chatSessionId
+          : createChatSessionId(),
+        codeInterpreterContainerId: typeof envelope.codeInterpreterContainerId === "string"
+          ? envelope.codeInterpreterContainerId
+          : null,
+        messages: envelope.messages.slice(-MAX_MESSAGES),
+      };
     }
-    return [];
+    return createEmptyStoredChatState();
   } catch {
-    return [];
+    return createEmptyStoredChatState();
   }
 };
 
-export const saveStoredMessages = (
+export const loadStoredMessages = (
   storage: StorageLike | null,
   workspaceId: string,
-  messages: ReadonlyArray<StoredMessage>,
+): ReadonlyArray<StoredMessage> => {
+  return loadStoredChatState(storage, workspaceId).messages;
+};
+
+export const saveStoredChatState = (
+  storage: StorageLike | null,
+  workspaceId: string,
+  state: StoredChatState,
 ): void => {
   if (storage === null) {
     return;
@@ -86,12 +126,27 @@ export const saveStoredMessages = (
   try {
     const payload: StoredChatEnvelope = {
       workspaceId,
-      messages: messages.slice(-MAX_MESSAGES),
+      chatSessionId: state.chatSessionId,
+      codeInterpreterContainerId: state.codeInterpreterContainerId,
+      messages: state.messages.slice(-MAX_MESSAGES),
     };
     storage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch {
     // localStorage full — silently drop
   }
+};
+
+export const saveStoredMessages = (
+  storage: StorageLike | null,
+  workspaceId: string,
+  messages: ReadonlyArray<StoredMessage>,
+): void => {
+  const previousState = loadStoredChatState(storage, workspaceId);
+  saveStoredChatState(storage, workspaceId, {
+    chatSessionId: previousState.chatSessionId,
+    codeInterpreterContainerId: previousState.codeInterpreterContainerId,
+    messages,
+  });
 };
 
 export const clearStoredMessages = (storage: StorageLike | null): void => {
@@ -103,18 +158,27 @@ export const clearStoredMessages = (storage: StorageLike | null): void => {
 
 export const useChatHistory = (workspaceId: string): ChatHistoryState => {
   const [messages, setMessages] = useState<ReadonlyArray<StoredMessage>>([]);
+  const [chatSessionId, setChatSessionId] = useState<string>(createChatSessionId());
+  const [codeInterpreterContainerId, setCodeInterpreterContainerIdState] = useState<string | null>(null);
   const loadedRef = useRef<boolean>(false);
 
   useEffect(() => {
-    setMessages(loadStoredMessages(getBrowserStorage(), workspaceId));
+    const state = loadStoredChatState(getBrowserStorage(), workspaceId);
+    setMessages(state.messages);
+    setChatSessionId(state.chatSessionId);
+    setCodeInterpreterContainerIdState(state.codeInterpreterContainerId);
     loadedRef.current = true;
   }, [workspaceId]);
 
   // Persist on every change after initial load
   useEffect(() => {
     if (!loadedRef.current) return;
-    saveStoredMessages(getBrowserStorage(), workspaceId, messages);
-  }, [messages, workspaceId]);
+    saveStoredChatState(getBrowserStorage(), workspaceId, {
+      chatSessionId,
+      codeInterpreterContainerId,
+      messages,
+    });
+  }, [messages, workspaceId, chatSessionId, codeInterpreterContainerId]);
 
   const appendUserMessage = useCallback((content: ReadonlyArray<ContentPart>): void => {
     const msg: StoredMessage = { role: "user", content, timestamp: Date.now(), isError: false };
@@ -205,13 +269,21 @@ export const useChatHistory = (workspaceId: string): ChatHistoryState => {
     });
   }, []);
 
+  const setCodeInterpreterContainerId = useCallback((containerId: string | null): void => {
+    setCodeInterpreterContainerIdState(containerId);
+  }, []);
+
   const clearHistory = useCallback((): void => {
     setMessages([]);
+    setChatSessionId(createChatSessionId());
+    setCodeInterpreterContainerIdState(null);
     clearStoredMessages(getBrowserStorage());
   }, []);
 
   return {
     messages,
+    chatSessionId,
+    codeInterpreterContainerId,
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
@@ -219,6 +291,7 @@ export const useChatHistory = (workspaceId: string): ChatHistoryState => {
     completeToolCall,
     finalizeAssistant,
     markAssistantError,
+    setCodeInterpreterContainerId,
     clearHistory,
   };
 };

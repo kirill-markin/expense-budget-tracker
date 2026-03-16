@@ -34,6 +34,7 @@ export type ChatMessage = Readonly<{
 }>;
 
 export type ChatStreamEvent =
+  | Readonly<{ type: "container_id"; containerId: string }>
   | Readonly<{ type: "delta"; text: string }>
   | Readonly<{ type: "tool_call"; name: string; status: "started" | "completed"; input?: string; output?: string }>
   | Readonly<{ type: "done" }>
