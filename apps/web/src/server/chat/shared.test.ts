@@ -30,4 +30,8 @@ test("buildSystemInstructions explains that browser chat already has an active w
 
   assert.match(instructions, /active workspace for this browser chat session is already selected by the app/i);
   assert.match(instructions, /Do not try to discover, list, or switch workspaces via SQL/i);
+  assert.match(instructions, /narrow, vertical browser chat/i);
+  assert.match(instructions, /Use plain text only/i);
+  assert.match(instructions, /Do not use Markdown/i);
+  assert.match(instructions, /Do not use .*tables/i);
 });
