@@ -7,7 +7,7 @@
  */
 import { randomInt } from "node:crypto";
 import { Hono, type Context } from "hono";
-import { createAgentOtpChallenge, reissueLatestAgentOtpChallenge } from "../server/agentOtpChallenges.js";
+import { createAgentOtpChallenge, reissueLatestAgentOtpChallenge } from "../server/otpChallengeStore.js";
 import { buildErrorEnvelope, buildSuccessEnvelope, buildVerifyCodeAction } from "../server/agentEnvelope.js";
 import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp } from "../server/cognitoAuth.js";

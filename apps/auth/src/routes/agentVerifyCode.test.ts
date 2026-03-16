@@ -15,6 +15,7 @@ test("agent verify-code logs rejected expired otp session before Cognito verific
     verifyEmailOtp: async () => {
       throw new Error("verifyEmailOtp should not be called");
     },
+    recordAgentOtpChallengeFailure: async () => ({ expired: false }),
     markAgentOtpChallengeUsed: async () => Promise.resolve(),
     extractIdentityFromIdToken: () => ({ userId: "user-1", email: "user@example.com" }),
     createAgentConnection: async () => ({
@@ -51,6 +52,68 @@ test("agent verify-code logs rejected expired otp session before Cognito verific
   }
 });
 
+test("agent verify-code expires the challenge on the fifth invalid code", async () => {
+  let failedAttempts = 0;
+  let verifyCalls = 0;
+  const app = createAgentVerifyCodeApp({
+    lookupAgentOtpChallenge: async () => (
+      failedAttempts >= 5
+        ? { status: "expired", email: "user@example.com" }
+        : { status: "active", email: "user@example.com", cognitoSession: "session-1" }
+    ),
+    verifyEmailOtp: async () => {
+      verifyCalls += 1;
+      const error = new Error("wrong code") as Error & { cognitoType: string };
+      error.cognitoType = "CodeMismatchException";
+      throw error;
+    },
+    recordAgentOtpChallengeFailure: async () => {
+      failedAttempts += 1;
+      return { expired: failedAttempts >= 5 };
+    },
+    markAgentOtpChallengeUsed: async () => Promise.resolve(),
+    extractIdentityFromIdToken: () => ({ userId: "user-1", email: "user@example.com" }),
+    createAgentConnection: async () => ({
+      connectionId: "connection-1",
+      createdAt: "2026-03-10T00:00:00.000Z",
+      label: "codex-desktop",
+      apiKey: "ebta_ABCDEFGH_0123456789ABCDEFGHJKMNPQRS",
+    }),
+    now: () => 123_456,
+  });
+
+  for (let index = 0; index < 4; index++) {
+    const response = await app.request(makeJsonRequest({
+      code: "12345678",
+      otpSessionToken: "OTP-SESSION",
+      label: "codex-desktop",
+    }));
+    const body = await response.json() as { error: { code: string } };
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error.code, "invalid_code");
+  }
+
+  const fifthResponse = await app.request(makeJsonRequest({
+    code: "12345678",
+    otpSessionToken: "OTP-SESSION",
+    label: "codex-desktop",
+  }));
+  const fifthBody = await fifthResponse.json() as { error: { code: string } };
+  assert.equal(fifthResponse.status, 400);
+  assert.equal(fifthBody.error.code, "expired_otp_session");
+
+  const sixthResponse = await app.request(makeJsonRequest({
+    code: "12345678",
+    otpSessionToken: "OTP-SESSION",
+    label: "codex-desktop",
+  }));
+  const sixthBody = await sixthResponse.json() as { error: { code: string } };
+  assert.equal(sixthResponse.status, 400);
+  assert.equal(sixthBody.error.code, "expired_otp_session");
+  assert.equal(verifyCalls, 5);
+});
+
 test("agent verify-code returns env-var guidance with the new key", async () => {
   const app = createAgentVerifyCodeApp({
     lookupAgentOtpChallenge: async () => ({
@@ -64,6 +127,7 @@ test("agent verify-code returns env-var guidance with the new key", async () => 
       refreshToken: "refresh-token",
       expiresIn: 3600,
     }),
+    recordAgentOtpChallengeFailure: async () => ({ expired: false }),
     markAgentOtpChallengeUsed: async () => Promise.resolve(),
     extractIdentityFromIdToken: () => ({ userId: "user-1", email: "user@example.com" }),
     createAgentConnection: async () => ({

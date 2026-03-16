@@ -8,8 +8,9 @@ import { Hono } from "hono";
 import {
   lookupAgentOtpChallenge,
   markAgentOtpChallengeUsed,
+  recordAgentOtpChallengeFailure,
   type AgentOtpChallengeLookup,
-} from "../server/agentOtpChallenges.js";
+} from "../server/otpChallengeStore.js";
 import { createAgentConnection, type AgentConnectionResult } from "../server/agentApiKeys.js";
 import {
   buildErrorEnvelope,
@@ -45,6 +46,11 @@ type CognitoFailure = Error & Readonly<{
 type AgentVerifyCodeDependencies = Readonly<{
   lookupAgentOtpChallenge: (otpSessionToken: string, nowMs: number) => Promise<AgentOtpChallengeLookup>;
   verifyEmailOtp: (email: string, code: string, session: string) => Promise<TokenResult>;
+  recordAgentOtpChallengeFailure: (
+    normalizedEmail: string,
+    cognitoSession: string,
+    nowMs: number,
+  ) => Promise<Readonly<{ expired: boolean }>>;
   markAgentOtpChallengeUsed: (normalizedEmail: string, cognitoSession: string, nowMs: number) => Promise<void>;
   extractIdentityFromIdToken: (idToken: string) => Readonly<{ userId: string; email: string }>;
   createAgentConnection: (userId: string, email: string, label: string) => Promise<AgentConnectionResult>;
@@ -223,6 +229,35 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
         200,
       );
     } catch (error) {
+      if (error instanceof Error && (error as CognitoFailure).cognitoType !== undefined) {
+        const cognitoError = error as CognitoFailure;
+        if (cognitoError.cognitoType === "CodeMismatchException" || cognitoError.cognitoType === "NotAuthorizedException") {
+          const failure = await dependencies.recordAgentOtpChallengeFailure(
+            challenge.email,
+            challenge.cognitoSession,
+            dependencies.now(),
+          );
+          if (failure.expired) {
+            log({
+              domain: "auth",
+              action: "verify_code_challenge_expired",
+              transport: "agent",
+              maskedEmail: maskEmail(challenge.email),
+            });
+            return c.json(
+              buildErrorEnvelope(
+                { field: "otpSessionToken", expected: "fresh token from send-code" },
+                [],
+                "The OTP session is expired. Start again with send-code.",
+                "expired_otp_session",
+                "OTP session expired",
+              ),
+              400,
+            );
+          }
+        }
+      }
+
       const mapped = mapVerifyError(error);
       log({
         domain: "auth",
@@ -248,6 +283,7 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
 const app = createAgentVerifyCodeApp({
   lookupAgentOtpChallenge,
   verifyEmailOtp,
+  recordAgentOtpChallengeFailure,
   markAgentOtpChallengeUsed,
   extractIdentityFromIdToken,
   createAgentConnection,

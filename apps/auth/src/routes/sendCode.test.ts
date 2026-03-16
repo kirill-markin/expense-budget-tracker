@@ -56,6 +56,8 @@ const createSendCodeTestApp = (
   getClientIp: (_context: Context) => "203.0.113.10",
   initiateEmailOtp,
   checkAndRecordOtpSendDecision: async () => decision,
+  createBrowserOtpChallenge: async (_normalizedEmail: string, cognitoSession: string) => `HANDLE-${cognitoSession}`,
+  now: () => 123_456,
 });
 
 const createAgentSendCodeTestApp = (
@@ -171,6 +173,8 @@ test("agent and browser send-code routes share limiter state when they use the s
     getClientIp: (_context: Context) => "203.0.113.10",
     initiateEmailOtp: initiateStub.initiateEmailOtp,
     checkAndRecordOtpSendDecision: sharedLimiter,
+    createBrowserOtpChallenge: async (_normalizedEmail: string, cognitoSession: string) => `HANDLE-${cognitoSession}`,
+    now: () => 123_456,
   });
 
   const firstResponse = await agentApp.request(makeJsonRequest("/api/agent/send-code", { email: "user@example.com" }));

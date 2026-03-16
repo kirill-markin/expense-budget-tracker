@@ -1,21 +1,22 @@
 /**
  * Email OTP initiation endpoint. Accepts an email address, calls Cognito
- * InitiateAuth with EMAIL_OTP challenge, and stores the Cognito session
- * in an HMAC-signed cookie after shared app-level anti-abuse checks pass.
+ * InitiateAuth with EMAIL_OTP challenge, and stores a short-lived opaque
+ * browser challenge handle in a cookie after shared app-level anti-abuse
+ * checks pass.
  *
  * Auto-creates the Cognito account if the user doesn't exist yet.
  *
  * A random delay (200–800 ms) is added before responding to equalise timing
  * between new and existing users, preventing email-existence enumeration.
  *
- * Security: HMAC-signed cookie + CSRF token + 3-min TTL.
+ * Security: opaque challenge cookie + CSRF token + 3-min TTL.
  */
 import { randomBytes, randomInt } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { setCookie } from "hono/cookie";
+import { createBrowserOtpChallenge } from "../server/otpChallengeStore.js";
 import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp } from "../server/cognitoAuth.js";
-import { sign } from "../server/crypto.js";
 import { log, maskEmail } from "../server/logger.js";
 import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otpRateLimit.js";
 
@@ -35,6 +36,13 @@ type SendCodeDependencies = Readonly<{
   getClientIp: (context: Context) => string;
   initiateEmailOtp: (email: string) => Promise<Readonly<{ session: string }>>;
   checkAndRecordOtpSendDecision: (normalizedEmail: string, requestIp: string) => Promise<OtpSendDecision>;
+  createBrowserOtpChallenge: (
+    normalizedEmail: string,
+    cognitoSession: string,
+    csrfToken: string,
+    nowMs: number,
+  ) => Promise<string>;
+  now: () => number;
 }>;
 
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
@@ -74,10 +82,17 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
       return c.json({ error: "Too many requests — please wait before trying again" }, 429);
     }
 
-    let session: string;
+    const csrfToken = dependencies.createCsrfToken();
+
+    let otpSessionToken: string;
     try {
       const [result] = await Promise.all([dependencies.initiateEmailOtp(email), dependencies.delay()]);
-      session = result.session;
+      otpSessionToken = await dependencies.createBrowserOtpChallenge(
+        email,
+        result.session,
+        csrfToken,
+        dependencies.now(),
+      );
     } catch (err) {
       log({ domain: "auth", action: "send_code_error", error: err instanceof Error ? err.message : String(err) });
       return c.json({ error: "Failed to send code — please try again" }, 500);
@@ -85,18 +100,7 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
 
     log({ domain: "auth", action: "send_code", maskedEmail: maskEmail(email) });
 
-    const csrfToken = dependencies.createCsrfToken();
-
-    const payload = JSON.stringify({
-      s: session,
-      e: email,
-      csrf: csrfToken,
-      t: Date.now(),
-    });
-
-    const signed = sign(payload);
-
-    setCookie(c, "otp_session", signed, {
+    setCookie(c, "otp_session", otpSessionToken, {
       path: "/",
       maxAge: 180,
       httpOnly: true,
@@ -116,6 +120,8 @@ const app = createSendCodeApp({
   getClientIp,
   initiateEmailOtp,
   checkAndRecordOtpSendDecision,
+  createBrowserOtpChallenge,
+  now: () => Date.now(),
 });
 
 export default app;
