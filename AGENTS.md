@@ -84,6 +84,7 @@ Use `make dev` (Docker Compose) only when you need a real database, such as for 
 ## Logging
 
 Use the structured server logger in `apps/web/src/server/logger.ts`. Log through `log()` only; never use raw `console.log` or `console.error`. Add new event types to the `LogEvent` union.
+For CloudWatch investigations, avoid complex OR filter patterns. Fetch fresh events first, then filter locally by `requestId` and chat error signals.
 
 ## Reference
 
