@@ -22,42 +22,99 @@ type ChatHistoryState = Readonly<{
   clearHistory: () => void;
 }>;
 
+type StoredChatEnvelope = Readonly<{
+  workspaceId: string;
+  messages: ReadonlyArray<StoredMessage>;
+}>;
+
+type StorageLike = Readonly<{
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+}>;
+
 const STORAGE_KEY = "expense-tracker-chat-messages";
 const MAX_MESSAGES = 200;
 
-const loadFromStorage = (): ReadonlyArray<StoredMessage> => {
+const getBrowserStorage = (): StorageLike | null =>
+  typeof localStorage === "undefined" ? null : localStorage;
+
+const isStoredMessageArray = (value: unknown): value is ReadonlyArray<StoredMessage> =>
+  Array.isArray(value);
+
+export const loadStoredMessages = (
+  storage: StorageLike | null,
+  workspaceId: string,
+): ReadonlyArray<StoredMessage> => {
+  if (storage === null) {
+    return [];
+  }
+
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = storage.getItem(STORAGE_KEY);
     if (raw === null) return [];
-    const parsed = JSON.parse(raw) as ReadonlyArray<StoredMessage>;
-    return parsed.slice(-MAX_MESSAGES);
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (isStoredMessageArray(parsed)) {
+      return parsed.slice(-MAX_MESSAGES);
+    }
+    if (
+      typeof parsed === "object"
+      && parsed !== null
+      && "workspaceId" in parsed
+      && "messages" in parsed
+      && (parsed as { workspaceId?: unknown }).workspaceId === workspaceId
+      && isStoredMessageArray((parsed as { messages?: unknown }).messages)
+    ) {
+      return (parsed as StoredChatEnvelope).messages.slice(-MAX_MESSAGES);
+    }
+    return [];
   } catch {
     return [];
   }
 };
 
-const saveToStorage = (messages: ReadonlyArray<StoredMessage>): void => {
+export const saveStoredMessages = (
+  storage: StorageLike | null,
+  workspaceId: string,
+  messages: ReadonlyArray<StoredMessage>,
+): void => {
+  if (storage === null) {
+    return;
+  }
+
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-MAX_MESSAGES)));
+    const payload: StoredChatEnvelope = {
+      workspaceId,
+      messages: messages.slice(-MAX_MESSAGES),
+    };
+    storage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch {
     // localStorage full — silently drop
   }
 };
 
-export const useChatHistory = (): ChatHistoryState => {
+export const clearStoredMessages = (storage: StorageLike | null): void => {
+  if (storage === null) {
+    return;
+  }
+  storage.removeItem(STORAGE_KEY);
+};
+
+export const useChatHistory = (workspaceId: string): ChatHistoryState => {
   const [messages, setMessages] = useState<ReadonlyArray<StoredMessage>>([]);
   const loadedRef = useRef<boolean>(false);
 
   useEffect(() => {
-    setMessages(loadFromStorage());
+    setMessages(loadStoredMessages(getBrowserStorage(), workspaceId));
     loadedRef.current = true;
-  }, []);
+  }, [workspaceId]);
 
   // Persist on every change after initial load
   useEffect(() => {
     if (!loadedRef.current) return;
-    saveToStorage(messages);
-  }, [messages]);
+    saveStoredMessages(getBrowserStorage(), workspaceId, messages);
+  }, [messages, workspaceId]);
 
   const appendUserMessage = useCallback((content: ReadonlyArray<ContentPart>): void => {
     const msg: StoredMessage = { role: "user", content, timestamp: Date.now(), isError: false };
@@ -150,7 +207,7 @@ export const useChatHistory = (): ChatHistoryState => {
 
   const clearHistory = useCallback((): void => {
     setMessages([]);
-    localStorage.removeItem(STORAGE_KEY);
+    clearStoredMessages(getBrowserStorage());
   }, []);
 
   return {

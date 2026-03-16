@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { execQuery } from "./shared";
+import { buildSystemInstructions, execQuery } from "./shared";
 
 test("execQuery rejects CTE shadowing of blocked relations before DB execution", async () => {
   await assert.rejects(
@@ -23,4 +23,11 @@ test("execQuery rejects blocked TABLE syntax before DB execution", async () => {
     ),
     /Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed/,
   );
+});
+
+test("buildSystemInstructions explains that browser chat already has an active workspace", () => {
+  const instructions = buildSystemInstructions("Europe/Madrid");
+
+  assert.match(instructions, /active workspace for this browser chat session is already selected by the app/i);
+  assert.match(instructions, /Do not try to discover, list, or switch workspaces via SQL/i);
 });

@@ -47,12 +47,13 @@ export default async function RootLayout(props: Readonly<{ children: React.React
     try {
       const headersList = await headers();
       const userId = extractUserIdFromHeaders(headersList);
-      let workspaceId = extractWorkspaceIdFromHeaders(headersList);
+      const workspaceId = extractWorkspaceIdFromHeaders(headersList);
+      let currencyWorkspaceId = workspaceId;
       try {
-        reportingCurrency = await getReportCurrency(userId, workspaceId);
+        reportingCurrency = await getReportCurrency(userId, currencyWorkspaceId);
       } catch {
-        workspaceId = userId;
-        reportingCurrency = await getReportCurrency(userId, workspaceId);
+        currencyWorkspaceId = userId;
+        reportingCurrency = await getReportCurrency(userId, currencyWorkspaceId);
       }
       currentWorkspaceId = workspaceId;
       if (authEnabled) {
@@ -104,7 +105,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                 </nav>
               </div>
               <ChatLayoutProvider initialChatOpen={chatOpen} initialChatWidth={chatWidth}>
-                <ChatLayoutShell>
+                <ChatLayoutShell workspaceId={currentWorkspaceId}>
                   {children}
                 </ChatLayoutShell>
               </ChatLayoutProvider>

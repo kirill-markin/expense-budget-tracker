@@ -16,6 +16,11 @@ type StreamAgentParams = Readonly<{
   timezone: string;
 }>;
 
+export type ChatRequestContext = Readonly<{
+  userId: string;
+  workspaceId: string;
+}>;
+
 type AgentModule = {
   streamAgentResponse: (
     params: StreamAgentParams,
@@ -26,6 +31,11 @@ const ENV_KEY_BY_VENDOR: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
 };
+
+export const extractChatRequestContext = (request: Request): ChatRequestContext => ({
+  userId: extractUserId(request),
+  workspaceId: extractWorkspaceId(request),
+});
 
 export const POST = async (request: Request): Promise<Response> => {
   const body: ChatRequestBody = await request.json();
@@ -53,8 +63,9 @@ export const POST = async (request: Request): Promise<Response> => {
   let userId: string;
   let workspaceId: string;
   try {
-    userId = extractUserId(request);
-    workspaceId = extractWorkspaceId(request);
+    const context = extractChatRequestContext(request);
+    userId = context.userId;
+    workspaceId = context.workspaceId;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("chat POST: auth header extraction failed: %s", message);

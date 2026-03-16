@@ -23,6 +23,7 @@ import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
   mode: "sidebar" | "fullscreen";
+  workspaceId: string;
 }>;
 
 const STORAGE_MODEL_KEY = "expense-tracker-chat-model";
@@ -175,7 +176,7 @@ const MIN_WIDTH = 280;
 const MAX_WIDTH = 600;
 
 export const ChatPanel = (props: Props): ReactElement => {
-  const { mode } = props;
+  const { mode, workspaceId } = props;
   const { t } = useTranslation();
   const { setIsOpen, chatWidth, setChatWidth } = useChatLayout();
   const [localWidth, setLocalWidth] = useState<number>(chatWidth);
@@ -190,7 +191,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     finalizeAssistant,
     markAssistantError,
     clearHistory,
-  } = useChatHistory();
+  } = useChatHistory(workspaceId);
 
   const [inputText, setInputText] = useState<string>("");
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL_ID);

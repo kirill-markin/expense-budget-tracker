@@ -211,12 +211,13 @@ const forwardWithIdentity = (
 const isPublicPath = (pathname: string): boolean =>
   PUBLIC_PATHS.includes(pathname);
 
-const resolveWorkspaceId = (request: NextRequest, userId: string): string => {
-  const workspaceCookie = request.cookies.get("workspace")?.value;
-  return (workspaceCookie !== undefined && workspaceCookie !== "" && WORKSPACE_ID_RE.test(workspaceCookie))
+export const resolveWorkspaceIdFromCookie = (workspaceCookie: string | undefined, userId: string): string =>
+  (workspaceCookie !== undefined && workspaceCookie !== "" && WORKSPACE_ID_RE.test(workspaceCookie))
     ? workspaceCookie
     : userId;
-};
+
+const resolveWorkspaceId = (request: NextRequest, userId: string): string =>
+  resolveWorkspaceIdFromCookie(request.cookies.get("workspace")?.value, userId);
 
 const buildCookieHeader = (name: string, value: string, maxAge: number): string => {
   const cookieDomain = process.env.COOKIE_DOMAIN ?? "";
