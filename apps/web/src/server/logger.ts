@@ -2,9 +2,48 @@ type ChatVendor = "anthropic" | "openai";
 type ToolStatus = "started" | "completed" | "error";
 
 type ChatEvent =
-  | Readonly<{ domain: "chat"; action: "request"; vendor: ChatVendor; model: string; messageCount: number; hasAttachments: boolean }>
+  | Readonly<{
+    domain: "chat";
+    action: "request";
+    vendor: ChatVendor;
+    model: string;
+    messageCount: number;
+    hasAttachments: boolean;
+    attachmentFileNames?: ReadonlyArray<string>;
+    attachmentMediaTypes?: ReadonlyArray<string>;
+    spreadsheetAttachmentFileNames?: ReadonlyArray<string>;
+    forcedToolChoice?: string | null;
+  }>
   | Readonly<{ domain: "chat"; action: "turn_start"; vendor: ChatVendor; turn: number }>
   | Readonly<{ domain: "chat"; action: "tool_call"; vendor: ChatVendor; tool: string; status: ToolStatus; durationMs?: number }>
+  | Readonly<{
+    domain: "chat";
+    action: "spreadsheet_container_verified";
+    vendor: "openai";
+    attachmentFileNames: ReadonlyArray<string>;
+    responseId?: string;
+    requestId?: string;
+    containerId: string;
+    containerFilePaths: ReadonlyArray<string>;
+  }>
+  | Readonly<{
+    domain: "chat";
+    action: "spreadsheet_container_missing_code_interpreter";
+    vendor: "openai";
+    attachmentFileNames: ReadonlyArray<string>;
+    responseId?: string;
+    requestId?: string;
+  }>
+  | Readonly<{
+    domain: "chat";
+    action: "spreadsheet_container_verification_failed";
+    vendor: "openai";
+    attachmentFileNames: ReadonlyArray<string>;
+    responseId?: string;
+    requestId?: string;
+    containerId?: string;
+    error: string;
+  }>
   | Readonly<{ domain: "chat"; action: "response"; vendor: ChatVendor; turns: number; stopReason: string; durationMs: number }>
   | Readonly<{ domain: "chat"; action: "error"; vendor: ChatVendor; error: string }>;
 

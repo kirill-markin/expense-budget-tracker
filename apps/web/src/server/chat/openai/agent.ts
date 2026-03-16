@@ -1,5 +1,7 @@
 import { Agent, run } from "@openai/agents";
+import type { ModelResponse } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
+import OpenAI from "openai";
 import type {
   ChatMessage,
   ChatStreamEvent,
@@ -35,10 +37,161 @@ type MessageOutputContentPart =
   | { type: "audio"; audio: string | { id: string }; format?: string | null; transcript?: string | null }
   | { type: "image"; image: string };
 
+type HostedToolCallOutputItem = Readonly<{
+  type: "hosted_tool_call";
+  name: string;
+  providerData?: Readonly<{
+    type?: string;
+    container_id?: string;
+  }>;
+}>;
+
+type SpreadsheetContainerRef = Readonly<{
+  containerId: string;
+  responseId?: string;
+  requestId?: string;
+}>;
+
+const SPREADSHEET_MEDIA_TYPES = new Set([
+  "text/csv",
+  "application/csv",
+  "text/tab-separated-values",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+
+const SPREADSHEET_EXTENSIONS = new Set([
+  ".csv",
+  ".tsv",
+  ".xls",
+  ".xlsx",
+]);
+
 const buildOpenaiInstructions = (timezone: string): string =>
   buildSystemInstructions(timezone) +
   "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate." +
+  "\nIf the user attaches a CSV or spreadsheet file, inspect it with the code interpreter before claiming the file is unavailable." +
   "\nYou also have web search. Use it to look up current exchange rates, financial news, tax rules, or any other real-time information.";
+
+const getLastUserMessage = (
+  messages: ReadonlyArray<ChatMessage>,
+): ChatMessage | null => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      return messages[i];
+    }
+  }
+  return null;
+};
+
+export const getLatestUserFileAttachments = (
+  messages: ReadonlyArray<ChatMessage>,
+): ReadonlyArray<FileContentPart> => {
+  const lastUserMessage = getLastUserMessage(messages);
+  if (lastUserMessage === null) {
+    return [];
+  }
+
+  return lastUserMessage.content.filter((part): part is FileContentPart => part.type === "file");
+};
+
+const getFileExtension = (fileName: string): string => {
+  const lastDot = fileName.lastIndexOf(".");
+  if (lastDot === -1) {
+    return "";
+  }
+  return fileName.slice(lastDot).toLowerCase();
+};
+
+const isSpreadsheetAttachment = (part: FileContentPart): boolean =>
+  SPREADSHEET_MEDIA_TYPES.has(part.mediaType) || SPREADSHEET_EXTENSIONS.has(getFileExtension(part.fileName));
+
+export const getSpreadsheetAttachmentFileNames = (
+  attachments: ReadonlyArray<FileContentPart>,
+): ReadonlyArray<string> =>
+  attachments.filter(isSpreadsheetAttachment).map((part) => part.fileName);
+
+const isHostedCodeInterpreterOutput = (
+  item: ModelResponse["output"][number],
+): item is HostedToolCallOutputItem =>
+  item.type === "hosted_tool_call" &&
+  item.name === "code_interpreter_call";
+
+export const extractCodeInterpreterContainers = (
+  responses: ReadonlyArray<ModelResponse>,
+): ReadonlyArray<SpreadsheetContainerRef> => {
+  const containers = new Map<string, SpreadsheetContainerRef>();
+
+  for (const response of responses) {
+    for (const item of response.output) {
+      if (!isHostedCodeInterpreterOutput(item)) {
+        continue;
+      }
+
+      const containerId = item.providerData?.container_id;
+      if (typeof containerId !== "string" || containerId.length === 0) {
+        continue;
+      }
+
+      containers.set(containerId, {
+        containerId,
+        responseId: response.responseId,
+        requestId: response.requestId,
+      });
+    }
+  }
+
+  return Array.from(containers.values());
+};
+
+const verifySpreadsheetContainers = async (
+  client: OpenAI,
+  responses: ReadonlyArray<ModelResponse>,
+  spreadsheetAttachmentFileNames: ReadonlyArray<string>,
+): Promise<void> => {
+  const containers = extractCodeInterpreterContainers(responses);
+  const latestResponse = responses.at(-1);
+
+  if (containers.length === 0) {
+    log({
+      domain: "chat",
+      action: "spreadsheet_container_missing_code_interpreter",
+      vendor: "openai",
+      attachmentFileNames: spreadsheetAttachmentFileNames,
+      responseId: latestResponse?.responseId,
+      requestId: latestResponse?.requestId,
+    });
+    return;
+  }
+
+  for (const container of containers) {
+    try {
+      const files = await client.containers.files.list(container.containerId, { order: "asc" });
+      log({
+        domain: "chat",
+        action: "spreadsheet_container_verified",
+        vendor: "openai",
+        attachmentFileNames: spreadsheetAttachmentFileNames,
+        responseId: container.responseId,
+        requestId: container.requestId,
+        containerId: container.containerId,
+        containerFilePaths: files.data.map((file) => file.path),
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log({
+        domain: "chat",
+        action: "spreadsheet_container_verification_failed",
+        vendor: "openai",
+        attachmentFileNames: spreadsheetAttachmentFileNames,
+        responseId: container.responseId,
+        requestId: container.requestId,
+        containerId: container.containerId,
+        error: errorMessage,
+      });
+    }
+  }
+};
 
 const mapUserPart = (part: TextContentPart | ImageContentPart | FileContentPart): UserContentPart => {
   switch (part.type) {
@@ -143,10 +296,16 @@ export type StreamAgentParams = Readonly<{
 export async function* streamAgentResponse(
   params: StreamAgentParams,
 ): AsyncGenerator<ChatStreamEvent> {
+  const latestFileAttachments = getLatestUserFileAttachments(params.messages);
+  const attachmentFileNames = latestFileAttachments.map((part) => part.fileName);
+  const attachmentMediaTypes = latestFileAttachments.map((part) => part.mediaType);
+  const spreadsheetAttachmentFileNames = getSpreadsheetAttachmentFileNames(latestFileAttachments);
+  const forcedToolChoice = spreadsheetAttachmentFileNames.length > 0 ? "code_interpreter" : null;
   const agent = new Agent<AgentContext>({
     name: "Expense Assistant",
     instructions: buildOpenaiInstructions(params.timezone),
     model: params.model,
+    modelSettings: forcedToolChoice === null ? {} : { toolChoice: forcedToolChoice },
     tools: [pgQueryTool, codeInterpreterTool(), webSearchTool({ searchContextSize: "medium" })],
   });
 
@@ -159,8 +318,20 @@ export async function* streamAgentResponse(
   const hasAttachments = params.messages.some((m) =>
     m.content.some((p) => p.type !== "text"),
   );
-  log({ domain: "chat", action: "request", vendor: "openai", model: params.model, messageCount: params.messages.length, hasAttachments });
+  log({
+    domain: "chat",
+    action: "request",
+    vendor: "openai",
+    model: params.model,
+    messageCount: params.messages.length,
+    hasAttachments,
+    attachmentFileNames,
+    attachmentMediaTypes,
+    spreadsheetAttachmentFileNames,
+    forcedToolChoice,
+  });
   const requestStart = Date.now();
+  const verificationClient = spreadsheetAttachmentFileNames.length > 0 ? new OpenAI() : null;
 
   const result = await run(agent, input as Parameters<typeof run>[1], {
     stream: true,
@@ -220,6 +391,10 @@ export async function* streamAgentResponse(
           activeToolInput = null;
         }
       }
+    }
+
+    if (verificationClient !== null) {
+      await verifySpreadsheetContainers(verificationClient, result.rawResponses, spreadsheetAttachmentFileNames);
     }
 
     log({ domain: "chat", action: "response", vendor: "openai", turns: toolCalls, stopReason: "done", durationMs: Date.now() - requestStart });
