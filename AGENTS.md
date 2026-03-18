@@ -15,6 +15,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Prefer non-interactive terminal commands.
 - Change schema via new files in `db/migrations/` only; never edit already-applied migrations.
 - CI/CD is GitHub Actions on push to `main` (`.github/workflows/deploy.yml`).
+- Do not build AWS SDK bundles or other AWS deployment artifacts locally. Push code to `main`, and let CI/CD build and deploy everything.
 - RTL support is required:
   - In CSS, use logical properties such as `inset-inline-start`/`end`, `margin-inline-start`/`end`, `padding-inline-start`/`end`, `border-inline-start`/`end`, and `text-align: start`/`end` instead of physical left/right variants.
   - Use `[dir="rtl"]` overrides only when no logical equivalent exists (for example `box-shadow`).
