@@ -16,7 +16,6 @@ export interface ComputeProps {
   workerDbSecret: cdk.aws_secretsmanager.Secret;
   sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
-  anthropicApiKeySecret: cdk.aws_secretsmanager.Secret;
   userPoolId: string;
   userPoolClientId: string;
   appDomain: string;
@@ -98,7 +97,6 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
       SESSION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(props.sessionEncryptionKeySecret),
       OPENAI_API_KEY: ecs.Secret.fromSecretsManager(props.openaiApiKeySecret),
-      ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(props.anthropicApiKeySecret),
     },
     logging: ecs.LogDrivers.awsLogs({
       logGroup: webLogGroup,

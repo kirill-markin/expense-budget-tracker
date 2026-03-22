@@ -1,20 +1,17 @@
-export type ChatModelVendor = "openai" | "anthropic";
+export const CHAT_VENDOR = "openai" as const;
+export const CHAT_MODEL_ID = "gpt-5.4" as const;
+export const CHAT_MODEL_LABEL = "GPT-5.4" as const;
+export const CHAT_PROVIDER_LABEL = "OpenAI" as const;
+export const CHAT_MODEL_BADGE_LABEL = `${CHAT_PROVIDER_LABEL} · ${CHAT_MODEL_LABEL}` as const;
 
 export type ChatModelDef = Readonly<{
-  id: string;
-  label: string;
-  vendor: ChatModelVendor;
+  id: typeof CHAT_MODEL_ID;
+  label: typeof CHAT_MODEL_LABEL;
+  vendor: typeof CHAT_VENDOR;
 }>;
 
-export const CHAT_MODELS: ReadonlyArray<ChatModelDef> = [
-  { id: "claude-opus-4-6", label: "Claude Opus 4.6", vendor: "anthropic" },
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", vendor: "anthropic" },
-  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", vendor: "anthropic" },
-  { id: "gpt-5.4", label: "GPT-5.4", vendor: "openai" },
-  { id: "gpt-5.2", label: "GPT-5.2", vendor: "openai" },
-  { id: "gpt-4.1", label: "GPT-4.1", vendor: "openai" },
-  { id: "gpt-4.1-mini", label: "GPT-4.1 Mini", vendor: "openai" },
-  { id: "gpt-4.1-nano", label: "GPT-4.1 Nano", vendor: "openai" },
-];
-
-export const DEFAULT_MODEL_ID = "gpt-5.4";
+export const CHAT_MODEL: ChatModelDef = {
+  id: CHAT_MODEL_ID,
+  label: CHAT_MODEL_LABEL,
+  vendor: CHAT_VENDOR,
+};

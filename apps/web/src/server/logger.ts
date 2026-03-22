@@ -1,4 +1,4 @@
-type ChatVendor = "anthropic" | "openai";
+type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 type ContainerAction =
   | "code_interpreter_container_created"

@@ -13,12 +13,11 @@ import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
 import { CODE_INTERPRETER_CONTAINER_HEADER_NAME } from "@/lib/chatSession";
+import { CHAT_MODEL_BADGE_LABEL, CHAT_MODEL_ID } from "@/lib/chatModels";
 import { cn } from "@/lib/cn";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
-import { DEFAULT_MODEL_ID } from "@/lib/chatModels";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
 import { useChatLayout } from "./ChatLayoutProvider";
-import { ModelSelector } from "./ModelSelector";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
 import styles from "./ChatPanel.module.css";
 
@@ -26,8 +25,6 @@ type Props = Readonly<{
   mode: "sidebar" | "fullscreen";
   workspaceId: string;
 }>;
-
-const STORAGE_MODEL_KEY = "expense-tracker-chat-model";
 
 const IMAGE_MEDIA_TYPES = new Set([
   "image/png",
@@ -198,7 +195,6 @@ export const ChatPanel = (props: Props): ReactElement => {
   } = useChatHistory(workspaceId);
 
   const [inputText, setInputText] = useState<string>("");
-  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL_ID);
   const [pendingAttachments, setPendingAttachments] = useState<ReadonlyArray<PendingAttachment>>([]);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
@@ -240,19 +236,6 @@ export const ChatPanel = (props: Props): ReactElement => {
       document.body.style.userSelect = "";
     };
   }, [isDragging, localWidth, setChatWidth]);
-
-  // Restore model from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_MODEL_KEY);
-    if (saved !== null) {
-      setSelectedModel(saved);
-    }
-  }, []);
-
-  const handleModelChange = (modelId: string): void => {
-    setSelectedModel(modelId);
-    localStorage.setItem(STORAGE_MODEL_KEY, modelId);
-  };
 
   // Track whether user is near the bottom of the scroll area
   useEffect(() => {
@@ -365,7 +348,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     ];
 
     const requestBody = JSON.stringify({
-      model: selectedModel,
+      model: CHAT_MODEL_ID,
       messages: allMessages,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       chatSessionId,
@@ -477,7 +460,6 @@ export const ChatPanel = (props: Props): ReactElement => {
     isStreaming,
     inputText,
     pendingAttachments,
-    selectedModel,
     messages,
     chatSessionId,
     codeInterpreterContainerId,
@@ -624,7 +606,7 @@ export const ChatPanel = (props: Props): ReactElement => {
           rows={1}
         />
         <div className={styles.controls}>
-          <ModelSelector value={selectedModel} onChange={handleModelChange} locked={messages.length > 0 || isStreaming} />
+          <span className={styles.modelLabel}>{CHAT_MODEL_BADGE_LABEL}</span>
           <div className={styles.controlsRight}>
             <FileAttachment onAttach={handleAttach} />
             <button

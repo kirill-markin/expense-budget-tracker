@@ -2,6 +2,7 @@ import { Agent, run } from "@openai/agents";
 import type { ModelResponse } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
+import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import { CODE_INTERPRETER_CONTAINER_HEADER_NAME } from "@/lib/chatSession";
 import type {
   ChatMessage,
@@ -495,7 +496,6 @@ const getUnsentMessageOutputText = (
 
 export type StreamAgentParams = Readonly<{
   messages: ReadonlyArray<ChatMessage>;
-  model: string;
   userId: string;
   workspaceId: string;
   timezone: string;
@@ -574,6 +574,8 @@ export const summarizeOpenAIResponse = (
 export const startAgentResponse = async (
   params: StreamAgentParams,
 ): Promise<StartAgentResponseResult> => {
+  // Keep provider-specific orchestration isolated here so multi-provider support
+  // can return later without reintroducing provider selection into the chat UI/API.
   const client = new OpenAI();
   const latestFileAttachments = getLatestUserFileAttachments(params.messages);
   const attachmentFileNames = latestFileAttachments.map((part) => part.fileName);
@@ -596,7 +598,7 @@ export const startAgentResponse = async (
   const agent = new Agent<AgentContext>({
     name: "Expense Assistant",
     instructions: buildOpenaiInstructions(params.timezone, effectiveContainerId !== null),
-    model: params.model,
+    model: CHAT_MODEL_ID,
     modelSettings: forcedToolChoice === null ? {} : { toolChoice: forcedToolChoice },
     tools: [
       pgQueryTool,
@@ -618,7 +620,7 @@ export const startAgentResponse = async (
     domain: "chat",
     action: "request",
     vendor: "openai",
-    model: params.model,
+    model: CHAT_MODEL_ID,
     chatSessionId: params.chatSessionId,
     messageCount: params.messages.length,
     hasAttachments,

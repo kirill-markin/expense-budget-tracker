@@ -54,7 +54,6 @@ services:
       AUTH_DOMAIN: ${AUTH_DOMAIN:-localhost:8081}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

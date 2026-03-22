@@ -14,7 +14,6 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
     "@expense-budget-tracker/agent-shared": "0.1.0",
     "@openai/agents": "^0.7.1",
     "@openai/agents-openai": "^0.7.1",

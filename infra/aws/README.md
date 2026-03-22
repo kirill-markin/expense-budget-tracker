@@ -57,7 +57,7 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → Mach
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.micro for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
-- **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key, Anthropic API key
+- **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
@@ -314,16 +314,11 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
 1. **Confirm SNS email** — check the `alertEmail` inbox for a message from "AWS Notifications" with subject "AWS Notification - Subscription Confirmation". Click the "Confirm subscription" link inside. Without this, CloudWatch alarm notifications will not be delivered
 2. **Visit your domain** — Email OTP login page appears. Open registration: anyone can sign up with email. Each user gets an isolated workspace via RLS — no shared data between users
 3. **Session encryption key** — CDK auto-generates a cryptographically random 32-byte hex key in Secrets Manager (`expense-tracker/session-encryption-key`). It encrypts the OTP session cookie (Cognito session + email + CSRF token) with AES-256-GCM during the login flow. Rotating this key invalidates only in-flight OTP sessions (users mid-login must request a new code). To rotate: `aws secretsmanager put-secret-value --secret-id expense-tracker/session-encryption-key --secret-string "$(openssl rand -hex 32)" --profile expense-tracker`, then restart the auth ECS service
-4. **Set AI API keys (first deploy only)** — the AI chat feature requires OpenAI and/or Anthropic API keys. CDK creates placeholder secrets in AWS Secrets Manager on the first deploy; replace them with real keys once:
+4. **Set AI API key (first deploy only)** — the AI chat feature uses OpenAI GPT-5.4. CDK creates a placeholder secret in AWS Secrets Manager on the first deploy; replace it with a real key once:
    ```bash
    aws secretsmanager put-secret-value \
      --secret-id expense-tracker/openai-api-key \
      --secret-string 'sk-...' \
-     --profile expense-tracker
-
-   aws secretsmanager put-secret-value \
-     --secret-id expense-tracker/anthropic-api-key \
-     --secret-string 'sk-ant-...' \
      --profile expense-tracker
    ```
    Then restart the ECS service to pick up the new values:
@@ -334,7 +329,8 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
      --force-new-deployment \
      --profile expense-tracker
    ```
-   This is a one-time step. Subsequent deploys reuse the same secrets — CDK does not overwrite values that are already set. Both keys are optional — chat models from vendors without a configured key will return a clear error.
+   This is a one-time step. Subsequent deploys reuse the same secret — CDK does not overwrite values that are already set.
+   If you are applying the OpenAI-only cleanup to an existing stack, run `npx cdk diff` first and confirm how CloudFormation plans to handle the removed Anthropic secret before deploying.
 
 ### 7. Configure SES for OTP emails (when needed)
 

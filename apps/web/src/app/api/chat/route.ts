@@ -1,5 +1,6 @@
-import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
-import { CHAT_MODELS } from "@/lib/chatModels";
+import type { ChatMessage } from "@/server/chat/types";
+import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import { startAgentResponse } from "@/server/chat/openai/agent";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 type ChatRequestBody = Readonly<{
@@ -10,36 +11,10 @@ type ChatRequestBody = Readonly<{
   codeInterpreterContainerId: string | null;
 }>;
 
-type StreamAgentParams = Readonly<{
-  messages: ReadonlyArray<ChatMessage>;
-  model: string;
-  userId: string;
-  workspaceId: string;
-  timezone: string;
-  chatSessionId: string;
-  codeInterpreterContainerId: string | null;
-}>;
-
-type StartAgentResponseResult = Readonly<{
-  events: AsyncGenerator<ChatStreamEvent>;
-  responseHeaders?: Readonly<Record<string, string>>;
-}>;
-
 export type ChatRequestContext = Readonly<{
   userId: string;
   workspaceId: string;
 }>;
-
-type AgentModule = {
-  startAgentResponse: (
-    params: StreamAgentParams,
-  ) => Promise<StartAgentResponseResult>;
-};
-
-const ENV_KEY_BY_VENDOR: Record<string, string> = {
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-};
 
 export const extractChatRequestContext = (request: Request): ChatRequestContext => ({
   userId: extractUserId(request),
@@ -90,20 +65,15 @@ export const POST = async (request: Request): Promise<Response> => {
     return new Response(message === "Invalid chat request body" ? message : message, { status: 400 });
   }
 
-  const validModel = CHAT_MODELS.find((m) => m.id === body.model);
-  if (validModel === undefined) {
-    return new Response(`Unknown model: ${body.model}`, { status: 400 });
+  if (body.model !== CHAT_MODEL_ID) {
+    return new Response(`Unsupported model: ${body.model}. Expected ${CHAT_MODEL_ID}`, { status: 400 });
   }
 
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return new Response("messages array is empty", { status: 400 });
   }
 
-  const envKey = ENV_KEY_BY_VENDOR[validModel.vendor];
-  if (envKey === undefined) {
-    return new Response(`Unsupported vendor: ${validModel.vendor}`, { status: 400 });
-  }
-
+  const envKey = "OPENAI_API_KEY";
   const apiKey = process.env[envKey];
   if (apiKey === undefined || apiKey === "") {
     console.error("chat POST: %s environment variable is not set", envKey);
@@ -122,13 +92,7 @@ export const POST = async (request: Request): Promise<Response> => {
     return new Response(message, { status: 401 });
   }
 
-  const agentModule: AgentModule =
-    validModel.vendor === "anthropic"
-      ? await import("@/server/chat/anthropic/agent")
-      : await import("@/server/chat/openai/agent");
-
-  const started = await agentModule.startAgentResponse({
-    model: body.model,
+  const started = await startAgentResponse({
     messages: body.messages,
     userId,
     workspaceId,

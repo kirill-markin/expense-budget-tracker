@@ -4,7 +4,6 @@ import { Construct } from "constructs";
 export interface SecretsResult {
   sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
-  anthropicApiKeySecret: cdk.aws_secretsmanager.Secret;
 }
 
 export function secrets(scope: Construct): SecretsResult {
@@ -28,10 +27,5 @@ export function secrets(scope: Construct): SecretsResult {
     generateSecretString: { excludePunctuation: true, passwordLength: 32 },
   });
 
-  const anthropicApiKeySecret = new cdk.aws_secretsmanager.Secret(scope, "AnthropicApiKey", {
-    secretName: "expense-tracker/anthropic-api-key",
-    generateSecretString: { excludePunctuation: true, passwordLength: 32 },
-  });
-
-  return { sessionEncryptionKeySecret, openaiApiKeySecret, anthropicApiKeySecret };
+  return { sessionEncryptionKeySecret, openaiApiKeySecret };
 }
