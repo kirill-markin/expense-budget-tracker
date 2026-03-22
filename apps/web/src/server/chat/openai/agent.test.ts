@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ModelResponse } from "@openai/agents-core";
+import { CHAT_MODEL_REASONING_EFFORT } from "@/lib/chatModels";
 import type { ChatMessage } from "@/server/chat/types";
 import {
   applyOutputItemDone,
   applyOutputTextDelta,
   applyOutputTextDone,
   applyRawTextStreamEvent,
+  buildOpenAIModelSettings,
   buildHostedToolCallEvent,
   extractCodeInterpreterContainers,
   finalizeToolCallEvent,
@@ -52,6 +54,29 @@ test("getSpreadsheetAttachmentFileNames recognizes spreadsheets by extension and
   ] as const;
 
   assert.deepEqual(getSpreadsheetAttachmentFileNames(attachments), ["expenses.csv", "balances"]);
+});
+
+test("buildOpenAIModelSettings requests code interpreter outputs in responses", () => {
+  assert.deepEqual(buildOpenAIModelSettings(null), {
+    reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
+    providerData: {
+      extraBody: {
+        include: ["code_interpreter_call.outputs"],
+      },
+    },
+  });
+});
+
+test("buildOpenAIModelSettings preserves forced tool choice", () => {
+  assert.deepEqual(buildOpenAIModelSettings("code_interpreter"), {
+    reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
+    providerData: {
+      extraBody: {
+        include: ["code_interpreter_call.outputs"],
+      },
+    },
+    toolChoice: "code_interpreter",
+  });
 });
 
 test("extractCodeInterpreterContainers returns unique container IDs from hosted tool outputs", () => {

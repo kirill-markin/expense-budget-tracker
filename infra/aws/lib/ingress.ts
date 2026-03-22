@@ -30,6 +30,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
     internetFacing: true,
     securityGroup: props.albSg,
   });
+  alb.setAttribute("idle_timeout.timeout_seconds", "600");
 
   // S3 bucket for ALB access logs
   const accessLogsBucket = new s3.Bucket(scope, "AlbAccessLogs", {

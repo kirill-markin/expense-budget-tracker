@@ -1,5 +1,6 @@
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
+export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
 type ContainerAction =
   | "code_interpreter_container_created"
   | "code_interpreter_container_reused"
@@ -87,8 +88,29 @@ type ChatEvent =
     containerFileCitations?: ReadonlyArray<string>;
     stopReason?: string;
   }>
-  | Readonly<{ domain: "chat"; action: "response"; vendor: ChatVendor; turns: number; stopReason: string; durationMs: number }>
-  | Readonly<{ domain: "chat"; action: "error"; vendor: ChatVendor; error: string }>;
+  | Readonly<{
+    domain: "chat";
+    action: "response";
+    vendor: ChatVendor;
+    requestId: string;
+    turns: number;
+    stopReason: string;
+    durationMs: number;
+  }>
+  | Readonly<{
+    domain: "chat";
+    action: "error";
+    vendor: ChatVendor;
+    stage: ChatErrorStage;
+    error: string;
+    requestId?: string;
+    userId?: string;
+    workspaceId?: string;
+    model?: string;
+    messageCount?: number;
+    hasAttachments?: boolean;
+    attachmentFileNames?: ReadonlyArray<string>;
+  }>;
 
 type ApiEvent =
   | Readonly<{ domain: "api"; action: "error"; route: string; method: string; error: string }>;

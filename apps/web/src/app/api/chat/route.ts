@@ -1,10 +1,11 @@
 import OpenAI from "openai";
 
-import type { ChatMessage } from "@/server/chat/types";
-import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
+import { CHAT_MODEL_ID, CHAT_VENDOR } from "@/lib/chatModels";
 import { handleRoute } from "@/server/api/handleRoute";
 import { resetServerManagedContainer } from "@/server/chat/openai/containerState";
 import { startAgentResponse } from "@/server/chat/openai/agent";
+import { log, type ChatErrorStage } from "@/server/logger";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 type ChatRequestBody = Readonly<{
@@ -18,10 +19,181 @@ export type ChatRequestContext = Readonly<{
   workspaceId: string;
 }>;
 
+export type ChatRequestDiagnostics = Readonly<{
+  requestId: string;
+  model: string;
+  messageCount: number;
+  hasAttachments: boolean;
+  attachmentFileNames: ReadonlyArray<string>;
+  userId?: string;
+  workspaceId?: string;
+}>;
+
+type ChatErrorLogEvent = Readonly<{
+  domain: "chat";
+  action: "error";
+  vendor: typeof CHAT_VENDOR;
+  stage: ChatErrorStage;
+  error: string;
+  requestId: string;
+  userId?: string;
+  workspaceId?: string;
+  model: string;
+  messageCount: number;
+  hasAttachments: boolean;
+  attachmentFileNames: ReadonlyArray<string>;
+}>;
+
+type ChatEventStreamParams = Readonly<{
+  events: AsyncGenerator<ChatStreamEvent>;
+  heartbeatIntervalMs: number;
+  onStreamError: (error: string) => void;
+}>;
+
+export const CHAT_STREAM_HEARTBEAT_INTERVAL_MS = 15_000;
+
 export const extractChatRequestContext = (request: Request): ChatRequestContext => ({
   userId: extractUserId(request),
   workspaceId: extractWorkspaceId(request),
 });
+
+const collectChatAttachmentFileNames = (messages: ReadonlyArray<ChatMessage>): ReadonlyArray<string> => {
+  const attachmentFileNames: Array<string> = [];
+  for (const message of messages) {
+    for (const part of message.content) {
+      if (part.type === "file") {
+        attachmentFileNames.push(part.fileName);
+      }
+    }
+  }
+  return attachmentFileNames;
+};
+
+export const buildChatRequestDiagnostics = (
+  requestId: string,
+  model: string,
+  messages: ReadonlyArray<ChatMessage>,
+  userId?: string,
+  workspaceId?: string,
+): ChatRequestDiagnostics => ({
+  requestId,
+  model,
+  messageCount: messages.length,
+  hasAttachments: messages.some((message) => message.content.some((part) => part.type !== "text")),
+  attachmentFileNames: collectChatAttachmentFileNames(messages),
+  userId,
+  workspaceId,
+});
+
+export const createChatErrorLogEvent = (
+  diagnostics: ChatRequestDiagnostics,
+  stage: ChatErrorStage,
+  error: string,
+): ChatErrorLogEvent => ({
+  domain: "chat",
+  action: "error",
+  vendor: CHAT_VENDOR,
+  stage,
+  error,
+  requestId: diagnostics.requestId,
+  userId: diagnostics.userId,
+  workspaceId: diagnostics.workspaceId,
+  model: diagnostics.model,
+  messageCount: diagnostics.messageCount,
+  hasAttachments: diagnostics.hasAttachments,
+  attachmentFileNames: diagnostics.attachmentFileNames,
+});
+
+const createSseDataLine = (event: ChatStreamEvent): string =>
+  `data: ${JSON.stringify(event)}\n\n`;
+
+const createSseHeartbeatLine = (): string =>
+  ": keep-alive\n\n";
+
+export const createChatEventStream = (params: ChatEventStreamParams): ReadableStream<Uint8Array> => {
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      let isClosed = false;
+      let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const clearHeartbeat = (): void => {
+        if (heartbeatTimer !== null) {
+          clearTimeout(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+      };
+
+      const closeStream = (): void => {
+        clearHeartbeat();
+        if (isClosed) {
+          return;
+        }
+        isClosed = true;
+        controller.close();
+      };
+
+      const enqueueChunk = (chunk: string): void => {
+        if (isClosed) {
+          throw new Error("Chat stream is already closed");
+        }
+
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch (error) {
+          clearHeartbeat();
+          isClosed = true;
+          throw error;
+        }
+      };
+
+      const scheduleHeartbeat = (): void => {
+        clearHeartbeat();
+        if (isClosed) {
+          return;
+        }
+
+        heartbeatTimer = setTimeout(() => {
+          try {
+            enqueueChunk(createSseHeartbeatLine());
+            scheduleHeartbeat();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            params.onStreamError(message);
+            closeStream();
+          }
+        }, params.heartbeatIntervalMs);
+      };
+
+      scheduleHeartbeat();
+
+      try {
+        for await (const event of params.events) {
+          clearHeartbeat();
+          enqueueChunk(createSseDataLine(event));
+          if (event.type === "done") {
+            closeStream();
+            return;
+          }
+          scheduleHeartbeat();
+        }
+      } catch (error) {
+        clearHeartbeat();
+        const message = error instanceof Error ? error.message : String(error);
+        params.onStreamError(message);
+        if (!isClosed) {
+          enqueueChunk(createSseDataLine({ type: "error", message }));
+        }
+      }
+
+      closeStream();
+    },
+    cancel() {
+      return;
+    },
+  });
+};
 
 export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
   if (typeof body !== "object" || body === null) {
@@ -63,10 +235,13 @@ export const POST = async (request: Request): Promise<Response> => {
     return new Response("messages array is empty", { status: 400 });
   }
 
+  const requestId = crypto.randomUUID();
+  const requestDiagnostics = buildChatRequestDiagnostics(requestId, body.model, body.messages);
+
   const envKey = "OPENAI_API_KEY";
   const apiKey = process.env[envKey];
   if (apiKey === undefined || apiKey === "") {
-    console.error("chat POST: %s environment variable is not set", envKey);
+    log(createChatErrorLogEvent(requestDiagnostics, "config", `${envKey} environment variable is not set`));
     return new Response(`${envKey} environment variable is not set`, { status: 500 });
   }
 
@@ -78,34 +253,32 @@ export const POST = async (request: Request): Promise<Response> => {
     workspaceId = context.workspaceId;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("chat POST: auth header extraction failed: %s", message);
+    log(createChatErrorLogEvent(requestDiagnostics, "auth", message));
     return new Response(message, { status: 401 });
   }
 
-  const started = await startAgentResponse({
-    messages: body.messages,
-    userId,
-    workspaceId,
-    timezone: body.timezone,
-    requestId: crypto.randomUUID(),
-  });
+  const diagnostics = buildChatRequestDiagnostics(requestId, body.model, body.messages, userId, workspaceId);
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const event of started.events) {
-          const line = `data: ${JSON.stringify(event)}\n\n`;
-          controller.enqueue(encoder.encode(line));
-          if (event.type === "done") break;
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error("chat POST: stream error: %s", message);
-        const errorLine = `data: ${JSON.stringify({ type: "error", message })}\n\n`;
-        controller.enqueue(encoder.encode(errorLine));
-      }
-      controller.close();
+  let started: Awaited<ReturnType<typeof startAgentResponse>>;
+  try {
+    started = await startAgentResponse({
+      messages: body.messages,
+      userId,
+      workspaceId,
+      timezone: body.timezone,
+      requestId,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(createChatErrorLogEvent(diagnostics, "agent", message));
+    throw err;
+  }
+
+  const stream = createChatEventStream({
+    events: started.events,
+    heartbeatIntervalMs: CHAT_STREAM_HEARTBEAT_INTERVAL_MS,
+    onStreamError: (error: string): void => {
+      log(createChatErrorLogEvent(diagnostics, "stream", error));
     },
   });
 

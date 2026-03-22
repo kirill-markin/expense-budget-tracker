@@ -165,6 +165,39 @@ export const upsertToolCallContent = (
   return [...content, toolCall];
 };
 
+export const applyAssistantError = (
+  messages: ReadonlyArray<StoredMessage>,
+  errorText: string,
+  timestamp: number,
+): ReadonlyArray<StoredMessage> => {
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  const errorMessage: StoredMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: errorText }],
+    timestamp,
+    isError: true,
+  };
+
+  const last = messages[messages.length - 1];
+  if (last.role !== "assistant") {
+    return [...messages, errorMessage];
+  }
+
+  if (last.content.length === 0) {
+    const updated: StoredMessage = {
+      ...last,
+      content: errorMessage.content,
+      isError: true,
+    };
+    return [...messages.slice(0, -1), updated];
+  }
+
+  return [...messages, errorMessage];
+};
+
 export const useChatHistory = (workspaceId: string): ChatHistoryState => {
   const [messages, setMessages] = useState<ReadonlyArray<StoredMessage>>([]);
   const loadedRef = useRef<boolean>(false);
@@ -233,23 +266,7 @@ export const useChatHistory = (workspaceId: string): ChatHistoryState => {
 
   const markAssistantError = useCallback((errorText: string): void => {
     setMessages((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      if (last.role !== "assistant") {
-        const errorMsg: StoredMessage = {
-          role: "assistant",
-          content: [{ type: "text", text: errorText }],
-          timestamp: Date.now(),
-          isError: true,
-        };
-        return [...prev, errorMsg];
-      }
-      const updated: StoredMessage = {
-        ...last,
-        content: [{ type: "text", text: errorText }],
-        isError: true,
-      };
-      return [...prev.slice(0, -1), updated];
+      return applyAssistantError(prev, errorText, Date.now());
     });
   }, []);
 

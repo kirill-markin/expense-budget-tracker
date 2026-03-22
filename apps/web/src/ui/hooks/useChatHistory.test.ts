@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { ContentPart } from "@/server/chat/types";
 import {
+  applyAssistantError,
   clearStoredMessages,
   loadStoredChatState,
   loadStoredMessages,
@@ -190,6 +191,81 @@ test("upsertToolCallContent appends when the existing history has no matching id
         providerStatus: "searching",
         input: "{\"query\":\"btc price\"}",
         output: null,
+      },
+    ],
+  );
+});
+
+test("applyAssistantError preserves partial assistant content and appends a separate error", () => {
+  const existingMessages: ReadonlyArray<StoredMessage> = [
+    createMessage("user question"),
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Partial answer" }],
+      timestamp: 2,
+      isError: false,
+    },
+  ];
+
+  assert.deepEqual(
+    applyAssistantError(existingMessages, "Request failed: network error", 3),
+    [
+      createMessage("user question"),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Partial answer" }],
+        timestamp: 2,
+        isError: false,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Request failed: network error" }],
+        timestamp: 3,
+        isError: true,
+      },
+    ],
+  );
+});
+
+test("applyAssistantError reuses an empty assistant placeholder", () => {
+  const existingMessages: ReadonlyArray<StoredMessage> = [
+    createMessage("user question"),
+    {
+      role: "assistant",
+      content: [],
+      timestamp: 2,
+      isError: false,
+    },
+  ];
+
+  assert.deepEqual(
+    applyAssistantError(existingMessages, "Request failed: network error", 3),
+    [
+      createMessage("user question"),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Request failed: network error" }],
+        timestamp: 2,
+        isError: true,
+      },
+    ],
+  );
+});
+
+test("applyAssistantError appends an error when the last message is not assistant", () => {
+  const existingMessages: ReadonlyArray<StoredMessage> = [
+    createMessage("user question"),
+  ];
+
+  assert.deepEqual(
+    applyAssistantError(existingMessages, "Request failed: network error", 3),
+    [
+      createMessage("user question"),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Request failed: network error" }],
+        timestamp: 3,
+        isError: true,
       },
     ],
   );

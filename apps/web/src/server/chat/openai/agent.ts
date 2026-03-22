@@ -172,6 +172,7 @@ const CODE_INTERPRETER_CONTAINER_PREFIX = "expense-chat";
 const CODE_INTERPRETER_CONTAINER_MINUTES = 20;
 const MAX_LOG_SNIPPET_LENGTH = 400;
 const TERMINAL_TOOL_PROVIDER_STATUSES = new Set(["completed", "failed", "incomplete"]);
+const CODE_INTERPRETER_OUTPUT_INCLUDE = ["code_interpreter_call.outputs"] as const;
 
 const buildOpenaiInstructions = (timezone: string, hasPersistentContainer: boolean): string =>
   buildSystemInstructions(timezone) +
@@ -181,6 +182,18 @@ const buildOpenaiInstructions = (timezone: string, hasPersistentContainer: boole
     ? "\nFiles previously attached earlier in this same chat remain available through code execution while the current code interpreter container is active."
     : "") +
   "\nYou also have web search. Use it to look up current exchange rates, financial news, tax rules, or any other real-time information.";
+
+export const buildOpenAIModelSettings = (
+  forcedToolChoice: "code_interpreter" | null,
+): Readonly<Record<string, unknown>> => ({
+  reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
+  providerData: {
+    extraBody: {
+      include: CODE_INTERPRETER_OUTPUT_INCLUDE,
+    },
+  },
+  ...(forcedToolChoice === null ? {} : { toolChoice: forcedToolChoice }),
+});
 
 const getLastUserMessage = (
   messages: ReadonlyArray<ChatMessage>,
@@ -996,10 +1009,7 @@ export const startAgentResponse = async (
     name: "Expense Assistant",
     instructions: buildOpenaiInstructions(params.timezone, true),
     model: CHAT_MODEL_ID,
-    modelSettings: {
-      reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
-      ...(forcedToolChoice === null ? {} : { toolChoice: forcedToolChoice }),
-    },
+    modelSettings: buildOpenAIModelSettings(forcedToolChoice),
     tools: [
       pgQueryTool,
       codeInterpreterTool({ container: effectiveContainerId }),
@@ -1154,10 +1164,31 @@ export const startAgentResponse = async (
         containerFileCitations: responseSummary.containerFileCitations,
         stopReason: "done",
       });
-      log({ domain: "chat", action: "response", vendor: "openai", turns: toolCalls, stopReason: "done", durationMs: Date.now() - requestStart });
+      log({
+        domain: "chat",
+        action: "response",
+        vendor: "openai",
+        requestId: params.requestId,
+        turns: toolCalls,
+        stopReason: "done",
+        durationMs: Date.now() - requestStart,
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      log({ domain: "chat", action: "error", vendor: "openai", error: errorMessage });
+      log({
+        domain: "chat",
+        action: "error",
+        vendor: "openai",
+        stage: "agent",
+        error: errorMessage,
+        requestId: params.requestId,
+        userId: params.userId,
+        workspaceId: params.workspaceId,
+        model: CHAT_MODEL_ID,
+        messageCount: params.messages.length,
+        hasAttachments,
+        attachmentFileNames,
+      });
       throw err;
     }
 
