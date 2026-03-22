@@ -106,6 +106,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     "infra/**",
     "!infra/docker",
     "infra/docker/**",
+    "!infra/docker/Dockerfile.migrate",
     "!infra/docker/migrate-entrypoint.sh",
     "!scripts",
     "scripts/**",
