@@ -34,6 +34,9 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /Use plain text only/i);
   assert.match(instructions, /Do not use Markdown/i);
   assert.match(instructions, /Do not use .*tables/i);
+  assert.match(instructions, /Create pending, completed, and preauth rows/i);
+  assert.match(instructions, /Treat preauth like pending because it often posts later/i);
+  assert.match(instructions, /Skip declined, cancelled, and reverted rows/i);
 });
 
 test("TOOL_DESCRIPTION documents multi-statement scripts and statements output", () => {

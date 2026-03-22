@@ -151,7 +151,7 @@ Pre-question checklist for EVERY entry:
 - account_id resolved? If transaction currency ≠ screenshot account currency → find provider's account in that currency
 - category resolved? Check Steps 2-3 results first — match to user's existing categories. Only ask if not found in history
 - kind clear? (spend / income / transfer)
-- non-posted rows filtered out? Skip preauth, declined, cancelled rows
+- bank status handled? Create pending, completed, and preauth rows. Treat preauth like pending because it often posts later. Skip declined, cancelled, and reverted rows
 - transfer complete? Source + destination accounts, both amounts. Cross-currency → MUST ask destination amount
 - internal conversion? Currency conversions within one provider = transfer between its currency accounts — always include
 - date/time complete? If any part is missing (day, month, or year), infer the date closest to today. If the result is >60 days from today, ask the user to confirm
