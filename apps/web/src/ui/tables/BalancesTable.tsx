@@ -17,6 +17,7 @@ import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { useFormat } from "@/ui/FormatProvider";
 
 import budgetStyles from "./BudgetTable.module.css";
+import { compareDaysAgoTimestamps, formatDaysAgoLabel, getDaysAgoValue } from "./balancesTableDaysAgo";
 import { CellSelectOverlay } from "./CellSelectOverlay";
 import { DataTable } from "./data-table/DataTable";
 import tableStyles from "./TableUi.module.css";
@@ -84,19 +85,6 @@ const formatDate = (isoString: string): string => {
   return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 };
 
-const daysAgo = (isoString: string): number => {
-  const then = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - then.getTime();
-  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
-};
-
-const daysAgoLabel = (days: number, t: (key: string, opts?: Record<string, string | number>) => string): string => {
-  if (days === 0) return t("balances.daysAgoToday");
-  if (days === 1) return t("balances.daysAgoOne");
-  return t("balances.daysAgoMany", { count: days });
-};
-
 const compareTotals = (a: CurrencyTotal, b: CurrencyTotal, key: TotalsSortKey, dir: "asc" | "desc"): number => {
   let cmp = 0;
   switch (key) {
@@ -141,7 +129,7 @@ const compareLiquidityTotals = (a: LiquidityTotal, b: LiquidityTotal, key: Liqui
   return dir === "asc" ? cmp : -cmp;
 };
 
-const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir: "asc" | "desc"): number => {
+const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir: "asc" | "desc", now: Date): number => {
   let cmp = 0;
   switch (key) {
     case "accountId":
@@ -159,13 +147,15 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
     case "balanceUsd":
       cmp = (a.balanceUsd ?? -Infinity) - (b.balanceUsd ?? -Infinity);
       break;
-    case "lastTransactionTs":
-    case "daysAgo": {
+    case "lastTransactionTs": {
       const aTs = a.lastTransactionTs ?? "";
       const bTs = b.lastTransactionTs ?? "";
       cmp = aTs.localeCompare(bTs);
       break;
     }
+    case "daysAgo":
+      cmp = compareDaysAgoTimestamps(a.lastTransactionTs, b.lastTransactionTs, now);
+      break;
     case "status":
       cmp = a.status.localeCompare(b.status);
       break;
@@ -303,6 +293,7 @@ export const BalancesTable = (props: Props): ReactElement => {
 
   const sortedAccounts = useMemo<ReadonlyArray<AccountRow>>(() => {
     const filtered = showInactive ? localAccounts : localAccounts.filter((a) => a.status === "active");
+    const now = new Date();
     return [...filtered].sort((a, b) => {
       if (showInactive) {
         const aInactive = a.status !== "active" ? 1 : 0;
@@ -310,7 +301,7 @@ export const BalancesTable = (props: Props): ReactElement => {
         if (aInactive !== bInactive) return aInactive - bInactive;
       }
       for (const entry of accountsSort.sort) {
-        const cmp = compareAccounts(a, b, entry.key as AccountsSortKey, entry.dir);
+        const cmp = compareAccounts(a, b, entry.key as AccountsSortKey, entry.dir, now);
         if (cmp !== 0) return cmp;
       }
       return 0;
@@ -580,11 +571,11 @@ export const BalancesTable = (props: Props): ReactElement => {
       key: "daysAgo",
       header: t("balances.daysAgo"),
       renderCell: (a: AccountRow): ReactElement => {
-        const days = a.lastTransactionTs !== null ? daysAgo(a.lastTransactionTs) : null;
+        const days = a.lastTransactionTs !== null ? getDaysAgoValue(a.lastTransactionTs, new Date()) : null;
         const isStale = a.overdue && a.status === "active";
         return (
           <td key="daysAgo" className={cn(tableStyles.cell, maskClass, isStale ? tableStyles.stale : "")}>
-            {days !== null ? daysAgoLabel(days, t) : "\u2014"}
+            {days !== null ? formatDaysAgoLabel(days, t) : "\u2014"}
           </td>
         );
       },
