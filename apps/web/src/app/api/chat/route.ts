@@ -1,5 +1,9 @@
+import OpenAI from "openai";
+
 import type { ChatMessage } from "@/server/chat/types";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import { handleRoute } from "@/server/api/handleRoute";
+import { resetServerManagedContainer } from "@/server/chat/openai/containerState";
 import { startAgentResponse } from "@/server/chat/openai/agent";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -7,8 +11,6 @@ type ChatRequestBody = Readonly<{
   messages: ReadonlyArray<ChatMessage>;
   model: string;
   timezone: string;
-  chatSessionId: string;
-  codeInterpreterContainerId: string | null;
 }>;
 
 export type ChatRequestContext = Readonly<{
@@ -36,23 +38,11 @@ export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
   if (typeof candidate.timezone !== "string" || candidate.timezone.length === 0) {
     throw new Error("timezone must be a non-empty string");
   }
-  if (typeof candidate.chatSessionId !== "string" || candidate.chatSessionId.length === 0) {
-    throw new Error("chatSessionId must be a non-empty string");
-  }
-  if (
-    candidate.codeInterpreterContainerId !== null
-    && candidate.codeInterpreterContainerId !== undefined
-    && typeof candidate.codeInterpreterContainerId !== "string"
-  ) {
-    throw new Error("codeInterpreterContainerId must be a string or null");
-  }
 
   return {
     messages: candidate.messages,
     model: candidate.model,
     timezone: candidate.timezone,
-    chatSessionId: candidate.chatSessionId,
-    codeInterpreterContainerId: candidate.codeInterpreterContainerId ?? null,
   };
 };
 
@@ -97,8 +87,7 @@ export const POST = async (request: Request): Promise<Response> => {
     userId,
     workspaceId,
     timezone: body.timezone,
-    chatSessionId: body.chatSessionId,
-    codeInterpreterContainerId: body.codeInterpreterContainerId,
+    requestId: crypto.randomUUID(),
   });
 
   const encoder = new TextEncoder();
@@ -125,7 +114,16 @@ export const POST = async (request: Request): Promise<Response> => {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
-      ...(started.responseHeaders ?? {}),
     },
   });
 };
+
+export const DELETE = async (request: Request): Promise<Response> =>
+  handleRoute(
+    { route: "/api/chat", method: "DELETE", internalErrorMessage: "Chat reset failed" },
+    async (): Promise<Response> => {
+      const context = extractChatRequestContext(request);
+      await resetServerManagedContainer(new OpenAI(), crypto.randomUUID(), context.userId, context.workspaceId);
+      return Response.json({ ok: true });
+    },
+  );

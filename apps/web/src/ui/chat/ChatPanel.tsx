@@ -12,7 +12,6 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
-import { CODE_INTERPRETER_CONTAINER_HEADER_NAME } from "@/lib/chatSession";
 import { CHAT_MODEL_BADGE_LABEL, CHAT_MODEL_ID } from "@/lib/chatModels";
 import { cn } from "@/lib/cn";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
@@ -181,8 +180,6 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const {
     messages,
-    chatSessionId,
-    codeInterpreterContainerId,
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
@@ -190,7 +187,6 @@ export const ChatPanel = (props: Props): ReactElement => {
     completeToolCall,
     finalizeAssistant,
     markAssistantError,
-    setCodeInterpreterContainerId,
     clearHistory,
   } = useChatHistory(workspaceId);
 
@@ -351,8 +347,6 @@ export const ChatPanel = (props: Props): ReactElement => {
       model: CHAT_MODEL_ID,
       messages: allMessages,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      chatSessionId,
-      codeInterpreterContainerId,
     });
 
     if (requestBody.length > MAX_BODY_BYTES) {
@@ -371,11 +365,6 @@ export const ChatPanel = (props: Props): ReactElement => {
         body: requestBody,
         signal: abortController.signal,
       });
-
-      const responseContainerId = response.headers.get(CODE_INTERPRETER_CONTAINER_HEADER_NAME);
-      if (responseContainerId !== null && responseContainerId.length > 0) {
-        setCodeInterpreterContainerId(responseContainerId);
-      }
 
       if (!response.ok) {
         const rawError = await response.text();
@@ -421,8 +410,6 @@ export const ChatPanel = (props: Props): ReactElement => {
           if (event.type === "delta") {
             receivedContent = true;
             appendAssistantChunk(event.text);
-          } else if (event.type === "container_id") {
-            setCodeInterpreterContainerId(event.containerId);
           } else if (event.type === "tool_call") {
             receivedContent = true;
             if (event.status === "started") {
@@ -461,8 +448,6 @@ export const ChatPanel = (props: Props): ReactElement => {
     inputText,
     pendingAttachments,
     messages,
-    chatSessionId,
-    codeInterpreterContainerId,
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
@@ -470,7 +455,6 @@ export const ChatPanel = (props: Props): ReactElement => {
     completeToolCall,
     finalizeAssistant,
     markAssistantError,
-    setCodeInterpreterContainerId,
     t,
   ]);
 
@@ -511,13 +495,26 @@ export const ChatPanel = (props: Props): ReactElement => {
           <button
             type="button"
             className={styles.closeButton}
-            onClick={() => {
+            onClick={async () => {
               if (abortRef.current !== null) {
                 abortRef.current.abort();
                 abortRef.current = null;
               }
               setIsStreaming(false);
-              clearHistory();
+              try {
+                const response = await fetchWithCsrf("/api/chat", {
+                  method: "DELETE",
+                });
+                if (!response.ok) {
+                  const rawError = await response.text();
+                  markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError, t)}`);
+                  return;
+                }
+                clearHistory();
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                markAssistantError(t("chat.errorFailed", { message }));
+              }
             }}
           >
             {t("chat.clear")}

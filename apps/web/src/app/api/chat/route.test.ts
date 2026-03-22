@@ -31,44 +31,40 @@ test("extractChatRequestContext rejects requests without a workspace header", ()
   );
 });
 
-test("parseChatRequestBody accepts chatSessionId and nullable codeInterpreterContainerId", () => {
+test("parseChatRequestBody accepts message payload without client container identifiers", () => {
   assert.deepEqual(parseChatRequestBody({
     messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
     model: CHAT_MODEL_ID,
     timezone: "Europe/Madrid",
-    chatSessionId: "chat-1",
-    codeInterpreterContainerId: null,
   }), {
     messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
     model: CHAT_MODEL_ID,
     timezone: "Europe/Madrid",
-    chatSessionId: "chat-1",
-    codeInterpreterContainerId: null,
   });
 });
 
-test("parseChatRequestBody rejects missing chatSessionId", () => {
-  assert.throws(
-    () => parseChatRequestBody({
-      messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-      model: CHAT_MODEL_ID,
-      timezone: "Europe/Madrid",
-      codeInterpreterContainerId: null,
-    }),
-    /chatSessionId must be a non-empty string/,
-  );
+test("parseChatRequestBody ignores legacy client container fields", () => {
+  assert.deepEqual(parseChatRequestBody({
+    messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    model: CHAT_MODEL_ID,
+    timezone: "Europe/Madrid",
+    chatSessionId: "legacy-chat-id",
+    codeInterpreterContainerId: "legacy-container-id",
+  }), {
+    messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    model: CHAT_MODEL_ID,
+    timezone: "Europe/Madrid",
+  });
 });
 
-test("parseChatRequestBody rejects non-string codeInterpreterContainerId", () => {
+test("parseChatRequestBody rejects missing timezone", () => {
   assert.throws(
     () => parseChatRequestBody({
       messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
       model: CHAT_MODEL_ID,
-      timezone: "Europe/Madrid",
-      chatSessionId: "chat-1",
-      codeInterpreterContainerId: 123,
+      timezone: "",
     }),
-    /codeInterpreterContainerId must be a string or null/,
+    /timezone must be a non-empty string/,
   );
 });
 
@@ -84,8 +80,6 @@ test("POST rejects models other than the pinned OpenAI model", async () => {
       messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
       model: "gpt-4.1",
       timezone: "Europe/Madrid",
-      chatSessionId: "chat-1",
-      codeInterpreterContainerId: null,
     }),
   });
 

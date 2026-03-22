@@ -5,8 +5,10 @@ type ContainerAction =
   | "code_interpreter_container_reused"
   | "code_interpreter_container_recreated"
   | "code_interpreter_container_not_found"
+  | "code_interpreter_container_retrieve_failed"
   | "code_interpreter_container_expired"
-  | "code_interpreter_container_session_mismatch"
+  | "code_interpreter_container_deleted"
+  | "code_interpreter_container_delete_failed"
   | "code_interpreter_container_file_added"
   | "code_interpreter_container_inventory";
 
@@ -16,7 +18,7 @@ type ChatEvent =
     action: "request";
     vendor: ChatVendor;
     model: string;
-    chatSessionId: string;
+    requestId: string;
     messageCount: number;
     hasAttachments: boolean;
     attachmentCount?: number;
@@ -24,7 +26,6 @@ type ChatEvent =
     attachmentMediaTypes?: ReadonlyArray<string>;
     spreadsheetAttachmentFileNames?: ReadonlyArray<string>;
     forcedToolChoice?: string | null;
-    codeInterpreterContainerId?: string | null;
   }>
   | Readonly<{ domain: "chat"; action: "turn_start"; vendor: ChatVendor; turn: number }>
   | Readonly<{ domain: "chat"; action: "tool_call"; vendor: ChatVendor; tool: string; status: ToolStatus; durationMs?: number }>
@@ -32,7 +33,7 @@ type ChatEvent =
     domain: "chat";
     action: ContainerAction;
     vendor: ChatVendor;
-    chatSessionId: string;
+    requestId: string;
     codeInterpreterContainerId?: string | null;
     effectiveContainerId?: string | null;
     containerName?: string;
@@ -42,7 +43,6 @@ type ChatEvent =
     providerFileId?: string;
     containerFilePaths?: ReadonlyArray<string>;
     responseId?: string;
-    requestId?: string;
   }>
   | Readonly<{
     domain: "chat";
@@ -76,7 +76,7 @@ type ChatEvent =
     domain: "chat";
     action: "response_summary";
     vendor: ChatVendor;
-    chatSessionId: string;
+    requestId: string;
     codeInterpreterContainerId?: string | null;
     finalOutputItemTypes: ReadonlyArray<string>;
     hasCodeInterpreterCall?: boolean;

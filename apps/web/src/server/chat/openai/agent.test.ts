@@ -7,7 +7,6 @@ import {
   extractCodeInterpreterContainers,
   getLatestUserFileAttachments,
   getSpreadsheetAttachmentFileNames,
-  shouldUseExplicitOpenAIContainer,
   summarizeOpenAIResponse,
 } from "./agent";
 
@@ -98,16 +97,6 @@ test("extractCodeInterpreterContainers returns unique container IDs from hosted 
     { containerId: "ctr-1", responseId: "resp-2", requestId: "req-2" },
     { containerId: "ctr-2", responseId: "resp-2", requestId: "req-2" },
   ]);
-});
-
-test("shouldUseExplicitOpenAIContainer depends on current attachments or a stored container id", () => {
-  const attachments = [
-    { type: "file", fileName: "report.csv", mediaType: "text/csv", base64Data: "MQ==" },
-  ] as const;
-
-  assert.equal(shouldUseExplicitOpenAIContainer([], null), false);
-  assert.equal(shouldUseExplicitOpenAIContainer(attachments, null), true);
-  assert.equal(shouldUseExplicitOpenAIContainer([], "container-1"), true);
 });
 
 test("summarizeOpenAIResponse extracts code interpreter and message diagnostics", () => {

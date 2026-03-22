@@ -3,7 +3,6 @@ import type { ModelResponse } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
-import { CODE_INTERPRETER_CONTAINER_HEADER_NAME } from "@/lib/chatSession";
 import type {
   ChatMessage,
   ChatStreamEvent,
@@ -18,6 +17,7 @@ import {
   summarizeContent,
 } from "@/server/chat/shared";
 import { log } from "@/server/logger";
+import { resolveServerManagedContainer } from "./containerState";
 import { pgQueryTool, type AgentContext } from "./tools";
 
 // Agents SDK protocol format — NOT the Responses API wire format.
@@ -58,7 +58,6 @@ type SpreadsheetContainerRef = Readonly<{
 
 type StartAgentResponseResult = Readonly<{
   events: AsyncGenerator<ChatStreamEvent>;
-  responseHeaders?: Readonly<Record<string, string>>;
 }>;
 
 type OpenAIMessageOutputItem = Readonly<{
@@ -151,16 +150,8 @@ const truncateForLog = (value: string | null | undefined): string | null => {
   return value.slice(0, MAX_LOG_SNIPPET_LENGTH) + "...[truncated]";
 };
 
-export const buildOpenAIContainerName = (chatSessionId: string): string =>
-  `${CODE_INTERPRETER_CONTAINER_PREFIX}-${chatSessionId}`;
-
-const getErrorStatus = (error: unknown): number | null => {
-  if (typeof error !== "object" || error === null || !("status" in error)) {
-    return null;
-  }
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : null;
-};
+export const buildOpenAIContainerName = (requestId: string): string =>
+  `${CODE_INTERPRETER_CONTAINER_PREFIX}-${requestId}`;
 
 export const isOpenAIContainerExpired = (
   container: Awaited<ReturnType<OpenAI["containers"]["retrieve"]>>,
@@ -170,107 +161,9 @@ export const isOpenAIContainerExpired = (
   return Date.now() >= (anchorSeconds + minutes * 60) * 1000;
 };
 
-export const shouldUseExplicitOpenAIContainer = (
-  attachments: ReadonlyArray<FileContentPart>,
-  codeInterpreterContainerId: string | null,
-): boolean => attachments.length > 0 || codeInterpreterContainerId !== null;
-
-const createOpenAIContainer = async (
-  client: OpenAI,
-  chatSessionId: string,
-  action: "code_interpreter_container_created" | "code_interpreter_container_recreated",
-  codeInterpreterContainerId: string | null,
-): Promise<string> => {
-  const containerName = buildOpenAIContainerName(chatSessionId);
-  const container = await client.containers.create({
-    name: containerName,
-    expires_after: {
-      anchor: "last_active_at",
-      minutes: CODE_INTERPRETER_CONTAINER_MINUTES,
-    },
-  });
-  log({
-    domain: "chat",
-    action,
-    vendor: "openai",
-    chatSessionId,
-    codeInterpreterContainerId,
-    effectiveContainerId: container.id,
-    containerName,
-  });
-  return container.id;
-};
-
-const resolveOpenAIContainer = async (
-  client: OpenAI,
-  chatSessionId: string,
-  codeInterpreterContainerId: string | null,
-): Promise<string> => {
-  if (codeInterpreterContainerId === null) {
-    return createOpenAIContainer(client, chatSessionId, "code_interpreter_container_created", null);
-  }
-
-  try {
-    const container = await client.containers.retrieve(codeInterpreterContainerId);
-    const expectedName = buildOpenAIContainerName(chatSessionId);
-
-    if (container.name !== expectedName) {
-      log({
-        domain: "chat",
-        action: "code_interpreter_container_session_mismatch",
-        vendor: "openai",
-        chatSessionId,
-        codeInterpreterContainerId,
-        effectiveContainerId: codeInterpreterContainerId,
-        containerName: container.name,
-        reason: `expected ${expectedName}`,
-      });
-      return createOpenAIContainer(client, chatSessionId, "code_interpreter_container_recreated", codeInterpreterContainerId);
-    }
-
-    if (container.status !== "active" || isOpenAIContainerExpired(container)) {
-      log({
-        domain: "chat",
-        action: "code_interpreter_container_expired",
-        vendor: "openai",
-        chatSessionId,
-        codeInterpreterContainerId,
-        effectiveContainerId: codeInterpreterContainerId,
-        containerName: container.name,
-        reason: container.status,
-      });
-      return createOpenAIContainer(client, chatSessionId, "code_interpreter_container_recreated", codeInterpreterContainerId);
-    }
-
-    log({
-      domain: "chat",
-      action: "code_interpreter_container_reused",
-      vendor: "openai",
-      chatSessionId,
-      codeInterpreterContainerId,
-      effectiveContainerId: codeInterpreterContainerId,
-      containerName: container.name,
-    });
-    return codeInterpreterContainerId;
-  } catch (error) {
-    if (getErrorStatus(error) === 404) {
-      log({
-        domain: "chat",
-        action: "code_interpreter_container_not_found",
-        vendor: "openai",
-        chatSessionId,
-        codeInterpreterContainerId,
-        effectiveContainerId: codeInterpreterContainerId,
-      });
-      return createOpenAIContainer(client, chatSessionId, "code_interpreter_container_recreated", codeInterpreterContainerId);
-    }
-    throw error;
-  }
-};
-
 const addFilesToOpenAIContainer = async (
   client: OpenAI,
-  chatSessionId: string,
+  requestId: string,
   containerId: string,
   attachments: ReadonlyArray<FileContentPart>,
 ): Promise<void> => {
@@ -282,7 +175,7 @@ const addFilesToOpenAIContainer = async (
       domain: "chat",
       action: "code_interpreter_container_file_added",
       vendor: "openai",
-      chatSessionId,
+      requestId,
       effectiveContainerId: containerId,
       attachmentFileName: attachment.fileName,
     });
@@ -324,7 +217,7 @@ export const extractCodeInterpreterContainers = (
 
 const verifySpreadsheetContainers = async (
   client: OpenAI,
-  chatSessionId: string,
+  requestId: string,
   effectiveContainerId: string | null,
   responses: ReadonlyArray<ModelResponse>,
   spreadsheetAttachmentFileNames: ReadonlyArray<string>,
@@ -361,11 +254,10 @@ const verifySpreadsheetContainers = async (
         domain: "chat",
         action: "code_interpreter_container_inventory",
         vendor: "openai",
-        chatSessionId,
+        requestId,
         effectiveContainerId: effectiveContainerId ?? container.containerId,
         attachmentFileNames: spreadsheetAttachmentFileNames,
         responseId: container.responseId,
-        requestId: container.requestId,
         containerFilePaths: files.data.map((file) => file.path),
       });
     } catch (error) {
@@ -386,7 +278,7 @@ const verifySpreadsheetContainers = async (
 
 const listOpenAIContainerInventory = async (
   client: OpenAI,
-  chatSessionId: string,
+  requestId: string,
   containerId: string,
   attachmentFileNames: ReadonlyArray<string>,
 ): Promise<void> => {
@@ -395,7 +287,7 @@ const listOpenAIContainerInventory = async (
     domain: "chat",
     action: "code_interpreter_container_inventory",
     vendor: "openai",
-    chatSessionId,
+    requestId,
     effectiveContainerId: containerId,
     attachmentFileNames,
     containerFilePaths: files.data.map((file) => file.path),
@@ -499,8 +391,7 @@ export type StreamAgentParams = Readonly<{
   userId: string;
   workspaceId: string;
   timezone: string;
-  chatSessionId: string;
-  codeInterpreterContainerId: string | null;
+  requestId: string;
 }>;
 
 const getMessageOutputParts = (
@@ -581,28 +472,29 @@ export const startAgentResponse = async (
   const attachmentFileNames = latestFileAttachments.map((part) => part.fileName);
   const attachmentMediaTypes = latestFileAttachments.map((part) => part.mediaType);
   const spreadsheetAttachmentFileNames = getSpreadsheetAttachmentFileNames(latestFileAttachments);
-  const shouldUseExplicitContainer = shouldUseExplicitOpenAIContainer(
-    latestFileAttachments,
-    params.codeInterpreterContainerId,
+  const effectiveContainerId = await resolveServerManagedContainer(
+    client,
+    params.requestId,
+    params.userId,
+    params.workspaceId,
+    buildOpenAIContainerName,
+    isOpenAIContainerExpired,
   );
-  const effectiveContainerId = shouldUseExplicitContainer
-    ? await resolveOpenAIContainer(client, params.chatSessionId, params.codeInterpreterContainerId)
-    : null;
   const forcedToolChoice = spreadsheetAttachmentFileNames.length > 0 ? "code_interpreter" : null;
 
-  if (effectiveContainerId !== null && latestFileAttachments.length > 0) {
-    await addFilesToOpenAIContainer(client, params.chatSessionId, effectiveContainerId, latestFileAttachments);
-    await listOpenAIContainerInventory(client, params.chatSessionId, effectiveContainerId, attachmentFileNames);
+  if (latestFileAttachments.length > 0) {
+    await addFilesToOpenAIContainer(client, params.requestId, effectiveContainerId, latestFileAttachments);
+    await listOpenAIContainerInventory(client, params.requestId, effectiveContainerId, attachmentFileNames);
   }
 
   const agent = new Agent<AgentContext>({
     name: "Expense Assistant",
-    instructions: buildOpenaiInstructions(params.timezone, effectiveContainerId !== null),
+    instructions: buildOpenaiInstructions(params.timezone, true),
     model: CHAT_MODEL_ID,
     modelSettings: forcedToolChoice === null ? {} : { toolChoice: forcedToolChoice },
     tools: [
       pgQueryTool,
-      effectiveContainerId === null ? codeInterpreterTool() : codeInterpreterTool({ container: effectiveContainerId }),
+      codeInterpreterTool({ container: effectiveContainerId }),
       webSearchTool({ searchContextSize: "medium" }),
     ],
   });
@@ -621,7 +513,7 @@ export const startAgentResponse = async (
     action: "request",
     vendor: "openai",
     model: CHAT_MODEL_ID,
-    chatSessionId: params.chatSessionId,
+    requestId: params.requestId,
     messageCount: params.messages.length,
     hasAttachments,
     attachmentCount: latestFileAttachments.length,
@@ -629,7 +521,6 @@ export const startAgentResponse = async (
     attachmentMediaTypes,
     spreadsheetAttachmentFileNames,
     forcedToolChoice,
-    codeInterpreterContainerId: params.codeInterpreterContainerId,
   });
   const requestStart = Date.now();
 
@@ -648,10 +539,6 @@ export const startAgentResponse = async (
     const emittedMessageOutputIds = new Set<string>();
 
     try {
-      if (effectiveContainerId !== null) {
-        yield { type: "container_id", containerId: effectiveContainerId };
-      }
-
       for await (const event of result) {
         if (event.type === "raw_model_stream_event") {
           if (event.data.type === "output_text_delta") {
@@ -699,9 +586,9 @@ export const startAgentResponse = async (
       }
 
       if (spreadsheetAttachmentFileNames.length > 0) {
-        await verifySpreadsheetContainers(client, params.chatSessionId, effectiveContainerId, result.rawResponses, spreadsheetAttachmentFileNames);
-      } else if (effectiveContainerId !== null) {
-        await listOpenAIContainerInventory(client, params.chatSessionId, effectiveContainerId, attachmentFileNames);
+        await verifySpreadsheetContainers(client, params.requestId, effectiveContainerId, result.rawResponses, spreadsheetAttachmentFileNames);
+      } else {
+        await listOpenAIContainerInventory(client, params.requestId, effectiveContainerId, attachmentFileNames);
       }
 
       const responseSummary = summarizeOpenAIResponse(
@@ -712,7 +599,7 @@ export const startAgentResponse = async (
         domain: "chat",
         action: "response_summary",
         vendor: "openai",
-        chatSessionId: params.chatSessionId,
+        requestId: params.requestId,
         codeInterpreterContainerId: effectiveContainerId,
         finalOutputItemTypes: responseSummary.finalOutputItemTypes,
         hasCodeInterpreterCall: responseSummary.hasCodeInterpreterCall,
@@ -735,8 +622,5 @@ export const startAgentResponse = async (
 
   return {
     events,
-    responseHeaders: effectiveContainerId === null
-      ? undefined
-      : { [CODE_INTERPRETER_CONTAINER_HEADER_NAME]: effectiveContainerId },
   };
 };

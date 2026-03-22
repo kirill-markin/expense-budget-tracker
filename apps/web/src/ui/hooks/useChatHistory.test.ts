@@ -53,7 +53,7 @@ test("loadStoredMessages keeps legacy message arrays readable", () => {
   assert.deepEqual(loadStoredMessages(storage, "workspace-a"), [createMessage("legacy")]);
 });
 
-test("loadStoredChatState migrates legacy stored envelopes with a fresh session id and null container id", () => {
+test("loadStoredChatState migrates legacy stored envelopes by keeping only messages", () => {
   const storage = createStorage();
   storage.setItem(
     "expense-tracker-chat-messages",
@@ -65,23 +65,33 @@ test("loadStoredChatState migrates legacy stored envelopes with a fresh session 
 
   const state = loadStoredChatState(storage, "workspace-a");
 
-  assert.equal(typeof state.chatSessionId, "string");
-  assert.notEqual(state.chatSessionId.length, 0);
-  assert.equal(state.codeInterpreterContainerId, null);
   assert.deepEqual(state.messages, [createMessage("legacy-envelope")]);
 });
 
-test("saveStoredChatState persists chat session id and container id", () => {
+test("saveStoredChatState persists messages without client container identifiers", () => {
   const storage = createStorage();
   saveStoredChatState(storage, "workspace-a", {
-    chatSessionId: "chat-1",
-    codeInterpreterContainerId: "container-1",
     messages: [createMessage("hello")],
   });
 
   assert.deepEqual(loadStoredChatState(storage, "workspace-a"), {
-    chatSessionId: "chat-1",
-    codeInterpreterContainerId: "container-1",
+    messages: [createMessage("hello")],
+  });
+});
+
+test("loadStoredChatState ignores legacy chat session and container identifiers", () => {
+  const storage = createStorage();
+  storage.setItem(
+    "expense-tracker-chat-messages",
+    JSON.stringify({
+      workspaceId: "workspace-a",
+      chatSessionId: "legacy-chat",
+      codeInterpreterContainerId: "legacy-container",
+      messages: [createMessage("hello")],
+    }),
+  );
+
+  assert.deepEqual(loadStoredChatState(storage, "workspace-a"), {
     messages: [createMessage("hello")],
   });
 });
