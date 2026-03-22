@@ -253,7 +253,7 @@ const generate = (): DemoData => {
     for (const bp of BUDGET_PLAN) {
       const key = `${month}|${bp.direction}|${bp.category}`;
       const raw = actuals.get(key) ?? 0;
-      const actual = bp.direction === "spend" ? Math.abs(raw) : raw;
+      const actual = bp.direction === "spend" ? -raw : raw;
       if (bp.planned === 0 && actual === 0) continue;
       budgetRows.push({
         month, direction: bp.direction, category: bp.category,

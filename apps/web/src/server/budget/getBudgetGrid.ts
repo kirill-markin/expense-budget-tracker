@@ -74,7 +74,7 @@ export type BudgetGridResult = Readonly<{
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }>;
 
-const QUERY = `
+export const QUERY = `
   WITH latest_plans AS (
     SELECT
       budget_month, direction, category, kind, planned_value,
@@ -109,11 +109,21 @@ const QUERY = `
           ELSE NULL
         END
       ELSE
-        ABS(CASE
-          WHEN le.currency = $1 THEN le.amount::double precision
-          WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
-          ELSE NULL
-        END)
+        CASE
+          WHEN le.kind = 'spend' THEN -(
+            CASE
+              WHEN le.currency = $1 THEN le.amount::double precision
+              WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+              ELSE NULL
+            END
+          )
+          ELSE
+            CASE
+              WHEN le.currency = $1 THEN le.amount::double precision
+              WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+              ELSE NULL
+            END
+        END
       END) AS actual,
       bool_or(le.currency != $1 AND r.rate IS NULL) AS has_unconvertible
     FROM ledger_entries le
@@ -147,7 +157,7 @@ const QUERY = `
   ORDER BY month, direction, category
 `;
 
-const CUMULATIVE_BALANCE_QUERY = `
+export const CUMULATIVE_BALANCE_QUERY = `
   WITH actual_before AS (
     SELECT
       le.kind AS direction,
@@ -158,11 +168,21 @@ const CUMULATIVE_BALANCE_QUERY = `
           ELSE NULL
         END
       ELSE
-        ABS(CASE
-          WHEN le.currency = $1 THEN le.amount::double precision
-          WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
-          ELSE NULL
-        END)
+        CASE
+          WHEN le.kind = 'spend' THEN -(
+            CASE
+              WHEN le.currency = $1 THEN le.amount::double precision
+              WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+              ELSE NULL
+            END
+          )
+          ELSE
+            CASE
+              WHEN le.currency = $1 THEN le.amount::double precision
+              WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+              ELSE NULL
+            END
+        END
       END) AS total
     FROM ledger_entries le
     -- LATERAL: same index-backed FX lookup as QUERY (see comment there).

@@ -44,11 +44,21 @@ actual AS (
         ELSE NULL
       END
     ELSE
-      ABS(CASE
-        WHEN le.currency = $1 THEN le.amount::double precision
-        WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
-        ELSE NULL
-      END)
+      CASE
+        WHEN le.kind = 'spend' THEN -(
+          CASE
+            WHEN le.currency = $1 THEN le.amount::double precision
+            WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+            ELSE NULL
+          END
+        )
+        ELSE
+          CASE
+            WHEN le.currency = $1 THEN le.amount::double precision
+            WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+            ELSE NULL
+          END
+      END
     END) AS actual,
     bool_or(le.currency != $1 AND r.rate IS NULL) AS has_unconvertible
   FROM ledger_entries le
@@ -92,11 +102,21 @@ WITH actual_before AS (
         ELSE NULL
       END
     ELSE
-      ABS(CASE
-        WHEN le.currency = $1 THEN le.amount::double precision
-        WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
-        ELSE NULL
-      END)
+      CASE
+        WHEN le.kind = 'spend' THEN -(
+          CASE
+            WHEN le.currency = $1 THEN le.amount::double precision
+            WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+            ELSE NULL
+          END
+        )
+        ELSE
+          CASE
+            WHEN le.currency = $1 THEN le.amount::double precision
+            WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+            ELSE NULL
+          END
+      END
     END) AS total
   FROM ledger_entries le
   LEFT JOIN LATERAL (
