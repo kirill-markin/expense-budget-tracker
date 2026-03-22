@@ -24,6 +24,7 @@ const fetchCommentPresence = async (monthFrom: string, monthTo: string): Promise
 export type CommentPresenceState = Readonly<{
   commentedCells: ReadonlySet<string>;
   fetchRange: (monthFrom: string, monthTo: string) => void;
+  reloadRange: (monthFrom: string, monthTo: string) => void;
   updateCell: (month: string, direction: string, category: string, hasComment: boolean) => void;
 }>;
 
@@ -63,6 +64,15 @@ export const useCommentPresence = (initialMonthFrom: string, initialMonthTo: str
       .catch((error) => console.error("Failed to load comment presence for range:", error));
   }, []);
 
+  const reloadRange = useCallback((monthFrom: string, monthTo: string): void => {
+    fetchCommentPresence(monthFrom, monthTo)
+      .then((cells) => {
+        const keys = new Set(cells.map((c) => cellKey(c.month, c.direction, c.category)));
+        setCommentedCells(keys);
+      })
+      .catch((error) => console.error("Failed to reload comment presence for range:", error));
+  }, []);
+
   const updateCell = useCallback((month: string, direction: string, category: string, hasComment: boolean): void => {
     const key = cellKey(month, direction, category);
     setCommentedCells((prev) => {
@@ -78,5 +88,5 @@ export const useCommentPresence = (initialMonthFrom: string, initialMonthTo: str
     });
   }, []);
 
-  return { commentedCells, fetchRange, updateCell };
+  return { commentedCells, fetchRange, reloadRange, updateCell };
 };

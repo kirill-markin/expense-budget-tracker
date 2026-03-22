@@ -22,6 +22,7 @@ const INITIAL_FUTURE_MONTHS = 12;
 
 async function BudgetData() {
   const demo = await isDemoMode();
+  const refreshToken = crypto.randomUUID();
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);
   const monthTo = offsetMonth(currentMonth, INITIAL_FUTURE_MONTHS);
@@ -40,6 +41,7 @@ async function BudgetData() {
         initialMonthTo={monthTo}
         reportingCurrency="USD"
         hints={hints}
+        refreshToken={refreshToken}
       />
     );
   }
@@ -65,6 +67,7 @@ async function BudgetData() {
       initialMonthTo={monthTo}
       reportingCurrency={reportingCurrency}
       hints={hints}
+      refreshToken={refreshToken}
     />
   );
 }

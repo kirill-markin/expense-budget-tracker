@@ -34,6 +34,7 @@ type Props = Readonly<{
   accounts: ReadonlyArray<AccountOption>;
   categories: ReadonlyArray<string>;
   hints: FieldHints;
+  refreshToken: string;
 }>;
 
 const SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = { amount: "desc" };
@@ -46,7 +47,7 @@ const toDateInputValue = (date: Date): string => {
 };
 
 export const TransactionsRawTable = (props: Props): ReactElement => {
-  const { accounts, categories, hints } = props;
+  const { accounts, categories, hints, refreshToken } = props;
   const { t } = useTranslation();
   const { effectiveAllowlist } = useFilteredMode();
 
@@ -90,7 +91,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   } = useEditableTransactionsTable({
     fetchPage,
     createEntryRequest: () => buildTransactionsCreateEntryRequest(dateTo, selectedAccount),
-    resetDeps: [dateFrom, dateTo, selectedAccount, sort[0].key, sort[0].dir],
+    resetDeps: [dateFrom, dateTo, selectedAccount, sort[0].key, sort[0].dir, refreshToken],
     onDirty: () => {},
   });
 

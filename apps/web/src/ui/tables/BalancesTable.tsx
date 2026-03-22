@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactElement } from "react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useTranslation } from "react-i18next";
 
@@ -202,6 +202,10 @@ export const BalancesTable = (props: Props): ReactElement => {
 
   const [localAccounts, setLocalAccounts] = useState<ReadonlyArray<AccountRow>>(accountsProp);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalAccounts(accountsProp);
+  }, [accountsProp]);
 
   const totalsSort = useTableSort("multi", "balanceUsd", "desc", TOTALS_SORT_DEFAULTS);
   const liquiditySort = useTableSort("multi", "liquidity", "asc", LIQUIDITY_SORT_DEFAULTS);

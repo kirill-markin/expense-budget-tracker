@@ -35,15 +35,21 @@ type Props = Readonly<{
   initialMonthTo: string;
   reportingCurrency: string;
   hints: FieldHints;
+  refreshToken: string;
 }>;
 
 export const BudgetTable = (props: Props): ReactElement => {
-  const { conversionWarnings, initialMonthFrom, initialMonthTo, reportingCurrency, hints } = props;
+  const { conversionWarnings, initialMonthFrom, initialMonthTo, reportingCurrency, hints, refreshToken } = props;
   const { effectiveAllowlist } = useFilteredMode();
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
   const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
-  const { commentedCells, fetchRange: fetchCommentRange, updateCell: updateCommentCell } = useCommentPresence(initialMonthFrom, initialMonthTo);
+  const {
+    commentedCells,
+    fetchRange: fetchCommentRange,
+    reloadRange: reloadCommentRange,
+    updateCell: updateCommentCell,
+  } = useCommentPresence(initialMonthFrom, initialMonthTo);
   const { toastMessage, copyToClipboard } = useCopyToast();
 
   const currentMonth = useMemo(() => getCurrentMonth(), []);
@@ -69,6 +75,7 @@ export const BudgetTable = (props: Props): ReactElement => {
   const isPrependingRef = useRef<boolean>(false);
   const isLoadingLeftRef = useRef<boolean>(false);
   const isLoadingRightRef = useRef<boolean>(false);
+  const initialRefreshHandledRef = useRef<boolean>(false);
 
   const months = useMemo<ReadonlyArray<string>>(
     () => generateMonthRange(loadedFrom, loadedTo),
@@ -164,6 +171,26 @@ export const BudgetTable = (props: Props): ReactElement => {
   const yearFetchingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!initialRefreshHandledRef.current) {
+      initialRefreshHandledRef.current = true;
+      return;
+    }
+
+    fetchBudgetRange(loadedFrom, loadedTo, currentMonth, currentMonth)
+      .then((result) => {
+        setAllRows(result.rows);
+        setCumBefore(result.cumulativeBefore);
+        setMeb(result.monthEndBalances);
+        setMebByLiq(result.monthEndBalancesByLiquidity);
+        reloadCommentRange(loadedFrom, loadedTo);
+      })
+      .catch((error) => console.error(error));
+
+    setYearFetchResults(new Map());
+    yearFetchingRef.current.clear();
+  }, [currentMonth, loadedFrom, loadedTo, refreshToken, reloadCommentRange]);
+
+  useEffect(() => {
     for (const col of columnSequence) {
       if (col.kind !== "year-total") continue;
       const { year } = col;
@@ -179,7 +206,7 @@ export const BudgetTable = (props: Props): ReactElement => {
           yearFetchingRef.current.delete(year);
         });
     }
-  }, [columnSequence, yearFetchResults]);
+  }, [columnSequence, currentMonth, yearFetchResults]);
 
   const yearComputed = useMemo<ReadonlyMap<string, YearTotalComputed>>(() => {
     const result = new Map<string, YearTotalComputed>();

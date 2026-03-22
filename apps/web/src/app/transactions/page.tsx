@@ -16,12 +16,13 @@ export const dynamic = "force-dynamic";
 
 async function TransactionsData() {
   const demo = await isDemoMode();
+  const refreshToken = crypto.randomUUID();
 
   if (demo) {
     const accounts = getDemoAccounts();
     const categories = getDemoCategories();
     const hints = getDemoFieldHints();
-    return <TransactionsRawTable accounts={accounts} categories={categories} hints={hints} />;
+    return <TransactionsRawTable accounts={accounts} categories={categories} hints={hints} refreshToken={refreshToken} />;
   }
 
   const headersList = await headers();
@@ -33,7 +34,7 @@ async function TransactionsData() {
     getFieldHints(userId, workspaceId),
   ]);
 
-  return <TransactionsRawTable accounts={accounts} categories={categories} hints={hints} />;
+  return <TransactionsRawTable accounts={accounts} categories={categories} hints={hints} refreshToken={refreshToken} />;
 }
 
 export default async function TransactionsDashboardPage() {
