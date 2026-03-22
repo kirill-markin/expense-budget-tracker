@@ -24,7 +24,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 
 ## Components
 
-- `apps/web/`: Next.js app with UI dashboards and API routes for transactions, balances, budget, and FX data; SQL via `pg.Pool`
+- `apps/web/`: Next.js app with UI dashboards and API routes for transactions, balances, budget, and FX data; SQL via `pg.Pool`. The web app also includes an AI chat where the user can open `/chat` and talk to their workspace data directly from the browser.
 - `apps/worker/`: TypeScript process that fetches daily ECB, CBR, and NBS exchange rates into `exchange_rates`; runs on a schedule (Docker) or as AWS Lambda
 - Postgres: single source of truth; schema in `db/migrations/`, views in `db/views/`, reference SQL in `db/queries/`
 
@@ -39,6 +39,9 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | Path | Description |
 | --- | --- |
 | `apps/web/src/app/api/` | Next.js API routes (`budget-grid`, `transactions`, `balances-summary`, and others) |
+| `apps/web/src/app/chat/page.tsx` | Web AI chat page at `/chat`; fullscreen browser entrypoint for chatting with workspace data |
+| `apps/web/src/app/api/chat/route.ts` | Server API entrypoint for the web AI chat (`POST` stream, `DELETE` reset) |
+| `apps/web/src/server/chat/openai/agent.ts` | Main AI chat orchestration logic for the web app |
 | `apps/web/src/server/` | Server-side data functions for budget, balances, and transactions |
 | `apps/web/src/ui/` | React components: tables, charts, hooks |
 | `apps/web/src/proxy.ts` | Auth proxy logic controlled by `AUTH_MODE` |
