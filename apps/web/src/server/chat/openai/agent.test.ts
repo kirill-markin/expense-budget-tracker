@@ -4,7 +4,9 @@ import test from "node:test";
 import type { ModelResponse } from "@openai/agents-core";
 import type { ChatMessage } from "@/server/chat/types";
 import {
+  buildHostedToolCallEvent,
   extractCodeInterpreterContainers,
+  finalizeToolCallEvent,
   getLatestUserFileAttachments,
   getSpreadsheetAttachmentFileNames,
   shouldRefreshRouteAfterToolCall,
@@ -171,4 +173,72 @@ test("shouldRefreshRouteAfterToolCall ignores read-only SQL tool results", () =>
 test("shouldRefreshRouteAfterToolCall ignores other tools and malformed payloads", () => {
   assert.equal(shouldRefreshRouteAfterToolCall("web_search", "{\"statements\":[{\"command\":\"DELETE\"}]}"), false);
   assert.equal(shouldRefreshRouteAfterToolCall("query_database", "not-json"), false);
+});
+
+test("buildHostedToolCallEvent uses hosted tool name and payload fields", () => {
+  assert.deepEqual(
+    buildHostedToolCallEvent({
+      type: "hosted_tool_call",
+      id: "tool-1",
+      name: "code_interpreter_call",
+      status: "interpreting",
+      providerData: {
+        type: "code_interpreter_call",
+        code: "print('hello')",
+        outputs: [{ type: "logs", logs: "hello" }],
+      },
+    }),
+    {
+      type: "tool_call",
+      id: "tool-1",
+      name: "code_interpreter_call",
+      status: "started",
+      providerStatus: "interpreting",
+      input: "print('hello')",
+      output: JSON.stringify([{ type: "logs", logs: "hello" }]),
+    },
+  );
+});
+
+test("buildHostedToolCallEvent keeps completed hosted tools completed", () => {
+  assert.deepEqual(
+    buildHostedToolCallEvent({
+      type: "hosted_tool_call",
+      id: "tool-2",
+      name: "web_search_call",
+      arguments: JSON.stringify({ query: "latest usd eur rate" }),
+      status: "completed",
+      output: JSON.stringify({ answer: "1.09" }),
+    }),
+    {
+      type: "tool_call",
+      id: "tool-2",
+      name: "web_search_call",
+      status: "completed",
+      providerStatus: "completed",
+      input: JSON.stringify({ query: "latest usd eur rate" }),
+      output: JSON.stringify({ answer: "1.09" }),
+    },
+  );
+});
+
+test("finalizeToolCallEvent marks unfinished hosted tools as completed", () => {
+  assert.deepEqual(
+    finalizeToolCallEvent({
+      type: "tool_call",
+      id: "tool-3",
+      name: "code_interpreter_call",
+      status: "started",
+      providerStatus: "interpreting",
+      input: "print('hello')",
+    }),
+    {
+      type: "tool_call",
+      id: "tool-3",
+      name: "code_interpreter_call",
+      status: "completed",
+      providerStatus: "completed",
+      input: "print('hello')",
+    },
+  );
 });

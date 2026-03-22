@@ -62,6 +62,39 @@ type QueryDatabaseToolOutput = Readonly<{
   }>>;
 }>;
 
+type FunctionToolCallRawItem = Readonly<{
+  type: "function_call";
+  callId: string;
+  id?: string;
+  name: string;
+  arguments?: string;
+  status?: string;
+}>;
+
+type HostedToolCallRawItem = Readonly<{
+  type: "hosted_tool_call";
+  id?: string;
+  name: string;
+  arguments?: string;
+  status?: string;
+  output?: string;
+  providerData?: Readonly<Record<string, unknown>>;
+}>;
+
+type ToolCallOutputRawItem = Readonly<{
+  type: string;
+  callId?: string;
+  id?: string;
+  name?: string;
+}>;
+
+type ToolCallEvent = Extract<ChatStreamEvent, { type: "tool_call" }>;
+
+type ToolCallState = Readonly<{
+  snapshot: ToolCallEvent;
+  startedAt: number;
+}>;
+
 type StartAgentResponseResult = Readonly<{
   events: AsyncGenerator<ChatStreamEvent>;
 }>;
@@ -98,6 +131,7 @@ const SPREADSHEET_EXTENSIONS = new Set([
 const CODE_INTERPRETER_CONTAINER_PREFIX = "expense-chat";
 const CODE_INTERPRETER_CONTAINER_MINUTES = 20;
 const MAX_LOG_SNIPPET_LENGTH = 400;
+const TERMINAL_TOOL_PROVIDER_STATUSES = new Set(["completed", "failed", "incomplete"]);
 
 const buildOpenaiInstructions = (timezone: string, hasPersistentContainer: boolean): string =>
   buildSystemInstructions(timezone) +
@@ -155,6 +189,182 @@ const truncateForLog = (value: string | null | undefined): string | null => {
   }
   return value.slice(0, MAX_LOG_SNIPPET_LENGTH) + "...[truncated]";
 };
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const stringifyToolValue = (
+  value: unknown,
+): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value);
+};
+
+const isTerminalToolProviderStatus = (
+  status: string | null | undefined,
+): boolean =>
+  status !== undefined
+  && status !== null
+  && TERMINAL_TOOL_PROVIDER_STATUSES.has(status);
+
+const createToolCallEvent = (
+  id: string,
+  name: string,
+  status: ToolCallEvent["status"],
+  providerStatus: string | null,
+  input: string | null,
+  output: string | null,
+  refreshRoute: boolean,
+): ToolCallEvent => ({
+  type: "tool_call",
+  id,
+  name,
+  status,
+  ...(providerStatus !== null ? { providerStatus } : {}),
+  ...(input !== null ? { input } : {}),
+  ...(output !== null ? { output } : {}),
+  ...(refreshRoute ? { refreshRoute: true } : {}),
+});
+
+const getRequiredToolCallId = (
+  rawItem: FunctionToolCallRawItem | HostedToolCallRawItem | ToolCallOutputRawItem,
+): string => {
+  if ("callId" in rawItem && typeof rawItem.callId === "string" && rawItem.callId.length > 0) {
+    return rawItem.callId;
+  }
+  if (typeof rawItem.id === "string" && rawItem.id.length > 0) {
+    return rawItem.id;
+  }
+  throw new Error(`OpenAI tool call is missing a stable identifier: ${JSON.stringify(rawItem)}`);
+};
+
+const getHostedToolCallInput = (
+  rawItem: HostedToolCallRawItem,
+): string | null => {
+  if (typeof rawItem.arguments === "string") {
+    return rawItem.arguments;
+  }
+
+  const providerData = rawItem.providerData;
+  if (!isRecord(providerData)) {
+    return null;
+  }
+  if (typeof providerData.code === "string") {
+    return providerData.code;
+  }
+  if ("queries" in providerData) {
+    return stringifyToolValue(providerData.queries);
+  }
+  if ("action" in providerData) {
+    return stringifyToolValue(providerData.action);
+  }
+
+  return null;
+};
+
+const getHostedToolCallOutput = (
+  rawItem: HostedToolCallRawItem,
+): string | null => {
+  if (typeof rawItem.output === "string") {
+    return rawItem.output;
+  }
+
+  const providerData = rawItem.providerData;
+  if (!isRecord(providerData)) {
+    return null;
+  }
+  if ("outputs" in providerData) {
+    return stringifyToolValue(providerData.outputs);
+  }
+  if ("results" in providerData) {
+    return stringifyToolValue(providerData.results);
+  }
+  if ("result" in providerData) {
+    return stringifyToolValue(providerData.result);
+  }
+
+  return null;
+};
+
+export const buildHostedToolCallEvent = (
+  rawItem: HostedToolCallRawItem,
+): ToolCallEvent => {
+  const providerStatus = typeof rawItem.status === "string" ? rawItem.status : null;
+  return createToolCallEvent(
+    getRequiredToolCallId(rawItem),
+    rawItem.name,
+    isTerminalToolProviderStatus(providerStatus) ? "completed" : "started",
+    providerStatus,
+    getHostedToolCallInput(rawItem),
+    getHostedToolCallOutput(rawItem),
+    false,
+  );
+};
+
+const buildFunctionToolCallEvent = (
+  rawItem: FunctionToolCallRawItem,
+): ToolCallEvent => {
+  const providerStatus = typeof rawItem.status === "string" ? rawItem.status : null;
+  return createToolCallEvent(
+    getRequiredToolCallId(rawItem),
+    rawItem.name,
+    isTerminalToolProviderStatus(providerStatus) ? "completed" : "started",
+    providerStatus,
+    rawItem.arguments ?? null,
+    null,
+    false,
+  );
+};
+
+const buildToolOutputEvent = (
+  rawItem: ToolCallOutputRawItem,
+  previousSnapshot: ToolCallEvent | null,
+  rawOutput: unknown,
+): ToolCallEvent => {
+  const id = getRequiredToolCallId(rawItem);
+  const output = stringifyToolValue(rawOutput);
+  const name = previousSnapshot?.name ?? (typeof rawItem.name === "string" ? rawItem.name : "tool");
+  const refreshRoute = output !== null && shouldRefreshRouteAfterToolCall(name, output);
+  return createToolCallEvent(
+    id,
+    name,
+    "completed",
+    "completed",
+    previousSnapshot?.input ?? null,
+    output,
+    refreshRoute,
+  );
+};
+
+export const finalizeToolCallEvent = (
+  event: ToolCallEvent,
+): ToolCallEvent =>
+  createToolCallEvent(
+    event.id,
+    event.name,
+    "completed",
+    isTerminalToolProviderStatus(event.providerStatus) ? (event.providerStatus ?? null) : "completed",
+    event.input ?? null,
+    event.output ?? null,
+    event.refreshRoute === true,
+  );
+
+const areToolCallEventsEqual = (
+  left: ToolCallEvent,
+  right: ToolCallEvent,
+): boolean =>
+  left.id === right.id
+  && left.name === right.name
+  && left.status === right.status
+  && left.providerStatus === right.providerStatus
+  && left.input === right.input
+  && left.output === right.output
+  && left.refreshRoute === right.refreshRoute;
 
 export const shouldRefreshRouteAfterToolCall = (
   name: string,
@@ -558,12 +768,10 @@ export const startAgentResponse = async (
   });
 
   const events = (async function* (): AsyncGenerator<ChatStreamEvent> {
-    let activeToolName: string | null = null;
-    let activeToolInput: string | null = null;
-    let toolStart = 0;
     let toolCalls = 0;
     let streamedText = "";
     const emittedMessageOutputIds = new Set<string>();
+    const toolStates = new Map<string, ToolCallState>();
 
     try {
       for await (const event of result) {
@@ -590,34 +798,80 @@ export const startAgentResponse = async (
               emittedMessageOutputIds.add(messageId);
             }
           } else if (event.name === "tool_called" && event.item.type === "tool_call_item") {
-            activeToolName = event.item.rawItem.type === "function_call"
-              ? event.item.rawItem.name
-              : event.item.rawItem.type;
-            activeToolInput = event.item.rawItem.type === "function_call"
-              ? (event.item.rawItem.arguments ?? null)
-              : null;
-            toolStart = Date.now();
-            log({ domain: "chat", action: "tool_call", vendor: "openai", tool: activeToolName, status: "started" });
-            yield { type: "tool_call", name: activeToolName, status: "started" };
+            const snapshot = event.item.rawItem.type === "hosted_tool_call"
+              ? buildHostedToolCallEvent(event.item.rawItem)
+              : event.item.rawItem.type === "function_call"
+                ? buildFunctionToolCallEvent(event.item.rawItem)
+                : (() => {
+                    throw new Error(`Unsupported OpenAI tool call type: ${event.item.rawItem.type}`);
+                  })();
+            const previousState = toolStates.get(snapshot.id);
+            const startedAt = previousState?.startedAt ?? Date.now();
+            toolStates.set(snapshot.id, { snapshot, startedAt });
+
+            if (previousState === undefined && snapshot.status === "started") {
+              log({ domain: "chat", action: "tool_call", vendor: "openai", tool: snapshot.name, status: "started" });
+            }
+            if (snapshot.status === "completed" && previousState?.snapshot.status !== "completed") {
+              log({
+                domain: "chat",
+                action: "tool_call",
+                vendor: "openai",
+                tool: snapshot.name,
+                status: "completed",
+                durationMs: Date.now() - startedAt,
+              });
+              toolCalls++;
+            }
+            if (previousState === undefined || !areToolCallEventsEqual(previousState.snapshot, snapshot)) {
+              yield snapshot;
+            }
           } else if (event.name === "tool_output" && event.item.type === "tool_call_output_item") {
-            const name = activeToolName ?? "tool";
-            log({ domain: "chat", action: "tool_call", vendor: "openai", tool: name, status: "completed", durationMs: Date.now() - toolStart });
-            toolCalls++;
-            const rawOutput = event.item.output;
-            const toolOutput = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
-            const refreshRoute = shouldRefreshRouteAfterToolCall(name, toolOutput);
-            yield {
-              type: "tool_call",
-              name,
-              status: "completed",
-              input: activeToolInput ?? undefined,
-              output: toolOutput,
-              refreshRoute,
-            };
-            activeToolName = null;
-            activeToolInput = null;
+            const snapshotId = getRequiredToolCallId(event.item.rawItem);
+            const previousState = toolStates.get(snapshotId);
+            const snapshot = buildToolOutputEvent(
+              event.item.rawItem,
+              previousState?.snapshot ?? null,
+              event.item.output,
+            );
+            const startedAt = previousState?.startedAt ?? Date.now();
+            toolStates.set(snapshot.id, { snapshot, startedAt });
+
+            if (previousState?.snapshot.status !== "completed") {
+              log({
+                domain: "chat",
+                action: "tool_call",
+                vendor: "openai",
+                tool: snapshot.name,
+                status: "completed",
+                durationMs: Date.now() - startedAt,
+              });
+              toolCalls++;
+            }
+            if (previousState === undefined || !areToolCallEventsEqual(previousState.snapshot, snapshot)) {
+              yield snapshot;
+            }
           }
         }
+      }
+
+      for (const state of toolStates.values()) {
+        if (state.snapshot.status === "completed") {
+          continue;
+        }
+
+        const snapshot = finalizeToolCallEvent(state.snapshot);
+        toolStates.set(snapshot.id, { snapshot, startedAt: state.startedAt });
+        log({
+          domain: "chat",
+          action: "tool_call",
+          vendor: "openai",
+          tool: snapshot.name,
+          status: "completed",
+          durationMs: Date.now() - state.startedAt,
+        });
+        toolCalls++;
+        yield snapshot;
       }
 
       if (spreadsheetAttachmentFileNames.length > 0) {

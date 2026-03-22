@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clearStoredMessages, loadStoredChatState, loadStoredMessages, saveStoredChatState, saveStoredMessages, type StoredMessage } from "./useChatHistory";
+import type { ContentPart } from "@/server/chat/types";
+import {
+  clearStoredMessages,
+  loadStoredChatState,
+  loadStoredMessages,
+  saveStoredChatState,
+  saveStoredMessages,
+  upsertToolCallContent,
+  type StoredMessage,
+} from "./useChatHistory";
 
 type StorageLike = Readonly<{
   getItem: (key: string) => string | null;
@@ -103,4 +112,85 @@ test("clearStoredMessages removes persisted chat history", () => {
   clearStoredMessages(storage);
 
   assert.equal(loadStoredMessages(storage, "workspace-a").length, 0);
+});
+
+test("upsertToolCallContent updates an existing tool call by id", () => {
+  const content: ReadonlyArray<ContentPart> = [
+    { type: "text", text: "Checking..." },
+    {
+      type: "tool_call",
+      id: "tool-1",
+      name: "code_interpreter_call",
+      status: "started",
+      providerStatus: "interpreting",
+      input: "print('hello')",
+      output: null,
+    },
+  ];
+
+  assert.deepEqual(
+    upsertToolCallContent(content, {
+      type: "tool_call",
+      id: "tool-1",
+      name: "code_interpreter_call",
+      status: "completed",
+      providerStatus: "completed",
+      input: "print('hello')",
+      output: JSON.stringify([{ type: "logs", logs: "hello" }]),
+    }),
+    [
+      { type: "text", text: "Checking..." },
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "code_interpreter_call",
+        status: "completed",
+        providerStatus: "completed",
+        input: "print('hello')",
+        output: JSON.stringify([{ type: "logs", logs: "hello" }]),
+      },
+    ],
+  );
+});
+
+test("upsertToolCallContent appends when the existing history has no matching id", () => {
+  const content: ReadonlyArray<ContentPart> = [
+    {
+      type: "tool_call",
+      name: "query_database",
+      status: "completed",
+      input: "select 1",
+      output: "[{\"value\":1}]",
+    },
+  ];
+
+  assert.deepEqual(
+    upsertToolCallContent(content, {
+      type: "tool_call",
+      id: "tool-2",
+      name: "web_search_call",
+      status: "started",
+      providerStatus: "searching",
+      input: "{\"query\":\"btc price\"}",
+      output: null,
+    }),
+    [
+      {
+        type: "tool_call",
+        name: "query_database",
+        status: "completed",
+        input: "select 1",
+        output: "[{\"value\":1}]",
+      },
+      {
+        type: "tool_call",
+        id: "tool-2",
+        name: "web_search_call",
+        status: "started",
+        providerStatus: "searching",
+        input: "{\"query\":\"btc price\"}",
+        output: null,
+      },
+    ],
+  );
 });

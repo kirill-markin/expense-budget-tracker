@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ContentPart } from "@/server/chat/types";
+import type { ContentPart, ToolCallContentPart } from "@/server/chat/types";
 
 export type StoredMessage = Readonly<{
   role: "user" | "assistant";
@@ -15,8 +15,7 @@ type ChatHistoryState = Readonly<{
   appendUserMessage: (content: ReadonlyArray<ContentPart>) => void;
   startAssistantMessage: () => void;
   appendAssistantChunk: (text: string) => void;
-  appendToolCall: (name: string) => void;
-  completeToolCall: (name: string, input: string | null, output: string | null) => void;
+  upsertToolCall: (toolCall: ToolCallContentPart) => void;
   finalizeAssistant: () => void;
   markAssistantError: (errorText: string) => void;
   clearHistory: () => void;
@@ -133,6 +132,39 @@ export const clearStoredMessages = (storage: StorageLike | null): void => {
   storage.removeItem(STORAGE_KEY);
 };
 
+export const upsertToolCallContent = (
+  content: ReadonlyArray<ContentPart>,
+  toolCall: ToolCallContentPart,
+): ReadonlyArray<ContentPart> => {
+  let found = false;
+  const updatedContent = content.map((part) => {
+    if (
+      !found
+      && part.type === "tool_call"
+      && part.id !== undefined
+      && toolCall.id !== undefined
+      && part.id === toolCall.id
+    ) {
+      found = true;
+      return {
+        ...part,
+        name: toolCall.name,
+        status: toolCall.status,
+        providerStatus: toolCall.providerStatus,
+        input: toolCall.input,
+        output: toolCall.output,
+      };
+    }
+    return part;
+  });
+
+  if (found) {
+    return updatedContent;
+  }
+
+  return [...content, toolCall];
+};
+
 export const useChatHistory = (workspaceId: string): ChatHistoryState => {
   const [messages, setMessages] = useState<ReadonlyArray<StoredMessage>>([]);
   const loadedRef = useRef<boolean>(false);
@@ -183,31 +215,12 @@ export const useChatHistory = (workspaceId: string): ChatHistoryState => {
     });
   }, []);
 
-  const appendToolCall = useCallback((name: string): void => {
+  const upsertToolCall = useCallback((toolCall: ToolCallContentPart): void => {
     setMessages((prev) => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
       if (last.role !== "assistant") return prev;
-      const part: ContentPart = { type: "tool_call", name, status: "started", input: null, output: null };
-      const updated: StoredMessage = { ...last, content: [...last.content, part] };
-      return [...prev.slice(0, -1), updated];
-    });
-  }, []);
-
-  const completeToolCall = useCallback((name: string, input: string | null, output: string | null): void => {
-    setMessages((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      if (last.role !== "assistant") return prev;
-      let found = false;
-      const updatedContent: ReadonlyArray<ContentPart> = [...last.content].reverse().map((p) => {
-        if (!found && p.type === "tool_call" && p.name === name && p.status === "started") {
-          found = true;
-          return { ...p, status: "completed" as const, input, output };
-        }
-        return p;
-      }).reverse();
-      if (!found) return prev;
+      const updatedContent = upsertToolCallContent(last.content, toolCall);
       const updated: StoredMessage = { ...last, content: updatedContent };
       return [...prev.slice(0, -1), updated];
     });
@@ -250,8 +263,7 @@ export const useChatHistory = (workspaceId: string): ChatHistoryState => {
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
-    appendToolCall,
-    completeToolCall,
+    upsertToolCall,
     finalizeAssistant,
     markAssistantError,
     clearHistory,

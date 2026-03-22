@@ -20,8 +20,10 @@ export type FileContentPart = Readonly<{
 
 export type ToolCallContentPart = Readonly<{
   type: "tool_call";
+  id?: string;
   name: string;
   status: "started" | "completed";
+  providerStatus?: string | null;
   input: string | null;
   output: string | null;
 }>;
@@ -37,8 +39,10 @@ export type ChatStreamEvent =
   | Readonly<{ type: "delta"; text: string }>
   | Readonly<{
     type: "tool_call";
+    id: string;
     name: string;
     status: "started" | "completed";
+    providerStatus?: string;
     input?: string;
     output?: string;
     refreshRoute?: boolean;
