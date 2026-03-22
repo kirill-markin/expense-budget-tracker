@@ -13,7 +13,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@expense-budget-tracker/agent-shared": "0.1.0",
+    "@expense-budget-tracker/agent-shared": "1.0.0",
     "@hono/node-server": "^1.19.11",
     "hono": "^4.12.8",
     "pg": "^8.20.0"
