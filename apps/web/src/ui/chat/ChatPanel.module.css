@@ -4,6 +4,8 @@
   border-inline-end: 1px solid var(--panel-border);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg);
   z-index: 60;
   position: relative;
@@ -15,6 +17,8 @@
   margin: 0 auto;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg);
   position: relative;
 }
@@ -76,6 +80,7 @@
 
 .messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px;
   display: flex;
