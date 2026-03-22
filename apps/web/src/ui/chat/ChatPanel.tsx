@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  startTransition,
   useCallback,
   useEffect,
   useRef,
@@ -10,6 +11,7 @@ import {
   type ReactElement,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useRouter } from "next/navigation";
 
 import { fetchWithCsrf } from "@/lib/csrf";
 import { CHAT_MODEL_BADGE_LABEL, CHAT_MODEL_ID } from "@/lib/chatModels";
@@ -175,6 +177,7 @@ const MAX_WIDTH = 600;
 export const ChatPanel = (props: Props): ReactElement => {
   const { mode, workspaceId } = props;
   const { t } = useTranslation();
+  const router = useRouter();
   const { setIsOpen, chatWidth, setChatWidth } = useChatLayout();
   const [localWidth, setLocalWidth] = useState<number>(chatWidth);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -416,6 +419,11 @@ export const ChatPanel = (props: Props): ReactElement => {
               appendToolCall(event.name);
             } else {
               completeToolCall(event.name, event.input ?? null, event.output ?? null);
+              if (mode === "sidebar" && event.refreshRoute === true) {
+                startTransition(() => {
+                  router.refresh();
+                });
+              }
             }
           } else if (event.type === "error") {
             markAssistantError(event.message);
@@ -455,6 +463,8 @@ export const ChatPanel = (props: Props): ReactElement => {
     completeToolCall,
     finalizeAssistant,
     markAssistantError,
+    mode,
+    router,
     t,
   ]);
 

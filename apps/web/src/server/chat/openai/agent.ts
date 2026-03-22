@@ -56,6 +56,12 @@ type SpreadsheetContainerRef = Readonly<{
   requestId?: string;
 }>;
 
+type QueryDatabaseToolOutput = Readonly<{
+  statements?: ReadonlyArray<Readonly<{
+    command?: unknown;
+  }>>;
+}>;
+
 type StartAgentResponseResult = Readonly<{
   events: AsyncGenerator<ChatStreamEvent>;
 }>;
@@ -148,6 +154,27 @@ const truncateForLog = (value: string | null | undefined): string | null => {
     return value;
   }
   return value.slice(0, MAX_LOG_SNIPPET_LENGTH) + "...[truncated]";
+};
+
+export const shouldRefreshRouteAfterToolCall = (
+  name: string,
+  output: string,
+): boolean => {
+  if (name !== "query_database") {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(output) as QueryDatabaseToolOutput;
+    if (!Array.isArray(parsed.statements)) {
+      return false;
+    }
+
+    return parsed.statements.some((statement) =>
+      typeof statement.command === "string" && statement.command.toUpperCase() !== "SELECT");
+  } catch {
+    return false;
+  }
 };
 
 export const buildOpenAIContainerName = (requestId: string): string =>
@@ -578,7 +605,15 @@ export const startAgentResponse = async (
             toolCalls++;
             const rawOutput = event.item.output;
             const toolOutput = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
-            yield { type: "tool_call", name, status: "completed", input: activeToolInput ?? undefined, output: toolOutput };
+            const refreshRoute = shouldRefreshRouteAfterToolCall(name, toolOutput);
+            yield {
+              type: "tool_call",
+              name,
+              status: "completed",
+              input: activeToolInput ?? undefined,
+              output: toolOutput,
+              refreshRoute,
+            };
             activeToolName = null;
             activeToolInput = null;
           }

@@ -7,6 +7,7 @@ import {
   extractCodeInterpreterContainers,
   getLatestUserFileAttachments,
   getSpreadsheetAttachmentFileNames,
+  shouldRefreshRouteAfterToolCall,
   summarizeOpenAIResponse,
 } from "./agent";
 
@@ -142,4 +143,32 @@ test("summarizeOpenAIResponse extracts code interpreter and message diagnostics"
     assistantTextSnippet: "Finished",
     containerFileCitations: ["/mnt/data/report.csv"],
   });
+});
+
+test("shouldRefreshRouteAfterToolCall detects mutating SQL tool results", () => {
+  assert.equal(
+    shouldRefreshRouteAfterToolCall("query_database", JSON.stringify({
+      statements: [
+        { command: "SELECT" },
+        { command: "UPDATE" },
+      ],
+    })),
+    true,
+  );
+});
+
+test("shouldRefreshRouteAfterToolCall ignores read-only SQL tool results", () => {
+  assert.equal(
+    shouldRefreshRouteAfterToolCall("query_database", JSON.stringify({
+      statements: [
+        { command: "SELECT" },
+      ],
+    })),
+    false,
+  );
+});
+
+test("shouldRefreshRouteAfterToolCall ignores other tools and malformed payloads", () => {
+  assert.equal(shouldRefreshRouteAfterToolCall("web_search", "{\"statements\":[{\"command\":\"DELETE\"}]}"), false);
+  assert.equal(shouldRefreshRouteAfterToolCall("query_database", "not-json"), false);
 });
