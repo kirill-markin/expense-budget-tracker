@@ -1,5 +1,6 @@
 export const CHAT_VENDOR = "openai" as const;
 export const CHAT_MODEL_ID = "gpt-5.4" as const;
+export const CHAT_MODEL_REASONING_EFFORT = "high" as const;
 export const CHAT_MODEL_LABEL = "GPT-5.4" as const;
 export const CHAT_PROVIDER_LABEL = "OpenAI" as const;
 export const CHAT_MODEL_BADGE_LABEL = `${CHAT_PROVIDER_LABEL} · ${CHAT_MODEL_LABEL}` as const;

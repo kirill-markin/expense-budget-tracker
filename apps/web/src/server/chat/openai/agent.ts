@@ -2,7 +2,7 @@ import { Agent, run } from "@openai/agents";
 import type { ModelResponse } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
-import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import { CHAT_MODEL_ID, CHAT_MODEL_REASONING_EFFORT } from "@/lib/chatModels";
 import type {
   ChatMessage,
   ChatStreamEvent,
@@ -996,7 +996,10 @@ export const startAgentResponse = async (
     name: "Expense Assistant",
     instructions: buildOpenaiInstructions(params.timezone, true),
     model: CHAT_MODEL_ID,
-    modelSettings: forcedToolChoice === null ? {} : { toolChoice: forcedToolChoice },
+    modelSettings: {
+      reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
+      ...(forcedToolChoice === null ? {} : { toolChoice: forcedToolChoice }),
+    },
     tools: [
       pgQueryTool,
       codeInterpreterTool({ container: effectiveContainerId }),
