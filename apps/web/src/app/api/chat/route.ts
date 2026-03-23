@@ -112,19 +112,18 @@ const createSseHeartbeatLine = (): string =>
 
 export const createChatEventStream = (params: ChatEventStreamParams): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
+  let isClosed = false;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearHeartbeat = (): void => {
+    if (heartbeatTimer !== null) {
+      clearTimeout(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
 
   return new ReadableStream({
     async start(controller) {
-      let isClosed = false;
-      let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
-
-      const clearHeartbeat = (): void => {
-        if (heartbeatTimer !== null) {
-          clearTimeout(heartbeatTimer);
-          heartbeatTimer = null;
-        }
-      };
-
       const closeStream = (): void => {
         clearHeartbeat();
         if (isClosed) {
@@ -159,6 +158,9 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
             enqueueChunk(createSseHeartbeatLine());
             scheduleHeartbeat();
           } catch (error) {
+            if (isClosed) {
+              return;
+            }
             const message = error instanceof Error ? error.message : String(error);
             params.onStreamError(message);
             closeStream();
@@ -170,6 +172,9 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
 
       try {
         for await (const event of params.events) {
+          if (isClosed) {
+            return;
+          }
           clearHeartbeat();
           enqueueChunk(createSseDataLine(event));
           if (event.type === "done") {
@@ -180,6 +185,9 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
         }
       } catch (error) {
         clearHeartbeat();
+        if (isClosed) {
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         params.onStreamError(message);
         if (!isClosed) {
@@ -190,6 +198,8 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
       closeStream();
     },
     cancel() {
+      clearHeartbeat();
+      isClosed = true;
       return;
     },
   });

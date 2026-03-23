@@ -228,3 +228,24 @@ test("createChatEventStream emits an error event when the generator fails while 
   assert.match(output, /data: {"type":"error","message":"boom"}\n\n/);
   assert.deepEqual(errors, ["boom"]);
 });
+
+test("createChatEventStream stops without logging an error after cancel", async () => {
+  const errors: Array<string> = [];
+  const stream = createChatEventStream({
+    events: (async function* (): AsyncGenerator<ChatStreamEvent> {
+      await delay(10);
+      yield { type: "delta", text: "hello" };
+    })(),
+    heartbeatIntervalMs: 50,
+    onStreamError: (error: string): void => {
+      errors.push(error);
+    },
+  });
+
+  const reader = stream.getReader();
+  await reader.cancel();
+
+  await delay(30);
+
+  assert.deepEqual(errors, []);
+});
