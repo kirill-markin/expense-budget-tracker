@@ -27,6 +27,13 @@ type Props = Readonly<{
   workspaceId: string;
 }>;
 
+type ChatHistoryResponse = Readonly<{
+  sessionId: string;
+  runState: "idle" | "running" | "interrupted";
+  updatedAt: number;
+  messages: ReadonlyArray<StoredMessage>;
+}>;
+
 const IMAGE_MEDIA_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -208,7 +215,18 @@ const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): R
     elements.unshift(<span key="fp">{filePrefix}</span>);
   }
 
-  return <>{elements}</>;
+  const shouldShowStoppedNotice = msg.isStopped;
+
+  return (
+    <>
+      {elements}
+      {shouldShowStoppedNotice && (
+        <span className={styles.stoppedNotice}>
+          {t("chat.stopped")}
+        </span>
+      )}
+    </>
+  );
 };
 
 const MIN_WIDTH = 280;
@@ -223,6 +241,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const {
     messages,
+    replaceMessages,
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
@@ -230,21 +249,117 @@ export const ChatPanel = (props: Props): ReactElement => {
     finalizeAssistant,
     markAssistantError,
     clearHistory,
-  } = useChatHistory(workspaceId);
+  } = useChatHistory();
 
   const [inputText, setInputText] = useState<string>("");
   const [pendingAttachments, setPendingAttachments] = useState<ReadonlyArray<PendingAttachment>>([]);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
+  const [isHistoryLoaded, setIsHistoryLoaded] = useState<boolean>(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [runState, setRunState] = useState<"idle" | "running" | "interrupted">("idle");
+  const [isStopping, setIsStopping] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const dragCounterRef = useRef<number>(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const isLiveStreamConnectedRef = useRef<boolean>(false);
   const isNearBottomRef = useRef<boolean>(true);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingScrollRef = useRef<boolean>(false);
   const initialScrollDoneRef = useRef<boolean>(false);
+
+  const loadChatSnapshot = useCallback(async (
+    sessionId: string | undefined,
+    signal: AbortSignal | undefined,
+    replaceHistory: boolean,
+  ): Promise<void> => {
+    const url = sessionId === undefined
+      ? "/api/chat"
+      : `/api/chat?sessionId=${encodeURIComponent(sessionId)}`;
+    const response = await fetchWithCsrf(url, {
+      method: "GET",
+      signal,
+    });
+
+    if (!response.ok) {
+      const rawError = await response.text();
+      throw new Error(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError, t)}`);
+    }
+
+    const payload = await response.json() as ChatHistoryResponse;
+    setCurrentSessionId(payload.sessionId);
+    setRunState(payload.runState);
+
+    if (payload.runState === "running") {
+      if (!isLiveStreamConnectedRef.current) {
+        setIsStreaming(true);
+      }
+    } else {
+      setIsStreaming(false);
+    }
+
+    if (replaceHistory) {
+      replaceMessages(payload.messages);
+    }
+  }, [replaceMessages, t]);
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    setIsHistoryLoaded(false);
+    setCurrentSessionId(null);
+    setRunState("idle");
+    setIsStreaming(false);
+    isLiveStreamConnectedRef.current = false;
+    replaceMessages([]);
+
+    void (async (): Promise<void> => {
+      try {
+        await loadChatSnapshot(undefined, abortController.signal, true);
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+        replaceMessages([{
+          role: "assistant",
+          content: [{ type: "text", text: t("chat.errorFailed", { message }) }],
+          timestamp: Date.now(),
+          isError: true,
+          isStopped: false,
+        }]);
+      } finally {
+        if (!abortController.signal.aborted) {
+          setIsHistoryLoaded(true);
+        }
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [replaceMessages, t, workspaceId]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded || currentSessionId === null || runState !== "running") {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      void loadChatSnapshot(
+        currentSessionId,
+        undefined,
+        !isLiveStreamConnectedRef.current,
+      ).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        markAssistantError(t("chat.errorFailed", { message }));
+        setRunState("interrupted");
+        setIsStreaming(false);
+      });
+    }, 2_000);
+
+    return () => clearInterval(intervalId);
+  }, [currentSessionId, isHistoryLoaded, loadChatSnapshot, markAssistantError, runState, t]);
 
   // Resize drag logic
   useEffect(() => {
@@ -363,7 +478,8 @@ export const ChatPanel = (props: Props): ReactElement => {
   }, [handleAttach]);
 
   const sendMessage = useCallback(async (): Promise<void> => {
-    if (isStreaming) return;
+    if (isStreaming || isStopping) return;
+    if (!isHistoryLoaded) return;
     if (inputText.trim().length === 0 && pendingAttachments.length === 0) return;
 
     const contentParts = buildContentParts(inputText, pendingAttachments);
@@ -373,21 +489,17 @@ export const ChatPanel = (props: Props): ReactElement => {
     setInputText("");
     setPendingAttachments([]);
     setIsStreaming(true);
+    setRunState("running");
 
     startAssistantMessage();
 
     const abortController = new AbortController();
     abortRef.current = abortController;
 
-    // Build messages for the API from full history + new message
-    const allMessages = [
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
-      { role: "user" as const, content: contentParts },
-    ];
-
     const requestBody = JSON.stringify({
+      sessionId: currentSessionId,
       model: CHAT_MODEL_ID,
-      messages: allMessages,
+      content: contentParts,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
 
@@ -396,9 +508,12 @@ export const ChatPanel = (props: Props): ReactElement => {
       const limitMb = (MAX_BODY_BYTES / (1024 * 1024)).toFixed(0);
       markAssistantError(t("chat.errorTooLarge", { sizeMb, limitMb }));
       setIsStreaming(false);
+      setRunState("idle");
       abortRef.current = null;
       return;
     }
+
+    let responseSessionId: string | null = null;
 
     try {
       const response = await fetchWithCsrf("/api/chat", {
@@ -412,6 +527,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         const rawError = await response.text();
         markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError, t)}`);
         setIsStreaming(false);
+        setRunState("idle");
         return;
       }
 
@@ -419,12 +535,20 @@ export const ChatPanel = (props: Props): ReactElement => {
       if (reader === undefined) {
         markAssistantError(t("chat.errorNoResponse"));
         setIsStreaming(false);
+        setRunState("idle");
         return;
       }
+
+      responseSessionId = response.headers.get("X-Chat-Session-Id");
+      if (responseSessionId !== null && responseSessionId.length > 0) {
+        setCurrentSessionId(responseSessionId);
+      }
+      isLiveStreamConnectedRef.current = true;
 
       const decoder = new TextDecoder();
       let buffer = "";
       let receivedContent = false;
+      let reachedTerminalState = false;
       const STREAM_TIMEOUT_MS = 6 * 60 * 1000;
 
       while (true) {
@@ -470,11 +594,16 @@ export const ChatPanel = (props: Props): ReactElement => {
             }
           } else if (event.type === "error") {
             markAssistantError(event.message);
-            setIsStreaming(false);
-            return;
+            reachedTerminalState = true;
+            break;
           } else if (event.type === "done") {
+            reachedTerminalState = true;
             break;
           }
+        }
+
+        if (reachedTerminalState) {
+          break;
         }
       }
 
@@ -484,21 +613,31 @@ export const ChatPanel = (props: Props): ReactElement => {
         markAssistantError(t("chat.errorEmptyResponse"));
       }
     } catch (err) {
-      if (abortController.signal.aborted) {
-        finalizeAssistant();
-      } else {
+      if (!abortController.signal.aborted) {
         const message = err instanceof Error ? err.message : String(err);
         markAssistantError(t("chat.errorFailed", { message }));
       }
-    }
+    } finally {
+      isLiveStreamConnectedRef.current = false;
+      setIsStreaming(false);
+      abortRef.current = null;
 
-    setIsStreaming(false);
-    abortRef.current = null;
+      const sessionIdToReload = responseSessionId ?? currentSessionId ?? undefined;
+      if (!abortController.signal.aborted && sessionIdToReload !== undefined) {
+        try {
+          await loadChatSnapshot(sessionIdToReload, undefined, true);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          markAssistantError(t("chat.errorFailed", { message }));
+          setRunState("interrupted");
+        }
+      }
+    }
   }, [
     isStreaming,
+    isStopping,
     inputText,
     pendingAttachments,
-    messages,
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
@@ -508,7 +647,45 @@ export const ChatPanel = (props: Props): ReactElement => {
     mode,
     router,
     t,
+    currentSessionId,
+    isHistoryLoaded,
+    loadChatSnapshot,
   ]);
+
+  const stopMessage = useCallback(async (): Promise<void> => {
+    if (currentSessionId === null || !isStreaming || isStopping) {
+      return;
+    }
+
+    setIsStopping(true);
+
+    try {
+      await fetchWithCsrf("/api/chat/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: currentSessionId }),
+      });
+    } catch {
+      // The stop request is best-effort, but we still abort the local stream below.
+    } finally {
+      if (abortRef.current !== null) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+      isLiveStreamConnectedRef.current = false;
+      setIsStreaming(false);
+
+      try {
+        await loadChatSnapshot(currentSessionId, undefined, true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        markAssistantError(t("chat.errorFailed", { message }));
+        setRunState("interrupted");
+      } finally {
+        setIsStopping(false);
+      }
+    }
+  }, [currentSessionId, isStopping, isStreaming, loadChatSnapshot, markAssistantError, t]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -549,12 +726,28 @@ export const ChatPanel = (props: Props): ReactElement => {
             className={styles.closeButton}
             onClick={async () => {
               if (abortRef.current !== null) {
+                if (currentSessionId !== null) {
+                  try {
+                    await fetchWithCsrf("/api/chat/stop", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ sessionId: currentSessionId }),
+                    });
+                  } catch {
+                    // Continue clearing the UI even if stop fails.
+                  }
+                }
                 abortRef.current.abort();
                 abortRef.current = null;
               }
+              isLiveStreamConnectedRef.current = false;
               setIsStreaming(false);
+              setIsStopping(false);
               try {
-                const response = await fetchWithCsrf("/api/chat", {
+                const clearUrl = currentSessionId === null
+                  ? "/api/chat"
+                  : `/api/chat?sessionId=${encodeURIComponent(currentSessionId)}`;
+                const response = await fetchWithCsrf(clearUrl, {
                   method: "DELETE",
                 });
                 if (!response.ok) {
@@ -562,6 +755,9 @@ export const ChatPanel = (props: Props): ReactElement => {
                   markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError, t)}`);
                   return;
                 }
+                const payload = await response.json() as { ok: boolean; sessionId: string };
+                setCurrentSessionId(payload.sessionId);
+                setRunState("idle");
                 clearHistory();
               } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
@@ -661,10 +857,10 @@ export const ChatPanel = (props: Props): ReactElement => {
             <button
               type="button"
               className={styles.sendButton}
-              disabled={isStreaming}
-              onClick={() => void sendMessage()}
+              disabled={!isHistoryLoaded || isStopping}
+              onClick={() => void (isStreaming ? stopMessage() : sendMessage())}
             >
-              {t("chat.send")}
+              {isStreaming ? t("chat.stop") : t("chat.send")}
             </button>
           </div>
         </div>

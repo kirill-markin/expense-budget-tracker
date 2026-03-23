@@ -1,15 +1,31 @@
 import OpenAI from "openai";
 
-import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
 import { CHAT_MODEL_ID, CHAT_VENDOR } from "@/lib/chatModels";
 import { handleRoute } from "@/server/api/handleRoute";
+import { ApiRouteError } from "@/server/api/errors";
+import {
+  CHAT_RUN_STALE_HEARTBEAT_MS,
+  hasActiveChatRun,
+  startPersistedChatRun,
+} from "@/server/chat/runtime";
+import {
+  ChatSessionConflictError,
+  ChatSessionNotFoundError,
+  createFreshChatSession,
+  getChatSessionSnapshot,
+  getLatestChatSessionId,
+  markChatSessionInterrupted,
+  prepareChatRun,
+  type ChatSessionRunState,
+} from "@/server/chat/store";
+import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { resetServerManagedContainer } from "@/server/chat/openai/containerState";
-import { startAgentResponse } from "@/server/chat/openai/agent";
 import { log, type ChatErrorStage } from "@/server/logger";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 type ChatRequestBody = Readonly<{
-  messages: ReadonlyArray<ChatMessage>;
+  sessionId?: string;
+  content: ReadonlyArray<ContentPart>;
   model: string;
   timezone: string;
 }>;
@@ -22,11 +38,24 @@ export type ChatRequestContext = Readonly<{
 export type ChatRequestDiagnostics = Readonly<{
   requestId: string;
   model: string;
+  sessionId?: string;
   messageCount: number;
   hasAttachments: boolean;
   attachmentFileNames: ReadonlyArray<string>;
   userId?: string;
   workspaceId?: string;
+}>;
+
+export type ChatHistoryResponse = Readonly<{
+  sessionId: string;
+  runState: ChatSessionRunState;
+  updatedAt: number;
+  messages: ReadonlyArray<Readonly<{
+    role: "user" | "assistant";
+    content: ReadonlyArray<ContentPart>;
+    timestamp: number;
+    isError: boolean;
+  }>>;
 }>;
 
 type ChatErrorLogEvent = Readonly<{
@@ -38,6 +67,7 @@ type ChatErrorLogEvent = Readonly<{
   requestId: string;
   userId?: string;
   workspaceId?: string;
+  sessionId?: string;
   model: string;
   messageCount: number;
   hasAttachments: boolean;
@@ -50,6 +80,7 @@ type ChatEventStreamParams = Readonly<{
   onStreamError: (error: string) => void;
 }>;
 
+const CHAT_STREAM_INTERRUPTED_ERROR = "This response stopped because the chat server restarted before it finished. Please send a new message to continue.";
 export const CHAT_STREAM_HEARTBEAT_INTERVAL_MS = 15_000;
 
 export const isExpectedStreamClosureError = (error: unknown): boolean => {
@@ -64,30 +95,52 @@ export const extractChatRequestContext = (request: Request): ChatRequestContext 
   workspaceId: extractWorkspaceId(request),
 });
 
-const collectChatAttachmentFileNames = (messages: ReadonlyArray<ChatMessage>): ReadonlyArray<string> => {
-  const attachmentFileNames: Array<string> = [];
-  for (const message of messages) {
-    for (const part of message.content) {
-      if (part.type === "file") {
-        attachmentFileNames.push(part.fileName);
-      }
-    }
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isContentPart = (value: unknown): value is ContentPart => {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return false;
   }
-  return attachmentFileNames;
+
+  switch (value.type) {
+    case "text":
+      return typeof value.text === "string";
+    case "image":
+      return typeof value.mediaType === "string" && typeof value.base64Data === "string";
+    case "file":
+      return typeof value.mediaType === "string"
+        && typeof value.base64Data === "string"
+        && typeof value.fileName === "string";
+    case "tool_call":
+      return typeof value.name === "string"
+        && (value.status === "started" || value.status === "completed");
+    default:
+      return false;
+  }
 };
+
+const collectChatAttachmentFileNames = (
+  content: ReadonlyArray<ContentPart>,
+): ReadonlyArray<string> =>
+  content
+    .filter((part): part is Extract<ContentPart, { type: "file" }> => part.type === "file")
+    .map((part) => part.fileName);
 
 export const buildChatRequestDiagnostics = (
   requestId: string,
   model: string,
-  messages: ReadonlyArray<ChatMessage>,
+  content: ReadonlyArray<ContentPart>,
   userId?: string,
   workspaceId?: string,
+  sessionId?: string,
 ): ChatRequestDiagnostics => ({
   requestId,
   model,
-  messageCount: messages.length,
-  hasAttachments: messages.some((message) => message.content.some((part) => part.type !== "text")),
-  attachmentFileNames: collectChatAttachmentFileNames(messages),
+  sessionId,
+  messageCount: 1,
+  hasAttachments: content.some((part) => part.type !== "text"),
+  attachmentFileNames: collectChatAttachmentFileNames(content),
   userId,
   workspaceId,
 });
@@ -105,6 +158,7 @@ export const createChatErrorLogEvent = (
   requestId: diagnostics.requestId,
   userId: diagnostics.userId,
   workspaceId: diagnostics.workspaceId,
+  sessionId: diagnostics.sessionId,
   model: diagnostics.model,
   messageCount: diagnostics.messageCount,
   hasAttachments: diagnostics.hasAttachments,
@@ -116,6 +170,61 @@ const createSseDataLine = (event: ChatStreamEvent): string =>
 
 const createSseHeartbeatLine = (): string =>
   ": keep-alive\n\n";
+
+const toChatHistoryResponse = (
+  snapshot: Awaited<ReturnType<typeof getChatSessionSnapshot>>,
+): ChatHistoryResponse => ({
+  sessionId: snapshot.sessionId,
+  runState: snapshot.runState,
+  updatedAt: snapshot.updatedAt,
+  messages: snapshot.messages,
+});
+
+const mapStoreErrorToRouteError = (error: unknown): never => {
+  if (error instanceof ChatSessionNotFoundError) {
+    throw new ApiRouteError(404, error.message);
+  }
+
+  if (error instanceof ChatSessionConflictError) {
+    throw new ApiRouteError(409, "Chat session already has an active response");
+  }
+
+  throw error;
+};
+
+const resolveSnapshotWithRunRecovery = async (
+  userId: string,
+  workspaceId: string,
+  sessionId?: string,
+): Promise<Awaited<ReturnType<typeof getChatSessionSnapshot>>> => {
+  let snapshot = await getChatSessionSnapshot(userId, workspaceId, sessionId);
+
+  if (snapshot.runState !== "running") {
+    return snapshot;
+  }
+
+  if (hasActiveChatRun(snapshot.sessionId)) {
+    return snapshot;
+  }
+
+  const heartbeatAgeMs = snapshot.activeRunHeartbeatAt === null
+    ? Number.POSITIVE_INFINITY
+    : Date.now() - snapshot.activeRunHeartbeatAt;
+
+  if (heartbeatAgeMs <= CHAT_RUN_STALE_HEARTBEAT_MS) {
+    return snapshot;
+  }
+
+  await markChatSessionInterrupted(
+    userId,
+    workspaceId,
+    snapshot.sessionId,
+    CHAT_STREAM_INTERRUPTED_ERROR,
+  );
+
+  snapshot = await getChatSessionSnapshot(userId, workspaceId, snapshot.sessionId);
+  return snapshot;
+};
 
 export const createChatEventStream = (params: ChatEventStreamParams): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
@@ -239,13 +348,16 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
 };
 
 export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
-  if (typeof body !== "object" || body === null) {
+  if (!isRecord(body)) {
     throw new Error("Invalid chat request body");
   }
 
   const candidate = body as Partial<ChatRequestBody>;
-  if (!Array.isArray(candidate.messages) || candidate.messages.length === 0) {
-    throw new Error("messages array is empty");
+  if (!Array.isArray(candidate.content) || candidate.content.length === 0) {
+    throw new Error("content array is empty");
+  }
+  if (!candidate.content.every(isContentPart)) {
+    throw new Error("content array contains invalid parts");
   }
   if (typeof candidate.model !== "string" || candidate.model.length === 0) {
     throw new Error("model must be a non-empty string");
@@ -253,85 +365,150 @@ export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
   if (typeof candidate.timezone !== "string" || candidate.timezone.length === 0) {
     throw new Error("timezone must be a non-empty string");
   }
+  if (candidate.sessionId !== undefined && typeof candidate.sessionId !== "string") {
+    throw new Error("sessionId must be a string when provided");
+  }
 
   return {
-    messages: candidate.messages,
+    sessionId: candidate.sessionId,
+    content: candidate.content,
     model: candidate.model,
     timezone: candidate.timezone,
   };
 };
 
+export const GET = async (request: Request): Promise<Response> =>
+  handleRoute(
+    { route: "/api/chat", method: "GET", internalErrorMessage: "Chat history load failed" },
+    async (): Promise<Response> => {
+      const context = extractChatRequestContext(request);
+      const sessionId = new URL(request.url).searchParams.get("sessionId") ?? undefined;
+
+      try {
+        const snapshot = await resolveSnapshotWithRunRecovery(
+          context.userId,
+          context.workspaceId,
+          sessionId,
+        );
+        return Response.json(toChatHistoryResponse(snapshot));
+      } catch (error) {
+        return mapStoreErrorToRouteError(error);
+      }
+    },
+  );
+
 export const POST = async (request: Request): Promise<Response> => {
   let body: ChatRequestBody;
   try {
     body = parseChatRequestBody(await request.json());
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return new Response(message === "Invalid chat request body" ? message : message, { status: 400 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Response(message, { status: 400 });
   }
 
   if (body.model !== CHAT_MODEL_ID) {
     return new Response(`Unsupported model: ${body.model}. Expected ${CHAT_MODEL_ID}`, { status: 400 });
   }
 
-  if (!Array.isArray(body.messages) || body.messages.length === 0) {
-    return new Response("messages array is empty", { status: 400 });
-  }
-
   const requestId = crypto.randomUUID();
-  const requestDiagnostics = buildChatRequestDiagnostics(requestId, body.model, body.messages);
-
   const envKey = "OPENAI_API_KEY";
   const apiKey = process.env[envKey];
   if (apiKey === undefined || apiKey === "") {
-    log(createChatErrorLogEvent(requestDiagnostics, "config", `${envKey} environment variable is not set`));
+    const diagnostics = buildChatRequestDiagnostics(requestId, body.model, body.content);
+    log(createChatErrorLogEvent(diagnostics, "config", `${envKey} environment variable is not set`));
     return new Response(`${envKey} environment variable is not set`, { status: 500 });
   }
 
-  let userId: string;
-  let workspaceId: string;
+  let context: ChatRequestContext;
   try {
-    const context = extractChatRequestContext(request);
-    userId = context.userId;
-    workspaceId = context.workspaceId;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(createChatErrorLogEvent(requestDiagnostics, "auth", message));
+    context = extractChatRequestContext(request);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const diagnostics = buildChatRequestDiagnostics(requestId, body.model, body.content);
+    log(createChatErrorLogEvent(diagnostics, "auth", message));
     return new Response(message, { status: 401 });
   }
 
-  const diagnostics = buildChatRequestDiagnostics(requestId, body.model, body.messages, userId, workspaceId);
-
-  let started: Awaited<ReturnType<typeof startAgentResponse>>;
   try {
-    started = await startAgentResponse({
-      messages: body.messages,
-      userId,
-      workspaceId,
-      timezone: body.timezone,
+    const snapshot = await resolveSnapshotWithRunRecovery(
+      context.userId,
+      context.workspaceId,
+      body.sessionId,
+    );
+
+    const diagnostics = buildChatRequestDiagnostics(
       requestId,
+      body.model,
+      body.content,
+      context.userId,
+      context.workspaceId,
+      snapshot.sessionId,
+    );
+
+    const preparedRun = await prepareChatRun(
+      context.userId,
+      context.workspaceId,
+      snapshot.sessionId,
+      body.content,
+    );
+
+    const events = startPersistedChatRun({
+      requestId,
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      sessionId: preparedRun.sessionId,
+      timezone: body.timezone,
+      assistantItemId: preparedRun.assistantItem.itemId,
+      messages: preparedRun.messagesForModel,
+      diagnostics: {
+        requestId,
+        userId: context.userId,
+        workspaceId: context.workspaceId,
+        sessionId: preparedRun.sessionId,
+        model: body.model,
+        messageCount: diagnostics.messageCount,
+        hasAttachments: diagnostics.hasAttachments,
+        attachmentFileNames: diagnostics.attachmentFileNames,
+      },
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(createChatErrorLogEvent(diagnostics, "agent", message));
-    throw err;
+
+    const stream = createChatEventStream({
+      events,
+      heartbeatIntervalMs: CHAT_STREAM_HEARTBEAT_INTERVAL_MS,
+      onStreamError: (error: string): void => {
+        log(createChatErrorLogEvent(diagnostics, "stream", error));
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "X-Chat-Session-Id": preparedRun.sessionId,
+      },
+    });
+  } catch (error) {
+    if (error instanceof ChatSessionNotFoundError || error instanceof ChatSessionConflictError) {
+      return new Response(
+        error instanceof ChatSessionConflictError
+          ? "Chat session already has an active response"
+          : error.message,
+        { status: error instanceof ChatSessionConflictError ? 409 : 404 },
+      );
+    }
+
+    const diagnostics = buildChatRequestDiagnostics(
+      requestId,
+      body.model,
+      body.content,
+      context.userId,
+      context.workspaceId,
+      body.sessionId,
+    );
+    log(createChatErrorLogEvent(diagnostics, "agent", error instanceof Error ? error.message : String(error)));
+    throw error;
   }
-
-  const stream = createChatEventStream({
-    events: started.events,
-    heartbeatIntervalMs: CHAT_STREAM_HEARTBEAT_INTERVAL_MS,
-    onStreamError: (error: string): void => {
-      log(createChatErrorLogEvent(diagnostics, "stream", error));
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
 };
 
 export const DELETE = async (request: Request): Promise<Response> =>
@@ -339,7 +516,34 @@ export const DELETE = async (request: Request): Promise<Response> =>
     { route: "/api/chat", method: "DELETE", internalErrorMessage: "Chat reset failed" },
     async (): Promise<Response> => {
       const context = extractChatRequestContext(request);
-      await resetServerManagedContainer(new OpenAI(), crypto.randomUUID(), context.userId, context.workspaceId);
-      return Response.json({ ok: true });
+      const sessionId = new URL(request.url).searchParams.get("sessionId") ?? undefined;
+
+      let targetSessionId: string | null = null;
+      try {
+        if (sessionId !== undefined) {
+          targetSessionId = await getChatSessionSnapshot(
+            context.userId,
+            context.workspaceId,
+            sessionId,
+          ).then((snapshot) => snapshot.sessionId);
+        } else {
+          targetSessionId = await getLatestChatSessionId(context.userId, context.workspaceId);
+        }
+      } catch (error) {
+        return mapStoreErrorToRouteError(error);
+      }
+
+      if (targetSessionId !== null && !hasActiveChatRun(targetSessionId)) {
+        await resetServerManagedContainer(
+          new OpenAI(),
+          crypto.randomUUID(),
+          context.userId,
+          context.workspaceId,
+          targetSessionId,
+        );
+      }
+
+      const newSessionId = await createFreshChatSession(context.userId, context.workspaceId);
+      return Response.json({ ok: true, sessionId: newSessionId });
     },
   );

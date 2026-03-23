@@ -7,9 +7,9 @@ type RetrieveContainerResult = Awaited<ReturnType<OpenAI["containers"]["retrieve
 type CreateContainerResult = Awaited<ReturnType<OpenAI["containers"]["create"]>>;
 
 type ContainerStore = Readonly<{
-  loadStoredContainer: (userId: string, workspaceId: string) => Promise<string | null>;
-  saveStoredContainer: (userId: string, workspaceId: string, containerId: string) => Promise<void>;
-  clearStoredContainer: (userId: string, workspaceId: string) => Promise<void>;
+  loadStoredContainer: (userId: string, workspaceId: string, sessionId: string) => Promise<string | null>;
+  saveStoredContainer: (userId: string, workspaceId: string, sessionId: string, containerId: string) => Promise<void>;
+  clearStoredContainer: (userId: string, workspaceId: string, sessionId: string) => Promise<void>;
 }>;
 
 type OpenAIContainerClient = Readonly<{
@@ -27,6 +27,7 @@ type ResolveServerManagedContainerParams = Readonly<{
   requestId: string;
   userId: string;
   workspaceId: string;
+  sessionId: string;
   createContainerName: (requestId: string) => string;
   isContainerExpired: (container: RetrieveContainerResult) => boolean;
   previousContainerId?: string | null;
@@ -41,23 +42,22 @@ type ResetServerManagedContainerParams = Readonly<{
   requestId: string;
   userId: string;
   workspaceId: string;
+  sessionId: string;
 }>;
 
 const LOAD_STORED_CONTAINER_SQL = `
   SELECT container_id
   FROM public.chat_code_interpreter_containers
-  WHERE user_id = $1
-    AND workspace_id = $2
+  WHERE session_id = $1
 `;
 
 const SAVE_STORED_CONTAINER_SQL = `
   INSERT INTO public.chat_code_interpreter_containers (
-    user_id,
-    workspace_id,
+    session_id,
     container_id,
     updated_at
-  ) VALUES ($1, $2, $3, now())
-  ON CONFLICT (user_id, workspace_id)
+  ) VALUES ($1, $2, now())
+  ON CONFLICT (session_id)
   DO UPDATE
     SET container_id = EXCLUDED.container_id,
         updated_at = now()
@@ -65,15 +65,15 @@ const SAVE_STORED_CONTAINER_SQL = `
 
 const CLEAR_STORED_CONTAINER_SQL = `
   DELETE FROM public.chat_code_interpreter_containers
-  WHERE user_id = $1
-    AND workspace_id = $2
+  WHERE session_id = $1
 `;
 
 export const loadStoredContainer = async (
   userId: string,
   workspaceId: string,
+  sessionId: string,
 ): Promise<string | null> => {
-  const result = await queryAs(userId, workspaceId, LOAD_STORED_CONTAINER_SQL, [userId, workspaceId]);
+  const result = await queryAs(userId, workspaceId, LOAD_STORED_CONTAINER_SQL, [sessionId]);
   if (result.rows.length === 0) {
     return null;
   }
@@ -85,16 +85,18 @@ export const loadStoredContainer = async (
 export const saveStoredContainer = async (
   userId: string,
   workspaceId: string,
+  sessionId: string,
   containerId: string,
 ): Promise<void> => {
-  await queryAs(userId, workspaceId, SAVE_STORED_CONTAINER_SQL, [userId, workspaceId, containerId]);
+  await queryAs(userId, workspaceId, SAVE_STORED_CONTAINER_SQL, [sessionId, containerId]);
 };
 
 export const clearStoredContainer = async (
   userId: string,
   workspaceId: string,
+  sessionId: string,
 ): Promise<void> => {
-  await queryAs(userId, workspaceId, CLEAR_STORED_CONTAINER_SQL, [userId, workspaceId]);
+  await queryAs(userId, workspaceId, CLEAR_STORED_CONTAINER_SQL, [sessionId]);
 };
 
 const getErrorStatus = (error: unknown): number | null => {
@@ -119,7 +121,12 @@ const createAndStoreContainer = async (
     },
   });
 
-  await dependencies.store.saveStoredContainer(params.userId, params.workspaceId, container.id);
+  await dependencies.store.saveStoredContainer(
+    params.userId,
+    params.workspaceId,
+    params.sessionId,
+    container.id,
+  );
 
   log({
     domain: "chat",
@@ -140,7 +147,11 @@ export const resolveServerManagedContainerWithDeps = async (
   dependencies: ResolveContainerDependencies,
   params: ResolveServerManagedContainerParams,
 ): Promise<string> => {
-  const storedContainerId = await dependencies.store.loadStoredContainer(params.userId, params.workspaceId);
+  const storedContainerId = await dependencies.store.loadStoredContainer(
+    params.userId,
+    params.workspaceId,
+    params.sessionId,
+  );
   if (storedContainerId === null) {
     return createAndStoreContainer(dependencies, params);
   }
@@ -193,6 +204,7 @@ export const resolveServerManagedContainer = async (
   requestId: string,
   userId: string,
   workspaceId: string,
+  sessionId: string,
   createContainerName: (requestId: string) => string,
   isContainerExpired: (container: RetrieveContainerResult) => boolean,
 ): Promise<string> =>
@@ -209,6 +221,7 @@ export const resolveServerManagedContainer = async (
       requestId,
       userId,
       workspaceId,
+      sessionId,
       createContainerName,
       isContainerExpired,
     },
@@ -218,8 +231,16 @@ export const resetServerManagedContainerWithDeps = async (
   dependencies: ResetServerManagedContainerDependencies,
   params: ResetServerManagedContainerParams,
 ): Promise<void> => {
-  const storedContainerId = await dependencies.store.loadStoredContainer(params.userId, params.workspaceId);
-  await dependencies.store.clearStoredContainer(params.userId, params.workspaceId);
+  const storedContainerId = await dependencies.store.loadStoredContainer(
+    params.userId,
+    params.workspaceId,
+    params.sessionId,
+  );
+  await dependencies.store.clearStoredContainer(
+    params.userId,
+    params.workspaceId,
+    params.sessionId,
+  );
 
   if (storedContainerId === null) {
     return;
@@ -253,6 +274,7 @@ export const resetServerManagedContainer = async (
   requestId: string,
   userId: string,
   workspaceId: string,
+  sessionId: string,
 ): Promise<void> =>
   resetServerManagedContainerWithDeps(
     {
@@ -266,5 +288,6 @@ export const resetServerManagedContainer = async (
       requestId,
       userId,
       workspaceId,
+      sessionId,
     },
   );

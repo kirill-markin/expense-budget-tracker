@@ -43,8 +43,10 @@ export type StreamAgentParams = Readonly<{
   messages: ReadonlyArray<ChatMessage>;
   userId: string;
   workspaceId: string;
+  sessionId: string;
   timezone: string;
   requestId: string;
+  signal?: AbortSignal;
 }>;
 
 type RawTextEvent = Readonly<{
@@ -99,6 +101,7 @@ type RunAgentParams = Readonly<{
   input: ReadonlyArray<InputMessage>;
   context: AgentContext;
   maxTurns: number;
+  signal?: AbortSignal;
 }>;
 
 type StartAgentResponseResult = Readonly<{
@@ -141,6 +144,7 @@ const DEFAULT_START_AGENT_RESPONSE_DEPENDENCIES: StartAgentResponseDependencies 
       stream: true,
       context: params.context,
       maxTurns: params.maxTurns,
+      signal: params.signal,
     }) as AgentRunResult,
   addFilesToOpenAIContainer,
   listOpenAIContainerInventory,
@@ -214,6 +218,7 @@ export const startAgentResponseWithDeps = async (
     params.requestId,
     params.userId,
     params.workspaceId,
+    params.sessionId,
     buildOpenAIContainerName,
     isOpenAIContainerExpired,
   );
@@ -299,6 +304,7 @@ export const startAgentResponseWithDeps = async (
     input,
     context,
     maxTurns: 10,
+    signal: params.signal,
   });
 
   const events = (async function* (): AsyncGenerator<ChatStreamEvent> {

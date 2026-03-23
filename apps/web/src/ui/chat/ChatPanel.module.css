@@ -135,6 +135,13 @@
   border-color: #c0392b;
 }
 
+.stoppedNotice {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .streamingIndicator {
   display: block;
   color: var(--text);

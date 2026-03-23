@@ -34,6 +34,15 @@ type ChatEvent =
     forcedToolChoice?: string | null;
   }>
   | Readonly<{ domain: "chat"; action: "turn_start"; vendor: ChatVendor; turn: number }>
+  | Readonly<{
+    domain: "chat";
+    action: "run_cancel_requested" | "run_cancelled";
+    vendor: ChatVendor;
+    requestId?: string;
+    sessionId: string;
+    userId?: string;
+    workspaceId?: string;
+  }>
   | Readonly<{ domain: "chat"; action: "tool_call"; vendor: ChatVendor; tool: string; status: ToolStatus; durationMs?: number }>
   | Readonly<{
     domain: "chat";
@@ -112,6 +121,7 @@ type ChatEvent =
     requestId?: string;
     userId?: string;
     workspaceId?: string;
+    sessionId?: string;
     model?: string;
     messageCount?: number;
     hasAttachments?: boolean;

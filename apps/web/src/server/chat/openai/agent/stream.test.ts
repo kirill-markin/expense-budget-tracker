@@ -86,6 +86,7 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
     messages,
     userId: "user-1",
     workspaceId: "workspace-1",
+    sessionId: "session-1",
     timezone: "Europe/Madrid",
     requestId: "request-1",
   };
@@ -196,6 +197,7 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
       messages,
       userId: "user-1",
       workspaceId: "workspace-1",
+      sessionId: "session-1",
       timezone: "Europe/Madrid",
       requestId: "request-2",
     },

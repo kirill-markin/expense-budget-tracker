@@ -12,9 +12,9 @@ type RetrieveContainerResult = Awaited<ReturnType<OpenAI["containers"]["retrieve
 type CreateContainerResult = Awaited<ReturnType<OpenAI["containers"]["create"]>>;
 
 type FakeStore = Readonly<{
-  loadStoredContainer: (userId: string, workspaceId: string) => Promise<string | null>;
-  saveStoredContainer: (userId: string, workspaceId: string, containerId: string) => Promise<void>;
-  clearStoredContainer: (userId: string, workspaceId: string) => Promise<void>;
+  loadStoredContainer: (userId: string, workspaceId: string, sessionId: string) => Promise<string | null>;
+  saveStoredContainer: (userId: string, workspaceId: string, sessionId: string, containerId: string) => Promise<void>;
+  clearStoredContainer: (userId: string, workspaceId: string, sessionId: string) => Promise<void>;
   getStored: () => string | null;
   savedContainerIds: Array<string>;
 }>;
@@ -48,11 +48,20 @@ const createFakeStore = (initialContainerId: string | null): FakeStore => {
 
   return {
     loadStoredContainer: async (): Promise<string | null> => storedContainerId,
-    saveStoredContainer: async (_userId: string, _workspaceId: string, containerId: string): Promise<void> => {
+    saveStoredContainer: async (
+      _userId: string,
+      _workspaceId: string,
+      _sessionId: string,
+      containerId: string,
+    ): Promise<void> => {
       storedContainerId = containerId;
       savedContainerIds.push(containerId);
     },
-    clearStoredContainer: async (): Promise<void> => {
+    clearStoredContainer: async (
+      _userId: string,
+      _workspaceId: string,
+      _sessionId: string,
+    ): Promise<void> => {
       storedContainerId = null;
     },
     getStored: (): string | null => storedContainerId,
@@ -82,6 +91,7 @@ test("resolveServerManagedContainerWithDeps creates and stores a container when 
       requestId: "request-1",
       userId: "user-1",
       workspaceId: "workspace-1",
+      sessionId: "session-1",
       createContainerName: (requestId: string): string => `expense-chat-${requestId}`,
       isContainerExpired: (): boolean => false,
     },
@@ -117,6 +127,7 @@ test("resolveServerManagedContainerWithDeps reuses an active stored container", 
       requestId: "request-1",
       userId: "user-1",
       workspaceId: "workspace-1",
+      sessionId: "session-1",
       createContainerName: (requestId: string): string => `expense-chat-${requestId}`,
       isContainerExpired: (): boolean => false,
     },
@@ -153,6 +164,7 @@ test("resolveServerManagedContainerWithDeps recreates when retrieve fails", asyn
       requestId: "request-2",
       userId: "user-1",
       workspaceId: "workspace-1",
+      sessionId: "session-1",
       createContainerName: (requestId: string): string => `expense-chat-${requestId}`,
       isContainerExpired: (): boolean => false,
     },
@@ -184,6 +196,7 @@ test("resolveServerManagedContainerWithDeps recreates expired containers", async
       requestId: "request-3",
       userId: "user-1",
       workspaceId: "workspace-1",
+      sessionId: "session-1",
       createContainerName: (requestId: string): string => `expense-chat-${requestId}`,
       isContainerExpired: (): boolean => true,
     },
@@ -216,6 +229,7 @@ test("resetServerManagedContainerWithDeps clears the stored row even when OpenAI
       requestId: "request-4",
       userId: "user-1",
       workspaceId: "workspace-1",
+      sessionId: "session-1",
     },
   );
 

@@ -60,11 +60,12 @@ test("extractChatRequestContext rejects requests without a workspace header", ()
 
 test("parseChatRequestBody accepts message payload without client container identifiers", () => {
   assert.deepEqual(parseChatRequestBody({
-    messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    content: [{ type: "text", text: "hello" }],
     model: CHAT_MODEL_ID,
     timezone: "Europe/Madrid",
   }), {
-    messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    sessionId: undefined,
+    content: [{ type: "text", text: "hello" }],
     model: CHAT_MODEL_ID,
     timezone: "Europe/Madrid",
   });
@@ -72,13 +73,14 @@ test("parseChatRequestBody accepts message payload without client container iden
 
 test("parseChatRequestBody ignores legacy client container fields", () => {
   assert.deepEqual(parseChatRequestBody({
-    messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    content: [{ type: "text", text: "hello" }],
     model: CHAT_MODEL_ID,
     timezone: "Europe/Madrid",
     chatSessionId: "legacy-chat-id",
     codeInterpreterContainerId: "legacy-container-id",
   }), {
-    messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    sessionId: undefined,
+    content: [{ type: "text", text: "hello" }],
     model: CHAT_MODEL_ID,
     timezone: "Europe/Madrid",
   });
@@ -87,7 +89,7 @@ test("parseChatRequestBody ignores legacy client container fields", () => {
 test("parseChatRequestBody rejects missing timezone", () => {
   assert.throws(
     () => parseChatRequestBody({
-      messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      content: [{ type: "text", text: "hello" }],
       model: CHAT_MODEL_ID,
       timezone: "",
     }),
@@ -104,7 +106,7 @@ test("POST rejects models other than the pinned OpenAI model", async () => {
       "x-workspace-id": "workspace-1",
     },
     body: JSON.stringify({
-      messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      content: [{ type: "text", text: "hello" }],
       model: "gpt-4.1",
       timezone: "Europe/Madrid",
     }),
@@ -120,17 +122,13 @@ test("POST rejects models other than the pinned OpenAI model", async () => {
 test("buildChatRequestDiagnostics tracks message and attachment metadata", () => {
   assert.deepEqual(
     buildChatRequestDiagnostics("req-1", CHAT_MODEL_ID, [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "hello" },
-          { type: "file", mediaType: "text/csv", base64Data: "YQ==", fileName: "report.csv" },
-        ],
-      },
-    ], "user-1", "workspace-1"),
+      { type: "text", text: "hello" },
+      { type: "file", mediaType: "text/csv", base64Data: "YQ==", fileName: "report.csv" },
+    ], "user-1", "workspace-1", "session-1"),
     {
       requestId: "req-1",
       model: CHAT_MODEL_ID,
+      sessionId: "session-1",
       messageCount: 1,
       hasAttachments: true,
       attachmentFileNames: ["report.csv"],
@@ -144,9 +142,10 @@ test("createChatErrorLogEvent includes structured chat context", () => {
   const diagnostics = buildChatRequestDiagnostics(
     "req-1",
     CHAT_MODEL_ID,
-    [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    [{ type: "text", text: "hello" }],
     "user-1",
     "workspace-1",
+    "session-1",
   );
 
   assert.deepEqual(
@@ -160,6 +159,7 @@ test("createChatErrorLogEvent includes structured chat context", () => {
       requestId: "req-1",
       userId: "user-1",
       workspaceId: "workspace-1",
+      sessionId: "session-1",
       model: CHAT_MODEL_ID,
       messageCount: 1,
       hasAttachments: false,
