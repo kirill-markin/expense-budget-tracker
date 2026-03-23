@@ -230,6 +230,61 @@ export type CumulativeBalance = Readonly<{
   isTainted: boolean;
 }>;
 
+export type BudgetTaintedState = Readonly<{
+  taintedCells: ReadonlySet<string>;
+  taintedDirectionMonths: ReadonlySet<string>;
+  taintedMonths: ReadonlySet<string>;
+}>;
+
+export const buildBudgetTaintedState = (
+  rows: ReadonlyArray<BudgetRow>,
+): BudgetTaintedState => {
+  const taintedCells = new Set<string>();
+  const taintedDirectionMonths = new Set<string>();
+  const taintedMonths = new Set<string>();
+
+  for (const row of rows) {
+    if (!row.hasUnconvertible) {
+      continue;
+    }
+
+    taintedCells.add(`${row.direction}::${row.month}::${row.category}`);
+    taintedDirectionMonths.add(`${row.direction}::${row.month}`);
+    taintedMonths.add(row.month);
+  }
+
+  return {
+    taintedCells,
+    taintedDirectionMonths,
+    taintedMonths,
+  };
+};
+
+export const adjustCumulativeBeforeForPrependedRows = (
+  cumulativeBefore: CumulativeBefore,
+  prependedRows: ReadonlyArray<BudgetRow>,
+): CumulativeBefore => {
+  let incomeDelta = 0;
+  let spendDelta = 0;
+  let transferDelta = 0;
+
+  for (const row of prependedRows) {
+    if (row.direction === "income") {
+      incomeDelta += row.actual;
+    } else if (row.direction === "spend") {
+      spendDelta += row.actual;
+    } else if (row.direction === "transfer") {
+      transferDelta += row.actual;
+    }
+  }
+
+  return {
+    incomeActual: cumulativeBefore.incomeActual - incomeDelta,
+    spendActual: cumulativeBefore.spendActual - spendDelta,
+    transferActual: cumulativeBefore.transferActual - transferDelta,
+  };
+};
+
 /**
  * Pre-computes cumulative balance for each month.
  * Used by the Balance row and year-total Balance cells (which show December's value).
