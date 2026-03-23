@@ -52,6 +52,13 @@ type ChatEventStreamParams = Readonly<{
 
 export const CHAT_STREAM_HEARTBEAT_INTERVAL_MS = 15_000;
 
+export const isExpectedStreamClosureError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Controller is already closed")
+    || message.includes("ReadableStream is already closed")
+    || message.includes("stream is already closed");
+};
+
 export const extractChatRequestContext = (request: Request): ChatRequestContext => ({
   userId: extractUserId(request),
   workspaceId: extractWorkspaceId(request),
@@ -130,19 +137,29 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
           return;
         }
         isClosed = true;
-        controller.close();
+        try {
+          controller.close();
+        } catch (error) {
+          if (!isExpectedStreamClosureError(error)) {
+            throw error;
+          }
+        }
       };
 
-      const enqueueChunk = (chunk: string): void => {
+      const enqueueChunk = (chunk: string): boolean => {
         if (isClosed) {
-          throw new Error("Chat stream is already closed");
+          return false;
         }
 
         try {
           controller.enqueue(encoder.encode(chunk));
+          return true;
         } catch (error) {
           clearHeartbeat();
           isClosed = true;
+          if (isExpectedStreamClosureError(error)) {
+            return false;
+          }
           throw error;
         }
       };
@@ -155,10 +172,13 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
 
         heartbeatTimer = setTimeout(() => {
           try {
-            enqueueChunk(createSseHeartbeatLine());
+            const written = enqueueChunk(createSseHeartbeatLine());
+            if (!written) {
+              return;
+            }
             scheduleHeartbeat();
           } catch (error) {
-            if (isClosed) {
+            if (isClosed || isExpectedStreamClosureError(error)) {
               return;
             }
             const message = error instanceof Error ? error.message : String(error);
@@ -176,7 +196,10 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
             return;
           }
           clearHeartbeat();
-          enqueueChunk(createSseDataLine(event));
+          const written = enqueueChunk(createSseDataLine(event));
+          if (!written) {
+            return;
+          }
           if (event.type === "done") {
             closeStream();
             return;
@@ -185,13 +208,16 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
         }
       } catch (error) {
         clearHeartbeat();
-        if (isClosed) {
+        if (isClosed || isExpectedStreamClosureError(error)) {
           return;
         }
         const message = error instanceof Error ? error.message : String(error);
         params.onStreamError(message);
         if (!isClosed) {
-          enqueueChunk(createSseDataLine({ type: "error", message }));
+          const written = enqueueChunk(createSseDataLine({ type: "error", message }));
+          if (!written) {
+            return;
+          }
         }
       }
 
@@ -200,7 +226,14 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
     cancel() {
       clearHeartbeat();
       isClosed = true;
-      return;
+      const returnFn = params.events.return?.bind(params.events);
+      if (returnFn === undefined) {
+        return;
+      }
+      return returnFn(undefined).then(
+        (): void => undefined,
+        (): void => undefined,
+      );
     },
   });
 };

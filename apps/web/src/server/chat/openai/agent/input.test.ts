@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ChatMessage } from "@/server/chat/types";
 import {
   buildInput,
+  getAllUserFileAttachments,
   getLatestUserFileAttachments,
   getSpreadsheetAttachmentFileNames,
 } from "./input";
@@ -32,6 +33,33 @@ test("getLatestUserFileAttachments returns only files from the latest user messa
 
   assert.deepEqual(getLatestUserFileAttachments(messages), [
     { type: "file", fileName: "report.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base64Data: "bmV3" },
+  ]);
+});
+
+test("getAllUserFileAttachments returns unique files across user history", () => {
+  const messages: ReadonlyArray<ChatMessage> = [
+    {
+      role: "user",
+      content: [
+        { type: "file", fileName: "old.csv", mediaType: "text/csv", base64Data: "b2xk" },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Seen" }],
+    },
+    {
+      role: "user",
+      content: [
+        { type: "file", fileName: "old.csv", mediaType: "text/csv", base64Data: "b2xk" },
+        { type: "file", fileName: "new.csv", mediaType: "text/csv", base64Data: "bmV3" },
+      ],
+    },
+  ];
+
+  assert.deepEqual(getAllUserFileAttachments(messages), [
+    { type: "file", fileName: "old.csv", mediaType: "text/csv", base64Data: "b2xk" },
+    { type: "file", fileName: "new.csv", mediaType: "text/csv", base64Data: "bmV3" },
   ]);
 });
 

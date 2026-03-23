@@ -157,3 +157,81 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
     && event.stopReason === "done"
   ), true);
 });
+
+test("startAgentResponseWithDeps rehydrates missing history attachments into the active container", async () => {
+  const addedFiles: Array<string> = [];
+  const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
+  const messages: ReadonlyArray<ChatMessage> = [
+    {
+      role: "user",
+      content: [
+        { type: "file", fileName: "statement.csv", mediaType: "text/csv", base64Data: "c3RhdGVtZW50" },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Seen" }],
+    },
+    {
+      role: "user",
+      content: [{ type: "text", text: "continue" }],
+    },
+  ];
+  const rawResponses = [{
+    usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2, inputTokensDetails: {}, outputTokensDetails: {} },
+    output: [{
+      type: "message",
+      role: "assistant",
+      content: [{
+        type: "output_text",
+        text: "Done",
+      }],
+    }],
+    responseId: "resp-1",
+    requestId: "req-1",
+  }] as unknown as ReadonlyArray<ModelResponse>;
+
+  const started = await startAgentResponseWithDeps(
+    {
+      messages,
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      timezone: "Europe/Madrid",
+      requestId: "request-2",
+    },
+    {
+      createClient: (): OpenAI => ({
+        containers: {
+          files: {
+            create: async (): Promise<unknown> => undefined,
+            list: async (): Promise<{ data: ReadonlyArray<Readonly<{ path: string }>> }> => ({ data: [] }),
+          },
+        },
+      }) as unknown as OpenAI,
+      resolveManagedContainer: async (): Promise<string> => "ctr-2",
+      runAgent: async (): Promise<AgentRunResult> => createRunResult([], rawResponses, "Done"),
+      addFilesToOpenAIContainer: async (_client, _containerId, attachments): Promise<void> => {
+        for (const attachment of attachments) {
+          addedFiles.push(attachment.fileName);
+        }
+      },
+      listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
+        containerId: "ctr-2",
+        filePaths: [],
+      }),
+      verifySpreadsheetContainers: async (): Promise<ReadonlyArray<never>> => [],
+      logEvent: (event): void => {
+        loggedEvents.push(event as unknown as Readonly<Record<string, unknown>>);
+      },
+      now: (): number => 100,
+    },
+  );
+
+  assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
+  assert.deepEqual(addedFiles, ["statement.csv"]);
+  assert.equal(loggedEvents.some((event) =>
+    event.action === "code_interpreter_container_file_added"
+    && event.attachmentFileName === "statement.csv"
+    && event.attachmentSource === "history_rehydrate"
+  ), true);
+});

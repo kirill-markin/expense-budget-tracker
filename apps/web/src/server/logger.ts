@@ -1,6 +1,7 @@
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
+type AttachmentSource = "latest_message" | "history_rehydrate";
 type ContainerAction =
   | "code_interpreter_container_created"
   | "code_interpreter_container_reused"
@@ -26,6 +27,10 @@ type ChatEvent =
     attachmentFileNames?: ReadonlyArray<string>;
     attachmentMediaTypes?: ReadonlyArray<string>;
     spreadsheetAttachmentFileNames?: ReadonlyArray<string>;
+    conversationAttachmentCount?: number;
+    conversationAttachmentFileNames?: ReadonlyArray<string>;
+    rehydratedAttachmentCount?: number;
+    effectiveContainerId?: string | null;
     forcedToolChoice?: string | null;
   }>
   | Readonly<{ domain: "chat"; action: "turn_start"; vendor: ChatVendor; turn: number }>
@@ -41,6 +46,7 @@ type ChatEvent =
     reason?: string;
     attachmentFileName?: string;
     attachmentFileNames?: ReadonlyArray<string>;
+    attachmentSource?: AttachmentSource;
     providerFileId?: string;
     containerFilePaths?: ReadonlyArray<string>;
     responseId?: string;
@@ -110,6 +116,7 @@ type ChatEvent =
     messageCount?: number;
     hasAttachments?: boolean;
     attachmentFileNames?: ReadonlyArray<string>;
+    effectiveContainerId?: string | null;
   }>;
 
 type ApiEvent =

@@ -10,6 +10,7 @@ import {
   createChatErrorLogEvent,
   createChatEventStream,
   extractChatRequestContext,
+  isExpectedStreamClosureError,
   parseChatRequestBody,
 } from "./route";
 
@@ -248,4 +249,10 @@ test("createChatEventStream stops without logging an error after cancel", async 
   await delay(30);
 
   assert.deepEqual(errors, []);
+});
+
+test("isExpectedStreamClosureError recognizes framework stream shutdown errors", () => {
+  assert.equal(isExpectedStreamClosureError(new Error("Invalid state: Controller is already closed")), true);
+  assert.equal(isExpectedStreamClosureError(new Error("ReadableStream is already closed")), true);
+  assert.equal(isExpectedStreamClosureError(new Error("boom")), false);
 });

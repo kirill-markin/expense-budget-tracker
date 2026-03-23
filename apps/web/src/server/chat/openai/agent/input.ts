@@ -57,6 +57,35 @@ export const getLatestUserFileAttachments = (
   return lastUserMessage.content.filter((part): part is FileContentPart => part.type === "file");
 };
 
+export const getAllUserFileAttachments = (
+  messages: ReadonlyArray<ChatMessage>,
+): ReadonlyArray<FileContentPart> => {
+  const seen = new Set<string>();
+  const attachments: Array<FileContentPart> = [];
+
+  for (const message of messages) {
+    if (message.role !== "user") {
+      continue;
+    }
+
+    for (const part of message.content) {
+      if (part.type !== "file") {
+        continue;
+      }
+
+      const signature = `${part.fileName}\u0000${part.mediaType}\u0000${part.base64Data}`;
+      if (seen.has(signature)) {
+        continue;
+      }
+
+      seen.add(signature);
+      attachments.push(part);
+    }
+  }
+
+  return attachments;
+};
+
 const getFileExtension = (fileName: string): string => {
   const lastDot = fileName.lastIndexOf(".");
   if (lastDot === -1) {

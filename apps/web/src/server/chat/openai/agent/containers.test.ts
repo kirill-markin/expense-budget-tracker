@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ModelResponse } from "@openai/agents-core";
 import {
   buildOpenAIContainerName,
+  containerHasAttachment,
   extractCodeInterpreterContainers,
   isOpenAIContainerExpired,
   listOpenAIContainerInventory,
@@ -146,6 +147,18 @@ test("listOpenAIContainerInventory returns stable file paths from OpenAI", async
     containerId: "ctr-1",
     filePaths: ["/mnt/data/a.csv", "/mnt/data/b.csv"],
   });
+});
+
+test("containerHasAttachment matches OpenAI container paths with generated prefixes", () => {
+  assert.equal(
+    containerHasAttachment(
+      ["/mnt/data/ba405a7eed0d934b94b03d3f9001ee79-account-statement.csv"],
+      "account-statement.csv",
+    ),
+    true,
+  );
+  assert.equal(containerHasAttachment(["/mnt/data/report.csv"], "report.csv"), true);
+  assert.equal(containerHasAttachment(["/mnt/data/report.csv"], "other.csv"), false);
 });
 
 test("verifySpreadsheetContainers reports a missing code interpreter when no containers are found", async () => {

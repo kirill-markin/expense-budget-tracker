@@ -165,6 +165,14 @@ export const listOpenAIContainerInventory = async (
   };
 };
 
+export const containerHasAttachment = (
+  filePaths: ReadonlyArray<string>,
+  fileName: string,
+): boolean =>
+  filePaths.some((filePath) =>
+    filePath === `/mnt/data/${fileName}` || filePath.endsWith(`-${fileName}`),
+  );
+
 export const verifySpreadsheetContainers = async (
   client: OpenAI,
   responses: ReadonlyArray<ModelResponse>,

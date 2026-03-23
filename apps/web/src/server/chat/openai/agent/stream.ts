@@ -11,6 +11,7 @@ import { buildOpenAIModelSettings, buildOpenaiInstructions } from "./config";
 import {
   addFilesToOpenAIContainer,
   buildOpenAIContainerName,
+  containerHasAttachment,
   isOpenAIContainerExpired,
   listOpenAIContainerInventory,
   summarizeOpenAIResponse,
@@ -18,6 +19,7 @@ import {
 } from "./containers";
 import {
   buildInput,
+  getAllUserFileAttachments,
   getLatestUserFileAttachments,
   getSpreadsheetAttachmentFileNames,
   type InputMessage,
@@ -202,7 +204,9 @@ export const startAgentResponseWithDeps = async (
 ): Promise<StartAgentResponseResult> => {
   const client = dependencies.createClient();
   const latestFileAttachments = getLatestUserFileAttachments(params.messages);
+  const conversationFileAttachments = getAllUserFileAttachments(params.messages);
   const attachmentFileNames = latestFileAttachments.map((part) => part.fileName);
+  const conversationAttachmentFileNames = conversationFileAttachments.map((part) => part.fileName);
   const attachmentMediaTypes = latestFileAttachments.map((part) => part.mediaType);
   const spreadsheetAttachmentFileNames = getSpreadsheetAttachmentFileNames(latestFileAttachments);
   const effectiveContainerId = await dependencies.resolveManagedContainer(
@@ -214,10 +218,28 @@ export const startAgentResponseWithDeps = async (
     isOpenAIContainerExpired,
   );
   const forcedToolChoice = spreadsheetAttachmentFileNames.length > 0 ? "code_interpreter" : null;
+  let rehydratedAttachmentCount = 0;
 
-  if (latestFileAttachments.length > 0) {
-    for (const attachment of latestFileAttachments) {
+  if (conversationFileAttachments.length > 0) {
+    const initialInventory = await dependencies.listOpenAIContainerInventory(client, effectiveContainerId);
+    const missingAttachments = conversationFileAttachments.filter((attachment) =>
+      !containerHasAttachment(initialInventory.filePaths, attachment.fileName),
+    );
+    const latestAttachmentSignatures = new Set(
+      latestFileAttachments.map((attachment) =>
+        `${attachment.fileName}\u0000${attachment.mediaType}\u0000${attachment.base64Data}`,
+      ),
+    );
+
+    for (const attachment of missingAttachments) {
       await dependencies.addFilesToOpenAIContainer(client, effectiveContainerId, [attachment]);
+      const signature = `${attachment.fileName}\u0000${attachment.mediaType}\u0000${attachment.base64Data}`;
+      const attachmentSource = latestAttachmentSignatures.has(signature)
+        ? "latest_message"
+        : "history_rehydrate";
+      if (attachmentSource === "history_rehydrate") {
+        rehydratedAttachmentCount += 1;
+      }
       dependencies.logEvent({
         domain: "chat",
         action: "code_interpreter_container_file_added",
@@ -225,17 +247,20 @@ export const startAgentResponseWithDeps = async (
         requestId: params.requestId,
         effectiveContainerId,
         attachmentFileName: attachment.fileName,
+        attachmentSource,
       });
     }
 
-    const initialInventory = await dependencies.listOpenAIContainerInventory(client, effectiveContainerId);
+    const syncedInventory = missingAttachments.length === 0
+      ? initialInventory
+      : await dependencies.listOpenAIContainerInventory(client, effectiveContainerId);
     logContainerInventory(
       dependencies.logEvent,
       params.requestId,
       effectiveContainerId,
-      attachmentFileNames,
+      conversationAttachmentFileNames,
       undefined,
-      initialInventory.filePaths,
+      syncedInventory.filePaths,
     );
   }
 
@@ -261,6 +286,10 @@ export const startAgentResponseWithDeps = async (
     attachmentFileNames,
     attachmentMediaTypes,
     spreadsheetAttachmentFileNames,
+    conversationAttachmentCount: conversationFileAttachments.length,
+    conversationAttachmentFileNames,
+    rehydratedAttachmentCount,
+    effectiveContainerId,
     forcedToolChoice,
   });
   const requestStart = dependencies.now();
@@ -468,6 +497,7 @@ export const startAgentResponseWithDeps = async (
         messageCount: params.messages.length,
         hasAttachments,
         attachmentFileNames,
+        effectiveContainerId,
       });
       throw error;
     }
