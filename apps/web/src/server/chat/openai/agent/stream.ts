@@ -3,10 +3,14 @@ import type { AgentInputItem, ModelResponse, ReasoningItem } from "@openai/agent
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
-import { persistChatSessionConversationId } from "@/server/chat/store";
+import {
+  persistChatSessionConversationId,
+  persistRecoveredChatConversation,
+} from "@/server/chat/store";
 import type { ChatMessage, ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { resolveServerManagedContainer } from "../containerState";
+import { recoverInterruptedFunctionCalls } from "../recovery";
 import { pgQueryTool, type AgentContext } from "../tools";
 import { buildOpenAIModelSettings, buildOpenaiInstructions } from "./config";
 import {
@@ -175,6 +179,9 @@ type StartAgentResponseDependencies = Readonly<{
   addFilesToOpenAIContainer: typeof addFilesToOpenAIContainer;
   listOpenAIContainerInventory: typeof listOpenAIContainerInventory;
   verifySpreadsheetContainers: typeof verifySpreadsheetContainers;
+  recoverInterruptedFunctionCalls?: typeof recoverInterruptedFunctionCalls;
+  persistRecoveredChatConversation?: typeof persistRecoveredChatConversation;
+  sleep?: (ms: number) => Promise<void>;
   logEvent: typeof log;
   now: () => number;
 }>;
@@ -260,9 +267,24 @@ const DEFAULT_START_AGENT_RESPONSE_DEPENDENCIES: StartAgentResponseDependencies 
   addFilesToOpenAIContainer,
   listOpenAIContainerInventory,
   verifySpreadsheetContainers,
+  recoverInterruptedFunctionCalls,
+  persistRecoveredChatConversation,
+  sleep: async (ms: number): Promise<void> =>
+    await new Promise((resolve) => setTimeout(resolve, ms)),
   logEvent: log,
   now: (): number => Date.now(),
 };
+
+const MISSING_TOOL_OUTPUT_ERROR_SNIPPET = "No tool output found for function call";
+const MISSING_TOOL_OUTPUT_RECOVERY_DELAYS_MS = [0, 200, 750] as const;
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const isMissingToolOutputError = (
+  error: unknown,
+): boolean =>
+  getErrorMessage(error).includes(MISSING_TOOL_OUTPUT_ERROR_SNIPPET);
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -610,21 +632,89 @@ export const startAgentResponseWithDeps = async (
     continuationBudgetRemaining: params.continuationBudgetRemaining,
   });
   const requestStart = dependencies.now();
+  const recoverPendingFunctionCalls = dependencies.recoverInterruptedFunctionCalls ?? recoverInterruptedFunctionCalls;
+  const persistRecoveredConversation = dependencies.persistRecoveredChatConversation ?? persistRecoveredChatConversation;
+  const sleep = dependencies.sleep ?? (async (ms: number): Promise<void> =>
+    await new Promise((resolve) => setTimeout(resolve, ms)));
 
-  const result = await dependencies.runAgent({
-    agent,
-    input,
-    context,
-    conversationId: effectiveConversationId,
-    groupId: params.sessionId,
-    traceMetadata: {
-      userId: params.userId,
-      workspaceId: params.workspaceId,
-      sessionId: params.sessionId,
-    },
-    maxTurns: params.maxTurns,
-    signal: params.signal,
-  });
+  let result: AgentRunResult;
+  let missingToolOutputRecovered = false;
+
+  while (true) {
+    try {
+      result = await dependencies.runAgent({
+        agent,
+        input,
+        context,
+        conversationId: effectiveConversationId,
+        groupId: params.sessionId,
+        traceMetadata: {
+          userId: params.userId,
+          workspaceId: params.workspaceId,
+          sessionId: params.sessionId,
+        },
+        maxTurns: params.maxTurns,
+        signal: params.signal,
+      });
+      break;
+    } catch (error) {
+      if (missingToolOutputRecovered || !isMissingToolOutputError(error)) {
+        throw error;
+      }
+
+      let recovered = false;
+      for (const delayMs of MISSING_TOOL_OUTPUT_RECOVERY_DELAYS_MS) {
+        if (delayMs > 0) {
+          await sleep(delayMs);
+        }
+
+        const recovery = await recoverPendingFunctionCalls(client, effectiveConversationId);
+        if (recovery.recoveredCalls.length === 0 || recovery.recoveryNoteText === null) {
+          continue;
+        }
+
+        await persistRecoveredConversation(
+          params.userId,
+          params.workspaceId,
+          {
+            sessionId: params.sessionId,
+            recoveredCalls: recovery.recoveredCalls,
+            recoveryNoteText: recovery.recoveryNoteText,
+            recoveryToolOutputText: recovery.recoveryToolOutputText,
+          },
+        );
+
+        dependencies.logEvent({
+          domain: "chat",
+          action: "error",
+          vendor: "openai",
+          stage: "agent",
+          error: `Recovered missing tool output state for ${String(recovery.recoveredCalls.length)} function call(s) and retried the run`,
+          requestId: params.requestId,
+          userId: params.userId,
+          workspaceId: params.workspaceId,
+          sessionId: params.sessionId,
+          model: CHAT_MODEL_ID,
+          messageCount: 1,
+          hasAttachments,
+          attachmentFileNames,
+          effectiveContainerId,
+          ...(params.attempt !== undefined ? { attempt: params.attempt } : {}),
+          maxTurns: params.maxTurns,
+          autoContinuationUsed: params.autoContinuationUsed ?? false,
+          continuationBudgetRemaining: params.continuationBudgetRemaining,
+        });
+
+        recovered = true;
+        missingToolOutputRecovered = true;
+        break;
+      }
+
+      if (!recovered) {
+        throw error;
+      }
+    }
+  }
   const completion = (async (): Promise<CompletedAgentResponse> => {
     await result.completed;
     return { conversationId: effectiveConversationId };

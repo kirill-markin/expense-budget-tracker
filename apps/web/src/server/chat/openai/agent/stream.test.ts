@@ -389,6 +389,89 @@ test("startAgentResponseWithDeps returns the created conversationId without read
   assert.deepEqual(await started.completion, { conversationId: "conv-created" });
 });
 
+test("startAgentResponseWithDeps repairs missing function tool outputs and retries once", async () => {
+  const persistedRecoveries: Array<Readonly<Record<string, unknown>>> = [];
+  let runAgentCalls = 0;
+
+  const started = await startAgentResponseWithDeps(
+    {
+      localMessages: [{
+        role: "user",
+        content: [{ type: "text", text: "continue" }],
+      }],
+      turnInput: [{ type: "text", text: "continue" }],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      conversationId: "conv-existing",
+      timezone: "Europe/Madrid",
+      requestId: "request-repair",
+      maxTurns: CHAT_RUN_MAX_TURNS,
+    },
+    {
+      createClient: (): OpenAI => ({
+        containers: {
+          files: {
+            create: async (): Promise<unknown> => undefined,
+            list: async (): Promise<{ data: ReadonlyArray<Readonly<{ path: string }>> }> => ({ data: [] }),
+          },
+        },
+      }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => {
+        throw new Error("createConversation should not be called");
+      },
+      persistConversationId: async (): Promise<void> => {
+        throw new Error("persistConversationId should not be called");
+      },
+      resolveManagedContainer: async (): Promise<string> => "ctr-repair",
+      runAgent: async (): Promise<AgentRunResult> => {
+        runAgentCalls += 1;
+        if (runAgentCalls === 1) {
+          throw new Error("400 No tool output found for function call call_jFL4iX7Pz5g6tEm8l07hDF7H.");
+        }
+        return createRunResult([], [{
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2, inputTokensDetails: {}, outputTokensDetails: {} },
+          output: [],
+          responseId: "resp-repair",
+          requestId: "req-repair",
+        }] as unknown as ReadonlyArray<ModelResponse>, "Done");
+      },
+      addFilesToOpenAIContainer: async (): Promise<void> => undefined,
+      listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
+        containerId: "ctr-repair",
+        filePaths: [],
+      }),
+      verifySpreadsheetContainers: async (): Promise<ReadonlyArray<never>> => [],
+      recoverInterruptedFunctionCalls: async (): Promise<{
+        recoveredCalls: ReadonlyArray<Readonly<{ callId: string; name: string }>>;
+        recoveryNoteText: string | null;
+        recoveryToolOutputText: string;
+      }> => ({
+        recoveredCalls: [{ callId: "call_jFL4iX7Pz5g6tEm8l07hDF7H", name: "query_database" }],
+        recoveryNoteText: "Recovered interrupted tool calls that were missing durable outputs in the stored OpenAI conversation.",
+        recoveryToolOutputText: "Interrupted before output was captured. The execution outcome is unknown. Inspect the current state before retrying.",
+      }),
+      persistRecoveredChatConversation: async (_userId, _workspaceId, params): Promise<void> => {
+        persistedRecoveries.push(params as unknown as Readonly<Record<string, unknown>>);
+      },
+      sleep: async (): Promise<void> => undefined,
+      logEvent: (): void => undefined,
+      now: (): number => 100,
+    },
+  );
+
+  assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
+  assert.equal(runAgentCalls, 2);
+  assert.deepEqual(persistedRecoveries, [{
+    sessionId: "session-1",
+    recoveredCalls: [{ callId: "call_jFL4iX7Pz5g6tEm8l07hDF7H", name: "query_database" }],
+    recoveryNoteText: "Recovered interrupted tool calls that were missing durable outputs in the stored OpenAI conversation.",
+    recoveryToolOutputText: "Interrupted before output was captured. The execution outcome is unknown. Inspect the current state before retrying.",
+  }]);
+  assert.equal(started.conversationId, "conv-existing");
+  assert.deepEqual(await started.completion, { conversationId: "conv-existing" });
+});
+
 test("startAgentResponseWithDeps injects CSV attachments as raw text while keeping the original file", async () => {
   const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
   let receivedInput: unknown;
