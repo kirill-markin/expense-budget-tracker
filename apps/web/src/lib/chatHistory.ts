@@ -15,6 +15,7 @@ export type StoredMessage = Readonly<{
 }>;
 
 type OrderedAssistantPart = TextContentPart | ToolCallContentPart | ReasoningSummaryContentPart;
+export type OrderedAssistantContentPart = OrderedAssistantPart & Readonly<{ streamPosition: StreamPosition }>;
 
 type AppendAssistantTextParams = Readonly<{
   text: string;
@@ -23,9 +24,10 @@ type AppendAssistantTextParams = Readonly<{
 
 const isOrderedAssistantPart = (
   part: ContentPart,
-): part is OrderedAssistantPart & Readonly<{ streamPosition: StreamPosition }> =>
-  (part.type === "text" || part.type === "tool_call")
+): part is OrderedAssistantContentPart =>
+  (part.type === "text" || part.type === "tool_call" || part.type === "reasoning_summary")
   && part.streamPosition !== undefined;
+export { isOrderedAssistantPart };
 
 const isLegacyAssistantPart = (
   part: ContentPart,
@@ -52,16 +54,14 @@ const normalizeContentIndex = (
   contentIndex: number | null,
 ): number =>
   contentIndex === null ? Number.MAX_SAFE_INTEGER : contentIndex;
-
-const normalizeSequenceNumber = (
-  sequenceNumber: number | null,
-): number =>
-  sequenceNumber === null ? Number.MAX_SAFE_INTEGER : sequenceNumber;
-
-const compareStreamPosition = (
+export const compareStreamPosition = (
   left: StreamPosition,
   right: StreamPosition,
 ): number => {
+  if (left.sequenceNumber !== null && right.sequenceNumber !== null && left.sequenceNumber !== right.sequenceNumber) {
+    return left.sequenceNumber - right.sequenceNumber;
+  }
+
   if (left.outputIndex !== right.outputIndex) {
     return left.outputIndex - right.outputIndex;
   }
@@ -72,18 +72,24 @@ const compareStreamPosition = (
     return leftContentIndex - rightContentIndex;
   }
 
-  const leftSequenceNumber = normalizeSequenceNumber(left.sequenceNumber);
-  const rightSequenceNumber = normalizeSequenceNumber(right.sequenceNumber);
-  if (leftSequenceNumber !== rightSequenceNumber) {
-    return leftSequenceNumber - rightSequenceNumber;
-  }
-
   return left.itemId.localeCompare(right.itemId);
 };
 
+const mergeChronologyPosition = (
+  existing: StreamPosition,
+  incoming: StreamPosition,
+): StreamPosition => ({
+  ...incoming,
+  sequenceNumber: existing.sequenceNumber === null
+    ? incoming.sequenceNumber
+    : incoming.sequenceNumber === null
+      ? existing.sequenceNumber
+      : Math.min(existing.sequenceNumber, incoming.sequenceNumber),
+});
+
 const insertOrderedAssistantPart = (
   content: ReadonlyArray<ContentPart>,
-  nextPart: OrderedAssistantPart & Readonly<{ streamPosition: StreamPosition }>,
+  nextPart: OrderedAssistantContentPart,
 ): ReadonlyArray<ContentPart> => {
   let insertIndex = content.length;
 
@@ -147,7 +153,7 @@ export const appendAssistantTextContent = (
     const updatedPart: TextContentPart = {
       ...existing,
       text: existing.text + params.text,
-      streamPosition: params.streamPosition,
+      streamPosition: mergeChronologyPosition(existing.streamPosition, params.streamPosition),
     };
 
     return [...content.slice(0, existingIndex), updatedPart, ...content.slice(existingIndex + 1)];
@@ -209,7 +215,7 @@ export const upsertToolCallContent = (
       providerStatus: toolCall.providerStatus,
       input: toolCall.input,
       output: toolCall.output,
-      streamPosition,
+      streamPosition: mergeChronologyPosition(existing.streamPosition, streamPosition),
     };
 
     return [...content.slice(0, existingIndex), updatedPart, ...content.slice(existingIndex + 1)];
@@ -245,7 +251,7 @@ export const upsertReasoningSummaryContent = (
     const updatedPart: ReasoningSummaryContentPart = {
       ...existing,
       summary: reasoningSummary.summary,
-      streamPosition: reasoningSummary.streamPosition,
+      streamPosition: mergeChronologyPosition(existing.streamPosition, reasoningSummary.streamPosition),
     };
 
     return [...content.slice(0, existingIndex), updatedPart, ...content.slice(existingIndex + 1)];

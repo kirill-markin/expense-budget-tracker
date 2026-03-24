@@ -313,3 +313,86 @@ test("buildChatTranscriptMarkdown keeps user attachments immediately before the 
     "Please compare these imports.",
   ]);
 });
+
+test("buildChatTranscriptMarkdown uses the same chronology-normalized assistant block order as the chat UI", () => {
+  const messages: ReadonlyArray<StoredMessage> = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_call",
+          id: "code-1",
+          name: "code_interpreter_call",
+          status: "completed",
+          providerStatus: "completed",
+          input: "print('done')",
+          output: "done",
+          streamPosition: {
+            itemId: "code-1-item",
+            outputIndex: 3,
+            contentIndex: null,
+            sequenceNumber: 40,
+          },
+        },
+        {
+          type: "reasoning_summary",
+          summary: "First thinking summary.",
+          streamPosition: {
+            itemId: "reasoning-1",
+            outputIndex: 0,
+            contentIndex: null,
+            sequenceNumber: 10,
+          },
+        },
+        {
+          type: "tool_call",
+          id: "db-2",
+          name: "query_database",
+          status: "completed",
+          providerStatus: "completed",
+          input: "{\"sql\":\"SELECT 2\"}",
+          output: "{\"rows\":[2]}",
+          streamPosition: {
+            itemId: "db-2-item",
+            outputIndex: 2,
+            contentIndex: null,
+            sequenceNumber: 30,
+          },
+        },
+        {
+          type: "tool_call",
+          id: "db-1",
+          name: "query_database",
+          status: "completed",
+          providerStatus: "completed",
+          input: "{\"sql\":\"SELECT 1\"}",
+          output: "{\"rows\":[1]}",
+          streamPosition: {
+            itemId: "db-1-item",
+            outputIndex: 1,
+            contentIndex: null,
+            sequenceNumber: 20,
+          },
+        },
+      ],
+      timestamp: Date.UTC(2026, 2, 24, 15, 48, 0),
+      isError: false,
+      isStopped: false,
+    },
+  ];
+
+  const result = buildChatTranscriptMarkdown({
+    messages,
+    runState: "idle",
+    exportedAt: Date.UTC(2026, 2, 24, 15, 49, 0),
+    t,
+  });
+
+  assertSubstringsInOrder(result.markdown, [
+    "### Thinking summary\n```text\nFirst thinking summary.\n```",
+    "### Database query (Completed)",
+    "SELECT 1",
+    "SELECT 2",
+    "### Code interpreter (Completed)",
+  ]);
+});

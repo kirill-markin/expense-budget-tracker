@@ -31,7 +31,7 @@ const createStreamPosition = (
   sequenceNumber,
 });
 
-test("appendAssistantTextContent appends deltas to the same text slot", () => {
+test("appendAssistantTextContent appends deltas to the same text slot and keeps its earliest stream chronology", () => {
   assert.deepEqual(
     appendAssistantTextContent([], {
       text: "Hel",
@@ -56,7 +56,7 @@ test("appendAssistantTextContent appends deltas to the same text slot", () => {
     [{
       type: "text",
       text: "Hello",
-      streamPosition: createStreamPosition("msg-1", 0, 0, 11),
+      streamPosition: createStreamPosition("msg-1", 0, 0, 10),
     }],
   );
 });
@@ -180,7 +180,7 @@ test("ordered assistant content places reasoning summaries between earlier text 
   );
 });
 
-test("upsertToolCallContent updates an existing tool call without moving it", () => {
+test("upsertToolCallContent updates an existing tool call without moving it and keeps its earliest stream chronology", () => {
   const content: ReadonlyArray<ContentPart> = [
     {
       type: "text",
@@ -224,13 +224,13 @@ test("upsertToolCallContent updates an existing tool call without moving it", ()
         providerStatus: "completed",
         input: "print('hello')",
         output: JSON.stringify([{ type: "logs", logs: "hello" }]),
-        streamPosition: createStreamPosition("tool-1-item", 1, null, 40),
+        streamPosition: createStreamPosition("tool-1-item", 1, null, 20),
       },
     ],
   );
 });
 
-test("upsertReasoningSummaryContent updates an existing reasoning summary without moving it", () => {
+test("upsertReasoningSummaryContent updates an existing reasoning summary without moving it and keeps its earliest stream chronology", () => {
   const content: ReadonlyArray<ContentPart> = [
     {
       type: "text",
@@ -259,7 +259,47 @@ test("upsertReasoningSummaryContent updates an existing reasoning summary withou
       {
         type: "reasoning_summary",
         summary: "Final summary.",
-        streamPosition: createStreamPosition("reasoning-1", 1, null, 40),
+        streamPosition: createStreamPosition("reasoning-1", 1, null, 20),
+      },
+    ],
+  );
+});
+
+test("upsertToolCallContent inserts a later-arriving tool call before an already-present reasoning summary when chronology is earlier", () => {
+  const content: ReadonlyArray<ContentPart> = [
+    {
+      type: "reasoning_summary",
+      summary: "Second thinking step.",
+      streamPosition: createStreamPosition("reasoning-2", 2, null, 30),
+    },
+  ];
+
+  assert.deepEqual(
+    upsertToolCallContent(content, {
+      type: "tool_call",
+      id: "tool-1",
+      name: "query_database",
+      status: "completed",
+      providerStatus: "completed",
+      input: "{\"sql\":\"SELECT 1\"}",
+      output: "{\"rows\":[]}",
+      streamPosition: createStreamPosition("tool-1-item", 1, null, 20),
+    }),
+    [
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "query_database",
+        status: "completed",
+        providerStatus: "completed",
+        input: "{\"sql\":\"SELECT 1\"}",
+        output: "{\"rows\":[]}",
+        streamPosition: createStreamPosition("tool-1-item", 1, null, 20),
+      },
+      {
+        type: "reasoning_summary",
+        summary: "Second thinking step.",
+        streamPosition: createStreamPosition("reasoning-2", 2, null, 30),
       },
     ],
   );

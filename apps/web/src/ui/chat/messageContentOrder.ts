@@ -1,4 +1,9 @@
-import type { StoredMessage } from "@/lib/chatHistory";
+import {
+  compareStreamPosition,
+  isOrderedAssistantPart,
+  type OrderedAssistantContentPart,
+  type StoredMessage,
+} from "@/lib/chatHistory";
 import type {
   ReasoningSummaryContentPart,
   ToolCallContentPart,
@@ -35,6 +40,30 @@ const getAttachmentNames = (
     return [];
   });
 
+const isRenderableNonAttachmentPart = (
+  part: StoredMessage["content"][number],
+): boolean =>
+  part.type === "text" || part.type === "tool_call" || part.type === "reasoning_summary";
+
+const getRenderableAssistantParts = (
+  message: StoredMessage,
+): ReadonlyArray<StoredMessage["content"][number]> => {
+  const renderableParts = message.content.filter(isRenderableNonAttachmentPart);
+  if (message.role !== "assistant") {
+    return renderableParts;
+  }
+
+  if (!renderableParts.every(isOrderedAssistantPart)) {
+    return renderableParts;
+  }
+
+  return [...renderableParts].sort((left, right) =>
+    compareStreamPosition(
+      (left as OrderedAssistantContentPart).streamPosition,
+      (right as OrderedAssistantContentPart).streamPosition,
+    ));
+};
+
 export const getOrderedMessageBlocks = (
   message: StoredMessage,
 ): ReadonlyArray<OrderedMessageBlock> => {
@@ -42,7 +71,7 @@ export const getOrderedMessageBlocks = (
   const blocks: Array<OrderedMessageBlock> = [];
   let attachmentBlockInserted = false;
 
-  for (const part of message.content) {
+  for (const part of getRenderableAssistantParts(message)) {
     if (part.type === "text") {
       if (!attachmentBlockInserted && attachmentNames.length > 0) {
         blocks.push({
