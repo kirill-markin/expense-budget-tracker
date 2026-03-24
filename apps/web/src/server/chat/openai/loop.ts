@@ -27,6 +27,10 @@ type ParsedFunctionToolCall = OpenAI.Responses.ResponseFunctionToolCall & Readon
   parsed_arguments?: unknown;
 }>;
 
+type ResponseStreamWithOptionalFinalResponse = AsyncIterable<OpenAI.Responses.ResponseStreamEvent> & Readonly<{
+  finalResponse?: () => Promise<OpenAI.Responses.Response>;
+}>;
+
 export type StartOpenAILoopParams = Readonly<{
   requestId: string;
   userId: string;
@@ -152,6 +156,26 @@ const isOutputTextDelta = (
 ): event is OpenAI.Responses.ResponseTextDeltaEvent =>
   event.type === "response.output_text.delta";
 
+const isResponseCompletedEvent = (
+  event: OpenAI.Responses.ResponseStreamEvent,
+): event is OpenAI.Responses.ResponseCompletedEvent =>
+  event.type === "response.completed";
+
+const getFinalResponseFromStream = async (
+  stream: ResponseStreamWithOptionalFinalResponse,
+  completedResponse: OpenAI.Responses.Response | null,
+): Promise<OpenAI.Responses.Response> => {
+  if (completedResponse !== null) {
+    return completedResponse;
+  }
+
+  if (typeof stream.finalResponse === "function") {
+    return stream.finalResponse();
+  }
+
+  throw new Error("OpenAI response stream completed without a final response");
+};
+
 const sanitizeToolOutputForTelemetry = (
   output: string,
 ): string =>
@@ -242,7 +266,7 @@ const runLoop = async (
   const continuationItems: Array<OpenAI.Responses.ResponseInputItem> = [];
 
   for (let callIndex = 1; callIndex <= CHAT_RUN_MAX_MODEL_CALLS; callIndex += 1) {
-    const stream = client.responses.stream(
+    const stream: ResponseStreamWithOptionalFinalResponse = client.responses.stream(
       {
         model: CHAT_MODEL_ID,
         store: false,
@@ -257,8 +281,14 @@ const runLoop = async (
     const reasoningSummaries = new Map<string, string>();
     const reasoningOrder: Array<string> = [];
     let toolStates = createToolCallStateMap();
+    let completedResponse: OpenAI.Responses.Response | null = null;
 
     for await (const event of stream) {
+      if (isResponseCompletedEvent(event)) {
+        completedResponse = event.response;
+        continue;
+      }
+
       if (isOutputTextDelta(event)) {
         pushQueueEvent(queue, {
           type: "delta",
@@ -336,7 +366,7 @@ const runLoop = async (
       }
     }
 
-    const finalResponse = await stream.finalResponse();
+    const finalResponse = await getFinalResponseFromStream(stream, completedResponse);
     const functionCalls = finalResponse.output
       .filter((item) => item.type === "function_call")
       .map((item) => item as ParsedFunctionToolCall);
