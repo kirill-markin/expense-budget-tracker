@@ -39,6 +39,7 @@ make down
 ## AWS (CDK)
 
 Full AWS deployment guide is in [`infra/aws/README.md`](../infra/aws/README.md).
+Langfuse trace verification and troubleshooting are documented in [`docs/langfuse-operations.md`](./langfuse-operations.md).
 
 We recommend deploying into a **dedicated AWS account** (the AWS equivalent of a GCP project) for complete isolation of resources, billing, and IAM. See step 1 in the AWS README for setup instructions.
 
@@ -64,3 +65,5 @@ Triggered on every push to `main`. Runs the same `cdk deploy` to update infrastr
 Schema changes in this pipeline must remain backward-compatible for at least one deploy. If a change requires “migrate before new web code serves traffic”, use a separate two-phase rollout instead of the default pipeline.
 
 The chat runtime now keeps all conversation state in Postgres and the app process. OpenAI Conversations, hosted code interpreter containers, and provider-managed recovery are not part of the deployed architecture anymore. Existing environments must run migration `0032_chat_runtime_local_loop.sql` before relying on the new chat stack.
+
+The current cutover includes tracing only. Dataset creation from Langfuse traces is not part of this runtime migration and remains phase 2 observability work.

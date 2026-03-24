@@ -350,7 +350,7 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
    - metadata with `requestId`, `workspaceId`, `model`, `turnIndex`, and `runState`
    - nested observations for the OpenAI generation and any local `query_database` tool call
 
-   The production runtime is fully app-managed now: transcript state lives in Postgres, the tool loop runs in the web process, and recovery uses `/api/chat` snapshots instead of provider-managed conversation state.
+   The production runtime is fully app-managed now: transcript state lives in Postgres, the tool loop runs in the web process, and recovery uses `/api/chat` snapshots instead of provider-managed conversation state. For ongoing operations and troubleshooting, use [`docs/langfuse-operations.md`](../../docs/langfuse-operations.md).
 
 ### 7. Configure SES for OTP emails (when needed)
 
@@ -429,6 +429,7 @@ After first deploy:
    - `CDK_DOMAIN_NAME` — your domain (e.g. `myfinance.com`)
    - `CDK_ALERT_EMAIL` — email for CloudWatch alarm notifications
    - `CDK_GITHUB_REPO` — GitHub repo (e.g. `user/expense-budget-tracker`)
+   - `CDK_LANGFUSE_BASE_URL` — optional custom Langfuse base URL; omit it to use `https://cloud.langfuse.com`
 
 3. Every push to `main` will automatically:
    - `cdk deploy` — update infrastructure, Lambda, and IAM permissions
