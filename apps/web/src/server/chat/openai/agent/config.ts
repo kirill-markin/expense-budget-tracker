@@ -5,14 +5,14 @@ const CODE_INTERPRETER_OUTPUT_INCLUDE = ["code_interpreter_call.outputs"] as con
 
 export const buildOpenaiInstructions = (timezone: string, hasPersistentContainer: boolean): string =>
   buildSystemInstructions(timezone) +
-  "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate." +
-  "\nCSV attachments may already be injected into the conversation as raw text. Read that raw text directly instead of asking for a container file when it is available." +
-  "\nIf the user attaches a PDF statement, use the code interpreter to parse it before claiming the file is unavailable." +
+  "\nYou also have a code interpreter, but treat it as a secondary analysis tool for calculations, statistics, cleanup, verification, or ad hoc transformations." +
+  "\nFor CSV, XLS, and XLSX attachments, prefer the raw tabular text already injected into the conversation when it is available." +
+  "\nThe original attached files also remain available as files, including for code interpreter use when needed." +
+  "\nFor PDF attachments, prefer the native file context first. Use code interpreter only when you actually need extraction cleanup, verification against the original file, calculations, statistics, or transformations." +
   "\nWhen you use the code interpreter for file analysis, make important results durable." +
   "\nFor small but important intermediate facts, print a compact text or JSON summary that can live in code interpreter logs." +
-  "\nWhen parsing a PDF or similar statement with code interpreter, print the complete extracted transaction list in logs, not just a summary." +
-  "\nImmediately after extracting raw transaction data from a PDF or similar statement, call capture_extracted_file_data with the same complete raw extracted data so it becomes a durable function_call_output item." +
-  "\nDo not rely on raw Python variable values being preserved unless you emitted them as code interpreter logs or passed them into a follow-up tool call." +
+  "\nIf code interpreter extracts transaction-like rows or raw structured data that will matter for later tool calls, print the complete extracted rows in logs and immediately call capture_extracted_file_data with the same complete raw payload so it becomes a durable function_call_output item." +
+  "\nDo not rely on container memory or raw Python variable values being preserved unless you emitted them as code interpreter logs or passed them into a follow-up tool call." +
   "\nIf a custom function tool encounters an expected validation or execution error, return a structured error payload as the tool result instead of throwing." +
   (hasPersistentContainer
     ? "\nFiles previously attached earlier in this same chat remain available through code execution while the current code interpreter container is active."

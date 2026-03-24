@@ -13,6 +13,7 @@ import {
   addFilesToOpenAIContainer,
   buildOpenAIContainerName,
   containerHasAttachment,
+  extractCodeInterpreterContainers,
   isOpenAIContainerExpired,
   listOpenAIContainerInventory,
   summarizeOpenAIResponse,
@@ -532,7 +533,7 @@ export const startAgentResponseWithDeps = async (
     buildOpenAIContainerName,
     isOpenAIContainerExpired,
   );
-  const forcedToolChoice = codeInterpreterAttachmentFileNames.length > 0 ? "code_interpreter" : null;
+  const forcedToolChoice = null;
   let rehydratedAttachmentCount = 0;
 
   if (conversationFileAttachments.length > 0) {
@@ -840,7 +841,7 @@ export const startAgentResponseWithDeps = async (
         yield finalized.event;
       }
 
-      if (codeInterpreterAttachmentFileNames.length > 0) {
+      if (codeInterpreterAttachmentFileNames.length > 0 && extractCodeInterpreterContainers(result.rawResponses).length > 0) {
         const verificationResults = await dependencies.verifySpreadsheetContainers(
           client,
           result.rawResponses,

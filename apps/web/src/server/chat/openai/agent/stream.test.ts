@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { ModelResponse } from "@openai/agents-core";
 import type OpenAI from "openai";
+import * as XLSX from "xlsx";
 import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
 import {
   CHAT_RUN_MAX_TURNS,
@@ -39,6 +40,19 @@ const createRunResult = (
     }
   },
 });
+
+const createWorkbookBase64 = (): string => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([
+      ["merchant", "amount"],
+      ["Taxi", 12],
+    ]),
+    "Expenses",
+  );
+  return XLSX.write(workbook, { bookType: "xlsx", type: "base64" });
+};
 
 test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending tools, and yields done", async () => {
   const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
@@ -375,7 +389,7 @@ test("startAgentResponseWithDeps returns the created conversationId without read
   assert.deepEqual(await started.completion, { conversationId: "conv-created" });
 });
 
-test("startAgentResponseWithDeps injects CSV attachments as raw text without forcing code interpreter", async () => {
+test("startAgentResponseWithDeps injects CSV attachments as raw text while keeping the original file", async () => {
   const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
   let receivedInput: unknown;
 
@@ -436,17 +450,103 @@ test("startAgentResponseWithDeps injects CSV attachments as raw text without for
   assert.deepEqual(receivedInput, [{
     role: "user",
     type: "message",
-    content: [{
-      type: "input_text",
-      text: "Attached CSV file: statement.csv\n```csv\na,b\n1,2\n```",
-    }],
+    content: [
+      {
+        type: "input_text",
+        text: "Attached CSV file: statement.csv\n```csv\na,b\n1,2\n```",
+      },
+      {
+        type: "input_file",
+        file: "data:text/csv;base64,YSxiCjEsMg==",
+        filename: "statement.csv",
+      },
+    ],
   }]);
   assert.equal(loggedEvents.some((event) =>
     event.action === "request" && event.forcedToolChoice === null
   ), true);
 });
 
-test("startAgentResponseWithDeps forces code interpreter for PDF turns", async () => {
+test("startAgentResponseWithDeps injects workbook attachments as raw text without forcing code interpreter", async () => {
+  const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
+  let receivedInput: unknown;
+  const workbookBase64 = createWorkbookBase64();
+
+  const started = await startAgentResponseWithDeps(
+    {
+      localMessages: [{
+        role: "user",
+        content: [{ type: "file", fileName: "statement.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base64Data: workbookBase64 }],
+      }],
+      turnInput: [{ type: "file", fileName: "statement.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base64Data: workbookBase64 }],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      conversationId: "conv-existing",
+      timezone: "Europe/Madrid",
+      requestId: "request-xlsx",
+      maxTurns: CHAT_RUN_MAX_TURNS,
+    },
+    {
+      createClient: (): OpenAI => ({
+        containers: {
+          files: {
+            create: async (): Promise<unknown> => undefined,
+            list: async (): Promise<{ data: ReadonlyArray<Readonly<{ path: string }>> }> => ({ data: [] }),
+          },
+        },
+      }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => {
+        throw new Error("createConversation should not be called");
+      },
+      persistConversationId: async (): Promise<void> => {
+        throw new Error("persistConversationId should not be called");
+      },
+      resolveManagedContainer: async (): Promise<string> => "ctr-xlsx",
+      runAgent: async (runParams): Promise<AgentRunResult> => {
+        receivedInput = runParams.input;
+        return createRunResult([], [{
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2, inputTokensDetails: {}, outputTokensDetails: {} },
+          output: [],
+          responseId: "resp-xlsx",
+          requestId: "req-xlsx",
+        }] as unknown as ReadonlyArray<ModelResponse>, "Done");
+      },
+      addFilesToOpenAIContainer: async (): Promise<void> => undefined,
+      listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
+        containerId: "ctr-xlsx",
+        filePaths: [],
+      }),
+      verifySpreadsheetContainers: async (): Promise<ReadonlyArray<never>> => [],
+      logEvent: (event): void => {
+        loggedEvents.push(event as unknown as Readonly<Record<string, unknown>>);
+      },
+      now: (): number => 100,
+    },
+  );
+
+  assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
+  assert.deepEqual(receivedInput, [{
+    role: "user",
+    type: "message",
+    content: [
+      {
+        type: "input_text",
+        text: "Attached workbook: statement.xlsx\nSheet: Expenses\n```csv\nmerchant,amount\nTaxi,12\n```",
+      },
+      {
+        type: "input_file",
+        file: `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${workbookBase64}`,
+        filename: "statement.xlsx",
+      },
+    ],
+  }]);
+  assert.equal(loggedEvents.some((event) =>
+    event.action === "request" && event.forcedToolChoice === null
+  ), true);
+});
+
+test("startAgentResponseWithDeps keeps PDF turns as native files without forcing code interpreter", async () => {
   const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
   let receivedInput: unknown;
 
@@ -514,7 +614,7 @@ test("startAgentResponseWithDeps forces code interpreter for PDF turns", async (
     }],
   }]);
   assert.equal(loggedEvents.some((event) =>
-    event.action === "request" && event.forcedToolChoice === "code_interpreter"
+    event.action === "request" && event.forcedToolChoice === null
   ), true);
 });
 

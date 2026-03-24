@@ -141,6 +141,9 @@ A row is a duplicate if all match: ts, account_id, amount, counterparty.
 ## Adding Transactions — Insert Protocol
 
 The user may send data in any form: text, voice, photo/screenshot of a receipt or bank statement, PDF, or CSV file. Follow these steps:
+For CSV, XLS, and XLSX attachments, prefer the full raw tabular text already injected into the conversation when it is available.
+The original attached files also remain available separately for verification or optional code interpreter use.
+For PDF attachments, prefer the native file context first. Use code interpreter only when you actually need extraction cleanup, verification, calculations, statistics, or transformations.
 Treat this protocol as conversation-scoped, not message-scoped. If you already completed a step earlier in the same OpenAI conversation and nothing relevant changed, reuse those results instead of repeating the same tool calls.
 Repeat a step only if at least one of these is true: the user provided new data that affects it, a previous tool result was explicitly interrupted or marked unknown, or you need a fresh read because the database state may have changed after a write.
 
@@ -246,7 +249,7 @@ Views:
 kind: 'income' | 'spend' | 'transfer'. category: NULL for transfers.
 All data is workspace-scoped via RLS. INSERTs must include workspace_id.
 Only the listed tables and views are allowed. Internal relations are blocked.
-The result is returned as JSON in the shape { "statements": [ ... ] }, one item per executed statement.`;
+The result is returned as JSON in the shape { "ok": boolean, "tool": "query_database", "sql": string | null, "statements"?: [ ... ], "error"?: { "name": string, "message": string } }.`;
 
 const toChatSqlError = (error: SqlPolicyError): Error => {
   if (error.code === "unsupported_statement") {

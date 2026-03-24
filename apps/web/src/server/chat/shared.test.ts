@@ -47,11 +47,17 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /Treat this protocol as conversation-scoped, not message-scoped/i);
   assert.match(instructions, /reuse those results instead of repeating the same tool calls/i);
   assert.match(instructions, /previous tool result was explicitly interrupted or marked unknown/i);
+  assert.match(instructions, /For CSV, XLS, and XLSX attachments, prefer the full raw tabular text already injected into the conversation/i);
+  assert.match(instructions, /For PDF attachments, prefer the native file context first/i);
 });
 
 test("TOOL_DESCRIPTION documents multi-statement scripts and statements output", () => {
   assert.match(TOOL_DESCRIPTION, /one or more .* statements separated by semicolons/i);
+  assert.match(TOOL_DESCRIPTION, /"ok": boolean/i);
+  assert.match(TOOL_DESCRIPTION, /"tool": "query_database"/i);
+  assert.match(TOOL_DESCRIPTION, /"sql": string \| null/i);
   assert.match(TOOL_DESCRIPTION, /"statements"/i);
+  assert.match(TOOL_DESCRIPTION, /"error"\?: \{ "name": string, "message": string \}/i);
   assert.match(TOOL_DESCRIPTION, /optional sidecar/i);
   assert.match(TOOL_DESCRIPTION, /liquidity must be high, medium, or low/i);
   assert.match(TOOL_DESCRIPTION, /first_day_of_week SMALLINT/i);
@@ -61,10 +67,11 @@ test("buildOpenaiInstructions describes durable CSV and PDF extraction behavior"
   const instructions = buildOpenaiInstructions("Europe/Madrid", true);
 
   assert.match(instructions, /make important results durable/i);
-  assert.match(instructions, /CSV attachments may already be injected into the conversation as raw text/i);
-  assert.match(instructions, /If the user attaches a PDF statement, use the code interpreter to parse it/i);
+  assert.match(instructions, /CSV, XLS, and XLSX attachments, prefer the raw tabular text already injected into the conversation/i);
+  assert.match(instructions, /The original attached files also remain available as files/i);
+  assert.match(instructions, /For PDF attachments, prefer the native file context first/i);
   assert.match(instructions, /print a compact text or JSON summary/i);
-  assert.match(instructions, /print the complete extracted transaction list in logs/i);
+  assert.match(instructions, /print the complete extracted rows in logs/i);
   assert.match(instructions, /call capture_extracted_file_data/i);
   assert.match(instructions, /return a structured error payload as the tool result instead of throwing/i);
 });
