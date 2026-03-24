@@ -75,6 +75,15 @@ export type ChatStreamEvent =
     providerStatus?: string;
     input?: string;
     output?: string;
+    /**
+     * Canonical session-level invalidation version attached by the chat runtime
+     * after persisting a successful mutating database tool call.
+     *
+     * Live SSE clients can refresh immediately from this event, while snapshot
+     * polling later observes the same version from `/api/chat` and avoids
+     * duplicate refreshes.
+     */
+    mainContentInvalidationVersion?: number;
     refreshRoute?: boolean;
   }>
   | Readonly<{

@@ -89,12 +89,14 @@ export type RestrictedSqlQueryResult = Readonly<{
 
 export type ValidatedExpenseSqlStatement = Readonly<{
   sql: string;
+  isMutating: boolean;
   referencedRelations: ReadonlyArray<AllowedRelationName>;
 }>;
 
 export type ExecutedExpenseSqlStatement = Readonly<{
   sql: string;
   command: string;
+  isMutating: boolean;
   rows: ReadonlyArray<RestrictedSqlResultRow>;
   rowCount: number;
   referencedRelations: ReadonlyArray<AllowedRelationName>;
@@ -653,7 +655,60 @@ const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationN
   return collectReferencedRelationsFromSegment(tokens, 0, tokens.length, new Set<string>());
 };
 
+/**
+ * Classifies whether a validated SQL statement mutates persisted data.
+ *
+ * PostgreSQL command tags are not sufficient for this because a statement such
+ * as `WITH changed AS (UPDATE ... RETURNING ...) SELECT ...` mutates data while
+ * still reporting `SELECT` as the outer command. We therefore classify writes
+ * from the validated SQL structure itself and carry that explicit flag through
+ * downstream chat/runtime code.
+ */
+const statementMutatesDataFromSegment = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): boolean => {
+  if (startIndex >= endIndex) {
+    return false;
+  }
+
+  const firstToken = tokens[startIndex];
+  if (firstToken === undefined || firstToken.kind !== "word") {
+    return false;
+  }
+
+  if (
+    firstToken.lower === "insert"
+    || firstToken.lower === "update"
+    || firstToken.lower === "delete"
+  ) {
+    return true;
+  }
+
+  if (firstToken.lower !== "with") {
+    return false;
+  }
+
+  const { ctes, mainQueryStartIndex } = parseCteDefinitions(tokens, startIndex, endIndex);
+  for (const cte of ctes) {
+    if (statementMutatesDataFromSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex)) {
+      return true;
+    }
+  }
+
+  return statementMutatesDataFromSegment(tokens, mainQueryStartIndex, endIndex);
+};
+
 export const getAllowedRelationNames = (): ReadonlyArray<AllowedRelationName> => ALLOWED_RELATION_NAMES;
+
+/**
+ * Returns whether a SQL script mutates persisted data in any validated
+ * statement. Multi-statement scripts are considered mutating when any one
+ * statement is mutating.
+ */
+export const isExpenseSqlMutation = (sql: string): boolean =>
+  validateExpenseSql(sql).statements.some((statement) => statement.isMutating);
 
 const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement => {
   const firstKeyword = getFirstKeyword(sql);
@@ -665,9 +720,14 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
     fail("set_config_not_allowed", "set_config() calls are not allowed");
   }
 
+  assertSupportedSqlSyntax(sql);
+  const sanitizedSql = stripSingleQuotedStrings(sql);
+  const tokens = tokenizeSql(sanitizedSql);
+
   return {
     sql,
-    referencedRelations: collectReferencedRelations(sql),
+    isMutating: statementMutatesDataFromSegment(tokens, 0, tokens.length),
+    referencedRelations: collectReferencedRelationsFromSegment(tokens, 0, tokens.length, new Set<string>()),
   };
 };
 
@@ -698,6 +758,7 @@ export const executeExpenseSql = async (
     statements.push({
       sql: statement.sql,
       command: result.command,
+      isMutating: statement.isMutating,
       rows,
       rowCount,
       referencedRelations: statement.referencedRelations,

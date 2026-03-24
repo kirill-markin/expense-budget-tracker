@@ -13,6 +13,7 @@ import {
   persistAssistantTerminalError,
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
+  updateAssistantMessageItemAndInvalidateMainContent,
 } from "@/server/chat/store";
 import {
   beginChatTaskProtection,
@@ -79,6 +80,7 @@ export type ChatRuntimeDependencies = Readonly<{
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
   touchChatSessionHeartbeat: typeof touchChatSessionHeartbeat;
   updateAssistantMessageItem: typeof updateAssistantMessageItem;
+  updateAssistantMessageItemAndInvalidateMainContent: typeof updateAssistantMessageItemAndInvalidateMainContent;
   beginTaskProtection: () => Promise<void>;
   endTaskProtection: () => Promise<void>;
   logEvent: typeof log;
@@ -93,6 +95,7 @@ const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
   persistAssistantTerminalError,
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
+  updateAssistantMessageItemAndInvalidateMainContent,
   beginTaskProtection: beginChatTaskProtection,
   endTaskProtection: endChatTaskProtection,
   logEvent: log,
@@ -136,6 +139,16 @@ const createChatErrorLogEvent = (
   attachmentFileNames: diagnostics.attachmentFileNames,
 });
 
+/**
+ * Converts a streamed tool-call event into the persisted assistant transcript
+ * shape stored in Postgres.
+ *
+ * Session-level invalidation metadata is intentionally excluded here. Live SSE
+ * and `/api/chat` snapshot polling share a separate session-scoped
+ * `mainContentInvalidationVersion`, which lets both delivery paths trigger the
+ * same main-content refresh behavior without storing transient routing hints in
+ * the assistant message payload itself.
+ */
 const createToolCallContentPart = (
   event: Extract<ChatStreamEvent, { type: "tool_call" }>,
 ): ToolCallContentPart => ({
@@ -345,11 +358,81 @@ const updateAssistantInProgress = async (
   });
 };
 
+/**
+ * Persists the current assistant tool-call transcript state and, for completed
+ * mutating database tool calls, advances the session-level invalidation
+ * version exactly once per tool-call ID.
+ *
+ * The returned event is the broadcast shape sent to live SSE subscribers. When
+ * an invalidation version is attached, the sidebar can refresh immediately from
+ * the stream while snapshot polling later observes the same version from the
+ * persisted session row and avoids duplicate refreshes.
+ */
+const persistToolCallProgress = async (
+  dependencies: ChatRuntimeDependencies,
+  userId: string,
+  workspaceId: string,
+  assistantItemId: string,
+  assistantContent: ReadonlyArray<ContentPart>,
+  event: Extract<ChatStreamEvent, { type: "tool_call" }>,
+  seenInvalidationVersions: Map<string, number>,
+): Promise<Extract<ChatStreamEvent, { type: "tool_call" }>> => {
+  if (event.status !== "completed" || event.refreshRoute !== true) {
+    await updateAssistantInProgress(
+      dependencies,
+      userId,
+      workspaceId,
+      assistantItemId,
+      assistantContent,
+    );
+    return event;
+  }
+
+  const existingVersion = seenInvalidationVersions.get(event.id);
+  if (existingVersion !== undefined) {
+    await updateAssistantInProgress(
+      dependencies,
+      userId,
+      workspaceId,
+      assistantItemId,
+      assistantContent,
+    );
+    return {
+      ...event,
+      mainContentInvalidationVersion: existingVersion,
+    };
+  }
+
+  const mainContentInvalidationVersion = await dependencies.updateAssistantMessageItemAndInvalidateMainContent(
+    userId,
+    workspaceId,
+    {
+      itemId: assistantItemId,
+      content: assistantContent,
+      state: "in_progress",
+    },
+  );
+  seenInvalidationVersions.set(event.id, mainContentInvalidationVersion);
+  return {
+    ...event,
+    mainContentInvalidationVersion,
+  };
+};
+
 const finalizeAssistantToolCalls = (
   assistantContent: ReadonlyArray<ContentPart>,
 ): ReadonlyArray<ContentPart> =>
   finalizePendingToolCallContent(assistantContent, INCOMPLETE_TOOL_CALL_PROVIDER_STATUS);
 
+/**
+ * Runs one persisted chat session against the OpenAI runtime while keeping the
+ * local transcript and session-level invalidation state in Postgres.
+ *
+ * Tool completions can reach the browser through the live stream immediately or
+ * through later `/api/chat` polling after reconnect/recovery. The runtime
+ * therefore persists main-content invalidation on the session row at tool
+ * completion time so both delivery paths observe the same refresh signal.
+ */
 export const runPersistedChatSessionWithDeps = async (
   params: StartPersistedChatRunParams,
   dependencies: ChatRuntimeDependencies,
@@ -357,6 +440,7 @@ export const runPersistedChatSessionWithDeps = async (
   let assistantContent: ReadonlyArray<ContentPart> = [];
   let isFinalized = false;
   let currentConversationId = params.conversationId;
+  const seenInvalidationVersions = new Map<string, number>();
   const heartbeatTimer = setInterval(() => {
     void dependencies.touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId).catch((error) => {
       logChatRunError(params.diagnostics, "stream", error);
@@ -440,13 +524,17 @@ export const runPersistedChatSessionWithDeps = async (
             );
           } else if (event.type === "tool_call") {
             assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
-            await updateAssistantInProgress(
+            const eventToBroadcast = await persistToolCallProgress(
               dependencies,
               params.userId,
               params.workspaceId,
               params.assistantItemId,
               assistantContent,
+              event,
+              seenInvalidationVersions,
             );
+            broadcastChatEvent(params.sessionId, eventToBroadcast);
+            continue;
           } else if (event.type === "reasoning_summary") {
             assistantContent = upsertReasoningSummaryContent(
               assistantContent,

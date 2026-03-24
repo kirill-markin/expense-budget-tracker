@@ -21,6 +21,8 @@ import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
   getEffectiveSnapshotRunState,
+  shouldRefreshMainContentFromLiveEvent,
+  shouldRefreshMainContentFromSnapshot,
   shouldReplaceHistoryFromSnapshot,
   shouldSnapshotSetStreaming,
   shouldSuppressStreamFailure,
@@ -35,10 +37,18 @@ type Props = Readonly<{
   workspaceId: string;
 }>;
 
+/**
+ * Browser-facing snapshot shape returned by `/api/chat`.
+ *
+ * The sidebar can receive tool completion data either from the live SSE stream
+ * or from later snapshot polling/recovery. The persisted invalidation version
+ * allows both paths to converge on the same main-content refresh behavior.
+ */
 type ChatHistoryResponse = Readonly<{
   sessionId: string;
   runState: "idle" | "running" | "interrupted";
   updatedAt: number;
+  mainContentInvalidationVersion: number;
   messages: ReadonlyArray<StoredMessage>;
 }>;
 
@@ -286,6 +296,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   const isLiveStreamConnectedRef = useRef<boolean>(false);
   const stoppedSessionIdsRef = useRef<Set<string>>(new Set());
   const lastSnapshotUpdatedAtRef = useRef<number | null>(null);
+  const lastMainContentInvalidationVersionRef = useRef<number | null>(null);
   const shouldAutoScrollRef = useRef<boolean>(true);
   const scrollFrameRef = useRef<number | null>(null);
   const initialScrollDoneRef = useRef<boolean>(false);
@@ -310,6 +321,46 @@ export const ChatPanel = (props: Props): ReactElement => {
     });
   }, [scrollToBottom]);
 
+  /**
+   * Applies a newly observed session-level invalidation version from either the
+   * live SSE stream or `/api/chat` snapshot polling.
+   *
+   * Sidebar mode refreshes the route-backed main content when a newer version
+   * is observed. Fullscreen chat does not refresh because it has no sibling
+   * main-content pane. Version deduplication prevents a live refresh from being
+   * repeated when polling later loads the same persisted invalidation state.
+   */
+  const applyMainContentInvalidationVersion = useCallback((
+    nextVersion: number,
+    source: "live" | "snapshot",
+  ): void => {
+    const previousVersion = lastMainContentInvalidationVersionRef.current;
+    const shouldRefresh = source === "live"
+      ? shouldRefreshMainContentFromLiveEvent(previousVersion, nextVersion)
+      : shouldRefreshMainContentFromSnapshot(previousVersion, nextVersion);
+
+    lastMainContentInvalidationVersionRef.current = previousVersion === null
+      ? nextVersion
+      : Math.max(previousVersion, nextVersion);
+
+    if (!shouldRefresh || mode !== "sidebar") {
+      return;
+    }
+
+    startTransition(() => {
+      router.refresh();
+    });
+  }, [mode, router]);
+
+  /**
+   * Loads the persisted chat snapshot used for bootstrap, polling, and
+   * post-stream recovery.
+   *
+   * This path is intentionally treated as a first-class delivery channel, not
+   * merely a fallback: it updates transcript state, run state, and the
+   * session-level invalidation version that can refresh the route-backed main
+   * content even when no live SSE connection is active.
+   */
   const loadChatSnapshot = useCallback(async (
     sessionId: string | undefined,
     signal: AbortSignal | undefined,
@@ -329,6 +380,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     }
 
     const payload = await response.json() as ChatHistoryResponse;
+    applyMainContentInvalidationVersion(payload.mainContentInvalidationVersion, "snapshot");
     const isUserStoppedSession = stoppedSessionIdsRef.current.has(payload.sessionId);
     const effectiveRunState = getEffectiveSnapshotRunState(
       payload.runState,
@@ -360,7 +412,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       ...payload,
       runState: effectiveRunState,
     };
-  }, [replaceMessages, t]);
+  }, [applyMainContentInvalidationVersion, replaceMessages, t]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -371,6 +423,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     isLiveStreamConnectedRef.current = false;
     stoppedSessionIdsRef.current.clear();
     lastSnapshotUpdatedAtRef.current = null;
+    lastMainContentInvalidationVersionRef.current = null;
     replaceMessages([]);
 
     void (async (): Promise<void> => {
@@ -669,10 +722,14 @@ export const ChatPanel = (props: Props): ReactElement => {
                 sequenceNumber: event.sequenceNumber,
               },
             });
-            if (event.status === "completed" && mode === "sidebar" && event.refreshRoute === true) {
-              startTransition(() => {
-                router.refresh();
-              });
+            if (
+              event.status === "completed"
+              && typeof event.mainContentInvalidationVersion === "number"
+            ) {
+              applyMainContentInvalidationVersion(
+                event.mainContentInvalidationVersion,
+                "live",
+              );
             }
           } else if (event.type === "error") {
             markAssistantError(event.message);
@@ -734,10 +791,9 @@ export const ChatPanel = (props: Props): ReactElement => {
     appendAssistantChunk,
     upsertReasoningSummary,
     upsertToolCall,
+    applyMainContentInvalidationVersion,
     finalizeAssistant,
     markAssistantError,
-    mode,
-    router,
     t,
     currentSessionId,
     isHistoryLoaded,

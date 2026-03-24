@@ -13,6 +13,7 @@ type ChatSessionRow = Readonly<{
   status: ChatSessionRunState;
   active_run_heartbeat_at: string | null;
   openai_conversation_id: string | null;
+  main_content_invalidation_version: string;
   updated_at: string;
 }>;
 
@@ -28,6 +29,10 @@ type ChatItemRow = Readonly<{
   payload: ChatItemPayload;
   created_at: string;
   updated_at: string;
+}>;
+
+type ChatItemWithInvalidationRow = ChatItemRow & Readonly<{
+  main_content_invalidation_version: string;
 }>;
 
 export class ChatSessionNotFoundError extends Error {
@@ -62,6 +67,15 @@ export type ChatSessionSnapshot = Readonly<{
   updatedAt: number;
   activeRunHeartbeatAt: number | null;
   conversationId: string | null;
+  /**
+   * Monotonic session-level version used to invalidate route-backed main
+   * content after successful mutating database tool calls.
+   *
+   * Unlike transient stream events, this value is persisted on the chat session
+   * row so both live SSE subscribers and `/api/chat` polling clients can observe
+   * the same refresh contract.
+   */
+  mainContentInvalidationVersion: number;
   messages: ReadonlyArray<StoredMessage>;
 }>;
 
@@ -81,6 +95,12 @@ type InsertChatItemParams = Readonly<{
 }>;
 
 type UpdateChatMessageItemParams = Readonly<{
+  itemId: string;
+  content: ReadonlyArray<ContentPart>;
+  state: ChatItemState;
+}>;
+
+type UpdateChatMessageItemAndInvalidateMainContentParams = Readonly<{
   itemId: string;
   content: ReadonlyArray<ContentPart>;
   state: ChatItemState;
@@ -136,7 +156,7 @@ type UserStoppedChatRunUpdatePlan = Readonly<{
 }>;
 
 const SELECT_SESSION_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE user_id = $1
     AND workspace_id = $2
@@ -144,14 +164,14 @@ const SELECT_SESSION_SQL = `
 `;
 
 const SELECT_SESSION_FOR_UPDATE_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE session_id = $1
   FOR UPDATE
 `;
 
 const SELECT_LATEST_SESSION_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE user_id = $1
     AND workspace_id = $2
@@ -166,10 +186,11 @@ const INSERT_SESSION_SQL = `
     status,
     active_run_heartbeat_at,
     openai_conversation_id,
+    main_content_invalidation_version,
     updated_at
   )
-  VALUES ($1, $2, 'idle', NULL, NULL, now())
-  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+  VALUES ($1, $2, 'idle', NULL, NULL, 0, now())
+  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
 `;
 
 const LIST_CHAT_ITEMS_SQL = `
@@ -231,7 +252,7 @@ const UPDATE_CHAT_SESSION_STATUS_SQL = `
       active_run_heartbeat_at = $3,
       updated_at = now()
   WHERE session_id = $1
-  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
 `;
 
 const UPDATE_CHAT_SESSION_COMPLETION_SQL = `
@@ -241,7 +262,7 @@ const UPDATE_CHAT_SESSION_COMPLETION_SQL = `
       openai_conversation_id = $2,
       updated_at = now()
   WHERE session_id = $1
-  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
 `;
 
 const UPDATE_CHAT_SESSION_CONVERSATION_ID_SQL = `
@@ -249,7 +270,35 @@ const UPDATE_CHAT_SESSION_CONVERSATION_ID_SQL = `
   SET openai_conversation_id = $2,
       updated_at = now()
   WHERE session_id = $1
-  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
+`;
+
+const UPDATE_CHAT_ITEM_AND_INVALIDATE_MAIN_CONTENT_SQL = `
+  WITH updated_item AS (
+    UPDATE public.chat_items
+    SET payload = $2::jsonb,
+        state = $3,
+        updated_at = now()
+    WHERE item_id = $1
+    RETURNING item_id, session_id, state, payload, created_at, updated_at
+  ),
+  invalidated_session AS (
+    UPDATE public.chat_sessions
+    SET main_content_invalidation_version = main_content_invalidation_version + 1,
+        updated_at = now()
+    WHERE session_id = (SELECT session_id FROM updated_item)
+    RETURNING main_content_invalidation_version
+  )
+  SELECT
+    updated_item.item_id,
+    updated_item.session_id,
+    updated_item.state,
+    updated_item.payload,
+    updated_item.created_at,
+    updated_item.updated_at,
+    invalidated_session.main_content_invalidation_version
+  FROM updated_item
+  CROSS JOIN invalidated_session
 `;
 
 const mapSessionRow = (row: ChatSessionRow): ChatSessionSnapshot => ({
@@ -260,6 +309,10 @@ const mapSessionRow = (row: ChatSessionRow): ChatSessionSnapshot => ({
     ? null
     : new Date(row.active_run_heartbeat_at).getTime(),
   conversationId: row.openai_conversation_id,
+  mainContentInvalidationVersion: parseMainContentInvalidationVersion(
+    row.main_content_invalidation_version,
+    "read",
+  ),
   messages: [],
 });
 
@@ -299,6 +352,20 @@ const requireChatItemRow = (
   return row;
 };
 
+const parseMainContentInvalidationVersion = (
+  rawValue: string,
+  operation: string,
+): number => {
+  const parsed = Number(rawValue);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(
+      `Chat session ${operation} failed: invalid main_content_invalidation_version=${rawValue}`,
+    );
+  }
+
+  return parsed;
+};
+
 const toChatItemPayload = (
   role: "user" | "assistant",
   content: ReadonlyArray<ContentPart>,
@@ -335,6 +402,42 @@ const updateChatItemWithQuery = async (
   return mapChatItemRow(
     requireChatItemRow(result.rows[0] as ChatItemRow | undefined, "update"),
   );
+};
+
+/**
+ * Persists the latest assistant tool-call state and atomically bumps the
+ * session-level main-content invalidation version.
+ *
+ * The chat client can learn about tool completion through live SSE or through
+ * later `/api/chat` snapshot polling. The invalidation version is therefore
+ * stored on `chat_sessions` instead of inside transient stream-only payloads so
+ * both delivery paths observe the same route refresh signal.
+ */
+const updateChatItemAndInvalidateMainContentWithQuery = async (
+  queryFn: QueryFn,
+  params: UpdateChatMessageItemAndInvalidateMainContentParams,
+): Promise<Readonly<{
+  item: PersistedChatMessageItem;
+  mainContentInvalidationVersion: number;
+}>> => {
+  const result = await queryFn(UPDATE_CHAT_ITEM_AND_INVALIDATE_MAIN_CONTENT_SQL, [
+    params.itemId,
+    JSON.stringify(toChatItemPayload("assistant", params.content)),
+    params.state,
+  ]);
+
+  const row = result.rows[0] as ChatItemWithInvalidationRow | undefined;
+  if (row === undefined) {
+    throw new Error("Chat item update+invalidate failed: query returned no row");
+  }
+
+  return {
+    item: mapChatItemRow(row),
+    mainContentInvalidationVersion: parseMainContentInvalidationVersion(
+      row.main_content_invalidation_version,
+      "update+invalidate",
+    ),
+  };
 };
 
 const updateChatSessionStatusWithQuery = async (
@@ -611,6 +714,13 @@ export const buildRecoveredChatConversationUpdatePlan = (
   };
 };
 
+/**
+ * Loads the canonical chat snapshot served by `/api/chat`.
+ *
+ * The snapshot combines the persisted transcript with session-scoped runtime
+ * metadata such as the OpenAI conversation ID, run state, and the main-content
+ * invalidation version consumed by clients that reconnect through polling.
+ */
 export const getChatSessionSnapshot = async (
   userId: string,
   workspaceId: string,
@@ -701,6 +811,24 @@ export const updateAssistantMessageItem = async (
   return mapChatItemRow(
     requireChatItemRow(result.rows[0] as ChatItemRow | undefined, "update"),
   );
+};
+
+/**
+ * Persists the assistant message update that completed a mutating database tool
+ * call and returns the new session-level invalidation version.
+ *
+ * The returned version is the canonical cross-channel refresh token used to
+ * keep route-backed content in sync whether the client observes the completion
+ * via live SSE or by reloading `/api/chat` snapshots during polling/recovery.
+ */
+export const updateAssistantMessageItemAndInvalidateMainContent = async (
+  userId: string,
+  workspaceId: string,
+  params: UpdateChatMessageItemAndInvalidateMainContentParams,
+): Promise<number> => {
+  const result = await withUserContext(userId, workspaceId, async (queryFn) =>
+    updateChatItemAndInvalidateMainContentWithQuery(queryFn, params));
+  return result.mainContentInvalidationVersion;
 };
 
 export const touchChatSessionHeartbeat = async (

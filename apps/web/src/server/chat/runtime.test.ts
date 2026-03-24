@@ -64,6 +64,7 @@ const createDependencies = (
   completeChatRunCalls: Array<Readonly<Record<string, unknown>>>,
   persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>>,
   persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>>,
+  updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>>,
   protectionTransitions: Array<string>,
 ): ChatRuntimeDependencies => ({
   startAgentResponse: startAgentResponseImpl,
@@ -78,6 +79,10 @@ const createDependencies = (
   },
   touchChatSessionHeartbeat: async (): Promise<void> => undefined,
   updateAssistantMessageItem: async (): Promise<never> => undefined as never,
+  updateAssistantMessageItemAndInvalidateMainContent: async (_userId, _workspaceId, params): Promise<number> => {
+    updateAssistantMessageItemAndInvalidateMainContentCalls.push(params as unknown as Readonly<Record<string, unknown>>);
+    return 1;
+  },
   beginTaskProtection: async (): Promise<void> => {
     protectionTransitions.push("begin");
   },
@@ -91,6 +96,7 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
   const maxTurnsError = new MaxTurnsExceededError("Max turns (30) exceeded", undefined as never);
   const receivedTurnInputs: Array<ReadonlyArray<unknown>> = [];
@@ -123,6 +129,7 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
 
@@ -134,6 +141,7 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
   assert.deepEqual(receivedTurnInputs[1], [{ type: "text", text: CHAT_INTERNAL_CONTINUATION_PROMPT }]);
   assert.equal(persistAssistantCancelledCalls.length, 0);
   assert.equal(persistAssistantTerminalErrorCalls.length, 0);
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
   assert.equal(completeChatRunCalls.length, 1);
   const completion = completeChatRunCalls[0];
   const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
@@ -155,6 +163,7 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
   const maxTurnsError = new MaxTurnsExceededError("Max turns (30) exceeded", undefined as never);
 
@@ -175,6 +184,7 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
 
@@ -183,6 +193,7 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
   assert.deepEqual(protectionTransitions, ["begin", "end"]);
   assert.equal(persistAssistantCancelledCalls.length, 0);
   assert.equal(persistAssistantTerminalErrorCalls.length, 0);
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
   assert.equal(completeChatRunCalls.length, 1);
   const completion = completeChatRunCalls[0];
   const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
@@ -196,6 +207,7 @@ test("runPersistedChatSessionWithDeps finalizes started tool calls before persis
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
   const dependencies = createDependencies(
@@ -213,6 +225,7 @@ test("runPersistedChatSessionWithDeps finalizes started tool calls before persis
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
 
@@ -221,6 +234,7 @@ test("runPersistedChatSessionWithDeps finalizes started tool calls before persis
   assert.deepEqual(protectionTransitions, ["begin", "end"]);
   assert.equal(persistAssistantCancelledCalls.length, 0);
   assert.equal(completeChatRunCalls.length, 0);
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
   assert.equal(persistAssistantTerminalErrorCalls.length, 1);
   const terminalErrorCall = persistAssistantTerminalErrorCalls[0];
   const assistantContent = terminalErrorCall.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
@@ -238,6 +252,7 @@ test("runPersistedChatSessionWithDeps persists reasoning summaries into the assi
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
   const dependencies = createDependencies(
@@ -263,6 +278,7 @@ test("runPersistedChatSessionWithDeps persists reasoning summaries into the assi
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
 
@@ -271,6 +287,7 @@ test("runPersistedChatSessionWithDeps persists reasoning summaries into the assi
   assert.deepEqual(protectionTransitions, ["begin", "end"]);
   assert.equal(persistAssistantCancelledCalls.length, 0);
   assert.equal(persistAssistantTerminalErrorCalls.length, 0);
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
   assert.equal(completeChatRunCalls.length, 1);
   const completion = completeChatRunCalls[0];
   const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
@@ -288,6 +305,7 @@ test("runPersistedChatSessionWithDeps persists cancellation once and ignores lat
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
   createActiveChatRunForTests("session-1");
@@ -323,6 +341,7 @@ test("runPersistedChatSessionWithDeps persists cancellation once and ignores lat
       completeChatRunCalls,
       persistAssistantCancelledCalls,
       persistAssistantTerminalErrorCalls,
+      updateAssistantMessageItemAndInvalidateMainContentCalls,
       protectionTransitions,
     );
 
@@ -334,6 +353,7 @@ test("runPersistedChatSessionWithDeps persists cancellation once and ignores lat
   assert.deepEqual(protectionTransitions, ["begin", "end"]);
   assert.equal(completeChatRunCalls.length, 0);
   assert.equal(persistAssistantTerminalErrorCalls.length, 0);
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
   assert.equal(persistAssistantCancelledCalls.length, 1);
   const cancelled = persistAssistantCancelledCalls[0];
   const assistantContent = cancelled.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
@@ -349,4 +369,41 @@ test("runPersistedChatSessionWithDeps persists cancellation once and ignores lat
     assistantContent.some((part) => part.type === "text" && part.text === "late answer"),
     false,
   );
+});
+
+test("runPersistedChatSessionWithDeps invalidates main content once for a mutating completed database tool call", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
+
+  const dependencies = createDependencies(
+    async (): Promise<StartAgentResponseResult> =>
+      createStartedResponse("conv-1", [{
+        type: "tool_call",
+        id: "tool-1",
+        itemId: "tool-item-1",
+        name: "query_database",
+        status: "completed",
+        outputIndex: 0,
+        sequenceNumber: 1,
+        input: "{\"sql\":\"WITH changed AS (UPDATE ledger_entries SET amount = 1 RETURNING entry_id) SELECT * FROM changed\"}",
+        output: "{\"statements\":[{\"isMutating\":true}]}",
+        refreshRoute: true,
+      }, { type: "done" }], null),
+    completeChatRunCalls,
+    persistAssistantCancelledCalls,
+    persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
+    protectionTransitions,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.deepEqual(protectionTransitions, ["begin", "end"]);
+  assert.equal(persistAssistantCancelledCalls.length, 0);
+  assert.equal(persistAssistantTerminalErrorCalls.length, 0);
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 1);
+  assert.equal(completeChatRunCalls.length, 1);
 });

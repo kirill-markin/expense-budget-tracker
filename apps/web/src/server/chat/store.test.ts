@@ -333,6 +333,7 @@ test("cancelActiveChatRunByUserWithQuery cancels a running session and finalizes
         status: "running",
         active_run_heartbeat_at: "2026-03-24T10:00:00.000Z",
         openai_conversation_id: "conv-1",
+        main_content_invalidation_version: "0",
         updated_at: "2026-03-24T10:00:00.000Z",
       }]);
     }
@@ -343,6 +344,7 @@ test("cancelActiveChatRunByUserWithQuery cancels a running session and finalizes
         status: "running",
         active_run_heartbeat_at: "2026-03-24T10:00:00.000Z",
         openai_conversation_id: "conv-1",
+        main_content_invalidation_version: "0",
         updated_at: "2026-03-24T10:00:00.000Z",
       }]);
     }
@@ -402,6 +404,7 @@ test("cancelActiveChatRunByUserWithQuery cancels a running session and finalizes
         status: "idle",
         active_run_heartbeat_at: null,
         openai_conversation_id: "conv-1",
+        main_content_invalidation_version: "0",
         updated_at: "2026-03-24T10:00:01.000Z",
       }]);
     }

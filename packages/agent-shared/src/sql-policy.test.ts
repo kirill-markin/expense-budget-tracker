@@ -22,6 +22,8 @@ test("validateExpenseSql splits multiple statements and ignores trailing semicol
     result.statements.map((statement) => statement.sql),
     ["SELECT 1", "SELECT * FROM accounts LIMIT 1"],
   );
+  assert.equal(result.statements[0]?.isMutating, false);
+  assert.equal(result.statements[1]?.isMutating, false);
   assert.deepEqual(result.statements[0]?.referencedRelations, []);
   assert.deepEqual(result.statements[1]?.referencedRelations, ["accounts"]);
 });
@@ -76,7 +78,43 @@ test("validateExpenseSql reports dollar-quoted string errors even when semicolon
 
 test("validateExpenseSql allows a CTE that reads allowed relations", () => {
   const result = validateExpenseSql("WITH recent AS (SELECT * FROM accounts) SELECT * FROM recent");
+  assert.equal(result.statements[0]?.isMutating, false);
   assert.deepEqual(result.statements[0]?.referencedRelations, ["accounts"]);
+});
+
+test("validateExpenseSql marks INSERT, UPDATE, and DELETE statements as mutating", () => {
+  const result = validateExpenseSql(
+    "INSERT INTO ledger_entries (entry_id) VALUES ('1'); UPDATE ledger_entries SET amount = 1; DELETE FROM ledger_entries WHERE entry_id = '1'",
+  );
+
+  assert.deepEqual(
+    result.statements.map((statement) => statement.isMutating),
+    [true, true, true],
+  );
+});
+
+test("validateExpenseSql keeps read-only WITH statements non-mutating", () => {
+  const result = validateExpenseSql(
+    "WITH recent AS (SELECT * FROM accounts) SELECT * FROM recent",
+  );
+
+  assert.equal(result.statements[0]?.isMutating, false);
+});
+
+test("validateExpenseSql marks mutating WITH statements as mutating", () => {
+  const result = validateExpenseSql(
+    "WITH changed AS (UPDATE ledger_entries SET amount = 1 RETURNING entry_id) SELECT * FROM changed",
+  );
+
+  assert.equal(result.statements[0]?.isMutating, true);
+});
+
+test("validateExpenseSql marks mutating WITH statements that insert or delete as mutating", () => {
+  const result = validateExpenseSql(
+    "WITH inserted AS (INSERT INTO budget_comments (workspace_id, month, direction, category, comment) VALUES ('w', '2026-01', 'spend', 'Food', 'x') RETURNING workspace_id), removed AS (DELETE FROM budget_comments WHERE workspace_id = 'w' RETURNING workspace_id) SELECT * FROM inserted UNION ALL SELECT * FROM removed",
+  );
+
+  assert.equal(result.statements[0]?.isMutating, true);
 });
 
 test("validateExpenseSql rejects TABLE syntax at the top level", () => {
@@ -178,6 +216,7 @@ test("executeExpenseSql executes validated statements in order", async () => {
     {
       sql: "SELECT * FROM accounts LIMIT 1",
       command: "SELECT",
+      isMutating: false,
       rows: [{ account_id: "checking" }],
       rowCount: 1,
       referencedRelations: ["accounts"],
@@ -185,6 +224,7 @@ test("executeExpenseSql executes validated statements in order", async () => {
     {
       sql: "SELECT 1",
       command: "SELECT",
+      isMutating: false,
       rows: [{ "?column?": 1 }],
       rowCount: 1,
       referencedRelations: [],

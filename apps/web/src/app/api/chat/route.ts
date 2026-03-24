@@ -51,10 +51,19 @@ export type ChatRequestDiagnostics = Readonly<{
   workspaceId?: string;
 }>;
 
+/**
+ * Snapshot payload returned by `GET /api/chat`.
+ *
+ * The browser chat can receive tool progress through two supported paths:
+ * live SSE while a run is connected, and later snapshot polling/recovery when a
+ * live stream is absent or interrupted. Session-level invalidation metadata is
+ * therefore included here, not only in transient stream events.
+ */
 export type ChatHistoryResponse = Readonly<{
   sessionId: string;
   runState: ChatSessionRunState;
   updatedAt: number;
+  mainContentInvalidationVersion: number;
   messages: ReadonlyArray<Readonly<{
     role: "user" | "assistant";
     content: ReadonlyArray<ContentPart>;
@@ -183,6 +192,7 @@ const toChatHistoryResponse = (
   sessionId: snapshot.sessionId,
   runState: snapshot.runState,
   updatedAt: snapshot.updatedAt,
+  mainContentInvalidationVersion: snapshot.mainContentInvalidationVersion,
   messages: snapshot.messages,
 });
 
@@ -232,6 +242,14 @@ const resolveSnapshotWithRunRecovery = async (
   return snapshot;
 };
 
+/**
+ * Creates the SSE stream consumed by the sidebar and fullscreen chat clients.
+ *
+ * Live SSE is the low-latency path for deltas and tool-call completions, while
+ * `/api/chat` snapshots remain the persisted recovery path. Both paths carry
+ * the same session-level invalidation contract for refreshing route-backed main
+ * content after successful mutating database tool calls.
+ */
 export const createChatEventStream = (params: ChatEventStreamParams): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
   let isClosed = false;

@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
   getEffectiveSnapshotRunState,
+  shouldRefreshMainContentFromLiveEvent,
+  shouldRefreshMainContentFromSnapshot,
   shouldReplaceHistoryFromSnapshot,
   shouldSnapshotSetStreaming,
   shouldSuppressStreamFailure,
@@ -18,9 +20,9 @@ test("shouldReplaceHistoryFromSnapshot only replaces history when the snapshot i
 
 test("shouldSuppressStreamFailure treats running and idle snapshots as recoverable", () => {
   assert.equal(ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS, 10_000);
-  assert.equal(shouldSuppressStreamFailure({ runState: "running", updatedAt: 100, messages: [] }), true);
-  assert.equal(shouldSuppressStreamFailure({ runState: "idle", updatedAt: 100, messages: [] }), true);
-  assert.equal(shouldSuppressStreamFailure({ runState: "interrupted", updatedAt: 100, messages: [] }), false);
+  assert.equal(shouldSuppressStreamFailure({ runState: "running", updatedAt: 100, mainContentInvalidationVersion: 0, messages: [] }), true);
+  assert.equal(shouldSuppressStreamFailure({ runState: "idle", updatedAt: 100, mainContentInvalidationVersion: 0, messages: [] }), true);
+  assert.equal(shouldSuppressStreamFailure({ runState: "interrupted", updatedAt: 100, mainContentInvalidationVersion: 0, messages: [] }), false);
 });
 
 test("getEffectiveSnapshotRunState hides running snapshots for user-stopped sessions", () => {
@@ -33,4 +35,16 @@ test("shouldSnapshotSetStreaming keeps a stopped session from returning to strea
   assert.equal(shouldSnapshotSetStreaming("running", false, true), false);
   assert.equal(shouldSnapshotSetStreaming("running", false, false), true);
   assert.equal(shouldSnapshotSetStreaming("running", true, false), false);
+});
+
+test("shouldRefreshMainContentFromLiveEvent refreshes immediately for new live invalidations", () => {
+  assert.equal(shouldRefreshMainContentFromLiveEvent(null, 1), true);
+  assert.equal(shouldRefreshMainContentFromLiveEvent(1, 1), false);
+  assert.equal(shouldRefreshMainContentFromLiveEvent(1, 2), true);
+});
+
+test("shouldRefreshMainContentFromSnapshot skips bootstrap and refreshes only for newer versions", () => {
+  assert.equal(shouldRefreshMainContentFromSnapshot(null, 1), false);
+  assert.equal(shouldRefreshMainContentFromSnapshot(1, 1), false);
+  assert.equal(shouldRefreshMainContentFromSnapshot(1, 2), true);
 });

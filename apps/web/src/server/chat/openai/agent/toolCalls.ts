@@ -1,9 +1,8 @@
+import { isExpenseSqlMutation } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ChatStreamEvent } from "@/server/chat/types";
 
-type QueryDatabaseToolOutput = Readonly<{
-  statements?: ReadonlyArray<Readonly<{
-    command?: unknown;
-  }>>;
+type QueryDatabaseToolInput = Readonly<{
+  sql?: unknown;
 }>;
 
 export type FunctionToolCallRawItem = Readonly<{
@@ -257,7 +256,7 @@ const buildToolOutputEvent = (
   const id = getRequiredToolCallId(rawItem);
   const output = stringifyToolValue(rawOutput);
   const name = previousSnapshot?.name ?? (typeof rawItem.name === "string" ? rawItem.name : "tool");
-  const refreshRoute = output !== null && shouldRefreshRouteAfterToolCall(name, output);
+  const refreshRoute = shouldRefreshRouteAfterToolCall(name, previousSnapshot?.input ?? null);
   return createToolCallEvent(
     id,
     getRequiredToolItemId(rawItem, previousSnapshot),
@@ -361,22 +360,30 @@ export const getTrackedToolCallPosition = (
   };
 };
 
+/**
+ * Determines whether a completed tool call should invalidate the route-backed
+ * main content shown beside the sidebar chat.
+ *
+ * The decision is based on the shared SQL policy used to validate the original
+ * `query_database` input, not on PostgreSQL command tags. Command tags are
+ * insufficient for data-modifying CTEs such as `WITH changed AS (UPDATE ...)
+ * SELECT ...`, which mutate data while still reporting `SELECT`.
+ */
 export const shouldRefreshRouteAfterToolCall = (
   name: string,
-  output: string,
+  input: string | null,
 ): boolean => {
-  if (name !== "query_database") {
+  if (name !== "query_database" || input === null) {
     return false;
   }
 
   try {
-    const parsed = JSON.parse(output) as QueryDatabaseToolOutput;
-    if (!Array.isArray(parsed.statements)) {
+    const parsed = JSON.parse(input) as QueryDatabaseToolInput;
+    if (typeof parsed.sql !== "string") {
       return false;
     }
 
-    return parsed.statements.some((statement) =>
-      typeof statement.command === "string" && statement.command.toUpperCase() !== "SELECT");
+    return isExpenseSqlMutation(parsed.sql);
   } catch {
     return false;
   }

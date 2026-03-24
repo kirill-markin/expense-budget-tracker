@@ -27,10 +27,7 @@ const createToolPosition = (
 test("shouldRefreshRouteAfterToolCall detects mutating SQL tool results", () => {
   assert.equal(
     shouldRefreshRouteAfterToolCall("query_database", JSON.stringify({
-      statements: [
-        { command: "SELECT" },
-        { command: "UPDATE" },
-      ],
+      sql: "SELECT 1; WITH changed AS (UPDATE ledger_entries SET amount = 1 RETURNING entry_id) SELECT * FROM changed",
     })),
     true,
   );
@@ -39,16 +36,14 @@ test("shouldRefreshRouteAfterToolCall detects mutating SQL tool results", () => 
 test("shouldRefreshRouteAfterToolCall ignores read-only SQL tool results", () => {
   assert.equal(
     shouldRefreshRouteAfterToolCall("query_database", JSON.stringify({
-      statements: [
-        { command: "SELECT" },
-      ],
+      sql: "WITH recent AS (SELECT * FROM accounts) SELECT * FROM recent",
     })),
     false,
   );
 });
 
 test("shouldRefreshRouteAfterToolCall ignores other tools and malformed payloads", () => {
-  assert.equal(shouldRefreshRouteAfterToolCall("web_search", "{\"statements\":[{\"command\":\"DELETE\"}]}"), false);
+  assert.equal(shouldRefreshRouteAfterToolCall("web_search", "{\"sql\":\"DELETE FROM ledger_entries\"}"), false);
   assert.equal(shouldRefreshRouteAfterToolCall("query_database", "not-json"), false);
 });
 
@@ -214,7 +209,7 @@ test("applyToolCallOutput completes a tracked tool call and computes duration", 
       callId: "tool-1",
       id: "tool-item-1",
       name: "query_database",
-      arguments: "{\"sql\":\"UPDATE ledger SET amount = 1\"}",
+      arguments: "{\"sql\":\"UPDATE ledger_entries SET amount = 1\"}",
     },
     createToolPosition("tool-item-1", 0, 10),
     100,
@@ -227,7 +222,7 @@ test("applyToolCallOutput completes a tracked tool call and computes duration", 
       name: "query_database",
     },
     JSON.stringify({
-      statements: [{ command: "UPDATE" }],
+      statements: [{ command: "SELECT" }],
     }),
     160,
   );
@@ -243,9 +238,9 @@ test("applyToolCallOutput completes a tracked tool call and computes duration", 
     outputIndex: 0,
     sequenceNumber: 10,
     providerStatus: "completed",
-    input: "{\"sql\":\"UPDATE ledger SET amount = 1\"}",
+    input: "{\"sql\":\"UPDATE ledger_entries SET amount = 1\"}",
     output: JSON.stringify({
-      statements: [{ command: "UPDATE" }],
+      statements: [{ command: "SELECT" }],
     }),
     refreshRoute: true,
   });
