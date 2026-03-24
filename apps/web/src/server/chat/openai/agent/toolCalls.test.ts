@@ -98,6 +98,7 @@ test("finalizeToolCallEvent marks unfinished hosted tools as completed", () => {
       sequenceNumber: 50,
       providerStatus: "completed",
       input: "print('hello')",
+      output: "Interrupted before output was captured.",
     },
   );
 });
@@ -291,6 +292,7 @@ test("finalizePendingToolCalls completes unfinished tools at stream end", () => 
       sequenceNumber: 20,
       providerStatus: "completed",
       input: "print('hello')",
+      output: "Interrupted before output was captured.",
     },
     durationMs: 60,
   }]);

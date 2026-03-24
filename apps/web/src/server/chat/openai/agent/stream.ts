@@ -7,7 +7,7 @@ import { persistChatSessionConversationId } from "@/server/chat/store";
 import type { ChatMessage, ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { resolveServerManagedContainer } from "../containerState";
-import { pgQueryTool, type AgentContext } from "../tools";
+import { captureExtractedFileDataTool, pgQueryTool, type AgentContext } from "../tools";
 import { buildOpenAIModelSettings, buildOpenaiInstructions } from "./config";
 import {
   addFilesToOpenAIContainer,
@@ -21,8 +21,8 @@ import {
 import {
   buildInput,
   getAllUserFileAttachments,
+  getCodeInterpreterAttachmentFileNames,
   getLatestUserFileAttachments,
-  getSpreadsheetAttachmentFileNames,
 } from "./input";
 import {
   createTextStreamState,
@@ -36,6 +36,7 @@ import {
   applyToolCallStarted,
   createToolCallStateMap,
   finalizePendingToolCalls,
+  INTERRUPTED_TOOL_CALL_OUTPUT,
   type FunctionToolCallRawItem,
   type FunctionCallArgumentsDeltaEvent,
   type FunctionCallArgumentsDoneEvent,
@@ -196,6 +197,7 @@ const createOpenAIAgent = (
     modelSettings: buildOpenAIModelSettings(forcedToolChoice),
     tools: [
       pgQueryTool,
+      captureExtractedFileDataTool,
       codeInterpreterTool({ container: effectiveContainerId }),
       webSearchTool({ searchContextSize: "medium" }),
     ],
@@ -520,7 +522,7 @@ export const startAgentResponseWithDeps = async (
   const attachmentFileNames = latestFileAttachments.map((part) => part.fileName);
   const conversationAttachmentFileNames = conversationFileAttachments.map((part) => part.fileName);
   const attachmentMediaTypes = latestFileAttachments.map((part) => part.mediaType);
-  const spreadsheetAttachmentFileNames = getSpreadsheetAttachmentFileNames(latestFileAttachments);
+  const codeInterpreterAttachmentFileNames = getCodeInterpreterAttachmentFileNames(latestFileAttachments);
   const effectiveContainerId = await dependencies.resolveManagedContainer(
     client,
     params.requestId,
@@ -530,7 +532,7 @@ export const startAgentResponseWithDeps = async (
     buildOpenAIContainerName,
     isOpenAIContainerExpired,
   );
-  const forcedToolChoice = spreadsheetAttachmentFileNames.length > 0 ? "code_interpreter" : null;
+  const forcedToolChoice = codeInterpreterAttachmentFileNames.length > 0 ? "code_interpreter" : null;
   let rehydratedAttachmentCount = 0;
 
   if (conversationFileAttachments.length > 0) {
@@ -596,7 +598,7 @@ export const startAgentResponseWithDeps = async (
     attachmentCount: latestFileAttachments.length,
     attachmentFileNames,
     attachmentMediaTypes,
-    spreadsheetAttachmentFileNames,
+    spreadsheetAttachmentFileNames: codeInterpreterAttachmentFileNames,
     conversationAttachmentCount: conversationFileAttachments.length,
     conversationAttachmentFileNames,
     rehydratedAttachmentCount,
@@ -804,6 +806,28 @@ export const startAgentResponseWithDeps = async (
       toolStates = finalizedUpdates.toolStates;
 
       for (const finalized of finalizedUpdates.finalized) {
+        if (finalized.event.output === INTERRUPTED_TOOL_CALL_OUTPUT) {
+          dependencies.logEvent({
+            domain: "chat",
+            action: "error",
+            vendor: "openai",
+            stage: "stream",
+            error: `Tool call ${finalized.event.name} (${finalized.event.id}) completed without a durable output and was finalized with an interruption diagnostic`,
+            requestId: params.requestId,
+            userId: params.userId,
+            workspaceId: params.workspaceId,
+            sessionId: params.sessionId,
+            model: CHAT_MODEL_ID,
+            messageCount: 1,
+            hasAttachments,
+            attachmentFileNames,
+            effectiveContainerId,
+            ...(params.attempt !== undefined ? { attempt: params.attempt } : {}),
+            maxTurns: params.maxTurns,
+            autoContinuationUsed: params.autoContinuationUsed ?? false,
+            continuationBudgetRemaining: params.continuationBudgetRemaining,
+          });
+        }
         dependencies.logEvent({
           domain: "chat",
           action: "tool_call",
@@ -816,11 +840,11 @@ export const startAgentResponseWithDeps = async (
         yield finalized.event;
       }
 
-      if (spreadsheetAttachmentFileNames.length > 0) {
+      if (codeInterpreterAttachmentFileNames.length > 0) {
         const verificationResults = await dependencies.verifySpreadsheetContainers(
           client,
           result.rawResponses,
-          spreadsheetAttachmentFileNames,
+          codeInterpreterAttachmentFileNames,
         );
 
         for (const verificationResult of verificationResults) {

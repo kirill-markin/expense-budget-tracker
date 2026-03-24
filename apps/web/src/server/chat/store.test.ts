@@ -77,7 +77,7 @@ test("buildRecoveredChatConversationUpdatePlan patches matching tool calls and a
       }),
     ],
     "recovery-1",
-    ["call-1"],
+    [{ callId: "call-1", name: "query_database" }],
     "Recovered the interrupted database step.",
     "database tool output lost",
   );
@@ -118,7 +118,7 @@ test("buildRecoveredChatConversationUpdatePlan inserts synthetic tool calls when
   const result = buildRecoveredChatConversationUpdatePlan(
     [createUserMessage()],
     "recovery-2",
-    ["call-missing"],
+    [{ callId: "call-missing", name: "capture_extracted_file_data" }],
     "Recovered the interrupted database step.",
     "database tool output lost",
   );
@@ -138,7 +138,7 @@ test("buildRecoveredChatConversationUpdatePlan inserts synthetic tool calls when
     {
       type: "tool_call",
       id: "call-missing",
-      name: "query_database",
+      name: "capture_extracted_file_data",
       status: "completed",
       providerStatus: "completed",
       input: null,
@@ -196,7 +196,10 @@ test("buildRecoveredChatConversationUpdatePlan matches multiple call IDs across 
       }),
     ],
     "recovery-3",
-    ["call-1", "call-2"],
+    [
+      { callId: "call-1", name: "query_database" },
+      { callId: "call-2", name: "query_database" },
+    ],
     "Recovered the interrupted database step.",
     "database tool output lost",
   );

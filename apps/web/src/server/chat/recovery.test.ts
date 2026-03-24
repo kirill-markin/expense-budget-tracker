@@ -3,8 +3,8 @@ import test from "node:test";
 
 import type OpenAI from "openai";
 import {
-  QUERY_DATABASE_RECOVERY_NOTE,
-  QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+  INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
+  INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
 } from "@/server/chat/openai/recovery";
 import { recoverInterruptedChatConversationWithDeps } from "./recovery";
 
@@ -20,14 +20,14 @@ test("recoverInterruptedChatConversationWithDeps persists local recovery after c
     },
     {
       createClient: (): OpenAI => ({}) as OpenAI,
-      recoverInterruptedQueryDatabaseCalls: async (): Promise<{
-        recoveredCallIds: ReadonlyArray<string>;
+      recoverInterruptedFunctionCalls: async (): Promise<{
+        recoveredCalls: ReadonlyArray<Readonly<{ callId: string; name: string }>>;
         recoveryNoteText: string | null;
         recoveryToolOutputText: string;
       }> => ({
-        recoveredCallIds: ["call-1"],
-        recoveryNoteText: QUERY_DATABASE_RECOVERY_NOTE,
-        recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+        recoveredCalls: [{ callId: "call-1", name: "query_database" }],
+        recoveryNoteText: INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
+        recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
       }),
       persistRecoveredChatConversation: async (_userId, _workspaceId, params): Promise<void> => {
         persistCalls.push(params as Readonly<Record<string, unknown>>);
@@ -36,15 +36,15 @@ test("recoverInterruptedChatConversationWithDeps persists local recovery after c
   );
 
   assert.deepEqual(result, {
-    recoveredCallIds: ["call-1"],
-    recoveryNoteText: QUERY_DATABASE_RECOVERY_NOTE,
-    recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+    recoveredCalls: [{ callId: "call-1", name: "query_database" }],
+    recoveryNoteText: INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
+    recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   });
   assert.deepEqual(persistCalls, [{
     sessionId: "session-1",
-    recoveredCallIds: ["call-1"],
-    recoveryNoteText: QUERY_DATABASE_RECOVERY_NOTE,
-    recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+    recoveredCalls: [{ callId: "call-1", name: "query_database" }],
+    recoveryNoteText: INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
+    recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   }]);
 });
 
@@ -61,16 +61,16 @@ test("recoverInterruptedChatConversationWithDeps is a no-op when there is no con
     },
     {
       createClient: (): OpenAI => ({}) as OpenAI,
-      recoverInterruptedQueryDatabaseCalls: async (): Promise<{
-        recoveredCallIds: ReadonlyArray<string>;
+      recoverInterruptedFunctionCalls: async (): Promise<{
+        recoveredCalls: ReadonlyArray<Readonly<{ callId: string; name: string }>>;
         recoveryNoteText: string | null;
         recoveryToolOutputText: string;
       }> => {
         recoverCalls += 1;
         return {
-          recoveredCallIds: [],
+          recoveredCalls: [],
           recoveryNoteText: null,
-          recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+          recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
         };
       },
       persistRecoveredChatConversation: async (): Promise<void> => {
@@ -82,9 +82,9 @@ test("recoverInterruptedChatConversationWithDeps is a no-op when there is no con
   assert.equal(recoverCalls, 0);
   assert.equal(persistCalls, 0);
   assert.deepEqual(result, {
-    recoveredCallIds: [],
+    recoveredCalls: [],
     recoveryNoteText: null,
-    recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+    recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   });
 });
 
@@ -100,14 +100,14 @@ test("recoverInterruptedChatConversationWithDeps skips local persistence when no
     },
     {
       createClient: (): OpenAI => ({}) as OpenAI,
-      recoverInterruptedQueryDatabaseCalls: async (): Promise<{
-        recoveredCallIds: ReadonlyArray<string>;
+      recoverInterruptedFunctionCalls: async (): Promise<{
+        recoveredCalls: ReadonlyArray<Readonly<{ callId: string; name: string }>>;
         recoveryNoteText: string | null;
         recoveryToolOutputText: string;
       }> => ({
-        recoveredCallIds: [],
+        recoveredCalls: [],
         recoveryNoteText: null,
-        recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+        recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
       }),
       persistRecoveredChatConversation: async (): Promise<void> => {
         persistCalls += 1;
@@ -117,8 +117,8 @@ test("recoverInterruptedChatConversationWithDeps skips local persistence when no
 
   assert.equal(persistCalls, 0);
   assert.deepEqual(result, {
-    recoveredCallIds: [],
+    recoveredCalls: [],
     recoveryNoteText: null,
-    recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+    recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   });
 });

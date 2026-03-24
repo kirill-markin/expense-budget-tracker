@@ -1,6 +1,8 @@
 import { isExpenseSqlMutation } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ChatStreamEvent } from "@/server/chat/types";
 
+export const INTERRUPTED_TOOL_CALL_OUTPUT = "Interrupted before output was captured.";
+
 type QueryDatabaseToolInput = Readonly<{
   sql?: unknown;
 }>;
@@ -283,7 +285,7 @@ export const finalizeToolCallEvent = (
     event.sequenceNumber,
     isTerminalToolProviderStatus(event.providerStatus) ? (event.providerStatus ?? null) : "completed",
     event.input ?? null,
-    event.output ?? null,
+    event.output ?? INTERRUPTED_TOOL_CALL_OUTPUT,
     event.refreshRoute === true,
   );
 

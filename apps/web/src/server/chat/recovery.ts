@@ -1,10 +1,11 @@
 import OpenAI from "openai";
 import {
-  QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
-  recoverInterruptedQueryDatabaseCalls,
-  type InterruptedQueryDatabaseRecovery,
+  INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
+  recoverInterruptedFunctionCalls,
+  type InterruptedFunctionCallRecovery,
 } from "@/server/chat/openai/recovery";
 import { persistRecoveredChatConversation } from "@/server/chat/store";
+import { log } from "@/server/logger";
 
 type RecoverInterruptedChatConversationParams = Readonly<{
   userId: string;
@@ -15,47 +16,58 @@ type RecoverInterruptedChatConversationParams = Readonly<{
 
 type RecoverInterruptedChatConversationDependencies = Readonly<{
   createClient: () => OpenAI;
-  recoverInterruptedQueryDatabaseCalls: (
+  recoverInterruptedFunctionCalls: (
     client: OpenAI,
     conversationId: string | null,
-  ) => Promise<InterruptedQueryDatabaseRecovery>;
+  ) => Promise<InterruptedFunctionCallRecovery>;
   persistRecoveredChatConversation: typeof persistRecoveredChatConversation;
 }>;
 
 const DEFAULT_RECOVER_INTERRUPTED_CHAT_CONVERSATION_DEPENDENCIES: RecoverInterruptedChatConversationDependencies = {
   createClient: (): OpenAI => new OpenAI(),
-  recoverInterruptedQueryDatabaseCalls,
+  recoverInterruptedFunctionCalls,
   persistRecoveredChatConversation,
 };
 
 export const recoverInterruptedChatConversationWithDeps = async (
   params: RecoverInterruptedChatConversationParams,
   dependencies: RecoverInterruptedChatConversationDependencies,
-): Promise<InterruptedQueryDatabaseRecovery> => {
+): Promise<InterruptedFunctionCallRecovery> => {
   if (params.conversationId === null) {
     return {
-      recoveredCallIds: [],
+      recoveredCalls: [],
       recoveryNoteText: null,
-      recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+      recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
     };
   }
 
   const client = dependencies.createClient();
-  const recovery = await dependencies.recoverInterruptedQueryDatabaseCalls(
+  const recovery = await dependencies.recoverInterruptedFunctionCalls(
     client,
     params.conversationId,
   );
 
-  if (recovery.recoveredCallIds.length === 0 || recovery.recoveryNoteText === null) {
+  if (recovery.recoveredCalls.length === 0 || recovery.recoveryNoteText === null) {
     return recovery;
   }
+
+  log({
+    domain: "chat",
+    action: "error",
+    vendor: "openai",
+    stage: "stream",
+    error: `Recovered ${String(recovery.recoveredCalls.length)} interrupted function call(s) without durable outputs: ${recovery.recoveredCalls.map((call) => `${call.name}:${call.callId}`).join(", ")}`,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+  });
 
   await dependencies.persistRecoveredChatConversation(
     params.userId,
     params.workspaceId,
     {
       sessionId: params.sessionId,
-      recoveredCallIds: recovery.recoveredCallIds,
+      recoveredCalls: recovery.recoveredCalls,
       recoveryNoteText: recovery.recoveryNoteText,
       recoveryToolOutputText: recovery.recoveryToolOutputText,
     },
@@ -66,7 +78,7 @@ export const recoverInterruptedChatConversationWithDeps = async (
 
 export const recoverInterruptedChatConversation = async (
   params: RecoverInterruptedChatConversationParams,
-): Promise<InterruptedQueryDatabaseRecovery> =>
+): Promise<InterruptedFunctionCallRecovery> =>
   recoverInterruptedChatConversationWithDeps(
     params,
     DEFAULT_RECOVER_INTERRUPTED_CHAT_CONVERSATION_DEPENDENCIES,

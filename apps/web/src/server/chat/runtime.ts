@@ -9,6 +9,7 @@ import {
 import { CHAT_RUN_MAX_TURNS, startAgentResponse } from "@/server/chat/openai/agent";
 import {
   completeChatRun,
+  INTERRUPTED_TOOL_CALL_OUTPUT,
   persistAssistantCancelled,
   persistAssistantTerminalError,
   touchChatSessionHeartbeat,
@@ -422,7 +423,11 @@ const persistToolCallProgress = async (
 const finalizeAssistantToolCalls = (
   assistantContent: ReadonlyArray<ContentPart>,
 ): ReadonlyArray<ContentPart> =>
-  finalizePendingToolCallContent(assistantContent, INCOMPLETE_TOOL_CALL_PROVIDER_STATUS);
+  finalizePendingToolCallContent(
+    assistantContent,
+    INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
+    INTERRUPTED_TOOL_CALL_OUTPUT,
+  );
 
 /**
  * Runs one persisted chat session against the OpenAI runtime while keeping the

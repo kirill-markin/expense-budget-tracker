@@ -4,9 +4,9 @@ import test from "node:test";
 import type OpenAI from "openai";
 import type { ConversationItem } from "openai/resources/conversations/items";
 import {
-  QUERY_DATABASE_RECOVERY_NOTE,
-  QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
-  recoverInterruptedQueryDatabaseCallsWithDeps,
+  INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
+  INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
+  recoverInterruptedFunctionCallsWithDeps,
 } from "./recovery";
 
 const createFunctionCallItem = (
@@ -31,8 +31,8 @@ const createFunctionCallOutputItem = (
   status: "completed",
 });
 
-test("recoverInterruptedQueryDatabaseCallsWithDeps returns a no-op result without a conversation ID", async () => {
-  const result = await recoverInterruptedQueryDatabaseCallsWithDeps(
+test("recoverInterruptedFunctionCallsWithDeps returns a no-op result without a conversation ID", async () => {
+  const result = await recoverInterruptedFunctionCallsWithDeps(
     {} as OpenAI,
     null,
     {
@@ -46,22 +46,22 @@ test("recoverInterruptedQueryDatabaseCallsWithDeps returns a no-op result withou
   );
 
   assert.deepEqual(result, {
-    recoveredCallIds: [],
+    recoveredCalls: [],
     recoveryNoteText: null,
-    recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+    recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   });
 });
 
-test("recoverInterruptedQueryDatabaseCallsWithDeps closes pending query_database calls", async () => {
+test("recoverInterruptedFunctionCallsWithDeps closes pending custom function calls", async () => {
   const createdItems: Array<Readonly<Record<string, unknown>>> = [];
 
-  const result = await recoverInterruptedQueryDatabaseCallsWithDeps(
+  const result = await recoverInterruptedFunctionCallsWithDeps(
     {} as OpenAI,
     "conv-1",
     {
       listConversationItems: async (): Promise<ReadonlyArray<ConversationItem>> => [
         createFunctionCallItem("call-pending", "query_database"),
-        createFunctionCallItem("call-hosted", "web_search"),
+        createFunctionCallItem("call-capture", "capture_extracted_file_data"),
         createFunctionCallOutputItem("call-done"),
         createFunctionCallItem("call-done", "query_database"),
       ],
@@ -72,55 +72,32 @@ test("recoverInterruptedQueryDatabaseCallsWithDeps closes pending query_database
     },
   );
 
-  assert.deepEqual(createdItems, [{
-    type: "function_call_output",
-    call_id: "call-pending",
-    output: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
-  }]);
+  assert.deepEqual(createdItems, [
+    {
+      type: "function_call_output",
+      call_id: "call-pending",
+      output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
+    },
+    {
+      type: "function_call_output",
+      call_id: "call-capture",
+      output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
+    },
+  ]);
   assert.deepEqual(result, {
-    recoveredCallIds: ["call-pending"],
-    recoveryNoteText: QUERY_DATABASE_RECOVERY_NOTE,
-    recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+    recoveredCalls: [
+      { callId: "call-pending", name: "query_database" },
+      { callId: "call-capture", name: "capture_extracted_file_data" },
+    ],
+    recoveryNoteText: INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
+    recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   });
 });
 
-test("recoverInterruptedQueryDatabaseCallsWithDeps closes multiple pending query_database calls in one request", async () => {
+test("recoverInterruptedFunctionCallsWithDeps is a no-op when all function calls already have outputs", async () => {
   let createCalls = 0;
 
-  const result = await recoverInterruptedQueryDatabaseCallsWithDeps(
-    {} as OpenAI,
-    "conv-2",
-    {
-      listConversationItems: async (): Promise<ReadonlyArray<ConversationItem>> => [
-        createFunctionCallItem("call-1", "query_database"),
-        createFunctionCallItem("call-2", "query_database"),
-      ],
-      createConversationItems: async (_client, _conversationId, items): Promise<void> => {
-        createCalls += 1;
-        assert.deepEqual(items, [
-          {
-            type: "function_call_output",
-            call_id: "call-1",
-            output: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
-          },
-          {
-            type: "function_call_output",
-            call_id: "call-2",
-            output: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
-          },
-        ]);
-      },
-    },
-  );
-
-  assert.equal(createCalls, 1);
-  assert.deepEqual(result.recoveredCallIds, ["call-1", "call-2"]);
-});
-
-test("recoverInterruptedQueryDatabaseCallsWithDeps is a no-op when all query_database calls already have outputs", async () => {
-  let createCalls = 0;
-
-  const result = await recoverInterruptedQueryDatabaseCallsWithDeps(
+  const result = await recoverInterruptedFunctionCallsWithDeps(
     {} as OpenAI,
     "conv-3",
     {
@@ -136,8 +113,8 @@ test("recoverInterruptedQueryDatabaseCallsWithDeps is a no-op when all query_dat
 
   assert.equal(createCalls, 0);
   assert.deepEqual(result, {
-    recoveredCallIds: [],
+    recoveredCalls: [],
     recoveryNoteText: null,
-    recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+    recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   });
 });

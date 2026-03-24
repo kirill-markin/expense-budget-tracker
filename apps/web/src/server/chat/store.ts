@@ -2,11 +2,14 @@ import { finalizePendingToolCallContent, type StoredMessage } from "@/lib/chatHi
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
 import type { ChatMessage, ContentPart } from "@/server/chat/types";
+import type { RecoveredFunctionCall } from "@/server/chat/openai/recovery";
 
 export type ChatSessionRunState = "idle" | "running" | "interrupted";
 export type ChatItemState = "in_progress" | "completed" | "error" | "cancelled";
 const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
 export const STOPPED_BY_USER_TOOL_OUTPUT = "Stopped by user";
+export const INTERRUPTED_TOOL_CALL_OUTPUT = "Interrupted before output was captured.";
+export const FAILED_TOOL_CALL_OUTPUT = "Tool failed before returning output.";
 
 type ChatSessionRow = Readonly<{
   session_id: string;
@@ -133,7 +136,7 @@ type PersistChatSessionConversationIdParams = Readonly<{
 
 type PersistRecoveredChatConversationParams = Readonly<{
   sessionId: string;
-  recoveredCallIds: ReadonlyArray<string>;
+  recoveredCalls: ReadonlyArray<RecoveredFunctionCall>;
   recoveryNoteText: string;
   recoveryToolOutputText: string;
 }>;
@@ -621,19 +624,19 @@ const createRecoveryTextContentPart = (
 
 const createRecoveryToolCallContentPart = (
   recoveryId: string,
-  callId: string,
+  call: RecoveredFunctionCall,
   outputIndex: number,
   output: string,
 ): Extract<ContentPart, { type: "tool_call" }> => ({
   type: "tool_call",
-  id: callId,
-  name: "query_database",
+  id: call.callId,
+  name: call.name,
   status: "completed",
   providerStatus: "completed",
   input: null,
   output,
   streamPosition: {
-    itemId: `recovery-tool-${recoveryId}-${callId}`,
+    itemId: `recovery-tool-${recoveryId}-${call.callId}`,
     outputIndex,
     contentIndex: null,
     sequenceNumber: outputIndex,
@@ -643,21 +646,21 @@ const createRecoveryToolCallContentPart = (
 export const buildRecoveredChatConversationUpdatePlan = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
   recoveryId: string,
-  recoveredCallIds: ReadonlyArray<string>,
+  recoveredCalls: ReadonlyArray<RecoveredFunctionCall>,
   recoveryNoteText: string,
   recoveryToolOutputText: string,
 ): RecoveredChatConversationUpdatePlan => {
-  if (recoveredCallIds.length === 0) {
+  if (recoveredCalls.length === 0) {
     return {
       messageUpdates: [],
       noteContent: null,
     };
   }
 
-  const unmatchedCallIds = new Set(recoveredCallIds);
+  const unmatchedCalls = new Map(recoveredCalls.map((call) => [call.callId, call]));
   const messageUpdates: Array<RecoveryAssistantMessageUpdate> = [];
 
-  for (let index = messages.length - 1; index >= 0 && unmatchedCallIds.size > 0; index -= 1) {
+  for (let index = messages.length - 1; index >= 0 && unmatchedCalls.size > 0; index -= 1) {
     const message = messages[index];
     if (message.role !== "assistant") {
       continue;
@@ -665,12 +668,12 @@ export const buildRecoveredChatConversationUpdatePlan = (
 
     let changed = false;
     const updatedContent = message.content.map((part) => {
-      if (part.type !== "tool_call" || part.id === undefined || !unmatchedCallIds.has(part.id)) {
+      if (part.type !== "tool_call" || part.id === undefined || !unmatchedCalls.has(part.id)) {
         return part;
       }
 
       changed = true;
-      unmatchedCallIds.delete(part.id);
+      unmatchedCalls.delete(part.id);
       const updatedPart: Extract<ContentPart, { type: "tool_call" }> = {
         ...part,
         status: "completed",
@@ -696,11 +699,11 @@ export const buildRecoveredChatConversationUpdatePlan = (
   ];
 
   let toolOutputIndex = 1;
-  for (const callId of unmatchedCallIds) {
+  for (const call of unmatchedCalls.values()) {
     noteContent.push(
       createRecoveryToolCallContentPart(
         recoveryId,
-        callId,
+        call,
         toolOutputIndex,
         recoveryToolOutputText,
       ),
@@ -882,7 +885,7 @@ export const persistRecoveredChatConversation = async (
     const updatePlan = buildRecoveredChatConversationUpdatePlan(
       persistedMessages,
       crypto.randomUUID(),
-      params.recoveredCallIds,
+      params.recoveredCalls,
       params.recoveryNoteText,
       params.recoveryToolOutputText,
     );
@@ -941,6 +944,7 @@ export const persistAssistantTerminalError = async (
     const finalizedAssistantContent = finalizePendingToolCallContent(
       params.assistantContent,
       INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
+      FAILED_TOOL_CALL_OUTPUT,
     );
 
     if (finalizedAssistantContent.length === 0) {
@@ -1043,6 +1047,7 @@ export const markChatSessionInterrupted = async (
       const finalizedAssistantContent = finalizePendingToolCallContent(
         lastMessage.content,
         INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
+        INTERRUPTED_TOOL_CALL_OUTPUT,
       );
       if (lastMessage.content.length === 0) {
         await updateChatItemWithQuery(queryFn, {

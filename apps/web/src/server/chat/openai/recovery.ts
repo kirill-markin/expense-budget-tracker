@@ -1,17 +1,21 @@
 import OpenAI from "openai";
 import type { ConversationItem } from "openai/resources/conversations/items";
-import type { ResponseInputItem } from "openai/resources/responses/responses";
 
-export const QUERY_DATABASE_RECOVERY_TOOL_OUTPUT = "query_database was interrupted before its result was captured. The execution outcome is unknown. Check the current database state before deciding whether another write is needed.";
-export const QUERY_DATABASE_RECOVERY_NOTE = "I recovered an earlier interrupted database step so we can keep using this conversation. Its result was lost, so I will re-check the current database state before relying on it.";
+export const INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE = "Recovered interrupted tool calls that were missing durable outputs in the stored OpenAI conversation.";
+export const INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT = "Interrupted before output was captured. The execution outcome is unknown. Inspect the current state before retrying.";
 
-export type InterruptedQueryDatabaseRecovery = Readonly<{
-  recoveredCallIds: ReadonlyArray<string>;
+export type RecoveredFunctionCall = Readonly<{
+  callId: string;
+  name: string;
+}>;
+
+export type InterruptedFunctionCallRecovery = Readonly<{
+  recoveredCalls: ReadonlyArray<RecoveredFunctionCall>;
   recoveryNoteText: string | null;
   recoveryToolOutputText: string;
 }>;
 
-type RecoverInterruptedQueryDatabaseCallsDependencies = Readonly<{
+type RecoverInterruptedFunctionCallsDependencies = Readonly<{
   listConversationItems: (
     client: OpenAI,
     conversationId: string,
@@ -19,20 +23,19 @@ type RecoverInterruptedQueryDatabaseCallsDependencies = Readonly<{
   createConversationItems: (
     client: OpenAI,
     conversationId: string,
-    items: ReadonlyArray<ResponseInputItem>,
+    items: ReadonlyArray<Extract<ConversationItem, { type: "function_call_output" }>>,
   ) => Promise<void>;
 }>;
 
-const DEFAULT_RECOVER_INTERRUPTED_QUERY_DATABASE_CALLS_DEPENDENCIES: RecoverInterruptedQueryDatabaseCallsDependencies = {
+const DEFAULT_RECOVER_INTERRUPTED_FUNCTION_CALLS_DEPENDENCIES: RecoverInterruptedFunctionCallsDependencies = {
   listConversationItems: async (
     client,
     conversationId,
   ): Promise<ReadonlyArray<ConversationItem>> => {
-    const items: Array<ConversationItem> = [];
-    for await (const item of client.conversations.items.list(conversationId)) {
-      items.push(item);
-    }
-    return items;
+    const items = await client.conversations.items.list(conversationId, {
+      order: "asc",
+    });
+    return items.data;
   },
   createConversationItems: async (
     client,
@@ -43,13 +46,14 @@ const DEFAULT_RECOVER_INTERRUPTED_QUERY_DATABASE_CALLS_DEPENDENCIES: RecoverInte
   },
 };
 
-const isQueryDatabaseFunctionCall = (
+const isFunctionCall = (
   item: ConversationItem,
 ): item is Extract<ConversationItem, { type: "function_call" }> =>
   item.type === "function_call"
-  && item.name === "query_database"
   && typeof item.call_id === "string"
-  && item.call_id.length > 0;
+  && item.call_id.length > 0
+  && typeof item.name === "string"
+  && item.name.length > 0;
 
 const isFunctionCallOutput = (
   item: ConversationItem,
@@ -58,16 +62,16 @@ const isFunctionCallOutput = (
   && typeof item.call_id === "string"
   && item.call_id.length > 0;
 
-export const recoverInterruptedQueryDatabaseCallsWithDeps = async (
+export const recoverInterruptedFunctionCallsWithDeps = async (
   client: OpenAI,
   conversationId: string | null,
-  dependencies: RecoverInterruptedQueryDatabaseCallsDependencies,
-): Promise<InterruptedQueryDatabaseRecovery> => {
+  dependencies: RecoverInterruptedFunctionCallsDependencies,
+): Promise<InterruptedFunctionCallRecovery> => {
   if (conversationId === null) {
     return {
-      recoveredCallIds: [],
+      recoveredCalls: [],
       recoveryNoteText: null,
-      recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+      recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
     };
   }
 
@@ -78,48 +82,51 @@ export const recoverInterruptedQueryDatabaseCallsWithDeps = async (
       .map((item) => item.call_id),
   );
   const seenPendingCallIds = new Set<string>();
-  const recoveredCallIds = conversationItems
-    .filter(isQueryDatabaseFunctionCall)
-    .map((item) => item.call_id)
-    .filter((callId) => {
-      if (completedCallIds.has(callId) || seenPendingCallIds.has(callId)) {
+  const recoveredCalls = conversationItems
+    .filter(isFunctionCall)
+    .filter((item) => {
+      if (completedCallIds.has(item.call_id) || seenPendingCallIds.has(item.call_id)) {
         return false;
       }
-      seenPendingCallIds.add(callId);
+      seenPendingCallIds.add(item.call_id);
       return true;
-    });
+    })
+    .map((item) => ({
+      callId: item.call_id,
+      name: item.name,
+    }));
 
-  if (recoveredCallIds.length === 0) {
+  if (recoveredCalls.length === 0) {
     return {
-      recoveredCallIds: [],
+      recoveredCalls: [],
       recoveryNoteText: null,
-      recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+      recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
     };
   }
 
   await dependencies.createConversationItems(
     client,
     conversationId,
-    recoveredCallIds.map((callId) => ({
+    recoveredCalls.map((call) => ({
       type: "function_call_output",
-      call_id: callId,
-      output: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+      call_id: call.callId,
+      output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
     })),
   );
 
   return {
-    recoveredCallIds,
-    recoveryNoteText: QUERY_DATABASE_RECOVERY_NOTE,
-    recoveryToolOutputText: QUERY_DATABASE_RECOVERY_TOOL_OUTPUT,
+    recoveredCalls,
+    recoveryNoteText: INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
+    recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   };
 };
 
-export const recoverInterruptedQueryDatabaseCalls = async (
+export const recoverInterruptedFunctionCalls = async (
   client: OpenAI,
   conversationId: string | null,
-): Promise<InterruptedQueryDatabaseRecovery> =>
-  recoverInterruptedQueryDatabaseCallsWithDeps(
+): Promise<InterruptedFunctionCallRecovery> =>
+  recoverInterruptedFunctionCallsWithDeps(
     client,
     conversationId,
-    DEFAULT_RECOVER_INTERRUPTED_QUERY_DATABASE_CALLS_DEPENDENCIES,
+    DEFAULT_RECOVER_INTERRUPTED_FUNCTION_CALLS_DEPENDENCIES,
   );

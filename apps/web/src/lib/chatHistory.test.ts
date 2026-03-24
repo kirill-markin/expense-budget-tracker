@@ -313,7 +313,7 @@ test("finalizePendingToolCallContent marks started tool calls as incomplete", ()
         output: "hello",
         streamPosition: createStreamPosition("tool-2-item", 2, null, 30),
       },
-    ], "incomplete"),
+    ], "incomplete", "Interrupted before output was captured."),
     [
       {
         type: "tool_call",
@@ -322,7 +322,7 @@ test("finalizePendingToolCallContent marks started tool calls as incomplete", ()
         status: "completed",
         providerStatus: "incomplete",
         input: "{\"sql\":\"SELECT 1\"}",
-        output: null,
+        output: "Interrupted before output was captured.",
         streamPosition: createStreamPosition("tool-1-item", 1, null, 20),
       },
       {

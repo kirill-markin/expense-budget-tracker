@@ -5,11 +5,11 @@ import type { ChatMessage, ContentPart } from "@/server/chat/types";
 import {
   buildInput,
   getAllUserFileAttachments,
+  getCodeInterpreterAttachmentFileNames,
   getLatestUserFileAttachments,
-  getSpreadsheetAttachmentFileNames,
 } from "./input";
 
-test("getLatestUserFileAttachments returns only files from the latest user message", () => {
+test("getLatestUserFileAttachments excludes CSV files that are injected as raw text", () => {
   const messages: ReadonlyArray<ChatMessage> = [
     {
       role: "user",
@@ -36,7 +36,7 @@ test("getLatestUserFileAttachments returns only files from the latest user messa
   ]);
 });
 
-test("getAllUserFileAttachments returns unique files across user history", () => {
+test("getAllUserFileAttachments returns unique non-CSV files across user history", () => {
   const messages: ReadonlyArray<ChatMessage> = [
     {
       role: "user",
@@ -57,26 +57,42 @@ test("getAllUserFileAttachments returns unique files across user history", () =>
     },
   ];
 
+  assert.deepEqual(getAllUserFileAttachments(messages), []);
+});
+
+test("getAllUserFileAttachments drops raw-text CSV files entirely", () => {
+  const messages: ReadonlyArray<ChatMessage> = [
+    {
+      role: "user",
+      content: [
+        { type: "file", fileName: "old.csv", mediaType: "text/csv", base64Data: "b2xk" },
+        { type: "file", fileName: "statement.pdf", mediaType: "application/pdf", base64Data: "cGRm" },
+      ],
+    },
+  ];
+
   assert.deepEqual(getAllUserFileAttachments(messages), [
-    { type: "file", fileName: "old.csv", mediaType: "text/csv", base64Data: "b2xk" },
-    { type: "file", fileName: "new.csv", mediaType: "text/csv", base64Data: "bmV3" },
+    { type: "file", fileName: "statement.pdf", mediaType: "application/pdf", base64Data: "cGRm" },
   ]);
 });
 
-test("getSpreadsheetAttachmentFileNames recognizes spreadsheets by extension and media type", () => {
+test("getCodeInterpreterAttachmentFileNames recognizes spreadsheet and PDF attachments", () => {
   const attachments = [
     { type: "file", fileName: "expenses.csv", mediaType: "application/octet-stream", base64Data: "MQ==" },
     { type: "file", fileName: "notes.txt", mediaType: "text/plain", base64Data: "Mg==" },
     { type: "file", fileName: "balances", mediaType: "text/csv", base64Data: "Mw==" },
+    { type: "file", fileName: "statement.pdf", mediaType: "application/pdf", base64Data: "NA==" },
+    { type: "file", fileName: "report.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base64Data: "NQ==" },
   ] as const;
 
-  assert.deepEqual(getSpreadsheetAttachmentFileNames(attachments), ["expenses.csv", "balances"]);
+  assert.deepEqual(getCodeInterpreterAttachmentFileNames(attachments), ["statement.pdf", "report.xlsx"]);
 });
 
-test("buildInput converts only the current user turn into Agent input items", () => {
+test("buildInput injects CSV attachments as raw text and keeps PDFs as files", () => {
   const content: ReadonlyArray<ContentPart> = [
     { type: "text", text: "Latest" },
     { type: "file", fileName: "new.csv", mediaType: "text/csv", base64Data: "bmV3" },
+    { type: "file", fileName: "statement.pdf", mediaType: "application/pdf", base64Data: "cGRm" },
   ];
 
   assert.deepEqual(buildInput(content), [{
@@ -84,7 +100,8 @@ test("buildInput converts only the current user turn into Agent input items", ()
     type: "message",
     content: [
       { type: "input_text", text: "Latest" },
-      { type: "input_file", file: "data:text/csv;base64,bmV3", filename: "new.csv" },
+      { type: "input_text", text: "Attached CSV file: new.csv\n```csv\nnew\n```" },
+      { type: "input_file", file: "data:application/pdf;base64,cGRm", filename: "statement.pdf" },
     ],
   }]);
 });

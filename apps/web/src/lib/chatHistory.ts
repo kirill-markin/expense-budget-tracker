@@ -257,6 +257,7 @@ export const upsertReasoningSummaryContent = (
 export const finalizePendingToolCallContent = (
   content: ReadonlyArray<ContentPart>,
   providerStatus: string,
+  output: string,
 ): ReadonlyArray<ContentPart> =>
   content.map((part) => {
     if (part.type !== "tool_call" || part.status !== "started") {
@@ -267,6 +268,7 @@ export const finalizePendingToolCallContent = (
       ...part,
       status: "completed",
       providerStatus,
+      output: part.output ?? output,
     };
   });
 

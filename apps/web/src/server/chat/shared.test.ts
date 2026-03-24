@@ -57,13 +57,14 @@ test("TOOL_DESCRIPTION documents multi-statement scripts and statements output",
   assert.match(TOOL_DESCRIPTION, /first_day_of_week SMALLINT/i);
 });
 
-test("buildOpenaiInstructions tells code interpreter to emit durable summaries for file analysis", () => {
+test("buildOpenaiInstructions describes durable CSV and PDF extraction behavior", () => {
   const instructions = buildOpenaiInstructions("Europe/Madrid", true);
 
   assert.match(instructions, /make important results durable/i);
+  assert.match(instructions, /CSV attachments may already be injected into the conversation as raw text/i);
+  assert.match(instructions, /If the user attaches a PDF statement, use the code interpreter to parse it/i);
   assert.match(instructions, /print a compact text or JSON summary/i);
-  assert.match(instructions, /raw Python variable values being preserved unless you emitted them as code interpreter logs or files/i);
-  assert.match(instructions, /When the user needs the full extracted result, not just a summary, write the result to a JSON or CSV file in the container/i);
-  assert.match(instructions, /mention the file in your answer with its purpose, shape, and row count/i);
-  assert.match(instructions, /print a short durable preview/i);
+  assert.match(instructions, /print the complete extracted transaction list in logs/i);
+  assert.match(instructions, /call capture_extracted_file_data/i);
+  assert.match(instructions, /return a structured error payload as the tool result instead of throwing/i);
 });

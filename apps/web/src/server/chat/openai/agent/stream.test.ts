@@ -194,6 +194,7 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
       sequenceNumber: 20,
       providerStatus: "completed",
       input: "{\"sql\":\"SELECT 1\"}",
+      output: "Interrupted before output was captured.",
     },
     { type: "done" },
   ]);
@@ -221,14 +222,14 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
   assert.deepEqual(await started.completion, { conversationId: "conv-existing" });
 });
 
-test("startAgentResponseWithDeps rehydrates missing history attachments into the active container", async () => {
+test("startAgentResponseWithDeps rehydrates missing PDF history attachments into the active container", async () => {
   const addedFiles: Array<string> = [];
   const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
   const localMessages: ReadonlyArray<ChatMessage> = [
     {
       role: "user",
       content: [
-        { type: "file", fileName: "statement.csv", mediaType: "text/csv", base64Data: "c3RhdGVtZW50" },
+        { type: "file", fileName: "statement.pdf", mediaType: "application/pdf", base64Data: "cGRm" },
       ],
     },
     {
@@ -307,13 +308,13 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
   );
 
   assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
-  assert.deepEqual(addedFiles, ["statement.csv"]);
+  assert.deepEqual(addedFiles, ["statement.pdf"]);
   assert.equal(createdConversationId, "conv-new");
   assert.equal(persistedConversationId, "conv-new");
   assert.equal(started.conversationId, "conv-new");
   assert.equal(loggedEvents.some((event) =>
     event.action === "code_interpreter_container_file_added"
-    && event.attachmentFileName === "statement.csv"
+    && event.attachmentFileName === "statement.pdf"
     && event.attachmentSource === "history_rehydrate"
   ), true);
   assert.deepEqual(await started.completion, { conversationId: "conv-new" });
@@ -372,6 +373,149 @@ test("startAgentResponseWithDeps returns the created conversationId without read
   assert.equal(persistedConversationId, "conv-created");
   assert.equal(started.conversationId, "conv-created");
   assert.deepEqual(await started.completion, { conversationId: "conv-created" });
+});
+
+test("startAgentResponseWithDeps injects CSV attachments as raw text without forcing code interpreter", async () => {
+  const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
+  let receivedInput: unknown;
+
+  const started = await startAgentResponseWithDeps(
+    {
+      localMessages: [{
+        role: "user",
+        content: [{ type: "file", fileName: "statement.csv", mediaType: "text/csv", base64Data: "YSxiCjEsMg==" }],
+      }],
+      turnInput: [{ type: "file", fileName: "statement.csv", mediaType: "text/csv", base64Data: "YSxiCjEsMg==" }],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      conversationId: "conv-existing",
+      timezone: "Europe/Madrid",
+      requestId: "request-csv",
+      maxTurns: CHAT_RUN_MAX_TURNS,
+    },
+    {
+      createClient: (): OpenAI => ({
+        containers: {
+          files: {
+            create: async (): Promise<unknown> => undefined,
+            list: async (): Promise<{ data: ReadonlyArray<Readonly<{ path: string }>> }> => ({ data: [] }),
+          },
+        },
+      }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => {
+        throw new Error("createConversation should not be called");
+      },
+      persistConversationId: async (): Promise<void> => {
+        throw new Error("persistConversationId should not be called");
+      },
+      resolveManagedContainer: async (): Promise<string> => "ctr-csv",
+      runAgent: async (runParams): Promise<AgentRunResult> => {
+        receivedInput = runParams.input;
+        return createRunResult([], [{
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2, inputTokensDetails: {}, outputTokensDetails: {} },
+          output: [],
+          responseId: "resp-csv",
+          requestId: "req-csv",
+        }] as unknown as ReadonlyArray<ModelResponse>, "Done");
+      },
+      addFilesToOpenAIContainer: async (): Promise<void> => undefined,
+      listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
+        containerId: "ctr-csv",
+        filePaths: [],
+      }),
+      verifySpreadsheetContainers: async (): Promise<ReadonlyArray<never>> => [],
+      logEvent: (event): void => {
+        loggedEvents.push(event as unknown as Readonly<Record<string, unknown>>);
+      },
+      now: (): number => 100,
+    },
+  );
+
+  assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
+  assert.deepEqual(receivedInput, [{
+    role: "user",
+    type: "message",
+    content: [{
+      type: "input_text",
+      text: "Attached CSV file: statement.csv\n```csv\na,b\n1,2\n```",
+    }],
+  }]);
+  assert.equal(loggedEvents.some((event) =>
+    event.action === "request" && event.forcedToolChoice === null
+  ), true);
+});
+
+test("startAgentResponseWithDeps forces code interpreter for PDF turns", async () => {
+  const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
+  let receivedInput: unknown;
+
+  const started = await startAgentResponseWithDeps(
+    {
+      localMessages: [{
+        role: "user",
+        content: [{ type: "file", fileName: "statement.pdf", mediaType: "application/pdf", base64Data: "cGRm" }],
+      }],
+      turnInput: [{ type: "file", fileName: "statement.pdf", mediaType: "application/pdf", base64Data: "cGRm" }],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      conversationId: "conv-existing",
+      timezone: "Europe/Madrid",
+      requestId: "request-pdf",
+      maxTurns: CHAT_RUN_MAX_TURNS,
+    },
+    {
+      createClient: (): OpenAI => ({
+        containers: {
+          files: {
+            create: async (): Promise<unknown> => undefined,
+            list: async (): Promise<{ data: ReadonlyArray<Readonly<{ path: string }>> }> => ({ data: [] }),
+          },
+        },
+      }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => {
+        throw new Error("createConversation should not be called");
+      },
+      persistConversationId: async (): Promise<void> => {
+        throw new Error("persistConversationId should not be called");
+      },
+      resolveManagedContainer: async (): Promise<string> => "ctr-pdf",
+      runAgent: async (runParams): Promise<AgentRunResult> => {
+        receivedInput = runParams.input;
+        return createRunResult([], [{
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2, inputTokensDetails: {}, outputTokensDetails: {} },
+          output: [],
+          responseId: "resp-pdf",
+          requestId: "req-pdf",
+        }] as unknown as ReadonlyArray<ModelResponse>, "Done");
+      },
+      addFilesToOpenAIContainer: async (): Promise<void> => undefined,
+      listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
+        containerId: "ctr-pdf",
+        filePaths: ["/mnt/data/statement.pdf"],
+      }),
+      verifySpreadsheetContainers: async (): Promise<ReadonlyArray<never>> => [],
+      logEvent: (event): void => {
+        loggedEvents.push(event as unknown as Readonly<Record<string, unknown>>);
+      },
+      now: (): number => 100,
+    },
+  );
+
+  assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
+  assert.deepEqual(receivedInput, [{
+    role: "user",
+    type: "message",
+    content: [{
+      type: "input_file",
+      file: "data:application/pdf;base64,cGRm",
+      filename: "statement.pdf",
+    }],
+  }]);
+  assert.equal(loggedEvents.some((event) =>
+    event.action === "request" && event.forcedToolChoice === "code_interpreter"
+  ), true);
 });
 
 test("startAgentResponseWithDeps emits reasoning summaries with stable ordering metadata", async () => {
