@@ -30,6 +30,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 
 ## Supported Clients
 
+- AI agent flows are split into two separate surfaces: the web app has its own built-in chat with conversations, while external client agents use the public machine API, mainly through the slash SQL endpoint; the client list below is about the external/API flow for reference.
 - Web app: supported
 - Terminal / AI agents: full functionality is supported through the canonical machine API entrypoint `GET https://api.expense-budget-tracker.com/v1/` (the discovery response includes the next-step instructions for signup/login and email OTP onboarding)
 - Direct HTTP clients and scripts: supported through the same `https://api.expense-budget-tracker.com/v1` surface with `Authorization: ApiKey <key>`
