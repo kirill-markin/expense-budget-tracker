@@ -1,7 +1,8 @@
 /**
  * Safe schema introspection endpoint for agents.
  *
- * Returns only relations that are allowed by the restricted SQL policy.
+ * Returns only relations that are allowed by the restricted SQL policy,
+ * plus optional hints for risky write constraints.
  */
 import { MAX_SQL_ROWS, SQL_STATEMENT_TIMEOUT_MS } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
@@ -24,7 +25,7 @@ export const GET = async (request: Request): Promise<Response> => {
           },
         },
         [buildRunSqlAction()],
-        "Schema includes only relations supported by /api/agent/sql.",
+        "Schema includes only relations supported by /api/agent/sql and may include optional hints about constraints or write semantics.",
       ),
     );
   } catch (error) {

@@ -21,6 +21,7 @@ test("root discovery matches /agent", async () => {
   assert.match(body.instructions, /same email OTP flow handles both signup and login/i);
   assert.match(body.instructions, /\.env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>'/i);
   assert.match(body.instructions, /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
+  assert.match(body.instructions, /relations, columns, and any agent hints/i);
 });
 
 test("root discovery matches the shared discovery contract", async () => {

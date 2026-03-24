@@ -1,3 +1,4 @@
+import type { AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { ensureTrustedIdentityProvisioned, queryAsTrustedIdentity, type UserIdentity, withRestrictedTrustedIdentityContext } from "../db.js";
@@ -56,6 +57,7 @@ export type SchemaColumn = Readonly<{
 export type SchemaRelation = Readonly<{
   name: AllowedRelationName;
   columns: ReadonlyArray<SchemaColumn>;
+  hints?: AgentSchemaHints;
 }>;
 
 export type JsonBody = Readonly<Record<string, unknown>>;

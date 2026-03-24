@@ -73,6 +73,59 @@ test("authenticated workspace routes return envelopes on canonical v1 paths", as
     (JSON.parse(meResponse.body).actions as Array<{ name: string }>).map((action) => action.name),
     ["list_workspaces", "select_workspace", "schema"],
   );
+  assert.match(String(JSON.parse(meResponse.body).instructions), /columns, and any agent hints/i);
+
+  const schemaPayload = JSON.parse(schemaResponse.body) as {
+    instructions: string;
+    data: {
+      relations: Array<{
+        name: string;
+        columns: Array<{ name: string }>;
+        hints?: {
+          optional: boolean;
+          primaryKey?: Array<string>;
+          notes: Array<string>;
+          columnConstraints?: Array<{
+            column: string;
+            allowedValues?: Array<string>;
+            notes?: Array<string>;
+          }>;
+        };
+      }>;
+    };
+  };
+
+  assert.match(schemaPayload.instructions, /optional hints about constraints or write semantics/i);
+  const accountMetadataRelation = schemaPayload.data.relations.find((relation) => relation.name === "account_metadata");
+  assert.deepEqual(accountMetadataRelation?.hints, {
+    optional: true,
+    primaryKey: ["workspace_id", "account_id"],
+    notes: [
+      "Optional sidecar table for per-account metadata.",
+      "Missing row is allowed. Balances and budget queries treat missing liquidity as 'high'.",
+      "Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity.",
+    ],
+    columnConstraints: [{
+      column: "liquidity",
+      allowedValues: ["high", "medium", "low"],
+      notes: ["Only high, medium, or low are accepted."],
+    }],
+  });
+  const workspaceSettingsRelation = schemaPayload.data.relations.find((relation) => relation.name === "workspace_settings");
+  assert.deepEqual(workspaceSettingsRelation?.hints, {
+    optional: false,
+    primaryKey: ["workspace_id"],
+    notes: [
+      "One row per workspace. Update the existing row instead of inserting duplicates.",
+      "filtered_categories NULL means no category filter is configured; an empty array means the filter is active but nothing is selected.",
+    ],
+    columnConstraints: [{
+      column: "first_day_of_week",
+      notes: ["Allowed values are integers 1 through 7."],
+    }],
+  });
+  const accountsRelation = schemaPayload.data.relations.find((relation) => relation.name === "accounts");
+  assert.equal(accountsRelation?.hints, undefined);
 });
 
 test("authenticated routes require api key auth", async () => {

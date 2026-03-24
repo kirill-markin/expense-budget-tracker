@@ -148,7 +148,8 @@
     },
     "/schema": {
       "get": {
-        "summary": "List allowed relations and columns",
+        "summary": "List allowed relations, columns, and optional hints",
+        "description": "Returns only relations supported by /sql. The response includes relation columns and may include optional agent hints about risky constraints or write semantics.",
         "security": [
           {
             "ApiKeyHeader": []

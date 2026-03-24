@@ -18,7 +18,7 @@ export const AGENT_DISCOVERY_SERVICE_DESCRIPTION = "Machine API for onboarding, 
 export const AGENT_DISCOVERY_CAPABILITIES: ReadonlyArray<string> = [
   "Load account context",
   "Select a workspace",
-  "Inspect allowed SQL schema",
+  "Inspect allowed SQL schema and hints",
   "Run restricted SQL scripts",
 ];
 
@@ -29,7 +29,7 @@ export type AgentDiscoveryParams = Readonly<{
 }>;
 
 export const buildAgentDiscoveryInstructions = (apiBaseUrl: string): string =>
-  `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as ${AGENT_API_KEY_ENV_VAR_NAME}='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me, ${apiBaseUrl}/workspaces, and ${apiBaseUrl}/workspaces/{workspaceId}/select before SQL. Use ${apiBaseUrl}/schema to inspect allowed relations/columns. Example: curl -H '${API_KEY_AUTHORIZATION_SCHEME.replace("<key>", `$${AGENT_API_KEY_ENV_VAR_NAME}`)}' ${apiBaseUrl}/me.`;
+  `Ask the user for their email address first, then call send_code. The same email OTP flow handles both signup and login. After login, save the returned key outside chat memory, preferably in a local .env file as ${AGENT_API_KEY_ENV_VAR_NAME}='<PASTE_KEY_HERE>', then call ${apiBaseUrl}/me, ${apiBaseUrl}/workspaces, and ${apiBaseUrl}/workspaces/{workspaceId}/select before SQL. Use ${apiBaseUrl}/schema to inspect allowed relations, columns, and any agent hints about constraints or write semantics. Example: curl -H '${API_KEY_AUTHORIZATION_SCHEME.replace("<key>", `$${AGENT_API_KEY_ENV_VAR_NAME}`)}' ${apiBaseUrl}/me.`;
 
 export const buildAgentDiscoveryEnvelope = ({
   apiBaseUrl,

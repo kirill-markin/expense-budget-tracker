@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRunSqlAction, buildSendCodeAction, buildSuccessEnvelope, RUN_SQL_WITH_WORKSPACE_INPUT } from "./index.js";
+import {
+  buildRunSqlAction,
+  buildSendCodeAction,
+  buildSuccessEnvelope,
+  getAgentSchemaHints,
+  RUN_SQL_WITH_WORKSPACE_INPUT,
+} from "./index.js";
 
 test("buildSendCodeAction accepts explicit urls", () => {
   assert.deepEqual(
@@ -36,6 +42,26 @@ test("buildSuccessEnvelope preserves the machine envelope shape", () => {
       data: { ok: true },
       actions: [],
       instructions: "Do the next step",
+    },
+  );
+});
+
+test("getAgentSchemaHints exposes risky write constraints for account metadata", () => {
+  assert.deepEqual(
+    getAgentSchemaHints("account_metadata"),
+    {
+      optional: true,
+      primaryKey: ["workspace_id", "account_id"],
+      notes: [
+        "Optional sidecar table for per-account metadata.",
+        "Missing row is allowed. Balances and budget queries treat missing liquidity as 'high'.",
+        "Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity.",
+      ],
+      columnConstraints: [{
+        column: "liquidity",
+        allowedValues: ["high", "medium", "low"],
+        notes: ["Only high, medium, or low are accepted."],
+      }],
     },
   );
 });

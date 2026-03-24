@@ -29,7 +29,7 @@ export const GET = async (request: Request): Promise<Response> => {
           },
         },
         [buildListWorkspacesAction(), buildSelectWorkspaceAction(), buildSchemaAction()],
-        "The default personal workspace uses the same ID as the user account. Call list_workspaces, select one workspace for this API key, then run SQL. Use /api/agent/schema to inspect available columns.",
+        "The default personal workspace uses the same ID as the user account. Call list_workspaces, select one workspace for this API key, then run SQL. Use /api/agent/schema to inspect available columns and any agent hints about constraints or write semantics.",
       ),
     );
   } catch (error) {

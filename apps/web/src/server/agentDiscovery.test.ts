@@ -42,7 +42,7 @@ test("buildAgentDiscoveryEnvelope points agents to ask for email before send_cod
   assert.deepEqual(envelope.data["capabilities"], [
     "Load account context",
     "Select a workspace",
-    "Inspect allowed SQL schema",
+    "Inspect allowed SQL schema and hints",
     "Run restricted SQL scripts",
   ]);
   assert.match(String(envelope.instructions), /Ask the user for their email address first/i);
@@ -50,6 +50,7 @@ test("buildAgentDiscoveryEnvelope points agents to ask for email before send_cod
   assert.match(String(envelope.instructions), /\.env file as EXPENSE_BUDGET_TRACKER_API_KEY='<PASTE_KEY_HERE>'/i);
   assert.match(String(envelope.instructions), /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
   assert.match(String(envelope.instructions), /https:\/\/api\.example\.com\/v1\/me/);
+  assert.match(String(envelope.instructions), /relations, columns, and any agent hints/i);
 });
 
 test("buildAgentDiscoveryEnvelope falls back to the request origin when auth env is missing", () => {

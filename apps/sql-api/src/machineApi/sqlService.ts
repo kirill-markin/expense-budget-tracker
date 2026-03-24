@@ -97,10 +97,10 @@ export const getSqlPolicyInstructions = (
 ): string => {
   if (error.code === "relation_not_allowed") {
     if (isSchemaExplorationAttempt(error.message)) {
-      return `System catalogs are not queryable via /sql. Use ${apiBaseUrl}/schema to inspect allowed relations and columns, then query only those relations. Example: SELECT * FROM accounts LIMIT 0.`;
+      return `System catalogs are not queryable via /sql. Use ${apiBaseUrl}/schema to inspect allowed relations, columns, and any agent hints, then query only those relations. Example: SELECT * FROM accounts LIMIT 0.`;
     }
 
-    return `Relation is not exposed by policy. Use ${apiBaseUrl}/schema to see allowed relations, then retry. Workspace context must be set via /workspaces/{workspaceId}/select or X-Workspace-Id.`;
+    return `Relation is not exposed by policy. Use ${apiBaseUrl}/schema to see allowed relations, columns, and any agent hints, then retry. Workspace context must be set via /workspaces/{workspaceId}/select or X-Workspace-Id.`;
   }
 
   if (error.code === "unsupported_statement") {

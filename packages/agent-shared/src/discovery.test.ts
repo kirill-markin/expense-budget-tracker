@@ -14,7 +14,8 @@ test("buildAgentDiscoveryEnvelope returns the canonical discovery payload", () =
   assert.deepEqual(envelope.data["capabilities"], [
     "Load account context",
     "Select a workspace",
-    "Inspect allowed SQL schema",
+    "Inspect allowed SQL schema and hints",
     "Run restricted SQL scripts",
   ]);
+  assert.match(String(envelope.instructions), /allowed relations, columns, and any agent hints/i);
 });

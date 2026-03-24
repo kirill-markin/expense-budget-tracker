@@ -37,9 +37,18 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /Create pending, completed, and preauth rows/i);
   assert.match(instructions, /Treat preauth like pending because it often posts later/i);
   assert.match(instructions, /Skip declined, cancelled, and reverted rows/i);
+  assert.doesNotMatch(instructions, /liquid \| illiquid/i);
+  assert.match(instructions, /Do not proactively write optional sidecar tables/i);
+  assert.match(instructions, /account_metadata \(optional sidecar table\)/i);
+  assert.match(instructions, /high \| medium \| low/i);
+  assert.match(instructions, /treats liquidity as high in balances and budget calculations/i);
+  assert.match(instructions, /first_day_of_week .*1\.\.7/i);
 });
 
 test("TOOL_DESCRIPTION documents multi-statement scripts and statements output", () => {
   assert.match(TOOL_DESCRIPTION, /one or more .* statements separated by semicolons/i);
   assert.match(TOOL_DESCRIPTION, /"statements"/i);
+  assert.match(TOOL_DESCRIPTION, /optional sidecar/i);
+  assert.match(TOOL_DESCRIPTION, /liquidity must be high, medium, or low/i);
+  assert.match(TOOL_DESCRIPTION, /first_day_of_week SMALLINT/i);
 });

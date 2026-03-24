@@ -1,3 +1,5 @@
+import type { AllowedRelationName } from "./sql-policy.js";
+
 /**
  * Shared machine-readable contract for agent-facing auth and setup flows.
  */
@@ -54,11 +56,59 @@ export type AgentEnvelope = Readonly<{
   }>;
 }>;
 
+export type AgentSchemaColumnConstraint = Readonly<{
+  column: string;
+  allowedValues?: ReadonlyArray<string>;
+  notes?: ReadonlyArray<string>;
+}>;
+
+export type AgentSchemaHints = Readonly<{
+  optional: boolean;
+  primaryKey?: ReadonlyArray<string>;
+  notes: ReadonlyArray<string>;
+  columnConstraints?: ReadonlyArray<AgentSchemaColumnConstraint>;
+}>;
+
+const ACCOUNT_METADATA_LIQUIDITY_VALUES = ["high", "medium", "low"] as const;
+
+const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>> = {
+  account_metadata: {
+    optional: true,
+    primaryKey: ["workspace_id", "account_id"],
+    notes: [
+      "Optional sidecar table for per-account metadata.",
+      "Missing row is allowed. Balances and budget queries treat missing liquidity as 'high'.",
+      "Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity.",
+    ],
+    columnConstraints: [{
+      column: "liquidity",
+      allowedValues: ACCOUNT_METADATA_LIQUIDITY_VALUES,
+      notes: ["Only high, medium, or low are accepted."],
+    }],
+  },
+  workspace_settings: {
+    optional: false,
+    primaryKey: ["workspace_id"],
+    notes: [
+      "One row per workspace. Update the existing row instead of inserting duplicates.",
+      "filtered_categories NULL means no category filter is configured; an empty array means the filter is active but nothing is selected.",
+    ],
+    columnConstraints: [{
+      column: "first_day_of_week",
+      notes: ["Allowed values are integers 1 through 7."],
+    }],
+  },
+};
+
 const trimTrailingSlash = (value: string): string =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
 const resolveActionUrl = (target: AgentUrlTarget): string =>
   "url" in target ? target.url : `${trimTrailingSlash(target.baseUrl)}${target.path}`;
+
+export const getAgentSchemaHints = (
+  relationName: AllowedRelationName,
+): AgentSchemaHints | undefined => AGENT_SCHEMA_HINTS[relationName];
 
 export const buildSuccessEnvelope = (
   data: Readonly<Record<string, unknown>>,

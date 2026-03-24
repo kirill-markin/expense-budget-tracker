@@ -26,10 +26,10 @@ const isSchemaExplorationAttempt = (message: string): boolean =>
 const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
   if (error.code === "relation_not_allowed") {
     if (isSchemaExplorationAttempt(error.message)) {
-      return "System catalogs are not queryable via /api/agent/sql. Use GET /api/agent/schema to inspect allowed relations and columns, then query only those relations. Example: SELECT * FROM accounts LIMIT 0.";
+      return "System catalogs are not queryable via /api/agent/sql. Use GET /api/agent/schema to inspect allowed relations, columns, and any agent hints, then query only those relations. Example: SELECT * FROM accounts LIMIT 0.";
     }
 
-    return "Relation is not exposed by policy. Use GET /api/agent/schema to see allowed relations, then retry.";
+    return "Relation is not exposed by policy. Use GET /api/agent/schema to see allowed relations, columns, and any agent hints, then retry.";
   }
 
   if (error.code === "unsupported_statement") {

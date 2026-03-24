@@ -1,3 +1,4 @@
+import { getAgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import { getAllowedRelationNames, type AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { UserIdentity } from "../db.js";
 import type { MachineApiDependencies, SchemaColumn, SchemaColumnRow, SchemaRelation } from "./types.js";
@@ -53,10 +54,12 @@ export const loadAllowedSchema = async (
     if (columns === undefined) {
       throw new Error(`Missing schema relation ${name}`);
     }
+    const hints = getAgentSchemaHints(name);
 
     return {
       name,
       columns,
+      ...(hints === undefined ? {} : { hints }),
     };
   });
 };

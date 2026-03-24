@@ -1,8 +1,10 @@
 /**
  * Safe schema introspection for agent clients.
  *
- * Returns only columns from relations allowed by the SQL policy.
+ * Returns only columns from relations allowed by the SQL policy, plus
+ * lightweight relation hints for risky write constraints.
  */
+import { getAgentSchemaHints, type AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import { getAllowedRelationNames, type AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { queryAsTrustedIdentity } from "@/server/db";
 import { type UserIdentity } from "@/server/users";
@@ -26,6 +28,7 @@ type SchemaColumn = Readonly<{
 export type SchemaRelation = Readonly<{
   name: AllowedRelationName;
   columns: ReadonlyArray<SchemaColumn>;
+  hints?: AgentSchemaHints;
 }>;
 
 const ALLOWED_RELATIONS = getAllowedRelationNames();
@@ -78,9 +81,11 @@ export const getAllowedSchemaRelations = async (
     if (columns === undefined) {
       throw new Error(`Missing schema relation ${name}`);
     }
+    const hints = getAgentSchemaHints(name);
     return {
       name,
       columns,
+      ...(hints === undefined ? {} : { hints }),
     };
   });
 };

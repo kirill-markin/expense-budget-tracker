@@ -57,7 +57,7 @@ export const handleMeRoute = async (
           buildSelectWorkspaceAction({ baseUrl: context.apiBaseUrl, path: "/workspaces/{workspaceId}/select" }),
           buildSchemaAction({ baseUrl: context.apiBaseUrl, path: "/schema" }),
         ],
-        "Call /workspaces next, select a workspace once, then run SQL. Call /schema to inspect allowed relations and columns.",
+        "Call /workspaces next, select a workspace once, then run SQL. Call /schema to inspect allowed relations, columns, and any agent hints about constraints or write semantics.",
       ),
     );
   } catch (error) {
@@ -88,7 +88,7 @@ export const handleSchemaRoute = async (
         [
           buildRunSqlAction({ baseUrl: context.apiBaseUrl, path: "/sql" }, RUN_SQL_WITH_WORKSPACE_INPUT),
         ],
-        "Schema includes only relations supported by /sql. Select a workspace once, then run SQL.",
+        "Schema includes only relations supported by /sql and may include optional hints about constraints or write semantics. Select a workspace once, then run SQL.",
       ),
     );
   } catch (error) {

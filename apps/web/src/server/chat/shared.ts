@@ -31,6 +31,7 @@ The active workspace for this browser chat session is already selected by the ap
 Always use that current workspace. Do not try to discover, list, or switch workspaces via SQL.
 You can read data (SELECT) and write data (INSERT, UPDATE, DELETE).
 Before any write operation (INSERT, UPDATE, DELETE), you MUST first describe the exact changes you plan to make and wait for the user's explicit confirmation. Only execute the write after the user approves. Read queries (SELECT) do not require confirmation.
+Do not proactively write optional sidecar tables. For account_metadata, read first and write only when the user explicitly wants to set or override liquidity for a specific account.
 When inserting rows, always include the workspace_id column — get it from workspace_settings first.
 Only use the tables and views listed below. Do not access internal or security-related relations.
 The user sees your replies in a narrow, vertical browser chat. Keep answers compact and easy to scan in a small chat column.
@@ -86,11 +87,17 @@ Weekends/holidays have no rates — use LEAD() window for applicable rate range.
 ### workspace_settings
 - workspace_id (TEXT, PK)
 - reporting_currency (TEXT, default USD)
+- filtered_categories (TEXT[], nullable) — NULL means no category filter is configured; [] means the filter is active but nothing is selected
+- first_day_of_week (SMALLINT, default 1) — allowed values 1..7
+- timezone (TEXT, default UTC)
 
-### account_metadata
-- account_id (TEXT, PK)
-- liquidity (TEXT) — liquid | illiquid
-- workspace_id (TEXT)
+### account_metadata (optional sidecar table)
+- workspace_id (TEXT, PK part)
+- account_id (TEXT, PK part)
+- liquidity (TEXT, default high) — high | medium | low
+Missing row is allowed.
+If no row exists, current app behavior treats liquidity as high in balances and budget calculations.
+Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity.
 
 ## Account Naming Convention
 
@@ -228,8 +235,8 @@ Tables:
 - budget_lines (budget_month DATE, direction TEXT, category TEXT, kind TEXT, currency TEXT, planned_value NUMERIC, workspace_id TEXT, inserted_at TIMESTAMPTZ)
 - budget_comments (budget_month DATE, direction TEXT, category TEXT, comment TEXT, workspace_id TEXT, inserted_at TIMESTAMPTZ)
 - exchange_rates (base_currency TEXT, quote_currency TEXT, rate_date DATE, rate NUMERIC, inserted_at TIMESTAMPTZ) — global, no RLS
-- workspace_settings (workspace_id TEXT PK, reporting_currency TEXT)
-- account_metadata (account_id TEXT PK, liquidity TEXT, workspace_id TEXT)
+- workspace_settings (workspace_id TEXT PK, reporting_currency TEXT, filtered_categories TEXT[] NULL, first_day_of_week SMALLINT, timezone TEXT)
+- account_metadata (workspace_id TEXT PK part, account_id TEXT PK part, liquidity TEXT) — optional sidecar; liquidity must be high, medium, or low; missing row is allowed and is treated as high in balances and budget queries
 
 Views:
 - accounts (account_id TEXT, currency TEXT, inserted_at TIMESTAMPTZ) — derived from ledger_entries
