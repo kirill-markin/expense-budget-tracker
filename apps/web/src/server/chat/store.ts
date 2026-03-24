@@ -6,6 +6,7 @@ import type { ChatMessage, ContentPart } from "@/server/chat/types";
 export type ChatSessionRunState = "idle" | "running" | "interrupted";
 export type ChatItemState = "in_progress" | "completed" | "error" | "cancelled";
 const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
+export const STOPPED_BY_USER_TOOL_OUTPUT = "Stopped by user";
 
 type ChatSessionRow = Readonly<{
   session_id: string;
@@ -126,6 +127,12 @@ type RecoveryAssistantMessageUpdate = Readonly<{
 type RecoveredChatConversationUpdatePlan = Readonly<{
   messageUpdates: ReadonlyArray<RecoveryAssistantMessageUpdate>;
   noteContent: ReadonlyArray<ContentPart> | null;
+}>;
+
+type UserStoppedChatRunUpdatePlan = Readonly<{
+  assistantItem: PersistedChatMessageItem | null;
+  assistantContent: ReadonlyArray<ContentPart> | null;
+  sessionState: ChatSessionRunState;
 }>;
 
 const SELECT_SESSION_SQL = `
@@ -455,6 +462,45 @@ const buildLocalChatMessages = (
     role: message.role,
     content: message.content,
   }));
+
+export const buildUserStoppedAssistantContent = (
+  content: ReadonlyArray<ContentPart>,
+): ReadonlyArray<ContentPart> =>
+  content.map((part) => {
+    if (part.type !== "tool_call" || part.status !== "started") {
+      return part;
+    }
+
+    return {
+      ...part,
+      status: "completed",
+      providerStatus: INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
+      output: part.output ?? STOPPED_BY_USER_TOOL_OUTPUT,
+    };
+  });
+
+export const buildUserStoppedChatRunUpdatePlan = (
+  messages: ReadonlyArray<PersistedChatMessageItem>,
+): UserStoppedChatRunUpdatePlan => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant" || message.state !== "in_progress") {
+      continue;
+    }
+
+    return {
+      assistantItem: message,
+      assistantContent: buildUserStoppedAssistantContent(message.content),
+      sessionState: "idle",
+    };
+  }
+
+  return {
+    assistantItem: null,
+    assistantContent: null,
+    sessionState: "idle",
+  };
+};
 
 const createRecoveryTextContentPart = (
   recoveryId: string,
@@ -800,15 +846,54 @@ export const persistAssistantCancelled = async (
   withUserContext(userId, workspaceId, async (queryFn) => {
     await updateChatItemWithQuery(queryFn, {
       itemId: params.assistantItemId,
-      content: finalizePendingToolCallContent(
-        params.assistantContent,
-        INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
-      ),
+      content: buildUserStoppedAssistantContent(params.assistantContent),
       state: "cancelled",
     });
 
     await updateChatSessionStatusWithQuery(queryFn, params.sessionId, "idle", null);
   });
+
+export const cancelActiveChatRunByUserWithQuery = async (
+  queryFn: QueryFn,
+  userId: string,
+  workspaceId: string,
+  sessionId: string,
+): Promise<boolean> => {
+  await resolveRequestedChatSessionWithQuery(queryFn, userId, workspaceId, sessionId);
+
+  const lockedSessionResult = await queryFn(SELECT_SESSION_FOR_UPDATE_SQL, [sessionId]);
+  const lockedSession = requireSessionRow(
+    lockedSessionResult.rows[0] as ChatSessionRow | undefined,
+    "lock",
+  );
+
+  if (lockedSession.status !== "running") {
+    return false;
+  }
+
+  const messagesResult = await queryFn(LIST_CHAT_ITEMS_SQL, [sessionId]);
+  const messages = messagesResult.rows.map((row) => mapChatItemRow(row as ChatItemRow));
+  const updatePlan = buildUserStoppedChatRunUpdatePlan(messages);
+
+  if (updatePlan.assistantItem !== null && updatePlan.assistantContent !== null) {
+    await updateChatItemWithQuery(queryFn, {
+      itemId: updatePlan.assistantItem.itemId,
+      content: updatePlan.assistantContent,
+      state: "cancelled",
+    });
+  }
+
+  await updateChatSessionStatusWithQuery(queryFn, sessionId, updatePlan.sessionState, null);
+  return true;
+};
+
+export const cancelActiveChatRunByUser = async (
+  userId: string,
+  workspaceId: string,
+  sessionId: string,
+): Promise<boolean> =>
+  withUserContext(userId, workspaceId, async (queryFn) =>
+    cancelActiveChatRunByUserWithQuery(queryFn, userId, workspaceId, sessionId));
 
 export const markChatSessionInterrupted = async (
   userId: string,

@@ -69,6 +69,7 @@ type ActiveChatRun = {
   subscribers: Set<ChatRunSubscriber>;
   abortController: AbortController;
   stopRequestedByUser: boolean;
+  cancellationState: "active" | "requested" | "persisted";
 };
 
 export type ChatRuntimeDependencies = Readonly<{
@@ -171,7 +172,7 @@ const broadcastChatEvent = (
   event: ChatStreamEvent,
 ): void => {
   const activeRun = activeChatRuns.get(sessionId);
-  if (activeRun === undefined) {
+  if (activeRun === undefined || activeRun.cancellationState !== "active") {
     return;
   }
 
@@ -362,6 +363,26 @@ export const runPersistedChatSessionWithDeps = async (
     });
   }, CHAT_RUN_HEARTBEAT_INTERVAL_MS);
 
+  const persistUserCancellationIfNeeded = async (): Promise<boolean> => {
+    const activeRun = getActiveChatRun(params.sessionId);
+    if (activeRun === undefined || activeRun.stopRequestedByUser !== true) {
+      return false;
+    }
+
+    if (activeRun.cancellationState === "persisted") {
+      return true;
+    }
+
+    assistantContent = finalizeAssistantToolCalls(assistantContent);
+    await dependencies.persistAssistantCancelled(params.userId, params.workspaceId, {
+      sessionId: params.sessionId,
+      assistantItemId: params.assistantItemId,
+      assistantContent,
+    });
+    activeRun.cancellationState = "persisted";
+    return true;
+  };
+
   try {
     await dependencies.beginTaskProtection();
     await dependencies.touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId);
@@ -404,6 +425,10 @@ export const runPersistedChatSessionWithDeps = async (
 
       try {
         for await (const event of started.events) {
+          if (await persistUserCancellationIfNeeded()) {
+            return;
+          }
+
           if (event.type === "delta") {
             assistantContent = applyAssistantDelta(assistantContent, event);
             await updateAssistantInProgress(
@@ -449,12 +474,23 @@ export const runPersistedChatSessionWithDeps = async (
           broadcastChatEvent(params.sessionId, event);
         }
 
+        if (await persistUserCancellationIfNeeded()) {
+          return;
+        }
+
         if (!isFinalized) {
           const completion = await started.completion;
+          if (await persistUserCancellationIfNeeded()) {
+            return;
+          }
           currentConversationId = completion.conversationId;
         }
         break;
       } catch (error) {
+        if (await persistUserCancellationIfNeeded()) {
+          return;
+        }
+
         if (isMaxTurnsExceededError(error) && continuationBudgetRemaining > 0) {
           assistantContent = finalizeAssistantToolCalls(assistantContent);
           continuationBudgetRemaining -= 1;
@@ -514,6 +550,7 @@ export const runPersistedChatSessionWithDeps = async (
     const stoppedByUser = activeRun?.stopRequestedByUser === true;
 
     if (stoppedByUser && isUserAbortError(error)) {
+      await persistUserCancellationIfNeeded();
       log({
         domain: "chat",
         action: "run_cancelled",
@@ -522,12 +559,6 @@ export const runPersistedChatSessionWithDeps = async (
         sessionId: params.sessionId,
         userId: params.userId,
         workspaceId: params.workspaceId,
-      });
-      assistantContent = finalizeAssistantToolCalls(assistantContent);
-      await dependencies.persistAssistantCancelled(params.userId, params.workspaceId, {
-        sessionId: params.sessionId,
-        assistantItemId: params.assistantItemId,
-        assistantContent,
       });
       return;
     }
@@ -557,7 +588,7 @@ const runPersistedChatSession = async (
   runPersistedChatSessionWithDeps(params, DEFAULT_CHAT_RUNTIME_DEPENDENCIES);
 
 export const hasActiveChatRun = (sessionId: string): boolean =>
-  activeChatRuns.has(sessionId);
+  activeChatRuns.get(sessionId)?.cancellationState === "active";
 
 export const startPersistedChatRun = (
   params: StartPersistedChatRunParams,
@@ -572,6 +603,7 @@ export const startPersistedChatRun = (
     subscribers: new Set([subscriber]),
     abortController,
     stopRequestedByUser: false,
+    cancellationState: "active",
   });
 
   void runPersistedChatSession(params);
@@ -583,11 +615,45 @@ export const stopActiveChatRun = (
   sessionId: string,
 ): boolean => {
   const activeRun = activeChatRuns.get(sessionId);
-  if (activeRun === undefined) {
+  if (activeRun === undefined || activeRun.cancellationState !== "active") {
     return false;
   }
 
   activeRun.stopRequestedByUser = true;
+  activeRun.cancellationState = "requested";
   activeRun.abortController.abort();
+  closeSubscribers(sessionId);
   return true;
+};
+
+export const markActiveChatRunCancellationPersisted = (
+  sessionId: string,
+): void => {
+  const activeRun = activeChatRuns.get(sessionId);
+  if (activeRun === undefined) {
+    return;
+  }
+
+  activeRun.cancellationState = "persisted";
+};
+
+export const createActiveChatRunForTests = (
+  sessionId: string,
+): void => {
+  if (activeChatRuns.has(sessionId)) {
+    throw new Error(`Active chat run already exists for tests: ${sessionId}`);
+  }
+
+  activeChatRuns.set(sessionId, {
+    subscribers: new Set(),
+    abortController: new AbortController(),
+    stopRequestedByUser: false,
+    cancellationState: "active",
+  });
+};
+
+export const clearActiveChatRunForTests = (
+  sessionId: string,
+): void => {
+  activeChatRuns.delete(sessionId);
 };

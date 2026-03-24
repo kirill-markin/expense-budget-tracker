@@ -20,7 +20,9 @@ import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+  getEffectiveSnapshotRunState,
   shouldReplaceHistoryFromSnapshot,
+  shouldSnapshotSetStreaming,
   shouldSuppressStreamFailure,
 } from "./streamRecovery";
 import { getAssistantStreamingIndicator } from "./thinkingSummary";
@@ -282,6 +284,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const isLiveStreamConnectedRef = useRef<boolean>(false);
+  const stoppedSessionIdsRef = useRef<Set<string>>(new Set());
   const lastSnapshotUpdatedAtRef = useRef<number | null>(null);
   const shouldAutoScrollRef = useRef<boolean>(true);
   const scrollFrameRef = useRef<number | null>(null);
@@ -326,13 +329,20 @@ export const ChatPanel = (props: Props): ReactElement => {
     }
 
     const payload = await response.json() as ChatHistoryResponse;
+    const isUserStoppedSession = stoppedSessionIdsRef.current.has(payload.sessionId);
+    const effectiveRunState = getEffectiveSnapshotRunState(
+      payload.runState,
+      isUserStoppedSession,
+    );
     setCurrentSessionId(payload.sessionId);
-    setRunState(payload.runState);
+    setRunState(effectiveRunState);
 
-    if (payload.runState === "running") {
-      if (!isLiveStreamConnectedRef.current) {
-        setIsStreaming(true);
-      }
+    if (shouldSnapshotSetStreaming(
+      payload.runState,
+      isLiveStreamConnectedRef.current,
+      isUserStoppedSession,
+    )) {
+      setIsStreaming(true);
     } else {
       setIsStreaming(false);
     }
@@ -346,7 +356,10 @@ export const ChatPanel = (props: Props): ReactElement => {
     if (shouldReplaceHistory) {
       replaceMessages(payload.messages);
     }
-    return payload;
+    return {
+      ...payload,
+      runState: effectiveRunState,
+    };
   }, [replaceMessages, t]);
 
   useEffect(() => {
@@ -356,6 +369,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     setRunState("idle");
     setIsStreaming(false);
     isLiveStreamConnectedRef.current = false;
+    stoppedSessionIdsRef.current.clear();
     lastSnapshotUpdatedAtRef.current = null;
     replaceMessages([]);
 
@@ -531,6 +545,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     appendUserMessage(contentParts);
     setInputText("");
     setPendingAttachments([]);
+    stoppedSessionIdsRef.current.clear();
     setIsStreaming(true);
     setRunState("running");
 
@@ -734,6 +749,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       return;
     }
 
+    stoppedSessionIdsRef.current.add(currentSessionId);
     setIsStopping(true);
 
     try {
@@ -820,6 +836,9 @@ export const ChatPanel = (props: Props): ReactElement => {
               isLiveStreamConnectedRef.current = false;
               setIsStreaming(false);
               setIsStopping(false);
+              if (currentSessionId !== null) {
+                stoppedSessionIdsRef.current.delete(currentSessionId);
+              }
               try {
                 const clearUrl = currentSessionId === null
                   ? "/api/chat"

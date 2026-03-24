@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+  getEffectiveSnapshotRunState,
   shouldReplaceHistoryFromSnapshot,
+  shouldSnapshotSetStreaming,
   shouldSuppressStreamFailure,
 } from "./streamRecovery";
 
@@ -19,4 +21,16 @@ test("shouldSuppressStreamFailure treats running and idle snapshots as recoverab
   assert.equal(shouldSuppressStreamFailure({ runState: "running", updatedAt: 100, messages: [] }), true);
   assert.equal(shouldSuppressStreamFailure({ runState: "idle", updatedAt: 100, messages: [] }), true);
   assert.equal(shouldSuppressStreamFailure({ runState: "interrupted", updatedAt: 100, messages: [] }), false);
+});
+
+test("getEffectiveSnapshotRunState hides running snapshots for user-stopped sessions", () => {
+  assert.equal(getEffectiveSnapshotRunState("running", true), "idle");
+  assert.equal(getEffectiveSnapshotRunState("running", false), "running");
+  assert.equal(getEffectiveSnapshotRunState("idle", true), "idle");
+});
+
+test("shouldSnapshotSetStreaming keeps a stopped session from returning to streaming", () => {
+  assert.equal(shouldSnapshotSetStreaming("running", false, true), false);
+  assert.equal(shouldSnapshotSetStreaming("running", false, false), true);
+  assert.equal(shouldSnapshotSetStreaming("running", true, false), false);
 });

@@ -16,6 +16,22 @@ export const shouldReplaceHistoryFromSnapshot = (
 ): boolean =>
   previousUpdatedAt === null || snapshotUpdatedAt > previousUpdatedAt;
 
+export const getEffectiveSnapshotRunState = (
+  snapshotRunState: ChatRunState,
+  isUserStoppedSession: boolean,
+): ChatRunState =>
+  isUserStoppedSession && snapshotRunState === "running"
+    ? "idle"
+    : snapshotRunState;
+
+export const shouldSnapshotSetStreaming = (
+  snapshotRunState: ChatRunState,
+  isLiveStreamConnected: boolean,
+  isUserStoppedSession: boolean,
+): boolean =>
+  getEffectiveSnapshotRunState(snapshotRunState, isUserStoppedSession) === "running"
+    && !isLiveStreamConnected;
+
 export const shouldSuppressStreamFailure = (
   snapshot: ChatSnapshotState,
 ): boolean =>
