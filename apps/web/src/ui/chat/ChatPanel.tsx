@@ -31,6 +31,7 @@ import {
 import { getAssistantStreamingIndicator } from "./thinkingSummary";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
+import { getToolCallDisplayState } from "./toolCallDisplay";
 import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
@@ -110,87 +111,6 @@ const parseSSELine = (line: string): ChatStreamEvent | null => {
   }
 };
 
-const formatToolLabel = (name: string, t: (key: string) => string): string => {
-  if (name === "query_database") return t("chat.toolDbQuery");
-  if (name === "code_execution") return t("chat.toolCodeExec");
-  if (name === "code_interpreter_call" || name === "code_interpreter") return t("chat.toolCodeInterpreter");
-  if (name === "web_search_call" || name === "web_search") return t("chat.toolWebSearch");
-  return name;
-};
-
-const formatToolStatusLabel = (
-  status: "started" | "completed",
-  providerStatus: string | null | undefined,
-  t: (key: string) => string,
-): string => {
-  const normalizedStatus = providerStatus ?? (status === "completed" ? "completed" : "running");
-  if (normalizedStatus === "running") return t("chat.toolStatusRunning");
-  if (normalizedStatus === "in_progress") return t("chat.toolStatusInProgress");
-  if (normalizedStatus === "interpreting") return t("chat.toolStatusInterpreting");
-  if (normalizedStatus === "searching") return t("chat.toolStatusSearching");
-  if (normalizedStatus === "completed") return t("chat.toolStatusCompleted");
-  if (normalizedStatus === "failed") return t("chat.toolStatusFailed");
-  if (normalizedStatus === "incomplete") return t("chat.toolStatusIncomplete");
-  return normalizedStatus.replaceAll("_", " ");
-};
-
-const formatStructuredToolText = (
-  value: string | null,
-): string | null => {
-  if (value === null) return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (
-      typeof parsed === "string"
-      || typeof parsed === "number"
-      || typeof parsed === "boolean"
-      || parsed === null
-    ) {
-      return String(parsed);
-    }
-    return JSON.stringify(parsed, null, 2);
-  } catch {
-    return value;
-  }
-};
-
-const formatToolInput = (name: string, input: string | null): string | null => {
-  if (input === null) return null;
-  if (name === "query_database") {
-    try {
-      const parsed = JSON.parse(input) as Record<string, unknown>;
-      if (typeof parsed.sql === "string") return parsed.sql;
-    } catch {
-      // fall through
-    }
-  }
-  return formatStructuredToolText(input);
-};
-
-const MAX_OUTPUT_DISPLAY_LENGTH = 10_000;
-
-const formatToolOutput = (name: string, output: string | null): string | null => {
-  if (output === null) return null;
-  let formattedOutput: string | null = output;
-  if (name === "query_database") {
-    try {
-      const parsed = JSON.parse(output) as unknown;
-      formattedOutput = JSON.stringify(parsed, null, 2);
-    } catch {
-      // fall through
-    }
-  } else {
-    formattedOutput = formatStructuredToolText(output);
-  }
-  if (formattedOutput === null) {
-    return null;
-  }
-  if (formattedOutput.length > MAX_OUTPUT_DISPLAY_LENGTH) {
-    return formattedOutput.slice(0, MAX_OUTPUT_DISPLAY_LENGTH) + "\n[truncated]";
-  }
-  return formattedOutput;
-};
-
 const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): ReactElement => {
   const fileParts = msg.content.filter((p) => p.type === "file" || p.type === "image");
   const filePrefix = fileParts.length > 0
@@ -209,21 +129,18 @@ const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): R
       fileHeaderAdded = true;
       elements.push(<span key={`t-${i}`}>{text}</span>);
     } else if (part.type === "tool_call") {
-      const label = formatToolLabel(part.name, t);
-      const statusLabel = formatToolStatusLabel(part.status, part.providerStatus, t);
-      const displayInput = formatToolInput(part.name, part.input);
-      const displayOutput = formatToolOutput(part.name, part.output ?? null);
+      const displayState = getToolCallDisplayState(part, t);
       elements.push(
         <details
           key={`tc-${i}`}
           className={cn(styles.toolCall, part.status === "started" ? styles.toolCallStarted : "")}
         >
-          <summary className={styles.toolCallSummary}>{`${label} (${statusLabel})`}</summary>
-          {displayInput !== null && (
-            <pre className={styles.toolCallInput}>{displayInput}</pre>
+          <summary className={styles.toolCallSummary}>{`${displayState.label} (${displayState.statusLabel})`}</summary>
+          {displayState.input !== null && (
+            <pre className={styles.toolCallInput}>{displayState.input}</pre>
           )}
-          {displayOutput !== null && (
-            <pre className={styles.toolCallOutput}>{displayOutput}</pre>
+          {displayState.output !== null && (
+            <pre className={styles.toolCallOutput}>{displayState.output}</pre>
           )}
         </details>,
       );
