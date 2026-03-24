@@ -2,6 +2,7 @@ import { MaxTurnsExceededError } from "@openai/agents";
 import OpenAI from "openai";
 import {
   appendAssistantTextContent,
+  finalizePendingToolCallContent,
   upsertReasoningSummaryContent,
   upsertToolCallContent,
 } from "@/lib/chatHistory";
@@ -28,6 +29,7 @@ export const CHAT_RUN_STALE_HEARTBEAT_MS = 30_000;
 export const CHAT_RUN_MAX_AUTO_CONTINUATIONS = 1;
 export const CHAT_MAX_TURNS_FALLBACK_MESSAGE = "I reached the tool-turn safety limit twice while working on this request. I kept the completed progress above. Send \"continue\" and I'll keep going from here.";
 export const CHAT_INTERNAL_CONTINUATION_PROMPT = "Continue the same user request from the current conversation state. You may keep using tools if needed. Avoid repeating completed work. Finish with a user-facing answer as soon as enough information is available.";
+const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
 
 type ChatRunDiagnostics = Readonly<{
   requestId: string;
@@ -334,6 +336,11 @@ const updateAssistantInProgress = async (
   });
 };
 
+const finalizeAssistantToolCalls = (
+  assistantContent: ReadonlyArray<ContentPart>,
+): ReadonlyArray<ContentPart> =>
+  finalizePendingToolCallContent(assistantContent, INCOMPLETE_TOOL_CALL_PROVIDER_STATUS);
+
 export const runPersistedChatSessionWithDeps = async (
   params: StartPersistedChatRunParams,
   dependencies: ChatRuntimeDependencies,
@@ -419,6 +426,7 @@ export const runPersistedChatSessionWithDeps = async (
               assistantContent,
             );
           } else if (event.type === "error") {
+            assistantContent = finalizeAssistantToolCalls(assistantContent);
             await dependencies.persistAssistantTerminalError(params.userId, params.workspaceId, {
               sessionId: params.sessionId,
               assistantItemId: params.assistantItemId,
@@ -439,6 +447,7 @@ export const runPersistedChatSessionWithDeps = async (
         break;
       } catch (error) {
         if (isMaxTurnsExceededError(error) && continuationBudgetRemaining > 0) {
+          assistantContent = finalizeAssistantToolCalls(assistantContent);
           continuationBudgetRemaining -= 1;
           attempt += 1;
           autoContinuationUsed = true;
@@ -446,6 +455,7 @@ export const runPersistedChatSessionWithDeps = async (
         }
 
         if (isMaxTurnsExceededError(error)) {
+          assistantContent = finalizeAssistantToolCalls(assistantContent);
           const streamPosition = createSyntheticAssistantTextPosition(assistantContent, attempt);
           assistantContent = appendAssistantTextContent(assistantContent, {
             text: CHAT_MAX_TURNS_FALLBACK_MESSAGE,
@@ -478,6 +488,7 @@ export const runPersistedChatSessionWithDeps = async (
       if (currentConversationId === null) {
         throw new Error("OpenAI conversationId missing after completed server-managed chat run");
       }
+      assistantContent = finalizeAssistantToolCalls(assistantContent);
       await dependencies.completeChatRun(
         params.userId,
         params.workspaceId,
@@ -503,6 +514,7 @@ export const runPersistedChatSessionWithDeps = async (
         userId: params.userId,
         workspaceId: params.workspaceId,
       });
+      assistantContent = finalizeAssistantToolCalls(assistantContent);
       await dependencies.persistAssistantCancelled(params.userId, params.workspaceId, {
         sessionId: params.sessionId,
         assistantItemId: params.assistantItemId,
@@ -512,6 +524,7 @@ export const runPersistedChatSessionWithDeps = async (
     }
 
     const message = error instanceof Error ? error.message : String(error);
+    assistantContent = finalizeAssistantToolCalls(assistantContent);
     await dependencies.persistAssistantTerminalError(params.userId, params.workspaceId, {
       sessionId: params.sessionId,
       assistantItemId: params.assistantItemId,

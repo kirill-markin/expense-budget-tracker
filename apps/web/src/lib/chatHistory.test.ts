@@ -5,6 +5,7 @@ import type { ContentPart, StreamPosition } from "@/server/chat/types";
 import {
   applyAssistantError,
   appendAssistantTextContent,
+  finalizePendingToolCallContent,
   upsertReasoningSummaryContent,
   upsertToolCallContent,
   type StoredMessage,
@@ -286,6 +287,55 @@ test("upsertToolCallContent rejects tool calls without streamPosition", () => {
       output: null,
     }),
     /missing required streamPosition metadata/,
+  );
+});
+
+test("finalizePendingToolCallContent marks started tool calls as incomplete", () => {
+  assert.deepEqual(
+    finalizePendingToolCallContent([
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "query_database",
+        status: "started",
+        providerStatus: "in_progress",
+        input: "{\"sql\":\"SELECT 1\"}",
+        output: null,
+        streamPosition: createStreamPosition("tool-1-item", 1, null, 20),
+      },
+      {
+        type: "tool_call",
+        id: "tool-2",
+        name: "code_interpreter_call",
+        status: "completed",
+        providerStatus: "completed",
+        input: "print('hello')",
+        output: "hello",
+        streamPosition: createStreamPosition("tool-2-item", 2, null, 30),
+      },
+    ], "incomplete"),
+    [
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "query_database",
+        status: "completed",
+        providerStatus: "incomplete",
+        input: "{\"sql\":\"SELECT 1\"}",
+        output: null,
+        streamPosition: createStreamPosition("tool-1-item", 1, null, 20),
+      },
+      {
+        type: "tool_call",
+        id: "tool-2",
+        name: "code_interpreter_call",
+        status: "completed",
+        providerStatus: "completed",
+        input: "print('hello')",
+        output: "hello",
+        streamPosition: createStreamPosition("tool-2-item", 2, null, 30),
+      },
+    ],
   );
 });
 

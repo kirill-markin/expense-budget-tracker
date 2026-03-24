@@ -89,11 +89,10 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
           id: "tool-1",
           itemId: "tool-item-1",
           name: "query_database",
-          status: "completed",
+          status: "started",
           outputIndex: 0,
           sequenceNumber: 1,
           input: "{\"sql\":\"SELECT 1\"}",
-          output: "{\"rows\":[1]}",
         }], maxTurnsError);
       }
 
@@ -120,7 +119,11 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
   const completion = completeChatRunCalls[0];
   const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
   assert.equal(
-    assistantContent.some((part) => part.type === "tool_call" && part.name === "query_database"),
+    assistantContent.some((part) =>
+      part.type === "tool_call"
+      && part.name === "query_database"
+      && part.status === "completed"
+      && part.providerStatus === "incomplete"),
     true,
   );
   assert.equal(
@@ -160,6 +163,42 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
   const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
   assert.equal(
     assistantContent.some((part) => part.type === "text" && part.text === CHAT_MAX_TURNS_FALLBACK_MESSAGE),
+    true,
+  );
+});
+
+test("runPersistedChatSessionWithDeps finalizes started tool calls before persisting a terminal error", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+
+  const dependencies = createDependencies(
+    async (): Promise<StartAgentResponseResult> =>
+      createStartedResponse("conv-1", [{
+        type: "tool_call",
+        id: "tool-1",
+        itemId: "tool-item-1",
+        name: "code_interpreter_call",
+        status: "started",
+        outputIndex: 0,
+        sequenceNumber: 1,
+        input: "print('hello')",
+      }], new Error("stream failed")),
+    completeChatRunCalls,
+    persistAssistantTerminalErrorCalls,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.equal(completeChatRunCalls.length, 0);
+  assert.equal(persistAssistantTerminalErrorCalls.length, 1);
+  const terminalErrorCall = persistAssistantTerminalErrorCalls[0];
+  const assistantContent = terminalErrorCall.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
+  assert.equal(
+    assistantContent.some((part) =>
+      part.type === "tool_call"
+      && part.name === "code_interpreter_call"
+      && part.status === "completed"
+      && part.providerStatus === "incomplete"),
     true,
   );
 });

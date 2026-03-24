@@ -1,10 +1,11 @@
-import type { StoredMessage } from "@/lib/chatHistory";
+import { finalizePendingToolCallContent, type StoredMessage } from "@/lib/chatHistory";
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
 import type { ChatMessage, ContentPart } from "@/server/chat/types";
 
 export type ChatSessionRunState = "idle" | "running" | "interrupted";
 export type ChatItemState = "in_progress" | "completed" | "error" | "cancelled";
+const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
 
 type ChatSessionRow = Readonly<{
   session_id: string;
@@ -596,7 +597,12 @@ export const persistAssistantTerminalError = async (
   params: PersistAssistantTerminalErrorParams,
 ): Promise<void> =>
   withUserContext(userId, workspaceId, async (queryFn) => {
-    if (params.assistantContent.length === 0) {
+    const finalizedAssistantContent = finalizePendingToolCallContent(
+      params.assistantContent,
+      INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
+    );
+
+    if (finalizedAssistantContent.length === 0) {
       await updateChatItemWithQuery(queryFn, {
         itemId: params.assistantItemId,
         content: [{ type: "text", text: params.errorMessage }],
@@ -605,7 +611,7 @@ export const persistAssistantTerminalError = async (
     } else {
       await updateChatItemWithQuery(queryFn, {
         itemId: params.assistantItemId,
-        content: params.assistantContent,
+        content: finalizedAssistantContent,
         state: "completed",
       });
       await insertChatItemWithQuery(queryFn, {
@@ -627,7 +633,10 @@ export const persistAssistantCancelled = async (
   withUserContext(userId, workspaceId, async (queryFn) => {
     await updateChatItemWithQuery(queryFn, {
       itemId: params.assistantItemId,
-      content: params.assistantContent,
+      content: finalizePendingToolCallContent(
+        params.assistantContent,
+        INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
+      ),
       state: "cancelled",
     });
 
@@ -651,6 +660,10 @@ export const markChatSessionInterrupted = async (
     const lastMessage = persistedMessages[persistedMessages.length - 1];
 
     if (lastMessage !== undefined && lastMessage.role === "assistant" && lastMessage.state === "in_progress") {
+      const finalizedAssistantContent = finalizePendingToolCallContent(
+        lastMessage.content,
+        INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
+      );
       if (lastMessage.content.length === 0) {
         await updateChatItemWithQuery(queryFn, {
           itemId: lastMessage.itemId,
@@ -660,7 +673,7 @@ export const markChatSessionInterrupted = async (
       } else {
         await updateChatItemWithQuery(queryFn, {
           itemId: lastMessage.itemId,
-          content: lastMessage.content,
+          content: finalizedAssistantContent,
           state: "completed",
         });
         await insertChatItemWithQuery(queryFn, {

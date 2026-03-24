@@ -254,6 +254,22 @@ export const upsertReasoningSummaryContent = (
   return insertOrderedAssistantPart(content, reasoningSummary);
 };
 
+export const finalizePendingToolCallContent = (
+  content: ReadonlyArray<ContentPart>,
+  providerStatus: string,
+): ReadonlyArray<ContentPart> =>
+  content.map((part) => {
+    if (part.type !== "tool_call" || part.status !== "started") {
+      return part;
+    }
+
+    return {
+      ...part,
+      status: "completed",
+      providerStatus,
+    };
+  });
+
 export const applyAssistantError = (
   messages: ReadonlyArray<StoredMessage>,
   errorText: string,
