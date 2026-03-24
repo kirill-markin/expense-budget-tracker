@@ -38,6 +38,10 @@ const getLastUserMessage = (
   return null;
 };
 
+/**
+ * Returns only the file attachments from the latest user message in local app history.
+ * These files determine what needs to be attached directly to the current OpenAI turn.
+ */
 export const getLatestUserFileAttachments = (
   messages: ReadonlyArray<ChatMessage>,
 ): ReadonlyArray<FileContentPart> => {
@@ -49,6 +53,11 @@ export const getLatestUserFileAttachments = (
   return lastUserMessage.content.filter((part): part is FileContentPart => part.type === "file");
 };
 
+/**
+ * Returns the distinct file attachments ever seen in local app history for the session.
+ * This is used to rehydrate explicit code interpreter containers after reuse or recreation,
+ * even though older messages are not replayed to the model as runtime memory.
+ */
 export const getAllUserFileAttachments = (
   messages: ReadonlyArray<ChatMessage>,
 ): ReadonlyArray<FileContentPart> => {
@@ -112,6 +121,12 @@ const mapUserPart = (part: TextContentPart | ImageContentPart | FileContentPart)
   }
 };
 
+/**
+ * Builds the OpenAI input for exactly one new user turn.
+ * Prior turns are intentionally omitted here because runtime conversation memory is continued
+ * via the stored OpenAI `conversationId`, while local history stays in Postgres for UI, audit,
+ * and attachment/container rehydration.
+ */
 export const buildInput = (
   content: ReadonlyArray<ContentPart>,
 ): ReadonlyArray<AgentInputItem> => [{

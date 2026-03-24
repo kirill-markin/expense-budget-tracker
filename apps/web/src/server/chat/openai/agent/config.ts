@@ -12,6 +12,11 @@ export const buildOpenaiInstructions = (timezone: string, hasPersistentContainer
     : "") +
   "\nYou also have web search. Use it to look up current exchange rates, financial news, tax rules, or any other real-time information.";
 
+/**
+ * Builds the model settings for the browser chat's OpenAI-managed conversation flow.
+ * `store: true` is enabled because the app relies on OpenAI conversation state between turns,
+ * while still keeping the full chat transcript in Postgres as the product source of truth.
+ */
 export const buildOpenAIModelSettings = (
   forcedToolChoice: "code_interpreter" | null,
 ): Readonly<Record<string, unknown>> => ({

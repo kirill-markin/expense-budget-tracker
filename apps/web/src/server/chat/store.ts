@@ -133,9 +133,10 @@ const INSERT_SESSION_SQL = `
     workspace_id,
     status,
     active_run_heartbeat_at,
+    openai_conversation_id,
     updated_at
   )
-  VALUES ($1, $2, 'idle', NULL, now())
+  VALUES ($1, $2, 'idle', NULL, NULL, now())
   RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
 `;
 
@@ -390,7 +391,12 @@ export const listChatMessages = async (
   return result.rows.map((row) => mapChatItemRow(row as ChatItemRow));
 };
 
-export const mapPersistedMessagesToStoredMessages = (
+/**
+ * Maps persisted chat items into the UI transcript shape stored and returned by the app.
+ * This transcript remains the product source of truth for history, audit, and reset flows,
+ * independent from the OpenAI-managed runtime conversation state.
+ */
+const mapPersistedMessagesToStoredMessages = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
 ): ReadonlyArray<StoredMessage> =>
   messages.map((message) => ({
@@ -401,7 +407,12 @@ export const mapPersistedMessagesToStoredMessages = (
     isStopped: message.isStopped,
   }));
 
-export const buildAgentMessages = (
+/**
+ * Builds the local message history kept by the app for attachment rehydration and local
+ * context handling. This history is not replayed to the model for runtime memory; the next
+ * model call uses only the current turn plus the stored OpenAI conversation ID.
+ */
+const buildLocalChatMessages = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
 ): ReadonlyArray<ChatMessage> =>
   messages.map((message) => ({
@@ -427,6 +438,15 @@ export const getChatSessionSnapshot = async (
   };
 };
 
+/**
+ * Persists the new user turn locally, creates the placeholder assistant item, and returns the
+ * split runtime inputs used by the chat pipeline:
+ * - `localMessages` for app-owned history, attachment rehydration, and debugging
+ * - `turnInput` for the only user content sent to the model on this turn
+ *
+ * The OpenAI conversation is continued exclusively through `openai_conversation_id`, which is
+ * loaded from the session row and later replaced after a successful completed run.
+ */
 export const prepareChatRun = async (
   userId: string,
   workspaceId: string,
@@ -468,7 +488,7 @@ export const prepareChatRun = async (
     return {
       sessionId: sessionRow.session_id,
       assistantItem,
-      localMessages: buildAgentMessages(
+      localMessages: buildLocalChatMessages(
         persistedMessages.rows.map((row) => mapChatItemRow(row as ChatItemRow)),
       ),
       turnInput: content,
@@ -504,6 +524,11 @@ export const touchChatSessionHeartbeat = async (
   ]);
 };
 
+/**
+ * Finalizes the assistant message in the local transcript and persists the latest
+ * `openai_conversation_id` on the chat session. The transcript remains the canonical product
+ * history, while the conversation ID is the only runtime continuation token used with OpenAI.
+ */
 export const completeChatRun = async (
   userId: string,
   workspaceId: string,

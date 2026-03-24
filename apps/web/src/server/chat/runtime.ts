@@ -11,7 +11,7 @@ import {
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
 } from "@/server/chat/store";
-import type { ChatStreamEvent, ContentPart, ToolCallContentPart } from "@/server/chat/types";
+import type { ChatMessage, ChatStreamEvent, ContentPart, ToolCallContentPart } from "@/server/chat/types";
 import { log, type ChatErrorStage } from "@/server/logger";
 
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
@@ -35,10 +35,7 @@ type StartPersistedChatRunParams = Readonly<{
   sessionId: string;
   timezone: string;
   assistantItemId: string;
-  localMessages: ReadonlyArray<Readonly<{
-    role: "user" | "assistant";
-    content: ReadonlyArray<ContentPart>;
-  }>>;
+  localMessages: ReadonlyArray<ChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
   conversationId: string | null;
   diagnostics: ChatRunDiagnostics;

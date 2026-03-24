@@ -39,6 +39,11 @@ import {
   type ToolCallOutputRawItem,
 } from "./toolCalls";
 
+/**
+ * Parameters for one browser-chat turn executed against OpenAI-managed conversation state.
+ * `localMessages` are app-owned history used for attachment rehydration and diagnostics,
+ * while `turnInput` is the only user content serialized into the next model request.
+ */
 export type StreamAgentParams = Readonly<{
   localMessages: ReadonlyArray<ChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
@@ -133,6 +138,11 @@ type StartAgentResponseDependencies = Readonly<{
   now: () => number;
 }>;
 
+/**
+ * Creates the per-turn OpenAI agent configuration while keeping explicit code interpreter
+ * containers enabled. The app intentionally reuses explicit containers so file availability
+ * can survive across turns and be rehydrated from local history when a container expires.
+ */
 const createOpenAIAgent = (
   timezone: string,
   effectiveContainerId: string,
@@ -150,23 +160,33 @@ const createOpenAIAgent = (
     ],
   });
 
+/**
+ * Runs a single streamed OpenAI turn through an SDK `Runner` so tracing metadata is attached at
+ * the runner level, while `conversationId` continues the OpenAI-managed conversation state.
+ * The underlying model settings enable `store: true`, which is required for this runtime memory
+ * approach even though the app still stores the full chat transcript locally in Postgres.
+ */
+const runAgentWithTracing = async (
+  params: RunAgentParams,
+): Promise<AgentRunResult> => {
+  const runner = new Runner({
+    groupId: params.groupId,
+    traceMetadata: { ...params.traceMetadata },
+  });
+
+  return await runner.run(params.agent, [...params.input], {
+    stream: true,
+    context: params.context,
+    conversationId: params.conversationId,
+    maxTurns: params.maxTurns,
+    signal: params.signal,
+  }) as AgentRunResult;
+};
+
 const DEFAULT_START_AGENT_RESPONSE_DEPENDENCIES: StartAgentResponseDependencies = {
   createClient: (): OpenAI => new OpenAI(),
   resolveManagedContainer: resolveServerManagedContainer,
-  runAgent: async (params: RunAgentParams): Promise<AgentRunResult> => {
-    const runner = new Runner({
-      groupId: params.groupId,
-      traceMetadata: { ...params.traceMetadata },
-    });
-
-    return await runner.run(params.agent, [...params.input], {
-      stream: true,
-      context: params.context,
-      conversationId: params.conversationId,
-      maxTurns: params.maxTurns,
-      signal: params.signal,
-    }) as AgentRunResult;
-  },
+  runAgent: runAgentWithTracing,
   addFilesToOpenAIContainer,
   listOpenAIContainerInventory,
   verifySpreadsheetContainers,
@@ -223,6 +243,15 @@ const logContainerInventory = (
   });
 };
 
+/**
+ * Starts a streamed browser-chat turn while keeping the app's local transcript and OpenAI's
+ * runtime conversation state intentionally separate.
+ *
+ * Local history is loaded so we can rehydrate attachments into the explicit code interpreter
+ * container, keep audit/debug visibility, and preserve the UI transcript. The model request,
+ * however, contains only the current turn and continues prior context solely through
+ * `conversationId`.
+ */
 export const startAgentResponseWithDeps = async (
   params: StreamAgentParams,
   dependencies: StartAgentResponseDependencies,
@@ -336,6 +365,7 @@ export const startAgentResponseWithDeps = async (
     await result.completed;
     const conversationId = extractConversationId(result.state);
     if (conversationId === null) {
+      // Fail fast so local transcript state never silently drifts away from OpenAI runtime memory.
       throw new Error("OpenAI conversationId missing after completed server-managed chat run");
     }
 
