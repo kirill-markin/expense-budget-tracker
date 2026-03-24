@@ -43,7 +43,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `apps/web/src/app/api/` | Next.js API routes (`budget-grid`, `transactions`, `balances-summary`, and others) |
 | `apps/web/src/app/chat/page.tsx` | Web AI chat page at `/chat`; fullscreen browser entrypoint for chatting with workspace data |
 | `apps/web/src/app/api/chat/route.ts` | Server API entrypoint for the web AI chat (`POST` stream, `DELETE` reset) |
-| `apps/web/src/server/chat/openai/agent.ts` | Main AI chat orchestration logic for the web app |
+| `apps/web/src/server/chat/openai/loop.ts` | Main app-managed OpenAI chat loop for the web app |
 | `apps/web/src/server/` | Server-side data functions for budget, balances, and transactions |
 | `apps/web/src/ui/` | React components: tables, charts, hooks |
 | `apps/web/src/proxy.ts` | Auth proxy logic controlled by `AUTH_MODE` |

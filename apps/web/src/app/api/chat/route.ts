@@ -1,5 +1,3 @@
-import OpenAI from "openai";
-
 import { CHAT_MODEL_ID, CHAT_VENDOR } from "@/lib/chatModels";
 import { handleRoute } from "@/server/api/handleRoute";
 import { ApiRouteError } from "@/server/api/errors";
@@ -8,7 +6,6 @@ import {
   hasActiveChatRun,
   startPersistedChatRun,
 } from "@/server/chat/runtime";
-import { recoverInterruptedChatConversation } from "@/server/chat/recovery";
 import {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
@@ -20,7 +17,6 @@ import {
   type ChatSessionRunState,
 } from "@/server/chat/store";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
-import { resetServerManagedContainer } from "@/server/chat/openai/containerState";
 import { log, type ChatErrorStage } from "@/server/logger";
 import {
   CHAT_SERVER_DRAINING_MESSAGE,
@@ -471,13 +467,6 @@ export const POST = async (request: Request): Promise<Response> => {
       body.sessionId,
     );
 
-    await recoverInterruptedChatConversation({
-      userId: context.userId,
-      workspaceId: context.workspaceId,
-      sessionId: snapshot.sessionId,
-      conversationId: snapshot.conversationId,
-    });
-
     const diagnostics = buildChatRequestDiagnostics(
       requestId,
       body.model,
@@ -503,7 +492,6 @@ export const POST = async (request: Request): Promise<Response> => {
       assistantItemId: preparedRun.assistantItem.itemId,
       localMessages: preparedRun.localMessages,
       turnInput: preparedRun.turnInput,
-      conversationId: preparedRun.conversationId,
       diagnostics: {
         requestId,
         userId: context.userId,
@@ -582,16 +570,6 @@ export const DELETE = async (request: Request): Promise<Response> =>
         }
       } catch (error) {
         return mapStoreErrorToRouteError(error);
-      }
-
-      if (targetSessionId !== null && !hasActiveChatRun(targetSessionId)) {
-        await resetServerManagedContainer(
-          new OpenAI(),
-          crypto.randomUUID(),
-          context.userId,
-          context.workspaceId,
-          targetSessionId,
-        );
       }
 
       const newSessionId = await createFreshChatSession(context.userId, context.workspaceId);

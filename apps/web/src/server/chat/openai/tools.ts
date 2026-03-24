@@ -1,23 +1,29 @@
-import { tool, type RunContext } from "@openai/agents";
+import type OpenAI from "openai";
 import { z } from "zod";
 import { TOOL_DESCRIPTION, execQuery } from "@/server/chat/shared";
 
-export type AgentContext = Readonly<{
+export type OpenAIToolContext = Readonly<{
   userId: string;
   workspaceId: string;
 }>;
 
-type ToolInvocationError = Readonly<{
-  name?: unknown;
-  message?: unknown;
-  toolInvocation?: Readonly<{
-    input?: unknown;
+type ToolSuccessPayload = Readonly<Record<string, unknown>>;
+
+type ToolErrorPayload = Readonly<{
+  sql: string | null;
+  error: Readonly<{
+    name: string;
+    message: string;
   }>;
 }>;
 
+const queryDatabaseInputSchema = z.object({
+  sql: z.string(),
+});
+
 const createToolSuccessResult = (
   toolName: string,
-  payload: Readonly<Record<string, unknown>>,
+  payload: ToolSuccessPayload,
 ): string =>
   JSON.stringify({
     ok: true,
@@ -27,7 +33,7 @@ const createToolSuccessResult = (
 
 const createToolErrorResult = (
   toolName: string,
-  payload: Readonly<Record<string, unknown>>,
+  payload: ToolErrorPayload,
 ): string =>
   JSON.stringify({
     ok: false,
@@ -54,66 +60,52 @@ const serializeToolError = (
   };
 };
 
-const isInvalidToolInputError = (
-  error: unknown,
-): error is ToolInvocationError =>
-  typeof error === "object"
-  && error !== null
-  && "name" in error
-  && error.name === "InvalidToolInputError";
-
-const createInvalidToolInputErrorFunction = (
-  toolName: string,
-  getPayload: (error: ToolInvocationError) => Readonly<Record<string, unknown>>,
-): ((runContext: RunContext, error: unknown) => string) =>
-  (_runContext: RunContext, error: unknown): string => {
-    if (isInvalidToolInputError(error)) {
-      return createToolErrorResult(toolName, getPayload(error));
-    }
-
-    return createToolErrorResult(toolName, {
-      error: serializeToolError(error),
-    });
-  };
-
-const createQueryDatabaseInvalidInputPayload = (): Readonly<Record<string, unknown>> => ({
-  sql: null,
-  error: {
-    name: "InvalidToolInput",
-    message: "query_database requires a string sql field",
-  },
-});
-
-export const pgQueryTool = tool({
+export const OPENAI_CHAT_TOOLS: ReadonlyArray<OpenAI.Responses.FunctionTool> = [{
+  type: "function",
   name: "query_database",
   description: TOOL_DESCRIPTION,
-  parameters: z.object({
-    sql: z.string().describe("SQL script to execute. One or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons."),
-  }),
-  errorFunction: createInvalidToolInputErrorFunction(
-    "query_database",
-    createQueryDatabaseInvalidInputPayload,
-  ),
-  execute: async (
-    input: Readonly<{ sql: string }>,
-    runContext?: RunContext<AgentContext>,
-  ): Promise<string> => {
-    if (runContext === undefined) {
-      throw new Error("pgQueryTool: missing run context");
-    }
-
-    try {
-      const { userId, workspaceId } = runContext.context;
-      const result = await execQuery(input.sql, userId, workspaceId);
-      return createToolSuccessResult("query_database", {
-        sql: input.sql,
-        ...JSON.parse(result.json) as Readonly<Record<string, unknown>>,
-      });
-    } catch (error) {
-      return createToolErrorResult("query_database", {
-        sql: input.sql,
-        error: serializeToolError(error),
-      });
-    }
+  strict: true,
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      sql: {
+        type: "string",
+        description: "SQL script to execute. One or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons.",
+      },
+    },
+    required: ["sql"],
   },
-});
+}];
+
+export const executeChatToolCall = async (
+  toolName: string,
+  rawArguments: string,
+  context: OpenAIToolContext,
+): Promise<string> => {
+  if (toolName !== "query_database") {
+    throw new Error(`Unsupported OpenAI tool call: ${toolName}`);
+  }
+
+  try {
+    const parsed = queryDatabaseInputSchema.parse(JSON.parse(rawArguments));
+    const result = await execQuery(parsed.sql, context.userId, context.workspaceId);
+    return createToolSuccessResult("query_database", {
+      sql: parsed.sql,
+      ...JSON.parse(result.json) as Readonly<Record<string, unknown>>,
+    });
+  } catch (error) {
+    const payload: ToolErrorPayload = {
+      sql: (() => {
+        try {
+          const parsed = JSON.parse(rawArguments) as Readonly<{ sql?: unknown }>;
+          return typeof parsed.sql === "string" ? parsed.sql : null;
+        } catch {
+          return null;
+        }
+      })(),
+      error: serializeToolError(error),
+    };
+    return createToolErrorResult("query_database", payload);
+  }
+};

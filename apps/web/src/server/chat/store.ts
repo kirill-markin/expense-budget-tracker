@@ -2,7 +2,6 @@ import { finalizePendingToolCallContent, type StoredMessage } from "@/lib/chatHi
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
 import type { ChatMessage, ContentPart } from "@/server/chat/types";
-import type { RecoveredFunctionCall } from "@/server/chat/openai/recovery";
 
 export type ChatSessionRunState = "idle" | "running" | "interrupted";
 export type ChatItemState = "in_progress" | "completed" | "error" | "cancelled";
@@ -15,7 +14,6 @@ type ChatSessionRow = Readonly<{
   session_id: string;
   status: ChatSessionRunState;
   active_run_heartbeat_at: string | null;
-  openai_conversation_id: string | null;
   main_content_invalidation_version: string;
   updated_at: string;
 }>;
@@ -69,7 +67,6 @@ export type ChatSessionSnapshot = Readonly<{
   runState: ChatSessionRunState;
   updatedAt: number;
   activeRunHeartbeatAt: number | null;
-  conversationId: string | null;
   /**
    * Monotonic session-level version used to invalidate route-backed main
    * content after successful mutating database tool calls.
@@ -87,7 +84,6 @@ export type PreparedChatRun = Readonly<{
   assistantItem: PersistedChatMessageItem;
   localMessages: ReadonlyArray<ChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
-  conversationId: string | null;
 }>;
 
 type InsertChatItemParams = Readonly<{
@@ -126,30 +122,6 @@ type PersistAssistantCancelledParams = Readonly<{
 type CompleteChatRunParams = Readonly<{
   assistantItemId: string;
   assistantContent: ReadonlyArray<ContentPart>;
-  conversationId: string;
-}>;
-
-type PersistChatSessionConversationIdParams = Readonly<{
-  sessionId: string;
-  conversationId: string;
-}>;
-
-type PersistRecoveredChatConversationParams = Readonly<{
-  sessionId: string;
-  recoveredCalls: ReadonlyArray<RecoveredFunctionCall>;
-  recoveryNoteText: string;
-  recoveryToolOutputText: string;
-}>;
-
-type RecoveryAssistantMessageUpdate = Readonly<{
-  itemId: string;
-  state: ChatItemState;
-  content: ReadonlyArray<ContentPart>;
-}>;
-
-type RecoveredChatConversationUpdatePlan = Readonly<{
-  messageUpdates: ReadonlyArray<RecoveryAssistantMessageUpdate>;
-  noteContent: ReadonlyArray<ContentPart> | null;
 }>;
 
 type UserStoppedChatRunUpdatePlan = Readonly<{
@@ -159,7 +131,7 @@ type UserStoppedChatRunUpdatePlan = Readonly<{
 }>;
 
 const SELECT_SESSION_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE user_id = $1
     AND workspace_id = $2
@@ -167,14 +139,14 @@ const SELECT_SESSION_SQL = `
 `;
 
 const SELECT_SESSION_FOR_UPDATE_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE session_id = $1
   FOR UPDATE
 `;
 
 const SELECT_LATEST_SESSION_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE user_id = $1
     AND workspace_id = $2
@@ -188,12 +160,11 @@ const INSERT_SESSION_SQL = `
     workspace_id,
     status,
     active_run_heartbeat_at,
-    openai_conversation_id,
     main_content_invalidation_version,
     updated_at
   )
-  VALUES ($1, $2, 'idle', NULL, NULL, 0, now())
-  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
+  VALUES ($1, $2, 'idle', NULL, 0, now())
+  RETURNING session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
 `;
 
 const LIST_CHAT_ITEMS_SQL = `
@@ -255,25 +226,7 @@ const UPDATE_CHAT_SESSION_STATUS_SQL = `
       active_run_heartbeat_at = $3,
       updated_at = now()
   WHERE session_id = $1
-  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
-`;
-
-const UPDATE_CHAT_SESSION_COMPLETION_SQL = `
-  UPDATE public.chat_sessions
-  SET status = 'idle',
-      active_run_heartbeat_at = NULL,
-      openai_conversation_id = $2,
-      updated_at = now()
-  WHERE session_id = $1
-  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
-`;
-
-const UPDATE_CHAT_SESSION_CONVERSATION_ID_SQL = `
-  UPDATE public.chat_sessions
-  SET openai_conversation_id = $2,
-      updated_at = now()
-  WHERE session_id = $1
-  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, main_content_invalidation_version, updated_at
+  RETURNING session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
 `;
 
 const UPDATE_CHAT_ITEM_AND_INVALIDATE_MAIN_CONTENT_SQL = `
@@ -311,7 +264,6 @@ const mapSessionRow = (row: ChatSessionRow): ChatSessionSnapshot => ({
   activeRunHeartbeatAt: row.active_run_heartbeat_at === null
     ? null
     : new Date(row.active_run_heartbeat_at).getTime(),
-  conversationId: row.openai_conversation_id,
   mainContentInvalidationVersion: parseMainContentInvalidationVersion(
     row.main_content_invalidation_version,
     "read",
@@ -542,8 +494,7 @@ export const listChatMessages = async (
 
 /**
  * Maps persisted chat items into the UI transcript shape stored and returned by the app.
- * This transcript remains the product source of truth for history, audit, and reset flows,
- * independent from the OpenAI-managed runtime conversation state.
+ * This transcript remains the product source of truth for history, audit, and reset flows.
  */
 const mapPersistedMessagesToStoredMessages = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
@@ -557,9 +508,9 @@ const mapPersistedMessagesToStoredMessages = (
   }));
 
 /**
- * Builds the local message history kept by the app for attachment rehydration and local
- * context handling. This history is not replayed to the model for runtime memory; the next
- * model call uses only the current turn plus the stored OpenAI conversation ID.
+ * Builds the local message history kept by the app for context compilation, attachment
+ * rehydration, and debugging. The app-managed OpenAI loop compiles this transcript into
+ * each new model request instead of relying on provider-managed conversation state.
  */
 const buildLocalChatMessages = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
@@ -608,121 +559,12 @@ export const buildUserStoppedChatRunUpdatePlan = (
   };
 };
 
-const createRecoveryTextContentPart = (
-  recoveryId: string,
-  text: string,
-): Extract<ContentPart, { type: "text" }> => ({
-  type: "text",
-  text,
-  streamPosition: {
-    itemId: `recovery-note-${recoveryId}`,
-    outputIndex: 0,
-    contentIndex: 0,
-    sequenceNumber: 0,
-  },
-});
-
-const createRecoveryToolCallContentPart = (
-  recoveryId: string,
-  call: RecoveredFunctionCall,
-  outputIndex: number,
-  output: string,
-): Extract<ContentPart, { type: "tool_call" }> => ({
-  type: "tool_call",
-  id: call.callId,
-  name: call.name,
-  status: "completed",
-  providerStatus: "completed",
-  input: null,
-  output,
-  streamPosition: {
-    itemId: `recovery-tool-${recoveryId}-${call.callId}`,
-    outputIndex,
-    contentIndex: null,
-    sequenceNumber: outputIndex,
-  },
-});
-
-export const buildRecoveredChatConversationUpdatePlan = (
-  messages: ReadonlyArray<PersistedChatMessageItem>,
-  recoveryId: string,
-  recoveredCalls: ReadonlyArray<RecoveredFunctionCall>,
-  recoveryNoteText: string,
-  recoveryToolOutputText: string,
-): RecoveredChatConversationUpdatePlan => {
-  if (recoveredCalls.length === 0) {
-    return {
-      messageUpdates: [],
-      noteContent: null,
-    };
-  }
-
-  const unmatchedCalls = new Map(recoveredCalls.map((call) => [call.callId, call]));
-  const messageUpdates: Array<RecoveryAssistantMessageUpdate> = [];
-
-  for (let index = messages.length - 1; index >= 0 && unmatchedCalls.size > 0; index -= 1) {
-    const message = messages[index];
-    if (message.role !== "assistant") {
-      continue;
-    }
-
-    let changed = false;
-    const updatedContent = message.content.map((part) => {
-      if (part.type !== "tool_call" || part.id === undefined || !unmatchedCalls.has(part.id)) {
-        return part;
-      }
-
-      changed = true;
-      unmatchedCalls.delete(part.id);
-      const updatedPart: Extract<ContentPart, { type: "tool_call" }> = {
-        ...part,
-        status: "completed",
-        providerStatus: "completed",
-        output: recoveryToolOutputText,
-      };
-      return updatedPart;
-    });
-
-    if (!changed) {
-      continue;
-    }
-
-    messageUpdates.push({
-      itemId: message.itemId,
-      state: message.state,
-      content: updatedContent,
-    });
-  }
-
-  const noteContent: Array<ContentPart> = [
-    createRecoveryTextContentPart(recoveryId, recoveryNoteText),
-  ];
-
-  let toolOutputIndex = 1;
-  for (const call of unmatchedCalls.values()) {
-    noteContent.push(
-      createRecoveryToolCallContentPart(
-        recoveryId,
-        call,
-        toolOutputIndex,
-        recoveryToolOutputText,
-      ),
-    );
-    toolOutputIndex += 1;
-  }
-
-  return {
-    messageUpdates,
-    noteContent,
-  };
-};
-
 /**
  * Loads the canonical chat snapshot served by `/api/chat`.
  *
  * The snapshot combines the persisted transcript with session-scoped runtime
- * metadata such as the OpenAI conversation ID, run state, and the main-content
- * invalidation version consumed by clients that reconnect through polling.
+ * metadata such as run state and the main-content invalidation version consumed by
+ * clients that reconnect through polling.
  */
 export const getChatSessionSnapshot = async (
   userId: string,
@@ -746,10 +588,7 @@ export const getChatSessionSnapshot = async (
  * Persists the new user turn locally, creates the placeholder assistant item, and returns the
  * split runtime inputs used by the chat pipeline:
  * - `localMessages` for app-owned history, attachment rehydration, and debugging
- * - `turnInput` for the only user content sent to the model on this turn
- *
- * The OpenAI conversation is continued exclusively through `openai_conversation_id`, which is
- * loaded from the session row and later replaced after a successful completed run.
+ * - `turnInput` for the new user content sent on this turn
  */
 export const prepareChatRun = async (
   userId: string,
@@ -796,7 +635,6 @@ export const prepareChatRun = async (
         persistedMessages.rows.map((row) => mapChatItemRow(row as ChatItemRow)),
       ),
       turnInput: content,
-      conversationId: lockedSession.openai_conversation_id,
     };
   });
 
@@ -846,76 +684,8 @@ export const touchChatSessionHeartbeat = async (
   ]);
 };
 
-export const persistChatSessionConversationId = async (
-  userId: string,
-  workspaceId: string,
-  params: PersistChatSessionConversationIdParams,
-): Promise<void> =>
-  withUserContext(userId, workspaceId, async (queryFn) => {
-    const lockedSessionResult = await queryFn(SELECT_SESSION_FOR_UPDATE_SQL, [params.sessionId]);
-    const lockedSession = requireSessionRow(
-      lockedSessionResult.rows[0] as ChatSessionRow | undefined,
-      "lock",
-    );
-
-    if (lockedSession.openai_conversation_id === params.conversationId) {
-      return;
-    }
-
-    if (lockedSession.openai_conversation_id !== null) {
-      throw new Error(
-        `Chat session conversationId mismatch for session ${params.sessionId}: stored=${lockedSession.openai_conversation_id} new=${params.conversationId}`,
-      );
-    }
-
-    await queryFn(UPDATE_CHAT_SESSION_CONVERSATION_ID_SQL, [
-      params.sessionId,
-      params.conversationId,
-    ]);
-  });
-
-export const persistRecoveredChatConversation = async (
-  userId: string,
-  workspaceId: string,
-  params: PersistRecoveredChatConversationParams,
-): Promise<void> =>
-  withUserContext(userId, workspaceId, async (queryFn) => {
-    const messagesResult = await queryFn(LIST_CHAT_ITEMS_SQL, [params.sessionId]);
-    const persistedMessages = messagesResult.rows.map((row) => mapChatItemRow(row as ChatItemRow));
-    const updatePlan = buildRecoveredChatConversationUpdatePlan(
-      persistedMessages,
-      crypto.randomUUID(),
-      params.recoveredCalls,
-      params.recoveryNoteText,
-      params.recoveryToolOutputText,
-    );
-
-    if (updatePlan.messageUpdates.length === 0 && updatePlan.noteContent === null) {
-      return;
-    }
-
-    for (const update of updatePlan.messageUpdates) {
-      await updateChatItemWithQuery(queryFn, {
-        itemId: update.itemId,
-        content: update.content,
-        state: update.state,
-      });
-    }
-
-    if (updatePlan.noteContent !== null) {
-      await insertChatItemWithQuery(queryFn, {
-        sessionId: params.sessionId,
-        role: "assistant",
-        state: "completed",
-        content: updatePlan.noteContent,
-      });
-    }
-  });
-
 /**
- * Finalizes the assistant message in the local transcript and persists the latest
- * `openai_conversation_id` on the chat session. The transcript remains the canonical product
- * history, while the conversation ID is the only runtime continuation token used with OpenAI.
+ * Finalizes the assistant message in the local transcript and marks the session idle.
  */
 export const completeChatRun = async (
   userId: string,
@@ -929,10 +699,7 @@ export const completeChatRun = async (
       state: "completed",
     });
 
-    await queryFn(UPDATE_CHAT_SESSION_COMPLETION_SQL, [
-      updatedAssistant.sessionId,
-      params.conversationId,
-    ]);
+    await updateChatSessionStatusWithQuery(queryFn, updatedAssistant.sessionId, "idle", null);
   });
 
 export const persistAssistantTerminalError = async (

@@ -16,16 +16,6 @@ export type FunctionToolCallRawItem = Readonly<{
   status?: string;
 }>;
 
-export type HostedToolCallRawItem = Readonly<{
-  type: "hosted_tool_call";
-  id?: string;
-  name: string;
-  arguments?: string;
-  status?: string;
-  output?: string;
-  providerData?: Readonly<Record<string, unknown>>;
-}>;
-
 export type ToolCallOutputRawItem = Readonly<{
   type: string;
   callId?: string;
@@ -70,20 +60,7 @@ type ToolCallUpdate = Readonly<{
   durationMs: number | null;
 }>;
 
-type FinalizedToolCall = Readonly<{
-  event: ToolCallEvent;
-  durationMs: number;
-}>;
-
-type FinalizeToolCallUpdates = Readonly<{
-  toolStates: ToolCallStateMap;
-  finalized: ReadonlyArray<FinalizedToolCall>;
-}>;
-
 const TERMINAL_TOOL_PROVIDER_STATUSES = new Set(["completed", "failed", "incomplete"]);
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const stringifyToolValue = (
   value: unknown,
@@ -130,7 +107,7 @@ const createToolCallEvent = (
 });
 
 export const getRequiredToolCallId = (
-  rawItem: FunctionToolCallRawItem | HostedToolCallRawItem | ToolCallOutputRawItem,
+  rawItem: FunctionToolCallRawItem | ToolCallOutputRawItem,
 ): string => {
   if ("callId" in rawItem && typeof rawItem.callId === "string" && rawItem.callId.length > 0) {
     return rawItem.callId;
@@ -142,7 +119,7 @@ export const getRequiredToolCallId = (
 };
 
 const getRequiredToolItemId = (
-  rawItem: FunctionToolCallRawItem | HostedToolCallRawItem | ToolCallOutputRawItem,
+  rawItem: FunctionToolCallRawItem | ToolCallOutputRawItem,
   previousSnapshot: ToolCallEvent | null,
 ): string => {
   if (typeof rawItem.id === "string" && rawItem.id.length > 0) {
@@ -162,73 +139,6 @@ const getRequiredToolOutputIndex = (
     return previousSnapshot.outputIndex;
   }
   throw new Error(`OpenAI tool call output arrived before a tracked output item existed: ${JSON.stringify(rawItem)}`);
-};
-
-const getHostedToolCallInput = (
-  rawItem: HostedToolCallRawItem,
-): string | null => {
-  if (typeof rawItem.arguments === "string") {
-    return rawItem.arguments;
-  }
-
-  const providerData = rawItem.providerData;
-  if (!isRecord(providerData)) {
-    return null;
-  }
-  if (typeof providerData.code === "string") {
-    return providerData.code;
-  }
-  if ("queries" in providerData) {
-    return stringifyToolValue(providerData.queries);
-  }
-  if ("action" in providerData) {
-    return stringifyToolValue(providerData.action);
-  }
-
-  return null;
-};
-
-const getHostedToolCallOutput = (
-  rawItem: HostedToolCallRawItem,
-): string | null => {
-  if (typeof rawItem.output === "string") {
-    return rawItem.output;
-  }
-
-  const providerData = rawItem.providerData;
-  if (!isRecord(providerData)) {
-    return null;
-  }
-  if ("outputs" in providerData) {
-    return stringifyToolValue(providerData.outputs);
-  }
-  if ("results" in providerData) {
-    return stringifyToolValue(providerData.results);
-  }
-  if ("result" in providerData) {
-    return stringifyToolValue(providerData.result);
-  }
-
-  return null;
-};
-
-export const buildHostedToolCallEvent = (
-  rawItem: HostedToolCallRawItem,
-  position: ToolCallPosition,
-): ToolCallEvent => {
-  const providerStatus = typeof rawItem.status === "string" ? rawItem.status : null;
-  return createToolCallEvent(
-    getRequiredToolCallId(rawItem),
-    position.itemId,
-    rawItem.name,
-    isTerminalToolProviderStatus(providerStatus) ? "completed" : "started",
-    position.outputIndex,
-    position.sequenceNumber,
-    providerStatus,
-    getHostedToolCallInput(rawItem),
-    getHostedToolCallOutput(rawItem),
-    false,
-  );
 };
 
 const buildFunctionToolCallEvent = (
@@ -272,22 +182,6 @@ const buildToolOutputEvent = (
     refreshRoute,
   );
 };
-
-export const finalizeToolCallEvent = (
-  event: ToolCallEvent,
-): ToolCallEvent =>
-  createToolCallEvent(
-    event.id,
-    event.itemId,
-    event.name,
-    "completed",
-    event.outputIndex,
-    event.sequenceNumber,
-    isTerminalToolProviderStatus(event.providerStatus) ? (event.providerStatus ?? null) : "completed",
-    event.input ?? null,
-    event.output ?? INTERRUPTED_TOOL_CALL_OUTPUT,
-    event.refreshRoute === true,
-  );
 
 const areToolCallEventsEqual = (
   left: ToolCallEvent,
@@ -346,30 +240,9 @@ const mergeToolCallSnapshot = (
 
 export const createToolCallStateMap = (): ToolCallStateMap => new Map();
 
-export const getTrackedToolCallPosition = (
-  toolStates: ToolCallStateMap,
-  toolId: string,
-): ToolCallPosition | null => {
-  const state = toolStates.get(toolId);
-  if (state === undefined) {
-    return null;
-  }
-
-  return {
-    itemId: state.snapshot.itemId,
-    outputIndex: state.snapshot.outputIndex,
-    sequenceNumber: state.snapshot.sequenceNumber,
-  };
-};
-
 /**
  * Determines whether a completed tool call should invalidate the route-backed
  * main content shown beside the sidebar chat.
- *
- * The decision is based on the shared SQL policy used to validate the original
- * `query_database` input, not on PostgreSQL command tags. Command tags are
- * insufficient for data-modifying CTEs such as `WITH changed AS (UPDATE ...)
- * SELECT ...`, which mutate data while still reporting `SELECT`.
  */
 export const shouldRefreshRouteAfterToolCall = (
   name: string,
@@ -393,13 +266,11 @@ export const shouldRefreshRouteAfterToolCall = (
 
 export const applyToolCallStarted = (
   toolStates: ToolCallStateMap,
-  rawItem: FunctionToolCallRawItem | HostedToolCallRawItem,
+  rawItem: FunctionToolCallRawItem,
   position: ToolCallPosition,
   nowMs: number,
 ): ToolCallUpdate => {
-  const rawSnapshot = rawItem.type === "hosted_tool_call"
-    ? buildHostedToolCallEvent(rawItem, position)
-    : buildFunctionToolCallEvent(rawItem, position);
+  const rawSnapshot = buildFunctionToolCallEvent(rawItem, position);
   const previousState = toolStates.get(rawSnapshot.id);
   const snapshot = previousState === undefined
     ? rawSnapshot
@@ -528,31 +399,5 @@ export const applyToolCallOutput = (
     started: false,
     completed: isCompleted,
     durationMs: isCompleted ? nowMs - startedAt : null,
-  };
-};
-
-export const finalizePendingToolCalls = (
-  toolStates: ToolCallStateMap,
-  nowMs: number,
-): FinalizeToolCallUpdates => {
-  let nextToolStates: ToolCallStateMap = toolStates;
-  const finalized: Array<FinalizedToolCall> = [];
-
-  for (const state of toolStates.values()) {
-    if (state.snapshot.status === "completed") {
-      continue;
-    }
-
-    const snapshot = finalizeToolCallEvent(state.snapshot);
-    nextToolStates = setToolCallState(nextToolStates, snapshot, state.startedAt);
-    finalized.push({
-      event: snapshot,
-      durationMs: nowMs - state.startedAt,
-    });
-  }
-
-  return {
-    toolStates: nextToolStates,
-    finalized,
   };
 };

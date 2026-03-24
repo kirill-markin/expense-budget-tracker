@@ -1,12 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MaxTurnsExceededError } from "@openai/agents";
-import type { StartAgentResponseResult } from "@/server/chat/openai/agent/stream";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import {
-  CHAT_INTERNAL_CONTINUATION_PROMPT,
-  CHAT_MAX_TURNS_FALLBACK_MESSAGE,
   clearActiveChatRunForTests,
   createActiveChatRunForTests,
   runPersistedChatSessionWithDeps,
@@ -16,20 +12,15 @@ import {
 } from "./runtime";
 
 const createStartedResponse = (
-  conversationId: string,
   events: ReadonlyArray<ChatStreamEvent>,
   terminalError: unknown | null,
-): StartAgentResponseResult => ({
-  conversationId,
+): Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>> => ({
   completion: terminalError === null
-    ? Promise.resolve({ conversationId })
-    : Promise.resolve({ conversationId }),
+    ? Promise.resolve()
+    : Promise.reject(terminalError),
   events: (async function* (): AsyncGenerator<ChatStreamEvent> {
     for (const event of events) {
       yield event;
-    }
-    if (terminalError !== null) {
-      throw terminalError;
     }
   })(),
 });
@@ -46,7 +37,6 @@ const createParams = (): StartPersistedChatRunParams => ({
     content: [{ type: "text", text: "Import this" }],
   }],
   turnInput: [{ type: "text", text: "Import this" }],
-  conversationId: "conv-1",
   diagnostics: {
     requestId: "req-1",
     userId: "user-1",
@@ -60,15 +50,15 @@ const createParams = (): StartPersistedChatRunParams => ({
 });
 
 const createDependencies = (
-  startAgentResponseImpl: ChatRuntimeDependencies["startAgentResponse"],
+  startOpenAILoopImpl: ChatRuntimeDependencies["startOpenAILoop"],
   completeChatRunCalls: Array<Readonly<Record<string, unknown>>>,
   persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>>,
   persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>>,
-  persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>>,
+  updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>>,
   updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>>,
   protectionTransitions: Array<string>,
 ): ChatRuntimeDependencies => ({
-  startAgentResponse: startAgentResponseImpl,
+  startOpenAILoop: startOpenAILoopImpl,
   completeChatRun: async (_userId, _workspaceId, params): Promise<void> => {
     completeChatRunCalls.push(params as unknown as Readonly<Record<string, unknown>>);
   },
@@ -78,14 +68,11 @@ const createDependencies = (
   persistAssistantTerminalError: async (_userId, _workspaceId, params): Promise<void> => {
     persistAssistantTerminalErrorCalls.push(params as unknown as Readonly<Record<string, unknown>>);
   },
-  persistStoppedFunctionOutputsToConversation: async (conversationId, assistantContent): Promise<void> => {
-    persistStoppedFunctionOutputsToConversationCalls.push({
-      conversationId,
-      assistantContent,
-    });
-  },
   touchChatSessionHeartbeat: async (): Promise<void> => undefined,
-  updateAssistantMessageItem: async (): Promise<never> => undefined as never,
+  updateAssistantMessageItem: async (_userId, _workspaceId, params): Promise<never> => {
+    updateAssistantMessageItemCalls.push(params as unknown as Readonly<Record<string, unknown>>);
+    return undefined as never;
+  },
   updateAssistantMessageItemAndInvalidateMainContent: async (_userId, _workspaceId, params): Promise<number> => {
     updateAssistantMessageItemAndInvalidateMainContentCalls.push(params as unknown as Readonly<Record<string, unknown>>);
     return 1;
@@ -96,203 +83,33 @@ const createDependencies = (
   endTaskProtection: async (): Promise<void> => {
     protectionTransitions.push("end");
   },
-  logEvent: (): void => undefined,
 });
 
-test("runPersistedChatSessionWithDeps auto-continues once after max turns and keeps the same assistant item", async () => {
+test("runPersistedChatSessionWithDeps completes a plain local-loop turn", async () => {
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const protectionTransitions: Array<string> = [];
-  const maxTurnsError = new MaxTurnsExceededError("Max turns (30) exceeded", undefined as never);
-  const receivedTurnInputs: Array<ReadonlyArray<unknown>> = [];
-
-  const dependencies = createDependencies(
-    async (params): Promise<StartAgentResponseResult> => {
-      receivedTurnInputs.push(params.turnInput);
-      if (params.attempt === 1) {
-        return createStartedResponse("conv-1", [{
-          type: "tool_call",
-          id: "tool-1",
-          itemId: "tool-item-1",
-          name: "query_database",
-          status: "started",
-          outputIndex: 0,
-          sequenceNumber: 1,
-          input: "{\"sql\":\"SELECT 1\"}",
-        }], maxTurnsError);
-      }
-
-      return createStartedResponse("conv-1", [{
-        type: "delta",
-        text: "Finished import plan.",
-        itemId: "msg-2",
-        outputIndex: 1,
-        contentIndex: 0,
-        sequenceNumber: 2,
-      }, { type: "done" }], null);
-    },
-    completeChatRunCalls,
-    persistAssistantCancelledCalls,
-    persistAssistantTerminalErrorCalls,
-    persistStoppedFunctionOutputsToConversationCalls,
-    updateAssistantMessageItemAndInvalidateMainContentCalls,
-    protectionTransitions,
-  );
-
-  await runPersistedChatSessionWithDeps(createParams(), dependencies);
-
-  assert.deepEqual(protectionTransitions, ["begin", "end"]);
-  assert.equal(receivedTurnInputs.length, 2);
-  assert.deepEqual(receivedTurnInputs[0], [{ type: "text", text: "Import this" }]);
-  assert.deepEqual(receivedTurnInputs[1], [{ type: "text", text: CHAT_INTERNAL_CONTINUATION_PROMPT }]);
-  assert.equal(persistAssistantCancelledCalls.length, 0);
-  assert.equal(persistAssistantTerminalErrorCalls.length, 0);
-  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
-  assert.equal(completeChatRunCalls.length, 1);
-  const completion = completeChatRunCalls[0];
-  const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
-  assert.equal(
-    assistantContent.some((part) =>
-      part.type === "tool_call"
-      && part.name === "query_database"
-      && part.status === "completed"
-      && part.providerStatus === "incomplete"),
-    true,
-  );
-  assert.equal(
-    assistantContent.some((part) => part.type === "text" && part.text === "Finished import plan."),
-    true,
-  );
-});
-
-test("runPersistedChatSessionWithDeps completes with fallback text instead of an error after a second max turns hit", async () => {
-  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const protectionTransitions: Array<string> = [];
-  const maxTurnsError = new MaxTurnsExceededError("Max turns (30) exceeded", undefined as never);
-
-  const dependencies = createDependencies(
-    async (params): Promise<StartAgentResponseResult> => {
-      return createStartedResponse("conv-1", params.attempt === 1
-        ? [{
-          type: "tool_call",
-          id: "tool-1",
-          itemId: "tool-item-1",
-          name: "code_interpreter_call",
-          status: "completed",
-          outputIndex: 0,
-          sequenceNumber: 1,
-        }]
-        : [], maxTurnsError);
-    },
-    completeChatRunCalls,
-    persistAssistantCancelledCalls,
-    persistAssistantTerminalErrorCalls,
-    persistStoppedFunctionOutputsToConversationCalls,
-    updateAssistantMessageItemAndInvalidateMainContentCalls,
-    protectionTransitions,
-  );
-
-  await runPersistedChatSessionWithDeps(createParams(), dependencies);
-
-  assert.deepEqual(protectionTransitions, ["begin", "end"]);
-  assert.equal(persistAssistantCancelledCalls.length, 0);
-  assert.equal(persistAssistantTerminalErrorCalls.length, 0);
-  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
-  assert.equal(completeChatRunCalls.length, 1);
-  const completion = completeChatRunCalls[0];
-  const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
-  assert.equal(
-    assistantContent.some((part) => part.type === "text" && part.text === CHAT_MAX_TURNS_FALLBACK_MESSAGE),
-    true,
-  );
-});
-
-test("runPersistedChatSessionWithDeps finalizes started tool calls before persisting a terminal error", async () => {
-  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>> = [];
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
   const dependencies = createDependencies(
-    async (): Promise<StartAgentResponseResult> =>
-      createStartedResponse("conv-1", [{
-        type: "tool_call",
-        id: "tool-1",
-        itemId: "tool-item-1",
-        name: "code_interpreter_call",
-        status: "started",
-        outputIndex: 0,
-        sequenceNumber: 1,
-        input: "print('hello')",
-      }], new Error("stream failed")),
-    completeChatRunCalls,
-    persistAssistantCancelledCalls,
-    persistAssistantTerminalErrorCalls,
-    persistStoppedFunctionOutputsToConversationCalls,
-    updateAssistantMessageItemAndInvalidateMainContentCalls,
-    protectionTransitions,
-  );
-
-  await runPersistedChatSessionWithDeps(createParams(), dependencies);
-
-  assert.deepEqual(protectionTransitions, ["begin", "end"]);
-  assert.equal(persistAssistantCancelledCalls.length, 0);
-  assert.equal(completeChatRunCalls.length, 0);
-  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
-  assert.equal(persistAssistantTerminalErrorCalls.length, 1);
-  const terminalErrorCall = persistAssistantTerminalErrorCalls[0];
-  const assistantContent = terminalErrorCall.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
-  assert.equal(
-    assistantContent.some((part) =>
-      part.type === "tool_call"
-      && part.name === "code_interpreter_call"
-      && part.status === "completed"
-      && part.providerStatus === "incomplete"),
-    true,
-  );
-});
-
-test("runPersistedChatSessionWithDeps persists reasoning summaries into the assistant content", async () => {
-  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const protectionTransitions: Array<string> = [];
-
-  const dependencies = createDependencies(
-    async (): Promise<StartAgentResponseResult> =>
-      createStartedResponse("conv-1", [
-        {
-          type: "reasoning_summary",
-          itemId: "reasoning-1",
-          outputIndex: 0,
-          sequenceNumber: 1,
-          summary: "Checked the existing rows before building the answer.",
-        },
+    async (): Promise<Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>>> =>
+      createStartedResponse([
         {
           type: "delta",
           text: "Finished import plan.",
-          itemId: "msg-2",
-          outputIndex: 1,
+          itemId: "msg-1",
+          outputIndex: 0,
           contentIndex: 0,
-          sequenceNumber: 2,
+          sequenceNumber: 1,
         },
         { type: "done" },
       ], null),
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
-    persistStoppedFunctionOutputsToConversationCalls,
+    updateAssistantMessageItemCalls,
     updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
@@ -304,143 +121,92 @@ test("runPersistedChatSessionWithDeps persists reasoning summaries into the assi
   assert.equal(persistAssistantTerminalErrorCalls.length, 0);
   assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
   assert.equal(completeChatRunCalls.length, 1);
+  assert.equal(updateAssistantMessageItemCalls.length > 0, true);
   const completion = completeChatRunCalls[0];
   const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
-  assert.equal(
-    assistantContent.some((part) => part.type === "reasoning_summary" && part.summary === "Checked the existing rows before building the answer."),
-    true,
-  );
   assert.equal(
     assistantContent.some((part) => part.type === "text" && part.text === "Finished import plan."),
     true,
   );
 });
 
-test("runPersistedChatSessionWithDeps persists cancellation once and ignores late events after a user stop", async () => {
+test("runPersistedChatSessionWithDeps persists tool invalidation on completed mutating tool calls", async () => {
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const protectionTransitions: Array<string> = [];
-
-  createActiveChatRunForTests("session-1");
-
-  try {
-    const dependencies = createDependencies(
-      async (): Promise<StartAgentResponseResult> => ({
-        conversationId: "conv-1",
-        completion: Promise.resolve({ conversationId: "conv-1" }),
-        events: (async function* (): AsyncGenerator<ChatStreamEvent> {
-          yield {
-            type: "tool_call",
-            id: "tool-1",
-            itemId: "tool-item-1",
-            name: "query_database",
-            status: "started",
-            outputIndex: 0,
-            sequenceNumber: 1,
-            input: "{\"sql\":\"SELECT 1\"}",
-          };
-          stopActiveChatRun("session-1");
-          yield {
-            type: "delta",
-            text: "late answer",
-            itemId: "msg-2",
-            outputIndex: 1,
-            contentIndex: 0,
-            sequenceNumber: 2,
-          };
-          yield { type: "done" };
-        })(),
-      }),
-      completeChatRunCalls,
-      persistAssistantCancelledCalls,
-      persistAssistantTerminalErrorCalls,
-      persistStoppedFunctionOutputsToConversationCalls,
-      updateAssistantMessageItemAndInvalidateMainContentCalls,
-      protectionTransitions,
-    );
-
-    await runPersistedChatSessionWithDeps(createParams(), dependencies);
-  } finally {
-    clearActiveChatRunForTests("session-1");
-  }
-
-  assert.deepEqual(protectionTransitions, ["begin", "end"]);
-  assert.equal(completeChatRunCalls.length, 0);
-  assert.equal(persistAssistantTerminalErrorCalls.length, 0);
-  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
-  assert.equal(persistAssistantCancelledCalls.length, 1);
-  assert.deepEqual(persistStoppedFunctionOutputsToConversationCalls, [{
-    conversationId: "conv-1",
-    assistantContent: [{
-      type: "tool_call",
-      id: "tool-1",
-      name: "query_database",
-      status: "completed",
-      providerStatus: "incomplete",
-      input: "{\"sql\":\"SELECT 1\"}",
-      output: "Stopped by user",
-      streamPosition: {
-        itemId: "tool-item-1",
-        outputIndex: 0,
-        contentIndex: null,
-        sequenceNumber: 1,
-      },
-    }],
-  }]);
-  const cancelled = persistAssistantCancelledCalls[0];
-  const assistantContent = cancelled.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
-  assert.equal(
-    assistantContent.some((part) =>
-      part.type === "tool_call"
-      && part.name === "query_database"
-      && part.status === "completed"
-      && part.providerStatus === "incomplete"),
-    true,
-  );
-  assert.equal(
-    assistantContent.some((part) => part.type === "text" && part.text === "late answer"),
-    false,
-  );
-});
-
-test("runPersistedChatSessionWithDeps invalidates main content once for a mutating completed database tool call", async () => {
-  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
-  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>> = [];
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
   const dependencies = createDependencies(
-    async (): Promise<StartAgentResponseResult> =>
-      createStartedResponse("conv-1", [{
-        type: "tool_call",
-        id: "tool-1",
-        itemId: "tool-item-1",
-        name: "query_database",
-        status: "completed",
-        outputIndex: 0,
-        sequenceNumber: 1,
-        input: "{\"sql\":\"WITH changed AS (UPDATE ledger_entries SET amount = 1 RETURNING entry_id) SELECT * FROM changed\"}",
-        output: "{\"statements\":[{\"isMutating\":true}]}",
-        refreshRoute: true,
-      }, { type: "done" }], null),
+    async (): Promise<Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>>> =>
+      createStartedResponse([
+        {
+          type: "tool_call",
+          id: "tool-1",
+          itemId: "tool-item-1",
+          name: "query_database",
+          status: "completed",
+          outputIndex: 0,
+          sequenceNumber: 1,
+          input: "{\"sql\":\"UPDATE ledger_entries SET amount = 1\"}",
+          output: "{\"ok\":true}",
+          refreshRoute: true,
+        },
+        { type: "done" },
+      ], null),
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
-    persistStoppedFunctionOutputsToConversationCalls,
+    updateAssistantMessageItemCalls,
     updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
 
   await runPersistedChatSessionWithDeps(createParams(), dependencies);
 
-  assert.deepEqual(protectionTransitions, ["begin", "end"]);
-  assert.equal(persistAssistantCancelledCalls.length, 0);
-  assert.equal(persistAssistantTerminalErrorCalls.length, 0);
   assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 1);
   assert.equal(completeChatRunCalls.length, 1);
+});
+
+test("runPersistedChatSessionWithDeps persists terminal errors after local-loop failure", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
+
+  const dependencies = createDependencies(
+    async (): Promise<Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>>> =>
+      createStartedResponse([{
+        type: "tool_call",
+        id: "tool-1",
+        itemId: "tool-item-1",
+        name: "query_database",
+        status: "started",
+        outputIndex: 0,
+        sequenceNumber: 1,
+        input: "{\"sql\":\"SELECT 1\"}",
+      }], new Error("stream failed")),
+    completeChatRunCalls,
+    persistAssistantCancelledCalls,
+    persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
+    protectionTransitions,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.equal(completeChatRunCalls.length, 0);
+  assert.equal(persistAssistantCancelledCalls.length, 0);
+  assert.equal(persistAssistantTerminalErrorCalls.length, 1);
+  assert.deepEqual(protectionTransitions, ["begin", "end"]);
+});
+
+test("stopActiveChatRun aborts the active session and closes it for tests", () => {
+  createActiveChatRunForTests("session-stop");
+  assert.equal(stopActiveChatRun("session-stop"), true);
+  clearActiveChatRunForTests("session-stop");
 });

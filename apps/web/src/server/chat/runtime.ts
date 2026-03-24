@@ -1,4 +1,3 @@
-import { MaxTurnsExceededError } from "@openai/agents";
 import OpenAI from "openai";
 import {
   appendAssistantTextContent,
@@ -6,15 +5,14 @@ import {
   upsertReasoningSummaryContent,
   upsertToolCallContent,
 } from "@/lib/chatHistory";
-import { CHAT_RUN_MAX_TURNS, startAgentResponse } from "@/server/chat/openai/agent";
-import { ensureFunctionCallOutputsPersisted } from "@/server/chat/openai/recovery";
+import { startOpenAILoop } from "@/server/chat/openai/loop";
+import { startChatTurnObservation } from "@/server/chat/openai/langfuse";
 import {
   buildUserStoppedAssistantContent,
   completeChatRun,
   INTERRUPTED_TOOL_CALL_OUTPUT,
   persistAssistantCancelled,
   persistAssistantTerminalError,
-  STOPPED_BY_USER_TOOL_OUTPUT,
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
   updateAssistantMessageItemAndInvalidateMainContent,
@@ -28,16 +26,12 @@ import type {
   ChatStreamEvent,
   ContentPart,
   ReasoningSummaryContentPart,
-  StreamPosition,
   ToolCallContentPart,
 } from "@/server/chat/types";
 import { log, type ChatErrorStage } from "@/server/logger";
 
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
 export const CHAT_RUN_STALE_HEARTBEAT_MS = 30_000;
-export const CHAT_RUN_MAX_AUTO_CONTINUATIONS = 1;
-export const CHAT_MAX_TURNS_FALLBACK_MESSAGE = "I reached the tool-turn safety limit twice while working on this request. I kept the completed progress above. Send \"continue\" and I'll keep going from here.";
-export const CHAT_INTERNAL_CONTINUATION_PROMPT = "Continue the same user request from the current conversation state. You may keep using tools if needed. Avoid repeating completed work. Finish with a user-facing answer as soon as enough information is available.";
 const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
 
 type ChatRunDiagnostics = Readonly<{
@@ -60,7 +54,6 @@ export type StartPersistedChatRunParams = Readonly<{
   assistantItemId: string;
   localMessages: ReadonlyArray<ChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
-  conversationId: string | null;
   diagnostics: ChatRunDiagnostics;
 }>;
 
@@ -78,73 +71,29 @@ type ActiveChatRun = {
 };
 
 export type ChatRuntimeDependencies = Readonly<{
-  startAgentResponse: typeof startAgentResponse;
+  startOpenAILoop: typeof startOpenAILoop;
   completeChatRun: typeof completeChatRun;
   persistAssistantCancelled: typeof persistAssistantCancelled;
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
-  persistStoppedFunctionOutputsToConversation: (
-    conversationId: string | null,
-    assistantContent: ReadonlyArray<ContentPart>,
-  ) => Promise<void>;
   touchChatSessionHeartbeat: typeof touchChatSessionHeartbeat;
   updateAssistantMessageItem: typeof updateAssistantMessageItem;
   updateAssistantMessageItemAndInvalidateMainContent: typeof updateAssistantMessageItemAndInvalidateMainContent;
   beginTaskProtection: () => Promise<void>;
   endTaskProtection: () => Promise<void>;
-  logEvent: typeof log;
 }>;
 
 const activeChatRuns = new Map<string, ActiveChatRun>();
 
-const persistStoppedFunctionOutputsToConversation = async (
-  conversationId: string | null,
-  assistantContent: ReadonlyArray<ContentPart>,
-): Promise<void> => {
-  if (conversationId === null) {
-    return;
-  }
-
-  const stoppedFunctionOutputs = assistantContent
-    .filter((part): part is Extract<ContentPart, { type: "tool_call" }> & { id: string; output: string } =>
-      part.type === "tool_call"
-      && typeof part.id === "string"
-      && part.id.length > 0
-      && part.status === "completed"
-      && part.providerStatus === INCOMPLETE_TOOL_CALL_PROVIDER_STATUS
-      && part.output === STOPPED_BY_USER_TOOL_OUTPUT
-      && !part.name.endsWith("_call"),
-    )
-    .map((part) => ({
-      callId: part.id,
-      name: part.name,
-      output: part.output,
-    }));
-
-  if (stoppedFunctionOutputs.length === 0) {
-    return;
-  }
-
-  await ensureFunctionCallOutputsPersisted(
-    new OpenAI(),
-    conversationId,
-    stoppedFunctionOutputs,
-    async (ms: number): Promise<void> =>
-      await new Promise((resolve) => setTimeout(resolve, ms)),
-  );
-};
-
 const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
-  startAgentResponse,
+  startOpenAILoop,
   completeChatRun,
   persistAssistantCancelled,
   persistAssistantTerminalError,
-  persistStoppedFunctionOutputsToConversation,
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
   updateAssistantMessageItemAndInvalidateMainContent,
   beginTaskProtection: beginChatTaskProtection,
   endTaskProtection: endChatTaskProtection,
-  logEvent: log,
 };
 
 const isUserAbortError = (error: unknown): boolean =>
@@ -345,9 +294,6 @@ const logChatRunError = (
   log(createChatErrorLogEvent(diagnostics, stage, message));
 };
 
-const isMaxTurnsExceededError = (error: unknown): error is MaxTurnsExceededError =>
-  error instanceof MaxTurnsExceededError;
-
 const applyAssistantDelta = (
   content: ReadonlyArray<ContentPart>,
   event: Extract<ChatStreamEvent, { type: "delta" }>,
@@ -361,34 +307,6 @@ const applyAssistantDelta = (
       sequenceNumber: event.sequenceNumber,
     },
   });
-
-const createSyntheticAssistantTextPosition = (
-  content: ReadonlyArray<ContentPart>,
-  attempt: number,
-): StreamPosition => {
-  const orderedParts = content.filter((part): part is (Extract<ContentPart, { type: "text" }> | Extract<ContentPart, { type: "tool_call" }> | Extract<ContentPart, { type: "reasoning_summary" }>) & Readonly<{ streamPosition: StreamPosition }> =>
-    (part.type === "text" || part.type === "tool_call" || part.type === "reasoning_summary") && part.streamPosition !== undefined,
-  );
-  const maxOutputIndex = orderedParts.reduce((currentMax, part) =>
-    Math.max(currentMax, part.streamPosition.outputIndex), -1);
-  const maxSequenceNumber = orderedParts.reduce<number | null>((currentMax, part) => {
-    const sequenceNumber = part.streamPosition.sequenceNumber;
-    if (sequenceNumber === null) {
-      return currentMax;
-    }
-    if (currentMax === null) {
-      return sequenceNumber;
-    }
-    return Math.max(currentMax, sequenceNumber);
-  }, null);
-
-  return {
-    itemId: `internal-max-turns-fallback-${String(attempt)}`,
-    outputIndex: maxOutputIndex + 1,
-    contentIndex: 0,
-    sequenceNumber: maxSequenceNumber === null ? null : maxSequenceNumber + 1,
-  };
-};
 
 const updateAssistantInProgress = async (
   dependencies: ChatRuntimeDependencies,
@@ -489,7 +407,6 @@ export const runPersistedChatSessionWithDeps = async (
 ): Promise<void> => {
   let assistantContent: ReadonlyArray<ContentPart> = [];
   let isFinalized = false;
-  let currentConversationId = params.conversationId;
   const seenInvalidationVersions = new Map<string, number>();
   const heartbeatTimer = setInterval(() => {
     void dependencies.touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId).catch((error) => {
@@ -513,7 +430,6 @@ export const runPersistedChatSessionWithDeps = async (
       assistantItemId: params.assistantItemId,
       assistantContent,
     });
-    await dependencies.persistStoppedFunctionOutputsToConversation(currentConversationId, assistantContent);
     activeRun.cancellationState = "persisted";
     return true;
   };
@@ -522,43 +438,30 @@ export const runPersistedChatSessionWithDeps = async (
     await dependencies.beginTaskProtection();
     await dependencies.touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId);
 
-    let attempt = 1;
-    let continuationBudgetRemaining = CHAT_RUN_MAX_AUTO_CONTINUATIONS;
-    let autoContinuationUsed = false;
-
-    while (true) {
-      dependencies.logEvent({
-        domain: "chat",
-        action: "turn_start",
-        vendor: "openai",
+    await startChatTurnObservation(
+      {
         requestId: params.requestId,
-        sessionId: params.sessionId,
-        attempt,
-        maxTurns: CHAT_RUN_MAX_TURNS,
-        autoContinuationUsed,
-        continuationBudgetRemaining,
-      });
-
-      const started = await dependencies.startAgentResponse({
-        localMessages: params.localMessages,
-        turnInput: attempt === 1
-          ? params.turnInput
-          : [{ type: "text", text: CHAT_INTERNAL_CONTINUATION_PROMPT }],
         userId: params.userId,
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
-        conversationId: currentConversationId,
-        timezone: params.timezone,
-        requestId: params.requestId,
-        maxTurns: CHAT_RUN_MAX_TURNS,
-        attempt,
-        autoContinuationUsed,
-        continuationBudgetRemaining,
-        signal: getActiveChatRun(params.sessionId)?.abortController.signal,
-      });
-      currentConversationId = started.conversationId;
+        model: params.diagnostics.model,
+        turnIndex: params.diagnostics.messageCount,
+        runState: "running",
+        turnInput: params.turnInput,
+      },
+      async (rootObservation): Promise<void> => {
+        const started = await dependencies.startOpenAILoop({
+          requestId: params.requestId,
+          userId: params.userId,
+          workspaceId: params.workspaceId,
+          sessionId: params.sessionId,
+          timezone: params.timezone,
+          localMessages: params.localMessages,
+          turnInput: params.turnInput,
+          rootObservation,
+          signal: getActiveChatRun(params.sessionId)?.abortController.signal,
+        });
 
-      try {
         for await (const event of started.events) {
           if (await persistUserCancellationIfNeeded()) {
             return;
@@ -618,60 +521,12 @@ export const runPersistedChatSessionWithDeps = async (
         }
 
         if (!isFinalized) {
-          const completion = await started.completion;
-          if (await persistUserCancellationIfNeeded()) {
-            return;
-          }
-          currentConversationId = completion.conversationId;
+          await started.completion;
         }
-        break;
-      } catch (error) {
-        if (await persistUserCancellationIfNeeded()) {
-          return;
-        }
-
-        if (isMaxTurnsExceededError(error) && continuationBudgetRemaining > 0) {
-          assistantContent = finalizeAssistantToolCalls(assistantContent);
-          continuationBudgetRemaining -= 1;
-          attempt += 1;
-          autoContinuationUsed = true;
-          continue;
-        }
-
-        if (isMaxTurnsExceededError(error)) {
-          assistantContent = finalizeAssistantToolCalls(assistantContent);
-          const streamPosition = createSyntheticAssistantTextPosition(assistantContent, attempt);
-          assistantContent = appendAssistantTextContent(assistantContent, {
-            text: CHAT_MAX_TURNS_FALLBACK_MESSAGE,
-            streamPosition,
-          });
-          await updateAssistantInProgress(
-            dependencies,
-            params.userId,
-            params.workspaceId,
-            params.assistantItemId,
-            assistantContent,
-          );
-          broadcastChatEvent(params.sessionId, {
-            type: "delta",
-            text: CHAT_MAX_TURNS_FALLBACK_MESSAGE,
-            itemId: streamPosition.itemId,
-            outputIndex: streamPosition.outputIndex,
-            contentIndex: 0,
-            sequenceNumber: streamPosition.sequenceNumber,
-          });
-          broadcastChatEvent(params.sessionId, { type: "done" });
-          break;
-        }
-
-        throw error;
-      }
-    }
+      },
+    );
 
     if (!isFinalized) {
-      if (currentConversationId === null) {
-        throw new Error("OpenAI conversationId missing after completed server-managed chat run");
-      }
       assistantContent = finalizeAssistantToolCalls(assistantContent);
       await dependencies.completeChatRun(
         params.userId,
@@ -679,7 +534,6 @@ export const runPersistedChatSessionWithDeps = async (
         {
           assistantItemId: params.assistantItemId,
           assistantContent,
-          conversationId: currentConversationId,
         },
       );
       isFinalized = true;

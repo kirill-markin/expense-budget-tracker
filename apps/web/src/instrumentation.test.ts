@@ -65,3 +65,18 @@ test("register rejects incomplete cognito configuration in production", () => {
     /COGNITO_USER_POOL_ID must be set when AUTH_MODE=cognito/,
   );
 });
+
+test("register rejects partial Langfuse configuration in production", () => {
+  MUTABLE_ENV.NODE_ENV = "production";
+  process.env.AUTH_MODE = "none";
+  process.env.HOST = "127.0.0.1";
+  process.env.DATABASE_URL = "postgresql://app:app@localhost:5432/tracker";
+  process.env.LANGFUSE_PUBLIC_KEY = "pk-lf-test";
+  delete process.env.LANGFUSE_SECRET_KEY;
+  delete process.env.LANGFUSE_BASE_URL;
+
+  assert.throws(
+    () => register(),
+    /LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_BASE_URL must be configured together/,
+  );
+});
