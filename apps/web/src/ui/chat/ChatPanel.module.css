@@ -231,6 +231,10 @@
 .bottomAnchor {
   block-size: 1px;
   flex-shrink: 0;
+  overflow-anchor: none;
+}
+
+.bottomAnchorActive {
   overflow-anchor: auto;
 }
 

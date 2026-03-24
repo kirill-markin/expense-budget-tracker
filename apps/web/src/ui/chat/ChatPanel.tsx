@@ -836,7 +836,10 @@ export const ChatPanel = (props: Props): ReactElement => {
             </div>
           );
         })}
-        <div aria-hidden="true" className={styles.bottomAnchor} />
+        <div
+          aria-hidden="true"
+          className={cn(styles.bottomAnchor, isStreaming ? styles.bottomAnchorActive : "")}
+        />
       </div>
 
       <div className={styles.inputArea}>
