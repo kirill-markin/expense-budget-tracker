@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import { Platform } from "aws-cdk-lib/aws-ecr-assets";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
@@ -163,6 +164,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       logGroup: webLogGroup,
       streamPrefix: "web",
     }),
+    stopTimeout: cdk.Duration.seconds(120),
     healthCheck: {
       command: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/api/live || exit 1"],
       interval: cdk.Duration.seconds(30),
@@ -171,6 +173,14 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       startPeriod: cdk.Duration.seconds(60),
     },
   });
+
+  webTaskDef.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: [
+      "ecs:GetTaskProtection",
+      "ecs:UpdateTaskProtection",
+    ],
+    resources: ["*"],
+  }));
 
   // Near-zero-downtime rolling update: with the ECS defaults (minHealthyPercent=100%,
   // maxPercent=200%) a new task starts alongside the old one. ALB routes traffic to

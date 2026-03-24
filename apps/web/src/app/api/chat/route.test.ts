@@ -3,8 +3,10 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import { setServerDrainingForTests } from "@/server/shutdownCoordinator";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import {
+  CHAT_STREAM_DRAINING_ERROR,
   CHAT_STREAM_HEARTBEAT_INTERVAL_MS,
   buildChatRequestDiagnostics,
   createChatErrorLogEvent,
@@ -117,6 +119,34 @@ test("POST rejects models other than the pinned OpenAI model", async () => {
 
   assert.equal(response.status, 400);
   assert.equal(await response.text(), `Unsupported model: gpt-4.1. Expected ${CHAT_MODEL_ID}`);
+});
+
+test("POST rejects new chat runs while the server is draining", async () => {
+  setServerDrainingForTests(true);
+
+  try {
+    const request = new Request("https://app.example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-user-id": "user-1",
+        "x-workspace-id": "workspace-1",
+      },
+      body: JSON.stringify({
+        content: [{ type: "text", text: "hello" }],
+        model: CHAT_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(request);
+
+    assert.equal(response.status, 503);
+    assert.equal(await response.text(), CHAT_STREAM_DRAINING_ERROR);
+  } finally {
+    setServerDrainingForTests(false);
+  }
 });
 
 test("buildChatRequestDiagnostics tracks message and attachment metadata", () => {

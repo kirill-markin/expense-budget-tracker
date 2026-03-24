@@ -14,6 +14,10 @@ import {
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
 } from "@/server/chat/store";
+import {
+  beginChatTaskProtection,
+  endChatTaskProtection,
+} from "@/server/chat/taskProtection";
 import type {
   ChatMessage,
   ChatStreamEvent,
@@ -74,6 +78,8 @@ export type ChatRuntimeDependencies = Readonly<{
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
   touchChatSessionHeartbeat: typeof touchChatSessionHeartbeat;
   updateAssistantMessageItem: typeof updateAssistantMessageItem;
+  beginTaskProtection: () => Promise<void>;
+  endTaskProtection: () => Promise<void>;
   logEvent: typeof log;
 }>;
 
@@ -86,6 +92,8 @@ const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
   persistAssistantTerminalError,
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
+  beginTaskProtection: beginChatTaskProtection,
+  endTaskProtection: endChatTaskProtection,
   logEvent: log,
 };
 
@@ -355,6 +363,7 @@ export const runPersistedChatSessionWithDeps = async (
   }, CHAT_RUN_HEARTBEAT_INTERVAL_MS);
 
   try {
+    await dependencies.beginTaskProtection();
     await dependencies.touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId);
 
     let attempt = 1;
@@ -538,6 +547,7 @@ export const runPersistedChatSessionWithDeps = async (
     clearInterval(heartbeatTimer);
     closeSubscribers(params.sessionId);
     activeChatRuns.delete(params.sessionId);
+    await dependencies.endTaskProtection();
   }
 };
 

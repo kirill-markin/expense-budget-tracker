@@ -60,6 +60,7 @@ const createDependencies = (
   startAgentResponseImpl: ChatRuntimeDependencies["startAgentResponse"],
   completeChatRunCalls: Array<Readonly<Record<string, unknown>>>,
   persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>>,
+  protectionTransitions: Array<string>,
 ): ChatRuntimeDependencies => ({
   startAgentResponse: startAgentResponseImpl,
   completeChatRun: async (_userId, _workspaceId, params): Promise<void> => {
@@ -71,12 +72,19 @@ const createDependencies = (
   },
   touchChatSessionHeartbeat: async (): Promise<void> => undefined,
   updateAssistantMessageItem: async (): Promise<never> => undefined as never,
+  beginTaskProtection: async (): Promise<void> => {
+    protectionTransitions.push("begin");
+  },
+  endTaskProtection: async (): Promise<void> => {
+    protectionTransitions.push("end");
+  },
   logEvent: (): void => undefined,
 });
 
 test("runPersistedChatSessionWithDeps auto-continues once after max turns and keeps the same assistant item", async () => {
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
   const maxTurnsError = new MaxTurnsExceededError("Max turns (30) exceeded", undefined as never);
   const receivedTurnInputs: Array<ReadonlyArray<unknown>> = [];
 
@@ -107,10 +115,12 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
     },
     completeChatRunCalls,
     persistAssistantTerminalErrorCalls,
+    protectionTransitions,
   );
 
   await runPersistedChatSessionWithDeps(createParams(), dependencies);
 
+  assert.deepEqual(protectionTransitions, ["begin", "end"]);
   assert.equal(receivedTurnInputs.length, 2);
   assert.deepEqual(receivedTurnInputs[0], [{ type: "text", text: "Import this" }]);
   assert.deepEqual(receivedTurnInputs[1], [{ type: "text", text: CHAT_INTERNAL_CONTINUATION_PROMPT }]);
@@ -135,6 +145,7 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
 test("runPersistedChatSessionWithDeps completes with fallback text instead of an error after a second max turns hit", async () => {
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
   const maxTurnsError = new MaxTurnsExceededError("Max turns (30) exceeded", undefined as never);
 
   const dependencies = createDependencies(
@@ -153,10 +164,12 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
     },
     completeChatRunCalls,
     persistAssistantTerminalErrorCalls,
+    protectionTransitions,
   );
 
   await runPersistedChatSessionWithDeps(createParams(), dependencies);
 
+  assert.deepEqual(protectionTransitions, ["begin", "end"]);
   assert.equal(persistAssistantTerminalErrorCalls.length, 0);
   assert.equal(completeChatRunCalls.length, 1);
   const completion = completeChatRunCalls[0];
@@ -170,6 +183,7 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
 test("runPersistedChatSessionWithDeps finalizes started tool calls before persisting a terminal error", async () => {
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
 
   const dependencies = createDependencies(
     async (): Promise<StartAgentResponseResult> =>
@@ -185,10 +199,12 @@ test("runPersistedChatSessionWithDeps finalizes started tool calls before persis
       }], new Error("stream failed")),
     completeChatRunCalls,
     persistAssistantTerminalErrorCalls,
+    protectionTransitions,
   );
 
   await runPersistedChatSessionWithDeps(createParams(), dependencies);
 
+  assert.deepEqual(protectionTransitions, ["begin", "end"]);
   assert.equal(completeChatRunCalls.length, 0);
   assert.equal(persistAssistantTerminalErrorCalls.length, 1);
   const terminalErrorCall = persistAssistantTerminalErrorCalls[0];
@@ -206,6 +222,7 @@ test("runPersistedChatSessionWithDeps finalizes started tool calls before persis
 test("runPersistedChatSessionWithDeps persists reasoning summaries into the assistant content", async () => {
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
 
   const dependencies = createDependencies(
     async (): Promise<StartAgentResponseResult> =>
@@ -229,10 +246,12 @@ test("runPersistedChatSessionWithDeps persists reasoning summaries into the assi
       ], null),
     completeChatRunCalls,
     persistAssistantTerminalErrorCalls,
+    protectionTransitions,
   );
 
   await runPersistedChatSessionWithDeps(createParams(), dependencies);
 
+  assert.deepEqual(protectionTransitions, ["begin", "end"]);
   assert.equal(persistAssistantTerminalErrorCalls.length, 0);
   assert.equal(completeChatRunCalls.length, 1);
   const completion = completeChatRunCalls[0];

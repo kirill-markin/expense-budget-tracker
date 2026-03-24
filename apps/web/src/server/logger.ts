@@ -2,6 +2,11 @@ type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
 type AttachmentSource = "latest_message" | "history_rehydrate";
+type TaskProtectionAction =
+  | "task_protection_enabled"
+  | "task_protection_enable_failed"
+  | "task_protection_disabled"
+  | "task_protection_disable_failed";
 type ChatAttemptMetadata = Readonly<{
   attempt?: number;
   maxTurns?: number;
@@ -79,6 +84,13 @@ type ChatEvent =
   }>
   | Readonly<{
     domain: "chat";
+    action: TaskProtectionAction;
+    activeProtectedRunCount: number;
+    expiresInMinutes?: number;
+    error?: string;
+  }>
+  | Readonly<{
+    domain: "chat";
     action: "spreadsheet_container_verified";
     vendor: "openai";
     attachmentFileNames: ReadonlyArray<string>;
@@ -147,7 +159,9 @@ type ChatEvent =
   } & ChatAttemptMetadata>;
 
 type ApiEvent =
-  | Readonly<{ domain: "api"; action: "error"; route: string; method: string; error: string }>;
+  | Readonly<{ domain: "api"; action: "error"; route: string; method: string; error: string }>
+  | Readonly<{ domain: "api"; action: "shutdown_draining"; signal: string }>
+  | Readonly<{ domain: "api"; action: "shutdown_chat_request_rejected"; route: string; method: string }>;
 
 type SqlApiEvent =
   | Readonly<{ domain: "sql-api"; action: "query"; durationMs: number; rowCount: number }>

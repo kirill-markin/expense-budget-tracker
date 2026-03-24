@@ -21,6 +21,10 @@ import {
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { resetServerManagedContainer } from "@/server/chat/openai/containerState";
 import { log, type ChatErrorStage } from "@/server/logger";
+import {
+  CHAT_SERVER_DRAINING_MESSAGE,
+  isServerDraining,
+} from "@/server/shutdownCoordinator";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 type ChatRequestBody = Readonly<{
@@ -81,6 +85,7 @@ type ChatEventStreamParams = Readonly<{
 }>;
 
 const CHAT_STREAM_INTERRUPTED_ERROR = "This response stopped because the chat server restarted before it finished. Please send a new message to continue.";
+export const CHAT_STREAM_DRAINING_ERROR = CHAT_SERVER_DRAINING_MESSAGE;
 export const CHAT_STREAM_HEARTBEAT_INTERVAL_MS = 15_000;
 
 export const isExpectedStreamClosureError = (error: unknown): boolean => {
@@ -398,6 +403,16 @@ export const GET = async (request: Request): Promise<Response> =>
   );
 
 export const POST = async (request: Request): Promise<Response> => {
+  if (isServerDraining()) {
+    log({
+      domain: "api",
+      action: "shutdown_chat_request_rejected",
+      route: "/api/chat",
+      method: "POST",
+    });
+    return new Response(CHAT_STREAM_DRAINING_ERROR, { status: 503 });
+  }
+
   let body: ChatRequestBody;
   try {
     body = parseChatRequestBody(await request.json());
