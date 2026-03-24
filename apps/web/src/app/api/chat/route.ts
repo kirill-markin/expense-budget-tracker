@@ -8,6 +8,7 @@ import {
   hasActiveChatRun,
   startPersistedChatRun,
 } from "@/server/chat/runtime";
+import { recoverInterruptedChatConversation } from "@/server/chat/recovery";
 import {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
@@ -450,6 +451,13 @@ export const POST = async (request: Request): Promise<Response> => {
       context.workspaceId,
       body.sessionId,
     );
+
+    await recoverInterruptedChatConversation({
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      sessionId: snapshot.sessionId,
+      conversationId: snapshot.conversationId,
+    });
 
     const diagnostics = buildChatRequestDiagnostics(
       requestId,

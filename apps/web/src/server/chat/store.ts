@@ -60,6 +60,7 @@ export type ChatSessionSnapshot = Readonly<{
   runState: ChatSessionRunState;
   updatedAt: number;
   activeRunHeartbeatAt: number | null;
+  conversationId: string | null;
   messages: ReadonlyArray<StoredMessage>;
 }>;
 
@@ -107,6 +108,24 @@ type CompleteChatRunParams = Readonly<{
 type PersistChatSessionConversationIdParams = Readonly<{
   sessionId: string;
   conversationId: string;
+}>;
+
+type PersistRecoveredChatConversationParams = Readonly<{
+  sessionId: string;
+  recoveredCallIds: ReadonlyArray<string>;
+  recoveryNoteText: string;
+  recoveryToolOutputText: string;
+}>;
+
+type RecoveryAssistantMessageUpdate = Readonly<{
+  itemId: string;
+  state: ChatItemState;
+  content: ReadonlyArray<ContentPart>;
+}>;
+
+type RecoveredChatConversationUpdatePlan = Readonly<{
+  messageUpdates: ReadonlyArray<RecoveryAssistantMessageUpdate>;
+  noteContent: ReadonlyArray<ContentPart> | null;
 }>;
 
 const SELECT_SESSION_SQL = `
@@ -233,6 +252,7 @@ const mapSessionRow = (row: ChatSessionRow): ChatSessionSnapshot => ({
   activeRunHeartbeatAt: row.active_run_heartbeat_at === null
     ? null
     : new Date(row.active_run_heartbeat_at).getTime(),
+  conversationId: row.openai_conversation_id,
   messages: [],
 });
 
@@ -436,6 +456,115 @@ const buildLocalChatMessages = (
     content: message.content,
   }));
 
+const createRecoveryTextContentPart = (
+  recoveryId: string,
+  text: string,
+): Extract<ContentPart, { type: "text" }> => ({
+  type: "text",
+  text,
+  streamPosition: {
+    itemId: `recovery-note-${recoveryId}`,
+    outputIndex: 0,
+    contentIndex: 0,
+    sequenceNumber: 0,
+  },
+});
+
+const createRecoveryToolCallContentPart = (
+  recoveryId: string,
+  callId: string,
+  outputIndex: number,
+  output: string,
+): Extract<ContentPart, { type: "tool_call" }> => ({
+  type: "tool_call",
+  id: callId,
+  name: "query_database",
+  status: "completed",
+  providerStatus: "completed",
+  input: null,
+  output,
+  streamPosition: {
+    itemId: `recovery-tool-${recoveryId}-${callId}`,
+    outputIndex,
+    contentIndex: null,
+    sequenceNumber: outputIndex,
+  },
+});
+
+export const buildRecoveredChatConversationUpdatePlan = (
+  messages: ReadonlyArray<PersistedChatMessageItem>,
+  recoveryId: string,
+  recoveredCallIds: ReadonlyArray<string>,
+  recoveryNoteText: string,
+  recoveryToolOutputText: string,
+): RecoveredChatConversationUpdatePlan => {
+  if (recoveredCallIds.length === 0) {
+    return {
+      messageUpdates: [],
+      noteContent: null,
+    };
+  }
+
+  const unmatchedCallIds = new Set(recoveredCallIds);
+  const messageUpdates: Array<RecoveryAssistantMessageUpdate> = [];
+
+  for (let index = messages.length - 1; index >= 0 && unmatchedCallIds.size > 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") {
+      continue;
+    }
+
+    let changed = false;
+    const updatedContent = message.content.map((part) => {
+      if (part.type !== "tool_call" || part.id === undefined || !unmatchedCallIds.has(part.id)) {
+        return part;
+      }
+
+      changed = true;
+      unmatchedCallIds.delete(part.id);
+      const updatedPart: Extract<ContentPart, { type: "tool_call" }> = {
+        ...part,
+        status: "completed",
+        providerStatus: "completed",
+        output: recoveryToolOutputText,
+      };
+      return updatedPart;
+    });
+
+    if (!changed) {
+      continue;
+    }
+
+    messageUpdates.push({
+      itemId: message.itemId,
+      state: message.state,
+      content: updatedContent,
+    });
+  }
+
+  const noteContent: Array<ContentPart> = [
+    createRecoveryTextContentPart(recoveryId, recoveryNoteText),
+  ];
+
+  let toolOutputIndex = 1;
+  for (const callId of unmatchedCallIds) {
+    noteContent.push(
+      createRecoveryToolCallContentPart(
+        recoveryId,
+        callId,
+        toolOutputIndex,
+        recoveryToolOutputText,
+      ),
+    );
+    toolOutputIndex += 1;
+  }
+
+  return {
+    messageUpdates,
+    noteContent,
+  };
+};
+
 export const getChatSessionSnapshot = async (
   userId: string,
   workspaceId: string,
@@ -566,6 +695,44 @@ export const persistChatSessionConversationId = async (
       params.sessionId,
       params.conversationId,
     ]);
+  });
+
+export const persistRecoveredChatConversation = async (
+  userId: string,
+  workspaceId: string,
+  params: PersistRecoveredChatConversationParams,
+): Promise<void> =>
+  withUserContext(userId, workspaceId, async (queryFn) => {
+    const messagesResult = await queryFn(LIST_CHAT_ITEMS_SQL, [params.sessionId]);
+    const persistedMessages = messagesResult.rows.map((row) => mapChatItemRow(row as ChatItemRow));
+    const updatePlan = buildRecoveredChatConversationUpdatePlan(
+      persistedMessages,
+      crypto.randomUUID(),
+      params.recoveredCallIds,
+      params.recoveryNoteText,
+      params.recoveryToolOutputText,
+    );
+
+    if (updatePlan.messageUpdates.length === 0 && updatePlan.noteContent === null) {
+      return;
+    }
+
+    for (const update of updatePlan.messageUpdates) {
+      await updateChatItemWithQuery(queryFn, {
+        itemId: update.itemId,
+        content: update.content,
+        state: update.state,
+      });
+    }
+
+    if (updatePlan.noteContent !== null) {
+      await insertChatItemWithQuery(queryFn, {
+        sessionId: params.sessionId,
+        role: "assistant",
+        state: "completed",
+        content: updatePlan.noteContent,
+      });
+    }
   });
 
 /**
