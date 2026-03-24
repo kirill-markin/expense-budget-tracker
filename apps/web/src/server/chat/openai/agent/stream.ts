@@ -7,7 +7,7 @@ import { persistChatSessionConversationId } from "@/server/chat/store";
 import type { ChatMessage, ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { resolveServerManagedContainer } from "../containerState";
-import { captureExtractedFileDataTool, pgQueryTool, type AgentContext } from "../tools";
+import { pgQueryTool, type AgentContext } from "../tools";
 import { buildOpenAIModelSettings, buildOpenaiInstructions } from "./config";
 import {
   addFilesToOpenAIContainer,
@@ -198,7 +198,6 @@ const createOpenAIAgent = (
     modelSettings: buildOpenAIModelSettings(forcedToolChoice),
     tools: [
       pgQueryTool,
-      captureExtractedFileDataTool,
       codeInterpreterTool({ container: effectiveContainerId }),
       webSearchTool({ searchContextSize: "medium" }),
     ],

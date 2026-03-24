@@ -61,7 +61,7 @@ test("recoverInterruptedFunctionCallsWithDeps closes pending custom function cal
     {
       listConversationItems: async (): Promise<ReadonlyArray<ConversationItem>> => [
         createFunctionCallItem("call-pending", "query_database"),
-        createFunctionCallItem("call-capture", "capture_extracted_file_data"),
+        createFunctionCallItem("call-pending-2", "query_database"),
         createFunctionCallOutputItem("call-done"),
         createFunctionCallItem("call-done", "query_database"),
       ],
@@ -81,15 +81,15 @@ test("recoverInterruptedFunctionCallsWithDeps closes pending custom function cal
     },
     {
       type: "function_call_output",
-      id: "recovery-fco-call-capture",
-      call_id: "call-capture",
+      id: "recovery-fco-call-pending-2",
+      call_id: "call-pending-2",
       output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
     },
   ]);
   assert.deepEqual(result, {
     recoveredCalls: [
       { callId: "call-pending", name: "query_database" },
-      { callId: "call-capture", name: "capture_extracted_file_data" },
+      { callId: "call-pending-2", name: "query_database" },
     ],
     recoveryNoteText: INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
     recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,

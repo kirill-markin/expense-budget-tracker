@@ -80,7 +80,7 @@ test("TOOL_DESCRIPTION documents multi-statement scripts and statements output",
   assert.match(TOOL_DESCRIPTION, /tiny representative batch/i);
 });
 
-test("buildOpenaiInstructions describes durable CSV and PDF extraction behavior", () => {
+test("buildOpenaiInstructions describes CSV and PDF extraction behavior without a capture tool", () => {
   const instructions = buildOpenaiInstructions("Europe/Madrid", true);
 
   assert.match(instructions, /make important results durable/i);
@@ -89,6 +89,6 @@ test("buildOpenaiInstructions describes durable CSV and PDF extraction behavior"
   assert.match(instructions, /For PDF attachments, prefer the native file context first/i);
   assert.match(instructions, /print a compact text or JSON summary/i);
   assert.match(instructions, /print the complete extracted rows in logs/i);
-  assert.match(instructions, /call capture_extracted_file_data/i);
+  assert.doesNotMatch(instructions, /capture_extracted_file_data/i);
   assert.match(instructions, /return a structured error payload as the tool result instead of throwing/i);
 });

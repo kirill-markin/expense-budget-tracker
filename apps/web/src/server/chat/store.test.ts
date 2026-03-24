@@ -118,7 +118,7 @@ test("buildRecoveredChatConversationUpdatePlan inserts synthetic tool calls when
   const result = buildRecoveredChatConversationUpdatePlan(
     [createUserMessage()],
     "recovery-2",
-    [{ callId: "call-missing", name: "capture_extracted_file_data" }],
+    [{ callId: "call-missing", name: "query_database" }],
     "Recovered the interrupted database step.",
     "database tool output lost",
   );
@@ -138,7 +138,7 @@ test("buildRecoveredChatConversationUpdatePlan inserts synthetic tool calls when
     {
       type: "tool_call",
       id: "call-missing",
-      name: "capture_extracted_file_data",
+      name: "query_database",
       status: "completed",
       providerStatus: "completed",
       input: null,
