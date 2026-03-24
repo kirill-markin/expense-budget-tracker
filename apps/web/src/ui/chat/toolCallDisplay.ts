@@ -9,8 +9,6 @@ export type ToolCallDisplayState = Readonly<{
   output: string | null;
 }>;
 
-const MAX_OUTPUT_DISPLAY_LENGTH = 10_000;
-
 /**
  * Maps a normalized tool name to the localized label shown in the chat UI.
  *
@@ -119,12 +117,6 @@ export const formatToolOutput = (
     }
   } else {
     formattedOutput = formatStructuredToolText(output);
-  }
-  if (formattedOutput === null) {
-    return null;
-  }
-  if (formattedOutput.length > MAX_OUTPUT_DISPLAY_LENGTH) {
-    return formattedOutput.slice(0, MAX_OUTPUT_DISPLAY_LENGTH) + "\n[truncated]";
   }
   return formattedOutput;
 };

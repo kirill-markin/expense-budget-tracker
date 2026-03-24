@@ -31,6 +31,7 @@ import {
 import { getAssistantStreamingIndicator } from "./thinkingSummary";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
+import { buildChatTranscriptMarkdown } from "./chatTranscriptMarkdown";
 import { getToolCallDisplayState } from "./toolCallDisplay";
 import styles from "./ChatPanel.module.css";
 
@@ -53,6 +54,8 @@ type ChatHistoryResponse = Readonly<{
   mainContentInvalidationVersion: number;
   messages: ReadonlyArray<StoredMessage>;
 }>;
+
+type CopyStatus = "idle" | "success" | "error";
 
 const IMAGE_MEDIA_TYPES = new Set([
   "image/png",
@@ -206,11 +209,13 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [runState, setRunState] = useState<"idle" | "running" | "interrupted">("idle");
   const [isLiveStreamConnected, setIsLiveStreamConnected] = useState<boolean>(false);
   const [isStopping, setIsStopping] = useState<boolean>(false);
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const dragCounterRef = useRef<number>(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const copyStatusResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stoppedSessionIdsRef = useRef<Set<string>>(new Set());
   const lastSnapshotUpdatedAtRef = useRef<number | null>(null);
   const lastMainContentInvalidationVersionRef = useRef<number | null>(null);
@@ -459,6 +464,9 @@ export const ChatPanel = (props: Props): ReactElement => {
     return () => {
       if (scrollFrameRef.current !== null) {
         cancelAnimationFrame(scrollFrameRef.current);
+      }
+      if (copyStatusResetRef.current !== null) {
+        clearTimeout(copyStatusResetRef.current);
       }
     };
   }, []);
@@ -841,6 +849,35 @@ export const ChatPanel = (props: Props): ReactElement => {
     }
   }, [clearHistory, currentSessionId, isAssistantRunActive, markAssistantError, t]);
 
+  const handleCopyTranscript = useCallback(async (): Promise<void> => {
+    try {
+      const { markdown } = buildChatTranscriptMarkdown({
+        messages,
+        runState,
+        exportedAt: Date.now(),
+        t: (key, params) => t(key, params),
+      });
+      await navigator.clipboard.writeText(markdown);
+      setCopyStatus("success");
+    } catch {
+      setCopyStatus("error");
+    }
+
+    if (copyStatusResetRef.current !== null) {
+      clearTimeout(copyStatusResetRef.current);
+    }
+    copyStatusResetRef.current = setTimeout(() => {
+      setCopyStatus("idle");
+      copyStatusResetRef.current = null;
+    }, 1500);
+  }, [messages, runState, t]);
+
+  const copyButtonLabel = copyStatus === "success"
+    ? t("chat.copied")
+    : copyStatus === "error"
+      ? t("chat.copyFailed")
+      : t("chat.copyTranscript");
+
   const rootClass = mode === "sidebar" ? styles.sidebar : styles.sidebarFullscreen;
   const sidebarStyle = mode === "sidebar" ? { width: localWidth } : undefined;
 
@@ -863,6 +900,31 @@ export const ChatPanel = (props: Props): ReactElement => {
       <div className={styles.header}>
         <span className={styles.headerTitle}>{t("chat.title")}</span>
         <div className={styles.headerActions}>
+          <button
+            type="button"
+            className={cn(styles.closeButton, styles.copyButton)}
+            onClick={() => void handleCopyTranscript()}
+            disabled={!isHistoryLoaded || messages.length === 0}
+            aria-label={t("chat.copyTranscript")}
+            title={t("chat.copyTranscript")}
+          >
+            <span className={styles.copyButtonContent}>
+              <svg
+                className={styles.copyButtonIcon}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="9" y="9" width="10" height="10" rx="2" />
+                <path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
+              </svg>
+              <span>{copyButtonLabel}</span>
+            </span>
+          </button>
           <button
             type="button"
             className={styles.closeButton}

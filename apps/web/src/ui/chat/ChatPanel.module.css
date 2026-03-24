@@ -73,9 +73,35 @@
   line-height: 1;
 }
 
+.closeButton:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .closeButton:hover {
   color: var(--text);
   border-color: var(--text);
+}
+
+.closeButton:disabled:hover {
+  color: var(--muted);
+  border-color: var(--panel-border);
+}
+
+.copyButton {
+  min-inline-size: 84px;
+}
+
+.copyButtonContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.copyButtonIcon {
+  inline-size: 12px;
+  block-size: 12px;
+  flex-shrink: 0;
 }
 
 .messages {

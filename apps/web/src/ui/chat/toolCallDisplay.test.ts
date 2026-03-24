@@ -99,3 +99,15 @@ test("non-database structured payloads stay pretty-printed for terminal output",
   assert.equal(displayState.input, '{\n  "query": "btc price"\n}');
   assert.equal(displayState.output, '{\n  "items": [\n    1,\n    2\n  ]\n}');
 });
+
+test("completed tool calls keep full terminal output without truncation", () => {
+  const longOutput = "x".repeat(12_000);
+  const displayState = getToolCallDisplayState(createToolCall({
+    status: "completed",
+    providerStatus: "completed",
+    output: JSON.stringify({ output: longOutput }),
+  }), t);
+
+  assert.equal(displayState.output, `{\n  "output": "${longOutput}"\n}`);
+  assert.equal(displayState.output?.includes("[truncated]"), false);
+});

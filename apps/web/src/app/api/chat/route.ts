@@ -69,6 +69,7 @@ export type ChatHistoryResponse = Readonly<{
     content: ReadonlyArray<ContentPart>;
     timestamp: number;
     isError: boolean;
+    isStopped: boolean;
   }>>;
 }>;
 
