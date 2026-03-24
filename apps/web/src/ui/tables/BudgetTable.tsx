@@ -11,7 +11,7 @@ import {
   BudgetDerivedSection,
   BudgetDirectionSection,
   BudgetTableHeader,
-} from "@/ui/tables/BudgetTableSections";
+} from "@/ui/tables/budget-table";
 import {
   type BudgetTableProps,
   useBudgetTableController,
