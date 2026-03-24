@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
@@ -31,7 +33,7 @@ export default async function HomePage() {
         <h1 className="title">{t(locale, "brand.full")}</h1>
         <ul className="link-list">
           {NAV_LINKS.map((link) => (
-            <li key={link.href}><a href={link.href}>{t(locale, link.labelKey)}</a></li>
+            <li key={link.href}><Link href={link.href}>{t(locale, link.labelKey)}</Link></li>
           ))}
         </ul>
       </section>

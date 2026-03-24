@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import Link from "next/link";
 
 import { readChatCookies } from "@/lib/chatCookies";
 import { isDemoMode } from "@/lib/demoMode";
@@ -84,10 +85,10 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                 )}
                 <FilteredBanner />
                 <header className="topbar">
-                  <a href="/" className="topbar-brand">
+                  <Link href="/" className="topbar-brand">
                     <span className="brand-full">{t(locale, "brand.full")}</span>
                     <span className="brand-short">{t(locale, "brand.short")}</span>
-                  </a>
+                  </Link>
                   <div className="topbar-actions">
                     <ModeToggle isDemoMode={demo} />
                     <AccountMenu
@@ -99,7 +100,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                 </header>
                 <nav className="nav">
                   {NAV_LINKS.map((link) => (
-                    <a key={link.href} href={link.href}>{t(locale, link.labelKey)}</a>
+                    <Link key={link.href} href={link.href}>{t(locale, link.labelKey)}</Link>
                   ))}
                   <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
                 </nav>
