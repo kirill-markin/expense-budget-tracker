@@ -57,6 +57,23 @@ const t = (
   return value;
 };
 
+const assertSubstringsInOrder = (
+  content: string,
+  substrings: ReadonlyArray<string>,
+): void => {
+  let lastIndex = -1;
+
+  for (const substring of substrings) {
+    const nextIndex = content.indexOf(substring);
+    assert.notEqual(nextIndex, -1, `Expected substring not found: ${substring}`);
+    assert.ok(
+      nextIndex > lastIndex,
+      `Expected substring "${substring}" to appear after index ${String(lastIndex)}, got ${String(nextIndex)}`,
+    );
+    lastIndex = nextIndex;
+  }
+};
+
 test("formatUtcTimestamp uses a simple UTC format", () => {
   assert.equal(formatUtcTimestamp(Date.UTC(2026, 2, 24, 15, 42, 11)), "2026-03-24 15:42:11");
 });
@@ -168,4 +185,131 @@ test("buildChatTranscriptMarkdown exports messages, tool sections, statuses, and
   assert.match(result.markdown, /Status: Error/);
   assert.match(result.markdown, /Activity: Thinking/);
   assert.doesNotMatch(result.markdown, /Time: .*UTC/);
+});
+
+test("buildChatTranscriptMarkdown preserves top-level message order exactly as provided", () => {
+  const messages: ReadonlyArray<StoredMessage> = [
+    {
+      role: "user",
+      content: [{ type: "text", text: "first user message" }],
+      timestamp: Date.UTC(2026, 2, 24, 15, 40, 0),
+      isError: false,
+      isStopped: false,
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "second assistant message" }],
+      timestamp: Date.UTC(2026, 2, 24, 15, 41, 0),
+      isError: false,
+      isStopped: false,
+    },
+    {
+      role: "user",
+      content: [{ type: "text", text: "third user message" }],
+      timestamp: Date.UTC(2026, 2, 24, 15, 42, 0),
+      isError: false,
+      isStopped: false,
+    },
+  ];
+
+  const result = buildChatTranscriptMarkdown({
+    messages,
+    runState: "idle",
+    exportedAt: Date.UTC(2026, 2, 24, 15, 43, 0),
+    t,
+  });
+
+  assertSubstringsInOrder(result.markdown, [
+    "## Message 1 - User",
+    "first user message",
+    "## Message 2 - Assistant",
+    "second assistant message",
+    "## Message 3 - User",
+    "third user message",
+  ]);
+});
+
+test("buildChatTranscriptMarkdown preserves visible block order inside an assistant message", () => {
+  const messages: ReadonlyArray<StoredMessage> = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_call",
+          id: "tool-1",
+          name: "query_database",
+          status: "completed",
+          providerStatus: "completed",
+          input: "{\"sql\":\"SELECT 1\"}",
+          output: "{\"rows\":[{\"value\":1}]}",
+          streamPosition: {
+            itemId: "tool-1",
+            outputIndex: 0,
+            contentIndex: null,
+            sequenceNumber: 1,
+          },
+        },
+        { type: "file", mediaType: "text/csv", base64Data: "abc", fileName: "report.csv" },
+        { type: "text", text: "Answer after attachment list." },
+        {
+          type: "reasoning_summary",
+          summary: "Looked at the imported rows.",
+          streamPosition: {
+            itemId: "reasoning-1",
+            outputIndex: 1,
+            contentIndex: null,
+            sequenceNumber: 2,
+          },
+        },
+        { type: "text", text: "Final sentence." },
+      ],
+      timestamp: Date.UTC(2026, 2, 24, 15, 44, 0),
+      isError: false,
+      isStopped: false,
+    },
+  ];
+
+  const result = buildChatTranscriptMarkdown({
+    messages,
+    runState: "idle",
+    exportedAt: Date.UTC(2026, 2, 24, 15, 45, 0),
+    t,
+  });
+
+  assertSubstringsInOrder(result.markdown, [
+    "### Database query (Completed)",
+    "### Attachments\n- report.csv",
+    "Answer after attachment list.",
+    "### Thinking summary\n```text\nLooked at the imported rows.\n```",
+    "Final sentence.",
+  ]);
+});
+
+test("buildChatTranscriptMarkdown keeps user attachments immediately before the first text block", () => {
+  const messages: ReadonlyArray<StoredMessage> = [
+    {
+      role: "user",
+      content: [
+        { type: "file", mediaType: "text/csv", base64Data: "abc", fileName: "budget.csv" },
+        { type: "image", mediaType: "image/png", base64Data: "def" },
+        { type: "text", text: "Please compare these imports." },
+      ],
+      timestamp: Date.UTC(2026, 2, 24, 15, 46, 0),
+      isError: false,
+      isStopped: false,
+    },
+  ];
+
+  const result = buildChatTranscriptMarkdown({
+    messages,
+    runState: "idle",
+    exportedAt: Date.UTC(2026, 2, 24, 15, 47, 0),
+    t,
+  });
+
+  assertSubstringsInOrder(result.markdown, [
+    "## Message 1 - User",
+    "### Attachments\n- budget.csv\n- [image]",
+    "Please compare these imports.",
+  ]);
 });

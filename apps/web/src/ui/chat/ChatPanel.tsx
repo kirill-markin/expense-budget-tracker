@@ -32,6 +32,7 @@ import { getAssistantStreamingIndicator } from "./thinkingSummary";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
 import { buildChatTranscriptMarkdown } from "./chatTranscriptMarkdown";
+import { getOrderedMessageBlocks } from "./messageContentOrder";
 import { getToolCallDisplayState } from "./toolCallDisplay";
 import styles from "./ChatPanel.module.css";
 
@@ -115,28 +116,21 @@ const parseSSELine = (line: string): ChatStreamEvent | null => {
 };
 
 const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): ReactElement => {
-  const fileParts = msg.content.filter((p) => p.type === "file" || p.type === "image");
-  const filePrefix = fileParts.length > 0
-    ? `[${fileParts.map((p) => (p.type === "file" ? p.fileName : "[image]")).join(", ")}]\n`
-    : "";
+  const elements: Array<ReactElement> = getOrderedMessageBlocks(msg).map((block, index) => {
+    if (block.type === "attachments") {
+      return <span key={`a-${index}`}>{`[${block.names.join(", ")}]\n`}</span>;
+    }
 
-  const elements: Array<ReactElement> = [];
-  let fileHeaderAdded = false;
+    if (block.type === "text") {
+      return <span key={`t-${index}`}>{block.text}</span>;
+    }
 
-  for (let i = 0; i < msg.content.length; i++) {
-    const part = msg.content[i];
-    if (part.type === "text") {
-      const text = !fileHeaderAdded && filePrefix.length > 0
-        ? filePrefix + part.text
-        : part.text;
-      fileHeaderAdded = true;
-      elements.push(<span key={`t-${i}`}>{text}</span>);
-    } else if (part.type === "tool_call") {
-      const displayState = getToolCallDisplayState(part, t);
-      elements.push(
+    if (block.type === "tool_call") {
+      const displayState = getToolCallDisplayState(block.part, t);
+      return (
         <details
-          key={`tc-${i}`}
-          className={cn(styles.toolCall, part.status === "started" ? styles.toolCallStarted : "")}
+          key={`tc-${index}`}
+          className={cn(styles.toolCall, block.part.status === "started" ? styles.toolCallStarted : "")}
         >
           <summary className={styles.toolCallSummary}>{`${displayState.label} (${displayState.statusLabel})`}</summary>
           {displayState.input !== null && (
@@ -145,24 +139,20 @@ const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): R
           {displayState.output !== null && (
             <pre className={styles.toolCallOutput}>{displayState.output}</pre>
           )}
-        </details>,
-      );
-    } else if (part.type === "reasoning_summary") {
-      elements.push(
-        <details
-          key={`rs-${i}`}
-          className={cn(styles.toolCall, styles.reasoningSummary)}
-        >
-          <summary className={styles.toolCallSummary}>{t("chat.thinkingSummary")}</summary>
-          <pre className={cn(styles.toolCallOutput, styles.reasoningSummaryContent)}>{part.summary}</pre>
-        </details>,
+        </details>
       );
     }
-  }
 
-  if (!fileHeaderAdded && filePrefix.length > 0) {
-    elements.unshift(<span key="fp">{filePrefix}</span>);
-  }
+    return (
+      <details
+        key={`rs-${index}`}
+        className={cn(styles.toolCall, styles.reasoningSummary)}
+      >
+        <summary className={styles.toolCallSummary}>{t("chat.thinkingSummary")}</summary>
+        <pre className={cn(styles.toolCallOutput, styles.reasoningSummaryContent)}>{block.part.summary}</pre>
+      </details>
+    );
+  });
 
   const shouldShowStoppedNotice = msg.isStopped;
 

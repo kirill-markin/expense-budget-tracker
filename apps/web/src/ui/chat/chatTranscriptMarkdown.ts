@@ -1,4 +1,5 @@
 import type { StoredMessage } from "@/lib/chatHistory";
+import { getOrderedMessageBlocks } from "./messageContentOrder";
 import { getAssistantStreamingIndicator } from "./thinkingSummary";
 import { getToolCallDisplayState } from "./toolCallDisplay";
 
@@ -44,24 +45,6 @@ const getMessageAuthorLabel = (
   t: Translate,
 ): string =>
   role === "user" ? t("chat.exportAuthorUser") : t("chat.exportAuthorAssistant");
-
-const getAttachmentNames = (
-  message: StoredMessage,
-): ReadonlyArray<string> =>
-  message.content.flatMap((part) => {
-    if (part.type === "file") {
-      return [part.fileName];
-    }
-    if (part.type === "image") {
-      return ["[image]"];
-    }
-    return [];
-  });
-
-const getTextParts = (
-  message: StoredMessage,
-): ReadonlyArray<string> =>
-  message.content.flatMap((part) => part.type === "text" ? [part.text] : []);
 
 const pushCodeBlock = (
   lines: Array<string>,
@@ -138,24 +121,18 @@ export const buildChatTranscriptMarkdown = (
       pushActivity(lines, message, runState, isLastMessage, t);
     }
 
-    const attachmentNames = getAttachmentNames(message);
-    if (attachmentNames.length > 0) {
-      lines.push(`### ${t("chat.exportAttachments")}`);
-      for (const attachmentName of attachmentNames) {
-        lines.push(`- ${attachmentName}`);
-      }
-      lines.push("");
-    }
-
-    const textParts = getTextParts(message);
-    for (const textPart of textParts) {
-      lines.push(textPart);
-      lines.push("");
-    }
-
-    for (const part of message.content) {
-      if (part.type === "tool_call") {
-        const displayState = getToolCallDisplayState(part, (key) => t(key));
+    for (const block of getOrderedMessageBlocks(message)) {
+      if (block.type === "attachments") {
+        lines.push(`### ${t("chat.exportAttachments")}`);
+        for (const attachmentName of block.names) {
+          lines.push(`- ${attachmentName}`);
+        }
+        lines.push("");
+      } else if (block.type === "text") {
+        lines.push(block.text);
+        lines.push("");
+      } else if (block.type === "tool_call") {
+        const displayState = getToolCallDisplayState(block.part, (key) => t(key));
         lines.push(`### ${displayState.label} (${displayState.statusLabel})`);
         if (displayState.input !== null) {
           lines.push(`#### ${t("chat.exportRequest")}`);
@@ -166,9 +143,9 @@ export const buildChatTranscriptMarkdown = (
           pushCodeBlock(lines, displayState.output);
         }
         lines.push("");
-      } else if (part.type === "reasoning_summary") {
+      } else if (block.type === "reasoning_summary") {
         lines.push(`### ${t("chat.thinkingSummary")}`);
-        pushCodeBlock(lines, part.summary);
+        pushCodeBlock(lines, block.part.summary);
         lines.push("");
       }
     }
