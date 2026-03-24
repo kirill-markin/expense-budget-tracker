@@ -30,6 +30,7 @@ import {
 } from "./streamRecovery";
 import { getAssistantStreamingIndicator } from "./thinkingSummary";
 import { useChatLayout } from "./ChatLayoutProvider";
+import { getNextAutoScrollPinnedState } from "./chatAutoScroll";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
 import { buildChatTranscriptMarkdown } from "./chatTranscriptMarkdown";
 import { getOrderedMessageBlocks } from "./messageContentOrder";
@@ -209,9 +210,11 @@ export const ChatPanel = (props: Props): ReactElement => {
   const stoppedSessionIdsRef = useRef<Set<string>>(new Set());
   const lastSnapshotUpdatedAtRef = useRef<number | null>(null);
   const lastMainContentInvalidationVersionRef = useRef<number | null>(null);
-  const shouldAutoScrollRef = useRef<boolean>(true);
   const scrollFrameRef = useRef<number | null>(null);
   const initialScrollDoneRef = useRef<boolean>(false);
+  const previousScrollTopRef = useRef<number | null>(null);
+  const autoScrollPinnedRef = useRef<boolean>(true);
+  const [isAutoScrollPinned, setIsAutoScrollPinned] = useState<boolean>(true);
   /**
    * The chat UI tracks two separate kinds of activity:
    *
@@ -341,6 +344,10 @@ export const ChatPanel = (props: Props): ReactElement => {
     stoppedSessionIdsRef.current.clear();
     lastSnapshotUpdatedAtRef.current = null;
     lastMainContentInvalidationVersionRef.current = null;
+    previousScrollTopRef.current = null;
+    autoScrollPinnedRef.current = true;
+    initialScrollDoneRef.current = false;
+    setIsAutoScrollPinned(true);
     replaceMessages([]);
 
     void (async (): Promise<void> => {
@@ -426,10 +433,24 @@ export const ChatPanel = (props: Props): ReactElement => {
   useEffect(() => {
     const el = messagesRef.current;
     if (el === null) return;
+
     const onScroll = (): void => {
-      const threshold = 80;
-      const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      shouldAutoScrollRef.current = distanceToBottom <= threshold;
+      const previousScrollTop = previousScrollTopRef.current ?? el.scrollTop;
+      const nextPinnedState = getNextAutoScrollPinnedState({
+        isPinned: autoScrollPinnedRef.current,
+        previousScrollTop,
+        currentScrollTop: el.scrollTop,
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      });
+
+      previousScrollTopRef.current = el.scrollTop;
+      if (nextPinnedState === autoScrollPinnedRef.current) {
+        return;
+      }
+
+      autoScrollPinnedRef.current = nextPinnedState;
+      setIsAutoScrollPinned(nextPinnedState);
     };
 
     onScroll();
@@ -438,7 +459,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   }, []);
 
   useEffect(() => {
-    if (!shouldAutoScrollRef.current) return;
+    if (!isAutoScrollPinned) return;
 
     const behavior: ScrollBehavior = isAssistantRunActive || isLiveStreamConnected || !initialScrollDoneRef.current
       ? "instant"
@@ -448,7 +469,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     if (!initialScrollDoneRef.current && messages.length > 0) {
       initialScrollDoneRef.current = true;
     }
-  }, [isAssistantRunActive, isLiveStreamConnected, messages, scheduleScrollToBottom]);
+  }, [isAssistantRunActive, isAutoScrollPinned, isLiveStreamConnected, messages, scheduleScrollToBottom]);
 
   useEffect(() => {
     return () => {
@@ -986,7 +1007,10 @@ export const ChatPanel = (props: Props): ReactElement => {
         })}
         <div
           aria-hidden="true"
-          className={cn(styles.bottomAnchor, isAssistantRunActive ? styles.bottomAnchorActive : "")}
+          className={cn(
+            styles.bottomAnchor,
+            isAssistantRunActive && isAutoScrollPinned ? styles.bottomAnchorActive : "",
+          )}
         />
       </div>
 
