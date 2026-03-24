@@ -877,6 +877,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     : copyStatus === "error"
       ? t("chat.copyFailed")
       : t("chat.copyTranscript");
+  const transcriptActionsDisabled = !isHistoryLoaded || messages.length === 0;
 
   const rootClass = mode === "sidebar" ? styles.sidebar : styles.sidebarFullscreen;
   const sidebarStyle = mode === "sidebar" ? { width: localWidth } : undefined;
@@ -904,31 +905,29 @@ export const ChatPanel = (props: Props): ReactElement => {
             type="button"
             className={cn(styles.closeButton, styles.copyButton)}
             onClick={() => void handleCopyTranscript()}
-            disabled={!isHistoryLoaded || messages.length === 0}
-            aria-label={t("chat.copyTranscript")}
-            title={t("chat.copyTranscript")}
+            disabled={transcriptActionsDisabled}
+            aria-label={copyButtonLabel}
+            title={copyButtonLabel}
           >
-            <span className={styles.copyButtonContent}>
-              <svg
-                className={styles.copyButtonIcon}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <rect x="9" y="9" width="10" height="10" rx="2" />
-                <path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
-              </svg>
-              <span>{copyButtonLabel}</span>
-            </span>
+            <svg
+              className={styles.copyButtonIcon}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="9" y="9" width="10" height="10" rx="2" />
+              <path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
+            </svg>
           </button>
           <button
             type="button"
             className={styles.closeButton}
             onClick={() => void clearConversation()}
+            disabled={transcriptActionsDisabled}
           >
             {t("chat.clear")}
           </button>

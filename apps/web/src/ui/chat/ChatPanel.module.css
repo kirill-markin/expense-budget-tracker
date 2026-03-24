@@ -51,7 +51,7 @@
 .headerActions {
   display: flex;
   gap: 6px;
-  align-items: stretch;
+  align-items: center;
 }
 
 .headerTitle {
@@ -63,6 +63,9 @@
 }
 
 .closeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: 1px solid var(--panel-border);
   padding: 2px 8px;
@@ -89,16 +92,12 @@
 }
 
 .copyButton {
-  min-inline-size: 84px;
-}
-
-.copyButtonContent {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  min-inline-size: 0;
+  padding-inline: 6px;
 }
 
 .copyButtonIcon {
+  display: block;
   inline-size: 12px;
   block-size: 12px;
   flex-shrink: 0;
