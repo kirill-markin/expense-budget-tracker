@@ -19,6 +19,8 @@ This runs `docker compose -f infra/docker/compose.yml up -d`, which starts:
 3. **web** — Next.js app on `http://localhost:3000`.
 4. **worker** — TypeScript FX rate fetcher on a daily schedule.
 
+If you want Langfuse tracing in local Docker, set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` together in `.env`. Leave all three unset if you do not want telemetry.
+
 ### Stop
 
 ```bash
@@ -53,10 +55,12 @@ export AWS_PROFILE=expense-tracker
 bash scripts/bootstrap.sh --region eu-central-1
 ```
 
-The script runs `cdk bootstrap` (prepares the AWS account), then `cdk deploy` (creates everything), then runs database migrations, then checks `/api/health` through the ALB DNS name to confirm DB readiness, then invokes the FX fetcher Lambda to seed exchange rates. After the first deploy, set AI API keys in Secrets Manager and restart ECS — see step 6.4 in [`infra/aws/README.md`](../infra/aws/README.md#6-post-deploy).
+The script runs `cdk bootstrap` (prepares the AWS account), then `cdk deploy` (creates everything), then runs database migrations, then checks `/api/health` through the ALB DNS name to confirm DB readiness, then invokes the FX fetcher Lambda to seed exchange rates. After the first deploy, set the OpenAI and Langfuse secrets in Secrets Manager and restart ECS — see step 6 in [`infra/aws/README.md`](../infra/aws/README.md#6-post-deploy).
 
 **CI/CD (all subsequent deploys):** `.github/workflows/deploy.yml`
 
 Triggered on every push to `main`. Runs the same `cdk deploy` to update infrastructure and images, then runs migrations when needed, then checks `/api/health` through the ALB DNS name to confirm DB readiness, then invokes the FX fetcher Lambda when worker code changes.
 
 Schema changes in this pipeline must remain backward-compatible for at least one deploy. If a change requires “migrate before new web code serves traffic”, use a separate two-phase rollout instead of the default pipeline.
+
+The chat runtime now keeps all conversation state in Postgres and the app process. OpenAI Conversations, hosted code interpreter containers, and provider-managed recovery are not part of the deployed architecture anymore. Existing environments must run migration `0032_chat_runtime_local_loop.sql` before relying on the new chat stack.

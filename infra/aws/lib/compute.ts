@@ -17,10 +17,13 @@ export interface ComputeProps {
   workerDbSecret: cdk.aws_secretsmanager.Secret;
   sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
+  langfusePublicKeySecret: cdk.aws_secretsmanager.Secret;
+  langfuseSecretKeySecret: cdk.aws_secretsmanager.Secret;
   userPoolId: string;
   userPoolClientId: string;
   appDomain: string;
   authDomain: string;
+  langfuseBaseUrl: string;
 }
 
 export interface ComputeResult {
@@ -151,6 +154,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_HOST: props.db.dbInstanceEndpointAddress,
       DB_NAME: "tracker",
       DB_USER: "app",
+      LANGFUSE_BASE_URL: props.langfuseBaseUrl,
       // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
       // Points to the CA bundle downloaded in apps/web/Dockerfile.
       NODE_EXTRA_CA_CERTS: "/app/rds-global-bundle.pem",
@@ -159,6 +163,8 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
       SESSION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(props.sessionEncryptionKeySecret),
       OPENAI_API_KEY: ecs.Secret.fromSecretsManager(props.openaiApiKeySecret),
+      LANGFUSE_PUBLIC_KEY: ecs.Secret.fromSecretsManager(props.langfusePublicKeySecret),
+      LANGFUSE_SECRET_KEY: ecs.Secret.fromSecretsManager(props.langfuseSecretKeySecret),
     },
     logging: ecs.LogDrivers.awsLogs({
       logGroup: webLogGroup,

@@ -4,6 +4,8 @@ import { Construct } from "constructs";
 export interface SecretsResult {
   sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
+  langfusePublicKeySecret: cdk.aws_secretsmanager.Secret;
+  langfuseSecretKeySecret: cdk.aws_secretsmanager.Secret;
 }
 
 export function secrets(scope: Construct): SecretsResult {
@@ -27,5 +29,20 @@ export function secrets(scope: Construct): SecretsResult {
     generateSecretString: { excludePunctuation: true, passwordLength: 32 },
   });
 
-  return { sessionEncryptionKeySecret, openaiApiKeySecret };
+  const langfusePublicKeySecret = new cdk.aws_secretsmanager.Secret(scope, "LangfusePublicKey", {
+    secretName: "expense-tracker/langfuse-public-key",
+    generateSecretString: { excludePunctuation: true, passwordLength: 32 },
+  });
+
+  const langfuseSecretKeySecret = new cdk.aws_secretsmanager.Secret(scope, "LangfuseSecretKey", {
+    secretName: "expense-tracker/langfuse-secret-key",
+    generateSecretString: { excludePunctuation: true, passwordLength: 32 },
+  });
+
+  return {
+    sessionEncryptionKeySecret,
+    openaiApiKeySecret,
+    langfusePublicKeySecret,
+    langfuseSecretKeySecret,
+  };
 }

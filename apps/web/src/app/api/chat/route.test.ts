@@ -60,7 +60,7 @@ test("extractChatRequestContext rejects requests without a workspace header", ()
   );
 });
 
-test("parseChatRequestBody accepts message payload without client container identifiers", () => {
+test("parseChatRequestBody accepts the local-loop request shape", () => {
   assert.deepEqual(parseChatRequestBody({
     content: [{ type: "text", text: "hello" }],
     model: CHAT_MODEL_ID,
@@ -73,19 +73,26 @@ test("parseChatRequestBody accepts message payload without client container iden
   });
 });
 
-test("parseChatRequestBody ignores legacy client container fields", () => {
-  assert.deepEqual(parseChatRequestBody({
-    content: [{ type: "text", text: "hello" }],
-    model: CHAT_MODEL_ID,
-    timezone: "Europe/Madrid",
-    chatSessionId: "legacy-chat-id",
-    codeInterpreterContainerId: "legacy-container-id",
-  }), {
-    sessionId: undefined,
-    content: [{ type: "text", text: "hello" }],
-    model: CHAT_MODEL_ID,
-    timezone: "Europe/Madrid",
-  });
+test("parseChatRequestBody rejects legacy external-conversation fields", () => {
+  assert.throws(
+    () => parseChatRequestBody({
+      content: [{ type: "text", text: "hello" }],
+      model: CHAT_MODEL_ID,
+      timezone: "Europe/Madrid",
+      chatSessionId: "legacy-chat-id",
+    }),
+    /Unsupported legacy chat field: chatSessionId/,
+  );
+
+  assert.throws(
+    () => parseChatRequestBody({
+      content: [{ type: "text", text: "hello" }],
+      model: CHAT_MODEL_ID,
+      timezone: "Europe/Madrid",
+      codeInterpreterContainerId: "legacy-container-id",
+    }),
+    /Unsupported legacy chat field: codeInterpreterContainerId/,
+  );
 });
 
 test("parseChatRequestBody rejects missing timezone", () => {

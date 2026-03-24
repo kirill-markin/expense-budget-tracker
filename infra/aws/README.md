@@ -57,7 +57,7 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → Mach
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.micro for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
-- **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key
+- **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key, Langfuse public key, Langfuse secret key
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
@@ -265,6 +265,7 @@ Edit `cdk.context.local.json` with your values:
 | `domainName` | Your domain, e.g. `myfinance.com` |
 | `certificateArn` | ACM certificate ARN from step 3d (Cloudflare Origin Cert) |
 | `apiCertificateArn` | ACM certificate ARN from step 3e (public cert for `api.myfinance.com`) |
+| `langfuseBaseUrl` | Langfuse base URL, defaults to `https://cloud.langfuse.com` |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
 
@@ -314,14 +315,24 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
 1. **Confirm SNS email** — check the `alertEmail` inbox for a message from "AWS Notifications" with subject "AWS Notification - Subscription Confirmation". Click the "Confirm subscription" link inside. Without this, CloudWatch alarm notifications will not be delivered
 2. **Visit your domain** — Email OTP login page appears. Open registration: anyone can sign up with email. Each user gets an isolated workspace via RLS — no shared data between users
 3. **Session encryption key** — CDK auto-generates a cryptographically random 32-byte hex key in Secrets Manager (`expense-tracker/session-encryption-key`). It encrypts the OTP session cookie (Cognito session + email + CSRF token) with AES-256-GCM during the login flow. Rotating this key invalidates only in-flight OTP sessions (users mid-login must request a new code). To rotate: `aws secretsmanager put-secret-value --secret-id expense-tracker/session-encryption-key --secret-string "$(openssl rand -hex 32)" --profile expense-tracker`, then restart the auth ECS service
-4. **Set AI API key (first deploy only)** — the AI chat feature uses OpenAI GPT-5.4. CDK creates a placeholder secret in AWS Secrets Manager on the first deploy; replace it with a real key once:
+4. **Set AI and telemetry secrets (first deploy only)** — the AI chat feature uses OpenAI GPT-5.4 and exports traces to Langfuse Cloud. CDK creates placeholder secrets in AWS Secrets Manager on the first deploy; replace them with real values once:
    ```bash
    aws secretsmanager put-secret-value \
      --secret-id expense-tracker/openai-api-key \
      --secret-string 'sk-...' \
      --profile expense-tracker
+
+   aws secretsmanager put-secret-value \
+     --secret-id expense-tracker/langfuse-public-key \
+     --secret-string 'pk-lf-...' \
+     --profile expense-tracker
+
+   aws secretsmanager put-secret-value \
+     --secret-id expense-tracker/langfuse-secret-key \
+     --secret-string 'sk-lf-...' \
+     --profile expense-tracker
    ```
-   Then restart the ECS service to pick up the new values:
+   `langfuseBaseUrl` is injected as a regular ECS environment variable and defaults to `https://cloud.langfuse.com`. Then restart the ECS service to pick up the new values:
    ```bash
    aws ecs update-service \
      --cluster <EcsClusterName from output> \
@@ -330,7 +341,16 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
      --profile expense-tracker
    ```
    This is a one-time step. Subsequent deploys reuse the same secret — CDK does not overwrite values that are already set.
-   If you are applying the OpenAI-only cleanup to an existing stack, run `npx cdk diff` first and confirm how CloudFormation plans to handle the removed Anthropic secret before deploying.
+   If you are upgrading an existing stack to the app-managed chat runtime, make sure the migration ECS task applies `0032_chat_runtime_local_loop.sql`. That migration drops `openai_conversation_id` and `chat_code_interpreter_containers`, and the new runtime does not support OpenAI Conversations or hosted code interpreter containers.
+
+5. **Verify Langfuse traces** — after the ECS restart, send one real chat message in the web UI and confirm that Langfuse shows:
+   - trace name `chat_turn`
+   - session-scoped grouping by the chat `sessionId`
+   - tags `surface:web-chat`, `runtime:local-loop`, and `vendor:openai`
+   - metadata with `requestId`, `workspaceId`, `model`, `turnIndex`, and `runState`
+   - nested observations for the OpenAI generation and any local `query_database` tool call
+
+   The production runtime is fully app-managed now: transcript state lives in Postgres, the tool loop runs in the web process, and recovery uses `/api/chat` snapshots instead of provider-managed conversation state.
 
 ### 7. Configure SES for OTP emails (when needed)
 

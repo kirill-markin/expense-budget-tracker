@@ -54,6 +54,9 @@ services:
       AUTH_DOMAIN: ${AUTH_DOMAIN:-localhost:8081}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

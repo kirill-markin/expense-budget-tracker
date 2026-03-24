@@ -1,7 +1,6 @@
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
-type AttachmentSource = "latest_message" | "history_rehydrate";
 type TaskProtectionAction =
   | "task_protection_enabled"
   | "task_protection_enable_failed"
@@ -14,17 +13,6 @@ type ChatAttemptMetadata = Readonly<{
   continuationBudgetRemaining?: number;
   maxTurnsHit?: boolean;
 }>;
-type ContainerAction =
-  | "code_interpreter_container_created"
-  | "code_interpreter_container_reused"
-  | "code_interpreter_container_recreated"
-  | "code_interpreter_container_not_found"
-  | "code_interpreter_container_retrieve_failed"
-  | "code_interpreter_container_expired"
-  | "code_interpreter_container_deleted"
-  | "code_interpreter_container_delete_failed"
-  | "code_interpreter_container_file_added"
-  | "code_interpreter_container_inventory";
 
 type ChatEvent =
   | Readonly<{
@@ -39,11 +27,6 @@ type ChatEvent =
     attachmentFileNames?: ReadonlyArray<string>;
     attachmentMediaTypes?: ReadonlyArray<string>;
     spreadsheetAttachmentFileNames?: ReadonlyArray<string>;
-    conversationAttachmentCount?: number;
-    conversationAttachmentFileNames?: ReadonlyArray<string>;
-    rehydratedAttachmentCount?: number;
-    effectiveContainerId?: string | null;
-    forcedToolChoice?: string | null;
   } & ChatAttemptMetadata>
   | Readonly<{
     domain: "chat";
@@ -68,69 +51,10 @@ type ChatEvent =
   | Readonly<{ domain: "chat"; action: "tool_call"; vendor: ChatVendor; tool: string; status: ToolStatus; durationMs?: number }>
   | Readonly<{
     domain: "chat";
-    action: ContainerAction;
-    vendor: ChatVendor;
-    requestId: string;
-    codeInterpreterContainerId?: string | null;
-    effectiveContainerId?: string | null;
-    containerName?: string;
-    reason?: string;
-    attachmentFileName?: string;
-    attachmentFileNames?: ReadonlyArray<string>;
-    attachmentSource?: AttachmentSource;
-    providerFileId?: string;
-    containerFilePaths?: ReadonlyArray<string>;
-    responseId?: string;
-  }>
-  | Readonly<{
-    domain: "chat";
     action: TaskProtectionAction;
     activeProtectedRunCount: number;
     expiresInMinutes?: number;
     error?: string;
-  }>
-  | Readonly<{
-    domain: "chat";
-    action: "spreadsheet_container_verified";
-    vendor: "openai";
-    attachmentFileNames: ReadonlyArray<string>;
-    responseId?: string;
-    requestId?: string;
-    containerId: string;
-    containerFilePaths: ReadonlyArray<string>;
-  }>
-  | Readonly<{
-    domain: "chat";
-    action: "spreadsheet_container_missing_code_interpreter";
-    vendor: "openai";
-    attachmentFileNames: ReadonlyArray<string>;
-    responseId?: string;
-    requestId?: string;
-  }>
-  | Readonly<{
-    domain: "chat";
-    action: "spreadsheet_container_verification_failed";
-    vendor: "openai";
-    attachmentFileNames: ReadonlyArray<string>;
-    responseId?: string;
-    requestId?: string;
-    containerId?: string;
-    error: string;
-  }>
-  | Readonly<{
-    domain: "chat";
-    action: "response_summary";
-    vendor: ChatVendor;
-    requestId: string;
-    codeInterpreterContainerId?: string | null;
-    finalOutputItemTypes: ReadonlyArray<string>;
-    hasCodeInterpreterCall?: boolean;
-    codeInterpreterCallCount?: number;
-    codeSnippet?: string | null;
-    outputSummary?: string | null;
-    assistantTextSnippet?: string | null;
-    containerFileCitations?: ReadonlyArray<string>;
-    stopReason?: string;
   }>
   | Readonly<{
     domain: "chat";
@@ -141,14 +65,6 @@ type ChatEvent =
     stopReason: string;
     durationMs: number;
   } & ChatAttemptMetadata>
-  | Readonly<{
-    domain: "chat";
-    action: "function_call_output_repaired";
-    vendor: ChatVendor;
-    requestId: string;
-    sessionId: string;
-    repairedCallIds: ReadonlyArray<string>;
-  }>
   | Readonly<{
     domain: "chat";
     action: "error";
@@ -163,7 +79,6 @@ type ChatEvent =
     messageCount?: number;
     hasAttachments?: boolean;
     attachmentFileNames?: ReadonlyArray<string>;
-    effectiveContainerId?: string | null;
   } & ChatAttemptMetadata>;
 
 type ApiEvent =

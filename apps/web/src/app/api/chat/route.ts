@@ -110,6 +110,11 @@ export const extractChatRequestContext = (request: Request): ChatRequestContext 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const LEGACY_CHAT_REQUEST_FIELDS = [
+  "chatSessionId",
+  "codeInterpreterContainerId",
+] as const;
+
 const isContentPart = (value: unknown): value is ContentPart => {
   if (!isRecord(value) || typeof value.type !== "string") {
     return false;
@@ -371,6 +376,12 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
 export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
   if (!isRecord(body)) {
     throw new Error("Invalid chat request body");
+  }
+
+  for (const fieldName of LEGACY_CHAT_REQUEST_FIELDS) {
+    if (fieldName in body) {
+      throw new Error(`Unsupported legacy chat field: ${fieldName}`);
+    }
   }
 
   const candidate = body as Partial<ChatRequestBody>;

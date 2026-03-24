@@ -25,6 +25,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
     const githubRepo = this.node.tryGetContext("githubRepo") as string;
     const apiCertificateArn = this.node.tryGetContext("apiCertificateArn") as string | undefined;
+    const langfuseBaseUrl = this.node.tryGetContext("langfuseBaseUrl") as string | undefined
+      ?? "https://cloud.langfuse.com";
 
     const appDomain = `app.${baseDomain}`;
     const authDomain = `auth.${baseDomain}`;
@@ -48,10 +50,13 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       workerDbSecret: dbResult.workerDbSecret,
       sessionEncryptionKeySecret: sec.sessionEncryptionKeySecret,
       openaiApiKeySecret: sec.openaiApiKeySecret,
+      langfusePublicKeySecret: sec.langfusePublicKeySecret,
+      langfuseSecretKeySecret: sec.langfuseSecretKeySecret,
       userPoolId: authResult.userPool.userPoolId,
       userPoolClientId: authResult.userPoolClient.userPoolClientId,
       appDomain,
       authDomain,
+      langfuseBaseUrl,
     });
     const ing = ingress(this, {
       vpc: net.vpc,
