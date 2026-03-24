@@ -505,6 +505,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     setIsDragOver(false);
 
     const files = e.dataTransfer.files;
+    let hasAttachedFile = false;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const sizeError = checkFileSize(file);
@@ -514,6 +515,11 @@ export const ChatPanel = (props: Props): ReactElement => {
       }
       const attachment = await prepareAttachment(file);
       handleAttach(attachment);
+      hasAttachedFile = true;
+    }
+
+    if (hasAttachedFile) {
+      textareaRef.current?.focus();
     }
   }, [handleAttach]);
 
