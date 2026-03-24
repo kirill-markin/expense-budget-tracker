@@ -1,4 +1,5 @@
 export { buildOpenAIModelSettings } from "./config";
+export { extractConversationId } from "./conversationState";
 export {
   extractCodeInterpreterContainers,
   summarizeOpenAIResponse,

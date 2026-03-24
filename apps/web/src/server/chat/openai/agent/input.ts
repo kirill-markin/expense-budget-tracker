@@ -1,24 +1,16 @@
+import type { AgentInputItem } from "@openai/agents-core";
 import type {
   ChatMessage,
+  ContentPart,
   FileContentPart,
   ImageContentPart,
   TextContentPart,
 } from "@/server/chat/types";
-import {
-  extractText,
-  summarizeContent,
-} from "@/server/chat/shared";
 
 type UserContentPart =
   | { type: "input_text"; text: string }
   | { type: "input_image"; image: string }
   | { type: "input_file"; file: string; filename: string };
-
-type AssistantContentPart = { type: "output_text"; text: string };
-
-export type InputMessage =
-  | { role: "user"; content: string | ReadonlyArray<UserContentPart> }
-  | { role: "assistant"; content: ReadonlyArray<AssistantContentPart> };
 
 const SPREADSHEET_MEDIA_TYPES = new Set([
   "text/csv",
@@ -121,52 +113,11 @@ const mapUserPart = (part: TextContentPart | ImageContentPart | FileContentPart)
 };
 
 export const buildInput = (
-  messages: ReadonlyArray<ChatMessage>,
-): ReadonlyArray<InputMessage> => {
-  // Only include actual file data for the latest user message;
-  // older attachments are summarized as text since the model already saw them.
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
-      lastUserIdx = i;
-      break;
-    }
-  }
-
-  const result: Array<InputMessage> = [];
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-
-    if (msg.role === "assistant") {
-      result.push({
-        role: "assistant",
-        content: [{ type: "output_text", text: extractText(msg.content) }],
-      });
-      continue;
-    }
-
-    const hasAttachments = msg.content.some((part) => part.type !== "text");
-
-    if (!hasAttachments) {
-      if (msg.content.length === 1 && msg.content[0].type === "text") {
-        result.push({ role: "user", content: msg.content[0].text });
-      } else {
-        result.push({ role: "user", content: extractText(msg.content) });
-      }
-      continue;
-    }
-
-    if (i === lastUserIdx) {
-      result.push({
-        role: "user",
-        content: msg.content
-          .filter((part): part is TextContentPart | ImageContentPart | FileContentPart => part.type !== "tool_call")
-          .map(mapUserPart),
-      });
-    } else {
-      result.push({ role: "user", content: summarizeContent(msg.content) });
-    }
-  }
-
-  return result;
-};
+  content: ReadonlyArray<ContentPart>,
+): ReadonlyArray<AgentInputItem> => [{
+  role: "user",
+  type: "message",
+  content: content
+    .filter((part): part is TextContentPart | ImageContentPart | FileContentPart => part.type !== "tool_call")
+    .map(mapUserPart),
+}];

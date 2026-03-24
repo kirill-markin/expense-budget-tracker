@@ -16,6 +16,7 @@ export const buildOpenAIModelSettings = (
   forcedToolChoice: "code_interpreter" | null,
 ): Readonly<Record<string, unknown>> => ({
   reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
+  store: true,
   providerData: {
     extraBody: {
       include: CODE_INTERPRETER_OUTPUT_INCLUDE,

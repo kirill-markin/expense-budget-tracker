@@ -10,6 +10,7 @@ type ChatSessionRow = Readonly<{
   session_id: string;
   status: ChatSessionRunState;
   active_run_heartbeat_at: string | null;
+  openai_conversation_id: string | null;
   updated_at: string;
 }>;
 
@@ -64,7 +65,9 @@ export type ChatSessionSnapshot = Readonly<{
 export type PreparedChatRun = Readonly<{
   sessionId: string;
   assistantItem: PersistedChatMessageItem;
-  messagesForModel: ReadonlyArray<ChatMessage>;
+  localMessages: ReadonlyArray<ChatMessage>;
+  turnInput: ReadonlyArray<ContentPart>;
+  conversationId: string | null;
 }>;
 
 type InsertChatItemParams = Readonly<{
@@ -94,8 +97,14 @@ type PersistAssistantCancelledParams = Readonly<{
   assistantContent: ReadonlyArray<ContentPart>;
 }>;
 
+type CompleteChatRunParams = Readonly<{
+  assistantItemId: string;
+  assistantContent: ReadonlyArray<ContentPart>;
+  conversationId: string;
+}>;
+
 const SELECT_SESSION_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
   FROM public.chat_sessions
   WHERE user_id = $1
     AND workspace_id = $2
@@ -103,14 +112,14 @@ const SELECT_SESSION_SQL = `
 `;
 
 const SELECT_SESSION_FOR_UPDATE_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
   FROM public.chat_sessions
   WHERE session_id = $1
   FOR UPDATE
 `;
 
 const SELECT_LATEST_SESSION_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, updated_at
+  SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
   FROM public.chat_sessions
   WHERE user_id = $1
     AND workspace_id = $2
@@ -127,7 +136,7 @@ const INSERT_SESSION_SQL = `
     updated_at
   )
   VALUES ($1, $2, 'idle', NULL, now())
-  RETURNING session_id, status, active_run_heartbeat_at, updated_at
+  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
 `;
 
 const LIST_CHAT_ITEMS_SQL = `
@@ -189,7 +198,17 @@ const UPDATE_CHAT_SESSION_STATUS_SQL = `
       active_run_heartbeat_at = $3,
       updated_at = now()
   WHERE session_id = $1
-  RETURNING session_id, status, active_run_heartbeat_at, updated_at
+  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+`;
+
+const UPDATE_CHAT_SESSION_COMPLETION_SQL = `
+  UPDATE public.chat_sessions
+  SET status = 'idle',
+      active_run_heartbeat_at = NULL,
+      openai_conversation_id = $2,
+      updated_at = now()
+  WHERE session_id = $1
+  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
 `;
 
 const mapSessionRow = (row: ChatSessionRow): ChatSessionSnapshot => ({
@@ -449,9 +468,11 @@ export const prepareChatRun = async (
     return {
       sessionId: sessionRow.session_id,
       assistantItem,
-      messagesForModel: buildAgentMessages(
+      localMessages: buildAgentMessages(
         persistedMessages.rows.map((row) => mapChatItemRow(row as ChatItemRow)),
       ),
+      turnInput: content,
+      conversationId: lockedSession.openai_conversation_id,
     };
   });
 
@@ -486,17 +507,19 @@ export const touchChatSessionHeartbeat = async (
 export const completeChatRun = async (
   userId: string,
   workspaceId: string,
-  assistantItemId: string,
-  assistantContent: ReadonlyArray<ContentPart>,
+  params: CompleteChatRunParams,
 ): Promise<void> =>
   withUserContext(userId, workspaceId, async (queryFn) => {
     const updatedAssistant = await updateChatItemWithQuery(queryFn, {
-      itemId: assistantItemId,
-      content: assistantContent,
+      itemId: params.assistantItemId,
+      content: params.assistantContent,
       state: "completed",
     });
 
-    await updateChatSessionStatusWithQuery(queryFn, updatedAssistant.sessionId, "idle", null);
+    await queryFn(UPDATE_CHAT_SESSION_COMPLETION_SQL, [
+      updatedAssistant.sessionId,
+      params.conversationId,
+    ]);
   });
 
 export const persistAssistantTerminalError = async (

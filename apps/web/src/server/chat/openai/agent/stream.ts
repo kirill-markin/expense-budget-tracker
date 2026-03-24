@@ -1,13 +1,14 @@
-import { Agent, run } from "@openai/agents";
-import type { ModelResponse } from "@openai/agents-core";
+import { Agent, Runner } from "@openai/agents";
+import type { AgentInputItem, ModelResponse } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
-import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
+import type { ChatMessage, ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { resolveServerManagedContainer } from "../containerState";
 import { pgQueryTool, type AgentContext } from "../tools";
 import { buildOpenAIModelSettings, buildOpenaiInstructions } from "./config";
+import { extractConversationId } from "./conversationState";
 import {
   addFilesToOpenAIContainer,
   buildOpenAIContainerName,
@@ -22,7 +23,6 @@ import {
   getAllUserFileAttachments,
   getLatestUserFileAttachments,
   getSpreadsheetAttachmentFileNames,
-  type InputMessage,
 } from "./input";
 import {
   createTextStreamState,
@@ -40,10 +40,12 @@ import {
 } from "./toolCalls";
 
 export type StreamAgentParams = Readonly<{
-  messages: ReadonlyArray<ChatMessage>;
+  localMessages: ReadonlyArray<ChatMessage>;
+  turnInput: ReadonlyArray<ContentPart>;
   userId: string;
   workspaceId: string;
   sessionId: string;
+  conversationId: string | null;
   timezone: string;
   requestId: string;
   signal?: AbortSignal;
@@ -94,18 +96,30 @@ export type OpenAIRunStreamEvent =
 export type AgentRunResult = AsyncIterable<OpenAIRunStreamEvent> & Readonly<{
   rawResponses: ReadonlyArray<ModelResponse>;
   finalOutput: unknown;
+  state: Readonly<{
+    toJSON: () => unknown;
+  }>;
+  completed: Promise<void>;
 }>;
 
 type RunAgentParams = Readonly<{
   agent: Agent<AgentContext>;
-  input: ReadonlyArray<InputMessage>;
+  input: ReadonlyArray<AgentInputItem>;
   context: AgentContext;
+  conversationId: string | undefined;
+  groupId: string;
+  traceMetadata: Readonly<Record<string, string>>;
   maxTurns: number;
   signal?: AbortSignal;
 }>;
 
+type CompletedAgentResponse = Readonly<{
+  conversationId: string;
+}>;
+
 type StartAgentResponseResult = Readonly<{
   events: AsyncGenerator<ChatStreamEvent>;
+  completion: Promise<CompletedAgentResponse>;
 }>;
 
 type StartAgentResponseDependencies = Readonly<{
@@ -139,13 +153,20 @@ const createOpenAIAgent = (
 const DEFAULT_START_AGENT_RESPONSE_DEPENDENCIES: StartAgentResponseDependencies = {
   createClient: (): OpenAI => new OpenAI(),
   resolveManagedContainer: resolveServerManagedContainer,
-  runAgent: async (params: RunAgentParams): Promise<AgentRunResult> =>
-    await run(params.agent, params.input as Parameters<typeof run>[1], {
+  runAgent: async (params: RunAgentParams): Promise<AgentRunResult> => {
+    const runner = new Runner({
+      groupId: params.groupId,
+      traceMetadata: { ...params.traceMetadata },
+    });
+
+    return await runner.run(params.agent, [...params.input], {
       stream: true,
       context: params.context,
+      conversationId: params.conversationId,
       maxTurns: params.maxTurns,
       signal: params.signal,
-    }) as AgentRunResult,
+    }) as AgentRunResult;
+  },
   addFilesToOpenAIContainer,
   listOpenAIContainerInventory,
   verifySpreadsheetContainers,
@@ -207,8 +228,8 @@ export const startAgentResponseWithDeps = async (
   dependencies: StartAgentResponseDependencies,
 ): Promise<StartAgentResponseResult> => {
   const client = dependencies.createClient();
-  const latestFileAttachments = getLatestUserFileAttachments(params.messages);
-  const conversationFileAttachments = getAllUserFileAttachments(params.messages);
+  const latestFileAttachments = getLatestUserFileAttachments(params.localMessages);
+  const conversationFileAttachments = getAllUserFileAttachments(params.localMessages);
   const attachmentFileNames = latestFileAttachments.map((part) => part.fileName);
   const conversationAttachmentFileNames = conversationFileAttachments.map((part) => part.fileName);
   const attachmentMediaTypes = latestFileAttachments.map((part) => part.mediaType);
@@ -274,10 +295,8 @@ export const startAgentResponseWithDeps = async (
     userId: params.userId,
     workspaceId: params.workspaceId,
   };
-  const input = buildInput(params.messages);
-  const hasAttachments = params.messages.some((message) =>
-    message.content.some((part) => part.type !== "text"),
-  );
+  const input = buildInput(params.turnInput);
+  const hasAttachments = params.turnInput.some((part) => part.type !== "text");
 
   dependencies.logEvent({
     domain: "chat",
@@ -285,7 +304,7 @@ export const startAgentResponseWithDeps = async (
     vendor: "openai",
     model: CHAT_MODEL_ID,
     requestId: params.requestId,
-    messageCount: params.messages.length,
+    messageCount: 1,
     hasAttachments,
     attachmentCount: latestFileAttachments.length,
     attachmentFileNames,
@@ -303,9 +322,25 @@ export const startAgentResponseWithDeps = async (
     agent,
     input,
     context,
+    conversationId: params.conversationId ?? undefined,
+    groupId: params.sessionId,
+    traceMetadata: {
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    },
     maxTurns: 10,
     signal: params.signal,
   });
+  const completion = (async (): Promise<CompletedAgentResponse> => {
+    await result.completed;
+    const conversationId = extractConversationId(result.state);
+    if (conversationId === null) {
+      throw new Error("OpenAI conversationId missing after completed server-managed chat run");
+    }
+
+    return { conversationId };
+  })();
 
   const events = (async function* (): AsyncGenerator<ChatStreamEvent> {
     let toolCalls = 0;
@@ -488,6 +523,7 @@ export const startAgentResponseWithDeps = async (
         stopReason: "done",
         durationMs: dependencies.now() - requestStart,
       });
+      await completion;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       dependencies.logEvent({
@@ -500,7 +536,7 @@ export const startAgentResponseWithDeps = async (
         userId: params.userId,
         workspaceId: params.workspaceId,
         model: CHAT_MODEL_ID,
-        messageCount: params.messages.length,
+        messageCount: 1,
         hasAttachments,
         attachmentFileNames,
         effectiveContainerId,
@@ -513,6 +549,7 @@ export const startAgentResponseWithDeps = async (
 
   return {
     events,
+    completion,
   };
 };
 

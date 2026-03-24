@@ -25,9 +25,15 @@ const createRunResult = (
   events: ReadonlyArray<OpenAIRunStreamEvent>,
   rawResponses: ReadonlyArray<ModelResponse>,
   finalOutput: unknown,
+  conversationId: string | null,
 ): AgentRunResult => ({
   rawResponses,
   finalOutput,
+  state: {
+    toJSON: (): Readonly<{ conversationId?: string }> =>
+      conversationId === null ? {} : { conversationId },
+  },
+  completed: Promise.resolve(),
   [Symbol.asyncIterator]: async function* () {
     for (const event of events) {
       yield event;
@@ -37,10 +43,12 @@ const createRunResult = (
 
 test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending tools, and yields done", async () => {
   const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
-  const messages: ReadonlyArray<ChatMessage> = [{
+  const localMessages: ReadonlyArray<ChatMessage> = [{
     role: "user",
     content: [{ type: "text", text: "Hi" }],
   }];
+  let receivedConversationId: string | undefined;
+  let receivedInput: unknown;
   const runEvents = [
     {
       type: "raw_model_stream_event",
@@ -83,10 +91,12 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
     requestId: "req-1",
   }] as unknown as ReadonlyArray<ModelResponse>;
   const params: StreamAgentParams = {
-    messages,
+    localMessages,
+    turnInput: [{ type: "text", text: "Hi" }],
     userId: "user-1",
     workspaceId: "workspace-1",
     sessionId: "session-1",
+    conversationId: "conv-existing",
     timezone: "Europe/Madrid",
     requestId: "request-1",
   };
@@ -106,7 +116,11 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
         },
       }) as unknown as OpenAI,
       resolveManagedContainer: async (): Promise<string> => "ctr-1",
-      runAgent: async (): Promise<AgentRunResult> => createRunResult(runEvents, rawResponses, "Hello"),
+      runAgent: async (runParams): Promise<AgentRunResult> => {
+        receivedConversationId = runParams.conversationId;
+        receivedInput = runParams.input;
+        return createRunResult(runEvents, rawResponses, "Hello", "conv-existing");
+      },
       addFilesToOpenAIContainer: async (): Promise<void> => undefined,
       listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
         containerId: "ctr-1",
@@ -157,12 +171,19 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
     event.action === "response"
     && event.stopReason === "done"
   ), true);
+  assert.equal(receivedConversationId, "conv-existing");
+  assert.deepEqual(receivedInput, [{
+    role: "user",
+    type: "message",
+    content: [{ type: "input_text", text: "Hi" }],
+  }]);
+  assert.deepEqual(await started.completion, { conversationId: "conv-existing" });
 });
 
 test("startAgentResponseWithDeps rehydrates missing history attachments into the active container", async () => {
   const addedFiles: Array<string> = [];
   const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
-  const messages: ReadonlyArray<ChatMessage> = [
+  const localMessages: ReadonlyArray<ChatMessage> = [
     {
       role: "user",
       content: [
@@ -194,10 +215,12 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
 
   const started = await startAgentResponseWithDeps(
     {
-      messages,
+      localMessages,
+      turnInput: [{ type: "text", text: "continue" }],
       userId: "user-1",
       workspaceId: "workspace-1",
       sessionId: "session-1",
+      conversationId: null,
       timezone: "Europe/Madrid",
       requestId: "request-2",
     },
@@ -211,7 +234,7 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
         },
       }) as unknown as OpenAI,
       resolveManagedContainer: async (): Promise<string> => "ctr-2",
-      runAgent: async (): Promise<AgentRunResult> => createRunResult([], rawResponses, "Done"),
+      runAgent: async (): Promise<AgentRunResult> => createRunResult([], rawResponses, "Done", "conv-new"),
       addFilesToOpenAIContainer: async (_client, _containerId, attachments): Promise<void> => {
         for (const attachment of attachments) {
           addedFiles.push(attachment.fileName);
@@ -236,4 +259,58 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
     && event.attachmentFileName === "statement.csv"
     && event.attachmentSource === "history_rehydrate"
   ), true);
+  assert.deepEqual(await started.completion, { conversationId: "conv-new" });
+});
+
+test("startAgentResponseWithDeps fails successful runs that do not return a conversationId", async () => {
+  const started = await startAgentResponseWithDeps(
+    {
+      localMessages: [{
+        role: "user",
+        content: [{ type: "text", text: "Hi" }],
+      }],
+      turnInput: [{ type: "text", text: "Hi" }],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      conversationId: null,
+      timezone: "Europe/Madrid",
+      requestId: "request-3",
+    },
+    {
+      createClient: (): OpenAI => ({
+        containers: {
+          files: {
+            create: async (): Promise<unknown> => undefined,
+            list: async (): Promise<{ data: ReadonlyArray<Readonly<{ path: string }>> }> => ({ data: [] }),
+          },
+        },
+      }) as unknown as OpenAI,
+      resolveManagedContainer: async (): Promise<string> => "ctr-3",
+      runAgent: async (): Promise<AgentRunResult> =>
+        createRunResult([], [{
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2, inputTokensDetails: {}, outputTokensDetails: {} },
+          output: [],
+          responseId: "resp-2",
+          requestId: "req-2",
+        }] as unknown as ReadonlyArray<ModelResponse>, "Done", null),
+      addFilesToOpenAIContainer: async (): Promise<void> => undefined,
+      listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
+        containerId: "ctr-3",
+        filePaths: [],
+      }),
+      verifySpreadsheetContainers: async (): Promise<ReadonlyArray<never>> => [],
+      logEvent: (): void => undefined,
+      now: (): number => 100,
+    },
+  );
+
+  await assert.rejects(
+    async () => await collectEvents(started.events),
+    /conversationId missing/,
+  );
+  await assert.rejects(
+    async () => await started.completion,
+    /conversationId missing/,
+  );
 });

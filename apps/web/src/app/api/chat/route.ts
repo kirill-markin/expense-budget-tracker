@@ -459,7 +459,9 @@ export const POST = async (request: Request): Promise<Response> => {
       sessionId: preparedRun.sessionId,
       timezone: body.timezone,
       assistantItemId: preparedRun.assistantItem.itemId,
-      messages: preparedRun.messagesForModel,
+      localMessages: preparedRun.localMessages,
+      turnInput: preparedRun.turnInput,
+      conversationId: preparedRun.conversationId,
       diagnostics: {
         requestId,
         userId: context.userId,

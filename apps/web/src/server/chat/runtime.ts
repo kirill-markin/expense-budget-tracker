@@ -35,10 +35,12 @@ type StartPersistedChatRunParams = Readonly<{
   sessionId: string;
   timezone: string;
   assistantItemId: string;
-  messages: ReadonlyArray<Readonly<{
+  localMessages: ReadonlyArray<Readonly<{
     role: "user" | "assistant";
     content: ReadonlyArray<ContentPart>;
   }>>;
+  turnInput: ReadonlyArray<ContentPart>;
+  conversationId: string | null;
   diagnostics: ChatRunDiagnostics;
 }>;
 
@@ -240,10 +242,12 @@ const runPersistedChatSession = async (
     await touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId);
 
     const started = await startAgentResponse({
-      messages: params.messages,
+      localMessages: params.localMessages,
+      turnInput: params.turnInput,
       userId: params.userId,
       workspaceId: params.workspaceId,
       sessionId: params.sessionId,
+      conversationId: params.conversationId,
       timezone: params.timezone,
       requestId: params.requestId,
       signal: getActiveChatRun(params.sessionId)?.abortController.signal,
@@ -264,14 +268,6 @@ const runPersistedChatSession = async (
           content: assistantContent,
           state: "in_progress",
         });
-      } else if (event.type === "done") {
-        await completeChatRun(
-          params.userId,
-          params.workspaceId,
-          params.assistantItemId,
-          assistantContent,
-        );
-        isFinalized = true;
       } else if (event.type === "error") {
         await persistAssistantTerminalError(params.userId, params.workspaceId, {
           sessionId: params.sessionId,
@@ -287,13 +283,17 @@ const runPersistedChatSession = async (
     }
 
     if (!isFinalized) {
+      const completion = await started.completion;
       await completeChatRun(
         params.userId,
         params.workspaceId,
-        params.assistantItemId,
-        assistantContent,
+        {
+          assistantItemId: params.assistantItemId,
+          assistantContent,
+          conversationId: completion.conversationId,
+        },
       );
-      broadcastChatEvent(params.sessionId, { type: "done" });
+      isFinalized = true;
     }
   } catch (error) {
     const activeRun = getActiveChatRun(params.sessionId);
