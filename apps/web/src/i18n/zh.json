@@ -186,7 +186,7 @@
   "chat.toolStatusCompleted": "已完成",
   "chat.toolStatusFailed": "失败",
   "chat.toolStatusIncomplete": "未完成",
-  "chat.thinking": "思考中…",
+  "chat.thinking": "思考中",
   "chat.thinkingSummary": "思考摘要",
   "chat.errorNoResponse": "响应流不可用",
   "chat.errorEmptyResponse": "AI 模型返回空响应 — 请重试",

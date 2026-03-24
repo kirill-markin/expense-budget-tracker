@@ -23,7 +23,7 @@ import {
   shouldReplaceHistoryFromSnapshot,
   shouldSuppressStreamFailure,
 } from "./streamRecovery";
-import { shouldShowThinkingIndicator } from "./thinkingSummary";
+import { getAssistantStreamingIndicator } from "./thinkingSummary";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
 import styles from "./ChatPanel.module.css";
@@ -876,6 +876,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         {messages.map((msg, i) => {
           const isLastAssistant =
             isStreaming && msg.role === "assistant" && i === messages.length - 1;
+          const streamingIndicator = getAssistantStreamingIndicator(msg, isStreaming, isLastAssistant);
           return (
             <div
               key={`${msg.timestamp}-${i}`}
@@ -886,9 +887,15 @@ export const ChatPanel = (props: Props): ReactElement => {
               )}
             >
               {renderMessageContent(msg, t)}
-              {shouldShowThinkingIndicator(msg, isStreaming, isLastAssistant) && (
+              {streamingIndicator === "thinking" && (
                 <span className={styles.thinkingIndicator}>
-                  {t("chat.thinking")}
+                  <span>{t("chat.thinking")}</span>
+                  <span aria-hidden="true" className={styles.dots} />
+                </span>
+              )}
+              {streamingIndicator === "streaming" && (
+                <span className={styles.streamingIndicator}>
+                  <span aria-hidden="true" className={styles.dots} />
                 </span>
               )}
             </div>

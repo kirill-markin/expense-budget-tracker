@@ -186,7 +186,7 @@
   "chat.toolStatusCompleted": "Завершено",
   "chat.toolStatusFailed": "Помилка",
   "chat.toolStatusIncomplete": "Не завершено",
-  "chat.thinking": "Думає…",
+  "chat.thinking": "Думає",
   "chat.thinkingSummary": "Підсумок міркувань",
   "chat.errorNoResponse": "Потік відповіді недоступний",
   "chat.errorEmptyResponse": "Порожня відповідь від AI моделі — спробуйте ще раз",

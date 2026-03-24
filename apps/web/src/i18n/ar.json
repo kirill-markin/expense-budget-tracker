@@ -186,7 +186,7 @@
   "chat.toolStatusCompleted": "مكتمل",
   "chat.toolStatusFailed": "فشل",
   "chat.toolStatusIncomplete": "غير مكتمل",
-  "chat.thinking": "يفكر…",
+  "chat.thinking": "يفكر",
   "chat.thinkingSummary": "ملخص التفكير",
   "chat.errorNoResponse": "تدفق الاستجابة غير متاح",
   "chat.errorEmptyResponse": "استجابة فارغة من نموذج الذكاء الاصطناعي — يرجى المحاولة مرة أخرى",

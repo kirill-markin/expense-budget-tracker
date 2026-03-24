@@ -186,7 +186,7 @@
   "chat.toolStatusCompleted": "Completed",
   "chat.toolStatusFailed": "Failed",
   "chat.toolStatusIncomplete": "Incomplete",
-  "chat.thinking": "Thinking…",
+  "chat.thinking": "Thinking",
   "chat.thinkingSummary": "Thinking summary",
   "chat.errorNoResponse": "No response stream available",
   "chat.errorEmptyResponse": "Empty response from AI model — please try again",

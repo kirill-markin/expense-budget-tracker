@@ -147,10 +147,13 @@
   color: var(--text);
   font-size: 12px;
   margin-top: 4px;
+  min-height: 1lh;
 }
 
 .thinkingIndicator {
-  display: block;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
   color: var(--muted);
   font-size: 12px;
   margin-top: 4px;
@@ -160,6 +163,7 @@
   display: inline-block;
   min-width: 2em;
   min-height: 1lh;
+  white-space: nowrap;
 }
 
 .dots::after {

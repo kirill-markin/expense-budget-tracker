@@ -186,7 +186,7 @@
   "chat.toolStatusCompleted": "تکمیل شد",
   "chat.toolStatusFailed": "ناموفق",
   "chat.toolStatusIncomplete": "ناتمام",
-  "chat.thinking": "در حال فکر کردن…",
+  "chat.thinking": "در حال فکر کردن",
   "chat.thinkingSummary": "خلاصه تفکر",
   "chat.errorNoResponse": "جریان پاسخ در دسترس نیست",
   "chat.errorEmptyResponse": "پاسخ خالی از مدل هوش مصنوعی — لطفاً دوباره تلاش کنید",

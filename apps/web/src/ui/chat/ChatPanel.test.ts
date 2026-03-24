@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { StoredMessage } from "@/ui/hooks/useChatHistory";
-import { hasReasoningSummary, hasRunningToolCall, shouldShowThinkingIndicator } from "./thinkingSummary";
+import {
+  getAssistantStreamingIndicator,
+  hasReasoningSummary,
+  hasToolCallActivity,
+} from "./thinkingSummary";
 
 const createAssistantMessage = (
   content: StoredMessage["content"],
@@ -14,12 +18,12 @@ const createAssistantMessage = (
   isStopped: false,
 });
 
-test("hasRunningToolCall detects in-progress tool cards", () => {
-  assert.equal(hasRunningToolCall(createAssistantMessage([{
+test("hasToolCallActivity detects tool-call activity from assistant content", () => {
+  assert.equal(hasToolCallActivity(createAssistantMessage([{
     type: "tool_call",
     id: "tool-1",
     name: "query_database",
-    status: "started",
+    status: "completed",
     input: "{\"sql\":\"SELECT 1\"}",
     output: null,
     streamPosition: {
@@ -44,13 +48,16 @@ test("hasReasoningSummary detects stored reasoning summaries", () => {
   }])), true);
 });
 
-test("shouldShowThinkingIndicator only shows transient thinking before a persisted summary exists", () => {
+test("getAssistantStreamingIndicator returns thinking before reasoning summary or tool calls", () => {
   assert.equal(
-    shouldShowThinkingIndicator(createAssistantMessage([{ type: "text", text: "Hi" }]), true, true),
-    true,
+    getAssistantStreamingIndicator(createAssistantMessage([{ type: "text", text: "Hi" }]), true, true),
+    "thinking",
   );
+});
+
+test("getAssistantStreamingIndicator returns streaming after a persisted reasoning summary exists", () => {
   assert.equal(
-    shouldShowThinkingIndicator(createAssistantMessage([{
+    getAssistantStreamingIndicator(createAssistantMessage([{
       type: "reasoning_summary",
       summary: "Compared the available rows before answering.",
       streamPosition: {
@@ -60,6 +67,33 @@ test("shouldShowThinkingIndicator only shows transient thinking before a persist
         sequenceNumber: 1,
       },
     }]), true, true),
-    false,
+    "streaming",
+  );
+});
+
+test("getAssistantStreamingIndicator returns streaming when tool-call activity exists", () => {
+  assert.equal(
+    getAssistantStreamingIndicator(createAssistantMessage([{
+      type: "tool_call",
+      id: "tool-1",
+      name: "query_database",
+      status: "started",
+      input: "{\"sql\":\"SELECT 1\"}",
+      output: null,
+      streamPosition: {
+        itemId: "tool-item-1",
+        outputIndex: 0,
+        contentIndex: null,
+        sequenceNumber: 1,
+      },
+    }]), true, true),
+    "streaming",
+  );
+});
+
+test("getAssistantStreamingIndicator returns hidden when the assistant is not actively streaming", () => {
+  assert.equal(
+    getAssistantStreamingIndicator(createAssistantMessage([{ type: "text", text: "Hi" }]), false, true),
+    "hidden",
   );
 });
