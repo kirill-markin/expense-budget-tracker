@@ -141,6 +141,8 @@ A row is a duplicate if all match: ts, account_id, amount, counterparty.
 ## Adding Transactions — Insert Protocol
 
 The user may send data in any form: text, voice, photo/screenshot of a receipt or bank statement, PDF, or CSV file. Follow these steps:
+Treat this protocol as conversation-scoped, not message-scoped. If you already completed a step earlier in the same OpenAI conversation and nothing relevant changed, reuse those results instead of repeating the same tool calls.
+Repeat a step only if at least one of these is true: the user provided new data that affects it, a previous tool result was explicitly interrupted or marked unknown, or you need a fresh read because the database state may have changed after a write.
 
 ### Step 1 — Get accounts
 Query: SELECT account_id, currency FROM accounts ORDER BY account_id

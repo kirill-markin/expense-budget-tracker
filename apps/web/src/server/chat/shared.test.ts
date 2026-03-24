@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildSystemInstructions, execQuery, TOOL_DESCRIPTION } from "./shared";
+import { buildOpenaiInstructions } from "./openai/agent/config";
 
 test("execQuery rejects CTE shadowing of blocked relations before DB execution", async () => {
   await assert.rejects(
@@ -43,6 +44,9 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /high \| medium \| low/i);
   assert.match(instructions, /treats liquidity as high in balances and budget calculations/i);
   assert.match(instructions, /first_day_of_week .*1\.\.7/i);
+  assert.match(instructions, /Treat this protocol as conversation-scoped, not message-scoped/i);
+  assert.match(instructions, /reuse those results instead of repeating the same tool calls/i);
+  assert.match(instructions, /previous tool result was explicitly interrupted or marked unknown/i);
 });
 
 test("TOOL_DESCRIPTION documents multi-statement scripts and statements output", () => {
@@ -51,4 +55,15 @@ test("TOOL_DESCRIPTION documents multi-statement scripts and statements output",
   assert.match(TOOL_DESCRIPTION, /optional sidecar/i);
   assert.match(TOOL_DESCRIPTION, /liquidity must be high, medium, or low/i);
   assert.match(TOOL_DESCRIPTION, /first_day_of_week SMALLINT/i);
+});
+
+test("buildOpenaiInstructions tells code interpreter to emit durable summaries for file analysis", () => {
+  const instructions = buildOpenaiInstructions("Europe/Madrid", true);
+
+  assert.match(instructions, /make important results durable/i);
+  assert.match(instructions, /print a compact text or JSON summary/i);
+  assert.match(instructions, /raw Python variable values being preserved unless you emitted them as code interpreter logs or files/i);
+  assert.match(instructions, /When the user needs the full extracted result, not just a summary, write the result to a JSON or CSV file in the container/i);
+  assert.match(instructions, /mention the file in your answer with its purpose, shape, and row count/i);
+  assert.match(instructions, /print a short durable preview/i);
 });

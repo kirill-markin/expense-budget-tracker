@@ -7,6 +7,11 @@ export const buildOpenaiInstructions = (timezone: string, hasPersistentContainer
   buildSystemInstructions(timezone) +
   "\nYou also have a code interpreter for calculations, charts, or file analysis. Use it when appropriate." +
   "\nIf the user attaches a CSV or spreadsheet file, inspect it with the code interpreter before claiming the file is unavailable." +
+  "\nWhen you use the code interpreter for file analysis, make important results durable." +
+  "\nFor small but important intermediate facts, print a compact text or JSON summary that can live in code interpreter logs." +
+  "\nWhen the user needs the full extracted result, not just a summary, write the result to a JSON or CSV file in the container in a clean machine-readable format, then mention the file in your answer with its purpose, shape, and row count." +
+  "\nAfter writing a result file, also print a short durable preview such as a compact schema, row count, and a few representative rows or key fields." +
+  "\nDo not rely on raw Python variable values being preserved unless you emitted them as code interpreter logs or files." +
   (hasPersistentContainer
     ? "\nFiles previously attached earlier in this same chat remain available through code execution while the current code interpreter container is active."
     : "") +
