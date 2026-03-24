@@ -265,10 +265,29 @@ export const ChatPanel = (props: Props): ReactElement => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const isLiveStreamConnectedRef = useRef<boolean>(false);
-  const isNearBottomRef = useRef<boolean>(true);
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingScrollRef = useRef<boolean>(false);
+  const shouldAutoScrollRef = useRef<boolean>(true);
+  const scrollFrameRef = useRef<number | null>(null);
   const initialScrollDoneRef = useRef<boolean>(false);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior): void => {
+    const el = messagesRef.current;
+    if (el === null) {
+      return;
+    }
+
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  const scheduleScrollToBottom = useCallback((behavior: ScrollBehavior): void => {
+    if (scrollFrameRef.current !== null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+    }
+
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      scrollToBottom(behavior);
+    });
+  }, [scrollToBottom]);
 
   const loadChatSnapshot = useCallback(async (
     sessionId: string | undefined,
@@ -395,41 +414,36 @@ export const ChatPanel = (props: Props): ReactElement => {
     const el = messagesRef.current;
     if (el === null) return;
     const onScroll = (): void => {
-      const threshold = 40;
-      isNearBottomRef.current =
-        el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+      const threshold = 80;
+      const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      shouldAutoScrollRef.current = distanceToBottom <= threshold;
     };
+
+    onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Throttled auto-scroll: batches scroll updates during streaming
   useEffect(() => {
-    if (!isNearBottomRef.current) return;
-    if (isStreaming) {
-      // During streaming, throttle to once per 300ms
-      if (pendingScrollRef.current) return;
-      pendingScrollRef.current = true;
-      scrollTimerRef.current = setTimeout(() => {
-        pendingScrollRef.current = false;
-        const el = messagesRef.current;
-        if (el !== null && isNearBottomRef.current) {
-          el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-        }
-      }, 300);
-    } else {
-      const el = messagesRef.current;
-      if (el !== null) {
-        // First scroll with actual messages (after localStorage load) — jump instantly;
-        // subsequent scrolls (new user message, streaming done) — animate smoothly
-        const behavior: ScrollBehavior = initialScrollDoneRef.current ? "smooth" : "instant";
-        el.scrollTo({ top: el.scrollHeight, behavior });
-        if (!initialScrollDoneRef.current && messages.length > 0) {
-          initialScrollDoneRef.current = true;
-        }
-      }
+    if (!shouldAutoScrollRef.current) return;
+
+    const behavior: ScrollBehavior = isStreaming || !initialScrollDoneRef.current
+      ? "instant"
+      : "smooth";
+    scheduleScrollToBottom(behavior);
+
+    if (!initialScrollDoneRef.current && messages.length > 0) {
+      initialScrollDoneRef.current = true;
     }
-  }, [messages, isStreaming]);
+  }, [isStreaming, messages, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
+  }, []);
 
   const handleAttach = useCallback((attachment: PendingAttachment): void => {
     setPendingAttachments((prev) => [...prev, attachment]);
@@ -822,6 +836,7 @@ export const ChatPanel = (props: Props): ReactElement => {
             </div>
           );
         })}
+        <div aria-hidden="true" className={styles.bottomAnchor} />
       </div>
 
       <div className={styles.inputArea}>
