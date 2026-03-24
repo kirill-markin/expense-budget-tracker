@@ -117,6 +117,16 @@ test("validateExpenseSql marks mutating WITH statements that insert or delete as
   assert.equal(result.statements[0]?.isMutating, true);
 });
 
+test("validateExpenseSql rejects ON CONFLICT with a clear policy error", () => {
+  assert.throws(
+    () => validateExpenseSql("INSERT INTO account_metadata (workspace_id, account_id, liquidity) VALUES ('w', 'a-checking-eur', 'high') ON CONFLICT (workspace_id, account_id) DO UPDATE SET liquidity = 'medium'"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "on_conflict_not_allowed"
+      && error.message === "ON CONFLICT is not supported in restricted SQL",
+  );
+});
+
 test("validateExpenseSql rejects TABLE syntax at the top level", () => {
   assert.throws(
     () => validateExpenseSql("TABLE accounts"),

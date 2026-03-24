@@ -214,6 +214,41 @@ test("unsupported_statement returns actionable transaction guidance", async () =
   assert.match(payload.instructions, /BEGIN\/COMMIT\/ROLLBACK/i);
 });
 
+test("ON CONFLICT returns explicit restricted SQL guidance", async () => {
+  const handler = createMachineApiHandler({
+    ensureTrustedIdentityProvisioned: async () => Promise.resolve(),
+    loadOpenApiDocument: () => ({ openapi: "3.1.0" }),
+    queryAsTrustedIdentity: async (_identity, _workspaceId, text, params) => {
+      if (text.includes("WHERE w.workspace_id = $1")) {
+        return createQueryResult([{ workspace_id: String(params[0]), name: "Main" }]) as never;
+      }
+      throw new Error(`Unexpected SQL: ${text}`);
+    },
+    withRestrictedTrustedIdentityContext: async () => {
+      throw new Error("Policy should reject ON CONFLICT before execution");
+    },
+  });
+
+  const sqlResponse = await handler(createAuthenticatedEvent({
+    httpMethod: "POST",
+    path: "/sql",
+    resource: "/sql",
+    headers: {
+      Host: "api.example.com",
+      "X-Workspace-Id": "workspace-1",
+    },
+    body: JSON.stringify({
+      sql: "INSERT INTO account_metadata (workspace_id, account_id, liquidity) VALUES ('workspace-1', 'a-checking-eur', 'high') ON CONFLICT (workspace_id, account_id) DO UPDATE SET liquidity = 'medium'",
+    }),
+  }));
+
+  assert.equal(sqlResponse.statusCode, 400);
+  const payload = JSON.parse(sqlResponse.body) as { error: { code: string }; instructions: string };
+  assert.equal(payload.error.code, "on_conflict_not_allowed");
+  assert.match(payload.instructions, /ON CONFLICT is not supported in restricted SQL/i);
+  assert.match(payload.instructions, /Use explicit SELECT first, then INSERT or UPDATE as separate steps/i);
+});
+
 test("sql rejects invalid json", async () => {
   const handler = createMachineApiHandler({
     ensureTrustedIdentityProvisioned: async () => Promise.resolve(),

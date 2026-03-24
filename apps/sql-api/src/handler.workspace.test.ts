@@ -104,6 +104,8 @@ test("authenticated workspace routes return envelopes on canonical v1 paths", as
       "Optional sidecar table for per-account metadata.",
       "Missing row is allowed. Balances and budget queries treat missing liquidity as 'high'.",
       "Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity.",
+      "Restricted agent SQL does not support ON CONFLICT for this table. Read first, then use an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists.",
+      "Before a long mutating command, first try the same SQL shape on a tiny representative batch. If the small probe fails, fix the SQL and retry the small version before scaling up.",
     ],
     columnConstraints: [{
       column: "liquidity",

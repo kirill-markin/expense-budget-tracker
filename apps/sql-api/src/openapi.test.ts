@@ -16,3 +16,11 @@ test("loadOpenApiDocument resolves the spec from the ESM module location", () =>
 
   assert.equal(typeof document.info, "object");
 });
+
+test("openapi documents restricted SQL ON CONFLICT and probe guidance", () => {
+  const document = loadOpenApiDocument();
+  const sqlPath = (document.paths as Record<string, { post?: { description?: string } }>)["/sql"];
+
+  assert.match(String(sqlPath?.post?.description), /Restricted SQL does not support ON CONFLICT/i);
+  assert.match(String(sqlPath?.post?.description), /tiny representative batch/i);
+});

@@ -26,6 +26,17 @@ test("execQuery rejects blocked TABLE syntax before DB execution", async () => {
   );
 });
 
+test("execQuery rejects ON CONFLICT before DB execution", async () => {
+  await assert.rejects(
+    execQuery(
+      "INSERT INTO account_metadata (workspace_id, account_id, liquidity) VALUES ('workspace-1', 'a-checking-eur', 'high') ON CONFLICT (workspace_id, account_id) DO UPDATE SET liquidity = 'medium'",
+      "user-1",
+      "workspace-1",
+    ),
+    /ON CONFLICT is not supported in chat queries/,
+  );
+});
+
 test("buildSystemInstructions explains that browser chat already has an active workspace", () => {
   const instructions = buildSystemInstructions("Europe/Madrid");
 
@@ -43,6 +54,10 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /account_metadata \(optional sidecar table\)/i);
   assert.match(instructions, /high \| medium \| low/i);
   assert.match(instructions, /treats liquidity as high in balances and budget calculations/i);
+  assert.match(instructions, /Restricted agent SQL does not support ON CONFLICT/i);
+  assert.match(instructions, /For INSERT .* try 1-3 representative rows first/i);
+  assert.match(instructions, /If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version/i);
+  assert.match(instructions, /explicit INSERT when the row is missing or an explicit UPDATE when the row already exists/i);
   assert.match(instructions, /first_day_of_week .*1\.\.7/i);
   assert.match(instructions, /Treat this protocol as conversation-scoped, not message-scoped/i);
   assert.match(instructions, /reuse those results instead of repeating the same tool calls/i);
@@ -61,6 +76,8 @@ test("TOOL_DESCRIPTION documents multi-statement scripts and statements output",
   assert.match(TOOL_DESCRIPTION, /optional sidecar/i);
   assert.match(TOOL_DESCRIPTION, /liquidity must be high, medium, or low/i);
   assert.match(TOOL_DESCRIPTION, /first_day_of_week SMALLINT/i);
+  assert.match(TOOL_DESCRIPTION, /Restricted SQL does not support ON CONFLICT/i);
+  assert.match(TOOL_DESCRIPTION, /tiny representative batch/i);
 });
 
 test("buildOpenaiInstructions describes durable CSV and PDF extraction behavior", () => {

@@ -36,6 +36,10 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
     return "Use one or more SQL statements of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
   }
 
+  if (error.code === "on_conflict_not_allowed") {
+    return "ON CONFLICT is not supported in restricted SQL. Use explicit SELECT first, then INSERT or UPDATE as separate steps.";
+  }
+
   if (error.code === "set_config_not_allowed") {
     return "Do not call set_config(). User and workspace context are managed by the API.";
   }

@@ -18,4 +18,6 @@ test("buildAgentDiscoveryEnvelope returns the canonical discovery payload", () =
     "Run restricted SQL scripts",
   ]);
   assert.match(String(envelope.instructions), /allowed relations, columns, and any agent hints/i);
+  assert.match(String(envelope.instructions), /Restricted SQL does not support ON CONFLICT/i);
+  assert.match(String(envelope.instructions), /tiny representative batch/i);
 });

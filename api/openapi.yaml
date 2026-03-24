@@ -19,7 +19,7 @@
     "/": {
       "get": {
         "summary": "API discovery index",
-        "description": "Start here for agent onboarding. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login.",
+        "description": "Start here for agent onboarding. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login. Use /schema before mutating SQL to inspect allowed relations, constraints, and write semantics. Restricted SQL does not support ON CONFLICT.",
         "responses": {
           "200": {
             "description": "Discovery envelope"
@@ -30,7 +30,7 @@
     "/agent": {
       "get": {
         "summary": "Agent discovery",
-        "description": "Agent onboarding entrypoint. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login.",
+        "description": "Agent onboarding entrypoint. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login. Use /schema before mutating SQL to inspect allowed relations, constraints, and write semantics. Restricted SQL does not support ON CONFLICT.",
         "responses": {
           "200": {
             "description": "Discovery envelope"
@@ -165,7 +165,7 @@
     "/sql": {
       "post": {
         "summary": "Execute restricted SQL",
-        "description": "Requires workspace context. Send X-Workspace-Id explicitly, or first call /workspaces/{workspaceId}/select to save a default for this API key. The sql field may contain one or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons.",
+        "description": "Requires workspace context. Send X-Workspace-Id explicitly, or first call /workspaces/{workspaceId}/select to save a default for this API key. The sql field may contain one or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons. Restricted SQL does not support ON CONFLICT. Before a long mutating SQL script, first try the same SQL shape on a tiny representative batch. If the small probe fails, fix the SQL and retry the small version before sending a larger batch.",
         "security": [
           {
             "ApiKeyHeader": []

@@ -57,6 +57,7 @@ type CteDefinition = Readonly<{
 
 type SqlPolicyErrorCode =
   | "unsupported_statement"
+  | "on_conflict_not_allowed"
   | "set_config_not_allowed"
   | "sql_comments_not_allowed"
   | "quoted_identifiers_not_allowed"
@@ -288,6 +289,8 @@ const splitSqlStatements = (sql: string): ReadonlyArray<string> => {
 };
 
 const containsSetConfig = (sql: string): boolean => /\bset_config\b/iu.test(sql);
+
+const containsOnConflict = (sql: string): boolean => /\bon\s+conflict\b/iu.test(sql);
 
 const assertSupportedSqlSyntax = (sql: string): void => {
   if (sql.includes("--") || sql.includes("/*")) {
@@ -651,6 +654,9 @@ const collectReferencedRelationsFromWithClause = (
 const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationName> => {
   assertSupportedSqlSyntax(sql);
   const sanitizedSql = stripSingleQuotedStrings(sql);
+  if (containsOnConflict(sanitizedSql)) {
+    fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
+  }
   const tokens = tokenizeSql(sanitizedSql);
   return collectReferencedRelationsFromSegment(tokens, 0, tokens.length, new Set<string>());
 };
@@ -722,6 +728,9 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
 
   assertSupportedSqlSyntax(sql);
   const sanitizedSql = stripSingleQuotedStrings(sql);
+  if (containsOnConflict(sanitizedSql)) {
+    fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
+  }
   const tokens = tokenizeSql(sanitizedSql);
 
   return {
