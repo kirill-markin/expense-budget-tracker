@@ -133,6 +133,7 @@ export const buildInput = (
   role: "user",
   type: "message",
   content: content
-    .filter((part): part is TextContentPart | ImageContentPart | FileContentPart => part.type !== "tool_call")
+    .filter((part): part is TextContentPart | ImageContentPart | FileContentPart =>
+      part.type !== "tool_call" && part.type !== "reasoning_summary")
     .map(mapUserPart),
 }];

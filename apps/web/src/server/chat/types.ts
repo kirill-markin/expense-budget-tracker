@@ -37,7 +37,18 @@ export type ToolCallContentPart = Readonly<{
   streamPosition?: StreamPosition;
 }>;
 
-export type ContentPart = TextContentPart | ImageContentPart | FileContentPart | ToolCallContentPart;
+export type ReasoningSummaryContentPart = Readonly<{
+  type: "reasoning_summary";
+  summary: string;
+  streamPosition: StreamPosition;
+}>;
+
+export type ContentPart =
+  | TextContentPart
+  | ImageContentPart
+  | FileContentPart
+  | ToolCallContentPart
+  | ReasoningSummaryContentPart;
 
 export type ChatMessage = Readonly<{
   role: ChatRole;
@@ -65,6 +76,13 @@ export type ChatStreamEvent =
     input?: string;
     output?: string;
     refreshRoute?: boolean;
+  }>
+  | Readonly<{
+    type: "reasoning_summary";
+    itemId: string;
+    outputIndex: number;
+    sequenceNumber: number | null;
+    summary: string;
   }>
   | Readonly<{ type: "done" }>
   | Readonly<{ type: "error"; message: string }>;

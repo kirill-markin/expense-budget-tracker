@@ -186,6 +186,8 @@
   "chat.toolStatusCompleted": "Завершен",
   "chat.toolStatusFailed": "Ошибка",
   "chat.toolStatusIncomplete": "Не завершен",
+  "chat.thinking": "Думает…",
+  "chat.thinkingSummary": "Сводка размышлений",
   "chat.errorNoResponse": "Поток ответа недоступен",
   "chat.errorEmptyResponse": "Пустой ответ от AI модели — попробуйте ещё раз",
   "chat.errorTooLarge": "Запрос слишком большой ({{sizeMb}} МБ, лимит {{limitMb}} МБ). Попробуйте отправить меньше вложений или уменьшить изображения.",

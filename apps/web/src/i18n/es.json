@@ -186,6 +186,8 @@
   "chat.toolStatusCompleted": "Completado",
   "chat.toolStatusFailed": "Falló",
   "chat.toolStatusIncomplete": "Incompleto",
+  "chat.thinking": "Pensando…",
+  "chat.thinkingSummary": "Resumen del razonamiento",
   "chat.errorNoResponse": "Flujo de respuesta no disponible",
   "chat.errorEmptyResponse": "Respuesta vacía del modelo de IA — intenta de nuevo",
   "chat.errorTooLarge": "Solicitud demasiado grande ({{sizeMb}} MB, límite {{limitMb}} MB). Intenta enviar menos archivos adjuntos o imágenes más pequeñas.",

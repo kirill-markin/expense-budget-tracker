@@ -373,3 +373,96 @@ test("startAgentResponseWithDeps returns the created conversationId without read
   assert.equal(started.conversationId, "conv-created");
   assert.deepEqual(await started.completion, { conversationId: "conv-created" });
 });
+
+test("startAgentResponseWithDeps emits reasoning summaries with stable ordering metadata", async () => {
+  const runEvents = [
+    {
+      type: "raw_model_stream_event",
+      data: {
+        type: "model",
+        event: {
+          type: "response.output_item.added",
+          output_index: 0,
+          sequence_number: 10,
+          item: {
+            id: "reasoning-1",
+            type: "reasoning",
+          },
+        },
+      },
+    },
+    {
+      type: "run_item_stream_event",
+      name: "reasoning_item_created",
+      item: {
+        type: "reasoning_item",
+        rawItem: {
+          id: "reasoning-1",
+          type: "reasoning",
+          content: [{ type: "input_text", text: "Compared the available data sources." }],
+        },
+      },
+    },
+  ] as const;
+  const rawResponses = [{
+    usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2, inputTokensDetails: {}, outputTokensDetails: {} },
+    output: [],
+    responseId: "resp-3",
+    requestId: "req-3",
+  }] as unknown as ReadonlyArray<ModelResponse>;
+
+  const started = await startAgentResponseWithDeps(
+    {
+      localMessages: [{
+        role: "user",
+        content: [{ type: "text", text: "Hi" }],
+      }],
+      turnInput: [{ type: "text", text: "Hi" }],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      conversationId: "conv-existing",
+      timezone: "Europe/Madrid",
+      requestId: "request-4",
+      maxTurns: CHAT_RUN_MAX_TURNS,
+    },
+    {
+      createClient: (): OpenAI => ({
+        containers: {
+          files: {
+            create: async (): Promise<unknown> => undefined,
+            list: async (): Promise<{ data: ReadonlyArray<Readonly<{ path: string }>> }> => ({ data: [] }),
+          },
+        },
+      }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => {
+        throw new Error("createConversation should not be called when conversationId already exists");
+      },
+      persistConversationId: async (): Promise<void> => {
+        throw new Error("persistConversationId should not be called when conversationId already exists");
+      },
+      resolveManagedContainer: async (): Promise<string> => "ctr-4",
+      runAgent: async (): Promise<AgentRunResult> =>
+        createRunResult(runEvents, rawResponses, "Done"),
+      addFilesToOpenAIContainer: async (): Promise<void> => undefined,
+      listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
+        containerId: "ctr-4",
+        filePaths: [],
+      }),
+      verifySpreadsheetContainers: async (): Promise<ReadonlyArray<never>> => [],
+      logEvent: (): void => undefined,
+      now: (): number => 100,
+    },
+  );
+
+  assert.deepEqual(await collectEvents(started.events), [
+    {
+      type: "reasoning_summary",
+      itemId: "reasoning-1",
+      outputIndex: 0,
+      sequenceNumber: 10,
+      summary: "Compared the available data sources.",
+    },
+    { type: "done" },
+  ]);
+});

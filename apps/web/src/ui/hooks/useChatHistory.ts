@@ -4,10 +4,16 @@ import { useCallback, useState } from "react";
 import {
   applyAssistantError,
   appendAssistantTextContent,
+  upsertReasoningSummaryContent,
   upsertToolCallContent,
   type StoredMessage,
 } from "@/lib/chatHistory";
-import type { ContentPart, StreamPosition, ToolCallContentPart } from "@/server/chat/types";
+import type {
+  ContentPart,
+  ReasoningSummaryContentPart,
+  StreamPosition,
+  ToolCallContentPart,
+} from "@/server/chat/types";
 
 type ChatHistoryState = Readonly<{
   messages: ReadonlyArray<StoredMessage>;
@@ -15,6 +21,7 @@ type ChatHistoryState = Readonly<{
   appendUserMessage: (content: ReadonlyArray<ContentPart>) => void;
   startAssistantMessage: () => void;
   appendAssistantChunk: (text: string, streamPosition: StreamPosition) => void;
+  upsertReasoningSummary: (reasoningSummary: ReasoningSummaryContentPart) => void;
   upsertToolCall: (toolCall: ToolCallContentPart) => void;
   finalizeAssistant: () => void;
   markAssistantError: (errorText: string) => void;
@@ -65,6 +72,17 @@ export const useChatHistory = (): ChatHistoryState => {
     });
   }, []);
 
+  const upsertReasoningSummary = useCallback((reasoningSummary: ReasoningSummaryContentPart): void => {
+    setMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      if (last.role !== "assistant") return prev;
+      const updatedContent = upsertReasoningSummaryContent(last.content, reasoningSummary);
+      const updated: StoredMessage = { ...last, content: updatedContent };
+      return [...prev.slice(0, -1), updated];
+    });
+  }, []);
+
   const upsertToolCall = useCallback((toolCall: ToolCallContentPart): void => {
     setMessages((prev) => {
       if (prev.length === 0) return prev;
@@ -97,6 +115,7 @@ export const useChatHistory = (): ChatHistoryState => {
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
+    upsertReasoningSummary,
     upsertToolCall,
     finalizeAssistant,
     markAssistantError,

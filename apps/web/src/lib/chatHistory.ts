@@ -1,5 +1,6 @@
 import type {
   ContentPart,
+  ReasoningSummaryContentPart,
   StreamPosition,
   TextContentPart,
   ToolCallContentPart,
@@ -13,7 +14,7 @@ export type StoredMessage = Readonly<{
   isStopped: boolean;
 }>;
 
-type OrderedAssistantPart = TextContentPart | ToolCallContentPart;
+type OrderedAssistantPart = TextContentPart | ToolCallContentPart | ReasoningSummaryContentPart;
 
 type AppendAssistantTextParams = Readonly<{
   text: string;
@@ -124,6 +125,12 @@ const isSameToolCall = (
     && existing.streamPosition.itemId === incoming.streamPosition.itemId;
 };
 
+const isSameReasoningSummary = (
+  existing: ReasoningSummaryContentPart,
+  incoming: ReasoningSummaryContentPart,
+): boolean =>
+  existing.streamPosition.itemId === incoming.streamPosition.itemId;
+
 export const appendAssistantTextContent = (
   content: ReadonlyArray<ContentPart>,
   params: AppendAssistantTextParams,
@@ -212,6 +219,39 @@ export const upsertToolCallContent = (
     ...toolCall,
     streamPosition,
   });
+};
+
+export const upsertReasoningSummaryContent = (
+  content: ReadonlyArray<ContentPart>,
+  reasoningSummary: ReasoningSummaryContentPart,
+): ReadonlyArray<ContentPart> => {
+  assertSupportedAssistantContent(content);
+
+  const existingIndex = content.findIndex((part) =>
+    part.type === "reasoning_summary" && isSameReasoningSummary(part, reasoningSummary),
+  );
+
+  if (existingIndex >= 0) {
+    const existing = content[existingIndex];
+    if (existing === undefined || existing.type !== "reasoning_summary") {
+      throw new Error(`Reasoning summary update matched an invalid content part at index ${String(existingIndex)}`);
+    }
+    if (existing.streamPosition.outputIndex !== reasoningSummary.streamPosition.outputIndex) {
+      throw new Error(
+        `Reasoning summary update changed outputIndex from ${formatStreamPosition(existing.streamPosition)} to ${formatStreamPosition(reasoningSummary.streamPosition)}`,
+      );
+    }
+
+    const updatedPart: ReasoningSummaryContentPart = {
+      ...existing,
+      summary: reasoningSummary.summary,
+      streamPosition: reasoningSummary.streamPosition,
+    };
+
+    return [...content.slice(0, existingIndex), updatedPart, ...content.slice(existingIndex + 1)];
+  }
+
+  return insertOrderedAssistantPart(content, reasoningSummary);
 };
 
 export const applyAssistantError = (

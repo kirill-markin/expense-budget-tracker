@@ -149,6 +149,13 @@
   margin-top: 4px;
 }
 
+.thinkingIndicator {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
 .dots {
   display: inline-block;
   min-width: 2em;
@@ -222,6 +229,15 @@
 
 .toolCallOutput {
   color: var(--muted);
+}
+
+.reasoningSummary {
+  border-style: solid;
+}
+
+.reasoningSummaryContent {
+  color: var(--text);
+  word-break: break-word;
 }
 
 .messages > * {

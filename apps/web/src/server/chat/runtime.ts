@@ -2,6 +2,7 @@ import { MaxTurnsExceededError } from "@openai/agents";
 import OpenAI from "openai";
 import {
   appendAssistantTextContent,
+  upsertReasoningSummaryContent,
   upsertToolCallContent,
 } from "@/lib/chatHistory";
 import { CHAT_RUN_MAX_TURNS, startAgentResponse } from "@/server/chat/openai/agent";
@@ -12,7 +13,14 @@ import {
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
 } from "@/server/chat/store";
-import type { ChatMessage, ChatStreamEvent, ContentPart, StreamPosition, ToolCallContentPart } from "@/server/chat/types";
+import type {
+  ChatMessage,
+  ChatStreamEvent,
+  ContentPart,
+  ReasoningSummaryContentPart,
+  StreamPosition,
+  ToolCallContentPart,
+} from "@/server/chat/types";
 import { log, type ChatErrorStage } from "@/server/logger";
 
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
@@ -127,6 +135,19 @@ const createToolCallContentPart = (
   providerStatus: event.providerStatus ?? null,
   input: event.input ?? null,
   output: event.output ?? null,
+  streamPosition: {
+    itemId: event.itemId,
+    outputIndex: event.outputIndex,
+    contentIndex: null,
+    sequenceNumber: event.sequenceNumber,
+  },
+});
+
+const createReasoningSummaryContentPart = (
+  event: Extract<ChatStreamEvent, { type: "reasoning_summary" }>,
+): ReasoningSummaryContentPart => ({
+  type: "reasoning_summary",
+  summary: event.summary,
   streamPosition: {
     itemId: event.itemId,
     outputIndex: event.outputIndex,
@@ -275,8 +296,8 @@ const createSyntheticAssistantTextPosition = (
   content: ReadonlyArray<ContentPart>,
   attempt: number,
 ): StreamPosition => {
-  const orderedParts = content.filter((part): part is (Extract<ContentPart, { type: "text" }> | Extract<ContentPart, { type: "tool_call" }>) & Readonly<{ streamPosition: StreamPosition }> =>
-    (part.type === "text" || part.type === "tool_call") && part.streamPosition !== undefined,
+  const orderedParts = content.filter((part): part is (Extract<ContentPart, { type: "text" }> | Extract<ContentPart, { type: "tool_call" }> | Extract<ContentPart, { type: "reasoning_summary" }>) & Readonly<{ streamPosition: StreamPosition }> =>
+    (part.type === "text" || part.type === "tool_call" || part.type === "reasoning_summary") && part.streamPosition !== undefined,
   );
   const maxOutputIndex = orderedParts.reduce((currentMax, part) =>
     Math.max(currentMax, part.streamPosition.outputIndex), -1);
@@ -378,6 +399,18 @@ export const runPersistedChatSessionWithDeps = async (
             );
           } else if (event.type === "tool_call") {
             assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
+            await updateAssistantInProgress(
+              dependencies,
+              params.userId,
+              params.workspaceId,
+              params.assistantItemId,
+              assistantContent,
+            );
+          } else if (event.type === "reasoning_summary") {
+            assistantContent = upsertReasoningSummaryContent(
+              assistantContent,
+              createReasoningSummaryContentPart(event),
+            );
             await updateAssistantInProgress(
               dependencies,
               params.userId,

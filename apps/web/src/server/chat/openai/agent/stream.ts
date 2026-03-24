@@ -1,5 +1,5 @@
 import { Agent, MaxTurnsExceededError, Runner } from "@openai/agents";
-import type { AgentInputItem, ModelResponse } from "@openai/agents-core";
+import type { AgentInputItem, ModelResponse, ReasoningItem } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
@@ -98,10 +98,20 @@ type ToolOutputRunItemEvent = Readonly<{
   }>;
 }>;
 
+type ReasoningRunItemEvent = Readonly<{
+  type: "run_item_stream_event";
+  name: "reasoning_item_created";
+  item: Readonly<{
+    type: "reasoning_item";
+    rawItem: ReasoningItem;
+  }>;
+}>;
+
 export type OpenAIRunStreamEvent =
   | RawModelStreamEvent
   | ToolCalledRunItemEvent
   | ToolOutputRunItemEvent
+  | ReasoningRunItemEvent
   | Readonly<{
     type: string;
     name?: string;
@@ -308,6 +318,17 @@ const isHostedToolCallType = (
 ): boolean =>
   itemType.endsWith("_call");
 
+const buildReasoningSummary = (
+  rawItem: ReasoningItem,
+): string | null => {
+  const summary = rawItem.content
+    .map((content) => content.text.trim())
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+
+  return summary.length > 0 ? summary : null;
+};
+
 const parseOutputItemAddedToolEvent = (
   rawEvent: unknown,
 ): Readonly<{
@@ -353,6 +374,31 @@ const parseOutputItemAddedToolEvent = (
   return {
     rawItem: buildHostedToolCallRawItem(rawItem, itemType),
     position,
+  };
+};
+
+const parseOutputItemAddedReasoningPosition = (
+  rawEvent: unknown,
+): ToolCallPosition | null => {
+  if (!isRecord(rawEvent) || rawEvent.type !== "response.output_item.added") {
+    return null;
+  }
+
+  const errorPrefix = `OpenAI response.output_item.added event is invalid: ${JSON.stringify(rawEvent)}`;
+  const rawItem = rawEvent.item;
+  if (!isRecord(rawItem)) {
+    throw new Error(`${errorPrefix}: missing item object`);
+  }
+
+  const itemType = getRequiredStringField(rawItem, "type", errorPrefix);
+  if (itemType !== "reasoning") {
+    return null;
+  }
+
+  return {
+    itemId: getRequiredStringField(rawItem, "id", errorPrefix),
+    outputIndex: getRequiredNumberField(rawEvent, "output_index", errorPrefix),
+    sequenceNumber: getRequiredNumberField(rawEvent, "sequence_number", errorPrefix),
   };
 };
 
@@ -409,6 +455,15 @@ const isToolOutputRunItemEvent = (
   && event.name === "tool_output"
   && isRecord(event.item)
   && event.item.type === "tool_call_output_item"
+  && "rawItem" in event.item;
+
+const isReasoningRunItemEvent = (
+  event: OpenAIRunStreamEvent,
+): event is ReasoningRunItemEvent =>
+  event.type === "run_item_stream_event"
+  && event.name === "reasoning_item_created"
+  && isRecord(event.item)
+  && event.item.type === "reasoning_item"
   && "rawItem" in event.item;
 
 const logContainerInventory = (
@@ -578,6 +633,7 @@ export const startAgentResponseWithDeps = async (
     let toolCalls = 0;
     let textStates: TextStreamState = createTextStreamState();
     let toolStates = createToolCallStateMap();
+    const reasoningPositions = new Map<string, ToolCallPosition>();
 
     try {
       for await (const event of result) {
@@ -617,6 +673,11 @@ export const startAgentResponseWithDeps = async (
             }
           }
 
+          const reasoningPosition = parseOutputItemAddedReasoningPosition(event.data.event);
+          if (reasoningPosition !== null) {
+            reasoningPositions.set(reasoningPosition.itemId, reasoningPosition);
+          }
+
           const textUpdate = applyRawTextStreamEvent(textStates, event.data);
           textStates = textUpdate.textStates;
           if (textUpdate.emittedDelta !== null) {
@@ -646,6 +707,32 @@ export const startAgentResponseWithDeps = async (
             if (update.event !== null) {
               yield update.event;
             }
+          }
+          continue;
+        }
+
+        if (isReasoningRunItemEvent(event)) {
+          const itemId = event.item.rawItem.id;
+          if (typeof itemId !== "string" || itemId.length === 0) {
+            throw new Error(`OpenAI reasoning item is missing a stable identifier: ${JSON.stringify(event.item.rawItem)}`);
+          }
+
+          const position = reasoningPositions.get(itemId);
+          if (position === undefined) {
+            throw new Error(
+              `OpenAI reasoning_item_created event arrived before response.output_item.added for item_id=${itemId}`,
+            );
+          }
+
+          const summary = buildReasoningSummary(event.item.rawItem);
+          if (summary !== null) {
+            yield {
+              type: "reasoning_summary",
+              itemId: position.itemId,
+              outputIndex: position.outputIndex,
+              sequenceNumber: position.sequenceNumber,
+              summary,
+            };
           }
           continue;
         }

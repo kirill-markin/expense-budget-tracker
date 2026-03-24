@@ -186,6 +186,8 @@
   "chat.toolStatusCompleted": "مكتمل",
   "chat.toolStatusFailed": "فشل",
   "chat.toolStatusIncomplete": "غير مكتمل",
+  "chat.thinking": "يفكر…",
+  "chat.thinkingSummary": "ملخص التفكير",
   "chat.errorNoResponse": "تدفق الاستجابة غير متاح",
   "chat.errorEmptyResponse": "استجابة فارغة من نموذج الذكاء الاصطناعي — يرجى المحاولة مرة أخرى",
   "chat.errorTooLarge": "الطلب كبير جداً ({{sizeMb}} ميغابايت، الحد {{limitMb}} ميغابايت). حاول إرسال مرفقات أقل أو صور أصغر.",

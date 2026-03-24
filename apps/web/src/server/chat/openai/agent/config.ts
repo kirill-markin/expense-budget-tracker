@@ -20,7 +20,7 @@ export const buildOpenaiInstructions = (timezone: string, hasPersistentContainer
 export const buildOpenAIModelSettings = (
   forcedToolChoice: "code_interpreter" | null,
 ): Readonly<Record<string, unknown>> => ({
-  reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
+  reasoning: { effort: CHAT_MODEL_REASONING_EFFORT, summary: "auto" },
   store: true,
   providerData: {
     extraBody: {

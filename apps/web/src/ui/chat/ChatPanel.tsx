@@ -23,6 +23,7 @@ import {
   shouldReplaceHistoryFromSnapshot,
   shouldSuppressStreamFailure,
 } from "./streamRecovery";
+import { shouldShowThinkingIndicator } from "./thinkingSummary";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
 import styles from "./ChatPanel.module.css";
@@ -213,6 +214,16 @@ const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): R
           )}
         </details>,
       );
+    } else if (part.type === "reasoning_summary") {
+      elements.push(
+        <details
+          key={`rs-${i}`}
+          className={cn(styles.toolCall, styles.reasoningSummary)}
+        >
+          <summary className={styles.toolCallSummary}>{t("chat.thinkingSummary")}</summary>
+          <pre className={cn(styles.toolCallOutput, styles.reasoningSummaryContent)}>{part.summary}</pre>
+        </details>,
+      );
     }
   }
 
@@ -250,6 +261,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
+    upsertReasoningSummary,
     upsertToolCall,
     finalizeAssistant,
     markAssistantError,
@@ -613,6 +625,18 @@ export const ChatPanel = (props: Props): ReactElement => {
               contentIndex: event.contentIndex,
               sequenceNumber: event.sequenceNumber,
             });
+          } else if (event.type === "reasoning_summary") {
+            receivedContent = true;
+            upsertReasoningSummary({
+              type: "reasoning_summary",
+              summary: event.summary,
+              streamPosition: {
+                itemId: event.itemId,
+                outputIndex: event.outputIndex,
+                contentIndex: null,
+                sequenceNumber: event.sequenceNumber,
+              },
+            });
           } else if (event.type === "tool_call") {
             receivedContent = true;
             upsertToolCall({
@@ -693,6 +717,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     appendUserMessage,
     startAssistantMessage,
     appendAssistantChunk,
+    upsertReasoningSummary,
     upsertToolCall,
     finalizeAssistant,
     markAssistantError,
@@ -861,16 +886,11 @@ export const ChatPanel = (props: Props): ReactElement => {
               )}
             >
               {renderMessageContent(msg, t)}
-              {isLastAssistant && (() => {
-                const lastPart = msg.content.length > 0 ? msg.content[msg.content.length - 1] : undefined;
-                const isToolRunning = lastPart !== undefined && lastPart.type === "tool_call" && lastPart.status === "started";
-                if (isToolRunning) return null;
-                return (
-                  <span className={styles.streamingIndicator}>
-                    <span className={styles.dots} />
-                  </span>
-                );
-              })()}
+              {shouldShowThinkingIndicator(msg, isStreaming, isLastAssistant) && (
+                <span className={styles.thinkingIndicator}>
+                  {t("chat.thinking")}
+                </span>
+              )}
             </div>
           );
         })}

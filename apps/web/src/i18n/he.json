@@ -186,6 +186,8 @@
   "chat.toolStatusCompleted": "הושלם",
   "chat.toolStatusFailed": "נכשל",
   "chat.toolStatusIncomplete": "לא הושלם",
+  "chat.thinking": "חושב…",
+  "chat.thinkingSummary": "סיכום החשיבה",
   "chat.errorNoResponse": "זרם תגובה אינו זמין",
   "chat.errorEmptyResponse": "תגובה ריקה ממודל ה-AI — נסה שוב",
   "chat.errorTooLarge": "הבקשה גדולה מדי ({{sizeMb}} MB, מגבלה {{limitMb}} MB). נסה לשלוח פחות קבצים מצורפים או תמונות קטנות יותר.",

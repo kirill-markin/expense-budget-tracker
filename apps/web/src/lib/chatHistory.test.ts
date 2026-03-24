@@ -5,6 +5,7 @@ import type { ContentPart, StreamPosition } from "@/server/chat/types";
 import {
   applyAssistantError,
   appendAssistantTextContent,
+  upsertReasoningSummaryContent,
   upsertToolCallContent,
   type StoredMessage,
 } from "./chatHistory";
@@ -142,6 +143,42 @@ test("ordered assistant content keeps text-tool-text interleaving", () => {
   );
 });
 
+test("ordered assistant content places reasoning summaries between earlier text and later text", () => {
+  const firstText = appendAssistantTextContent([], {
+    text: "Before",
+    streamPosition: createStreamPosition("msg-1", 0, 0, 10),
+  });
+  const withReasoningSummary = upsertReasoningSummaryContent(firstText, {
+    type: "reasoning_summary",
+    summary: "Reasoned about the import strategy.",
+    streamPosition: createStreamPosition("reasoning-1", 1, null, 20),
+  });
+
+  assert.deepEqual(
+    appendAssistantTextContent(withReasoningSummary, {
+      text: "After",
+      streamPosition: createStreamPosition("msg-2", 2, 0, 30),
+    }),
+    [
+      {
+        type: "text",
+        text: "Before",
+        streamPosition: createStreamPosition("msg-1", 0, 0, 10),
+      },
+      {
+        type: "reasoning_summary",
+        summary: "Reasoned about the import strategy.",
+        streamPosition: createStreamPosition("reasoning-1", 1, null, 20),
+      },
+      {
+        type: "text",
+        text: "After",
+        streamPosition: createStreamPosition("msg-2", 2, 0, 30),
+      },
+    ],
+  );
+});
+
 test("upsertToolCallContent updates an existing tool call without moving it", () => {
   const content: ReadonlyArray<ContentPart> = [
     {
@@ -187,6 +224,41 @@ test("upsertToolCallContent updates an existing tool call without moving it", ()
         input: "print('hello')",
         output: JSON.stringify([{ type: "logs", logs: "hello" }]),
         streamPosition: createStreamPosition("tool-1-item", 1, null, 40),
+      },
+    ],
+  );
+});
+
+test("upsertReasoningSummaryContent updates an existing reasoning summary without moving it", () => {
+  const content: ReadonlyArray<ContentPart> = [
+    {
+      type: "text",
+      text: "Checking...",
+      streamPosition: createStreamPosition("msg-1", 0, 0, 10),
+    },
+    {
+      type: "reasoning_summary",
+      summary: "First draft.",
+      streamPosition: createStreamPosition("reasoning-1", 1, null, 20),
+    },
+  ];
+
+  assert.deepEqual(
+    upsertReasoningSummaryContent(content, {
+      type: "reasoning_summary",
+      summary: "Final summary.",
+      streamPosition: createStreamPosition("reasoning-1", 1, null, 40),
+    }),
+    [
+      {
+        type: "text",
+        text: "Checking...",
+        streamPosition: createStreamPosition("msg-1", 0, 0, 10),
+      },
+      {
+        type: "reasoning_summary",
+        summary: "Final summary.",
+        streamPosition: createStreamPosition("reasoning-1", 1, null, 40),
       },
     ],
   );

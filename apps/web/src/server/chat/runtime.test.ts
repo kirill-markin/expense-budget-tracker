@@ -163,3 +163,47 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
     true,
   );
 });
+
+test("runPersistedChatSessionWithDeps persists reasoning summaries into the assistant content", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+
+  const dependencies = createDependencies(
+    async (): Promise<StartAgentResponseResult> =>
+      createStartedResponse("conv-1", [
+        {
+          type: "reasoning_summary",
+          itemId: "reasoning-1",
+          outputIndex: 0,
+          sequenceNumber: 1,
+          summary: "Checked the existing rows before building the answer.",
+        },
+        {
+          type: "delta",
+          text: "Finished import plan.",
+          itemId: "msg-2",
+          outputIndex: 1,
+          contentIndex: 0,
+          sequenceNumber: 2,
+        },
+        { type: "done" },
+      ], null),
+    completeChatRunCalls,
+    persistAssistantTerminalErrorCalls,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.equal(persistAssistantTerminalErrorCalls.length, 0);
+  assert.equal(completeChatRunCalls.length, 1);
+  const completion = completeChatRunCalls[0];
+  const assistantContent = completion.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
+  assert.equal(
+    assistantContent.some((part) => part.type === "reasoning_summary" && part.summary === "Checked the existing rows before building the answer."),
+    true,
+  );
+  assert.equal(
+    assistantContent.some((part) => part.type === "text" && part.text === "Finished import plan."),
+    true,
+  );
+});

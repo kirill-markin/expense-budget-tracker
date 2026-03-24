@@ -6,7 +6,7 @@ import { buildOpenAIModelSettings } from "./config";
 
 test("buildOpenAIModelSettings requests code interpreter outputs in responses", () => {
   assert.deepEqual(buildOpenAIModelSettings(null), {
-    reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
+    reasoning: { effort: CHAT_MODEL_REASONING_EFFORT, summary: "auto" },
     store: true,
     providerData: {
       extraBody: {
@@ -18,7 +18,7 @@ test("buildOpenAIModelSettings requests code interpreter outputs in responses", 
 
 test("buildOpenAIModelSettings preserves forced tool choice", () => {
   assert.deepEqual(buildOpenAIModelSettings("code_interpreter"), {
-    reasoning: { effort: CHAT_MODEL_REASONING_EFFORT },
+    reasoning: { effort: CHAT_MODEL_REASONING_EFFORT, summary: "auto" },
     store: true,
     providerData: {
       extraBody: {
