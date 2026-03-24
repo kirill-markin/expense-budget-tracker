@@ -75,11 +75,13 @@ test("recoverInterruptedFunctionCallsWithDeps closes pending custom function cal
   assert.deepEqual(createdItems, [
     {
       type: "function_call_output",
+      id: "recovery-fco-call-pending",
       call_id: "call-pending",
       output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
     },
     {
       type: "function_call_output",
+      id: "recovery-fco-call-capture",
       call_id: "call-capture",
       output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
     },

@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ConversationItem } from "openai/resources/conversations/items";
+import type { ResponseFunctionToolCallOutputItem } from "openai/resources/responses/responses";
 
 export const INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE = "Recovered interrupted tool calls that were missing durable outputs in the stored OpenAI conversation.";
 export const INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT = "Interrupted before output was captured. The execution outcome is unknown. Inspect the current state before retrying.";
@@ -23,7 +24,7 @@ type RecoverInterruptedFunctionCallsDependencies = Readonly<{
   createConversationItems: (
     client: OpenAI,
     conversationId: string,
-    items: ReadonlyArray<Extract<ConversationItem, { type: "function_call_output" }>>,
+    items: ReadonlyArray<ResponseFunctionToolCallOutputItem>,
   ) => Promise<void>;
 }>;
 
@@ -61,6 +62,15 @@ const isFunctionCallOutput = (
   item.type === "function_call_output"
   && typeof item.call_id === "string"
   && item.call_id.length > 0;
+
+const buildRecoveryFunctionCallOutputItem = (
+  callId: string,
+): ResponseFunctionToolCallOutputItem => ({
+  type: "function_call_output",
+  id: `recovery-fco-${callId}`,
+  call_id: callId,
+  output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
+});
 
 export const recoverInterruptedFunctionCallsWithDeps = async (
   client: OpenAI,
@@ -107,11 +117,7 @@ export const recoverInterruptedFunctionCallsWithDeps = async (
   await dependencies.createConversationItems(
     client,
     conversationId,
-    recoveredCalls.map((call) => ({
-      type: "function_call_output",
-      call_id: call.callId,
-      output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
-    })),
+    recoveredCalls.map((call) => buildRecoveryFunctionCallOutputItem(call.callId)),
   );
 
   return {
