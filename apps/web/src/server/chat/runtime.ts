@@ -103,6 +103,12 @@ const createToolCallContentPart = (
   providerStatus: event.providerStatus ?? null,
   input: event.input ?? null,
   output: event.output ?? null,
+  streamPosition: {
+    itemId: event.itemId,
+    outputIndex: event.outputIndex,
+    contentIndex: null,
+    sequenceNumber: event.sequenceNumber,
+  },
 });
 
 const broadcastChatEvent = (
@@ -252,7 +258,15 @@ const runPersistedChatSession = async (
 
     for await (const event of started.events) {
       if (event.type === "delta") {
-        assistantContent = appendAssistantTextContent(assistantContent, event.text);
+        assistantContent = appendAssistantTextContent(assistantContent, {
+          text: event.text,
+          streamPosition: {
+            itemId: event.itemId,
+            outputIndex: event.outputIndex,
+            contentIndex: event.contentIndex,
+            sequenceNumber: event.sequenceNumber,
+          },
+        });
         await updateAssistantMessageItem(params.userId, params.workspaceId, {
           itemId: params.assistantItemId,
           content: assistantContent,

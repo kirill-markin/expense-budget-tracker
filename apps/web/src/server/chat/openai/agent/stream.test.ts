@@ -62,6 +62,25 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
       },
     },
     {
+      type: "raw_model_stream_event",
+      data: {
+        type: "model",
+        event: {
+          type: "response.output_item.added",
+          output_index: 1,
+          sequence_number: 20,
+          item: {
+            id: "tool-item-1",
+            type: "function_call",
+            call_id: "tool-1",
+            name: "query_database",
+            arguments: "{\"sql\":\"SELECT 1\"}",
+            status: "in_progress",
+          },
+        },
+      },
+    },
+    {
       type: "run_item_stream_event",
       name: "tool_called",
       item: {
@@ -69,6 +88,7 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
         rawItem: {
           type: "function_call",
           callId: "tool-1",
+          id: "tool-item-1",
           name: "query_database",
           arguments: "{\"sql\":\"SELECT 1\"}",
         },
@@ -143,19 +163,33 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
   );
 
   assert.deepEqual(await collectEvents(started.events), [
-    { type: "delta", text: "Hello" },
     {
-      type: "tool_call",
-      id: "tool-1",
-      name: "query_database",
-      status: "started",
-      input: "{\"sql\":\"SELECT 1\"}",
+      type: "delta",
+      text: "Hello",
+      itemId: "msg-1",
+      outputIndex: 0,
+      contentIndex: 0,
+      sequenceNumber: null,
     },
     {
       type: "tool_call",
       id: "tool-1",
+      itemId: "tool-item-1",
+      name: "query_database",
+      status: "started",
+      outputIndex: 1,
+      sequenceNumber: 20,
+      input: "{\"sql\":\"SELECT 1\"}",
+      providerStatus: "in_progress",
+    },
+    {
+      type: "tool_call",
+      id: "tool-1",
+      itemId: "tool-item-1",
       name: "query_database",
       status: "completed",
+      outputIndex: 1,
+      sequenceNumber: 20,
       providerStatus: "completed",
       input: "{\"sql\":\"SELECT 1\"}",
     },

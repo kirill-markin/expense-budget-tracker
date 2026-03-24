@@ -3,6 +3,16 @@ type OutputTextDeltaProviderData = Readonly<{
   item_id: string;
   content_index: number;
   output_index: number;
+  sequence_number?: number;
+}>;
+
+type OutputTextDeltaEvent = Readonly<{
+  type: "response.output_text.delta";
+  item_id: string;
+  content_index: number;
+  output_index: number;
+  sequence_number: number;
+  delta: string;
 }>;
 
 type OutputTextDoneEvent = Readonly<{
@@ -22,6 +32,14 @@ type OutputItemDoneEvent = Readonly<{
   }>;
 }>;
 
+export type TextDeltaChunk = Readonly<{
+  text: string;
+  itemId: string;
+  outputIndex: number;
+  contentIndex: number;
+  sequenceNumber: number | null;
+}>;
+
 type TextPartState = Readonly<{
   itemId: string;
   contentIndex: number;
@@ -35,7 +53,7 @@ export type TextStreamState = ReadonlyMap<string, TextPartState>;
 
 type TextStreamUpdate = Readonly<{
   textStates: TextStreamState;
-  emittedDelta: string | null;
+  emittedDelta: TextDeltaChunk | null;
 }>;
 
 const MAX_LOG_SNIPPET_LENGTH = 400;
@@ -74,6 +92,20 @@ const getRequiredStringField = (
   throw new Error(`${errorPrefix}: missing string field ${key}`);
 };
 
+const getOptionalNumberField = (
+  value: Readonly<Record<string, unknown>>,
+  key: string,
+): number | undefined => {
+  const candidate = value[key];
+  if (candidate === undefined) {
+    return undefined;
+  }
+  if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 0) {
+    return candidate;
+  }
+  throw new Error(`OpenAI event field ${key} must be a non-negative integer when present`);
+};
+
 const getRequiredNumberField = (
   value: Readonly<Record<string, unknown>>,
   key: string,
@@ -103,6 +135,25 @@ const parseOutputTextDeltaProviderData = (
     item_id: getRequiredStringField(providerData, "item_id", errorPrefix),
     content_index: getRequiredNumberField(providerData, "content_index", errorPrefix),
     output_index: getRequiredNumberField(providerData, "output_index", errorPrefix),
+    sequence_number: getOptionalNumberField(providerData, "sequence_number"),
+  };
+};
+
+const parseOutputTextDeltaEvent = (
+  rawEvent: unknown,
+): OutputTextDeltaEvent | null => {
+  if (!isRecord(rawEvent) || rawEvent.type !== "response.output_text.delta") {
+    return null;
+  }
+
+  const errorPrefix = `OpenAI response.output_text.delta event is invalid: ${JSON.stringify(rawEvent)}`;
+  return {
+    type: "response.output_text.delta",
+    item_id: getRequiredStringField(rawEvent, "item_id", errorPrefix),
+    content_index: getRequiredNumberField(rawEvent, "content_index", errorPrefix),
+    output_index: getRequiredNumberField(rawEvent, "output_index", errorPrefix),
+    sequence_number: getRequiredNumberField(rawEvent, "sequence_number", errorPrefix),
+    delta: getRequiredStringField(rawEvent, "delta", errorPrefix),
   };
 };
 
@@ -163,37 +214,36 @@ export const createTextStreamState = (): TextStreamState => new Map();
 
 export const applyOutputTextDelta = (
   textStates: TextStreamState,
-  providerData: OutputTextDeltaProviderData,
-  delta: string,
+  chunk: TextDeltaChunk,
 ): TextStreamUpdate => {
-  const key = buildTextPartKey(providerData.item_id, providerData.content_index);
+  const key = buildTextPartKey(chunk.itemId, chunk.contentIndex);
   const previousState = textStates.get(key);
 
   if (previousState !== undefined) {
     if (previousState.isDone) {
       throw new Error(
-        `OpenAI output_text.delta arrived after output_text.done for item_id=${providerData.item_id} content_index=${String(providerData.content_index)} output_index=${String(providerData.output_index)}`,
+        `OpenAI output_text.delta arrived after output_text.done for item_id=${chunk.itemId} content_index=${String(chunk.contentIndex)} output_index=${String(chunk.outputIndex)}`,
       );
     }
-    if (previousState.outputIndex !== providerData.output_index) {
+    if (previousState.outputIndex !== chunk.outputIndex) {
       throw new Error(
-        `OpenAI output_text.delta changed output_index for item_id=${providerData.item_id} content_index=${String(providerData.content_index)} from ${String(previousState.outputIndex)} to ${String(providerData.output_index)}`,
+        `OpenAI output_text.delta changed output_index for item_id=${chunk.itemId} content_index=${String(chunk.contentIndex)} from ${String(previousState.outputIndex)} to ${String(chunk.outputIndex)}`,
       );
     }
   }
 
   const nextState: TextPartState = {
-    itemId: providerData.item_id,
-    contentIndex: providerData.content_index,
-    outputIndex: providerData.output_index,
-    assembledText: (previousState?.assembledText ?? "") + delta,
+    itemId: chunk.itemId,
+    contentIndex: chunk.contentIndex,
+    outputIndex: chunk.outputIndex,
+    assembledText: (previousState?.assembledText ?? "") + chunk.text,
     doneText: previousState?.doneText ?? null,
     isDone: false,
   };
 
   return {
     textStates: setTextPartState(textStates, nextState),
-    emittedDelta: delta.length > 0 ? delta : null,
+    emittedDelta: chunk.text.length > 0 ? chunk : null,
   };
 };
 
@@ -285,10 +335,27 @@ export const applyRawTextStreamEvent = (
     if (typeof event.delta !== "string") {
       throw new Error(`OpenAI output_text_delta is missing delta for item_id=${providerData.item_id}`);
     }
-    return applyOutputTextDelta(textStates, providerData, event.delta);
+    return applyOutputTextDelta(textStates, {
+      text: event.delta,
+      itemId: providerData.item_id,
+      outputIndex: providerData.output_index,
+      contentIndex: providerData.content_index,
+      sequenceNumber: providerData.sequence_number ?? null,
+    });
   }
 
   if (event.type === "model") {
+    const textDeltaEvent = parseOutputTextDeltaEvent(event.event);
+    if (textDeltaEvent !== null) {
+      return applyOutputTextDelta(textStates, {
+        text: textDeltaEvent.delta,
+        itemId: textDeltaEvent.item_id,
+        outputIndex: textDeltaEvent.output_index,
+        contentIndex: textDeltaEvent.content_index,
+        sequenceNumber: textDeltaEvent.sequence_number,
+      });
+    }
+
     const doneEvent = parseOutputTextDoneEvent(event.event);
     if (doneEvent !== null) {
       return applyOutputTextDone(textStates, doneEvent);

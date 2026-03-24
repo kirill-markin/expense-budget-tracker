@@ -1,4 +1,9 @@
-import type { ContentPart, ToolCallContentPart } from "@/server/chat/types";
+import type {
+  ContentPart,
+  StreamPosition,
+  TextContentPart,
+  ToolCallContentPart,
+} from "@/server/chat/types";
 
 export type StoredMessage = Readonly<{
   role: "user" | "assistant";
@@ -8,49 +13,205 @@ export type StoredMessage = Readonly<{
   isStopped: boolean;
 }>;
 
-export const appendAssistantTextContent = (
+type OrderedAssistantPart = TextContentPart | ToolCallContentPart;
+
+type AppendAssistantTextParams = Readonly<{
+  text: string;
+  streamPosition: StreamPosition;
+}>;
+
+const isOrderedAssistantPart = (
+  part: ContentPart,
+): part is OrderedAssistantPart & Readonly<{ streamPosition: StreamPosition }> =>
+  (part.type === "text" || part.type === "tool_call")
+  && part.streamPosition !== undefined;
+
+const isLegacyAssistantPart = (
+  part: ContentPart,
+): boolean =>
+  (part.type === "text" || part.type === "tool_call")
+  && part.streamPosition === undefined;
+
+const formatStreamPosition = (
+  streamPosition: StreamPosition,
+): string =>
+  `itemId=${streamPosition.itemId} outputIndex=${String(streamPosition.outputIndex)} contentIndex=${String(streamPosition.contentIndex)} sequenceNumber=${String(streamPosition.sequenceNumber)}`;
+
+const assertSupportedAssistantContent = (
   content: ReadonlyArray<ContentPart>,
-  text: string,
-): ReadonlyArray<ContentPart> => {
-  const lastPart = content.length > 0 ? content[content.length - 1] : undefined;
-  if (lastPart !== undefined && lastPart.type === "text") {
-    return [...content.slice(0, -1), { ...lastPart, text: lastPart.text + text }];
+): void => {
+  if (content.some(isLegacyAssistantPart)) {
+    throw new Error(
+      "Assistant content uses an unsupported legacy format without streamPosition metadata",
+    );
+  }
+};
+
+const normalizeContentIndex = (
+  contentIndex: number | null,
+): number =>
+  contentIndex === null ? Number.MAX_SAFE_INTEGER : contentIndex;
+
+const normalizeSequenceNumber = (
+  sequenceNumber: number | null,
+): number =>
+  sequenceNumber === null ? Number.MAX_SAFE_INTEGER : sequenceNumber;
+
+const compareStreamPosition = (
+  left: StreamPosition,
+  right: StreamPosition,
+): number => {
+  if (left.outputIndex !== right.outputIndex) {
+    return left.outputIndex - right.outputIndex;
   }
 
-  return [...content, { type: "text", text }];
+  const leftContentIndex = normalizeContentIndex(left.contentIndex);
+  const rightContentIndex = normalizeContentIndex(right.contentIndex);
+  if (leftContentIndex !== rightContentIndex) {
+    return leftContentIndex - rightContentIndex;
+  }
+
+  const leftSequenceNumber = normalizeSequenceNumber(left.sequenceNumber);
+  const rightSequenceNumber = normalizeSequenceNumber(right.sequenceNumber);
+  if (leftSequenceNumber !== rightSequenceNumber) {
+    return leftSequenceNumber - rightSequenceNumber;
+  }
+
+  return left.itemId.localeCompare(right.itemId);
+};
+
+const insertOrderedAssistantPart = (
+  content: ReadonlyArray<ContentPart>,
+  nextPart: OrderedAssistantPart & Readonly<{ streamPosition: StreamPosition }>,
+): ReadonlyArray<ContentPart> => {
+  let insertIndex = content.length;
+
+  for (let i = 0; i < content.length; i++) {
+    const current = content[i];
+    if (!isOrderedAssistantPart(current)) {
+      continue;
+    }
+
+    if (compareStreamPosition(nextPart.streamPosition, current.streamPosition) < 0) {
+      insertIndex = i;
+      break;
+    }
+  }
+
+  return [...content.slice(0, insertIndex), nextPart, ...content.slice(insertIndex)];
+};
+
+const findTextPartIndex = (
+  content: ReadonlyArray<ContentPart>,
+  streamPosition: StreamPosition,
+): number =>
+  content.findIndex((part) =>
+    part.type === "text"
+    && part.streamPosition !== undefined
+    && part.streamPosition.itemId === streamPosition.itemId
+    && part.streamPosition.contentIndex === streamPosition.contentIndex,
+  );
+
+const isSameToolCall = (
+  existing: ToolCallContentPart,
+  incoming: ToolCallContentPart & Readonly<{ streamPosition: StreamPosition }>,
+): boolean => {
+  if (existing.id !== undefined && incoming.id !== undefined) {
+    return existing.id === incoming.id;
+  }
+
+  return existing.streamPosition !== undefined
+    && existing.streamPosition.itemId === incoming.streamPosition.itemId;
+};
+
+export const appendAssistantTextContent = (
+  content: ReadonlyArray<ContentPart>,
+  params: AppendAssistantTextParams,
+): ReadonlyArray<ContentPart> => {
+  assertSupportedAssistantContent(content);
+
+  const existingIndex = findTextPartIndex(content, params.streamPosition);
+  if (existingIndex >= 0) {
+    const existing = content[existingIndex];
+    if (existing === undefined || existing.type !== "text" || existing.streamPosition === undefined) {
+      throw new Error(`Assistant text update matched an invalid content part at index ${String(existingIndex)}`);
+    }
+
+    const updatedPart: TextContentPart = {
+      ...existing,
+      text: existing.text + params.text,
+      streamPosition: params.streamPosition,
+    };
+
+    return [...content.slice(0, existingIndex), updatedPart, ...content.slice(existingIndex + 1)];
+  }
+
+  return insertOrderedAssistantPart(content, {
+    type: "text",
+    text: params.text,
+    streamPosition: params.streamPosition,
+  });
 };
 
 export const upsertToolCallContent = (
   content: ReadonlyArray<ContentPart>,
   toolCall: ToolCallContentPart,
 ): ReadonlyArray<ContentPart> => {
-  let found = false;
-  const updatedContent = content.map((part) => {
-    if (
-      !found
-      && part.type === "tool_call"
-      && part.id !== undefined
-      && toolCall.id !== undefined
-      && part.id === toolCall.id
-    ) {
-      found = true;
-      return {
-        ...part,
-        name: toolCall.name,
-        status: toolCall.status,
-        providerStatus: toolCall.providerStatus,
-        input: toolCall.input,
-        output: toolCall.output,
-      };
-    }
-    return part;
-  });
+  assertSupportedAssistantContent(content);
 
-  if (found) {
-    return updatedContent;
+  if (toolCall.streamPosition === undefined) {
+    throw new Error(
+      `Tool call update is missing required streamPosition metadata: id=${toolCall.id ?? "unknown"} name=${toolCall.name}`,
+    );
+  }
+  const streamPosition = toolCall.streamPosition;
+
+  const existingIndex = content.findIndex((part) =>
+    part.type === "tool_call"
+    && isSameToolCall(part, {
+      ...toolCall,
+      streamPosition,
+    }),
+  );
+
+  if (existingIndex >= 0) {
+    const existing = content[existingIndex];
+    if (existing === undefined || existing.type !== "tool_call") {
+      throw new Error(`Tool call update matched an invalid content part at index ${String(existingIndex)}`);
+    }
+    if (existing.streamPosition === undefined) {
+      throw new Error(
+        `Tool call update encountered a legacy assistant part without streamPosition: id=${existing.id ?? "unknown"}`,
+      );
+    }
+    if (existing.streamPosition.itemId !== toolCall.streamPosition.itemId) {
+      throw new Error(
+        `Tool call update changed itemId for id=${toolCall.id ?? "unknown"} from ${formatStreamPosition(existing.streamPosition)} to ${formatStreamPosition(toolCall.streamPosition)}`,
+      );
+    }
+    if (existing.streamPosition.outputIndex !== streamPosition.outputIndex) {
+      throw new Error(
+        `Tool call update changed outputIndex for id=${toolCall.id ?? "unknown"} from ${formatStreamPosition(existing.streamPosition)} to ${formatStreamPosition(streamPosition)}`,
+      );
+    }
+
+    const updatedPart: ToolCallContentPart = {
+      ...existing,
+      name: toolCall.name,
+      status: toolCall.status,
+      providerStatus: toolCall.providerStatus,
+      input: toolCall.input,
+      output: toolCall.output,
+      streamPosition,
+    };
+
+    return [...content.slice(0, existingIndex), updatedPart, ...content.slice(existingIndex + 1)];
   }
 
-  return [...content, toolCall];
+  return insertOrderedAssistantPart(content, {
+    ...toolCall,
+    streamPosition,
+  });
 };
 
 export const applyAssistantError = (

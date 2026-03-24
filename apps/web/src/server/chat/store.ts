@@ -235,17 +235,19 @@ const mapSessionRow = (row: ChatSessionRow): ChatSessionSnapshot => ({
   messages: [],
 });
 
-const mapChatItemRow = (row: ChatItemRow): PersistedChatMessageItem => ({
-  itemId: row.item_id,
-  sessionId: row.session_id,
-  role: row.payload.role,
-  content: row.payload.content,
-  state: row.state,
-  isError: row.state === "error",
-  isStopped: row.state === "cancelled",
-  timestamp: new Date(row.created_at).getTime(),
-  updatedAt: new Date(row.updated_at).getTime(),
-});
+const mapChatItemRow = (row: ChatItemRow): PersistedChatMessageItem => {
+  return {
+    itemId: row.item_id,
+    sessionId: row.session_id,
+    role: row.payload.role,
+    content: row.payload.content,
+    state: row.state,
+    isError: row.state === "error",
+    isStopped: row.state === "cancelled",
+    timestamp: new Date(row.created_at).getTime(),
+    updatedAt: new Date(row.updated_at).getTime(),
+  };
+};
 
 const requireSessionRow = (
   row: ChatSessionRow | undefined,

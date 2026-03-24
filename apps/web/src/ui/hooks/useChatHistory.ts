@@ -7,14 +7,14 @@ import {
   upsertToolCallContent,
   type StoredMessage,
 } from "@/lib/chatHistory";
-import type { ContentPart, ToolCallContentPart } from "@/server/chat/types";
+import type { ContentPart, StreamPosition, ToolCallContentPart } from "@/server/chat/types";
 
 type ChatHistoryState = Readonly<{
   messages: ReadonlyArray<StoredMessage>;
   replaceMessages: (messages: ReadonlyArray<StoredMessage>) => void;
   appendUserMessage: (content: ReadonlyArray<ContentPart>) => void;
   startAssistantMessage: () => void;
-  appendAssistantChunk: (text: string) => void;
+  appendAssistantChunk: (text: string, streamPosition: StreamPosition) => void;
   upsertToolCall: (toolCall: ToolCallContentPart) => void;
   finalizeAssistant: () => void;
   markAssistantError: (errorText: string) => void;
@@ -51,12 +51,15 @@ export const useChatHistory = (): ChatHistoryState => {
     setMessages((prev) => [...prev, msg]);
   }, []);
 
-  const appendAssistantChunk = useCallback((text: string): void => {
+  const appendAssistantChunk = useCallback((text: string, streamPosition: StreamPosition): void => {
     setMessages((prev) => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
       if (last.role !== "assistant") return prev;
-      const updatedContent = appendAssistantTextContent(last.content, text);
+      const updatedContent = appendAssistantTextContent(last.content, {
+        text,
+        streamPosition,
+      });
       const updated: StoredMessage = { ...last, content: updatedContent };
       return [...prev.slice(0, -1), updated];
     });

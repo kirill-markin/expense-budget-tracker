@@ -32,6 +32,26 @@ export type ToolCallOutputRawItem = Readonly<{
   name?: string;
 }>;
 
+export type ToolCallPosition = Readonly<{
+  itemId: string;
+  outputIndex: number;
+  sequenceNumber: number | null;
+}>;
+
+export type FunctionCallArgumentsDeltaEvent = Readonly<{
+  itemId: string;
+  outputIndex: number;
+  sequenceNumber: number;
+  delta: string;
+}>;
+
+export type FunctionCallArgumentsDoneEvent = Readonly<{
+  itemId: string;
+  outputIndex: number;
+  sequenceNumber: number;
+  arguments: string;
+}>;
+
 export type ToolCallEvent = Extract<ChatStreamEvent, { type: "tool_call" }>;
 
 type ToolCallState = Readonly<{
@@ -85,8 +105,11 @@ const isTerminalToolProviderStatus = (
 
 const createToolCallEvent = (
   id: string,
+  itemId: string,
   name: string,
   status: ToolCallEvent["status"],
+  outputIndex: number,
+  sequenceNumber: number | null,
   providerStatus: string | null,
   input: string | null,
   output: string | null,
@@ -94,8 +117,11 @@ const createToolCallEvent = (
 ): ToolCallEvent => ({
   type: "tool_call",
   id,
+  itemId,
   name,
   status,
+  outputIndex,
+  sequenceNumber,
   ...(providerStatus !== null ? { providerStatus } : {}),
   ...(input !== null ? { input } : {}),
   ...(output !== null ? { output } : {}),
@@ -112,6 +138,29 @@ export const getRequiredToolCallId = (
     return rawItem.id;
   }
   throw new Error(`OpenAI tool call is missing a stable identifier: ${JSON.stringify(rawItem)}`);
+};
+
+const getRequiredToolItemId = (
+  rawItem: FunctionToolCallRawItem | HostedToolCallRawItem | ToolCallOutputRawItem,
+  previousSnapshot: ToolCallEvent | null,
+): string => {
+  if (typeof rawItem.id === "string" && rawItem.id.length > 0) {
+    return rawItem.id;
+  }
+  if (previousSnapshot !== null) {
+    return previousSnapshot.itemId;
+  }
+  throw new Error(`OpenAI tool call is missing an output item id: ${JSON.stringify(rawItem)}`);
+};
+
+const getRequiredToolOutputIndex = (
+  previousSnapshot: ToolCallEvent | null,
+  rawItem: ToolCallOutputRawItem,
+): number => {
+  if (previousSnapshot !== null) {
+    return previousSnapshot.outputIndex;
+  }
+  throw new Error(`OpenAI tool call output arrived before a tracked output item existed: ${JSON.stringify(rawItem)}`);
 };
 
 const getHostedToolCallInput = (
@@ -164,12 +213,16 @@ const getHostedToolCallOutput = (
 
 export const buildHostedToolCallEvent = (
   rawItem: HostedToolCallRawItem,
+  position: ToolCallPosition,
 ): ToolCallEvent => {
   const providerStatus = typeof rawItem.status === "string" ? rawItem.status : null;
   return createToolCallEvent(
     getRequiredToolCallId(rawItem),
+    position.itemId,
     rawItem.name,
     isTerminalToolProviderStatus(providerStatus) ? "completed" : "started",
+    position.outputIndex,
+    position.sequenceNumber,
     providerStatus,
     getHostedToolCallInput(rawItem),
     getHostedToolCallOutput(rawItem),
@@ -179,12 +232,16 @@ export const buildHostedToolCallEvent = (
 
 const buildFunctionToolCallEvent = (
   rawItem: FunctionToolCallRawItem,
+  position: ToolCallPosition,
 ): ToolCallEvent => {
   const providerStatus = typeof rawItem.status === "string" ? rawItem.status : null;
   return createToolCallEvent(
     getRequiredToolCallId(rawItem),
+    position.itemId,
     rawItem.name,
     isTerminalToolProviderStatus(providerStatus) ? "completed" : "started",
+    position.outputIndex,
+    position.sequenceNumber,
     providerStatus,
     rawItem.arguments ?? null,
     null,
@@ -203,8 +260,11 @@ const buildToolOutputEvent = (
   const refreshRoute = output !== null && shouldRefreshRouteAfterToolCall(name, output);
   return createToolCallEvent(
     id,
+    getRequiredToolItemId(rawItem, previousSnapshot),
     name,
     "completed",
+    getRequiredToolOutputIndex(previousSnapshot, rawItem),
+    previousSnapshot?.sequenceNumber ?? null,
     "completed",
     previousSnapshot?.input ?? null,
     output,
@@ -217,8 +277,11 @@ export const finalizeToolCallEvent = (
 ): ToolCallEvent =>
   createToolCallEvent(
     event.id,
+    event.itemId,
     event.name,
     "completed",
+    event.outputIndex,
+    event.sequenceNumber,
     isTerminalToolProviderStatus(event.providerStatus) ? (event.providerStatus ?? null) : "completed",
     event.input ?? null,
     event.output ?? null,
@@ -230,8 +293,11 @@ const areToolCallEventsEqual = (
   right: ToolCallEvent,
 ): boolean =>
   left.id === right.id
+  && left.itemId === right.itemId
   && left.name === right.name
   && left.status === right.status
+  && left.outputIndex === right.outputIndex
+  && left.sequenceNumber === right.sequenceNumber
   && left.providerStatus === right.providerStatus
   && left.input === right.input
   && left.output === right.output
@@ -247,7 +313,53 @@ const setToolCallState = (
   return nextToolStates;
 };
 
+const findToolStateByItemId = (
+  toolStates: ToolCallStateMap,
+  itemId: string,
+): ToolCallState | null => {
+  for (const state of toolStates.values()) {
+    if (state.snapshot.itemId === itemId) {
+      return state;
+    }
+  }
+
+  return null;
+};
+
+const mergeToolCallSnapshot = (
+  previousSnapshot: ToolCallEvent,
+  nextSnapshot: ToolCallEvent,
+): ToolCallEvent =>
+  createToolCallEvent(
+    nextSnapshot.id,
+    previousSnapshot.itemId,
+    nextSnapshot.name,
+    nextSnapshot.status,
+    previousSnapshot.outputIndex,
+    nextSnapshot.sequenceNumber ?? previousSnapshot.sequenceNumber,
+    nextSnapshot.providerStatus ?? previousSnapshot.providerStatus ?? null,
+    nextSnapshot.input ?? previousSnapshot.input ?? null,
+    nextSnapshot.output ?? previousSnapshot.output ?? null,
+    nextSnapshot.refreshRoute === true || previousSnapshot.refreshRoute === true,
+  );
+
 export const createToolCallStateMap = (): ToolCallStateMap => new Map();
+
+export const getTrackedToolCallPosition = (
+  toolStates: ToolCallStateMap,
+  toolId: string,
+): ToolCallPosition | null => {
+  const state = toolStates.get(toolId);
+  if (state === undefined) {
+    return null;
+  }
+
+  return {
+    itemId: state.snapshot.itemId,
+    outputIndex: state.snapshot.outputIndex,
+    sequenceNumber: state.snapshot.sequenceNumber,
+  };
+};
 
 export const shouldRefreshRouteAfterToolCall = (
   name: string,
@@ -273,12 +385,16 @@ export const shouldRefreshRouteAfterToolCall = (
 export const applyToolCallStarted = (
   toolStates: ToolCallStateMap,
   rawItem: FunctionToolCallRawItem | HostedToolCallRawItem,
+  position: ToolCallPosition,
   nowMs: number,
 ): ToolCallUpdate => {
-  const snapshot = rawItem.type === "hosted_tool_call"
-    ? buildHostedToolCallEvent(rawItem)
-    : buildFunctionToolCallEvent(rawItem);
-  const previousState = toolStates.get(snapshot.id);
+  const rawSnapshot = rawItem.type === "hosted_tool_call"
+    ? buildHostedToolCallEvent(rawItem, position)
+    : buildFunctionToolCallEvent(rawItem, position);
+  const previousState = toolStates.get(rawSnapshot.id);
+  const snapshot = previousState === undefined
+    ? rawSnapshot
+    : mergeToolCallSnapshot(previousState.snapshot, rawSnapshot);
   const startedAt = previousState?.startedAt ?? nowMs;
   const nextToolStates = setToolCallState(toolStates, snapshot, startedAt);
   const isStarted = previousState === undefined && snapshot.status === "started";
@@ -295,6 +411,84 @@ export const applyToolCallStarted = (
   };
 };
 
+export const applyFunctionCallArgumentsDelta = (
+  toolStates: ToolCallStateMap,
+  event: FunctionCallArgumentsDeltaEvent,
+): ToolCallUpdate => {
+  const previousState = findToolStateByItemId(toolStates, event.itemId);
+  if (previousState === null) {
+    throw new Error(
+      `OpenAI function_call_arguments.delta arrived before response.output_item.added for item_id=${event.itemId} output_index=${String(event.outputIndex)}`,
+    );
+  }
+  if (previousState.snapshot.outputIndex !== event.outputIndex) {
+    throw new Error(
+      `OpenAI function_call_arguments.delta changed output_index for item_id=${event.itemId} from ${String(previousState.snapshot.outputIndex)} to ${String(event.outputIndex)}`,
+    );
+  }
+
+  const nextSnapshot: ToolCallEvent = createToolCallEvent(
+    previousState.snapshot.id,
+    previousState.snapshot.itemId,
+    previousState.snapshot.name,
+    previousState.snapshot.status,
+    previousState.snapshot.outputIndex,
+    event.sequenceNumber,
+    previousState.snapshot.providerStatus ?? null,
+    (previousState.snapshot.input ?? "") + event.delta,
+    previousState.snapshot.output ?? null,
+    previousState.snapshot.refreshRoute === true,
+  );
+  const nextToolStates = setToolCallState(toolStates, nextSnapshot, previousState.startedAt);
+
+  return {
+    toolStates: nextToolStates,
+    event: areToolCallEventsEqual(previousState.snapshot, nextSnapshot) ? null : nextSnapshot,
+    started: false,
+    completed: false,
+    durationMs: null,
+  };
+};
+
+export const applyFunctionCallArgumentsDone = (
+  toolStates: ToolCallStateMap,
+  event: FunctionCallArgumentsDoneEvent,
+): ToolCallUpdate => {
+  const previousState = findToolStateByItemId(toolStates, event.itemId);
+  if (previousState === null) {
+    throw new Error(
+      `OpenAI function_call_arguments.done arrived before response.output_item.added for item_id=${event.itemId} output_index=${String(event.outputIndex)}`,
+    );
+  }
+  if (previousState.snapshot.outputIndex !== event.outputIndex) {
+    throw new Error(
+      `OpenAI function_call_arguments.done changed output_index for item_id=${event.itemId} from ${String(previousState.snapshot.outputIndex)} to ${String(event.outputIndex)}`,
+    );
+  }
+
+  const nextSnapshot: ToolCallEvent = createToolCallEvent(
+    previousState.snapshot.id,
+    previousState.snapshot.itemId,
+    previousState.snapshot.name,
+    previousState.snapshot.status,
+    previousState.snapshot.outputIndex,
+    event.sequenceNumber,
+    previousState.snapshot.providerStatus ?? null,
+    event.arguments,
+    previousState.snapshot.output ?? null,
+    previousState.snapshot.refreshRoute === true,
+  );
+  const nextToolStates = setToolCallState(toolStates, nextSnapshot, previousState.startedAt);
+
+  return {
+    toolStates: nextToolStates,
+    event: areToolCallEventsEqual(previousState.snapshot, nextSnapshot) ? null : nextSnapshot,
+    started: false,
+    completed: false,
+    durationMs: null,
+  };
+};
+
 export const applyToolCallOutput = (
   toolStates: ToolCallStateMap,
   rawItem: ToolCallOutputRawItem,
@@ -303,18 +497,23 @@ export const applyToolCallOutput = (
 ): ToolCallUpdate => {
   const snapshotId = getRequiredToolCallId(rawItem);
   const previousState = toolStates.get(snapshotId);
+  if (previousState === undefined) {
+    throw new Error(
+      `OpenAI tool call output arrived before a tracked output item existed: ${JSON.stringify(rawItem)}`,
+    );
+  }
   const snapshot = buildToolOutputEvent(
     rawItem,
-    previousState?.snapshot ?? null,
+    previousState.snapshot,
     rawOutput,
   );
-  const startedAt = previousState?.startedAt ?? nowMs;
+  const startedAt = previousState.startedAt;
   const nextToolStates = setToolCallState(toolStates, snapshot, startedAt);
-  const isCompleted = previousState?.snapshot.status !== "completed";
+  const isCompleted = previousState.snapshot.status !== "completed";
 
   return {
     toolStates: nextToolStates,
-    event: previousState === undefined || !areToolCallEventsEqual(previousState.snapshot, snapshot)
+    event: !areToolCallEventsEqual(previousState.snapshot, snapshot)
       ? snapshot
       : null,
     started: false,

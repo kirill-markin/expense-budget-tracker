@@ -1,8 +1,16 @@
 export type ChatRole = "user" | "assistant";
 
+export type StreamPosition = Readonly<{
+  itemId: string;
+  outputIndex: number;
+  contentIndex: number | null;
+  sequenceNumber: number | null;
+}>;
+
 export type TextContentPart = Readonly<{
   type: "text";
   text: string;
+  streamPosition?: StreamPosition;
 }>;
 
 export type ImageContentPart = Readonly<{
@@ -26,6 +34,7 @@ export type ToolCallContentPart = Readonly<{
   providerStatus?: string | null;
   input: string | null;
   output: string | null;
+  streamPosition?: StreamPosition;
 }>;
 
 export type ContentPart = TextContentPart | ImageContentPart | FileContentPart | ToolCallContentPart;
@@ -36,12 +45,22 @@ export type ChatMessage = Readonly<{
 }>;
 
 export type ChatStreamEvent =
-  | Readonly<{ type: "delta"; text: string }>
+  | Readonly<{
+    type: "delta";
+    text: string;
+    itemId: string;
+    outputIndex: number;
+    contentIndex: number;
+    sequenceNumber: number | null;
+  }>
   | Readonly<{
     type: "tool_call";
     id: string;
+    itemId: string;
     name: string;
     status: "started" | "completed";
+    outputIndex: number;
+    sequenceNumber: number | null;
     providerStatus?: string;
     input?: string;
     output?: string;

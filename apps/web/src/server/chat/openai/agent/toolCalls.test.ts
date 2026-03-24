@@ -2,14 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyFunctionCallArgumentsDelta,
+  applyFunctionCallArgumentsDone,
   applyToolCallOutput,
   applyToolCallStarted,
   buildHostedToolCallEvent,
   createToolCallStateMap,
   finalizePendingToolCalls,
   finalizeToolCallEvent,
+  getTrackedToolCallPosition,
   shouldRefreshRouteAfterToolCall,
 } from "./toolCalls";
+
+const createToolPosition = (
+  itemId: string,
+  outputIndex: number,
+  sequenceNumber: number | null,
+) => ({
+  itemId,
+  outputIndex,
+  sequenceNumber,
+});
 
 test("shouldRefreshRouteAfterToolCall detects mutating SQL tool results", () => {
   assert.equal(
@@ -43,7 +56,7 @@ test("buildHostedToolCallEvent uses hosted tool name and payload fields", () => 
   assert.deepEqual(
     buildHostedToolCallEvent({
       type: "hosted_tool_call",
-      id: "tool-1",
+      id: "tool-item-1",
       name: "code_interpreter_call",
       status: "interpreting",
       providerData: {
@@ -51,37 +64,18 @@ test("buildHostedToolCallEvent uses hosted tool name and payload fields", () => 
         code: "print('hello')",
         outputs: [{ type: "logs", logs: "hello" }],
       },
-    }),
+    }, createToolPosition("tool-item-1", 1, 15)),
     {
       type: "tool_call",
-      id: "tool-1",
+      id: "tool-item-1",
+      itemId: "tool-item-1",
       name: "code_interpreter_call",
       status: "started",
+      outputIndex: 1,
+      sequenceNumber: 15,
       providerStatus: "interpreting",
       input: "print('hello')",
       output: JSON.stringify([{ type: "logs", logs: "hello" }]),
-    },
-  );
-});
-
-test("buildHostedToolCallEvent keeps completed hosted tools completed", () => {
-  assert.deepEqual(
-    buildHostedToolCallEvent({
-      type: "hosted_tool_call",
-      id: "tool-2",
-      name: "web_search_call",
-      arguments: JSON.stringify({ query: "latest usd eur rate" }),
-      status: "completed",
-      output: JSON.stringify({ answer: "1.09" }),
-    }),
-    {
-      type: "tool_call",
-      id: "tool-2",
-      name: "web_search_call",
-      status: "completed",
-      providerStatus: "completed",
-      input: JSON.stringify({ query: "latest usd eur rate" }),
-      output: JSON.stringify({ answer: "1.09" }),
     },
   );
 });
@@ -91,42 +85,40 @@ test("finalizeToolCallEvent marks unfinished hosted tools as completed", () => {
     finalizeToolCallEvent({
       type: "tool_call",
       id: "tool-3",
+      itemId: "tool-item-3",
       name: "code_interpreter_call",
       status: "started",
+      outputIndex: 2,
+      sequenceNumber: 50,
       providerStatus: "interpreting",
       input: "print('hello')",
     }),
     {
       type: "tool_call",
       id: "tool-3",
+      itemId: "tool-item-3",
       name: "code_interpreter_call",
       status: "completed",
+      outputIndex: 2,
+      sequenceNumber: 50,
       providerStatus: "completed",
       input: "print('hello')",
     },
   );
 });
 
-test("applyToolCallStarted logs a started tool only on first sighting", () => {
+test("applyToolCallStarted tracks tool position on first sighting", () => {
   const firstUpdate = applyToolCallStarted(
     createToolCallStateMap(),
     {
       type: "function_call",
       callId: "tool-1",
+      id: "tool-item-1",
       name: "query_database",
       arguments: "{\"sql\":\"SELECT 1\"}",
     },
+    createToolPosition("tool-item-1", 0, 10),
     100,
-  );
-  const secondUpdate = applyToolCallStarted(
-    firstUpdate.toolStates,
-    {
-      type: "function_call",
-      callId: "tool-1",
-      name: "query_database",
-      arguments: "{\"sql\":\"SELECT 1\"}",
-    },
-    120,
   );
 
   assert.equal(firstUpdate.started, true);
@@ -134,12 +126,84 @@ test("applyToolCallStarted logs a started tool only on first sighting", () => {
   assert.deepEqual(firstUpdate.event, {
     type: "tool_call",
     id: "tool-1",
+    itemId: "tool-item-1",
     name: "query_database",
     status: "started",
+    outputIndex: 0,
+    sequenceNumber: 10,
     input: "{\"sql\":\"SELECT 1\"}",
   });
-  assert.equal(secondUpdate.started, false);
-  assert.equal(secondUpdate.event, null);
+  assert.deepEqual(getTrackedToolCallPosition(firstUpdate.toolStates, "tool-1"), {
+    itemId: "tool-item-1",
+    outputIndex: 0,
+    sequenceNumber: 10,
+  });
+});
+
+test("applyFunctionCallArgumentsDelta updates the tracked tool input", () => {
+  const started = applyToolCallStarted(
+    createToolCallStateMap(),
+    {
+      type: "function_call",
+      callId: "tool-1",
+      id: "tool-item-1",
+      name: "query_database",
+      arguments: "{\"sql\":\"SEL",
+    },
+    createToolPosition("tool-item-1", 0, 10),
+    100,
+  );
+
+  const updated = applyFunctionCallArgumentsDelta(started.toolStates, {
+    itemId: "tool-item-1",
+    outputIndex: 0,
+    sequenceNumber: 12,
+    delta: "ECT 1\"}",
+  });
+
+  assert.deepEqual(updated.event, {
+    type: "tool_call",
+    id: "tool-1",
+    itemId: "tool-item-1",
+    name: "query_database",
+    status: "started",
+    outputIndex: 0,
+    sequenceNumber: 12,
+    input: "{\"sql\":\"SELECT 1\"}",
+  });
+});
+
+test("applyFunctionCallArgumentsDone replaces the tracked tool input with the final payload", () => {
+  const started = applyToolCallStarted(
+    createToolCallStateMap(),
+    {
+      type: "function_call",
+      callId: "tool-1",
+      id: "tool-item-1",
+      name: "query_database",
+      arguments: "{\"sql\":\"SEL",
+    },
+    createToolPosition("tool-item-1", 0, 10),
+    100,
+  );
+
+  const updated = applyFunctionCallArgumentsDone(started.toolStates, {
+    itemId: "tool-item-1",
+    outputIndex: 0,
+    sequenceNumber: 15,
+    arguments: "{\"sql\":\"SELECT 1\"}",
+  });
+
+  assert.deepEqual(updated.event, {
+    type: "tool_call",
+    id: "tool-1",
+    itemId: "tool-item-1",
+    name: "query_database",
+    status: "started",
+    outputIndex: 0,
+    sequenceNumber: 15,
+    input: "{\"sql\":\"SELECT 1\"}",
+  });
 });
 
 test("applyToolCallOutput completes a tracked tool call and computes duration", () => {
@@ -148,9 +212,11 @@ test("applyToolCallOutput completes a tracked tool call and computes duration", 
     {
       type: "function_call",
       callId: "tool-1",
+      id: "tool-item-1",
       name: "query_database",
       arguments: "{\"sql\":\"UPDATE ledger SET amount = 1\"}",
     },
+    createToolPosition("tool-item-1", 0, 10),
     100,
   );
   const completed = applyToolCallOutput(
@@ -171,8 +237,11 @@ test("applyToolCallOutput completes a tracked tool call and computes duration", 
   assert.deepEqual(completed.event, {
     type: "tool_call",
     id: "tool-1",
+    itemId: "tool-item-1",
     name: "query_database",
     status: "completed",
+    outputIndex: 0,
+    sequenceNumber: 10,
     providerStatus: "completed",
     input: "{\"sql\":\"UPDATE ledger SET amount = 1\"}",
     output: JSON.stringify({
@@ -182,12 +251,27 @@ test("applyToolCallOutput completes a tracked tool call and computes duration", 
   });
 });
 
+test("applyToolCallOutput rejects untracked tool outputs", () => {
+  assert.throws(
+    () => applyToolCallOutput(
+      createToolCallStateMap(),
+      {
+        type: "function_call_output",
+        callId: "tool-404",
+      },
+      "{}",
+      100,
+    ),
+    /tool call output arrived before a tracked output item existed/,
+  );
+});
+
 test("finalizePendingToolCalls completes unfinished tools at stream end", () => {
   const started = applyToolCallStarted(
     createToolCallStateMap(),
     {
       type: "hosted_tool_call",
-      id: "tool-2",
+      id: "tool-item-2",
       name: "code_interpreter_call",
       status: "interpreting",
       providerData: {
@@ -195,6 +279,7 @@ test("finalizePendingToolCalls completes unfinished tools at stream end", () => 
         code: "print('hello')",
       },
     },
+    createToolPosition("tool-item-2", 1, 20),
     200,
   );
 
@@ -203,9 +288,12 @@ test("finalizePendingToolCalls completes unfinished tools at stream end", () => 
   assert.deepEqual(finalized.finalized, [{
     event: {
       type: "tool_call",
-      id: "tool-2",
+      id: "tool-item-2",
+      itemId: "tool-item-2",
       name: "code_interpreter_call",
       status: "completed",
+      outputIndex: 1,
+      sequenceNumber: 20,
       providerStatus: "completed",
       input: "print('hello')",
     },

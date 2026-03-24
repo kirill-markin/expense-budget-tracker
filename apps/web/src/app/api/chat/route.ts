@@ -491,12 +491,19 @@ export const POST = async (request: Request): Promise<Response> => {
       },
     });
   } catch (error) {
-    if (error instanceof ChatSessionNotFoundError || error instanceof ChatSessionConflictError) {
+    if (
+      error instanceof ChatSessionNotFoundError
+      || error instanceof ChatSessionConflictError
+    ) {
       return new Response(
         error instanceof ChatSessionConflictError
           ? "Chat session already has an active response"
           : error.message,
-        { status: error instanceof ChatSessionConflictError ? 409 : 404 },
+        {
+          status: error instanceof ChatSessionConflictError
+            ? 409
+            : 404,
+        },
       );
     }
 

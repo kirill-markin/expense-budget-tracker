@@ -172,7 +172,14 @@ test("createChatEventStream emits heartbeat comments during idle gaps", async ()
   const stream = createChatEventStream({
     events: (async function* (): AsyncGenerator<ChatStreamEvent> {
       await delay(20);
-      yield { type: "delta", text: "hello" };
+      yield {
+        type: "delta",
+        text: "hello",
+        itemId: "msg-1",
+        outputIndex: 0,
+        contentIndex: 0,
+        sequenceNumber: 10,
+      };
       yield { type: "done" };
     })(),
     heartbeatIntervalMs: 5,
@@ -184,7 +191,7 @@ test("createChatEventStream emits heartbeat comments during idle gaps", async ()
   const output = await readStream(stream);
 
   assert.match(output, /: keep-alive\n\n/);
-  assert.match(output, /data: {"type":"delta","text":"hello"}\n\n/);
+  assert.match(output, /data: {"type":"delta","text":"hello","itemId":"msg-1","outputIndex":0,"contentIndex":0,"sequenceNumber":10}\n\n/);
   assert.match(output, /data: {"type":"done"}\n\n/);
 });
 
@@ -235,7 +242,14 @@ test("createChatEventStream stops without logging an error after cancel", async 
   const stream = createChatEventStream({
     events: (async function* (): AsyncGenerator<ChatStreamEvent> {
       await delay(10);
-      yield { type: "delta", text: "hello" };
+      yield {
+        type: "delta",
+        text: "hello",
+        itemId: "msg-1",
+        outputIndex: 0,
+        contentIndex: 0,
+        sequenceNumber: 10,
+      };
     })(),
     heartbeatIntervalMs: 50,
     onStreamError: (error: string): void => {

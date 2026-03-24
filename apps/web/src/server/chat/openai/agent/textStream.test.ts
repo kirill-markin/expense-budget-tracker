@@ -12,26 +12,38 @@ test("applyOutputTextDelta keeps text state separate for different item IDs", ()
   const firstUpdate = applyOutputTextDelta(
     new Map(),
     {
-      type: "response.output_text.delta",
-      item_id: "msg-a",
-      content_index: 0,
-      output_index: 0,
+      text: "Hello",
+      itemId: "msg-a",
+      outputIndex: 0,
+      contentIndex: 0,
+      sequenceNumber: 10,
     },
-    "Hello",
   );
   const secondUpdate = applyOutputTextDelta(
     firstUpdate.textStates,
     {
-      type: "response.output_text.delta",
-      item_id: "msg-b",
-      content_index: 0,
-      output_index: 1,
+      text: "World",
+      itemId: "msg-b",
+      outputIndex: 1,
+      contentIndex: 0,
+      sequenceNumber: 20,
     },
-    "World",
   );
 
-  assert.equal(firstUpdate.emittedDelta, "Hello");
-  assert.equal(secondUpdate.emittedDelta, "World");
+  assert.deepEqual(firstUpdate.emittedDelta, {
+    text: "Hello",
+    itemId: "msg-a",
+    outputIndex: 0,
+    contentIndex: 0,
+    sequenceNumber: 10,
+  });
+  assert.deepEqual(secondUpdate.emittedDelta, {
+    text: "World",
+    itemId: "msg-b",
+    outputIndex: 1,
+    contentIndex: 0,
+    sequenceNumber: 20,
+  });
   assert.equal(secondUpdate.textStates.get("msg-a:0")?.assembledText, "Hello");
   assert.equal(secondUpdate.textStates.get("msg-b:0")?.assembledText, "World");
 });
@@ -40,12 +52,12 @@ test("applyOutputTextDone validates assembled text for the same text part", () =
   const deltaUpdate = applyOutputTextDelta(
     new Map(),
     {
-      type: "response.output_text.delta",
-      item_id: "msg-a",
-      content_index: 0,
-      output_index: 0,
+      text: "Hello",
+      itemId: "msg-a",
+      outputIndex: 0,
+      contentIndex: 0,
+      sequenceNumber: 10,
     },
-    "Hello",
   );
   const doneUpdate = applyOutputTextDone(
     deltaUpdate.textStates,
@@ -67,12 +79,12 @@ test("applyOutputTextDone throws a contextual error on documented text mismatch"
   const deltaUpdate = applyOutputTextDelta(
     new Map(),
     {
-      type: "response.output_text.delta",
-      item_id: "msg-a",
-      content_index: 0,
-      output_index: 0,
+      text: "Hello",
+      itemId: "msg-a",
+      outputIndex: 0,
+      contentIndex: 0,
+      sequenceNumber: 10,
     },
-    "Hello",
   );
 
   assert.throws(
@@ -94,12 +106,12 @@ test("applyOutputItemDone requires text parts to be finalized before the message
   const deltaUpdate = applyOutputTextDelta(
     new Map(),
     {
-      type: "response.output_text.delta",
-      item_id: "msg-a",
-      content_index: 0,
-      output_index: 0,
+      text: "Hello",
+      itemId: "msg-a",
+      outputIndex: 0,
+      contentIndex: 0,
+      sequenceNumber: 10,
     },
-    "Hello",
   );
 
   assert.throws(
@@ -131,6 +143,7 @@ test("applyRawTextStreamEvent handles multiple text items in one run without pre
         item_id: "msg-a",
         content_index: 0,
         output_index: 0,
+        sequence_number: 10,
       },
     },
     {
@@ -162,6 +175,7 @@ test("applyRawTextStreamEvent handles multiple text items in one run without pre
         item_id: "msg-b",
         content_index: 0,
         output_index: 1,
+        sequence_number: 20,
       },
     },
     {
@@ -175,13 +189,14 @@ test("applyRawTextStreamEvent handles multiple text items in one run without pre
       },
     },
     {
-      type: "output_text_delta",
-      delta: "Third",
-      providerData: {
+      type: "model",
+      event: {
         type: "response.output_text.delta",
         item_id: "msg-c",
         content_index: 0,
         output_index: 2,
+        sequence_number: 30,
+        delta: "Third",
       },
     },
     {
@@ -200,7 +215,7 @@ test("applyRawTextStreamEvent handles multiple text items in one run without pre
     const update = applyRawTextStreamEvent(textStates, event);
     textStates = update.textStates;
     if (update.emittedDelta !== null) {
-      emitted.push(update.emittedDelta);
+      emitted.push(update.emittedDelta.text);
     }
   }
 
@@ -219,6 +234,7 @@ test("applyRawTextStreamEvent ignores unrelated raw model events", () => {
         type: "response.function_call_arguments.delta",
         item_id: "fc_123",
         output_index: 1,
+        sequence_number: 20,
         delta: "{\"sql\":\"SELECT 1\"}",
       },
     },

@@ -30,12 +30,19 @@ import {
   applyRawTextStreamEvent,
 } from "./textStream";
 import {
+  applyFunctionCallArgumentsDelta,
+  applyFunctionCallArgumentsDone,
   applyToolCallOutput,
   applyToolCallStarted,
   createToolCallStateMap,
   finalizePendingToolCalls,
   type FunctionToolCallRawItem,
+  type FunctionCallArgumentsDeltaEvent,
+  type FunctionCallArgumentsDoneEvent,
   type HostedToolCallRawItem,
+  getRequiredToolCallId,
+  getTrackedToolCallPosition,
+  type ToolCallPosition,
   type ToolCallOutputRawItem,
 } from "./toolCalls";
 
@@ -241,8 +248,138 @@ const DEFAULT_START_AGENT_RESPONSE_DEPENDENCIES: StartAgentResponseDependencies 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const getRequiredStringField = (
+  value: Readonly<Record<string, unknown>>,
+  key: string,
+  errorPrefix: string,
+): string => {
+  const candidate = value[key];
+  if (typeof candidate === "string" && candidate.length > 0) {
+    return candidate;
+  }
+  throw new Error(`${errorPrefix}: missing string field ${key}`);
+};
+
+const getRequiredNumberField = (
+  value: Readonly<Record<string, unknown>>,
+  key: string,
+  errorPrefix: string,
+): number => {
+  const candidate = value[key];
+  if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 0) {
+    return candidate;
+  }
+  throw new Error(`${errorPrefix}: missing non-negative integer field ${key}`);
+};
+
+const getOptionalStringField = (
+  value: Readonly<Record<string, unknown>>,
+  key: string,
+): string | undefined => {
+  const candidate = value[key];
+  return typeof candidate === "string" ? candidate : undefined;
+};
+
 const isRawTextEvent = (value: unknown): value is RawTextEvent =>
   isRecord(value) && typeof value.type === "string";
+
+const buildHostedToolCallRawItem = (
+  rawItem: Readonly<Record<string, unknown>>,
+  itemType: string,
+): HostedToolCallRawItem => ({
+  type: "hosted_tool_call",
+  id: getOptionalStringField(rawItem, "id"),
+  name: itemType,
+  arguments: getOptionalStringField(rawItem, "arguments"),
+  status: getOptionalStringField(rawItem, "status"),
+  output: getOptionalStringField(rawItem, "output"),
+  providerData: rawItem,
+});
+
+const isHostedToolCallType = (
+  itemType: string,
+): boolean =>
+  itemType.endsWith("_call");
+
+const parseOutputItemAddedToolEvent = (
+  rawEvent: unknown,
+): Readonly<{
+  rawItem: FunctionToolCallRawItem | HostedToolCallRawItem;
+  position: ToolCallPosition;
+}> | null => {
+  if (!isRecord(rawEvent) || rawEvent.type !== "response.output_item.added") {
+    return null;
+  }
+
+  const errorPrefix = `OpenAI response.output_item.added event is invalid: ${JSON.stringify(rawEvent)}`;
+  const rawItem = rawEvent.item;
+  if (!isRecord(rawItem)) {
+    throw new Error(`${errorPrefix}: missing item object`);
+  }
+
+  const itemType = getRequiredStringField(rawItem, "type", errorPrefix);
+  const itemId = getRequiredStringField(rawItem, "id", errorPrefix);
+  const position: ToolCallPosition = {
+    itemId,
+    outputIndex: getRequiredNumberField(rawEvent, "output_index", errorPrefix),
+    sequenceNumber: getRequiredNumberField(rawEvent, "sequence_number", errorPrefix),
+  };
+
+  if (itemType === "function_call") {
+    return {
+      rawItem: {
+        type: "function_call",
+        callId: getRequiredStringField(rawItem, "call_id", errorPrefix),
+        id: itemId,
+        name: getRequiredStringField(rawItem, "name", errorPrefix),
+        arguments: getOptionalStringField(rawItem, "arguments"),
+        status: getOptionalStringField(rawItem, "status"),
+      },
+      position,
+    };
+  }
+
+  if (!isHostedToolCallType(itemType)) {
+    return null;
+  }
+
+  return {
+    rawItem: buildHostedToolCallRawItem(rawItem, itemType),
+    position,
+  };
+};
+
+const parseFunctionCallArgumentsDeltaEvent = (
+  rawEvent: unknown,
+): FunctionCallArgumentsDeltaEvent | null => {
+  if (!isRecord(rawEvent) || rawEvent.type !== "response.function_call_arguments.delta") {
+    return null;
+  }
+
+  const errorPrefix = `OpenAI response.function_call_arguments.delta event is invalid: ${JSON.stringify(rawEvent)}`;
+  return {
+    itemId: getRequiredStringField(rawEvent, "item_id", errorPrefix),
+    outputIndex: getRequiredNumberField(rawEvent, "output_index", errorPrefix),
+    sequenceNumber: getRequiredNumberField(rawEvent, "sequence_number", errorPrefix),
+    delta: getRequiredStringField(rawEvent, "delta", errorPrefix),
+  };
+};
+
+const parseFunctionCallArgumentsDoneEvent = (
+  rawEvent: unknown,
+): FunctionCallArgumentsDoneEvent | null => {
+  if (!isRecord(rawEvent) || rawEvent.type !== "response.function_call_arguments.done") {
+    return null;
+  }
+
+  const errorPrefix = `OpenAI response.function_call_arguments.done event is invalid: ${JSON.stringify(rawEvent)}`;
+  return {
+    itemId: getRequiredStringField(rawEvent, "item_id", errorPrefix),
+    outputIndex: getRequiredNumberField(rawEvent, "output_index", errorPrefix),
+    sequenceNumber: getRequiredNumberField(rawEvent, "sequence_number", errorPrefix),
+    arguments: getRequiredStringField(rawEvent, "arguments", errorPrefix),
+  };
+};
 
 const isRawModelStreamEvent = (
   event: OpenAIRunStreamEvent,
@@ -433,16 +570,83 @@ export const startAgentResponseWithDeps = async (
     try {
       for await (const event of result) {
         if (isRawModelStreamEvent(event)) {
+          const outputItemAddedToolEvent = parseOutputItemAddedToolEvent(event.data.event);
+          if (outputItemAddedToolEvent !== null) {
+            const update = applyToolCallStarted(
+              toolStates,
+              outputItemAddedToolEvent.rawItem,
+              outputItemAddedToolEvent.position,
+              dependencies.now(),
+            );
+            toolStates = update.toolStates;
+
+            if (update.started) {
+              dependencies.logEvent({
+                domain: "chat",
+                action: "tool_call",
+                vendor: "openai",
+                tool: update.event?.name ?? outputItemAddedToolEvent.rawItem.name,
+                status: "started",
+              });
+            }
+            if (update.completed && update.durationMs !== null && update.event !== null) {
+              dependencies.logEvent({
+                domain: "chat",
+                action: "tool_call",
+                vendor: "openai",
+                tool: update.event.name,
+                status: "completed",
+                durationMs: update.durationMs,
+              });
+              toolCalls++;
+            }
+            if (update.event !== null) {
+              yield update.event;
+            }
+          }
+
           const textUpdate = applyRawTextStreamEvent(textStates, event.data);
           textStates = textUpdate.textStates;
           if (textUpdate.emittedDelta !== null) {
-            yield { type: "delta", text: textUpdate.emittedDelta };
+            yield {
+              type: "delta",
+              text: textUpdate.emittedDelta.text,
+              itemId: textUpdate.emittedDelta.itemId,
+              outputIndex: textUpdate.emittedDelta.outputIndex,
+              contentIndex: textUpdate.emittedDelta.contentIndex,
+              sequenceNumber: textUpdate.emittedDelta.sequenceNumber,
+            };
+          }
+
+          const functionArgumentsDeltaEvent = parseFunctionCallArgumentsDeltaEvent(event.data.event);
+          if (functionArgumentsDeltaEvent !== null) {
+            const update = applyFunctionCallArgumentsDelta(toolStates, functionArgumentsDeltaEvent);
+            toolStates = update.toolStates;
+            if (update.event !== null) {
+              yield update.event;
+            }
+          }
+
+          const functionArgumentsDoneEvent = parseFunctionCallArgumentsDoneEvent(event.data.event);
+          if (functionArgumentsDoneEvent !== null) {
+            const update = applyFunctionCallArgumentsDone(toolStates, functionArgumentsDoneEvent);
+            toolStates = update.toolStates;
+            if (update.event !== null) {
+              yield update.event;
+            }
           }
           continue;
         }
 
         if (isToolCalledRunItemEvent(event)) {
-          const update = applyToolCallStarted(toolStates, event.item.rawItem, dependencies.now());
+          const toolId = getRequiredToolCallId(event.item.rawItem);
+          const position = getTrackedToolCallPosition(toolStates, toolId);
+          if (position === null) {
+            throw new Error(
+              `OpenAI tool_called event arrived before response.output_item.added for tool_id=${toolId}`,
+            );
+          }
+          const update = applyToolCallStarted(toolStates, event.item.rawItem, position, dependencies.now());
           toolStates = update.toolStates;
 
           if (update.started) {

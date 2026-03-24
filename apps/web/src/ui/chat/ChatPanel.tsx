@@ -589,7 +589,12 @@ export const ChatPanel = (props: Props): ReactElement => {
 
           if (event.type === "delta") {
             receivedContent = true;
-            appendAssistantChunk(event.text);
+            appendAssistantChunk(event.text, {
+              itemId: event.itemId,
+              outputIndex: event.outputIndex,
+              contentIndex: event.contentIndex,
+              sequenceNumber: event.sequenceNumber,
+            });
           } else if (event.type === "tool_call") {
             receivedContent = true;
             upsertToolCall({
@@ -600,6 +605,12 @@ export const ChatPanel = (props: Props): ReactElement => {
               providerStatus: event.providerStatus ?? null,
               input: event.input ?? null,
               output: event.output ?? null,
+              streamPosition: {
+                itemId: event.itemId,
+                outputIndex: event.outputIndex,
+                contentIndex: null,
+                sequenceNumber: event.sequenceNumber,
+              },
             });
             if (event.status === "completed" && mode === "sidebar" && event.refreshRoute === true) {
               startTransition(() => {
