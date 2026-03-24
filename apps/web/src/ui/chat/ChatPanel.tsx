@@ -20,11 +20,12 @@ import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+  getChatComposerAction,
   getEffectiveSnapshotRunState,
+  isChatRunActive,
   shouldRefreshMainContentFromLiveEvent,
   shouldRefreshMainContentFromSnapshot,
   shouldReplaceHistoryFromSnapshot,
-  shouldSnapshotSetStreaming,
   shouldSuppressStreamFailure,
 } from "./streamRecovery";
 import { getAssistantStreamingIndicator } from "./thinkingSummary";
@@ -282,24 +283,37 @@ export const ChatPanel = (props: Props): ReactElement => {
 
   const [inputText, setInputText] = useState<string>("");
   const [pendingAttachments, setPendingAttachments] = useState<ReadonlyArray<PendingAttachment>>([]);
-  const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [isHistoryLoaded, setIsHistoryLoaded] = useState<boolean>(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [runState, setRunState] = useState<"idle" | "running" | "interrupted">("idle");
+  const [isLiveStreamConnected, setIsLiveStreamConnected] = useState<boolean>(false);
   const [isStopping, setIsStopping] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const dragCounterRef = useRef<number>(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const isLiveStreamConnectedRef = useRef<boolean>(false);
   const stoppedSessionIdsRef = useRef<Set<string>>(new Set());
   const lastSnapshotUpdatedAtRef = useRef<number | null>(null);
   const lastMainContentInvalidationVersionRef = useRef<number | null>(null);
   const shouldAutoScrollRef = useRef<boolean>(true);
   const scrollFrameRef = useRef<number | null>(null);
   const initialScrollDoneRef = useRef<boolean>(false);
+  /**
+   * The chat UI tracks two separate kinds of activity:
+   *
+   * - `runState` is the persisted session-level truth about whether the
+   *   assistant is still working on the current turn.
+   * - `isLiveStreamConnected` only tells us whether this browser currently has
+   *   an open SSE reader for that run.
+   *
+   * Snapshot polling is a supported delivery path after the live stream drops,
+   * so the UI must never hide active-run affordances merely because the
+   * transport is disconnected.
+   */
+  const isAssistantRunActive = isChatRunActive(runState);
+  const composerAction = getChatComposerAction(runState);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior): void => {
     const el = messagesRef.current;
@@ -359,7 +373,9 @@ export const ChatPanel = (props: Props): ReactElement => {
    * This path is intentionally treated as a first-class delivery channel, not
    * merely a fallback: it updates transcript state, run state, and the
    * session-level invalidation version that can refresh the route-backed main
-   * content even when no live SSE connection is active.
+   * content even when no live SSE connection is active. Snapshot loading must
+   * never reset `isLiveStreamConnected`, because polling can race with an open
+   * live stream and should not collapse the UI into a false idle state.
    */
   const loadChatSnapshot = useCallback(async (
     sessionId: string | undefined,
@@ -389,16 +405,6 @@ export const ChatPanel = (props: Props): ReactElement => {
     setCurrentSessionId(payload.sessionId);
     setRunState(effectiveRunState);
 
-    if (shouldSnapshotSetStreaming(
-      payload.runState,
-      isLiveStreamConnectedRef.current,
-      isUserStoppedSession,
-    )) {
-      setIsStreaming(true);
-    } else {
-      setIsStreaming(false);
-    }
-
     const shouldReplaceHistory = replaceHistory && shouldReplaceHistoryFromSnapshot(
       lastSnapshotUpdatedAtRef.current,
       payload.updatedAt,
@@ -419,8 +425,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     setIsHistoryLoaded(false);
     setCurrentSessionId(null);
     setRunState("idle");
-    setIsStreaming(false);
-    isLiveStreamConnectedRef.current = false;
+    setIsLiveStreamConnected(false);
     stoppedSessionIdsRef.current.clear();
     lastSnapshotUpdatedAtRef.current = null;
     lastMainContentInvalidationVersionRef.current = null;
@@ -463,18 +468,18 @@ export const ChatPanel = (props: Props): ReactElement => {
         undefined,
         true,
       ).catch((error) => {
-        if (isLiveStreamConnectedRef.current) {
+        if (isLiveStreamConnected) {
           return;
         }
         const message = error instanceof Error ? error.message : String(error);
         markAssistantError(t("chat.errorFailed", { message }));
         setRunState("interrupted");
-        setIsStreaming(false);
+        setIsLiveStreamConnected(false);
       });
     }, ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
-  }, [currentSessionId, isHistoryLoaded, loadChatSnapshot, markAssistantError, runState, t]);
+  }, [currentSessionId, isHistoryLoaded, isLiveStreamConnected, loadChatSnapshot, markAssistantError, runState, t]);
 
   // Resize drag logic
   useEffect(() => {
@@ -523,7 +528,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return;
 
-    const behavior: ScrollBehavior = isStreaming || !initialScrollDoneRef.current
+    const behavior: ScrollBehavior = isAssistantRunActive || isLiveStreamConnected || !initialScrollDoneRef.current
       ? "instant"
       : "smooth";
     scheduleScrollToBottom(behavior);
@@ -531,7 +536,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     if (!initialScrollDoneRef.current && messages.length > 0) {
       initialScrollDoneRef.current = true;
     }
-  }, [isStreaming, messages, scheduleScrollToBottom]);
+  }, [isAssistantRunActive, isLiveStreamConnected, messages, scheduleScrollToBottom]);
 
   useEffect(() => {
     return () => {
@@ -587,8 +592,16 @@ export const ChatPanel = (props: Props): ReactElement => {
     }
   }, [handleAttach]);
 
+  /**
+   * Starts a new user turn and opens the live SSE reader for that run.
+   *
+   * Sending is blocked both while the persisted run is still active and while a
+   * previous live stream is still draining locally. This prevents the false
+   * `Send` state that used to appear when snapshot polling continued updating a
+   * run after the transport state fell out of sync.
+   */
   const sendMessage = useCallback(async (): Promise<void> => {
-    if (isStreaming || isStopping) return;
+    if (isAssistantRunActive || isLiveStreamConnected || isStopping) return;
     if (!isHistoryLoaded) return;
     if (inputText.trim().length === 0 && pendingAttachments.length === 0) return;
 
@@ -599,8 +612,8 @@ export const ChatPanel = (props: Props): ReactElement => {
     setInputText("");
     setPendingAttachments([]);
     stoppedSessionIdsRef.current.clear();
-    setIsStreaming(true);
     setRunState("running");
+    setIsLiveStreamConnected(false);
 
     startAssistantMessage();
 
@@ -618,7 +631,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       const sizeMb = (requestBody.length / (1024 * 1024)).toFixed(1);
       const limitMb = (MAX_BODY_BYTES / (1024 * 1024)).toFixed(0);
       markAssistantError(t("chat.errorTooLarge", { sizeMb, limitMb }));
-      setIsStreaming(false);
+      setIsLiveStreamConnected(false);
       setRunState("idle");
       abortRef.current = null;
       return;
@@ -638,7 +651,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       if (!response.ok) {
         const rawError = await response.text();
         markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError, t)}`);
-        setIsStreaming(false);
+        setIsLiveStreamConnected(false);
         setRunState("idle");
         return;
       }
@@ -646,7 +659,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       const reader = response.body?.getReader();
       if (reader === undefined) {
         markAssistantError(t("chat.errorNoResponse"));
-        setIsStreaming(false);
+        setIsLiveStreamConnected(false);
         setRunState("idle");
         return;
       }
@@ -655,7 +668,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       if (responseSessionId !== null && responseSessionId.length > 0) {
         setCurrentSessionId(responseSessionId);
       }
-      isLiveStreamConnectedRef.current = true;
+      setIsLiveStreamConnected(true);
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -756,7 +769,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         streamFailure = err instanceof Error ? err : new Error(String(err));
       }
     } finally {
-      isLiveStreamConnectedRef.current = false;
+      setIsLiveStreamConnected(false);
       abortRef.current = null;
 
       const sessionIdToReload = responseSessionId ?? currentSessionId ?? undefined;
@@ -775,14 +788,14 @@ export const ChatPanel = (props: Props): ReactElement => {
         }
       }
 
-      setIsStreaming(false);
       if (streamFailure !== null && !abortController.signal.aborted) {
         markAssistantError(t("chat.errorFailed", { message: streamFailure.message }));
         setRunState("interrupted");
       }
     }
   }, [
-    isStreaming,
+    isAssistantRunActive,
+    isLiveStreamConnected,
     isStopping,
     inputText,
     pendingAttachments,
@@ -800,8 +813,16 @@ export const ChatPanel = (props: Props): ReactElement => {
     loadChatSnapshot,
   ]);
 
+  /**
+   * Stops the active assistant run using persisted session state rather than
+   * requiring a live SSE connection.
+   *
+   * The server may keep processing a run after this browser loses its live
+   * reader, so stop must remain available whenever the session still reports an
+   * active run. The local abort controller is cancelled only when it exists.
+   */
   const stopMessage = useCallback(async (): Promise<void> => {
-    if (currentSessionId === null || !isStreaming || isStopping) {
+    if (currentSessionId === null || !isAssistantRunActive || isStopping) {
       return;
     }
 
@@ -821,8 +842,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         abortRef.current.abort();
         abortRef.current = null;
       }
-      isLiveStreamConnectedRef.current = false;
-      setIsStreaming(false);
+      setIsLiveStreamConnected(false);
 
       try {
         await loadChatSnapshot(currentSessionId, undefined, true);
@@ -834,7 +854,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         setIsStopping(false);
       }
     }
-  }, [currentSessionId, isStopping, isStreaming, loadChatSnapshot, markAssistantError, t]);
+  }, [currentSessionId, isAssistantRunActive, isStopping, loadChatSnapshot, markAssistantError, t]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -847,6 +867,62 @@ export const ChatPanel = (props: Props): ReactElement => {
   const handleInput = (value: string): void => {
     setInputText(value);
   };
+
+  /**
+   * Clears the current transcript after first requesting cancellation for any
+   * still-active run.
+   *
+   * Clearing must consult persisted run activity instead of only checking for a
+   * local abort controller, because a run may still be active after the live
+   * stream has disconnected and the transcript has switched to snapshot-driven
+   * updates.
+   */
+  const clearConversation = useCallback(async (): Promise<void> => {
+    if (currentSessionId !== null && isAssistantRunActive) {
+      try {
+        await fetchWithCsrf("/api/chat/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: currentSessionId }),
+        });
+      } catch {
+        // Continue clearing the UI even if stop fails.
+      }
+    }
+
+    if (abortRef.current !== null) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+
+    setIsLiveStreamConnected(false);
+    setIsStopping(false);
+    if (currentSessionId !== null) {
+      stoppedSessionIdsRef.current.delete(currentSessionId);
+    }
+
+    try {
+      const clearUrl = currentSessionId === null
+        ? "/api/chat"
+        : `/api/chat?sessionId=${encodeURIComponent(currentSessionId)}`;
+      const response = await fetchWithCsrf(clearUrl, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const rawError = await response.text();
+        markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError, t)}`);
+        return;
+      }
+
+      const payload = await response.json() as { ok: boolean; sessionId: string };
+      setCurrentSessionId(payload.sessionId);
+      setRunState("idle");
+      clearHistory();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      markAssistantError(t("chat.errorFailed", { message }));
+    }
+  }, [clearHistory, currentSessionId, isAssistantRunActive, markAssistantError, t]);
 
   const rootClass = mode === "sidebar" ? styles.sidebar : styles.sidebarFullscreen;
   const sidebarStyle = mode === "sidebar" ? { width: localWidth } : undefined;
@@ -873,49 +949,7 @@ export const ChatPanel = (props: Props): ReactElement => {
           <button
             type="button"
             className={styles.closeButton}
-            onClick={async () => {
-              if (abortRef.current !== null) {
-                if (currentSessionId !== null) {
-                  try {
-                    await fetchWithCsrf("/api/chat/stop", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ sessionId: currentSessionId }),
-                    });
-                  } catch {
-                    // Continue clearing the UI even if stop fails.
-                  }
-                }
-                abortRef.current.abort();
-                abortRef.current = null;
-              }
-              isLiveStreamConnectedRef.current = false;
-              setIsStreaming(false);
-              setIsStopping(false);
-              if (currentSessionId !== null) {
-                stoppedSessionIdsRef.current.delete(currentSessionId);
-              }
-              try {
-                const clearUrl = currentSessionId === null
-                  ? "/api/chat"
-                  : `/api/chat?sessionId=${encodeURIComponent(currentSessionId)}`;
-                const response = await fetchWithCsrf(clearUrl, {
-                  method: "DELETE",
-                });
-                if (!response.ok) {
-                  const rawError = await response.text();
-                  markAssistantError(`Error ${response.status}: ${sanitizeErrorText(response.status, rawError, t)}`);
-                  return;
-                }
-                const payload = await response.json() as { ok: boolean; sessionId: string };
-                setCurrentSessionId(payload.sessionId);
-                setRunState("idle");
-                clearHistory();
-              } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                markAssistantError(t("chat.errorFailed", { message }));
-              }
-            }}
+            onClick={() => void clearConversation()}
           >
             {t("chat.clear")}
           </button>
@@ -950,8 +984,8 @@ export const ChatPanel = (props: Props): ReactElement => {
         )}
         {messages.map((msg, i) => {
           const isLastAssistant =
-            isStreaming && msg.role === "assistant" && i === messages.length - 1;
-          const streamingIndicator = getAssistantStreamingIndicator(msg, isStreaming, isLastAssistant);
+            isAssistantRunActive && msg.role === "assistant" && i === messages.length - 1;
+          const streamingIndicator = getAssistantStreamingIndicator(msg, isAssistantRunActive, isLastAssistant);
           return (
             <div
               key={`${msg.timestamp}-${i}`}
@@ -978,7 +1012,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         })}
         <div
           aria-hidden="true"
-          className={cn(styles.bottomAnchor, isStreaming ? styles.bottomAnchorActive : "")}
+          className={cn(styles.bottomAnchor, isAssistantRunActive ? styles.bottomAnchorActive : "")}
         />
       </div>
 
@@ -1015,10 +1049,10 @@ export const ChatPanel = (props: Props): ReactElement => {
             <button
               type="button"
               className={styles.sendButton}
-              disabled={!isHistoryLoaded || isStopping}
-              onClick={() => void (isStreaming ? stopMessage() : sendMessage())}
+              disabled={!isHistoryLoaded || isStopping || (composerAction === "send" && isLiveStreamConnected)}
+              onClick={() => void (composerAction === "stop" ? stopMessage() : sendMessage())}
             >
-              {isStreaming ? t("chat.stop") : t("chat.send")}
+              {composerAction === "stop" ? t("chat.stop") : t("chat.send")}
             </button>
           </div>
         </div>

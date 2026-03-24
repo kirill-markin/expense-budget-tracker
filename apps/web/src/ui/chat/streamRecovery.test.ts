@@ -3,11 +3,12 @@ import test from "node:test";
 
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+  getChatComposerAction,
   getEffectiveSnapshotRunState,
+  isChatRunActive,
   shouldRefreshMainContentFromLiveEvent,
   shouldRefreshMainContentFromSnapshot,
   shouldReplaceHistoryFromSnapshot,
-  shouldSnapshotSetStreaming,
   shouldSuppressStreamFailure,
 } from "./streamRecovery";
 
@@ -31,10 +32,17 @@ test("getEffectiveSnapshotRunState hides running snapshots for user-stopped sess
   assert.equal(getEffectiveSnapshotRunState("idle", true), "idle");
 });
 
-test("shouldSnapshotSetStreaming keeps a stopped session from returning to streaming", () => {
-  assert.equal(shouldSnapshotSetStreaming("running", false, true), false);
-  assert.equal(shouldSnapshotSetStreaming("running", false, false), true);
-  assert.equal(shouldSnapshotSetStreaming("running", true, false), false);
+test("snapshot recovery keeps the run active while the session still reports running", () => {
+  const effectiveRunState = getEffectiveSnapshotRunState("running", false);
+
+  assert.equal(isChatRunActive(effectiveRunState), true);
+  assert.equal(getChatComposerAction(effectiveRunState), "stop");
+});
+
+test("composer action returns send only for non-running snapshots", () => {
+  assert.equal(getChatComposerAction("idle"), "send");
+  assert.equal(getChatComposerAction("interrupted"), "send");
+  assert.equal(getChatComposerAction("running"), "stop");
 });
 
 test("shouldRefreshMainContentFromLiveEvent refreshes immediately for new live invalidations", () => {

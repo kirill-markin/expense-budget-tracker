@@ -1,6 +1,7 @@
 import type { StoredMessage } from "@/ui/hooks/useChatHistory";
 
 export type ChatRunState = "idle" | "running" | "interrupted";
+export type ChatComposerAction = "send" | "stop";
 
 /**
  * Snapshot shape consumed by the client polling/recovery path.
@@ -32,13 +33,32 @@ export const getEffectiveSnapshotRunState = (
     ? "idle"
     : snapshotRunState;
 
-export const shouldSnapshotSetStreaming = (
-  snapshotRunState: ChatRunState,
-  isLiveStreamConnected: boolean,
-  isUserStoppedSession: boolean,
+/**
+ * Returns whether the UI should continue presenting the assistant as active.
+ *
+ * This is intentionally derived from the persisted session run state instead of
+ * the local SSE connection. Polling remains a first-class delivery path after a
+ * live stream disconnects, so the absence of an open reader must not hide
+ * active-run affordances such as the stop button or animated progress dots.
+ */
+export const isChatRunActive = (
+  runState: ChatRunState,
 ): boolean =>
-  getEffectiveSnapshotRunState(snapshotRunState, isUserStoppedSession) === "running"
-    && !isLiveStreamConnected;
+  runState === "running";
+
+/**
+ * Chooses the composer action that the user should see for the current run
+ * state.
+ *
+ * The composer exposes `Stop` whenever the persisted session still reports an
+ * active run, even if the browser no longer has a live SSE connection. This
+ * keeps the UI aligned with server truth and prevents a false `Send` state
+ * during snapshot-based recovery.
+ */
+export const getChatComposerAction = (
+  runState: ChatRunState,
+): ChatComposerAction =>
+  isChatRunActive(runState) ? "stop" : "send";
 
 export const shouldSuppressStreamFailure = (
   snapshot: ChatSnapshotState,
