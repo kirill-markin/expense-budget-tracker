@@ -103,6 +103,11 @@ type CompleteChatRunParams = Readonly<{
   conversationId: string;
 }>;
 
+type PersistChatSessionConversationIdParams = Readonly<{
+  sessionId: string;
+  conversationId: string;
+}>;
+
 const SELECT_SESSION_SQL = `
   SELECT session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
   FROM public.chat_sessions
@@ -207,6 +212,14 @@ const UPDATE_CHAT_SESSION_COMPLETION_SQL = `
   SET status = 'idle',
       active_run_heartbeat_at = NULL,
       openai_conversation_id = $2,
+      updated_at = now()
+  WHERE session_id = $1
+  RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
+`;
+
+const UPDATE_CHAT_SESSION_CONVERSATION_ID_SQL = `
+  UPDATE public.chat_sessions
+  SET openai_conversation_id = $2,
       updated_at = now()
   WHERE session_id = $1
   RETURNING session_id, status, active_run_heartbeat_at, openai_conversation_id, updated_at
@@ -523,6 +536,34 @@ export const touchChatSessionHeartbeat = async (
     new Date().toISOString(),
   ]);
 };
+
+export const persistChatSessionConversationId = async (
+  userId: string,
+  workspaceId: string,
+  params: PersistChatSessionConversationIdParams,
+): Promise<void> =>
+  withUserContext(userId, workspaceId, async (queryFn) => {
+    const lockedSessionResult = await queryFn(SELECT_SESSION_FOR_UPDATE_SQL, [params.sessionId]);
+    const lockedSession = requireSessionRow(
+      lockedSessionResult.rows[0] as ChatSessionRow | undefined,
+      "lock",
+    );
+
+    if (lockedSession.openai_conversation_id === params.conversationId) {
+      return;
+    }
+
+    if (lockedSession.openai_conversation_id !== null) {
+      throw new Error(
+        `Chat session conversationId mismatch for session ${params.sessionId}: stored=${lockedSession.openai_conversation_id} new=${params.conversationId}`,
+      );
+    }
+
+    await queryFn(UPDATE_CHAT_SESSION_CONVERSATION_ID_SQL, [
+      params.sessionId,
+      params.conversationId,
+    ]);
+  });
 
 /**
  * Finalizes the assistant message in the local transcript and persists the latest

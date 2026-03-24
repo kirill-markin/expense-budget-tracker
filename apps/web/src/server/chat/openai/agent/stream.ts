@@ -3,12 +3,12 @@ import type { AgentInputItem, ModelResponse } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import { persistChatSessionConversationId } from "@/server/chat/store";
 import type { ChatMessage, ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { resolveServerManagedContainer } from "../containerState";
 import { pgQueryTool, type AgentContext } from "../tools";
 import { buildOpenAIModelSettings, buildOpenaiInstructions } from "./config";
-import { extractConversationId } from "./conversationState";
 import {
   addFilesToOpenAIContainer,
   buildOpenAIContainerName,
@@ -129,6 +129,23 @@ type StartAgentResponseResult = Readonly<{
 
 type StartAgentResponseDependencies = Readonly<{
   createClient: () => OpenAI;
+  createConversation: (
+    client: OpenAI,
+    params: Readonly<{
+      requestId: string;
+      userId: string;
+      workspaceId: string;
+      sessionId: string;
+    }>,
+  ) => Promise<Readonly<{ id: string }>>;
+  persistConversationId: (
+    params: Readonly<{
+      userId: string;
+      workspaceId: string;
+      sessionId: string;
+      conversationId: string;
+    }>,
+  ) => Promise<void>;
   resolveManagedContainer: typeof resolveServerManagedContainer;
   runAgent: (params: RunAgentParams) => Promise<AgentRunResult>;
   addFilesToOpenAIContainer: typeof addFilesToOpenAIContainer;
@@ -183,8 +200,35 @@ const runAgentWithTracing = async (
   }) as AgentRunResult;
 };
 
+const createConversation = async (
+  client: OpenAI,
+  params: Readonly<{
+    requestId: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+  }>,
+): Promise<Readonly<{ id: string }>> => {
+  const conversation = await client.conversations.create({
+    metadata: {
+      requestId: params.requestId,
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    },
+  });
+
+  return { id: conversation.id };
+};
+
 const DEFAULT_START_AGENT_RESPONSE_DEPENDENCIES: StartAgentResponseDependencies = {
   createClient: (): OpenAI => new OpenAI(),
+  createConversation,
+  persistConversationId: async (params): Promise<void> =>
+    persistChatSessionConversationId(params.userId, params.workspaceId, {
+      sessionId: params.sessionId,
+      conversationId: params.conversationId,
+    }),
   resolveManagedContainer: resolveServerManagedContainer,
   runAgent: runAgentWithTracing,
   addFilesToOpenAIContainer,
@@ -257,6 +301,21 @@ export const startAgentResponseWithDeps = async (
   dependencies: StartAgentResponseDependencies,
 ): Promise<StartAgentResponseResult> => {
   const client = dependencies.createClient();
+  let effectiveConversationId = params.conversationId;
+  if (effectiveConversationId === null) {
+    effectiveConversationId = (await dependencies.createConversation(client, {
+      requestId: params.requestId,
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    })).id;
+    await dependencies.persistConversationId({
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      conversationId: effectiveConversationId,
+    });
+  }
   const latestFileAttachments = getLatestUserFileAttachments(params.localMessages);
   const conversationFileAttachments = getAllUserFileAttachments(params.localMessages);
   const attachmentFileNames = latestFileAttachments.map((part) => part.fileName);
@@ -351,7 +410,7 @@ export const startAgentResponseWithDeps = async (
     agent,
     input,
     context,
-    conversationId: params.conversationId ?? undefined,
+    conversationId: effectiveConversationId,
     groupId: params.sessionId,
     traceMetadata: {
       userId: params.userId,
@@ -363,13 +422,7 @@ export const startAgentResponseWithDeps = async (
   });
   const completion = (async (): Promise<CompletedAgentResponse> => {
     await result.completed;
-    const conversationId = extractConversationId(result.state);
-    if (conversationId === null) {
-      // Fail fast so local transcript state never silently drifts away from OpenAI runtime memory.
-      throw new Error("OpenAI conversationId missing after completed server-managed chat run");
-    }
-
-    return { conversationId };
+    return { conversationId: effectiveConversationId };
   })();
 
   const events = (async function* (): AsyncGenerator<ChatStreamEvent> {

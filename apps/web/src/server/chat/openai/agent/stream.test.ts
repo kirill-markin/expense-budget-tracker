@@ -25,13 +25,11 @@ const createRunResult = (
   events: ReadonlyArray<OpenAIRunStreamEvent>,
   rawResponses: ReadonlyArray<ModelResponse>,
   finalOutput: unknown,
-  conversationId: string | null,
 ): AgentRunResult => ({
   rawResponses,
   finalOutput,
   state: {
-    toJSON: (): Readonly<{ conversationId?: string }> =>
-      conversationId === null ? {} : { conversationId },
+    toJSON: (): Readonly<Record<string, never>> => ({}),
   },
   completed: Promise.resolve(),
   [Symbol.asyncIterator]: async function* () {
@@ -115,11 +113,17 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
           },
         },
       }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => {
+        throw new Error("createConversation should not be called when conversationId already exists");
+      },
+      persistConversationId: async (): Promise<void> => {
+        throw new Error("persistConversationId should not be called when conversationId already exists");
+      },
       resolveManagedContainer: async (): Promise<string> => "ctr-1",
       runAgent: async (runParams): Promise<AgentRunResult> => {
         receivedConversationId = runParams.conversationId;
         receivedInput = runParams.input;
-        return createRunResult(runEvents, rawResponses, "Hello", "conv-existing");
+        return createRunResult(runEvents, rawResponses, "Hello");
       },
       addFilesToOpenAIContainer: async (): Promise<void> => undefined,
       listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
@@ -212,6 +216,8 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
     responseId: "resp-1",
     requestId: "req-1",
   }] as unknown as ReadonlyArray<ModelResponse>;
+  let createdConversationId: string | null = null;
+  let persistedConversationId: string | null = null;
 
   const started = await startAgentResponseWithDeps(
     {
@@ -233,8 +239,18 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
           },
         },
       }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => {
+        createdConversationId = "conv-new";
+        return { id: "conv-new" };
+      },
+      persistConversationId: async (params): Promise<void> => {
+        persistedConversationId = params.conversationId;
+      },
       resolveManagedContainer: async (): Promise<string> => "ctr-2",
-      runAgent: async (): Promise<AgentRunResult> => createRunResult([], rawResponses, "Done", "conv-new"),
+      runAgent: async (runParams): Promise<AgentRunResult> => {
+        assert.equal(runParams.conversationId, "conv-new");
+        return createRunResult([], rawResponses, "Done");
+      },
       addFilesToOpenAIContainer: async (_client, _containerId, attachments): Promise<void> => {
         for (const attachment of attachments) {
           addedFiles.push(attachment.fileName);
@@ -254,6 +270,8 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
 
   assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
   assert.deepEqual(addedFiles, ["statement.csv"]);
+  assert.equal(createdConversationId, "conv-new");
+  assert.equal(persistedConversationId, "conv-new");
   assert.equal(loggedEvents.some((event) =>
     event.action === "code_interpreter_container_file_added"
     && event.attachmentFileName === "statement.csv"
@@ -262,7 +280,8 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
   assert.deepEqual(await started.completion, { conversationId: "conv-new" });
 });
 
-test("startAgentResponseWithDeps fails successful runs that do not return a conversationId", async () => {
+test("startAgentResponseWithDeps returns the created conversationId without reading run state", async () => {
+  let persistedConversationId: string | null = null;
   const started = await startAgentResponseWithDeps(
     {
       localMessages: [{
@@ -286,6 +305,10 @@ test("startAgentResponseWithDeps fails successful runs that do not return a conv
           },
         },
       }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => ({ id: "conv-created" }),
+      persistConversationId: async (params): Promise<void> => {
+        persistedConversationId = params.conversationId;
+      },
       resolveManagedContainer: async (): Promise<string> => "ctr-3",
       runAgent: async (): Promise<AgentRunResult> =>
         createRunResult([], [{
@@ -293,7 +316,7 @@ test("startAgentResponseWithDeps fails successful runs that do not return a conv
           output: [],
           responseId: "resp-2",
           requestId: "req-2",
-        }] as unknown as ReadonlyArray<ModelResponse>, "Done", null),
+        }] as unknown as ReadonlyArray<ModelResponse>, "Done"),
       addFilesToOpenAIContainer: async (): Promise<void> => undefined,
       listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
         containerId: "ctr-3",
@@ -305,12 +328,7 @@ test("startAgentResponseWithDeps fails successful runs that do not return a conv
     },
   );
 
-  await assert.rejects(
-    async () => await collectEvents(started.events),
-    /conversationId missing/,
-  );
-  await assert.rejects(
-    async () => await started.completion,
-    /conversationId missing/,
-  );
+  assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
+  assert.equal(persistedConversationId, "conv-created");
+  assert.deepEqual(await started.completion, { conversationId: "conv-created" });
 });
