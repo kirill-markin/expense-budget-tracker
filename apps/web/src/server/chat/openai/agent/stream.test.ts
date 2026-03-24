@@ -5,6 +5,7 @@ import type { ModelResponse } from "@openai/agents-core";
 import type OpenAI from "openai";
 import type { ChatMessage, ChatStreamEvent } from "@/server/chat/types";
 import {
+  CHAT_RUN_MAX_TURNS,
   startAgentResponseWithDeps,
   type AgentRunResult,
   type OpenAIRunStreamEvent,
@@ -117,6 +118,7 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
     conversationId: "conv-existing",
     timezone: "Europe/Madrid",
     requestId: "request-1",
+    maxTurns: CHAT_RUN_MAX_TURNS,
   };
   let nowValue = 100;
 
@@ -215,6 +217,7 @@ test("startAgentResponseWithDeps streams deltas, tool calls, finalizes pending t
     type: "message",
     content: [{ type: "input_text", text: "Hi" }],
   }]);
+  assert.equal(started.conversationId, "conv-existing");
   assert.deepEqual(await started.completion, { conversationId: "conv-existing" });
 });
 
@@ -263,6 +266,7 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
       conversationId: null,
       timezone: "Europe/Madrid",
       requestId: "request-2",
+      maxTurns: CHAT_RUN_MAX_TURNS,
     },
     {
       createClient: (): OpenAI => ({
@@ -306,6 +310,7 @@ test("startAgentResponseWithDeps rehydrates missing history attachments into the
   assert.deepEqual(addedFiles, ["statement.csv"]);
   assert.equal(createdConversationId, "conv-new");
   assert.equal(persistedConversationId, "conv-new");
+  assert.equal(started.conversationId, "conv-new");
   assert.equal(loggedEvents.some((event) =>
     event.action === "code_interpreter_container_file_added"
     && event.attachmentFileName === "statement.csv"
@@ -329,6 +334,7 @@ test("startAgentResponseWithDeps returns the created conversationId without read
       conversationId: null,
       timezone: "Europe/Madrid",
       requestId: "request-3",
+      maxTurns: CHAT_RUN_MAX_TURNS,
     },
     {
       createClient: (): OpenAI => ({
@@ -364,5 +370,6 @@ test("startAgentResponseWithDeps returns the created conversationId without read
 
   assert.deepEqual(await collectEvents(started.events), [{ type: "done" }]);
   assert.equal(persistedConversationId, "conv-created");
+  assert.equal(started.conversationId, "conv-created");
   assert.deepEqual(await started.completion, { conversationId: "conv-created" });
 });

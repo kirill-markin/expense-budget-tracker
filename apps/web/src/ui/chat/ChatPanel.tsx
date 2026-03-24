@@ -18,6 +18,11 @@ import { CHAT_MODEL_BADGE_LABEL, CHAT_MODEL_ID } from "@/lib/chatModels";
 import { cn } from "@/lib/cn";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { useChatHistory, type StoredMessage } from "@/ui/hooks/useChatHistory";
+import {
+  ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+  shouldReplaceHistoryFromSnapshot,
+  shouldSuppressStreamFailure,
+} from "./streamRecovery";
 import { useChatLayout } from "./ChatLayoutProvider";
 import { FileAttachment, prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
 import styles from "./ChatPanel.module.css";
@@ -265,6 +270,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const isLiveStreamConnectedRef = useRef<boolean>(false);
+  const lastSnapshotUpdatedAtRef = useRef<number | null>(null);
   const shouldAutoScrollRef = useRef<boolean>(true);
   const scrollFrameRef = useRef<number | null>(null);
   const initialScrollDoneRef = useRef<boolean>(false);
@@ -293,7 +299,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     sessionId: string | undefined,
     signal: AbortSignal | undefined,
     replaceHistory: boolean,
-  ): Promise<void> => {
+  ): Promise<ChatHistoryResponse> => {
     const url = sessionId === undefined
       ? "/api/chat"
       : `/api/chat?sessionId=${encodeURIComponent(sessionId)}`;
@@ -319,9 +325,16 @@ export const ChatPanel = (props: Props): ReactElement => {
       setIsStreaming(false);
     }
 
-    if (replaceHistory) {
+    const shouldReplaceHistory = replaceHistory && shouldReplaceHistoryFromSnapshot(
+      lastSnapshotUpdatedAtRef.current,
+      payload.updatedAt,
+    );
+    lastSnapshotUpdatedAtRef.current = payload.updatedAt;
+
+    if (shouldReplaceHistory) {
       replaceMessages(payload.messages);
     }
+    return payload;
   }, [replaceMessages, t]);
 
   useEffect(() => {
@@ -331,6 +344,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     setRunState("idle");
     setIsStreaming(false);
     isLiveStreamConnectedRef.current = false;
+    lastSnapshotUpdatedAtRef.current = null;
     replaceMessages([]);
 
     void (async (): Promise<void> => {
@@ -368,14 +382,17 @@ export const ChatPanel = (props: Props): ReactElement => {
       void loadChatSnapshot(
         currentSessionId,
         undefined,
-        !isLiveStreamConnectedRef.current,
+        true,
       ).catch((error) => {
+        if (isLiveStreamConnectedRef.current) {
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         markAssistantError(t("chat.errorFailed", { message }));
         setRunState("interrupted");
         setIsStreaming(false);
       });
-    }, 2_000);
+    }, ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
   }, [currentSessionId, isHistoryLoaded, loadChatSnapshot, markAssistantError, runState, t]);
@@ -528,6 +545,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     }
 
     let responseSessionId: string | null = null;
+    let streamFailure: Error | null = null;
 
     try {
       const response = await fetchWithCsrf("/api/chat", {
@@ -635,27 +653,36 @@ export const ChatPanel = (props: Props): ReactElement => {
       if (receivedContent) {
         finalizeAssistant();
       } else {
-        markAssistantError(t("chat.errorEmptyResponse"));
+        streamFailure = new Error(t("chat.errorEmptyResponse"));
       }
     } catch (err) {
       if (!abortController.signal.aborted) {
-        const message = err instanceof Error ? err.message : String(err);
-        markAssistantError(t("chat.errorFailed", { message }));
+        streamFailure = err instanceof Error ? err : new Error(String(err));
       }
     } finally {
       isLiveStreamConnectedRef.current = false;
-      setIsStreaming(false);
       abortRef.current = null;
 
       const sessionIdToReload = responseSessionId ?? currentSessionId ?? undefined;
       if (!abortController.signal.aborted && sessionIdToReload !== undefined) {
         try {
-          await loadChatSnapshot(sessionIdToReload, undefined, true);
+          const snapshot = await loadChatSnapshot(sessionIdToReload, undefined, true);
+          if (shouldSuppressStreamFailure(snapshot)) {
+            return;
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          markAssistantError(t("chat.errorFailed", { message }));
-          setRunState("interrupted");
+          if (streamFailure === null) {
+            markAssistantError(t("chat.errorFailed", { message }));
+            setRunState("interrupted");
+          }
         }
+      }
+
+      setIsStreaming(false);
+      if (streamFailure !== null && !abortController.signal.aborted) {
+        markAssistantError(t("chat.errorFailed", { message: streamFailure.message }));
+        setRunState("interrupted");
       }
     }
   }, [

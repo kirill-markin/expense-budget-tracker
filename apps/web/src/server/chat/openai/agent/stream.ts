@@ -1,4 +1,4 @@
-import { Agent, Runner } from "@openai/agents";
+import { Agent, MaxTurnsExceededError, Runner } from "@openai/agents";
 import type { AgentInputItem, ModelResponse } from "@openai/agents-core";
 import { codeInterpreterTool, webSearchTool } from "@openai/agents-openai";
 import OpenAI from "openai";
@@ -60,6 +60,10 @@ export type StreamAgentParams = Readonly<{
   conversationId: string | null;
   timezone: string;
   requestId: string;
+  maxTurns: number;
+  attempt?: number;
+  autoContinuationUsed?: boolean;
+  continuationBudgetRemaining?: number;
   signal?: AbortSignal;
 }>;
 
@@ -129,9 +133,10 @@ type CompletedAgentResponse = Readonly<{
   conversationId: string;
 }>;
 
-type StartAgentResponseResult = Readonly<{
+export type StartAgentResponseResult = Readonly<{
   events: AsyncGenerator<ChatStreamEvent>;
   completion: Promise<CompletedAgentResponse>;
+  conversationId: string;
 }>;
 
 type StartAgentResponseDependencies = Readonly<{
@@ -161,6 +166,8 @@ type StartAgentResponseDependencies = Readonly<{
   logEvent: typeof log;
   now: () => number;
 }>;
+
+export const CHAT_RUN_MAX_TURNS = 30;
 
 /**
  * Creates the per-turn OpenAI agent configuration while keeping explicit code interpreter
@@ -540,6 +547,10 @@ export const startAgentResponseWithDeps = async (
     rehydratedAttachmentCount,
     effectiveContainerId,
     forcedToolChoice,
+    ...(params.attempt !== undefined ? { attempt: params.attempt } : {}),
+    maxTurns: params.maxTurns,
+    autoContinuationUsed: params.autoContinuationUsed ?? false,
+    continuationBudgetRemaining: params.continuationBudgetRemaining,
   });
   const requestStart = dependencies.now();
 
@@ -554,13 +565,14 @@ export const startAgentResponseWithDeps = async (
       workspaceId: params.workspaceId,
       sessionId: params.sessionId,
     },
-    maxTurns: 10,
+    maxTurns: params.maxTurns,
     signal: params.signal,
   });
   const completion = (async (): Promise<CompletedAgentResponse> => {
     await result.completed;
     return { conversationId: effectiveConversationId };
   })();
+  void completion.catch((): void => undefined);
 
   const events = (async function* (): AsyncGenerator<ChatStreamEvent> {
     let toolCalls = 0;
@@ -809,9 +821,16 @@ export const startAgentResponseWithDeps = async (
         turns: toolCalls,
         stopReason: "done",
         durationMs: dependencies.now() - requestStart,
+        ...(params.attempt !== undefined ? { attempt: params.attempt } : {}),
+        maxTurns: params.maxTurns,
+        autoContinuationUsed: params.autoContinuationUsed ?? false,
+        continuationBudgetRemaining: params.continuationBudgetRemaining,
       });
       await completion;
     } catch (error) {
+      if (error instanceof MaxTurnsExceededError) {
+        throw error;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       dependencies.logEvent({
         domain: "chat",
@@ -827,6 +846,10 @@ export const startAgentResponseWithDeps = async (
         hasAttachments,
         attachmentFileNames,
         effectiveContainerId,
+        ...(params.attempt !== undefined ? { attempt: params.attempt } : {}),
+        maxTurns: params.maxTurns,
+        autoContinuationUsed: params.autoContinuationUsed ?? false,
+        continuationBudgetRemaining: params.continuationBudgetRemaining,
       });
       throw error;
     }
@@ -837,6 +860,7 @@ export const startAgentResponseWithDeps = async (
   return {
     events,
     completion,
+    conversationId: effectiveConversationId,
   };
 };
 

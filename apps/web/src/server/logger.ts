@@ -2,6 +2,13 @@ type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
 type AttachmentSource = "latest_message" | "history_rehydrate";
+type ChatAttemptMetadata = Readonly<{
+  attempt?: number;
+  maxTurns?: number;
+  autoContinuationUsed?: boolean;
+  continuationBudgetRemaining?: number;
+  maxTurnsHit?: boolean;
+}>;
 type ContainerAction =
   | "code_interpreter_container_created"
   | "code_interpreter_container_reused"
@@ -32,8 +39,18 @@ type ChatEvent =
     rehydratedAttachmentCount?: number;
     effectiveContainerId?: string | null;
     forcedToolChoice?: string | null;
+  } & ChatAttemptMetadata>
+  | Readonly<{
+    domain: "chat";
+    action: "turn_start";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    attempt: number;
+    maxTurns: number;
+    autoContinuationUsed: boolean;
+    continuationBudgetRemaining: number;
   }>
-  | Readonly<{ domain: "chat"; action: "turn_start"; vendor: ChatVendor; turn: number }>
   | Readonly<{
     domain: "chat";
     action: "run_cancel_requested" | "run_cancelled";
@@ -111,7 +128,7 @@ type ChatEvent =
     turns: number;
     stopReason: string;
     durationMs: number;
-  }>
+  } & ChatAttemptMetadata>
   | Readonly<{
     domain: "chat";
     action: "error";
@@ -127,7 +144,7 @@ type ChatEvent =
     hasAttachments?: boolean;
     attachmentFileNames?: ReadonlyArray<string>;
     effectiveContainerId?: string | null;
-  }>;
+  } & ChatAttemptMetadata>;
 
 type ApiEvent =
   | Readonly<{ domain: "api"; action: "error"; route: string; method: string; error: string }>;

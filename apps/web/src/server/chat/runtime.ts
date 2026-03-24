@@ -1,9 +1,10 @@
+import { MaxTurnsExceededError } from "@openai/agents";
 import OpenAI from "openai";
 import {
   appendAssistantTextContent,
   upsertToolCallContent,
 } from "@/lib/chatHistory";
-import { startAgentResponse } from "@/server/chat/openai/agent";
+import { CHAT_RUN_MAX_TURNS, startAgentResponse } from "@/server/chat/openai/agent";
 import {
   completeChatRun,
   persistAssistantCancelled,
@@ -11,11 +12,14 @@ import {
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
 } from "@/server/chat/store";
-import type { ChatMessage, ChatStreamEvent, ContentPart, ToolCallContentPart } from "@/server/chat/types";
+import type { ChatMessage, ChatStreamEvent, ContentPart, StreamPosition, ToolCallContentPart } from "@/server/chat/types";
 import { log, type ChatErrorStage } from "@/server/logger";
 
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
 export const CHAT_RUN_STALE_HEARTBEAT_MS = 30_000;
+export const CHAT_RUN_MAX_AUTO_CONTINUATIONS = 1;
+export const CHAT_MAX_TURNS_FALLBACK_MESSAGE = "I reached the tool-turn safety limit twice while working on this request. I kept the completed progress above. Send \"continue\" and I'll keep going from here.";
+export const CHAT_INTERNAL_CONTINUATION_PROMPT = "Continue the same user request from the current conversation state. You may keep using tools if needed. Avoid repeating completed work. Finish with a user-facing answer as soon as enough information is available.";
 
 type ChatRunDiagnostics = Readonly<{
   requestId: string;
@@ -28,7 +32,7 @@ type ChatRunDiagnostics = Readonly<{
   attachmentFileNames: ReadonlyArray<string>;
 }>;
 
-type StartPersistedChatRunParams = Readonly<{
+export type StartPersistedChatRunParams = Readonly<{
   requestId: string;
   userId: string;
   workspaceId: string;
@@ -53,7 +57,27 @@ type ActiveChatRun = {
   stopRequestedByUser: boolean;
 };
 
+export type ChatRuntimeDependencies = Readonly<{
+  startAgentResponse: typeof startAgentResponse;
+  completeChatRun: typeof completeChatRun;
+  persistAssistantCancelled: typeof persistAssistantCancelled;
+  persistAssistantTerminalError: typeof persistAssistantTerminalError;
+  touchChatSessionHeartbeat: typeof touchChatSessionHeartbeat;
+  updateAssistantMessageItem: typeof updateAssistantMessageItem;
+  logEvent: typeof log;
+}>;
+
 const activeChatRuns = new Map<string, ActiveChatRun>();
+
+const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
+  startAgentResponse,
+  completeChatRun,
+  persistAssistantCancelled,
+  persistAssistantTerminalError,
+  touchChatSessionHeartbeat,
+  updateAssistantMessageItem,
+  logEvent: log,
+};
 
 const isUserAbortError = (error: unknown): boolean =>
   error instanceof OpenAI.APIUserAbortError
@@ -230,78 +254,204 @@ const logChatRunError = (
   log(createChatErrorLogEvent(diagnostics, stage, message));
 };
 
-const runPersistedChatSession = async (
+const isMaxTurnsExceededError = (error: unknown): error is MaxTurnsExceededError =>
+  error instanceof MaxTurnsExceededError;
+
+const applyAssistantDelta = (
+  content: ReadonlyArray<ContentPart>,
+  event: Extract<ChatStreamEvent, { type: "delta" }>,
+): ReadonlyArray<ContentPart> =>
+  appendAssistantTextContent(content, {
+    text: event.text,
+    streamPosition: {
+      itemId: event.itemId,
+      outputIndex: event.outputIndex,
+      contentIndex: event.contentIndex,
+      sequenceNumber: event.sequenceNumber,
+    },
+  });
+
+const createSyntheticAssistantTextPosition = (
+  content: ReadonlyArray<ContentPart>,
+  attempt: number,
+): StreamPosition => {
+  const orderedParts = content.filter((part): part is (Extract<ContentPart, { type: "text" }> | Extract<ContentPart, { type: "tool_call" }>) & Readonly<{ streamPosition: StreamPosition }> =>
+    (part.type === "text" || part.type === "tool_call") && part.streamPosition !== undefined,
+  );
+  const maxOutputIndex = orderedParts.reduce((currentMax, part) =>
+    Math.max(currentMax, part.streamPosition.outputIndex), -1);
+  const maxSequenceNumber = orderedParts.reduce<number | null>((currentMax, part) => {
+    const sequenceNumber = part.streamPosition.sequenceNumber;
+    if (sequenceNumber === null) {
+      return currentMax;
+    }
+    if (currentMax === null) {
+      return sequenceNumber;
+    }
+    return Math.max(currentMax, sequenceNumber);
+  }, null);
+
+  return {
+    itemId: `internal-max-turns-fallback-${String(attempt)}`,
+    outputIndex: maxOutputIndex + 1,
+    contentIndex: 0,
+    sequenceNumber: maxSequenceNumber === null ? null : maxSequenceNumber + 1,
+  };
+};
+
+const updateAssistantInProgress = async (
+  dependencies: ChatRuntimeDependencies,
+  userId: string,
+  workspaceId: string,
+  assistantItemId: string,
+  assistantContent: ReadonlyArray<ContentPart>,
+): Promise<void> => {
+  await dependencies.updateAssistantMessageItem(userId, workspaceId, {
+    itemId: assistantItemId,
+    content: assistantContent,
+    state: "in_progress",
+  });
+};
+
+export const runPersistedChatSessionWithDeps = async (
   params: StartPersistedChatRunParams,
+  dependencies: ChatRuntimeDependencies,
 ): Promise<void> => {
   let assistantContent: ReadonlyArray<ContentPart> = [];
   let isFinalized = false;
+  let currentConversationId = params.conversationId;
   const heartbeatTimer = setInterval(() => {
-    void touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId).catch((error) => {
+    void dependencies.touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId).catch((error) => {
       logChatRunError(params.diagnostics, "stream", error);
     });
   }, CHAT_RUN_HEARTBEAT_INTERVAL_MS);
 
   try {
-    await touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId);
+    await dependencies.touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId);
 
-    const started = await startAgentResponse({
-      localMessages: params.localMessages,
-      turnInput: params.turnInput,
-      userId: params.userId,
-      workspaceId: params.workspaceId,
-      sessionId: params.sessionId,
-      conversationId: params.conversationId,
-      timezone: params.timezone,
-      requestId: params.requestId,
-      signal: getActiveChatRun(params.sessionId)?.abortController.signal,
-    });
+    let attempt = 1;
+    let continuationBudgetRemaining = CHAT_RUN_MAX_AUTO_CONTINUATIONS;
+    let autoContinuationUsed = false;
 
-    for await (const event of started.events) {
-      if (event.type === "delta") {
-        assistantContent = appendAssistantTextContent(assistantContent, {
-          text: event.text,
-          streamPosition: {
-            itemId: event.itemId,
-            outputIndex: event.outputIndex,
-            contentIndex: event.contentIndex,
-            sequenceNumber: event.sequenceNumber,
-          },
-        });
-        await updateAssistantMessageItem(params.userId, params.workspaceId, {
-          itemId: params.assistantItemId,
-          content: assistantContent,
-          state: "in_progress",
-        });
-      } else if (event.type === "tool_call") {
-        assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
-        await updateAssistantMessageItem(params.userId, params.workspaceId, {
-          itemId: params.assistantItemId,
-          content: assistantContent,
-          state: "in_progress",
-        });
-      } else if (event.type === "error") {
-        await persistAssistantTerminalError(params.userId, params.workspaceId, {
-          sessionId: params.sessionId,
-          assistantItemId: params.assistantItemId,
-          assistantContent,
-          errorMessage: event.message,
-          sessionState: "idle",
-        });
-        isFinalized = true;
+    while (true) {
+      dependencies.logEvent({
+        domain: "chat",
+        action: "turn_start",
+        vendor: "openai",
+        requestId: params.requestId,
+        sessionId: params.sessionId,
+        attempt,
+        maxTurns: CHAT_RUN_MAX_TURNS,
+        autoContinuationUsed,
+        continuationBudgetRemaining,
+      });
+
+      const started = await dependencies.startAgentResponse({
+        localMessages: params.localMessages,
+        turnInput: attempt === 1
+          ? params.turnInput
+          : [{ type: "text", text: CHAT_INTERNAL_CONTINUATION_PROMPT }],
+        userId: params.userId,
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        conversationId: currentConversationId,
+        timezone: params.timezone,
+        requestId: params.requestId,
+        maxTurns: CHAT_RUN_MAX_TURNS,
+        attempt,
+        autoContinuationUsed,
+        continuationBudgetRemaining,
+        signal: getActiveChatRun(params.sessionId)?.abortController.signal,
+      });
+      currentConversationId = started.conversationId;
+
+      try {
+        for await (const event of started.events) {
+          if (event.type === "delta") {
+            assistantContent = applyAssistantDelta(assistantContent, event);
+            await updateAssistantInProgress(
+              dependencies,
+              params.userId,
+              params.workspaceId,
+              params.assistantItemId,
+              assistantContent,
+            );
+          } else if (event.type === "tool_call") {
+            assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
+            await updateAssistantInProgress(
+              dependencies,
+              params.userId,
+              params.workspaceId,
+              params.assistantItemId,
+              assistantContent,
+            );
+          } else if (event.type === "error") {
+            await dependencies.persistAssistantTerminalError(params.userId, params.workspaceId, {
+              sessionId: params.sessionId,
+              assistantItemId: params.assistantItemId,
+              assistantContent,
+              errorMessage: event.message,
+              sessionState: "idle",
+            });
+            isFinalized = true;
+          }
+
+          broadcastChatEvent(params.sessionId, event);
+        }
+
+        if (!isFinalized) {
+          const completion = await started.completion;
+          currentConversationId = completion.conversationId;
+        }
+        break;
+      } catch (error) {
+        if (isMaxTurnsExceededError(error) && continuationBudgetRemaining > 0) {
+          continuationBudgetRemaining -= 1;
+          attempt += 1;
+          autoContinuationUsed = true;
+          continue;
+        }
+
+        if (isMaxTurnsExceededError(error)) {
+          const streamPosition = createSyntheticAssistantTextPosition(assistantContent, attempt);
+          assistantContent = appendAssistantTextContent(assistantContent, {
+            text: CHAT_MAX_TURNS_FALLBACK_MESSAGE,
+            streamPosition,
+          });
+          await updateAssistantInProgress(
+            dependencies,
+            params.userId,
+            params.workspaceId,
+            params.assistantItemId,
+            assistantContent,
+          );
+          broadcastChatEvent(params.sessionId, {
+            type: "delta",
+            text: CHAT_MAX_TURNS_FALLBACK_MESSAGE,
+            itemId: streamPosition.itemId,
+            outputIndex: streamPosition.outputIndex,
+            contentIndex: 0,
+            sequenceNumber: streamPosition.sequenceNumber,
+          });
+          broadcastChatEvent(params.sessionId, { type: "done" });
+          break;
+        }
+
+        throw error;
       }
-
-      broadcastChatEvent(params.sessionId, event);
     }
 
     if (!isFinalized) {
-      const completion = await started.completion;
-      await completeChatRun(
+      if (currentConversationId === null) {
+        throw new Error("OpenAI conversationId missing after completed server-managed chat run");
+      }
+      await dependencies.completeChatRun(
         params.userId,
         params.workspaceId,
         {
           assistantItemId: params.assistantItemId,
           assistantContent,
-          conversationId: completion.conversationId,
+          conversationId: currentConversationId,
         },
       );
       isFinalized = true;
@@ -320,7 +470,7 @@ const runPersistedChatSession = async (
         userId: params.userId,
         workspaceId: params.workspaceId,
       });
-      await persistAssistantCancelled(params.userId, params.workspaceId, {
+      await dependencies.persistAssistantCancelled(params.userId, params.workspaceId, {
         sessionId: params.sessionId,
         assistantItemId: params.assistantItemId,
         assistantContent,
@@ -329,7 +479,7 @@ const runPersistedChatSession = async (
     }
 
     const message = error instanceof Error ? error.message : String(error);
-    await persistAssistantTerminalError(params.userId, params.workspaceId, {
+    await dependencies.persistAssistantTerminalError(params.userId, params.workspaceId, {
       sessionId: params.sessionId,
       assistantItemId: params.assistantItemId,
       assistantContent,
@@ -344,6 +494,11 @@ const runPersistedChatSession = async (
     activeChatRuns.delete(params.sessionId);
   }
 };
+
+const runPersistedChatSession = async (
+  params: StartPersistedChatRunParams,
+): Promise<void> =>
+  runPersistedChatSessionWithDeps(params, DEFAULT_CHAT_RUNTIME_DEPENDENCIES);
 
 export const hasActiveChatRun = (sessionId: string): boolean =>
   activeChatRuns.has(sessionId);
