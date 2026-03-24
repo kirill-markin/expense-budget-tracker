@@ -472,6 +472,139 @@ test("startAgentResponseWithDeps repairs missing function tool outputs and retri
   assert.deepEqual(await started.completion, { conversationId: "conv-existing" });
 });
 
+test("startAgentResponseWithDeps verifies durable function tool outputs against the conversation", async () => {
+  const verifiedOutputs: Array<Readonly<Record<string, unknown>>> = [];
+
+  const started = await startAgentResponseWithDeps(
+    {
+      localMessages: [{
+        role: "user",
+        content: [{ type: "text", text: "Import it" }],
+      }],
+      turnInput: [{ type: "text", text: "Import it" }],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-verify",
+      conversationId: "conv-verify",
+      timezone: "Europe/Madrid",
+      requestId: "request-verify",
+      maxTurns: CHAT_RUN_MAX_TURNS,
+    },
+    {
+      createClient: (): OpenAI => ({
+        containers: {
+          files: {
+            create: async (): Promise<unknown> => undefined,
+            list: async (): Promise<{ data: ReadonlyArray<Readonly<{ path: string }>> }> => ({ data: [] }),
+          },
+        },
+      }) as unknown as OpenAI,
+      createConversation: async (): Promise<Readonly<{ id: string }>> => {
+        throw new Error("createConversation should not be called");
+      },
+      persistConversationId: async (): Promise<void> => {
+        throw new Error("persistConversationId should not be called");
+      },
+      resolveManagedContainer: async (): Promise<string> => "ctr-verify",
+      runAgent: async (): Promise<AgentRunResult> =>
+        createRunResult(
+          [
+            {
+              type: "raw_model_stream_event",
+              data: {
+                type: "model",
+                event: {
+                  type: "response.output_item.added",
+                  output_index: 0,
+                  sequence_number: 1,
+                  item: {
+                    id: "tool-item-verify",
+                    type: "function_call",
+                    call_id: "tool-verify",
+                    name: "query_database",
+                    arguments: "{\"sql\":\"SELECT 1\"}",
+                    status: "in_progress",
+                  },
+                },
+              },
+            },
+            {
+              type: "run_item_stream_event",
+              name: "tool_output",
+              item: {
+                type: "tool_call_output_item",
+                rawItem: {
+                  type: "function_call_output",
+                  callId: "tool-verify",
+                  id: "tool-output-verify",
+                  name: "query_database",
+                },
+                output: "{\"ok\":true}",
+              },
+            },
+          ],
+          [{
+            usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2, inputTokensDetails: {}, outputTokensDetails: {} },
+            output: [],
+            responseId: "resp-verify",
+            requestId: "req-verify",
+          }] as unknown as ReadonlyArray<ModelResponse>,
+          "Done",
+        ),
+      addFilesToOpenAIContainer: async (): Promise<void> => undefined,
+      listOpenAIContainerInventory: async (): Promise<{ containerId: string; filePaths: ReadonlyArray<string> }> => ({
+        containerId: "ctr-verify",
+        filePaths: [],
+      }),
+      verifySpreadsheetContainers: async (): Promise<ReadonlyArray<never>> => [],
+      ensureFunctionCallOutputsPersisted: async (_client, conversationId, outputs): Promise<{ repairedCalls: ReadonlyArray<{ callId: string; name: string }> }> => {
+        verifiedOutputs.push({
+          conversationId,
+          outputs,
+        });
+        return { repairedCalls: [] };
+      },
+      logEvent: (): void => undefined,
+      now: (): number => 100,
+    },
+  );
+
+  assert.deepEqual(await collectEvents(started.events), [
+    {
+      type: "tool_call",
+      id: "tool-verify",
+      itemId: "tool-item-verify",
+      name: "query_database",
+      status: "started",
+      outputIndex: 0,
+      sequenceNumber: 1,
+      input: "{\"sql\":\"SELECT 1\"}",
+      providerStatus: "in_progress",
+    },
+    {
+      type: "tool_call",
+      id: "tool-verify",
+      itemId: "tool-output-verify",
+      name: "query_database",
+      status: "completed",
+      outputIndex: 0,
+      sequenceNumber: 1,
+      input: "{\"sql\":\"SELECT 1\"}",
+      output: "{\"ok\":true}",
+      providerStatus: "completed",
+    },
+    { type: "done" },
+  ]);
+  assert.deepEqual(verifiedOutputs, [{
+    conversationId: "conv-verify",
+    outputs: [{
+      callId: "tool-verify",
+      name: "query_database",
+      output: "{\"ok\":true}",
+    }],
+  }]);
+});
+
 test("startAgentResponseWithDeps injects CSV attachments as raw text while keeping the original file", async () => {
   const loggedEvents: Array<Readonly<Record<string, unknown>>> = [];
   let receivedInput: unknown;

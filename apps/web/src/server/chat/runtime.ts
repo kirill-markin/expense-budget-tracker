@@ -7,11 +7,14 @@ import {
   upsertToolCallContent,
 } from "@/lib/chatHistory";
 import { CHAT_RUN_MAX_TURNS, startAgentResponse } from "@/server/chat/openai/agent";
+import { ensureFunctionCallOutputsPersisted } from "@/server/chat/openai/recovery";
 import {
+  buildUserStoppedAssistantContent,
   completeChatRun,
   INTERRUPTED_TOOL_CALL_OUTPUT,
   persistAssistantCancelled,
   persistAssistantTerminalError,
+  STOPPED_BY_USER_TOOL_OUTPUT,
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
   updateAssistantMessageItemAndInvalidateMainContent,
@@ -79,6 +82,10 @@ export type ChatRuntimeDependencies = Readonly<{
   completeChatRun: typeof completeChatRun;
   persistAssistantCancelled: typeof persistAssistantCancelled;
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
+  persistStoppedFunctionOutputsToConversation: (
+    conversationId: string | null,
+    assistantContent: ReadonlyArray<ContentPart>,
+  ) => Promise<void>;
   touchChatSessionHeartbeat: typeof touchChatSessionHeartbeat;
   updateAssistantMessageItem: typeof updateAssistantMessageItem;
   updateAssistantMessageItemAndInvalidateMainContent: typeof updateAssistantMessageItemAndInvalidateMainContent;
@@ -89,11 +96,49 @@ export type ChatRuntimeDependencies = Readonly<{
 
 const activeChatRuns = new Map<string, ActiveChatRun>();
 
+const persistStoppedFunctionOutputsToConversation = async (
+  conversationId: string | null,
+  assistantContent: ReadonlyArray<ContentPart>,
+): Promise<void> => {
+  if (conversationId === null) {
+    return;
+  }
+
+  const stoppedFunctionOutputs = assistantContent
+    .filter((part): part is Extract<ContentPart, { type: "tool_call" }> & { id: string; output: string } =>
+      part.type === "tool_call"
+      && typeof part.id === "string"
+      && part.id.length > 0
+      && part.status === "completed"
+      && part.providerStatus === INCOMPLETE_TOOL_CALL_PROVIDER_STATUS
+      && part.output === STOPPED_BY_USER_TOOL_OUTPUT
+      && !part.name.endsWith("_call"),
+    )
+    .map((part) => ({
+      callId: part.id,
+      name: part.name,
+      output: part.output,
+    }));
+
+  if (stoppedFunctionOutputs.length === 0) {
+    return;
+  }
+
+  await ensureFunctionCallOutputsPersisted(
+    new OpenAI(),
+    conversationId,
+    stoppedFunctionOutputs,
+    async (ms: number): Promise<void> =>
+      await new Promise((resolve) => setTimeout(resolve, ms)),
+  );
+};
+
 const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
   startAgentResponse,
   completeChatRun,
   persistAssistantCancelled,
   persistAssistantTerminalError,
+  persistStoppedFunctionOutputsToConversation,
   touchChatSessionHeartbeat,
   updateAssistantMessageItem,
   updateAssistantMessageItemAndInvalidateMainContent,
@@ -462,12 +507,13 @@ export const runPersistedChatSessionWithDeps = async (
       return true;
     }
 
-    assistantContent = finalizeAssistantToolCalls(assistantContent);
+    assistantContent = buildUserStoppedAssistantContent(assistantContent);
     await dependencies.persistAssistantCancelled(params.userId, params.workspaceId, {
       sessionId: params.sessionId,
       assistantItemId: params.assistantItemId,
       assistantContent,
     });
+    await dependencies.persistStoppedFunctionOutputsToConversation(currentConversationId, assistantContent);
     activeRun.cancellationState = "persisted";
     return true;
   };

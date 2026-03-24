@@ -10,7 +10,10 @@ import {
 import type { ChatMessage, ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { resolveServerManagedContainer } from "../containerState";
-import { recoverInterruptedFunctionCalls } from "../recovery";
+import {
+  ensureFunctionCallOutputsPersisted,
+  recoverInterruptedFunctionCalls,
+} from "../recovery";
 import { pgQueryTool, type AgentContext } from "../tools";
 import { buildOpenAIModelSettings, buildOpenaiInstructions } from "./config";
 import {
@@ -180,6 +183,7 @@ type StartAgentResponseDependencies = Readonly<{
   listOpenAIContainerInventory: typeof listOpenAIContainerInventory;
   verifySpreadsheetContainers: typeof verifySpreadsheetContainers;
   recoverInterruptedFunctionCalls?: typeof recoverInterruptedFunctionCalls;
+  ensureFunctionCallOutputsPersisted?: typeof ensureFunctionCallOutputsPersisted;
   persistRecoveredChatConversation?: typeof persistRecoveredChatConversation;
   sleep?: (ms: number) => Promise<void>;
   logEvent: typeof log;
@@ -268,6 +272,7 @@ const DEFAULT_START_AGENT_RESPONSE_DEPENDENCIES: StartAgentResponseDependencies 
   listOpenAIContainerInventory,
   verifySpreadsheetContainers,
   recoverInterruptedFunctionCalls,
+  ensureFunctionCallOutputsPersisted,
   persistRecoveredChatConversation,
   sleep: async (ms: number): Promise<void> =>
     await new Promise((resolve) => setTimeout(resolve, ms)),
@@ -633,6 +638,8 @@ export const startAgentResponseWithDeps = async (
   });
   const requestStart = dependencies.now();
   const recoverPendingFunctionCalls = dependencies.recoverInterruptedFunctionCalls ?? recoverInterruptedFunctionCalls;
+  const ensureDurableFunctionCallOutputs =
+    dependencies.ensureFunctionCallOutputsPersisted ?? ensureFunctionCallOutputsPersisted;
   const persistRecoveredConversation = dependencies.persistRecoveredChatConversation ?? persistRecoveredChatConversation;
   const sleep = dependencies.sleep ?? (async (ms: number): Promise<void> =>
     await new Promise((resolve) => setTimeout(resolve, ms)));
@@ -726,12 +733,16 @@ export const startAgentResponseWithDeps = async (
     let textStates: TextStreamState = createTextStreamState();
     let toolStates = createToolCallStateMap();
     const reasoningPositions = new Map<string, ToolCallPosition>();
+    const functionToolCallIds = new Set<string>();
 
     try {
       for await (const event of result) {
         if (isRawModelStreamEvent(event)) {
           const outputItemAddedToolEvent = parseOutputItemAddedToolEvent(event.data.event);
           if (outputItemAddedToolEvent !== null) {
+            if (outputItemAddedToolEvent.rawItem.type === "function_call") {
+              functionToolCallIds.add(getRequiredToolCallId(outputItemAddedToolEvent.rawItem));
+            }
             const update = applyToolCallStarted(
               toolStates,
               outputItemAddedToolEvent.rawItem,
@@ -830,6 +841,9 @@ export const startAgentResponseWithDeps = async (
         }
 
         if (isToolCalledRunItemEvent(event)) {
+          if (event.item.rawItem.type === "function_call") {
+            functionToolCallIds.add(getRequiredToolCallId(event.item.rawItem));
+          }
           const toolId = getRequiredToolCallId(event.item.rawItem);
           const position = getTrackedToolCallPosition(toolStates, toolId);
           if (position === null) {
@@ -928,6 +942,38 @@ export const startAgentResponseWithDeps = async (
         });
         toolCalls++;
         yield finalized.event;
+      }
+
+      const durableFunctionCallOutputs = [...functionToolCallIds]
+        .map((callId) => toolStates.get(callId)?.snapshot)
+        .filter((snapshot): snapshot is NonNullable<typeof snapshot> & { output: string } =>
+          snapshot !== undefined
+          && snapshot.status === "completed"
+          && typeof snapshot.output === "string"
+          && snapshot.output.length > 0
+          && snapshot.output !== INTERRUPTED_TOOL_CALL_OUTPUT,
+        )
+        .map((snapshot) => ({
+          callId: snapshot.id,
+          name: snapshot.name,
+          output: snapshot.output,
+        }));
+      const repairedFunctionCallOutputs = await ensureDurableFunctionCallOutputs(
+        client,
+        effectiveConversationId,
+        durableFunctionCallOutputs,
+        sleep,
+      );
+
+      if (repairedFunctionCallOutputs.repairedCalls.length > 0) {
+        dependencies.logEvent({
+          domain: "chat",
+          action: "function_call_output_repaired",
+          vendor: "openai",
+          requestId: params.requestId,
+          sessionId: params.sessionId,
+          repairedCallIds: repairedFunctionCallOutputs.repairedCalls.map((call) => call.callId),
+        });
       }
 
       if (codeInterpreterAttachmentFileNames.length > 0 && extractCodeInterpreterContainers(result.rawResponses).length > 0) {

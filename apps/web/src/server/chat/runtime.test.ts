@@ -64,6 +64,7 @@ const createDependencies = (
   completeChatRunCalls: Array<Readonly<Record<string, unknown>>>,
   persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>>,
   persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>>,
+  persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>>,
   updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>>,
   protectionTransitions: Array<string>,
 ): ChatRuntimeDependencies => ({
@@ -76,6 +77,12 @@ const createDependencies = (
   },
   persistAssistantTerminalError: async (_userId, _workspaceId, params): Promise<void> => {
     persistAssistantTerminalErrorCalls.push(params as unknown as Readonly<Record<string, unknown>>);
+  },
+  persistStoppedFunctionOutputsToConversation: async (conversationId, assistantContent): Promise<void> => {
+    persistStoppedFunctionOutputsToConversationCalls.push({
+      conversationId,
+      assistantContent,
+    });
   },
   touchChatSessionHeartbeat: async (): Promise<void> => undefined,
   updateAssistantMessageItem: async (): Promise<never> => undefined as never,
@@ -96,6 +103,7 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
   const maxTurnsError = new MaxTurnsExceededError("Max turns (30) exceeded", undefined as never);
@@ -129,6 +137,7 @@ test("runPersistedChatSessionWithDeps auto-continues once after max turns and ke
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    persistStoppedFunctionOutputsToConversationCalls,
     updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
@@ -163,6 +172,7 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
   const maxTurnsError = new MaxTurnsExceededError("Max turns (30) exceeded", undefined as never);
@@ -184,6 +194,7 @@ test("runPersistedChatSessionWithDeps completes with fallback text instead of an
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    persistStoppedFunctionOutputsToConversationCalls,
     updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
@@ -207,6 +218,7 @@ test("runPersistedChatSessionWithDeps finalizes started tool calls before persis
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
@@ -225,6 +237,7 @@ test("runPersistedChatSessionWithDeps finalizes started tool calls before persis
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    persistStoppedFunctionOutputsToConversationCalls,
     updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
@@ -252,6 +265,7 @@ test("runPersistedChatSessionWithDeps persists reasoning summaries into the assi
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
@@ -278,6 +292,7 @@ test("runPersistedChatSessionWithDeps persists reasoning summaries into the assi
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    persistStoppedFunctionOutputsToConversationCalls,
     updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );
@@ -305,6 +320,7 @@ test("runPersistedChatSessionWithDeps persists cancellation once and ignores lat
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
@@ -341,6 +357,7 @@ test("runPersistedChatSessionWithDeps persists cancellation once and ignores lat
       completeChatRunCalls,
       persistAssistantCancelledCalls,
       persistAssistantTerminalErrorCalls,
+      persistStoppedFunctionOutputsToConversationCalls,
       updateAssistantMessageItemAndInvalidateMainContentCalls,
       protectionTransitions,
     );
@@ -355,6 +372,24 @@ test("runPersistedChatSessionWithDeps persists cancellation once and ignores lat
   assert.equal(persistAssistantTerminalErrorCalls.length, 0);
   assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
   assert.equal(persistAssistantCancelledCalls.length, 1);
+  assert.deepEqual(persistStoppedFunctionOutputsToConversationCalls, [{
+    conversationId: "conv-1",
+    assistantContent: [{
+      type: "tool_call",
+      id: "tool-1",
+      name: "query_database",
+      status: "completed",
+      providerStatus: "incomplete",
+      input: "{\"sql\":\"SELECT 1\"}",
+      output: "Stopped by user",
+      streamPosition: {
+        itemId: "tool-item-1",
+        outputIndex: 0,
+        contentIndex: null,
+        sequenceNumber: 1,
+      },
+    }],
+  }]);
   const cancelled = persistAssistantCancelledCalls[0];
   const assistantContent = cancelled.assistantContent as ReadonlyArray<Readonly<Record<string, unknown>>>;
   assert.equal(
@@ -375,6 +410,7 @@ test("runPersistedChatSessionWithDeps invalidates main content once for a mutati
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistStoppedFunctionOutputsToConversationCalls: Array<Readonly<Record<string, unknown>>> = [];
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
@@ -395,6 +431,7 @@ test("runPersistedChatSessionWithDeps invalidates main content once for a mutati
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
+    persistStoppedFunctionOutputsToConversationCalls,
     updateAssistantMessageItemAndInvalidateMainContentCalls,
     protectionTransitions,
   );

@@ -16,6 +16,16 @@ export type InterruptedFunctionCallRecovery = Readonly<{
   recoveryToolOutputText: string;
 }>;
 
+export type DurableFunctionCallOutput = Readonly<{
+  callId: string;
+  name: string;
+  output: string;
+}>;
+
+export type DurableFunctionCallOutputRepair = Readonly<{
+  repairedCalls: ReadonlyArray<RecoveredFunctionCall>;
+}>;
+
 type RecoverInterruptedFunctionCallsDependencies = Readonly<{
   listConversationItems: (
     client: OpenAI,
@@ -47,6 +57,8 @@ const DEFAULT_RECOVER_INTERRUPTED_FUNCTION_CALLS_DEPENDENCIES: RecoverInterrupte
   },
 };
 
+const DURABLE_FUNCTION_OUTPUT_REPAIR_RETRY_DELAYS_MS = [0, 200, 750] as const;
+
 const isFunctionCall = (
   item: ConversationItem,
 ): item is Extract<ConversationItem, { type: "function_call" }> =>
@@ -65,12 +77,43 @@ const isFunctionCallOutput = (
 
 const buildRecoveryFunctionCallOutputItem = (
   callId: string,
+  output: string,
 ): ResponseFunctionToolCallOutputItem => ({
   type: "function_call_output",
   id: `recovery-fco-${callId}`,
   call_id: callId,
-  output: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
+  output,
 });
+
+const dedupeDurableFunctionCallOutputs = (
+  outputs: ReadonlyArray<DurableFunctionCallOutput>,
+): ReadonlyArray<DurableFunctionCallOutput> => {
+  const uniqueOutputs = new Map<string, DurableFunctionCallOutput>();
+
+  for (const output of outputs) {
+    if (output.callId.length === 0) {
+      continue;
+    }
+    uniqueOutputs.set(output.callId, output);
+  }
+
+  return [...uniqueOutputs.values()];
+};
+
+const getCompletedFunctionCallOutputIds = (
+  conversationItems: ReadonlyArray<ConversationItem>,
+): ReadonlySet<string> =>
+  new Set(
+    conversationItems
+      .filter(isFunctionCallOutput)
+      .map((item) => item.call_id),
+  );
+
+const getMissingDurableFunctionCallOutputs = (
+  expectedOutputs: ReadonlyArray<DurableFunctionCallOutput>,
+  completedCallIds: ReadonlySet<string>,
+): ReadonlyArray<DurableFunctionCallOutput> =>
+  expectedOutputs.filter((output) => !completedCallIds.has(output.callId));
 
 export const recoverInterruptedFunctionCallsWithDeps = async (
   client: OpenAI,
@@ -117,7 +160,7 @@ export const recoverInterruptedFunctionCallsWithDeps = async (
   await dependencies.createConversationItems(
     client,
     conversationId,
-    recoveredCalls.map((call) => buildRecoveryFunctionCallOutputItem(call.callId)),
+    recoveredCalls.map((call) => buildRecoveryFunctionCallOutputItem(call.callId, INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT)),
   );
 
   return {
@@ -134,5 +177,61 @@ export const recoverInterruptedFunctionCalls = async (
   recoverInterruptedFunctionCallsWithDeps(
     client,
     conversationId,
+    DEFAULT_RECOVER_INTERRUPTED_FUNCTION_CALLS_DEPENDENCIES,
+  );
+
+export const ensureFunctionCallOutputsPersistedWithDeps = async (
+  client: OpenAI,
+  conversationId: string | null,
+  expectedOutputs: ReadonlyArray<DurableFunctionCallOutput>,
+  sleep: (ms: number) => Promise<void>,
+  dependencies: RecoverInterruptedFunctionCallsDependencies,
+): Promise<DurableFunctionCallOutputRepair> => {
+  if (conversationId === null || expectedOutputs.length === 0) {
+    return { repairedCalls: [] };
+  }
+
+  const uniqueExpectedOutputs = dedupeDurableFunctionCallOutputs(expectedOutputs);
+  let missingOutputs = uniqueExpectedOutputs;
+
+  for (const delayMs of DURABLE_FUNCTION_OUTPUT_REPAIR_RETRY_DELAYS_MS) {
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+
+    const conversationItems = await dependencies.listConversationItems(client, conversationId);
+    const completedCallIds = getCompletedFunctionCallOutputIds(conversationItems);
+    missingOutputs = getMissingDurableFunctionCallOutputs(uniqueExpectedOutputs, completedCallIds);
+
+    if (missingOutputs.length === 0) {
+      return { repairedCalls: [] };
+    }
+  }
+
+  await dependencies.createConversationItems(
+    client,
+    conversationId,
+    missingOutputs.map((output) => buildRecoveryFunctionCallOutputItem(output.callId, output.output)),
+  );
+
+  return {
+    repairedCalls: missingOutputs.map((output) => ({
+      callId: output.callId,
+      name: output.name,
+    })),
+  };
+};
+
+export const ensureFunctionCallOutputsPersisted = async (
+  client: OpenAI,
+  conversationId: string | null,
+  expectedOutputs: ReadonlyArray<DurableFunctionCallOutput>,
+  sleep: (ms: number) => Promise<void>,
+): Promise<DurableFunctionCallOutputRepair> =>
+  ensureFunctionCallOutputsPersistedWithDeps(
+    client,
+    conversationId,
+    expectedOutputs,
+    sleep,
     DEFAULT_RECOVER_INTERRUPTED_FUNCTION_CALLS_DEPENDENCIES,
   );

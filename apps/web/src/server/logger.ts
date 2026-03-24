@@ -143,6 +143,14 @@ type ChatEvent =
   } & ChatAttemptMetadata>
   | Readonly<{
     domain: "chat";
+    action: "function_call_output_repaired";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    repairedCallIds: ReadonlyArray<string>;
+  }>
+  | Readonly<{
+    domain: "chat";
     action: "error";
     vendor: ChatVendor;
     stage: ChatErrorStage;

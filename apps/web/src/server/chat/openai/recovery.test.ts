@@ -4,6 +4,7 @@ import test from "node:test";
 import type OpenAI from "openai";
 import type { ConversationItem } from "openai/resources/conversations/items";
 import {
+  ensureFunctionCallOutputsPersistedWithDeps,
   INTERRUPTED_FUNCTION_CALL_RECOVERY_NOTE,
   INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   recoverInterruptedFunctionCallsWithDeps,
@@ -119,4 +120,74 @@ test("recoverInterruptedFunctionCallsWithDeps is a no-op when all function calls
     recoveryNoteText: null,
     recoveryToolOutputText: INTERRUPTED_FUNCTION_CALL_RECOVERY_OUTPUT,
   });
+});
+
+test("ensureFunctionCallOutputsPersistedWithDeps repairs exact outputs that never became durable conversation items", async () => {
+  const createdItems: Array<Readonly<Record<string, unknown>>> = [];
+  const sleepCalls: Array<number> = [];
+
+  const result = await ensureFunctionCallOutputsPersistedWithDeps(
+    {} as OpenAI,
+    "conv-4",
+    [{
+      callId: "call-missing",
+      name: "query_database",
+      output: "{\"ok\":true}",
+    }],
+    async (ms: number): Promise<void> => {
+      sleepCalls.push(ms);
+    },
+    {
+      listConversationItems: async (): Promise<ReadonlyArray<ConversationItem>> => [
+        createFunctionCallItem("call-missing", "query_database"),
+      ],
+      createConversationItems: async (_client, conversationId, items): Promise<void> => {
+        assert.equal(conversationId, "conv-4");
+        createdItems.push(...items.map((item) => item as unknown as Readonly<Record<string, unknown>>));
+      },
+    },
+  );
+
+  assert.deepEqual(sleepCalls, [200, 750]);
+  assert.deepEqual(createdItems, [{
+    type: "function_call_output",
+    id: "recovery-fco-call-missing",
+    call_id: "call-missing",
+    output: "{\"ok\":true}",
+  }]);
+  assert.deepEqual(result, {
+    repairedCalls: [{ callId: "call-missing", name: "query_database" }],
+  });
+});
+
+test("ensureFunctionCallOutputsPersistedWithDeps is a no-op when the exact output is already durable", async () => {
+  let createCalls = 0;
+  let listCalls = 0;
+
+  const result = await ensureFunctionCallOutputsPersistedWithDeps(
+    {} as OpenAI,
+    "conv-5",
+    [{
+      callId: "call-done",
+      name: "query_database",
+      output: "{\"ok\":true}",
+    }],
+    async (): Promise<void> => undefined,
+    {
+      listConversationItems: async (): Promise<ReadonlyArray<ConversationItem>> => {
+        listCalls += 1;
+        return [
+          createFunctionCallItem("call-done", "query_database"),
+          createFunctionCallOutputItem("call-done"),
+        ];
+      },
+      createConversationItems: async (): Promise<void> => {
+        createCalls += 1;
+      },
+    },
+  );
+
+  assert.equal(listCalls, 1);
+  assert.equal(createCalls, 0);
+  assert.deepEqual(result, { repairedCalls: [] });
 });
