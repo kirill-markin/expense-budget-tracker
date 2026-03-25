@@ -105,7 +105,7 @@ test("authenticated workspace routes return envelopes on canonical v1 paths", as
       "Missing row is allowed. Balances and budget queries treat missing liquidity as 'high'.",
       "Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity.",
       "Restricted agent SQL does not support ON CONFLICT for this table. Read first, then use an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists.",
-      "Before a long mutating INSERT or UPDATE, first try the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. If the probe fails, fix the SQL and retry the small version. After the probe succeeds, continue with the remaining approved data in sequential batches of at most 100 records per tool call. The user's explicit approval covers the full approved dataset across those sequential tool calls; only ask again if the requested change itself changes.",
+      "Before a long mutating INSERT or UPDATE, first try the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. The user's explicit approval covers the full approved change set, including that probe and all remaining sequential batches. If the probe fails, fix the SQL and retry the small version. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.",
     ],
     columnConstraints: [{
       column: "liquidity",

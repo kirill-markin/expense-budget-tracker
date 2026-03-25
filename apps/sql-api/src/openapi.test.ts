@@ -24,4 +24,8 @@ test("openapi documents restricted SQL ON CONFLICT and probe guidance", () => {
   assert.match(String(sqlPath?.post?.description), /Restricted SQL does not support ON CONFLICT/i);
   assert.match(String(sqlPath?.post?.description), /tiny representative probe/i);
   assert.match(String(sqlPath?.post?.description), /at most 100 records per tool call/i);
+  assert.match(String(sqlPath?.post?.description), /approval covers the full approved change set/i);
+  assert.match(String(sqlPath?.post?.description), /including that probe and all remaining sequential batches/i);
+  assert.match(String(sqlPath?.post?.description), /Do not pause only to ask the user to continue, proceed, or reconfirm for later batches/i);
+  assert.match(String(sqlPath?.post?.description), /Only ask again if the requested change itself changes, new ambiguity appears, or execution fails/i);
 });

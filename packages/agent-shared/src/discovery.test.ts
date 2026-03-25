@@ -21,5 +21,8 @@ test("buildAgentDiscoveryEnvelope returns the canonical discovery payload", () =
   assert.match(String(envelope.instructions), /Restricted SQL does not support ON CONFLICT/i);
   assert.match(String(envelope.instructions), /tiny representative probe/i);
   assert.match(String(envelope.instructions), /at most 100 records per tool call/i);
-  assert.match(String(envelope.instructions), /approval covers the full approved dataset/i);
+  assert.match(String(envelope.instructions), /approval covers the full approved change set/i);
+  assert.match(String(envelope.instructions), /including that probe and all remaining sequential batches/i);
+  assert.match(String(envelope.instructions), /Do not pause only to ask the user to continue, proceed, or reconfirm for later batches/i);
+  assert.match(String(envelope.instructions), /Only ask again if the requested change itself changes, new ambiguity appears, or execution fails/i);
 });
