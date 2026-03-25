@@ -12,9 +12,9 @@ import {
 import { buildChatCompletionInput } from "@/server/chat/openai/input";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
-  toStoredOpenAIResponseItem,
+  toStoredOpenAIReplayItem,
   type ServerChatMessage,
-  type StoredOpenAIResponseItem,
+  type StoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
 import { executeChatToolCall, OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tools";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
@@ -30,7 +30,7 @@ type OpenAIStreamResult = Readonly<{
 }>;
 
 export type OpenAILoopCompletion = Readonly<{
-  openaiItems: ReadonlyArray<StoredOpenAIResponseItem>;
+  openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
 type ParsedFunctionToolCall = OpenAI.Responses.ResponseFunctionToolCall & Readonly<{
@@ -373,7 +373,7 @@ const runLoop = async (
     params.turnInput,
     params.timezone,
   );
-  const continuationItems: Array<StoredOpenAIResponseItem> = [];
+  const continuationItems: Array<StoredOpenAIReplayItem> = [];
   const promptCacheKey = buildPromptCacheKey(params.sessionId);
 
   for (let callIndex = 1; callIndex <= CHAT_RUN_MAX_MODEL_CALLS; callIndex += 1) {
@@ -493,7 +493,7 @@ const runLoop = async (
       .filter((item) => item.type === "function_call")
       .map((item) => item as ParsedFunctionToolCall);
 
-    continuationItems.push(...finalResponse.output.map(toStoredOpenAIResponseItem));
+    continuationItems.push(...finalResponse.output.map(toStoredOpenAIReplayItem));
 
     if (functionCalls.length === 0) {
       pushQueueEvent(queue, { type: "done" });
@@ -524,7 +524,7 @@ const runLoop = async (
       if (update.event !== null) {
         pushQueueEvent(queue, update.event);
       }
-      continuationItems.push(toStoredOpenAIResponseItem(
+      continuationItems.push(toStoredOpenAIReplayItem(
         toFunctionCallOutputInputItem(functionCall.call_id, output),
       ));
     }

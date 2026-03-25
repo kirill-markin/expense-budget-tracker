@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { StoredOpenAIResponseItem } from "@/server/chat/openai/replayItems";
+import type { StoredOpenAIReplayItem } from "@/server/chat/openai/replayItems";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import {
   clearActiveChatRunForTests,
@@ -15,7 +15,7 @@ import {
 const createStartedResponse = (
   events: ReadonlyArray<ChatStreamEvent>,
   terminalError: unknown | null,
-  openaiItems: ReadonlyArray<StoredOpenAIResponseItem>,
+  openaiItems: ReadonlyArray<StoredOpenAIReplayItem>,
 ): Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>> => ({
   completion: terminalError === null
     ? Promise.resolve({ openaiItems })
@@ -244,7 +244,7 @@ test("runPersistedChatSessionWithDeps persists replayable OpenAI items from a mu
   const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
   const protectionTransitions: Array<string> = [];
 
-  const replayItems: ReadonlyArray<StoredOpenAIResponseItem> = [
+  const replayItems: ReadonlyArray<StoredOpenAIReplayItem> = [
     {
       id: "rs_123",
       type: "reasoning",

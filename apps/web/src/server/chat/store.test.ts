@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult } from "pg";
 
-import type { StoredOpenAIResponseItem } from "@/server/chat/openai/replayItems";
+import type { StoredOpenAIReplayItem } from "@/server/chat/openai/replayItems";
 import type { QueryFn } from "@/server/db/contextRunner";
 import type { PersistedChatMessageItem } from "./store";
 import {
@@ -54,7 +54,7 @@ const createQueryResult = (
   rows: [...rows],
 });
 
-const REPLAY_ITEMS: ReadonlyArray<StoredOpenAIResponseItem> = [{
+const REPLAY_ITEMS: ReadonlyArray<StoredOpenAIReplayItem> = [{
   id: "msg_123",
   type: "message",
   role: "assistant",

@@ -7,7 +7,7 @@ import {
 } from "@/lib/chatHistory";
 import type {
   ServerChatMessage,
-  StoredOpenAIResponseItem,
+  StoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
 import { startOpenAILoop } from "@/server/chat/openai/loop";
 import { startChatTurnObservation } from "@/server/chat/openai/langfuse";
@@ -412,7 +412,7 @@ export const runPersistedChatSessionWithDeps = async (
   dependencies: ChatRuntimeDependencies,
 ): Promise<void> => {
   let assistantContent: ReadonlyArray<ContentPart> = [];
-  let assistantOpenAIItems: ReadonlyArray<StoredOpenAIResponseItem> | undefined;
+  let assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | undefined;
   let isFinalized = false;
   const seenInvalidationVersions = new Map<string, number>();
   const heartbeatTimer = setInterval(() => {

@@ -257,10 +257,12 @@ export const buildChatCompletionInput = async (
   timezone: string,
 ): Promise<ReadonlyArray<OpenAIInputItem>> => {
   /**
-   * Rebuild the full app-owned session history instead of relying on
-   * provider-managed conversation state. This keeps previously attached files
-   * available on later turns, with the same attachment policy as the current
-   * user turn.
+   * Rebuild the full app-owned session history for manual Responses API
+   * context management.
+   *
+   * User turns replay from app transcript content so attachments can be
+   * rehydrated with the same policy as the current turn. Assistant turns replay
+   * only from persisted native OpenAI items stored in `openaiItems`.
    */
   const input: Array<OpenAIInputItem> = [{
     role: "system",

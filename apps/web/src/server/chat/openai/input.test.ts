@@ -4,7 +4,7 @@ import type OpenAI from "openai";
 
 import type {
   ServerChatMessage,
-  StoredOpenAIResponseItem,
+  StoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
 import type { ChatMessage, ContentPart } from "@/server/chat/types";
 import { buildChatCompletionInput } from "./input";
@@ -206,7 +206,7 @@ test("buildChatCompletionInput drops assistant history without persisted OpenAI 
 });
 
 test("buildChatCompletionInput replays persisted OpenAI items verbatim, including phase", async () => {
-  const assistantReplayItems: ReadonlyArray<StoredOpenAIResponseItem> = [
+  const assistantReplayItems: ReadonlyArray<StoredOpenAIReplayItem> = [
     {
       id: "rs_123",
       type: "reasoning",

@@ -1,7 +1,7 @@
 import { finalizePendingToolCallContent, type StoredMessage } from "@/lib/chatHistory";
 import type {
   ServerChatMessage,
-  StoredOpenAIResponseItem,
+  StoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
@@ -25,7 +25,7 @@ type ChatSessionRow = Readonly<{
 type ChatItemPayload = Readonly<{
   role: "user" | "assistant";
   content: ReadonlyArray<ContentPart>;
-  openaiItems?: ReadonlyArray<StoredOpenAIResponseItem>;
+  openaiItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
 type ChatItemRow = Readonly<{
@@ -60,7 +60,7 @@ export type PersistedChatMessageItem = Readonly<{
   sessionId: string;
   role: "user" | "assistant";
   content: ReadonlyArray<ContentPart>;
-  openaiItems?: ReadonlyArray<StoredOpenAIResponseItem>;
+  openaiItems?: ReadonlyArray<StoredOpenAIReplayItem>;
   state: ChatItemState;
   isError: boolean;
   isStopped: boolean;
@@ -97,28 +97,28 @@ type InsertChatItemParams = Readonly<{
   role: "user" | "assistant";
   state: ChatItemState;
   content: ReadonlyArray<ContentPart>;
-  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
 type UpdateChatMessageItemParams = Readonly<{
   itemId: string;
   content: ReadonlyArray<ContentPart>;
   state: ChatItemState;
-  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
 type UpdateChatMessageItemAndInvalidateMainContentParams = Readonly<{
   itemId: string;
   content: ReadonlyArray<ContentPart>;
   state: ChatItemState;
-  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
 type PersistAssistantTerminalErrorParams = Readonly<{
   sessionId: string;
   assistantItemId: string;
   assistantContent: ReadonlyArray<ContentPart>;
-  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
   errorMessage: string;
   sessionState: ChatSessionRunState;
 }>;
@@ -127,19 +127,19 @@ type PersistAssistantCancelledParams = Readonly<{
   sessionId: string;
   assistantItemId: string;
   assistantContent: ReadonlyArray<ContentPart>;
-  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
 type CompleteChatRunParams = Readonly<{
   assistantItemId: string;
   assistantContent: ReadonlyArray<ContentPart>;
-  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
 type UserStoppedChatRunUpdatePlan = Readonly<{
   assistantItem: PersistedChatMessageItem | null;
   assistantContent: ReadonlyArray<ContentPart> | null;
-  assistantOpenAIItems: ReadonlyArray<StoredOpenAIResponseItem> | null;
+  assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | null;
   sessionState: ChatSessionRunState;
 }>;
 
@@ -338,7 +338,7 @@ const parseMainContentInvalidationVersion = (
 const toChatItemPayload = (
   role: "user" | "assistant",
   content: ReadonlyArray<ContentPart>,
-  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>,
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>,
 ): ChatItemPayload => ({
   role,
   content,
@@ -526,9 +526,12 @@ const mapPersistedMessagesToStoredMessages = (
   }));
 
 /**
- * Builds the local message history kept by the app for context compilation, attachment
- * rehydration, and debugging. The app-managed OpenAI loop compiles this transcript into
- * each new model request instead of relying on provider-managed conversation state.
+ * Builds the server-side chat history used for OpenAI request compilation,
+ * attachment rehydration, and debugging.
+ *
+ * User turns replay from app transcript content. Assistant turns retain the
+ * same visible transcript content for the UI, plus optional `openaiItems`
+ * metadata for native Responses API replay on later turns.
  */
 const buildLocalChatMessages = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
