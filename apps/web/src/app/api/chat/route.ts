@@ -188,14 +188,24 @@ const createSseDataLine = (event: ChatStreamEvent): string =>
 const createSseHeartbeatLine = (): string =>
   ": keep-alive\n\n";
 
-const toChatHistoryResponse = (
+const toChatHistoryMessage = (
+  message: Awaited<ReturnType<typeof getChatSessionSnapshot>>["messages"][number],
+): ChatHistoryResponse["messages"][number] => ({
+  role: message.role,
+  content: message.content,
+  timestamp: message.timestamp,
+  isError: message.isError,
+  isStopped: message.isStopped,
+});
+
+export const toChatHistoryResponse = (
   snapshot: Awaited<ReturnType<typeof getChatSessionSnapshot>>,
 ): ChatHistoryResponse => ({
   sessionId: snapshot.sessionId,
   runState: snapshot.runState,
   updatedAt: snapshot.updatedAt,
   mainContentInvalidationVersion: snapshot.mainContentInvalidationVersion,
-  messages: snapshot.messages,
+  messages: snapshot.messages.map(toChatHistoryMessage),
 });
 
 const mapStoreErrorToRouteError = (error: unknown): never => {

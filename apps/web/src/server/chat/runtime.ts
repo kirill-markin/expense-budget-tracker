@@ -5,6 +5,10 @@ import {
   upsertReasoningSummaryContent,
   upsertToolCallContent,
 } from "@/lib/chatHistory";
+import type {
+  ServerChatMessage,
+  StoredOpenAIResponseItem,
+} from "@/server/chat/openai/replayItems";
 import { startOpenAILoop } from "@/server/chat/openai/loop";
 import { startChatTurnObservation } from "@/server/chat/openai/langfuse";
 import {
@@ -22,7 +26,6 @@ import {
   endChatTaskProtection,
 } from "@/server/chat/taskProtection";
 import type {
-  ChatMessage,
   ChatStreamEvent,
   ContentPart,
   ReasoningSummaryContentPart,
@@ -52,7 +55,7 @@ export type StartPersistedChatRunParams = Readonly<{
   sessionId: string;
   timezone: string;
   assistantItemId: string;
-  localMessages: ReadonlyArray<ChatMessage>;
+  localMessages: ReadonlyArray<ServerChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
   diagnostics: ChatRunDiagnostics;
 }>;
@@ -409,6 +412,7 @@ export const runPersistedChatSessionWithDeps = async (
   dependencies: ChatRuntimeDependencies,
 ): Promise<void> => {
   let assistantContent: ReadonlyArray<ContentPart> = [];
+  let assistantOpenAIItems: ReadonlyArray<StoredOpenAIResponseItem> | undefined;
   let isFinalized = false;
   const seenInvalidationVersions = new Map<string, number>();
   const heartbeatTimer = setInterval(() => {
@@ -524,7 +528,8 @@ export const runPersistedChatSessionWithDeps = async (
         }
 
         if (!isFinalized) {
-          await started.completion;
+          const completion = await started.completion;
+          assistantOpenAIItems = completion.openaiItems;
         }
       },
     );
@@ -537,6 +542,7 @@ export const runPersistedChatSessionWithDeps = async (
         {
           assistantItemId: params.assistantItemId,
           assistantContent,
+          assistantOpenAIItems,
         },
       );
       isFinalized = true;

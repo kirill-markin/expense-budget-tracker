@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { StoredOpenAIResponseItem } from "@/server/chat/openai/replayItems";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import {
   clearActiveChatRunForTests,
@@ -14,9 +15,10 @@ import {
 const createStartedResponse = (
   events: ReadonlyArray<ChatStreamEvent>,
   terminalError: unknown | null,
+  openaiItems: ReadonlyArray<StoredOpenAIResponseItem>,
 ): Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>> => ({
   completion: terminalError === null
-    ? Promise.resolve()
+    ? Promise.resolve({ openaiItems })
     : Promise.reject(terminalError),
   events: (async function* (): AsyncGenerator<ChatStreamEvent> {
     for (const event of events) {
@@ -105,7 +107,18 @@ test("runPersistedChatSessionWithDeps completes a plain local-loop turn", async 
           sequenceNumber: 1,
         },
         { type: "done" },
-      ], null),
+      ], null, [{
+        id: "msg-1",
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        phase: "final_answer",
+        content: [{
+          type: "output_text",
+          text: "Finished import plan.",
+          annotations: [],
+        }],
+      }]),
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
@@ -128,6 +141,18 @@ test("runPersistedChatSessionWithDeps completes a plain local-loop turn", async 
     assistantContent.some((part) => part.type === "text" && part.text === "Finished import plan."),
     true,
   );
+  assert.deepEqual(completion.assistantOpenAIItems, [{
+    id: "msg-1",
+    type: "message",
+    role: "assistant",
+    status: "completed",
+    phase: "final_answer",
+    content: [{
+      type: "output_text",
+      text: "Finished import plan.",
+      annotations: [],
+    }],
+  }]);
 });
 
 test("runPersistedChatSessionWithDeps persists tool invalidation on completed mutating tool calls", async () => {
@@ -154,7 +179,7 @@ test("runPersistedChatSessionWithDeps persists tool invalidation on completed mu
           refreshRoute: true,
         },
         { type: "done" },
-      ], null),
+      ], null, []),
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
@@ -188,7 +213,7 @@ test("runPersistedChatSessionWithDeps persists terminal errors after local-loop 
         outputIndex: 0,
         sequenceNumber: 1,
         input: "{\"sql\":\"SELECT 1\"}",
-      }], new Error("stream failed")),
+      }], new Error("stream failed"), []),
     completeChatRunCalls,
     persistAssistantCancelledCalls,
     persistAssistantTerminalErrorCalls,
@@ -209,4 +234,81 @@ test("stopActiveChatRun aborts the active session and closes it for tests", () =
   createActiveChatRunForTests("session-stop");
   assert.equal(stopActiveChatRun("session-stop"), true);
   clearActiveChatRunForTests("session-stop");
+});
+
+test("runPersistedChatSessionWithDeps persists replayable OpenAI items from a multi-call tool turn", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
+
+  const replayItems: ReadonlyArray<StoredOpenAIResponseItem> = [
+    {
+      id: "rs_123",
+      type: "reasoning",
+      summary: [],
+    },
+    {
+      id: "fc_123",
+      type: "function_call",
+      call_id: "call_123",
+      name: "query_database",
+      arguments: "{\"sql\":\"SELECT 1\"}",
+    },
+    {
+      type: "function_call_output",
+      call_id: "call_123",
+      output: "{\"ok\":true}",
+    },
+    {
+      id: "msg_123",
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      phase: "final_answer",
+      content: [{
+        type: "output_text",
+        text: "All done.",
+        annotations: [],
+      }],
+    },
+  ];
+
+  const dependencies = createDependencies(
+    async (): Promise<Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>>> =>
+      createStartedResponse([
+        {
+          type: "tool_call",
+          id: "tool-1",
+          itemId: "tool-item-1",
+          name: "query_database",
+          status: "completed",
+          outputIndex: 0,
+          sequenceNumber: 1,
+          input: "{\"sql\":\"SELECT 1\"}",
+          output: "{\"ok\":true}",
+        },
+        {
+          type: "delta",
+          text: "All done.",
+          itemId: "msg-1",
+          outputIndex: 1,
+          contentIndex: 0,
+          sequenceNumber: 2,
+        },
+        { type: "done" },
+      ], null, replayItems),
+    completeChatRunCalls,
+    persistAssistantCancelledCalls,
+    persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
+    protectionTransitions,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.deepEqual(completeChatRunCalls[0]?.assistantOpenAIItems, replayItems);
 });

@@ -11,8 +11,13 @@ import {
 } from "@/server/chat/openai/toolCalls";
 import { buildChatCompletionInput } from "@/server/chat/openai/input";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
+import {
+  toStoredOpenAIResponseItem,
+  type ServerChatMessage,
+  type StoredOpenAIResponseItem,
+} from "@/server/chat/openai/replayItems";
 import { executeChatToolCall, OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tools";
-import type { ChatMessage, ChatStreamEvent, ContentPart } from "@/server/chat/types";
+import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 
@@ -21,7 +26,11 @@ const MAX_REASONING_ITEMS = 8;
 
 type OpenAIStreamResult = Readonly<{
   events: AsyncGenerator<ChatStreamEvent>;
-  completion: Promise<void>;
+  completion: Promise<OpenAILoopCompletion>;
+}>;
+
+export type OpenAILoopCompletion = Readonly<{
+  openaiItems: ReadonlyArray<StoredOpenAIResponseItem>;
 }>;
 
 type ParsedFunctionToolCall = OpenAI.Responses.ResponseFunctionToolCall & Readonly<{
@@ -64,7 +73,7 @@ export type StartOpenAILoopParams = Readonly<{
   workspaceId: string;
   sessionId: string;
   timezone: string;
-  localMessages: ReadonlyArray<ChatMessage>;
+  localMessages: ReadonlyArray<ServerChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
   signal?: AbortSignal;
   rootObservation: LangfuseObservation | null;
@@ -357,14 +366,14 @@ export const buildChatResponseLogEvent = (
 const runLoop = async (
   params: StartOpenAILoopParams,
   queue: QueueState,
-): Promise<void> => {
+): Promise<OpenAILoopCompletion> => {
   const client = getObservedOpenAIClient();
   const baseInput = await buildChatCompletionInput(
     params.localMessages,
     params.turnInput,
     params.timezone,
   );
-  const continuationItems: Array<OpenAI.Responses.ResponseInputItem> = [];
+  const continuationItems: Array<StoredOpenAIResponseItem> = [];
   const promptCacheKey = buildPromptCacheKey(params.sessionId);
 
   for (let callIndex = 1; callIndex <= CHAT_RUN_MAX_MODEL_CALLS; callIndex += 1) {
@@ -484,11 +493,13 @@ const runLoop = async (
       .filter((item) => item.type === "function_call")
       .map((item) => item as ParsedFunctionToolCall);
 
-    continuationItems.push(...finalResponse.output);
+    continuationItems.push(...finalResponse.output.map(toStoredOpenAIResponseItem));
 
     if (functionCalls.length === 0) {
       pushQueueEvent(queue, { type: "done" });
-      return;
+      return {
+        openaiItems: continuationItems,
+      };
     }
 
     for (const functionCall of functionCalls) {
@@ -513,9 +524,9 @@ const runLoop = async (
       if (update.event !== null) {
         pushQueueEvent(queue, update.event);
       }
-      continuationItems.push(
+      continuationItems.push(toStoredOpenAIResponseItem(
         toFunctionCallOutputInputItem(functionCall.call_id, output),
-      );
+      ));
     }
   }
 

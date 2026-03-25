@@ -1,7 +1,11 @@
 import { finalizePendingToolCallContent, type StoredMessage } from "@/lib/chatHistory";
+import type {
+  ServerChatMessage,
+  StoredOpenAIResponseItem,
+} from "@/server/chat/openai/replayItems";
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
-import type { ChatMessage, ContentPart } from "@/server/chat/types";
+import type { ContentPart } from "@/server/chat/types";
 
 export type ChatSessionRunState = "idle" | "running" | "interrupted";
 export type ChatItemState = "in_progress" | "completed" | "error" | "cancelled";
@@ -21,6 +25,7 @@ type ChatSessionRow = Readonly<{
 type ChatItemPayload = Readonly<{
   role: "user" | "assistant";
   content: ReadonlyArray<ContentPart>;
+  openaiItems?: ReadonlyArray<StoredOpenAIResponseItem>;
 }>;
 
 type ChatItemRow = Readonly<{
@@ -55,6 +60,7 @@ export type PersistedChatMessageItem = Readonly<{
   sessionId: string;
   role: "user" | "assistant";
   content: ReadonlyArray<ContentPart>;
+  openaiItems?: ReadonlyArray<StoredOpenAIResponseItem>;
   state: ChatItemState;
   isError: boolean;
   isStopped: boolean;
@@ -82,7 +88,7 @@ export type ChatSessionSnapshot = Readonly<{
 export type PreparedChatRun = Readonly<{
   sessionId: string;
   assistantItem: PersistedChatMessageItem;
-  localMessages: ReadonlyArray<ChatMessage>;
+  localMessages: ReadonlyArray<ServerChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
 }>;
 
@@ -91,24 +97,28 @@ type InsertChatItemParams = Readonly<{
   role: "user" | "assistant";
   state: ChatItemState;
   content: ReadonlyArray<ContentPart>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
 }>;
 
 type UpdateChatMessageItemParams = Readonly<{
   itemId: string;
   content: ReadonlyArray<ContentPart>;
   state: ChatItemState;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
 }>;
 
 type UpdateChatMessageItemAndInvalidateMainContentParams = Readonly<{
   itemId: string;
   content: ReadonlyArray<ContentPart>;
   state: ChatItemState;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
 }>;
 
 type PersistAssistantTerminalErrorParams = Readonly<{
   sessionId: string;
   assistantItemId: string;
   assistantContent: ReadonlyArray<ContentPart>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
   errorMessage: string;
   sessionState: ChatSessionRunState;
 }>;
@@ -117,16 +127,19 @@ type PersistAssistantCancelledParams = Readonly<{
   sessionId: string;
   assistantItemId: string;
   assistantContent: ReadonlyArray<ContentPart>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
 }>;
 
 type CompleteChatRunParams = Readonly<{
   assistantItemId: string;
   assistantContent: ReadonlyArray<ContentPart>;
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>;
 }>;
 
 type UserStoppedChatRunUpdatePlan = Readonly<{
   assistantItem: PersistedChatMessageItem | null;
   assistantContent: ReadonlyArray<ContentPart> | null;
+  assistantOpenAIItems: ReadonlyArray<StoredOpenAIResponseItem> | null;
   sessionState: ChatSessionRunState;
 }>;
 
@@ -277,6 +290,7 @@ const mapChatItemRow = (row: ChatItemRow): PersistedChatMessageItem => {
     sessionId: row.session_id,
     role: row.payload.role,
     content: row.payload.content,
+    openaiItems: row.payload.role === "assistant" ? row.payload.openaiItems : undefined,
     state: row.state,
     isError: row.state === "error",
     isStopped: row.state === "cancelled",
@@ -324,9 +338,13 @@ const parseMainContentInvalidationVersion = (
 const toChatItemPayload = (
   role: "user" | "assistant",
   content: ReadonlyArray<ContentPart>,
+  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIResponseItem>,
 ): ChatItemPayload => ({
   role,
   content,
+  ...(role === "assistant" && assistantOpenAIItems !== undefined
+    ? { openaiItems: assistantOpenAIItems }
+    : {}),
 });
 
 const insertChatItemWithQuery = async (
@@ -336,7 +354,7 @@ const insertChatItemWithQuery = async (
   const result = await queryFn(INSERT_CHAT_ITEM_SQL, [
     params.sessionId,
     params.state,
-    JSON.stringify(toChatItemPayload(params.role, params.content)),
+    JSON.stringify(toChatItemPayload(params.role, params.content, params.assistantOpenAIItems)),
   ]);
 
   return mapChatItemRow(
@@ -350,7 +368,7 @@ const updateChatItemWithQuery = async (
 ): Promise<PersistedChatMessageItem> => {
   const result = await queryFn(UPDATE_CHAT_ITEM_SQL, [
     params.itemId,
-    JSON.stringify(toChatItemPayload("assistant", params.content)),
+    JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
     params.state,
   ]);
 
@@ -377,7 +395,7 @@ const updateChatItemAndInvalidateMainContentWithQuery = async (
 }>> => {
   const result = await queryFn(UPDATE_CHAT_ITEM_AND_INVALIDATE_MAIN_CONTENT_SQL, [
     params.itemId,
-    JSON.stringify(toChatItemPayload("assistant", params.content)),
+    JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
     params.state,
   ]);
 
@@ -514,10 +532,11 @@ const mapPersistedMessagesToStoredMessages = (
  */
 const buildLocalChatMessages = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
-): ReadonlyArray<ChatMessage> =>
+): ReadonlyArray<ServerChatMessage> =>
   messages.map((message) => ({
     role: message.role,
     content: message.content,
+    ...(message.openaiItems !== undefined ? { openaiItems: message.openaiItems } : {}),
   }));
 
 export const buildUserStoppedAssistantContent = (
@@ -548,6 +567,7 @@ export const buildUserStoppedChatRunUpdatePlan = (
     return {
       assistantItem: message,
       assistantContent: buildUserStoppedAssistantContent(message.content),
+      assistantOpenAIItems: message.openaiItems ?? null,
       sessionState: "idle",
     };
   }
@@ -555,6 +575,7 @@ export const buildUserStoppedChatRunUpdatePlan = (
   return {
     assistantItem: null,
     assistantContent: null,
+    assistantOpenAIItems: null,
     sessionState: "idle",
   };
 };
@@ -645,7 +666,7 @@ export const updateAssistantMessageItem = async (
 ): Promise<PersistedChatMessageItem> => {
   const result = await queryAs(userId, workspaceId, UPDATE_CHAT_ITEM_SQL, [
     params.itemId,
-    JSON.stringify(toChatItemPayload("assistant", params.content)),
+    JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
     params.state,
   ]);
 
@@ -697,6 +718,7 @@ export const completeChatRun = async (
       itemId: params.assistantItemId,
       content: params.assistantContent,
       state: "completed",
+      assistantOpenAIItems: params.assistantOpenAIItems,
     });
 
     await updateChatSessionStatusWithQuery(queryFn, updatedAssistant.sessionId, "idle", null);
@@ -719,12 +741,14 @@ export const persistAssistantTerminalError = async (
         itemId: params.assistantItemId,
         content: [{ type: "text", text: params.errorMessage }],
         state: "error",
+        assistantOpenAIItems: params.assistantOpenAIItems,
       });
     } else {
       await updateChatItemWithQuery(queryFn, {
         itemId: params.assistantItemId,
         content: finalizedAssistantContent,
         state: "completed",
+        assistantOpenAIItems: params.assistantOpenAIItems,
       });
       await insertChatItemWithQuery(queryFn, {
         sessionId: params.sessionId,
@@ -747,6 +771,7 @@ export const persistAssistantCancelled = async (
       itemId: params.assistantItemId,
       content: buildUserStoppedAssistantContent(params.assistantContent),
       state: "cancelled",
+      assistantOpenAIItems: params.assistantOpenAIItems,
     });
 
     await updateChatSessionStatusWithQuery(queryFn, params.sessionId, "idle", null);
@@ -779,6 +804,7 @@ export const cancelActiveChatRunByUserWithQuery = async (
       itemId: updatePlan.assistantItem.itemId,
       content: updatePlan.assistantContent,
       state: "cancelled",
+      assistantOpenAIItems: updatePlan.assistantOpenAIItems ?? undefined,
     });
   }
 

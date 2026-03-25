@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type OpenAI from "openai";
 
+import type {
+  ServerChatMessage,
+  StoredOpenAIResponseItem,
+} from "@/server/chat/openai/replayItems";
 import type { ChatMessage, ContentPart } from "@/server/chat/types";
 import { buildChatCompletionInput } from "./input";
 
@@ -176,7 +180,7 @@ test("buildChatCompletionInput expands DOCX attachments to text while keeping th
   );
 });
 
-test("buildChatCompletionInput replays assistant history as assistant output content", async () => {
+test("buildChatCompletionInput drops assistant history without persisted OpenAI replay items", async () => {
   const localMessages: ReadonlyArray<ChatMessage> = [
     {
       role: "user",
@@ -198,17 +202,48 @@ test("buildChatCompletionInput replays assistant history as assistant output con
   ];
 
   const input = await buildChatCompletionInput(localMessages, [{ type: "text", text: "Continue." }], "UTC");
-  const assistantMessage = input[2];
+  assert.equal(input.some((item) => isAssistantOutputMessage(item)), false);
+});
 
-  assert.ok(assistantMessage !== undefined && isAssistantOutputMessage(assistantMessage));
-  assert.equal(assistantMessage.role, "assistant");
-  assert.equal(assistantMessage.status, "completed");
-  assert.ok(
-    assistantMessage.content.some((part) =>
-      part.type === "output_text" && part.text === "I checked the CSV."),
-  );
-  assert.ok(
-    assistantMessage.content.some((part) =>
-      part.type === "output_text" && part.text.includes("Tool call: query_database")),
-  );
+test("buildChatCompletionInput replays persisted OpenAI items verbatim, including phase", async () => {
+  const assistantReplayItems: ReadonlyArray<StoredOpenAIResponseItem> = [
+    {
+      id: "rs_123",
+      type: "reasoning",
+      summary: [],
+    },
+    {
+      id: "msg_123",
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      phase: "final_answer",
+      content: [{
+        type: "output_text",
+        text: "Native assistant answer",
+        annotations: [],
+      }],
+    },
+    {
+      type: "function_call_output",
+      call_id: "call_123",
+      output: "{\"ok\":true}",
+    },
+  ];
+
+  const localMessages: ReadonlyArray<ServerChatMessage> = [
+    {
+      role: "user",
+      content: [{ type: "text", text: "First turn" }],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Visible transcript text" }],
+      openaiItems: assistantReplayItems,
+    },
+  ];
+
+  const input = await buildChatCompletionInput(localMessages, [{ type: "text", text: "Next turn" }], "UTC");
+
+  assert.deepEqual(input.slice(2, 5), assistantReplayItems);
 });

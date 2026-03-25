@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult } from "pg";
 
+import type { StoredOpenAIResponseItem } from "@/server/chat/openai/replayItems";
 import type { QueryFn } from "@/server/db/contextRunner";
 import type { PersistedChatMessageItem } from "./store";
 import {
@@ -16,12 +17,14 @@ const createAssistantMessage = (
     itemId: string;
     state: PersistedChatMessageItem["state"];
     content: PersistedChatMessageItem["content"];
+    openaiItems?: PersistedChatMessageItem["openaiItems"];
   }>,
 ): PersistedChatMessageItem => ({
   itemId: params.itemId,
   sessionId: "session-1",
   role: "assistant",
   content: params.content,
+  openaiItems: params.openaiItems,
   state: params.state,
   isError: params.state === "error",
   isStopped: params.state === "cancelled",
@@ -50,6 +53,19 @@ const createQueryResult = (
   fields: [],
   rows: [...rows],
 });
+
+const REPLAY_ITEMS: ReadonlyArray<StoredOpenAIResponseItem> = [{
+  id: "msg_123",
+  type: "message",
+  role: "assistant",
+  status: "completed",
+  phase: "final_answer",
+  content: [{
+    type: "output_text",
+    text: "Stored answer",
+    annotations: [],
+  }],
+}];
 
 test("buildUserStoppedAssistantContent finalizes started tool calls with a user-stopped output", () => {
   assert.deepEqual(
@@ -92,6 +108,7 @@ test("buildUserStoppedChatRunUpdatePlan keeps the current assistant visible and 
     createAssistantMessage({
       itemId: "assistant-1",
       state: "in_progress",
+      openaiItems: REPLAY_ITEMS,
       content: [{
         type: "tool_call",
         id: "call-1",
@@ -112,6 +129,7 @@ test("buildUserStoppedChatRunUpdatePlan keeps the current assistant visible and 
 
   assert.equal(plan.sessionState, "idle");
   assert.equal(plan.assistantItem?.itemId, "assistant-1");
+  assert.deepEqual(plan.assistantOpenAIItems, REPLAY_ITEMS);
   assert.deepEqual(plan.assistantContent, [{
     type: "tool_call",
     id: "call-1",
@@ -161,6 +179,7 @@ test("cancelActiveChatRunByUserWithQuery cancels a running session and finalizes
         state: "in_progress",
         payload: {
           role: "assistant",
+          openaiItems: REPLAY_ITEMS,
           content: [{
             type: "tool_call",
             id: "call-1",
@@ -228,6 +247,7 @@ test("cancelActiveChatRunByUserWithQuery cancels a running session and finalizes
     itemId: "assistant-1",
     payload: {
       role: "assistant",
+      openaiItems: REPLAY_ITEMS,
       content: [{
         type: "tool_call",
         id: "call-1",

@@ -14,6 +14,7 @@ import {
   extractChatRequestContext,
   isExpectedStreamClosureError,
   parseChatRequestBody,
+  toChatHistoryResponse,
 } from "./route";
 
 const readStream = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
@@ -203,6 +204,49 @@ test("createChatErrorLogEvent includes structured chat context", () => {
       attachmentFileNames: [],
     },
   );
+});
+
+test("toChatHistoryResponse keeps the browser snapshot contract and strips server-only replay metadata", () => {
+  const response = toChatHistoryResponse(({
+    sessionId: "session-1",
+    runState: "idle",
+    updatedAt: 100,
+    activeRunHeartbeatAt: null,
+    mainContentInvalidationVersion: 0,
+    messages: [{
+      role: "assistant",
+      content: [{ type: "text", text: "hello" }],
+      timestamp: 100,
+      isError: false,
+      isStopped: false,
+      openaiItems: [{
+        id: "msg_123",
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        phase: "final_answer",
+        content: [{
+          type: "output_text",
+          text: "hello",
+          annotations: [],
+        }],
+      }],
+    }],
+  } as unknown) as Awaited<ReturnType<typeof import("@/server/chat/store").getChatSessionSnapshot>>);
+
+  assert.deepEqual(response, {
+    sessionId: "session-1",
+    runState: "idle",
+    updatedAt: 100,
+    mainContentInvalidationVersion: 0,
+    messages: [{
+      role: "assistant",
+      content: [{ type: "text", text: "hello" }],
+      timestamp: 100,
+      isError: false,
+      isStopped: false,
+    }],
+  });
 });
 
 test("createChatEventStream emits heartbeat comments during idle gaps", async () => {
