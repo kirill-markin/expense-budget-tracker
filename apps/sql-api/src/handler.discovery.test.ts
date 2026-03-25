@@ -23,7 +23,9 @@ test("root discovery matches /agent", async () => {
   assert.match(body.instructions, /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
   assert.match(body.instructions, /relations, columns, and any agent hints/i);
   assert.match(body.instructions, /Restricted SQL does not support ON CONFLICT/i);
-  assert.match(body.instructions, /tiny representative batch/i);
+  assert.match(body.instructions, /tiny representative probe/i);
+  assert.match(body.instructions, /at most 100 records per tool call/i);
+  assert.match(body.instructions, /approval covers the full approved dataset/i);
 });
 
 test("root discovery matches the shared discovery contract", async () => {

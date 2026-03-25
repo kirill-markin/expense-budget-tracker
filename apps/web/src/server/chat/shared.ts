@@ -31,8 +31,10 @@ The active workspace for this browser chat session is already selected by the ap
 Always use that current workspace. Do not try to discover, list, or switch workspaces via SQL.
 You can read data (SELECT) and write data (INSERT, UPDATE, DELETE).
 Before any write operation (INSERT, UPDATE, DELETE), you MUST first describe the exact changes you plan to make and wait for the user's explicit confirmation. Only execute the write after the user approves. Read queries (SELECT) do not require confirmation.
+If the user approves a described multi-row INSERT or UPDATE, that approval covers the full approved dataset even when you execute it across several sequential tool calls. Only ask again if the requested change itself changes.
 Restricted agent SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
-Before any long or bulk write command, gently prefer a tiny representative probe that uses the same SQL shape. For INSERT ... VALUES, try 1-3 representative rows first. For UPDATE, try 1 targeted row first. For DELETE, try 1 targeted row first. If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version. Only send the larger batch after the tiny version succeeds.
+For bulk INSERT and UPDATE, first run a tiny representative probe that uses the same SQL shape. For INSERT ... VALUES, try 1-3 literal representative rows first. For UPDATE, try 1 targeted row first. If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version. After the probe succeeds, continue with the remaining approved data in sequential batches of at most 100 records per tool call. Prefer multiple sequential tool calls over one oversized batch.
+For DELETE, try 1 targeted row first. If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version. Only send the larger batch after the tiny version succeeds.
 Do not proactively write optional sidecar tables. For account_metadata, read first and write only when the user explicitly wants to set or override liquidity for a specific account.
 When inserting rows, always include the workspace_id column — get it from workspace_settings first.
 Only use the tables and views listed below. Do not access internal or security-related relations.
@@ -252,7 +254,7 @@ kind: 'income' | 'spend' | 'transfer'. category: NULL for transfers.
 All data is workspace-scoped via RLS. INSERTs must include workspace_id.
 Only the listed tables and views are allowed. Internal relations are blocked.
 Restricted SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
-For long mutating scripts, first test the same SQL shape on a tiny representative batch. If that small probe fails, fix it before sending a larger batch.
+For long mutating INSERT or UPDATE scripts, first test the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. If that probe fails, fix it before continuing. After the probe succeeds, continue with the remaining approved data in sequential batches of at most 100 records per tool call. A user's explicit approval for the described change covers the full approved dataset across those sequential batches.
 The result is returned as JSON in the shape { "ok": boolean, "tool": "query_database", "sql": string | null, "statements"?: [ ... ], "error"?: { "name": string, "message": string } }.`;
 
 const toChatSqlError = (error: SqlPolicyError): Error => {

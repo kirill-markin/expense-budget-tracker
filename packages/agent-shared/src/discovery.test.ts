@@ -19,5 +19,7 @@ test("buildAgentDiscoveryEnvelope returns the canonical discovery payload", () =
   ]);
   assert.match(String(envelope.instructions), /allowed relations, columns, and any agent hints/i);
   assert.match(String(envelope.instructions), /Restricted SQL does not support ON CONFLICT/i);
-  assert.match(String(envelope.instructions), /tiny representative batch/i);
+  assert.match(String(envelope.instructions), /tiny representative probe/i);
+  assert.match(String(envelope.instructions), /at most 100 records per tool call/i);
+  assert.match(String(envelope.instructions), /approval covers the full approved dataset/i);
 });

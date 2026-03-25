@@ -54,7 +54,10 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /high \| medium \| low/i);
   assert.match(instructions, /treats liquidity as high in balances and budget calculations/i);
   assert.match(instructions, /Restricted agent SQL does not support ON CONFLICT/i);
-  assert.match(instructions, /For INSERT .* try 1-3 representative rows first/i);
+  assert.match(instructions, /approval covers the full approved dataset/i);
+  assert.match(instructions, /For INSERT .* try 1-3 literal representative rows first/i);
+  assert.match(instructions, /at most 100 records per tool call/i);
+  assert.match(instructions, /Prefer multiple sequential tool calls over one oversized batch/i);
   assert.match(instructions, /If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version/i);
   assert.match(instructions, /explicit INSERT when the row is missing or an explicit UPDATE when the row already exists/i);
   assert.match(instructions, /first_day_of_week .*1\.\.7/i);
@@ -78,5 +81,7 @@ test("TOOL_DESCRIPTION documents multi-statement scripts and statements output",
   assert.match(TOOL_DESCRIPTION, /liquidity must be high, medium, or low/i);
   assert.match(TOOL_DESCRIPTION, /first_day_of_week SMALLINT/i);
   assert.match(TOOL_DESCRIPTION, /Restricted SQL does not support ON CONFLICT/i);
-  assert.match(TOOL_DESCRIPTION, /tiny representative batch/i);
+  assert.match(TOOL_DESCRIPTION, /tiny representative probe/i);
+  assert.match(TOOL_DESCRIPTION, /at most 100 records per tool call/i);
+  assert.match(TOOL_DESCRIPTION, /approval .* full approved dataset/i);
 });

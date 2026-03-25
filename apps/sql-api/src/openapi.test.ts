@@ -22,5 +22,6 @@ test("openapi documents restricted SQL ON CONFLICT and probe guidance", () => {
   const sqlPath = (document.paths as Record<string, { post?: { description?: string } }>)["/sql"];
 
   assert.match(String(sqlPath?.post?.description), /Restricted SQL does not support ON CONFLICT/i);
-  assert.match(String(sqlPath?.post?.description), /tiny representative batch/i);
+  assert.match(String(sqlPath?.post?.description), /tiny representative probe/i);
+  assert.match(String(sqlPath?.post?.description), /at most 100 records per tool call/i);
 });
