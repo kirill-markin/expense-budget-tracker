@@ -158,6 +158,15 @@ export const useChatSessionController = (
   const isAssistantRunActive = isChatRunActive(runState);
   const composerAction = getChatComposerAction(runState);
 
+  /**
+   * Applies the canonical session-level invalidation version observed through
+   * either live SSE or `/api/chat` snapshot polling.
+   *
+   * A completed tool-call transcript item alone must not refresh the route.
+   * The sidebar refreshes only after the runtime has persisted a newer
+   * `mainContentInvalidationVersion`, which guarantees that a successful
+   * mutating tool call committed to local state.
+   */
   const applyMainContentInvalidationVersion = useCallback((
     nextVersion: number,
     source: "live" | "snapshot",

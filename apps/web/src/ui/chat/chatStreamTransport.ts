@@ -118,6 +118,9 @@ export const applyChatStreamEvent = (
       streamPosition: buildToolContentStreamPosition(event),
     });
 
+    // Transcript completion alone is not the refresh contract. The route
+    // refreshes only when the completed tool event also carries the persisted
+    // session invalidation version assigned by the runtime.
     if (event.status === "completed" && typeof event.mainContentInvalidationVersion === "number") {
       handlers.applyMainContentInvalidationVersion(
         event.mainContentInvalidationVersion,

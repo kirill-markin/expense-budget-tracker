@@ -225,6 +225,13 @@ const sanitizeToolOutputForTelemetry = (
     ? output
     : `${output.slice(0, 4_000)}...`;
 
+/**
+ * Executes a single local tool call and returns both the serialized tool
+ * output and the canonical metadata later used for route invalidation.
+ *
+ * This keeps the refresh contract grounded in the executed SQL/result pair
+ * instead of in earlier streamed tool-call snapshots.
+ */
 const runOneToolCall = async (
   params: Readonly<{
     item: OpenAI.Responses.ResponseFunctionToolCall;

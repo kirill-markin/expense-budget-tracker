@@ -19,8 +19,22 @@ type ToolErrorPayload = Readonly<{
 }>;
 
 export type ExecutedChatToolCall = Readonly<{
+  /**
+   * Serialized tool output forwarded back into the OpenAI continuation input
+   * and persisted in the local transcript.
+   */
   output: string;
+  /**
+   * Canonical mutation flag derived from the exact SQL arguments executed for
+   * this tool call. Runtime invalidation must use this value instead of
+   * inferring mutability from earlier streamed tool snapshots.
+   */
   isMutating: boolean;
+  /**
+   * Whether the tool execution itself succeeded. A completed transcript item is
+   * not enough to refresh route-backed content; the runtime only invalidates
+   * main content when a completed tool call both succeeded and mutated data.
+   */
   succeeded: boolean;
 }>;
 
@@ -71,6 +85,11 @@ const serializeToolError = (
   };
 };
 
+/**
+ * Best-effort SQL extraction used to classify the executed tool call before we
+ * know whether execution itself will succeed. Invalid JSON or invalid schema
+ * simply means "not classifiable", which falls back to a non-mutating result.
+ */
 const getSqlFromRawArguments = (
   rawArguments: string,
 ): string | null => {
@@ -82,6 +101,11 @@ const getSqlFromRawArguments = (
   }
 };
 
+/**
+ * Converts parsed SQL into the canonical mutation flag used by route
+ * invalidation. Validation failures intentionally degrade to `false` so the
+ * runtime never refreshes route content on uncertain metadata.
+ */
 const getIsMutatingSql = (
   sql: string | null,
 ): boolean => {
@@ -119,6 +143,12 @@ export const executeChatToolCall = async (
   rawArguments: string,
   context: OpenAIToolContext,
 ): Promise<ExecutedChatToolCall> => {
+  /**
+   * This function is the canonical source of tool completion metadata consumed
+   * by the chat runtime. Later layers may mark the transcript item as
+   * `completed`, but route refresh is allowed only when this result reports
+   * `succeeded === true` and `isMutating === true`.
+   */
   if (toolName !== "query_database") {
     throw new Error(`Unsupported OpenAI tool call: ${toolName}`);
   }

@@ -20,6 +20,9 @@ const INITIAL_PAST_MONTHS = 12;
 
 async function BudgetStreamData() {
   const demo = await isDemoMode();
+  // Route refresh re-runs this server component; changing the key ensures the
+  // client dashboard remounts from the fresh server payload instead of keeping
+  // pre-refresh local state.
   const refreshToken = crypto.randomUUID();
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);

@@ -82,11 +82,22 @@ export type ChatStreamEvent =
      * Canonical session-level invalidation version attached by the chat runtime
      * after persisting a successful mutating database tool call.
      *
+     * A tool call reaching transcript status `completed` is not enough on its
+     * own to refresh route-backed content. The sidebar refreshes only when this
+     * persisted version is present, which guarantees that the completed tool
+     * both succeeded and mutated workspace data.
+     *
      * Live SSE clients can refresh immediately from this event, while snapshot
      * polling later observes the same version from `/api/chat` and avoids
      * duplicate refreshes.
      */
     mainContentInvalidationVersion?: number;
+    /**
+     * Internal runtime hint indicating that this completed tool call is
+     * eligible to persist main-content invalidation. It remains private to the
+     * app-owned chat pipeline; the persisted invalidation version above is the
+     * real refresh contract consumed by the browser.
+     */
     refreshRoute?: boolean;
   }>
   | Readonly<{

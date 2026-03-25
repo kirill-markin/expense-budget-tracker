@@ -333,6 +333,12 @@ const updateAssistantInProgress = async (
  * mutating database tool calls, advances the session-level invalidation
  * version exactly once per tool-call ID.
  *
+ * A tool reaching transcript status `completed` is not enough on its own to
+ * refresh route-backed content. This helper invalidates only when the event
+ * already carries the internal `refreshRoute` marker, which in turn is derived
+ * from canonical execution metadata: the tool call succeeded and executed
+ * mutating SQL.
+ *
  * The returned event is the broadcast shape sent to live SSE subscribers. When
  * an invalidation version is attached, the sidebar can refresh immediately from
  * the stream while snapshot polling later observes the same version from the

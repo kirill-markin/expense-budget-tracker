@@ -68,8 +68,10 @@ export const shouldSuppressStreamFailure = (
 /**
  * Returns whether a live SSE tool-call event should refresh the main content.
  *
- * Live events should refresh immediately on the first seen invalidation version
- * because there is no earlier snapshot in memory for that completed tool call.
+ * Live events should refresh immediately on the first seen invalidation
+ * version because there is no earlier snapshot in memory for that completed
+ * tool call. The presence of the version, not the mere fact that the
+ * transcript says `completed`, is the refresh contract.
  */
 export const shouldRefreshMainContentFromLiveEvent = (
   previousVersion: number | null,
@@ -84,7 +86,8 @@ export const shouldRefreshMainContentFromLiveEvent = (
  * Snapshot polling must not refresh on the initial bootstrap load because the
  * version may already reflect older completed tool calls from previous turns.
  * It refreshes only when polling observes a newer persisted invalidation
- * version than the client has already seen.
+ * version than the client has already seen, which lets snapshot recovery act
+ * as the fallback when a live SSE completion event is missed.
  */
 export const shouldRefreshMainContentFromSnapshot = (
   previousVersion: number | null,

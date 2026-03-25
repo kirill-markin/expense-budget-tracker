@@ -159,6 +159,14 @@ const buildFunctionToolCallEvent = (
   );
 };
 
+/**
+ * Builds the completed tool-call event emitted after local execution.
+ *
+ * The `refreshRoute` flag is passed in from canonical execution metadata
+ * produced by `executeChatToolCall`. This avoids the older failure mode where
+ * the runtime tried to infer route refresh eligibility from transient streamed
+ * tool snapshots instead of from the SQL that actually ran.
+ */
 const buildToolOutputEvent = (
   rawItem: ToolCallOutputRawItem,
   previousSnapshot: ToolCallEvent | null,
@@ -349,6 +357,15 @@ export const applyFunctionCallArgumentsDone = (
   };
 };
 
+/**
+ * Applies the terminal output of one tool call to the tracked local tool
+ * state.
+ *
+ * Completed transcript state and route refresh eligibility intentionally travel
+ * together here: the event becomes `completed`, but route invalidation is only
+ * marked when the caller provides `refreshRoute === true` from canonical tool
+ * execution metadata.
+ */
 export const applyToolCallOutput = (
   toolStates: ToolCallStateMap,
   rawItem: ToolCallOutputRawItem,
