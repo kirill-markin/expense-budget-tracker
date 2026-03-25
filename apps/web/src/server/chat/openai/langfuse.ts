@@ -19,6 +19,12 @@ type ChatTraceMetadata = Readonly<{
 
 type TelemetryMetadata = Readonly<Record<string, string>>;
 
+type StartChatTurnObservationDependencies = Readonly<{
+  createTraceId: typeof createTraceId;
+  propagateAttributes: typeof propagateAttributes;
+  startObservation: typeof startObservation;
+}>;
+
 const MASK_PATTERNS: ReadonlyArray<Readonly<{
   pattern: RegExp;
   replacement: string;
@@ -111,19 +117,28 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
   });
 };
 
-export const startChatTurnObservation = async (
+const DEFAULT_START_CHAT_TURN_OBSERVATION_DEPENDENCIES: StartChatTurnObservationDependencies = {
+  createTraceId,
+  propagateAttributes,
+  startObservation,
+};
+
+export const startChatTurnObservationWithDeps = async (
   params: ChatTraceMetadata,
   fn: (rootObservation: LangfuseObservation | null) => Promise<void>,
+  dependencies: StartChatTurnObservationDependencies,
 ): Promise<void> => {
-  const traceId = await createTraceId(params.requestId);
+  const traceId = await dependencies.createTraceId(params.requestId);
   const parentSpanContext = {
     traceId,
     spanId: traceId.slice(0, 16),
     traceFlags: 1,
   };
+  let callbackStarted = false;
+  let callbackError: unknown | null = null;
 
   try {
-    await propagateAttributes(
+    await dependencies.propagateAttributes(
       {
         traceName: "chat_turn",
         userId: params.userId,
@@ -132,7 +147,8 @@ export const startChatTurnObservation = async (
         metadata: buildTraceMetadata(params),
       },
       async (): Promise<void> => {
-        const rootObservation = startObservation(
+        callbackStarted = true;
+        const rootObservation = dependencies.startObservation(
           "chat_turn",
           {
             input: {
@@ -154,6 +170,7 @@ export const startChatTurnObservation = async (
             },
           });
         } catch (error) {
+          callbackError = error;
           rootObservation.updateOtelSpanAttributes({
             output: {
               result: "error",
@@ -167,6 +184,21 @@ export const startChatTurnObservation = async (
       },
     );
   } catch (error) {
+    if (callbackError !== null) {
+      throw callbackError;
+    }
+
+    if (callbackStarted) {
+      log({
+        domain: "chat",
+        action: "error",
+        vendor: "openai",
+        stage: "agent",
+        error: `Langfuse telemetry failed after the chat turn finished: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return;
+    }
+
     log({
       domain: "chat",
       action: "error",
@@ -177,3 +209,13 @@ export const startChatTurnObservation = async (
     await fn(null);
   }
 };
+
+export const startChatTurnObservation = async (
+  params: ChatTraceMetadata,
+  fn: (rootObservation: LangfuseObservation | null) => Promise<void>,
+): Promise<void> =>
+  startChatTurnObservationWithDeps(
+    params,
+    fn,
+    DEFAULT_START_CHAT_TURN_OBSERVATION_DEPENDENCIES,
+  );

@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { SupportedLocale } from "@/lib/locale";
 import {
   appendAssistantTextContent,
   finalizePendingToolCallContent,
@@ -53,6 +54,7 @@ export type StartPersistedChatRunParams = Readonly<{
   userId: string;
   workspaceId: string;
   sessionId: string;
+  locale: SupportedLocale;
   timezone: string;
   assistantItemId: string;
   localMessages: ReadonlyArray<ServerChatMessage>;
@@ -468,6 +470,7 @@ export const runPersistedChatSessionWithDeps = async (
           userId: params.userId,
           workspaceId: params.workspaceId,
           sessionId: params.sessionId,
+          locale: params.locale,
           timezone: params.timezone,
           localMessages: params.localMessages,
           turnInput: params.turnInput,

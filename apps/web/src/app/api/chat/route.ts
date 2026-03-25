@@ -1,4 +1,5 @@
 import { CHAT_MODEL_ID, CHAT_VENDOR } from "@/lib/chatModels";
+import { getLocaleFromRequest } from "@/lib/localeCookie";
 import { handleRoute } from "@/server/api/handleRoute";
 import { ApiRouteError } from "@/server/api/errors";
 import {
@@ -503,12 +504,14 @@ export const POST = async (request: Request): Promise<Response> => {
       snapshot.sessionId,
       body.content,
     );
+    const locale = getLocaleFromRequest(request);
 
     const events = startPersistedChatRun({
       requestId,
       userId: context.userId,
       workspaceId: context.workspaceId,
       sessionId: preparedRun.sessionId,
+      locale,
       timezone: body.timezone,
       assistantItemId: preparedRun.assistantItem.itemId,
       localMessages: preparedRun.localMessages,

@@ -193,6 +193,7 @@
   "chat.errorTooLarge": "الطلب كبير جداً ({{sizeMb}} ميغابايت، الحد {{limitMb}} ميغابايت). حاول إرسال مرفقات أقل أو صور أصغر.",
   "chat.errorBlocked": "تم حظر الطلب بواسطة جدار الحماية",
   "chat.errorFailed": "فشل الطلب: {{message}}",
+  "chat.toolCallLimitReachedContinue": "وصلت إلى حد {{limit}} من استدعاءات الأدوات في هذه الجولة. أرسل رسالة أخرى مثل \"continue\" وسأتابع من الجلسة نفسها.",
   "chat.stopped": "تم الإيقاف",
   "chat.copyTranscript": "نسخ المحادثة",
   "chat.copied": "تم النسخ",

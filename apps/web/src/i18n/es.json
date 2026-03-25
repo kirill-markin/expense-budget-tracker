@@ -193,6 +193,7 @@
   "chat.errorTooLarge": "Solicitud demasiado grande ({{sizeMb}} MB, límite {{limitMb}} MB). Intenta enviar menos archivos adjuntos o imágenes más pequeñas.",
   "chat.errorBlocked": "Solicitud bloqueada por el firewall",
   "chat.errorFailed": "Error en la solicitud: {{message}}",
+  "chat.toolCallLimitReachedContinue": "He alcanzado el límite de {{limit}} llamadas a herramientas para este turno. Envía otro mensaje, por ejemplo \"continue\", y seguiré desde esta misma sesión de chat.",
   "chat.stopped": "Detenido",
   "chat.copyTranscript": "Copiar chat",
   "chat.copied": "Copiado",

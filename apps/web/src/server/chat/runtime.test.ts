@@ -32,6 +32,7 @@ const createParams = (): StartPersistedChatRunParams => ({
   userId: "user-1",
   workspaceId: "workspace-1",
   sessionId: "session-1",
+  locale: "en",
   timezone: "Europe/Madrid",
   assistantItemId: "assistant-1",
   localMessages: [{
@@ -141,7 +142,6 @@ test("runPersistedChatSessionWithDeps completes a plain local-loop turn", async 
     true,
   );
   assert.deepEqual(completion.assistantOpenAIItems, [{
-    id: "msg-1",
     type: "message",
     role: "assistant",
     status: "completed",
@@ -447,4 +447,64 @@ test("runPersistedChatSessionWithDeps persists replayable OpenAI items from a mu
   await runPersistedChatSessionWithDeps(createParams(), dependencies);
 
   assert.deepEqual(completeChatRunCalls[0]?.assistantOpenAIItems, replayItems);
+});
+
+test("runPersistedChatSessionWithDeps treats a capped turn summary as a normal completion", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
+
+  const dependencies = createDependencies(
+    async (): Promise<Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>>> =>
+      createStartedResponse([
+        {
+          type: "tool_call",
+          id: "tool-1",
+          itemId: "tool-item-1",
+          name: "query_database",
+          status: "completed",
+          outputIndex: 0,
+          sequenceNumber: 1,
+          input: "{\"sql\":\"INSERT INTO ledger_entries VALUES ('probe')\"}",
+          output: "{\"ok\":true}",
+          refreshRoute: true,
+        },
+        {
+          type: "delta",
+          text: "I reached the tool-call limit for this turn. Reply with continue and I will resume.",
+          itemId: "assistant-msg-1",
+          outputIndex: 1,
+          contentIndex: 0,
+          sequenceNumber: 2,
+        },
+        { type: "done" },
+      ], null, [{
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        phase: "final_answer",
+        content: [{
+          type: "output_text",
+          text: "I reached the tool-call limit for this turn. Reply with continue and I will resume.",
+          annotations: [],
+        }],
+      }]),
+    completeChatRunCalls,
+    persistAssistantCancelledCalls,
+    persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
+    protectionTransitions,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.deepEqual(protectionTransitions, ["begin", "end"]);
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 1);
+  assert.equal(completeChatRunCalls.length, 1);
+  assert.equal(persistAssistantCancelledCalls.length, 0);
+  assert.equal(persistAssistantTerminalErrorCalls.length, 0);
 });

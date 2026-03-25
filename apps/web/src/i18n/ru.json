@@ -193,6 +193,7 @@
   "chat.errorTooLarge": "Запрос слишком большой ({{sizeMb}} МБ, лимит {{limitMb}} МБ). Попробуйте отправить меньше вложений или уменьшить изображения.",
   "chat.errorBlocked": "Запрос заблокирован файрволом",
   "chat.errorFailed": "Ошибка запроса: {{message}}",
+  "chat.toolCallLimitReachedContinue": "Я достиг лимита в {{limit}} tool-call'ов для этого хода. Отправьте ещё одно сообщение, например «continue», и я продолжу из этой же сессии чата.",
   "chat.stopped": "Остановлено",
   "chat.copyTranscript": "Копировать чат",
   "chat.copied": "Скопировано",

@@ -193,6 +193,7 @@
   "chat.errorTooLarge": "请求过大（{{sizeMb}} MB，限制 {{limitMb}} MB）。请尝试发送更少的附件或更小的图片。",
   "chat.errorBlocked": "请求被防火墙拦截",
   "chat.errorFailed": "请求失败：{{message}}",
+  "chat.toolCallLimitReachedContinue": "我已达到本轮 {{limit}} 次工具调用的上限。请再发一条消息，例如“continue”，我会从同一个聊天会话继续。",
   "chat.stopped": "已停止",
   "chat.copyTranscript": "复制聊天",
   "chat.copied": "已复制",

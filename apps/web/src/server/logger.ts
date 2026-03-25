@@ -76,6 +76,15 @@ type ChatEvent =
   }>
   | Readonly<{
     domain: "chat";
+    action: "tool_call_limit_reached";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    toolEnabledModelCallLimit: number;
+    callIndex: number;
+  }>
+  | Readonly<{
+    domain: "chat";
     action: "replay_item_dropped";
     vendor: ChatVendor;
     itemType: "reasoning";

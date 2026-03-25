@@ -193,6 +193,7 @@
   "chat.errorTooLarge": "הבקשה גדולה מדי ({{sizeMb}} MB, מגבלה {{limitMb}} MB). נסה לשלוח פחות קבצים מצורפים או תמונות קטנות יותר.",
   "chat.errorBlocked": "הבקשה נחסמה על ידי חומת האש",
   "chat.errorFailed": "הבקשה נכשלה: {{message}}",
+  "chat.toolCallLimitReachedContinue": "הגעתי למגבלה של {{limit}} קריאות לכלים עבור התור הזה. שלח הודעה נוספת כמו \"continue\" ואמשיך מאותה שיחת צ׳אט.",
   "chat.stopped": "נעצר",
   "chat.copyTranscript": "העתק צ׳אט",
   "chat.copied": "הועתק",

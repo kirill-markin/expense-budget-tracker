@@ -193,6 +193,7 @@
   "chat.errorTooLarge": "درخواست بیش از حد بزرگ ({{sizeMb}} مگابایت، حد {{limitMb}} مگابایت). فایل‌های کمتر یا تصاویر کوچک‌تر ارسال کنید.",
   "chat.errorBlocked": "درخواست توسط فایروال مسدود شد",
   "chat.errorFailed": "خطای درخواست: {{message}}",
+  "chat.toolCallLimitReachedContinue": "به سقف {{limit}} فراخوانی ابزار در این نوبت رسیدم. یک پیام دیگر مثل \"continue\" بفرستید تا از همین نشست چت ادامه بدهم.",
   "chat.stopped": "متوقف شد",
   "chat.copyTranscript": "کپی چت",
   "chat.copied": "کپی شد",
