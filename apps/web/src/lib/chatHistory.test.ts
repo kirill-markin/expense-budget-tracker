@@ -144,6 +144,64 @@ test("ordered assistant content keeps text-tool-text interleaving", () => {
   );
 });
 
+test("ordered assistant content keeps tool-thinking-tool interleaving for live updates", () => {
+  const firstTool = upsertToolCallContent([], {
+    type: "tool_call",
+    id: "tool-1",
+    name: "query_database",
+    status: "completed",
+    providerStatus: "completed",
+    input: "{\"sql\":\"SELECT 1\"}",
+    output: "{\"rows\":[1]}",
+    streamPosition: createStreamPosition("tool-1-item", 0, null, 10),
+  });
+  const withReasoning = upsertReasoningSummaryContent(firstTool, {
+    type: "reasoning_summary",
+    summary: "Compared the first tool output before continuing.",
+    streamPosition: createStreamPosition("reasoning-1", 1, null, 20),
+  });
+
+  assert.deepEqual(
+    upsertToolCallContent(withReasoning, {
+      type: "tool_call",
+      id: "tool-2",
+      name: "code_interpreter_call",
+      status: "completed",
+      providerStatus: "completed",
+      input: "print('done')",
+      output: "done",
+      streamPosition: createStreamPosition("tool-2-item", 2, null, 30),
+    }),
+    [
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "query_database",
+        status: "completed",
+        providerStatus: "completed",
+        input: "{\"sql\":\"SELECT 1\"}",
+        output: "{\"rows\":[1]}",
+        streamPosition: createStreamPosition("tool-1-item", 0, null, 10),
+      },
+      {
+        type: "reasoning_summary",
+        summary: "Compared the first tool output before continuing.",
+        streamPosition: createStreamPosition("reasoning-1", 1, null, 20),
+      },
+      {
+        type: "tool_call",
+        id: "tool-2",
+        name: "code_interpreter_call",
+        status: "completed",
+        providerStatus: "completed",
+        input: "print('done')",
+        output: "done",
+        streamPosition: createStreamPosition("tool-2-item", 2, null, 30),
+      },
+    ],
+  );
+});
+
 test("ordered assistant content prefers response index over sequence number across multi-call turns", () => {
   const laterResponseText = appendAssistantTextContent([], {
     text: "Second response text",

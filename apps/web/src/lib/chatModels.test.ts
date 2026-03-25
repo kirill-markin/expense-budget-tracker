@@ -8,6 +8,7 @@ import {
   CHAT_MODEL_LABEL,
   CHAT_MODEL_REASONING_EFFORT,
   CHAT_MODEL_REASONING_LABEL,
+  CHAT_MODEL_REASONING_SUMMARY,
   CHAT_PROVIDER_LABEL,
   CHAT_VENDOR,
 } from "./chatModels";
@@ -19,6 +20,7 @@ test("chat model config is pinned to GPT-5.4 with medium reasoning", () => {
     vendor: CHAT_VENDOR,
   });
   assert.equal(CHAT_MODEL_REASONING_EFFORT, "medium");
+  assert.equal(CHAT_MODEL_REASONING_SUMMARY, "auto");
   assert.equal(CHAT_MODEL_REASONING_LABEL, "Medium");
   assert.equal(CHAT_PROVIDER_LABEL, "OpenAI");
   assert.equal(CHAT_MODEL_BADGE_LABEL, "GPT-5.4 · Medium");

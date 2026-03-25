@@ -23,7 +23,11 @@ import {
 } from "@/server/chat/openai/tools";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
-import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import {
+  CHAT_MODEL_ID,
+  CHAT_MODEL_REASONING_EFFORT,
+  CHAT_MODEL_REASONING_SUMMARY,
+} from "@/lib/chatModels";
 
 const CHAT_RUN_MAX_MODEL_CALLS = 8;
 const MAX_REASONING_ITEMS = 8;
@@ -50,6 +54,10 @@ type OpenAIResponsesRequest = Readonly<{
   store: false;
   tools: Array<OpenAI.Responses.Tool>;
   input: Array<OpenAI.Responses.ResponseInputItem>;
+  reasoning: Readonly<{
+    effort: typeof CHAT_MODEL_REASONING_EFFORT;
+    summary: typeof CHAT_MODEL_REASONING_SUMMARY;
+  }>;
   prompt_cache_key: string;
 }>;
 
@@ -317,6 +325,10 @@ export const buildOpenAIResponsesRequest = (
   store: false,
   tools: [...OPENAI_CHAT_TOOLS],
   input: buildOpenAIInput(baseInput, continuationItems),
+  reasoning: {
+    effort: CHAT_MODEL_REASONING_EFFORT,
+    summary: CHAT_MODEL_REASONING_SUMMARY,
+  },
   prompt_cache_key: buildPromptCacheKey(sessionId),
 });
 

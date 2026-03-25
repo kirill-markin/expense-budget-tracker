@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type OpenAI from "openai";
 
-import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import {
+  CHAT_MODEL_ID,
+  CHAT_MODEL_REASONING_EFFORT,
+  CHAT_MODEL_REASONING_SUMMARY,
+} from "@/lib/chatModels";
 import { OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tools";
 import {
   buildChatResponseLogEvent,
@@ -91,6 +95,10 @@ test("buildOpenAIResponsesRequest includes a stable prompt_cache_key", () => {
   assert.equal(firstRequest.model, CHAT_MODEL_ID);
   assert.equal(firstRequest.store, false);
   assert.deepEqual(firstRequest.tools, OPENAI_CHAT_TOOLS);
+  assert.deepEqual(firstRequest.reasoning, {
+    effort: CHAT_MODEL_REASONING_EFFORT,
+    summary: CHAT_MODEL_REASONING_SUMMARY,
+  });
   assert.equal(
     firstRequest.prompt_cache_key,
     "session-1",
