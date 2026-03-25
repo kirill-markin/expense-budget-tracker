@@ -61,10 +61,18 @@ type ChatEvent =
     action: "response";
     vendor: ChatVendor;
     requestId: string;
-    turns: number;
+    sessionId: string;
+    model: string;
+    callIndex: number;
+    promptCacheKey: string;
     stopReason: string;
     durationMs: number;
-  } & ChatAttemptMetadata>
+    inputTokens: number;
+    cachedTokens: number;
+    cachedRatio: number;
+    outputTokens: number;
+    totalTokens: number;
+  }>
   | Readonly<{
     domain: "chat";
     action: "error";
