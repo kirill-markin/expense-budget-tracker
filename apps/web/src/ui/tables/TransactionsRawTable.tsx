@@ -68,8 +68,21 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
 
   const { sort, onSort } = useTableSort("single", "ts", "desc", SORT_DEFAULTS);
 
+  // The transactions header/filter options refresh through the server
+  // component. The row list is fetched separately on the client, so it needs
+  // the same refresh identity in its URL to ensure the post-refresh read is
+  // observably newer than the pre-refresh read.
   const fetchPage = useCallback(async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
-    const url = buildTransactionsPageUrl(dateFrom, dateTo, selectedAccount, sort[0].key, sort[0].dir, limit, offset);
+    const url = buildTransactionsPageUrl(
+      dateFrom,
+      dateTo,
+      selectedAccount,
+      sort[0].key,
+      sort[0].dir,
+      refreshToken,
+      limit,
+      offset,
+    );
     const response = await fetchLiveData(url);
     if (!response.ok) {
       const text = await response.text();
@@ -77,7 +90,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     }
     const page: TransactionsPage = await response.json();
     return { items: page.entries, total: page.total };
-  }, [dateFrom, dateTo, selectedAccount, sort]);
+  }, [dateFrom, dateTo, refreshToken, selectedAccount, sort]);
 
   const {
     rows,

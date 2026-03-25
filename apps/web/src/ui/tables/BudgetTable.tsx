@@ -19,7 +19,7 @@ import {
 import styles from "@/ui/tables/BudgetTable.module.css";
 
 export const BudgetTable = (props: BudgetTableProps): ReactElement => {
-  const { conversionWarnings, reportingCurrency, hints } = props;
+  const { conversionWarnings, reportingCurrency, hints, refreshToken } = props;
   const { t } = useTranslation();
   const { numberFormat } = useFormat();
   const { toastMessage, copyToClipboard } = useCopyToast();
@@ -113,11 +113,12 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
           filter={controller.drillDownFilter}
           categories={controller.allCategories}
           hints={hints}
+          refreshToken={refreshToken}
           onClose={controller.handleDrillDownClose}
         />
       )}
       {controller.fxBreakdownMonth !== null && (
-        <FxBreakdownPanel month={controller.fxBreakdownMonth} onClose={controller.closeFxBreakdown} />
+        <FxBreakdownPanel month={controller.fxBreakdownMonth} refreshToken={refreshToken} onClose={controller.closeFxBreakdown} />
       )}
     </>
   );

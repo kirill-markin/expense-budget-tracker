@@ -1,7 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fetchLiveData } from "./liveDataFetch";
+import { buildLiveDataUrl, fetchLiveData } from "./liveDataFetch";
+
+test("buildLiveDataUrl appends refresh to existing query params", () => {
+  const params = new URLSearchParams({
+    monthFrom: "2026-01",
+    monthTo: "2026-03",
+    planFrom: "2026-01",
+    actualTo: "2026-03",
+  });
+
+  assert.equal(
+    buildLiveDataUrl("/api/budget-grid", params, "refresh-1"),
+    "/api/budget-grid?monthFrom=2026-01&monthTo=2026-03&planFrom=2026-01&actualTo=2026-03&refresh=refresh-1",
+  );
+});
+
+test("buildLiveDataUrl changes when refreshToken changes", () => {
+  const params = new URLSearchParams({ limit: "100", offset: "0" });
+
+  assert.notEqual(
+    buildLiveDataUrl("/api/transactions", params, "refresh-a"),
+    buildLiveDataUrl("/api/transactions", params, "refresh-b"),
+  );
+});
 
 test("fetchLiveData disables browser caching for live workspace reads", async () => {
   const originalFetch = globalThis.fetch;

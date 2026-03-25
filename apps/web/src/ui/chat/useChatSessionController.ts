@@ -165,7 +165,9 @@ export const useChatSessionController = (
    * A completed tool-call transcript item alone must not refresh the route.
    * The sidebar refreshes only after the runtime has persisted a newer
    * `mainContentInvalidationVersion`, which guarantees that a successful
-   * mutating tool call committed to local state.
+   * mutating tool call committed to local state. The refreshed server route
+   * then issues new refresh tokens so client-side live reads can observe the
+   * same post-mutation snapshot as the server-rendered props.
    */
   const applyMainContentInvalidationVersion = useCallback((
     nextVersion: number,

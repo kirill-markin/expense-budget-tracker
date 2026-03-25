@@ -1,9 +1,27 @@
 import { fetchWithCsrf } from "@/lib/csrf";
-import { fetchLiveData } from "@/lib/liveDataFetch";
+import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
 import type { BudgetGridResult } from "@/server/budget/getBudgetGrid";
 
-export const fetchBudgetRange = async (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): Promise<BudgetGridResult> => {
-  const url = `/api/budget-grid?monthFrom=${encodeURIComponent(monthFrom)}&monthTo=${encodeURIComponent(monthTo)}&planFrom=${encodeURIComponent(planFrom)}&actualTo=${encodeURIComponent(actualTo)}`;
+/**
+ * Reads the budget grid for the current client-visible range.
+ *
+ * The refresh token keeps this client-side read aligned with the latest
+ * server-rendered route refresh without resetting the current month window.
+ */
+export const fetchBudgetRange = async (
+  monthFrom: string,
+  monthTo: string,
+  planFrom: string,
+  actualTo: string,
+  refreshToken: string,
+): Promise<BudgetGridResult> => {
+  const params = new URLSearchParams({
+    monthFrom,
+    monthTo,
+    planFrom,
+    actualTo,
+  });
+  const url = buildLiveDataUrl("/api/budget-grid", params, refreshToken);
   const response = await fetchLiveData(url);
   if (!response.ok) {
     throw new Error(`Budget API error: ${response.status} ${await response.text()}`);

@@ -104,6 +104,10 @@ export type BudgetTableController = Readonly<{
   closeFxBreakdown: () => void;
 }>;
 
+/**
+ * Keeps the budget table's current viewport and overlays stable while route
+ * refreshes update the underlying live data through the current refresh token.
+ */
 export const useBudgetTableController = (
   props: BudgetTableProps,
 ): BudgetTableController => {
@@ -113,7 +117,7 @@ export const useBudgetTableController = (
     fetchRange: fetchCommentRange,
     reloadRange: reloadCommentRange,
     updateCell: updateCommentCell,
-  } = useCommentPresence(props.initialMonthFrom, props.initialMonthTo);
+  } = useCommentPresence(props.initialMonthFrom, props.initialMonthTo, props.refreshToken);
   const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
 
   const currentMonth = useMemo(() => getCurrentMonth(), []);
@@ -242,13 +246,18 @@ export const useBudgetTableController = (
   const [yearFetchResults, setYearFetchResults] = useState<ReadonlyMap<string, YearFetchResult>>(new Map());
   const yearFetchingRef = useRef<Set<string>>(new Set());
 
+  /**
+   * Re-reads the currently loaded budget range when the surrounding route
+   * refreshes. This keeps the user's current scroll window and open overlays
+   * intact while updating the live data to the newest committed snapshot.
+   */
   useEffect(() => {
     if (!initialRefreshHandledRef.current) {
       initialRefreshHandledRef.current = true;
       return;
     }
 
-    fetchBudgetRange(loadedFrom, loadedTo, currentMonth, currentMonth)
+    fetchBudgetRange(loadedFrom, loadedTo, currentMonth, currentMonth, props.refreshToken)
       .then((result) => {
         setAllRows(result.rows);
         setCumBefore(result.cumulativeBefore);
@@ -274,7 +283,7 @@ export const useBudgetTableController = (
       }
 
       yearFetchingRef.current.add(year);
-      fetchBudgetRange(`${year}-01`, `${year}-12`, `${year}-01`, currentMonth)
+      fetchBudgetRange(`${year}-01`, `${year}-12`, `${year}-01`, currentMonth, props.refreshToken)
         .then((result) => {
           setYearFetchResults((previous) => new Map([
             ...previous,
@@ -294,7 +303,7 @@ export const useBudgetTableController = (
           yearFetchingRef.current.delete(year);
         });
     }
-  }, [columnSequence, currentMonth, yearFetchResults]);
+  }, [columnSequence, currentMonth, props.refreshToken, yearFetchResults]);
 
   const yearComputed = useMemo<ReadonlyMap<string, YearTotalComputed>>(() => {
     const result = new Map<string, YearTotalComputed>();
@@ -397,7 +406,7 @@ export const useBudgetTableController = (
   }, []);
 
   const refreshLoadedRange = useCallback((): void => {
-    fetchBudgetRange(loadedFrom, loadedTo, currentMonth, currentMonth)
+    fetchBudgetRange(loadedFrom, loadedTo, currentMonth, currentMonth, props.refreshToken)
       .then((result) => {
         setAllRows(result.rows);
         setCumBefore(result.cumulativeBefore);
@@ -408,7 +417,7 @@ export const useBudgetTableController = (
 
     setYearFetchResults(new Map());
     yearFetchingRef.current.clear();
-  }, [currentMonth, loadedFrom, loadedTo]);
+  }, [currentMonth, loadedFrom, loadedTo, props.refreshToken]);
 
   const handleDrillDownClose = useCallback((dirty: boolean): void => {
     setDrillDownFilter(null);
@@ -431,7 +440,7 @@ export const useBudgetTableController = (
     const newFrom = offsetMonth(loadedFrom, -BATCH_SIZE);
 
     try {
-      const result = await fetchBudgetRange(newFrom, newTo, currentMonth, currentMonth);
+      const result = await fetchBudgetRange(newFrom, newTo, currentMonth, currentMonth, props.refreshToken);
       const prependedRows = result.rows;
 
       const scrollElement = scrollRef.current;
@@ -450,7 +459,7 @@ export const useBudgetTableController = (
       isLoadingLeftRef.current = false;
       setIsLoadingLeft(false);
     }
-  }, [currentMonth, fetchCommentRange, loadedFrom]);
+  }, [currentMonth, fetchCommentRange, loadedFrom, props.refreshToken]);
 
   const loadRight = useCallback(async (): Promise<void> => {
     if (isLoadingRightRef.current) {
@@ -464,7 +473,7 @@ export const useBudgetTableController = (
     const newTo = offsetMonth(loadedTo, BATCH_SIZE);
 
     try {
-      const result = await fetchBudgetRange(newFrom, newTo, currentMonth, currentMonth);
+      const result = await fetchBudgetRange(newFrom, newTo, currentMonth, currentMonth, props.refreshToken);
       setAllRows((previous) => [...previous, ...result.rows]);
       setLoadedTo(newTo);
       setMeb((previous) => ({ ...previous, ...result.monthEndBalances }));
@@ -474,7 +483,7 @@ export const useBudgetTableController = (
       isLoadingRightRef.current = false;
       setIsLoadingRight(false);
     }
-  }, [currentMonth, fetchCommentRange, loadedTo]);
+  }, [currentMonth, fetchCommentRange, loadedTo, props.refreshToken]);
 
   useLayoutEffect(() => {
     if (!isPrependingRef.current) {

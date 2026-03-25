@@ -16,6 +16,8 @@ export const dynamic = "force-dynamic";
 
 async function TransactionsData() {
   const demo = await isDemoMode();
+  // A route refresh regenerates this token so the table can refetch live rows
+  // against the same refresh boundary as the server-rendered header metadata.
   const refreshToken = crypto.randomUUID();
 
   if (demo) {

@@ -40,6 +40,7 @@ type Props = Readonly<{
   filter: DrillDownFilter;
   categories: ReadonlyArray<string>;
   hints: FieldHints;
+  refreshToken: string;
   onClose: (dirty: boolean) => void;
 }>;
 
@@ -66,7 +67,7 @@ const buildSubtitle = (filter: DrillDownFilter): string => {
 };
 
 export const DrillDownPanel = (props: Props): ReactElement => {
-  const { filter, categories, hints, onClose } = props;
+  const { filter, categories, hints, refreshToken, onClose } = props;
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
   const getMaskClass = useCallback((row: LedgerEntry): string => {
@@ -111,7 +112,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   }, [isDragging]);
 
   const fetchPage = useCallback(async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
-    const url = buildDrillDownPageUrl(filter, sort[0].key, sort[0].dir, limit, offset);
+    const url = buildDrillDownPageUrl(filter, sort[0].key, sort[0].dir, refreshToken, limit, offset);
     const response = await fetchLiveData(url);
     if (!response.ok) {
       const text = await response.text();
@@ -119,7 +120,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     }
     const page: TransactionsPage = await response.json();
     return { items: page.entries, total: page.total };
-  }, [filter, sort]);
+  }, [filter, refreshToken, sort]);
 
   const {
     rows,
@@ -134,7 +135,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   } = useEditableTransactionsTable({
     fetchPage,
     createEntryRequest: () => buildDrillDownCreateEntryRequest(filter),
-    resetDeps: [filter.dateFrom, filter.dateTo, filter.direction, filter.category, categoriesKey, sort[0].key, sort[0].dir],
+    resetDeps: [filter.dateFrom, filter.dateTo, filter.direction, filter.category, categoriesKey, sort[0].key, sort[0].dir, refreshToken],
     onDirty: () => {
       dirtyRef.current = true;
     },

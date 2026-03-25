@@ -4,7 +4,7 @@ import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
-import { fetchLiveData } from "@/lib/liveDataFetch";
+import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
 import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBreakdown";
 import { useFormat } from "@/ui/FormatProvider";
 import alertStyles from "@/ui/Alert.module.css";
@@ -15,6 +15,7 @@ import tableStyles from "./TableUi.module.css";
 
 type Props = Readonly<{
   month: string;
+  refreshToken: string;
   onClose: () => void;
 }>;
 
@@ -30,7 +31,7 @@ const formatNative = (value: number): string => {
 };
 
 export const FxBreakdownPanel = (props: Props): ReactElement => {
-  const { month, onClose } = props;
+  const { month, refreshToken, onClose } = props;
   const { numberFormat } = useFormat();
 
   const [rows, setRows] = useState<ReadonlyArray<FxBreakdownRow>>([]);
@@ -71,7 +72,8 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
     setLoading(true);
     setError(null);
 
-    fetchLiveData(`/api/fx-breakdown?month=${encodeURIComponent(month)}`)
+    const params = new URLSearchParams({ month });
+    fetchLiveData(buildLiveDataUrl("/api/fx-breakdown", params, refreshToken))
       .then(async (response) => {
         if (!response.ok) {
           const text = await response.text();
@@ -88,7 +90,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
       .finally(() => {
         setLoading(false);
       });
-  }, [month]);
+  }, [month, refreshToken]);
 
   const closePanel = useCallback((): void => {
     onClose();

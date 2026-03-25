@@ -68,12 +68,19 @@ test("prependLedgerEntry inserts new rows at the front and replaces duplicates",
 
 test("buildTransactionsPageUrl preserves current optional filters and paging", () => {
   assert.equal(
-    buildTransactionsPageUrl("2026-01-01", "2026-01-31", "cash", "ts", "desc", 100, 200),
-    "/api/transactions?dateFrom=2026-01-01&dateTo=2026-01-31&accountId=cash&sortKey=ts&sortDir=desc&limit=100&offset=200",
+    buildTransactionsPageUrl("2026-01-01", "2026-01-31", "cash", "ts", "desc", "refresh-1", 100, 200),
+    "/api/transactions?dateFrom=2026-01-01&dateTo=2026-01-31&accountId=cash&sortKey=ts&sortDir=desc&limit=100&offset=200&refresh=refresh-1",
   );
   assert.equal(
-    buildTransactionsPageUrl("", "", "", "amount", "asc", 50, 0),
-    "/api/transactions?sortKey=amount&sortDir=asc&limit=50&offset=0",
+    buildTransactionsPageUrl("", "", "", "amount", "asc", "refresh-2", 50, 0),
+    "/api/transactions?sortKey=amount&sortDir=asc&limit=50&offset=0&refresh=refresh-2",
+  );
+});
+
+test("buildTransactionsPageUrl changes when refreshToken changes", () => {
+  assert.notEqual(
+    buildTransactionsPageUrl("2026-01-01", "2026-01-31", "cash", "ts", "desc", "refresh-a", 100, 0),
+    buildTransactionsPageUrl("2026-01-01", "2026-01-31", "cash", "ts", "desc", "refresh-b", 100, 0),
   );
 });
 
@@ -102,8 +109,23 @@ test("buildDrillDownPageUrl preserves drill-down filters including repeated cate
   };
 
   assert.equal(
-    buildDrillDownPageUrl(filter, "amountUsdAbs", "desc", 100, 0),
-    "/api/transactions?dateFrom=2026-03-01&dateTo=2026-03-31&kind=spend&category=Food&categories=Food&categories=&sortKey=amountUsdAbs&sortDir=desc&limit=100&offset=0",
+    buildDrillDownPageUrl(filter, "amountUsdAbs", "desc", "refresh-3", 100, 0),
+    "/api/transactions?dateFrom=2026-03-01&dateTo=2026-03-31&kind=spend&category=Food&categories=Food&categories=&sortKey=amountUsdAbs&sortDir=desc&limit=100&offset=0&refresh=refresh-3",
+  );
+});
+
+test("buildDrillDownPageUrl changes when refreshToken changes", () => {
+  const filter: DrillDownFilter = {
+    dateFrom: "2026-03-01",
+    dateTo: "2026-03-31",
+    direction: "spend",
+    category: "Food",
+    categories: null,
+  };
+
+  assert.notEqual(
+    buildDrillDownPageUrl(filter, "amountUsdAbs", "desc", "refresh-a", 100, 0),
+    buildDrillDownPageUrl(filter, "amountUsdAbs", "desc", "refresh-b", 100, 0),
   );
 });
 

@@ -22,6 +22,8 @@ const INITIAL_FUTURE_MONTHS = 12;
 
 async function BudgetData() {
   const demo = await isDemoMode();
+  // A route refresh regenerates this token so the grid and its client-side
+  // overlays can refetch live data against the same refreshed snapshot.
   const refreshToken = crypto.randomUUID();
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);

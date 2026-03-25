@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { fetchLiveData } from "@/lib/liveDataFetch";
+import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
 import { getCurrentMonth } from "@/lib/monthUtils";
 import alertStyles from "@/ui/Alert.module.css";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
@@ -32,12 +32,10 @@ type Props = Readonly<{
   initialMonthFrom: string;
   initialMonthTo: string;
   reportingCurrency: string;
+  refreshToken: string;
 }>;
 
 const EMPTY_HINTS: FieldHints = { accounts: [], currencies: [], counterparties: [], notes: [] };
-
-const buildBudgetUrl = (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): string =>
-  `/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}&planFrom=${planFrom}&actualTo=${actualTo}`;
 
 const lastDayOfMonth = (month: string): string => {
   const [y, m] = month.split("-").map(Number);
@@ -45,11 +43,8 @@ const lastDayOfMonth = (month: string): string => {
   return `${month}-${String(lastDay).padStart(2, "0")}`;
 };
 
-const buildTreemapUrl = (monthFrom: string, monthTo: string): string =>
-  `/api/transactions?dateFrom=${monthFrom}-01&dateTo=${lastDayOfMonth(monthTo)}&kind=spend&limit=500&sortKey=amountUsdAbs&sortDir=desc`;
-
 export const BudgetStreamDashboard = (props: Props): ReactElement => {
-  const { initialRows, initialMonthFrom, initialMonthTo, reportingCurrency } = props;
+  const { initialRows, initialMonthFrom, initialMonthTo, reportingCurrency, refreshToken } = props;
   const { t } = useTranslation();
 
   const [monthFrom, setMonthFrom] = useState<string>(initialMonthFrom);
@@ -75,8 +70,19 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
     return Array.from(set).sort();
   }, [treemapEntries]);
 
+  /**
+   * The dashboard keeps the user's current month range and open drill-downs
+   * across route refreshes. A new refresh token therefore triggers in-place
+   * refetches instead of a keyed remount.
+   */
   const fetchBudgetData = useCallback(async (currentFetchId: number): Promise<void> => {
-    const url = buildBudgetUrl(monthFrom, monthTo, currentMonth, currentMonth);
+    const params = new URLSearchParams({
+      monthFrom,
+      monthTo,
+      planFrom: currentMonth,
+      actualTo: currentMonth,
+    });
+    const url = buildLiveDataUrl("/api/budget-grid", params, refreshToken);
     const response = await fetchLiveData(url);
     if (!response.ok) {
       const text = await response.text();
@@ -87,10 +93,18 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
     if (fetchIdRef.current !== currentFetchId) return;
 
     setRows(data.rows);
-  }, [monthFrom, monthTo, currentMonth]);
+  }, [monthFrom, monthTo, currentMonth, refreshToken]);
 
   const fetchTreemapData = useCallback(async (currentFetchId: number): Promise<void> => {
-    const url = buildTreemapUrl(monthFrom, monthTo);
+    const params = new URLSearchParams({
+      dateFrom: `${monthFrom}-01`,
+      dateTo: lastDayOfMonth(monthTo),
+      kind: "spend",
+      limit: "500",
+      sortKey: "amountUsdAbs",
+      sortDir: "desc",
+    });
+    const url = buildLiveDataUrl("/api/transactions", params, refreshToken);
     const response = await fetchLiveData(url);
     if (!response.ok) {
       const text = await response.text();
@@ -101,7 +115,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
     if (treemapFetchIdRef.current !== currentFetchId) return;
 
     setTreemapEntries(data.entries);
-  }, [monthFrom, monthTo]);
+  }, [monthFrom, monthTo, refreshToken]);
 
   // Fetch budget grid data on month change
   useEffect(() => {
@@ -234,6 +248,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
           filter={drillDownFilter}
           categories={treemapCategories}
           hints={EMPTY_HINTS}
+          refreshToken={refreshToken}
           onClose={handleDrillDownClose}
         />
       )}

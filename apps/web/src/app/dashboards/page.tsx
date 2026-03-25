@@ -20,9 +20,8 @@ const INITIAL_PAST_MONTHS = 12;
 
 async function BudgetStreamData() {
   const demo = await isDemoMode();
-  // Route refresh re-runs this server component; changing the key ensures the
-  // client dashboard remounts from the fresh server payload instead of keeping
-  // pre-refresh local state.
+  // A route refresh regenerates this token so dashboard widgets can refetch
+  // live data in place while preserving the user's chosen month range.
   const refreshToken = crypto.randomUUID();
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);
@@ -32,11 +31,11 @@ async function BudgetStreamData() {
     const { rows } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
     return (
       <BudgetStreamDashboard
-        key={refreshToken}
         initialRows={rows}
         initialMonthFrom={monthFrom}
         initialMonthTo={monthTo}
         reportingCurrency="USD"
+        refreshToken={refreshToken}
       />
     );
   }
@@ -52,11 +51,11 @@ async function BudgetStreamData() {
 
   return (
     <BudgetStreamDashboard
-      key={refreshToken}
       initialRows={rows}
       initialMonthFrom={monthFrom}
       initialMonthTo={monthTo}
       reportingCurrency={reportingCurrency}
+      refreshToken={refreshToken}
     />
   );
 }

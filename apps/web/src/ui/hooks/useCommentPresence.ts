@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { fetchLiveData } from "@/lib/liveDataFetch";
+import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
 
 type CommentPresenceResult = Readonly<{
@@ -12,9 +12,13 @@ type CommentPresenceResult = Readonly<{
 const cellKey = (month: string, direction: string, category: string): string =>
   `${month}::${direction}::${category}`;
 
-const fetchCommentPresence = async (monthFrom: string, monthTo: string): Promise<ReadonlyArray<CommentedCell>> => {
+const fetchCommentPresence = async (
+  monthFrom: string,
+  monthTo: string,
+  refreshToken: string,
+): Promise<ReadonlyArray<CommentedCell>> => {
   const params = new URLSearchParams({ monthFrom, monthTo });
-  const response = await fetchLiveData(`/api/budget-comments-exist?${params.toString()}`);
+  const response = await fetchLiveData(buildLiveDataUrl("/api/budget-comments-exist", params, refreshToken));
   if (!response.ok) {
     throw new Error(`Comment presence fetch failed: ${response.status} ${await response.text()}`);
   }
@@ -31,9 +35,15 @@ export type CommentPresenceState = Readonly<{
 
 /**
  * Background-loads comment presence for budget cells within a month range.
- * Fires on mount for the initial range and exposes fetchRange for scroll-loaded ranges.
+ * Fires on mount for the initial range and exposes fetchRange for scroll-loaded
+ * ranges. The refresh token keeps those background reads aligned with the same
+ * chat-driven route refresh boundary as the surrounding budget grid.
  */
-export const useCommentPresence = (initialMonthFrom: string, initialMonthTo: string): CommentPresenceState => {
+export const useCommentPresence = (
+  initialMonthFrom: string,
+  initialMonthTo: string,
+  refreshToken: string,
+): CommentPresenceState => {
   const [commentedCells, setCommentedCells] = useState<ReadonlySet<string>>(new Set());
   const initialFetchedRef = useRef<boolean>(false);
 
@@ -41,16 +51,16 @@ export const useCommentPresence = (initialMonthFrom: string, initialMonthTo: str
     if (initialFetchedRef.current) return;
     initialFetchedRef.current = true;
 
-    fetchCommentPresence(initialMonthFrom, initialMonthTo)
+    fetchCommentPresence(initialMonthFrom, initialMonthTo, refreshToken)
       .then((cells) => {
         const keys = new Set(cells.map((c) => cellKey(c.month, c.direction, c.category)));
         setCommentedCells(keys);
       })
       .catch((error) => console.error("Failed to load comment presence:", error));
-  }, [initialMonthFrom, initialMonthTo]);
+  }, [initialMonthFrom, initialMonthTo, refreshToken]);
 
   const fetchRange = useCallback((monthFrom: string, monthTo: string): void => {
-    fetchCommentPresence(monthFrom, monthTo)
+    fetchCommentPresence(monthFrom, monthTo, refreshToken)
       .then((cells) => {
         if (cells.length === 0) return;
         const newKeys = cells.map((c) => cellKey(c.month, c.direction, c.category));
@@ -63,16 +73,16 @@ export const useCommentPresence = (initialMonthFrom: string, initialMonthTo: str
         });
       })
       .catch((error) => console.error("Failed to load comment presence for range:", error));
-  }, []);
+  }, [refreshToken]);
 
   const reloadRange = useCallback((monthFrom: string, monthTo: string): void => {
-    fetchCommentPresence(monthFrom, monthTo)
+    fetchCommentPresence(monthFrom, monthTo, refreshToken)
       .then((cells) => {
         const keys = new Set(cells.map((c) => cellKey(c.month, c.direction, c.category)));
         setCommentedCells(keys);
       })
       .catch((error) => console.error("Failed to reload comment presence for range:", error));
-  }, []);
+  }, [refreshToken]);
 
   const updateCell = useCallback((month: string, direction: string, category: string, hasComment: boolean): void => {
     const key = cellKey(month, direction, category);

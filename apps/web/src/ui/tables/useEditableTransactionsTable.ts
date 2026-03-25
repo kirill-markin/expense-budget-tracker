@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { fetchWithCsrf } from "@/lib/csrf";
+import { buildLiveDataUrl } from "@/lib/liveDataFetch";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
 import type { PageResult } from "./data-table/types";
@@ -99,6 +100,7 @@ export const buildTransactionsPageUrl = (
   selectedAccount: string,
   sortKey: string,
   sortDir: "asc" | "desc",
+  refreshToken: string,
   limit: number,
   offset: number,
 ): string => {
@@ -110,13 +112,14 @@ export const buildTransactionsPageUrl = (
   params.set("sortDir", sortDir);
   params.set("limit", String(limit));
   params.set("offset", String(offset));
-  return `/api/transactions?${params.toString()}`;
+  return buildLiveDataUrl("/api/transactions", params, refreshToken);
 };
 
 export const buildDrillDownPageUrl = (
   filter: DrillDownFilter,
   sortKey: string,
   sortDir: "asc" | "desc",
+  refreshToken: string,
   limit: number,
   offset: number,
 ): string => {
@@ -138,7 +141,7 @@ export const buildDrillDownPageUrl = (
   params.set("sortDir", sortDir);
   params.set("limit", String(limit));
   params.set("offset", String(offset));
-  return `/api/transactions?${params.toString()}`;
+  return buildLiveDataUrl("/api/transactions", params, refreshToken);
 };
 
 export const buildTransactionsCreateEntryRequest = (
