@@ -18,8 +18,6 @@ import { CHAT_MODEL_ID } from "@/lib/chatModels";
 
 const CHAT_RUN_MAX_MODEL_CALLS = 8;
 const MAX_REASONING_ITEMS = 8;
-const PROMPT_CACHE_SYSTEM_VERSION = "v1";
-const PROMPT_CACHE_TOOLS_VERSION = "v1";
 
 type OpenAIStreamResult = Readonly<{
   events: AsyncGenerator<ChatStreamEvent>;
@@ -286,9 +284,8 @@ const buildOpenAIInput = (
 
 export const buildPromptCacheKey = (
   sessionId: string,
-  timezone: string,
 ): string =>
-  `chat:session:${sessionId}:model:${CHAT_MODEL_ID}:tz:${timezone}:system:${PROMPT_CACHE_SYSTEM_VERSION}:tools:${PROMPT_CACHE_TOOLS_VERSION}`;
+  sessionId;
 
 export const buildOpenAIResponsesRequest = (
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
@@ -300,7 +297,7 @@ export const buildOpenAIResponsesRequest = (
   store: false,
   tools: [...OPENAI_CHAT_TOOLS],
   input: buildOpenAIInput(baseInput, continuationItems),
-  prompt_cache_key: buildPromptCacheKey(sessionId, timezone),
+  prompt_cache_key: buildPromptCacheKey(sessionId),
 });
 
 const getResponseStopReason = (
@@ -368,7 +365,7 @@ const runLoop = async (
     params.timezone,
   );
   const continuationItems: Array<OpenAI.Responses.ResponseInputItem> = [];
-  const promptCacheKey = buildPromptCacheKey(params.sessionId, params.timezone);
+  const promptCacheKey = buildPromptCacheKey(params.sessionId);
 
   for (let callIndex = 1; callIndex <= CHAT_RUN_MAX_MODEL_CALLS; callIndex += 1) {
     const modelCallStartedAt = Date.now();

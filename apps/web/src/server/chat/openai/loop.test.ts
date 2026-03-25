@@ -51,24 +51,17 @@ const createResponse = (
   },
 });
 
-test("buildPromptCacheKey is stable for the same session and timezone", () => {
+test("buildPromptCacheKey is stable for the same session", () => {
   assert.equal(
-    buildPromptCacheKey("session-1", "Europe/Madrid"),
-    buildPromptCacheKey("session-1", "Europe/Madrid"),
+    buildPromptCacheKey("session-1"),
+    buildPromptCacheKey("session-1"),
   );
 });
 
 test("buildPromptCacheKey changes when the session changes", () => {
   assert.notEqual(
-    buildPromptCacheKey("session-1", "Europe/Madrid"),
-    buildPromptCacheKey("session-2", "Europe/Madrid"),
-  );
-});
-
-test("buildPromptCacheKey changes when the timezone changes", () => {
-  assert.notEqual(
-    buildPromptCacheKey("session-1", "UTC"),
-    buildPromptCacheKey("session-1", "Europe/Madrid"),
+    buildPromptCacheKey("session-1"),
+    buildPromptCacheKey("session-2"),
   );
 });
 
@@ -100,7 +93,7 @@ test("buildOpenAIResponsesRequest includes a stable prompt_cache_key", () => {
   assert.deepEqual(firstRequest.tools, OPENAI_CHAT_TOOLS);
   assert.equal(
     firstRequest.prompt_cache_key,
-    "chat:session:session-1:model:gpt-5.4:tz:Europe/Madrid:system:v1:tools:v1",
+    "session-1",
   );
   assert.equal(firstRequest.prompt_cache_key, secondRequest.prompt_cache_key);
 });
