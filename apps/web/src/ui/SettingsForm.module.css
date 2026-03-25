@@ -54,7 +54,7 @@
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 .save:hover {
@@ -131,7 +131,7 @@
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 .codeblockCopy:hover {
@@ -234,7 +234,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   white-space: nowrap;
   padding: 2px 0;
 }
@@ -243,7 +243,7 @@
   accent-color: var(--accent);
   width: 14px;
   height: 14px;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 @media (max-width: 768px) {

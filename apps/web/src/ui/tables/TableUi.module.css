@@ -29,7 +29,7 @@
 }
 
 .headCellSortable {
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   user-select: none;
 }
 
@@ -81,7 +81,7 @@
   margin-inline-start: 4px;
   font-size: 11px;
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   vertical-align: middle;
 }
 
@@ -151,7 +151,7 @@
   font-family: inherit;
   font-size: 12px;
   padding: 4px 10px;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 .addRowButton:hover {
@@ -177,7 +177,7 @@
   font-size: 13px;
   font-family: inherit;
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   opacity: 0;
   line-height: 1;
 }
@@ -266,7 +266,7 @@
   padding: 4px 10px;
   font-family: inherit;
   font-size: 16px;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   color: var(--muted);
   line-height: 1;
 }
@@ -290,7 +290,7 @@
 }
 
 .editable {
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 .editable:hover {
@@ -378,7 +378,7 @@
   font-family: inherit;
   font-size: 13px;
   text-align: start;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   white-space: nowrap;
 }
 

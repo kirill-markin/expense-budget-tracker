@@ -71,7 +71,7 @@
   padding: 2px 8px;
   font-family: inherit;
   font-size: 12px;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   color: var(--muted);
   line-height: 1;
 }
@@ -212,7 +212,7 @@
 
 .toolCallSummary {
   padding: 4px 8px;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   color: var(--muted);
   list-style: none;
   user-select: none;
@@ -334,7 +334,7 @@
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 .sendButton {
@@ -388,7 +388,7 @@
   border: none;
   padding: 0;
   font-size: 11px;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   color: var(--muted);
   font-family: inherit;
 }
@@ -425,7 +425,7 @@
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 .toggleFloating:hover {

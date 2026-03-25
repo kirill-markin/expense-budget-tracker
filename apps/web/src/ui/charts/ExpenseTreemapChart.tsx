@@ -236,7 +236,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                     return (
                       <g
                         key={`${catName}-${li}`}
-                        style={{ cursor: "pointer" }}
+                        style={{ cursor: "var(--cursor-pointer)" }}
                         onClick={(e) => { e.stopPropagation(); onCellClick(catName); }}
                         onMouseEnter={leaf.data.entry !== undefined ? (e) => handleLeafEnter(e, leaf.data.entry as LedgerEntry) : undefined}
                         onMouseLeave={handleLeafLeave}
@@ -267,7 +267,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                   {/* Category header — on top of children, with opaque background */}
                   {showHeader && (
                     <g
-                      style={{ cursor: "pointer" }}
+                      style={{ cursor: "var(--cursor-pointer)" }}
                       onClick={() => onCellClick(catName)}
                     >
                       <rect

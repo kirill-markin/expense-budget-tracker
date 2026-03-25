@@ -10,7 +10,7 @@
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   font-family: inherit;
 }
 
@@ -41,7 +41,7 @@
   font-family: inherit;
   font-size: 12px;
   text-align: start;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 .item:hover {

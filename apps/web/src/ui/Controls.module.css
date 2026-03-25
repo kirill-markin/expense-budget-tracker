@@ -8,7 +8,7 @@
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   font-family: inherit;
   margin-inline-start: -1px;
 }

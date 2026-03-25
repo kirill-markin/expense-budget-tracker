@@ -10,8 +10,28 @@ body {
 a {
   color: var(--accent);
   text-decoration: none;
+  cursor: var(--cursor-pointer);
 }
 
 a:hover {
   text-decoration: underline;
+}
+
+button:not(:disabled),
+summary,
+input[type="button"]:not(:disabled),
+input[type="submit"]:not(:disabled),
+input[type="reset"]:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: var(--cursor-pointer);
+}
+
+a *,
+button:not(:disabled) *,
+summary *,
+input[type="button"]:not(:disabled) *,
+input[type="submit"]:not(:disabled) *,
+input[type="reset"]:not(:disabled) *,
+[role="button"]:not([aria-disabled="true"]) * {
+  cursor: inherit;
 }

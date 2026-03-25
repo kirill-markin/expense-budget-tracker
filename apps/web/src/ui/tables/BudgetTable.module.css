@@ -17,7 +17,7 @@
   border-radius: 0;
   background: var(--bg);
   color: var(--muted);
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   font-family: inherit;
 }
 
@@ -215,7 +215,7 @@ tbody tr:last-child .currentMonthActual {
 
 .cellEditable:not(.data-masked),
 .cellClickable {
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
 }
 
 .cellEditable:not(.data-masked):hover,
@@ -337,7 +337,7 @@ tbody tr:last-child .currentMonthActual {
   font-family: inherit;
   font-size: 12px;
   text-align: start;
-  cursor: pointer;
+  cursor: var(--cursor-pointer);
   text-decoration: underline;
   text-underline-offset: 2px;
 }

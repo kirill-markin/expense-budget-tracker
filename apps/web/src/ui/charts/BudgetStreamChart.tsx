@@ -366,7 +366,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           viewBox={`0 0 ${width} ${height}`}
           role="img"
           aria-label="Budget streamgraph"
-          style={!masked ? { cursor: "pointer" } : undefined}
+          style={!masked ? { cursor: "var(--cursor-pointer)" } : undefined}
           onMouseMove={!masked ? handleMouseMove : undefined}
           onMouseLeave={!masked ? handleMouseLeave : undefined}
           onClick={!masked ? handleClick : undefined}
