@@ -16,9 +16,9 @@ import {
 } from "@/lib/chatAttachments";
 import { buildSystemInstructions } from "@/server/chat/shared";
 
-type OpenAIInputMessage = OpenAI.Responses.EasyInputMessage;
 type OpenAIInputItem = OpenAI.Responses.ResponseInputItem;
 type OpenAIInputContent = OpenAI.Responses.ResponseInputMessageContentList[number];
+type OpenAIAssistantOutputContent = OpenAI.Responses.ResponseOutputMessage["content"][number];
 
 type AttachmentSummary = Readonly<{
   fileName: string;
@@ -160,6 +160,36 @@ const mapMessagePart = async (
   return [{ type: "input_text", text: buildReasoningHistoryText(part) }];
 };
 
+const mapAssistantHistoryPart = async (
+  part: ContentPart,
+): Promise<ReadonlyArray<OpenAIAssistantOutputContent>> => {
+  if (part.type === "text") {
+    return [{
+      type: "output_text",
+      text: part.text,
+      annotations: [],
+    }];
+  }
+
+  if (part.type === "tool_call") {
+    return [{
+      type: "output_text",
+      text: buildToolCallHistoryText(part),
+      annotations: [],
+    }];
+  }
+
+  if (part.type === "reasoning_summary") {
+    return [{
+      type: "output_text",
+      text: buildReasoningHistoryText(part),
+      annotations: [],
+    }];
+  }
+
+  throw new Error(`Assistant history contains unsupported content part: ${part.type}`);
+};
+
 const bytesToHex = (
   bytes: Uint8Array,
 ): string =>
@@ -201,11 +231,24 @@ const normalizeHistoryMessages = (
 const buildInputMessage = async (
   role: ChatMessage["role"],
   content: ReadonlyArray<ContentPart>,
-): Promise<OpenAIInputMessage> => ({
-  role,
-  type: "message",
-  content: (await Promise.all(content.map(mapMessagePart))).flat(),
-});
+  messageIndex: number,
+): Promise<OpenAIInputItem> => {
+  if (role === "assistant") {
+    return {
+      id: `assistant-history-${String(messageIndex)}`,
+      role,
+      status: "completed",
+      type: "message",
+      content: (await Promise.all(content.map(mapAssistantHistoryPart))).flat(),
+    };
+  }
+
+  return {
+    role,
+    type: "message",
+    content: (await Promise.all(content.map(mapMessagePart))).flat(),
+  };
+};
 
 export const sanitizeContentPartsForTelemetry = async (
   content: ReadonlyArray<ContentPart>,
@@ -260,13 +303,13 @@ export const buildChatCompletionInput = async (
   }];
 
   const normalizedHistory = normalizeHistoryMessages(localMessages, turnInput);
-  for (const message of normalizedHistory) {
+  for (const [messageIndex, message] of normalizedHistory.entries()) {
     if (message.content.length === 0) {
       continue;
     }
-    input.push(await buildInputMessage(message.role, message.content));
+    input.push(await buildInputMessage(message.role, message.content, messageIndex));
   }
 
-  input.push(await buildInputMessage("user", turnInput));
+  input.push(await buildInputMessage("user", turnInput, normalizedHistory.length));
   return input;
 };

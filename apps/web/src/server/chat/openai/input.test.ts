@@ -9,6 +9,8 @@ type InputMessage = OpenAI.Responses.EasyInputMessage & Readonly<{
   content: OpenAI.Responses.ResponseInputMessageContentList;
 }>;
 
+type AssistantOutputMessage = OpenAI.Responses.ResponseOutputMessage;
+
 const encodeText = (
   value: string,
 ): string =>
@@ -43,6 +45,15 @@ const isInputTextPart = (
   part: OpenAI.Responses.ResponseInputMessageContentList[number],
 ): part is Extract<OpenAI.Responses.ResponseInputMessageContentList[number], { type: "input_text" }> =>
   part.type === "input_text";
+
+const isAssistantOutputMessage = (
+  item: OpenAI.Responses.ResponseInputItem,
+): item is AssistantOutputMessage =>
+  item.type === "message"
+  && item.role === "assistant"
+  && "status" in item
+  && Array.isArray(item.content)
+  && item.content.every((part) => part.type === "output_text" || part.type === "refusal");
 
 test("buildChatCompletionInput preserves prior attached files as full content on later turns", async () => {
   const localMessages: ReadonlyArray<ChatMessage> = [
@@ -162,5 +173,42 @@ test("buildChatCompletionInput expands DOCX attachments to text while keeping th
   assert.ok(
     previousUserMessage.content.some((part) =>
       isInputFilePart(part) && part.filename === "notes.docx"),
+  );
+});
+
+test("buildChatCompletionInput replays assistant history as assistant output content", async () => {
+  const localMessages: ReadonlyArray<ChatMessage> = [
+    {
+      role: "user",
+      content: [{ type: "text", text: "Import this statement." }],
+    },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "I checked the CSV." },
+        {
+          type: "tool_call",
+          name: "query_database",
+          status: "completed",
+          input: "SELECT 1",
+          output: "{\"ok\":true}",
+        },
+      ],
+    },
+  ];
+
+  const input = await buildChatCompletionInput(localMessages, [{ type: "text", text: "Continue." }], "UTC");
+  const assistantMessage = input[2];
+
+  assert.ok(assistantMessage !== undefined && isAssistantOutputMessage(assistantMessage));
+  assert.equal(assistantMessage.role, "assistant");
+  assert.equal(assistantMessage.status, "completed");
+  assert.ok(
+    assistantMessage.content.some((part) =>
+      part.type === "output_text" && part.text === "I checked the CSV."),
+  );
+  assert.ok(
+    assistantMessage.content.some((part) =>
+      part.type === "output_text" && part.text.includes("Tool call: query_database")),
   );
 });
