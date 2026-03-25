@@ -46,7 +46,7 @@ test("drainChatStreamChunk preserves partial lines until the next chunk arrives"
 
   const completed = drainChatStreamChunk({
     buffer: partial.buffer,
-    chunk: ',"itemId":"item-2","name":"query_database","status":"completed","outputIndex":0,"sequenceNumber":2,"mainContentInvalidationVersion":3}\n',
+    chunk: ',"itemId":"item-2","responseIndex":1,"name":"query_database","status":"completed","outputIndex":0,"sequenceNumber":2,"mainContentInvalidationVersion":3}\n',
   });
 
   assert.equal(completed.buffer, "");
@@ -54,6 +54,7 @@ test("drainChatStreamChunk preserves partial lines until the next chunk arrives"
     type: "tool_call",
     id: "tool-1",
     itemId: "item-2",
+    responseIndex: 1,
     name: "query_database",
     status: "completed",
     outputIndex: 0,
@@ -70,6 +71,7 @@ test("applyChatStreamEvent applies assistant content updates for delta and reaso
     type: "delta",
     text: "Hello",
     itemId: "item-1",
+    responseIndex: 0,
     outputIndex: 0,
     contentIndex: 1,
     sequenceNumber: 5,
@@ -84,6 +86,7 @@ test("applyChatStreamEvent applies assistant content updates for delta and reaso
   const reasoningResult = applyChatStreamEvent({
     type: "reasoning_summary",
     itemId: "item-2",
+    responseIndex: 0,
     outputIndex: 1,
     sequenceNumber: 6,
     summary: "Compared prior messages.",
@@ -97,20 +100,22 @@ test("applyChatStreamEvent applies assistant content updates for delta and reaso
 
   assert.deepEqual(receivedChunks, [{
     text: "Hello",
-    streamPosition: {
-      itemId: "item-1",
-      outputIndex: 0,
-      contentIndex: 1,
+      streamPosition: {
+        itemId: "item-1",
+        responseIndex: 0,
+        outputIndex: 0,
+        contentIndex: 1,
       sequenceNumber: 5,
     },
   }]);
   assert.deepEqual(receivedReasoning, [{
     type: "reasoning_summary",
     summary: "Compared prior messages.",
-    streamPosition: {
-      itemId: "item-2",
-      outputIndex: 1,
-      contentIndex: null,
+      streamPosition: {
+        itemId: "item-2",
+        responseIndex: 0,
+        outputIndex: 1,
+        contentIndex: null,
       sequenceNumber: 6,
     },
   }]);
@@ -128,6 +133,7 @@ test("applyChatStreamEvent refreshes main content only for completed tool calls 
     itemId: "item-1",
     name: "query_database",
     status: "started",
+    responseIndex: 0,
     outputIndex: 0,
     sequenceNumber: 1,
   }, {
@@ -144,6 +150,7 @@ test("applyChatStreamEvent refreshes main content only for completed tool calls 
     itemId: "item-2",
     name: "query_database",
     status: "completed",
+    responseIndex: 0,
     outputIndex: 0,
     sequenceNumber: 2,
   }, {
@@ -160,6 +167,7 @@ test("applyChatStreamEvent refreshes main content only for completed tool calls 
     itemId: "item-3",
     name: "query_database",
     status: "completed",
+    responseIndex: 0,
     outputIndex: 0,
     sequenceNumber: 3,
     mainContentInvalidationVersion: 9,

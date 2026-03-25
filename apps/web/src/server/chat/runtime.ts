@@ -156,6 +156,7 @@ const createToolCallContentPart = (
   output: event.output ?? null,
   streamPosition: {
     itemId: event.itemId,
+    responseIndex: event.responseIndex,
     outputIndex: event.outputIndex,
     contentIndex: null,
     sequenceNumber: event.sequenceNumber,
@@ -169,6 +170,7 @@ const createReasoningSummaryContentPart = (
   summary: event.summary,
   streamPosition: {
     itemId: event.itemId,
+    responseIndex: event.responseIndex,
     outputIndex: event.outputIndex,
     contentIndex: null,
     sequenceNumber: event.sequenceNumber,
@@ -302,6 +304,7 @@ const applyAssistantDelta = (
     text: event.text,
     streamPosition: {
       itemId: event.itemId,
+      responseIndex: event.responseIndex,
       outputIndex: event.outputIndex,
       contentIndex: event.contentIndex,
       sequenceNumber: event.sequenceNumber,

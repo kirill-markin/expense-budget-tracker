@@ -262,10 +262,12 @@
 
 .reasoningSummary {
   border-style: solid;
+  border-color: color-mix(in srgb, var(--panel-border) 65%, transparent);
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel-border) 30%);
 }
 
 .reasoningSummaryContent {
-  color: var(--text);
+  color: var(--muted);
   word-break: break-word;
 }
 

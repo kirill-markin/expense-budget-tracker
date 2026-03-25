@@ -39,7 +39,7 @@ const isRenderableNonAttachmentPart = (
 ): boolean =>
   part.type === "text" || part.type === "tool_call" || part.type === "reasoning_summary";
 
-const getRenderableAssistantParts = (
+const getRenderableParts = (
   message: StoredMessage,
 ): ReadonlyArray<StoredMessage["content"][number]> => {
   const renderableParts = message.content.filter(isRenderableNonAttachmentPart);
@@ -62,18 +62,41 @@ export const getOrderedMessageBlocks = (
   message: StoredMessage,
 ): ReadonlyArray<OrderedMessageBlock> => {
   const attachmentParts = getAttachmentParts(message);
-  const blocks: Array<OrderedMessageBlock> = [];
-  let attachmentBlockInserted = false;
+  const renderableParts = getRenderableParts(message);
 
-  for (const part of getRenderableAssistantParts(message)) {
-    if (part.type === "text") {
-      if (!attachmentBlockInserted && attachmentParts.length > 0) {
-        blocks.push({
-          type: "attachments",
-          parts: attachmentParts,
-        });
-        attachmentBlockInserted = true;
+  if (message.role !== "assistant") {
+    const blocks: Array<OrderedMessageBlock> = [];
+    if (attachmentParts.length > 0) {
+      blocks.push({
+        type: "attachments",
+        parts: attachmentParts,
+      });
+    }
+
+    for (const part of renderableParts) {
+      if (part.type !== "text") {
+        continue;
       }
+
+      blocks.push({
+        type: "text",
+        text: part.text,
+      });
+    }
+
+    return blocks;
+  }
+
+  const blocks: Array<OrderedMessageBlock> = [];
+  if (attachmentParts.length > 0) {
+    blocks.push({
+      type: "attachments",
+      parts: attachmentParts,
+    });
+  }
+
+  for (const part of renderableParts) {
+    if (part.type === "text") {
       blocks.push({
         type: "text",
         text: part.text,
@@ -95,16 +118,6 @@ export const getOrderedMessageBlocks = (
         part,
       });
     }
-  }
-
-  if (!attachmentBlockInserted && attachmentParts.length > 0) {
-    return [
-      {
-        type: "attachments",
-        parts: attachmentParts,
-      },
-      ...blocks,
-    ];
   }
 
   return blocks;

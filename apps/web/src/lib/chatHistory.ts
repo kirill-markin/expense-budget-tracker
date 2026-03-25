@@ -38,7 +38,12 @@ const isLegacyAssistantPart = (
 const formatStreamPosition = (
   streamPosition: StreamPosition,
 ): string =>
-  `itemId=${streamPosition.itemId} outputIndex=${String(streamPosition.outputIndex)} contentIndex=${String(streamPosition.contentIndex)} sequenceNumber=${String(streamPosition.sequenceNumber)}`;
+  `itemId=${streamPosition.itemId} responseIndex=${String(streamPosition.responseIndex ?? 0)} outputIndex=${String(streamPosition.outputIndex)} contentIndex=${String(streamPosition.contentIndex)} sequenceNumber=${String(streamPosition.sequenceNumber)}`;
+
+const normalizeResponseIndex = (
+  responseIndex: number | undefined,
+): number =>
+  responseIndex ?? 0;
 
 const assertSupportedAssistantContent = (
   content: ReadonlyArray<ContentPart>,
@@ -58,8 +63,10 @@ export const compareStreamPosition = (
   left: StreamPosition,
   right: StreamPosition,
 ): number => {
-  if (left.sequenceNumber !== null && right.sequenceNumber !== null && left.sequenceNumber !== right.sequenceNumber) {
-    return left.sequenceNumber - right.sequenceNumber;
+  const leftResponseIndex = normalizeResponseIndex(left.responseIndex);
+  const rightResponseIndex = normalizeResponseIndex(right.responseIndex);
+  if (leftResponseIndex !== rightResponseIndex) {
+    return leftResponseIndex - rightResponseIndex;
   }
 
   if (left.outputIndex !== right.outputIndex) {
@@ -70,6 +77,10 @@ export const compareStreamPosition = (
   const rightContentIndex = normalizeContentIndex(right.contentIndex);
   if (leftContentIndex !== rightContentIndex) {
     return leftContentIndex - rightContentIndex;
+  }
+
+  if (left.sequenceNumber !== null && right.sequenceNumber !== null && left.sequenceNumber !== right.sequenceNumber) {
+    return left.sequenceNumber - right.sequenceNumber;
   }
 
   return left.itemId.localeCompare(right.itemId);

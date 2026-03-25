@@ -147,10 +147,12 @@ const createEventIterator = (
 
 const createToolCallPosition = (
   event: OpenAI.Responses.ResponseOutputItemAddedEvent,
+  responseIndex: number,
 ): ToolCallPosition => ({
   itemId: typeof event.item.id === "string" && event.item.id.length > 0
     ? event.item.id
     : `response-output-${String(event.output_index)}`,
+  responseIndex,
   outputIndex: event.output_index,
   sequenceNumber: event.sequence_number,
 });
@@ -398,6 +400,7 @@ const runLoop = async (
           type: "delta",
           text: event.delta,
           itemId: event.item_id,
+          responseIndex: callIndex - 1,
           outputIndex: event.output_index,
           contentIndex: event.content_index,
           sequenceNumber: event.sequence_number,
@@ -409,7 +412,7 @@ const runLoop = async (
         const update = applyToolCallStarted(
           toolStates,
           toFunctionToolCallRawItem(event.item),
-          createToolCallPosition(event),
+          createToolCallPosition(event, callIndex - 1),
           Date.now(),
         );
         toolStates = update.toolStates;
@@ -463,6 +466,7 @@ const runLoop = async (
         pushQueueEvent(queue, {
           type: "reasoning_summary",
           itemId: event.item_id,
+          responseIndex: callIndex - 1,
           outputIndex: event.output_index,
           sequenceNumber: event.sequence_number,
           summary: nextSummary,

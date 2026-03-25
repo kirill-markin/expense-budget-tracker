@@ -25,6 +25,7 @@ export type ToolCallOutputRawItem = Readonly<{
 
 export type ToolCallPosition = Readonly<{
   itemId: string;
+  responseIndex: number;
   outputIndex: number;
   sequenceNumber: number | null;
 }>;
@@ -86,6 +87,7 @@ const createToolCallEvent = (
   itemId: string,
   name: string,
   status: ToolCallEvent["status"],
+  responseIndex: number,
   outputIndex: number,
   sequenceNumber: number | null,
   providerStatus: string | null,
@@ -98,6 +100,7 @@ const createToolCallEvent = (
   itemId,
   name,
   status,
+  responseIndex,
   outputIndex,
   sequenceNumber,
   ...(providerStatus !== null ? { providerStatus } : {}),
@@ -151,6 +154,7 @@ const buildFunctionToolCallEvent = (
     position.itemId,
     rawItem.name,
     isTerminalToolProviderStatus(providerStatus) ? "completed" : "started",
+    position.responseIndex,
     position.outputIndex,
     position.sequenceNumber,
     providerStatus,
@@ -174,6 +178,7 @@ const buildToolOutputEvent = (
     getRequiredToolItemId(rawItem, previousSnapshot),
     name,
     "completed",
+    previousSnapshot?.responseIndex ?? 0,
     getRequiredToolOutputIndex(previousSnapshot, rawItem),
     previousSnapshot?.sequenceNumber ?? null,
     "completed",
@@ -191,6 +196,7 @@ const areToolCallEventsEqual = (
   && left.itemId === right.itemId
   && left.name === right.name
   && left.status === right.status
+  && left.responseIndex === right.responseIndex
   && left.outputIndex === right.outputIndex
   && left.sequenceNumber === right.sequenceNumber
   && left.providerStatus === right.providerStatus
@@ -230,6 +236,7 @@ const mergeToolCallSnapshot = (
     previousSnapshot.itemId,
     nextSnapshot.name,
     nextSnapshot.status,
+    nextSnapshot.responseIndex ?? previousSnapshot.responseIndex ?? 0,
     previousSnapshot.outputIndex,
     nextSnapshot.sequenceNumber ?? previousSnapshot.sequenceNumber,
     nextSnapshot.providerStatus ?? previousSnapshot.providerStatus ?? null,
@@ -312,6 +319,7 @@ export const applyFunctionCallArgumentsDelta = (
     previousState.snapshot.itemId,
     previousState.snapshot.name,
     previousState.snapshot.status,
+    previousState.snapshot.responseIndex ?? 0,
     previousState.snapshot.outputIndex,
     event.sequenceNumber,
     previousState.snapshot.providerStatus ?? null,
@@ -351,6 +359,7 @@ export const applyFunctionCallArgumentsDone = (
     previousState.snapshot.itemId,
     previousState.snapshot.name,
     previousState.snapshot.status,
+    previousState.snapshot.responseIndex ?? 0,
     previousState.snapshot.outputIndex,
     event.sequenceNumber,
     previousState.snapshot.providerStatus ?? null,

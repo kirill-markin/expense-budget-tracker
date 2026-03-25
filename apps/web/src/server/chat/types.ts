@@ -2,6 +2,7 @@ export type ChatRole = "user" | "assistant";
 
 export type StreamPosition = Readonly<{
   itemId: string;
+  responseIndex?: number;
   outputIndex: number;
   contentIndex: number | null;
   sequenceNumber: number | null;
@@ -60,6 +61,7 @@ export type ChatStreamEvent =
     type: "delta";
     text: string;
     itemId: string;
+    responseIndex?: number;
     outputIndex: number;
     contentIndex: number;
     sequenceNumber: number | null;
@@ -70,6 +72,7 @@ export type ChatStreamEvent =
     itemId: string;
     name: string;
     status: "started" | "completed";
+    responseIndex?: number;
     outputIndex: number;
     sequenceNumber: number | null;
     providerStatus?: string;
@@ -89,6 +92,7 @@ export type ChatStreamEvent =
   | Readonly<{
     type: "reasoning_summary";
     itemId: string;
+    responseIndex?: number;
     outputIndex: number;
     sequenceNumber: number | null;
     summary: string;

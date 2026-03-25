@@ -204,20 +204,78 @@ test("buildChatTranscriptMarkdown exports inline attachment bodies and UTC times
   assert.match(result.markdown, /```csv\ndate,amount\n2026-03-24,10\n```/);
   assert.match(result.markdown, /#### \[image\] \(image\/png\)\n\[binary-data\]/);
   assert.match(result.markdown, /Please analyze this import\./);
+  assertSubstringsInOrder(result.markdown, [
+    "#### report.csv (text/csv)",
+    "#### [image] (image/png)",
+    "Please analyze this import.",
+  ]);
   assert.match(result.markdown, /## Message 2 - Assistant/);
   assert.match(result.markdown, /Status: Stopped/);
-  assert.match(result.markdown, /### Thinking summary\n```text\nChecked the file layout before answering\.\n```/);
-  assert.match(result.markdown, /### Database query \(Completed\)/);
-  assert.match(result.markdown, /#### Request\n```text\nSELECT 1\n```/);
-  assert.match(result.markdown, /#### Response\n```text\n\{\n  "rows": \[/);
-  assert.match(result.markdown, /"full": true/);
-  assert.match(result.markdown, /### Web search \(In progress\)/);
-  assert.match(result.markdown, /#### Response\n```text\nIn progress\n```/);
-  assert.match(result.markdown, /I found the matching records\./);
+  assertSubstringsInOrder(result.markdown, [
+    "### Thinking summary",
+    "Checked the file layout before answering.",
+    "### Database query (Completed)",
+    "SELECT 1",
+    "\"full\": true",
+    "### Web search (In progress)",
+    "In progress",
+    "I found the matching records.",
+  ]);
   assert.match(result.markdown, /## Message 3 - Assistant/);
   assert.match(result.markdown, /Status: Error/);
   assert.match(result.markdown, /Activity: Thinking/);
   assert.doesNotMatch(result.markdown, /Time: .*UTC/);
+});
+
+test("buildChatTranscriptMarkdown follows response index chronology across multi-call turns", async () => {
+  const messages: ReadonlyArray<StoredMessage> = [{
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "Second response text.",
+        streamPosition: {
+          itemId: "msg-2",
+          responseIndex: 1,
+          outputIndex: 0,
+          contentIndex: 0,
+          sequenceNumber: 5,
+        },
+      },
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "query_database",
+        status: "completed",
+        providerStatus: "completed",
+        input: "{\"sql\":\"SELECT 1\"}",
+        output: "{\"rows\":[1]}",
+        streamPosition: {
+          itemId: "tool-1-item",
+          responseIndex: 0,
+          outputIndex: 0,
+          contentIndex: null,
+          sequenceNumber: 50,
+        },
+      },
+    ],
+    timestamp: Date.UTC(2026, 2, 24, 15, 41, 0),
+    isError: false,
+    isStopped: false,
+  }];
+
+  const result = await buildChatTranscriptMarkdown({
+    messages,
+    runState: "idle",
+    exportedAt: Date.UTC(2026, 2, 24, 15, 42, 11),
+    t,
+  });
+
+  assertSubstringsInOrder(result.markdown, [
+    "### Database query (Completed)",
+    "SELECT 1",
+    "Second response text.",
+  ]);
 });
 
 test("buildChatTranscriptMarkdown preserves top-level message order exactly as provided", async () => {
@@ -310,8 +368,8 @@ test("buildChatTranscriptMarkdown preserves visible block order inside an assist
   });
 
   assertSubstringsInOrder(result.markdown, [
-    "### Database query (Completed)",
     "#### report.csv (text/csv)",
+    "### Database query (Completed)",
     "Answer after attachment list.",
     "### Thinking summary\n```text\nLooked at the imported rows.\n```",
     "Final sentence.",

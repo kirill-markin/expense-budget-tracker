@@ -37,6 +37,7 @@ const buildToolContentStreamPosition = (
   event: Extract<ChatStreamEvent, { type: "delta" | "reasoning_summary" | "tool_call" }>,
 ): StreamPosition => ({
   itemId: event.itemId,
+  responseIndex: event.responseIndex,
   outputIndex: event.outputIndex,
   contentIndex: event.type === "delta" ? event.contentIndex : null,
   sequenceNumber: event.sequenceNumber,

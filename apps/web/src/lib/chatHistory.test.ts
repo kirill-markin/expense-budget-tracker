@@ -144,6 +144,67 @@ test("ordered assistant content keeps text-tool-text interleaving", () => {
   );
 });
 
+test("ordered assistant content prefers response index over sequence number across multi-call turns", () => {
+  const laterResponseText = appendAssistantTextContent([], {
+    text: "Second response text",
+    streamPosition: {
+      itemId: "msg-2",
+      responseIndex: 1,
+      outputIndex: 0,
+      contentIndex: 0,
+      sequenceNumber: 5,
+    },
+  });
+
+  assert.deepEqual(
+    upsertToolCallContent(laterResponseText, {
+      type: "tool_call",
+      id: "tool-1",
+      name: "query_database",
+      status: "completed",
+      providerStatus: "completed",
+      input: "{\"sql\":\"SELECT 1\"}",
+      output: "{\"rows\":[1]}",
+      streamPosition: {
+        itemId: "tool-1-item",
+        responseIndex: 0,
+        outputIndex: 0,
+        contentIndex: null,
+        sequenceNumber: 50,
+      },
+    }),
+    [
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "query_database",
+        status: "completed",
+        providerStatus: "completed",
+        input: "{\"sql\":\"SELECT 1\"}",
+        output: "{\"rows\":[1]}",
+        streamPosition: {
+          itemId: "tool-1-item",
+          responseIndex: 0,
+          outputIndex: 0,
+          contentIndex: null,
+          sequenceNumber: 50,
+        },
+      },
+      {
+        type: "text",
+        text: "Second response text",
+        streamPosition: {
+          itemId: "msg-2",
+          responseIndex: 1,
+          outputIndex: 0,
+          contentIndex: 0,
+          sequenceNumber: 5,
+        },
+      },
+    ],
+  );
+});
+
 test("ordered assistant content places reasoning summaries between earlier text and later text", () => {
   const firstText = appendAssistantTextContent([], {
     text: "Before",
@@ -175,6 +236,89 @@ test("ordered assistant content places reasoning summaries between earlier text 
         type: "text",
         text: "After",
         streamPosition: createStreamPosition("msg-2", 2, 0, 30),
+      },
+    ],
+  );
+});
+
+test("ordered assistant content keeps lower content indexes before reasoning and tools in the same output item", () => {
+  const content = upsertReasoningSummaryContent([], {
+    type: "reasoning_summary",
+    summary: "Thinking between chunks.",
+    streamPosition: {
+      itemId: "reasoning-1",
+      responseIndex: 0,
+      outputIndex: 0,
+      contentIndex: null,
+      sequenceNumber: 20,
+    },
+  });
+  const withTrailingTool = upsertToolCallContent(content, {
+    type: "tool_call",
+    id: "tool-1",
+    name: "code_interpreter_call",
+    status: "started",
+    providerStatus: "in_progress",
+    input: "print('done')",
+    output: null,
+    streamPosition: {
+      itemId: "tool-1-item",
+      responseIndex: 0,
+      outputIndex: 1,
+      contentIndex: null,
+      sequenceNumber: 30,
+    },
+  });
+
+  assert.deepEqual(
+    appendAssistantTextContent(withTrailingTool, {
+      text: "First text chunk",
+      streamPosition: {
+        itemId: "msg-1",
+        responseIndex: 0,
+        outputIndex: 0,
+        contentIndex: 0,
+        sequenceNumber: 40,
+      },
+    }),
+    [
+      {
+        type: "text",
+        text: "First text chunk",
+        streamPosition: {
+          itemId: "msg-1",
+          responseIndex: 0,
+          outputIndex: 0,
+          contentIndex: 0,
+          sequenceNumber: 40,
+        },
+      },
+      {
+        type: "reasoning_summary",
+        summary: "Thinking between chunks.",
+        streamPosition: {
+          itemId: "reasoning-1",
+          responseIndex: 0,
+          outputIndex: 0,
+          contentIndex: null,
+          sequenceNumber: 20,
+        },
+      },
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "code_interpreter_call",
+        status: "started",
+        providerStatus: "in_progress",
+        input: "print('done')",
+        output: null,
+        streamPosition: {
+          itemId: "tool-1-item",
+          responseIndex: 0,
+          outputIndex: 1,
+          contentIndex: null,
+          sequenceNumber: 30,
+        },
       },
     ],
   );
