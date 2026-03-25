@@ -3,11 +3,14 @@ import { z } from "zod";
 import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { parseBudgetCommentBody, parseBudgetCommentQuery } from "@/server/api/budget";
 import { handleRoute } from "@/server/api/handleRoute";
+import { jsonNoStore } from "@/server/api/noStore";
 import { parseJsonBody } from "@/server/api/validation";
 import { getLatestComment } from "@/server/budget/getLatestComment";
 import { insertBudgetComment } from "@/server/budget/insertBudgetComment";
 import { getDemoLatestComment } from "@/server/demo/data";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
+
+export const dynamic = "force-dynamic";
 
 export const GET = async (request: Request): Promise<Response> =>
   handleRoute(
@@ -16,13 +19,13 @@ export const GET = async (request: Request): Promise<Response> =>
       const query = parseBudgetCommentQuery(new URL(request.url).searchParams);
 
       if (isDemoModeFromRequest(request)) {
-        return Response.json({ comment: getDemoLatestComment(query) });
+        return jsonNoStore({ comment: getDemoLatestComment(query) });
       }
 
       const userId = extractUserId(request);
       const workspaceId = extractWorkspaceId(request);
       const comment = await getLatestComment(userId, workspaceId, query);
-      return Response.json({ comment });
+      return jsonNoStore({ comment });
     },
   );
 

@@ -1,9 +1,10 @@
 import { fetchWithCsrf } from "@/lib/csrf";
+import { fetchLiveData } from "@/lib/liveDataFetch";
 import type { BudgetGridResult } from "@/server/budget/getBudgetGrid";
 
 export const fetchBudgetRange = async (monthFrom: string, monthTo: string, planFrom: string, actualTo: string): Promise<BudgetGridResult> => {
   const url = `/api/budget-grid?monthFrom=${encodeURIComponent(monthFrom)}&monthTo=${encodeURIComponent(monthTo)}&planFrom=${encodeURIComponent(planFrom)}&actualTo=${encodeURIComponent(actualTo)}`;
-  const response = await fetch(url);
+  const response = await fetchLiveData(url);
   if (!response.ok) {
     throw new Error(`Budget API error: ${response.status} ${await response.text()}`);
   }
@@ -45,7 +46,7 @@ export const postBudgetPlanFill = async (params: {
 
 export const fetchComment = async (month: string, direction: string, category: string): Promise<string | null> => {
   const params = new URLSearchParams({ month, direction, category });
-  const response = await fetch(`/api/budget-comment?${params.toString()}`);
+  const response = await fetchLiveData(`/api/budget-comment?${params.toString()}`);
   if (!response.ok) {
     throw new Error(`Comment fetch failed: ${response.status} ${await response.text()}`);
   }

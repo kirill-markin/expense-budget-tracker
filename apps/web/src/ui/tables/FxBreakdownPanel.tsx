@@ -4,6 +4,7 @@ import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
+import { fetchLiveData } from "@/lib/liveDataFetch";
 import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBreakdown";
 import { useFormat } from "@/ui/FormatProvider";
 import alertStyles from "@/ui/Alert.module.css";
@@ -70,7 +71,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/fx-breakdown?month=${encodeURIComponent(month)}`)
+    fetchLiveData(`/api/fx-breakdown?month=${encodeURIComponent(month)}`)
       .then(async (response) => {
         if (!response.ok) {
           const text = await response.text();

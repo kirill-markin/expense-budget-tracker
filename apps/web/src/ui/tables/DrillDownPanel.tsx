@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
+import { fetchLiveData } from "@/lib/liveDataFetch";
 import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFormat } from "@/ui/FormatProvider";
 import alertStyles from "@/ui/Alert.module.css";
@@ -111,7 +112,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
 
   const fetchPage = useCallback(async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
     const url = buildDrillDownPageUrl(filter, sort[0].key, sort[0].dir, limit, offset);
-    const response = await fetch(url);
+    const response = await fetchLiveData(url);
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`${response.status}: ${text}`);

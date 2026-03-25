@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { fetchLiveData } from "@/lib/liveDataFetch";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
 
 type CommentPresenceResult = Readonly<{
@@ -13,7 +14,7 @@ const cellKey = (month: string, direction: string, category: string): string =>
 
 const fetchCommentPresence = async (monthFrom: string, monthTo: string): Promise<ReadonlyArray<CommentedCell>> => {
   const params = new URLSearchParams({ monthFrom, monthTo });
-  const response = await fetch(`/api/budget-comments-exist?${params.toString()}`);
+  const response = await fetchLiveData(`/api/budget-comments-exist?${params.toString()}`);
   if (!response.ok) {
     throw new Error(`Comment presence fetch failed: ${response.status} ${await response.text()}`);
   }

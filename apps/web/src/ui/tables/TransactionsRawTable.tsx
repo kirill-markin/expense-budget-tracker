@@ -4,6 +4,7 @@ import { type ReactElement } from "react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { fetchLiveData } from "@/lib/liveDataFetch";
 import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import alertStyles from "@/ui/Alert.module.css";
@@ -69,7 +70,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
 
   const fetchPage = useCallback(async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
     const url = buildTransactionsPageUrl(dateFrom, dateTo, selectedAccount, sort[0].key, sort[0].dir, limit, offset);
-    const response = await fetch(url);
+    const response = await fetchLiveData(url);
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`${response.status}: ${text}`);

@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { fetchLiveData } from "@/lib/liveDataFetch";
 import { getCurrentMonth } from "@/lib/monthUtils";
 import alertStyles from "@/ui/Alert.module.css";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
@@ -76,7 +77,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
 
   const fetchBudgetData = useCallback(async (currentFetchId: number): Promise<void> => {
     const url = buildBudgetUrl(monthFrom, monthTo, currentMonth, currentMonth);
-    const response = await fetch(url);
+    const response = await fetchLiveData(url);
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`${response.status}: ${text}`);
@@ -90,7 +91,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
 
   const fetchTreemapData = useCallback(async (currentFetchId: number): Promise<void> => {
     const url = buildTreemapUrl(monthFrom, monthTo);
-    const response = await fetch(url);
+    const response = await fetchLiveData(url);
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`${response.status}: ${text}`);
