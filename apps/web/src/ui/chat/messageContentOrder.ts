@@ -4,6 +4,7 @@ import {
   type OrderedAssistantContentPart,
   type StoredMessage,
 } from "@/lib/chatHistory";
+import { type AttachmentContentPart } from "@/lib/chatAttachments";
 import type {
   ReasoningSummaryContentPart,
   ToolCallContentPart,
@@ -12,7 +13,7 @@ import type {
 export type OrderedMessageBlock =
   | Readonly<{
     type: "attachments";
-    names: ReadonlyArray<string>;
+    parts: ReadonlyArray<AttachmentContentPart>;
   }>
   | Readonly<{
     type: "text";
@@ -27,18 +28,11 @@ export type OrderedMessageBlock =
     part: ReasoningSummaryContentPart;
   }>;
 
-const getAttachmentNames = (
+const getAttachmentParts = (
   message: StoredMessage,
-): ReadonlyArray<string> =>
-  message.content.flatMap((part) => {
-    if (part.type === "file") {
-      return [part.fileName];
-    }
-    if (part.type === "image") {
-      return ["[image]"];
-    }
-    return [];
-  });
+): ReadonlyArray<AttachmentContentPart> =>
+  message.content.filter((part): part is AttachmentContentPart =>
+    part.type === "file" || part.type === "image");
 
 const isRenderableNonAttachmentPart = (
   part: StoredMessage["content"][number],
@@ -67,16 +61,16 @@ const getRenderableAssistantParts = (
 export const getOrderedMessageBlocks = (
   message: StoredMessage,
 ): ReadonlyArray<OrderedMessageBlock> => {
-  const attachmentNames = getAttachmentNames(message);
+  const attachmentParts = getAttachmentParts(message);
   const blocks: Array<OrderedMessageBlock> = [];
   let attachmentBlockInserted = false;
 
   for (const part of getRenderableAssistantParts(message)) {
     if (part.type === "text") {
-      if (!attachmentBlockInserted && attachmentNames.length > 0) {
+      if (!attachmentBlockInserted && attachmentParts.length > 0) {
         blocks.push({
           type: "attachments",
-          names: attachmentNames,
+          parts: attachmentParts,
         });
         attachmentBlockInserted = true;
       }
@@ -103,11 +97,11 @@ export const getOrderedMessageBlocks = (
     }
   }
 
-  if (!attachmentBlockInserted && attachmentNames.length > 0) {
+  if (!attachmentBlockInserted && attachmentParts.length > 0) {
     return [
       {
         type: "attachments",
-        names: attachmentNames,
+        parts: attachmentParts,
       },
       ...blocks,
     ];

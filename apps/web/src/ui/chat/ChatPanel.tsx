@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 import { useRouter } from "next/navigation";
 
 import { fetchWithCsrf } from "@/lib/csrf";
+import { getAttachmentLabel } from "@/lib/chatAttachments";
 import { CHAT_MODEL_BADGE_LABEL, CHAT_MODEL_ID } from "@/lib/chatModels";
 import { cn } from "@/lib/cn";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
@@ -119,7 +120,7 @@ const parseSSELine = (line: string): ChatStreamEvent | null => {
 const renderMessageContent = (msg: StoredMessage, t: (key: string) => string): ReactElement => {
   const elements: Array<ReactElement> = getOrderedMessageBlocks(msg).map((block, index) => {
     if (block.type === "attachments") {
-      return <span key={`a-${index}`}>{`[${block.names.join(", ")}]\n`}</span>;
+      return <span key={`a-${index}`}>{`[${block.parts.map(getAttachmentLabel).join(", ")}]\n`}</span>;
     }
 
     if (block.type === "text") {
@@ -868,7 +869,7 @@ export const ChatPanel = (props: Props): ReactElement => {
 
   const handleCopyTranscript = useCallback(async (): Promise<void> => {
     try {
-      const { markdown } = buildChatTranscriptMarkdown({
+      const { markdown } = await buildChatTranscriptMarkdown({
         messages,
         runState,
         exportedAt: Date.now(),

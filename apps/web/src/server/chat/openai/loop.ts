@@ -258,7 +258,7 @@ const runLoop = async (
   queue: QueueState,
 ): Promise<void> => {
   const client = getObservedOpenAIClient();
-  const baseInput = buildChatCompletionInput(
+  const baseInput = await buildChatCompletionInput(
     params.localMessages,
     params.turnInput,
     params.timezone,

@@ -1,5 +1,4 @@
 import type OpenAI from "openai";
-import * as XLSX from "xlsx";
 import type {
   ChatMessage,
   ContentPart,
@@ -7,18 +6,19 @@ import type {
   ImageContentPart,
   TextContentPart,
 } from "@/server/chat/types";
+import {
+  buildDocxPromptText,
+  buildTextFilePromptText,
+  buildWorkbookPromptText,
+  isDocxAttachment,
+  isTextFileAttachment,
+  isWorkbookAttachment,
+} from "@/lib/chatAttachments";
 import { buildSystemInstructions } from "@/server/chat/shared";
 
 type OpenAIInputMessage = OpenAI.Responses.EasyInputMessage;
 type OpenAIInputItem = OpenAI.Responses.ResponseInputItem;
 type OpenAIInputContent = OpenAI.Responses.ResponseInputMessageContentList[number];
-
-class AttachmentSerializationError extends Error {
-  public constructor(fileName: string, message: string) {
-    super(`Failed to serialize attachment ${fileName}: ${message}`);
-    this.name = "AttachmentSerializationError";
-  }
-}
 
 type AttachmentSummary = Readonly<{
   fileName: string;
@@ -27,89 +27,30 @@ type AttachmentSummary = Readonly<{
   sha256?: string;
 }>;
 
-const RAW_TEXT_CSV_MEDIA_TYPES = new Set([
-  "text/csv",
-  "application/csv",
-]);
-
-const RAW_TEXT_CSV_EXTENSIONS = new Set([
-  ".csv",
-]);
-
-const RAW_TEXT_WORKBOOK_MEDIA_TYPES = new Set([
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-]);
-
-const RAW_TEXT_WORKBOOK_EXTENSIONS = new Set([
-  ".xls",
-  ".xlsx",
-]);
-
-const CHAT_HISTORY_WINDOW = 24;
 const MAX_TEXT_HISTORY_LENGTH = 8_000;
 const MAX_TOOL_PAYLOAD_LENGTH = 4_000;
 const MAX_REASONING_SUMMARY_LENGTH = 2_000;
-const MAX_ATTACHMENT_SUMMARY_LENGTH = 600;
 
-const getFileExtension = (fileName: string): string => {
-  const lastDot = fileName.lastIndexOf(".");
-  if (lastDot === -1) {
-    return "";
-  }
-  return fileName.slice(lastDot).toLowerCase();
-};
+const buildFileDataUrl = (
+  part: FileContentPart,
+): string =>
+  `data:${part.mediaType};base64,${part.base64Data}`;
 
-const isRawTextCsvAttachment = (part: FileContentPart): boolean =>
-  RAW_TEXT_CSV_MEDIA_TYPES.has(part.mediaType) || RAW_TEXT_CSV_EXTENSIONS.has(getFileExtension(part.fileName));
-
-const isRawTextWorkbookAttachment = (part: FileContentPart): boolean =>
-  RAW_TEXT_WORKBOOK_MEDIA_TYPES.has(part.mediaType) || RAW_TEXT_WORKBOOK_EXTENSIONS.has(getFileExtension(part.fileName));
-
-const decodeBase64Utf8 = (value: string): string =>
-  Buffer.from(value, "base64").toString("utf8");
-
-const trimTrailingNewline = (value: string): string =>
-  value.endsWith("\n") ? value.slice(0, -1) : value;
-
-const buildRawCsvAttachmentText = (part: FileContentPart): string => {
-  const rawText = decodeBase64Utf8(part.base64Data);
-  return `Attached CSV file: ${part.fileName}\n\`\`\`csv\n${rawText}\n\`\`\``;
-};
-
-const buildWorkbookAttachmentText = (part: FileContentPart): string => {
-  try {
-    const workbook = XLSX.read(Buffer.from(part.base64Data, "base64"), {
-      type: "buffer",
-    });
-    const sheetBlocks = workbook.SheetNames.map((sheetName) => {
-      const sheet = workbook.Sheets[sheetName];
-      if (sheet === undefined) {
-        throw new AttachmentSerializationError(part.fileName, `missing sheet ${sheetName}`);
-      }
-      const csv = trimTrailingNewline(XLSX.utils.sheet_to_csv(sheet));
-      return `Sheet: ${sheetName}\n\`\`\`csv\n${csv}\n\`\`\``;
-    });
-
-    return [`Attached workbook: ${part.fileName}`, ...sheetBlocks].join("\n");
-  } catch (error) {
-    if (error instanceof AttachmentSerializationError) {
-      throw error;
-    }
-
-    throw new AttachmentSerializationError(
-      part.fileName,
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-};
-
-const mapUserPart = (
-  part: TextContentPart | ImageContentPart | FileContentPart,
-): ReadonlyArray<OpenAIInputContent> => {
+/**
+ * Maps a persisted attachment back into the exact content shape we want to
+ * resend to the model on later turns.
+ *
+ * The policy is intentionally format-aware:
+ * - text-like files -> `input_text` + original `input_file`
+ * - workbooks -> extracted CSV text + original `input_file`
+ * - DOCX -> extracted raw text + original `input_file`
+ * - images -> native `input_image`
+ * - PDFs and other binaries -> native `input_file` only
+ */
+const mapAttachmentPart = async (
+  part: ImageContentPart | FileContentPart,
+): Promise<ReadonlyArray<OpenAIInputContent>> => {
   switch (part.type) {
-    case "text":
-      return [{ type: "input_text", text: part.text }];
     case "image":
       return [{
         type: "input_image",
@@ -117,30 +58,44 @@ const mapUserPart = (
         image_url: `data:${part.mediaType};base64,${part.base64Data}`,
       }];
     case "file":
-      if (isRawTextCsvAttachment(part)) {
+      if (isTextFileAttachment(part)) {
         return [
           {
             type: "input_text",
-            text: buildRawCsvAttachmentText(part),
+            text: buildTextFilePromptText(part),
           },
           {
             type: "input_file",
             filename: part.fileName,
-            file_data: `data:${part.mediaType};base64,${part.base64Data}`,
+            file_data: buildFileDataUrl(part),
           },
         ];
       }
 
-      if (isRawTextWorkbookAttachment(part)) {
+      if (isWorkbookAttachment(part)) {
         return [
           {
             type: "input_text",
-            text: buildWorkbookAttachmentText(part),
+            text: buildWorkbookPromptText(part),
           },
           {
             type: "input_file",
             filename: part.fileName,
-            file_data: `data:${part.mediaType};base64,${part.base64Data}`,
+            file_data: buildFileDataUrl(part),
+          },
+        ];
+      }
+
+      if (isDocxAttachment(part)) {
+        return [
+          {
+            type: "input_text",
+            text: await buildDocxPromptText(part),
+          },
+          {
+            type: "input_file",
+            filename: part.fileName,
+            file_data: buildFileDataUrl(part),
           },
         ];
       }
@@ -148,7 +103,7 @@ const mapUserPart = (
       return [{
         type: "input_file",
         filename: part.fileName,
-        file_data: `data:${part.mediaType};base64,${part.base64Data}`,
+        file_data: buildFileDataUrl(part),
       }];
   }
 };
@@ -169,17 +124,40 @@ const stringifyJson = (value: unknown): string => {
   }
 };
 
-const buildPromptAttachmentSummary = (
-  part: FileContentPart | ImageContentPart,
-): string => {
-  const fileName = part.type === "file" ? part.fileName : "image";
-  const summary: AttachmentSummary = {
-    fileName,
-    mediaType: part.mediaType,
-    sizeBytes: Buffer.from(part.base64Data, "base64").byteLength,
-  };
+const buildToolCallHistoryText = (
+  part: Extract<ContentPart, { type: "tool_call" }>,
+): string =>
+  [
+    `Tool call: ${part.name}`,
+    `Status: ${part.status}`,
+    part.providerStatus === undefined || part.providerStatus === null
+      ? null
+      : `Provider status: ${part.providerStatus}`,
+    part.input === null ? null : `Input:\n${part.input}`,
+    part.output === null ? null : `Output:\n${part.output}`,
+  ].filter((value): value is string => value !== null).join("\n");
 
-  return clipText(JSON.stringify(summary), MAX_ATTACHMENT_SUMMARY_LENGTH);
+const buildReasoningHistoryText = (
+  part: Extract<ContentPart, { type: "reasoning_summary" }>,
+): string =>
+  `Reasoning summary:\n${part.summary}`;
+
+const mapMessagePart = async (
+  part: ContentPart,
+): Promise<ReadonlyArray<OpenAIInputContent>> => {
+  if (part.type === "text") {
+    return [{ type: "input_text", text: part.text }];
+  }
+
+  if (part.type === "image" || part.type === "file") {
+    return await mapAttachmentPart(part);
+  }
+
+  if (part.type === "tool_call") {
+    return [{ type: "input_text", text: buildToolCallHistoryText(part) }];
+  }
+
+  return [{ type: "input_text", text: buildReasoningHistoryText(part) }];
 };
 
 const bytesToHex = (
@@ -204,51 +182,6 @@ const buildTelemetryAttachmentSummary = async (
   };
 };
 
-const summarizeMessageContent = (
-  parts: ReadonlyArray<ContentPart>,
-): string => {
-  const chunks: Array<string> = [];
-
-  for (const part of parts) {
-    if (part.type === "text") {
-      chunks.push(`text: ${clipText(part.text, MAX_TEXT_HISTORY_LENGTH)}`);
-      continue;
-    }
-
-    if (part.type === "image" || part.type === "file") {
-      chunks.push(`attachment: ${buildPromptAttachmentSummary(part)}`);
-      continue;
-    }
-
-    if (part.type === "tool_call") {
-      chunks.push(
-        [
-          `tool_call: ${part.name}`,
-          `status=${part.status}`,
-          part.input === null ? null : `input=${clipText(part.input, MAX_TOOL_PAYLOAD_LENGTH)}`,
-          part.output === null ? null : `output=${clipText(part.output, MAX_TOOL_PAYLOAD_LENGTH)}`,
-        ].filter((value): value is string => value !== null).join(" "),
-      );
-      continue;
-    }
-
-    if (part.type === "reasoning_summary") {
-      chunks.push(`reasoning_summary: ${clipText(part.summary, MAX_REASONING_SUMMARY_LENGTH)}`);
-    }
-  }
-
-  return chunks.join("\n");
-};
-
-const formatHistoryMessage = (
-  message: ChatMessage,
-  index: number,
-): string => {
-  const header = `${String(index + 1)}. ${message.role.toUpperCase()}`;
-  const body = summarizeMessageContent(message.content);
-  return `${header}\n${body}`;
-};
-
 const normalizeHistoryMessages = (
   localMessages: ReadonlyArray<ChatMessage>,
   turnInput: ReadonlyArray<ContentPart>,
@@ -265,37 +198,13 @@ const normalizeHistoryMessages = (
   return localMessages.slice(0, -1);
 };
 
-const buildHistoryTranscript = (
-  localMessages: ReadonlyArray<ChatMessage>,
-  turnInput: ReadonlyArray<ContentPart>,
-): string | null => {
-  const normalizedMessages = normalizeHistoryMessages(localMessages, turnInput);
-  if (normalizedMessages.length === 0) {
-    return null;
-  }
-
-  const historyWindow = normalizedMessages.slice(-CHAT_HISTORY_WINDOW);
-  const transcript = historyWindow
-    .map(formatHistoryMessage)
-    .join("\n\n");
-
-  return [
-    "Conversation transcript from the app database.",
-    "Treat this as the canonical prior context for the current chat session.",
-    "Do not repeat earlier completed work unless new tool results or user input require it.",
-    transcript,
-  ].join("\n\n");
-};
-
-const buildUserTurnMessage = (
-  turnInput: ReadonlyArray<ContentPart>,
-): OpenAIInputMessage => ({
-  role: "user",
+const buildInputMessage = async (
+  role: ChatMessage["role"],
+  content: ReadonlyArray<ContentPart>,
+): Promise<OpenAIInputMessage> => ({
+  role,
   type: "message",
-  content: turnInput
-    .filter((part): part is TextContentPart | ImageContentPart | FileContentPart =>
-      part.type !== "tool_call" && part.type !== "reasoning_summary")
-    .flatMap(mapUserPart),
+  content: (await Promise.all(content.map(mapMessagePart))).flat(),
 });
 
 export const sanitizeContentPartsForTelemetry = async (
@@ -333,26 +242,31 @@ export const sanitizeContentPartsForTelemetry = async (
     };
   }));
 
-export const buildChatCompletionInput = (
+export const buildChatCompletionInput = async (
   localMessages: ReadonlyArray<ChatMessage>,
   turnInput: ReadonlyArray<ContentPart>,
   timezone: string,
-): ReadonlyArray<OpenAIInputItem> => {
+): Promise<ReadonlyArray<OpenAIInputItem>> => {
+  /**
+   * Rebuild the full app-owned session history instead of relying on
+   * provider-managed conversation state. This keeps previously attached files
+   * available on later turns, with the same attachment policy as the current
+   * user turn.
+   */
   const input: Array<OpenAIInputItem> = [{
     role: "system",
     type: "message",
     content: buildSystemInstructions(timezone),
   }];
 
-  const historyTranscript = buildHistoryTranscript(localMessages, turnInput);
-  if (historyTranscript !== null) {
-    input.push({
-      role: "developer",
-      type: "message",
-      content: historyTranscript,
-    });
+  const normalizedHistory = normalizeHistoryMessages(localMessages, turnInput);
+  for (const message of normalizedHistory) {
+    if (message.content.length === 0) {
+      continue;
+    }
+    input.push(await buildInputMessage(message.role, message.content));
   }
 
-  input.push(buildUserTurnMessage(turnInput));
+  input.push(await buildInputMessage("user", turnInput));
   return input;
 };

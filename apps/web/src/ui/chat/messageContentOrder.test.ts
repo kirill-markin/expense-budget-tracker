@@ -39,7 +39,7 @@ test("getOrderedMessageBlocks inserts attachments immediately before the first t
     },
     {
       type: "attachments",
-      names: ["report.csv", "[image]"],
+      parts: [message.content[1], message.content[2]],
     },
     {
       type: "text",
@@ -77,7 +77,7 @@ test("getOrderedMessageBlocks prepends attachments when the message has no text 
   assert.deepEqual(getOrderedMessageBlocks(message), [
     {
       type: "attachments",
-      names: ["balances.csv"],
+      parts: [message.content[0]],
     },
     {
       type: "tool_call",

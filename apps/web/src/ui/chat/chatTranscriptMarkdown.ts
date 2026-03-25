@@ -1,4 +1,5 @@
 import type { StoredMessage } from "@/lib/chatHistory";
+import { serializeAttachmentForMarkdown } from "@/lib/chatAttachments";
 import { getOrderedMessageBlocks } from "./messageContentOrder";
 import { getAssistantStreamingIndicator } from "./thinkingSummary";
 import { getToolCallDisplayState } from "./toolCallDisplay";
@@ -91,9 +92,9 @@ const pushActivity = (
   lines.push("");
 };
 
-export const buildChatTranscriptMarkdown = (
+export const buildChatTranscriptMarkdown = async (
   params: BuildChatTranscriptMarkdownParams,
-): ChatTranscriptMarkdown => {
+): Promise<ChatTranscriptMarkdown> => {
   const { messages, runState, exportedAt, t } = params;
   const suggestedFileName = buildChatTranscriptSuggestedFileName(exportedAt);
   const lines: Array<string> = [
@@ -124,10 +125,12 @@ export const buildChatTranscriptMarkdown = (
     for (const block of getOrderedMessageBlocks(message)) {
       if (block.type === "attachments") {
         lines.push(`### ${t("chat.exportAttachments")}`);
-        for (const attachmentName of block.names) {
-          lines.push(`- ${attachmentName}`);
+        for (const part of block.parts) {
+          const attachment = await serializeAttachmentForMarkdown(part);
+          lines.push(`#### ${attachment.label} (${attachment.mediaType})`);
+          lines.push(...attachment.lines);
+          lines.push("");
         }
-        lines.push("");
       } else if (block.type === "text") {
         lines.push(block.text);
         lines.push("");
