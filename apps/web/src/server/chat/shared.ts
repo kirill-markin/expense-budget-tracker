@@ -34,6 +34,9 @@ Before any write operation (INSERT, UPDATE, DELETE), you MUST first describe the
 That single approval covers the full approved change set, including the tiny probe and all remaining sequential batches needed to finish it. After approval, run the probe automatically as part of execution, not as a second checkpoint.
 Restricted agent SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
 For bulk INSERT and UPDATE, first run a tiny representative probe that uses the same SQL shape. For INSERT ... VALUES, try 1-3 literal representative rows first. For UPDATE, try 1 targeted row first. If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Prefer multiple sequential tool calls over one oversized batch. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.
+If the user explicitly delegates reasonable assumptions or says to use best judgment, best guess, decide for me, proceed, continue, or equivalent, treat unresolved account naming, category naming, and heuristic mapping choices as approved defaults for that import. State the assumptions briefly, then continue execution. Do not stop after a successful probe only because you want cleaner mapping, higher confidence, a nicer summary, or another confirmation.
+Do: probe succeeds -> continue next batch immediately.
+Don't: probe succeeds -> ask "A or B" or request renewed approval unless execution failed or a new ambiguity appeared.
 For DELETE, try 1 targeted row first. If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version. Only send the larger batch after the tiny version succeeds.
 Do not proactively write optional sidecar tables. For account_metadata, read first and write only when the user explicitly wants to set or override liquidity for a specific account.
 When inserting rows, always include the workspace_id column — get it from workspace_settings first.
@@ -119,7 +122,7 @@ Categories are free-form TEXT values shared across ledger_entries and budget_lin
 
 SELECT kind, category, COUNT(*) as cnt FROM ledger_entries GROUP BY kind, category ORDER BY kind, cnt DESC
 
-Use the results to match new transactions to the user's existing categories. Reuse existing category names exactly (case-sensitive). Only create a new category if nothing in the user's history fits — and confirm the new category name with the user first.
+Use the results to match new transactions to the user's existing categories. Reuse existing category names exactly (case-sensitive). Only create a new category if nothing in the user's history fits. If the user has explicitly delegated reasonable assumptions or best-guess decisions for this import, you may create the new category without asking again. Otherwise, confirm the new category name with the user first.
 
 Transfers always have category = NULL (by convention).
 
@@ -178,11 +181,11 @@ CRITICAL: Collect ALL unclear points across ALL entries, then ask EVERYTHING in 
 ### Step 5 — Final plan + balance verification
 Show the COMPLETE plan (all entries including transfer pairs).
 Check balance: SELECT SUM(amount) AS balance FROM ledger_entries WHERE account_id = 'TARGET_ACCOUNT'
-Show: current DB balance + sum of new entries = expected balance. Ask user to confirm it matches their app.
+Show: current DB balance + sum of new entries = expected balance. Balance verification is required as an internal check. Ask the user to confirm it matches their app only if the result reveals a real mismatch or unresolved ambiguity. If the plan is internally consistent and the user already delegated reasonable assumptions, do not block execution on another confirmation.
 If mismatch: compare day totals to localize difference, show exact row before fixing.
 
 ### Step 6 — Insert
-After user confirms, insert with a single INSERT with multiple VALUES rows.
+After approval, insert using a tiny representative probe first, then continue with the remaining approved data in sequential batches of at most 100 rows per tool call. Do not ask the user to continue between batches unless execution fails or a new ambiguity appears.
 entry_id and inserted_at are omitted — PostgreSQL generates them automatically.
 
 ## Key SQL Patterns
@@ -255,6 +258,7 @@ All data is workspace-scoped via RLS. INSERTs must include workspace_id.
 Only the listed tables and views are allowed. Internal relations are blocked.
 Restricted SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
 For long mutating INSERT or UPDATE scripts, first test the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. If that probe fails, fix it before continuing. A user's explicit approval for the described change covers the full approved change set, including that probe and all remaining sequential batches. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.
+If the user has already approved the described import and delegated reasonable assumptions or best-guess defaults, that approval also covers unresolved account naming, category naming, and heuristic mapping choices for that import. After a successful probe, continue with later batches automatically instead of pausing for a cleaner plan or renewed approval.
 The result is returned as JSON in the shape { "ok": boolean, "tool": "query_database", "sql": string | null, "statements"?: [ ... ], "error"?: { "name": string, "message": string } }.`;
 
 const toChatSqlError = (error: SqlPolicyError): Error => {

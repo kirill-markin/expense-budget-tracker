@@ -62,6 +62,15 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /Do not pause only to ask the user to continue, proceed, or reconfirm for later batches/i);
   assert.match(instructions, /Only ask again if the requested change itself changes, new ambiguity appears, or execution fails/i);
   assert.match(instructions, /If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version/i);
+  assert.match(instructions, /If the user explicitly delegates reasonable assumptions or says to use best judgment, best guess, decide for me, proceed, continue, or equivalent/i);
+  assert.match(instructions, /treat unresolved account naming, category naming, and heuristic mapping choices as approved defaults for that import/i);
+  assert.match(instructions, /Do: probe succeeds -> continue next batch immediately/i);
+  assert.match(instructions, /Don't: probe succeeds -> ask "A or B" or request renewed approval unless execution failed or a new ambiguity appeared/i);
+  assert.match(instructions, /If the user has explicitly delegated reasonable assumptions or best-guess decisions for this import, you may create the new category without asking again/i);
+  assert.match(instructions, /Balance verification is required as an internal check/i);
+  assert.match(instructions, /If the plan is internally consistent and the user already delegated reasonable assumptions, do not block execution on another confirmation/i);
+  assert.match(instructions, /After approval, insert using a tiny representative probe first, then continue with the remaining approved data in sequential batches of at most 100 rows per tool call/i);
+  assert.match(instructions, /Do not ask the user to continue between batches unless execution fails or a new ambiguity appears/i);
   assert.match(instructions, /explicit INSERT when the row is missing or an explicit UPDATE when the row already exists/i);
   assert.match(instructions, /first_day_of_week .*1\.\.7/i);
   assert.match(instructions, /Treat this protocol as chat-session-scoped, not message-scoped/i);
@@ -69,8 +78,19 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /previous tool result was explicitly interrupted or marked unknown/i);
   assert.match(instructions, /For CSV, XLS, and XLSX attachments, prefer the full raw tabular text already injected into the conversation/i);
   assert.match(instructions, /For PDF attachments, prefer the native file context first/i);
+  assert.doesNotMatch(instructions, /After user confirms, insert with a single INSERT with multiple VALUES rows/i);
   assert.doesNotMatch(instructions, /web search/i);
   assert.doesNotMatch(instructions, /code interpreter/i);
+});
+
+test("buildSystemInstructions keeps import execution moving after a successful probe when assumptions were delegated", () => {
+  const instructions = buildSystemInstructions("UTC");
+
+  assert.match(instructions, /proceed, continue, or equivalent/i);
+  assert.match(instructions, /approved defaults for that import/i);
+  assert.match(instructions, /If the probe succeeds, immediately continue with the remaining approved data/i);
+  assert.match(instructions, /Do not stop after a successful probe only because you want cleaner mapping, higher confidence, a nicer summary, or another confirmation/i);
+  assert.match(instructions, /If the plan is internally consistent and the user already delegated reasonable assumptions, do not block execution on another confirmation/i);
 });
 
 test("TOOL_DESCRIPTION documents multi-statement scripts and statements output", () => {
@@ -90,4 +110,6 @@ test("TOOL_DESCRIPTION documents multi-statement scripts and statements output",
   assert.match(TOOL_DESCRIPTION, /including that probe and all remaining sequential batches/i);
   assert.match(TOOL_DESCRIPTION, /Do not pause only to ask the user to continue, proceed, or reconfirm for later batches/i);
   assert.match(TOOL_DESCRIPTION, /Only ask again if the requested change itself changes, new ambiguity appears, or execution fails/i);
+  assert.match(TOOL_DESCRIPTION, /delegated reasonable assumptions or best-guess defaults/i);
+  assert.match(TOOL_DESCRIPTION, /continue with later batches automatically instead of pausing for a cleaner plan or renewed approval/i);
 });
