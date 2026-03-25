@@ -183,6 +183,48 @@ test("applyChatStreamEvent refreshes main content only for completed tool calls 
   assert.deepEqual(invalidationVersions, [9]);
 });
 
+test("applyChatStreamEvent forwards every newer completed invalidation version", () => {
+  const invalidationVersions: Array<number> = [];
+
+  applyChatStreamEvent({
+    type: "tool_call",
+    id: "tool-1",
+    itemId: "item-1",
+    name: "query_database",
+    status: "completed",
+    responseIndex: 0,
+    outputIndex: 0,
+    sequenceNumber: 1,
+    mainContentInvalidationVersion: 3,
+  }, {
+    appendAssistantChunk: () => assert.fail("delta append should not run for tool events"),
+    upsertReasoningSummary: () => assert.fail("reasoning should not be applied for tool events"),
+    upsertToolCall: () => undefined,
+    markAssistantError: () => assert.fail("errors should not be marked for tool events"),
+    applyMainContentInvalidationVersion: (nextVersion) => invalidationVersions.push(nextVersion),
+  });
+
+  applyChatStreamEvent({
+    type: "tool_call",
+    id: "tool-2",
+    itemId: "item-2",
+    name: "query_database",
+    status: "completed",
+    responseIndex: 0,
+    outputIndex: 1,
+    sequenceNumber: 2,
+    mainContentInvalidationVersion: 4,
+  }, {
+    appendAssistantChunk: () => assert.fail("delta append should not run for tool events"),
+    upsertReasoningSummary: () => assert.fail("reasoning should not be applied for tool events"),
+    upsertToolCall: () => undefined,
+    markAssistantError: () => assert.fail("errors should not be marked for tool events"),
+    applyMainContentInvalidationVersion: (nextVersion) => invalidationVersions.push(nextVersion),
+  });
+
+  assert.deepEqual(invalidationVersions, [3, 4]);
+});
+
 test("applyChatStreamEvent marks terminal error and done events", () => {
   const markedErrors: Array<string> = [];
 

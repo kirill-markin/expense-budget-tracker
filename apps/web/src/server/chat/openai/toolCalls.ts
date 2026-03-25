@@ -1,11 +1,6 @@
-import { isExpenseSqlMutation } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ChatStreamEvent } from "@/server/chat/types";
 
 export const INTERRUPTED_TOOL_CALL_OUTPUT = "Interrupted before output was captured.";
-
-type QueryDatabaseToolInput = Readonly<{
-  sql?: unknown;
-}>;
 
 export type FunctionToolCallRawItem = Readonly<{
   type: "function_call";
@@ -168,11 +163,11 @@ const buildToolOutputEvent = (
   rawItem: ToolCallOutputRawItem,
   previousSnapshot: ToolCallEvent | null,
   rawOutput: unknown,
+  refreshRoute: boolean,
 ): ToolCallEvent => {
   const id = getRequiredToolCallId(rawItem);
   const output = stringifyToolValue(rawOutput);
   const name = previousSnapshot?.name ?? (typeof rawItem.name === "string" ? rawItem.name : "tool");
-  const refreshRoute = shouldRefreshRouteAfterToolCall(name, previousSnapshot?.input ?? null);
   return createToolCallEvent(
     id,
     getRequiredToolItemId(rawItem, previousSnapshot),
@@ -246,30 +241,6 @@ const mergeToolCallSnapshot = (
   );
 
 export const createToolCallStateMap = (): ToolCallStateMap => new Map();
-
-/**
- * Determines whether a completed tool call should invalidate the route-backed
- * main content shown beside the sidebar chat.
- */
-export const shouldRefreshRouteAfterToolCall = (
-  name: string,
-  input: string | null,
-): boolean => {
-  if (name !== "query_database" || input === null) {
-    return false;
-  }
-
-  try {
-    const parsed = JSON.parse(input) as QueryDatabaseToolInput;
-    if (typeof parsed.sql !== "string") {
-      return false;
-    }
-
-    return isExpenseSqlMutation(parsed.sql);
-  } catch {
-    return false;
-  }
-};
 
 export const applyToolCallStarted = (
   toolStates: ToolCallStateMap,
@@ -383,6 +354,7 @@ export const applyToolCallOutput = (
   rawItem: ToolCallOutputRawItem,
   rawOutput: unknown,
   nowMs: number,
+  refreshRoute: boolean,
 ): ToolCallUpdate => {
   const snapshotId = getRequiredToolCallId(rawItem);
   const previousState = toolStates.get(snapshotId);
@@ -395,6 +367,7 @@ export const applyToolCallOutput = (
     rawItem,
     previousState.snapshot,
     rawOutput,
+    refreshRoute,
   );
   const startedAt = previousState.startedAt;
   const nextToolStates = setToolCallState(toolStates, snapshot, startedAt);

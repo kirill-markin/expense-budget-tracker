@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import { z } from "zod";
+import { isExpenseSqlMutation } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { TOOL_DESCRIPTION, execQuery } from "@/server/chat/shared";
 
 export type OpenAIToolContext = Readonly<{
@@ -15,6 +16,16 @@ type ToolErrorPayload = Readonly<{
     name: string;
     message: string;
   }>;
+}>;
+
+export type ExecutedChatToolCall = Readonly<{
+  output: string;
+  isMutating: boolean;
+  succeeded: boolean;
+}>;
+
+type QueryDatabaseToolInput = Readonly<{
+  sql?: unknown;
 }>;
 
 const queryDatabaseInputSchema = z.object({
@@ -60,6 +71,31 @@ const serializeToolError = (
   };
 };
 
+const getSqlFromRawArguments = (
+  rawArguments: string,
+): string | null => {
+  try {
+    const parsed = JSON.parse(rawArguments) as QueryDatabaseToolInput;
+    return typeof parsed.sql === "string" ? parsed.sql : null;
+  } catch {
+    return null;
+  }
+};
+
+const getIsMutatingSql = (
+  sql: string | null,
+): boolean => {
+  if (sql === null) {
+    return false;
+  }
+
+  try {
+    return isExpenseSqlMutation(sql);
+  } catch {
+    return false;
+  }
+};
+
 export const OPENAI_CHAT_TOOLS: ReadonlyArray<OpenAI.Responses.FunctionTool> = [{
   type: "function",
   name: "query_database",
@@ -82,30 +118,34 @@ export const executeChatToolCall = async (
   toolName: string,
   rawArguments: string,
   context: OpenAIToolContext,
-): Promise<string> => {
+): Promise<ExecutedChatToolCall> => {
   if (toolName !== "query_database") {
     throw new Error(`Unsupported OpenAI tool call: ${toolName}`);
   }
 
+  const sql = getSqlFromRawArguments(rawArguments);
+  const isMutating = getIsMutatingSql(sql);
+
   try {
     const parsed = queryDatabaseInputSchema.parse(JSON.parse(rawArguments));
     const result = await execQuery(parsed.sql, context.userId, context.workspaceId);
-    return createToolSuccessResult("query_database", {
-      sql: parsed.sql,
-      ...JSON.parse(result.json) as Readonly<Record<string, unknown>>,
-    });
+    return {
+      output: createToolSuccessResult("query_database", {
+        sql: parsed.sql,
+        ...JSON.parse(result.json) as Readonly<Record<string, unknown>>,
+      }),
+      isMutating,
+      succeeded: true,
+    };
   } catch (error) {
     const payload: ToolErrorPayload = {
-      sql: (() => {
-        try {
-          const parsed = JSON.parse(rawArguments) as Readonly<{ sql?: unknown }>;
-          return typeof parsed.sql === "string" ? parsed.sql : null;
-        } catch {
-          return null;
-        }
-      })(),
+      sql,
       error: serializeToolError(error),
     };
-    return createToolErrorResult("query_database", payload);
+    return {
+      output: createToolErrorResult("query_database", payload),
+      isMutating,
+      succeeded: false,
+    };
   }
 };

@@ -194,6 +194,145 @@ test("runPersistedChatSessionWithDeps persists tool invalidation on completed mu
   assert.equal(completeChatRunCalls.length, 1);
 });
 
+test("runPersistedChatSessionWithDeps does not invalidate main content for completed read-only tool calls", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
+
+  const dependencies = createDependencies(
+    async (): Promise<Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>>> =>
+      createStartedResponse([
+        {
+          type: "tool_call",
+          id: "tool-1",
+          itemId: "tool-item-1",
+          name: "query_database",
+          status: "completed",
+          outputIndex: 0,
+          sequenceNumber: 1,
+          input: "{\"sql\":\"SELECT 1\"}",
+          output: "{\"ok\":true}",
+        },
+        { type: "done" },
+      ], null, []),
+    completeChatRunCalls,
+    persistAssistantCancelledCalls,
+    persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
+    protectionTransitions,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
+  assert.equal(completeChatRunCalls.length, 1);
+});
+
+test("runPersistedChatSessionWithDeps does not invalidate main content for failed mutating tool calls", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
+
+  const dependencies = createDependencies(
+    async (): Promise<Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>>> =>
+      createStartedResponse([
+        {
+          type: "tool_call",
+          id: "tool-1",
+          itemId: "tool-item-1",
+          name: "query_database",
+          status: "completed",
+          outputIndex: 0,
+          sequenceNumber: 1,
+          input: "{\"sql\":\"INSERT INTO ledger_entries VALUES ('bad')\"}",
+          output: "{\"ok\":false}",
+        },
+        { type: "done" },
+      ], null, []),
+    completeChatRunCalls,
+    persistAssistantCancelledCalls,
+    persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
+    protectionTransitions,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 0);
+  assert.equal(completeChatRunCalls.length, 1);
+});
+
+test("runPersistedChatSessionWithDeps invalidates main content for each completed mutating batch in one turn", async () => {
+  const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const persistAssistantTerminalErrorCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const updateAssistantMessageItemAndInvalidateMainContentCalls: Array<Readonly<Record<string, unknown>>> = [];
+  const protectionTransitions: Array<string> = [];
+
+  const dependencies = createDependencies(
+    async (): Promise<Awaited<ReturnType<ChatRuntimeDependencies["startOpenAILoop"]>>> =>
+      createStartedResponse([
+        {
+          type: "tool_call",
+          id: "tool-probe",
+          itemId: "tool-item-1",
+          name: "query_database",
+          status: "completed",
+          outputIndex: 0,
+          sequenceNumber: 1,
+          input: "{\"sql\":\"INSERT INTO ledger_entries VALUES ('probe')\"}",
+          output: "{\"ok\":true}",
+          refreshRoute: true,
+        },
+        {
+          type: "tool_call",
+          id: "tool-batch-1",
+          itemId: "tool-item-2",
+          name: "query_database",
+          status: "completed",
+          outputIndex: 1,
+          sequenceNumber: 2,
+          input: "{\"sql\":\"INSERT INTO ledger_entries VALUES ('batch-1')\"}",
+          output: "{\"ok\":true}",
+          refreshRoute: true,
+        },
+        {
+          type: "tool_call",
+          id: "tool-batch-2",
+          itemId: "tool-item-3",
+          name: "query_database",
+          status: "completed",
+          outputIndex: 2,
+          sequenceNumber: 3,
+          input: "{\"sql\":\"INSERT INTO ledger_entries VALUES ('batch-2')\"}",
+          output: "{\"ok\":true}",
+          refreshRoute: true,
+        },
+        { type: "done" },
+      ], null, []),
+    completeChatRunCalls,
+    persistAssistantCancelledCalls,
+    persistAssistantTerminalErrorCalls,
+    updateAssistantMessageItemCalls,
+    updateAssistantMessageItemAndInvalidateMainContentCalls,
+    protectionTransitions,
+  );
+
+  await runPersistedChatSessionWithDeps(createParams(), dependencies);
+
+  assert.equal(updateAssistantMessageItemAndInvalidateMainContentCalls.length, 3);
+  assert.equal(completeChatRunCalls.length, 1);
+});
+
 test("runPersistedChatSessionWithDeps persists terminal errors after local-loop failure", async () => {
   const completeChatRunCalls: Array<Readonly<Record<string, unknown>>> = [];
   const persistAssistantCancelledCalls: Array<Readonly<Record<string, unknown>>> = [];

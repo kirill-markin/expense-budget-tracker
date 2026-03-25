@@ -16,7 +16,11 @@ import {
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
-import { executeChatToolCall, OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tools";
+import {
+  executeChatToolCall,
+  OPENAI_CHAT_TOOLS,
+  type ExecutedChatToolCall,
+} from "@/server/chat/openai/tools";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
@@ -228,7 +232,7 @@ const runOneToolCall = async (
     workspaceId: string;
     rootObservation: LangfuseObservation | null;
   }>,
-): Promise<string> => {
+): Promise<ExecutedChatToolCall> => {
   const toolObservation = params.rootObservation?.startObservation(
     params.item.name,
     {
@@ -257,7 +261,7 @@ const runOneToolCall = async (
     );
     toolObservation?.updateOtelSpanAttributes({
       output: {
-        output: sanitizeToolOutputForTelemetry(output),
+        output: sanitizeToolOutputForTelemetry(output.output),
       },
       metadata: {
         toolName: params.item.name,
@@ -517,15 +521,16 @@ const runLoop = async (
           id: functionCall.id,
           name: functionCall.name,
         },
-        output,
+        output.output,
         Date.now(),
+        output.succeeded && output.isMutating,
       );
       toolStates = update.toolStates;
       if (update.event !== null) {
         pushQueueEvent(queue, update.event);
       }
       continuationItems.push(toStoredOpenAIReplayItem(
-        toFunctionCallOutputInputItem(functionCall.call_id, output),
+        toFunctionCallOutputInputItem(functionCall.call_id, output.output),
       ));
     }
   }

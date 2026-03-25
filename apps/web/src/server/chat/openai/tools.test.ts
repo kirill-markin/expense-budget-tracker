@@ -30,9 +30,11 @@ test("query_database returns a structured invalid-input error without throwing",
     },
   );
 
-  const parsed = JSON.parse(result) as Readonly<Record<string, unknown>>;
+  const parsed = JSON.parse(result.output) as Readonly<Record<string, unknown>>;
   assert.equal(parsed.ok, false);
   assert.equal(parsed.tool, "query_database");
   assert.equal(parsed.sql, null);
   assert.equal(typeof parsed.error, "object");
+  assert.equal(result.succeeded, false);
+  assert.equal(result.isMutating, false);
 });

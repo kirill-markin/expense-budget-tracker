@@ -20,6 +20,7 @@ const INITIAL_PAST_MONTHS = 12;
 
 async function BudgetStreamData() {
   const demo = await isDemoMode();
+  const refreshToken = crypto.randomUUID();
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);
   const monthTo = currentMonth;
@@ -28,6 +29,7 @@ async function BudgetStreamData() {
     const { rows } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
     return (
       <BudgetStreamDashboard
+        key={refreshToken}
         initialRows={rows}
         initialMonthFrom={monthFrom}
         initialMonthTo={monthTo}
@@ -47,6 +49,7 @@ async function BudgetStreamData() {
 
   return (
     <BudgetStreamDashboard
+      key={refreshToken}
       initialRows={rows}
       initialMonthFrom={monthFrom}
       initialMonthTo={monthTo}
