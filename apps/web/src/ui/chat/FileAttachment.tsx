@@ -12,6 +12,7 @@ export type PendingAttachment = Readonly<{
 
 type Props = Readonly<{
   onAttach: (attachment: PendingAttachment) => void;
+  disabled?: boolean;
 }>;
 
 const ACCEPTED_TYPES = "image/*,.pdf,.txt,.csv,.json,.xml,.xlsx,.xls,.md,.html,.py,.js,.ts,.yaml,.yml,.sql,.log,.docx";
@@ -81,7 +82,7 @@ export const prepareAttachment = async (file: File): Promise<PendingAttachment> 
 };
 
 export const FileAttachment = (props: Props): ReactElement => {
-  const { onAttach } = props;
+  const { onAttach, disabled = false } = props;
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -114,11 +115,13 @@ export const FileAttachment = (props: Props): ReactElement => {
         accept={ACCEPTED_TYPES}
         multiple
         style={{ display: "none" }}
+        disabled={disabled}
         onChange={() => void handleChange()}
       />
       <button
         type="button"
         className={styles.attachButton}
+        disabled={disabled}
         onClick={() => inputRef.current?.click()}
       >
         {t("chat.attach")}

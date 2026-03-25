@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type MutableRefObject,
   type DragEvent,
   type ReactElement,
 } from "react";
@@ -17,6 +18,12 @@ import { ChatPanelHeader } from "./ChatPanelHeader";
 import { ChatTranscript } from "./ChatTranscript";
 import { prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
 import { buildChatTranscriptMarkdown } from "./chatTranscriptMarkdown";
+import {
+  insertDictationTranscriptIntoDraft,
+  transcribeChatAudio,
+  type ChatDraftSelection,
+  type ChatDictationState,
+} from "./chatDictation";
 import { useChatSessionController } from "./useChatSessionController";
 import styles from "./ChatPanel.module.css";
 
@@ -29,6 +36,89 @@ type CopyStatus = "idle" | "success" | "error";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 600;
+
+const stopMediaStream = (stream: MediaStream | null): void => {
+  if (stream === null) {
+    return;
+  }
+
+  for (const track of stream.getTracks()) {
+    track.stop();
+  }
+};
+
+const chooseSupportedRecordingMimeType = (): string | null => {
+  if (typeof MediaRecorder.isTypeSupported !== "function") {
+    return null;
+  }
+
+  const supportedMimeTypes = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+  ];
+
+  for (const mimeType of supportedMimeTypes) {
+    if (MediaRecorder.isTypeSupported(mimeType)) {
+      return mimeType;
+    }
+  }
+
+  return null;
+};
+
+const cleanupDictationResources = (
+  mediaRecorderRef: MutableRefObject<MediaRecorder | null>,
+  mediaStreamRef: MutableRefObject<MediaStream | null>,
+  recordedChunksRef: MutableRefObject<Array<Blob>>,
+): void => {
+  stopMediaStream(mediaStreamRef.current);
+  mediaRecorderRef.current = null;
+  mediaStreamRef.current = null;
+  recordedChunksRef.current = [];
+};
+
+const stopMediaRecorder = (
+  recorder: MediaRecorder,
+  recordedChunksRef: MutableRefObject<Array<Blob>>,
+): Promise<Blob> =>
+  new Promise((resolve, reject) => {
+    const handleStop = (): void => {
+      recorder.removeEventListener("error", handleError as EventListener);
+      resolve(new Blob(recordedChunksRef.current, {
+        type: recorder.mimeType === "" ? "audio/webm" : recorder.mimeType,
+      }));
+    };
+
+    const handleError = (event: Event): void => {
+      recorder.removeEventListener("stop", handleStop);
+      if (event instanceof ErrorEvent && event.error instanceof Error) {
+        reject(event.error);
+        return;
+      }
+
+      reject(new Error("Microphone recording failed."));
+    };
+
+    recorder.addEventListener("stop", handleStop, { once: true });
+    recorder.addEventListener("error", handleError as EventListener, { once: true });
+    recorder.stop();
+  });
+
+const getMicrophoneErrorMessage = (
+  error: unknown,
+  t: (key: string) => string,
+): string => {
+  if (error instanceof DOMException && error.name === "NotAllowedError") {
+    return t("chat.dictationPermissionDenied");
+  }
+
+  if (error instanceof DOMException && error.name === "NotFoundError") {
+    return t("chat.dictationNoMicrophone");
+  }
+
+  return error instanceof Error ? error.message : String(error);
+};
 
 export const ChatPanel = (props: Props): ReactElement => {
   const { mode, workspaceId } = props;
@@ -53,10 +143,18 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [pendingAttachments, setPendingAttachments] = useState<ReadonlyArray<PendingAttachment>>([]);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
+  const [dictationState, setDictationState] = useState<ChatDictationState>("idle");
 
   const dragCounterRef = useRef<number>(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const copyStatusResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordedChunksRef = useRef<Array<Blob>>([]);
+  const draftSelectionRef = useRef<ChatDraftSelection | null>(null);
+  const pendingTextareaSelectionRef = useRef<ChatDraftSelection | null>(null);
+  const shouldRestoreTextareaFocusAfterDictationRef = useRef<boolean>(false);
+  const isMountedRef = useRef<boolean>(true);
   useEffect(() => {
     if (!isDragging) return;
 
@@ -87,11 +185,41 @@ export const ChatPanel = (props: Props): ReactElement => {
 
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
       if (copyStatusResetRef.current !== null) {
         clearTimeout(copyStatusResetRef.current);
       }
+      const recorder = mediaRecorderRef.current;
+      if (recorder !== null && recorder.state !== "inactive") {
+        recorder.stop();
+      }
+      cleanupDictationResources(mediaRecorderRef, mediaStreamRef, recordedChunksRef);
     };
   }, []);
+
+  useEffect(() => {
+    if (dictationState !== "idle") {
+      return;
+    }
+
+    const textarea = textareaRef.current;
+    const pendingSelection = pendingTextareaSelectionRef.current;
+    if (textarea === null || pendingSelection === null) {
+      return;
+    }
+
+    const start = Math.max(0, Math.min(pendingSelection.start, textarea.value.length));
+    const end = Math.max(0, Math.min(pendingSelection.end, textarea.value.length));
+
+    if (shouldRestoreTextareaFocusAfterDictationRef.current) {
+      textarea.focus();
+    }
+
+    textarea.setSelectionRange(start, end);
+    draftSelectionRef.current = { start, end };
+    pendingTextareaSelectionRef.current = null;
+    shouldRestoreTextareaFocusAfterDictationRef.current = false;
+  }, [dictationState, inputText]);
 
   const handleAttach = useCallback((attachment: PendingAttachment): void => {
     setPendingAttachments((prev) => [...prev, attachment]);
@@ -149,7 +277,141 @@ export const ChatPanel = (props: Props): ReactElement => {
     && !isStopping
     && !isAssistantRunActive
     && !isLiveStreamConnected
+    && dictationState === "idle"
     && (inputText.trim().length > 0 || pendingAttachments.length > 0);
+
+  const discardDictation = useCallback((): void => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder !== null && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+
+    cleanupDictationResources(mediaRecorderRef, mediaStreamRef, recordedChunksRef);
+    draftSelectionRef.current = null;
+    pendingTextareaSelectionRef.current = null;
+    shouldRestoreTextareaFocusAfterDictationRef.current = false;
+    if (isMountedRef.current) {
+      setDictationState("idle");
+    }
+  }, []);
+
+  const startDictation = useCallback(async (): Promise<void> => {
+    if (dictationState !== "idle") {
+      return;
+    }
+
+    const textarea = textareaRef.current;
+    const shouldRestoreFocus = textarea !== null && document.activeElement === textarea;
+    shouldRestoreTextareaFocusAfterDictationRef.current = shouldRestoreFocus;
+    draftSelectionRef.current = shouldRestoreFocus && textarea !== null
+      ? {
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+      }
+      : null;
+
+    if (typeof MediaRecorder === "undefined") {
+      alert(t("chat.dictationUnavailable"));
+      return;
+    }
+
+    const mediaDevices = navigator.mediaDevices;
+    if (mediaDevices === undefined || typeof mediaDevices.getUserMedia !== "function") {
+      alert(t("chat.dictationUnavailable"));
+      return;
+    }
+
+    setDictationState("requesting_permission");
+
+    let stream: MediaStream | null = null;
+    try {
+      stream = await mediaDevices.getUserMedia({ audio: true, video: false });
+      const recorderMimeType = chooseSupportedRecordingMimeType();
+      const recorder = recorderMimeType === null
+        ? new MediaRecorder(stream)
+        : new MediaRecorder(stream, { mimeType: recorderMimeType });
+      recordedChunksRef.current = [];
+      recorder.addEventListener("dataavailable", (event: BlobEvent) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      });
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      mediaStreamRef.current = stream;
+      if (isMountedRef.current) {
+        setDictationState("recording");
+      }
+    } catch (error) {
+      stopMediaStream(stream);
+      cleanupDictationResources(mediaRecorderRef, mediaStreamRef, recordedChunksRef);
+      if (isMountedRef.current) {
+        alert(getMicrophoneErrorMessage(error, t));
+        setDictationState("idle");
+      }
+    }
+  }, [dictationState, t]);
+
+  const stopDictation = useCallback(async (): Promise<void> => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder === null || recorder.state === "inactive") {
+      cleanupDictationResources(mediaRecorderRef, mediaStreamRef, recordedChunksRef);
+      setDictationState("idle");
+      return;
+    }
+
+    setDictationState("transcribing");
+
+    try {
+      const audioBlob = await stopMediaRecorder(recorder, recordedChunksRef);
+      stopMediaStream(mediaStreamRef.current);
+      if (audioBlob.size <= 0) {
+        if (isMountedRef.current) {
+          setDictationState("idle");
+        }
+        return;
+      }
+
+      const transcript = await transcribeChatAudio(audioBlob);
+      if (isMountedRef.current) {
+        setInputText((currentText) => {
+          const insertionResult = insertDictationTranscriptIntoDraft(
+            currentText,
+            transcript,
+            draftSelectionRef.current,
+          );
+          const nextSelection = shouldRestoreTextareaFocusAfterDictationRef.current
+            ? insertionResult.selection
+            : null;
+          draftSelectionRef.current = nextSelection;
+          pendingTextareaSelectionRef.current = nextSelection;
+          return insertionResult.text;
+        });
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        alert(getMicrophoneErrorMessage(error, t));
+      }
+    } finally {
+      cleanupDictationResources(mediaRecorderRef, mediaStreamRef, recordedChunksRef);
+      if (isMountedRef.current) {
+        setDictationState("idle");
+      }
+    }
+  }, [t]);
+
+  const handleToggleDictation = useCallback(async (): Promise<void> => {
+    if (dictationState === "recording") {
+      await stopDictation();
+      return;
+    }
+
+    if (dictationState !== "idle") {
+      return;
+    }
+
+    await startDictation();
+  }, [dictationState, startDictation, stopDictation]);
 
   const sendPendingMessage = useCallback(async (): Promise<void> => {
     if (!canSendPendingMessage) {
@@ -196,6 +458,13 @@ export const ChatPanel = (props: Props): ReactElement => {
       ? t("chat.copyFailed")
       : t("chat.copyTranscript");
   const transcriptActionsDisabled = !isHistoryLoaded || messages.length === 0;
+  const dictationStatusLabel = dictationState === "requesting_permission"
+    ? t("chat.dictationWaitingPermission")
+    : dictationState === "recording"
+      ? t("chat.dictationRecording")
+      : dictationState === "transcribing"
+        ? t("chat.dictationTranscribing")
+        : null;
 
   const rootClass = mode === "sidebar" ? styles.sidebar : styles.sidebarFullscreen;
   const sidebarStyle = mode === "sidebar" ? { width: localWidth } : undefined;
@@ -221,7 +490,10 @@ export const ChatPanel = (props: Props): ReactElement => {
         transcriptActionsDisabled={transcriptActionsDisabled}
         copyButtonLabel={copyButtonLabel}
         onCopyTranscript={() => void handleCopyTranscript()}
-        onClearConversation={() => void clearConversation()}
+        onClearConversation={() => {
+          discardDictation();
+          void clearConversation();
+        }}
         onCloseSidebar={() => setIsOpen(false)}
       />
       <ChatTranscript
@@ -236,10 +508,14 @@ export const ChatPanel = (props: Props): ReactElement => {
         isHistoryLoaded={isHistoryLoaded}
         isStopping={isStopping}
         isLiveStreamConnected={isLiveStreamConnected}
+        dictationState={dictationState}
+        isDictationEnabled={!isAssistantRunActive}
+        dictationStatusLabel={dictationStatusLabel}
         textareaRef={textareaRef}
         onInputChange={setInputText}
         onAttach={handleAttach}
         onRemoveAttachment={removeAttachment}
+        onToggleDictation={handleToggleDictation}
         onSend={sendPendingMessage}
         onStop={stopMessage}
       />

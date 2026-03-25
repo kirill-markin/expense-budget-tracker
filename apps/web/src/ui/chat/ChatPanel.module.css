@@ -326,8 +326,14 @@
   border-color: var(--text);
 }
 
+.textarea:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
 .sendButton,
-.attachButton {
+.attachButton,
+.microphoneButton {
   font-family: inherit;
   font-size: 12px;
   border: 1px solid var(--panel-border);
@@ -345,15 +351,31 @@
   padding: 2px 8px;
 }
 
+.microphoneButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  min-inline-size: 32px;
+}
+
 .sendButton:hover,
-.attachButton:hover {
+.attachButton:hover,
+.microphoneButton:hover {
   color: var(--text);
   border-color: var(--text);
 }
 
-.sendButton:disabled {
+.sendButton:disabled,
+.attachButton:disabled,
+.microphoneButton:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.microphoneButton[aria-pressed="true"] {
+  color: #c0392b;
+  border-color: #c0392b;
 }
 
 .modelLabel {
@@ -364,6 +386,18 @@
   color: var(--muted);
   display: inline-flex;
   align-items: center;
+}
+
+.microphoneIcon {
+  display: block;
+  inline-size: 14px;
+  block-size: 14px;
+  fill: currentColor;
+}
+
+.dictationStatus {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .attachmentPreview {

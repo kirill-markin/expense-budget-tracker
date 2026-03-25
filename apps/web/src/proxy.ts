@@ -69,7 +69,7 @@ const SECURITY_HEADERS: ReadonlyArray<[string, string]> = [
   ["X-Frame-Options", "DENY"],
   ["Referrer-Policy", "strict-origin-when-cross-origin"],
   ["X-DNS-Prefetch-Control", "off"],
-  ["Permissions-Policy", "camera=(), microphone=(), geolocation=()"],
+  ["Permissions-Policy", "camera=(), microphone=(self), geolocation=()"],
 ];
 
 const buildCsp = (nonce: string): string => {

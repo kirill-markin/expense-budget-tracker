@@ -106,6 +106,21 @@ type ChatEvent =
     hasAttachments?: boolean;
     attachmentFileNames?: ReadonlyArray<string>;
   } & ChatAttemptMetadata>;
+type ChatTranscriptionEvent = Readonly<{
+  domain: "chat";
+  action: "transcription_failed";
+  vendor: ChatVendor;
+  requestId: string;
+  source: "web";
+  fileName: string;
+  fileSize: number;
+  fileExtension: string | null;
+  mediaType: string;
+  upstreamStatus: number | null;
+  upstreamMessage: string | null;
+  upstreamRequestId: string | null;
+  error: string;
+}>;
 
 type ApiEvent =
   | Readonly<{ domain: "api"; action: "error"; route: string; method: string; error: string }>
@@ -121,7 +136,7 @@ type AuthEvent =
   | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "error"; error: string }>;
 
-type LogEvent = ChatEvent | ApiEvent | SqlApiEvent | AuthEvent;
+type LogEvent = ChatEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));
