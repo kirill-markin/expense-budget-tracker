@@ -55,7 +55,6 @@ const createQueryResult = (
 });
 
 const REPLAY_ITEMS: ReadonlyArray<StoredOpenAIReplayItem> = [{
-  id: "msg_123",
   type: "message",
   role: "assistant",
   status: "completed",

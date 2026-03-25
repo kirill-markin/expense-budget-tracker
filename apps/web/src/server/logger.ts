@@ -1,6 +1,7 @@
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
+type ChatReplayDropReason = "missing_encrypted_content";
 type TaskProtectionAction =
   | "task_protection_enabled"
   | "task_protection_enable_failed"
@@ -72,6 +73,14 @@ type ChatEvent =
     cachedRatio: number;
     outputTokens: number;
     totalTokens: number;
+  }>
+  | Readonly<{
+    domain: "chat";
+    action: "replay_item_dropped";
+    vendor: ChatVendor;
+    itemType: "reasoning";
+    reason: ChatReplayDropReason;
+    count: number;
   }>
   | Readonly<{
     domain: "chat";

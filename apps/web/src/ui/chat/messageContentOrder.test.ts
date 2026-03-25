@@ -378,3 +378,74 @@ test("getOrderedMessageBlocks sorts multi-call assistant content by response ind
     },
   ]);
 });
+
+test("getOrderedMessageBlocks prefers later sequence numbers over lower output indexes", () => {
+  const message: StoredMessage = {
+    role: "assistant",
+    content: [
+      {
+        type: "reasoning_summary",
+        summary: "Second thinking summary.",
+        streamPosition: {
+          itemId: "reasoning-2",
+          responseIndex: 0,
+          outputIndex: 0,
+          contentIndex: null,
+          sequenceNumber: 40,
+        },
+      },
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "query_database",
+        status: "completed",
+        providerStatus: "completed",
+        input: "{\"sql\":\"SELECT 1\"}",
+        output: "{\"rows\":[1]}",
+        streamPosition: {
+          itemId: "tool-1-item",
+          responseIndex: 0,
+          outputIndex: 1,
+          contentIndex: null,
+          sequenceNumber: 20,
+        },
+      },
+      {
+        type: "tool_call",
+        id: "tool-2",
+        name: "query_database",
+        status: "completed",
+        providerStatus: "completed",
+        input: "{\"sql\":\"SELECT 2\"}",
+        output: "{\"rows\":[2]}",
+        streamPosition: {
+          itemId: "tool-2-item",
+          responseIndex: 0,
+          outputIndex: 2,
+          contentIndex: null,
+          sequenceNumber: 30,
+        },
+      },
+    ],
+    timestamp: Date.UTC(2026, 2, 24, 15, 45, 0),
+    isError: false,
+    isStopped: false,
+  };
+
+  assert.deepEqual(
+    getOrderedMessageBlocks(message).map((block) => {
+      if (block.type === "reasoning_summary") {
+        return block.part.summary;
+      }
+      if (block.type === "tool_call") {
+        return block.part.id;
+      }
+      throw new Error(`Unexpected block type: ${block.type}`);
+    }),
+    [
+      "tool-1",
+      "tool-2",
+      "Second thinking summary.",
+    ],
+  );
+});

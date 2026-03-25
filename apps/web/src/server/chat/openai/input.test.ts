@@ -208,12 +208,11 @@ test("buildChatCompletionInput drops assistant history without persisted OpenAI 
 test("buildChatCompletionInput replays persisted OpenAI items verbatim, including phase", async () => {
   const assistantReplayItems: ReadonlyArray<StoredOpenAIReplayItem> = [
     {
-      id: "rs_123",
       type: "reasoning",
       summary: [],
+      encrypted_content: "enc_123",
     },
     {
-      id: "msg_123",
       type: "message",
       role: "assistant",
       status: "completed",
@@ -246,4 +245,67 @@ test("buildChatCompletionInput replays persisted OpenAI items verbatim, includin
   const input = await buildChatCompletionInput(localMessages, [{ type: "text", text: "Next turn" }], "UTC");
 
   assert.deepEqual(input.slice(2, 5), assistantReplayItems);
+});
+
+test("buildChatCompletionInput strips legacy replay ids and drops reasoning without encrypted content", async () => {
+  const localMessages: ReadonlyArray<ServerChatMessage> = [
+    {
+      role: "user",
+      content: [{ type: "text", text: "First turn" }],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Visible transcript text" }],
+      openaiItems: [
+        {
+          id: "rs_missing",
+          type: "reasoning",
+          summary: [],
+        },
+        {
+          id: "fc_123",
+          type: "function_call",
+          call_id: "call_123",
+          name: "query_database",
+          arguments: "{\"sql\":\"SELECT 1\"}",
+          status: "completed",
+        },
+        {
+          id: "msg_123",
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          phase: "commentary",
+          content: [{
+            type: "output_text",
+            text: "Intermediate update",
+            annotations: [],
+          }],
+        },
+      ] as unknown as ReadonlyArray<StoredOpenAIReplayItem>,
+    },
+  ];
+
+  const input = await buildChatCompletionInput(localMessages, [{ type: "text", text: "Next turn" }], "UTC");
+
+  assert.deepEqual(input.slice(2, 4), [
+    {
+      type: "function_call",
+      call_id: "call_123",
+      name: "query_database",
+      arguments: "{\"sql\":\"SELECT 1\"}",
+      status: "completed",
+    },
+    {
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      phase: "commentary",
+      content: [{
+        type: "output_text",
+        text: "Intermediate update",
+        annotations: [],
+      }],
+    },
+  ]);
 });

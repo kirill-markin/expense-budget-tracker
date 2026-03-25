@@ -59,6 +59,12 @@ const normalizeContentIndex = (
   contentIndex: number | null,
 ): number =>
   contentIndex === null ? Number.MAX_SAFE_INTEGER : contentIndex;
+
+const normalizeSequenceNumber = (
+  sequenceNumber: number | null,
+): number =>
+  sequenceNumber === null ? Number.MAX_SAFE_INTEGER : sequenceNumber;
+
 export const compareStreamPosition = (
   left: StreamPosition,
   right: StreamPosition,
@@ -69,6 +75,20 @@ export const compareStreamPosition = (
     return leftResponseIndex - rightResponseIndex;
   }
 
+  if (left.outputIndex === right.outputIndex) {
+    const leftContentIndex = normalizeContentIndex(left.contentIndex);
+    const rightContentIndex = normalizeContentIndex(right.contentIndex);
+    if (leftContentIndex !== rightContentIndex) {
+      return leftContentIndex - rightContentIndex;
+    }
+  }
+
+  const leftSequenceNumber = normalizeSequenceNumber(left.sequenceNumber);
+  const rightSequenceNumber = normalizeSequenceNumber(right.sequenceNumber);
+  if (leftSequenceNumber !== rightSequenceNumber) {
+    return leftSequenceNumber - rightSequenceNumber;
+  }
+
   if (left.outputIndex !== right.outputIndex) {
     return left.outputIndex - right.outputIndex;
   }
@@ -77,10 +97,6 @@ export const compareStreamPosition = (
   const rightContentIndex = normalizeContentIndex(right.contentIndex);
   if (leftContentIndex !== rightContentIndex) {
     return leftContentIndex - rightContentIndex;
-  }
-
-  if (left.sequenceNumber !== null && right.sequenceNumber !== null && left.sequenceNumber !== right.sequenceNumber) {
-    return left.sequenceNumber - right.sequenceNumber;
   }
 
   return left.itemId.localeCompare(right.itemId);

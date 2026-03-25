@@ -12,10 +12,13 @@ import {
   isTextFileAttachment,
   isWorkbookAttachment,
 } from "@/lib/chatAttachments";
-import type {
-  ServerChatMessage,
+import {
+  normalizeStoredOpenAIReplayItems,
+  toOpenAIResponseInputItem,
+  type ServerChatMessage,
 } from "@/server/chat/openai/replayItems";
 import { buildSystemInstructions } from "@/server/chat/shared";
+import { log } from "@/server/logger";
 
 type OpenAIInputItem = OpenAI.Responses.ResponseInputItem;
 type OpenAIInputContent = OpenAI.Responses.ResponseInputMessageContentList[number];
@@ -202,7 +205,19 @@ const buildAssistantHistoryItems = (
   message: ServerChatMessage,
 ): ReadonlyArray<OpenAIInputItem> => {
   if (message.openaiItems !== undefined) {
-    return [...message.openaiItems];
+    const { items, droppedReasoningItems } = normalizeStoredOpenAIReplayItems(message.openaiItems);
+    if (droppedReasoningItems > 0) {
+      log({
+        domain: "chat",
+        action: "replay_item_dropped",
+        vendor: "openai",
+        itemType: "reasoning",
+        reason: "missing_encrypted_content",
+        count: droppedReasoningItems,
+      });
+    }
+
+    return items.map(toOpenAIResponseInputItem);
   }
 
   return [];

@@ -108,7 +108,6 @@ test("runPersistedChatSessionWithDeps completes a plain local-loop turn", async 
         },
         { type: "done" },
       ], null, [{
-        id: "msg-1",
         type: "message",
         role: "assistant",
         status: "completed",
@@ -385,12 +384,11 @@ test("runPersistedChatSessionWithDeps persists replayable OpenAI items from a mu
 
   const replayItems: ReadonlyArray<StoredOpenAIReplayItem> = [
     {
-      id: "rs_123",
       type: "reasoning",
       summary: [],
+      encrypted_content: "enc_123",
     },
     {
-      id: "fc_123",
       type: "function_call",
       call_id: "call_123",
       name: "query_database",
@@ -402,7 +400,6 @@ test("runPersistedChatSessionWithDeps persists replayable OpenAI items from a mu
       output: "{\"ok\":true}",
     },
     {
-      id: "msg_123",
       type: "message",
       role: "assistant",
       status: "completed",

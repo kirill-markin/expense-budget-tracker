@@ -12,6 +12,7 @@ import {
 import { buildChatCompletionInput } from "@/server/chat/openai/input";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
+  toOpenAIResponseInputItem,
   toStoredOpenAIReplayItem,
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
@@ -52,6 +53,7 @@ type ResponseStreamWithOptionalFinalResponse = AsyncIterable<OpenAI.Responses.Re
 type OpenAIResponsesRequest = Readonly<{
   model: typeof CHAT_MODEL_ID;
   store: false;
+  include: ["reasoning.encrypted_content"];
   tools: Array<OpenAI.Responses.Tool>;
   input: Array<OpenAI.Responses.ResponseInputItem>;
   reasoning: Readonly<{
@@ -304,10 +306,10 @@ const runOneToolCall = async (
 
 const buildOpenAIInput = (
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
-  continuationItems: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
+  continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
 ): Array<OpenAI.Responses.ResponseInputItem> => [
   ...baseInput,
-  ...continuationItems,
+  ...continuationItems.map(toOpenAIResponseInputItem),
 ];
 
 export const buildPromptCacheKey = (
@@ -317,12 +319,13 @@ export const buildPromptCacheKey = (
 
 export const buildOpenAIResponsesRequest = (
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
-  continuationItems: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
+  continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
   sessionId: string,
   timezone: string,
 ): OpenAIResponsesRequest => ({
   model: CHAT_MODEL_ID,
   store: false,
+  include: ["reasoning.encrypted_content"],
   tools: [...OPENAI_CHAT_TOOLS],
   input: buildOpenAIInput(baseInput, continuationItems),
   reasoning: {

@@ -85,8 +85,10 @@ test("buildOpenAIResponsesRequest includes a stable prompt_cache_key", () => {
     baseInput,
     [{
       type: "message",
-      role: "user",
-      content: [{ type: "input_text", text: "next" }],
+      role: "assistant",
+      status: "completed",
+      phase: "commentary",
+      content: [{ type: "output_text", text: "next", annotations: [] }],
     }],
     "session-1",
     "Europe/Madrid",
@@ -94,6 +96,7 @@ test("buildOpenAIResponsesRequest includes a stable prompt_cache_key", () => {
 
   assert.equal(firstRequest.model, CHAT_MODEL_ID);
   assert.equal(firstRequest.store, false);
+  assert.deepEqual(firstRequest.include, ["reasoning.encrypted_content"]);
   assert.deepEqual(firstRequest.tools, OPENAI_CHAT_TOOLS);
   assert.deepEqual(firstRequest.reasoning, {
     effort: CHAT_MODEL_REASONING_EFFORT,
