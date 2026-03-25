@@ -51,6 +51,8 @@ test("buildAgentDiscoveryEnvelope points agents to ask for email before send_cod
   assert.match(String(envelope.instructions), /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
   assert.match(String(envelope.instructions), /https:\/\/api\.example\.com\/v1\/me/);
   assert.match(String(envelope.instructions), /relations, columns, and any agent hints/i);
+  assert.match(String(envelope.instructions), /Use regular single-quoted literals/i);
+  assert.match(String(envelope.instructions), /Dollar-quoted strings are not allowed/i);
 });
 
 test("buildAgentDiscoveryEnvelope falls back to the request origin when auth env is missing", () => {

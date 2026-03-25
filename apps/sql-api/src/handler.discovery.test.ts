@@ -23,6 +23,8 @@ test("root discovery matches /agent", async () => {
   assert.match(body.instructions, /Authorization: ApiKey \$EXPENSE_BUDGET_TRACKER_API_KEY/);
   assert.match(body.instructions, /relations, columns, and any agent hints/i);
   assert.match(body.instructions, /Restricted SQL does not support ON CONFLICT/i);
+  assert.match(body.instructions, /Use regular single-quoted literals/i);
+  assert.match(body.instructions, /Dollar-quoted strings are not allowed/i);
   assert.match(body.instructions, /tiny representative probe/i);
   assert.match(body.instructions, /at most 100 records per tool call/i);
   assert.match(body.instructions, /approval covers the full approved change set/i);

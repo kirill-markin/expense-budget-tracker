@@ -54,6 +54,8 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /high \| medium \| low/i);
   assert.match(instructions, /treats liquidity as high in balances and budget calculations/i);
   assert.match(instructions, /Restricted agent SQL does not support ON CONFLICT/i);
+  assert.match(instructions, /Use regular single-quoted SQL literals/i);
+  assert.match(instructions, /Dollar-quoted strings are not supported/i);
   assert.match(instructions, /single approval covers the full approved change set|approval covers the full approved change set/i);
   assert.match(instructions, /including the tiny probe and all remaining sequential batches/i);
   assert.match(instructions, /For INSERT .* try 1-3 literal representative rows first/i);
@@ -104,6 +106,8 @@ test("TOOL_DESCRIPTION documents multi-statement scripts and statements output",
   assert.match(TOOL_DESCRIPTION, /liquidity must be high, medium, or low/i);
   assert.match(TOOL_DESCRIPTION, /first_day_of_week SMALLINT/i);
   assert.match(TOOL_DESCRIPTION, /Restricted SQL does not support ON CONFLICT/i);
+  assert.match(TOOL_DESCRIPTION, /Use regular single-quoted SQL literals/i);
+  assert.match(TOOL_DESCRIPTION, /Dollar-quoted strings are not supported/i);
   assert.match(TOOL_DESCRIPTION, /tiny representative probe/i);
   assert.match(TOOL_DESCRIPTION, /at most 100 records per tool call/i);
   assert.match(TOOL_DESCRIPTION, /approval .* full approved change set/i);

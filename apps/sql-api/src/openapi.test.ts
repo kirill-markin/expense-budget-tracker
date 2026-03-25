@@ -17,11 +17,40 @@ test("loadOpenApiDocument resolves the spec from the ESM module location", () =>
   assert.equal(typeof document.info, "object");
 });
 
-test("openapi documents restricted SQL ON CONFLICT and probe guidance", () => {
+test("openapi documents restricted SQL literal, ON CONFLICT, and probe guidance", () => {
   const document = loadOpenApiDocument();
+  const rootPath = (document.paths as Record<string, { get?: { description?: string } }>)["/"];
+  const agentPath = (document.paths as Record<string, { get?: { description?: string } }>)["/agent"];
   const sqlPath = (document.paths as Record<string, { post?: { description?: string } }>)["/sql"];
+  const sqlPropertyDescription = (
+    document.paths as Record<string, {
+      post?: {
+        requestBody?: {
+          content?: {
+            "application/json"?: {
+              schema?: {
+                properties?: {
+                  sql?: {
+                    description?: string;
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    }>
+  )["/sql"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties?.sql?.description;
 
+  assert.match(String(rootPath?.get?.description), /Use regular single-quoted literals/i);
+  assert.match(String(rootPath?.get?.description), /Dollar-quoted strings are not allowed/i);
+  assert.match(String(agentPath?.get?.description), /Use regular single-quoted literals/i);
+  assert.match(String(agentPath?.get?.description), /Dollar-quoted strings are not allowed/i);
   assert.match(String(sqlPath?.post?.description), /Restricted SQL does not support ON CONFLICT/i);
+  assert.match(String(sqlPath?.post?.description), /Use regular single-quoted literals/i);
+  assert.match(String(sqlPath?.post?.description), /Dollar-quoted strings are not allowed/i);
+  assert.match(String(sqlPropertyDescription), /Use regular single-quoted literals/i);
+  assert.match(String(sqlPropertyDescription), /Dollar-quoted strings are not allowed/i);
   assert.match(String(sqlPath?.post?.description), /tiny representative probe/i);
   assert.match(String(sqlPath?.post?.description), /at most 100 records per tool call/i);
   assert.match(String(sqlPath?.post?.description), /approval covers the full approved change set/i);
