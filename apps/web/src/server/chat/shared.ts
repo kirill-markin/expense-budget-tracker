@@ -35,6 +35,9 @@ That single approval covers the full approved change set, including the tiny pro
 Restricted agent SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
 Use regular single-quoted SQL literals. Dollar-quoted strings are not supported.
 For bulk INSERT and UPDATE, first run a tiny representative probe that uses the same SQL shape. For INSERT ... VALUES, try 1-3 literal representative rows first. For UPDATE, try 1 targeted row first. If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Prefer multiple sequential tool calls over one oversized batch. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.
+For any multi-batch INSERT, UPDATE, DELETE, or import, maintain an explicit progress ledger in the conversation. Before the first write batch, state the execution unit you will track: source row indices or row ranges when available; otherwise stable source markers such as timestamps, external IDs, or account-specific ordered chunks. After each successful probe or batch, briefly state which checkpoint is completed and which checkpoint is next pending. Do not claim a checkpoint as completed until that tool call succeeded.
+On a later message such as "continue", do not restart planning from scratch. Resume from the last explicitly completed checkpoint already recorded in the same chat session unless a new read proves that checkpoint is wrong. If execution was interrupted mid-import, first reconcile the last completed checkpoint from prior tool results and your own progress notes, then continue from the next unfinished checkpoint.
+The final stage of any import is checksum verification. After the last write batch, verify the number of rows added and the resulting account balances before declaring the import complete. If the checksum does not match after fresh reads, investigate and clean up only the inconsistent rows with targeted fixes. For destructive cleanup that is broad, ambiguous, or not obviously safe, ask the user before deleting rows.
 If the user explicitly delegates reasonable assumptions or says to use best judgment, best guess, decide for me, proceed, continue, or equivalent, treat unresolved account naming, category naming, and heuristic mapping choices as approved defaults for that import. State the assumptions briefly, then continue execution. Do not stop after a successful probe only because you want cleaner mapping, higher confidence, a nicer summary, or another confirmation.
 Do: probe succeeds -> continue next batch immediately.
 Don't: probe succeeds -> ask "A or B" or request renewed approval unless execution failed or a new ambiguity appeared.
@@ -181,6 +184,7 @@ CRITICAL: Collect ALL unclear points across ALL entries, then ask EVERYTHING in 
 
 ### Step 5 — Final plan + balance verification
 Show the COMPLETE plan (all entries including transfer pairs).
+For long imports, include the exact chunk boundaries or equivalent stable source markers that will be used for execution and resume. If source rows are numbered in the prompt or attachment, prefer those row numbers as the batch reference format.
 Check balance: SELECT SUM(amount) AS balance FROM ledger_entries WHERE account_id = 'TARGET_ACCOUNT'
 Show: current DB balance + sum of new entries = expected balance. Balance verification is required as an internal check. Ask the user to confirm it matches their app only if the result reveals a real mismatch or unresolved ambiguity. If the plan is internally consistent and the user already delegated reasonable assumptions, do not block execution on another confirmation.
 If mismatch: compare day totals to localize difference, show exact row before fixing.
@@ -188,6 +192,9 @@ If mismatch: compare day totals to localize difference, show exact row before fi
 ### Step 6 — Insert
 After approval, insert using a tiny representative probe first, then continue with the remaining approved data in sequential batches of at most 100 rows per tool call. Do not ask the user to continue between batches unless execution fails or a new ambiguity appears.
 entry_id and inserted_at are omitted — PostgreSQL generates them automatically.
+
+### Step 7 — Verify checksums and clean up carefully if needed
+After the final batch, verify checksum totals before declaring the import complete. At minimum, check how many rows were added and the resulting account balances for the affected account(s). If fresh reads show a mismatch, investigate and apply only targeted cleanup such as removing exact duplicate rows. For broad, destructive, or ambiguous cleanup, ask the user before deleting rows.
 
 ## Key SQL Patterns
 
@@ -260,6 +267,8 @@ Only the listed tables and views are allowed. Internal relations are blocked.
 Restricted SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
 Use regular single-quoted SQL literals. Dollar-quoted strings are not supported.
 For long mutating INSERT or UPDATE scripts, first test the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. If that probe fails, fix it before continuing. A user's explicit approval for the described change covers the full approved change set, including that probe and all remaining sequential batches. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.
+For any long mutating script or import, keep explicit completed and pending checkpoints in your replies. Prefer source row ranges when available; otherwise use stable source markers such as timestamps, external IDs, or ordered source chunks. After each successful batch, record the completed checkpoint and the next pending checkpoint. After a later "continue" message, resume from the last completed checkpoint in the same chat session instead of regenerating earlier batches.
+The final stage of any long import is checksum verification. After the last write batch, run fresh reads to verify how many rows were added and what balances now result for the affected account(s). If the checksum does not match, investigate and prefer targeted cleanup of the inconsistent rows. Ask the user before broad, destructive, or ambiguous cleanup.
 If the user has already approved the described import and delegated reasonable assumptions or best-guess defaults, that approval also covers unresolved account naming, category naming, and heuristic mapping choices for that import. After a successful probe, continue with later batches automatically instead of pausing for a cleaner plan or renewed approval.
 The result is returned as JSON in the shape { "ok": boolean, "tool": "query_database", "sql": string | null, "statements"?: [ ... ], "error"?: { "name": string, "message": string } }.`;
 

@@ -264,6 +264,18 @@ test("startOpenAILoopWithDeps uses 30 tool-enabled calls before one final no-too
     JSON.stringify(requests.at(-1)?.input).includes("tool-enabled model call limit for this turn (30) has been reached"),
     true,
   );
+  assert.equal(
+    JSON.stringify(requests.at(-1)?.input).includes("Explicitly name the checkpoint that is fully completed."),
+    true,
+  );
+  assert.equal(
+    JSON.stringify(requests.at(-1)?.input).includes("Explicitly name the next pending checkpoint."),
+    true,
+  );
+  assert.equal(
+    JSON.stringify(requests.at(-1)?.input).includes("resume from that checkpoint instead of restarting earlier completed batches"),
+    true,
+  );
   assert.equal(events.some((event) => {
     if (typeof event !== "object" || event === null || !("type" in event)) {
       return false;

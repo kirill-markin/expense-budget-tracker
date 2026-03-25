@@ -355,8 +355,11 @@ const buildToolLimitSummaryInstruction = (
       `The tool-enabled model call limit for this turn (${String(toolEnabledModelCallLimit)}) has been reached.`,
       "Do not call any tools in this response.",
       "Briefly summarize what you already completed.",
+      "Explicitly name the checkpoint that is fully completed.",
       "Briefly state what remains unfinished.",
+      "Explicitly name the next pending checkpoint.",
       "Ask the user to send another message such as \"continue\" if they want you to keep going from the same chat session.",
+      "Tell the user that the next message should resume from that checkpoint instead of restarting earlier completed batches.",
     ].join(" "),
   );
 
