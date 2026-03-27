@@ -3,6 +3,8 @@
 import { usePathname } from "next/navigation";
 import type { ReactElement, ReactNode } from "react";
 
+import { cn } from "@/lib/cn";
+
 import { useChatLayout } from "./ChatLayoutProvider";
 import { ChatPanel } from "./ChatPanel";
 import { ChatToggle } from "./ChatToggle";
@@ -22,7 +24,7 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
   return (
     <div className={styles.layoutShell}>
       {!isFullscreenChat && isOpen && <ChatPanel key={`sidebar-${workspaceId}`} mode="sidebar" workspaceId={workspaceId} />}
-      <div className={styles.mainContent}>
+      <div className={cn(styles.mainContent, !isFullscreenChat && styles.mainContentWithChatClearance)}>
         {children}
       </div>
       {!isFullscreenChat && !isOpen && <ChatToggle />}

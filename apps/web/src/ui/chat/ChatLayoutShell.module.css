@@ -10,3 +10,8 @@
   min-width: 0;
   overflow-y: auto;
 }
+
+.mainContentWithChatClearance {
+  --chat-toggle-clearance: 88px;
+  padding-block-end: calc(var(--chat-toggle-clearance) + env(safe-area-inset-bottom, 0px));
+}
