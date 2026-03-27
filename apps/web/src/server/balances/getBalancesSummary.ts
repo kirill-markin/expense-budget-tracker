@@ -58,8 +58,8 @@ function computeAccountStatus(
   return diffMs > THREE_MONTHS_MS ? "inactive" : "active";
 }
 
-const ACCOUNTS_QUERY = `
-  latest_rates AS (
+export const ACCOUNTS_QUERY = `
+  WITH latest_rates AS (
     SELECT base_currency, rate
     FROM fx_rates_daily
     WHERE quote_currency = $1
@@ -82,7 +82,7 @@ const ACCOUNTS_QUERY = `
   ORDER BY a.account_id
 `;
 
-const TOTALS_QUERY = `
+export const TOTALS_QUERY = `
   WITH account_balances AS (
     SELECT
       a.account_id,
@@ -163,7 +163,7 @@ const METADATA_QUERY = `
   SELECT account_id, liquidity FROM account_metadata
 `;
 
-const WARNINGS_QUERY = `
+export const WARNINGS_QUERY = `
   WITH latest_rates AS (
     SELECT DISTINCT base_currency
     FROM fx_rates_daily
