@@ -56,6 +56,27 @@ export const createWorkspaceForCurrentUser = async (
   return { workspaceId: row.workspace_id, name: row.name };
 };
 
+export const createWorkspaceForCurrentUserWithTimezone = async (
+  userId: string,
+  workspaceId: string,
+  name: string,
+  timezone: string,
+): Promise<WorkspaceSummary> => {
+  const result = await queryAs(
+    userId,
+    workspaceId,
+    "SELECT workspace_id, name FROM create_workspace_for_current_user($1, $2)",
+    [name, timezone],
+  );
+
+  if (result.rows.length !== 1) {
+    throw new Error(`create_workspace_for_current_user returned ${result.rows.length} rows`);
+  }
+
+  const row = result.rows[0] as { workspace_id: string; name: string };
+  return { workspaceId: row.workspace_id, name: row.name };
+};
+
 export const createWorkspaceForTrustedIdentity = async (
   identity: UserIdentity,
   name: string,

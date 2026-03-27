@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ApiRouteError } from "./errors";
-import { parseUserSettingsBody, parseWorkspaceSettingsBody } from "./settings";
+import { parseCreateWorkspaceBody, parseUserSettingsBody, parseWorkspaceSettingsBody } from "./settings";
 
 test("parseUserSettingsBody rejects empty updates", () => {
   assert.throws(
@@ -77,6 +77,37 @@ test("parseWorkspaceSettingsBody validates timezone", () => {
     },
     (error: unknown): boolean =>
       error instanceof ApiRouteError
-      && error.publicMessage === "Invalid timezone. Expected non-empty string",
+      && error.publicMessage === "Invalid timezone. Expected UTC or supported IANA timezone",
   );
+});
+
+test("parseWorkspaceSettingsBody accepts UTC timezone", () => {
+  assert.deepEqual(parseWorkspaceSettingsBody({ timezone: "UTC" }), {
+    reportingCurrency: undefined,
+    filteredCategories: undefined,
+    firstDayOfWeek: undefined,
+    timezone: "UTC",
+    hasReportingCurrency: false,
+    hasFilteredCategories: false,
+    hasFirstDayOfWeek: false,
+    hasTimezone: true,
+  });
+});
+
+test("parseCreateWorkspaceBody validates timezone", () => {
+  assert.throws(
+    (): void => {
+      parseCreateWorkspaceBody({ name: "Trips", timezone: "Mars/Olympus" });
+    },
+    (error: unknown): boolean =>
+      error instanceof ApiRouteError
+      && error.publicMessage === "Invalid timezone. Expected UTC or supported IANA timezone",
+  );
+});
+
+test("parseCreateWorkspaceBody trims name and accepts valid timezone", () => {
+  assert.deepEqual(parseCreateWorkspaceBody({ name: " Trips ", timezone: "Europe/Madrid" }), {
+    name: "Trips",
+    timezone: "Europe/Madrid",
+  });
 });

@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
 import { cn } from "@/lib/cn";
+import { resolveBrowserTimezone } from "@/lib/timezone";
 
 import styles from "./AccountMenu.module.css";
 
@@ -102,10 +103,11 @@ export const AccountMenu = (props: Props): ReactElement | null => {
     setError("");
 
     try {
+      const timezone = resolveBrowserTimezone();
       const response = await fetchWithCsrf("/api/workspaces", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+        body: JSON.stringify({ name: trimmed, timezone }),
       });
 
       if (!response.ok) {

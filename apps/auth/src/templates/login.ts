@@ -32,7 +32,12 @@ const LOCALE_LABELS: Readonly<Record<string, string>> = {
 
 const SUPPORTED_LOCALES = ["en", "es", "zh", "ru", "uk", "fa", "ar", "he"] as const;
 
-export const renderLoginPage = (locale: string, redirectUri: string, websiteUrl: string): string => {
+export const renderLoginPage = (
+  locale: string,
+  redirectUri: string,
+  websiteUrl: string,
+  cookieDomain: string,
+): string => {
   const dir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
   const lang = locale;
 
@@ -238,6 +243,7 @@ export const renderLoginPage = (locale: string, redirectUri: string, websiteUrl:
   <script>
     (function() {
       var redirectUri = ${JSON.stringify(redirectUri)};
+      var timezoneCookieDomain = ${JSON.stringify(cookieDomain)};
 
       document.getElementById("lang-select").addEventListener("change", function() {
         window.location.href = "/login?redirect_uri=" + encodeURIComponent(redirectUri) + "&lang=" + this.value;
@@ -337,6 +343,25 @@ export const renderLoginPage = (locale: string, redirectUri: string, websiteUrl:
               if (!res.ok) {
                 showError(otpError, data.error || "Error: " + res.status);
                 return;
+              }
+              var browserTimezone = "";
+              try {
+                browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+              } catch {
+                browserTimezone = "";
+              }
+              if (browserTimezone) {
+                var cookieParts = [
+                  "browser_timezone=" + encodeURIComponent(browserTimezone),
+                  "Path=/",
+                  "Max-Age=86400",
+                  "Secure",
+                  "SameSite=Lax"
+                ];
+                if (timezoneCookieDomain) {
+                  cookieParts.push("Domain=" + timezoneCookieDomain);
+                }
+                document.cookie = cookieParts.join("; ");
               }
               // Cookies set by server response — redirect to app
               window.location.href = redirectUri;

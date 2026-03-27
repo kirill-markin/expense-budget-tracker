@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { DATE_FORMATS, NUMBER_FORMATS, SUPPORTED_LOCALES, type DateFormat, type NumberFormat, type SupportedLocale } from "@/lib/locale";
+import { INVALID_TIMEZONE_MESSAGE, parseTimezone } from "@/lib/timezone";
 import { createBadRequestError } from "@/server/api/errors";
 import { integerRangeSchema, parseWithSchema } from "@/server/api/validation";
 
@@ -22,6 +23,11 @@ type ParsedWorkspaceSettingsBody = Readonly<{
   hasFilteredCategories: boolean;
   hasFirstDayOfWeek: boolean;
   hasTimezone: boolean;
+}>;
+
+type ParsedCreateWorkspaceBody = Readonly<{
+  name: string;
+  timezone: string;
 }>;
 
 const localeSchema = z.unknown().superRefine((value, ctx) => {
@@ -58,10 +64,20 @@ const filteredCategoriesSchema = z.unknown().superRefine((value, ctx) => {
 }).transform((value): ReadonlyArray<string> | null => value as ReadonlyArray<string> | null);
 
 const timezoneSchema = z.unknown().superRefine((value, ctx) => {
-  if (typeof value !== "string" || value.length === 0) {
-    ctx.addIssue({ code: "custom", message: "Invalid timezone. Expected non-empty string" });
+  if (typeof value !== "string" || parseTimezone(value) === null) {
+    ctx.addIssue({ code: "custom", message: INVALID_TIMEZONE_MESSAGE });
   }
-}).transform((value): string => value as string);
+}).transform((value): string => parseTimezone(value as string) as string);
+
+const workspaceNameSchema = z.unknown().superRefine((value, ctx) => {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    ctx.addIssue({ code: "custom", message: "name is required and must be a non-empty string" });
+    return;
+  }
+  if (value.trim().length > 100) {
+    ctx.addIssue({ code: "custom", message: "name must be 100 characters or fewer" });
+  }
+}).transform((value): string => (value as string).trim());
 
 /**
  * Validate the PUT /api/user-settings request body.
@@ -122,3 +138,9 @@ export const parseWorkspaceSettingsBody = (input: unknown): ParsedWorkspaceSetti
     hasTimezone,
   };
 };
+
+export const parseCreateWorkspaceBody = (input: unknown): ParsedCreateWorkspaceBody =>
+  parseWithSchema(input, z.object({
+    name: workspaceNameSchema,
+    timezone: timezoneSchema,
+  }));

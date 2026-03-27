@@ -268,6 +268,7 @@ test("ensureProvisionedIdentity verifies state after expected race conflict", as
     {
       pool,
       getInitialLocale: async () => "en",
+      getInitialTimezone: async () => null,
       upsertIdentity: async () => undefined,
       ensureUserSettings: async () => undefined,
     },
@@ -297,6 +298,46 @@ test("ensureProvisionedIdentity verifies state after expected race conflict", as
       "COMMIT",
     ],
   );
+});
+
+test("ensureProvisionedIdentity uses browser timezone when provisioning a personal workspace", async () => {
+  resetProvisioningCachesForTests();
+
+  const provisioningClient = createFakeClient(async (text) => {
+    if (text === "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2") {
+      return createEmptyResult();
+    }
+    if (text === "SELECT 1 FROM workspace_settings WHERE workspace_id = $1") {
+      return createResultWithRows(1);
+    }
+    return createEmptyResult();
+  });
+
+  await ensureProvisionedIdentity(
+    createIdentity("user-timezone"),
+    "user-timezone",
+    {
+      pool: { connect: async () => provisioningClient },
+      getInitialLocale: async () => "en",
+      getInitialTimezone: async () => "Europe/Madrid",
+      upsertIdentity: async () => undefined,
+      ensureUserSettings: async () => undefined,
+    },
+  );
+
+  assert.deepEqual(
+    provisioningClient.calls.map((call) => call.text),
+    [
+      "BEGIN",
+      "SELECT set_config('app.user_id', $1, true)",
+      "SELECT set_config('app.workspace_id', $1, true)",
+      "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+      "SELECT provision_personal_workspace_for_current_user($1)",
+      "SELECT 1 FROM workspace_settings WHERE workspace_id = $1",
+      "COMMIT",
+    ],
+  );
+  assert.deepEqual(provisioningClient.calls[4]?.params, ["Europe/Madrid"]);
 });
 
 test("trusted identity wrappers do not use session-backed provisioning", async () => {

@@ -78,7 +78,7 @@ app.get("/login", (c) => {
   const websiteUrl = domain.startsWith(".")
     ? `https://${domain.slice(1)}`
     : `https://${domain}`;
-  const html = renderLoginPage(locale, redirectUri, websiteUrl);
+  const html = renderLoginPage(locale, redirectUri, websiteUrl, domain);
 
   c.header("Set-Cookie", `locale=${locale}; Domain=${domain}; Path=/; Max-Age=31536000; Secure; SameSite=Lax`);
   return c.html(html);

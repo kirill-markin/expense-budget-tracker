@@ -2,6 +2,7 @@ import { type PoolClient } from "pg";
 
 import { type SupportedLocale } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
+import { getBrowserTimezoneCookie } from "@/lib/timezoneCookie";
 import { type DbClient, type DbPool } from "@/server/db/contextRunner";
 import { getPool } from "@/server/db/pool";
 import { getCurrentRequestIdentity } from "@/server/db/requestIdentity";
@@ -34,6 +35,7 @@ type PgError = Error & Readonly<{
 type ProvisioningDependencies = Readonly<{
   pool: DbPool;
   getInitialLocale: () => Promise<SupportedLocale>;
+  getInitialTimezone: () => Promise<string | null>;
   upsertIdentity: (client: DbClient, identity: UserIdentity) => Promise<void>;
   ensureUserSettings: (client: DbClient, userId: string, locale: SupportedLocale) => Promise<void>;
 }>;
@@ -41,6 +43,7 @@ type ProvisioningDependencies = Readonly<{
 const createProvisioningDependencies = (): ProvisioningDependencies => ({
   pool: getPool(),
   getInitialLocale: getLocaleCookie,
+  getInitialTimezone: getBrowserTimezoneCookie,
   upsertIdentity: async (client, identity) => upsertUserIdentity(client as PoolClient, identity),
   ensureUserSettings: async (client, userId, locale) => ensureUserSettingsRow(client as PoolClient, userId, locale),
 });
@@ -130,6 +133,7 @@ export const ensureProvisionedIdentity = async (
 ): Promise<void> => {
   const userId = identity.userId;
   const initialLocale = await dependencies.getInitialLocale();
+  const initialTimezone = await dependencies.getInitialTimezone();
   const membershipKey = getMembershipCacheKey(userId, workspaceId);
   const shouldCacheMembership = !provisionedMemberships.has(membershipKey);
   const shouldCacheUser = !provisionedUsers.has(userId);
@@ -150,7 +154,11 @@ export const ensureProvisionedIdentity = async (
         if (workspaceId !== userId) {
           throw new Error(`User ${userId} is not a member of workspace ${workspaceId}`);
         }
-        await client.query("SELECT provision_personal_workspace_for_current_user()", []);
+        if (initialTimezone === null) {
+          await client.query("SELECT provision_personal_workspace_for_current_user()", []);
+        } else {
+          await client.query("SELECT provision_personal_workspace_for_current_user($1)", [initialTimezone]);
+        }
       }
 
       const settingsCheck = await client.query(

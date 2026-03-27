@@ -4,6 +4,7 @@ import { type ReactElement, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
+import { listSupportedTimezones } from "@/lib/timezone";
 
 import styles from "@/ui/SettingsForm.module.css";
 
@@ -32,11 +33,7 @@ export const WorkspaceSettings = (props: Props): ReactElement => {
   const dirty = selected !== reportingCurrency || firstDayOfWeek !== props.firstDayOfWeek || timezone !== props.timezone;
 
   const timezones = useMemo<ReadonlyArray<string>>(() => {
-    try {
-      return Intl.supportedValuesOf("timeZone");
-    } catch {
-      return ["UTC"];
-    }
+    return listSupportedTimezones();
   }, []);
 
   const handleSave = useCallback(async (): Promise<void> => {
