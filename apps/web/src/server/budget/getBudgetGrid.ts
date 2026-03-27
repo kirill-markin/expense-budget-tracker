@@ -3,8 +3,8 @@
  *
  * Runs four queries in true parallel (separate DB connections via queryAs):
  * 1. QUERY — planned (base + modifier) vs actual per month/direction/category,
- *    with FX conversion via LATERAL index lookup. Plan uses last-write-wins
- *    on inserted_at.
+ *    with FX conversion via exact-date joins on fx_rates_daily. Plan uses
+ *    last-write-wins on inserted_at.
  * 2. CUMULATIVE_BALANCE — actual income/spend/transfer totals before the loaded
  *    range, used as the Balance row starting point.
  * 3. WARNINGS — currencies missing exchange rates.
@@ -12,10 +12,8 @@
  *    used to anchor the Balance row and derive FX adjustments.
  *
  * Performance notes:
- * - FX rate lookup uses LATERAL + LIMIT 1 instead of the rate_ranges CTE.
- *   The old pattern materialized the entire exchange_rates table (for the
- *   report currency) and did an O(N×M) non-equi range join. LATERAL does
- *   one backward index scan per row via idx_exchange_rates_quote_base_date.
+ * - The worker already expanded raw market data into exact-date all-pairs rows.
+ *   Read queries use fx_rates_daily directly and never re-derive carry-forward.
  * - MONTH_END_BALANCES uses le.currency directly instead of joining the
  *   accounts view (which triggers a redundant full scan of ledger_entries
  *   via MODE() WITHIN GROUP).
@@ -127,17 +125,10 @@ export const QUERY = `
       END) AS actual,
       bool_or(le.currency != $1 AND r.rate IS NULL) AS has_unconvertible
     FROM ledger_entries le
-    -- LATERAL: one backward index scan per row via idx_exchange_rates_quote_base_date,
-    -- replacing the old rate_ranges CTE that materialized the entire exchange_rates
-    -- table and did an O(N×M) non-equi range join.
-    LEFT JOIN LATERAL (
-      SELECT rate FROM exchange_rates
-      WHERE quote_currency = $1
-        AND base_currency = le.currency
-        AND rate_date <= le.ts::date
-      ORDER BY rate_date DESC
-      LIMIT 1
-    ) r ON true
+    LEFT JOIN fx_rates_daily r
+      ON r.quote_currency = $1
+      AND r.base_currency = le.currency
+      AND r.calendar_date = le.ts::date
     WHERE le.ts::date >= to_date($2, 'YYYY-MM')
       AND le.ts::date < (LEAST(to_date($3, 'YYYY-MM'), to_date($5, 'YYYY-MM')) + interval '1 month')::date
     GROUP BY 1, 2, 3
@@ -185,15 +176,10 @@ export const CUMULATIVE_BALANCE_QUERY = `
         END
       END) AS total
     FROM ledger_entries le
-    -- LATERAL: same index-backed FX lookup as QUERY (see comment there).
-    LEFT JOIN LATERAL (
-      SELECT rate FROM exchange_rates
-      WHERE quote_currency = $1
-        AND base_currency = le.currency
-        AND rate_date <= le.ts::date
-      ORDER BY rate_date DESC
-      LIMIT 1
-    ) r ON true
+    LEFT JOIN fx_rates_daily r
+      ON r.quote_currency = $1
+      AND r.base_currency = le.currency
+      AND r.calendar_date = le.ts::date
     WHERE le.ts::date < to_date($2, 'YYYY-MM')
     GROUP BY direction
   )
@@ -205,15 +191,20 @@ export const CUMULATIVE_BALANCE_QUERY = `
 `;
 
 const WARNINGS_QUERY = `
-  WITH data_currencies AS (
+  WITH latest_day AS (
+    SELECT MAX(calendar_date) AS calendar_date
+    FROM fx_rates_daily
+  ),
+  data_currencies AS (
     SELECT DISTINCT currency FROM budget_lines
     UNION
     SELECT DISTINCT currency FROM ledger_entries
   ),
   rate_currencies AS (
     SELECT DISTINCT base_currency
-    FROM exchange_rates
+    FROM fx_rates_daily
     WHERE quote_currency = $1
+      AND calendar_date = (SELECT calendar_date FROM latest_day)
   )
   SELECT dc.currency
   FROM data_currencies dc
@@ -276,17 +267,10 @@ const MONTH_END_BALANCES_QUERY = `
       ELSE NULL
     END)::numeric, 2) AS balance_report
   FROM running_balances rb
-  -- LATERAL: one backward index scan per (currency, month-end date) via
-  -- idx_exchange_rates_quote_base_date, replacing the old rate_ranges CTE
-  -- that materialized all exchange_rates rows and did an O(N×M) range join.
-  LEFT JOIN LATERAL (
-    SELECT rate FROM exchange_rates
-    WHERE quote_currency = $1
-      AND base_currency = rb.currency
-      AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
-    ORDER BY rate_date DESC
-    LIMIT 1
-  ) rr ON true
+  LEFT JOIN fx_rates_daily rr
+    ON rr.quote_currency = $1
+    AND rr.base_currency = rb.currency
+    AND rr.calendar_date = (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
   WHERE rb.month >= to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
     AND rb.month <= $3
   GROUP BY rb.month, rb.liquidity

@@ -3,7 +3,7 @@
  *
  * Fetches USD/RUB rates from the CBR XML API, converts to
  * base_currency=RUB / quote_currency=USD pairs,
- * and inserts missing dates into exchange_rates.
+ * and inserts missing dates into fx_rates_raw.
  *
  * CBR publishes rates as "RUB per Nominal units of foreign currency".
  * For USD: Nominal=1, Value=77.0223 means 1 USD = 77.0223 RUB.
@@ -14,9 +14,10 @@ import { XMLParser } from "fast-xml-parser";
 import { CBR_BASE_URL, CBR_EARLIEST_DATE, CBR_USD_ID } from "../config";
 import { addDays, todayIso, formatDdMmYyyy } from "../dateUtils";
 import { getRateDateRanges, insertRows } from "../dbQueries";
-import type { ExchangeRateRow, DateRange, FetcherResult } from "../types";
+import type { FxRawRateRow, DateRange, FetcherResult } from "../types";
 
 const CURRENCY = "RUB";
+const SOURCE = "cbr";
 
 // ---------------------------------------------------------------------------
 // Type definitions
@@ -97,8 +98,8 @@ function parseCbrXml(xmlText: string): CBRRecord[] {
  * CBR gives: 1 USD = Value/Nominal RUB (Nominal is always 1 for USD).
  * We need: 1 RUB = ? USD -> rate = Nominal / Value.
  */
-function convertCbrToUsd(records: CBRRecord[]): ExchangeRateRow[] {
-  const rows: ExchangeRateRow[] = [];
+function convertCbrToUsd(records: CBRRecord[]): FxRawRateRow[] {
+  const rows: FxRawRateRow[] = [];
   for (const record of records) {
     if (record.value === 0) {
       throw new Error(`CBR returned zero rate for date ${record.rate_date}`);
@@ -109,6 +110,7 @@ function convertCbrToUsd(records: CBRRecord[]): ExchangeRateRow[] {
       quote_currency: "USD",
       rate_date: record.rate_date,
       rate: rate.toFixed(9),
+      source: SOURCE,
     });
   }
   return rows;
@@ -142,9 +144,9 @@ async function fetchCbrRates(start: string, end: string): Promise<string> {
 
 /** Keep only rows not already covered by existing data. */
 function filterNewRows(
-  allRows: ExchangeRateRow[],
+  allRows: FxRawRateRow[],
   existingRange: DateRange | undefined,
-): ExchangeRateRow[] {
+): FxRawRateRow[] {
   if (!existingRange) {
     return allRows;
   }

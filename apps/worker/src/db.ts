@@ -25,6 +25,15 @@ async function getPool(): Promise<pg.Pool> {
 export const query = async (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>
   (await getPool()).query(text, params as Array<unknown>);
 
+export const withClient = async <T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> => {
+  const client = await (await getPool()).connect();
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
+};
+
 export const endPool = async (): Promise<void> => {
   if (pool) {
     await pool.end();

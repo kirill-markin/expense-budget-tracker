@@ -167,17 +167,17 @@ const generate = (): DemoData => {
       if (mi % p.every !== p.offset) continue;
       const amount = p.amount + vary(month, pi, p.jitter);
       const rate = FX[p.currency] ?? 1;
-      const amountUsd = round2(amount * rate);
+      const amountReport = round2(amount * rate);
       entries.push({
         entryId: `d${String(++entryN).padStart(3, "0")}`,
         eventId: `ev${String(++eventN).padStart(3, "0")}`,
         ts: new Date(Date.UTC(y, m - 1, Math.min(p.day, 28), 9 + (pi % 12))).toISOString(),
-        accountId: p.account, amount, amountUsd, currency: p.currency,
+        accountId: p.account, amount, amountReport, currency: p.currency,
         kind: p.kind, category: p.category, counterparty: p.counterparty, note: noteFor(p.category, abbr),
       });
       accBal[p.account] = round2((accBal[p.account] ?? 0) + amount);
       const key = `${month}|${p.kind}|${p.category}`;
-      actuals.set(key, round2((actuals.get(key) ?? 0) + amountUsd));
+      actuals.set(key, round2((actuals.get(key) ?? 0) + amountReport));
     }
 
     let transferNet = 0;
@@ -189,8 +189,8 @@ const generate = (): DemoData => {
       const fromUsd = round2(t.fromAmt * (FX[t.fromCur] ?? 1));
       const toUsd = round2(t.toAmt * (FX[t.toCur] ?? 1));
       entries.push(
-        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.from, amount: t.fromAmt, amountUsd: fromUsd, currency: t.fromCur, kind: "transfer", category: null, counterparty: null, note: `To ${t.to}` },
-        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.to, amount: t.toAmt, amountUsd: toUsd, currency: t.toCur, kind: "transfer", category: null, counterparty: null, note: `From ${t.from}` },
+        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.from, amount: t.fromAmt, amountReport: fromUsd, currency: t.fromCur, kind: "transfer", category: null, counterparty: null, note: `To ${t.to}` },
+        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.to, amount: t.toAmt, amountReport: toUsd, currency: t.toCur, kind: "transfer", category: null, counterparty: null, note: `From ${t.from}` },
       );
       accBal[t.from] = round2((accBal[t.from] ?? 0) + t.fromAmt);
       accBal[t.to] = round2((accBal[t.to] ?? 0) + t.toAmt);
@@ -223,7 +223,7 @@ const generate = (): DemoData => {
       return {
         accountId, currency, liquidity: DEMO_LIQUIDITY[accountId] ?? "high",
         status: "active" as const, balance,
-        balanceUsd: round2(balance * (FX[currency] ?? 1)),
+        balanceReport: round2(balance * (FX[currency] ?? 1)),
         lastTransactionTs: entries.find((e) => e.accountId === accountId)?.ts ?? null,
         overdue: false,
       };
@@ -234,7 +234,7 @@ const generate = (): DemoData => {
   const curMap: Record<string, { balance: number; usd: number }> = {};
   for (const acc of accounts) {
     const prev = curMap[acc.currency] ?? { balance: 0, usd: 0 };
-    curMap[acc.currency] = { balance: round2(prev.balance + acc.balance), usd: round2(prev.usd + (acc.balanceUsd ?? 0)) };
+    curMap[acc.currency] = { balance: round2(prev.balance + acc.balance), usd: round2(prev.usd + (acc.balanceReport ?? 0)) };
   }
   const totals: ReadonlyArray<CurrencyTotal> = Object.entries(curMap)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -242,7 +242,7 @@ const generate = (): DemoData => {
       currency, balance,
       balancePositive: balance > 0 ? balance : 0,
       balanceNegative: balance < 0 ? balance : 0,
-      balanceUsd: usd, hasUnconvertible: false,
+      balanceReport: usd, hasUnconvertible: false,
     }));
 
   // Budget rows (past months with actuals + future months plan-only)
@@ -292,7 +292,7 @@ const SORT_ACCESSORS: Readonly<Record<string, (e: LedgerEntry) => string | numbe
   accountId: (e) => e.accountId,
   amount: (e) => e.amount,
   amountAbs: (e) => Math.abs(e.amount),
-  amountUsdAbs: (e) => Math.abs(e.amountUsd ?? 0),
+  amountReportAbs: (e) => Math.abs(e.amountReport ?? 0),
   currency: (e) => e.currency,
   kind: (e) => e.kind,
   category: (e) => e.category ?? "",
@@ -435,9 +435,9 @@ export const getDemoFxBreakdown = (month: string): FxBreakdownResult => {
     const o = open[cur] ?? 0;
     const c = close[cur] ?? 0;
     return {
-      currency: cur, openNative: o, openRate: rate, openUsd: round2(o * rate),
+      currency: cur, openNative: o, openRate: rate, openReport: round2(o * rate),
       deltaNative: round2(c - o), closeNative: c, closeRate: rate,
-      closeUsd: round2(c * rate), changeUsd: round2((c - o) * rate),
+      closeReport: round2(c * rate), changeReport: round2((c - o) * rate),
     };
   });
   return { rows };

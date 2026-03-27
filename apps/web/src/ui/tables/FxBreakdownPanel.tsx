@@ -15,6 +15,7 @@ import tableStyles from "./TableUi.module.css";
 
 type Props = Readonly<{
   month: string;
+  reportingCurrency: string;
   refreshToken: string;
   onClose: () => void;
 }>;
@@ -31,7 +32,7 @@ const formatNative = (value: number): string => {
 };
 
 export const FxBreakdownPanel = (props: Props): ReactElement => {
-  const { month, refreshToken, onClose } = props;
+  const { month, reportingCurrency, refreshToken, onClose } = props;
   const { numberFormat } = useFormat();
 
   const [rows, setRows] = useState<ReadonlyArray<FxBreakdownRow>>([]);
@@ -104,7 +105,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [closePanel]);
 
-  const totalChange = rows.reduce((sum, r) => sum + r.changeUsd, 0);
+  const totalChange = rows.reduce((sum, r) => sum + r.changeReport, 0);
 
   return (
     <>
@@ -138,12 +139,12 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                 <th className={tableStyles.headCell}>Currency</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Open</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Open USD</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Open ${reportingCurrency}`}</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Delta</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Close</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Close USD</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Change USD</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Close ${reportingCurrency}`}</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Change ${reportingCurrency}`}</th>
               </tr>
             </thead>
             <tbody>
@@ -152,12 +153,12 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                   <td className={cn(tableStyles.cell, tableStyles.cellMono)}>{row.currency}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.openNative)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.openRate)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.openUsd, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.openReport, numberFormat)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.deltaNative)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeUsd, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight, row.changeUsd < 0 ? budgetStyles.over : "")}>{formatAmount(row.changeUsd, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeReport, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight, row.changeReport < 0 ? budgetStyles.over : "")}>{formatAmount(row.changeReport, numberFormat)}</td>
                 </tr>
               ))}
               {!loading && rows.length === 0 && (
@@ -174,11 +175,11 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                   <td className={tableStyles.cell}>Total</td>
                   <td className={tableStyles.cell} />
                   <td className={tableStyles.cell} />
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.openUsd, 0), numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.openReport, 0), numberFormat)}</td>
                   <td className={tableStyles.cell} />
                   <td className={tableStyles.cell} />
                   <td className={tableStyles.cell} />
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.closeUsd, 0), numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.closeReport, 0), numberFormat)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight, totalChange < 0 ? budgetStyles.over : "")}>{formatAmount(totalChange, numberFormat)}</td>
                 </tr>
               </tfoot>

@@ -1,11 +1,10 @@
 /**
  * Paginated ledger entry queries for the transactions dashboard.
  *
- * Fetches entries with runtime FX conversion via LATERAL index lookup on
- * exchange_rates (one backward scan per row via idx_exchange_rates_quote_base_date).
- * Supports filtering by date range, account, kind, and category, with
- * configurable sort and pagination. The report-currency amount is computed
- * at read time — no precomputed amount_usd column.
+ * Reads query-ready daily FX pairs from fx_rates_daily.
+ *
+ * The worker expands raw market data into exact-date all-pairs rates ahead of
+ * time, so this query only has to do a single equality join per ledger row.
  */
 import { withUserContext, queryAs } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
@@ -16,7 +15,7 @@ export type LedgerEntry = Readonly<{
   ts: string;
   accountId: string;
   amount: number;
-  amountUsd: number | null;
+  amountReport: number | null;
   currency: string;
   kind: string;
   category: string | null;
@@ -50,7 +49,6 @@ export type TransactionsPage = Readonly<{
 // names inside expressions (like ABS(...)) are resolved against input columns
 // only. So "ABS(amount_report)" fails because amount_report is a SELECT alias,
 // not a real column. We inline the full CASE expression for computed sorts.
-// The $1 placeholder is the report currency, same as in the main SELECT.
 const AMOUNT_REPORT_EXPR =
   "CASE WHEN le.currency = $1 THEN le.amount::double precision" +
   " WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision" +
@@ -65,7 +63,7 @@ const SORT_COLUMNS: Readonly<Record<string, string>> = {
   category: "category",
   counterparty: "counterparty",
   amountAbs: "ABS(amount)",
-  amountUsdAbs: `ABS(${AMOUNT_REPORT_EXPR})`,
+  amountReportAbs: `ABS(${AMOUNT_REPORT_EXPR})`,
 };
 
 const buildWhereClause = (
@@ -146,17 +144,10 @@ export const getTransactionsPage = async (
       END AS amount_report,
       le.currency, le.kind, le.category, le.counterparty, le.note
     FROM ledger_entries le
-    -- LATERAL: one backward index scan per row via idx_exchange_rates_quote_base_date,
-    -- replacing the old rate_ranges CTE that materialized the entire exchange_rates
-    -- table and did an O(N×M) non-equi range join.
-    LEFT JOIN LATERAL (
-      SELECT rate FROM exchange_rates
-      WHERE quote_currency = $1
-        AND base_currency = le.currency
-        AND rate_date <= le.ts::date
-      ORDER BY rate_date DESC
-      LIMIT 1
-    ) r ON true
+    LEFT JOIN fx_rates_daily r
+      ON r.quote_currency = $1
+      AND r.base_currency = le.currency
+      AND r.calendar_date = le.ts::date
     ${entriesWhere}
     ORDER BY ${sortColumn} ${sortDir}
     LIMIT $${entriesParams.push(filter.limit)}
@@ -197,7 +188,7 @@ export const getTransactionsPage = async (
         ts: new Date(row.ts).toISOString(),
         accountId: row.account_id,
         amount: Number(row.amount),
-        amountUsd: row.amount_report !== null ? Number(row.amount_report) : null,
+        amountReport: row.amount_report !== null ? Number(row.amount_report) : null,
         currency: row.currency,
         kind: row.kind,
         category: row.category,

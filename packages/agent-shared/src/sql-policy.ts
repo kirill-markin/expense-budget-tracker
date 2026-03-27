@@ -30,7 +30,8 @@ const ALLOWED_RELATION_NAMES = [
   "budget_comments",
   "workspace_settings",
   "account_metadata",
-  "exchange_rates",
+  "fx_rates_raw",
+  "fx_rates_daily",
 ] as const;
 
 export type AllowedRelationName = typeof ALLOWED_RELATION_NAMES[number];

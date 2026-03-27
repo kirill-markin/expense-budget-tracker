@@ -88,11 +88,19 @@ Current plan = latest base + latest modifier per (budget_month, direction, categ
 - comment (TEXT) — empty string means "no comment"
 - workspace_id (TEXT), inserted_at (TIMESTAMPTZ)
 
-### exchange_rates (global, no RLS)
+### fx_rates_raw (global, no RLS)
 - base_currency (TEXT), quote_currency (TEXT), rate_date (DATE) — composite PK
 - rate (NUMERIC) — amount_in_base * rate = amount_in_quote
+- source (TEXT)
 - inserted_at (TIMESTAMPTZ)
-Weekends/holidays have no rates — use LEAD() window for applicable rate range.
+Canonical FX source-of-truth. quote_currency is always the internal pivot currency USD.
+
+### fx_rates_daily (global, no RLS)
+- base_currency (TEXT), quote_currency (TEXT), calendar_date (DATE) — composite PK
+- rate (NUMERIC) — amount_in_base * rate = amount_in_quote
+- source_rate_date (DATE) — latest raw market date used to build this daily row
+- inserted_at (TIMESTAMPTZ)
+Query-ready FX table. This is the table app reads use for exact-date conversion.
 
 ### workspace_settings
 - workspace_id (TEXT, PK)
@@ -236,17 +244,12 @@ FROM plan p FULL OUTER JOIN actual a ON p.direction = a.direction AND p.category
 ORDER BY direction, category
 
 ### FX conversion at query time
-WITH rate_ranges AS (
-  SELECT base_currency, rate_date, rate,
-         LEAD(rate_date) OVER (PARTITION BY base_currency ORDER BY rate_date) AS next_date
-  FROM exchange_rates WHERE quote_currency = 'USD'
-)
-SELECT le.*, COALESCE(rr.rate, 1.0) AS to_usd, le.amount * COALESCE(rr.rate, 1.0) AS amount_usd
+SELECT le.*, fr.rate AS to_report, le.amount * fr.rate AS amount_report
 FROM ledger_entries le
-LEFT JOIN rate_ranges rr ON le.currency = rr.base_currency AND le.ts::date >= rr.rate_date AND (rr.next_date IS NULL OR le.ts::date < rr.next_date)
-WHERE le.currency != 'USD'
-UNION ALL
-SELECT le.*, 1.0 AS to_usd, le.amount AS amount_usd FROM ledger_entries le WHERE le.currency = 'USD'`;
+LEFT JOIN fx_rates_daily fr
+  ON fr.base_currency = le.currency
+ AND fr.quote_currency = 'EUR'
+ AND fr.calendar_date = le.ts::date`;
 
 export const TOOL_DESCRIPTION = `Execute a SQL script against the expense tracker database. A script may contain one or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons.
 
@@ -254,7 +257,8 @@ Tables:
 - ledger_entries (entry_id TEXT PK, event_id TEXT, ts TIMESTAMPTZ, account_id TEXT, amount NUMERIC, currency TEXT, kind TEXT, category TEXT, counterparty TEXT, note TEXT, external_id TEXT, workspace_id TEXT, inserted_at TIMESTAMPTZ)
 - budget_lines (budget_month DATE, direction TEXT, category TEXT, kind TEXT, currency TEXT, planned_value NUMERIC, workspace_id TEXT, inserted_at TIMESTAMPTZ)
 - budget_comments (budget_month DATE, direction TEXT, category TEXT, comment TEXT, workspace_id TEXT, inserted_at TIMESTAMPTZ)
-- exchange_rates (base_currency TEXT, quote_currency TEXT, rate_date DATE, rate NUMERIC, inserted_at TIMESTAMPTZ) — global, no RLS
+- fx_rates_raw (base_currency TEXT, quote_currency TEXT, rate_date DATE, rate NUMERIC, source TEXT, inserted_at TIMESTAMPTZ) — global, no RLS
+- fx_rates_daily (base_currency TEXT, quote_currency TEXT, calendar_date DATE, rate NUMERIC, source_rate_date DATE, inserted_at TIMESTAMPTZ) — global, no RLS
 - workspace_settings (workspace_id TEXT PK, reporting_currency TEXT, filtered_categories TEXT[] NULL, first_day_of_week SMALLINT, timezone TEXT)
 - account_metadata (workspace_id TEXT PK part, account_id TEXT PK part, liquidity TEXT) — optional sidecar; liquidity must be high, medium, or low; missing row is allowed and is treated as high in balances and budget queries
 

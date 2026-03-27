@@ -1,5 +1,5 @@
 /**
- * Generate static USDT/USD exchange rate rows and insert into Postgres.
+ * Generate static USDT/USD raw FX rows and insert into Postgres.
  *
  * USDT (Tether) is pegged 1:1 to USD. No external API call is needed —
  * rows are generated locally with a fixed rate of 1.0 for every calendar day.
@@ -7,19 +7,20 @@
 
 import { addDays, todayIso } from "../dateUtils";
 import { getRateDateRanges, insertRows } from "../dbQueries";
-import type { ExchangeRateRow, DateRange, FetcherResult } from "../types";
+import type { FxRawRateRow, DateRange, FetcherResult } from "../types";
 
 const CURRENCY = "USDT";
 const RATE = "1.000000000";
 const EARLIEST_DATE = "2009-01-03";
+const SOURCE = "usdt";
 
 // ---------------------------------------------------------------------------
 // Pure functions
 // ---------------------------------------------------------------------------
 
-/** Generate one USDT/USD row per calendar day for the given date range. */
-function generateRows(start: string, end: string): ExchangeRateRow[] {
-  const rows: ExchangeRateRow[] = [];
+/** Generate one USDT/USD raw row per calendar day for the given date range. */
+function generateRows(start: string, end: string): FxRawRateRow[] {
+  const rows: FxRawRateRow[] = [];
   let cursor = start;
   while (cursor <= end) {
     rows.push({
@@ -27,6 +28,7 @@ function generateRows(start: string, end: string): ExchangeRateRow[] {
       quote_currency: "USD",
       rate_date: cursor,
       rate: RATE,
+      source: SOURCE,
     });
     cursor = addDays(cursor, 1);
   }
@@ -35,9 +37,9 @@ function generateRows(start: string, end: string): ExchangeRateRow[] {
 
 /** Keep only rows not already covered by existing data. */
 function filterNewRows(
-  allRows: ExchangeRateRow[],
+  allRows: FxRawRateRow[],
   existingRange: DateRange | undefined,
-): ExchangeRateRow[] {
+): FxRawRateRow[] {
   if (!existingRange) {
     return allRows;
   }

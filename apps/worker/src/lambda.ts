@@ -1,8 +1,8 @@
 /**
- * AWS Lambda entrypoint for exchange rate fetchers.
+ * AWS Lambda entrypoint for the FX pipeline.
  *
- * Invoked by EventBridge schedule rules. Runs all fetchers in parallel
- * against the Postgres database specified by DATABASE_URL.
+ * Invoked by EventBridge schedule rules. It ingests raw source rates first and
+ * then rebuilds the query-ready all-pairs daily FX table in one coherent pass.
  */
 
 import { run as runEcb } from "./fetchers/ecb";
@@ -11,6 +11,7 @@ import { run as runNbs } from "./fetchers/nbs";
 import { run as runNbu } from "./fetchers/nbu";
 import { run as runUsdt } from "./fetchers/usdt";
 import { endPool } from "./db";
+import { rebuildDailyRates } from "./rebuildDailyRates";
 import type { FetcherOutcome } from "./types";
 
 export async function handler(): Promise<{ statusCode: number; body: string }> {
@@ -44,9 +45,15 @@ export async function handler(): Promise<{ statusCode: number; body: string }> {
       throw new Error(`All fetchers failed: ${errors.map(([k]) => k).join(", ")}`);
     }
 
+    const rebuildResult = await rebuildDailyRates();
+    console.log("Daily FX rebuild complete:", JSON.stringify(rebuildResult));
+
     return {
       statusCode: 200,
-      body: JSON.stringify(results),
+      body: JSON.stringify({
+        fetchers: results,
+        rebuild: rebuildResult,
+      }),
     };
   } finally {
     await endPool();

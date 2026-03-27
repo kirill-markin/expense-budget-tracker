@@ -1,5 +1,8 @@
 /**
  * Create a ledger entry and return the inserted row with report-currency amount.
+ *
+ * Create responses use the same exact-date FX read model as the dashboards:
+ * every conversion comes from fx_rates_daily instead of ad hoc range lookups.
  */
 import { queryAs } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
@@ -41,7 +44,7 @@ export const createLedgerEntry = async (
   ts: string;
   accountId: string;
   amount: number;
-  amountUsd: number | null;
+  amountReport: number | null;
   currency: string;
   kind: string;
   category: string | null;
@@ -97,14 +100,10 @@ export const createLedgerEntry = async (
         i.counterparty,
         i.note
       FROM inserted i
-      LEFT JOIN LATERAL (
-        SELECT rate FROM exchange_rates
-        WHERE quote_currency = $1
-          AND base_currency = i.currency
-          AND rate_date <= i.ts::date
-        ORDER BY rate_date DESC
-        LIMIT 1
-      ) r ON true
+      LEFT JOIN fx_rates_daily r
+        ON r.quote_currency = $1
+        AND r.base_currency = i.currency
+        AND r.calendar_date = i.ts::date
     `,
     [
       reportCurrency,
@@ -131,7 +130,7 @@ export const createLedgerEntry = async (
     ts: new Date(row.ts).toISOString(),
     accountId: row.account_id,
     amount: Number(row.amount),
-    amountUsd: row.amount_report !== null ? Number(row.amount_report) : null,
+    amountReport: row.amount_report !== null ? Number(row.amount_report) : null,
     currency: row.currency,
     kind: row.kind,
     category: row.category,

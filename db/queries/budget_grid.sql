@@ -2,12 +2,8 @@
 -- Parameters: $1 = report_currency, $2 = month_from, $3 = month_to,
 --             $4 = plan_from, $5 = actual_to
 --
--- Performance: all FX rate lookups use LATERAL + LIMIT 1 instead of the old
--- rate_ranges CTE. The old pattern materialized the entire exchange_rates table
--- (filtered by quote_currency) with a LEAD() window function, then did a
--- non-equi range join — O(N×M). LATERAL does one backward index scan per row
--- via idx_exchange_rates_quote_base_date (quote_currency, base_currency,
--- rate_date) INCLUDE (rate).
+-- Performance: raw market data is pre-expanded by the worker into exact-date
+-- all-pairs rows in fx_rates_daily, so budget reads use simple equality joins.
 
 -- QUERY: main budget grid — planned (base + modifier) vs actual per month/direction/category.
 WITH latest_plans AS (
@@ -62,14 +58,10 @@ actual AS (
     END) AS actual,
     bool_or(le.currency != $1 AND r.rate IS NULL) AS has_unconvertible
   FROM ledger_entries le
-  LEFT JOIN LATERAL (
-    SELECT rate FROM exchange_rates
-    WHERE quote_currency = $1
-      AND base_currency = le.currency
-      AND rate_date <= le.ts::date
-    ORDER BY rate_date DESC
-    LIMIT 1
-  ) r ON true
+  LEFT JOIN fx_rates_daily r
+    ON r.quote_currency = $1
+    AND r.base_currency = le.currency
+    AND r.calendar_date = le.ts::date
   WHERE le.ts::date >= to_date($2, 'YYYY-MM')
     AND le.ts::date < (LEAST(to_date($3, 'YYYY-MM'), to_date($5, 'YYYY-MM')) + interval '1 month')::date
   GROUP BY 1, 2, 3
@@ -119,14 +111,10 @@ WITH actual_before AS (
       END
     END) AS total
   FROM ledger_entries le
-  LEFT JOIN LATERAL (
-    SELECT rate FROM exchange_rates
-    WHERE quote_currency = $1
-      AND base_currency = le.currency
-      AND rate_date <= le.ts::date
-    ORDER BY rate_date DESC
-    LIMIT 1
-  ) r ON true
+  LEFT JOIN fx_rates_daily r
+    ON r.quote_currency = $1
+    AND r.base_currency = le.currency
+    AND r.calendar_date = le.ts::date
   WHERE le.ts::date < to_date($2, 'YYYY-MM')
   GROUP BY direction
 )
@@ -140,15 +128,20 @@ FROM actual_before;
 
 -- WARNINGS_QUERY: currencies without exchange rates for the report currency.
 -- Parameters: $1 = report_currency
-WITH data_currencies AS (
+WITH latest_day AS (
+  SELECT MAX(calendar_date) AS calendar_date
+  FROM fx_rates_daily
+),
+data_currencies AS (
   SELECT DISTINCT currency FROM budget_lines
   UNION
   SELECT DISTINCT currency FROM ledger_entries
 ),
 rate_currencies AS (
   SELECT DISTINCT base_currency
-  FROM exchange_rates
+  FROM fx_rates_daily
   WHERE quote_currency = $1
+    AND calendar_date = (SELECT calendar_date FROM latest_day)
 )
 SELECT dc.currency
 FROM data_currencies dc
@@ -209,14 +202,10 @@ SELECT
     ELSE NULL
   END)::numeric, 2) AS balance_report
 FROM running_balances rb
-LEFT JOIN LATERAL (
-  SELECT rate FROM exchange_rates
-  WHERE quote_currency = $1
-    AND base_currency = rb.currency
-    AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
-  ORDER BY rate_date DESC
-  LIMIT 1
-) rr ON true
+LEFT JOIN fx_rates_daily rr
+  ON rr.quote_currency = $1
+  AND rr.base_currency = rb.currency
+  AND rr.calendar_date = (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
 WHERE rb.month >= to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
   AND rb.month <= $3
 GROUP BY rb.month

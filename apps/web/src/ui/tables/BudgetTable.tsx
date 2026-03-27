@@ -113,12 +113,13 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
           filter={controller.drillDownFilter}
           categories={controller.allCategories}
           hints={hints}
+          reportingCurrency={reportingCurrency}
           refreshToken={refreshToken}
           onClose={controller.handleDrillDownClose}
         />
       )}
       {controller.fxBreakdownMonth !== null && (
-        <FxBreakdownPanel month={controller.fxBreakdownMonth} refreshToken={refreshToken} onClose={controller.closeFxBreakdown} />
+        <FxBreakdownPanel month={controller.fxBreakdownMonth} reportingCurrency={reportingCurrency} refreshToken={refreshToken} onClose={controller.closeFxBreakdown} />
       )}
     </>
   );

@@ -21,7 +21,7 @@ const createEntry = (entryId: string, category: string | null): LedgerEntry => (
   ts: "2026-03-12T10:00:00.000Z",
   accountId: "cash",
   amount: 10,
-  amountUsd: 10,
+  amountReport: 10,
   currency: "USD",
   kind: "spend",
   category,
@@ -109,8 +109,8 @@ test("buildDrillDownPageUrl preserves drill-down filters including repeated cate
   };
 
   assert.equal(
-    buildDrillDownPageUrl(filter, "amountUsdAbs", "desc", "refresh-3", 100, 0),
-    "/api/transactions?dateFrom=2026-03-01&dateTo=2026-03-31&kind=spend&category=Food&categories=Food&categories=&sortKey=amountUsdAbs&sortDir=desc&limit=100&offset=0&refresh=refresh-3",
+    buildDrillDownPageUrl(filter, "amountReportAbs", "desc", "refresh-3", 100, 0),
+    "/api/transactions?dateFrom=2026-03-01&dateTo=2026-03-31&kind=spend&category=Food&categories=Food&categories=&sortKey=amountReportAbs&sortDir=desc&limit=100&offset=0&refresh=refresh-3",
   );
 });
 
@@ -124,8 +124,8 @@ test("buildDrillDownPageUrl changes when refreshToken changes", () => {
   };
 
   assert.notEqual(
-    buildDrillDownPageUrl(filter, "amountUsdAbs", "desc", "refresh-a", 100, 0),
-    buildDrillDownPageUrl(filter, "amountUsdAbs", "desc", "refresh-b", 100, 0),
+    buildDrillDownPageUrl(filter, "amountReportAbs", "desc", "refresh-a", 100, 0),
+    buildDrillDownPageUrl(filter, "amountReportAbs", "desc", "refresh-b", 100, 0),
   );
 });
 

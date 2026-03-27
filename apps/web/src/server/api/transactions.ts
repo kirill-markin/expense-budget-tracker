@@ -36,7 +36,7 @@ const DEFAULT_SORT_KEY = "ts";
 const DEFAULT_SORT_DIR = "desc";
 const MAX_LIMIT = 500;
 const VALID_SORT_KEYS = new Set([
-  "ts", "accountId", "amount", "amountAbs", "amountUsdAbs", "currency", "kind", "category", "counterparty",
+  "ts", "accountId", "amount", "amountAbs", "amountReportAbs", "currency", "kind", "category", "counterparty",
 ]);
 
 const dateParamSchema = (fieldName: string) =>

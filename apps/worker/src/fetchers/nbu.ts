@@ -3,7 +3,7 @@
  *
  * Fetches USD/UAH rates from the NBU API (official data),
  * converts to base_currency=UAH / quote_currency=USD pairs,
- * and inserts missing dates into exchange_rates.
+ * and inserts missing dates into fx_rates_raw.
  *
  * NBU publishes rates as "UAH per 1 unit of foreign currency".
  * For USD: rate=41.2948 means 1 USD = 41.2948 UAH.
@@ -13,9 +13,10 @@
 import { NBU_BASE_URL, NBU_EARLIEST_DATE } from "../config";
 import { todayIso, addDays } from "../dateUtils";
 import { getRateDateRanges, insertRows } from "../dbQueries";
-import type { ExchangeRateRow, DateRange, FetcherResult } from "../types";
+import type { FxRawRateRow, DateRange, FetcherResult } from "../types";
 
 const CURRENCY = "UAH";
+const SOURCE = "nbu";
 
 // ---------------------------------------------------------------------------
 // Type definitions
@@ -68,8 +69,8 @@ function parseNbuResponse(data: NBUApiEntry[]): NBURecord[] {
  * NBU gives: 1 USD = rate UAH.
  * We need: 1 UAH = ? USD -> rate = 1 / rate.
  */
-function convertNbuToUsd(records: NBURecord[]): ExchangeRateRow[] {
-  const rows: ExchangeRateRow[] = [];
+function convertNbuToUsd(records: NBURecord[]): FxRawRateRow[] {
+  const rows: FxRawRateRow[] = [];
   for (const record of records) {
     const rate = 1 / record.rate;
     rows.push({
@@ -77,6 +78,7 @@ function convertNbuToUsd(records: NBURecord[]): ExchangeRateRow[] {
       quote_currency: "USD",
       rate_date: record.rate_date,
       rate: rate.toFixed(9),
+      source: SOURCE,
     });
   }
   return rows;
@@ -113,9 +115,9 @@ async function fetchNbuRates(start: string, end: string): Promise<NBUApiEntry[]>
 
 /** Keep only rows not already covered by existing data. */
 function filterNewRows(
-  allRows: ExchangeRateRow[],
+  allRows: FxRawRateRow[],
   existingRange: DateRange | undefined,
-): ExchangeRateRow[] {
+): FxRawRateRow[] {
   if (!existingRange) {
     return allRows;
   }

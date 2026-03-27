@@ -3,7 +3,7 @@
  *
  * Fetches USD/RSD rates from the kurs.resenje.org API (official NBS data),
  * converts to base_currency=RSD / quote_currency=USD pairs,
- * and inserts missing dates into exchange_rates.
+ * and inserts missing dates into fx_rates_raw.
  *
  * NBS publishes rates as "RSD per 1 unit of foreign currency".
  * For USD: exchange_middle=98.9309 means 1 USD = 98.9309 RSD.
@@ -13,9 +13,10 @@
 import { NBS_API_BASE_URL, NBS_EARLIEST_DATE, NBS_MAX_COUNT } from "../config";
 import { addDays, daysBetween, todayIso } from "../dateUtils";
 import { getRateDateRanges, insertRows } from "../dbQueries";
-import type { ExchangeRateRow, DateRange, FetcherResult } from "../types";
+import type { FxRawRateRow, DateRange, FetcherResult } from "../types";
 
 const CURRENCY = "RSD";
+const SOURCE = "nbs";
 
 // ---------------------------------------------------------------------------
 // Type definitions
@@ -75,8 +76,8 @@ function parseNbsResponse(data: NBSApiEntry): NBSRecord[] {
  * NBS gives: 1 USD = exchange_middle RSD.
  * We need: 1 RSD = ? USD -> rate = 1 / exchange_middle.
  */
-function convertNbsToUsd(records: NBSRecord[]): ExchangeRateRow[] {
-  const rows: ExchangeRateRow[] = [];
+function convertNbsToUsd(records: NBSRecord[]): FxRawRateRow[] {
+  const rows: FxRawRateRow[] = [];
   for (const record of records) {
     const rate = 1 / record.exchange_middle;
     rows.push({
@@ -84,6 +85,7 @@ function convertNbsToUsd(records: NBSRecord[]): ExchangeRateRow[] {
       quote_currency: "USD",
       rate_date: record.rate_date,
       rate: rate.toFixed(9),
+      source: SOURCE,
     });
   }
   return rows;
@@ -134,9 +136,9 @@ async function fetchNbsRates(start: string, end: string): Promise<NBSApiEntry[]>
 
 /** Keep only rows not already covered by existing data. */
 function filterNewRows(
-  allRows: ExchangeRateRow[],
+  allRows: FxRawRateRow[],
   existingRange: DateRange | undefined,
-): ExchangeRateRow[] {
+): FxRawRateRow[] {
   if (!existingRange) {
     return allRows;
   }

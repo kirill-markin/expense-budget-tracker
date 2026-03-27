@@ -1,20 +1,13 @@
 -- Reference queries for the balances dashboard.
--- Parameters: $1 = report_currency (e.g. 'USD')
+-- Parameters: $1 = report_currency (e.g. 'USD'), $2 = latest_fx_calendar_date
 
 -- ACCOUNTS_QUERY: per-account balances with FX conversion to report currency.
-WITH max_rate_dates AS (
-  SELECT base_currency, MAX(rate_date) AS rate_date
-  FROM exchange_rates
-  WHERE quote_currency = $1
-  GROUP BY base_currency
-),
+WITH
 latest_rates AS (
-  SELECT er.base_currency, er.rate
-  FROM exchange_rates er
-  INNER JOIN max_rate_dates mrd
-    ON mrd.base_currency = er.base_currency
-    AND mrd.rate_date = er.rate_date
-  WHERE er.quote_currency = $1
+  SELECT base_currency, rate
+  FROM fx_rates_daily
+  WHERE quote_currency = $1
+    AND calendar_date = $2
 )
 SELECT
   a.account_id,
@@ -35,7 +28,7 @@ ORDER BY a.account_id;
 ----
 
 -- TOTALS_QUERY: per-currency totals with FX conversion.
--- Parameters: $1 = report_currency
+-- Parameters: $1 = report_currency, $2 = latest_fx_calendar_date
 WITH account_balances AS (
   SELECT
     a.account_id,
@@ -45,19 +38,11 @@ WITH account_balances AS (
   LEFT JOIN ledger_entries le ON le.account_id = a.account_id
   GROUP BY a.account_id, a.currency
 ),
-max_rate_dates AS (
-  SELECT base_currency, MAX(rate_date) AS rate_date
-  FROM exchange_rates
-  WHERE quote_currency = $1
-  GROUP BY base_currency
-),
 latest_rates AS (
-  SELECT er.base_currency, er.rate
-  FROM exchange_rates er
-  INNER JOIN max_rate_dates mrd
-    ON mrd.base_currency = er.base_currency
-    AND mrd.rate_date = er.rate_date
-  WHERE er.quote_currency = $1
+  SELECT base_currency, rate
+  FROM fx_rates_daily
+  WHERE quote_currency = $1
+    AND calendar_date = $2
 )
 SELECT
   ab.currency,
@@ -123,19 +108,20 @@ LEFT JOIN stats s ON s.account_id = c.account_id;
 ----
 
 -- WARNINGS_QUERY: currencies without exchange rates.
--- Parameters: $1 = report_currency
-WITH data_currencies AS (
+-- Parameters: $1 = report_currency, $2 = latest_fx_calendar_date
+WITH latest_rates AS (
+  SELECT DISTINCT base_currency
+  FROM fx_rates_daily
+  WHERE quote_currency = $1
+    AND calendar_date = $2
+),
+data_currencies AS (
   SELECT DISTINCT currency
   FROM accounts
   WHERE currency != $1
-),
-rate_currencies AS (
-  SELECT DISTINCT base_currency
-  FROM exchange_rates
-  WHERE quote_currency = $1
 )
 SELECT dc.currency
 FROM data_currencies dc
-LEFT JOIN rate_currencies rc ON rc.base_currency = dc.currency
-WHERE rc.base_currency IS NULL
+LEFT JOIN latest_rates lr ON lr.base_currency = dc.currency
+WHERE lr.base_currency IS NULL
 ORDER BY dc.currency;

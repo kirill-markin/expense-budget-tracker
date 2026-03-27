@@ -18,8 +18,8 @@ Four components, one database:
 
 1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool` with per-request RLS context.
 2. **sql-api** (`apps/sql-api/`) — Two AWS Lambdas behind API Gateway (REST API) for machine clients. Lambda Authorizer validates `ApiKey` agent tokens; the handler serves discovery, workspace setup, and SQL with the same v1 machine surface. Separate from the web stack — no ALB involved.
-3. **worker** (`apps/worker/`) — TypeScript process that fetches daily exchange rates from ECB, CBR, and NBS and inserts them into `exchange_rates`. Runs on a schedule (local Docker) or as a Lambda (AWS).
-4. **Postgres** — single source of truth. Seven tables (six with RLS), one view.
+3. **worker** (`apps/worker/`) — TypeScript process that fetches daily raw exchange rates from ECB, CBR, NBS, NBU, and USDT, stores them in `fx_rates_raw`, and rebuilds query-ready all-pairs daily rates in `fx_rates_daily`. Runs on a schedule (local Docker) or as a Lambda (AWS).
+4. **Postgres** — single source of truth. Eight tables (six with RLS), one view.
 
 ## Data model
 
@@ -30,32 +30,37 @@ workspace_id (PK)      workspace_id (PK, FK)
 name                   user_id (PK)
 created_at
 
-ledger_entries          exchange_rates         budget_lines
-─────────────           ──────────────         ────────────
+ledger_entries          fx_rates_raw           budget_lines
+─────────────           ────────────           ────────────
 entry_id (PK)           base_currency (PK)     budget_month
 workspace_id (RLS)      quote_currency (PK)    workspace_id (RLS)
 event_id                rate_date (PK)         direction
 ts                      rate                   category
-account_id                                     kind (base|modifier)
-amount                                         currency
+account_id              source                 kind (base|modifier)
+amount                  inserted_at            currency
 currency                                       planned_value
 kind (income|spend|                            inserted_at
       transfer)
-category
-counterparty            workspace_settings     budget_comments
-note                    ──────────────────     ───────────────
-                        workspace_id (PK,RLS)  budget_month
-accounts (VIEW)         reporting_currency     workspace_id (RLS)
-──────────────                                 direction
-derived from                                   category
-ledger_entries                                 comment
+category                fx_rates_daily         workspace_settings
+counterparty            ─────────────          ──────────────────
+note                    base_currency (PK)     workspace_id (PK,RLS)
+                        quote_currency (PK)    reporting_currency
+accounts (VIEW)         calendar_date (PK)
+──────────────          rate                   budget_comments
+derived from            source_rate_date       ───────────────
+ledger_entries          inserted_at            budget_month
+                                               workspace_id (RLS)
+                                               direction
+                                               category
+                                               comment
                                                inserted_at
 ```
 
 - `workspaces` — one row per workspace. RLS: user sees only workspaces they belong to.
 - `workspace_members` — (workspace_id, user_id) pairs. RLS: user sees only their own memberships.
 - `ledger_entries` — one row per account movement. Immutable except category/note. RLS by `workspace_id`.
-- `exchange_rates` — one row per (base, quote, date) triple. Generalized: no USD assumption. **No RLS** — global data.
+- `fx_rates_raw` — canonical FX source-of-truth. One row per `(base, USD, rate_date)` triple plus source metadata. **No RLS** — global data.
+- `fx_rates_daily` — query-ready daily all-pairs FX read model. One row per `(base, quote, calendar_date)` triple. **No RLS** — global data.
 - `budget_lines` — append-only. Effective value resolved by latest `inserted_at` per cell. RLS by `workspace_id`.
 - `budget_comments` — append-only. Same last-write-wins pattern. RLS by `workspace_id`.
 - `workspace_settings` — one row per workspace storing reporting currency. RLS by `workspace_id`.
@@ -147,14 +152,15 @@ curl -X POST https://api.example.com/v1/sql \
 
 ## Multi-currency conversion
 
-All amounts are stored in native currency only. No precomputed `amount_usd` column.
+All amounts are stored in native currency only. No precomputed report-currency column exists on `ledger_entries`.
 
-Conversion to the reporting currency happens at read time via SQL joins:
+Conversion to the reporting currency uses a two-layer FX model:
 
-1. `exchange_rates` stores `(base_currency, quote_currency, rate_date, rate)`.
-2. Queries build a `rate_ranges` CTE using `LEAD()` to find the applicable rate for any date.
-3. The reporting currency is read from `workspace_settings` (per workspace) and passed as `$1` to all queries.
-4. If no rate exists for a currency, the converted amount is NULL and a warning is returned.
+1. `fx_rates_raw` stores canonical raw market rates against the internal pivot currency `USD`.
+2. The worker rebuilds `fx_rates_daily`, which contains exact-date all-pairs rates for every supported `base -> quote` combination.
+3. Weekend and holiday carry-forward are resolved during the rebuild, not inside dashboard queries.
+4. The reporting currency is read from `workspace_settings` (per workspace) and passed to read queries as the `quote_currency`.
+5. If an exact daily pair is missing, the converted amount is `NULL` and the UI surfaces an unconvertible warning.
 
 ## Auth model
 

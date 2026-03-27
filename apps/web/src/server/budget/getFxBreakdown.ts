@@ -6,20 +6,19 @@ import { getReportCurrency } from "@/server/reportCurrency";
  * Shows how each currency's balance changed between previous and current month-end,
  * valued at the respective month-end exchange rates (mark-to-market).
  *
- * Performance: uses le.currency directly (not the accounts view) and LATERAL
- * index lookups for FX rates (not the rate_ranges CTE). See getBudgetGrid.ts
- * module docstring for rationale.
+ * The worker already expanded raw rates into exact-date all-pairs rows, so
+ * this query only joins the required month-end dates from fx_rates_daily.
  */
 export type FxBreakdownRow = Readonly<{
   currency: string;
   openNative: number;
   openRate: number;
-  openUsd: number;
+  openReport: number;
   deltaNative: number;
   closeNative: number;
   closeRate: number;
-  closeUsd: number;
-  changeUsd: number;
+  closeReport: number;
+  changeReport: number;
 }>;
 
 export type FxBreakdownResult = Readonly<{
@@ -38,7 +37,7 @@ export type FxBreakdownResult = Readonly<{
  * The sum of all change values equals monthEndBalance(M) - monthEndBalance(M-1).
  * The difference between that sum and the budget delta is the FX adjustment.
  */
-const QUERY = `
+export const QUERY = `
   WITH
   monthly_deltas AS (
     -- Use le.currency directly instead of JOIN accounts view
@@ -80,30 +79,20 @@ const QUERY = `
     SELECT rb.currency, rb.balance,
       CASE WHEN rb.currency = $1 THEN 1.0 ELSE rr.rate::double precision END AS rate
     FROM running_balances rb
-    -- LATERAL: one backward index scan per currency via
-    -- idx_exchange_rates_quote_base_date (see getBudgetGrid.ts for rationale).
-    LEFT JOIN LATERAL (
-      SELECT rate FROM exchange_rates
-      WHERE quote_currency = $1
-        AND base_currency = rb.currency
-        AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
-      ORDER BY rate_date DESC
-      LIMIT 1
-    ) rr ON true
+    LEFT JOIN fx_rates_daily rr
+      ON rr.quote_currency = $1
+      AND rr.base_currency = rb.currency
+      AND rr.calendar_date = (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
     WHERE rb.month = to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
   ),
   curr AS (
     SELECT rb.currency, rb.balance, rb.delta,
       CASE WHEN rb.currency = $1 THEN 1.0 ELSE rr.rate::double precision END AS rate
     FROM running_balances rb
-    LEFT JOIN LATERAL (
-      SELECT rate FROM exchange_rates
-      WHERE quote_currency = $1
-        AND base_currency = rb.currency
-        AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
-      ORDER BY rate_date DESC
-      LIMIT 1
-    ) rr ON true
+    LEFT JOIN fx_rates_daily rr
+      ON rr.quote_currency = $1
+      AND rr.base_currency = rb.currency
+      AND rr.calendar_date = (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
     WHERE rb.month = $2
   )
   SELECT
@@ -149,12 +138,12 @@ export const getFxBreakdown = async (userId: string, workspaceId: string, month:
       currency: row.currency,
       openNative: Number(row.open_native),
       openRate: Number(row.open_rate),
-      openUsd: Number(row.open_report),
+      openReport: Number(row.open_report),
       deltaNative: Number(row.delta_native),
       closeNative: Number(row.close_native),
       closeRate: Number(row.close_rate),
-      closeUsd: Number(row.close_report),
-      changeUsd: Number(row.change_report),
+      closeReport: Number(row.close_report),
+      changeReport: Number(row.change_report),
     })),
   };
 };

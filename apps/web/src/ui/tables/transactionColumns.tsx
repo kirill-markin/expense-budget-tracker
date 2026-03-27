@@ -285,12 +285,12 @@ export const buildTransactionColumns = (maskClass: string, fmt: FormatParams): R
   },
 });
 
-export const usdColumn = (numberFormat: NumberFormat): ColumnDef<LedgerEntry> => ({
-  key: "amountUsd",
-  header: "USD",
+export const reportAmountColumn = (numberFormat: NumberFormat, reportingCurrency: string): ColumnDef<LedgerEntry> => ({
+  key: "amountReport",
+  header: reportingCurrency,
   renderCell: (row: LedgerEntry): ReactElement => (
-    <td key="amountUsd" className={cn(styles.cell, styles.cellRight)}>
-      {row.amountUsd !== null ? formatAmount(row.amountUsd, numberFormat) : "\u2014"}
+    <td key="amountReport" className={cn(styles.cell, styles.cellRight)}>
+      {row.amountReport !== null ? formatAmount(row.amountReport, numberFormat) : "\u2014"}
     </td>
   ),
   rightAlign: true,

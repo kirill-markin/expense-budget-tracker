@@ -11,7 +11,7 @@ import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 const DEMO_FX_RATES: Readonly<Record<string, number>> = { USD: 1, EUR: 1.029, GBP: 1.24 };
 
-const getDemoAmountUsd = (amount: number, currency: string): number | null => {
+const getDemoAmountReport = (amount: number, currency: string): number | null => {
   if (currency.length === 0) return null;
   const rate = DEMO_FX_RATES[currency];
   if (rate === undefined) return null;
@@ -32,7 +32,7 @@ export const POST = async (request: Request): Promise<Response> =>
           ts: new Date(body.ts).toISOString(),
           accountId: body.accountId,
           amount: body.amount,
-          amountUsd: getDemoAmountUsd(body.amount, body.currency),
+          amountReport: getDemoAmountReport(body.amount, body.currency),
           currency: body.currency,
           kind: body.kind,
           category: body.category,

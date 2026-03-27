@@ -36,9 +36,13 @@ const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
     summary: "Per-account metadata such as liquidity classification.",
     related: ["accounts", "ledger_entries", "workspace_settings"],
   },
-  exchange_rates: {
-    summary: "Global FX rates used for query-time currency conversion.",
-    related: ["workspace_settings", "ledger_entries", "budget_lines"],
+  fx_rates_raw: {
+    summary: "Canonical raw FX source rates against the internal USD pivot currency.",
+    related: ["fx_rates_daily", "workspace_settings", "ledger_entries"],
+  },
+  fx_rates_daily: {
+    summary: "Query-ready daily all-pairs FX rates used by dashboards and reporting-currency conversion.",
+    related: ["fx_rates_raw", "workspace_settings", "ledger_entries"],
   },
 };
 

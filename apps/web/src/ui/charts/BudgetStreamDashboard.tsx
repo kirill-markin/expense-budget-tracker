@@ -101,7 +101,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       dateTo: lastDayOfMonth(monthTo),
       kind: "spend",
       limit: "500",
-      sortKey: "amountUsdAbs",
+      sortKey: "amountReportAbs",
       sortDir: "desc",
     });
     const url = buildLiveDataUrl("/api/transactions", params, refreshToken);
@@ -248,6 +248,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
           filter={drillDownFilter}
           categories={treemapCategories}
           hints={EMPTY_HINTS}
+          reportingCurrency={reportingCurrency}
           refreshToken={refreshToken}
           onClose={handleDrillDownClose}
         />

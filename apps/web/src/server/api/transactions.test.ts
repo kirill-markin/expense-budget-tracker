@@ -39,7 +39,7 @@ test("parseTransactionsFilterQuery rejects invalid sortKey", () => {
     },
     (error: unknown): boolean =>
       error instanceof ApiRouteError
-      && error.publicMessage === "sortKey must be one of: ts, accountId, amount, amountAbs, amountUsdAbs, currency, kind, category, counterparty",
+      && error.publicMessage === "sortKey must be one of: ts, accountId, amount, amountAbs, amountReportAbs, currency, kind, category, counterparty",
   );
 });
 

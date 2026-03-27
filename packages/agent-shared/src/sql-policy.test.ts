@@ -10,7 +10,8 @@ test("getAllowedRelationNames returns the canonical relation list", () => {
     "budget_comments",
     "workspace_settings",
     "account_metadata",
-    "exchange_rates",
+    "fx_rates_raw",
+    "fx_rates_daily",
   ]);
 });
 

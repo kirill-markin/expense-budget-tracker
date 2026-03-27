@@ -77,7 +77,7 @@ const buildHierarchy = (
   const groups = new Map<string, Array<LedgerEntry>>();
 
   for (const entry of entries) {
-    if (entry.amountUsd === null) continue;
+    if (entry.amountReport === null) continue;
     const cat = entry.category ?? uncategorizedLabel;
     if (allowlist !== null && !isCategoryVisible(allowlist, cat)) continue;
     const existing = groups.get(cat);
@@ -97,12 +97,12 @@ const buildHierarchy = (
       category: cat,
       counterparty: null,
       children: catEntries
-        .sort((a, b) => Math.abs(b.amountUsd ?? 0) - Math.abs(a.amountUsd ?? 0))
+        .sort((a, b) => Math.abs(b.amountReport ?? 0) - Math.abs(a.amountReport ?? 0))
         .map((e): TreemapDatum => ({
           name: e.counterparty ?? "",
           category: cat,
           counterparty: e.counterparty,
-          leafValue: Math.abs(e.amountUsd ?? 0),
+          leafValue: Math.abs(e.amountReport ?? 0),
           entry: e,
         })),
     })),
@@ -136,10 +136,10 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
 
     let total = 0;
     for (const e of entries) {
-      if (e.amountUsd === null) continue;
+      if (e.amountReport === null) continue;
       const cat = e.category ?? uncategorizedLabel;
       if (allowlist !== null && !isCategoryVisible(allowlist, cat)) continue;
-      total += Math.abs(e.amountUsd);
+      total += Math.abs(e.amountReport);
     }
 
     const rn = root as unknown as RectNode;
@@ -309,9 +309,9 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
             <div className={styles.tooltipAmount}>
               {fmtCurrency(Math.abs(hover.entry.amount), hover.entry.currency)}
             </div>
-            {hover.entry.amountUsd !== null && hover.entry.currency !== reportingCurrency && (
+            {hover.entry.amountReport !== null && hover.entry.currency !== reportingCurrency && (
               <div className={styles.tooltipConverted}>
-                ≈ {fmtCurrency(Math.abs(hover.entry.amountUsd), reportingCurrency)}
+                ≈ {fmtCurrency(Math.abs(hover.entry.amountReport), reportingCurrency)}
               </div>
             )}
             {hover.entry.counterparty !== null && (

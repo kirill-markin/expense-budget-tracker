@@ -7,10 +7,11 @@
  * 3. WARNINGS — currencies present in data but missing exchange rates.
  * 4. STALENESS — MAX inter-transaction gap stats for overdue detection.
  *
- * FX conversion uses the latest available rate per currency from exchange_rates.
+ * FX conversion uses the latest fully built day from fx_rates_daily.
  * Accounts are classified as active/inactive based on balance and 90-day activity.
  */
 import { withUserContext } from "@/server/db";
+import { getLatestFxCalendarDate } from "@/server/fxRates";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { type StalenessInput, isAccountOverdue } from "@/server/balances/accountStaleness";
 
@@ -20,7 +21,7 @@ export type AccountRow = Readonly<{
   liquidity: string;
   status: string;
   balance: number;
-  balanceUsd: number | null;
+  balanceReport: number | null;
   lastTransactionTs: string | null;
   overdue: boolean;
 }>;
@@ -30,7 +31,7 @@ export type CurrencyTotal = Readonly<{
   balance: number;
   balancePositive: number;
   balanceNegative: number;
-  balanceUsd: number | null;
+  balanceReport: number | null;
   hasUnconvertible: boolean;
 }>;
 
@@ -58,19 +59,11 @@ function computeAccountStatus(
 }
 
 const ACCOUNTS_QUERY = `
-  WITH max_rate_dates AS (
-    SELECT base_currency, MAX(rate_date) AS rate_date
-    FROM exchange_rates
-    WHERE quote_currency = $1
-    GROUP BY base_currency
-  ),
   latest_rates AS (
-    SELECT er.base_currency, er.rate
-    FROM exchange_rates er
-    INNER JOIN max_rate_dates mrd
-      ON mrd.base_currency = er.base_currency
-      AND mrd.rate_date = er.rate_date
-    WHERE er.quote_currency = $1
+    SELECT base_currency, rate
+    FROM fx_rates_daily
+    WHERE quote_currency = $1
+      AND calendar_date = $2
   )
   SELECT
     a.account_id,
@@ -99,19 +92,11 @@ const TOTALS_QUERY = `
     LEFT JOIN ledger_entries le ON le.account_id = a.account_id
     GROUP BY a.account_id, a.currency
   ),
-  max_rate_dates AS (
-    SELECT base_currency, MAX(rate_date) AS rate_date
-    FROM exchange_rates
-    WHERE quote_currency = $1
-    GROUP BY base_currency
-  ),
   latest_rates AS (
-    SELECT er.base_currency, er.rate
-    FROM exchange_rates er
-    INNER JOIN max_rate_dates mrd
-      ON mrd.base_currency = er.base_currency
-      AND mrd.rate_date = er.rate_date
-    WHERE er.quote_currency = $1
+    SELECT base_currency, rate
+    FROM fx_rates_daily
+    WHERE quote_currency = $1
+      AND calendar_date = $2
   )
   SELECT
     ab.currency,
@@ -179,31 +164,35 @@ const METADATA_QUERY = `
 `;
 
 const WARNINGS_QUERY = `
-  WITH data_currencies AS (
+  WITH latest_rates AS (
+    SELECT DISTINCT base_currency
+    FROM fx_rates_daily
+    WHERE quote_currency = $1
+      AND calendar_date = $2
+  ),
+  data_currencies AS (
     SELECT DISTINCT currency
     FROM accounts
     WHERE currency != $1
-  ),
-  rate_currencies AS (
-    SELECT DISTINCT base_currency
-    FROM exchange_rates
-    WHERE quote_currency = $1
   )
   SELECT dc.currency
   FROM data_currencies dc
-  LEFT JOIN rate_currencies rc ON rc.base_currency = dc.currency
-  WHERE rc.base_currency IS NULL
+  LEFT JOIN latest_rates lr ON lr.base_currency = dc.currency
+  WHERE lr.base_currency IS NULL
   ORDER BY dc.currency
 `;
 
 export const getBalancesSummary = async (userId: string, workspaceId: string): Promise<BalancesSummaryResult> => {
-  const reportCurrency = await getReportCurrency(userId, workspaceId);
+  const [reportCurrency, latestFxCalendarDate] = await Promise.all([
+    getReportCurrency(userId, workspaceId),
+    getLatestFxCalendarDate(),
+  ]);
 
   return withUserContext(userId, workspaceId, async (q) => {
     const [accountResult, totalResult, warningResult, stalenessResult, metadataResult] = await Promise.all([
-      q(ACCOUNTS_QUERY, [reportCurrency]),
-      q(TOTALS_QUERY, [reportCurrency]),
-      q(WARNINGS_QUERY, [reportCurrency]),
+      q(ACCOUNTS_QUERY, [reportCurrency, latestFxCalendarDate]),
+      q(TOTALS_QUERY, [reportCurrency, latestFxCalendarDate]),
+      q(WARNINGS_QUERY, [reportCurrency, latestFxCalendarDate]),
       q(STALENESS_QUERY, []),
       q(METADATA_QUERY, []),
     ]);
@@ -255,7 +244,7 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
           liquidity: liquidityMap.get(row.account_id) ?? "high",
           status: computeAccountStatus(Number(row.balance), lastTransactionTs),
           balance: Number(row.balance),
-          balanceUsd: row.balance_report !== null ? Number(row.balance_report) : null,
+          balanceReport: row.balance_report !== null ? Number(row.balance_report) : null,
           lastTransactionTs,
           overdue,
         };
@@ -272,7 +261,7 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
         balance: Number(row.balance),
         balancePositive: Number(row.balance_positive),
         balanceNegative: Number(row.balance_negative),
-        balanceUsd: row.balance_report !== null ? Number(row.balance_report) : null,
+        balanceReport: row.balance_report !== null ? Number(row.balance_report) : null,
         hasUnconvertible: row.has_unconvertible,
       })),
       conversionWarnings: warningResult.rows.map((row: { currency: string }) => ({

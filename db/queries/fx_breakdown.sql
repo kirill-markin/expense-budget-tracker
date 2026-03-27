@@ -1,8 +1,7 @@
 -- Reference query for the per-currency FX breakdown panel.
 -- Parameters: $1 = report_currency, $2 = month (YYYY-MM)
 --
--- Uses le.currency directly (not the accounts view) and LATERAL index lookups
--- for FX rates (not the rate_ranges CTE). See budget_grid.sql header for rationale.
+-- Uses exact month-end joins to fx_rates_daily. See budget_grid.sql header.
 
 WITH
 monthly_deltas AS (
@@ -43,28 +42,20 @@ prev AS (
   SELECT rb.currency, rb.balance,
     CASE WHEN rb.currency = $1 THEN 1.0 ELSE rr.rate::double precision END AS rate
   FROM running_balances rb
-  LEFT JOIN LATERAL (
-    SELECT rate FROM exchange_rates
-    WHERE quote_currency = $1
-      AND base_currency = rb.currency
-      AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
-    ORDER BY rate_date DESC
-    LIMIT 1
-  ) rr ON true
+  LEFT JOIN fx_rates_daily rr
+    ON rr.quote_currency = $1
+    AND rr.base_currency = rb.currency
+    AND rr.calendar_date = (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
   WHERE rb.month = to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
 ),
 curr AS (
   SELECT rb.currency, rb.balance, rb.delta,
     CASE WHEN rb.currency = $1 THEN 1.0 ELSE rr.rate::double precision END AS rate
   FROM running_balances rb
-  LEFT JOIN LATERAL (
-    SELECT rate FROM exchange_rates
-    WHERE quote_currency = $1
-      AND base_currency = rb.currency
-      AND rate_date <= (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
-    ORDER BY rate_date DESC
-    LIMIT 1
-  ) rr ON true
+  LEFT JOIN fx_rates_daily rr
+    ON rr.quote_currency = $1
+    AND rr.base_currency = rb.currency
+    AND rr.calendar_date = (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
   WHERE rb.month = $2
 )
 SELECT

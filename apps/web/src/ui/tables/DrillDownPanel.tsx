@@ -31,7 +31,7 @@ import {
   editableDeleteColumn,
   editableKindColumn,
   editableNoteColumn,
-  usdColumn,
+  reportAmountColumn,
 } from "./transactionColumns";
 
 export type { DrillDownFilter } from "./useEditableTransactionsTable";
@@ -40,13 +40,14 @@ type Props = Readonly<{
   filter: DrillDownFilter;
   categories: ReadonlyArray<string>;
   hints: FieldHints;
+  reportingCurrency: string;
   refreshToken: string;
   onClose: (dirty: boolean) => void;
 }>;
 
 const DRILLDOWN_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   amount: "desc",
-  amountUsdAbs: "desc",
+  amountReportAbs: "desc",
 };
 
 const buildTitle = (filter: DrillDownFilter): string => {
@@ -67,7 +68,7 @@ const buildSubtitle = (filter: DrillDownFilter): string => {
 };
 
 export const DrillDownPanel = (props: Props): ReactElement => {
-  const { filter, categories, hints, refreshToken, onClose } = props;
+  const { filter, categories, hints, reportingCurrency, refreshToken, onClose } = props;
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
   const getMaskClass = useCallback((row: LedgerEntry): string => {
@@ -78,7 +79,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
-  const { sort, onSort } = useTableSort("single", "amountUsdAbs", "desc", DRILLDOWN_SORT_DEFAULTS);
+  const { sort, onSort } = useTableSort("single", "amountReportAbs", "desc", DRILLDOWN_SORT_DEFAULTS);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dirtyRef = useRef<boolean>(false);
@@ -205,7 +206,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     editableAccountColumn(getMaskClass, handleAccountCommit, hints.accounts),
     editableAmountColumn(getMaskClass, handleAmountCommit),
     editableCurrencyColumn(getMaskClass, handleCurrencyCommit, hints.currencies),
-    { ...usdColumn(numberFormat), sortKey: "amountUsdAbs" },
+    { ...reportAmountColumn(numberFormat, reportingCurrency), sortKey: "amountReportAbs" },
     editableKindColumn(getMaskClass, handleKindChange),
     editableCategoryColumn(getMaskClass, categories, handleCategoryChange),
     editableCounterpartyColumn(getMaskClass, handleCounterpartyCommit, hints.counterparties),

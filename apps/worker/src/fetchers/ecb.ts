@@ -3,13 +3,15 @@
  *
  * Fetches EUR-based rates from the ECB SDMX REST API, converts to
  * base_currency/quote_currency/rate pairs (quote_currency=USD),
- * and inserts missing dates into exchange_rates.
+ * and inserts missing dates into fx_rates_raw.
  */
 
 import { ECB_BASE_URL, ECB_CURRENCIES, ECB_EARLIEST_DATE } from "../config";
 import { addDays, todayIso } from "../dateUtils";
 import { getRateDateRanges, insertRows } from "../dbQueries";
-import type { ExchangeRateRow, DateRange, FetcherResult } from "../types";
+import type { FxRawRateRow, DateRange, FetcherResult } from "../types";
+
+const SOURCE = "ecb";
 
 // ---------------------------------------------------------------------------
 // Type definitions
@@ -78,7 +80,7 @@ function parseEcbCsv(csvText: string): ECBRate[] {
  * - EUR->USD: rate = rate_eur_usd
  * - CCY->USD: rate = rate_eur_usd / rate_eur_ccy
  */
-function convertEurRatesToUsd(ecbRates: ECBRate[]): ExchangeRateRow[] {
+function convertEurRatesToUsd(ecbRates: ECBRate[]): FxRawRateRow[] {
   const ratesByDate: Record<string, Record<string, number>> = {};
   for (const rate of ecbRates) {
     if (!ratesByDate[rate.rate_date]) {
@@ -87,7 +89,7 @@ function convertEurRatesToUsd(ecbRates: ECBRate[]): ExchangeRateRow[] {
     ratesByDate[rate.rate_date][rate.currency] = rate.rate_eur;
   }
 
-  const rows: ExchangeRateRow[] = [];
+  const rows: FxRawRateRow[] = [];
   for (const rateDate of Object.keys(ratesByDate).sort()) {
     const dayRates = ratesByDate[rateDate];
     if (dayRates["USD"] === undefined) {
@@ -104,6 +106,7 @@ function convertEurRatesToUsd(ecbRates: ECBRate[]): ExchangeRateRow[] {
           quote_currency: "USD",
           rate_date: rateDate,
           rate: eurUsd.toFixed(9),
+          source: SOURCE,
         });
       } else {
         const rateToUsd = eurUsd / dayRates[currency];
@@ -112,6 +115,7 @@ function convertEurRatesToUsd(ecbRates: ECBRate[]): ExchangeRateRow[] {
           quote_currency: "USD",
           rate_date: rateDate,
           rate: rateToUsd.toFixed(9),
+          source: SOURCE,
         });
       }
     }
@@ -167,11 +171,11 @@ function determineEcbCurrencies(requested: string[]): string[] {
 
 /** Keep only rows not already covered by existing data. */
 function filterNewRows(
-  allRows: ExchangeRateRow[],
+  allRows: FxRawRateRow[],
   dateRanges: Record<string, DateRange>,
   requestedCurrencies: string[],
-): ExchangeRateRow[] {
-  const newRows: ExchangeRateRow[] = [];
+): FxRawRateRow[] {
+  const newRows: FxRawRateRow[] = [];
   for (const row of allRows) {
     if (!requestedCurrencies.includes(row.base_currency)) {
       continue;
