@@ -1,7 +1,6 @@
 "use client";
 
 import type {
-  KeyboardEvent,
   ReactElement,
   RefObject,
 } from "react";
@@ -51,14 +50,6 @@ export const ChatComposer = (props: Props): ReactElement => {
   } = props;
   const { t } = useTranslation();
 
-  const handleKeyDown = (
-    event: KeyboardEvent<HTMLTextAreaElement>,
-  ): void => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void onSend();
-    }
-  };
   const microphoneAriaLabel = dictationState === "recording"
     ? t("chat.dictationStop")
     : t("chat.dictationStart");
@@ -87,8 +78,8 @@ export const ChatComposer = (props: Props): ReactElement => {
         placeholder={t("chat.placeholder")}
         value={inputText}
         disabled={capabilities.isTextareaDisabled}
+        enterKeyHint="enter"
         onChange={(event) => onInputChange(event.target.value)}
-        onKeyDown={handleKeyDown}
         rows={1}
       />
       {dictationStatusLabel !== null && (
