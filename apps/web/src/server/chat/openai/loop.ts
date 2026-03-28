@@ -3,49 +3,40 @@ import type { LangfuseObservation } from "@langfuse/tracing";
 import type { SupportedLocale } from "@/lib/locale";
 import { ti } from "@/i18n/serverT";
 import {
-  applyFunctionCallArgumentsDelta,
-  applyFunctionCallArgumentsDone,
   applyToolCallOutput,
-  applyToolCallStarted,
-  createToolCallStateMap,
-  type FunctionToolCallRawItem,
-  type ToolCallPosition,
 } from "@/server/chat/openai/toolCalls";
 import { buildChatCompletionInput } from "@/server/chat/openai/input";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
-  toOpenAIResponseInputItem,
   type StoredOpenAIReplayMessage,
-  toStoredOpenAIReplayItem,
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
+  toStoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
 import {
-  executeChatToolCall,
-  OPENAI_CHAT_TOOLS,
-  type ExecutedChatToolCall,
-} from "@/server/chat/openai/tools";
+  buildOpenAIResponsesRequest,
+  buildOpenAIResponsesRequestWithOptions,
+  buildPromptCacheKey,
+} from "@/server/chat/openai/request";
+import {
+  closeQueue,
+  createEventIterator,
+  createQueueState,
+  pushQueueEvent,
+  runOneModelCall,
+  type QueueState,
+} from "@/server/chat/openai/modelCall";
+import { runOneToolCall } from "@/server/chat/openai/toolExecutor";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
-import {
-  CHAT_MODEL_ID,
-  CHAT_MODEL_REASONING_EFFORT,
-  CHAT_MODEL_REASONING_SUMMARY,
-} from "@/lib/chatModels";
 
 export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 30;
-const MAX_REASONING_ITEMS = 8;
 const TOOL_LIMIT_FALLBACK_ITEM_ID = "tool-limit-summary";
 
 type OpenAILoopDependencies = Readonly<{
   buildChatCompletionInput: typeof buildChatCompletionInput;
   getObservedOpenAIClient: typeof getObservedOpenAIClient;
-  runOneToolCall: (params: Readonly<{
-    item: OpenAI.Responses.ResponseFunctionToolCall;
-    userId: string;
-    workspaceId: string;
-    rootObservation: LangfuseObservation | null;
-  }>) => Promise<ExecutedChatToolCall>;
+  runOneToolCall: typeof runOneToolCall;
 }>;
 
 type OpenAIStreamResult = Readonly<{
@@ -55,45 +46,6 @@ type OpenAIStreamResult = Readonly<{
 
 export type OpenAILoopCompletion = Readonly<{
   openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-}>;
-
-type ParsedFunctionToolCall = OpenAI.Responses.ResponseFunctionToolCall & Readonly<{
-  parsed_arguments?: unknown;
-}>;
-
-type ResponseStreamWithOptionalFinalResponse = AsyncIterable<OpenAI.Responses.ResponseStreamEvent> & Readonly<{
-  finalResponse?: () => Promise<OpenAI.Responses.Response>;
-}>;
-
-type OpenAIResponsesRequest = Readonly<{
-  model: typeof CHAT_MODEL_ID;
-  store: false;
-  include: ["reasoning.encrypted_content"];
-  tools: Array<OpenAI.Responses.Tool>;
-  input: Array<OpenAI.Responses.ResponseInputItem>;
-  reasoning: Readonly<{
-    effort: typeof CHAT_MODEL_REASONING_EFFORT;
-    summary: typeof CHAT_MODEL_REASONING_SUMMARY;
-  }>;
-  prompt_cache_key: string;
-}>;
-
-type ChatResponseLogEvent = Readonly<{
-  domain: "chat";
-  action: "response";
-  vendor: "openai";
-  requestId: string;
-  sessionId: string;
-  model: string;
-  callIndex: number;
-  promptCacheKey: string;
-  stopReason: string;
-  durationMs: number;
-  inputTokens: number;
-  cachedTokens: number;
-  cachedRatio: number;
-  outputTokens: number;
-  totalTokens: number;
 }>;
 
 export type StartOpenAILoopParams = Readonly<{
@@ -109,110 +61,6 @@ export type StartOpenAILoopParams = Readonly<{
   rootObservation: LangfuseObservation | null;
 }>;
 
-type QueueState = {
-  readonly events: Array<ChatStreamEvent>;
-  resolver: ((result: IteratorResult<ChatStreamEvent>) => void) | null;
-  closed: boolean;
-};
-
-type ModelCallResult = Readonly<{
-  finalResponse: OpenAI.Responses.Response;
-  functionCalls: ReadonlyArray<ParsedFunctionToolCall>;
-  replayItems: ReadonlyArray<StoredOpenAIReplayItem>;
-  streamedText: string;
-  toolStates: ReturnType<typeof createToolCallStateMap>;
-}>;
-
-const createQueueState = (): QueueState => ({
-  events: [],
-  resolver: null,
-  closed: false,
-});
-
-const pushQueueEvent = (
-  queue: QueueState,
-  event: ChatStreamEvent,
-): void => {
-  if (queue.closed) {
-    return;
-  }
-
-  if (queue.resolver !== null) {
-    const resolver = queue.resolver;
-    queue.resolver = null;
-    resolver({ done: false, value: event });
-    return;
-  }
-
-  queue.events.push(event);
-};
-
-const closeQueue = (
-  queue: QueueState,
-): void => {
-  if (queue.closed) {
-    return;
-  }
-
-  queue.closed = true;
-  if (queue.resolver !== null) {
-    const resolver = queue.resolver;
-    queue.resolver = null;
-    resolver({ done: true, value: undefined });
-  }
-};
-
-const createEventIterator = (
-  queue: QueueState,
-): AsyncGenerator<ChatStreamEvent> =>
-  (async function* (): AsyncGenerator<ChatStreamEvent> {
-    while (true) {
-      if (queue.events.length > 0) {
-        const nextEvent = queue.events.shift();
-        if (nextEvent === undefined) {
-          throw new Error("OpenAI chat event queue unexpectedly returned no event");
-        }
-        yield nextEvent;
-        continue;
-      }
-
-      if (queue.closed) {
-        return;
-      }
-
-      const next = await new Promise<IteratorResult<ChatStreamEvent>>((resolve) => {
-        queue.resolver = resolve;
-      });
-      if (next.done) {
-        return;
-      }
-      yield next.value;
-    }
-  })();
-
-const createToolCallPosition = (
-  event: OpenAI.Responses.ResponseOutputItemAddedEvent,
-  responseIndex: number,
-): ToolCallPosition => ({
-  itemId: typeof event.item.id === "string" && event.item.id.length > 0
-    ? event.item.id
-    : `response-output-${String(event.output_index)}`,
-  responseIndex,
-  outputIndex: event.output_index,
-  sequenceNumber: event.sequence_number,
-});
-
-const toFunctionToolCallRawItem = (
-  item: OpenAI.Responses.ResponseFunctionToolCall,
-): FunctionToolCallRawItem => ({
-  type: "function_call",
-  callId: item.call_id,
-  id: item.id,
-  name: item.name,
-  arguments: item.arguments,
-  status: item.status ?? undefined,
-});
-
 const toFunctionCallOutputInputItem = (
   callId: string,
   output: string,
@@ -221,112 +69,6 @@ const toFunctionCallOutputInputItem = (
   call_id: callId,
   output,
 });
-
-const isReasoningSummaryDelta = (
-  event: OpenAI.Responses.ResponseStreamEvent,
-): event is OpenAI.Responses.ResponseReasoningSummaryTextDeltaEvent =>
-  event.type === "response.reasoning_summary_text.delta";
-
-const isOutputTextDelta = (
-  event: OpenAI.Responses.ResponseStreamEvent,
-): event is OpenAI.Responses.ResponseTextDeltaEvent =>
-  event.type === "response.output_text.delta";
-
-const isResponseCompletedEvent = (
-  event: OpenAI.Responses.ResponseStreamEvent,
-): event is OpenAI.Responses.ResponseCompletedEvent =>
-  event.type === "response.completed";
-
-const getFinalResponseFromStream = async (
-  stream: ResponseStreamWithOptionalFinalResponse,
-  completedResponse: OpenAI.Responses.Response | null,
-): Promise<OpenAI.Responses.Response> => {
-  if (completedResponse !== null) {
-    return completedResponse;
-  }
-
-  if (typeof stream.finalResponse === "function") {
-    return stream.finalResponse();
-  }
-
-  throw new Error("OpenAI response stream completed without a final response");
-};
-
-const sanitizeToolOutputForTelemetry = (
-  output: string,
-): string =>
-  output.length <= 4_000
-    ? output
-    : `${output.slice(0, 4_000)}...`;
-
-/**
- * Executes a single local tool call and returns both the serialized tool
- * output and the canonical metadata later used for route invalidation.
- *
- * This keeps the refresh contract grounded in the executed SQL/result pair
- * instead of in earlier streamed tool-call snapshots.
- */
-const runOneToolCall = async (
-  params: Readonly<{
-    item: OpenAI.Responses.ResponseFunctionToolCall;
-    userId: string;
-    workspaceId: string;
-    rootObservation: LangfuseObservation | null;
-  }>,
-): Promise<ExecutedChatToolCall> => {
-  const toolObservation = params.rootObservation?.startObservation(
-    params.item.name,
-    {
-      input: {
-        arguments: params.item.arguments,
-      },
-      metadata: {
-        toolName: params.item.name,
-        toolCallId: params.item.call_id,
-      },
-    },
-    {
-      asType: "tool",
-    },
-  ) ?? null;
-
-  const startedAt = Date.now();
-  try {
-    const output = await executeChatToolCall(
-      params.item.name,
-      params.item.arguments,
-      {
-        userId: params.userId,
-        workspaceId: params.workspaceId,
-      },
-    );
-    toolObservation?.updateOtelSpanAttributes({
-      output: {
-        output: sanitizeToolOutputForTelemetry(output.output),
-      },
-      metadata: {
-        toolName: params.item.name,
-        toolCallId: params.item.call_id,
-        durationMs: String(Date.now() - startedAt),
-      },
-    });
-    toolObservation?.end();
-    return output;
-  } catch (error) {
-    toolObservation?.updateOtelSpanAttributes({
-      output: {
-        error: error instanceof Error ? error.message : String(error),
-      },
-      metadata: {
-        toolName: params.item.name,
-        toolCallId: params.item.call_id,
-        durationMs: String(Date.now() - startedAt),
-      },
-    });
-    toolObservation?.end();
-    throw error;
-  }
-};
 
 const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   buildChatCompletionInput,
@@ -402,242 +144,6 @@ const pushSyntheticAssistantDelta = (
     contentIndex: 0,
     sequenceNumber: 0,
   });
-};
-
-const buildOpenAIInput = (
-  baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
-  continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
-  extraInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
-): Array<OpenAI.Responses.ResponseInputItem> => [
-  ...baseInput,
-  ...continuationItems.map(toOpenAIResponseInputItem),
-  ...extraInput,
-];
-
-export const buildPromptCacheKey = (
-  sessionId: string,
-): string =>
-  sessionId;
-
-export const buildOpenAIResponsesRequest = (
-  baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
-  continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
-  sessionId: string,
-  timezone: string,
-): OpenAIResponsesRequest => ({
-  model: CHAT_MODEL_ID,
-  store: false,
-  include: ["reasoning.encrypted_content"],
-  tools: [...OPENAI_CHAT_TOOLS],
-  input: buildOpenAIInput(baseInput, continuationItems, []),
-  reasoning: {
-    effort: CHAT_MODEL_REASONING_EFFORT,
-    summary: CHAT_MODEL_REASONING_SUMMARY,
-  },
-  prompt_cache_key: buildPromptCacheKey(sessionId),
-});
-
-const buildOpenAIResponsesRequestWithOptions = (
-  baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
-  continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
-  sessionId: string,
-  timezone: string,
-  tools: ReadonlyArray<OpenAI.Responses.Tool>,
-  extraInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
-): OpenAIResponsesRequest => ({
-  model: CHAT_MODEL_ID,
-  store: false,
-  include: ["reasoning.encrypted_content"],
-  tools: [...tools],
-  input: buildOpenAIInput(baseInput, continuationItems, extraInput),
-  reasoning: {
-    effort: CHAT_MODEL_REASONING_EFFORT,
-    summary: CHAT_MODEL_REASONING_SUMMARY,
-  },
-  prompt_cache_key: buildPromptCacheKey(sessionId),
-});
-
-const getResponseStopReason = (
-  response: OpenAI.Responses.Response,
-): string => {
-  const stopReason = response.incomplete_details?.reason ?? response.status;
-  if (stopReason === undefined) {
-    throw new Error(`OpenAI response ${response.id} is missing both incomplete_details.reason and status`);
-  }
-
-  return stopReason;
-};
-
-const getResponseUsage = (
-  response: OpenAI.Responses.Response,
-): OpenAI.Responses.ResponseUsage => {
-  if (response.usage === undefined) {
-    throw new Error(`OpenAI response ${response.id} is missing usage`);
-  }
-
-  return response.usage;
-};
-
-export const buildChatResponseLogEvent = (
-  params: Readonly<{
-    requestId: string;
-    sessionId: string;
-    callIndex: number;
-    promptCacheKey: string;
-    durationMs: number;
-    response: OpenAI.Responses.Response;
-  }>,
-): ChatResponseLogEvent => {
-  const usage = getResponseUsage(params.response);
-  const inputTokens = usage.input_tokens;
-  const cachedTokens = usage.input_tokens_details.cached_tokens;
-
-  return {
-    domain: "chat",
-    action: "response",
-    vendor: "openai",
-    requestId: params.requestId,
-    sessionId: params.sessionId,
-    model: params.response.model,
-    callIndex: params.callIndex,
-    promptCacheKey: params.promptCacheKey,
-    stopReason: getResponseStopReason(params.response),
-    durationMs: params.durationMs,
-    inputTokens,
-    cachedTokens,
-    cachedRatio: inputTokens === 0 ? 0 : cachedTokens / inputTokens,
-    outputTokens: usage.output_tokens,
-    totalTokens: usage.total_tokens,
-  };
-};
-
-const runOneModelCall = async (
-  client: OpenAI,
-  params: StartOpenAILoopParams,
-  queue: QueueState,
-  request: OpenAIResponsesRequest,
-  promptCacheKey: string,
-  callIndex: number,
-): Promise<ModelCallResult> => {
-  const modelCallStartedAt = Date.now();
-  const stream: ResponseStreamWithOptionalFinalResponse = client.responses.stream(
-    request,
-    {
-      signal: params.signal,
-    },
-  );
-
-  const reasoningSummaries = new Map<string, string>();
-  const reasoningOrder: Array<string> = [];
-  let toolStates = createToolCallStateMap();
-  let completedResponse: OpenAI.Responses.Response | null = null;
-  let streamedText = "";
-
-  for await (const event of stream) {
-    if (isResponseCompletedEvent(event)) {
-      completedResponse = event.response;
-      continue;
-    }
-
-    if (isOutputTextDelta(event)) {
-      streamedText = `${streamedText}${event.delta}`;
-      pushQueueEvent(queue, {
-        type: "delta",
-        text: event.delta,
-        itemId: event.item_id,
-        responseIndex: callIndex - 1,
-        outputIndex: event.output_index,
-        contentIndex: event.content_index,
-        sequenceNumber: event.sequence_number,
-      });
-      continue;
-    }
-
-    if (event.type === "response.output_item.added" && event.item.type === "function_call") {
-      const update = applyToolCallStarted(
-        toolStates,
-        toFunctionToolCallRawItem(event.item),
-        createToolCallPosition(event, callIndex - 1),
-        Date.now(),
-      );
-      toolStates = update.toolStates;
-      if (update.event !== null) {
-        pushQueueEvent(queue, update.event);
-      }
-      continue;
-    }
-
-    if (event.type === "response.function_call_arguments.delta") {
-      const update = applyFunctionCallArgumentsDelta(toolStates, {
-        itemId: event.item_id,
-        outputIndex: event.output_index,
-        sequenceNumber: event.sequence_number,
-        delta: event.delta,
-      });
-      toolStates = update.toolStates;
-      if (update.event !== null) {
-        pushQueueEvent(queue, update.event);
-      }
-      continue;
-    }
-
-    if (event.type === "response.function_call_arguments.done") {
-      const update = applyFunctionCallArgumentsDone(toolStates, {
-        itemId: event.item_id,
-        outputIndex: event.output_index,
-        sequenceNumber: event.sequence_number,
-        arguments: event.arguments,
-      });
-      toolStates = update.toolStates;
-      if (update.event !== null) {
-        pushQueueEvent(queue, update.event);
-      }
-      continue;
-    }
-
-    if (isReasoningSummaryDelta(event)) {
-      if (!reasoningSummaries.has(event.item_id)) {
-        reasoningOrder.push(event.item_id);
-        if (reasoningOrder.length > MAX_REASONING_ITEMS) {
-          const removedItemId = reasoningOrder.shift();
-          if (removedItemId !== undefined) {
-            reasoningSummaries.delete(removedItemId);
-          }
-        }
-      }
-
-      const nextSummary = `${reasoningSummaries.get(event.item_id) ?? ""}${event.delta}`;
-      reasoningSummaries.set(event.item_id, nextSummary);
-      pushQueueEvent(queue, {
-        type: "reasoning_summary",
-        itemId: event.item_id,
-        responseIndex: callIndex - 1,
-        outputIndex: event.output_index,
-        sequenceNumber: event.sequence_number,
-        summary: nextSummary,
-      });
-    }
-  }
-
-  const finalResponse = await getFinalResponseFromStream(stream, completedResponse);
-  log(buildChatResponseLogEvent({
-    requestId: params.requestId,
-    sessionId: params.sessionId,
-    callIndex,
-    promptCacheKey,
-    durationMs: Date.now() - modelCallStartedAt,
-    response: finalResponse,
-  }));
-
-  return {
-    finalResponse,
-    functionCalls: finalResponse.output
-      .filter((item) => item.type === "function_call")
-      .map((item) => item as ParsedFunctionToolCall),
-    replayItems: finalResponse.output.map(toStoredOpenAIReplayItem),
-    streamedText,
-    toolStates,
-  };
 };
 
 const completeToolLimitSummaryTurn = async (
