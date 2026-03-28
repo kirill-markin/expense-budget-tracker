@@ -73,6 +73,9 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /reconcile the last completed checkpoint from prior tool results and your own progress notes/i);
   assert.match(instructions, /The final stage of any import is checksum verification/i);
   assert.match(instructions, /verify the number of rows added and the resulting account balances before declaring the import complete/i);
+  assert.match(instructions, /If the resulting balance is negative or this looks like the first import for a specific account/i);
+  assert.match(instructions, /it may be worth clarifying with the user what the real current balance is/i);
+  assert.match(instructions, /you may suggest a backdated adjustment entry so the account balance matches reality/i);
   assert.match(instructions, /investigate and clean up only the inconsistent rows with targeted fixes/i);
   assert.match(instructions, /For destructive cleanup that is broad, ambiguous, or not obviously safe, ask the user before deleting rows/i);
   assert.match(instructions, /If the user explicitly delegates reasonable assumptions or says to use best judgment, best guess, decide for me, proceed, continue, or equivalent/i);
@@ -81,6 +84,9 @@ test("buildSystemInstructions explains that browser chat already has an active w
   assert.match(instructions, /Don't: probe succeeds -> ask "A or B" or request renewed approval unless execution failed or a new ambiguity appeared/i);
   assert.match(instructions, /If the user has explicitly delegated reasonable assumptions or best-guess decisions for this import, you may create the new category without asking again/i);
   assert.match(instructions, /Balance verification is required as an internal check/i);
+  assert.match(instructions, /If the resulting balance is negative or this looks like the first import for that account/i);
+  assert.match(instructions, /it may be worth clarifying the real current balance with the user/i);
+  assert.match(instructions, /you may suggest a backdated adjustment entry so the account balance matches/i);
   assert.match(instructions, /If the plan is internally consistent and the user already delegated reasonable assumptions, do not block execution on another confirmation/i);
   assert.match(instructions, /include the exact chunk boundaries or equivalent stable source markers that will be used for execution and resume/i);
   assert.match(instructions, /If source rows are numbered in the prompt or attachment, prefer those row numbers as the batch reference format/i);
@@ -139,6 +145,9 @@ test("TOOL_DESCRIPTION documents multi-statement scripts and statements output",
   assert.match(TOOL_DESCRIPTION, /resume from the last completed checkpoint in the same chat session instead of regenerating earlier batches/i);
   assert.match(TOOL_DESCRIPTION, /The final stage of any long import is checksum verification/i);
   assert.match(TOOL_DESCRIPTION, /run fresh reads to verify how many rows were added and what balances now result for the affected account/i);
+  assert.match(TOOL_DESCRIPTION, /If a resulting balance is negative or this looks like the first import for a specific account/i);
+  assert.match(TOOL_DESCRIPTION, /it may be worth clarifying the real current balance with the user/i);
+  assert.match(TOOL_DESCRIPTION, /suggesting a backdated adjustment entry if that would reconcile the balance to reality/i);
   assert.match(TOOL_DESCRIPTION, /prefer targeted cleanup of the inconsistent rows/i);
   assert.match(TOOL_DESCRIPTION, /Ask the user before broad, destructive, or ambiguous cleanup/i);
   assert.match(TOOL_DESCRIPTION, /delegated reasonable assumptions or best-guess defaults/i);
