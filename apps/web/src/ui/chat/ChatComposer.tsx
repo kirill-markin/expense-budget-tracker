@@ -8,6 +8,7 @@ import type {
 import { useTranslation } from "react-i18next";
 
 import { CHAT_MODEL_BADGE_LABEL } from "@/lib/chatModels";
+import type { ChatComposerCapabilities } from "./chatComposerCapabilities";
 import type { ChatDictationState } from "./chatDictation";
 import type { ChatComposerAction } from "./streamRecovery";
 import {
@@ -20,12 +21,9 @@ type Props = Readonly<{
   inputText: string;
   pendingAttachments: ReadonlyArray<PendingAttachment>;
   composerAction: ChatComposerAction;
-  isHistoryLoaded: boolean;
-  isStopping: boolean;
-  isLiveStreamConnected: boolean;
   dictationState: ChatDictationState;
-  isDictationEnabled: boolean;
   dictationStatusLabel: string | null;
+  capabilities: ChatComposerCapabilities;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onInputChange: (value: string) => void;
   onAttach: (attachment: PendingAttachment) => void;
@@ -40,12 +38,9 @@ export const ChatComposer = (props: Props): ReactElement => {
     inputText,
     pendingAttachments,
     composerAction,
-    isHistoryLoaded,
-    isStopping,
-    isLiveStreamConnected,
     dictationState,
-    isDictationEnabled,
     dictationStatusLabel,
+    capabilities,
     textareaRef,
     onInputChange,
     onAttach,
@@ -64,22 +59,6 @@ export const ChatComposer = (props: Props): ReactElement => {
       void onSend();
     }
   };
-
-  const isSubmitButtonDisabled = !isHistoryLoaded
-    || isStopping
-    || dictationState !== "idle"
-    || (composerAction === "send" && isLiveStreamConnected);
-  const isAttachButtonDisabled = !isHistoryLoaded
-    || isStopping
-    || dictationState !== "idle"
-    || composerAction !== "send";
-  const isMicrophoneButtonDisabled = !isDictationEnabled
-    || !isHistoryLoaded
-    || isStopping
-    || isLiveStreamConnected
-    || composerAction !== "send"
-    || dictationState === "requesting_permission"
-    || dictationState === "transcribing";
   const microphoneAriaLabel = dictationState === "recording"
     ? t("chat.dictationStop")
     : t("chat.dictationStart");
@@ -107,7 +86,7 @@ export const ChatComposer = (props: Props): ReactElement => {
         className={styles.textarea}
         placeholder={t("chat.placeholder")}
         value={inputText}
-        disabled={dictationState !== "idle"}
+        disabled={capabilities.isTextareaDisabled}
         onChange={(event) => onInputChange(event.target.value)}
         onKeyDown={handleKeyDown}
         rows={1}
@@ -123,7 +102,7 @@ export const ChatComposer = (props: Props): ReactElement => {
           <button
             type="button"
             className={styles.microphoneButton}
-            disabled={isMicrophoneButtonDisabled}
+            disabled={capabilities.isMicrophoneButtonDisabled}
             aria-label={microphoneAriaLabel}
             aria-pressed={dictationState === "recording"}
             onClick={() => void onToggleDictation()}
@@ -140,11 +119,11 @@ export const ChatComposer = (props: Props): ReactElement => {
               )}
             </svg>
           </button>
-          <FileAttachment onAttach={onAttach} disabled={isAttachButtonDisabled} />
+          <FileAttachment onAttach={onAttach} disabled={capabilities.isAttachButtonDisabled} />
           <button
             type="button"
             className={styles.sendButton}
-            disabled={isSubmitButtonDisabled}
+            disabled={capabilities.isSubmitButtonDisabled}
             onClick={() => void (composerAction === "stop" ? onStop() : onSend())}
           >
             {composerAction === "stop" ? t("chat.stop") : t("chat.send")}

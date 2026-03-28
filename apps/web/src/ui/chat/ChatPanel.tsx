@@ -17,6 +17,7 @@ import { ChatComposer } from "./ChatComposer";
 import { ChatPanelHeader } from "./ChatPanelHeader";
 import { ChatTranscript } from "./ChatTranscript";
 import { prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
+import { getChatComposerCapabilities } from "./chatComposerCapabilities";
 import { buildChatTranscriptMarkdown } from "./chatTranscriptMarkdown";
 import {
   insertDictationTranscriptIntoDraft,
@@ -231,30 +232,58 @@ export const ChatPanel = (props: Props): ReactElement => {
     setPendingAttachments((prev) => [...prev.slice(0, index), ...prev.slice(index + 1)]);
   }, []);
 
+  const hasPendingMessage = inputText.trim().length > 0 || pendingAttachments.length > 0;
+  const composerCapabilities = getChatComposerCapabilities({
+    composerAction,
+    isHistoryLoaded,
+    isStopping,
+    isLiveStreamConnected,
+    dictationState,
+    hasPendingMessage,
+  });
+
   const handleDragEnter = useCallback((e: DragEvent<HTMLDivElement>): void => {
     e.preventDefault();
+
+    if (!composerCapabilities.isDropTargetEnabled) {
+      return;
+    }
     dragCounterRef.current += 1;
     if (dragCounterRef.current === 1) {
       setIsDragOver(true);
     }
-  }, []);
+  }, [composerCapabilities.isDropTargetEnabled]);
 
   const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>): void => {
     e.preventDefault();
+
+    if (!composerCapabilities.isDropTargetEnabled) {
+      return;
+    }
     dragCounterRef.current -= 1;
     if (dragCounterRef.current === 0) {
       setIsDragOver(false);
     }
-  }, []);
+  }, [composerCapabilities.isDropTargetEnabled]);
 
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>): void => {
     e.preventDefault();
-  }, []);
+
+    if (!composerCapabilities.isDropTargetEnabled) {
+      e.dataTransfer.dropEffect = "none";
+      return;
+    }
+    e.dataTransfer.dropEffect = "copy";
+  }, [composerCapabilities.isDropTargetEnabled]);
 
   const handleDrop = useCallback(async (e: DragEvent<HTMLDivElement>): Promise<void> => {
     e.preventDefault();
     dragCounterRef.current = 0;
     setIsDragOver(false);
+
+    if (!composerCapabilities.isDropTargetEnabled) {
+      return;
+    }
 
     const files = e.dataTransfer.files;
     let hasAttachedFile = false;
@@ -273,14 +302,23 @@ export const ChatPanel = (props: Props): ReactElement => {
     if (hasAttachedFile) {
       textareaRef.current?.focus();
     }
-  }, [handleAttach]);
+  }, [composerCapabilities.isDropTargetEnabled, handleAttach]);
 
   const canSendPendingMessage = isHistoryLoaded
     && !isStopping
     && !isAssistantRunActive
     && !isLiveStreamConnected
     && dictationState === "idle"
-    && (inputText.trim().length > 0 || pendingAttachments.length > 0);
+    && hasPendingMessage;
+
+  useEffect(() => {
+    if (composerCapabilities.isDropTargetEnabled) {
+      return;
+    }
+
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+  }, [composerCapabilities.isDropTargetEnabled]);
 
   const discardDictation = useCallback((): void => {
     const recorder = mediaRecorderRef.current;
@@ -481,7 +519,9 @@ export const ChatPanel = (props: Props): ReactElement => {
       onDragOver={handleDragOver}
       onDrop={(e) => void handleDrop(e)}
     >
-      {isDragOver && <div className={styles.dropOverlay}>{t("chat.dropFiles")}</div>}
+      {isDragOver && composerCapabilities.isDropTargetEnabled && (
+        <div className={styles.dropOverlay}>{t("chat.dropFiles")}</div>
+      )}
       {mode === "sidebar" && (
         <div
           className={cn(styles.resizeHandle, isDragging ? styles.resizeHandleDragging : "")}
@@ -508,12 +548,9 @@ export const ChatPanel = (props: Props): ReactElement => {
         inputText={inputText}
         pendingAttachments={pendingAttachments}
         composerAction={composerAction}
-        isHistoryLoaded={isHistoryLoaded}
-        isStopping={isStopping}
-        isLiveStreamConnected={isLiveStreamConnected}
         dictationState={dictationState}
-        isDictationEnabled={!isAssistantRunActive}
         dictationStatusLabel={dictationStatusLabel}
+        capabilities={composerCapabilities}
         textareaRef={textareaRef}
         onInputChange={setInputText}
         onAttach={handleAttach}
