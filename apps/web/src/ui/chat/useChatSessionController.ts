@@ -55,6 +55,7 @@ export type ChatSessionController = Readonly<{
   isStopping: boolean;
   currentSessionId: string | null;
   composerAction: ChatComposerAction;
+  acceptServerSessionId: (sessionId: string) => void;
   sendMessage: (params: SendChatMessageParams) => Promise<void>;
   stopMessage: () => Promise<void>;
   clearConversation: () => Promise<void>;
@@ -569,6 +570,10 @@ export const useChatSessionController = (
     }
   }, [clearHistory, currentSessionId, isAssistantRunActive, markAssistantError, t]);
 
+  const acceptServerSessionId = useCallback((sessionId: string): void => {
+    setCurrentSessionId(sessionId);
+  }, []);
+
   return {
     messages,
     runState,
@@ -578,6 +583,7 @@ export const useChatSessionController = (
     isStopping,
     currentSessionId,
     composerAction,
+    acceptServerSessionId,
     sendMessage,
     stopMessage,
     clearConversation,

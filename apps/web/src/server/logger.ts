@@ -111,6 +111,8 @@ type ChatTranscriptionEvent = Readonly<{
   action: "transcription_failed";
   vendor: ChatVendor;
   requestId: string;
+  userId: string;
+  sessionId: string;
   source: "web";
   fileName: string;
   fileSize: number;

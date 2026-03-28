@@ -1,7 +1,11 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
-import OpenAI, { toFile } from "openai";
+import { toFile } from "openai";
 import { ApiRouteError } from "@/server/api/errors";
+import { getObservedOpenAIClient } from "@/server/chat/openai/client";
+import {
+  startChatTranscriptionObservation,
+  type ChatTranscriptionTraceMetadata,
+} from "@/server/chat/openai/langfuse";
 import { log } from "@/server/logger";
 
 export type ChatTranscriptionSource = "web";
@@ -22,7 +26,10 @@ type OpenAITranscriptionClient = Readonly<{
 export type ChatTranscriptionUpload = Readonly<{
   file: File;
   source: ChatTranscriptionSource;
+  sessionId?: string;
 }>;
+
+export type ChatTranscriptionTelemetryContext = ChatTranscriptionTraceMetadata;
 
 type OpenAIErrorMetadata = Readonly<{
   upstreamStatus: number | null;
@@ -54,10 +61,10 @@ const getRequiredOpenAIApiKey = (): string => {
   return apiKey;
 };
 
-const createOpenAITranscriptionClient = (): OpenAITranscriptionClient =>
-  new OpenAI({
-    apiKey: getRequiredOpenAIApiKey(),
-  });
+export const createOpenAITranscriptionClient = (): OpenAITranscriptionClient => {
+  getRequiredOpenAIApiKey();
+  return getObservedOpenAIClient();
+};
 
 const normalizeFileExtension = (fileName: string): string | null => {
   const extensionIndex = fileName.lastIndexOf(".");
@@ -107,6 +114,15 @@ export const parseChatTranscriptionUpload = async (request: Request): Promise<Ch
   return {
     file: fileValue,
     source: sourceValue,
+    sessionId: (() => {
+      const sessionValue = formData.get("sessionId");
+      if (typeof sessionValue !== "string") {
+        return undefined;
+      }
+
+      const normalizedSessionId = sessionValue.trim();
+      return normalizedSessionId === "" ? undefined : normalizedSessionId;
+    })(),
   };
 };
 
@@ -166,7 +182,7 @@ const isInvalidAudioFailure = (error: unknown): boolean => {
 };
 
 const logChatTranscriptionFailure = (
-  requestId: string,
+  telemetryContext: ChatTranscriptionTelemetryContext,
   upload: ChatTranscriptionUpload,
   metadata: OpenAIErrorMetadata,
 ): void => {
@@ -174,7 +190,9 @@ const logChatTranscriptionFailure = (
     domain: "chat",
     action: "transcription_failed",
     vendor: "openai",
-    requestId,
+    requestId: telemetryContext.requestId,
+    userId: telemetryContext.userId,
+    sessionId: telemetryContext.sessionId,
     source: upload.source,
     fileName: upload.file.name,
     fileSize: upload.file.size,
@@ -198,29 +216,32 @@ const createProviderError = (error: unknown): ApiRouteError => {
 
 export const transcribeChatAudioUpload = async (
   upload: ChatTranscriptionUpload,
-  client: OpenAITranscriptionClient = createOpenAITranscriptionClient(),
+  telemetryContext: ChatTranscriptionTelemetryContext,
+  client?: OpenAITranscriptionClient,
 ): Promise<string> => {
   try {
-    const buffer = Buffer.from(await upload.file.arrayBuffer());
-    const file = await toFile(buffer, upload.file.name, { type: upload.file.type });
-    const result = await client.audio.transcriptions.create({
-      file,
-      model: CHAT_TRANSCRIPTION_MODEL,
-    });
-    const trimmedText = result.text.trim();
-    if (trimmedText === "") {
-      throw new Error("Transcription response was empty");
-    }
+    const transcriptionClient = client ?? createOpenAITranscriptionClient();
+    return await startChatTranscriptionObservation(telemetryContext, async (): Promise<string> => {
+      const buffer = Buffer.from(await upload.file.arrayBuffer());
+      const file = await toFile(buffer, upload.file.name, { type: upload.file.type });
+      const result = await transcriptionClient.audio.transcriptions.create({
+        file,
+        model: CHAT_TRANSCRIPTION_MODEL,
+      });
+      const trimmedText = result.text.trim();
+      if (trimmedText === "") {
+        throw new Error("Transcription response was empty");
+      }
 
-    return trimmedText;
+      return trimmedText;
+    });
   } catch (error) {
     if (error instanceof ApiRouteError) {
       throw error;
     }
 
-    const requestId = randomUUID();
     const metadata = getErrorMetadata(error);
-    logChatTranscriptionFailure(requestId, upload, metadata);
+    logChatTranscriptionFailure(telemetryContext, upload, metadata);
 
     if (isInvalidAudioFailure(error)) {
       throw new ApiRouteError(422, CHAT_TRANSCRIPTION_INVALID_AUDIO_ERROR_MESSAGE);

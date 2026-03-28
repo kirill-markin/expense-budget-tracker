@@ -131,7 +131,9 @@ export const ChatPanel = (props: Props): ReactElement => {
     isAssistantRunActive,
     isLiveStreamConnected,
     isStopping,
+    currentSessionId,
     composerAction,
+    acceptServerSessionId,
     sendMessage,
     stopMessage,
     clearConversation,
@@ -372,12 +374,13 @@ export const ChatPanel = (props: Props): ReactElement => {
         return;
       }
 
-      const transcript = await transcribeChatAudio(audioBlob);
+      const transcription = await transcribeChatAudio(audioBlob, currentSessionId);
       if (isMountedRef.current) {
+        acceptServerSessionId(transcription.sessionId);
         setInputText((currentText) => {
           const insertionResult = insertDictationTranscriptIntoDraft(
             currentText,
-            transcript,
+            transcription.text,
             draftSelectionRef.current,
           );
           const nextSelection = shouldRestoreTextareaFocusAfterDictationRef.current

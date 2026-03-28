@@ -1,10 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ApiRouteError } from "@/server/api/errors";
+import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
+  createOpenAITranscriptionClient,
   parseChatTranscriptionUpload,
   transcribeChatAudioUpload,
 } from "./transcriptions";
+
+const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+
+const createTelemetryContext = () => ({
+  requestId: "req-1",
+  userId: "user-1",
+  sessionId: "session-1",
+  source: "web" as const,
+  fileName: "sample.webm",
+  mediaType: "audio/webm",
+  fileSize: 3,
+});
+
+test.afterEach(() => {
+  if (originalOpenAiApiKey === undefined) {
+    delete process.env.OPENAI_API_KEY;
+    return;
+  }
+
+  process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+});
 
 test("parseChatTranscriptionUpload accepts supported webm uploads", async () => {
   const formData = new FormData();
@@ -21,6 +44,24 @@ test("parseChatTranscriptionUpload accepts supported webm uploads", async () => 
   const upload = await parseChatTranscriptionUpload(request);
   assert.equal(upload.file.name, "sample.webm");
   assert.equal(upload.source, "web");
+  assert.equal(upload.sessionId, undefined);
+});
+
+test("parseChatTranscriptionUpload accepts optional session IDs", async () => {
+  const formData = new FormData();
+  formData.append("file", new File([new Uint8Array([1, 2, 3])], "sample.webm", {
+    type: "audio/webm",
+  }));
+  formData.append("source", "web");
+  formData.append("sessionId", "session-1");
+
+  const request = new Request("https://app.example.com/api/chat/transcriptions", {
+    method: "POST",
+    body: formData,
+  });
+
+  const upload = await parseChatTranscriptionUpload(request);
+  assert.equal(upload.sessionId, "session-1");
 });
 
 test("parseChatTranscriptionUpload accepts supported wav uploads", async () => {
@@ -116,7 +157,7 @@ test("transcribeChatAudioUpload returns trimmed transcript text", async () => {
   const transcript = await transcribeChatAudioUpload({
     file: new File([new Uint8Array([1, 2, 3])], "sample.webm", { type: "audio/webm" }),
     source: "web",
-  }, {
+  }, createTelemetryContext(), {
     audio: {
       transcriptions: {
         create: async (): Promise<Readonly<{ text: string }>> => ({
@@ -129,12 +170,18 @@ test("transcribeChatAudioUpload returns trimmed transcript text", async () => {
   assert.equal(transcript, "hello world");
 });
 
+test("createOpenAITranscriptionClient reuses the observed OpenAI client", () => {
+  process.env.OPENAI_API_KEY = "test-key";
+
+  assert.equal(createOpenAITranscriptionClient(), getObservedOpenAIClient());
+});
+
 test("transcribeChatAudioUpload converts invalid audio provider errors into a 422 route error", async () => {
   await assert.rejects(
     () => transcribeChatAudioUpload({
       file: new File([new Uint8Array([1, 2, 3])], "sample.webm", { type: "audio/webm" }),
       source: "web",
-    }, {
+    }, createTelemetryContext(), {
       audio: {
         transcriptions: {
           create: async (): Promise<Readonly<{ text: string }>> => {
@@ -157,7 +204,7 @@ test("transcribeChatAudioUpload converts generic provider failures into a 502 ro
     () => transcribeChatAudioUpload({
       file: new File([new Uint8Array([1, 2, 3])], "sample.webm", { type: "audio/webm" }),
       source: "web",
-    }, {
+    }, createTelemetryContext(), {
       audio: {
         transcriptions: {
           create: async (): Promise<Readonly<{ text: string }>> => {

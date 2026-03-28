@@ -11,6 +11,7 @@ import {
   buildChatRequestDiagnostics,
   createChatErrorLogEvent,
   createChatEventStream,
+  deleteChatRouteWithDeps,
   extractChatRequestContext,
   isExpectedStreamClosureError,
   parseChatRequestBody,
@@ -155,6 +156,66 @@ test("POST rejects new chat runs while the server is draining", async () => {
   } finally {
     setServerDrainingForTests(false);
   }
+});
+
+test("deleteChatRouteWithDeps keeps the current empty session instead of creating a fresh one", async () => {
+  const request = new Request("https://app.example.com/api/chat", {
+    method: "DELETE",
+    headers: {
+      "x-user-id": "user-1",
+      "x-workspace-id": "workspace-1",
+    },
+  });
+
+  const response = await deleteChatRouteWithDeps(request, {
+    getChatSessionSnapshot: async (_userId, _workspaceId, sessionId) => ({
+      sessionId: sessionId ?? "session-empty",
+      runState: "idle",
+      updatedAt: 1,
+      activeRunHeartbeatAt: null,
+      mainContentInvalidationVersion: 0,
+      messages: [],
+    }),
+    getLatestChatSessionId: async () => "session-empty",
+    createFreshChatSession: async () => {
+      throw new Error("should not create a fresh session when the current chat is empty");
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, sessionId: "session-empty" });
+});
+
+test("deleteChatRouteWithDeps creates a fresh session when the current chat has messages", async () => {
+  const request = new Request("https://app.example.com/api/chat", {
+    method: "DELETE",
+    headers: {
+      "x-user-id": "user-1",
+      "x-workspace-id": "workspace-1",
+    },
+  });
+
+  const response = await deleteChatRouteWithDeps(request, {
+    getChatSessionSnapshot: async (_userId, _workspaceId, sessionId) => ({
+      sessionId: sessionId ?? "session-current",
+      runState: "idle",
+      updatedAt: 1,
+      activeRunHeartbeatAt: null,
+      mainContentInvalidationVersion: 0,
+      messages: [{
+        role: "assistant",
+        content: [{ type: "text", text: "Stored answer" }],
+        timestamp: 1,
+        isError: false,
+        isStopped: false,
+      }],
+    }),
+    getLatestChatSessionId: async () => "session-current",
+    createFreshChatSession: async () => "session-new",
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, sessionId: "session-new" });
 });
 
 test("buildChatRequestDiagnostics tracks message and attachment metadata", () => {

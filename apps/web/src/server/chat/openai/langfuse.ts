@@ -17,9 +17,19 @@ type ChatTraceMetadata = Readonly<{
   turnInput: ReadonlyArray<ContentPart>;
 }>;
 
+export type ChatTranscriptionTraceMetadata = Readonly<{
+  requestId: string;
+  userId: string;
+  sessionId: string;
+  source: "web";
+  fileName: string;
+  mediaType: string;
+  fileSize: number;
+}>;
+
 type TelemetryMetadata = Readonly<Record<string, string>>;
 
-type StartChatTurnObservationDependencies = Readonly<{
+type StartObservationDependencies = Readonly<{
   createTraceId: typeof createTraceId;
   propagateAttributes: typeof propagateAttributes;
   startObservation: typeof startObservation;
@@ -63,24 +73,36 @@ const buildTraceMetadata = (
   runState: metadataValue(params.runState),
 });
 
+const buildChatTranscriptionTraceMetadata = (
+  params: ChatTranscriptionTraceMetadata,
+): TelemetryMetadata => ({
+  requestId: metadataValue(params.requestId),
+  userId: metadataValue(params.userId),
+  sessionId: metadataValue(params.sessionId),
+  source: metadataValue(params.source),
+  fileName: metadataValue(params.fileName),
+  mediaType: metadataValue(params.mediaType),
+  fileSize: metadataValue(params.fileSize),
+});
+
 const sanitizeString = (value: string): string =>
   MASK_PATTERNS.reduce(
     (currentValue, rule) => currentValue.replace(rule.pattern, rule.replacement),
     value,
   );
 
-const sanitizeTelemetryValue = (value: unknown): unknown => {
+export const sanitizeLangfuseTelemetryValue = (value: unknown): unknown => {
   if (typeof value === "string") {
     return sanitizeString(value);
   }
 
   if (Array.isArray(value)) {
-    return value.map(sanitizeTelemetryValue);
+    return value.map(sanitizeLangfuseTelemetryValue);
   }
 
   if (typeof value === "object" && value !== null) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, childValue]) => [key, sanitizeTelemetryValue(childValue)]),
+      Object.entries(value).map(([key, childValue]) => [key, sanitizeLangfuseTelemetryValue(childValue)]),
     );
   }
 
@@ -113,20 +135,40 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
     shouldExportSpan: ({ otelSpan }: Readonly<{ otelSpan: ReadableSpan }>): boolean =>
       isDefaultExportSpan(otelSpan),
     mask: ({ data }: Readonly<{ data: unknown }>): unknown =>
-      sanitizeTelemetryValue(data),
+      sanitizeLangfuseTelemetryValue(data),
   });
 };
 
-const DEFAULT_START_CHAT_TURN_OBSERVATION_DEPENDENCIES: StartChatTurnObservationDependencies = {
+const DEFAULT_START_OBSERVATION_DEPENDENCIES: StartObservationDependencies = {
   createTraceId,
   propagateAttributes,
   startObservation,
 };
 
+export const sanitizeChatTranscriptionForTelemetry = (
+  params: ChatTranscriptionTraceMetadata,
+): Readonly<{
+  upload: Readonly<{
+    sessionId: string;
+    source: string;
+    fileName: string;
+    mediaType: string;
+    fileSize: number;
+  }>;
+}> => ({
+  upload: {
+    sessionId: params.sessionId,
+    source: params.source,
+    fileName: params.fileName,
+    mediaType: params.mediaType,
+    fileSize: params.fileSize,
+  },
+});
+
 export const startChatTurnObservationWithDeps = async (
   params: ChatTraceMetadata,
   fn: (rootObservation: LangfuseObservation | null) => Promise<void>,
-  dependencies: StartChatTurnObservationDependencies,
+  dependencies: StartObservationDependencies,
 ): Promise<void> => {
   const traceId = await dependencies.createTraceId(params.requestId);
   const parentSpanContext = {
@@ -217,5 +259,112 @@ export const startChatTurnObservation = async (
   startChatTurnObservationWithDeps(
     params,
     fn,
-    DEFAULT_START_CHAT_TURN_OBSERVATION_DEPENDENCIES,
+    DEFAULT_START_OBSERVATION_DEPENDENCIES,
+  );
+
+export const startChatTranscriptionObservationWithDeps = async <TResult>(
+  params: ChatTranscriptionTraceMetadata,
+  fn: (rootObservation: LangfuseObservation | null) => Promise<TResult>,
+  dependencies: StartObservationDependencies,
+): Promise<TResult> => {
+  const traceId = await dependencies.createTraceId(params.requestId);
+  const parentSpanContext = {
+    traceId,
+    spanId: traceId.slice(0, 16),
+    traceFlags: 1,
+  };
+  let callbackStarted = false;
+  let callbackCompleted = false;
+  let callbackError: unknown | null = null;
+  let callbackResult: TResult | undefined;
+
+  try {
+    await dependencies.propagateAttributes(
+      {
+        traceName: "chat_transcription",
+        userId: params.userId,
+        tags: ["surface:chat-transcription", "runtime:backend-route", "vendor:openai"],
+        metadata: buildChatTranscriptionTraceMetadata(params),
+      },
+      async (): Promise<TResult> => {
+        callbackStarted = true;
+        const rootObservation = dependencies.startObservation(
+          "chat_transcription",
+          {
+            input: sanitizeChatTranscriptionForTelemetry(params),
+            metadata: buildChatTranscriptionTraceMetadata(params),
+          },
+          {
+            asType: "agent",
+            parentSpanContext,
+          },
+        );
+
+        try {
+          callbackResult = await fn(rootObservation);
+          callbackCompleted = true;
+          rootObservation.updateOtelSpanAttributes({
+            output: {
+              result: "success",
+            },
+          });
+          return callbackResult;
+        } catch (error) {
+          callbackError = error;
+          rootObservation.updateOtelSpanAttributes({
+            output: {
+              result: "error",
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+          throw error;
+        } finally {
+          rootObservation.end();
+        }
+      },
+    );
+    if (!callbackCompleted) {
+      throw new Error("Chat transcription completed without returning a result");
+    }
+    return callbackResult as TResult;
+  } catch (error) {
+    if (callbackError !== null) {
+      throw callbackError;
+    }
+
+    if (callbackStarted && callbackCompleted) {
+      log({
+        domain: "chat",
+        action: "error",
+        vendor: "openai",
+        stage: "agent",
+        requestId: params.requestId,
+        error: `Langfuse telemetry failed after the chat transcription finished: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      if (!callbackCompleted) {
+        throw new Error("Chat transcription completed without returning a result");
+      }
+      return callbackResult as TResult;
+    }
+
+    log({
+      domain: "chat",
+      action: "error",
+      vendor: "openai",
+      stage: "agent",
+      requestId: params.requestId,
+      error: `Langfuse telemetry failed: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return await fn(null);
+  }
+};
+
+export const startChatTranscriptionObservation = async <TResult>(
+  params: ChatTranscriptionTraceMetadata,
+  fn: (rootObservation: LangfuseObservation | null) => Promise<TResult>,
+): Promise<TResult> =>
+  startChatTranscriptionObservationWithDeps(
+    params,
+    fn,
+    DEFAULT_START_OBSERVATION_DEPENDENCIES,
   );

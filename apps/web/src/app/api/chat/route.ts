@@ -92,6 +92,12 @@ type ChatEventStreamParams = Readonly<{
   onStreamError: (error: string) => void;
 }>;
 
+type ChatDeleteRouteDependencies = Readonly<{
+  getChatSessionSnapshot: typeof getChatSessionSnapshot;
+  getLatestChatSessionId: typeof getLatestChatSessionId;
+  createFreshChatSession: typeof createFreshChatSession;
+}>;
+
 const CHAT_STREAM_INTERRUPTED_ERROR = "This response stopped because the chat server restarted before it finished. Please send a new message to continue.";
 export const CHAT_STREAM_DRAINING_ERROR = CHAT_SERVER_DRAINING_MESSAGE;
 export const CHAT_STREAM_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -384,6 +390,12 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
   });
 };
 
+const DEFAULT_CHAT_DELETE_ROUTE_DEPENDENCIES: ChatDeleteRouteDependencies = {
+  getChatSessionSnapshot,
+  getLatestChatSessionId,
+  createFreshChatSession,
+};
+
 export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
   if (!isRecord(body)) {
     throw new Error("Invalid chat request body");
@@ -574,29 +586,46 @@ export const POST = async (request: Request): Promise<Response> => {
   }
 };
 
-export const DELETE = async (request: Request): Promise<Response> =>
+export const deleteChatRouteWithDeps = async (
+  request: Request,
+  dependencies: ChatDeleteRouteDependencies,
+): Promise<Response> =>
   handleRoute(
     { route: "/api/chat", method: "DELETE", internalErrorMessage: "Chat reset failed" },
     async (): Promise<Response> => {
       const context = extractChatRequestContext(request);
       const sessionId = new URL(request.url).searchParams.get("sessionId") ?? undefined;
 
-      let targetSessionId: string | null = null;
+      let targetSnapshot: Awaited<ReturnType<typeof getChatSessionSnapshot>> | null = null;
       try {
         if (sessionId !== undefined) {
-          targetSessionId = await getChatSessionSnapshot(
+          targetSnapshot = await dependencies.getChatSessionSnapshot(
             context.userId,
             context.workspaceId,
             sessionId,
-          ).then((snapshot) => snapshot.sessionId);
+          );
         } else {
-          targetSessionId = await getLatestChatSessionId(context.userId, context.workspaceId);
+          const latestSessionId = await dependencies.getLatestChatSessionId(context.userId, context.workspaceId);
+          if (latestSessionId !== null) {
+            targetSnapshot = await dependencies.getChatSessionSnapshot(
+              context.userId,
+              context.workspaceId,
+              latestSessionId,
+            );
+          }
         }
       } catch (error) {
         return mapStoreErrorToRouteError(error);
       }
 
-      const newSessionId = await createFreshChatSession(context.userId, context.workspaceId);
+      if (targetSnapshot !== null && targetSnapshot.messages.length === 0) {
+        return Response.json({ ok: true, sessionId: targetSnapshot.sessionId });
+      }
+
+      const newSessionId = await dependencies.createFreshChatSession(context.userId, context.workspaceId);
       return Response.json({ ok: true, sessionId: newSessionId });
     },
   );
+
+export const DELETE = async (request: Request): Promise<Response> =>
+  deleteChatRouteWithDeps(request, DEFAULT_CHAT_DELETE_ROUTE_DEPENDENCIES);
