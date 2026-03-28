@@ -5,12 +5,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
+import { getMonthEndDate } from "@/lib/monthUtils";
 import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBreakdown";
 import { useFormat } from "@/ui/FormatProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
 import { formatAmount } from "./format";
 import budgetStyles from "./BudgetTable.module.css";
+import { formatFxAmount } from "./budgetTableLogic";
+import { buildFxBreakdownSubtitle, sumFxAdjustReport } from "./FxBreakdownPanel.logic";
 import tableStyles from "./TableUi.module.css";
 
 type Props = Readonly<{
@@ -36,6 +39,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
   const { numberFormat } = useFormat();
 
   const [rows, setRows] = useState<ReadonlyArray<FxBreakdownRow>>([]);
+  const [closeValuationDate, setCloseValuationDate] = useState<string>(getMonthEndDate(month));
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,6 +76,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setCloseValuationDate(getMonthEndDate(month));
 
     const params = new URLSearchParams({ month });
     fetchLiveData(buildLiveDataUrl("/api/fx-breakdown", params, refreshToken))
@@ -84,6 +89,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
       })
       .then((result) => {
         setRows(result.rows);
+        setCloseValuationDate(result.closeValuationDate);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : String(err));
@@ -105,7 +111,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [closePanel]);
 
-  const totalChange = rows.reduce((sum, r) => sum + r.changeReport, 0);
+  const totalFxAdjust = sumFxAdjustReport(rows);
 
   return (
     <>
@@ -118,7 +124,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
         <div className={tableStyles.panelHeader}>
           <div>
             <div className={tableStyles.panelTitle}>FX Breakdown</div>
-            <div className={tableStyles.panelSubtitle}>{month}</div>
+            <div className={tableStyles.panelSubtitle}>{buildFxBreakdownSubtitle(month, closeValuationDate)}</div>
           </div>
           <button className={tableStyles.panelCloseButton} type="button" onClick={closePanel}>
             &times;
@@ -140,11 +146,11 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Open</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Open ${reportingCurrency}`}</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Delta</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Flow ${reportingCurrency}`}</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Close</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
                 <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Close ${reportingCurrency}`}</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Change ${reportingCurrency}`}</th>
+                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`FX ${reportingCurrency}`}</th>
               </tr>
             </thead>
             <tbody>
@@ -154,11 +160,11 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.openNative)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.openRate)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.openReport, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.deltaNative)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.flowReport, numberFormat)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeReport, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight, row.changeReport < 0 ? budgetStyles.over : "")}>{formatAmount(row.changeReport, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight, row.fxAdjustReport < 0 ? budgetStyles.over : "")}>{formatFxAmount(row.fxAdjustReport, numberFormat)}</td>
                 </tr>
               ))}
               {!loading && rows.length === 0 && (
@@ -180,7 +186,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                   <td className={tableStyles.cell} />
                   <td className={tableStyles.cell} />
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.closeReport, 0), numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight, totalChange < 0 ? budgetStyles.over : "")}>{formatAmount(totalChange, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight, totalFxAdjust < 0 ? budgetStyles.over : "")}>{formatFxAmount(totalFxAdjust, numberFormat)}</td>
                 </tr>
               </tfoot>
             )}

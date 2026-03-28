@@ -11,6 +11,12 @@ export const getCurrentMonth = (): string => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 };
 
+export const getMonthEndDate = (month: string): string => {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const date = new Date(Date.UTC(year, monthNumber, 0));
+  return date.toISOString().slice(0, 10);
+};
+
 /**
  * Extracts the four-digit year from a "YYYY-MM" month string.
  */

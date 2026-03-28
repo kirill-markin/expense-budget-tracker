@@ -7,7 +7,7 @@ import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid"
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
 import type { FxBreakdownResult, FxBreakdownRow } from "@/server/budget/getFxBreakdown";
 import type { AccountOption, FieldHints, LedgerEntry, TransactionsFilter, TransactionsPage } from "@/server/transactions/getTransactions";
-import { generateMonthRange, getCurrentMonth, offsetMonth } from "@/lib/monthUtils";
+import { generateMonthRange, getCurrentMonth, getMonthEndDate, offsetMonth } from "@/lib/monthUtils";
 
 // ---------------------------------------------------------------------------
 // Config — edit these to change demo content
@@ -434,11 +434,16 @@ export const getDemoFxBreakdown = (month: string): FxBreakdownResult => {
     const rate = FX[cur] ?? 1;
     const o = open[cur] ?? 0;
     const c = close[cur] ?? 0;
+    const flowReport = round2((c - o) * rate);
     return {
       currency: cur, openNative: o, openRate: rate, openReport: round2(o * rate),
-      deltaNative: round2(c - o), closeNative: c, closeRate: rate,
-      closeReport: round2(c * rate), changeReport: round2((c - o) * rate),
+      deltaNative: round2(c - o), flowReport, closeNative: c, closeRate: rate,
+      closeReport: round2(c * rate), changeReport: flowReport, fxAdjustReport: 0,
     };
   });
-  return { rows };
+  return {
+    rows,
+    openValuationDate: getMonthEndDate(prev),
+    closeValuationDate: getMonthEndDate(month),
+  };
 };

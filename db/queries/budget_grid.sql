@@ -153,7 +153,7 @@ ORDER BY dc.currency;
 ----
 
 -- MONTH_END_BALANCES_QUERY: portfolio balance in report currency at each month-end (mark-to-market).
--- Parameters: $1 = report_currency, $2 = month_from, $3 = actual_to
+-- Parameters: $1 = report_currency, $2 = month_from, $3 = actual_to, $4 = latest_fx_calendar_date
 --
 -- Uses le.currency directly instead of JOIN accounts view. The accounts view
 -- does MODE() WITHIN GROUP over the entire ledger_entries table to derive the
@@ -176,6 +176,15 @@ all_months AS (
     (date_trunc('month', to_date($3, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date,
     interval '1 month'
   ) d
+),
+valuation_dates AS (
+  SELECT
+    month,
+    LEAST(
+      (date_trunc('month', to_date(month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date,
+      to_date($4, 'YYYY-MM-DD')
+    ) AS valuation_date
+  FROM all_months
 ),
 currencies AS (
   SELECT DISTINCT currency FROM monthly_deltas
@@ -202,10 +211,12 @@ SELECT
     ELSE NULL
   END)::numeric, 2) AS balance_report
 FROM running_balances rb
+JOIN valuation_dates vd
+  ON vd.month = rb.month
 LEFT JOIN fx_rates_daily rr
   ON rr.quote_currency = $1
   AND rr.base_currency = rb.currency
-  AND rr.calendar_date = (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
+  AND rr.calendar_date = vd.valuation_date
 WHERE rb.month >= to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
   AND rb.month <= $3
 GROUP BY rb.month

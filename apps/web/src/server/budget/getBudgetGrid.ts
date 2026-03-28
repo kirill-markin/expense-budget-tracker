@@ -22,6 +22,7 @@
  *   connection, serializing all queries despite Promise.all.
  */
 import { queryAs } from "@/server/db";
+import { getLatestFxCalendarDate } from "@/server/fxRates";
 import { getReportCurrency } from "@/server/reportCurrency";
 
 export type BudgetRow = Readonly<{
@@ -60,8 +61,9 @@ export type BudgetGridResult = Readonly<{
   /**
    * Actual portfolio balance in report currency at the end of each month, keyed by "YYYY-MM".
    * Computed as: running native-currency balance per currency, converted at the
-   * exchange rate closest to month-end (mark-to-market). Covers months from one
-   * month before monthFrom up to actualTo. Used by the UI to anchor the
+   * exchange rate at month-end, capped to the latest available FX build day for
+   * open months. Covers months from one month before monthFrom up to actualTo.
+   * Used by the UI to anchor the
    * Balance row to reality and derive the per-month FX adjustment.
    */
   monthEndBalances: Readonly<Record<string, number>>;
@@ -214,7 +216,7 @@ const WARNINGS_QUERY = `
   ORDER BY dc.currency
 `;
 
-const MONTH_END_BALANCES_QUERY = `
+export const MONTH_END_BALANCES_QUERY = `
   WITH
   monthly_deltas AS (
     -- Use le.currency directly instead of JOIN accounts view. The accounts view
@@ -240,6 +242,15 @@ const MONTH_END_BALANCES_QUERY = `
       (date_trunc('month', to_date($3, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date,
       interval '1 month'
     ) d
+  ),
+  valuation_dates AS (
+    SELECT
+      month,
+      LEAST(
+        (date_trunc('month', to_date(month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date,
+        to_date($4, 'YYYY-MM-DD')
+      ) AS valuation_date
+    FROM all_months
   ),
   currency_liquidities AS (
     SELECT DISTINCT currency, liquidity FROM monthly_deltas
@@ -267,10 +278,12 @@ const MONTH_END_BALANCES_QUERY = `
       ELSE NULL
     END)::numeric, 2) AS balance_report
   FROM running_balances rb
+  JOIN valuation_dates vd
+    ON vd.month = rb.month
   LEFT JOIN fx_rates_daily rr
     ON rr.quote_currency = $1
     AND rr.base_currency = rb.currency
-    AND rr.calendar_date = (date_trunc('month', to_date(rb.month, 'YYYY-MM')) + interval '1 month' - interval '1 day')::date
+    AND rr.calendar_date = vd.valuation_date
   WHERE rb.month >= to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM')
     AND rb.month <= $3
   GROUP BY rb.month, rb.liquidity
@@ -284,7 +297,10 @@ type CumulativeRaw = Readonly<{
 }>;
 
 export const getBudgetGrid = async (userId: string, workspaceId: string, monthFrom: string, monthTo: string, planFrom: string, actualTo: string): Promise<BudgetGridResult> => {
-  const reportCurrency = await getReportCurrency(userId, workspaceId);
+  const [reportCurrency, latestFxCalendarDate] = await Promise.all([
+    getReportCurrency(userId, workspaceId),
+    getLatestFxCalendarDate(),
+  ]);
 
   // Each queryAs acquires its own connection from the pool and sets RLS context
   // independently, so Promise.all runs all 4 queries on separate connections
@@ -295,7 +311,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
     queryAs(userId, workspaceId, QUERY, [reportCurrency, monthFrom, monthTo, planFrom, actualTo]),
     queryAs(userId, workspaceId, WARNINGS_QUERY, [reportCurrency]),
     queryAs(userId, workspaceId, CUMULATIVE_BALANCE_QUERY, [reportCurrency, monthFrom]),
-    queryAs(userId, workspaceId, MONTH_END_BALANCES_QUERY, [reportCurrency, monthFrom, actualTo]),
+    queryAs(userId, workspaceId, MONTH_END_BALANCES_QUERY, [reportCurrency, monthFrom, actualTo, latestFxCalendarDate]),
   ]);
 
   const cumulative: CumulativeRaw = cumulativeResult.rows[0] as CumulativeRaw;
