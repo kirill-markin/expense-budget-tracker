@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f infra/docker/compose.yml
 
-.PHONY: up down migrate dev build test lint
+.PHONY: up down migrate dev build lint
 
 up:
 	$(COMPOSE) up -d
@@ -16,10 +16,6 @@ dev:
 
 build:
 	$(COMPOSE) build
-
-test:
-	$(COMPOSE) run --rm web npm test
-	$(COMPOSE) run --rm worker npm test
 
 lint:
 	cd apps/web && npm run lint

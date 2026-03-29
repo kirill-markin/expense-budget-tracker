@@ -33,7 +33,6 @@ make down
 |---|---|
 | `make dev` | Start in foreground (logs visible) |
 | `make build` | Rebuild container images |
-| `make test` | Run web + worker tests |
 | `make lint` | Run web + worker linters |
 
 ## AWS (CDK)

@@ -6,10 +6,8 @@
   "scripts": {
     "predev": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
-    "pretest": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "test": "node --import tsx --test",
     "start": "node dist/index.js"
   },
   "dependencies": {

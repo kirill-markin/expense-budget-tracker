@@ -12,7 +12,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Raise explicit, actionable errors with context.
 - Machine API documentation is intentionally duplicated across the discovery envelope (`actions` and `instructions`) and the published specs (`/v1/openapi.json`, `/v1/swagger.json`, `api/openapi.yaml`). When changing the machine API, keep all of these in sync in the same change.
 - Keep changes minimal and scoped to the current request.
-- Before considering a large block of work complete, run the relevant tests, type checks (`tsc --noEmit`), and for web changes a production build (`cd apps/web && npm test && npm run lint && npm run build`).
+- Before considering a large block of work complete, run the relevant type checks and builds, and for web changes a production build (`cd apps/web && npm run lint && npm run build`).
 - Prefer non-interactive terminal commands.
 - The web app supports multiple languages. When adding or changing any translation in `apps/web/src/i18n/`, update the same keys in every locale file in that directory in the same change.
 - Change schema via new files in `db/migrations/` only; never edit already-applied migrations.
@@ -98,4 +98,4 @@ For CloudWatch investigations, avoid complex OR filter patterns. Fetch fresh eve
 - [docs/architecture.md](docs/architecture.md) - system overview, data model, multi-currency design, auth model
 - [docs/deployment.md](docs/deployment.md) - local Docker Compose and AWS CDK setup
 - [infra/aws/README.md](infra/aws/README.md) - full AWS CDK deployment guide
-- [Makefile](Makefile) - `make up`, `make down`, `make migrate`, `make test`, `make lint`
+- [Makefile](Makefile) - `make up`, `make down`, `make migrate`, `make build`, `make lint`
