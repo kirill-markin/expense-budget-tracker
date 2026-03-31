@@ -136,8 +136,7 @@ type SqlApiEvent =
 type AuthEvent =
   | Readonly<{ domain: "auth"; action: "refresh" }>
   | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
-  | Readonly<{ domain: "auth"; action: "error"; error: string }>
-  | Readonly<{ domain: "auth"; action: "csrf_debug"; [key: string]: unknown }>;
+  | Readonly<{ domain: "auth"; action: "error"; error: string }>;
 
 type LogEvent = ChatEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent;
 

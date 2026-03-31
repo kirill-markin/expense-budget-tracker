@@ -95,6 +95,7 @@ function buildAuthHeaders(idToken, workspaceId) {
   return {
     cookie: cookies.join("; "),
     "x-csrf-token": csrf,
+    origin: appBaseUrl,
   };
 }
 

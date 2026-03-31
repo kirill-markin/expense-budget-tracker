@@ -4,13 +4,16 @@
  * Provides auth bypass, workspace CRUD, and wrapped Playwright interactions
  * that attach diagnostic context on failure.
  *
- * All mutating API calls build explicit Cookie headers to work around
- * Playwright not sending __Host- prefixed cookies from its cookie jar.
+ * All API calls use Node.js native fetch with explicit Cookie headers.
+ * Playwright's page.request merges cookies from its jar, which breaks
+ * __Host- prefixed cookies (the jar stores them with a Domain attribute
+ * that violates the __Host- prefix contract).
  */
 import { randomBytes } from "node:crypto";
 import { type Page, type TestInfo } from "@playwright/test";
 
 const authBaseUrl = process.env.EXPENSE_E2E_AUTH_BASE_URL ?? "https://auth.expense-budget-tracker.com";
+const appBaseUrl = process.env.EXPENSE_E2E_APP_BASE_URL ?? "https://app.expense-budget-tracker.com";
 const reviewEmail = process.env.EXPENSE_E2E_REVIEW_EMAIL ?? "e2e-test@example.com";
 
 export type LiveSmokeScenario = Readonly<{
@@ -31,7 +34,6 @@ export const buildScenario = (runId: string): LiveSmokeScenario => ({
 
 /**
  * Holds session state for building explicit Cookie headers.
- * Playwright's cookie jar doesn't handle __Host- prefixed cookies.
  */
 export type SessionState = {
   idToken: string;
@@ -64,35 +66,48 @@ const buildMutatingHeaders = (session: SessionState): Record<string, string> => 
   "Content-Type": "application/json",
   "Cookie": buildCookieHeader(session),
   "x-csrf-token": session.csrfToken,
+  "Origin": appBaseUrl,
 });
 
 const buildReadHeaders = (session: SessionState): Record<string, string> => ({
   "Cookie": buildCookieHeader(session),
 });
 
+const assertOk = async (response: Response, label: string): Promise<void> => {
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${label} failed: ${response.status} ${text}`);
+  }
+};
+
 type DemoSignInResult = Readonly<{
   idToken: string;
   refreshToken: string;
 }>;
 
-export const signInWithDemoEmail = async (page: Page): Promise<DemoSignInResult> => {
-  const response = await page.request.post(`${authBaseUrl}/api/send-code`, {
-    data: { email: reviewEmail },
-    headers: { "Content-Type": "application/json" },
-    timeout: 30_000,
-  });
+export const signInWithDemoEmail = async (): Promise<DemoSignInResult> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  if (!response.ok()) {
-    const text = await response.text();
-    throw new Error(`Demo sign-in failed: ${response.status()} ${text}`);
+  try {
+    const response = await fetch(`${authBaseUrl}/api/send-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: reviewEmail }),
+      signal: controller.signal,
+    });
+
+    await assertOk(response, "Demo sign-in");
+
+    const body = await response.json() as { ok: boolean; idToken: string; refreshToken: string };
+    if (!body.ok || typeof body.idToken !== "string") {
+      throw new Error(`Demo sign-in did not return tokens: ${JSON.stringify(body)}`);
+    }
+
+    return { idToken: body.idToken, refreshToken: body.refreshToken };
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const body = await response.json() as { ok: boolean; idToken: string; refreshToken: string };
-  if (!body.ok || typeof body.idToken !== "string") {
-    throw new Error(`Demo sign-in did not return tokens: ${JSON.stringify(body)}`);
-  }
-
-  return { idToken: body.idToken, refreshToken: body.refreshToken };
 };
 
 export const setSessionCookiesForNavigation = async (
@@ -119,39 +134,30 @@ type WorkspaceResult = Readonly<{
 }>;
 
 export const createTestWorkspace = async (
-  page: Page,
-  baseUrl: string,
   session: SessionState,
   name: string,
 ): Promise<WorkspaceResult> => {
-  const response = await page.request.post(`${baseUrl}/api/workspaces`, {
-    data: { name, timezone: "UTC" },
+  const response = await fetch(`${appBaseUrl}/api/workspaces`, {
+    method: "POST",
     headers: buildMutatingHeaders(session),
+    body: JSON.stringify({ name, timezone: "UTC" }),
   });
 
-  if (!response.ok()) {
-    const text = await response.text();
-    throw new Error(`Create workspace failed: ${response.status()} ${text}`);
-  }
-
+  await assertOk(response, "Create workspace");
   return response.json() as Promise<WorkspaceResult>;
 };
 
 export const deleteTestWorkspace = async (
-  page: Page,
-  baseUrl: string,
   session: SessionState,
   workspaceName: string,
 ): Promise<void> => {
-  const response = await page.request.post(`${baseUrl}/api/workspaces/${session.workspaceId}/delete`, {
-    data: { confirmText: workspaceName },
+  const response = await fetch(`${appBaseUrl}/api/workspaces/${session.workspaceId}/delete`, {
+    method: "POST",
     headers: buildMutatingHeaders(session),
+    body: JSON.stringify({ confirmText: workspaceName }),
   });
 
-  if (!response.ok()) {
-    const text = await response.text();
-    throw new Error(`Delete workspace failed: ${response.status()} ${text}`);
-  }
+  await assertOk(response, "Delete workspace");
 };
 
 type TransactionResult = Readonly<{
@@ -164,8 +170,6 @@ type TransactionResult = Readonly<{
 }>;
 
 export const createTransaction = async (
-  page: Page,
-  baseUrl: string,
   session: SessionState,
   data: Readonly<{
     ts: string;
@@ -178,16 +182,13 @@ export const createTransaction = async (
     note: string | null;
   }>,
 ): Promise<TransactionResult> => {
-  const response = await page.request.post(`${baseUrl}/api/transactions/create`, {
-    data,
+  const response = await fetch(`${appBaseUrl}/api/transactions/create`, {
+    method: "POST",
     headers: buildMutatingHeaders(session),
+    body: JSON.stringify(data),
   });
 
-  if (!response.ok()) {
-    const text = await response.text();
-    throw new Error(`Create transaction failed: ${response.status()} ${text}`);
-  }
-
+  await assertOk(response, "Create transaction");
   return response.json() as Promise<TransactionResult>;
 };
 
@@ -200,25 +201,18 @@ type BalancesSummary = Readonly<{
 }>;
 
 export const getBalancesSummary = async (
-  page: Page,
-  baseUrl: string,
   session: SessionState,
 ): Promise<BalancesSummary> => {
-  const response = await page.request.get(`${baseUrl}/api/balances-summary`, {
+  const response = await fetch(`${appBaseUrl}/api/balances-summary`, {
+    method: "GET",
     headers: buildReadHeaders(session),
   });
 
-  if (!response.ok()) {
-    const text = await response.text();
-    throw new Error(`Balances summary failed: ${response.status()} ${text}`);
-  }
-
+  await assertOk(response, "Balances summary");
   return response.json() as Promise<BalancesSummary>;
 };
 
 export const setBudgetPlan = async (
-  page: Page,
-  baseUrl: string,
   session: SessionState,
   data: Readonly<{
     month: string;
@@ -228,15 +222,13 @@ export const setBudgetPlan = async (
     plannedValue: number;
   }>,
 ): Promise<void> => {
-  const response = await page.request.post(`${baseUrl}/api/budget-plan`, {
-    data,
+  const response = await fetch(`${appBaseUrl}/api/budget-plan`, {
+    method: "POST",
     headers: buildMutatingHeaders(session),
+    body: JSON.stringify(data),
   });
 
-  if (!response.ok()) {
-    const text = await response.text();
-    throw new Error(`Set budget plan failed: ${response.status()} ${text}`);
-  }
+  await assertOk(response, "Set budget plan");
 };
 
 type BudgetGridRow = Readonly<{
@@ -254,22 +246,16 @@ type BudgetGrid = Readonly<{
 }>;
 
 export const getBudgetGrid = async (
-  page: Page,
-  baseUrl: string,
   session: SessionState,
   monthFrom: string,
   monthTo: string,
 ): Promise<BudgetGrid> => {
-  const response = await page.request.get(
-    `${baseUrl}/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}`,
-    { headers: buildReadHeaders(session) },
+  const response = await fetch(
+    `${appBaseUrl}/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}`,
+    { method: "GET", headers: buildReadHeaders(session) },
   );
 
-  if (!response.ok()) {
-    const text = await response.text();
-    throw new Error(`Budget grid failed: ${response.status()} ${text}`);
-  }
-
+  await assertOk(response, "Budget grid");
   return response.json() as Promise<BudgetGrid>;
 };
 

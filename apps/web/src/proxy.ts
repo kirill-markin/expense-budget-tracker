@@ -121,13 +121,11 @@ const addSecurityHeaders = (response: NextResponse, nonce: string, csp?: string)
  * Rate limiting is handled at the infrastructure level (Cloudflare + AWS WAF
  * managed rule sets) and is not duplicated here.
  */
-type CsrfResult = { ok: true } | { ok: false; debug: Record<string, unknown> };
-
-const checkCsrf = (request: NextRequest): CsrfResult => {
+const checkCsrf = (request: NextRequest): boolean => {
   const method = request.method;
-  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return { ok: true };
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
   if (request.nextUrl.pathname.startsWith("/api/agent/") && hasApiKeyAuthorization(request.headers.get("authorization"))) {
-    return { ok: true };
+    return true;
   }
 
   const csrfCookie = request.cookies.get(CSRF_COOKIE_NAME)?.value ?? "";
@@ -137,44 +135,34 @@ const checkCsrf = (request: NextRequest): CsrfResult => {
     || !CSRF_TOKEN_RE.test(csrfHeader)
     || csrfCookie !== csrfHeader
   ) {
-    const cookieHeader = request.headers.get("cookie") ?? "(no cookie header)";
-    const allCookieNames = Array.from(request.cookies.getAll()).map((c) => c.name);
-    return {
-      ok: false,
-      debug: {
-        csrfCookieLen: csrfCookie.length,
-        csrfHeaderLen: csrfHeader.length,
-        cookieNames: allCookieNames,
-        rawCookieSnippet: cookieHeader.substring(0, 300),
-      },
-    };
+    return false;
   }
 
   const allowedOrigin = process.env.CORS_ORIGIN ?? "";
   const secFetchSite = request.headers.get("sec-fetch-site");
   if (secFetchSite === "cross-site") {
-    return { ok: false, debug: { reason: "cross-site" } };
+    return false;
   }
 
   if (allowedOrigin === "") {
-    return { ok: true };
+    return true;
   }
 
   const origin = request.headers.get("origin");
   if (origin !== null) {
-    return origin === allowedOrigin ? { ok: true } : { ok: false, debug: { reason: "origin-mismatch", origin, allowedOrigin } };
+    return origin === allowedOrigin;
   }
 
   const referer = request.headers.get("referer");
   if (referer !== null) {
     try {
       const refererOrigin = new URL(referer).origin;
-      return refererOrigin === allowedOrigin ? { ok: true } : { ok: false, debug: { reason: "referer-mismatch" } };
+      return refererOrigin === allowedOrigin;
     } catch {
-      return { ok: false, debug: { reason: "referer-parse-error" } };
+      return false;
     }
   }
-  return { ok: false, debug: { reason: "no-origin-no-referer" } };
+  return false;
 };
 
 type VerifiedIdentity = Readonly<{
@@ -263,9 +251,8 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
   const { pathname } = request.nextUrl;
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
-  const csrfResult = checkCsrf(request);
-  if (!csrfResult.ok) {
-    const response = new NextResponse(JSON.stringify(csrfResult.debug), { status: 403, headers: { "content-type": "application/json" } });
+  if (!checkCsrf(request)) {
+    const response = new NextResponse("CSRF validation failed", { status: 403 });
     addSecurityHeaders(response, nonce);
     return response;
   }
