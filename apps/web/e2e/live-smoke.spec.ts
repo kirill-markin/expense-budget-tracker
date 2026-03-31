@@ -103,7 +103,7 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
       const expense = await createTransaction(page, {
         ts: now,
         accountId: scenario.testAccountId,
-        amount: 250,
+        amount: -250,
         currency: "USD",
         kind: "spend",
         category: scenario.testCategory,
@@ -111,7 +111,7 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
         note: `E2E expense ${scenario.runId}`,
       });
       expect(expense.entryId).toBeTruthy();
-      expect(expense.amount).toBe(250);
+      expect(expense.amount).toBe(-250);
 
       const summary = await getBalancesSummary(page);
       const testAccount = summary.accounts.find((a) => a.accountId === scenario.testAccountId);
