@@ -34,6 +34,7 @@ export const signInWithDemoEmail = async (page: Page): Promise<DemoSignInResult>
   const response = await page.request.post(`${authBaseUrl}/api/send-code`, {
     data: { email: reviewEmail },
     headers: { "Content-Type": "application/json" },
+    timeout: 30_000,
   });
 
   if (!response.ok()) {

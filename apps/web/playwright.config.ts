@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const appBaseUrl = process.env.EXPENSE_E2E_APP_BASE_URL ?? "https://expense-budget-tracker.com";
+const appBaseUrl = process.env.EXPENSE_E2E_APP_BASE_URL ?? "https://app.expense-budget-tracker.com";
 
 export default defineConfig({
   testDir: "./e2e",

@@ -176,11 +176,28 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: apps/web
 
+      - name: Wait for services to be healthy
+        run: |
+          for endpoint in "https://auth.${{ vars.CDK_DOMAIN_NAME }}/health" "https://app.${{ vars.CDK_DOMAIN_NAME }}/api/health"; do
+            echo "Waiting for $endpoint ..."
+            for i in $(seq 1 30); do
+              if curl -sf --max-time 5 "$endpoint" > /dev/null 2>&1; then
+                echo "  OK after attempt $i"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "  FAILED: $endpoint not healthy after 30 attempts"
+                exit 1
+              fi
+              sleep 5
+            done
+          done
+
       - name: Run live smoke tests
         working-directory: apps/web
         run: npx playwright test
         env:
-          EXPENSE_E2E_APP_BASE_URL: https://${{ vars.CDK_DOMAIN_NAME }}
+          EXPENSE_E2E_APP_BASE_URL: https://app.${{ vars.CDK_DOMAIN_NAME }}
           EXPENSE_E2E_AUTH_BASE_URL: https://auth.${{ vars.CDK_DOMAIN_NAME }}
           EXPENSE_E2E_REVIEW_EMAIL: e2e-test@example.com
 
