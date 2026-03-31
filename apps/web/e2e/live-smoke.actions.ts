@@ -3,6 +3,9 @@
  *
  * Provides auth bypass, workspace CRUD, and wrapped Playwright interactions
  * that attach diagnostic context on failure.
+ *
+ * All mutating API calls build explicit Cookie headers to work around
+ * Playwright not sending __Host- prefixed cookies from its cookie jar.
  */
 import { randomBytes } from "node:crypto";
 import { type Page, type TestInfo } from "@playwright/test";
@@ -24,6 +27,47 @@ export const buildScenario = (runId: string): LiveSmokeScenario => ({
   workspaceName: `E2E web ${runId}`,
   testAccountId: `E2E Checking ${runId}`,
   testCategory: `E2E Groceries ${runId}`,
+});
+
+/**
+ * Holds session state for building explicit Cookie headers.
+ * Playwright's cookie jar doesn't handle __Host- prefixed cookies.
+ */
+export type SessionState = {
+  idToken: string;
+  refreshToken: string;
+  csrfToken: string;
+  workspaceId: string | null;
+};
+
+export const createSessionState = (idToken: string, refreshToken: string): SessionState => ({
+  idToken,
+  refreshToken,
+  csrfToken: randomBytes(32).toString("hex"),
+  workspaceId: null,
+});
+
+const buildCookieHeader = (session: SessionState): string => {
+  const parts = [
+    `session=${session.idToken}`,
+    `refresh=${session.refreshToken}`,
+    `logged_in=1`,
+    `__Host-csrf=${session.csrfToken}`,
+  ];
+  if (session.workspaceId !== null) {
+    parts.push(`workspace=${session.workspaceId}`);
+  }
+  return parts.join("; ");
+};
+
+const buildMutatingHeaders = (session: SessionState): Record<string, string> => ({
+  "Content-Type": "application/json",
+  "Cookie": buildCookieHeader(session),
+  "x-csrf-token": session.csrfToken,
+});
+
+const buildReadHeaders = (session: SessionState): Record<string, string> => ({
+  "Cookie": buildCookieHeader(session),
 });
 
 type DemoSignInResult = Readonly<{
@@ -51,18 +95,21 @@ export const signInWithDemoEmail = async (page: Page): Promise<DemoSignInResult>
   return { idToken: body.idToken, refreshToken: body.refreshToken };
 };
 
-export const setSessionCookies = async (
+export const setSessionCookiesForNavigation = async (
   page: Page,
   baseUrl: string,
-  tokens: DemoSignInResult,
+  session: SessionState,
 ): Promise<void> => {
   const url = new URL(baseUrl);
   const domain = url.hostname;
 
   await page.context().addCookies([
-    { name: "session", value: tokens.idToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
-    { name: "refresh", value: tokens.refreshToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
+    { name: "session", value: session.idToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
+    { name: "refresh", value: session.refreshToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
     { name: "logged_in", value: "1", domain, path: "/", httpOnly: false, secure: true, sameSite: "Lax" },
+    ...(session.workspaceId !== null ? [
+      { name: "workspace", value: session.workspaceId, domain, path: "/", httpOnly: false, secure: true, sameSite: "Lax" as const },
+    ] : []),
   ]);
 };
 
@@ -74,15 +121,12 @@ type WorkspaceResult = Readonly<{
 export const createTestWorkspace = async (
   page: Page,
   baseUrl: string,
+  session: SessionState,
   name: string,
 ): Promise<WorkspaceResult> => {
-  const csrfCookie = await ensureCsrfToken(page, baseUrl);
   const response = await page.request.post(`${baseUrl}/api/workspaces`, {
     data: { name, timezone: "UTC" },
-    headers: {
-      "Content-Type": "application/json",
-      "x-csrf-token": csrfCookie,
-    },
+    headers: buildMutatingHeaders(session),
   });
 
   if (!response.ok()) {
@@ -93,56 +137,21 @@ export const createTestWorkspace = async (
   return response.json() as Promise<WorkspaceResult>;
 };
 
-export const selectWorkspace = async (
-  page: Page,
-  baseUrl: string,
-  workspaceId: string,
-): Promise<void> => {
-  const url = new URL(baseUrl);
-  await page.context().addCookies([
-    { name: "workspace", value: workspaceId, domain: url.hostname, path: "/", httpOnly: false, secure: true, sameSite: "Lax" },
-  ]);
-};
-
 export const deleteTestWorkspace = async (
   page: Page,
   baseUrl: string,
-  workspaceId: string,
+  session: SessionState,
   workspaceName: string,
 ): Promise<void> => {
-  const csrfCookie = await ensureCsrfToken(page, baseUrl);
-  const response = await page.request.post(`${baseUrl}/api/workspaces/${workspaceId}/delete`, {
+  const response = await page.request.post(`${baseUrl}/api/workspaces/${session.workspaceId}/delete`, {
     data: { confirmText: workspaceName },
-    headers: {
-      "Content-Type": "application/json",
-      "x-csrf-token": csrfCookie,
-    },
+    headers: buildMutatingHeaders(session),
   });
 
   if (!response.ok()) {
     const text = await response.text();
     throw new Error(`Delete workspace failed: ${response.status()} ${text}`);
   }
-};
-
-/**
- * Generate a synthetic CSRF token and inject it as a cookie.
- * The proxy checks that the __Host-csrf cookie matches the x-csrf-token header
- * and that both are 64-char hex strings. We set both sides ourselves.
- */
-const ensureCsrfToken = async (page: Page, baseUrl: string): Promise<string> => {
-  const token = randomBytes(32).toString("hex");
-  const url = new URL(baseUrl);
-  await page.context().addCookies([{
-    name: "__Host-csrf",
-    value: token,
-    domain: url.hostname,
-    path: "/",
-    httpOnly: false,
-    secure: true,
-    sameSite: "Strict",
-  }]);
-  return token;
 };
 
 type TransactionResult = Readonly<{
@@ -157,6 +166,7 @@ type TransactionResult = Readonly<{
 export const createTransaction = async (
   page: Page,
   baseUrl: string,
+  session: SessionState,
   data: Readonly<{
     ts: string;
     accountId: string;
@@ -168,13 +178,9 @@ export const createTransaction = async (
     note: string | null;
   }>,
 ): Promise<TransactionResult> => {
-  const csrfCookie = await ensureCsrfToken(page, baseUrl);
   const response = await page.request.post(`${baseUrl}/api/transactions/create`, {
     data,
-    headers: {
-      "Content-Type": "application/json",
-      "x-csrf-token": csrfCookie,
-    },
+    headers: buildMutatingHeaders(session),
   });
 
   if (!response.ok()) {
@@ -196,8 +202,11 @@ type BalancesSummary = Readonly<{
 export const getBalancesSummary = async (
   page: Page,
   baseUrl: string,
+  session: SessionState,
 ): Promise<BalancesSummary> => {
-  const response = await page.request.get(`${baseUrl}/api/balances-summary`);
+  const response = await page.request.get(`${baseUrl}/api/balances-summary`, {
+    headers: buildReadHeaders(session),
+  });
 
   if (!response.ok()) {
     const text = await response.text();
@@ -210,6 +219,7 @@ export const getBalancesSummary = async (
 export const setBudgetPlan = async (
   page: Page,
   baseUrl: string,
+  session: SessionState,
   data: Readonly<{
     month: string;
     direction: "income" | "spend";
@@ -218,13 +228,9 @@ export const setBudgetPlan = async (
     plannedValue: number;
   }>,
 ): Promise<void> => {
-  const csrfCookie = await ensureCsrfToken(page, baseUrl);
   const response = await page.request.post(`${baseUrl}/api/budget-plan`, {
     data,
-    headers: {
-      "Content-Type": "application/json",
-      "x-csrf-token": csrfCookie,
-    },
+    headers: buildMutatingHeaders(session),
   });
 
   if (!response.ok()) {
@@ -250,11 +256,13 @@ type BudgetGrid = Readonly<{
 export const getBudgetGrid = async (
   page: Page,
   baseUrl: string,
+  session: SessionState,
   monthFrom: string,
   monthTo: string,
 ): Promise<BudgetGrid> => {
   const response = await page.request.get(
     `${baseUrl}/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}`,
+    { headers: buildReadHeaders(session) },
   );
 
   if (!response.ok()) {
