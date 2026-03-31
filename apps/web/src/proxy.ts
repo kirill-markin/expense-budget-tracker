@@ -135,6 +135,21 @@ const checkCsrf = (request: NextRequest): boolean => {
     || !CSRF_TOKEN_RE.test(csrfHeader)
     || csrfCookie !== csrfHeader
   ) {
+    // Temporary debug: log CSRF failure details
+    const cookieHeader = request.headers.get("cookie") ?? "(no cookie header)";
+    const allCookieNames = Array.from(request.cookies.getAll()).map((c) => c.name);
+    log({
+      domain: "auth",
+      action: "csrf_debug",
+      csrfCookiePresent: csrfCookie !== "",
+      csrfCookieLength: csrfCookie.length,
+      csrfHeaderPresent: csrfHeader !== "",
+      csrfHeaderLength: csrfHeader.length,
+      cookieMatch: csrfCookie === csrfHeader,
+      allCookieNames: allCookieNames.join(","),
+      rawCookieHeaderLength: cookieHeader.length,
+      rawCookieSnippet: cookieHeader.substring(0, 200),
+    });
     return false;
   }
 
