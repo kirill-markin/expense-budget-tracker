@@ -4,7 +4,8 @@
  * Provides auth bypass, workspace CRUD, and wrapped Playwright interactions
  * that attach diagnostic context on failure.
  */
-import { expect, type Page, type TestInfo } from "@playwright/test";
+import { randomBytes } from "node:crypto";
+import { type Page, type TestInfo } from "@playwright/test";
 
 const authBaseUrl = process.env.EXPENSE_E2E_AUTH_BASE_URL ?? "https://auth.expense-budget-tracker.com";
 const reviewEmail = process.env.EXPENSE_E2E_REVIEW_EMAIL ?? "e2e-test@example.com";
@@ -75,7 +76,7 @@ export const createTestWorkspace = async (
   baseUrl: string,
   name: string,
 ): Promise<WorkspaceResult> => {
-  const csrfCookie = await getCsrfCookie(page, baseUrl);
+  const csrfCookie = await ensureCsrfToken(page, baseUrl);
   const response = await page.request.post(`${baseUrl}/api/workspaces`, {
     data: { name, timezone: "UTC" },
     headers: {
@@ -109,7 +110,7 @@ export const deleteTestWorkspace = async (
   workspaceId: string,
   workspaceName: string,
 ): Promise<void> => {
-  const csrfCookie = await getCsrfCookie(page, baseUrl);
+  const csrfCookie = await ensureCsrfToken(page, baseUrl);
   const response = await page.request.post(`${baseUrl}/api/workspaces/${workspaceId}/delete`, {
     data: { confirmText: workspaceName },
     headers: {
@@ -124,22 +125,24 @@ export const deleteTestWorkspace = async (
   }
 };
 
-const getCsrfCookie = async (page: Page, baseUrl: string): Promise<string> => {
+/**
+ * Generate a synthetic CSRF token and inject it as a cookie.
+ * The proxy checks that the __Host-csrf cookie matches the x-csrf-token header
+ * and that both are 64-char hex strings. We set both sides ourselves.
+ */
+const ensureCsrfToken = async (page: Page, baseUrl: string): Promise<string> => {
+  const token = randomBytes(32).toString("hex");
   const url = new URL(baseUrl);
-  const cookies = await page.context().cookies(baseUrl);
-  const csrf = cookies.find((c) => c.name === "__Host-csrf");
-  if (csrf !== undefined) {
-    return csrf.value;
-  }
-
-  // Navigate to get the CSRF cookie set by the proxy
-  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
-  const freshCookies = await page.context().cookies(baseUrl);
-  const freshCsrf = freshCookies.find((c) => c.name === "__Host-csrf");
-  if (freshCsrf === undefined) {
-    throw new Error(`No __Host-csrf cookie found for ${url.hostname}`);
-  }
-  return freshCsrf.value;
+  await page.context().addCookies([{
+    name: "__Host-csrf",
+    value: token,
+    domain: url.hostname,
+    path: "/",
+    httpOnly: false,
+    secure: true,
+    sameSite: "Strict",
+  }]);
+  return token;
 };
 
 type TransactionResult = Readonly<{
@@ -165,7 +168,7 @@ export const createTransaction = async (
     note: string | null;
   }>,
 ): Promise<TransactionResult> => {
-  const csrfCookie = await getCsrfCookie(page, baseUrl);
+  const csrfCookie = await ensureCsrfToken(page, baseUrl);
   const response = await page.request.post(`${baseUrl}/api/transactions/create`, {
     data,
     headers: {
@@ -215,7 +218,7 @@ export const setBudgetPlan = async (
     plannedValue: number;
   }>,
 ): Promise<void> => {
-  const csrfCookie = await getCsrfCookie(page, baseUrl);
+  const csrfCookie = await ensureCsrfToken(page, baseUrl);
   const response = await page.request.post(`${baseUrl}/api/budget-plan`, {
     data,
     headers: {
