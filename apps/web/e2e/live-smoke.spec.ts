@@ -142,16 +142,15 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
         plannedValue: 500,
       });
 
-      const grid = await getBudgetGrid(page, currentMonth, currentMonth);
+      const grid = await getBudgetGrid(page, currentMonth, currentMonth, currentMonth, currentMonth);
       const row = grid.rows.find(
-        (r) => r.category === scenario.testCategory && r.direction === "spend",
+        (r) => r.month === currentMonth
+          && r.category === scenario.testCategory
+          && r.direction === "spend",
       );
       expect(row).toBeDefined();
-
-      const monthData = row!.months.find((m) => m.month === currentMonth);
-      expect(monthData).toBeDefined();
-      expect(monthData!.planned).toBe(500);
-      expect(monthData!.actual).toBe(250);
+      expect(row!.planned).toBe(500);
+      expect(row!.actual).toBe(250);
 
       await page.goto(`${baseUrl}/budget`, { waitUntil: "networkidle" });
       await expect(page.locator("body")).toContainText(scenario.testCategory);

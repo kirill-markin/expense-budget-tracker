@@ -202,13 +202,11 @@ export const setBudgetPlan = async (
 };
 
 type BudgetGridRow = Readonly<{
+  month: string;
   direction: string;
   category: string;
-  months: ReadonlyArray<Readonly<{
-    month: string;
-    planned: number;
-    actual: number;
-  }>>;
+  planned: number;
+  actual: number;
 }>;
 
 type BudgetGrid = Readonly<{
@@ -219,8 +217,15 @@ export const getBudgetGrid = async (
   page: Page,
   monthFrom: string,
   monthTo: string,
+  planFrom: string,
+  actualTo: string,
 ): Promise<BudgetGrid> =>
-  browserFetch<BudgetGrid>(page, `/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}`, "GET", null);
+  browserFetch<BudgetGrid>(
+    page,
+    `/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}&planFrom=${planFrom}&actualTo=${actualTo}`,
+    "GET",
+    null,
+  );
 
 export const attachFailureDiagnostics = async (
   page: Page,
