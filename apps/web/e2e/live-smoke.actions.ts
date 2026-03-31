@@ -1,15 +1,10 @@
 /**
  * Shared helpers for the live smoke E2E tests.
  *
- * Provides auth bypass, workspace CRUD, and wrapped Playwright interactions
- * that attach diagnostic context on failure.
- *
- * All API calls use Node.js native fetch with explicit Cookie headers.
- * Playwright's page.request merges cookies from its jar, which breaks
- * __Host- prefixed cookies (the jar stores them with a Domain attribute
- * that violates the __Host- prefix contract).
+ * Auth uses Node.js fetch (auth service has no CSRF).
+ * App API calls run inside the browser via page.evaluate() + fetch,
+ * so the browser naturally handles cookies, CSRF, and Origin headers.
  */
-import { randomBytes } from "node:crypto";
 import { type Page, type TestInfo } from "@playwright/test";
 
 const authBaseUrl = process.env.EXPENSE_E2E_AUTH_BASE_URL ?? "https://auth.expense-budget-tracker.com";
@@ -32,54 +27,6 @@ export const buildScenario = (runId: string): LiveSmokeScenario => ({
   testCategory: `E2E Groceries ${runId}`,
 });
 
-/**
- * Holds session state for building explicit Cookie headers.
- */
-export type SessionState = {
-  idToken: string;
-  refreshToken: string;
-  csrfToken: string;
-  workspaceId: string | null;
-};
-
-export const createSessionState = (idToken: string, refreshToken: string): SessionState => ({
-  idToken,
-  refreshToken,
-  csrfToken: randomBytes(32).toString("hex"),
-  workspaceId: null,
-});
-
-const buildCookieHeader = (session: SessionState): string => {
-  const parts = [
-    `session=${session.idToken}`,
-    `refresh=${session.refreshToken}`,
-    `logged_in=1`,
-    `__Host-csrf=${session.csrfToken}`,
-  ];
-  if (session.workspaceId !== null) {
-    parts.push(`workspace=${session.workspaceId}`);
-  }
-  return parts.join("; ");
-};
-
-const buildMutatingHeaders = (session: SessionState): Record<string, string> => ({
-  "Content-Type": "application/json",
-  "Cookie": buildCookieHeader(session),
-  "x-csrf-token": session.csrfToken,
-  "Origin": appBaseUrl,
-});
-
-const buildReadHeaders = (session: SessionState): Record<string, string> => ({
-  "Cookie": buildCookieHeader(session),
-});
-
-const assertOk = async (response: Response, label: string): Promise<void> => {
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`${label} failed: ${response.status} ${text}`);
-  }
-};
-
 type DemoSignInResult = Readonly<{
   idToken: string;
   refreshToken: string;
@@ -97,7 +44,10 @@ export const signInWithDemoEmail = async (): Promise<DemoSignInResult> => {
       signal: controller.signal,
     });
 
-    await assertOk(response, "Demo sign-in");
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Demo sign-in failed: ${response.status} ${text}`);
+    }
 
     const body = await response.json() as { ok: boolean; idToken: string; refreshToken: string };
     if (!body.ok || typeof body.idToken !== "string") {
@@ -110,22 +60,76 @@ export const signInWithDemoEmail = async (): Promise<DemoSignInResult> => {
   }
 };
 
-export const setSessionCookiesForNavigation = async (
+export const setupBrowserSession = async (
   page: Page,
-  baseUrl: string,
-  session: SessionState,
+  tokens: DemoSignInResult,
 ): Promise<void> => {
-  const url = new URL(baseUrl);
+  const url = new URL(appBaseUrl);
   const domain = url.hostname;
 
+  // Set auth cookies so the browser can access the app
   await page.context().addCookies([
-    { name: "session", value: session.idToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
-    { name: "refresh", value: session.refreshToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
+    { name: "session", value: tokens.idToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
+    { name: "refresh", value: tokens.refreshToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
     { name: "logged_in", value: "1", domain, path: "/", httpOnly: false, secure: true, sameSite: "Lax" },
-    ...(session.workspaceId !== null ? [
-      { name: "workspace", value: session.workspaceId, domain, path: "/", httpOnly: false, secure: true, sameSite: "Lax" as const },
-    ] : []),
   ]);
+
+  // Navigate to the app to let the proxy set the __Host-csrf cookie
+  await page.goto(appBaseUrl, { waitUntil: "networkidle" });
+};
+
+export const setWorkspaceCookie = async (
+  page: Page,
+  workspaceId: string,
+): Promise<void> => {
+  const url = new URL(appBaseUrl);
+  await page.context().addCookies([
+    { name: "workspace", value: workspaceId, domain: url.hostname, path: "/", httpOnly: false, secure: true, sameSite: "Lax" },
+  ]);
+};
+
+/**
+ * Run fetch() inside the browser page context.
+ * The browser handles cookies (including __Host-csrf) and Origin automatically.
+ */
+const browserFetch = async <T>(
+  page: Page,
+  path: string,
+  method: "GET" | "POST",
+  body: unknown | null,
+): Promise<T> => {
+  const result = await page.evaluate(
+    async ({ url, method: m, body: b }) => {
+      // Read __Host-csrf from document.cookie for the header
+      const csrfMatch = document.cookie.match(/(?:^|;\s*)__Host-csrf=([0-9a-f]+)/);
+      const csrfToken = csrfMatch !== null ? csrfMatch[1] : "";
+
+      const headers: Record<string, string> = {};
+      if (m === "POST") {
+        headers["Content-Type"] = "application/json";
+        if (csrfToken !== "") {
+          headers["x-csrf-token"] = csrfToken;
+        }
+      }
+
+      const res = await fetch(url, {
+        method: m,
+        headers,
+        body: b !== null ? JSON.stringify(b) : undefined,
+        credentials: "same-origin",
+      });
+
+      const text = await res.text();
+      return { status: res.status, ok: res.ok, text };
+    },
+    { url: `${appBaseUrl}${path}`, method, body },
+  );
+
+  if (!result.ok) {
+    throw new Error(`${method} ${path} failed: ${result.status} ${result.text}`);
+  }
+
+  return JSON.parse(result.text) as T;
 };
 
 type WorkspaceResult = Readonly<{
@@ -134,30 +138,17 @@ type WorkspaceResult = Readonly<{
 }>;
 
 export const createTestWorkspace = async (
-  session: SessionState,
+  page: Page,
   name: string,
-): Promise<WorkspaceResult> => {
-  const response = await fetch(`${appBaseUrl}/api/workspaces`, {
-    method: "POST",
-    headers: buildMutatingHeaders(session),
-    body: JSON.stringify({ name, timezone: "UTC" }),
-  });
-
-  await assertOk(response, "Create workspace");
-  return response.json() as Promise<WorkspaceResult>;
-};
+): Promise<WorkspaceResult> =>
+  browserFetch<WorkspaceResult>(page, "/api/workspaces", "POST", { name, timezone: "UTC" });
 
 export const deleteTestWorkspace = async (
-  session: SessionState,
+  page: Page,
+  workspaceId: string,
   workspaceName: string,
 ): Promise<void> => {
-  const response = await fetch(`${appBaseUrl}/api/workspaces/${session.workspaceId}/delete`, {
-    method: "POST",
-    headers: buildMutatingHeaders(session),
-    body: JSON.stringify({ confirmText: workspaceName }),
-  });
-
-  await assertOk(response, "Delete workspace");
+  await browserFetch<unknown>(page, `/api/workspaces/${workspaceId}/delete`, "POST", { confirmText: workspaceName });
 };
 
 type TransactionResult = Readonly<{
@@ -170,7 +161,7 @@ type TransactionResult = Readonly<{
 }>;
 
 export const createTransaction = async (
-  session: SessionState,
+  page: Page,
   data: Readonly<{
     ts: string;
     accountId: string;
@@ -181,16 +172,8 @@ export const createTransaction = async (
     counterparty: string | null;
     note: string | null;
   }>,
-): Promise<TransactionResult> => {
-  const response = await fetch(`${appBaseUrl}/api/transactions/create`, {
-    method: "POST",
-    headers: buildMutatingHeaders(session),
-    body: JSON.stringify(data),
-  });
-
-  await assertOk(response, "Create transaction");
-  return response.json() as Promise<TransactionResult>;
-};
+): Promise<TransactionResult> =>
+  browserFetch<TransactionResult>(page, "/api/transactions/create", "POST", data);
 
 type BalancesSummary = Readonly<{
   accounts: ReadonlyArray<Readonly<{
@@ -201,19 +184,12 @@ type BalancesSummary = Readonly<{
 }>;
 
 export const getBalancesSummary = async (
-  session: SessionState,
-): Promise<BalancesSummary> => {
-  const response = await fetch(`${appBaseUrl}/api/balances-summary`, {
-    method: "GET",
-    headers: buildReadHeaders(session),
-  });
-
-  await assertOk(response, "Balances summary");
-  return response.json() as Promise<BalancesSummary>;
-};
+  page: Page,
+): Promise<BalancesSummary> =>
+  browserFetch<BalancesSummary>(page, "/api/balances-summary", "GET", null);
 
 export const setBudgetPlan = async (
-  session: SessionState,
+  page: Page,
   data: Readonly<{
     month: string;
     direction: "income" | "spend";
@@ -222,13 +198,7 @@ export const setBudgetPlan = async (
     plannedValue: number;
   }>,
 ): Promise<void> => {
-  const response = await fetch(`${appBaseUrl}/api/budget-plan`, {
-    method: "POST",
-    headers: buildMutatingHeaders(session),
-    body: JSON.stringify(data),
-  });
-
-  await assertOk(response, "Set budget plan");
+  await browserFetch<unknown>(page, "/api/budget-plan", "POST", data);
 };
 
 type BudgetGridRow = Readonly<{
@@ -246,18 +216,11 @@ type BudgetGrid = Readonly<{
 }>;
 
 export const getBudgetGrid = async (
-  session: SessionState,
+  page: Page,
   monthFrom: string,
   monthTo: string,
-): Promise<BudgetGrid> => {
-  const response = await fetch(
-    `${appBaseUrl}/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}`,
-    { method: "GET", headers: buildReadHeaders(session) },
-  );
-
-  await assertOk(response, "Budget grid");
-  return response.json() as Promise<BudgetGrid>;
-};
+): Promise<BudgetGrid> =>
+  browserFetch<BudgetGrid>(page, `/api/budget-grid?monthFrom=${monthFrom}&monthTo=${monthTo}`, "GET", null);
 
 export const attachFailureDiagnostics = async (
   page: Page,

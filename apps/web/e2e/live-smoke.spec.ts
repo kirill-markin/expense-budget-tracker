@@ -10,7 +10,6 @@ import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import {
   attachFailureDiagnostics,
   buildScenario,
-  createSessionState,
   createTestWorkspace,
   createTransaction,
   deleteTestWorkspace,
@@ -18,10 +17,10 @@ import {
   getBudgetGrid,
   runIdFromClock,
   setBudgetPlan,
-  setSessionCookiesForNavigation,
+  setWorkspaceCookie,
+  setupBrowserSession,
   signInWithDemoEmail,
   type LiveSmokeScenario,
-  type SessionState,
 } from "./live-smoke.actions";
 
 test.describe.serial("live smoke: auth, transactions, balances, and budget", () => {
@@ -29,7 +28,7 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
   let sharedPage: Page | null = null;
   let sharedBaseUrl: string | null = null;
   let sharedScenario: LiveSmokeScenario | null = null;
-  let sharedSession: SessionState | null = null;
+  let createdWorkspaceId: string | null = null;
 
   test.beforeAll(async ({ browser, baseURL }) => {
     if (baseURL === undefined) {
@@ -43,12 +42,12 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
   });
 
   test.afterAll(async () => {
-    if (sharedPage !== null && sharedBaseUrl !== null && sharedSession?.workspaceId !== null && sharedScenario !== null && sharedSession !== null) {
+    if (sharedPage !== null && createdWorkspaceId !== null && sharedScenario !== null) {
       try {
-        await deleteTestWorkspace(sharedPage, sharedBaseUrl, sharedSession, sharedScenario.workspaceName);
+        await deleteTestWorkspace(sharedPage, createdWorkspaceId, sharedScenario.workspaceName);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`[cleanup] Failed to delete workspace ${sharedSession.workspaceId}: ${message}`);
+        console.error(`[cleanup] Failed to delete workspace ${createdWorkspaceId}: ${message}`);
       }
     }
 
@@ -63,17 +62,16 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
     const scenario = sharedScenario!;
 
     try {
-      const tokens = await signInWithDemoEmail(page);
-      const session = createSessionState(tokens.idToken, tokens.refreshToken);
+      const tokens = await signInWithDemoEmail();
+      await setupBrowserSession(page, tokens);
 
-      const workspace = await createTestWorkspace(page, baseUrl, session, scenario.workspaceName);
+      const workspace = await createTestWorkspace(page, scenario.workspaceName);
+      createdWorkspaceId = workspace.workspaceId;
       expect(workspace.name).toBe(scenario.workspaceName);
 
-      session.workspaceId = workspace.workspaceId;
-      sharedSession = session;
+      await setWorkspaceCookie(page, workspace.workspaceId);
 
-      await setSessionCookiesForNavigation(page, baseUrl, session);
-
+      // Reload with workspace cookie set
       await page.goto(baseUrl, { waitUntil: "networkidle" });
       await expect(page).not.toHaveURL(/\/login/);
     } catch (error) {
@@ -86,11 +84,10 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
     const page = sharedPage!;
     const baseUrl = sharedBaseUrl!;
     const scenario = sharedScenario!;
-    const session = sharedSession!;
     const now = new Date().toISOString();
 
     try {
-      const income = await createTransaction(page, baseUrl, session, {
+      const income = await createTransaction(page, {
         ts: now,
         accountId: scenario.testAccountId,
         amount: 1000,
@@ -103,7 +100,7 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
       expect(income.entryId).toBeTruthy();
       expect(income.amount).toBe(1000);
 
-      const expense = await createTransaction(page, baseUrl, session, {
+      const expense = await createTransaction(page, {
         ts: now,
         accountId: scenario.testAccountId,
         amount: 250,
@@ -116,7 +113,7 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
       expect(expense.entryId).toBeTruthy();
       expect(expense.amount).toBe(250);
 
-      const summary = await getBalancesSummary(page, baseUrl, session);
+      const summary = await getBalancesSummary(page);
       const testAccount = summary.accounts.find((a) => a.accountId === scenario.testAccountId);
       expect(testAccount).toBeDefined();
       expect(testAccount!.balance).toBe(750);
@@ -134,11 +131,10 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
     const page = sharedPage!;
     const baseUrl = sharedBaseUrl!;
     const scenario = sharedScenario!;
-    const session = sharedSession!;
     const currentMonth = new Date().toISOString().slice(0, 7);
 
     try {
-      await setBudgetPlan(page, baseUrl, session, {
+      await setBudgetPlan(page, {
         month: currentMonth,
         direction: "spend",
         category: scenario.testCategory,
@@ -146,7 +142,7 @@ test.describe.serial("live smoke: auth, transactions, balances, and budget", () 
         plannedValue: 500,
       });
 
-      const grid = await getBudgetGrid(page, baseUrl, session, currentMonth, currentMonth);
+      const grid = await getBudgetGrid(page, currentMonth, currentMonth);
       const row = grid.rows.find(
         (r) => r.category === scenario.testCategory && r.direction === "spend",
       );
