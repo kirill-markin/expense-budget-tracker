@@ -16,7 +16,8 @@ import { Hono, type Context } from "hono";
 import { setCookie } from "hono/cookie";
 import { createBrowserOtpChallenge } from "../server/otpChallengeStore.js";
 import { getClientIp } from "../server/clientIp.js";
-import { initiateEmailOtp } from "../server/cognitoAuth.js";
+import { initiateEmailOtp, signInWithPassword, type TokenResult } from "../server/cognitoAuth.js";
+import { getDemoEmailPassword } from "../server/demoEmailAccess.js";
 import { log, maskEmail } from "../server/logger.js";
 import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otpRateLimit.js";
 
@@ -35,6 +36,8 @@ type SendCodeDependencies = Readonly<{
   createCsrfToken: () => string;
   getClientIp: (context: Context) => string;
   initiateEmailOtp: (email: string) => Promise<Readonly<{ session: string }>>;
+  signInWithPassword: (email: string, password: string) => Promise<TokenResult>;
+  getDemoEmailPassword: (email: string) => string | null;
   checkAndRecordOtpSendDecision: (normalizedEmail: string, requestIp: string) => Promise<OtpSendDecision>;
   createBrowserOtpChallenge: (
     normalizedEmail: string,
@@ -64,6 +67,26 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
 
     if (!EMAIL_RE.test(email) || email.length > 256) {
       return c.json({ error: "Invalid email" }, 400);
+    }
+
+    const demoPassword = dependencies.getDemoEmailPassword(email);
+    if (demoPassword !== null) {
+      try {
+        const tokens = await dependencies.signInWithPassword(email, demoPassword);
+        const cookieDomain = process.env.COOKIE_DOMAIN ?? "";
+        const domainOpt = cookieDomain === "" ? undefined : cookieDomain;
+        const cookieOpts = { path: "/", maxAge: 3024000, httpOnly: true, secure: true, sameSite: "Lax" as const, domain: domainOpt };
+
+        setCookie(c, "session", tokens.idToken, cookieOpts);
+        setCookie(c, "refresh", tokens.refreshToken, cookieOpts);
+        setCookie(c, "logged_in", "1", { ...cookieOpts, httpOnly: false });
+
+        log({ domain: "auth", action: "send_code_demo_sign_in", maskedEmail: maskEmail(email) });
+        return c.json({ ok: true, idToken: tokens.idToken, refreshToken: tokens.refreshToken, expiresIn: tokens.expiresIn });
+      } catch (err) {
+        log({ domain: "auth", action: "send_code_demo_sign_in_error", error: err instanceof Error ? err.message : String(err) });
+        return c.json({ error: "Demo sign-in failed" }, 500);
+      }
     }
 
     const requestIp = dependencies.getClientIp(c);
@@ -119,6 +142,8 @@ const app = createSendCodeApp({
   createCsrfToken,
   getClientIp,
   initiateEmailOtp,
+  signInWithPassword,
+  getDemoEmailPassword,
   checkAndRecordOtpSendDecision,
   createBrowserOtpChallenge,
   now: () => Date.now(),

@@ -25,3 +25,7 @@ __pycache__/
 
 # Local artifacts
 tmp/
+
+# Playwright
+apps/web/playwright-report/
+apps/web/test-results/

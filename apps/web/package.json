@@ -9,7 +9,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000} -H ${HOST:-127.0.0.1}",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:e2e": "npx playwright test"
   },
   "dependencies": {
     "@expense-budget-tracker/agent-shared": "1.0.0",
@@ -37,6 +38,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@playwright/test": "^1.52.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2"
   },

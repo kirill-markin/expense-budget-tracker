@@ -6,6 +6,7 @@ export interface SecretsResult {
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
   langfusePublicKeySecret: cdk.aws_secretsmanager.Secret;
   langfuseSecretKeySecret: cdk.aws_secretsmanager.Secret;
+  demoPasswordSecret: cdk.aws_secretsmanager.ISecret;
 }
 
 export function secrets(scope: Construct): SecretsResult {
@@ -39,10 +40,18 @@ export function secrets(scope: Construct): SecretsResult {
     generateSecretString: { excludePunctuation: true, passwordLength: 32 },
   });
 
+  // Insecure shared password for demo/review @example.com accounts.
+  // Used by E2E smoke tests to bypass OTP.
+  // Pre-created manually in Secrets Manager — CDK references it but does not own it.
+  const demoPasswordSecret = cdk.aws_secretsmanager.Secret.fromSecretNameV2(
+    scope, "DemoPassword", "expense-tracker/demo-password",
+  );
+
   return {
     sessionEncryptionKeySecret,
     openaiApiKeySecret,
     langfusePublicKeySecret,
     langfuseSecretKeySecret,
+    demoPasswordSecret,
   };
 }

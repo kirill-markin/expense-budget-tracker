@@ -96,6 +96,45 @@ export const createWorkspaceForTrustedIdentity = async (
   return { workspaceId: row.workspace_id, name: row.name };
 };
 
+export const deleteWorkspace = async (
+  userId: string,
+  workspaceId: string,
+  targetWorkspaceId: string,
+): Promise<WorkspaceSummary> => {
+  const result = await queryAs(
+    userId,
+    workspaceId,
+    "SELECT workspace_id, name FROM delete_workspace_for_current_user($1)",
+    [targetWorkspaceId],
+  );
+
+  if (result.rows.length !== 1) {
+    throw new Error(`delete_workspace_for_current_user returned ${result.rows.length} rows`);
+  }
+
+  const row = result.rows[0] as { workspace_id: string; name: string };
+  return { workspaceId: row.workspace_id, name: row.name };
+};
+
+export const deleteWorkspaceForTrustedIdentity = async (
+  identity: UserIdentity,
+  targetWorkspaceId: string,
+): Promise<WorkspaceSummary> => {
+  const result = await queryAsTrustedIdentity(
+    identity,
+    identity.userId,
+    "SELECT workspace_id, name FROM delete_workspace_for_current_user($1)",
+    [targetWorkspaceId],
+  );
+
+  if (result.rows.length !== 1) {
+    throw new Error(`delete_workspace_for_current_user returned ${result.rows.length} rows`);
+  }
+
+  const row = result.rows[0] as { workspace_id: string; name: string };
+  return { workspaceId: row.workspace_id, name: row.name };
+};
+
 export const getWorkspaceForTrustedIdentity = async (
   identity: UserIdentity,
   workspaceId: string,

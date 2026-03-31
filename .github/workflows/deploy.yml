@@ -40,6 +40,8 @@ jobs:
   deploy:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
+    outputs:
+      domain_name: ${{ vars.CDK_DOMAIN_NAME }}
     steps:
       - uses: actions/checkout@v5
 
@@ -105,7 +107,8 @@ jobs:
             "apiCertificateArn": "${{ secrets.CDK_API_CERTIFICATE_ARN }}",
             "langfuseBaseUrl": "${{ vars.CDK_LANGFUSE_BASE_URL }}",
             "alertEmail": "${{ vars.CDK_ALERT_EMAIL }}",
-            "githubRepo": "${{ vars.CDK_GITHUB_REPO }}"
+            "githubRepo": "${{ vars.CDK_GITHUB_REPO }}",
+            "demoEmailDostip": "${{ vars.CDK_DEMO_EMAIL_DOSTIP }}"
           }
           CTXEOF
           npx cdk deploy --all --require-approval never
@@ -150,3 +153,49 @@ jobs:
         run: bash scripts/invoke-fx-fetcher.sh
         env:
           FX_FUNCTION: ${{ steps.outputs.outputs.fx_function }}
+
+  # Post-deploy smoke test: Playwright happy-path against the live app.
+  # Fix-forward: a failed smoke does not rollback the deployment.
+  web_smoke:
+    needs: deploy
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+
+      - name: Run live smoke tests
+        working-directory: apps/web
+        run: npx playwright test
+        env:
+          EXPENSE_E2E_APP_BASE_URL: https://${{ vars.CDK_DOMAIN_NAME }}
+          EXPENSE_E2E_AUTH_BASE_URL: https://auth.${{ vars.CDK_DOMAIN_NAME }}
+          EXPENSE_E2E_REVIEW_EMAIL: e2e-test@example.com
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 14
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: apps/web/test-results/
+          retention-days: 14

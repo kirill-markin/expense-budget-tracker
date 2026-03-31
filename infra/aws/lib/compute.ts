@@ -24,6 +24,8 @@ export interface ComputeProps {
   appDomain: string;
   authDomain: string;
   langfuseBaseUrl: string;
+  demoEmailDostip: string;
+  demoPasswordSecret: cdk.aws_secretsmanager.ISecret | null;
 }
 
 export interface ComputeResult {
@@ -248,10 +250,12 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_NAME: "tracker",
       DB_USER: "auth_service",
       NODE_EXTRA_CA_CERTS: "/app/rds-global-bundle.pem",
+      ...(props.demoEmailDostip !== "" ? { DEMO_EMAIL_DOSTIP: props.demoEmailDostip } : {}),
     },
     secrets: {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.authDbSecret, "password"),
       SESSION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(props.sessionEncryptionKeySecret),
+      ...(props.demoPasswordSecret !== null ? { DEMO_PASSWORD_DOSTIP: ecs.Secret.fromSecretsManager(props.demoPasswordSecret) } : {}),
     },
     logging: ecs.LogDrivers.awsLogs({
       logGroup: authLogGroup,

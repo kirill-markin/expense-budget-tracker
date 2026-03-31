@@ -155,6 +155,96 @@ export const verifyEmailOtp = async (
  * The token is trusted here because it comes from the HTTPS response of
  * RespondToAuthChallenge rather than from an untrusted client.
  */
+/**
+ * Password-based sign-in via the Cognito USER_AUTH flow with PASSWORD challenge.
+ *
+ * Used exclusively by the insecure demo email bypass for E2E tests.
+ * The Cognito User Pool must have PASSWORD in AllowedFirstAuthFactors.
+ */
+export const signInWithPassword = async (
+  email: string,
+  password: string,
+): Promise<TokenResult> => {
+  const clientId = getClientId();
+
+  const initialResult = await cognitoFetch("InitiateAuth", {
+    AuthFlow: "USER_AUTH",
+    ClientId: clientId,
+    AuthParameters: {
+      USERNAME: email,
+      PREFERRED_CHALLENGE: "PASSWORD",
+      PASSWORD: password,
+    },
+  });
+
+  const authResult = initialResult.AuthenticationResult as Record<string, unknown> | undefined;
+  if (authResult !== undefined) {
+    return extractTokenResult(authResult);
+  }
+
+  const challengeName = initialResult.ChallengeName as string | undefined;
+  const session = initialResult.Session as string | undefined;
+  if (session === undefined || session === "") {
+    throw new Error("Cognito InitiateAuth did not return a session");
+  }
+
+  let passwordSession = session;
+
+  if (challengeName === "SELECT_CHALLENGE") {
+    const selectResult = await cognitoFetch("RespondToAuthChallenge", {
+      ClientId: clientId,
+      ChallengeName: "SELECT_CHALLENGE",
+      Session: session,
+      ChallengeResponses: {
+        USERNAME: email,
+        ANSWER: "PASSWORD",
+        PASSWORD: password,
+      },
+    });
+
+    const selectAuth = selectResult.AuthenticationResult as Record<string, unknown> | undefined;
+    if (selectAuth !== undefined) {
+      return extractTokenResult(selectAuth);
+    }
+
+    const nextChallenge = selectResult.ChallengeName as string | undefined;
+    const nextSession = selectResult.Session as string | undefined;
+    if (nextChallenge !== "PASSWORD") {
+      throw new Error(`Unexpected Cognito password challenge: ${nextChallenge}`);
+    }
+    if (nextSession === undefined || nextSession === "") {
+      throw new Error("Cognito RespondToAuthChallenge did not return a session");
+    }
+    passwordSession = nextSession;
+  } else if (challengeName !== "PASSWORD") {
+    throw new Error(`Unexpected Cognito password challenge: ${challengeName}`);
+  }
+
+  const passwordResult = await cognitoFetch("RespondToAuthChallenge", {
+    ClientId: clientId,
+    ChallengeName: "PASSWORD",
+    Session: passwordSession,
+    ChallengeResponses: {
+      USERNAME: email,
+      PASSWORD: password,
+    },
+  });
+
+  const finalAuth = passwordResult.AuthenticationResult as Record<string, unknown> | undefined;
+  if (finalAuth === undefined) {
+    throw new Error("Cognito RespondToAuthChallenge did not return AuthenticationResult");
+  }
+
+  return extractTokenResult(finalAuth);
+};
+
+const extractTokenResult = (authResult: Record<string, unknown>): TokenResult => ({
+  idToken: authResult.IdToken as string,
+  accessToken: authResult.AccessToken as string,
+  refreshToken: authResult.RefreshToken as string,
+  expiresIn: authResult.ExpiresIn as number,
+});
+
 export const extractIdentityFromIdToken = (idToken: string): AgentIdentity => {
   const parts = idToken.split(".");
   if (parts.length !== 3) {
