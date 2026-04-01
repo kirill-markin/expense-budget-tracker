@@ -8,7 +8,7 @@
 import { randomBytes } from "node:crypto";
 
 const authBaseUrl = process.env.EXPENSE_LIVE_E2E_AUTH_BASE_URL ?? "https://auth.expense-budget-tracker.com";
-const appBaseUrl = process.env.EXPENSE_LIVE_E2E_APP_BASE_URL ?? "https://expense-budget-tracker.com";
+const appBaseUrl = process.env.EXPENSE_LIVE_E2E_APP_BASE_URL ?? "https://app.expense-budget-tracker.com";
 const workspacePrefix = process.env.EXPENSE_LIVE_E2E_WORKSPACE_PREFIX ?? "E2E ";
 const ttlHours = parsePositiveInteger(
   process.env.EXPENSE_LIVE_E2E_WORKSPACE_TTL_HOURS ?? "48",
