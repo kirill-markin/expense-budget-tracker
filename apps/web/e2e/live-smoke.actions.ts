@@ -16,16 +16,28 @@ export type LiveSmokeScenario = Readonly<{
   workspaceName: string;
   testAccountId: string;
   testCategory: string;
+  aiTransactionTimestamp: string;
+  aiTransactionAmount: number;
+  aiTransactionCounterparty: string;
+  aiTransactionNote: string;
 }>;
 
 export const runIdFromClock = (): string => String(Date.now());
 
-export const buildScenario = (runId: string): LiveSmokeScenario => ({
-  runId,
-  workspaceName: `E2E web ${runId}`,
-  testAccountId: `E2E Checking ${runId}`,
-  testCategory: `E2E Groceries ${runId}`,
-});
+export const buildScenario = (runId: string): LiveSmokeScenario => {
+  const aiTransactionTimestamp = new Date(Date.now() + 60_000).toISOString();
+
+  return {
+    runId,
+    workspaceName: `E2E web ${runId}`,
+    testAccountId: `E2E Checking ${runId}`,
+    testCategory: `E2E Groceries ${runId}`,
+    aiTransactionTimestamp,
+    aiTransactionAmount: -17.34,
+    aiTransactionCounterparty: `E2E AI Merchant ${runId}`,
+    aiTransactionNote: `E2E AI note ${runId}`,
+  };
+};
 
 type DemoSignInResult = Readonly<{
   idToken: string;
@@ -75,7 +87,7 @@ export const setupBrowserSession = async (
   ]);
 
   // Navigate to the app to let the proxy set the __Host-csrf cookie
-  await page.goto(appBaseUrl, { waitUntil: "networkidle" });
+  await page.goto(appBaseUrl, { waitUntil: "domcontentloaded" });
 };
 
 export const setWorkspaceCookie = async (
@@ -226,6 +238,55 @@ export const getBudgetGrid = async (
     "GET",
     null,
   );
+
+type TransactionsQuery = Readonly<{
+  dateFrom: string;
+  dateTo: string;
+  accountId: string;
+  sortKey: string;
+  sortDir: "asc" | "desc";
+  limit: number;
+  offset: number;
+}>;
+
+type TransactionsPageResult = Readonly<{
+  entries: ReadonlyArray<Readonly<{
+    entryId: string;
+    eventId: string;
+    ts: string;
+    accountId: string;
+    amount: number;
+    amountReport: number | null;
+    currency: string;
+    kind: string;
+    category: string | null;
+    counterparty: string | null;
+    note: string | null;
+  }>>;
+  total: number;
+}>;
+
+export const getTransactionsPage = async (
+  page: Page,
+  query: TransactionsQuery,
+): Promise<TransactionsPageResult> => {
+  const params = new URLSearchParams({
+    dateFrom: query.dateFrom,
+    dateTo: query.dateTo,
+    accountId: query.accountId,
+    sortKey: query.sortKey,
+    sortDir: query.sortDir,
+    limit: String(query.limit),
+    offset: String(query.offset),
+  });
+
+  return browserFetch<TransactionsPageResult>(
+    page,
+    `/api/transactions?${params.toString()}`,
+    "GET",
+    null,
+  );
+};
 
 export const attachFailureDiagnostics = async (
   page: Page,
