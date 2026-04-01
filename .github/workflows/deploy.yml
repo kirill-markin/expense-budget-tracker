@@ -43,7 +43,7 @@ jobs:
     outputs:
       domain_name: ${{ vars.CDK_DOMAIN_NAME }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Detect changed paths
         id: changes
@@ -60,9 +60,9 @@ jobs:
             worker:
               - 'apps/worker/**'
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -161,11 +161,11 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: package-lock.json
 

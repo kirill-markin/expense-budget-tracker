@@ -1,5 +1,5 @@
 # --- Stage 1: Install dependencies ---
-FROM node:24-alpine AS deps
+FROM node:25.8.2-alpine AS deps
 WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps/auth/package.json apps/auth/package.json
@@ -11,14 +11,14 @@ COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci
 
 # --- Stage 2: Build ---
-FROM node:24-alpine AS builder
+FROM node:25.8.2-alpine AS builder
 WORKDIR /workspace
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
 RUN npm run build --workspace expense-budget-tracker-web
 
 # --- Stage 3: Production runner ---
-FROM node:24-alpine AS runner
+FROM node:25.8.2-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
