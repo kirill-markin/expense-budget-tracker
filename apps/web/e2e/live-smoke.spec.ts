@@ -13,6 +13,7 @@ import {
   createTestWorkspace,
   createTransaction,
   deleteTestWorkspace,
+  ensureAllVisibilityMode,
   getBalancesSummary,
   getBudgetGrid,
   getTransactionsPage,
@@ -86,6 +87,7 @@ test.describe.serial("live smoke: auth, transactions, balances, budget, and AI c
       // Reload with workspace cookie set
       await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
       await expect(page).not.toHaveURL(/\/login/);
+      await ensureAllVisibilityMode(page);
     } catch (error) {
       await attachFailureDiagnostics(page, testInfo, "auth-workspace-setup");
       throw error;
@@ -132,6 +134,7 @@ test.describe.serial("live smoke: auth, transactions, balances, budget, and AI c
       expect(testAccount!.currency).toBe("USD");
 
       await page.goto(`${baseUrl}/transactions`, { waitUntil: "domcontentloaded" });
+      await ensureAllVisibilityMode(page);
       await expect(page.locator("body")).toContainText(scenario.testAccountId);
     } catch (error) {
       await attachFailureDiagnostics(page, testInfo, "transactions-balances");
@@ -165,6 +168,7 @@ test.describe.serial("live smoke: auth, transactions, balances, budget, and AI c
       expect(row!.actual).toBe(250);
 
       await page.goto(`${baseUrl}/budget`, { waitUntil: "domcontentloaded" });
+      await ensureAllVisibilityMode(page);
       await expect(page.locator("body")).toContainText(scenario.testCategory);
     } catch (error) {
       await attachFailureDiagnostics(page, testInfo, "budget-grid");
@@ -179,6 +183,7 @@ test.describe.serial("live smoke: auth, transactions, balances, budget, and AI c
 
     try {
       await page.goto(`${baseUrl}/transactions`, { waitUntil: "domcontentloaded" });
+      await ensureAllVisibilityMode(page);
       await ensureSidebarChatOpen(page);
 
       const insertToolCall = await createTransactionThroughAiChat(page, scenario);

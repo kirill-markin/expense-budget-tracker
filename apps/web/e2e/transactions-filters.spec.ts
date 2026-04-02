@@ -5,6 +5,7 @@ import {
   createTestWorkspace,
   createTransaction,
   deleteTestWorkspace,
+  ensureAllVisibilityMode,
   runIdFromClock,
   setWorkspaceCookie,
   setupBrowserSession,
@@ -51,6 +52,9 @@ test("transactions filters work in deployed app with authenticated workspace dat
     const workspace = await createTestWorkspace(page, workspaceName);
     workspaceId = workspace.workspaceId;
     await setWorkspaceCookie(page, workspace.workspaceId);
+    await page.goto(baseURL, { waitUntil: "domcontentloaded" });
+    await expect(page).not.toHaveURL(/\/login/);
+    await ensureAllVisibilityMode(page);
 
     await createTransaction(page, {
       ts: timestamp,
@@ -94,6 +98,7 @@ test("transactions filters work in deployed app with authenticated workspace dat
     });
 
     await page.goto(`${baseURL}/transactions`, { waitUntil: "domcontentloaded" });
+    await ensureAllVisibilityMode(page);
     await expect(page.getByRole("heading", { name: "Transactions", exact: true })).toBeVisible({ timeout: externalUiTimeoutMs });
     await expect(page.locator("body")).toContainText(accountUsd);
     await expect(page.locator("body")).toContainText(`usd-groceries-${runId}`);

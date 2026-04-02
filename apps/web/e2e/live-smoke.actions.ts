@@ -10,6 +10,8 @@ import { type Page, type TestInfo } from "@playwright/test";
 const authBaseUrl = process.env.EXPENSE_E2E_AUTH_BASE_URL ?? "https://auth.expense-budget-tracker.com";
 const appBaseUrl = process.env.EXPENSE_E2E_APP_BASE_URL ?? "https://app.expense-budget-tracker.com";
 const reviewEmail = process.env.EXPENSE_E2E_REVIEW_EMAIL ?? "e2e-test@example.com";
+const VISIBILITY_MODE_STORAGE_KEY = "expense-tracker-visibility-mode";
+const LAST_ACTIVE_STORAGE_KEY = "expense-tracker-last-active-ts";
 
 export type LiveSmokeScenario = Readonly<{
   runId: string;
@@ -98,6 +100,23 @@ export const setWorkspaceCookie = async (
   await page.context().addCookies([
     { name: "workspace", value: workspaceId, domain: url.hostname, path: "/", httpOnly: false, secure: true, sameSite: "Lax" },
   ]);
+};
+
+export const ensureAllVisibilityMode = async (
+  page: Page,
+): Promise<void> => {
+  await page.evaluate(
+    ({ visibilityModeKey, lastActiveKey }) => {
+      localStorage.setItem(visibilityModeKey, "all");
+      localStorage.setItem(lastActiveKey, String(Date.now()));
+    },
+    { visibilityModeKey: VISIBILITY_MODE_STORAGE_KEY, lastActiveKey: LAST_ACTIVE_STORAGE_KEY },
+  );
+
+  const allButton = page.getByRole("button", { name: "All", exact: true }).first();
+  if (await allButton.isVisible().catch(() => false)) {
+    await allButton.click();
+  }
 };
 
 /**
