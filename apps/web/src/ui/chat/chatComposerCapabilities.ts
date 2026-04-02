@@ -8,14 +8,17 @@ export type ChatComposerCapabilitiesParams = Readonly<{
   isLiveStreamConnected: boolean;
   dictationState: ChatDictationState;
   hasPendingMessage: boolean;
+  shouldSubmitOnEnter: boolean;
 }>;
 
 export type ChatComposerCapabilities = Readonly<{
   isTextareaDisabled: boolean;
   isSubmitButtonDisabled: boolean;
+  isEnterSubmissionEnabled: boolean;
   isAttachButtonDisabled: boolean;
   isMicrophoneButtonDisabled: boolean;
   isDropTargetEnabled: boolean;
+  shouldSubmitOnEnter: boolean;
 }>;
 
 const isDictationBusy = (dictationState: ChatDictationState): boolean =>
@@ -31,6 +34,7 @@ export const getChatComposerCapabilities = (
     isLiveStreamConnected,
     dictationState,
     hasPendingMessage,
+    shouldSubmitOnEnter,
   } = params;
   const isDictationActive = dictationState !== "idle";
   const canAttachFiles = isHistoryLoaded && !isStopping && !isDictationActive;
@@ -41,14 +45,19 @@ export const getChatComposerCapabilities = (
       || isDictationActive
       || isLiveStreamConnected
       || !hasPendingMessage;
+  const isEnterSubmissionEnabled = shouldSubmitOnEnter
+    && composerAction === "send"
+    && !isSubmitButtonDisabled;
 
   return {
     isTextareaDisabled: isDictationActive,
     isSubmitButtonDisabled,
+    isEnterSubmissionEnabled,
     isAttachButtonDisabled: !canAttachFiles,
     isMicrophoneButtonDisabled: !isHistoryLoaded
       || isStopping
       || isDictationBusy(dictationState),
     isDropTargetEnabled: canAttachFiles,
+    shouldSubmitOnEnter,
   };
 };

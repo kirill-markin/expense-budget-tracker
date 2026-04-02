@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  KeyboardEvent,
   ReactElement,
   RefObject,
 } from "react";
@@ -53,6 +54,22 @@ export const ChatComposer = (props: Props): ReactElement => {
   const microphoneAriaLabel = dictationState === "recording"
     ? t("chat.dictationStop")
     : t("chat.dictationStart");
+  const enterKeyHint = capabilities.shouldSubmitOnEnter ? "send" : "enter";
+
+  const handleTextareaKeyDown = (
+    event: KeyboardEvent<HTMLTextAreaElement>,
+  ): void => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    if (event.shiftKey || event.nativeEvent.isComposing || !capabilities.isEnterSubmissionEnabled) {
+      return;
+    }
+
+    event.preventDefault();
+    void onSend();
+  };
 
   return (
     <div className={styles.inputArea}>
@@ -78,8 +95,9 @@ export const ChatComposer = (props: Props): ReactElement => {
         placeholder={t("chat.placeholder")}
         value={inputText}
         disabled={capabilities.isTextareaDisabled}
-        enterKeyHint="enter"
+        enterKeyHint={enterKeyHint}
         onChange={(event) => onInputChange(event.target.value)}
+        onKeyDown={handleTextareaKeyDown}
         rows={1}
       />
       {dictationStatusLabel !== null && (

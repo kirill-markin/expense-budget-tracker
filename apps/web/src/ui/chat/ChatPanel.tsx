@@ -25,6 +25,7 @@ import {
   type ChatDraftSelection,
   type ChatDictationState,
 } from "./chatDictation";
+import { useDesktopEnterToSend } from "./useDesktopEnterToSend";
 import { useChatSessionController } from "./useChatSessionController";
 import styles from "./ChatPanel.module.css";
 
@@ -147,6 +148,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const [dictationState, setDictationState] = useState<ChatDictationState>("idle");
+  const shouldSubmitOnEnter = useDesktopEnterToSend();
 
   const dragCounterRef = useRef<number>(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -240,6 +242,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     isLiveStreamConnected,
     dictationState,
     hasPendingMessage,
+    shouldSubmitOnEnter,
   });
 
   const handleDragEnter = useCallback((e: DragEvent<HTMLDivElement>): void => {
