@@ -1,6 +1,72 @@
-import { defineConfig } from "@playwright/test";
+import {
+  defineConfig,
+  type ScreenshotMode,
+  type TraceMode,
+  type VideoMode,
+} from "@playwright/test";
 
 const appBaseUrl = process.env.EXPENSE_E2E_APP_BASE_URL ?? "https://app.expense-budget-tracker.com";
+
+const defaultTraceMode: TraceMode = "retain-on-failure";
+const defaultVideoMode: VideoMode = "retain-on-failure";
+const defaultScreenshotMode: ScreenshotMode = "only-on-failure";
+
+const traceModeValues = new Set<TraceMode>([
+  "off",
+  "on",
+  "retain-on-failure",
+  "on-first-retry",
+  "on-all-retries",
+  "retain-on-first-failure",
+  "retain-on-failure-and-retries",
+]);
+const videoModeValues = new Set<VideoMode>(["off", "on", "retain-on-failure", "on-first-retry"]);
+const screenshotModeValues = new Set<ScreenshotMode>(["off", "on", "only-on-failure", "on-first-failure"]);
+
+const readTraceMode = (): TraceMode => {
+  const rawValue = process.env.EXPENSE_E2E_TRACE_MODE;
+  if (rawValue === undefined) {
+    return defaultTraceMode;
+  }
+
+  if (traceModeValues.has(rawValue as TraceMode)) {
+    return rawValue as TraceMode;
+  }
+
+  throw new Error(
+    `Invalid EXPENSE_E2E_TRACE_MODE: ${rawValue}. Expected one of: ${Array.from(traceModeValues).join(", ")}`,
+  );
+};
+
+const readVideoMode = (): VideoMode => {
+  const rawValue = process.env.EXPENSE_E2E_VIDEO_MODE;
+  if (rawValue === undefined) {
+    return defaultVideoMode;
+  }
+
+  if (videoModeValues.has(rawValue as VideoMode)) {
+    return rawValue as VideoMode;
+  }
+
+  throw new Error(
+    `Invalid EXPENSE_E2E_VIDEO_MODE: ${rawValue}. Expected one of: ${Array.from(videoModeValues).join(", ")}`,
+  );
+};
+
+const readScreenshotMode = (): ScreenshotMode => {
+  const rawValue = process.env.EXPENSE_E2E_SCREENSHOT_MODE;
+  if (rawValue === undefined) {
+    return defaultScreenshotMode;
+  }
+
+  if (screenshotModeValues.has(rawValue as ScreenshotMode)) {
+    return rawValue as ScreenshotMode;
+  }
+
+  throw new Error(
+    `Invalid EXPENSE_E2E_SCREENSHOT_MODE: ${rawValue}. Expected one of: ${Array.from(screenshotModeValues).join(", ")}`,
+  );
+};
 
 export default defineConfig({
   testDir: "./e2e",
@@ -18,8 +84,8 @@ export default defineConfig({
     headless: true,
     ignoreHTTPSErrors: true,
     navigationTimeout: 30_000,
-    trace: "on",
-    screenshot: "on",
-    video: "on",
+    trace: readTraceMode(),
+    screenshot: readScreenshotMode(),
+    video: readVideoMode(),
   },
 });
