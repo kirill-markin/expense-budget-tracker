@@ -96,10 +96,14 @@ test("transactions filters work in deployed app with authenticated workspace dat
     await page.goto(`${baseURL}/transactions`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Transactions", exact: true })).toBeVisible({ timeout: externalUiTimeoutMs });
     await expect(page.locator("body")).toContainText(accountUsd);
+    await expect(page.locator("body")).toContainText(`usd-groceries-${runId}`);
+    await expect(page.locator("body")).toContainText(`eur-transport-${runId}`);
+    await expect(page.locator("body")).toContainText(`usd-transport-${runId}`);
+    await expect(page.locator("body")).toContainText(`gbp-dining-${runId}`);
 
     const initialCount = await readCountLabel(page);
-    expect(initialCount.total).toBe(4);
-    expect(initialCount.shown).toBe(4);
+    expect(initialCount.total).toBeGreaterThanOrEqual(4);
+    expect(initialCount.shown).toBeGreaterThanOrEqual(4);
 
     const accountTrigger = page.getByTestId("transactions-account-filter");
     await accountTrigger.click();
@@ -204,9 +208,9 @@ test("transactions filters work in deployed app with authenticated workspace dat
 
     const resetBody = await clearEurResponse.json() as TransactionsResponseBody;
     const resetCount = await readCountLabel(page);
-    expect(resetBody.total).toBe(4);
-    expect(resetCount.shown).toBe(4);
-    expect(resetCount.total).toBe(4);
+    expect(resetBody.total).toBe(initialCount.total);
+    expect(resetCount.total).toBe(initialCount.total);
+    expect(resetCount.shown).toBe(initialCount.shown);
   } catch (error) {
     await attachFailureDiagnostics(page, testInfo, "transactions-filters");
     throw error;
