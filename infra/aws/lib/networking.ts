@@ -21,6 +21,7 @@ export function networking(scope: Construct): NetworkingResult {
   // natGatewayProvider and keep only: natGateways: 1,
   const natProvider = ec2.NatProvider.instanceV2({
     instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO),
+    defaultAllowedTraffic: ec2.NatTrafficDirection.OUTBOUND_ONLY,
   });
   const vpc = new ec2.Vpc(scope, "Vpc", {
     maxAzs: 2,
@@ -31,6 +32,11 @@ export function networking(scope: Construct): NetworkingResult {
       { name: "private", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
     ],
   });
+  natProvider.securityGroup.addIngressRule(
+    ec2.Peer.ipv4(vpc.vpcCidrBlock),
+    ec2.Port.allTraffic(),
+    "Allow VPC traffic to NAT instance",
+  );
 
   // --- Security Groups ---
   // ALB only accepts traffic from Cloudflare edge servers.
