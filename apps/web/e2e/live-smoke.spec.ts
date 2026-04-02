@@ -26,6 +26,7 @@ import {
 } from "./live-smoke.actions";
 
 const externalUiTimeoutMs = 30_000;
+const chatCompletionTimeoutMs = 90_000;
 
 type CompletedLedgerInsertToolCall = Readonly<{
   summary: string;
@@ -260,7 +261,7 @@ async function sendChatMessageAndWaitForIdle(
       const sendEnabled = await sendButton.isEnabled().catch(() => false);
       return sendEnabled ? "draft" : "idle";
     },
-    { timeout: externalUiTimeoutMs },
+    { timeout: chatCompletionTimeoutMs },
   ).toBe("idle");
 }
 
@@ -347,7 +348,7 @@ async function createTransactionThroughAiChat(
 
   for (const prompt of followUpPrompts) {
     await sendChatMessageAndWaitForIdle(page, prompt);
-    const completedInsert = await waitForCompletedLedgerInsertToolCall(page, 10_000);
+    const completedInsert = await waitForCompletedLedgerInsertToolCall(page, 30_000);
     if (completedInsert !== null) {
       return completedInsert;
     }
