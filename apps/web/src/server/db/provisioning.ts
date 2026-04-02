@@ -19,9 +19,11 @@ const getMembershipCacheKey = (userId: string, workspaceId: string): string =>
   `${userId}:${workspaceId}`;
 
 // Only these unique violations are expected during concurrent first-request
-// provisioning. Anything else (for example users.email uniqueness) must fail
-// loudly instead of being treated as a harmless race.
+// provisioning. The users email mirror can race too: concurrent inserts for the
+// same authenticated identity may surface on the secondary unique email index
+// before the ON CONFLICT(user_id) branch can resolve the duplicate.
 const EXPECTED_PROVISIONING_CONSTRAINTS: ReadonlySet<string> = new Set([
+  "idx_users_email",
   "workspaces_pkey",
   "workspace_members_pkey",
   "workspace_settings_pkey",
