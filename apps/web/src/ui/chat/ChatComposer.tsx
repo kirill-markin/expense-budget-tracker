@@ -71,6 +71,16 @@ export const ChatComposer = (props: Props): ReactElement => {
     void onSend();
   };
 
+  const handleSubmitButtonClick = (): void => {
+    if (composerAction === "stop") {
+      void onStop();
+      return;
+    }
+
+    textareaRef.current?.focus();
+    void onSend();
+  };
+
   return (
     <div className={styles.inputArea}>
       {pendingAttachments.length > 0 && (
@@ -133,7 +143,7 @@ export const ChatComposer = (props: Props): ReactElement => {
             type="button"
             className={styles.sendButton}
             disabled={capabilities.isSubmitButtonDisabled}
-            onClick={() => void (composerAction === "stop" ? onStop() : onSend())}
+            onClick={handleSubmitButtonClick}
           >
             {composerAction === "stop" ? t("chat.stop") : t("chat.send")}
           </button>

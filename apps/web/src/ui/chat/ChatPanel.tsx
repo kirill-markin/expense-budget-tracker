@@ -496,6 +496,12 @@ export const ChatPanel = (props: Props): ReactElement => {
     }, 1500);
   }, [messages, runState, t]);
 
+  const handleClearConversation = useCallback((): void => {
+    discardDictation();
+    textareaRef.current?.focus();
+    void clearConversation();
+  }, [clearConversation, discardDictation]);
+
   const copyButtonLabel = copyStatus === "success"
     ? t("chat.copied")
     : copyStatus === "error"
@@ -536,10 +542,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         transcriptActionsDisabled={transcriptActionsDisabled}
         copyButtonLabel={copyButtonLabel}
         onCopyTranscript={() => void handleCopyTranscript()}
-        onClearConversation={() => {
-          discardDictation();
-          void clearConversation();
-        }}
+        onClearConversation={handleClearConversation}
         onCloseSidebar={() => setIsOpen(false)}
       />
       <ChatTranscript
