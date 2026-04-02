@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactElement } from "react";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchLiveData } from "@/lib/liveDataFetch";
@@ -10,6 +10,7 @@ import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
 import { DataTable } from "./data-table/DataTable";
+import { FilterMultiSelect, type FilterMultiSelectOption } from "./FilterMultiSelect";
 import tableStyles from "./TableUi.module.css";
 import type { ColumnDef, PageResult } from "./data-table/types";
 import { useTableSort } from "./data-table/useTableSort";
@@ -64,9 +65,25 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
 
   const [dateFrom, setDateFrom] = useState<string>(toDateInputValue(ninetyDaysAgo));
   const [dateTo, setDateTo] = useState<string>(toDateInputValue(now));
-  const [selectedAccount, setSelectedAccount] = useState<string>("");
+  const [selectedAccountIds, setSelectedAccountIds] = useState<ReadonlyArray<string>>([]);
+  const [selectedCategories, setSelectedCategories] = useState<ReadonlyArray<string>>([]);
 
   const { sort, onSort } = useTableSort("single", "ts", "desc", SORT_DEFAULTS);
+  const selectedAccountIdsKey = selectedAccountIds.join("\u0001");
+  const selectedCategoriesKey = selectedCategories.join("\u0001");
+
+  const accountOptions = useMemo<ReadonlyArray<FilterMultiSelectOption>>(
+    () => accounts.map((account) => ({ value: account.accountId, label: account.accountId })),
+    [accounts],
+  );
+
+  const categoryOptions = useMemo<ReadonlyArray<FilterMultiSelectOption>>(
+    () => [
+      { value: "", label: t("txn.filterUncategorized") },
+      ...categories.map((category) => ({ value: category, label: category })),
+    ],
+    [categories, t],
+  );
 
   // The transactions header/filter options refresh through the server
   // component. The row list is fetched separately on the client, so it needs
@@ -76,7 +93,8 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     const url = buildTransactionsPageUrl(
       dateFrom,
       dateTo,
-      selectedAccount,
+      selectedAccountIds,
+      selectedCategories,
       sort[0].key,
       sort[0].dir,
       refreshToken,
@@ -90,7 +108,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     }
     const page: TransactionsPage = await response.json();
     return { items: page.entries, total: page.total };
-  }, [dateFrom, dateTo, refreshToken, selectedAccount, sort]);
+  }, [dateFrom, dateTo, refreshToken, selectedAccountIds, selectedCategories, sort]);
 
   const {
     rows,
@@ -104,8 +122,8 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     deleteEntry,
   } = useEditableTransactionsTable({
     fetchPage,
-    createEntryRequest: () => buildTransactionsCreateEntryRequest(dateTo, selectedAccount),
-    resetDeps: [dateFrom, dateTo, selectedAccount, sort[0].key, sort[0].dir, refreshToken],
+    createEntryRequest: () => buildTransactionsCreateEntryRequest(dateTo, selectedAccountIds),
+    resetDeps: [dateFrom, dateTo, selectedAccountIdsKey, selectedCategoriesKey, sort[0].key, sort[0].dir, refreshToken],
     onDirty: () => {},
   });
 
@@ -193,19 +211,20 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
             onChange={(e) => setDateTo(e.target.value)}
           />
         </label>
-        <label className={tableStyles.filterLabel}>
-          {t("table.account")}
-          <select
-            className={tableStyles.filterInput}
-            value={selectedAccount}
-            onChange={(e) => setSelectedAccount(e.target.value)}
-          >
-            <option value="">{t("mode.all")}</option>
-            {accounts.map((a) => (
-              <option key={a.accountId} value={a.accountId}>{a.accountId}</option>
-            ))}
-          </select>
-        </label>
+        <FilterMultiSelect
+          label={t("table.account")}
+          options={accountOptions}
+          selectedValues={selectedAccountIds}
+          onChange={setSelectedAccountIds}
+          testId="transactions-account-filter"
+        />
+        <FilterMultiSelect
+          label={t("table.category")}
+          options={categoryOptions}
+          selectedValues={selectedCategories}
+          onChange={setSelectedCategories}
+          testId="transactions-category-filter"
+        />
         {!loading && (
           <span className={tableStyles.filterCount}>
             {t("txn.countLabel", { shown: rows.length, total })}

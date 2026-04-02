@@ -31,6 +31,7 @@ export type TransactionsFilter = Readonly<{
   dateFrom: string | null;
   dateTo: string | null;
   accountId: string | null;
+  accountIds: ReadonlyArray<string> | null;
   kind: string | null;
   category: string | null;
   categories: ReadonlyArray<string> | null;
@@ -83,6 +84,14 @@ const buildWhereClause = (
   if (filter.accountId !== null) {
     params.push(filter.accountId);
     conditions.push(`le.account_id = $${params.length}`);
+  }
+  if (filter.accountIds !== null) {
+    if (filter.accountIds.length === 0) {
+      conditions.push("FALSE");
+    } else {
+      params.push(filter.accountIds);
+      conditions.push(`le.account_id = ANY($${params.length})`);
+    }
   }
   if (filter.kind !== null) {
     params.push(filter.kind);

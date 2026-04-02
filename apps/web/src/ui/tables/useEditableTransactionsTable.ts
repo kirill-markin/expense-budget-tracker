@@ -97,7 +97,8 @@ export const prependLedgerEntry = (
 export const buildTransactionsPageUrl = (
   dateFrom: string,
   dateTo: string,
-  selectedAccount: string,
+  selectedAccountIds: ReadonlyArray<string>,
+  selectedCategories: ReadonlyArray<string>,
   sortKey: string,
   sortDir: "asc" | "desc",
   refreshToken: string,
@@ -107,7 +108,12 @@ export const buildTransactionsPageUrl = (
   const params = new URLSearchParams();
   if (dateFrom.length > 0) params.set("dateFrom", dateFrom);
   if (dateTo.length > 0) params.set("dateTo", dateTo);
-  if (selectedAccount.length > 0) params.set("accountId", selectedAccount);
+  for (const accountId of selectedAccountIds) {
+    params.append("accountIds", accountId);
+  }
+  for (const category of selectedCategories) {
+    params.append("categories", category);
+  }
   params.set("sortKey", sortKey);
   params.set("sortDir", sortDir);
   params.set("limit", String(limit));
@@ -146,10 +152,10 @@ export const buildDrillDownPageUrl = (
 
 export const buildTransactionsCreateEntryRequest = (
   dateTo: string,
-  selectedAccount: string,
+  selectedAccountIds: ReadonlyArray<string>,
 ): CreateLedgerEntryRequest => ({
   ts: toLocalNoonIso(dateTo),
-  accountId: selectedAccount,
+  accountId: selectedAccountIds.length === 1 ? selectedAccountIds[0] : "",
   amount: 0,
   currency: "",
   kind: "spend",

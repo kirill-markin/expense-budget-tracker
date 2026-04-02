@@ -225,5 +225,9 @@
   "txn.failedToCreate": "Не удалось создать операцию",
   "txn.addRow": "Добавить строку",
   "txn.noMatch": "Нет записей, соответствующих выбранным фильтрам.",
-  "txn.deleteConfirm": "Удалить эту операцию? Это действие нельзя отменить."
+  "txn.deleteConfirm": "Удалить эту операцию? Это действие нельзя отменить.",
+  "txn.filterSearchPlaceholder": "Поиск...",
+  "txn.filterSelectedCount": "Выбрано: {{count}}",
+  "txn.filterUncategorized": "Без категории",
+  "txn.filterNoMatches": "Ничего не найдено."
 }

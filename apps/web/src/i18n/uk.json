@@ -225,5 +225,9 @@
   "txn.failedToCreate": "Не вдалося створити операцію",
   "txn.addRow": "Додати рядок",
   "txn.noMatch": "Немає записів, що відповідають обраним фільтрам.",
-  "txn.deleteConfirm": "Видалити цю операцію? Цю дію не можна скасувати."
+  "txn.deleteConfirm": "Видалити цю операцію? Цю дію не можна скасувати.",
+  "txn.filterSearchPlaceholder": "Пошук...",
+  "txn.filterSelectedCount": "Вибрано: {{count}}",
+  "txn.filterUncategorized": "Без категорії",
+  "txn.filterNoMatches": "Нічого не знайдено."
 }

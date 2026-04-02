@@ -225,5 +225,9 @@
   "txn.failedToCreate": "Error al crear la transacción",
   "txn.addRow": "Añadir fila",
   "txn.noMatch": "No hay registros que coincidan con los filtros seleccionados.",
-  "txn.deleteConfirm": "¿Eliminar esta transacción? Esta acción no se puede deshacer."
+  "txn.deleteConfirm": "¿Eliminar esta transacción? Esta acción no se puede deshacer.",
+  "txn.filterSearchPlaceholder": "Buscar...",
+  "txn.filterSelectedCount": "{{count}} seleccionadas",
+  "txn.filterUncategorized": "Sin categoría",
+  "txn.filterNoMatches": "No se encontraron coincidencias."
 }

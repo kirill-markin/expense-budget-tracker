@@ -225,5 +225,9 @@
   "txn.failedToCreate": "ایجاد تراکنش ناموفق بود",
   "txn.addRow": "افزودن ردیف",
   "txn.noMatch": "رکوردی با فیلترهای انتخاب شده مطابقت ندارد.",
-  "txn.deleteConfirm": "این تراکنش حذف شود؟ این عمل قابل بازگشت نیست."
+  "txn.deleteConfirm": "این تراکنش حذف شود؟ این عمل قابل بازگشت نیست.",
+  "txn.filterSearchPlaceholder": "جستجو...",
+  "txn.filterSelectedCount": "{{count}} انتخاب‌شده",
+  "txn.filterUncategorized": "بدون دسته‌بندی",
+  "txn.filterNoMatches": "نتیجه‌ای پیدا نشد."
 }

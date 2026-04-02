@@ -138,6 +138,34 @@
   color: var(--text);
 }
 
+.filterTrigger {
+  min-width: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: var(--cursor-pointer);
+  text-align: start;
+}
+
+.filterTrigger::after {
+  content: "\25BE";
+  color: var(--muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.filterTriggerOpen {
+  border-color: var(--text);
+}
+
+.filterTriggerText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .filterCount {
   font-size: 12px;
   color: var(--muted);
@@ -389,6 +417,65 @@
 
 .selectOptionActive {
   font-weight: 650;
+}
+
+.filterPopover {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--panel-border), 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-sizing: border-box;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.filterPopoverSearch {
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.filterPopoverOptions {
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.filterPopoverOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: var(--cursor-pointer);
+}
+
+.filterPopoverOption:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.filterPopoverOption input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.filterPopoverOptionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterPopoverEmpty {
+  padding: 8px 10px;
+  color: var(--muted);
 }
 
 @media (max-width: 768px) {

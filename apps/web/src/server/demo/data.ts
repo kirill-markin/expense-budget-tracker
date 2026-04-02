@@ -310,6 +310,14 @@ const applyFilter = (entries: ReadonlyArray<LedgerEntry>, filter: TransactionsFi
     result = result.filter((e) => e.ts < to);
   }
   if (filter.accountId !== null) result = result.filter((e) => e.accountId === filter.accountId);
+  if (filter.accountIds !== null) {
+    if (filter.accountIds.length === 0) {
+      result = [];
+    } else {
+      const accountSet = new Set(filter.accountIds);
+      result = result.filter((e) => accountSet.has(e.accountId));
+    }
+  }
   if (filter.kind !== null) result = result.filter((e) => e.kind === filter.kind);
   if (filter.category !== null) {
     result = filter.category === ""

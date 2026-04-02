@@ -225,5 +225,9 @@
   "txn.failedToCreate": "创建交易失败",
   "txn.addRow": "新增行",
   "txn.noMatch": "没有符合所选筛选条件的记录。",
-  "txn.deleteConfirm": "删除此交易？此操作无法撤销。"
+  "txn.deleteConfirm": "删除此交易？此操作无法撤销。",
+  "txn.filterSearchPlaceholder": "搜索...",
+  "txn.filterSelectedCount": "已选 {{count}} 项",
+  "txn.filterUncategorized": "未分类",
+  "txn.filterNoMatches": "未找到匹配项。"
 }

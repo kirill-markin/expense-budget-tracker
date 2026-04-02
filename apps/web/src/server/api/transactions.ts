@@ -125,6 +125,7 @@ export const parseTransactionsFilterQuery = (searchParams: URLSearchParams): Tra
   const dateFrom = parseOptionalQueryParam(searchParams, "dateFrom", dateParamSchema("dateFrom"));
   const dateTo = parseOptionalQueryParam(searchParams, "dateTo", dateParamSchema("dateTo"));
   const accountId = parseOptionalQueryParam(searchParams, "accountId", maxLengthParamSchema("accountId too long (max 200 chars)", 200));
+  const accountIds = parseRepeatedQueryParam(searchParams, "accountIds", maxLengthParamSchema("accountIds entry too long (max 200 chars)", 200));
   const kind = parseOptionalQueryParam(searchParams, "kind", maxLengthParamSchema("kind too long (max 20 chars)", 20));
   const category = parseOptionalQueryParam(searchParams, "category", maxLengthParamSchema("category too long (max 200 chars)", 200));
   const categories = parseRepeatedQueryParam(searchParams, "categories", categoriesEntrySchema);
@@ -133,6 +134,7 @@ export const parseTransactionsFilterQuery = (searchParams: URLSearchParams): Tra
     dateFrom,
     dateTo,
     accountId,
+    accountIds: accountIds.length > 0 ? accountIds : null,
     kind,
     category,
     categories: categories.length > 0 ? categories : null,
