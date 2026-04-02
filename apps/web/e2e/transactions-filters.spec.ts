@@ -41,8 +41,6 @@ test("transactions filters work in deployed app with authenticated workspace dat
   const transport = `E2E Filter Transport ${runId}`;
   const dining = `E2E Filter Dining ${runId}`;
   const timestamp = new Date().toISOString();
-  const dateFrom = timestamp.slice(0, 10);
-  const dateTo = dateFrom;
   let workspaceId: string | null = null;
 
   try {
@@ -98,7 +96,6 @@ test("transactions filters work in deployed app with authenticated workspace dat
     await page.goto(`${baseURL}/transactions`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Transactions", exact: true })).toBeVisible({ timeout: externalUiTimeoutMs });
     await expect(page.locator("body")).toContainText(accountUsd);
-    await waitForAnyTransactionsResponse(page);
 
     const initialCount = await readCountLabel(page);
     expect(initialCount.total).toBe(4);
@@ -266,15 +263,6 @@ async function waitForTransactionsResponse(
   ]);
 
   return response;
-}
-
-async function waitForAnyTransactionsResponse(page: Page): Promise<Response> {
-  return await page.waitForResponse((candidate) =>
-    candidate.request().method() === "GET"
-    && candidate.status() === 200
-    && candidate.url().includes("/api/transactions?"),
-    { timeout: externalUiTimeoutMs },
-  );
 }
 
 function getRepeatedQueryValues(url: string, key: string): ReadonlyArray<string> {
