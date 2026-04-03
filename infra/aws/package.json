@@ -15,7 +15,7 @@
     "synth": "cdk synth"
   },
   "dependencies": {
-    "aws-cdk-lib": "^2.246.0",
+    "aws-cdk-lib": "^2.247.0",
     "constructs": "^10.6.0"
   },
   "devDependencies": {
