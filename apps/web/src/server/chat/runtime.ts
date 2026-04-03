@@ -10,7 +10,7 @@ import type {
   ServerChatMessage,
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
-import { startOpenAILoop } from "@/server/chat/openai/loop";
+import { runOpenAILoop } from "@/server/chat/openai/loop";
 import { startChatTurnObservation } from "@/server/chat/openai/langfuse";
 import {
   buildUserStoppedAssistantContent,
@@ -76,7 +76,8 @@ type ActiveChatRun = {
 };
 
 export type ChatRuntimeDependencies = Readonly<{
-  startOpenAILoop: typeof startOpenAILoop;
+  runOpenAILoop: typeof runOpenAILoop;
+  startChatTurnObservation: typeof startChatTurnObservation;
   completeChatRun: typeof completeChatRun;
   persistAssistantCancelled: typeof persistAssistantCancelled;
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
@@ -90,7 +91,8 @@ export type ChatRuntimeDependencies = Readonly<{
 const activeChatRuns = new Map<string, ActiveChatRun>();
 
 const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
-  startOpenAILoop,
+  runOpenAILoop,
+  startChatTurnObservation,
   completeChatRun,
   persistAssistantCancelled,
   persistAssistantTerminalError,
@@ -453,7 +455,7 @@ export const runPersistedChatSessionWithDeps = async (
     await dependencies.beginTaskProtection();
     await dependencies.touchChatSessionHeartbeat(params.userId, params.workspaceId, params.sessionId);
 
-    await startChatTurnObservation(
+    await dependencies.startChatTurnObservation(
       {
         requestId: params.requestId,
         userId: params.userId,
@@ -465,20 +467,7 @@ export const runPersistedChatSessionWithDeps = async (
         turnInput: params.turnInput,
       },
       async (rootObservation): Promise<void> => {
-        const started = await dependencies.startOpenAILoop({
-          requestId: params.requestId,
-          userId: params.userId,
-          workspaceId: params.workspaceId,
-          sessionId: params.sessionId,
-          locale: params.locale,
-          timezone: params.timezone,
-          localMessages: params.localMessages,
-          turnInput: params.turnInput,
-          rootObservation,
-          signal: getActiveChatRun(params.sessionId)?.abortController.signal,
-        });
-
-        for await (const event of started.events) {
+        const handleOpenAILoopEvent = async (event: ChatStreamEvent): Promise<void> => {
           if (await persistUserCancellationIfNeeded()) {
             return;
           }
@@ -504,7 +493,7 @@ export const runPersistedChatSessionWithDeps = async (
               seenInvalidationVersions,
             );
             broadcastChatEvent(params.sessionId, eventToBroadcast);
-            continue;
+            return;
           } else if (event.type === "reasoning_summary") {
             assistantContent = upsertReasoningSummaryContent(
               assistantContent,
@@ -530,14 +519,26 @@ export const runPersistedChatSessionWithDeps = async (
           }
 
           broadcastChatEvent(params.sessionId, event);
-        }
+        };
+
+        const completion = await dependencies.runOpenAILoop({
+          requestId: params.requestId,
+          userId: params.userId,
+          workspaceId: params.workspaceId,
+          sessionId: params.sessionId,
+          locale: params.locale,
+          timezone: params.timezone,
+          localMessages: params.localMessages,
+          turnInput: params.turnInput,
+          rootObservation,
+          signal: getActiveChatRun(params.sessionId)?.abortController.signal,
+        }, handleOpenAILoopEvent);
 
         if (await persistUserCancellationIfNeeded()) {
           return;
         }
 
         if (!isFinalized) {
-          const completion = await started.completion;
           assistantOpenAIItems = completion.openaiItems;
         }
       },

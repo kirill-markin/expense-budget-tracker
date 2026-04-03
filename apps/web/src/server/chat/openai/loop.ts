@@ -19,12 +19,7 @@ import {
   buildPromptCacheKey,
 } from "@/server/chat/openai/request";
 import {
-  closeQueue,
-  createEventIterator,
-  createQueueState,
-  pushQueueEvent,
   runOneModelCall,
-  type QueueState,
 } from "@/server/chat/openai/modelCall";
 import { runOneToolCall } from "@/server/chat/openai/toolExecutor";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
@@ -36,17 +31,17 @@ const TOOL_LIMIT_FALLBACK_ITEM_ID = "tool-limit-summary";
 type OpenAILoopDependencies = Readonly<{
   buildChatCompletionInput: typeof buildChatCompletionInput;
   getObservedOpenAIClient: typeof getObservedOpenAIClient;
+  runOneModelCall: typeof runOneModelCall;
   runOneToolCall: typeof runOneToolCall;
-}>;
-
-type OpenAIStreamResult = Readonly<{
-  events: AsyncGenerator<ChatStreamEvent>;
-  completion: Promise<OpenAILoopCompletion>;
 }>;
 
 export type OpenAILoopCompletion = Readonly<{
   openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
+
+export type OpenAILoopEventHandler = (
+  event: ChatStreamEvent,
+) => void | Promise<void>;
 
 export type StartOpenAILoopParams = Readonly<{
   requestId: string;
@@ -73,6 +68,7 @@ const toFunctionCallOutputInputItem = (
 const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   buildChatCompletionInput,
   getObservedOpenAIClient,
+  runOneModelCall,
   runOneToolCall,
 };
 
@@ -126,16 +122,16 @@ const createAssistantReplayMessage = (
   }],
 });
 
-const pushSyntheticAssistantDelta = (
-  queue: QueueState,
+const pushSyntheticAssistantDelta = async (
+  emitEvent: OpenAILoopEventHandler,
   text: string,
   responseIndex: number,
-): void => {
+): Promise<void> => {
   if (text.trim().length === 0) {
     return;
   }
 
-  pushQueueEvent(queue, {
+  await emitEvent({
     type: "delta",
     text,
     itemId: TOOL_LIMIT_FALLBACK_ITEM_ID,
@@ -148,7 +144,8 @@ const pushSyntheticAssistantDelta = (
 
 const completeToolLimitSummaryTurn = async (
   params: StartOpenAILoopParams,
-  queue: QueueState,
+  emitEvent: OpenAILoopEventHandler,
+  runOneModelCallFn: typeof runOneModelCall,
   client: OpenAI,
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
   continuationItems: Array<StoredOpenAIReplayItem>,
@@ -165,10 +162,10 @@ const completeToolLimitSummaryTurn = async (
   });
 
   const summaryCallIndex = CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS + 1;
-  const summaryCall = await runOneModelCall(
+  const summaryCall = await runOneModelCallFn(
     client,
     params,
-    queue,
+    emitEvent,
     buildOpenAIResponsesRequestWithOptions(
       baseInput,
       continuationItems,
@@ -188,9 +185,9 @@ const completeToolLimitSummaryTurn = async (
   if (summaryCall.functionCalls.length === 0 && finalAssistantText.length > 0) {
     continuationItems.push(...summaryCall.replayItems);
     if (summaryCall.streamedText.length === 0) {
-      pushSyntheticAssistantDelta(queue, finalAssistantText, summaryCallIndex - 1);
+      await pushSyntheticAssistantDelta(emitEvent, finalAssistantText, summaryCallIndex - 1);
     }
-    pushQueueEvent(queue, { type: "done" });
+    await emitEvent({ type: "done" });
     return {
       openaiItems: continuationItems,
     };
@@ -199,9 +196,9 @@ const completeToolLimitSummaryTurn = async (
   const fallbackText = buildToolLimitFallbackText(params.locale);
   continuationItems.push(createAssistantReplayMessage(fallbackText));
   if (summaryCall.streamedText.length === 0) {
-    pushSyntheticAssistantDelta(queue, fallbackText, summaryCallIndex - 1);
+    await pushSyntheticAssistantDelta(emitEvent, fallbackText, summaryCallIndex - 1);
   }
-  pushQueueEvent(queue, { type: "done" });
+  await emitEvent({ type: "done" });
   return {
     openaiItems: continuationItems,
   };
@@ -209,7 +206,7 @@ const completeToolLimitSummaryTurn = async (
 
 const runLoopWithDeps = async (
   params: StartOpenAILoopParams,
-  queue: QueueState,
+  emitEvent: OpenAILoopEventHandler,
   dependencies: OpenAILoopDependencies,
 ): Promise<OpenAILoopCompletion> => {
   const client = dependencies.getObservedOpenAIClient();
@@ -222,10 +219,10 @@ const runLoopWithDeps = async (
   const promptCacheKey = buildPromptCacheKey(params.sessionId);
 
   for (let callIndex = 1; callIndex <= CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS; callIndex += 1) {
-    const modelCall = await runOneModelCall(
+    const modelCall = await dependencies.runOneModelCall(
       client,
       params,
-      queue,
+      emitEvent,
       buildOpenAIResponsesRequest(
         baseInput,
         continuationItems,
@@ -239,7 +236,7 @@ const runLoopWithDeps = async (
     continuationItems.push(...modelCall.replayItems);
 
     if (modelCall.functionCalls.length === 0) {
-      pushQueueEvent(queue, { type: "done" });
+      await emitEvent({ type: "done" });
       return {
         openaiItems: continuationItems,
       };
@@ -267,7 +264,7 @@ const runLoopWithDeps = async (
       );
       toolStates = update.toolStates;
       if (update.event !== null) {
-        pushQueueEvent(queue, update.event);
+        await emitEvent(update.event);
       }
       continuationItems.push(toStoredOpenAIReplayItem(
         toFunctionCallOutputInputItem(functionCall.call_id, output.output),
@@ -277,7 +274,8 @@ const runLoopWithDeps = async (
     if (callIndex === CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS) {
       return completeToolLimitSummaryTurn(
         params,
-        queue,
+        emitEvent,
+        dependencies.runOneModelCall,
         client,
         baseInput,
         continuationItems,
@@ -289,25 +287,18 @@ const runLoopWithDeps = async (
   throw new Error("OpenAI chat loop exceeded the expected control flow");
 };
 
-export const startOpenAILoopWithDeps = async (
+export const runOpenAILoopWithDeps = async (
   params: StartOpenAILoopParams,
+  onEvent: OpenAILoopEventHandler,
   dependencies: OpenAILoopDependencies,
-): Promise<OpenAIStreamResult> => {
-  const queue = createQueueState();
-  const completion = runLoopWithDeps(params, queue, dependencies).finally(() => {
-    closeQueue(queue);
-  });
+) => runLoopWithDeps(params, onEvent, dependencies);
 
-  return {
-    events: createEventIterator(queue),
-    completion,
-  };
-};
-
-export const startOpenAILoop = async (
+export const runOpenAILoop = async (
   params: StartOpenAILoopParams,
-): Promise<OpenAIStreamResult> =>
-  startOpenAILoopWithDeps(
+  onEvent: OpenAILoopEventHandler,
+): Promise<OpenAILoopCompletion> =>
+  runOpenAILoopWithDeps(
     params,
+    onEvent,
     DEFAULT_OPENAI_LOOP_DEPENDENCIES,
   );

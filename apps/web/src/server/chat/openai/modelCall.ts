@@ -17,7 +17,7 @@ import {
 } from "@/server/chat/openai/request";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import { log } from "@/server/logger";
-import type { StartOpenAILoopParams } from "./loop";
+import type { OpenAILoopEventHandler, StartOpenAILoopParams } from "./loop";
 
 const MAX_REASONING_ITEMS = 8;
 
@@ -29,12 +29,6 @@ type ResponseStreamWithOptionalFinalResponse = AsyncIterable<OpenAI.Responses.Re
   finalResponse?: () => Promise<OpenAI.Responses.Response>;
 }>;
 
-export type QueueState = {
-  readonly events: Array<ChatStreamEvent>;
-  resolver: ((result: IteratorResult<ChatStreamEvent>) => void) | null;
-  closed: boolean;
-};
-
 export type ModelCallResult = Readonly<{
   finalResponse: OpenAI.Responses.Response;
   functionCalls: ReadonlyArray<ParsedFunctionToolCall>;
@@ -42,73 +36,6 @@ export type ModelCallResult = Readonly<{
   streamedText: string;
   toolStates: ReturnType<typeof createToolCallStateMap>;
 }>;
-
-export const createQueueState = (): QueueState => ({
-  events: [],
-  resolver: null,
-  closed: false,
-});
-
-export const pushQueueEvent = (
-  queue: QueueState,
-  event: ChatStreamEvent,
-): void => {
-  if (queue.closed) {
-    return;
-  }
-
-  if (queue.resolver !== null) {
-    const resolver = queue.resolver;
-    queue.resolver = null;
-    resolver({ done: false, value: event });
-    return;
-  }
-
-  queue.events.push(event);
-};
-
-export const closeQueue = (
-  queue: QueueState,
-): void => {
-  if (queue.closed) {
-    return;
-  }
-
-  queue.closed = true;
-  if (queue.resolver !== null) {
-    const resolver = queue.resolver;
-    queue.resolver = null;
-    resolver({ done: true, value: undefined });
-  }
-};
-
-export const createEventIterator = (
-  queue: QueueState,
-): AsyncGenerator<ChatStreamEvent> =>
-  (async function* (): AsyncGenerator<ChatStreamEvent> {
-    while (true) {
-      if (queue.events.length > 0) {
-        const nextEvent = queue.events.shift();
-        if (nextEvent === undefined) {
-          throw new Error("OpenAI chat event queue unexpectedly returned no event");
-        }
-        yield nextEvent;
-        continue;
-      }
-
-      if (queue.closed) {
-        return;
-      }
-
-      const next = await new Promise<IteratorResult<ChatStreamEvent>>((resolve) => {
-        queue.resolver = resolve;
-      });
-      if (next.done) {
-        return;
-      }
-      yield next.value;
-    }
-  })();
 
 const createToolCallPosition = (
   event: OpenAI.Responses.ResponseOutputItemAddedEvent,
@@ -166,7 +93,7 @@ const getFinalResponseFromStream = async (
 export const runOneModelCall = async (
   client: OpenAI,
   params: StartOpenAILoopParams,
-  queue: QueueState,
+  emitEvent: OpenAILoopEventHandler,
   request: OpenAIResponsesRequest,
   promptCacheKey: string,
   callIndex: number,
@@ -193,7 +120,7 @@ export const runOneModelCall = async (
 
     if (isOutputTextDelta(event)) {
       streamedText = `${streamedText}${event.delta}`;
-      pushQueueEvent(queue, {
+      await emitEvent({
         type: "delta",
         text: event.delta,
         itemId: event.item_id,
@@ -214,7 +141,7 @@ export const runOneModelCall = async (
       );
       toolStates = update.toolStates;
       if (update.event !== null) {
-        pushQueueEvent(queue, update.event);
+        await emitEvent(update.event);
       }
       continue;
     }
@@ -228,7 +155,7 @@ export const runOneModelCall = async (
       });
       toolStates = update.toolStates;
       if (update.event !== null) {
-        pushQueueEvent(queue, update.event);
+        await emitEvent(update.event);
       }
       continue;
     }
@@ -242,7 +169,7 @@ export const runOneModelCall = async (
       });
       toolStates = update.toolStates;
       if (update.event !== null) {
-        pushQueueEvent(queue, update.event);
+        await emitEvent(update.event);
       }
       continue;
     }
@@ -260,7 +187,7 @@ export const runOneModelCall = async (
 
       const nextSummary = `${reasoningSummaries.get(event.item_id) ?? ""}${event.delta}`;
       reasoningSummaries.set(event.item_id, nextSummary);
-      pushQueueEvent(queue, {
+      await emitEvent({
         type: "reasoning_summary",
         itemId: event.item_id,
         responseIndex: callIndex - 1,
