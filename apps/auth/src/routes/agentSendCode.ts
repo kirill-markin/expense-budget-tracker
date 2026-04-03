@@ -11,6 +11,7 @@ import { createAgentOtpChallenge, reissueLatestAgentOtpChallenge } from "../serv
 import { buildErrorEnvelope, buildSuccessEnvelope, buildVerifyCodeAction } from "../server/agentEnvelope.js";
 import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp } from "../server/cognitoAuth.js";
+import { createDemoAgentOtpSession, getDemoEmailPassword } from "../server/demoEmailAccess.js";
 import { log, maskEmail } from "../server/logger.js";
 import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otpRateLimit.js";
 
@@ -28,6 +29,8 @@ type AgentSendCodeDependencies = Readonly<{
   delay: () => Promise<void>;
   getClientIp: (context: Context) => string;
   initiateEmailOtp: (email: string) => Promise<Readonly<{ session: string }>>;
+  getDemoEmailPassword: (email: string) => string | null;
+  createDemoAgentOtpSession: (email: string) => string;
   checkAndRecordOtpSendDecision: (normalizedEmail: string, requestIp: string) => Promise<OtpSendDecision>;
   createAgentOtpChallenge: (normalizedEmail: string, cognitoSession: string, nowMs: number) => Promise<string>;
   reissueLatestAgentOtpChallenge: (normalizedEmail: string, nowMs: number) => Promise<string | null>;
@@ -67,6 +70,19 @@ export const createAgentSendCodeApp = (dependencies: AgentSendCodeDependencies):
           "Invalid email",
         ),
         400,
+      );
+    }
+
+    const demoPassword = dependencies.getDemoEmailPassword(email);
+    if (demoPassword !== null) {
+      log({ domain: "auth", action: "agent_send_code_demo_sign_in", maskedEmail: maskEmail(email) });
+      return c.json(
+        buildSuccessEnvelope(
+          { otpSessionToken: dependencies.createDemoAgentOtpSession(email) },
+          [buildVerifyCodeAction()],
+          "Demo review account recognized. Call verify-code next to mint the API key for this session.",
+        ),
+        200,
       );
     }
 
@@ -157,6 +173,8 @@ const app = createAgentSendCodeApp({
   delay,
   getClientIp,
   initiateEmailOtp,
+  getDemoEmailPassword,
+  createDemoAgentOtpSession,
   checkAndRecordOtpSendDecision,
   createAgentOtpChallenge,
   reissueLatestAgentOtpChallenge,

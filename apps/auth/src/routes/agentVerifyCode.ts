@@ -22,9 +22,11 @@ import {
 } from "../server/agentEnvelope.js";
 import {
   extractIdentityFromIdToken,
+  signInWithPassword,
   verifyEmailOtp,
   type TokenResult,
 } from "../server/cognitoAuth.js";
+import { getDemoEmailPassword, isDemoAgentOtpSession } from "../server/demoEmailAccess.js";
 import { log, maskEmail } from "../server/logger.js";
 
 const CODE_RE = /^\d{8}$/;
@@ -46,6 +48,7 @@ type CognitoFailure = Error & Readonly<{
 type AgentVerifyCodeDependencies = Readonly<{
   lookupAgentOtpChallenge: (otpSessionToken: string, nowMs: number) => Promise<AgentOtpChallengeLookup>;
   verifyEmailOtp: (email: string, code: string, session: string) => Promise<TokenResult>;
+  signInWithPassword: (email: string, password: string) => Promise<TokenResult>;
   recordAgentOtpChallengeFailure: (
     normalizedEmail: string,
     cognitoSession: string,
@@ -53,6 +56,8 @@ type AgentVerifyCodeDependencies = Readonly<{
   ) => Promise<Readonly<{ expired: boolean }>>;
   markAgentOtpChallengeUsed: (normalizedEmail: string, cognitoSession: string, nowMs: number) => Promise<void>;
   extractIdentityFromIdToken: (idToken: string) => Readonly<{ userId: string; email: string }>;
+  getDemoEmailPassword: (email: string) => string | null;
+  isDemoAgentOtpSession: (email: string, session: string) => boolean;
   createAgentConnection: (userId: string, email: string, label: string) => Promise<AgentConnectionResult>;
   now: () => number;
 }>;
@@ -116,6 +121,18 @@ const mapVerifyError = (error: unknown): Readonly<{
   };
 };
 
+const loadDemoReviewTokens = async (
+  email: string,
+  dependencies: AgentVerifyCodeDependencies,
+): Promise<TokenResult> => {
+  const password = dependencies.getDemoEmailPassword(email);
+  if (password === null) {
+    throw new Error(`Demo review password is not configured for "${email}"`);
+  }
+
+  return dependencies.signInWithPassword(email, password);
+};
+
 /**
  * Builds the agent verify-code route with injectable dependencies so the OTP
  * and key flows can be tested without live Cognito or Postgres calls.
@@ -143,20 +160,6 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
     const code = typeof body.code === "string" ? body.code.trim() : "";
     const otpSessionToken = typeof body.otpSessionToken === "string" ? body.otpSessionToken : "";
     const label = typeof body.label === "string" ? body.label.trim() : "";
-
-    if (!CODE_RE.test(code)) {
-      logRejectedAttempt("invalid_code", "");
-      return c.json(
-        buildErrorEnvelope(
-          { field: "code", expected: "8-digit code" },
-          [],
-          "Enter the 8-digit code from the user's email and retry.",
-          "invalid_code",
-          "Enter an 8-digit code",
-        ),
-        400,
-      );
-    }
 
     if (label === "" || label.length > 200) {
       logRejectedAttempt("invalid_label", "");
@@ -201,8 +204,25 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
       );
     }
 
+    const isDemoChallenge = dependencies.isDemoAgentOtpSession(challenge.email, challenge.cognitoSession);
+    if (!isDemoChallenge && !CODE_RE.test(code)) {
+      logRejectedAttempt("invalid_code", challenge.email);
+      return c.json(
+        buildErrorEnvelope(
+          { field: "code", expected: "8-digit code" },
+          [],
+          "Enter the 8-digit code from the user's email and retry.",
+          "invalid_code",
+          "Enter an 8-digit code",
+        ),
+        400,
+      );
+    }
+
     try {
-      const tokens = await dependencies.verifyEmailOtp(challenge.email, code, challenge.cognitoSession);
+      const tokens = isDemoChallenge
+        ? await loadDemoReviewTokens(challenge.email, dependencies)
+        : await dependencies.verifyEmailOtp(challenge.email, code, challenge.cognitoSession);
       await dependencies.markAgentOtpChallengeUsed(challenge.email, challenge.cognitoSession, dependencies.now());
       const identity = dependencies.extractIdentityFromIdToken(tokens.idToken);
       const connection = await dependencies.createAgentConnection(identity.userId, identity.email, label);
@@ -229,7 +249,7 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
         200,
       );
     } catch (error) {
-      if (error instanceof Error && (error as CognitoFailure).cognitoType !== undefined) {
+      if (!isDemoChallenge && error instanceof Error && (error as CognitoFailure).cognitoType !== undefined) {
         const cognitoError = error as CognitoFailure;
         if (cognitoError.cognitoType === "CodeMismatchException" || cognitoError.cognitoType === "NotAuthorizedException") {
           const failure = await dependencies.recordAgentOtpChallengeFailure(
@@ -283,9 +303,12 @@ export const createAgentVerifyCodeApp = (dependencies: AgentVerifyCodeDependenci
 const app = createAgentVerifyCodeApp({
   lookupAgentOtpChallenge,
   verifyEmailOtp,
+  signInWithPassword,
   recordAgentOtpChallengeFailure,
   markAgentOtpChallengeUsed,
   extractIdentityFromIdToken,
+  getDemoEmailPassword,
+  isDemoAgentOtpSession,
   createAgentConnection,
   now: () => Date.now(),
 });

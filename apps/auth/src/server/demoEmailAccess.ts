@@ -15,6 +15,7 @@ type DemoEmailAccessConfig = Readonly<{
 }>;
 
 const DEMO_EMAIL_GUARDIAN_DOMAIN = "example.com";
+const DEMO_AGENT_OTP_SESSION_PREFIX = "demo-agent:";
 
 let resolvedConfig: DemoEmailAccessConfig | undefined;
 
@@ -71,6 +72,24 @@ export const getDemoEmailPassword = (email: string): string | null => {
   }
 
   return config.sharedPassword;
+};
+
+export const createDemoAgentOtpSession = (email: string): string => {
+  const normalized = normalizeDemoEmail(email);
+  if (getDemoEmailPassword(normalized) === null) {
+    throw new Error(`Demo agent OTP session requires an allowlisted review email, got "${email}"`);
+  }
+
+  return `${DEMO_AGENT_OTP_SESSION_PREFIX}${normalized}`;
+};
+
+export const isDemoAgentOtpSession = (
+  email: string,
+  session: string,
+): boolean => {
+  const normalized = normalizeDemoEmail(email);
+  return session === `${DEMO_AGENT_OTP_SESSION_PREFIX}${normalized}`
+    && getDemoEmailPassword(normalized) !== null;
 };
 
 export const resetDemoEmailAccessConfigForTests = (): void => {

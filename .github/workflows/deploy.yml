@@ -21,6 +21,7 @@ on:
       - 'scripts/migrate.sh'
       - 'scripts/run-migration-task.sh'
       - 'scripts/check-web-readiness.sh'
+      - 'scripts/live-agent-api-smoke.mjs'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -212,4 +213,50 @@ jobs:
         with:
           name: test-results
           path: apps/web/test-results/
+          retention-days: 14
+
+  agent_api_smoke:
+    needs: deploy
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Wait for auth and API to be healthy
+        run: |
+          for endpoint in "https://auth.${{ vars.CDK_DOMAIN_NAME }}/health" "https://api.${{ vars.CDK_DOMAIN_NAME }}/v1/"; do
+            echo "Waiting for $endpoint ..."
+            for i in $(seq 1 30); do
+              if curl -sf --max-time 5 "$endpoint" > /dev/null 2>&1; then
+                echo "  OK after attempt $i"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "  FAILED: $endpoint not healthy after 30 attempts"
+                exit 1
+              fi
+              sleep 5
+            done
+          done
+
+      - name: Run live agent API smoke
+        run: |
+          mkdir -p artifacts
+          node scripts/live-agent-api-smoke.mjs 2>&1 | tee artifacts/agent-api-smoke.log
+        env:
+          EXPENSE_AGENT_SMOKE_APP_BASE_URL: https://app.${{ vars.CDK_DOMAIN_NAME }}
+          EXPENSE_AGENT_SMOKE_AUTH_BASE_URL: https://auth.${{ vars.CDK_DOMAIN_NAME }}
+          EXPENSE_AGENT_SMOKE_API_BASE_URL: https://api.${{ vars.CDK_DOMAIN_NAME }}/v1
+          EXPENSE_AGENT_SMOKE_REVIEW_EMAIL: e2e-test@example.com
+
+      - name: Upload agent API smoke log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-api-smoke-log
+          path: artifacts/agent-api-smoke.log
           retention-days: 14
