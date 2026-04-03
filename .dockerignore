@@ -3,6 +3,8 @@
 **/node_modules
 **/.next
 **/dist
+!packages/agent-shared/dist
+!packages/agent-shared/dist/**
 **/cdk.out
 **/.DS_Store
 infra/aws/cdk.context.local.json

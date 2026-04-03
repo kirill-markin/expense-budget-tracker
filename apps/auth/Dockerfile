@@ -17,7 +17,7 @@ WORKDIR /workspace
 
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
-RUN npm run build --workspace expense-tracker-auth
+RUN cd apps/auth && ../../node_modules/.bin/tsc -p tsconfig.json
 
 FROM node:24.14.1-alpine AS prod-deps
 

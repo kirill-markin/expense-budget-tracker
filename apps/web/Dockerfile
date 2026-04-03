@@ -15,7 +15,7 @@ FROM node:24.14.1-alpine AS builder
 WORKDIR /workspace
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
-RUN npm run build --workspace expense-budget-tracker-web
+RUN cd apps/web && ../../node_modules/.bin/next build
 
 # --- Stage 3: Production runner ---
 FROM node:24.14.1-alpine AS runner
