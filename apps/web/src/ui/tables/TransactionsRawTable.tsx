@@ -13,6 +13,7 @@ import { DataTable } from "./data-table/DataTable";
 import tableStyles from "./TableUi.module.css";
 import type { ColumnDef, PageResult } from "./data-table/types";
 import { useTableSort } from "./data-table/useTableSort";
+import { serializeFilterValues } from "./transactionsFiltersState";
 import {
   TransactionsFiltersOverlay,
   type TransactionsFiltersOverlayOptions,
@@ -77,11 +78,11 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
 
   const { sort, onSort } = useTableSort("single", "ts", "desc", SORT_DEFAULTS);
-  const selectedAccountIdsKey = selectedAccountIds.join("\u0001");
-  const selectedCategoriesKey = selectedCategories.join("\u0001");
-  const selectedKindsKey = selectedKinds.join("\u0001");
-  const selectedCurrenciesKey = selectedCurrencies.join("\u0001");
-  const selectedCounterpartiesKey = selectedCounterparties.join("\u0001");
+  const selectedAccountIdsKey = serializeFilterValues(selectedAccountIds);
+  const selectedCategoriesKey = serializeFilterValues(selectedCategories);
+  const selectedKindsKey = serializeFilterValues(selectedKinds);
+  const selectedCurrenciesKey = serializeFilterValues(selectedCurrencies);
+  const selectedCounterpartiesKey = serializeFilterValues(selectedCounterparties);
 
   const filterValues = useMemo<TransactionsTableFilter>(
     () => ({
