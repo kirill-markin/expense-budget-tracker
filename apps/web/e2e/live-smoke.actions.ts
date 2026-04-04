@@ -12,6 +12,7 @@ const appBaseUrl = process.env.EXPENSE_E2E_APP_BASE_URL ?? "https://app.expense-
 const reviewEmail = process.env.EXPENSE_E2E_REVIEW_EMAIL ?? "e2e-test@example.com";
 const VISIBILITY_MODE_STORAGE_KEY = "expense-tracker-visibility-mode";
 const LAST_ACTIVE_STORAGE_KEY = "expense-tracker-last-active-ts";
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 export type LiveSmokeScenario = Readonly<{
   runId: string;
@@ -46,7 +47,21 @@ type DemoSignInResult = Readonly<{
   refreshToken: string;
 }>;
 
+const isLocalAppBaseUrl = (): boolean => {
+  const url = new URL(appBaseUrl);
+  return LOCAL_HOSTS.has(url.hostname);
+};
+
+const isSecureCookieOrigin = (): boolean => {
+  const url = new URL(appBaseUrl);
+  return url.protocol === "https:";
+};
+
 export const signInWithDemoEmail = async (): Promise<DemoSignInResult> => {
+  if (isLocalAppBaseUrl()) {
+    return { idToken: "local-dev-id-token", refreshToken: "local-dev-refresh-token" };
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
 
@@ -80,12 +95,18 @@ export const setupBrowserSession = async (
 ): Promise<void> => {
   const url = new URL(appBaseUrl);
   const domain = url.hostname;
+  const secure = isSecureCookieOrigin();
+
+  if (isLocalAppBaseUrl()) {
+    await page.goto(appBaseUrl, { waitUntil: "domcontentloaded" });
+    return;
+  }
 
   // Set auth cookies so the browser can access the app
   await page.context().addCookies([
-    { name: "session", value: tokens.idToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
-    { name: "refresh", value: tokens.refreshToken, domain, path: "/", httpOnly: true, secure: true, sameSite: "Lax" },
-    { name: "logged_in", value: "1", domain, path: "/", httpOnly: false, secure: true, sameSite: "Lax" },
+    { name: "session", value: tokens.idToken, domain, path: "/", httpOnly: true, secure, sameSite: "Lax" },
+    { name: "refresh", value: tokens.refreshToken, domain, path: "/", httpOnly: true, secure, sameSite: "Lax" },
+    { name: "logged_in", value: "1", domain, path: "/", httpOnly: false, secure, sameSite: "Lax" },
   ]);
 
   // Navigate to the app to let the proxy set the __Host-csrf cookie
@@ -98,7 +119,15 @@ export const setWorkspaceCookie = async (
 ): Promise<void> => {
   const url = new URL(appBaseUrl);
   await page.context().addCookies([
-    { name: "workspace", value: workspaceId, domain: url.hostname, path: "/", httpOnly: false, secure: true, sameSite: "Lax" },
+    {
+      name: "workspace",
+      value: workspaceId,
+      domain: url.hostname,
+      path: "/",
+      httpOnly: false,
+      secure: isSecureCookieOrigin(),
+      sameSite: "Lax",
+    },
   ]);
 };
 

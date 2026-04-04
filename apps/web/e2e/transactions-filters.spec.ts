@@ -121,15 +121,34 @@ test("transactions filters work in deployed app with authenticated workspace dat
     await filtersTrigger.click();
 
     const filtersOverlay = page.getByTestId("transactions-filters-overlay");
-    const accountSearch = page.getByTestId("transactions-filters-account-search");
     await expect(filtersOverlay).toBeVisible();
-    await expect(accountSearch).toHaveValue("");
+    await expect(filtersOverlay.locator('[data-testid$="-search"]')).toHaveCount(0);
     await expectPopoverAnchoredToTrigger(filtersTrigger, filtersOverlay);
     await page.keyboard.press("Escape");
     await expect(filtersOverlay).toHaveCount(0);
 
     await filtersTrigger.click();
+    await expect(filtersOverlay).toBeVisible();
+    await expect(filtersOverlay.locator('[data-testid$="-search"]')).toHaveCount(0);
+
+    const accountSearch = await openFilterPicker(page, "transactions-filters-account");
     await expect(accountSearch).toHaveValue("");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("transactions-filters-account-picker")).toHaveCount(0);
+    await expect(filtersOverlay).toBeVisible();
+
+    await openFilterPicker(page, "transactions-filters-account");
+    await expect(page.getByTestId("transactions-filters-account-picker")).toBeVisible();
+    await filtersOverlay.getByText("Filters", { exact: true }).click();
+    await expect(page.getByTestId("transactions-filters-account-picker")).toHaveCount(0);
+    await expect(filtersOverlay).toBeVisible();
+
+    await openFilterPicker(page, "transactions-filters-account");
+    await expect(page.getByTestId("transactions-filters-account-picker")).toBeVisible();
+    await openFilterPicker(page, "transactions-filters-category");
+    await expect(page.getByTestId("transactions-filters-account-picker")).toHaveCount(0);
+    await expect(page.getByTestId("transactions-filters-category-picker")).toBeVisible();
+    await openFilterPicker(page, "transactions-filters-account");
 
     await accountSearch.fill(`USD ${runId}`);
     const accountUsdResponse = await waitForTransactionsResponse(page, async () => {
@@ -154,6 +173,7 @@ test("transactions filters work in deployed app with authenticated workspace dat
     await expect(page.getByTestId("transactions-filters-account-options").getByText(accountEur, { exact: true })).toBeVisible();
     await expect(page.getByTestId("transactions-filters-account-options").getByText(accountGbp, { exact: true })).toHaveCount(0);
 
+    await openFilterPicker(page, "transactions-filters-kind");
     const kindResponse = await waitForTransactionsResponse(page, async () => {
       await page.getByTestId("transactions-filters-kind-options").getByLabel("Spend", { exact: true }).click();
     });
@@ -164,6 +184,7 @@ test("transactions filters work in deployed app with authenticated workspace dat
     expect(kindBody.entries.every((entry) => entry.kind === "spend")).toBe(true);
     await expect(page.getByTestId("transactions-filters-badge")).toHaveText("2");
 
+    await openFilterPicker(page, "transactions-filters-currency");
     const currencyResponse = await waitForTransactionsResponse(page, async () => {
       await page.getByTestId("transactions-filters-currency-options").getByLabel("USD", { exact: true }).click();
     });
@@ -173,6 +194,7 @@ test("transactions filters work in deployed app with authenticated workspace dat
     expect(currencyBody.entries.every((entry) => entry.currency === "USD" && entry.kind === "spend")).toBe(true);
     await expect(page.getByTestId("transactions-filters-badge")).toHaveText("3");
 
+    await openFilterPicker(page, "transactions-filters-category");
     const categoryResponse = await waitForTransactionsResponse(page, async () => {
       await page.getByTestId("transactions-filters-category-options").getByLabel(groceries, { exact: true }).click();
     });
@@ -186,8 +208,10 @@ test("transactions filters work in deployed app with authenticated workspace dat
     await expect(filtersOverlay).toHaveCount(0);
 
     await filtersTrigger.click();
-    await expect(accountSearch).toHaveValue("");
+    await expect(filtersOverlay.locator('[data-testid$="-search"]')).toHaveCount(0);
+    await openFilterPicker(page, "transactions-filters-account");
     await expect(page.getByTestId("transactions-filters-account-options").getByLabel(accountUsd, { exact: true })).toBeChecked();
+    await openFilterPicker(page, "transactions-filters-category");
     await expect(page.getByTestId("transactions-filters-category-options").getByLabel(groceries, { exact: true })).toBeChecked();
 
     const clearFiltersResponse = await waitForTransactionsResponse(page, async () => {
@@ -206,6 +230,7 @@ test("transactions filters work in deployed app with authenticated workspace dat
     expect(resetCount.total).toBe(initialCount.total);
     expect(resetCount.shown).toBe(initialCount.shown);
 
+    await openFilterPicker(page, "transactions-filters-category");
     const uncategorizedResponse = await waitForTransactionsResponse(page, async () => {
       await page.getByTestId("transactions-filters-category-options").getByLabel("Uncategorized", { exact: true }).click();
     });
@@ -214,6 +239,7 @@ test("transactions filters work in deployed app with authenticated workspace dat
     expect(uncategorizedBody.total).toBe(1);
     expect(uncategorizedBody.entries.every((entry) => entry.category === null)).toBe(true);
 
+    await openFilterPicker(page, "transactions-filters-counterparty");
     const noCounterpartyResponse = await waitForTransactionsResponse(page, async () => {
       await page.getByTestId("transactions-filters-counterparty-options").getByLabel("No counterparty", { exact: true }).click();
     });
@@ -222,6 +248,7 @@ test("transactions filters work in deployed app with authenticated workspace dat
     expect(noCounterpartyBody.total).toBe(1);
     expect(noCounterpartyBody.entries.every((entry) => entry.counterparty === null)).toBe(true);
 
+    await openFilterPicker(page, "transactions-filters-kind");
     const transferResponse = await waitForTransactionsResponse(page, async () => {
       await page.getByTestId("transactions-filters-kind-options").getByLabel("Transfer", { exact: true }).click();
     });
@@ -244,10 +271,26 @@ test("transactions filters work in deployed app with authenticated workspace dat
   }
 });
 
+async function openFilterPicker(page: Page, testId: string): Promise<Locator> {
+  const row = page.getByTestId(`${testId}-row`);
+  await row.click();
+  const picker = page.getByTestId(`${testId}-picker`);
+  await expect(picker).toBeVisible({ timeout: externalUiTimeoutMs });
+  return page.getByTestId(`${testId}-search`);
+}
+
 async function setLocaleCookie(page: Page, baseURL: string, locale: string): Promise<void> {
-  const domain = new URL(baseURL).hostname;
+  const url = new URL(baseURL);
   await page.context().addCookies([
-    { name: "locale", value: locale, domain, path: "/", httpOnly: false, secure: true, sameSite: "Lax" },
+    {
+      name: "locale",
+      value: locale,
+      domain: url.hostname,
+      path: "/",
+      httpOnly: false,
+      secure: url.protocol === "https:",
+      sameSite: "Lax",
+    },
   ]);
 }
 

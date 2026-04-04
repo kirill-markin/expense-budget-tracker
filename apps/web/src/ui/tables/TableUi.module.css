@@ -132,10 +132,13 @@
   font-family: inherit;
   font-size: 13px;
   padding: 4px 8px;
+  block-size: 31px;
   border: 1px solid var(--panel-border);
   border-radius: 0;
   background: var(--bg);
   color: var(--text);
+  box-sizing: border-box;
+  line-height: 1.2;
 }
 
 .filterTrigger {
@@ -144,6 +147,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  appearance: none;
+  -webkit-appearance: none;
   cursor: var(--cursor-pointer);
   text-align: start;
 }
@@ -506,6 +511,7 @@
 .transactionsFiltersOverlay {
   z-index: 210;
   border: 1px solid var(--panel-border);
+  overflow: hidden;
 }
 
 .transactionsFiltersOverlayHeader {
@@ -548,9 +554,9 @@
 }
 
 .transactionsFiltersOverlayBody {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 12px;
   overflow-y: auto;
 }
@@ -558,19 +564,83 @@
 .transactionsFiltersSection {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  border: 1px solid var(--panel-border);
+  gap: 8px;
 }
 
-.transactionsFiltersSectionTitle {
-  padding: 8px 10px 0;
+.transactionsFiltersRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: var(--cursor-pointer);
+}
+
+.transactionsFiltersRow:hover,
+.transactionsFiltersRowOpen {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: var(--text);
+}
+
+.transactionsFiltersRowTitle {
+  min-width: 0;
+  font-weight: 650;
+}
+
+.transactionsFiltersRowSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.transactionsFiltersRowSummaryText {
+  color: var(--muted);
+}
+
+.transactionsFiltersRowBadge {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.transactionsFiltersRowCaret {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.transactionsFiltersPicker {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+}
+
+.transactionsFiltersPickerTitle {
+  padding: 10px 12px 0;
   font-size: 12px;
   font-weight: 650;
 }
 
-.transactionsFiltersSectionSearch {
-  width: calc(100% - 20px);
-  margin: 8px 10px;
+.transactionsFiltersPickerSearch {
+  width: calc(100% - 24px);
+  margin: 10px 12px;
   padding: 6px 8px;
   border: 1px solid var(--panel-border);
   background: var(--bg);
@@ -581,31 +651,29 @@
   box-sizing: border-box;
 }
 
-.transactionsFiltersSectionOptions {
-  min-height: 180px;
-  max-height: 220px;
+.transactionsFiltersPickerOptions {
   overflow-y: auto;
-  padding: 0 0 6px;
+  padding: 0 0 8px;
 }
 
-.transactionsFiltersSectionOption {
+.transactionsFiltersPickerOption {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   cursor: var(--cursor-pointer);
 }
 
-.transactionsFiltersSectionOption:hover {
+.transactionsFiltersPickerOption:hover {
   background: rgba(0, 0, 0, 0.04);
 }
 
-.transactionsFiltersSectionOption input[type="checkbox"] {
+.transactionsFiltersPickerOption input[type="checkbox"] {
   margin: 0;
   flex-shrink: 0;
 }
 
-.transactionsFiltersSectionOptionLabel {
+.transactionsFiltersPickerOptionLabel {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -625,6 +693,6 @@
   }
 
   .transactionsFiltersOverlayBody {
-    grid-template-columns: minmax(0, 1fr);
+    padding: 10px;
   }
 }
