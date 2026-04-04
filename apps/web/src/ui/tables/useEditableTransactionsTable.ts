@@ -26,6 +26,16 @@ export type DrillDownFilter = Readonly<{
   categories: ReadonlyArray<string> | null;
 }>;
 
+export type TransactionsTableFilter = Readonly<{
+  dateFrom: string;
+  dateTo: string;
+  accountIds: ReadonlyArray<string>;
+  categories: ReadonlyArray<string>;
+  kinds: ReadonlyArray<string>;
+  currencies: ReadonlyArray<string>;
+  counterparties: ReadonlyArray<string>;
+}>;
+
 type UseEditableTransactionsTableParams = Readonly<{
   fetchPage: (limit: number, offset: number) => Promise<PageResult<LedgerEntry>>;
   createEntryRequest: () => CreateLedgerEntryRequest;
@@ -95,10 +105,7 @@ export const prependLedgerEntry = (
 };
 
 export const buildTransactionsPageUrl = (
-  dateFrom: string,
-  dateTo: string,
-  selectedAccountIds: ReadonlyArray<string>,
-  selectedCategories: ReadonlyArray<string>,
+  filter: TransactionsTableFilter,
   sortKey: string,
   sortDir: "asc" | "desc",
   refreshToken: string,
@@ -106,13 +113,22 @@ export const buildTransactionsPageUrl = (
   offset: number,
 ): string => {
   const params = new URLSearchParams();
-  if (dateFrom.length > 0) params.set("dateFrom", dateFrom);
-  if (dateTo.length > 0) params.set("dateTo", dateTo);
-  for (const accountId of selectedAccountIds) {
+  if (filter.dateFrom.length > 0) params.set("dateFrom", filter.dateFrom);
+  if (filter.dateTo.length > 0) params.set("dateTo", filter.dateTo);
+  for (const accountId of filter.accountIds) {
     params.append("accountIds", accountId);
   }
-  for (const category of selectedCategories) {
+  for (const category of filter.categories) {
     params.append("categories", category);
+  }
+  for (const kind of filter.kinds) {
+    params.append("kinds", kind);
+  }
+  for (const currency of filter.currencies) {
+    params.append("currencies", currency);
+  }
+  for (const counterparty of filter.counterparties) {
+    params.append("counterparties", counterparty);
   }
   params.set("sortKey", sortKey);
   params.set("sortDir", sortDir);

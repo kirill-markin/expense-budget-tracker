@@ -226,8 +226,11 @@
   "txn.addRow": "Añadir fila",
   "txn.noMatch": "No hay registros que coincidan con los filtros seleccionados.",
   "txn.deleteConfirm": "¿Eliminar esta transacción? Esta acción no se puede deshacer.",
+  "txn.filtersButton": "Filtros",
+  "txn.filtersReset": "Restablecer todo",
   "txn.filterSearchPlaceholder": "Buscar...",
   "txn.filterSelectedCount": "{{count}} seleccionadas",
+  "txn.filterNoCounterparty": "Sin contraparte",
   "txn.filterUncategorized": "Sin categoría",
   "txn.filterNoMatches": "No se encontraron coincidencias."
 }

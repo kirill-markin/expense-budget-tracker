@@ -172,6 +172,31 @@
   padding-bottom: 4px;
 }
 
+.transactionsFiltersTrigger {
+  min-width: 160px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: var(--cursor-pointer);
+  text-align: start;
+}
+
+.transactionsFiltersTriggerBadge {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .addRowButton {
   border: 1px solid var(--panel-border);
   background: var(--bg);
@@ -478,6 +503,115 @@
   color: var(--muted);
 }
 
+.transactionsFiltersOverlay {
+  z-index: 210;
+  border: 1px solid var(--panel-border);
+}
+
+.transactionsFiltersOverlayHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.transactionsFiltersOverlayTitle {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.transactionsFiltersOverlayActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.transactionsFiltersOverlayAction {
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: var(--cursor-pointer);
+}
+
+.transactionsFiltersOverlayAction:hover:not(:disabled) {
+  border-color: var(--text);
+}
+
+.transactionsFiltersOverlayAction:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.transactionsFiltersOverlayBody {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.transactionsFiltersSection {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--panel-border);
+}
+
+.transactionsFiltersSectionTitle {
+  padding: 8px 10px 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.transactionsFiltersSectionSearch {
+  width: calc(100% - 20px);
+  margin: 8px 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.transactionsFiltersSectionOptions {
+  min-height: 180px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 0 0 6px;
+}
+
+.transactionsFiltersSectionOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: var(--cursor-pointer);
+}
+
+.transactionsFiltersSectionOption:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.transactionsFiltersSectionOption input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.transactionsFiltersSectionOptionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 768px) {
   .sidePanel {
     width: 100% !important;
@@ -488,5 +622,9 @@
 
   .panelResizeHandle {
     display: none;
+  }
+
+  .transactionsFiltersOverlayBody {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

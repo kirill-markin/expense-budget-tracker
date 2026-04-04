@@ -15,7 +15,10 @@ import {
 type TransactionsResponseBody = Readonly<{
   entries: ReadonlyArray<Readonly<{
     accountId: string;
+    currency: string;
+    kind: string;
     category: string | null;
+    counterparty: string | null;
     note: string | null;
   }>>;
   total: number;
@@ -41,6 +44,9 @@ test("transactions filters work in deployed app with authenticated workspace dat
   const groceries = `E2E Filter Groceries ${runId}`;
   const transport = `E2E Filter Transport ${runId}`;
   const dining = `E2E Filter Dining ${runId}`;
+  const employer = `E2E Employer ${runId}`;
+  const storeOne = `E2E Store 1 ${runId}`;
+  const storeTwo = `E2E Store 2 ${runId}`;
   const timestamp = new Date().toISOString();
   let workspaceId: string | null = null;
 
@@ -63,7 +69,7 @@ test("transactions filters work in deployed app with authenticated workspace dat
       currency: "USD",
       kind: "spend",
       category: groceries,
-      counterparty: "E2E Store 1",
+      counterparty: storeOne,
       note: `usd-groceries-${runId}`,
     });
     await createTransaction(page, {
@@ -73,28 +79,28 @@ test("transactions filters work in deployed app with authenticated workspace dat
       currency: "EUR",
       kind: "spend",
       category: transport,
-      counterparty: "E2E Store 2",
+      counterparty: storeTwo,
       note: `eur-transport-${runId}`,
     });
     await createTransaction(page, {
       ts: timestamp,
       accountId: accountUsd,
-      amount: -33.33,
+      amount: 33.33,
       currency: "USD",
-      kind: "spend",
-      category: transport,
-      counterparty: "E2E Store 3",
-      note: `usd-transport-${runId}`,
+      kind: "income",
+      category: dining,
+      counterparty: employer,
+      note: `usd-income-${runId}`,
     });
     await createTransaction(page, {
       ts: timestamp,
       accountId: accountGbp,
       amount: -44.44,
       currency: "GBP",
-      kind: "spend",
-      category: dining,
-      counterparty: "E2E Store 4",
-      note: `gbp-dining-${runId}`,
+      kind: "transfer",
+      category: null,
+      counterparty: null,
+      note: `gbp-transfer-${runId}`,
     });
 
     await page.goto(`${baseURL}/transactions`, { waitUntil: "domcontentloaded" });
@@ -103,119 +109,126 @@ test("transactions filters work in deployed app with authenticated workspace dat
     await expect(page.locator("body")).toContainText(accountUsd);
     await expect(page.locator("body")).toContainText(`usd-groceries-${runId}`);
     await expect(page.locator("body")).toContainText(`eur-transport-${runId}`);
-    await expect(page.locator("body")).toContainText(`usd-transport-${runId}`);
-    await expect(page.locator("body")).toContainText(`gbp-dining-${runId}`);
+    await expect(page.locator("body")).toContainText(`usd-income-${runId}`);
+    await expect(page.locator("body")).toContainText(`gbp-transfer-${runId}`);
 
     const initialCount = await readCountLabel(page);
     expect(initialCount.total).toBeGreaterThanOrEqual(4);
     expect(initialCount.shown).toBeGreaterThanOrEqual(4);
 
-    const accountTrigger = page.getByTestId("transactions-account-filter");
-    await accountTrigger.click();
+    const filtersTrigger = page.getByTestId("transactions-filters-trigger");
+    await expect(page.getByTestId("transactions-filters-badge")).toHaveCount(0);
+    await filtersTrigger.click();
 
-    const accountPopover = page.getByTestId("transactions-account-filter-popover");
-    const accountSearch = page.getByTestId("transactions-account-filter-search");
-    await expect(accountPopover).toBeVisible();
+    const filtersOverlay = page.getByTestId("transactions-filters-overlay");
+    const accountSearch = page.getByTestId("transactions-filters-account-search");
+    await expect(filtersOverlay).toBeVisible();
     await expect(accountSearch).toHaveValue("");
-    await expectPopoverAnchoredToTrigger(accountTrigger, accountPopover);
+    await expectPopoverAnchoredToTrigger(filtersTrigger, filtersOverlay);
+    await page.keyboard.press("Escape");
+    await expect(filtersOverlay).toHaveCount(0);
+
+    await filtersTrigger.click();
+    await expect(accountSearch).toHaveValue("");
 
     await accountSearch.fill(`USD ${runId}`);
     const accountUsdResponse = await waitForTransactionsResponse(page, async () => {
-      await accountPopover.getByLabel(accountUsd, { exact: true }).click();
+      await page.getByTestId("transactions-filters-account-options").getByLabel(accountUsd, { exact: true }).click();
     });
-    await expect(accountTrigger).toContainText(accountUsd);
     expectSortedQueryValues(accountUsdResponse.url(), "accountIds", [accountUsd]);
+    await expect(page.getByTestId("transactions-filters-badge")).toHaveText("1");
 
     await accountSearch.fill(`EUR ${runId}`);
     const accountEurResponse = await waitForTransactionsResponse(page, async () => {
-      await accountPopover.getByLabel(accountEur, { exact: true }).click();
+      await page.getByTestId("transactions-filters-account-options").getByLabel(accountEur, { exact: true }).click();
     });
-    await expect(accountTrigger).toContainText("2 selected");
     expectSortedQueryValues(accountEurResponse.url(), "accountIds", [accountUsd, accountEur]);
-
-    await accountSearch.fill("zzzz");
-    await expect(accountPopover.getByText(accountUsd, { exact: true })).toBeVisible();
-    await expect(accountPopover.getByText(accountEur, { exact: true })).toBeVisible();
-    await expect(accountPopover.getByText(accountGbp, { exact: true })).toHaveCount(0);
-
-    await page.keyboard.press("Escape");
-    await expect(accountPopover).toHaveCount(0);
-    await accountTrigger.click();
-    await expect(accountSearch).toHaveValue("");
-    await page.keyboard.press("Escape");
-
-    const accountFilteredCount = await readCountLabel(page);
-    expect(accountFilteredCount.total).toBe(3);
-    expect(accountFilteredCount.shown).toBe(3);
-
-    const categoryTrigger = page.getByTestId("transactions-category-filter");
-    await categoryTrigger.click();
-
-    const categoryPopover = page.getByTestId("transactions-category-filter-popover");
-    const categorySearch = page.getByTestId("transactions-category-filter-search");
-    await expect(categoryPopover).toBeVisible();
-    await expect(categorySearch).toHaveValue("");
-    await expectPopoverAnchoredToTrigger(categoryTrigger, categoryPopover);
-
-    await categorySearch.fill(`Groceries ${runId}`);
-    const groceriesResponse = await waitForTransactionsResponse(page, async () => {
-      await categoryPopover.getByLabel(groceries, { exact: true }).click();
-    });
-    expectSortedQueryValues(groceriesResponse.url(), "accountIds", [accountUsd, accountEur]);
-    expectSortedQueryValues(groceriesResponse.url(), "categories", [groceries]);
-
-    await categorySearch.fill(`Transport ${runId}`);
-    const transportResponse = await waitForTransactionsResponse(page, async () => {
-      await categoryPopover.getByLabel(transport, { exact: true }).click();
-    });
-    await expect(categoryTrigger).toContainText("2 selected");
-    expectSortedQueryValues(transportResponse.url(), "categories", [groceries, transport]);
-
-    const filteredBody = await transportResponse.json() as TransactionsResponseBody;
-    expect(filteredBody.total).toBe(3);
-    expect(filteredBody.entries.every((entry) =>
-      (entry.accountId === accountUsd || entry.accountId === accountEur)
-      && (entry.category === groceries || entry.category === transport),
+    const accountBody = await accountEurResponse.json() as TransactionsResponseBody;
+    expect(accountBody.total).toBe(3);
+    expect(accountBody.entries.every((entry) =>
+      entry.accountId === accountUsd || entry.accountId === accountEur,
     )).toBe(true);
 
-    const filteredCount = await readCountLabel(page);
-    expect(filteredCount.shown).toBe(3);
-    expect(filteredCount.total).toBe(3);
+    await accountSearch.fill("zzzz");
+    await expect(page.getByTestId("transactions-filters-account-options").getByText(accountUsd, { exact: true })).toBeVisible();
+    await expect(page.getByTestId("transactions-filters-account-options").getByText(accountEur, { exact: true })).toBeVisible();
+    await expect(page.getByTestId("transactions-filters-account-options").getByText(accountGbp, { exact: true })).toHaveCount(0);
 
-    const clearGroceriesResponse = await waitForTransactionsResponse(page, async () => {
-      await categoryPopover.getByLabel(groceries, { exact: true }).click();
+    const kindResponse = await waitForTransactionsResponse(page, async () => {
+      await page.getByTestId("transactions-filters-kind-options").getByLabel("Spend", { exact: true }).click();
     });
-    expectSortedQueryValues(clearGroceriesResponse.url(), "categories", [transport]);
-    const transportOnlyBody = await clearGroceriesResponse.json() as TransactionsResponseBody;
-    expect(transportOnlyBody.total).toBe(2);
-    expect(transportOnlyBody.entries.every((entry) => entry.category === transport)).toBe(true);
+    expectSortedQueryValues(kindResponse.url(), "accountIds", [accountUsd, accountEur]);
+    expectSortedQueryValues(kindResponse.url(), "kinds", ["spend"]);
+    const kindBody = await kindResponse.json() as TransactionsResponseBody;
+    expect(kindBody.total).toBe(2);
+    expect(kindBody.entries.every((entry) => entry.kind === "spend")).toBe(true);
+    await expect(page.getByTestId("transactions-filters-badge")).toHaveText("2");
 
-    const clearTransportResponse = await waitForTransactionsResponse(page, async () => {
-      await categoryPopover.getByLabel(transport, { exact: true }).click();
+    const currencyResponse = await waitForTransactionsResponse(page, async () => {
+      await page.getByTestId("transactions-filters-currency-options").getByLabel("USD", { exact: true }).click();
     });
-    expectSortedQueryValues(clearTransportResponse.url(), "categories", []);
+    expectSortedQueryValues(currencyResponse.url(), "currencies", ["USD"]);
+    const currencyBody = await currencyResponse.json() as TransactionsResponseBody;
+    expect(currencyBody.total).toBe(1);
+    expect(currencyBody.entries.every((entry) => entry.currency === "USD" && entry.kind === "spend")).toBe(true);
+    await expect(page.getByTestId("transactions-filters-badge")).toHaveText("3");
 
-    await page.keyboard.press("Escape");
-    await categoryTrigger.click();
-    await expect(categorySearch).toHaveValue("");
-    await page.keyboard.press("Escape");
-
-    await accountTrigger.click();
-    const clearUsdResponse = await waitForTransactionsResponse(page, async () => {
-      await page.getByTestId("transactions-account-filter-popover").getByLabel(accountUsd, { exact: true }).click();
+    const categoryResponse = await waitForTransactionsResponse(page, async () => {
+      await page.getByTestId("transactions-filters-category-options").getByLabel(groceries, { exact: true }).click();
     });
-    expectSortedQueryValues(clearUsdResponse.url(), "accountIds", [accountEur]);
+    expectSortedQueryValues(categoryResponse.url(), "categories", [groceries]);
+    const categoryBody = await categoryResponse.json() as TransactionsResponseBody;
+    expect(categoryBody.total).toBe(1);
+    expect(categoryBody.entries[0]?.note).toBe(`usd-groceries-${runId}`);
+    await expect(page.getByTestId("transactions-filters-badge")).toHaveText("4");
 
-    const clearEurResponse = await waitForTransactionsResponse(page, async () => {
-      await page.getByTestId("transactions-account-filter-popover").getByLabel(accountEur, { exact: true }).click();
+    await page.getByRole("heading", { name: "Transactions", exact: true }).click();
+    await expect(filtersOverlay).toHaveCount(0);
+
+    await filtersTrigger.click();
+    await expect(accountSearch).toHaveValue("");
+    await expect(page.getByTestId("transactions-filters-account-options").getByLabel(accountUsd, { exact: true })).toBeChecked();
+    await expect(page.getByTestId("transactions-filters-category-options").getByLabel(groceries, { exact: true })).toBeChecked();
+
+    const clearFiltersResponse = await waitForTransactionsResponse(page, async () => {
+      await page.getByRole("button", { name: "Reset all", exact: true }).click();
     });
-    expectSortedQueryValues(clearEurResponse.url(), "accountIds", []);
+    expectSortedQueryValues(clearFiltersResponse.url(), "accountIds", []);
+    expectSortedQueryValues(clearFiltersResponse.url(), "categories", []);
+    expectSortedQueryValues(clearFiltersResponse.url(), "kinds", []);
+    expectSortedQueryValues(clearFiltersResponse.url(), "currencies", []);
+    expectSortedQueryValues(clearFiltersResponse.url(), "counterparties", []);
+    await expect(page.getByTestId("transactions-filters-badge")).toHaveCount(0);
 
-    const resetBody = await clearEurResponse.json() as TransactionsResponseBody;
+    const resetBody = await clearFiltersResponse.json() as TransactionsResponseBody;
     const resetCount = await readCountLabel(page);
     expect(resetBody.total).toBe(initialCount.total);
     expect(resetCount.total).toBe(initialCount.total);
     expect(resetCount.shown).toBe(initialCount.shown);
+
+    const uncategorizedResponse = await waitForTransactionsResponse(page, async () => {
+      await page.getByTestId("transactions-filters-category-options").getByLabel("Uncategorized", { exact: true }).click();
+    });
+    expectSortedQueryValues(uncategorizedResponse.url(), "categories", [""]);
+    const uncategorizedBody = await uncategorizedResponse.json() as TransactionsResponseBody;
+    expect(uncategorizedBody.total).toBe(1);
+    expect(uncategorizedBody.entries.every((entry) => entry.category === null)).toBe(true);
+
+    const noCounterpartyResponse = await waitForTransactionsResponse(page, async () => {
+      await page.getByTestId("transactions-filters-counterparty-options").getByLabel("No counterparty", { exact: true }).click();
+    });
+    expectSortedQueryValues(noCounterpartyResponse.url(), "counterparties", [""]);
+    const noCounterpartyBody = await noCounterpartyResponse.json() as TransactionsResponseBody;
+    expect(noCounterpartyBody.total).toBe(1);
+    expect(noCounterpartyBody.entries.every((entry) => entry.counterparty === null)).toBe(true);
+
+    const transferResponse = await waitForTransactionsResponse(page, async () => {
+      await page.getByTestId("transactions-filters-kind-options").getByLabel("Transfer", { exact: true }).click();
+    });
+    expectSortedQueryValues(transferResponse.url(), "kinds", ["transfer"]);
+    const transferBody = await transferResponse.json() as TransactionsResponseBody;
+    expect(transferBody.total).toBe(1);
+    expect(transferBody.entries.every((entry) => entry.kind === "transfer")).toBe(true);
   } catch (error) {
     await attachFailureDiagnostics(page, testInfo, "transactions-filters");
     throw error;

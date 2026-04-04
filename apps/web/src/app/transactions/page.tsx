@@ -5,10 +5,10 @@ import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
 import { t } from "@/i18n/serverT";
-import { getAccounts, getCategories, getFieldHints } from "@/server/transactions/getTransactions";
+import { getFieldHints, getTransactionsFilterOptions } from "@/server/transactions/getTransactions";
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getUserSettings } from "@/server/userSettings";
-import { getDemoAccounts, getDemoCategories, getDemoFieldHints } from "@/server/demo/data";
+import { getDemoFieldHints, getDemoTransactionsFilterOptions } from "@/server/demo/data";
 import { TransactionsRawTable } from "@/ui/tables/TransactionsRawTable";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
@@ -21,22 +21,20 @@ async function TransactionsData() {
   const refreshToken = crypto.randomUUID();
 
   if (demo) {
-    const accounts = getDemoAccounts();
-    const categories = getDemoCategories();
+    const filterOptions = getDemoTransactionsFilterOptions();
     const hints = getDemoFieldHints();
-    return <TransactionsRawTable accounts={accounts} categories={categories} hints={hints} refreshToken={refreshToken} />;
+    return <TransactionsRawTable filterOptions={filterOptions} hints={hints} refreshToken={refreshToken} />;
   }
 
   const headersList = await headers();
   const userId = extractUserIdFromHeaders(headersList);
   const workspaceId = extractWorkspaceIdFromHeaders(headersList);
-  const [accounts, categories, hints] = await Promise.all([
-    getAccounts(userId, workspaceId),
-    getCategories(userId, workspaceId),
+  const [filterOptions, hints] = await Promise.all([
+    getTransactionsFilterOptions(userId, workspaceId),
     getFieldHints(userId, workspaceId),
   ]);
 
-  return <TransactionsRawTable accounts={accounts} categories={categories} hints={hints} refreshToken={refreshToken} />;
+  return <TransactionsRawTable filterOptions={filterOptions} hints={hints} refreshToken={refreshToken} />;
 }
 
 export default async function TransactionsDashboardPage() {

@@ -6,7 +6,15 @@ import type { AccountRow, BalancesSummaryResult, CurrencyTotal } from "@/server/
 import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
 import type { FxBreakdownResult, FxBreakdownRow } from "@/server/budget/getFxBreakdown";
-import type { AccountOption, FieldHints, LedgerEntry, TransactionsFilter, TransactionsPage } from "@/server/transactions/getTransactions";
+import {
+  TRANSACTION_KINDS,
+  type AccountOption,
+  type FieldHints,
+  type LedgerEntry,
+  type TransactionsFilter,
+  type TransactionsFilterOptions,
+  type TransactionsPage,
+} from "@/server/transactions/getTransactions";
 import { generateMonthRange, getCurrentMonth, getMonthEndDate, offsetMonth } from "@/lib/monthUtils";
 
 // ---------------------------------------------------------------------------
@@ -319,6 +327,22 @@ const applyFilter = (entries: ReadonlyArray<LedgerEntry>, filter: TransactionsFi
     }
   }
   if (filter.kind !== null) result = result.filter((e) => e.kind === filter.kind);
+  if (filter.kinds !== null) {
+    if (filter.kinds.length === 0) {
+      result = [];
+    } else {
+      const kindSet = new Set(filter.kinds);
+      result = result.filter((e) => kindSet.has(e.kind));
+    }
+  }
+  if (filter.currencies !== null) {
+    if (filter.currencies.length === 0) {
+      result = [];
+    } else {
+      const currencySet = new Set(filter.currencies);
+      result = result.filter((e) => currencySet.has(e.currency));
+    }
+  }
   if (filter.category !== null) {
     result = filter.category === ""
       ? result.filter((e) => e.category === null)
@@ -333,6 +357,18 @@ const applyFilter = (entries: ReadonlyArray<LedgerEntry>, filter: TransactionsFi
       result = result.filter((e) =>
         (e.category !== null && catSet.has(e.category)) ||
         (e.category === null && includeUncategorized),
+      );
+    }
+  }
+  if (filter.counterparties !== null) {
+    if (filter.counterparties.length === 0) {
+      result = [];
+    } else {
+      const counterpartySet = new Set(filter.counterparties);
+      const includeMissingCounterparty = counterpartySet.has("");
+      result = result.filter((e) =>
+        (e.counterparty !== null && counterpartySet.has(e.counterparty)) ||
+        (e.counterparty === null && includeMissingCounterparty),
       );
     }
   }
@@ -364,6 +400,33 @@ export const getDemoCategories = (): ReadonlyArray<string> => {
     if (entry.category !== null) set.add(entry.category);
   }
   return [...set].sort();
+};
+
+export const getDemoTransactionsFilterOptions = (): TransactionsFilterOptions => {
+  const entries = generate().entries;
+  const accounts = new Set<string>();
+  const categories = new Set<string>();
+  const currencies = new Set<string>();
+  const counterparties = new Set<string>();
+
+  for (const entry of entries) {
+    accounts.add(entry.accountId);
+    currencies.add(entry.currency);
+    if (entry.category !== null) {
+      categories.add(entry.category);
+    }
+    if (entry.counterparty !== null) {
+      counterparties.add(entry.counterparty);
+    }
+  }
+
+  return {
+    accounts: [...accounts].sort(),
+    categories: [...categories].sort(),
+    currencies: [...currencies].sort(),
+    counterparties: [...counterparties].sort(),
+    kinds: [...TRANSACTION_KINDS],
+  };
 };
 
 export const getDemoFieldHints = (): FieldHints => {

@@ -127,8 +127,15 @@ export const parseTransactionsFilterQuery = (searchParams: URLSearchParams): Tra
   const accountId = parseOptionalQueryParam(searchParams, "accountId", maxLengthParamSchema("accountId too long (max 200 chars)", 200));
   const accountIds = parseRepeatedQueryParam(searchParams, "accountIds", maxLengthParamSchema("accountIds entry too long (max 200 chars)", 200));
   const kind = parseOptionalQueryParam(searchParams, "kind", maxLengthParamSchema("kind too long (max 20 chars)", 20));
+  const kinds = parseRepeatedQueryParam(searchParams, "kinds", transactionKindSchema);
+  const currencies = parseRepeatedQueryParam(searchParams, "currencies", currencySchema);
   const category = parseOptionalQueryParam(searchParams, "category", maxLengthParamSchema("category too long (max 200 chars)", 200));
   const categories = parseRepeatedQueryParam(searchParams, "categories", categoriesEntrySchema);
+  const counterparties = parseRepeatedQueryParam(
+    searchParams,
+    "counterparties",
+    maxLengthParamSchema("counterparties entry too long (max 200 chars)", 200),
+  );
 
   return {
     dateFrom,
@@ -136,8 +143,11 @@ export const parseTransactionsFilterQuery = (searchParams: URLSearchParams): Tra
     accountId,
     accountIds: accountIds.length > 0 ? accountIds : null,
     kind,
+    kinds: kinds.length > 0 ? kinds : null,
+    currencies: currencies.length > 0 ? currencies : null,
     category,
     categories: categories.length > 0 ? categories : null,
+    counterparties: counterparties.length > 0 ? counterparties : null,
     sortKey,
     sortDir,
     limit,

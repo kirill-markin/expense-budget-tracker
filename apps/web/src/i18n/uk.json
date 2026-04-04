@@ -226,8 +226,11 @@
   "txn.addRow": "Додати рядок",
   "txn.noMatch": "Немає записів, що відповідають обраним фільтрам.",
   "txn.deleteConfirm": "Видалити цю операцію? Цю дію не можна скасувати.",
+  "txn.filtersButton": "Фільтри",
+  "txn.filtersReset": "Скинути все",
   "txn.filterSearchPlaceholder": "Пошук...",
   "txn.filterSelectedCount": "Вибрано: {{count}}",
+  "txn.filterNoCounterparty": "Без контрагента",
   "txn.filterUncategorized": "Без категорії",
   "txn.filterNoMatches": "Нічого не знайдено."
 }

@@ -1,23 +1,27 @@
 "use client";
 
 import { type ReactElement } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchLiveData } from "@/lib/liveDataFetch";
-import type { AccountOption, FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
+import type { FieldHints, LedgerEntry, TransactionsFilterOptions, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
 import { DataTable } from "./data-table/DataTable";
-import { FilterMultiSelect, type FilterMultiSelectOption } from "./FilterMultiSelect";
 import tableStyles from "./TableUi.module.css";
 import type { ColumnDef, PageResult } from "./data-table/types";
 import { useTableSort } from "./data-table/useTableSort";
 import {
+  TransactionsFiltersOverlay,
+  type TransactionsFiltersOverlayOptions,
+} from "./TransactionsFiltersOverlay";
+import {
   buildTransactionsCreateEntryRequest,
   buildTransactionsPageUrl,
   CREATE_ERROR_PREFIX,
+  type TransactionsTableFilter,
   useEditableTransactionsTable,
 } from "./useEditableTransactionsTable";
 import {
@@ -33,8 +37,7 @@ import {
 } from "./transactionColumns";
 
 type Props = Readonly<{
-  accounts: ReadonlyArray<AccountOption>;
-  categories: ReadonlyArray<string>;
+  filterOptions: TransactionsFilterOptions;
   hints: FieldHints;
   refreshToken: string;
 }>;
@@ -49,9 +52,10 @@ const toDateInputValue = (date: Date): string => {
 };
 
 export const TransactionsRawTable = (props: Props): ReactElement => {
-  const { accounts, categories, hints, refreshToken } = props;
+  const { filterOptions, hints, refreshToken } = props;
   const { t } = useTranslation();
   const { effectiveAllowlist } = useFilteredMode();
+  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const getMaskClass = (category: string | null): string => {
     if (effectiveAllowlist === null) return "";
@@ -67,22 +71,60 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   const [dateTo, setDateTo] = useState<string>(toDateInputValue(now));
   const [selectedAccountIds, setSelectedAccountIds] = useState<ReadonlyArray<string>>([]);
   const [selectedCategories, setSelectedCategories] = useState<ReadonlyArray<string>>([]);
+  const [selectedKinds, setSelectedKinds] = useState<ReadonlyArray<string>>([]);
+  const [selectedCurrencies, setSelectedCurrencies] = useState<ReadonlyArray<string>>([]);
+  const [selectedCounterparties, setSelectedCounterparties] = useState<ReadonlyArray<string>>([]);
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
 
   const { sort, onSort } = useTableSort("single", "ts", "desc", SORT_DEFAULTS);
   const selectedAccountIdsKey = selectedAccountIds.join("\u0001");
   const selectedCategoriesKey = selectedCategories.join("\u0001");
+  const selectedKindsKey = selectedKinds.join("\u0001");
+  const selectedCurrenciesKey = selectedCurrencies.join("\u0001");
+  const selectedCounterpartiesKey = selectedCounterparties.join("\u0001");
 
-  const accountOptions = useMemo<ReadonlyArray<FilterMultiSelectOption>>(
-    () => accounts.map((account) => ({ value: account.accountId, label: account.accountId })),
-    [accounts],
+  const filterValues = useMemo<TransactionsTableFilter>(
+    () => ({
+      dateFrom,
+      dateTo,
+      accountIds: selectedAccountIds,
+      categories: selectedCategories,
+      kinds: selectedKinds,
+      currencies: selectedCurrencies,
+      counterparties: selectedCounterparties,
+    }),
+    [dateFrom, dateTo, selectedAccountIds, selectedCategories, selectedKinds, selectedCurrencies, selectedCounterparties],
   );
 
-  const categoryOptions = useMemo<ReadonlyArray<FilterMultiSelectOption>>(
+  const overlayOptions = useMemo<TransactionsFiltersOverlayOptions>(
+    () => ({
+      accountIds: filterOptions.accounts.map((accountId) => ({ value: accountId, label: accountId })),
+      categories: [
+        { value: "", label: t("txn.filterUncategorized") },
+        ...filterOptions.categories.map((category) => ({ value: category, label: category })),
+      ],
+      kinds: filterOptions.kinds.map((kind) => ({
+        value: kind,
+        label: kind.charAt(0).toUpperCase() + kind.slice(1),
+      })),
+      currencies: filterOptions.currencies.map((currency) => ({ value: currency, label: currency })),
+      counterparties: [
+        { value: "", label: t("txn.filterNoCounterparty") },
+        ...filterOptions.counterparties.map((counterparty) => ({ value: counterparty, label: counterparty })),
+      ],
+    }),
+    [filterOptions, t],
+  );
+
+  const activeFilterGroupCount = useMemo<number>(
     () => [
-      { value: "", label: t("txn.filterUncategorized") },
-      ...categories.map((category) => ({ value: category, label: category })),
-    ],
-    [categories, t],
+      selectedAccountIds,
+      selectedCategories,
+      selectedKinds,
+      selectedCurrencies,
+      selectedCounterparties,
+    ].filter((items) => items.length > 0).length,
+    [selectedAccountIds, selectedCategories, selectedKinds, selectedCurrencies, selectedCounterparties],
   );
 
   // The transactions header/filter options refresh through the server
@@ -91,10 +133,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   // observably newer than the pre-refresh read.
   const fetchPage = useCallback(async (limit: number, offset: number): Promise<PageResult<LedgerEntry>> => {
     const url = buildTransactionsPageUrl(
-      dateFrom,
-      dateTo,
-      selectedAccountIds,
-      selectedCategories,
+      filterValues,
       sort[0].key,
       sort[0].dir,
       refreshToken,
@@ -108,7 +147,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     }
     const page: TransactionsPage = await response.json();
     return { items: page.entries, total: page.total };
-  }, [dateFrom, dateTo, refreshToken, selectedAccountIds, selectedCategories, sort]);
+  }, [filterValues, refreshToken, sort]);
 
   const {
     rows,
@@ -123,9 +162,28 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   } = useEditableTransactionsTable({
     fetchPage,
     createEntryRequest: () => buildTransactionsCreateEntryRequest(dateTo, selectedAccountIds),
-    resetDeps: [dateFrom, dateTo, selectedAccountIdsKey, selectedCategoriesKey, sort[0].key, sort[0].dir, refreshToken],
+    resetDeps: [
+      dateFrom,
+      dateTo,
+      selectedAccountIdsKey,
+      selectedCategoriesKey,
+      selectedKindsKey,
+      selectedCurrenciesKey,
+      selectedCounterpartiesKey,
+      sort[0].key,
+      sort[0].dir,
+      refreshToken,
+    ],
     onDirty: () => {},
   });
+
+  const handleFiltersChange = (nextValues: TransactionsTableFilter): void => {
+    setSelectedAccountIds(nextValues.accountIds);
+    setSelectedCategories(nextValues.categories);
+    setSelectedKinds(nextValues.kinds);
+    setSelectedCurrencies(nextValues.currencies);
+    setSelectedCounterparties(nextValues.counterparties);
+  };
 
   const handleCategoryChange = (entryId: string, newCategory: string | null, oldCategory: string | null): void => {
     void oldCategory;
@@ -178,7 +236,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     editableAmountColumn(getRowMaskClass, handleAmountCommit),
     editableCurrencyColumn(getRowMaskClass, handleCurrencyCommit, hints.currencies),
     editableKindColumn(getRowMaskClass, handleKindChange),
-    editableCategoryColumn(getRowMaskClass, categories, handleCategoryChange),
+    editableCategoryColumn(getRowMaskClass, filterOptions.categories, handleCategoryChange),
     editableCounterpartyColumn(getRowMaskClass, handleCounterpartyCommit, hints.counterparties),
     editableNoteColumn(getRowMaskClass, handleNoteCommit, hints.notes),
     editableDeleteColumn(handleDelete),
@@ -211,20 +269,28 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
             onChange={(e) => setDateTo(e.target.value)}
           />
         </label>
-        <FilterMultiSelect
-          label={t("table.account")}
-          options={accountOptions}
-          selectedValues={selectedAccountIds}
-          onChange={setSelectedAccountIds}
-          testId="transactions-account-filter"
-        />
-        <FilterMultiSelect
-          label={t("table.category")}
-          options={categoryOptions}
-          selectedValues={selectedCategories}
-          onChange={setSelectedCategories}
-          testId="transactions-category-filter"
-        />
+        <div className={tableStyles.filterLabel}>
+          {t("txn.filtersButton")}
+          <button
+            ref={filtersTriggerRef}
+            type="button"
+            className={[
+              tableStyles.filterInput,
+              tableStyles.filterTrigger,
+              tableStyles.transactionsFiltersTrigger,
+              filtersOpen ? tableStyles.filterTriggerOpen : "",
+            ].join(" ")}
+            onClick={() => setFiltersOpen((current) => !current)}
+            data-testid="transactions-filters-trigger"
+          >
+            <span className={tableStyles.filterTriggerText}>{t("txn.filtersButton")}</span>
+            {activeFilterGroupCount > 0 && (
+              <span className={tableStyles.transactionsFiltersTriggerBadge} data-testid="transactions-filters-badge">
+                {activeFilterGroupCount}
+              </span>
+            )}
+          </button>
+        </div>
         {!loading && (
           <span className={tableStyles.filterCount}>
             {t("txn.countLabel", { shown: rows.length, total })}
@@ -234,6 +300,16 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           {t("txn.addRow")}
         </button>
       </div>
+
+      {filtersOpen && (
+        <TransactionsFiltersOverlay
+          triggerRef={filtersTriggerRef}
+          values={filterValues}
+          options={overlayOptions}
+          onChange={handleFiltersChange}
+          onClose={() => setFiltersOpen(false)}
+        />
+      )}
 
       {errorMessage !== null && (
         <div className={alertStyles.alert}>

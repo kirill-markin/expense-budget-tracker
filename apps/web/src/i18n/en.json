@@ -226,8 +226,11 @@
   "txn.addRow": "Add row",
   "txn.noMatch": "No entries match the selected filters.",
   "txn.deleteConfirm": "Delete this transaction? This cannot be undone.",
+  "txn.filtersButton": "Filters",
+  "txn.filtersReset": "Reset all",
   "txn.filterSearchPlaceholder": "Search...",
   "txn.filterSelectedCount": "{{count}} selected",
+  "txn.filterNoCounterparty": "No counterparty",
   "txn.filterUncategorized": "Uncategorized",
   "txn.filterNoMatches": "No matches found."
 }
