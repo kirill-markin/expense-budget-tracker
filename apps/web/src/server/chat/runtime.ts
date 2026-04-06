@@ -26,6 +26,7 @@ import {
   beginChatTaskProtection,
   endChatTaskProtection,
 } from "@/server/chat/taskProtection";
+import { createChatErrorLogEvent } from "@/server/chat/logging";
 import type {
   ChatStreamEvent,
   ContentPart,
@@ -106,40 +107,6 @@ const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
 const isUserAbortError = (error: unknown): boolean =>
   error instanceof OpenAI.APIUserAbortError
   || (error instanceof Error && error.name === "AbortError");
-
-const createChatErrorLogEvent = (
-  diagnostics: ChatRunDiagnostics,
-  stage: ChatErrorStage,
-  error: string,
-): Readonly<{
-  domain: "chat";
-  action: "error";
-  vendor: "openai";
-  stage: ChatErrorStage;
-  error: string;
-  requestId: string;
-  userId: string;
-  workspaceId: string;
-  sessionId: string;
-  model: string;
-  messageCount: number;
-  hasAttachments: boolean;
-  attachmentFileNames: ReadonlyArray<string>;
-}> => ({
-  domain: "chat",
-  action: "error",
-  vendor: "openai",
-  stage,
-  error,
-  requestId: diagnostics.requestId,
-  userId: diagnostics.userId,
-  workspaceId: diagnostics.workspaceId,
-  sessionId: diagnostics.sessionId,
-  model: diagnostics.model,
-  messageCount: diagnostics.messageCount,
-  hasAttachments: diagnostics.hasAttachments,
-  attachmentFileNames: diagnostics.attachmentFileNames,
-});
 
 /**
  * Converts a streamed tool-call event into the persisted assistant transcript
