@@ -24,7 +24,7 @@ type ChatClearConversationResponse = Readonly<{
 }>;
 
 type ChatSendRequestBody = Readonly<{
-  sessionId: string | null;
+  sessionId: string;
   model: string;
   content: ReadonlyArray<ContentPart>;
   timezone: string;
@@ -40,7 +40,6 @@ export type PreparedChatSendRequest =
   | Readonly<{
     kind: "ready";
     contentParts: ReadonlyArray<ContentPart>;
-    requestBody: string;
   }>;
 
 export type StreamChatResponseParams = Readonly<{
@@ -54,6 +53,10 @@ export type StreamChatResponseParams = Readonly<{
 }>;
 
 export type StreamChatFailureStage = "request" | "stream" | null;
+
+type ChatCreateSessionResponse = Readonly<{
+  sessionId: string;
+}>;
 
 export type StreamChatResponseResult = Readonly<{
   responseSessionId: string | null;
@@ -131,7 +134,6 @@ export const sanitizeChatRouteErrorText = (
 export const prepareChatSendRequest = (
   text: string,
   attachments: ReadonlyArray<PendingAttachment>,
-  sessionId: string | null,
   t: ChatTranslation,
 ): PreparedChatSendRequest => {
   const contentParts = buildContentParts(text, attachments);
@@ -140,7 +142,7 @@ export const prepareChatSendRequest = (
   }
 
   const requestBody = JSON.stringify({
-    sessionId,
+    sessionId: "session-size-check",
     model: CHAT_MODEL_ID,
     content: contentParts,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -159,9 +161,19 @@ export const prepareChatSendRequest = (
   return {
     kind: "ready",
     contentParts,
-    requestBody,
   };
 };
+
+export const buildChatSendRequestBody = (
+  content: ReadonlyArray<ContentPart>,
+  sessionId: string,
+): string =>
+  JSON.stringify({
+    sessionId,
+    model: CHAT_MODEL_ID,
+    content,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  } satisfies ChatSendRequestBody);
 
 export const fetchChatSessionSnapshot = async (
   sessionId: string | undefined,
@@ -192,6 +204,37 @@ export const postStopChatSession = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionId }),
   });
+};
+
+export const createChatSession = async (
+  t: ChatTranslation,
+): Promise<string> => {
+  const response = await fetchWithCsrf("/api/chat/session", {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const rawError = await response.text();
+    throw new Error(`Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`);
+  }
+
+  const payload = await response.json() as ChatCreateSessionResponse;
+  if (typeof payload.sessionId !== "string" || payload.sessionId.trim() === "") {
+    throw new Error("Chat session creation failed");
+  }
+
+  return payload.sessionId;
+};
+
+export const ensureWritableChatSession = async (
+  sessionId: string | null,
+  createSession: () => Promise<string>,
+): Promise<string> => {
+  if (sessionId !== null) {
+    return sessionId;
+  }
+
+  return createSession();
 };
 
 export const deleteChatConversation = async (

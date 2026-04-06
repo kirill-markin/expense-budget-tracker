@@ -26,7 +26,7 @@ type OpenAITranscriptionClient = Readonly<{
 export type ChatTranscriptionUpload = Readonly<{
   file: File;
   source: ChatTranscriptionSource;
-  sessionId?: string;
+  sessionId: string;
 }>;
 
 export type ChatTranscriptionTelemetryContext = ChatTranscriptionTraceMetadata;
@@ -117,11 +117,15 @@ export const parseChatTranscriptionUpload = async (request: Request): Promise<Ch
     sessionId: (() => {
       const sessionValue = formData.get("sessionId");
       if (typeof sessionValue !== "string") {
-        return undefined;
+        throw new ApiRouteError(400, "sessionId is required");
       }
 
       const normalizedSessionId = sessionValue.trim();
-      return normalizedSessionId === "" ? undefined : normalizedSessionId;
+      if (normalizedSessionId === "") {
+        throw new ApiRouteError(400, "sessionId is required");
+      }
+
+      return normalizedSessionId;
     })(),
   };
 };

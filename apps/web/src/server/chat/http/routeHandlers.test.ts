@@ -119,6 +119,7 @@ test("postChatRouteWithDeps returns 400 for invalid request bodies", async (): P
 test("postChatRouteWithDeps returns 400 for unsupported models", async (): Promise<void> => {
   const response = await postChatRouteWithDeps(
     createChatRequest({
+      sessionId: "session-1",
       content: [{ type: "text", text: "Hello" }],
       model: "wrong-model",
       timezone: "Europe/Madrid",
@@ -134,6 +135,7 @@ test("postChatRouteWithDeps returns 500 when OPENAI_API_KEY is missing", async (
   await withOpenAiApiKey(undefined, async (): Promise<void> => {
     const response = await postChatRouteWithDeps(
       createChatRequest({
+        sessionId: "session-1",
         content: [{ type: "text", text: "Hello" }],
         model: CHAT_MODEL_ID,
         timezone: "Europe/Madrid",
@@ -151,6 +153,7 @@ test("postChatRouteWithDeps returns 401 when auth headers are missing", async ()
     const response = await postChatRouteWithDeps(
       createChatRequest(
         {
+          sessionId: "session-1",
           content: [{ type: "text", text: "Hello" }],
           model: CHAT_MODEL_ID,
           timezone: "Europe/Madrid",
@@ -171,6 +174,7 @@ test("postChatRouteWithDeps maps chat session conflicts to 409", async (): Promi
   await withOpenAiApiKey("test-key", async (): Promise<void> => {
     const response = await postChatRouteWithDeps(
       createChatRequest({
+        sessionId: "session-1",
         content: [{ type: "text", text: "Hello" }],
         model: CHAT_MODEL_ID,
         timezone: "Europe/Madrid",
@@ -184,6 +188,22 @@ test("postChatRouteWithDeps maps chat session conflicts to 409", async (): Promi
 
     assert.equal(response.status, 409);
     assert.equal(await response.text(), "Chat session already has an active response");
+  });
+});
+
+test("postChatRouteWithDeps rejects missing session ids", async (): Promise<void> => {
+  await withOpenAiApiKey("test-key", async (): Promise<void> => {
+    const response = await postChatRouteWithDeps(
+      createChatRequest({
+        content: [{ type: "text", text: "Hello" }],
+        model: CHAT_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+      createPostDependencies(),
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(await response.text(), "sessionId must be a non-empty string");
   });
 });
 
@@ -208,6 +228,7 @@ test("postChatRouteWithDeps returns SSE headers for successful runs", async (): 
   await withOpenAiApiKey("test-key", async (): Promise<void> => {
     const response = await postChatRouteWithDeps(
       createChatRequest({
+        sessionId: "session-1",
         content: [{ type: "text", text: "Hello" }],
         model: CHAT_MODEL_ID,
         timezone: "Europe/Madrid",

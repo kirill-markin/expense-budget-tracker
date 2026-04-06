@@ -15,6 +15,14 @@ import {
   type StoredMessage,
 } from "@/ui/hooks/useChatHistory";
 import type { PendingAttachment } from "./FileAttachment";
+import {
+  createChatBootstrapLocalState,
+  deriveLastUserMessageAt,
+  readChatBootstrapLocalState,
+  readChatBootstrapLocalStateFromStorageEvent,
+  resolveChatBootstrapMode,
+  writeChatBootstrapLocalState,
+} from "./chatBootstrapLocalState";
 import type { ChatSessionSnapshot } from "./chatSessionSnapshot";
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
@@ -23,6 +31,8 @@ import {
   type ChatRunState,
 } from "./streamRecovery";
 import {
+  buildChatSendRequestBody,
+  createChatSession,
   deleteChatConversation,
   fetchChatSessionSnapshot,
   postStopChatSession,
@@ -61,6 +71,7 @@ export type ChatSessionController = Readonly<{
   currentSessionId: string | null;
   composerAction: ChatComposerAction;
   acceptServerSessionId: (sessionId: string) => void;
+  ensureWritableSessionId: () => Promise<string>;
   sendMessage: (params: SendChatMessageParams) => Promise<void>;
   stopMessage: () => Promise<void>;
   clearConversation: () => Promise<void>;
@@ -100,6 +111,7 @@ export const useChatSessionController = (
   );
   const stateRef = useRef(state);
   const abortRef = useRef<AbortController | null>(null);
+  const pendingSessionIdRef = useRef<Promise<string> | null>(null);
 
   const dispatchAction = useCallback((
     action: ChatSessionControllerAction,
@@ -185,6 +197,33 @@ export const useChatSessionController = (
   }, [dispatchAction, mode, replaceMessages, router, t]);
 
   useEffect(() => {
+    if (!state.isHistoryLoaded) {
+      return;
+    }
+
+    if (state.currentSessionId === null && state.runState !== "idle") {
+      return;
+    }
+
+    writeChatBootstrapLocalState(
+      workspaceId,
+      createChatBootstrapLocalState(
+        state.currentSessionId,
+        deriveLastUserMessageAt(messages),
+        state.runState,
+        state.lastSnapshotUpdatedAt,
+      ),
+    );
+  }, [
+    messages,
+    state.currentSessionId,
+    state.isHistoryLoaded,
+    state.lastSnapshotUpdatedAt,
+    state.runState,
+    workspaceId,
+  ]);
+
+  useEffect(() => {
     const abortController = new AbortController();
     dispatchAction({ type: "workspace_reset" });
     replaceMessages([]);
@@ -193,6 +232,20 @@ export const useChatSessionController = (
       let didFail = false;
 
       try {
+        const bootstrapMode = resolveChatBootstrapMode(
+          readChatBootstrapLocalState(workspaceId),
+          Date.now(),
+        );
+        if (bootstrapMode.kind === "local_empty") {
+          if (bootstrapMode.sessionId !== null) {
+            dispatchAction({
+              type: "server_session_accepted",
+              sessionId: bootstrapMode.sessionId,
+            });
+          }
+          return;
+        }
+
         await loadChatSnapshot(undefined, abortController.signal, true);
       } catch (error) {
         if (abortController.signal.aborted) {
@@ -219,6 +272,70 @@ export const useChatSessionController = (
 
     return () => abortController.abort();
   }, [dispatchAction, loadChatSnapshot, replaceMessages, t, workspaceId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleStorage = (event: StorageEvent): void => {
+      const currentState = stateRef.current;
+      if (
+        !currentState.isHistoryLoaded
+        || selectIsAssistantRunActive(currentState)
+        || currentState.isLiveStreamConnected
+        || currentState.isStopping
+      ) {
+        return;
+      }
+
+      const nextLocalState = readChatBootstrapLocalStateFromStorageEvent(
+        workspaceId,
+        event.key,
+        event.newValue,
+      );
+      if (nextLocalState === undefined) {
+        return;
+      }
+
+      const bootstrapMode = resolveChatBootstrapMode(nextLocalState, Date.now());
+      if (bootstrapMode.kind === "local_empty") {
+        replaceMessages([]);
+        dispatchAction({ type: "workspace_reset" });
+        if (bootstrapMode.sessionId !== null) {
+          dispatchAction({
+            type: "server_session_accepted",
+            sessionId: bootstrapMode.sessionId,
+          });
+        }
+        dispatchAction({ type: "bootstrap_succeeded" });
+        return;
+      }
+
+      if (nextLocalState === null || nextLocalState.sessionId === null) {
+        return;
+      }
+
+      const shouldReloadSnapshot = nextLocalState.sessionId !== currentState.currentSessionId
+        || (
+          nextLocalState.lastSnapshotUpdatedAt !== null
+          && (
+            currentState.lastSnapshotUpdatedAt === null
+            || nextLocalState.lastSnapshotUpdatedAt > currentState.lastSnapshotUpdatedAt
+          )
+        )
+        || nextLocalState.lastKnownRunState !== currentState.runState;
+
+      if (!shouldReloadSnapshot) {
+        return;
+      }
+
+      void loadChatSnapshot(nextLocalState.sessionId, undefined, true).catch(() => undefined);
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [dispatchAction, loadChatSnapshot, replaceMessages, workspaceId]);
 
   useEffect(() => {
     if (!state.isHistoryLoaded || state.currentSessionId === null || state.runState !== "running") {
@@ -248,6 +365,36 @@ export const useChatSessionController = (
     t,
   ]);
 
+  const ensureWritableSessionId = useCallback(async (): Promise<string> => {
+    const currentSessionId = stateRef.current.currentSessionId;
+    if (currentSessionId !== null) {
+      return currentSessionId;
+    }
+
+    if (pendingSessionIdRef.current !== null) {
+      return pendingSessionIdRef.current;
+    }
+
+    const pendingSessionId = createChatSession(t)
+      .then((writableSessionId) => {
+        if (stateRef.current.currentSessionId !== writableSessionId) {
+          dispatchAction({
+            type: "server_session_accepted",
+            sessionId: writableSessionId,
+          });
+        }
+        return writableSessionId;
+      })
+      .finally(() => {
+        pendingSessionIdRef.current = null;
+      });
+
+    pendingSessionIdRef.current = pendingSessionId;
+    const writableSessionId = await pendingSessionId;
+
+    return writableSessionId;
+  }, [dispatchAction, t]);
+
   const sendMessage = useCallback(async (
     sendParams: SendChatMessageParams,
   ): Promise<void> => {
@@ -263,7 +410,6 @@ export const useChatSessionController = (
     const preparedRequest = prepareChatSendRequest(
       sendParams.text,
       sendParams.attachments,
-      currentState.currentSessionId,
       t,
     );
     if (preparedRequest.kind === "empty") {
@@ -284,8 +430,19 @@ export const useChatSessionController = (
       return;
     }
 
+    let writableSessionId: string;
+    try {
+      writableSessionId = await ensureWritableSessionId();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      markAssistantError(t("chat.errorFailed", { message }));
+      dispatchAction({ type: "run_finished" });
+      abortRef.current = null;
+      return;
+    }
+
     const streamResult = await streamChatResponse({
-      requestBody: preparedRequest.requestBody,
+      requestBody: buildChatSendRequestBody(preparedRequest.contentParts, writableSessionId),
       signal: abortController.signal,
       abortStream: (): void => {
         abortController.abort();
@@ -352,6 +509,7 @@ export const useChatSessionController = (
     appendUserMessage,
     applyMainContentInvalidationVersion,
     dispatchAction,
+    ensureWritableSessionId,
     finalizeAssistant,
     loadChatSnapshot,
     markAssistantError,
@@ -449,6 +607,7 @@ export const useChatSessionController = (
     currentSessionId: state.currentSessionId,
     composerAction,
     acceptServerSessionId,
+    ensureWritableSessionId,
     sendMessage,
     stopMessage,
     clearConversation,

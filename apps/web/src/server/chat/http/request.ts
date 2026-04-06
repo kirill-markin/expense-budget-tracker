@@ -6,7 +6,7 @@ import type { ContentPart } from "@/server/chat/types";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 export type ChatRequestBody = Readonly<{
-  sessionId?: string;
+  sessionId: string;
   content: ReadonlyArray<ContentPart>;
   model: string;
   timezone: string;
@@ -126,8 +126,8 @@ export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
   if (typeof candidate.timezone !== "string" || candidate.timezone.length === 0) {
     throw new Error("timezone must be a non-empty string");
   }
-  if (candidate.sessionId !== undefined && typeof candidate.sessionId !== "string") {
-    throw new Error("sessionId must be a string when provided");
+  if (typeof candidate.sessionId !== "string" || candidate.sessionId.trim().length === 0) {
+    throw new Error("sessionId must be a non-empty string");
   }
 
   return {

@@ -101,7 +101,7 @@ type ChatTranscriptionResponse = Readonly<{
 
 export const transcribeChatAudio = async (
   blob: Blob,
-  sessionId: string | null,
+  sessionId: string,
 ): Promise<ChatTranscriptionResponse> => {
   const mediaType = normalizeAudioMediaType(blob.type === "" ? "audio/webm" : blob.type);
   const file = new File([blob], `chat-dictation.${extensionForAudioMediaType(mediaType)}`, {
@@ -110,9 +110,7 @@ export const transcribeChatAudio = async (
   const formData = new FormData();
   formData.append("file", file);
   formData.append("source", "web");
-  if (sessionId !== null) {
-    formData.append("sessionId", sessionId);
-  }
+  formData.append("sessionId", sessionId);
 
   const response = await fetchWithCsrf("/api/chat/transcriptions", {
     method: "POST",

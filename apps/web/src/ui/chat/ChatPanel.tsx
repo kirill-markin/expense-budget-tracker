@@ -133,9 +133,9 @@ export const ChatPanel = (props: Props): ReactElement => {
     isAssistantRunActive,
     isLiveStreamConnected,
     isStopping,
-    currentSessionId,
     composerAction,
     acceptServerSessionId,
+    ensureWritableSessionId,
     sendMessage,
     stopMessage,
     clearConversation,
@@ -415,7 +415,8 @@ export const ChatPanel = (props: Props): ReactElement => {
         return;
       }
 
-      const transcription = await transcribeChatAudio(audioBlob, currentSessionId);
+      const sessionId = await ensureWritableSessionId();
+      const transcription = await transcribeChatAudio(audioBlob, sessionId);
       if (isMountedRef.current) {
         acceptServerSessionId(transcription.sessionId);
         setInputText((currentText) => {
@@ -442,7 +443,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         setDictationState("idle");
       }
     }
-  }, [t]);
+  }, [acceptServerSessionId, ensureWritableSessionId, t]);
 
   const handleToggleDictation = useCallback(async (): Promise<void> => {
     if (dictationState === "recording") {

@@ -38,25 +38,6 @@ const assertAuthenticatedChatRequest = (request: Request): void => {
   }
 };
 
-const resolveTranscriptionSessionId = async (
-  userId: string,
-  workspaceId: string,
-  requestedSessionId: string | undefined,
-  dependencies: ChatTranscriptionsRouteDependencies,
-): Promise<string> => {
-  try {
-    return await dependencies.getChatSessionSnapshot(userId, workspaceId, requestedSessionId)
-      .then((snapshot) => snapshot.sessionId);
-  } catch (error) {
-    if (requestedSessionId !== undefined && error instanceof ChatSessionNotFoundError) {
-      return dependencies.getChatSessionSnapshot(userId, workspaceId)
-        .then((snapshot) => snapshot.sessionId);
-    }
-
-    throw error;
-  }
-};
-
 export const transcribeChatRouteWithDeps = async (
   request: Request,
   dependencies: ChatTranscriptionsRouteDependencies,
@@ -72,12 +53,20 @@ export const transcribeChatRouteWithDeps = async (
       const userId = extractUserId(request);
       const workspaceId = extractWorkspaceId(request);
       const upload = await dependencies.parseChatTranscriptionUpload(request);
-      const sessionId = await resolveTranscriptionSessionId(
-        userId,
-        workspaceId,
-        upload.sessionId,
-        dependencies,
-      );
+      let sessionId: string;
+      try {
+        sessionId = await dependencies.getChatSessionSnapshot(
+          userId,
+          workspaceId,
+          upload.sessionId,
+        ).then((snapshot) => snapshot.sessionId);
+      } catch (error) {
+        if (error instanceof ChatSessionNotFoundError) {
+          throw new ApiRouteError(404, error.message);
+        }
+
+        throw error;
+      }
       const text = await dependencies.transcribeChatAudioUpload(upload, {
         requestId: randomUUID(),
         userId,
