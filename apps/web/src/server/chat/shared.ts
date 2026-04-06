@@ -269,6 +269,7 @@ kind: 'income' | 'spend' | 'transfer'. category: NULL for transfers.
 All data is workspace-scoped via RLS. INSERTs must include workspace_id.
 Only the listed tables and views are allowed. Internal relations are blocked.
 Restricted SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
+Restricted SQL does not support function calls. Query the listed tables and views directly.
 Use regular single-quoted SQL literals. Dollar-quoted strings are not supported.
 For long mutating INSERT or UPDATE scripts, first test the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. If that probe fails, fix it before continuing. A user's explicit approval for the described change covers the full approved change set, including that probe and all remaining sequential batches. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.
 For any long mutating script or import, keep explicit completed and pending checkpoints in your replies. Prefer source row ranges when available; otherwise use stable source markers such as timestamps, external IDs, or ordered source chunks. After each successful batch, record the completed checkpoint and the next pending checkpoint. After a later "continue" message, resume from the last completed checkpoint in the same chat session instead of regenerating earlier batches.
@@ -285,6 +286,9 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
   }
   if (error.code === "set_config_not_allowed") {
     return new Error("set_config() calls are not allowed");
+  }
+  if (error.code === "function_calls_not_allowed") {
+    return new Error("Function calls are not allowed in chat queries");
   }
   if (error.code === "sql_comments_not_allowed") {
     return new Error("SQL comments are not allowed in chat queries");

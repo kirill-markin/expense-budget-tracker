@@ -119,6 +119,10 @@ export const getSqlPolicyInstructions = (
     return "Do not call set_config(). User and workspace context are managed by the API.";
   }
 
+  if (error.code === "function_calls_not_allowed") {
+    return "Function calls are not supported in restricted SQL. Query only the published tables and views directly.";
+  }
+
   if (error.code === "sql_comments_not_allowed") {
     return "Remove SQL comments (`--` and `/* ... */`) and retry.";
   }

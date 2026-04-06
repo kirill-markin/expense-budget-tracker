@@ -60,6 +60,7 @@ type SqlPolicyErrorCode =
   | "unsupported_statement"
   | "on_conflict_not_allowed"
   | "set_config_not_allowed"
+  | "function_calls_not_allowed"
   | "sql_comments_not_allowed"
   | "quoted_identifiers_not_allowed"
   | "dollar_quoted_strings_not_allowed"
@@ -397,6 +398,19 @@ const findMatchingParen = (
   return fail("invalid_relation_reference", "Expected closing parenthesis");
 };
 
+const findPreviousSignificantIndex = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+): number | null => {
+  for (let index = startIndex; index >= 0; index -= 1) {
+    const token = tokens[index];
+    if (token !== undefined) {
+      return index;
+    }
+  }
+  return null;
+};
+
 const parseRelationName = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
@@ -615,6 +629,75 @@ const parseCteDefinitions = (
   };
 };
 
+const assertNoFunctionCallsInSegment = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): void => {
+  if (startIndex >= endIndex) {
+    return;
+  }
+
+  if (tokens[startIndex]?.lower === "with") {
+    const { ctes, mainQueryStartIndex } = parseCteDefinitions(tokens, startIndex, endIndex);
+    for (const cte of ctes) {
+      assertNoFunctionCallsInSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex);
+    }
+    assertNoFunctionCallsInSegment(tokens, mainQueryStartIndex, endIndex);
+    return;
+  }
+
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) {
+      continue;
+    }
+
+    if (token.lower === "into") {
+      const reference = parseRelationName(tokens, index + 1);
+      index = reference.nextIndex - 1;
+      if (tokens[reference.nextIndex]?.value === "(") {
+        index = findMatchingParen(tokens, reference.nextIndex, endIndex);
+      }
+      continue;
+    }
+
+    if (token.kind === "punct") {
+      if (token.value === "(") {
+        const closeIndex = findMatchingParen(tokens, index, endIndex);
+        assertNoFunctionCallsInSegment(tokens, index + 1, closeIndex);
+        index = closeIndex;
+      }
+      continue;
+    }
+
+    if (tokens[index + 1]?.value !== "(") {
+      continue;
+    }
+
+    if (token.lower === "in" || token.lower === "exists" || token.lower === "values") {
+      const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
+      assertNoFunctionCallsInSegment(tokens, index + 2, closeIndex);
+      index = closeIndex;
+      continue;
+    }
+
+    const previousIndex = findPreviousSignificantIndex(tokens, index - 1);
+    const previousToken = previousIndex === null ? undefined : tokens[previousIndex];
+    if (
+      previousIndex !== null
+      && previousToken?.value === "."
+      && previousIndex >= 2
+      && tokens[previousIndex - 1]?.lower === "public"
+      && tokens[previousIndex - 2]?.lower === "into"
+    ) {
+      continue;
+    }
+
+    fail("function_calls_not_allowed", "Function calls are not allowed in restricted SQL");
+  }
+};
+
 const collectReferencedRelationsFromWithClause = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
@@ -733,6 +816,7 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
     fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
   }
   const tokens = tokenizeSql(sanitizedSql);
+  assertNoFunctionCallsInSegment(tokens, 0, tokens.length);
 
   return {
     sql,

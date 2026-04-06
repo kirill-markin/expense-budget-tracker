@@ -5,9 +5,17 @@
  * Requires confirmText matching the workspace name for safety.
  */
 import { buildSuccessEnvelope } from "@/server/agentEnvelope";
-import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
+import {
+  authenticateAgentRequest,
+  getAgentAuthError,
+  type AgentAuthenticatedRequest,
+} from "@/server/agentApiKeyAuth";
 import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
-import { deleteWorkspaceForTrustedIdentity, getWorkspaceForTrustedIdentity } from "@/server/workspaces";
+import {
+  deleteWorkspaceForTrustedIdentity,
+  getWorkspaceForTrustedIdentity,
+  SharedWorkspaceDeletionDisabledError,
+} from "@/server/workspaces";
 
 type RouteContext = Readonly<{
   params: Promise<{
@@ -15,7 +23,23 @@ type RouteContext = Readonly<{
   }>;
 }>;
 
-export const POST = async (request: Request, context: RouteContext): Promise<Response> => {
+type AgentWorkspaceDeleteRouteDependencies = Readonly<{
+  authenticateAgentRequest: (request: Request) => Promise<AgentAuthenticatedRequest>;
+  getWorkspaceForTrustedIdentity: typeof getWorkspaceForTrustedIdentity;
+  deleteWorkspaceForTrustedIdentity: typeof deleteWorkspaceForTrustedIdentity;
+}>;
+
+const DEFAULT_AGENT_WORKSPACE_DELETE_ROUTE_DEPENDENCIES: AgentWorkspaceDeleteRouteDependencies = {
+  authenticateAgentRequest,
+  getWorkspaceForTrustedIdentity,
+  deleteWorkspaceForTrustedIdentity,
+};
+
+export const postAgentWorkspaceDeleteRouteWithDeps = async (
+  request: Request,
+  context: RouteContext,
+  dependencies: AgentWorkspaceDeleteRouteDependencies,
+): Promise<Response> => {
   const { workspaceId } = await context.params;
 
   if (workspaceId.trim() === "") {
@@ -56,8 +80,8 @@ export const POST = async (request: Request, context: RouteContext): Promise<Res
   }
 
   try {
-    const authenticated = await authenticateAgentRequest(request);
-    const workspace = await getWorkspaceForTrustedIdentity(authenticated.identity, workspaceId);
+    const authenticated = await dependencies.authenticateAgentRequest(request);
+    const workspace = await dependencies.getWorkspaceForTrustedIdentity(authenticated.identity, workspaceId);
 
     if (workspace === null) {
       return jsonAgentError(
@@ -81,7 +105,21 @@ export const POST = async (request: Request, context: RouteContext): Promise<Res
       );
     }
 
-    await deleteWorkspaceForTrustedIdentity(authenticated.identity, workspaceId);
+    try {
+      await dependencies.deleteWorkspaceForTrustedIdentity(authenticated.identity, workspaceId);
+    } catch (error) {
+      if (error instanceof SharedWorkspaceDeletionDisabledError) {
+        return jsonAgentError(
+          403,
+          "shared_workspace_delete_disabled",
+          error.message,
+          "Only personal workspaces can be deleted right now. Shared workspace deletion will require dedicated admin roles.",
+          {},
+          [],
+        );
+      }
+      throw error;
+    }
 
     return Response.json(
       buildSuccessEnvelope(
@@ -102,3 +140,10 @@ export const POST = async (request: Request, context: RouteContext): Promise<Res
     );
   }
 };
+
+export const POST = async (request: Request, context: RouteContext): Promise<Response> =>
+  postAgentWorkspaceDeleteRouteWithDeps(
+    request,
+    context,
+    DEFAULT_AGENT_WORKSPACE_DELETE_ROUTE_DEPENDENCIES,
+  );

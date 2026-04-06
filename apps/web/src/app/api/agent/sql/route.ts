@@ -5,7 +5,11 @@
  * the stable agent envelope plus lightweight entity hints for known relations.
  */
 import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
-import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
+import {
+  authenticateAgentRequest,
+  getAgentAuthError,
+  type AgentAuthenticatedRequest,
+} from "@/server/agentApiKeyAuth";
 import { buildSuccessEnvelope } from "@/server/agentEnvelope";
 import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
 import { executeAgentSql, getAgentSqlAllowedRelations, getUserSqlExecutionMessage, isUserSqlExecutionError } from "@/server/agentSql";
@@ -44,6 +48,10 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
     return "Do not call set_config(). User and workspace context are managed by the API.";
   }
 
+  if (error.code === "function_calls_not_allowed") {
+    return "Function calls are not supported in restricted SQL. Query only the published tables and views directly.";
+  }
+
   if (error.code === "sql_comments_not_allowed") {
     return "Remove SQL comments (`--` and `/* ... */`) and retry.";
   }
@@ -59,7 +67,22 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
   return "Fix the SQL statement and retry. Use only supported relations.";
 };
 
-export const POST = async (request: Request): Promise<Response> => {
+type AgentSqlRouteDependencies = Readonly<{
+  authenticateAgentRequest: (request: Request) => Promise<AgentAuthenticatedRequest>;
+  resolveWorkspaceIdForSql: typeof resolveWorkspaceIdForSql;
+  executeAgentSql: typeof executeAgentSql;
+}>;
+
+const DEFAULT_AGENT_SQL_ROUTE_DEPENDENCIES: AgentSqlRouteDependencies = {
+  authenticateAgentRequest,
+  resolveWorkspaceIdForSql,
+  executeAgentSql,
+};
+
+export const postAgentSqlRouteWithDeps = async (
+  request: Request,
+  dependencies: AgentSqlRouteDependencies,
+): Promise<Response> => {
   let body: AgentSqlBody;
   try {
     body = await request.json() as AgentSqlBody;
@@ -87,9 +110,9 @@ export const POST = async (request: Request): Promise<Response> => {
   }
 
   try {
-    const authenticated = await authenticateAgentRequest(request);
+    const authenticated = await dependencies.authenticateAgentRequest(request);
     const headerWorkspaceId = getWorkspaceId(request);
-    const workspaceId = await resolveWorkspaceIdForSql(authenticated, headerWorkspaceId);
+    const workspaceId = await dependencies.resolveWorkspaceIdForSql(authenticated, headerWorkspaceId);
     if (workspaceId === null || workspaceId === "") {
       return jsonAgentError(
         400,
@@ -101,7 +124,7 @@ export const POST = async (request: Request): Promise<Response> => {
       );
     }
 
-    const result = await executeAgentSql(authenticated, workspaceId, sql);
+    const result = await dependencies.executeAgentSql(authenticated, workspaceId, sql);
 
     if (result === null) {
       return jsonAgentError(
@@ -160,3 +183,6 @@ export const POST = async (request: Request): Promise<Response> => {
     );
   }
 };
+
+export const POST = async (request: Request): Promise<Response> =>
+  postAgentSqlRouteWithDeps(request, DEFAULT_AGENT_SQL_ROUTE_DEPENDENCIES);

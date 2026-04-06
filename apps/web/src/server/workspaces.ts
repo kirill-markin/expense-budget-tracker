@@ -9,6 +9,25 @@ export type WorkspaceSummary = Readonly<{
   name: string;
 }>;
 
+export const SHARED_WORKSPACE_DELETE_DISABLED_MESSAGE =
+  "Shared workspace deletion is disabled until workspace admin roles are introduced";
+
+export class SharedWorkspaceDeletionDisabledError extends Error {
+  public constructor() {
+    super(SHARED_WORKSPACE_DELETE_DISABLED_MESSAGE);
+    this.name = "SharedWorkspaceDeletionDisabledError";
+  }
+}
+
+const assertPersonalWorkspaceDeletionOnly = (
+  actorUserId: string,
+  targetWorkspaceId: string,
+): void => {
+  if (targetWorkspaceId !== actorUserId) {
+    throw new SharedWorkspaceDeletionDisabledError();
+  }
+};
+
 const WORKSPACES_SQL = `SELECT w.workspace_id, w.name
   FROM workspaces w
   JOIN workspace_members wm ON wm.workspace_id = w.workspace_id
@@ -101,6 +120,7 @@ export const deleteWorkspace = async (
   workspaceId: string,
   targetWorkspaceId: string,
 ): Promise<WorkspaceSummary> => {
+  assertPersonalWorkspaceDeletionOnly(userId, targetWorkspaceId);
   const result = await queryAs(
     userId,
     workspaceId,
@@ -120,6 +140,7 @@ export const deleteWorkspaceForTrustedIdentity = async (
   identity: UserIdentity,
   targetWorkspaceId: string,
 ): Promise<WorkspaceSummary> => {
+  assertPersonalWorkspaceDeletionOnly(identity.userId, targetWorkspaceId);
   const result = await queryAsTrustedIdentity(
     identity,
     identity.userId,
