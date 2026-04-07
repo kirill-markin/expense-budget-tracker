@@ -136,7 +136,7 @@ test.describe.serial("live smoke: auth, transactions, balances, budget, and AI c
 
       await page.goto(`${baseUrl}/transactions`, { waitUntil: "domcontentloaded" });
       await ensureAllVisibilityMode(page);
-      await expect(page.locator("body")).toContainText(scenario.testAccountId);
+      await expect(page.locator("table")).toContainText(scenario.testAccountId, { timeout: externalUiTimeoutMs });
     } catch (error) {
       await attachFailureDiagnostics(page, testInfo, "transactions-balances");
       throw error;
@@ -170,7 +170,7 @@ test.describe.serial("live smoke: auth, transactions, balances, budget, and AI c
 
       await page.goto(`${baseUrl}/budget`, { waitUntil: "domcontentloaded" });
       await ensureAllVisibilityMode(page);
-      await expect(page.locator("body")).toContainText(scenario.testCategory);
+      await expect(page.locator("table")).toContainText(scenario.testCategory, { timeout: externalUiTimeoutMs });
     } catch (error) {
       await attachFailureDiagnostics(page, testInfo, "budget-grid");
       throw error;

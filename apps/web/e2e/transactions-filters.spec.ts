@@ -106,11 +106,11 @@ test("transactions filters work in deployed app with authenticated workspace dat
     await page.goto(`${baseURL}/transactions`, { waitUntil: "domcontentloaded" });
     await ensureAllVisibilityMode(page);
     await expect(page.getByRole("heading", { name: "Transactions", exact: true })).toBeVisible({ timeout: externalUiTimeoutMs });
-    await expect(page.locator("body")).toContainText(accountUsd);
-    await expect(page.locator("body")).toContainText(`usd-groceries-${runId}`);
-    await expect(page.locator("body")).toContainText(`eur-transport-${runId}`);
-    await expect(page.locator("body")).toContainText(`usd-income-${runId}`);
-    await expect(page.locator("body")).toContainText(`gbp-transfer-${runId}`);
+    await expect(page.locator("table")).toContainText(accountUsd, { timeout: externalUiTimeoutMs });
+    await expect(page.locator("table")).toContainText(`usd-groceries-${runId}`, { timeout: externalUiTimeoutMs });
+    await expect(page.locator("table")).toContainText(`eur-transport-${runId}`, { timeout: externalUiTimeoutMs });
+    await expect(page.locator("table")).toContainText(`usd-income-${runId}`, { timeout: externalUiTimeoutMs });
+    await expect(page.locator("table")).toContainText(`gbp-transfer-${runId}`, { timeout: externalUiTimeoutMs });
 
     const initialCount = await readCountLabel(page);
     expect(initialCount.total).toBeGreaterThanOrEqual(4);
