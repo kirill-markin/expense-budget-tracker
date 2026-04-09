@@ -26,7 +26,7 @@ test("getWorkspaceBootstrapRouteWithDeps sets workspace cookie and redirects to 
   );
 
   assert.equal(response.status, 307);
-  assert.equal(response.headers.get("location"), "http://localhost/balances?month=2026-04");
+  assert.equal(response.headers.get("location"), "/balances?month=2026-04");
   const setCookie = response.headers.get("set-cookie") ?? "";
   assert.match(setCookie, /workspace=workspace-1/);
 });
@@ -45,5 +45,5 @@ test("getWorkspaceBootstrapRouteWithDeps falls back to root for invalid returnTo
   );
 
   assert.equal(response.status, 307);
-  assert.equal(response.headers.get("location"), "http://localhost/");
+  assert.equal(response.headers.get("location"), "/");
 });

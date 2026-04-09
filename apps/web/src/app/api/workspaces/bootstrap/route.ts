@@ -14,6 +14,14 @@ const DEFAULT_BOOTSTRAP_ROUTE_DEPENDENCIES: BootstrapRouteDependencies = {
   resolveWorkspaceForIdentity: resolveWorkspaceForCurrentRequestIdentity,
 };
 
+const createSameOriginRedirectResponse = (location: string): NextResponse => {
+  // Route handlers may observe an internal container URL behind proxies/load balancers.
+  // A path-only Location header keeps this redirect on the current public origin.
+  const response = new NextResponse(null, { status: 307 });
+  response.headers.set("location", location);
+  return response;
+};
+
 const sanitizeReturnTo = (rawValue: string | null): string => {
   if (rawValue === null || rawValue === "" || !rawValue.startsWith("/") || rawValue.startsWith("//")) {
     return "/";
@@ -32,7 +40,7 @@ export const getWorkspaceBootstrapRouteWithDeps = async (
   const identity = buildRequestIdentity(request.headers);
   const workspace = await dependencies.resolveWorkspaceForIdentity(identity, requestedWorkspaceId);
 
-  const response = NextResponse.redirect(new URL(returnTo, request.url));
+  const response = createSameOriginRedirectResponse(returnTo);
   response.cookies.set({
     name: WORKSPACE_COOKIE_NAME,
     value: workspace.workspaceId,
