@@ -10,6 +10,7 @@ import {
   buildSuccessEnvelope,
 } from "@expense-budget-tracker/agent-shared";
 import { MAX_SQL_ROWS, SQL_STATEMENT_TIMEOUT_MS, SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import { resolveOrCreateWorkspaceForTrustedIdentity } from "../db.js";
 import { buildDiscoveryEnvelope, readJsonBody } from "./request.js";
 import { buildRetryableErrorResponse, json } from "./responses.js";
 import { ALLOWED_RELATION_NAMES, loadAllowedSchema } from "./schemaService.js";
@@ -29,12 +30,15 @@ export const handleOpenApiRoute = (
 
 export const handleMeRoute = async (
   context: MachineRouteContext,
+): Promise<APIGatewayProxyResult> =>
+  handleMeRouteWithResolver(context, resolveOrCreateWorkspaceForTrustedIdentity);
+
+export const handleMeRouteWithResolver = async (
+  context: MachineRouteContext,
+  resolveWorkspace: typeof resolveOrCreateWorkspaceForTrustedIdentity,
 ): Promise<APIGatewayProxyResult> => {
   try {
-    await context.dependencies.ensureTrustedIdentityProvisioned(
-      context.authenticated.identity,
-      context.authenticated.identity.userId,
-    );
+    await resolveWorkspace(context.authenticated.identity);
 
     return json(
       200,
@@ -44,7 +48,6 @@ export const handleMeRoute = async (
             userId: context.authenticated.identity.userId,
             email: context.authenticated.identity.email,
           },
-          defaultWorkspaceId: context.authenticated.identity.userId,
           connection: {
             connectionId: context.authenticated.connectionId,
             label: context.authenticated.label,
@@ -283,10 +286,10 @@ export const handleSqlRoute = async (
   if (workspaceId === null || workspaceId === "") {
     return json(
       400,
-      buildErrorEnvelope(
+        buildErrorEnvelope(
         { field: "X-Workspace-Id", expected: "workspaceId string" },
         [],
-        "Send X-Workspace-Id, or call /workspaces/{workspaceId}/select once to save a default workspace for this API key.",
+        "Send X-Workspace-Id, or call /workspaces/{workspaceId}/select once to save the active workspace for this API key.",
         "missing_workspace_id",
         "Workspace ID is required",
       ),

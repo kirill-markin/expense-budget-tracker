@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import Link from "next/link";
+import { redirect, unstable_rethrow } from "next/navigation";
 
 import { readChatCookies } from "@/lib/chatCookies";
 import { isDemoMode } from "@/lib/demoMode";
@@ -9,10 +10,12 @@ import { getLocaleCookie } from "@/lib/localeCookie";
 import { NAV_LINKS } from "@/lib/navigation";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import { t } from "@/i18n/serverT";
+import { buildRequestIdentity } from "@/server/db/requestIdentity";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/workspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { getUserSettings } from "@/server/userSettings";
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
+import { resolveWorkspaceForCurrentRequestIdentity } from "@/server/workspaceBootstrap";
 import { AccountMenu } from "@/ui/AccountMenu";
 import { ChatLayoutProvider } from "@/ui/chat/ChatLayoutProvider";
 import { ChatLayoutShell } from "@/ui/chat/ChatLayoutShell";
@@ -49,13 +52,17 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       const headersList = await headers();
       const userId = extractUserIdFromHeaders(headersList);
       const workspaceId = extractWorkspaceIdFromHeaders(headersList);
-      let currencyWorkspaceId = workspaceId;
-      try {
-        reportingCurrency = await getReportCurrency(userId, currencyWorkspaceId);
-      } catch {
-        currencyWorkspaceId = userId;
-        reportingCurrency = await getReportCurrency(userId, currencyWorkspaceId);
+      if (authEnabled) {
+        const resolvedWorkspace = await resolveWorkspaceForCurrentRequestIdentity(
+          buildRequestIdentity(headersList),
+          workspaceId,
+        );
+        if (resolvedWorkspace.workspaceId !== workspaceId) {
+          const returnTo = headersList.get("x-request-path") ?? "/";
+          redirect(`/api/workspaces/bootstrap?returnTo=${encodeURIComponent(returnTo)}`);
+        }
       }
+      reportingCurrency = await getReportCurrency(userId, workspaceId);
       currentWorkspaceId = workspaceId;
       if (authEnabled) {
         workspaces = await listWorkspaces(userId, workspaceId);
@@ -66,6 +73,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       numberFormat = userSettings.numberFormat;
       dateFormat = userSettings.dateFormat;
     } catch (err) {
+      unstable_rethrow(err);
       console.error("Layout DB unavailable, using defaults: %s", err instanceof Error ? err.message : String(err));
       locale = await getLocaleCookie();
     }

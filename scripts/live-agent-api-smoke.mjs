@@ -301,9 +301,11 @@ async function verifyAuthenticatedEndpoints(apiKey) {
 
   const mePayload = await requestJson("GET", `${apiBaseUrl}/me`, headers, null, 200, "me_authorized", true);
   expectEnvelope(mePayload, "me_authorized");
+  assertCondition(typeof mePayload.data.user?.userId === "string" && mePayload.data.user.userId !== "", "me_authorized: missing userId");
   assertCondition(mePayload.data.user?.email === reviewEmail, "me_authorized: email mismatch");
+  assertCondition(typeof mePayload.data.connection?.connectionId === "string" && mePayload.data.connection.connectionId !== "", "me_authorized: missing connectionId");
   assertCondition(mePayload.data.connection?.label === connectionLabel, "me_authorized: connection label mismatch");
-  assertCondition(typeof mePayload.data.defaultWorkspaceId === "string" && mePayload.data.defaultWorkspaceId !== "", "me_authorized: missing defaultWorkspaceId");
+  assertCondition(!("defaultWorkspaceId" in mePayload.data), "me_authorized: defaultWorkspaceId should be omitted");
 
   const workspacesPayload = await requestJson("GET", `${apiBaseUrl}/workspaces`, headers, null, 200, "workspaces_list", true);
   expectEnvelope(workspacesPayload, "workspaces_list");

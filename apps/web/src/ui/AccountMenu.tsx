@@ -117,7 +117,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
       }
 
       const data = await response.json() as { workspaceId: string };
-      document.cookie = `workspace=${data.workspaceId};path=/;max-age=31536000;samesite=lax`;
+      document.cookie = `workspace=${data.workspaceId};path=/;max-age=31536000;samesite=lax;secure`;
       window.location.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

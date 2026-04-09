@@ -8,8 +8,9 @@
  *                     redirected to the auth service (auth.*) for login.
  *                     Expired tokens are refreshed inline (no GET redirect).
  *
- * The resolved userId is forwarded as x-user-id and x-workspace-id headers to all
- * downstream route handlers. /api/live and /api/health are always exempt from auth.
+ * The resolved userId is forwarded as x-user-id and, once established, the
+ * active workspace is forwarded as x-workspace-id to downstream route
+ * handlers. /api/live and /api/health are always exempt from auth.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { JwtExpiredError } from "aws-jwt-verify/error";
@@ -19,6 +20,7 @@ import { log } from "@/server/logger";
 import { clearAuthCookies } from "@/server/cookies";
 import { LOCAL_USER_EMAIL } from "@/server/users";
 import { getConfiguredAuthMode, type AuthMode } from "@/server/authMode";
+import { ACTIVE_WORKSPACE_RELOAD_MESSAGE } from "@/server/workspaceErrors";
 
 const LOCAL_USER_ID = "local";
 const LOCAL_WORKSPACE_ID = "local";
@@ -26,10 +28,12 @@ const USER_ID_HEADER = "x-user-id";
 const WORKSPACE_ID_HEADER = "x-workspace-id";
 const USER_EMAIL_HEADER = "x-user-email";
 const USER_EMAIL_VERIFIED_HEADER = "x-user-email-verified";
+const REQUEST_PATH_HEADER = "x-request-path";
 const CSRF_COOKIE_NAME = "__Host-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const WORKSPACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CSRF_TOKEN_RE = /^[0-9a-f]{64}$/;
+const WORKSPACE_BOOTSTRAP_PATH = "/api/workspaces/bootstrap";
 
 const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/auth/logout",
@@ -191,15 +195,20 @@ const verifyAndExtractIdentity = async (jwt: string): Promise<VerifiedIdentity> 
 const forwardWithIdentity = (
   request: NextRequest,
   identity: VerifiedIdentity,
-  workspaceId: string,
+  workspaceId: string | null,
   nonce: string,
 ): NextResponse => {
   const csp = buildCsp(nonce);
   const headers = new Headers(request.headers);
   headers.set(USER_ID_HEADER, identity.userId);
-  headers.set(WORKSPACE_ID_HEADER, workspaceId);
+  if (workspaceId === null) {
+    headers.delete(WORKSPACE_ID_HEADER);
+  } else {
+    headers.set(WORKSPACE_ID_HEADER, workspaceId);
+  }
   headers.set(USER_EMAIL_HEADER, identity.email);
   headers.set(USER_EMAIL_VERIFIED_HEADER, identity.emailVerified ? "true" : "false");
+  headers.set(REQUEST_PATH_HEADER, request.nextUrl.pathname + request.nextUrl.search);
   headers.set("x-nonce", nonce);
   headers.set("Content-Security-Policy", csp);
   const response = NextResponse.next({ request: { headers } });
@@ -211,13 +220,19 @@ const forwardWithIdentity = (
 const isPublicPath = (pathname: string): boolean =>
   PUBLIC_PATHS.includes(pathname);
 
-export const resolveWorkspaceIdFromCookie = (workspaceCookie: string | undefined, userId: string): string =>
+export const resolveWorkspaceIdFromCookie = (workspaceCookie: string | undefined): string | null =>
   (workspaceCookie !== undefined && workspaceCookie !== "" && WORKSPACE_ID_RE.test(workspaceCookie))
     ? workspaceCookie
-    : userId;
+    : null;
 
-const resolveWorkspaceId = (request: NextRequest, userId: string): string =>
-  resolveWorkspaceIdFromCookie(request.cookies.get("workspace")?.value, userId);
+const resolveWorkspaceId = (request: NextRequest): string | null =>
+  resolveWorkspaceIdFromCookie(request.cookies.get("workspace")?.value);
+
+const buildWorkspaceBootstrapUrl = (request: NextRequest): URL => {
+  const url = new URL(WORKSPACE_BOOTSTRAP_PATH, request.url);
+  url.searchParams.set("returnTo", request.nextUrl.pathname + request.nextUrl.search);
+  return url;
+};
 
 const buildCookieHeader = (name: string, value: string, maxAge: number): string => {
   const cookieDomain = process.env.COOKIE_DOMAIN ?? "";
@@ -243,6 +258,21 @@ const redirectToAuth = (request: NextRequest, nonce: string): NextResponse => {
   const redirectUrl = buildAuthRedirectUrl(request);
   const response = NextResponse.redirect(redirectUrl);
   clearAuthCookies(response.headers);
+  addSecurityHeaders(response, nonce);
+  return response;
+};
+
+const handleMissingWorkspaceCookie = (
+  request: NextRequest,
+  nonce: string,
+): NextResponse => {
+  if (request.method === "GET" || request.method === "HEAD") {
+    const response = NextResponse.redirect(buildWorkspaceBootstrapUrl(request));
+    addSecurityHeaders(response, nonce);
+    return response;
+  }
+
+  const response = new NextResponse(ACTIVE_WORKSPACE_RELOAD_MESSAGE, { status: 409 });
   addSecurityHeaders(response, nonce);
   return response;
 };
@@ -331,7 +361,23 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
         return redirectToAuth(request, nonce);
       }
 
-      const workspaceId = resolveWorkspaceId(request, refreshedIdentity.userId);
+      if (pathname === WORKSPACE_BOOTSTRAP_PATH) {
+        const response = forwardWithIdentity(request, refreshedIdentity, null, nonce);
+        response.headers.append("Set-Cookie", buildCookieHeader("session", tokens.idToken, 3024000));
+        if (tokens.refreshToken !== undefined) {
+          response.headers.append("Set-Cookie", buildCookieHeader("refresh", tokens.refreshToken, 3024000));
+        }
+        const cookieDomain = process.env.COOKIE_DOMAIN ?? "";
+        const domainAttr = cookieDomain !== "" ? `; Domain=${cookieDomain}` : "";
+        response.headers.append("Set-Cookie", `logged_in=1; Path=/; Max-Age=3024000; Secure; SameSite=Lax${domainAttr}`);
+        return response;
+      }
+
+      const workspaceId = resolveWorkspaceId(request);
+      if (workspaceId === null) {
+        return handleMissingWorkspaceCookie(request, nonce);
+      }
+
       const response = forwardWithIdentity(request, refreshedIdentity, workspaceId, nonce);
       response.headers.append("Set-Cookie", buildCookieHeader("session", tokens.idToken, 3024000));
       if (tokens.refreshToken !== undefined) {
@@ -344,15 +390,21 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
       return response;
     }
 
-    // Token invalid — clear cookies and redirect to auth service
+  // Token invalid — clear cookies and redirect to auth service
     const message = err instanceof Error ? err.message : String(err);
     log({ domain: "auth", action: "proxy_auth_error", error: message });
     return redirectToAuth(request, nonce);
   }
 
-  // Workspace cookie is set client-side. RLS enforces workspace membership
-  // at the database level — setting this to a foreign workspace gives no access.
-  const workspaceId = resolveWorkspaceId(request, identity.userId);
+  if (pathname === WORKSPACE_BOOTSTRAP_PATH) {
+    return forwardWithIdentity(request, identity, null, nonce);
+  }
+
+  const workspaceId = resolveWorkspaceId(request);
+  if (workspaceId === null) {
+    return handleMissingWorkspaceCookie(request, nonce);
+  }
+
   return forwardWithIdentity(request, identity, workspaceId, nonce);
 };
 

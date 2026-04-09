@@ -1,4 +1,4 @@
-import type { UserIdentity } from "../db.js";
+import { resolveOrCreateWorkspaceForTrustedIdentity, type UserIdentity } from "../db.js";
 import type { AuthenticatedContext, MachineApiDependencies, WorkspaceSummary } from "./types.js";
 
 const WORKSPACES_SQL = `SELECT w.workspace_id, w.name
@@ -31,7 +31,8 @@ export const listWorkspaces = async (
   dependencies: MachineApiDependencies,
   identity: UserIdentity,
 ): Promise<ReadonlyArray<WorkspaceSummary>> => {
-  const result = await dependencies.queryAsTrustedIdentity(identity, identity.userId, WORKSPACES_SQL, [identity.userId]);
+  const contextWorkspace = await resolveOrCreateWorkspaceForTrustedIdentity(identity);
+  const result = await dependencies.queryAsTrustedIdentity(identity, contextWorkspace.workspaceId, WORKSPACES_SQL, [identity.userId]);
   return mapWorkspaceRows(result.rows);
 };
 
@@ -40,9 +41,10 @@ export const createWorkspace = async (
   identity: UserIdentity,
   name: string,
 ): Promise<WorkspaceSummary> => {
+  const contextWorkspace = await resolveOrCreateWorkspaceForTrustedIdentity(identity);
   const result = await dependencies.queryAsTrustedIdentity(
     identity,
-    identity.userId,
+    contextWorkspace.workspaceId,
     "SELECT workspace_id, name FROM create_workspace_for_current_user($1)",
     [name],
   );
@@ -63,9 +65,10 @@ export const getWorkspace = async (
   identity: UserIdentity,
   workspaceId: string,
 ): Promise<WorkspaceSummary | null> => {
+  const contextWorkspace = await resolveOrCreateWorkspaceForTrustedIdentity(identity);
   const result = await dependencies.queryAsTrustedIdentity(
     identity,
-    identity.userId,
+    contextWorkspace.workspaceId,
     `SELECT w.workspace_id, w.name
      FROM workspaces w
      JOIN workspace_members wm ON wm.workspace_id = w.workspace_id
@@ -90,9 +93,10 @@ export const persistSelectedWorkspace = async (
   authenticated: AuthenticatedContext,
   workspaceId: string,
 ): Promise<void> => {
+  const contextWorkspace = await resolveOrCreateWorkspaceForTrustedIdentity(authenticated.identity);
   const result = await dependencies.queryAsTrustedIdentity(
     authenticated.identity,
-    authenticated.identity.userId,
+    contextWorkspace.workspaceId,
     AGENT_CONNECTION_UPDATE_SQL,
     [workspaceId, authenticated.connectionId, authenticated.identity.userId],
   );
@@ -106,9 +110,10 @@ const getSelectedWorkspace = async (
   dependencies: MachineApiDependencies,
   authenticated: AuthenticatedContext,
 ): Promise<string | null> => {
+  const contextWorkspace = await resolveOrCreateWorkspaceForTrustedIdentity(authenticated.identity);
   const result = await dependencies.queryAsTrustedIdentity(
     authenticated.identity,
-    authenticated.identity.userId,
+    contextWorkspace.workspaceId,
     AGENT_CONNECTION_SELECT_SQL,
     [authenticated.connectionId, authenticated.identity.userId],
   );

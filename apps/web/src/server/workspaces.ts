@@ -3,6 +3,7 @@
  */
 import { queryAs, queryAsTrustedIdentity } from "@/server/db";
 import { type UserIdentity } from "@/server/users";
+import { resolveWorkspaceForIdentity } from "@/server/workspaceBootstrap";
 
 export type WorkspaceSummary = Readonly<{
   workspaceId: string;
@@ -95,7 +96,8 @@ export const listWorkspaces = async (
 export const listWorkspacesForTrustedIdentity = async (
   identity: UserIdentity,
 ): Promise<ReadonlyArray<WorkspaceSummary>> => {
-  const result = await queryAsTrustedIdentity(identity, identity.userId, WORKSPACES_SQL, [identity.userId]);
+  const contextWorkspace = await resolveWorkspaceForIdentity(identity, "", "en", null);
+  const result = await queryAsTrustedIdentity(identity, contextWorkspace.workspaceId, WORKSPACES_SQL, [identity.userId]);
   return mapWorkspaceRows(result.rows);
 };
 
@@ -134,9 +136,10 @@ export const createWorkspaceForTrustedIdentity = async (
   identity: UserIdentity,
   name: string,
 ): Promise<WorkspaceSummary> => {
+  const contextWorkspace = await resolveWorkspaceForIdentity(identity, "", "en", null);
   const result = await queryAsTrustedIdentity(
     identity,
-    identity.userId,
+    contextWorkspace.workspaceId,
     "SELECT workspace_id, name FROM create_workspace_for_current_user($1)",
     [name],
   );
@@ -163,10 +166,11 @@ export const deleteWorkspaceForTrustedIdentity = async (
   identity: UserIdentity,
   targetWorkspaceId: string,
 ): Promise<WorkspaceSummary> => {
+  const contextWorkspace = await resolveWorkspaceForIdentity(identity, "", "en", null);
   return executeDeleteWorkspaceQuery(() =>
     queryAsTrustedIdentity(
       identity,
-      identity.userId,
+      contextWorkspace.workspaceId,
       "SELECT workspace_id, name FROM delete_workspace_for_current_user($1)",
       [targetWorkspaceId],
     ),
@@ -177,9 +181,10 @@ export const getWorkspaceForTrustedIdentity = async (
   identity: UserIdentity,
   workspaceId: string,
 ): Promise<WorkspaceSummary | null> => {
+  const contextWorkspace = await resolveWorkspaceForIdentity(identity, "", "en", null);
   const result = await queryAsTrustedIdentity(
     identity,
-    identity.userId,
+    contextWorkspace.workspaceId,
     `SELECT w.workspace_id, w.name
      FROM workspaces w
      JOIN workspace_members wm ON wm.workspace_id = w.workspace_id

@@ -25,7 +25,8 @@ export const POST = async (request: Request): Promise<Response> =>
     async (): Promise<Response> => {
       const body = parseCreateWorkspaceBody(await parseJsonBody(request, z.unknown()));
       const userId = extractUserId(request);
-      const workspace = await createWorkspaceForCurrentUserWithTimezone(userId, userId, body.name, body.timezone);
+      const workspaceId = extractWorkspaceId(request);
+      const workspace = await createWorkspaceForCurrentUserWithTimezone(userId, workspaceId, body.name, body.timezone);
       return Response.json({ workspaceId: workspace.workspaceId, name: workspace.name });
     },
   );

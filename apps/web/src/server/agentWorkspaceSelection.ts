@@ -3,6 +3,7 @@
  */
 import { queryAsTrustedIdentity } from "@/server/db";
 import { type AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
+import { resolveWorkspaceForIdentity } from "@/server/workspaceBootstrap";
 import { listWorkspacesForTrustedIdentity } from "@/server/workspaces";
 
 const SELECT_SAVED_WORKSPACE_SQL = `SELECT selected_workspace_id
@@ -21,9 +22,10 @@ const UPDATE_SAVED_WORKSPACE_SQL = `UPDATE auth.agent_api_keys
 export const loadSavedWorkspaceId = async (
   authenticated: AgentAuthenticatedRequest,
 ): Promise<string | null> => {
+  const contextWorkspace = await resolveWorkspaceForIdentity(authenticated.identity, "", "en", null);
   const result = await queryAsTrustedIdentity(
     authenticated.identity,
-    authenticated.identity.userId,
+    contextWorkspace.workspaceId,
     SELECT_SAVED_WORKSPACE_SQL,
     [authenticated.connectionId, authenticated.identity.userId],
   );
@@ -40,9 +42,10 @@ export const saveWorkspaceId = async (
   authenticated: AgentAuthenticatedRequest,
   workspaceId: string,
 ): Promise<void> => {
+  const contextWorkspace = await resolveWorkspaceForIdentity(authenticated.identity, "", "en", null);
   const result = await queryAsTrustedIdentity(
     authenticated.identity,
-    authenticated.identity.userId,
+    contextWorkspace.workspaceId,
     UPDATE_SAVED_WORKSPACE_SQL,
     [workspaceId, authenticated.connectionId, authenticated.identity.userId],
   );

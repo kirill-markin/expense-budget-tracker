@@ -6,6 +6,7 @@
  */
 import { ApiRouteError, toErrorResponse } from "@/server/api/errors";
 import { log } from "@/server/logger";
+import { ACTIVE_WORKSPACE_RELOAD_MESSAGE, WorkspaceAccessError } from "@/server/workspaceErrors";
 
 type RouteContext = Readonly<{
   route: string;
@@ -26,6 +27,10 @@ export const handleRoute = async (
   } catch (error) {
     if (error instanceof ApiRouteError) {
       return toErrorResponse(error);
+    }
+
+    if (error instanceof WorkspaceAccessError) {
+      return new Response(ACTIVE_WORKSPACE_RELOAD_MESSAGE, { status: 409 });
     }
 
     const message = error instanceof Error ? error.message : String(error);

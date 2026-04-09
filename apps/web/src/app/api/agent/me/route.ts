@@ -1,18 +1,31 @@
 /**
  * Agent setup entrypoint.
  *
- * Authenticates ApiKey requests, provisions the personal workspace if needed,
- * and returns the current account context in the stable agent envelope.
+ * Authenticates ApiKey requests, ensures at least one workspace exists, and
+ * returns the current account context in the stable agent envelope.
  */
 import { buildListWorkspacesAction, buildSchemaAction, buildSelectWorkspaceAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
-import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
-import { ensureTrustedIdentityProvisioned } from "@/server/db";
+import { authenticateAgentRequest, getAgentAuthError, type AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
 import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agentResponses";
+import { resolveWorkspaceForIdentity } from "@/server/workspaceBootstrap";
 
-export const GET = async (request: Request): Promise<Response> => {
+type AgentMeRouteDependencies = Readonly<{
+  authenticateAgentRequest: (request: Request) => Promise<AgentAuthenticatedRequest>;
+  resolveWorkspaceForIdentity: typeof resolveWorkspaceForIdentity;
+}>;
+
+const DEFAULT_AGENT_ME_ROUTE_DEPENDENCIES: AgentMeRouteDependencies = {
+  authenticateAgentRequest,
+  resolveWorkspaceForIdentity,
+};
+
+export const getAgentMeRouteWithDeps = async (
+  request: Request,
+  dependencies: AgentMeRouteDependencies,
+): Promise<Response> => {
   try {
-    const authenticated = await authenticateAgentRequest(request);
-    await ensureTrustedIdentityProvisioned(authenticated.identity, authenticated.identity.userId);
+    const authenticated = await dependencies.authenticateAgentRequest(request);
+    await dependencies.resolveWorkspaceForIdentity(authenticated.identity, "", "en", null);
 
     return Response.json(
       buildSuccessEnvelope(
@@ -21,7 +34,6 @@ export const GET = async (request: Request): Promise<Response> => {
             userId: authenticated.identity.userId,
             email: authenticated.identity.email,
           },
-          defaultWorkspaceId: authenticated.identity.userId,
           connection: {
             connectionId: authenticated.connectionId,
             label: authenticated.label,
@@ -29,7 +41,7 @@ export const GET = async (request: Request): Promise<Response> => {
           },
         },
         [buildListWorkspacesAction(), buildSelectWorkspaceAction(), buildSchemaAction()],
-        "The default personal workspace uses the same ID as the user account. Call list_workspaces, select one workspace for this API key, then run SQL. Use /api/agent/schema to inspect available columns and any agent hints about constraints or write semantics.",
+        "Call list_workspaces next, select one workspace for this API key, then run SQL. Use /api/agent/schema to inspect available columns and any agent hints about constraints or write semantics.",
       ),
     );
   } catch (error) {
@@ -44,3 +56,6 @@ export const GET = async (request: Request): Promise<Response> => {
     );
   }
 };
+
+export const GET = async (request: Request): Promise<Response> =>
+  getAgentMeRouteWithDeps(request, DEFAULT_AGENT_ME_ROUTE_DEPENDENCIES);

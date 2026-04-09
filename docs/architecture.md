@@ -167,7 +167,7 @@ Conversion to the reporting currency uses a two-layer FX model:
 Zero built-in auth logic. Two modes controlled by `AUTH_MODE` env var:
 
 - `none` (default) — no authentication. App binds to `127.0.0.1`, userId is hardcoded to `"local"`, workspaceId is `"local"`. All data belongs to this single workspace.
-- `cognito` — passwordless Email OTP via Cognito (Essentials tier, USER_AUTH + EMAIL_OTP). Auth is handled by a standalone Hono service on `auth.*`. IdToken is stored in `session` cookie (Domain=baseDomain), verified by `CognitoJwtVerifier` in the web app. Extracts `sub` claim as userId. workspaceId defaults to userId (each user has a default workspace matching their user ID). Redirects to `auth.*/login` if the cookie is missing or invalid. Open registration: anyone can sign up via Cognito — each user gets an isolated workspace via RLS.
+- `cognito` — passwordless Email OTP via Cognito (Essentials tier, USER_AUTH + EMAIL_OTP). Auth is handled by a standalone Hono service on `auth.*`. IdToken is stored in `session` cookie (Domain=baseDomain), verified by `CognitoJwtVerifier` in the web app. Extracts `sub` claim as userId. The browser keeps the active workspace in a `workspace` cookie; if it is missing or stale, the app resolves the newest accessible workspace or creates the first one automatically. Redirects to `auth.*/login` if the session cookie is missing or invalid. Open registration: anyone can sign up via Cognito — each user gets a first regular workspace plus workspace-scoped isolation via RLS.
 
 Details in `apps/web/src/proxy.ts`.
 

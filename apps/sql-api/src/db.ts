@@ -34,6 +34,18 @@ export const query = async (text: string, params: ReadonlyArray<unknown>): Promi
   (await getPool()).query(text, params as Array<unknown>);
 
 type QueryFn = (text: string, params: ReadonlyArray<unknown>) => Promise<pg.QueryResult>;
+type ResolvedWorkspaceRow = Readonly<{
+  workspace_id: string;
+  name: string;
+  created: boolean;
+}>;
+type ResolvedWorkspace = Readonly<{
+  workspaceId: string;
+  created: boolean;
+}>;
+const DEFAULT_USER_LOCALE = "en";
+const DEFAULT_FIRST_WORKSPACE_NAME = "My Workspace";
+const DEFAULT_WORKSPACE_TIMEZONE = "UTC";
 
 /**
  * Execute user-provided SQL in a transaction with RLS context and a restricted role.
@@ -70,8 +82,6 @@ export const withTransaction = async <T>(
   }
 };
 
-const DEFAULT_USER_LOCALE = "en";
-
 const upsertUserIdentity = async (
   client: pg.PoolClient,
   identity: UserIdentity,
@@ -101,6 +111,44 @@ const upsertUserIdentity = async (
   );
 };
 
+export const resolveOrCreateWorkspaceForTrustedIdentity = async (
+  identity: UserIdentity,
+): Promise<ResolvedWorkspace> => {
+  const client = await (await getPool()).connect();
+
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [identity.userId]);
+    await upsertUserIdentity(client, identity);
+
+    const workspaceResult = await client.query(
+      "SELECT workspace_id, name, created FROM ensure_current_user_has_workspace($1, $2)",
+      [DEFAULT_FIRST_WORKSPACE_NAME, DEFAULT_WORKSPACE_TIMEZONE],
+    );
+
+    if (workspaceResult.rows.length !== 1) {
+      throw new Error(`ensure_current_user_has_workspace returned ${workspaceResult.rows.length} rows`);
+    }
+
+    await client.query(
+      "INSERT INTO user_settings (user_id, locale) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
+      [identity.userId, DEFAULT_USER_LOCALE],
+    );
+
+    await client.query("COMMIT");
+    const row = workspaceResult.rows[0] as ResolvedWorkspaceRow;
+    return {
+      workspaceId: row.workspace_id,
+      created: row.created,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 export const ensureTrustedIdentityProvisioned = async (
   identity: UserIdentity,
   workspaceId: string,
@@ -119,10 +167,7 @@ export const ensureTrustedIdentityProvisioned = async (
     );
 
     if (membershipResult.rows.length === 0) {
-      if (workspaceId !== identity.userId) {
-        throw new Error(`User ${identity.userId} is not a member of workspace ${workspaceId}`);
-      }
-      await client.query("SELECT provision_personal_workspace_for_current_user()", []);
+      throw new Error(`User ${identity.userId} is not a member of workspace ${workspaceId}`);
     }
 
     await client.query(

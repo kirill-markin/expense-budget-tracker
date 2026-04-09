@@ -22,10 +22,36 @@ export type AgentConnectionResult = Readonly<{
   apiKey: string;
 }>;
 
-export const createAgentConnection = async (
+type QueryResultRow = Readonly<Record<string, unknown>>;
+type QueryResultLike = Readonly<{
+  rows: ReadonlyArray<QueryResultRow>;
+}>;
+type QueryFn = (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResultLike>;
+type TransactionRunner = <T>(callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
+
+const DEFAULT_FIRST_WORKSPACE_NAME = "My Workspace";
+const DEFAULT_WORKSPACE_TIMEZONE = "UTC";
+
+const readSelectedWorkspaceId = (rows: ReadonlyArray<QueryResultRow>): string | null => {
+  if (rows.length !== 1) {
+    throw new Error(`resolve_login_workspace_id: expected 1 row, got ${rows.length}`);
+  }
+
+  const workspaceId = rows[0]?.["workspace_id"];
+  if (workspaceId === null) {
+    return null;
+  }
+  if (typeof workspaceId !== "string") {
+    throw new Error("resolve_login_workspace_id: workspace_id must be string or null");
+  }
+  return workspaceId;
+};
+
+export const createAgentConnectionWithTransaction = async (
   userId: string,
   email: string,
   label: string,
+  runInTransaction: TransactionRunner,
 ): Promise<AgentConnectionResult> => {
   const trimmedLabel = label.trim();
   if (trimmedLabel === "" || trimmedLabel.length > 200) {
@@ -37,15 +63,13 @@ export const createAgentConnection = async (
   const keyHash = hashSecret(secret);
   const apiKey = `${KEY_PREFIX}_${keyId}_${secret}`;
 
-  return withTransaction(async (queryFn) => {
+  return runInTransaction(async (queryFn) => {
     await queryFn("SELECT auth.sync_authenticated_user($1, $2)", [userId, email]);
     const workspaceResult = await queryFn(
-      "SELECT auth.get_single_workspace_id($1) AS workspace_id",
-      [userId],
+      "SELECT auth.resolve_login_workspace_id($1, $2, $3) AS workspace_id",
+      [userId, DEFAULT_FIRST_WORKSPACE_NAME, DEFAULT_WORKSPACE_TIMEZONE],
     );
-    const selectedWorkspaceId = workspaceResult.rows.length === 1
-      ? ((workspaceResult.rows[0] as { workspace_id: string | null }).workspace_id)
-      : null;
+    const selectedWorkspaceId = readSelectedWorkspaceId(workspaceResult.rows);
 
     const result = await queryFn(
       `INSERT INTO auth.agent_api_keys (user_id, label, key_id, key_hash, selected_workspace_id)
@@ -58,12 +82,24 @@ export const createAgentConnection = async (
       throw new Error(`createAgentConnection: expected 1 row, got ${result.rows.length}`);
     }
 
-    const row = result.rows[0] as { connection_id: string; created_at: string };
+    const connectionId = result.rows[0]?.["connection_id"];
+    const createdAt = result.rows[0]?.["created_at"];
+    if (typeof connectionId !== "string" || typeof createdAt !== "string") {
+      throw new Error("createAgentConnection: expected string connection_id and created_at");
+    }
+
     return {
-      connectionId: row.connection_id,
-      createdAt: row.created_at,
+      connectionId,
+      createdAt,
       label: trimmedLabel,
       apiKey,
     };
   });
 };
+
+export const createAgentConnection = async (
+  userId: string,
+  email: string,
+  label: string,
+): Promise<AgentConnectionResult> =>
+  createAgentConnectionWithTransaction(userId, email, label, withTransaction);

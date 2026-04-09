@@ -8,6 +8,7 @@ import { getAgentSchemaHints, type AgentSchemaHints } from "@expense-budget-trac
 import { getAllowedRelationNames, type AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { queryAsTrustedIdentity } from "@/server/db";
 import { type UserIdentity } from "@/server/users";
+import { resolveWorkspaceForIdentity } from "@/server/workspaceBootstrap";
 
 type SchemaColumnRow = Readonly<{
   table_name: string;
@@ -36,9 +37,10 @@ const ALLOWED_RELATIONS = getAllowedRelationNames();
 export const getAllowedSchemaRelations = async (
   identity: UserIdentity,
 ): Promise<ReadonlyArray<SchemaRelation>> => {
+  const contextWorkspace = await resolveWorkspaceForIdentity(identity, "", "en", null);
   const result = await queryAsTrustedIdentity(
     identity,
-    identity.userId,
+    contextWorkspace.workspaceId,
     `SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default
      FROM information_schema.columns
      WHERE table_schema = 'public'

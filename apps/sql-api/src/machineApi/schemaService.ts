@@ -1,17 +1,19 @@
 import { getAgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import { getAllowedRelationNames, type AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
-import type { UserIdentity } from "../db.js";
+import { resolveOrCreateWorkspaceForTrustedIdentity, type UserIdentity } from "../db.js";
 import type { MachineApiDependencies, SchemaColumn, SchemaColumnRow, SchemaRelation } from "./types.js";
 
 export const ALLOWED_RELATION_NAMES = getAllowedRelationNames();
 
-export const loadAllowedSchema = async (
+export const loadAllowedSchemaWithResolver = async (
   dependencies: MachineApiDependencies,
   identity: UserIdentity,
+  resolveWorkspace: typeof resolveOrCreateWorkspaceForTrustedIdentity,
 ): Promise<ReadonlyArray<SchemaRelation>> => {
+  const contextWorkspace = await resolveWorkspace(identity);
   const result = await dependencies.queryAsTrustedIdentity(
     identity,
-    identity.userId,
+    contextWorkspace.workspaceId,
     `SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default
      FROM information_schema.columns
      WHERE table_schema = 'public'
@@ -63,3 +65,13 @@ export const loadAllowedSchema = async (
     };
   });
 };
+
+export const loadAllowedSchema = async (
+  dependencies: MachineApiDependencies,
+  identity: UserIdentity,
+): Promise<ReadonlyArray<SchemaRelation>> =>
+  loadAllowedSchemaWithResolver(
+    dependencies,
+    identity,
+    resolveOrCreateWorkspaceForTrustedIdentity,
+  );
