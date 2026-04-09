@@ -14,7 +14,7 @@ import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/serv
 import {
   deleteWorkspaceForTrustedIdentity,
   getWorkspaceForTrustedIdentity,
-  SharedWorkspaceDeletionDisabledError,
+  WorkspaceDeletionRequiresSingleMemberError,
 } from "@/server/workspaces";
 
 type RouteContext = Readonly<{
@@ -108,12 +108,12 @@ export const postAgentWorkspaceDeleteRouteWithDeps = async (
     try {
       await dependencies.deleteWorkspaceForTrustedIdentity(authenticated.identity, workspaceId);
     } catch (error) {
-      if (error instanceof SharedWorkspaceDeletionDisabledError) {
+      if (error instanceof WorkspaceDeletionRequiresSingleMemberError) {
         return jsonAgentError(
           403,
-          "shared_workspace_delete_disabled",
+          "workspace_delete_requires_single_member",
           error.message,
-          "Only personal workspaces can be deleted right now. Shared workspace deletion will require dedicated admin roles.",
+          "Workspace deletion is only allowed when the workspace has exactly one member. Remove other participants and retry.",
           {},
           [],
         );

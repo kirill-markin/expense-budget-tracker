@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { postAgentWorkspaceDeleteRouteWithDeps } from "@/app/api/agent/workspaces/[workspaceId]/delete/route";
 import type { AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
-import { SharedWorkspaceDeletionDisabledError } from "@/server/workspaces";
+import { WorkspaceDeletionRequiresSingleMemberError } from "@/server/workspaces";
 
 const createAuthenticatedRequest = (): AgentAuthenticatedRequest => ({
   transport: "api_key",
@@ -28,7 +28,7 @@ const createRequest = (confirmText: string): Request =>
     body: JSON.stringify({ confirmText }),
   });
 
-test("postAgentWorkspaceDeleteRouteWithDeps returns 403 for shared workspace deletion", async (): Promise<void> => {
+test("postAgentWorkspaceDeleteRouteWithDeps returns 403 when workspace has multiple members", async (): Promise<void> => {
   const response = await postAgentWorkspaceDeleteRouteWithDeps(
     createRequest("Shared"),
     { params: Promise.resolve({ workspaceId: "workspace-1" }) },
@@ -36,7 +36,7 @@ test("postAgentWorkspaceDeleteRouteWithDeps returns 403 for shared workspace del
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
       getWorkspaceForTrustedIdentity: async () => ({ workspaceId: "workspace-1", name: "Shared" }),
       deleteWorkspaceForTrustedIdentity: async () => {
-        throw new SharedWorkspaceDeletionDisabledError();
+        throw new WorkspaceDeletionRequiresSingleMemberError(2);
       },
     },
   );
@@ -46,22 +46,22 @@ test("postAgentWorkspaceDeleteRouteWithDeps returns 403 for shared workspace del
     ok: false,
     data: {},
     actions: [],
-    instructions: "Only personal workspaces can be deleted right now. Shared workspace deletion will require dedicated admin roles.",
+    instructions: "Workspace deletion is only allowed when the workspace has exactly one member. Remove other participants and retry.",
     error: {
-      code: "shared_workspace_delete_disabled",
-      message: "Shared workspace deletion is disabled until workspace admin roles are introduced",
+      code: "workspace_delete_requires_single_member",
+      message: "Workspace deletion is only allowed when the workspace has exactly one member; found 2.",
     },
   });
 });
 
-test("postAgentWorkspaceDeleteRouteWithDeps allows personal workspace deletion", async (): Promise<void> => {
+test("postAgentWorkspaceDeleteRouteWithDeps allows single-member workspace deletion", async (): Promise<void> => {
   const response = await postAgentWorkspaceDeleteRouteWithDeps(
-    createRequest("Personal"),
-    { params: Promise.resolve({ workspaceId: "user-1" }) },
+    createRequest("Project Alpha"),
+    { params: Promise.resolve({ workspaceId: "workspace-a0f0f8e4" }) },
     {
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
-      getWorkspaceForTrustedIdentity: async () => ({ workspaceId: "user-1", name: "Personal" }),
-      deleteWorkspaceForTrustedIdentity: async () => ({ workspaceId: "user-1", name: "Personal" }),
+      getWorkspaceForTrustedIdentity: async () => ({ workspaceId: "workspace-a0f0f8e4", name: "Project Alpha" }),
+      deleteWorkspaceForTrustedIdentity: async () => ({ workspaceId: "workspace-a0f0f8e4", name: "Project Alpha" }),
     },
   );
 
@@ -70,8 +70,8 @@ test("postAgentWorkspaceDeleteRouteWithDeps allows personal workspace deletion",
     ok: true,
     data: {
       deleted: {
-        workspaceId: "user-1",
-        name: "Personal",
+        workspaceId: "workspace-a0f0f8e4",
+        name: "Project Alpha",
       },
     },
     actions: [],

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { postDeleteWorkspaceRouteWithDeps } from "@/app/api/workspaces/[workspaceId]/delete/route";
-import { SharedWorkspaceDeletionDisabledError } from "@/server/workspaces";
+import { WorkspaceDeletionRequiresSingleMemberError } from "@/server/workspaces";
 
 const createRequest = (confirmText: string): Request =>
   new Request("http://localhost/api/workspaces/workspace-1/delete", {
@@ -14,20 +14,20 @@ const createRequest = (confirmText: string): Request =>
     body: JSON.stringify({ confirmText }),
   });
 
-test("postDeleteWorkspaceRouteWithDeps returns 403 for shared workspace deletion", async (): Promise<void> => {
+test("postDeleteWorkspaceRouteWithDeps returns 403 when workspace has multiple members", async (): Promise<void> => {
   const response = await postDeleteWorkspaceRouteWithDeps(
     createRequest("Shared"),
     { params: Promise.resolve({ workspaceId: "workspace-1" }) },
     {
       listWorkspaces: async () => [{ workspaceId: "workspace-1", name: "Shared" }],
       deleteWorkspace: async () => {
-        throw new SharedWorkspaceDeletionDisabledError();
+        throw new WorkspaceDeletionRequiresSingleMemberError(2);
       },
     },
   );
 
   assert.equal(response.status, 403);
-  assert.equal(await response.text(), "Shared workspace deletion is disabled until workspace admin roles are introduced");
+  assert.equal(await response.text(), "Workspace deletion is only allowed when the workspace has exactly one member; found 2.");
 });
 
 test("postDeleteWorkspaceRouteWithDeps keeps confirmation validation", async (): Promise<void> => {
@@ -49,13 +49,13 @@ test("postDeleteWorkspaceRouteWithDeps keeps confirmation validation", async ():
   assert.equal(deleteCalled, false);
 });
 
-test("postDeleteWorkspaceRouteWithDeps allows personal workspace deletion", async (): Promise<void> => {
+test("postDeleteWorkspaceRouteWithDeps allows single-member workspace deletion", async (): Promise<void> => {
   const response = await postDeleteWorkspaceRouteWithDeps(
-    createRequest("Personal"),
-    { params: Promise.resolve({ workspaceId: "user-1" }) },
+    createRequest("Project Alpha"),
+    { params: Promise.resolve({ workspaceId: "workspace-a0f0f8e4" }) },
     {
-      listWorkspaces: async () => [{ workspaceId: "user-1", name: "Personal" }],
-      deleteWorkspace: async () => ({ workspaceId: "user-1", name: "Personal" }),
+      listWorkspaces: async () => [{ workspaceId: "workspace-a0f0f8e4", name: "Project Alpha" }],
+      deleteWorkspace: async () => ({ workspaceId: "workspace-a0f0f8e4", name: "Project Alpha" }),
     },
   );
 

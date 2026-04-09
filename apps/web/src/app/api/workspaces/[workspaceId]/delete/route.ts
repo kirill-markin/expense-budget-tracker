@@ -6,7 +6,7 @@ import { ApiRouteError, createBadRequestError } from "@/server/api/errors";
 import {
   deleteWorkspace,
   listWorkspaces,
-  SharedWorkspaceDeletionDisabledError,
+  WorkspaceDeletionRequiresSingleMemberError,
 } from "@/server/workspaces";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -51,7 +51,7 @@ export const postDeleteWorkspaceRouteWithDeps = async (
       try {
         await dependencies.deleteWorkspace(userId, currentWorkspaceId, targetWorkspaceId);
       } catch (error) {
-        if (error instanceof SharedWorkspaceDeletionDisabledError) {
+        if (error instanceof WorkspaceDeletionRequiresSingleMemberError) {
           throw new ApiRouteError(403, error.message);
         }
         throw error;
