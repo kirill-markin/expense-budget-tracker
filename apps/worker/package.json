@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1029.0",
-    "fast-xml-parser": "^5.5.11",
+    "fast-xml-parser": "^5.5.12",
     "node-cron": "^4.2.1",
     "pg": "^8.20.0"
   },
