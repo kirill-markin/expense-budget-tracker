@@ -1,4 +1,4 @@
-FROM node:24.14.1-alpine AS deps
+FROM node:24.15.0-alpine AS deps
 
 WORKDIR /workspace
 
@@ -11,7 +11,7 @@ COPY packages/agent-shared/package.json packages/agent-shared/package.json
 COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci
 
-FROM node:24.14.1-alpine AS builder
+FROM node:24.15.0-alpine AS builder
 
 WORKDIR /workspace
 
@@ -19,7 +19,7 @@ COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
 RUN cd apps/auth && ../../node_modules/.bin/tsc -p tsconfig.json
 
-FROM node:24.14.1-alpine AS prod-deps
+FROM node:24.15.0-alpine AS prod-deps
 
 WORKDIR /workspace
 
@@ -32,7 +32,7 @@ COPY packages/agent-shared/package.json packages/agent-shared/package.json
 COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci --omit=dev
 
-FROM node:24.14.1-alpine
+FROM node:24.15.0-alpine
 
 WORKDIR /app/apps/auth
 

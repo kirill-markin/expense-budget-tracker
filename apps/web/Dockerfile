@@ -1,5 +1,5 @@
 # --- Stage 1: Install dependencies ---
-FROM node:24.14.1-alpine AS deps
+FROM node:24.15.0-alpine AS deps
 WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps/auth/package.json apps/auth/package.json
@@ -11,14 +11,14 @@ COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci
 
 # --- Stage 2: Build ---
-FROM node:24.14.1-alpine AS builder
+FROM node:24.15.0-alpine AS builder
 WORKDIR /workspace
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
 RUN cd apps/web && ../../node_modules/.bin/next build
 
 # --- Stage 3: Production runner ---
-FROM node:24.14.1-alpine AS runner
+FROM node:24.15.0-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
