@@ -55,12 +55,21 @@ test("resolveChatBootstrapMode opens a fresh local chat after six hours of user 
   );
 });
 
-test("resolveChatBootstrapMode keeps a locally empty session after clear", (): void => {
+test("resolveChatBootstrapMode revalidates an empty cached session through the server", (): void => {
   const state = createChatBootstrapLocalState("session-2", null, "idle", 1_000);
 
   assert.deepEqual(
     resolveChatBootstrapMode(state, 1_500),
-    { kind: "local_empty", sessionId: "session-2" },
+    { kind: "server" },
+  );
+});
+
+test("resolveChatBootstrapMode keeps a fully local empty chat when no session exists yet", (): void => {
+  const state = createChatBootstrapLocalState(null, null, "idle", 1_000);
+
+  assert.deepEqual(
+    resolveChatBootstrapMode(state, 1_500),
+    { kind: "local_empty", sessionId: null },
   );
 });
 

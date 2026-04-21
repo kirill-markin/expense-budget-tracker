@@ -184,6 +184,10 @@ export const resolveChatBootstrapMode = (
   }
 
   if (state.lastUserMessageAt === null) {
+    if (state.sessionId !== null) {
+      return { kind: "server" };
+    }
+
     return {
       kind: "local_empty",
       sessionId: state.sessionId,
