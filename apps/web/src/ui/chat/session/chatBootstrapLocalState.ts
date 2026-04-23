@@ -1,5 +1,5 @@
 import type { StoredMessage } from "@/ui/hooks/useChatHistory";
-import type { ChatRunState } from "./streamRecovery";
+import type { ChatRunState } from "../stream/streamRecovery";
 
 const CHAT_LOCAL_STATE_STORAGE_PREFIX = "expense-tracker-chat-local-state:";
 export const CHAT_LOCAL_STATE_VERSION = 1;

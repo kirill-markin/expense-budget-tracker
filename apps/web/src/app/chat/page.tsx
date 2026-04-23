@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 
 import { extractWorkspaceIdFromHeaders } from "@/server/userId";
-import { ChatPanel } from "@/ui/chat/ChatPanel";
+import { ChatPanel } from "@/ui/chat";
 
 export default async function ChatPage() {
   const headersList = await headers();

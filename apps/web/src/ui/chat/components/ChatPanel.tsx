@@ -17,16 +17,16 @@ import { ChatComposer } from "./ChatComposer";
 import { ChatPanelHeader } from "./ChatPanelHeader";
 import { ChatTranscript } from "./ChatTranscript";
 import { prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
-import { getChatComposerCapabilities } from "./chatComposerCapabilities";
-import { buildChatTranscriptMarkdown } from "./chatTranscriptMarkdown";
+import { getChatComposerCapabilities } from "../display/chatComposerCapabilities";
+import { buildChatTranscriptMarkdown } from "../display/chatTranscriptMarkdown";
 import {
   insertDictationTranscriptIntoDraft,
   transcribeChatAudio,
   type ChatDraftSelection,
   type ChatDictationState,
-} from "./chatDictation";
-import { useDesktopEnterToSend } from "./useDesktopEnterToSend";
-import { useChatSessionController } from "./useChatSessionController";
+} from "../hooks/chatDictation";
+import { useDesktopEnterToSend } from "../hooks/useDesktopEnterToSend";
+import { useChatSessionController } from "../session/useChatSessionController";
 import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
