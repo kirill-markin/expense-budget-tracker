@@ -1,5 +1,5 @@
-import type { ChatDictationState } from "./chatDictation";
-import type { ChatComposerAction } from "./streamRecovery";
+import type { ChatDictationState } from "../hooks/chatDictation";
+import type { ChatComposerAction } from "../stream/streamRecovery";
 
 export type ChatComposerCapabilitiesParams = Readonly<{
   composerAction: ChatComposerAction;

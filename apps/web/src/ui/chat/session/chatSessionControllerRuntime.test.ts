@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   buildChatSendRequestBody,
   ensureWritableChatSession,
-} from "@/ui/chat/chatSessionControllerRuntime";
+} from "./chatSessionControllerRuntime";
 
 test("ensureWritableChatSession creates a session for a fresh local chat", async (): Promise<void> => {
   let createCallCount = 0;

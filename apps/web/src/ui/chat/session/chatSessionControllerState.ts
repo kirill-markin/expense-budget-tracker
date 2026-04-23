@@ -9,7 +9,7 @@ import {
   shouldReplaceHistoryFromSnapshot,
   type ChatComposerAction,
   type ChatRunState,
-} from "./streamRecovery";
+} from "../stream/streamRecovery";
 
 export type ChatMainContentInvalidationSource = "live" | "snapshot";
 

@@ -14,7 +14,7 @@ import {
   useChatHistory,
   type StoredMessage,
 } from "@/ui/hooks/useChatHistory";
-import type { PendingAttachment } from "./FileAttachment";
+import type { PendingAttachment } from "../components/FileAttachment";
 import {
   createChatBootstrapLocalState,
   deriveLastUserMessageAt,
@@ -29,7 +29,7 @@ import {
   shouldSuppressStreamFailure,
   type ChatComposerAction,
   type ChatRunState,
-} from "./streamRecovery";
+} from "../stream/streamRecovery";
 import {
   buildChatSendRequestBody,
   createChatSession,

@@ -7,7 +7,7 @@ import {
   parseChatBootstrapLocalState,
   readChatBootstrapLocalStateFromStorageEvent,
   resolveChatBootstrapMode,
-} from "@/ui/chat/chatBootstrapLocalState";
+} from "./chatBootstrapLocalState";
 
 test("deriveLastUserMessageAt returns the last user-authored timestamp", (): void => {
   const lastUserMessageAt = deriveLastUserMessageAt([
