@@ -13,12 +13,12 @@ import type {
   CumulativeBalance,
   DirectionBlock,
   YearTotalComputed,
-} from "@/ui/tables/budgetTableLogic";
-import type { DrillDownFilter } from "@/ui/tables/DrillDownPanel";
-import { useBudgetTableDerivedState } from "@/ui/tables/budget-table/useBudgetTableDerivedState";
-import { useBudgetTableRangeState } from "@/ui/tables/budget-table/useBudgetTableRangeState";
-import { useBudgetTableViewport } from "@/ui/tables/budget-table/useBudgetTableViewport";
-import { useBudgetTableYearTotals } from "@/ui/tables/budget-table/useBudgetTableYearTotals";
+} from "./logic";
+import type { DrillDownFilter } from "@/ui/tables/transactions-table";
+import { useBudgetTableDerivedState } from "./useBudgetTableDerivedState";
+import { useBudgetTableRangeState } from "./useBudgetTableRangeState";
+import { useBudgetTableViewport } from "./useBudgetTableViewport";
+import { useBudgetTableYearTotals } from "./useBudgetTableYearTotals";
 
 export type BudgetTableProps = Readonly<{
   rows: ReadonlyArray<BudgetRow>;

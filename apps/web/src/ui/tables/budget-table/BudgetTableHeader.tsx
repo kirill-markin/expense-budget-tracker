@@ -3,9 +3,9 @@
 import { Fragment, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { ColumnEntry } from "@/ui/tables/budgetTableLogic";
-import { isFutureMonth, isPastMonth } from "@/ui/tables/budgetTableLogic";
-import styles from "@/ui/tables/BudgetTable.module.css";
+import type { ColumnEntry } from "./logic";
+import { isFutureMonth, isPastMonth } from "./logic";
+import styles from "./BudgetTable.module.css";
 
 export type BudgetTableHeaderProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;

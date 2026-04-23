@@ -16,14 +16,13 @@ import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import { useFormat } from "@/ui/FormatProvider";
 
-import budgetStyles from "./BudgetTable.module.css";
-import { compareDaysAgoTimestamps, formatDaysAgoLabel, getDaysAgoValue } from "./balancesTableDaysAgo";
-import { CellSelectOverlay } from "./CellSelectOverlay";
-import { DataTable } from "./data-table/DataTable";
-import tableStyles from "./TableUi.module.css";
-import type { ColumnDef } from "./data-table/types";
-import { useTableSort } from "./data-table/useTableSort";
-import { formatAmount } from "./format";
+import { CellSelectOverlay } from "../editable-cells/CellSelectOverlay";
+import { DataTable } from "../data-table/DataTable";
+import type { ColumnDef } from "../data-table/types";
+import { useTableSort } from "../data-table/useTableSort";
+import { formatAmount } from "../shared/format";
+import tableStyles from "../shared/TableUi.module.css";
+import { compareDaysAgoTimestamps, formatDaysAgoLabel, getDaysAgoValue } from "./daysAgo";
 
 type Props = Readonly<{
   accounts: ReadonlyArray<AccountRow>;
@@ -387,7 +386,7 @@ export const BalancesTable = (props: Props): ReactElement => {
       key: "balanceReport",
       header: t("balances.equivalent", { currency: reportingCurrency }),
       renderCell: (row: CurrencyTotal): ReactElement => (
-        <td key="balanceReport" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass, row.hasUnconvertible ? budgetStyles.error : "")}>
+        <td key="balanceReport" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass, row.hasUnconvertible ? tableStyles.error : "")}>
           {row.balanceReport !== null ? formatAmount(row.balanceReport, numberFormat) : "\u2014"}
         </td>
       ),

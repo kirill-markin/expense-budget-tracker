@@ -3,23 +3,25 @@ import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
-import { useFormat } from "@/ui/FormatProvider";
 
-import { formatAmount } from "./format";
-import styles from "./TableUi.module.css";
+import { CellComboOverlay } from "./CellComboOverlay";
+import styles from "../shared/TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 type Props = Readonly<{
   entryId: string;
-  currentValue: number;
+  currentValue: string | null;
   maskClass: string;
-  onAmountCommit: (entryId: string, newAmount: number, oldAmount: number) => void;
+  onCommit: (entryId: string, newValue: string | null, oldValue: string | null) => void;
+  cellClass?: string;
+  hints?: ReadonlyArray<string>;
+  allowEmptyString?: boolean;
 }>;
 
-export const EditableAmount = (props: Props): ReactElement => {
-  const { entryId, currentValue, maskClass, onAmountCommit } = props;
-  const { numberFormat } = useFormat();
+export const EditableText = (props: Props): ReactElement => {
+  const { entryId, currentValue, maskClass, onCommit, cellClass, hints, allowEmptyString } = props;
+  const tdClass = cn(styles.cell, cellClass);
 
   const [editing, setEditing] = useState<boolean>(false);
   const [editValue, setEditValue] = useState<string>("");
@@ -38,17 +40,17 @@ export const EditableAmount = (props: Props): ReactElement => {
     if (cellRef.current === null) return;
     const r = cellRef.current.getBoundingClientRect();
     setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-    setEditValue(String(currentValue));
+    setEditValue(currentValue ?? "");
     setEditing(true);
   };
 
   const commitEdit = (): void => {
     setEditing(false);
     setRect(null);
-    const parsed = parseFloat(editValue.trim());
-    if (!Number.isFinite(parsed)) return;
-    if (parsed === currentValue) return;
-    onAmountCommit(entryId, parsed, currentValue);
+    const trimmed = editValue.trim();
+    const newValue = trimmed.length > 0 ? trimmed : (allowEmptyString ? "" : null);
+    if (newValue === currentValue) return;
+    onCommit(entryId, newValue, currentValue);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
@@ -64,23 +66,45 @@ export const EditableAmount = (props: Props): ReactElement => {
     }
   };
 
+  const handleComboCommit = (value: string | null): void => {
+    setEditing(false);
+    setRect(null);
+    const nextValue = value === null && allowEmptyString ? "" : value;
+    if (nextValue === currentValue) return;
+    onCommit(entryId, nextValue, currentValue);
+  };
+
+  const handleComboClose = (): void => {
+    setEditing(false);
+    setRect(null);
+  };
+
   const isMasked = maskClass.length > 0;
+  const hasHints = hints !== undefined && hints.length > 0;
 
   return (
     <td
       ref={cellRef}
-      className={cn(styles.cell, styles.cellRight, !isMasked ? styles.editable : "", maskClass)}
+      className={cn(tdClass, !isMasked ? styles.editable : "", maskClass)}
       onClick={isMasked ? undefined : startEditing}
     >
-      {formatAmount(currentValue, numberFormat)}
-      {editing && rect !== null && createPortal(
+      {currentValue === null || currentValue.length === 0 ? "\u2014" : currentValue}
+      {editing && rect !== null && hasHints && (
+        <CellComboOverlay
+          hints={hints}
+          currentValue={currentValue}
+          rect={rect}
+          onCommit={handleComboCommit}
+          onClose={handleComboClose}
+        />
+      )}
+      {editing && rect !== null && !hasHints && createPortal(
         <input
           ref={inputRef}
           className={styles.editorOverlay}
           type="text"
-          inputMode="decimal"
           value={editValue}
-          style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height, textAlign: "right" }}
+          style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={commitEdit}
           onKeyDown={handleKeyDown}

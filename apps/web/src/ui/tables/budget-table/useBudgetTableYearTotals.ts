@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ColumnEntry, YearFetchResult, YearTotalComputed } from "@/ui/tables/budgetTableLogic";
-import { buildColumnSequence, computeYearTotal } from "@/ui/tables/budgetTableLogic";
+import type { ColumnEntry, YearFetchResult, YearTotalComputed } from "./logic";
+import { buildColumnSequence, computeYearTotal } from "./logic";
 import { generateMonthRange } from "@/lib/monthUtils";
-import { fetchBudgetRange } from "@/ui/tables/budgetTableApi";
+import { fetchBudgetRange } from "./api";
 import { logBudgetTableError } from "@/ui/tables/budget-table/logBudgetTableError";
 
 export type BudgetTableYearTotalsState = Readonly<{

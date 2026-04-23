@@ -5,18 +5,13 @@ import { useTranslation } from "react-i18next";
 import alertStyles from "@/ui/Alert.module.css";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 import { useFormat } from "@/ui/FormatProvider";
-import { DrillDownPanel } from "@/ui/tables/DrillDownPanel";
-import { FxBreakdownPanel } from "@/ui/tables/FxBreakdownPanel";
-import {
-  BudgetDerivedSection,
-  BudgetDirectionSection,
-  BudgetTableHeader,
-} from "@/ui/tables/budget-table";
-import {
-  type BudgetTableProps,
-  useBudgetTableController,
-} from "@/ui/tables/useBudgetTableController";
-import styles from "@/ui/tables/BudgetTable.module.css";
+import { DrillDownPanel } from "@/ui/tables/transactions-table";
+import { BudgetDerivedSection } from "./BudgetDerivedSection";
+import { BudgetDirectionSection } from "./BudgetDirectionSection";
+import { BudgetTableHeader } from "./BudgetTableHeader";
+import { FxBreakdownPanel } from "./fx-breakdown/FxBreakdownPanel";
+import { type BudgetTableProps, useBudgetTableController } from "./useBudgetTableController";
+import styles from "./BudgetTable.module.css";
 
 export const BudgetTable = (props: BudgetTableProps): ReactElement => {
   const { conversionWarnings, reportingCurrency, hints, refreshToken } = props;

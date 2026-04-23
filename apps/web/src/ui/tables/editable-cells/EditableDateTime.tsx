@@ -5,8 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { useFormat } from "@/ui/FormatProvider";
 
-import { formatDateTime } from "./format";
-import styles from "./TableUi.module.css";
+import { formatDateTime } from "../shared/format";
+import styles from "../shared/TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 

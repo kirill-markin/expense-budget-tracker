@@ -6,8 +6,8 @@ import { offsetMonth } from "@/lib/monthUtils";
 import {
   adjustCumulativeBeforeForPrependedRows,
   getTargetFillMonths,
-} from "@/ui/tables/budgetTableLogic";
-import { fetchBudgetRange } from "@/ui/tables/budgetTableApi";
+} from "./logic";
+import { fetchBudgetRange } from "./api";
 import { logBudgetTableError } from "@/ui/tables/budget-table/logBudgetTableError";
 
 const BATCH_SIZE = 6;

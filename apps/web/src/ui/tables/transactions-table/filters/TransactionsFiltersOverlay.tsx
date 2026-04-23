@@ -8,8 +8,8 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
 
 import type { FilterMultiSelectOption } from "./FilterMultiSelect";
-import tableStyles from "./TableUi.module.css";
-import type { TransactionsTableFilter } from "./useEditableTransactionsTable";
+import tableStyles from "../../shared/TableUi.module.css";
+import type { TransactionsTableFilter } from "../useEditableTransactionsTable";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 

@@ -10,10 +10,10 @@ import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transac
 import { useFormat } from "@/ui/FormatProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
-import { DataTable } from "./data-table/DataTable";
-import tableStyles from "./TableUi.module.css";
-import type { ColumnDef, PageResult } from "./data-table/types";
-import { useTableSort } from "./data-table/useTableSort";
+import { DataTable } from "../data-table/DataTable";
+import tableStyles from "../shared/TableUi.module.css";
+import type { ColumnDef, PageResult } from "../data-table/types";
+import { useTableSort } from "../data-table/useTableSort";
 import {
   buildDrillDownCreateEntryRequest,
   buildDrillDownPageUrl,
@@ -32,7 +32,7 @@ import {
   editableKindColumn,
   editableNoteColumn,
   reportAmountColumn,
-} from "./transactionColumns";
+} from "./columns";
 
 export type { DrillDownFilter } from "./useEditableTransactionsTable";
 

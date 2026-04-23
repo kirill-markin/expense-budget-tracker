@@ -9,15 +9,15 @@ import type { FieldHints, LedgerEntry, TransactionsFilterOptions, TransactionsPa
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
-import { DataTable } from "./data-table/DataTable";
-import tableStyles from "./TableUi.module.css";
-import type { ColumnDef, PageResult } from "./data-table/types";
-import { useTableSort } from "./data-table/useTableSort";
-import { serializeFilterValues } from "./transactionsFiltersState";
+import { DataTable } from "../data-table/DataTable";
+import tableStyles from "../shared/TableUi.module.css";
+import type { ColumnDef, PageResult } from "../data-table/types";
+import { useTableSort } from "../data-table/useTableSort";
+import { serializeFilterValues } from "./filters/filtersState";
 import {
   TransactionsFiltersOverlay,
   type TransactionsFiltersOverlayOptions,
-} from "./TransactionsFiltersOverlay";
+} from "./filters/TransactionsFiltersOverlay";
 import {
   buildTransactionsCreateEntryRequest,
   buildTransactionsPageUrl,
@@ -35,7 +35,7 @@ import {
   editableDeleteColumn,
   editableKindColumn,
   editableNoteColumn,
-} from "./transactionColumns";
+} from "./columns";
 
 type Props = Readonly<{
   filterOptions: TransactionsFilterOptions;
