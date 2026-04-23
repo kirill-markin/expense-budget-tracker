@@ -5,8 +5,8 @@ import { useTranslation } from "react-i18next";
 
 import { getCellVisibility, type CellVisibility } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
-import { BudgetPlanCell } from "@/ui/tables/BudgetPlanCell";
-import type { DrillDownFilter } from "@/ui/tables/DrillDownPanel";
+import { BudgetPlanCell } from "./BudgetPlanCell";
+import type { DrillDownFilter } from "@/ui/tables/transactions-table";
 import {
   formatAmount,
   lookupCell,
@@ -15,8 +15,8 @@ import {
   type ColumnEntry,
   type DirectionBlock,
   type YearTotalComputed,
-} from "@/ui/tables/budgetTableLogic";
-import styles from "@/ui/tables/BudgetTable.module.css";
+} from "./logic";
+import styles from "./BudgetTable.module.css";
 import {
   buildCategoryMonthDrillDownFilter,
   buildCategoryYearDrillDownFilter,

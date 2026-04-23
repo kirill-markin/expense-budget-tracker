@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { RefObject } from "react";
-import styles from "@/ui/tables/BudgetTable.module.css";
+import styles from "./BudgetTable.module.css";
 
 const SCROLL_THRESHOLD = 200;
 

@@ -9,7 +9,7 @@ import { getFieldHints, getTransactionsFilterOptions } from "@/server/transactio
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getUserSettings } from "@/server/userSettings";
 import { getDemoFieldHints, getDemoTransactionsFilterOptions } from "@/server/demo/data";
-import { TransactionsRawTable } from "@/ui/tables/TransactionsRawTable";
+import { TransactionsRawTable } from "@/ui/tables/transactions-table";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
 export const dynamic = "force-dynamic";

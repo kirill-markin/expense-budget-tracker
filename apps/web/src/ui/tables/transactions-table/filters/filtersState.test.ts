@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { serializeFilterValues } from "@/ui/tables/transactionsFiltersState";
+import { serializeFilterValues } from "@/ui/tables/transactions-table/filters/filtersState";
 
 test("serializeFilterValues distinguishes empty array from nullable sentinel", (): void => {
   assert.notEqual(serializeFilterValues([]), serializeFilterValues([""]));

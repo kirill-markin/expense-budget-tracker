@@ -5,8 +5,8 @@ import {
   isFutureMonth,
   isPastMonth,
   type ColumnEntry,
-} from "@/ui/tables/budgetTableLogic";
-import styles from "@/ui/tables/BudgetTable.module.css";
+} from "./logic";
+import styles from "./BudgetTable.module.css";
 export {
   buildCategoryMonthDrillDownFilter,
   buildCategoryYearDrillDownFilter,

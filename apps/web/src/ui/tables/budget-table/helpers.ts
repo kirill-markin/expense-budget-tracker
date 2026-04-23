@@ -1,5 +1,5 @@
-import type { DrillDownFilter } from "@/ui/tables/DrillDownPanel";
-import { monthToDateFrom, monthToDateTo } from "@/ui/tables/budgetTableLogic";
+import type { DrillDownFilter } from "@/ui/tables/transactions-table";
+import { monthToDateFrom, monthToDateTo } from "./logic";
 
 export const buildDirectionYearDrillDownFilter = (
   year: string,

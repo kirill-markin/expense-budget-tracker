@@ -4,8 +4,8 @@ import { fetchWithCsrf } from "@/lib/csrf";
 import { buildLiveDataUrl } from "@/lib/liveDataFetch";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
-import type { PageResult } from "./data-table/types";
-import { useInfiniteScroll } from "./data-table/useInfiniteScroll";
+import type { PageResult } from "../data-table/types";
+import { useInfiniteScroll } from "../data-table/useInfiniteScroll";
 
 export type CreateLedgerEntryRequest = Readonly<{
   ts: string;

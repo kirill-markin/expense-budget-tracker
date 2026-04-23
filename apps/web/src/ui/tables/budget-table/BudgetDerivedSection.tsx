@@ -13,8 +13,8 @@ import {
   type ColumnEntry,
   type CumulativeBalance,
   type YearTotalComputed,
-} from "@/ui/tables/budgetTableLogic";
-import styles from "@/ui/tables/BudgetTable.module.css";
+} from "./logic";
+import styles from "./BudgetTable.module.css";
 import {
   isNegativeValueOver,
   renderColumnCells,
