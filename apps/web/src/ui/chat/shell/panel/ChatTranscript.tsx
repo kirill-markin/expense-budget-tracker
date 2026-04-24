@@ -12,10 +12,10 @@ import { useTranslation } from "react-i18next";
 import { getAttachmentLabel } from "@/lib/chatAttachments";
 import { cn } from "@/lib/cn";
 import type { StoredMessage } from "@/ui/hooks/useChatHistory";
-import { getNextAutoScrollPinnedState } from "../hooks/chatAutoScroll";
-import { getOrderedMessageBlocks } from "../display/messageContentOrder";
-import { getAssistantStreamingIndicator } from "../display/thinkingSummary";
-import { getToolCallDisplayState } from "../display/toolCallDisplay";
+import { getNextAutoScrollPinnedState } from "../../stream/hooks/chatAutoScroll";
+import { getOrderedMessageBlocks } from "../../stream/display/messageContentOrder";
+import { getAssistantStreamingIndicator } from "../../stream/display/thinkingSummary";
+import { getToolCallDisplayState } from "../../stream/display/toolCallDisplay";
 import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{

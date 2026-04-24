@@ -3,7 +3,7 @@
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useChatLayout } from "./ChatLayoutProvider";
-import styles from "./ChatPanel.module.css";
+import styles from "../panel/ChatPanel.module.css";
 
 export const ChatToggle = (): ReactElement => {
   const { t } = useTranslation();

@@ -6,7 +6,7 @@ import type { ReactElement, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 import { useChatLayout } from "./ChatLayoutProvider";
-import { ChatPanel } from "./ChatPanel";
+import { ChatPanel } from "../panel/ChatPanel";
 import { ChatToggle } from "./ChatToggle";
 import styles from "./ChatLayoutShell.module.css";
 

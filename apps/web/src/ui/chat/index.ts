@@ -1,5 +1,5 @@
 "use client";
 
-export { ChatLayoutProvider } from "./components/ChatLayoutProvider";
-export { ChatLayoutShell } from "./components/ChatLayoutShell";
-export { ChatPanel } from "./components/ChatPanel";
+export { ChatLayoutProvider } from "./shell/layout/ChatLayoutProvider";
+export { ChatLayoutShell } from "./shell/layout/ChatLayoutShell";
+export { ChatPanel } from "./shell/panel/ChatPanel";
