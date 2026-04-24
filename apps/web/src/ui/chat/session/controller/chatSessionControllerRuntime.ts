@@ -3,13 +3,13 @@
 import { fetchWithCsrf } from "@/lib/csrf";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import type { ContentPart } from "@/server/chat/types";
-import type { PendingAttachment } from "../components/FileAttachment";
-import type { ChatSessionSnapshot } from "./chatSessionSnapshot";
+import type { PendingAttachment } from "../../shell/panel/FileAttachment";
+import type { ChatSessionSnapshot } from "../bootstrap/chatSessionSnapshot";
 import {
   applyChatStreamEvent,
   drainChatStreamChunk,
   type ChatStreamTransportHandlers,
-} from "../stream/chatStreamTransport";
+} from "../../stream/chatStreamTransport";
 
 type TranslationParams = Readonly<Record<string, string | number>>;
 

@@ -12,21 +12,21 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
-import { useChatLayout } from "./ChatLayoutProvider";
+import { useChatLayout } from "../layout/ChatLayoutProvider";
 import { ChatComposer } from "./ChatComposer";
 import { ChatPanelHeader } from "./ChatPanelHeader";
 import { ChatTranscript } from "./ChatTranscript";
 import { prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
-import { getChatComposerCapabilities } from "../display/chatComposerCapabilities";
-import { buildChatTranscriptMarkdown } from "../display/chatTranscriptMarkdown";
+import { getChatComposerCapabilities } from "../../stream/display/chatComposerCapabilities";
+import { buildChatTranscriptMarkdown } from "../../stream/display/chatTranscriptMarkdown";
 import {
   insertDictationTranscriptIntoDraft,
   transcribeChatAudio,
   type ChatDraftSelection,
   type ChatDictationState,
-} from "../hooks/chatDictation";
-import { useDesktopEnterToSend } from "../hooks/useDesktopEnterToSend";
-import { useChatSessionController } from "../session/useChatSessionController";
+} from "../../stream/hooks/chatDictation";
+import { useDesktopEnterToSend } from "../../stream/hooks/useDesktopEnterToSend";
+import { useChatSessionController } from "../../session/controller/useChatSessionController";
 import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{

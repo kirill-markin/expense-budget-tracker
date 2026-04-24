@@ -8,9 +8,9 @@ import type {
 import { useTranslation } from "react-i18next";
 
 import { CHAT_MODEL_BADGE_LABEL } from "@/lib/chatModels";
-import type { ChatComposerCapabilities } from "../display/chatComposerCapabilities";
-import type { ChatDictationState } from "../hooks/chatDictation";
-import type { ChatComposerAction } from "../stream/streamRecovery";
+import type { ChatComposerCapabilities } from "../../stream/display/chatComposerCapabilities";
+import type { ChatDictationState } from "../../stream/hooks/chatDictation";
+import type { ChatComposerAction } from "../../stream/streamRecovery";
 import {
   FileAttachment,
   type PendingAttachment,

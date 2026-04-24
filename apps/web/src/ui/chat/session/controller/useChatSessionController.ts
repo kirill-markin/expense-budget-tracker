@@ -14,7 +14,7 @@ import {
   useChatHistory,
   type StoredMessage,
 } from "@/ui/hooks/useChatHistory";
-import type { PendingAttachment } from "../components/FileAttachment";
+import type { PendingAttachment } from "../../shell/panel/FileAttachment";
 import {
   createChatBootstrapLocalState,
   deriveLastUserMessageAt,
@@ -22,14 +22,14 @@ import {
   readChatBootstrapLocalStateFromStorageEvent,
   resolveChatBootstrapMode,
   writeChatBootstrapLocalState,
-} from "./chatBootstrapLocalState";
-import type { ChatSessionSnapshot } from "./chatSessionSnapshot";
+} from "../bootstrap/chatBootstrapLocalState";
+import type { ChatSessionSnapshot } from "../bootstrap/chatSessionSnapshot";
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
   shouldSuppressStreamFailure,
   type ChatComposerAction,
   type ChatRunState,
-} from "../stream/streamRecovery";
+} from "../../stream/streamRecovery";
 import {
   buildChatSendRequestBody,
   createChatSession,
