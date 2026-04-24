@@ -10,13 +10,13 @@ import alertStyles from "@/ui/Alert.module.css";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { LedgerEntry, FieldHints } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
+import filterStyles from "@/ui/FilterControls.module.css";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 import { BudgetStreamChart } from "@/ui/charts/BudgetStreamChart";
 import { ExpenseTreemapChart } from "@/ui/charts/ExpenseTreemapChart";
 import treemapStyles from "@/ui/charts/ExpenseTreemapChart.module.css";
-import { DrillDownPanel } from "@/ui/tables/transactions-table";
-import type { DrillDownFilter } from "@/ui/tables/transactions-table";
-import tableStyles from "@/ui/tables/shared/TableUi.module.css";
+import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
+import { DrillDownPanel } from "@/ui/tables/transactions/DrillDownPanel";
 
 type BudgetGridResponse = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -196,21 +196,21 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className={tableStyles.filters}>
-        <label className={tableStyles.filterLabel}>
+      <div className={filterStyles.filters}>
+        <label className={filterStyles.filterLabel}>
           {t("common.from")}
           <input
             type="month"
-            className={tableStyles.filterInput}
+            className={filterStyles.filterInput}
             value={monthFrom}
             onChange={(e) => setMonthFrom(e.target.value)}
           />
         </label>
-        <label className={tableStyles.filterLabel}>
+        <label className={filterStyles.filterLabel}>
           {t("common.to")}
           <input
             type="month"
-            className={tableStyles.filterInput}
+            className={filterStyles.filterInput}
             value={monthTo}
             onChange={(e) => setMonthTo(e.target.value)}
           />

@@ -1,0 +1,59 @@
+.filters {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding-inline-end: 16px;
+  margin-bottom: 12px;
+}
+
+.filterLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.filterInput {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  block-size: 31px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--text);
+  box-sizing: border-box;
+  line-height: 1.2;
+}
+
+.filterTrigger {
+  min-width: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: var(--cursor-pointer);
+  text-align: start;
+}
+
+.filterTrigger::after {
+  content: "\25BE";
+  color: var(--muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.filterTriggerOpen {
+  border-color: var(--text);
+}
+
+.filterTriggerText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

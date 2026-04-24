@@ -1,0 +1,47 @@
+.sectionTitle {
+  margin: 24px 0 8px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.rowInactive {
+  opacity: 0.5;
+}
+
+.stale {
+  color: #c0392b;
+}
+
+.statusInactive {
+  color: var(--muted);
+}
+
+.infoIcon {
+  display: inline-block;
+  margin-inline-start: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: var(--cursor-pointer);
+  vertical-align: middle;
+}
+
+.infoIcon:hover {
+  color: var(--text);
+}
+
+.infoPopup {
+  position: absolute;
+  top: 100%;
+  inset-inline-start: 0;
+  z-index: 10;
+  margin-top: 4px;
+  padding: 8px 12px;
+  max-width: 280px;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: normal;
+  color: #f0f0f0;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+}

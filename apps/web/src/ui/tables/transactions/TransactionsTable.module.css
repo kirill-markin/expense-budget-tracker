@@ -1,0 +1,250 @@
+.filterCount {
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 4px;
+}
+
+.transactionsFiltersTrigger {
+  min-width: 160px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: var(--cursor-pointer);
+  text-align: start;
+}
+
+.transactionsFiltersTriggerBadge {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.addRowButton {
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: var(--cursor-pointer);
+}
+
+.addRowButton:hover {
+  border-color: var(--text);
+}
+
+.cellNote {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cellDelete {
+  width: 24px;
+  display: inline-block;
+  text-align: center;
+}
+
+.deleteButton {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--muted);
+  cursor: var(--cursor-pointer);
+  opacity: 0;
+  line-height: 1;
+}
+
+:global(tr:hover) .deleteButton {
+  opacity: 1;
+}
+
+.deleteButton:hover {
+  color: #c0392b;
+}
+
+.transactionsFiltersOverlay {
+  z-index: 210;
+  border: 1px solid var(--panel-border);
+  overflow: hidden;
+}
+
+.transactionsFiltersOverlayHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.transactionsFiltersOverlayTitle {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.transactionsFiltersOverlayActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.transactionsFiltersOverlayAction {
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: var(--cursor-pointer);
+}
+
+.transactionsFiltersOverlayAction:hover:not(:disabled) {
+  border-color: var(--text);
+}
+
+.transactionsFiltersOverlayAction:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.transactionsFiltersOverlayBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.transactionsFiltersOverlaySection {}
+
+.transactionsFiltersRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: var(--cursor-pointer);
+}
+
+.transactionsFiltersRow:hover,
+.transactionsFiltersRowOpen {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: var(--text);
+}
+
+.transactionsFiltersRowTitle {
+  min-width: 0;
+  font-weight: 650;
+}
+
+.transactionsFiltersRowSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.transactionsFiltersRowSummaryText {
+  color: var(--muted);
+}
+
+.transactionsFiltersRowBadge {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.transactionsFiltersRowCaret {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.transactionsFiltersPicker {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+}
+
+.transactionsFiltersPickerTitle {
+  padding: 10px 12px 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.transactionsFiltersPickerSearch {
+  width: calc(100% - 24px);
+  margin: 10px 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.transactionsFiltersPickerOptions {
+  overflow-y: auto;
+  padding: 0 0 8px;
+}
+
+.transactionsFiltersPickerOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  cursor: var(--cursor-pointer);
+}
+
+.transactionsFiltersPickerOption:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.transactionsFiltersPickerOption input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.transactionsFiltersPickerOptionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .transactionsFiltersOverlayBody {
+    padding: 10px;
+  }
+}

@@ -1,6 +1,6 @@
 import type { NumberFormat, DateFormat } from "@/lib/locale";
 
-const NUMBER_FORMAT_LOCALE: Readonly<Record<NumberFormat, string>> = {
+export const NUMBER_FORMAT_LOCALE: Readonly<Record<NumberFormat, string>> = {
   "1,234.56": "en-US",
   "1 234,56": "ru-RU",
   "1.234,56": "de-DE",
