@@ -5,9 +5,9 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import { useFormat } from "@/ui/FormatProvider";
-import { formatAmount, isDecember } from "@/ui/tables/budgetTableLogic";
-import { postBudgetPlan, postBudgetPlanFill, fetchComment, postComment } from "@/ui/tables/budgetTableApi";
-import styles from "@/ui/tables/BudgetTable.module.css";
+import { formatAmount, isDecember } from "./logic";
+import { postBudgetPlan, postBudgetPlanFill, fetchComment, postComment } from "./api";
+import styles from "./BudgetTable.module.css";
 
 const POPOVER_WIDTH = 240;
 

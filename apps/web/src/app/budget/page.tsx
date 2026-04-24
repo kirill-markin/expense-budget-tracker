@@ -12,7 +12,7 @@ import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/serve
 import { getFieldHints } from "@/server/transactions/getTransactions";
 import { getUserSettings } from "@/server/userSettings";
 import { getDemoBudgetGrid, getDemoFieldHints } from "@/server/demo/data";
-import { BudgetTable } from "@/ui/tables/BudgetTable";
+import { BudgetTable } from "@/ui/tables/budget-table";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
 export const dynamic = "force-dynamic";

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
 
-import styles from "./TableUi.module.css";
+import styles from "../shared/TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 

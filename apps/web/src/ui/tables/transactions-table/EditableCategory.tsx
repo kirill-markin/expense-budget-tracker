@@ -3,8 +3,8 @@ import { type ReactElement, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
-import { CellSelectOverlay } from "./CellSelectOverlay";
-import styles from "./TableUi.module.css";
+import { CellSelectOverlay } from "../editable-cells/CellSelectOverlay";
+import styles from "../shared/TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 

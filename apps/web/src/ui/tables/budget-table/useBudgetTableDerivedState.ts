@@ -7,7 +7,7 @@ import type {
   ColumnEntry,
   CumulativeBalance,
   DirectionBlock,
-} from "@/ui/tables/budgetTableLogic";
+} from "./logic";
 import {
   LIQUIDITY_ORDER,
   buildBlocks,
@@ -17,7 +17,7 @@ import {
   computeCumulativeBalances,
   computeCumulativeBalancesByLiquidity,
   computeFxAdjustments,
-} from "@/ui/tables/budgetTableLogic";
+} from "./logic";
 import { generateMonthRange } from "@/lib/monthUtils";
 
 export type BudgetTableDerivedState = Readonly<{

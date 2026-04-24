@@ -4,14 +4,14 @@ import { cn } from "@/lib/cn";
 import type { NumberFormat, DateFormat } from "@/lib/locale";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
-import { EditableAmount } from "./EditableAmount";
+import { EditableAmount } from "../editable-cells/EditableAmount";
 import { EditableCategory } from "./EditableCategory";
-import { EditableDateTime } from "./EditableDateTime";
+import { EditableDateTime } from "../editable-cells/EditableDateTime";
 import { EditableKind } from "./EditableKind";
-import { EditableText } from "./EditableText";
-import styles from "./TableUi.module.css";
-import type { ColumnDef } from "./data-table/types";
-import { formatAmount, formatDateTime } from "./format";
+import { EditableText } from "../editable-cells/EditableText";
+import styles from "../shared/TableUi.module.css";
+import type { ColumnDef } from "../data-table/types";
+import { formatAmount, formatDateTime } from "../shared/format";
 
 type FormatParams = Readonly<{
   numberFormat: NumberFormat;

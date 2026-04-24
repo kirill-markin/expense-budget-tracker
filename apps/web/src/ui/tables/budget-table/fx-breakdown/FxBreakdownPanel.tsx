@@ -10,11 +10,10 @@ import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBre
 import { useFormat } from "@/ui/FormatProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
-import { formatAmount } from "./format";
-import budgetStyles from "./BudgetTable.module.css";
-import { formatFxAmount } from "./budgetTableLogic";
-import { buildFxBreakdownSubtitle, sumFxAdjustReport } from "./FxBreakdownPanel.logic";
-import tableStyles from "./TableUi.module.css";
+import { formatAmount } from "../../shared/format";
+import { formatFxAmount } from "../logic";
+import tableStyles from "../../shared/TableUi.module.css";
+import { buildFxBreakdownSubtitle, sumFxAdjustReport } from "./logic";
 
 type Props = Readonly<{
   month: string;
@@ -164,7 +163,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeReport, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight, row.fxAdjustReport < 0 ? budgetStyles.over : "")}>{formatFxAmount(row.fxAdjustReport, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight, row.fxAdjustReport < 0 ? tableStyles.error : "")}>{formatFxAmount(row.fxAdjustReport, numberFormat)}</td>
                 </tr>
               ))}
               {!loading && rows.length === 0 && (
@@ -186,14 +185,14 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                   <td className={tableStyles.cell} />
                   <td className={tableStyles.cell} />
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.closeReport, 0), numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight, totalFxAdjust < 0 ? budgetStyles.over : "")}>{formatFxAmount(totalFxAdjust, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight, totalFxAdjust < 0 ? tableStyles.error : "")}>{formatFxAmount(totalFxAdjust, numberFormat)}</td>
                 </tr>
               </tfoot>
             )}
           </table>
 
           {loading && (
-            <span className={budgetStyles.loadingEdge}>Loading</span>
+            <span className={tableStyles.loadingEdge}>Loading</span>
           )}
         </div>
       </div>

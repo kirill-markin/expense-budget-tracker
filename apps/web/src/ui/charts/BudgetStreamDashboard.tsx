@@ -14,9 +14,9 @@ import { LoadingIndicator } from "@/ui/LoadingIndicator";
 import { BudgetStreamChart } from "@/ui/charts/BudgetStreamChart";
 import { ExpenseTreemapChart } from "@/ui/charts/ExpenseTreemapChart";
 import treemapStyles from "@/ui/charts/ExpenseTreemapChart.module.css";
-import { DrillDownPanel } from "@/ui/tables/DrillDownPanel";
-import type { DrillDownFilter } from "@/ui/tables/DrillDownPanel";
-import tableStyles from "@/ui/tables/TableUi.module.css";
+import { DrillDownPanel } from "@/ui/tables/transactions-table";
+import type { DrillDownFilter } from "@/ui/tables/transactions-table";
+import tableStyles from "@/ui/tables/shared/TableUi.module.css";
 
 type BudgetGridResponse = Readonly<{
   rows: ReadonlyArray<BudgetRow>;

@@ -2,8 +2,8 @@ import { type ReactElement } from "react";
 
 import { cn } from "@/lib/cn";
 
-import { sortIndicator } from "../format";
-import styles from "../TableUi.module.css";
+import { sortIndicator } from "../shared/format";
+import styles from "../shared/TableUi.module.css";
 import type { DataTableProps, SortEntry } from "./types";
 
 const findSortEntry = (sort: ReadonlyArray<SortEntry> | null, sortKey: string | null): { entry: SortEntry; position: number } | null => {
