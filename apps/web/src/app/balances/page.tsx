@@ -10,7 +10,7 @@ import { getReportCurrency } from "@/server/reportCurrency";
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getUserSettings } from "@/server/userSettings";
 import { getDemoBalancesSummary } from "@/server/demo/data";
-import { BalancesTable } from "@/ui/tables/balances-table";
+import { BalancesTable } from "@/ui/tables/balances/BalancesTable";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
 export const dynamic = "force-dynamic";
