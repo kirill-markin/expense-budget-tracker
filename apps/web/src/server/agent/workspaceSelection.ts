@@ -2,7 +2,7 @@
  * Persist and resolve per-connection workspace selection for agent API keys.
  */
 import { queryAsTrustedIdentity } from "@/server/db";
-import { type AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
+import { type AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
 import { resolveWorkspaceForIdentity } from "@/server/workspaceBootstrap";
 import { listWorkspacesForTrustedIdentity } from "@/server/workspaces";
 

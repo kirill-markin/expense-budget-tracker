@@ -9,11 +9,11 @@ import {
   authenticateAgentRequest,
   getAgentAuthError,
   type AgentAuthenticatedRequest,
-} from "@/server/agentApiKeyAuth";
-import { buildSuccessEnvelope } from "@/server/agentEnvelope";
-import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
-import { executeAgentSql, getAgentSqlAllowedRelations, getUserSqlExecutionMessage, isUserSqlExecutionError } from "@/server/agentSql";
-import { resolveWorkspaceIdForSql } from "@/server/agentWorkspaceSelection";
+} from "@/server/agent/apiKeyAuth";
+import { buildSuccessEnvelope } from "@/server/agent/envelope";
+import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agent/responses";
+import { executeAgentSql, getAgentSqlAllowedRelations, getUserSqlExecutionMessage, isUserSqlExecutionError } from "@/server/agent/sql";
+import { resolveWorkspaceIdForSql } from "@/server/agent/workspaceSelection";
 
 type AgentSqlBody = Readonly<{
   sql?: unknown;

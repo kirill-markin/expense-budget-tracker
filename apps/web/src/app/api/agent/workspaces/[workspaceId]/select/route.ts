@@ -4,11 +4,11 @@
  * Validates membership and persists the selected workspace for the current
  * agent API key connection.
  */
-import { buildRunSqlAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
-import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
-import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
+import { buildRunSqlAction, buildSuccessEnvelope } from "@/server/agent/envelope";
+import { authenticateAgentRequest, getAgentAuthError } from "@/server/agent/apiKeyAuth";
+import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agent/responses";
 import { getWorkspaceForTrustedIdentity } from "@/server/workspaces";
-import { saveWorkspaceId } from "@/server/agentWorkspaceSelection";
+import { saveWorkspaceId } from "@/server/agent/workspaceSelection";
 
 type RouteContext = Readonly<{
   params: Promise<{

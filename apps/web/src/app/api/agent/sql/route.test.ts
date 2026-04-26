@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { postAgentSqlRouteWithDeps } from "@/app/api/agent/sql/route";
-import type { AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
+import type { AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
 
 const createAuthenticatedRequest = (): AgentAuthenticatedRequest => ({
   transport: "api_key",

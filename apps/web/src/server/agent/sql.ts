@@ -9,7 +9,7 @@ import {
   type AllowedRelationName,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { withRestrictedTrustedIdentityContext } from "@/server/db";
-import { type AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
+import { type AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
 import { getWorkspaceForTrustedIdentity } from "@/server/workspaces";
 
 type EntityHint = Readonly<{

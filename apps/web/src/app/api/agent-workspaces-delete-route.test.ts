@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { postAgentWorkspaceDeleteRouteWithDeps } from "@/app/api/agent/workspaces/[workspaceId]/delete/route";
-import type { AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
+import type { AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
 import { WorkspaceDeletionRequiresSingleMemberError } from "@/server/workspaces";
 
 const createAuthenticatedRequest = (): AgentAuthenticatedRequest => ({

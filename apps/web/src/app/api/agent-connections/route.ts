@@ -2,7 +2,7 @@
  * Human settings API for listing agent connections.
  */
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
-import { listAgentConnections } from "@/server/agentConnections";
+import { listAgentConnections } from "@/server/agent/connections";
 
 export const GET = async (request: Request): Promise<Response> => {
   const userId = extractUserId(request);

@@ -2,7 +2,7 @@
  * Discovery document for terminal-first agent onboarding.
  */
 import { buildAgentDiscoveryEnvelope as buildSharedAgentDiscoveryEnvelope } from "@expense-budget-tracker/agent-shared/discovery";
-import { type AgentEnvelope } from "@/server/agentEnvelope";
+import { type AgentEnvelope } from "@/server/agent/envelope";
 
 const getApiBaseUrl = (request: Request): string => {
   const requestUrl = new URL(request.url);
