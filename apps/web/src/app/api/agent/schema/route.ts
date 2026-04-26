@@ -5,10 +5,10 @@
  * plus optional hints for risky write constraints.
  */
 import { MAX_SQL_ROWS, SQL_STATEMENT_TIMEOUT_MS } from "@expense-budget-tracker/agent-shared/sql-policy";
-import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
-import { buildRunSqlAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
-import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agentResponses";
-import { getAllowedSchemaRelations } from "@/server/agentSchema";
+import { authenticateAgentRequest, getAgentAuthError } from "@/server/agent/apiKeyAuth";
+import { buildRunSqlAction, buildSuccessEnvelope } from "@/server/agent/envelope";
+import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agent/responses";
+import { getAllowedSchemaRelations } from "@/server/agent/schema";
 
 export const GET = async (request: Request): Promise<Response> => {
   try {

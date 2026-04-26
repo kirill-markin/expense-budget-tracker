@@ -97,7 +97,7 @@ test("trusted agent helpers query with a resolved accessible workspace context",
   });
 
   const [{ getAllowedSchemaRelations }, { deleteWorkspaceForTrustedIdentity }] = await Promise.all([
-    import("./agentSchema"),
+    import("./agent/schema"),
     import("./workspaces"),
   ]);
 

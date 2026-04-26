@@ -4,13 +4,13 @@
  * Validates membership and deletes the workspace with all its data.
  * Requires confirmText matching the workspace name for safety.
  */
-import { buildSuccessEnvelope } from "@/server/agentEnvelope";
+import { buildSuccessEnvelope } from "@/server/agent/envelope";
 import {
   authenticateAgentRequest,
   getAgentAuthError,
   type AgentAuthenticatedRequest,
-} from "@/server/agentApiKeyAuth";
-import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
+} from "@/server/agent/apiKeyAuth";
+import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agent/responses";
 import {
   deleteWorkspaceForTrustedIdentity,
   getWorkspaceForTrustedIdentity,

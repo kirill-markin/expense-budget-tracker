@@ -2,8 +2,8 @@
  * Shared response helpers for machine-facing agent endpoints.
  */
 import { AGENT_API_KEY_ENV_VAR_NAME } from "@expense-budget-tracker/agent-shared";
-import { type AgentAuthError } from "@/server/agentApiKeyAuth";
-import { buildErrorEnvelope, type AgentAction } from "@/server/agentEnvelope";
+import { type AgentAuthError } from "@/server/agent/apiKeyAuth";
+import { buildErrorEnvelope, type AgentAction } from "@/server/agent/envelope";
 
 export const API_KEY_INSTRUCTIONS = `Send Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME} after exporting the key once, or create a new agent connection.`;
 

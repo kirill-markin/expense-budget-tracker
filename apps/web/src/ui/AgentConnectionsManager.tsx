@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import { fetchWithCsrf } from "@/lib/csrf";
-import type { AgentConnectionRow } from "@/server/agentConnections";
+import type { AgentConnectionRow } from "@/server/agent/connections";
 
 import settingsStyles from "@/ui/SettingsForm.module.css";
 

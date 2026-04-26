@@ -13,7 +13,7 @@ import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/serve
 import { getCategories } from "@/server/transactions/getTransactions";
 import { getUserSettings } from "@/server/userSettings";
 import { queryAs } from "@/server/db";
-import { listAgentConnections } from "@/server/agentConnections";
+import { listAgentConnections } from "@/server/agent/connections";
 import { AgentConnectionsManager } from "@/ui/AgentConnectionsManager";
 import { FilteredCategorySettings } from "@/ui/FilteredCategorySettings";
 import { UserSettingsForm } from "@/ui/UserSettingsForm";

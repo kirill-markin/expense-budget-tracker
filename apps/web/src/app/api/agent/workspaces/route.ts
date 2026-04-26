@@ -4,9 +4,9 @@
  * GET lists the current user's workspaces. POST creates a new workspace using
  * the same backend helper as the human session flow.
  */
-import { buildCreateWorkspaceAction, buildSchemaAction, buildSelectWorkspaceAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
-import { authenticateAgentRequest, getAgentAuthError } from "@/server/agentApiKeyAuth";
-import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agentResponses";
+import { buildCreateWorkspaceAction, buildSchemaAction, buildSelectWorkspaceAction, buildSuccessEnvelope } from "@/server/agent/envelope";
+import { authenticateAgentRequest, getAgentAuthError } from "@/server/agent/apiKeyAuth";
+import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agent/responses";
 import { createWorkspaceForTrustedIdentity, listWorkspacesForTrustedIdentity } from "@/server/workspaces";
 
 type CreateWorkspaceBody = Readonly<{

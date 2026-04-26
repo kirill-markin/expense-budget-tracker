@@ -4,9 +4,9 @@
  * Authenticates ApiKey requests, ensures at least one workspace exists, and
  * returns the current account context in the stable agent envelope.
  */
-import { buildListWorkspacesAction, buildSchemaAction, buildSelectWorkspaceAction, buildSuccessEnvelope } from "@/server/agentEnvelope";
-import { authenticateAgentRequest, getAgentAuthError, type AgentAuthenticatedRequest } from "@/server/agentApiKeyAuth";
-import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agentResponses";
+import { buildListWorkspacesAction, buildSchemaAction, buildSelectWorkspaceAction, buildSuccessEnvelope } from "@/server/agent/envelope";
+import { authenticateAgentRequest, getAgentAuthError, type AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
+import { jsonAgentAuthError, jsonAgentUnavailable } from "@/server/agent/responses";
 import { resolveWorkspaceForIdentity } from "@/server/workspaceBootstrap";
 
 type AgentMeRouteDependencies = Readonly<{

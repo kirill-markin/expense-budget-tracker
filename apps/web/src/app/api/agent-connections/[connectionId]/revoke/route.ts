@@ -1,7 +1,7 @@
 /**
  * Human settings API for revoking one agent connection.
  */
-import { revokeAgentConnection } from "@/server/agentConnections";
+import { revokeAgentConnection } from "@/server/agent/connections";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 type RouteContext = Readonly<{
