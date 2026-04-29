@@ -169,6 +169,7 @@ const completeToolLimitSummaryTurn = async (
     buildOpenAIResponsesRequestWithOptions(
       baseInput,
       continuationItems,
+      params.userId,
       params.sessionId,
       params.timezone,
       [],
@@ -226,6 +227,7 @@ const runLoopWithDeps = async (
       buildOpenAIResponsesRequest(
         baseInput,
         continuationItems,
+        params.userId,
         params.sessionId,
         params.timezone,
       ),

@@ -13,7 +13,10 @@ import {
   applyToolCallStarted,
   createToolCallStateMap,
 } from "@/server/chat/openai/toolCalls";
+import type { OpenAIResponsesRequest } from "@/server/chat/openai/request";
 import type { ChatStreamEvent } from "@/server/chat/types";
+
+const EXPECTED_USER_1_SAFETY_IDENTIFIER = "v1_xsKJ5J6cBbIUWGA4e3O8sY30P7CaHkpKlxPHbIi7VBs";
 
 const createLoopParams = (): StartOpenAILoopParams => ({
   requestId: "req-loop",
@@ -210,6 +213,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
   const toolCall = createFunctionCall("call-1", "query_database", "{\"sql\":\"select 1\"}");
   const toolOutput = "{\"ok\":true}";
   let modelCallCount = 0;
+  const openAIRequests: Array<OpenAIResponsesRequest> = [];
 
   const completion = await runOpenAILoopWithDeps(
     params,
@@ -219,8 +223,14 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
     {
       buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
       getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
-      runOneModelCall: async () => {
+      runOneModelCall: async (
+        _client: OpenAI,
+        _callParams: StartOpenAILoopParams,
+        _emitEvent: OpenAILoopEventHandler,
+        request: OpenAIResponsesRequest,
+      ) => {
         modelCallCount += 1;
+        openAIRequests.push(request);
         if (modelCallCount === 1) {
           return {
             finalResponse: createFinalResponse(""),
@@ -252,6 +262,17 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
   );
 
   assert.equal(modelCallCount, 2);
+  assert.deepEqual(
+    openAIRequests.map((request) => request.safety_identifier),
+    [
+      EXPECTED_USER_1_SAFETY_IDENTIFIER,
+      EXPECTED_USER_1_SAFETY_IDENTIFIER,
+    ],
+  );
+  assert.deepEqual(
+    openAIRequests.map((request) => request.prompt_cache_key),
+    ["session-1", "session-1"],
+  );
   assert.deepEqual(observedEvents, [
     {
       type: "tool_call",
@@ -279,6 +300,7 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
   const params = createLoopParams();
   const observedEvents: Array<ChatStreamEvent> = [];
   let modelCallCount = 0;
+  const openAIRequests: Array<OpenAIResponsesRequest> = [];
 
   const completion = await runOpenAILoopWithDeps(
     params,
@@ -292,11 +314,12 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
         _client: OpenAI,
         _callParams: StartOpenAILoopParams,
         _emitEvent: OpenAILoopEventHandler,
-        _request,
+        request: OpenAIResponsesRequest,
         _promptCacheKey: string,
         callIndex: number,
       ) => {
         modelCallCount += 1;
+        openAIRequests.push(request);
         if (callIndex <= CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS) {
           const callId = `call-${String(callIndex)}`;
           return {
@@ -329,6 +352,11 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
   );
 
   assert.equal(modelCallCount, CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS + 1);
+  assert.equal(
+    openAIRequests.every((request) => request.safety_identifier === EXPECTED_USER_1_SAFETY_IDENTIFIER),
+    true,
+  );
+  assert.deepEqual(openAIRequests.at(-1)?.tools, []);
   assert.deepEqual(observedEvents.slice(-2), [
     {
       type: "delta",

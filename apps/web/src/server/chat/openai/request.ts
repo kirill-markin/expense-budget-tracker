@@ -8,6 +8,7 @@ import {
   toOpenAIResponseInputItem,
   type StoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
+import { buildOpenAISafetyIdentifier } from "@/server/chat/openai/safetyIdentifier";
 import { OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tools";
 
 export type OpenAIResponsesRequest = Readonly<{
@@ -21,6 +22,7 @@ export type OpenAIResponsesRequest = Readonly<{
     summary: typeof CHAT_MODEL_REASONING_SUMMARY;
   }>;
   prompt_cache_key: string;
+  safety_identifier: string;
 }>;
 
 type ChatResponseLogEvent = Readonly<{
@@ -59,6 +61,7 @@ export const buildPromptCacheKey = (
 export const buildOpenAIResponsesRequest = (
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
   continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
+  userId: string,
   sessionId: string,
   timezone: string,
 ): OpenAIResponsesRequest => ({
@@ -72,11 +75,13 @@ export const buildOpenAIResponsesRequest = (
     summary: CHAT_MODEL_REASONING_SUMMARY,
   },
   prompt_cache_key: buildPromptCacheKey(sessionId),
+  safety_identifier: buildOpenAISafetyIdentifier(userId),
 });
 
 export const buildOpenAIResponsesRequestWithOptions = (
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
   continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
+  userId: string,
   sessionId: string,
   timezone: string,
   tools: ReadonlyArray<OpenAI.Responses.Tool>,
@@ -92,6 +97,7 @@ export const buildOpenAIResponsesRequestWithOptions = (
     summary: CHAT_MODEL_REASONING_SUMMARY,
   },
   prompt_cache_key: buildPromptCacheKey(sessionId),
+  safety_identifier: buildOpenAISafetyIdentifier(userId),
 });
 
 const getResponseStopReason = (
