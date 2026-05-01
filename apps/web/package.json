@@ -18,7 +18,7 @@
     "@langfuse/openai": "^5.2.0",
     "@langfuse/otel": "^5.2.0",
     "@langfuse/tracing": "^5.2.0",
-    "@opentelemetry/sdk-node": "^0.214.0",
+    "@opentelemetry/sdk-node": "^0.216.0",
     "aws-jwt-verify": "^5.1.1",
     "d3": "^7.9.0",
     "i18next": "^26.0.8",
