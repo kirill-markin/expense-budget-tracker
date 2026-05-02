@@ -120,7 +120,7 @@ export const getSqlPolicyInstructions = (
   }
 
   if (error.code === "function_calls_not_allowed") {
-    return "Function calls are not supported in restricted SQL. Query only the published tables and views directly.";
+    return "Only allowlisted functions are supported in restricted SQL: SUM, COUNT, MIN, MAX, AVG, and COALESCE. Query only the published tables and views directly, use ILIKE instead of LOWER(...) for case-insensitive text search, and use explicit date ranges instead of NOW() or DATE_TRUNC().";
   }
 
   if (error.code === "sql_comments_not_allowed") {
@@ -174,6 +174,9 @@ export const runSql = async (
         command: statement.command,
         rows: statement.rows,
         rowCount: statement.rowCount,
+        returnedRowCount: statement.returnedRowCount,
+        totalRowCount: statement.totalRowCount,
+        truncated: statement.truncated,
         referencedRelations: statement.referencedRelations,
         ...(entityHints === undefined ? {} : { entityHints }),
       };

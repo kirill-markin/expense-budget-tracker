@@ -4,6 +4,23 @@
 export const MAX_SQL_ROWS = 100;
 export const SQL_STATEMENT_TIMEOUT_MS = 30_000;
 
+export const ALLOWED_SQL_FUNCTION_NAMES = [
+  "sum",
+  "count",
+  "min",
+  "max",
+  "avg",
+  "coalesce",
+] as const;
+
+export type AllowedSqlFunctionName = typeof ALLOWED_SQL_FUNCTION_NAMES[number];
+
+const ALLOWED_SQL_FUNCTIONS: ReadonlySet<string> = new Set(ALLOWED_SQL_FUNCTION_NAMES);
+
+const ALLOWED_SQL_FUNCTIONS_DESCRIPTION = ALLOWED_SQL_FUNCTION_NAMES
+  .map((name) => name.toUpperCase())
+  .join(", ");
+
 const ALLOWED_FIRST_KEYWORDS = new Set([
   "SELECT", "WITH", "INSERT", "UPDATE", "DELETE",
 ]);
@@ -102,6 +119,9 @@ export type ExecutedExpenseSqlStatement = Readonly<{
   isMutating: boolean;
   rows: ReadonlyArray<RestrictedSqlResultRow>;
   rowCount: number;
+  returnedRowCount: number;
+  totalRowCount: number;
+  truncated: boolean;
   referencedRelations: ReadonlyArray<AllowedRelationName>;
 }>;
 
@@ -629,7 +649,13 @@ const parseCteDefinitions = (
   };
 };
 
-const assertNoFunctionCallsInSegment = (
+const failFunctionCallNotAllowed = (functionName: string): never =>
+  fail(
+    "function_calls_not_allowed",
+    `Function ${functionName}() is not allowed in restricted SQL. Allowed functions: ${ALLOWED_SQL_FUNCTIONS_DESCRIPTION}`,
+  );
+
+const assertOnlyAllowedFunctionCallsInSegment = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
   endIndex: number,
@@ -641,9 +667,9 @@ const assertNoFunctionCallsInSegment = (
   if (tokens[startIndex]?.lower === "with") {
     const { ctes, mainQueryStartIndex } = parseCteDefinitions(tokens, startIndex, endIndex);
     for (const cte of ctes) {
-      assertNoFunctionCallsInSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex);
+      assertOnlyAllowedFunctionCallsInSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex);
     }
-    assertNoFunctionCallsInSegment(tokens, mainQueryStartIndex, endIndex);
+    assertOnlyAllowedFunctionCallsInSegment(tokens, mainQueryStartIndex, endIndex);
     return;
   }
 
@@ -665,7 +691,7 @@ const assertNoFunctionCallsInSegment = (
     if (token.kind === "punct") {
       if (token.value === "(") {
         const closeIndex = findMatchingParen(tokens, index, endIndex);
-        assertNoFunctionCallsInSegment(tokens, index + 1, closeIndex);
+        assertOnlyAllowedFunctionCallsInSegment(tokens, index + 1, closeIndex);
         index = closeIndex;
       }
       continue;
@@ -677,7 +703,7 @@ const assertNoFunctionCallsInSegment = (
 
     if (token.lower === "in" || token.lower === "exists" || token.lower === "values") {
       const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
-      assertNoFunctionCallsInSegment(tokens, index + 2, closeIndex);
+      assertOnlyAllowedFunctionCallsInSegment(tokens, index + 2, closeIndex);
       index = closeIndex;
       continue;
     }
@@ -694,7 +720,17 @@ const assertNoFunctionCallsInSegment = (
       continue;
     }
 
-    fail("function_calls_not_allowed", "Function calls are not allowed in restricted SQL");
+    if (previousToken?.value === ".") {
+      failFunctionCallNotAllowed(token.value);
+    }
+
+    if (!ALLOWED_SQL_FUNCTIONS.has(token.lower)) {
+      failFunctionCallNotAllowed(token.value);
+    }
+
+    const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
+    assertOnlyAllowedFunctionCallsInSegment(tokens, index + 2, closeIndex);
+    index = closeIndex;
   }
 };
 
@@ -816,7 +852,7 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
     fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
   }
   const tokens = tokenizeSql(sanitizedSql);
-  assertNoFunctionCallsInSegment(tokens, 0, tokens.length);
+  assertOnlyAllowedFunctionCallsInSegment(tokens, 0, tokens.length);
 
   return {
     sql,
@@ -849,12 +885,16 @@ export const executeExpenseSql = async (
     const result = await execute(statement.sql);
     const rows = result.rows.slice(0, MAX_SQL_ROWS);
     const rowCount = rows.length > 0 ? rows.length : (result.rowCount ?? 0);
+    const totalRowCount = result.rows.length > 0 ? result.rows.length : (result.rowCount ?? 0);
     statements.push({
       sql: statement.sql,
       command: result.command,
       isMutating: statement.isMutating,
       rows,
       rowCount,
+      returnedRowCount: rows.length,
+      totalRowCount,
+      truncated: result.rows.length > rows.length,
       referencedRelations: statement.referencedRelations,
     });
   }

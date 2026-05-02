@@ -27,6 +27,9 @@ type AgentSqlStatementResult = Readonly<{
   command: string;
   rows: ReadonlyArray<Readonly<Record<string, unknown>>>;
   rowCount: number;
+  returnedRowCount: number;
+  totalRowCount: number;
+  truncated: boolean;
   referencedRelations: ReadonlyArray<AllowedRelationName>;
   entityHints?: EntityHints;
 }>;
@@ -166,6 +169,9 @@ export const executeAgentSql = async (
         command: statement.command,
         rows: statement.rows,
         rowCount: statement.rowCount,
+        returnedRowCount: statement.returnedRowCount,
+        totalRowCount: statement.totalRowCount,
+        truncated: statement.truncated,
         referencedRelations: statement.referencedRelations,
         ...(entityHints === undefined ? {} : { entityHints }),
       };

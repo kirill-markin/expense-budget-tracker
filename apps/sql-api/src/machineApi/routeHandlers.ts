@@ -91,7 +91,7 @@ export const handleSchemaRoute = async (
         [
           buildRunSqlAction({ baseUrl: context.apiBaseUrl, path: "/sql" }, RUN_SQL_WITH_WORKSPACE_INPUT),
         ],
-        "Schema includes only relations supported by /sql and may include optional hints about constraints or write semantics. Select a workspace once, then run SQL.",
+        "Schema includes only relations supported by /sql and may include optional hints about constraints or write semantics. SQL supports only SUM, COUNT, MIN, MAX, AVG, and COALESCE function calls. Select a workspace once, then run SQL.",
       ),
     );
   } catch (error) {
@@ -310,7 +310,7 @@ export const handleSqlRoute = async (
       buildSuccessEnvelope(
         response,
         [],
-        "Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first, semicolon-separated statements are allowed, and only supported relations may be queried.",
+        "Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first, semicolon-separated statements are allowed, only supported relations may be queried, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and results are capped per statement with returnedRowCount, totalRowCount, and truncated metadata.",
       ),
     );
   } catch (error) {

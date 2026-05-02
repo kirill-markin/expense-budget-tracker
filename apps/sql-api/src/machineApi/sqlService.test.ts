@@ -64,7 +64,7 @@ test("runSql rejects function-only SQL before executing restricted queries", asy
   assert.equal(restrictedContextCalled, false);
 });
 
-test("runSql still executes allowed direct relation queries", async (): Promise<void> => {
+test("runSql executes allowed aggregate relation queries with row metadata", async (): Promise<void> => {
   let restrictedContextCalled = false;
   const dependencies = createDependencies({
     withRestrictedTrustedIdentityContext: async <T>(
@@ -80,7 +80,7 @@ test("runSql still executes allowed direct relation queries", async (): Promise<
           rowCount: 1,
           oid: 0,
           fields: [],
-          rows: [{ account_id: "a-main-usd" }],
+          rows: [{ balance: "123.45" }],
         }) as QueryResult);
     },
   });
@@ -89,10 +89,16 @@ test("runSql still executes allowed direct relation queries", async (): Promise<
     dependencies,
     createAuthenticatedContext(),
     "user-1",
-    "SELECT account_id FROM ledger_entries LIMIT 1",
+    "SELECT SUM(amount) AS balance FROM ledger_entries WHERE account_id = 'a-main-usd'",
   );
   const workspace = (result?.workspace ?? null) as WorkspaceSummary | null;
+  const statements = (result?.statements ?? []) as ReadonlyArray<Readonly<Record<string, unknown>>>;
+  const statement = statements[0];
 
   assert.equal(restrictedContextCalled, true);
   assert.equal(workspace?.workspaceId, "user-1");
+  assert.equal(statement?.rowCount, 1);
+  assert.equal(statement?.returnedRowCount, 1);
+  assert.equal(statement?.totalRowCount, 1);
+  assert.equal(statement?.truncated, false);
 });
