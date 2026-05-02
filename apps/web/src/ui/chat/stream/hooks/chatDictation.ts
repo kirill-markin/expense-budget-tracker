@@ -2,6 +2,8 @@
 
 import { fetchWithCsrf } from "@/lib/csrf";
 
+type ChatTranslation = (key: string) => string;
+
 export type ChatDictationState = "idle" | "requesting_permission" | "recording" | "transcribing";
 
 export type ChatDraftSelection = Readonly<{
@@ -99,9 +101,42 @@ type ChatTranscriptionResponse = Readonly<{
   sessionId: string;
 }>;
 
+const isHtmlContentType = (contentType: string | null): boolean => {
+  if (contentType === null) {
+    return false;
+  }
+
+  const normalizedContentType = contentType.trim().toLowerCase();
+  return normalizedContentType === "text/html" || normalizedContentType.startsWith("text/html;");
+};
+
+const isHtmlLikeErrorText = (raw: string): boolean => {
+  const normalizedRaw = raw.trim().toLowerCase();
+  return (
+    normalizedRaw === ""
+    || normalizedRaw.includes("<html")
+    || normalizedRaw.includes("<!doctype")
+    || normalizedRaw.startsWith("<!--")
+    || /^<\/?[a-z][a-z0-9-]*(?:\s|>|\/>)/.test(normalizedRaw)
+  );
+};
+
+export const sanitizeChatTranscriptionErrorText = (
+  raw: string,
+  contentType: string | null,
+  t: ChatTranslation,
+): string => {
+  if (isHtmlContentType(contentType) || isHtmlLikeErrorText(raw)) {
+    return t("chat.dictationFailed");
+  }
+
+  return raw;
+};
+
 export const transcribeChatAudio = async (
   blob: Blob,
   sessionId: string,
+  t: ChatTranslation,
 ): Promise<ChatTranscriptionResponse> => {
   const mediaType = normalizeAudioMediaType(blob.type === "" ? "audio/webm" : blob.type);
   const file = new File([blob], `chat-dictation.${extensionForAudioMediaType(mediaType)}`, {
@@ -118,15 +153,19 @@ export const transcribeChatAudio = async (
   });
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message);
+    throw new Error(sanitizeChatTranscriptionErrorText(
+      message,
+      response.headers.get("content-type"),
+      t,
+    ));
   }
 
   const payload = await response.json() as ChatTranscriptionResponse;
   if (typeof payload.text !== "string" || payload.text.trim() === "") {
-    throw new Error("Audio transcription failed. Please try again.");
+    throw new Error(t("chat.dictationFailed"));
   }
   if (typeof payload.sessionId !== "string" || payload.sessionId.trim() === "") {
-    throw new Error("Audio transcription failed. Please try again.");
+    throw new Error(t("chat.dictationFailed"));
   }
 
   return payload;

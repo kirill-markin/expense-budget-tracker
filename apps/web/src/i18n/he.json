@@ -206,6 +206,7 @@
   "chat.dictationUnavailable": "הקלטה מהמיקרופון אינה זמינה בדפדפן הזה.",
   "chat.dictationPermissionDenied": "הגישה למיקרופון נדחתה. אפשר אותה בהגדרות הדפדפן ונסה שוב.",
   "chat.dictationNoMicrophone": "לא נמצא מיקרופון זמין להכתבה קולית.",
+  "chat.dictationFailed": "תמלול השמע נכשל. נסה שוב.",
   "chat.exportTitle": "ייצוא שיחת AI",
   "chat.exportTimestampsUtc": "כל חותמות הזמן שלהלן הן ב-UTC",
   "chat.exportedAt": "זמן הייצוא",

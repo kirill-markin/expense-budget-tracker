@@ -206,6 +206,7 @@
   "chat.dictationUnavailable": "当前浏览器不支持麦克风录音。",
   "chat.dictationPermissionDenied": "麦克风权限被拒绝。请在浏览器设置中允许后重试。",
   "chat.dictationNoMicrophone": "未检测到可用于语音输入的麦克风。",
+  "chat.dictationFailed": "音频转写失败。请重试。",
   "chat.exportTitle": "AI 聊天记录导出",
   "chat.exportTimestampsUtc": "以下所有时间戳均为 UTC 时间",
   "chat.exportedAt": "导出时间",

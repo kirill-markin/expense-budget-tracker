@@ -206,6 +206,7 @@
   "chat.dictationUnavailable": "Запис з мікрофона недоступний у цьому браузері.",
   "chat.dictationPermissionDenied": "Доступ до мікрофона заборонено. Дозвольте його в налаштуваннях браузера та спробуйте ще раз.",
   "chat.dictationNoMicrophone": "Для голосового диктування не знайдено мікрофон.",
+  "chat.dictationFailed": "Не вдалося розпізнати аудіо. Спробуйте ще раз.",
   "chat.exportTitle": "Експорт чату із ШІ",
   "chat.exportTimestampsUtc": "Усі мітки часу нижче вказані в UTC",
   "chat.exportedAt": "Експортовано",

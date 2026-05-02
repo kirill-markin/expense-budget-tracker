@@ -206,6 +206,7 @@
   "chat.dictationUnavailable": "ضبط با میکروفون در این مرورگر در دسترس نیست.",
   "chat.dictationPermissionDenied": "دسترسی به میکروفون رد شد. آن را در تنظیمات مرورگر فعال کنید و دوباره تلاش کنید.",
   "chat.dictationNoMicrophone": "برای دیکته صوتی هیچ میکروفونی پیدا نشد.",
+  "chat.dictationFailed": "تبدیل صدا به متن ناموفق بود. دوباره تلاش کنید.",
   "chat.exportTitle": "خروجی گفت‌وگو با هوش مصنوعی",
   "chat.exportTimestampsUtc": "همه زمان‌های زیر بر اساس UTC هستند",
   "chat.exportedAt": "زمان تهیه خروجی",
