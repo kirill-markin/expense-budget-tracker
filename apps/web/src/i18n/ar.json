@@ -206,6 +206,7 @@
   "chat.dictationUnavailable": "تسجيل الميكروفون غير متاح في هذا المتصفح.",
   "chat.dictationPermissionDenied": "تم رفض الوصول إلى الميكروفون. اسمح به من إعدادات المتصفح ثم حاول مرة أخرى.",
   "chat.dictationNoMicrophone": "لم يتم العثور على ميكروفون للإملاء الصوتي.",
+  "chat.dictationFailed": "تعذر تحويل الصوت إلى نص. حاول مرة أخرى.",
   "chat.exportTitle": "تصدير دردشة الذكاء الاصطناعي",
   "chat.exportTimestampsUtc": "جميع الطوابع الزمنية أدناه بتوقيت UTC",
   "chat.exportedAt": "تم التصدير في",

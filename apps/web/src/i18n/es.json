@@ -206,6 +206,7 @@
   "chat.dictationUnavailable": "La grabación con micrófono no está disponible en este navegador.",
   "chat.dictationPermissionDenied": "Se denegó el acceso al micrófono. Permítelo en la configuración del navegador e inténtalo de nuevo.",
   "chat.dictationNoMicrophone": "No se encontró ningún micrófono para el dictado por voz.",
+  "chat.dictationFailed": "No se pudo transcribir el audio. Inténtalo de nuevo.",
   "chat.exportTitle": "Exportación del chat con IA",
   "chat.exportTimestampsUtc": "Todas las marcas de tiempo que aparecen a continuación están en UTC",
   "chat.exportedAt": "Exportado el",

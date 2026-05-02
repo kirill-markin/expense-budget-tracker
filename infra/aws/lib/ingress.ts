@@ -23,6 +23,129 @@ export interface IngressResult {
   accessLogsBucket: s3.Bucket;
 }
 
+type ByteMatchPositionalConstraint = "EXACTLY" | "STARTS_WITH";
+
+const noneTextTransformation = (): wafv2.CfnWebACL.TextTransformationProperty => ({
+  priority: 0,
+  type: "NONE",
+});
+
+const lowercaseTextTransformation = (): wafv2.CfnWebACL.TextTransformationProperty => ({
+  priority: 0,
+  type: "LOWERCASE",
+});
+
+const byteMatchStatement = (
+  fieldToMatch: wafv2.CfnWebACL.FieldToMatchProperty,
+  positionalConstraint: ByteMatchPositionalConstraint,
+  searchString: string,
+  textTransformation: wafv2.CfnWebACL.TextTransformationProperty,
+): wafv2.CfnWebACL.StatementProperty => ({
+  byteMatchStatement: {
+    fieldToMatch,
+    positionalConstraint,
+    searchString,
+    textTransformations: [textTransformation],
+  },
+});
+
+const methodIs = (method: string): wafv2.CfnWebACL.StatementProperty =>
+  byteMatchStatement({ method: {} }, "EXACTLY", method, noneTextTransformation());
+
+const uriPathIs = (path: string): wafv2.CfnWebACL.StatementProperty =>
+  byteMatchStatement({ uriPath: {} }, "EXACTLY", path, noneTextTransformation());
+
+const singleHeaderField = (headerName: string): wafv2.CfnWebACL.FieldToMatchProperty => ({
+  singleHeader: { Name: headerName },
+});
+
+const headerIs = (
+  headerName: string,
+  headerValue: string,
+): wafv2.CfnWebACL.StatementProperty =>
+  byteMatchStatement(
+    singleHeaderField(headerName),
+    "EXACTLY",
+    headerValue.toLowerCase(),
+    lowercaseTextTransformation(),
+  );
+
+const headerStartsWith = (
+  headerName: string,
+  headerPrefix: string,
+): wafv2.CfnWebACL.StatementProperty =>
+  byteMatchStatement(
+    singleHeaderField(headerName),
+    "STARTS_WITH",
+    headerPrefix.toLowerCase(),
+    lowercaseTextTransformation(),
+  );
+
+const hasLabel = (label: string): wafv2.CfnWebACL.StatementProperty => ({
+  labelMatchStatement: {
+    scope: "LABEL",
+    key: label,
+  },
+});
+
+const andStatement = (
+  statements: ReadonlyArray<wafv2.CfnWebACL.StatementProperty>,
+): wafv2.CfnWebACL.StatementProperty => ({
+  andStatement: {
+    statements: [...statements],
+  },
+});
+
+const orStatement = (
+  statements: ReadonlyArray<wafv2.CfnWebACL.StatementProperty>,
+): wafv2.CfnWebACL.StatementProperty => ({
+  orStatement: {
+    statements: [...statements],
+  },
+});
+
+const notStatement = (
+  statement: wafv2.CfnWebACL.StatementProperty,
+): wafv2.CfnWebACL.StatementProperty => ({
+  notStatement: {
+    statement,
+  },
+});
+
+const blockLabeledRequestUnless = (
+  name: string,
+  priority: number,
+  label: string,
+  allowedRequest: wafv2.CfnWebACL.StatementProperty,
+  metricName: string,
+): wafv2.CfnWebACL.RuleProperty => ({
+  name,
+  priority,
+  action: { block: {} },
+  statement: andStatement([
+    hasLabel(label),
+    notStatement(allowedRequest),
+  ]),
+  visibilityConfig: {
+    sampledRequestsEnabled: true,
+    cloudWatchMetricsEnabled: true,
+    metricName,
+  },
+});
+
+const postRequestToApp = (
+  appDomain: string,
+  path: string,
+  contentTypePrefix: string,
+): wafv2.CfnWebACL.StatementProperty =>
+  andStatement([
+    methodIs("POST"),
+    uriPathIs(path),
+    headerIs("host", appDomain),
+    headerIs("origin", `https://${appDomain}`),
+    headerStartsWith("content-type", contentTypePrefix),
+  ]);
+
 export function ingress(scope: Construct, props: IngressProps): IngressResult {
   // --- ALB ---
   const alb = new elbv2.ApplicationLoadBalancer(scope, "Alb", {
@@ -112,6 +235,13 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   //
   // WAF is kept for managed rule sets (SQLi, XSS, known bad inputs) which inspect
   // request content and work correctly regardless of source IP.
+  const chatJsonRequest = postRequestToApp(props.appDomain, "/api/chat", "application/json");
+  const chatTranscriptionUploadRequest = postRequestToApp(
+    props.appDomain,
+    "/api/chat/transcriptions",
+    "multipart/form-data",
+  );
+
   const waf = new wafv2.CfnWebACL(scope, "Waf", {
     scope: "REGIONAL",
     defaultAction: { allow: {} },
@@ -129,11 +259,17 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
           managedRuleGroupStatement: {
             vendorName: "AWS",
             name: "AWSManagedRulesCommonRuleSet",
-            excludedRules: [
+            ruleActionOverrides: [
+              {
+                name: "CrossSiteScripting_BODY",
+                actionToUse: { count: {} },
+              },
               // SizeRestrictions_BODY blocks requests with body > 8 KB.
-              // The /api/chat endpoint sends base64-encoded images (several MB).
-              // Cloudflare enforces its own upload limits upstream.
-              { name: "SizeRestrictions_BODY" },
+              // Large app payloads are re-blocked below except for explicit upload routes.
+              {
+                name: "SizeRestrictions_BODY",
+                actionToUse: { count: {} },
+              },
             ],
           },
         },
@@ -143,9 +279,23 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
           metricName: "expense-tracker-common-rules",
         },
       },
+      blockLabeledRequestUnless(
+        "BlockUnexpectedXssBodyMatches",
+        1,
+        "awswaf:managed:aws:core-rule-set:CrossSiteScripting_Body",
+        chatTranscriptionUploadRequest,
+        "expense-tracker-xss-body-reblock",
+      ),
+      blockLabeledRequestUnless(
+        "BlockUnexpectedBodySizeMatches",
+        2,
+        "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body",
+        orStatement([chatJsonRequest, chatTranscriptionUploadRequest]),
+        "expense-tracker-size-body-reblock",
+      ),
       {
         name: "AWSManagedKnownBadInputs",
-        priority: 1,
+        priority: 3,
         overrideAction: { none: {} },
         statement: {
           managedRuleGroupStatement: {

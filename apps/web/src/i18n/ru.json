@@ -206,6 +206,7 @@
   "chat.dictationUnavailable": "Запись с микрофона недоступна в этом браузере.",
   "chat.dictationPermissionDenied": "Доступ к микрофону запрещён. Разрешите его в настройках браузера и попробуйте снова.",
   "chat.dictationNoMicrophone": "Для голосовой диктовки не найден микрофон.",
+  "chat.dictationFailed": "Не удалось распознать аудио. Попробуйте ещё раз.",
   "chat.exportTitle": "Экспорт чата с ИИ",
   "chat.exportTimestampsUtc": "Все метки времени ниже указаны в UTC",
   "chat.exportedAt": "Экспортировано",

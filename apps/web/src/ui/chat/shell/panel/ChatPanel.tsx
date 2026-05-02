@@ -416,7 +416,7 @@ export const ChatPanel = (props: Props): ReactElement => {
       }
 
       const sessionId = await ensureWritableSessionId();
-      const transcription = await transcribeChatAudio(audioBlob, sessionId);
+      const transcription = await transcribeChatAudio(audioBlob, sessionId, t);
       if (isMountedRef.current) {
         acceptServerSessionId(transcription.sessionId);
         setInputText((currentText) => {

@@ -41,6 +41,7 @@ type OpenAIErrorMetadata = Readonly<{
 const CHAT_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const CHAT_TRANSCRIPTION_GENERIC_ERROR_MESSAGE = "Audio transcription failed. Please try again.";
 const CHAT_TRANSCRIPTION_INVALID_AUDIO_ERROR_MESSAGE = "We couldn’t process that recording. Please try again.";
+export const MAX_CHAT_TRANSCRIPTION_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_AUDIO_FILE_EXTENSIONS = new Set(["m4a", "wav", "webm"]);
 const SUPPORTED_AUDIO_MEDIA_TYPES = new Set([
   "audio/mp4",
@@ -100,6 +101,15 @@ export const parseChatTranscriptionUpload = async (request: Request): Promise<Ch
 
   if (fileValue.size <= 0) {
     throw new ApiRouteError(400, "file must not be empty");
+  }
+
+  if (fileValue.size > MAX_CHAT_TRANSCRIPTION_FILE_SIZE_BYTES) {
+    const sizeMb = (fileValue.size / (1024 * 1024)).toFixed(1);
+    const limitMb = (MAX_CHAT_TRANSCRIPTION_FILE_SIZE_BYTES / (1024 * 1024)).toFixed(0);
+    throw new ApiRouteError(
+      400,
+      `Audio file is too large (${sizeMb} MB). Maximum allowed size is ${limitMb} MB.`,
+    );
   }
 
   if (!isSupportedAudioUpload(fileValue)) {

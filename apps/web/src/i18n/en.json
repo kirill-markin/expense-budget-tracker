@@ -206,6 +206,7 @@
   "chat.dictationUnavailable": "Microphone recording is unavailable in this browser.",
   "chat.dictationPermissionDenied": "Microphone access was denied. Allow it in your browser settings and try again.",
   "chat.dictationNoMicrophone": "No microphone was found for voice dictation.",
+  "chat.dictationFailed": "Audio transcription failed. Please try again.",
   "chat.exportTitle": "AI Chat Export",
   "chat.exportTimestampsUtc": "All timestamps below are in UTC",
   "chat.exportedAt": "Exported at",
