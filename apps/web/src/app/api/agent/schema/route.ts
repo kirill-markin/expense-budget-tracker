@@ -25,7 +25,7 @@ export const GET = async (request: Request): Promise<Response> => {
           },
         },
         [buildRunSqlAction()],
-        "Schema includes only relations supported by /api/agent/sql and may include optional hints about constraints or write semantics.",
+        "Schema includes only relations supported by /api/agent/sql and may include optional hints about constraints or write semantics. SQL supports only SUM, COUNT, MIN, MAX, AVG, and COALESCE function calls.",
       ),
     );
   } catch (error) {

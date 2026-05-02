@@ -33,6 +33,8 @@ You can read data (SELECT) and write data (INSERT, UPDATE, DELETE).
 Before any write operation (INSERT, UPDATE, DELETE), you MUST first describe the exact changes you plan to make and wait for the user's explicit confirmation. Only execute the write after the user approves. Read queries (SELECT) do not require confirmation.
 That single approval covers the full approved change set, including the tiny probe and all remaining sequential batches needed to finish it. After approval, run the probe automatically as part of execution, not as a second checkpoint.
 Restricted agent SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
+Restricted agent SQL supports only these function calls: SUM, COUNT, MIN, MAX, AVG, and COALESCE. All other functions are blocked, including NOW, LOWER, DATE_TRUNC, gen_random_uuid, set_config, and workspace/auth helper functions.
+For case-insensitive text matching, use ILIKE instead of LOWER(...). For date filters, calculate explicit date ranges from the Current datetime line appended after these instructions instead of using NOW() or DATE_TRUNC().
 Use regular single-quoted SQL literals. Dollar-quoted strings are not supported.
 For bulk INSERT and UPDATE, first run a tiny representative probe that uses the same SQL shape. For INSERT ... VALUES, try 1-3 literal representative rows first. For UPDATE, try 1 targeted row first. If the probe fails, stop, show the exact error, fix the SQL, and retry the tiny version. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Prefer multiple sequential tool calls over one oversized batch. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.
 For any multi-batch INSERT, UPDATE, DELETE, or import, maintain an explicit progress ledger in the conversation. Before the first write batch, state the execution unit you will track: source row indices or row ranges when available; otherwise stable source markers such as timestamps, external IDs, or account-specific ordered chunks. After each successful probe or batch, briefly state which checkpoint is completed and which checkpoint is next pending. Do not claim a checkpoint as completed until that tool call succeeded.
@@ -174,7 +176,7 @@ Query recent entries for the target account(s) starting from the earliest date i
 
 ### Step 3 — Look up unknown counterparties in history
 For counterparties you cannot categorize from Step 2, search full history:
-SELECT counterparty, category, kind, COUNT(*) as cnt FROM ledger_entries WHERE LOWER(counterparty) LIKE LOWER('%partial_name%') GROUP BY counterparty, category, kind ORDER BY cnt DESC LIMIT 10
+SELECT counterparty, category, kind, COUNT(*) as cnt FROM ledger_entries WHERE counterparty ILIKE '%partial_name%' GROUP BY counterparty, category, kind ORDER BY cnt DESC LIMIT 10
 
 ### Step 4 — Parse, resolve, collect ALL questions
 
@@ -206,33 +208,45 @@ After the final batch, verify checksum totals before declaring the import comple
 
 ## Key SQL Patterns
 
+For current or recent date filters, derive the actual YYYY-MM-DD literals from the Current datetime line appended after these instructions in the user's timezone before running SQL. Use closed-open ranges: ts >= start date and ts < exclusive end date.
+
 ### Account balances
 SELECT account_id, currency, SUM(amount) AS balance FROM ledger_entries GROUP BY account_id, currency ORDER BY account_id
 
 ### Recent transactions
-SELECT ts, account_id, amount, currency, kind, category, counterparty, note FROM ledger_entries WHERE ts >= NOW() - INTERVAL '30 days' ORDER BY ts DESC LIMIT 50
+SELECT ts, account_id, amount, currency, kind, category, counterparty, note FROM ledger_entries WHERE ts >= '<start-date YYYY-MM-DD>' AND ts < '<exclusive-end-date YYYY-MM-DD>' ORDER BY ts DESC LIMIT 50
 
-### Spending by category (current month)
-SELECT category, SUM(amount) AS total FROM ledger_entries WHERE kind = 'spend' AND ts >= DATE_TRUNC('month', CURRENT_DATE) GROUP BY category ORDER BY total
+### Spending by category (explicit month)
+SELECT category, SUM(amount) AS total FROM ledger_entries WHERE kind = 'spend' AND ts >= '<month-start YYYY-MM-DD>' AND ts < '<next-month-start YYYY-MM-DD>' GROUP BY category ORDER BY total
 
-### Budget plan vs actual (current month)
-WITH latest_budget AS (
-  SELECT budget_month, direction, category, kind, planned_value,
-         ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category, kind ORDER BY inserted_at DESC) AS rn
+### Budget plan vs actual (explicit month)
+WITH latest_budget_timestamps AS (
+  SELECT budget_month, direction, category, kind, MAX(inserted_at) AS inserted_at
   FROM budget_lines
-  WHERE budget_month = DATE_TRUNC('month', CURRENT_DATE)
+  WHERE budget_month = '<month-start YYYY-MM-DD>'
+  GROUP BY budget_month, direction, category, kind
+),
+latest_budget AS (
+  SELECT bl.budget_month, bl.direction, bl.category, bl.kind, bl.planned_value
+  FROM budget_lines bl
+  JOIN latest_budget_timestamps lbt
+    ON lbt.budget_month = bl.budget_month
+   AND lbt.direction = bl.direction
+   AND lbt.category = bl.category
+   AND lbt.kind = bl.kind
+   AND lbt.inserted_at = bl.inserted_at
 ),
 plan AS (
   SELECT direction, category,
          COALESCE(MAX(CASE WHEN kind = 'base' THEN planned_value END), 0)
            + COALESCE(MAX(CASE WHEN kind = 'modifier' THEN planned_value END), 0) AS planned
-  FROM latest_budget WHERE rn = 1
+  FROM latest_budget
   GROUP BY direction, category
 ),
 actual AS (
   SELECT kind AS direction, category, SUM(amount) AS spent
   FROM ledger_entries
-  WHERE ts >= DATE_TRUNC('month', CURRENT_DATE) AND kind IN ('spend', 'income')
+  WHERE ts >= '<month-start YYYY-MM-DD>' AND ts < '<next-month-start YYYY-MM-DD>' AND kind IN ('spend', 'income')
   GROUP BY kind, category
 )
 SELECT COALESCE(p.direction, a.direction) AS direction,
@@ -269,13 +283,13 @@ kind: 'income' | 'spend' | 'transfer'. category: NULL for transfers.
 All data is workspace-scoped via RLS. INSERTs must include workspace_id.
 Only the listed tables and views are allowed. Internal relations are blocked.
 Restricted SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
-Restricted SQL does not support function calls. Query the listed tables and views directly.
+Restricted SQL supports only these function calls: SUM, COUNT, MIN, MAX, AVG, and COALESCE. All other functions are blocked. Use ILIKE instead of LOWER(...) for case-insensitive text search, and use explicit date ranges instead of NOW() or DATE_TRUNC().
 Use regular single-quoted SQL literals. Dollar-quoted strings are not supported.
 For long mutating INSERT or UPDATE scripts, first test the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. If that probe fails, fix it before continuing. A user's explicit approval for the described change covers the full approved change set, including that probe and all remaining sequential batches. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.
 For any long mutating script or import, keep explicit completed and pending checkpoints in your replies. Prefer source row ranges when available; otherwise use stable source markers such as timestamps, external IDs, or ordered source chunks. After each successful batch, record the completed checkpoint and the next pending checkpoint. After a later "continue" message, resume from the last completed checkpoint in the same chat session instead of regenerating earlier batches.
 The final stage of any long import is checksum verification. After the last write batch, run fresh reads to verify how many rows were added and what balances now result for the affected account(s). If a resulting balance is negative or this looks like the first import for a specific account, it may be worth clarifying the real current balance with the user and suggesting a backdated adjustment entry if that would reconcile the balance to reality. If the checksum does not match, investigate and prefer targeted cleanup of the inconsistent rows. Ask the user before broad, destructive, or ambiguous cleanup.
 If the user has already approved the described import and delegated reasonable assumptions or best-guess defaults, that approval also covers unresolved account naming, category naming, and heuristic mapping choices for that import. After a successful probe, continue with later batches automatically instead of pausing for a cleaner plan or renewed approval.
-The result is returned as JSON in the shape { "ok": boolean, "tool": "query_database", "sql": string | null, "statements"?: [ ... ], "error"?: { "name": string, "message": string } }.`;
+The result is returned as JSON in the shape { "ok": boolean, "tool": "query_database", "sql": string | null, "statements"?: [ ... ], "error"?: { "name": string, "message": string } }. Each statement keeps rowCount and also includes returnedRowCount, totalRowCount, and truncated so capped SELECT results are visible.`;
 
 const toChatSqlError = (error: SqlPolicyError): Error => {
   if (error.code === "unsupported_statement") {
@@ -288,7 +302,7 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
     return new Error("set_config() calls are not allowed");
   }
   if (error.code === "function_calls_not_allowed") {
-    return new Error("Function calls are not allowed in chat queries");
+    return new Error("Only allowlisted functions are supported in chat queries: SUM, COUNT, MIN, MAX, AVG, and COALESCE");
   }
   if (error.code === "sql_comments_not_allowed") {
     return new Error("SQL comments are not allowed in chat queries");
@@ -344,6 +358,9 @@ export const execQuery = async (
           command: result.command,
           rows,
           rowCount: rows.length > 0 ? rows.length : (result.rowCount ?? 0),
+          returnedRowCount: rows.length,
+          totalRowCount: result.rows.length > 0 ? result.rows.length : (result.rowCount ?? 0),
+          truncated: result.rows.length > rows.length,
           referencedRelations: statement.referencedRelations,
         });
       }

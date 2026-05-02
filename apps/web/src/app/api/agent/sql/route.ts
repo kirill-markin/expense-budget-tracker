@@ -49,7 +49,7 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
   }
 
   if (error.code === "function_calls_not_allowed") {
-    return "Function calls are not supported in restricted SQL. Query only the published tables and views directly.";
+    return "Only allowlisted functions are supported in restricted SQL: SUM, COUNT, MIN, MAX, AVG, and COALESCE. Query only the published tables and views directly, use ILIKE instead of LOWER(...) for case-insensitive text search, and use explicit date ranges instead of NOW() or DATE_TRUNC().";
   }
 
   if (error.code === "sql_comments_not_allowed") {
@@ -145,7 +145,7 @@ export const postAgentSqlRouteWithDeps = async (
           limits: result.limits,
         },
         [],
-        "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, and results are capped per statement.",
+        "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and results are capped per statement with returnedRowCount, totalRowCount, and truncated metadata.",
       ),
     );
   } catch (error) {

@@ -32,7 +32,10 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
       resolveWorkspaceIdForSql: async () => "workspace-1",
       executeAgentSql: async () => {
-        throw new SqlPolicyError("function_calls_not_allowed", "Function calls are not allowed in restricted SQL");
+        throw new SqlPolicyError(
+          "function_calls_not_allowed",
+          "Function now() is not allowed in restricted SQL. Allowed functions: SUM, COUNT, MIN, MAX, AVG, COALESCE",
+        );
       },
     },
   );
@@ -53,10 +56,10 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
       ],
     },
     actions: [],
-    instructions: "Function calls are not supported in restricted SQL. Query only the published tables and views directly.",
+    instructions: "Only allowlisted functions are supported in restricted SQL: SUM, COUNT, MIN, MAX, AVG, and COALESCE. Query only the published tables and views directly, use ILIKE instead of LOWER(...) for case-insensitive text search, and use explicit date ranges instead of NOW() or DATE_TRUNC().",
     error: {
       code: "function_calls_not_allowed",
-      message: "Function calls are not allowed in restricted SQL",
+      message: "Function now() is not allowed in restricted SQL. Allowed functions: SUM, COUNT, MIN, MAX, AVG, COALESCE",
     },
   });
 });
