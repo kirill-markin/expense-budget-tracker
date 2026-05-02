@@ -57,7 +57,7 @@ export const ChatPanelHeader = (props: Props): ReactElement => {
           onClick={onClearConversation}
           disabled={transcriptActionsDisabled}
         >
-          {t("chat.clear")}
+          {t("chat.new")}
         </button>
         {mode === "sidebar" && (
           <button
