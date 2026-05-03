@@ -1,7 +1,7 @@
 import { handleRoute } from "@/server/api/handleRoute";
 import { ApiRouteError } from "@/server/api/errors";
 import {
-  hasActiveChatRun,
+  hasActiveChatSessionRun,
   markActiveChatRunCancellationPersisted,
   stopActiveChatRun,
 } from "@/server/chat/runtime";
@@ -43,7 +43,7 @@ type StopChatRouteDependencies = Readonly<{
   stopActiveChatRun: typeof stopActiveChatRun;
   cancelActiveChatRunByUser: typeof cancelActiveChatRunByUser;
   markActiveChatRunCancellationPersisted: typeof markActiveChatRunCancellationPersisted;
-  hasActiveChatRun: typeof hasActiveChatRun;
+  hasActiveChatSessionRun: typeof hasActiveChatSessionRun;
   log: typeof log;
 }>;
 
@@ -52,7 +52,7 @@ const DEFAULT_STOP_CHAT_ROUTE_DEPENDENCIES: StopChatRouteDependencies = {
   stopActiveChatRun,
   cancelActiveChatRunByUser,
   markActiveChatRunCancellationPersisted,
-  hasActiveChatRun,
+  hasActiveChatSessionRun,
   log,
 };
 
@@ -67,12 +67,20 @@ export const stopChatRouteWithDeps = async (
       const body = parseStopChatRequestBody(await request.json());
 
       let sessionId: string;
+      let expectedActiveRunId: string | null = null;
       try {
-        sessionId = await dependencies.getChatSessionSnapshot(
+        const snapshot = await dependencies.getChatSessionSnapshot(
           context.userId,
           context.workspaceId,
           body.sessionId,
-        ).then((snapshot) => snapshot.sessionId);
+        );
+        sessionId = snapshot.sessionId;
+        if (snapshot.runState === "running" && snapshot.activeRunId === null) {
+          throw new Error(`Chat stop failed: running session has no activeRunId, sessionId=${sessionId}`);
+        }
+        expectedActiveRunId = snapshot.runState === "running"
+          ? snapshot.activeRunId
+          : null;
       } catch (error) {
         if (error instanceof ChatSessionNotFoundError) {
           throw new ApiRouteError(404, error.message);
@@ -80,17 +88,22 @@ export const stopChatRouteWithDeps = async (
         throw error;
       }
 
-      const stoppedRuntimeRun = dependencies.stopActiveChatRun(sessionId);
-      const persistedCancelledRun = await dependencies.cancelActiveChatRunByUser(
-        context.userId,
-        context.workspaceId,
-        sessionId,
-      );
-      if (persistedCancelledRun) {
-        dependencies.markActiveChatRunCancellationPersisted(sessionId);
+      const stoppedRuntimeRun = expectedActiveRunId === null
+        ? { stopped: false } as const
+        : dependencies.stopActiveChatRun(sessionId, expectedActiveRunId);
+      const persistedCancelResult = expectedActiveRunId === null
+        ? "not_running"
+        : await dependencies.cancelActiveChatRunByUser(
+          context.userId,
+          context.workspaceId,
+          sessionId,
+          expectedActiveRunId,
+        );
+      if (stoppedRuntimeRun.stopped) {
+        dependencies.markActiveChatRunCancellationPersisted(sessionId, stoppedRuntimeRun.activeRunId);
       }
 
-      const stopped = stoppedRuntimeRun || persistedCancelledRun;
+      const stopped = stoppedRuntimeRun.stopped || persistedCancelResult === "cancelled";
       if (stopped) {
         dependencies.log({
           domain: "chat",
@@ -105,7 +118,7 @@ export const stopChatRouteWithDeps = async (
         ok: true,
         sessionId,
         stopped,
-        stillRunning: dependencies.hasActiveChatRun(sessionId),
+        stillRunning: dependencies.hasActiveChatSessionRun(sessionId),
       });
     },
   );

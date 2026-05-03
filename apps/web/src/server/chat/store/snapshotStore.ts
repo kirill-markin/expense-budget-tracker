@@ -1,4 +1,3 @@
-import type { StoredMessage } from "@/lib/chatHistory";
 import { withUserContext } from "@/server/db";
 import type { ServerChatMessage } from "@/server/chat/openai/replayItems";
 import {
@@ -11,17 +10,6 @@ import {
   resolveRequestedChatSessionWithQuery,
 } from "./sessionStore";
 import { listChatMessages } from "./messageStore";
-
-const mapPersistedMessagesToStoredMessages = (
-  messages: ReadonlyArray<PersistedChatMessageItem>,
-): ReadonlyArray<StoredMessage> =>
-  messages.map((message) => ({
-    role: message.role,
-    content: message.content,
-    timestamp: message.timestamp,
-    isError: message.isError,
-    isStopped: message.isStopped,
-  }));
 
 export const buildLocalChatMessages = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
@@ -46,6 +34,6 @@ export const getChatSessionSnapshot = async (
 
   return {
     ...mapSessionRow(sessionRow),
-    messages: mapPersistedMessagesToStoredMessages(messages),
+    messages,
   };
 };

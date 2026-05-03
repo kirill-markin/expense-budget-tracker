@@ -20,7 +20,11 @@ import {
   CHAT_STREAM_HEARTBEAT_INTERVAL_MS,
   createChatEventStream,
 } from "@/server/chat/http/sse";
-import { startPersistedChatRun } from "@/server/chat/runtime";
+import {
+  releaseChatRunStartReservation,
+  reserveChatRunStart,
+  startPersistedChatRun,
+} from "@/server/chat/runtime";
 import {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
@@ -43,6 +47,8 @@ type GetChatRouteDependencies = Readonly<{
 type PostChatRouteDependencies = Readonly<{
   getLocaleFromRequest: typeof getLocaleFromRequest;
   resolveSnapshotWithRunRecovery: typeof resolveSnapshotWithRunRecovery;
+  reserveChatRunStart: typeof reserveChatRunStart;
+  releaseChatRunStartReservation: typeof releaseChatRunStartReservation;
   prepareChatRun: typeof prepareChatRun;
   startPersistedChatRun: typeof startPersistedChatRun;
   isServerDraining: typeof isServerDraining;
@@ -62,6 +68,8 @@ const DEFAULT_GET_CHAT_ROUTE_DEPENDENCIES: GetChatRouteDependencies = {
 const DEFAULT_POST_CHAT_ROUTE_DEPENDENCIES: PostChatRouteDependencies = {
   getLocaleFromRequest,
   resolveSnapshotWithRunRecovery,
+  reserveChatRunStart,
+  releaseChatRunStartReservation,
   prepareChatRun,
   startPersistedChatRun,
   isServerDraining,
@@ -160,25 +168,21 @@ export const postChatRouteWithDeps = async (
       snapshot.sessionId,
     );
 
-    const preparedRun = await dependencies.prepareChatRun(
-      context.userId,
-      context.workspaceId,
-      snapshot.sessionId,
-      body.content,
-    );
-    const locale = dependencies.getLocaleFromRequest(request);
+    const reservation = dependencies.reserveChatRunStart(snapshot.sessionId);
+    if (reservation === null) {
+      throw new ChatSessionConflictError(snapshot.sessionId);
+    }
 
-    const events = dependencies.startPersistedChatRun({
-      requestId,
-      userId: context.userId,
-      workspaceId: context.workspaceId,
-      sessionId: preparedRun.sessionId,
-      locale,
-      timezone: body.timezone,
-      assistantItemId: preparedRun.assistantItem.itemId,
-      localMessages: preparedRun.localMessages,
-      turnInput: preparedRun.turnInput,
-      diagnostics: {
+    let runtimeStarted = false;
+    try {
+      const preparedRun = await dependencies.prepareChatRun(
+        context.userId,
+        context.workspaceId,
+        snapshot.sessionId,
+        body.content,
+      );
+      const locale = dependencies.getLocaleFromRequest(request);
+      const runtimeParams = {
         requestId,
         userId: context.userId,
         workspaceId: context.workspaceId,
@@ -187,25 +191,43 @@ export const postChatRouteWithDeps = async (
         messageCount: diagnostics.messageCount,
         hasAttachments: diagnostics.hasAttachments,
         attachmentFileNames: diagnostics.attachmentFileNames,
-      },
-    });
+      };
+      const events = dependencies.startPersistedChatRun({
+        requestId,
+        userId: context.userId,
+        workspaceId: context.workspaceId,
+        sessionId: preparedRun.sessionId,
+        activeRunId: preparedRun.activeRunId,
+        locale,
+        timezone: body.timezone,
+        assistantItemId: preparedRun.assistantItem.itemId,
+        localMessages: preparedRun.localMessages,
+        turnInput: preparedRun.turnInput,
+        diagnostics: runtimeParams,
+      }, reservation);
+      runtimeStarted = true;
 
-    const stream = createChatEventStream({
-      events,
-      heartbeatIntervalMs: CHAT_STREAM_HEARTBEAT_INTERVAL_MS,
-      onStreamError: (error: string): void => {
-        dependencies.log(createChatErrorLogEvent(diagnostics, "stream", error));
-      },
-    });
+      const stream = createChatEventStream({
+        events,
+        heartbeatIntervalMs: CHAT_STREAM_HEARTBEAT_INTERVAL_MS,
+        onStreamError: (error: string): void => {
+          dependencies.log(createChatErrorLogEvent(diagnostics, "stream", error));
+        },
+      });
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-        "X-Chat-Session-Id": preparedRun.sessionId,
-      },
-    });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Chat-Session-Id": preparedRun.sessionId,
+        },
+      });
+    } finally {
+      if (!runtimeStarted) {
+        dependencies.releaseChatRunStartReservation(reservation);
+      }
+    }
   } catch (error) {
     if (
       error instanceof ChatSessionNotFoundError

@@ -6,10 +6,13 @@ import {
   type ChatItemState,
   type InsertChatItemParams,
   type PersistedChatMessageItem,
+  type RunScopedUpdateChatMessageItemAndInvalidateMainContentParams,
+  type RunScopedUpdateChatMessageItemParams,
   type UpdateChatMessageItemAndInvalidateMainContentParams,
   type UpdateChatMessageItemParams,
 } from "./shared";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/replayItems";
+import { lockActiveChatSessionRunWithQuery } from "./sessionStore";
 
 type ChatItemPayload = Readonly<{
   role: "user" | "assistant";
@@ -68,10 +71,11 @@ const INSERT_CHAT_ITEM_SQL = `
 const UPDATE_CHAT_ITEM_SQL = `
   WITH updated_item AS (
     UPDATE public.chat_items
-    SET payload = $2::jsonb,
-        state = $3,
+    SET payload = $3::jsonb,
+        state = $4,
         updated_at = now()
     WHERE item_id = $1
+      AND session_id = $2
     RETURNING item_id, session_id, state, payload, created_at, updated_at
   ),
   touched_session AS (
@@ -86,10 +90,11 @@ const UPDATE_CHAT_ITEM_SQL = `
 const UPDATE_CHAT_ITEM_AND_INVALIDATE_MAIN_CONTENT_SQL = `
   WITH updated_item AS (
     UPDATE public.chat_items
-    SET payload = $2::jsonb,
-        state = $3,
+    SET payload = $3::jsonb,
+        state = $4,
         updated_at = now()
     WHERE item_id = $1
+      AND session_id = $2
     RETURNING item_id, session_id, state, payload, created_at, updated_at
   ),
   invalidated_session AS (
@@ -176,6 +181,7 @@ export const updateChatItemWithQuery = async (
 ): Promise<PersistedChatMessageItem> => {
   const result = await queryFn(UPDATE_CHAT_ITEM_SQL, [
     params.itemId,
+    params.sessionId,
     JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
     params.state,
   ]);
@@ -194,6 +200,7 @@ export const updateChatItemAndInvalidateMainContentWithQuery = async (
 }>> => {
   const result = await queryFn(UPDATE_CHAT_ITEM_AND_INVALIDATE_MAIN_CONTENT_SQL, [
     params.itemId,
+    params.sessionId,
     JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
     params.state,
   ]);
@@ -224,25 +231,46 @@ export const listChatMessages = async (
 export const updateAssistantMessageItem = async (
   userId: string,
   workspaceId: string,
-  params: UpdateChatMessageItemParams,
-): Promise<PersistedChatMessageItem> => {
-  const result = await queryAs(userId, workspaceId, UPDATE_CHAT_ITEM_SQL, [
-    params.itemId,
-    JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
-    params.state,
-  ]);
+  params: RunScopedUpdateChatMessageItemParams,
+): Promise<PersistedChatMessageItem> =>
+  withUserContext(userId, workspaceId, async (queryFn) =>
+    updateAssistantMessageItemWithQuery(queryFn, params));
 
-  return mapChatItemRow(
-    requireChatItemRow(result.rows[0] as ChatItemRow | undefined, "update"),
+export const updateAssistantMessageItemWithQuery = async (
+  queryFn: QueryFn,
+  params: RunScopedUpdateChatMessageItemParams,
+): Promise<PersistedChatMessageItem> => {
+  await lockActiveChatSessionRunWithQuery(
+    queryFn,
+    params.sessionId,
+    params.activeRunId,
+    "update assistant message",
   );
+  return updateChatItemWithQuery(queryFn, params);
+};
+
+export const updateAssistantMessageItemAndInvalidateMainContentWithQuery = async (
+  queryFn: QueryFn,
+  params: RunScopedUpdateChatMessageItemAndInvalidateMainContentParams,
+): Promise<Readonly<{
+  item: PersistedChatMessageItem;
+  mainContentInvalidationVersion: number;
+}>> => {
+  await lockActiveChatSessionRunWithQuery(
+    queryFn,
+    params.sessionId,
+    params.activeRunId,
+    "update assistant message and invalidate main content",
+  );
+  return updateChatItemAndInvalidateMainContentWithQuery(queryFn, params);
 };
 
 export const updateAssistantMessageItemAndInvalidateMainContent = async (
   userId: string,
   workspaceId: string,
-  params: UpdateChatMessageItemAndInvalidateMainContentParams,
+  params: RunScopedUpdateChatMessageItemAndInvalidateMainContentParams,
 ): Promise<number> => {
   const result = await withUserContext(userId, workspaceId, async (queryFn) =>
-    updateChatItemAndInvalidateMainContentWithQuery(queryFn, params));
+    updateAssistantMessageItemAndInvalidateMainContentWithQuery(queryFn, params));
   return result.mainContentInvalidationVersion;
 };

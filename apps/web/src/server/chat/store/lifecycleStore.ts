@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { finalizePendingToolCallContent } from "@/lib/chatHistory";
 import { withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
 import type { ContentPart } from "@/server/chat/types";
+import { log } from "@/server/logger";
 import {
   ChatSessionConflictError,
   FAILED_TOOL_CALL_OUTPUT,
@@ -13,6 +15,7 @@ import {
   type PersistedChatMessageItem,
   type PersistAssistantTerminalErrorParams,
   type PreparedChatRun,
+  type UserCancelChatRunResult,
   type UserStoppedChatRunUpdatePlan,
 } from "./shared";
 import {
@@ -22,10 +25,14 @@ import {
 } from "./messageStore";
 import { buildLocalChatMessages } from "./snapshotStore";
 import {
+  completeChatSessionRunWithQuery,
+  lockActiveChatSessionRunWithQuery,
   lockChatSessionWithQuery,
+  lockRequestedChatSessionWithQuery,
+  requireActiveRunId,
   resolveLatestOrCreateChatSessionWithQuery,
   resolveRequestedChatSessionWithQuery,
-  updateChatSessionStatusWithQuery,
+  startChatSessionRunWithQuery,
 } from "./sessionStore";
 
 export const buildUserStoppedAssistantContent = (
@@ -85,6 +92,7 @@ export const prepareChatRunWithQuery = async (
     throw new ChatSessionConflictError(sessionRow.session_id);
   }
 
+  const activeRunId = randomUUID();
   await insertChatItemWithQuery(queryFn, {
     sessionId: sessionRow.session_id,
     role: "user",
@@ -100,10 +108,11 @@ export const prepareChatRunWithQuery = async (
     content: [],
   });
 
-  await updateChatSessionStatusWithQuery(queryFn, sessionRow.session_id, "running", new Date());
+  await startChatSessionRunWithQuery(queryFn, sessionRow.session_id, activeRunId, new Date());
 
   return {
     sessionId: sessionRow.session_id,
+    activeRunId,
     assistantItem,
     localMessages: buildLocalChatMessages(persistedMessages),
     turnInput: content,
@@ -119,26 +128,51 @@ export const prepareChatRun = async (
   withUserContext(userId, workspaceId, async (queryFn) =>
     prepareChatRunWithQuery(queryFn, userId, workspaceId, requestedSessionId, content));
 
+export const completeChatRunWithQuery = async (
+  queryFn: QueryFn,
+  params: CompleteChatRunParams,
+): Promise<void> => {
+  await lockActiveChatSessionRunWithQuery(
+    queryFn,
+    params.sessionId,
+    params.activeRunId,
+    "complete chat run",
+  );
+  await updateChatItemWithQuery(queryFn, {
+    sessionId: params.sessionId,
+    itemId: params.assistantItemId,
+    content: params.assistantContent,
+    state: "completed",
+    assistantOpenAIItems: params.assistantOpenAIItems,
+  });
+
+  await completeChatSessionRunWithQuery(
+    queryFn,
+    params.sessionId,
+    params.activeRunId,
+    "idle",
+  );
+};
+
 export const completeChatRun = async (
   userId: string,
   workspaceId: string,
   params: CompleteChatRunParams,
 ): Promise<void> =>
-  withUserContext(userId, workspaceId, async (queryFn) => {
-    const updatedAssistant = await updateChatItemWithQuery(queryFn, {
-      itemId: params.assistantItemId,
-      content: params.assistantContent,
-      state: "completed",
-      assistantOpenAIItems: params.assistantOpenAIItems,
-    });
-
-    await updateChatSessionStatusWithQuery(queryFn, updatedAssistant.sessionId, "idle", null);
-  });
+  withUserContext(userId, workspaceId, async (queryFn) =>
+    completeChatRunWithQuery(queryFn, params));
 
 export const persistAssistantTerminalErrorWithQuery = async (
   queryFn: QueryFn,
   params: PersistAssistantTerminalErrorParams,
 ): Promise<void> => {
+  await lockActiveChatSessionRunWithQuery(
+    queryFn,
+    params.sessionId,
+    params.activeRunId,
+    "persist assistant terminal error",
+  );
+
   const finalizedAssistantContent = finalizePendingToolCallContent(
     params.assistantContent,
     INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
@@ -147,6 +181,7 @@ export const persistAssistantTerminalErrorWithQuery = async (
 
   if (finalizedAssistantContent.length === 0) {
     await updateChatItemWithQuery(queryFn, {
+      sessionId: params.sessionId,
       itemId: params.assistantItemId,
       content: [{ type: "text", text: params.errorMessage }],
       state: "error",
@@ -154,6 +189,7 @@ export const persistAssistantTerminalErrorWithQuery = async (
     });
   } else {
     await updateChatItemWithQuery(queryFn, {
+      sessionId: params.sessionId,
       itemId: params.assistantItemId,
       content: finalizedAssistantContent,
       state: "completed",
@@ -167,7 +203,12 @@ export const persistAssistantTerminalErrorWithQuery = async (
     });
   }
 
-  await updateChatSessionStatusWithQuery(queryFn, params.sessionId, params.sessionState, null);
+  await completeChatSessionRunWithQuery(
+    queryFn,
+    params.sessionId,
+    params.activeRunId,
+    params.sessionState,
+  );
 };
 
 export const persistAssistantTerminalError = async (
@@ -182,14 +223,27 @@ export const persistAssistantCancelledWithQuery = async (
   queryFn: QueryFn,
   params: PersistAssistantCancelledParams,
 ): Promise<void> => {
+  await lockActiveChatSessionRunWithQuery(
+    queryFn,
+    params.sessionId,
+    params.activeRunId,
+    "persist assistant cancellation",
+  );
+
   await updateChatItemWithQuery(queryFn, {
+    sessionId: params.sessionId,
     itemId: params.assistantItemId,
     content: buildUserStoppedAssistantContent(params.assistantContent),
     state: "cancelled",
     assistantOpenAIItems: params.assistantOpenAIItems,
   });
 
-  await updateChatSessionStatusWithQuery(queryFn, params.sessionId, "idle", null);
+  await completeChatSessionRunWithQuery(
+    queryFn,
+    params.sessionId,
+    params.activeRunId,
+    "idle",
+  );
 };
 
 export const persistAssistantCancelled = async (
@@ -205,12 +259,17 @@ export const cancelActiveChatRunByUserWithQuery = async (
   userId: string,
   workspaceId: string,
   sessionId: string,
-): Promise<boolean> => {
+  expectedActiveRunId: string,
+): Promise<UserCancelChatRunResult> => {
   await resolveRequestedChatSessionWithQuery(queryFn, userId, workspaceId, sessionId);
 
   const lockedSession = await lockChatSessionWithQuery(queryFn, sessionId);
   if (lockedSession.status !== "running") {
-    return false;
+    return "not_running";
+  }
+  const activeRunId = requireActiveRunId(lockedSession, "cancel active run");
+  if (activeRunId !== expectedActiveRunId) {
+    return "run_changed";
   }
 
   const messages = await listChatMessagesWithQuery(queryFn, sessionId);
@@ -218,6 +277,7 @@ export const cancelActiveChatRunByUserWithQuery = async (
 
   if (updatePlan.assistantItem !== null && updatePlan.assistantContent !== null) {
     await updateChatItemWithQuery(queryFn, {
+      sessionId,
       itemId: updatePlan.assistantItem.itemId,
       content: updatePlan.assistantContent,
       state: "cancelled",
@@ -225,31 +285,57 @@ export const cancelActiveChatRunByUserWithQuery = async (
     });
   }
 
-  await updateChatSessionStatusWithQuery(queryFn, sessionId, updatePlan.sessionState, null);
-  return true;
+  await completeChatSessionRunWithQuery(
+    queryFn,
+    sessionId,
+    expectedActiveRunId,
+    updatePlan.sessionState,
+  );
+  return "cancelled";
 };
 
 export const cancelActiveChatRunByUser = async (
   userId: string,
   workspaceId: string,
   sessionId: string,
-): Promise<boolean> =>
+  expectedActiveRunId: string,
+): Promise<UserCancelChatRunResult> =>
   withUserContext(userId, workspaceId, async (queryFn) =>
-    cancelActiveChatRunByUserWithQuery(queryFn, userId, workspaceId, sessionId));
+    cancelActiveChatRunByUserWithQuery(queryFn, userId, workspaceId, sessionId, expectedActiveRunId));
 
-export const markChatSessionInterruptedWithQuery = async (
+export type StaleChatSessionRecoveryResult =
+  | "interrupted"
+  | "completed_recovered"
+  | "not_running"
+  | "run_changed";
+
+export type RecoverStaleChatSessionParams = Readonly<{
+  sessionId: string;
+  expectedActiveRunId: string;
+  errorMessage: string;
+}>;
+
+export const recoverStaleChatSessionWithQuery = async (
   queryFn: QueryFn,
   userId: string,
   workspaceId: string,
-  sessionId: string,
-  errorMessage: string,
-): Promise<void> => {
-  const sessionRow = await resolveRequestedChatSessionWithQuery(queryFn, userId, workspaceId, sessionId);
+  params: RecoverStaleChatSessionParams,
+): Promise<StaleChatSessionRecoveryResult> => {
+  const sessionRow = await lockRequestedChatSessionWithQuery(
+    queryFn,
+    userId,
+    workspaceId,
+    params.sessionId,
+  );
   if (sessionRow.status !== "running") {
-    return;
+    return "not_running";
   }
 
-  const persistedMessages = await listChatMessagesWithQuery(queryFn, sessionId);
+  if (sessionRow.active_run_id !== params.expectedActiveRunId) {
+    return "run_changed";
+  }
+
+  const persistedMessages = await listChatMessagesWithQuery(queryFn, params.sessionId);
   const lastMessage = persistedMessages[persistedMessages.length - 1];
 
   if (lastMessage !== undefined && lastMessage.role === "assistant" && lastMessage.state === "in_progress") {
@@ -261,40 +347,60 @@ export const markChatSessionInterruptedWithQuery = async (
 
     if (lastMessage.content.length === 0) {
       await updateChatItemWithQuery(queryFn, {
+        sessionId: params.sessionId,
         itemId: lastMessage.itemId,
-        content: [{ type: "text", text: errorMessage }],
+        content: [{ type: "text", text: params.errorMessage }],
         state: "error",
       });
     } else {
       await updateChatItemWithQuery(queryFn, {
+        sessionId: params.sessionId,
         itemId: lastMessage.itemId,
         content: finalizedAssistantContent,
         state: "completed",
       });
       await insertChatItemWithQuery(queryFn, {
-        sessionId,
+        sessionId: params.sessionId,
         role: "assistant",
         state: "error",
-        content: [{ type: "text", text: errorMessage }],
+        content: [{ type: "text", text: params.errorMessage }],
       });
     }
+    await completeChatSessionRunWithQuery(
+      queryFn,
+      params.sessionId,
+      params.expectedActiveRunId,
+      "interrupted",
+    );
+    return "interrupted";
   } else {
-    await insertChatItemWithQuery(queryFn, {
-      sessionId,
-      role: "assistant",
-      state: "error",
-      content: [{ type: "text", text: errorMessage }],
+    await completeChatSessionRunWithQuery(
+      queryFn,
+      params.sessionId,
+      params.expectedActiveRunId,
+      "idle",
+    );
+    log({
+      domain: "chat",
+      action: "stale_completed_run_recovered",
+      sessionId: params.sessionId,
+      userId,
+      workspaceId,
+      activeRunId: params.expectedActiveRunId,
+      lastMessageRole: lastMessage?.role,
+      lastMessageState: lastMessage?.state,
     });
+    return "completed_recovered";
   }
-
-  await updateChatSessionStatusWithQuery(queryFn, sessionId, "interrupted", null);
 };
 
-export const markChatSessionInterrupted = async (
+export const recoverStaleChatSession = async (
   userId: string,
   workspaceId: string,
-  sessionId: string,
-  errorMessage: string,
-): Promise<void> =>
+  params: RecoverStaleChatSessionParams,
+): Promise<StaleChatSessionRecoveryResult> =>
   withUserContext(userId, workspaceId, async (queryFn) =>
-    markChatSessionInterruptedWithQuery(queryFn, userId, workspaceId, sessionId, errorMessage));
+    recoverStaleChatSessionWithQuery(queryFn, userId, workspaceId, params));
+
+export const markChatSessionInterruptedWithQuery = recoverStaleChatSessionWithQuery;
+export const markChatSessionInterrupted = recoverStaleChatSession;
