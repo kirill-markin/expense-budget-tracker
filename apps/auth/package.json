@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@expense-budget-tracker/agent-shared": "1.0.0",
-    "@hono/node-server": "^1.19.14",
+    "@hono/node-server": "^2.0.1",
     "hono": "^4.12.16",
     "pg": "^8.20.0"
   },
