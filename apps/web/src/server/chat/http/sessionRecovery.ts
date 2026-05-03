@@ -7,14 +7,14 @@ import {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
   getChatSessionSnapshot,
-  markChatSessionInterrupted,
+  recoverStaleChatSession,
   type ChatSessionSnapshot,
 } from "@/server/chat/store";
 
 export type SessionRecoveryDependencies = Readonly<{
   getChatSessionSnapshot: typeof getChatSessionSnapshot;
   hasActiveChatRun: typeof hasActiveChatRun;
-  markChatSessionInterrupted: typeof markChatSessionInterrupted;
+  recoverStaleChatSession: typeof recoverStaleChatSession;
   now: () => number;
 }>;
 
@@ -23,8 +23,16 @@ export const CHAT_STREAM_INTERRUPTED_ERROR = "This response stopped because the 
 const DEFAULT_SESSION_RECOVERY_DEPENDENCIES: SessionRecoveryDependencies = {
   getChatSessionSnapshot,
   hasActiveChatRun,
-  markChatSessionInterrupted,
+  recoverStaleChatSession,
   now: (): number => Date.now(),
+};
+
+const requireSnapshotActiveRunId = (snapshot: ChatSessionSnapshot): string => {
+  if (snapshot.activeRunId === null) {
+    throw new Error(`Chat stale run recovery failed: running session has no activeRunId, sessionId=${snapshot.sessionId}`);
+  }
+
+  return snapshot.activeRunId;
 };
 
 export const mapStoreErrorToRouteError = (error: unknown): never => {
@@ -51,10 +59,6 @@ export const resolveSnapshotWithRunRecoveryWithDeps = async (
     return snapshot;
   }
 
-  if (dependencies.hasActiveChatRun(snapshot.sessionId)) {
-    return snapshot;
-  }
-
   const heartbeatAgeMs = snapshot.activeRunHeartbeatAt === null
     ? Number.POSITIVE_INFINITY
     : dependencies.now() - snapshot.activeRunHeartbeatAt;
@@ -63,11 +67,19 @@ export const resolveSnapshotWithRunRecoveryWithDeps = async (
     return snapshot;
   }
 
-  await dependencies.markChatSessionInterrupted(
+  const expectedActiveRunId = requireSnapshotActiveRunId(snapshot);
+  if (dependencies.hasActiveChatRun(snapshot.sessionId, expectedActiveRunId)) {
+    return snapshot;
+  }
+
+  await dependencies.recoverStaleChatSession(
     userId,
     workspaceId,
-    snapshot.sessionId,
-    CHAT_STREAM_INTERRUPTED_ERROR,
+    {
+      sessionId: snapshot.sessionId,
+      expectedActiveRunId,
+      errorMessage: CHAT_STREAM_INTERRUPTED_ERROR,
+    },
   );
 
   snapshot = await dependencies.getChatSessionSnapshot(userId, workspaceId, snapshot.sessionId);

@@ -1,22 +1,25 @@
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
 import {
+  ChatSessionRunTransitionError,
   ChatSessionNotFoundError,
   parseMainContentInvalidationVersion,
   type ChatSessionRunState,
+  type ChatSessionTerminalState,
   type ChatSessionSnapshot,
 } from "./shared";
 
 export type ChatSessionRow = Readonly<{
   session_id: string;
   status: ChatSessionRunState;
+  active_run_id: string | null;
   active_run_heartbeat_at: string | null;
   main_content_invalidation_version: string;
   updated_at: string;
 }>;
 
 const SELECT_SESSION_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+  SELECT session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE user_id = $1
     AND workspace_id = $2
@@ -24,14 +27,32 @@ const SELECT_SESSION_SQL = `
 `;
 
 const SELECT_SESSION_FOR_UPDATE_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+  SELECT session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE session_id = $1
   FOR UPDATE
 `;
 
+const SELECT_REQUESTED_SESSION_FOR_UPDATE_SQL = `
+  SELECT session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+  FROM public.chat_sessions
+  WHERE user_id = $1
+    AND workspace_id = $2
+    AND session_id = $3
+  FOR UPDATE
+`;
+
+const SELECT_ACTIVE_SESSION_RUN_FOR_UPDATE_SQL = `
+  SELECT session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+  FROM public.chat_sessions
+  WHERE session_id = $1
+    AND active_run_id = $2
+    AND status = 'running'
+  FOR UPDATE
+`;
+
 const SELECT_LATEST_SESSION_SQL = `
-  SELECT session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+  SELECT session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
   WHERE user_id = $1
     AND workspace_id = $2
@@ -44,27 +65,53 @@ const INSERT_SESSION_SQL = `
     user_id,
     workspace_id,
     status,
+    active_run_id,
     active_run_heartbeat_at,
     main_content_invalidation_version,
     updated_at
   )
-  VALUES ($1, $2, 'idle', NULL, 0, now())
-  RETURNING session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+  VALUES ($1, $2, 'idle', NULL, NULL, 0, now())
+  RETURNING session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
 `;
 
-const UPDATE_CHAT_SESSION_STATUS_SQL = `
+const START_CHAT_SESSION_RUN_SQL = `
   UPDATE public.chat_sessions
-  SET status = $2,
+  SET status = 'running',
+      active_run_id = $2,
       active_run_heartbeat_at = $3,
       updated_at = now()
   WHERE session_id = $1
-  RETURNING session_id, status, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+    AND status <> 'running'
+  RETURNING session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+`;
+
+const COMPLETE_CHAT_SESSION_RUN_SQL = `
+  UPDATE public.chat_sessions
+  SET status = $3,
+      active_run_id = NULL,
+      active_run_heartbeat_at = NULL,
+      updated_at = now()
+  WHERE session_id = $1
+    AND active_run_id = $2
+    AND status = 'running'
+  RETURNING session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+`;
+
+const TOUCH_CHAT_SESSION_HEARTBEAT_SQL = `
+  UPDATE public.chat_sessions
+  SET active_run_heartbeat_at = $3,
+      updated_at = now()
+  WHERE session_id = $1
+    AND active_run_id = $2
+    AND status = 'running'
+  RETURNING session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
 `;
 
 export const mapSessionRow = (row: ChatSessionRow): ChatSessionSnapshot => ({
   sessionId: row.session_id,
   runState: row.status,
   updatedAt: new Date(row.updated_at).getTime(),
+  activeRunId: row.active_run_id,
   activeRunHeartbeatAt: row.active_run_heartbeat_at === null
     ? null
     : new Date(row.active_run_heartbeat_at).getTime(),
@@ -81,6 +128,35 @@ export const requireSessionRow = (
 ): ChatSessionRow => {
   if (row === undefined) {
     throw new Error(`Chat session ${operation} failed: query returned no row`);
+  }
+
+  return row;
+};
+
+export const requireActiveRunId = (
+  row: ChatSessionRow,
+  operation: string,
+): string => {
+  if (row.active_run_id === null) {
+    throw new Error(`Chat session ${operation} failed: running session has no active_run_id, sessionId=${row.session_id}`);
+  }
+
+  return row.active_run_id;
+};
+
+const requireSessionRunTransitionRow = (
+  row: ChatSessionRow | undefined,
+  sessionId: string,
+  activeRunId: string,
+  targetState: ChatSessionTerminalState,
+): ChatSessionRow => {
+  if (row === undefined) {
+    throw new ChatSessionRunTransitionError({
+      sessionId,
+      activeRunId,
+      operation: "final state transition",
+      targetState,
+    });
   }
 
   return row;
@@ -141,17 +217,85 @@ export const lockChatSessionWithQuery = async (
   return requireSessionRow(result.rows[0] as ChatSessionRow | undefined, "lock");
 };
 
-export const updateChatSessionStatusWithQuery = async (
+export const lockRequestedChatSessionWithQuery = async (
+  queryFn: QueryFn,
+  userId: string,
+  workspaceId: string,
+  sessionId: string,
+): Promise<ChatSessionRow> => {
+  const result = await queryFn(SELECT_REQUESTED_SESSION_FOR_UPDATE_SQL, [userId, workspaceId, sessionId]);
+  const row = result.rows[0] as ChatSessionRow | undefined;
+  if (row === undefined) {
+    throw new ChatSessionNotFoundError(sessionId);
+  }
+
+  return row;
+};
+
+export const lockActiveChatSessionRunWithQuery = async (
   queryFn: QueryFn,
   sessionId: string,
-  status: ChatSessionRunState,
+  activeRunId: string,
+  operation: string,
+): Promise<ChatSessionRow> => {
+  const result = await queryFn(SELECT_ACTIVE_SESSION_RUN_FOR_UPDATE_SQL, [sessionId, activeRunId]);
+  const row = result.rows[0] as ChatSessionRow | undefined;
+  if (row === undefined) {
+    throw new ChatSessionRunTransitionError({
+      sessionId,
+      activeRunId,
+      operation,
+    });
+  }
+
+  return row;
+};
+
+export const startChatSessionRunWithQuery = async (
+  queryFn: QueryFn,
+  sessionId: string,
+  activeRunId: string,
   heartbeatAt: Date | null,
 ): Promise<void> => {
-  await queryFn(UPDATE_CHAT_SESSION_STATUS_SQL, [
+  const result = await queryFn(START_CHAT_SESSION_RUN_SQL, [
     sessionId,
-    status,
+    activeRunId,
     heartbeatAt === null ? null : heartbeatAt.toISOString(),
   ]);
+  requireSessionRow(result.rows[0] as ChatSessionRow | undefined, "start run");
+};
+
+export const completeChatSessionRunWithQuery = async (
+  queryFn: QueryFn,
+  sessionId: string,
+  activeRunId: string,
+  targetState: ChatSessionTerminalState,
+): Promise<void> => {
+  const result = await queryFn(COMPLETE_CHAT_SESSION_RUN_SQL, [
+    sessionId,
+    activeRunId,
+    targetState,
+  ]);
+  requireSessionRunTransitionRow(
+    result.rows[0] as ChatSessionRow | undefined,
+    sessionId,
+    activeRunId,
+    targetState,
+  );
+};
+
+export const touchChatSessionHeartbeatWithQuery = async (
+  queryFn: QueryFn,
+  sessionId: string,
+  activeRunId: string,
+  heartbeatAt: Date,
+): Promise<boolean> => {
+  const result = await queryFn(TOUCH_CHAT_SESSION_HEARTBEAT_SQL, [
+    sessionId,
+    activeRunId,
+    heartbeatAt.toISOString(),
+  ]);
+  return result.rows.length > 0;
 };
 
 export const getChatSessionId = async (
@@ -186,10 +330,11 @@ export const touchChatSessionHeartbeat = async (
   userId: string,
   workspaceId: string,
   sessionId: string,
+  activeRunId: string,
 ): Promise<void> => {
-  await queryAs(userId, workspaceId, UPDATE_CHAT_SESSION_STATUS_SQL, [
+  await queryAs(userId, workspaceId, TOUCH_CHAT_SESSION_HEARTBEAT_SQL, [
     sessionId,
-    "running",
+    activeRunId,
     new Date().toISOString(),
   ]);
 };

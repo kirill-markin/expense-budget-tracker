@@ -12,6 +12,7 @@ import {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
 } from "@/server/chat/store";
+import type { ChatRunStartReservation } from "@/server/chat/runtime";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 
 const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
@@ -29,6 +30,7 @@ const createSnapshot = (
   sessionId: "session-1",
   runState: "idle",
   updatedAt: 100,
+  activeRunId: null,
   activeRunHeartbeatAt: null,
   mainContentInvalidationVersion: 0,
   messages: [],
@@ -39,6 +41,7 @@ const createPreparedRun = (
   sessionId: string,
 ): PreparedChatRun => ({
   sessionId,
+  activeRunId: `run-${sessionId}`,
   assistantItem: {
     itemId: "assistant-1",
     sessionId,
@@ -52,6 +55,13 @@ const createPreparedRun = (
   },
   localMessages: [],
   turnInput: [{ type: "text", text: "Hello" }],
+});
+
+const createReservation = (
+  sessionId: string,
+): ChatRunStartReservation => ({
+  sessionId,
+  reservationId: Symbol(sessionId),
 });
 
 const createChatRequest = (
@@ -69,6 +79,8 @@ const createPostDependencies = (
 ): Parameters<typeof postChatRouteWithDeps>[1] => ({
   getLocaleFromRequest: overrides.getLocaleFromRequest ?? (() => "en" as SupportedLocale),
   resolveSnapshotWithRunRecovery: overrides.resolveSnapshotWithRunRecovery ?? (async () => createSnapshot()),
+  reserveChatRunStart: overrides.reserveChatRunStart ?? ((sessionId) => createReservation(sessionId)),
+  releaseChatRunStartReservation: overrides.releaseChatRunStartReservation ?? (() => undefined),
   prepareChatRun: overrides.prepareChatRun ?? (async (
     _userId: string,
     _workspaceId: string,
@@ -191,6 +203,101 @@ test("postChatRouteWithDeps maps chat session conflicts to 409", async (): Promi
   });
 });
 
+test("postChatRouteWithDeps returns 409 without preparing DB run when local reservation is denied", async (): Promise<void> => {
+  await withOpenAiApiKey("test-key", async (): Promise<void> => {
+    let prepareCalled = false;
+    const response = await postChatRouteWithDeps(
+      createChatRequest({
+        sessionId: "session-1",
+        content: [{ type: "text", text: "Hello" }],
+        model: CHAT_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+      createPostDependencies({
+        reserveChatRunStart: () => null,
+        prepareChatRun: async (): Promise<PreparedChatRun> => {
+          prepareCalled = true;
+          return createPreparedRun("session-1");
+        },
+      }),
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(await response.text(), "Chat session already has an active response");
+    assert.equal(prepareCalled, false);
+  });
+});
+
+test("postChatRouteWithDeps releases the local reservation when DB prepare fails", async (): Promise<void> => {
+  await withOpenAiApiKey("test-key", async (): Promise<void> => {
+    const reservation = createReservation("session-1");
+    let releasedReservation: ChatRunStartReservation | null = null;
+    const response = await postChatRouteWithDeps(
+      createChatRequest({
+        sessionId: "session-1",
+        content: [{ type: "text", text: "Hello" }],
+        model: CHAT_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+      createPostDependencies({
+        reserveChatRunStart: () => reservation,
+        releaseChatRunStartReservation: (released) => {
+          releasedReservation = released;
+        },
+        prepareChatRun: async (): Promise<PreparedChatRun> => {
+          throw new ChatSessionConflictError("session-1");
+        },
+      }),
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(await response.text(), "Chat session already has an active response");
+    assert.equal(releasedReservation, reservation);
+  });
+});
+
+test("postChatRouteWithDeps consumes the reservation when runtime starts successfully", async (): Promise<void> => {
+  await withOpenAiApiKey("test-key", async (): Promise<void> => {
+    const reservation = createReservation("session-1");
+    let released = false;
+    let startedWith: Readonly<{
+      activeRunId: string;
+      reservation: ChatRunStartReservation;
+    }> | null = null;
+    const response = await postChatRouteWithDeps(
+      createChatRequest({
+        sessionId: "session-1",
+        content: [{ type: "text", text: "Hello" }],
+        model: CHAT_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+      createPostDependencies({
+        reserveChatRunStart: () => reservation,
+        releaseChatRunStartReservation: () => {
+          released = true;
+        },
+        prepareChatRun: async () => createPreparedRun("session-1"),
+        startPersistedChatRun: (params, startReservation) => {
+          startedWith = {
+            activeRunId: params.activeRunId,
+            reservation: startReservation,
+          };
+          return (async function* (): AsyncGenerator<ChatStreamEvent> {
+            yield { type: "done" };
+          })();
+        },
+      }),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(startedWith, {
+      activeRunId: "run-session-1",
+      reservation,
+    });
+    assert.equal(released, false);
+  });
+});
+
 test("postChatRouteWithDeps rejects missing session ids", async (): Promise<void> => {
   await withOpenAiApiKey("test-key", async (): Promise<void> => {
     const response = await postChatRouteWithDeps(
@@ -222,6 +329,56 @@ test("getChatRouteWithDeps maps missing sessions to 404", async (): Promise<void
 
   assert.equal(response.status, 404);
   assert.equal(await response.text(), "Chat session not found: missing");
+});
+
+test("getChatRouteWithDeps does not serialize internal active run fields", async (): Promise<void> => {
+  const publicContent: ReadonlyArray<ContentPart> = [{ type: "text", text: "Hello" }];
+  const response = await getChatRouteWithDeps(
+    new Request("http://localhost/api/chat?sessionId=session-1", {
+      method: "GET",
+      headers: createHeaders(),
+    }),
+    {
+      resolveSnapshotWithRunRecovery: async () => createSnapshot({
+        runState: "running",
+        activeRunId: "run-1",
+        activeRunHeartbeatAt: 1_000,
+        messages: [{
+          itemId: "assistant-1",
+          sessionId: "session-1",
+          role: "assistant",
+          content: publicContent,
+          openaiItems: [{
+            type: "function_call",
+            call_id: "call-1",
+            name: "lookup_transactions",
+            arguments: "{}",
+          }],
+          state: "completed",
+          timestamp: 123,
+          updatedAt: 456,
+          isError: false,
+          isStopped: false,
+        }],
+      }),
+    },
+  );
+
+  const body = await response.json() as Record<string, unknown>;
+  assert.equal(response.status, 200);
+  assert.deepEqual(body, {
+    sessionId: "session-1",
+    runState: "running",
+    updatedAt: 100,
+    mainContentInvalidationVersion: 0,
+    messages: [{
+      role: "assistant",
+      content: publicContent,
+      timestamp: 123,
+      isError: false,
+      isStopped: false,
+    }],
+  });
 });
 
 test("postChatRouteWithDeps returns SSE headers for successful runs", async (): Promise<void> => {
@@ -281,9 +438,13 @@ test("deleteChatRouteWithDeps creates a fresh session when the latest session ha
       getChatSessionSnapshot: async () => createSnapshot({
         sessionId: "session-1",
         messages: [{
+          itemId: "item-1",
+          sessionId: "session-1",
           role: "user",
           content: [{ type: "text", text: "Hello" }],
+          state: "completed",
           timestamp: 0,
+          updatedAt: 0,
           isError: false,
           isStopped: false,
         }],

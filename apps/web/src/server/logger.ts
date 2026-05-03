@@ -93,6 +93,28 @@ type ChatEvent =
   }>
   | Readonly<{
     domain: "chat";
+    action: "stale_completed_run_recovered";
+    sessionId: string;
+    userId: string;
+    workspaceId: string;
+    activeRunId: string;
+    lastMessageRole?: "user" | "assistant";
+    lastMessageState?: "in_progress" | "completed" | "error" | "cancelled";
+  }>
+  | Readonly<{
+    domain: "chat";
+    action: "run_transition_skipped";
+    requestId: string;
+    sessionId: string;
+    userId: string;
+    workspaceId: string;
+    activeRunId: string;
+    operation: string;
+    targetState?: "idle" | "interrupted";
+    error: string;
+  }>
+  | Readonly<{
+    domain: "chat";
     action: "error";
     vendor: ChatVendor;
     stage: ChatErrorStage;
