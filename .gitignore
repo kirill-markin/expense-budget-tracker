@@ -29,3 +29,6 @@ tmp/
 # Playwright
 apps/web/playwright-report/
 apps/web/test-results/
+
+# Claude Code local state (per-developer)
+.claude/
