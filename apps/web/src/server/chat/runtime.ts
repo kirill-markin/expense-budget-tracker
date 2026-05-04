@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { SupportedLocale } from "@/lib/locale";
+import { t } from "@/i18n/serverT";
 import {
   appendAssistantTextContent,
   finalizePendingToolCallContent,
@@ -11,6 +12,7 @@ import type {
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/replayItems";
 import { runOpenAILoop } from "@/server/chat/openai/loop";
+import { isOpenAITransientError } from "@/server/chat/logging";
 import { startChatTurnObservation } from "@/server/chat/openai/langfuse";
 import {
   buildUserStoppedAssistantContent,
@@ -120,6 +122,28 @@ const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
 const isUserAbortError = (error: unknown): boolean =>
   error instanceof OpenAI.APIUserAbortError
   || (error instanceof Error && error.name === "AbortError");
+
+/**
+ * Translates an internal chat-run error into a user-facing message.
+ *
+ * The original error.message goes only to logs (`logChatRunError`); users see
+ * a concise i18n-translated explanation that doesn't leak provider request IDs
+ * or technical details, and tells them what to do next when work is salvageable.
+ */
+const buildUserFacingChatErrorMessage = (
+  locale: SupportedLocale,
+  error: unknown,
+): string => {
+  if (isOpenAITransientError(error)) {
+    return t(locale, "chat.openaiTransientError");
+  }
+  if (error instanceof OpenAI.APIError
+    && (error.code === "content_policy_violation"
+      || (typeof error.message === "string" && /content[_ ]policy/i.test(error.message)))) {
+    return t(locale, "chat.contentPolicyBlocked");
+  }
+  return t(locale, "chat.unexpectedError");
+};
 
 /**
  * Converts a streamed tool-call event into the persisted assistant transcript
@@ -331,8 +355,7 @@ const logChatRunError = (
   stage: ChatErrorStage,
   error: unknown,
 ): void => {
-  const message = error instanceof Error ? error.message : String(error);
-  log(createChatErrorLogEvent(diagnostics, stage, message));
+  log(createChatErrorLogEvent(diagnostics, stage, error));
 };
 
 const logRunTransitionSkipped = (
@@ -686,7 +709,7 @@ export const runPersistedChatSessionWithDeps = async (
       return;
     }
 
-    const message = error instanceof Error ? error.message : String(error);
+    const userFacingMessage = buildUserFacingChatErrorMessage(params.locale, error);
     assistantContent = finalizeAssistantToolCalls(assistantContent);
     try {
       await dependencies.persistAssistantTerminalError(params.userId, params.workspaceId, {
@@ -694,7 +717,7 @@ export const runPersistedChatSessionWithDeps = async (
         activeRunId: params.activeRunId,
         assistantItemId: params.assistantItemId,
         assistantContent,
-        errorMessage: message,
+        errorMessage: userFacingMessage,
         sessionState: "idle",
       });
     } catch (persistError) {
@@ -705,7 +728,7 @@ export const runPersistedChatSessionWithDeps = async (
 
       throw persistError;
     }
-    broadcastChatEvent(params.sessionId, params.activeRunId, { type: "error", message });
+    broadcastChatEvent(params.sessionId, params.activeRunId, { type: "error", message: userFacingMessage });
     logChatRunError(params.diagnostics, "agent", error);
   } finally {
     clearInterval(heartbeatTimer);
