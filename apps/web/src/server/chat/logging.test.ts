@@ -176,3 +176,17 @@ test("parseRetryAfterMs handles numeric seconds, HTTP-date, missing, and malform
 
   assert.equal(parseRetryAfterMs(new Error("not an APIError")), undefined);
 });
+
+test("parseRetryAfterMs rejects numeric values exceeding the 24h sanity cap", (): void => {
+  // ~27 hours, well above any legitimate Retry-After.
+  const headers = new Headers({ "retry-after": "100000" });
+  const error = new OpenAI.APIError(429, {}, "429", headers);
+  assert.equal(parseRetryAfterMs(error), undefined);
+});
+
+test("parseRetryAfterMs rejects HTTP-dates further than 24h in the future", (): void => {
+  const farFutureDate = new Date(Date.now() + 25 * 60 * 60 * 1000).toUTCString();
+  const headers = new Headers({ "retry-after": farFutureDate });
+  const error = new OpenAI.APIError(429, {}, "429", headers);
+  assert.equal(parseRetryAfterMs(error), undefined);
+});

@@ -31,6 +31,23 @@ const createLoopParams = (): StartOpenAILoopParams => ({
   rootObservation: null,
 });
 
+type LoopDeps = Parameters<typeof runOpenAILoopWithDeps>[2];
+
+const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
+  buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
+  getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+  runOneModelCall: async (): Promise<never> => {
+    throw new Error("runOneModelCall was invoked but the test did not override it via createTestLoopDeps");
+  },
+  runOneToolCall: async (): Promise<never> => {
+    throw new Error("runOneToolCall was invoked but the test did not override it via createTestLoopDeps");
+  },
+  getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [],
+  sleep: async (): Promise<void> => {},
+  log: (_event: Parameters<LoopDeps["log"]>[0]): void => {},
+  ...overrides,
+});
+
 const createAssistantReplayItem = (
   text: string,
 ): StoredOpenAIReplayItem => ({
@@ -144,9 +161,7 @@ test("runOpenAILoop waits for async event handling before resolving completion",
         await deltaHandled.promise;
       }
     },
-    {
-      buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-      getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+    createTestLoopDeps({
       runOneModelCall: async (
         _client: OpenAI,
         _callParams: StartOpenAILoopParams,
@@ -170,16 +185,7 @@ test("runOpenAILoop waits for async event handling before resolving completion",
           toolStates: createToolCallStateMap(),
         };
       },
-      runOneToolCall: async (): Promise<Readonly<{
-        output: string;
-        isMutating: boolean;
-        succeeded: boolean;
-      }>> => {
-        throw new Error("runOneToolCall should not be called in the no-tool path");
-      },
-      getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [],
-      sleep: async (): Promise<void> => {},
-    },
+    }),
   );
 
   void runPromise.then((): void => {
@@ -223,9 +229,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
     async (event: ChatStreamEvent): Promise<void> => {
       observedEvents.push(event);
     },
-    {
-      buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-      getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+    createTestLoopDeps({
       runOneModelCall: async (
         _client: OpenAI,
         _callParams: StartOpenAILoopParams,
@@ -261,9 +265,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
         isMutating: false,
         succeeded: true,
       }),
-      getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [],
-      sleep: async (): Promise<void> => {},
-    },
+    }),
   );
 
   assert.equal(modelCallCount, 2);
@@ -312,9 +314,7 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
     async (event: ChatStreamEvent): Promise<void> => {
       observedEvents.push(event);
     },
-    {
-      buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-      getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+    createTestLoopDeps({
       runOneModelCall: async (
         _client: OpenAI,
         _callParams: StartOpenAILoopParams,
@@ -353,9 +353,7 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
         isMutating: false,
         succeeded: true,
       }),
-      getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [],
-      sleep: async (): Promise<void> => {},
-    },
+    }),
   );
 
   assert.equal(modelCallCount, CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS + 1);
@@ -386,9 +384,7 @@ test("runOpenAILoop retries the same call on a transient OpenAI 5xx error", asyn
   const completion = await runOpenAILoopWithDeps(
     params,
     async (): Promise<void> => {},
-    {
-      buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-      getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+    createTestLoopDeps({
       runOneModelCall: async () => {
         attemptCount += 1;
         if (attemptCount === 1) {
@@ -402,16 +398,8 @@ test("runOpenAILoop retries the same call on a transient OpenAI 5xx error", asyn
           toolStates: createToolCallStateMap(),
         };
       },
-      runOneToolCall: async (): Promise<Readonly<{
-        output: string;
-        isMutating: boolean;
-        succeeded: boolean;
-      }>> => {
-        throw new Error("runOneToolCall should not be called");
-      },
       getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
-      sleep: async (): Promise<void> => {},
-    },
+    }),
   );
 
   assert.equal(attemptCount, 2);
@@ -428,23 +416,13 @@ test("runOpenAILoop retries on ChatModelCallTimeoutError and surfaces the error 
     runOpenAILoopWithDeps(
       params,
       async (): Promise<void> => {},
-      {
-        buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-        getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+      createTestLoopDeps({
         runOneModelCall: async () => {
           attemptCount += 1;
           throw new ChatModelCallTimeoutError(5_000);
         },
-        runOneToolCall: async (): Promise<Readonly<{
-          output: string;
-          isMutating: boolean;
-          succeeded: boolean;
-        }>> => {
-          throw new Error("runOneToolCall should not be called");
-        },
         getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
-        sleep: async (): Promise<void> => {},
-      },
+      }),
     ),
     (error: unknown): boolean => error instanceof ChatModelCallTimeoutError,
   );
@@ -460,23 +438,13 @@ test("runOpenAILoop does NOT retry on a 4xx OpenAI error", async (): Promise<voi
     runOpenAILoopWithDeps(
       params,
       async (): Promise<void> => {},
-      {
-        buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-        getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+      createTestLoopDeps({
         runOneModelCall: async () => {
           attemptCount += 1;
           throw new OpenAI.APIError(400, { message: "bad request" }, "Bad Request", undefined);
         },
-        runOneToolCall: async (): Promise<Readonly<{
-          output: string;
-          isMutating: boolean;
-          succeeded: boolean;
-        }>> => {
-          throw new Error("runOneToolCall should not be called");
-        },
         getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
-        sleep: async (): Promise<void> => {},
-      },
+      }),
     ),
     (error: unknown): boolean => error instanceof OpenAI.APIError && error.status === 400,
   );
@@ -492,23 +460,13 @@ test("runOpenAILoop does NOT retry on a user abort", async (): Promise<void> => 
     runOpenAILoopWithDeps(
       params,
       async (): Promise<void> => {},
-      {
-        buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-        getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+      createTestLoopDeps({
         runOneModelCall: async () => {
           attemptCount += 1;
           throw new OpenAI.APIUserAbortError();
         },
-        runOneToolCall: async (): Promise<Readonly<{
-          output: string;
-          isMutating: boolean;
-          succeeded: boolean;
-        }>> => {
-          throw new Error("runOneToolCall should not be called");
-        },
         getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
-        sleep: async (): Promise<void> => {},
-      },
+      }),
     ),
     (error: unknown): boolean => error instanceof OpenAI.APIUserAbortError,
   );
@@ -523,9 +481,7 @@ test("runOpenAILoop retries on the canonical OpenAI 'An error occurred...' gener
   const completion = await runOpenAILoopWithDeps(
     params,
     async (): Promise<void> => {},
-    {
-      buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-      getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+    createTestLoopDeps({
       runOneModelCall: async () => {
         attemptCount += 1;
         if (attemptCount === 1) {
@@ -541,16 +497,8 @@ test("runOpenAILoop retries on the canonical OpenAI 'An error occurred...' gener
           toolStates: createToolCallStateMap(),
         };
       },
-      runOneToolCall: async (): Promise<Readonly<{
-        output: string;
-        isMutating: boolean;
-        succeeded: boolean;
-      }>> => {
-        throw new Error("runOneToolCall should not be called");
-      },
       getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
-      sleep: async (): Promise<void> => {},
-    },
+    }),
   );
 
   assert.equal(attemptCount, 2);
@@ -565,9 +513,7 @@ test("runOpenAILoop does NOT retry when the failed attempt already emitted a del
     runOpenAILoopWithDeps(
       params,
       async (): Promise<void> => {},
-      {
-        buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-        getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+      createTestLoopDeps({
         runOneModelCall: async (
           _client: OpenAI,
           _callParams: StartOpenAILoopParams,
@@ -585,16 +531,8 @@ test("runOpenAILoop does NOT retry when the failed attempt already emitted a del
           });
           throw new OpenAI.APIError(503, { message: "service unavailable" }, "Service Unavailable", undefined);
         },
-        runOneToolCall: async (): Promise<Readonly<{
-          output: string;
-          isMutating: boolean;
-          succeeded: boolean;
-        }>> => {
-          throw new Error("runOneToolCall should not be called");
-        },
         getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
-        sleep: async (): Promise<void> => {},
-      },
+      }),
     ),
     (error: unknown): boolean => error instanceof OpenAI.APIError && error.status === 503,
   );
@@ -606,67 +544,45 @@ test("runOpenAILoop retries on a 429 RateLimitError and respects the Retry-After
   const params = createLoopParams();
   let attemptCount = 0;
   const observedDelays: Array<number> = [];
-  const originalLog = console.log.bind(console);
-  console.log = (line: string): void => {
-    try {
-      const event: unknown = JSON.parse(line);
-      if (
-        typeof event === "object" && event !== null
-        && (event as { action?: unknown }).action === "model_call_retry"
-      ) {
-        const delay = (event as { delayMs?: unknown }).delayMs;
-        if (typeof delay === "number") observedDelays.push(delay);
-      }
-    } catch {
-      // Non-JSON line — ignore.
-    }
-  };
-  try {
-    const completion = await runOpenAILoopWithDeps(
-      params,
-      async (): Promise<void> => {},
-      {
-        buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-        getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
-        runOneModelCall: async () => {
-          attemptCount += 1;
-          if (attemptCount === 1) {
-            throw new OpenAI.APIError(
-              429,
-              { message: "rate limit exceeded" },
-              "429 rate limit exceeded",
-              new Headers({ "retry-after": "2" }),
-            );
-          }
-          return {
-            finalResponse: createFinalResponse("Recovered after rate limit"),
-            functionCalls: [],
-            replayItems: [createAssistantReplayItem("Recovered after rate limit")],
-            streamedText: "Recovered after rate limit",
-            toolStates: createToolCallStateMap(),
-          };
-        },
-        runOneToolCall: async (): Promise<Readonly<{
-          output: string;
-          isMutating: boolean;
-          succeeded: boolean;
-        }>> => {
-          throw new Error("runOneToolCall should not be called");
-        },
-        getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
-        sleep: async (): Promise<void> => {},
+
+  const completion = await runOpenAILoopWithDeps(
+    params,
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      runOneModelCall: async () => {
+        attemptCount += 1;
+        if (attemptCount === 1) {
+          throw new OpenAI.APIError(
+            429,
+            { message: "rate limit exceeded" },
+            "429 rate limit exceeded",
+            new Headers({ "retry-after": "2" }),
+          );
+        }
+        return {
+          finalResponse: createFinalResponse("Recovered after rate limit"),
+          functionCalls: [],
+          replayItems: [createAssistantReplayItem("Recovered after rate limit")],
+          streamedText: "Recovered after rate limit",
+          toolStates: createToolCallStateMap(),
+        };
       },
-    );
-    assert.equal(attemptCount, 2);
-    assert.deepEqual(completion.openaiItems.at(-1), createAssistantReplayItem("Recovered after rate limit"));
-    assert.equal(observedDelays.length, 1);
-    assert.ok(
-      observedDelays[0] !== undefined && observedDelays[0] >= 2_000,
-      `expected Retry-After 2s to floor delayMs, observed ${String(observedDelays[0])}`,
-    );
-  } finally {
-    console.log = originalLog;
-  }
+      getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
+      log: (event): void => {
+        if (event.action === "model_call_retry" && typeof event.delayMs === "number") {
+          observedDelays.push(event.delayMs);
+        }
+      },
+    }),
+  );
+
+  assert.equal(attemptCount, 2);
+  assert.deepEqual(completion.openaiItems.at(-1), createAssistantReplayItem("Recovered after rate limit"));
+  assert.equal(observedDelays.length, 1);
+  assert.ok(
+    observedDelays[0] !== undefined && observedDelays[0] >= 2_000,
+    `expected Retry-After 2s to floor delayMs, observed ${String(observedDelays[0])}`,
+  );
 });
 
 test("runOpenAILoop does NOT retry when Retry-After exceeds the max delay cap", async (): Promise<void> => {
@@ -677,9 +593,7 @@ test("runOpenAILoop does NOT retry when Retry-After exceeds the max delay cap", 
     runOpenAILoopWithDeps(
       params,
       async (): Promise<void> => {},
-      {
-        buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
-        getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+      createTestLoopDeps({
         runOneModelCall: async () => {
           attemptCount += 1;
           throw new OpenAI.APIError(
@@ -689,19 +603,68 @@ test("runOpenAILoop does NOT retry when Retry-After exceeds the max delay cap", 
             new Headers({ "retry-after": "120" }),
           );
         },
-        runOneToolCall: async (): Promise<Readonly<{
-          output: string;
-          isMutating: boolean;
-          succeeded: boolean;
-        }>> => {
-          throw new Error("runOneToolCall should not be called");
-        },
         getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
-        sleep: async (): Promise<void> => {},
-      },
+      }),
     ),
     (error: unknown): boolean => error instanceof OpenAI.APIError && error.status === 429,
   );
 
   assert.equal(attemptCount, 1);
+});
+
+test("runOpenAILoop falls back to base backoff when Retry-After exceeds the parser's 24h sanity cap", async (): Promise<void> => {
+  // A header value > 24h is treated as malformed by parseRetryAfterMs and
+  // returns undefined, so the loop never sees the absurd delay and uses base
+  // backoff instead of throwing. Pinning this so the parser-cap behaviour is
+  // not silently changed by future edits.
+  const params = createLoopParams();
+  let attemptCount = 0;
+  const observedDelays: Array<number> = [];
+  const observedRetryAfterMs: Array<number | undefined> = [];
+
+  const completion = await runOpenAILoopWithDeps(
+    params,
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      runOneModelCall: async () => {
+        attemptCount += 1;
+        if (attemptCount === 1) {
+          throw new OpenAI.APIError(
+            429,
+            { message: "rate limit exceeded" },
+            "429 rate limit exceeded",
+            // ~27 hours — well above the parser's 24h cap.
+            new Headers({ "retry-after": "100000" }),
+          );
+        }
+        return {
+          finalResponse: createFinalResponse("Recovered"),
+          functionCalls: [],
+          replayItems: [createAssistantReplayItem("Recovered")],
+          streamedText: "Recovered",
+          toolStates: createToolCallStateMap(),
+        };
+      },
+      getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
+      log: (event): void => {
+        if (event.action === "model_call_retry") {
+          if (typeof event.delayMs === "number") observedDelays.push(event.delayMs);
+          observedRetryAfterMs.push(event.retryAfterMs);
+        }
+      },
+    }),
+  );
+
+  assert.equal(attemptCount, 2);
+  assert.deepEqual(completion.openaiItems.at(-1), createAssistantReplayItem("Recovered"));
+  assert.equal(observedDelays.length, 1);
+  // Parser dropped the absurd value, so the retry log records no retryAfterMs
+  // and the delay equals the (jittered) base backoff of 0. Use a tight upper
+  // bound so a regression that lets the absurd Retry-After leak through
+  // (e.g. ~100_000_000 ms) is caught here, not just by attemptCount.
+  assert.equal(observedRetryAfterMs[0], undefined);
+  assert.ok(
+    observedDelays[0] !== undefined && observedDelays[0] < 100,
+    `expected near-zero base-backoff delay, observed ${String(observedDelays[0])}`,
+  );
 });

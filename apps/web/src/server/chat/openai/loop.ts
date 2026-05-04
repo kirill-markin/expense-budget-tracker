@@ -21,6 +21,7 @@ import {
 } from "@/server/chat/openai/request";
 import {
   runOneModelCall,
+  type ModelCallResult,
 } from "@/server/chat/openai/modelCall";
 import { runOneToolCall } from "@/server/chat/openai/toolExecutor";
 import {
@@ -29,13 +30,17 @@ import {
   parseRetryAfterMs,
 } from "@/server/chat/logging";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
-import { log } from "@/server/logger";
+import { log as serverLog } from "@/server/logger";
 
 export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 30;
 const TOOL_LIMIT_FALLBACK_ITEM_ID = "tool-limit-summary";
 
 const MODEL_CALL_RETRY_BACKOFF_MS: ReadonlyArray<number> = [5_000, 20_000];
 const MODEL_CALL_RETRY_JITTER = 0.2;
+// Loop-level retry policy cap: if the server's Retry-After exceeds this,
+// surface the error instead of waiting. Distinct from the parser-level 24h
+// sanity cap in logging.ts (which filters obviously-malformed values before
+// they ever reach this check).
 const MODEL_CALL_RETRY_MAX_DELAY_MS = 60_000;
 
 const computeRetryDelayMs = (
@@ -81,6 +86,7 @@ type OpenAILoopDependencies = Readonly<{
   runOneToolCall: typeof runOneToolCall;
   getModelCallRetryBackoffMs: () => ReadonlyArray<number>;
   sleep: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
+  log: typeof serverLog;
 }>;
 
 export type OpenAILoopCompletion = Readonly<{
@@ -120,6 +126,7 @@ const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   runOneToolCall,
   getModelCallRetryBackoffMs: (): ReadonlyArray<number> => MODEL_CALL_RETRY_BACKOFF_MS,
   sleep: sleepWithAbort,
+  log: serverLog,
 };
 
 const createInputTextMessage = (
@@ -218,6 +225,7 @@ type RunOneModelCallWithRetryArgs = Readonly<{
   runOneModelCallFn: typeof runOneModelCall;
   backoffMs: ReadonlyArray<number>;
   sleep: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
+  log: typeof serverLog;
   client: OpenAI;
   params: StartOpenAILoopParams;
   emitEvent: OpenAILoopEventHandler;
@@ -228,8 +236,8 @@ type RunOneModelCallWithRetryArgs = Readonly<{
 
 const runOneModelCallWithRetry = async (
   args: RunOneModelCallWithRetryArgs,
-): Promise<Awaited<ReturnType<typeof runOneModelCall>>> => {
-  const { runOneModelCallFn, backoffMs, sleep, client, params, emitEvent, request, promptCacheKey, callIndex } = args;
+): Promise<ModelCallResult> => {
+  const { runOneModelCallFn, backoffMs, sleep, log, client, params, emitEvent, request, promptCacheKey, callIndex } = args;
   const maxAttempts = backoffMs.length + 1;
   for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
     const { trackingEmit, hasEmitted } = wrapEmitEventWithTracking(emitEvent);
@@ -291,6 +299,7 @@ const completeToolLimitSummaryTurn = async (
   runOneModelCallFn: typeof runOneModelCall,
   backoffMs: ReadonlyArray<number>,
   sleep: (ms: number, signal: AbortSignal | undefined) => Promise<void>,
+  log: typeof serverLog,
   client: OpenAI,
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
   continuationItems: Array<StoredOpenAIReplayItem>,
@@ -311,6 +320,7 @@ const completeToolLimitSummaryTurn = async (
     runOneModelCallFn,
     backoffMs,
     sleep,
+    log,
     client,
     params,
     emitEvent,
@@ -373,6 +383,7 @@ const runLoopWithDeps = async (
       runOneModelCallFn: dependencies.runOneModelCall,
       backoffMs: retryBackoffMs,
       sleep: dependencies.sleep,
+      log: dependencies.log,
       client,
       params,
       emitEvent,
@@ -432,6 +443,7 @@ const runLoopWithDeps = async (
         dependencies.runOneModelCall,
         retryBackoffMs,
         dependencies.sleep,
+        dependencies.log,
         client,
         baseInput,
         continuationItems,

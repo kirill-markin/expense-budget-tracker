@@ -165,13 +165,32 @@ export const isOpenAITransientError = (error: unknown): boolean =>
   classifyOpenAITransientError(error).retryable;
 
 /**
+ * Parser-level sanity cap. Values above this are treated as malformed (server
+ * misconfiguration / garbage), not as legitimate "wait this long" requests.
+ *
+ * Distinct from the loop's `MODEL_CALL_RETRY_MAX_DELAY_MS` (60 s in
+ * `openai/loop.ts`), which is the retry policy. This 24 h cap only filters
+ * obviously-broken values; the loop's tighter cap still decides whether to
+ * actually wait or surface the error.
+ */
+const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
+
+/**
  * Parses the `Retry-After` header from an OpenAI APIError (typically a 429).
  *
  * Per RFC 7231 the value is either a non-negative integer (seconds) or an
  * HTTP-date. An HTTP-date already in the past is intentionally normalised to
  * `0` ms — the spec says the server thinks "wait until that point", and if
- * that point has already passed the answer is "no wait". Returns undefined
- * when the header is missing or unparseable.
+ * that point has already passed the answer is "no wait".
+ *
+ * Returns undefined when the header is missing, unparseable, or specifies a
+ * delay greater than 24 hours. Note the behavioural consequence of the cap:
+ * because the loop only honours `parseRetryAfterMs` when it returns a defined
+ * value, an absurd `Retry-After` (e.g. 27 h) is treated as if the server sent
+ * no header — the loop falls back to its base backoff and will retry instead
+ * of surfacing the error. That is intentional: a server requesting a 24 h+
+ * wait is almost certainly misconfigured, and a quick retry is friendlier
+ * than failing the user's chat turn outright.
  */
 export const parseRetryAfterMs = (error: unknown): number | undefined => {
   if (!(error instanceof OpenAI.APIError)) return undefined;
@@ -181,11 +200,13 @@ export const parseRetryAfterMs = (error: unknown): number | undefined => {
   if (typeof headerValue !== "string" || headerValue.length === 0) return undefined;
   const seconds = Number(headerValue);
   if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.round(seconds * 1000);
+    const ms = Math.round(seconds * 1000);
+    return ms > RETRY_AFTER_MAX_MS ? undefined : ms;
   }
   const dateMs = Date.parse(headerValue);
   if (Number.isFinite(dateMs)) {
-    return Math.max(0, dateMs - Date.now());
+    const delta = Math.max(0, dateMs - Date.now());
+    return delta > RETRY_AFTER_MAX_MS ? undefined : delta;
   }
   return undefined;
 };
