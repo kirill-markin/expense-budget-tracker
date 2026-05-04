@@ -1,4 +1,4 @@
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import {
   applyFunctionCallArgumentsDelta,
   applyFunctionCallArgumentsDone,
@@ -20,6 +20,39 @@ import { log } from "@/server/logger";
 import type { OpenAILoopEventHandler, StartOpenAILoopParams } from "./loop";
 
 const MAX_REASONING_ITEMS = 8;
+
+export const MODEL_CALL_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Thrown when a single OpenAI model call exceeds {@link MODEL_CALL_TIMEOUT_MS}.
+ *
+ * Distinct from a user-initiated abort: the loop can retry on this error,
+ * whereas user aborts must terminate the run.
+ */
+export class ChatModelCallTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`OpenAI model call exceeded the ${String(timeoutMs)}ms timeout`);
+    this.name = "ChatModelCallTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+const isUserAbortError = (error: unknown): boolean =>
+  error instanceof OpenAI.APIUserAbortError
+  || (error instanceof Error && error.name === "AbortError");
+
+const buildModelCallSignal = (
+  userSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): Readonly<{ signal: AbortSignal; timeoutSignal: AbortSignal }> => {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = userSignal === undefined
+    ? timeoutSignal
+    : AbortSignal.any([userSignal, timeoutSignal]);
+  return { signal, timeoutSignal };
+};
 
 export type ParsedFunctionToolCall = OpenAI.Responses.ResponseFunctionToolCall & Readonly<{
   parsed_arguments?: unknown;
@@ -90,22 +123,15 @@ const getFinalResponseFromStream = async (
   throw new Error("OpenAI response stream completed without a final response");
 };
 
-export const runOneModelCall = async (
-  client: OpenAI,
-  params: StartOpenAILoopParams,
+const consumeStreamResponse = async (
+  stream: ResponseStreamWithOptionalFinalResponse,
   emitEvent: OpenAILoopEventHandler,
-  request: OpenAIResponsesRequest,
-  promptCacheKey: string,
   callIndex: number,
-): Promise<ModelCallResult> => {
-  const modelCallStartedAt = Date.now();
-  const stream: ResponseStreamWithOptionalFinalResponse = client.responses.stream(
-    request,
-    {
-      signal: params.signal,
-    },
-  );
-
+): Promise<Readonly<{
+  finalResponse: OpenAI.Responses.Response;
+  streamedText: string;
+  toolStates: ReturnType<typeof createToolCallStateMap>;
+}>> => {
   const reasoningSummaries = new Map<string, string>();
   const reasoningOrder: Array<string> = [];
   let toolStates = createToolCallStateMap();
@@ -199,22 +225,54 @@ export const runOneModelCall = async (
   }
 
   const finalResponse = await getFinalResponseFromStream(stream, completedResponse);
-  log(buildChatResponseLogEvent({
-    requestId: params.requestId,
-    sessionId: params.sessionId,
-    callIndex,
-    promptCacheKey,
-    durationMs: Date.now() - modelCallStartedAt,
-    response: finalResponse,
-  }));
+  return { finalResponse, streamedText, toolStates };
+};
 
-  return {
-    finalResponse,
-    functionCalls: finalResponse.output
-      .filter((item) => item.type === "function_call")
-      .map((item) => item as ParsedFunctionToolCall),
-    replayItems: finalResponse.output.map(toStoredOpenAIReplayItem),
-    streamedText,
-    toolStates,
-  };
+export const runOneModelCall = async (
+  client: OpenAI,
+  params: StartOpenAILoopParams,
+  emitEvent: OpenAILoopEventHandler,
+  request: OpenAIResponsesRequest,
+  promptCacheKey: string,
+  callIndex: number,
+): Promise<ModelCallResult> => {
+  const modelCallStartedAt = Date.now();
+  const { signal, timeoutSignal } = buildModelCallSignal(params.signal, MODEL_CALL_TIMEOUT_MS);
+  const stream: ResponseStreamWithOptionalFinalResponse = client.responses.stream(
+    request,
+    { signal },
+  );
+
+  try {
+    const { finalResponse, streamedText, toolStates } = await consumeStreamResponse(
+      stream,
+      emitEvent,
+      callIndex,
+    );
+    log(buildChatResponseLogEvent({
+      requestId: params.requestId,
+      sessionId: params.sessionId,
+      callIndex,
+      promptCacheKey,
+      durationMs: Date.now() - modelCallStartedAt,
+      response: finalResponse,
+    }));
+    return {
+      finalResponse,
+      functionCalls: finalResponse.output
+        .filter((item) => item.type === "function_call")
+        .map((item) => item as ParsedFunctionToolCall),
+      replayItems: finalResponse.output.map(toStoredOpenAIReplayItem),
+      streamedText,
+      toolStates,
+    };
+  } catch (error) {
+    // Distinguish per-call timeout from user-initiated abort: both surface as
+    // AbortError, but only timeout is retryable. User abort takes precedence.
+    const userAborted = params.signal !== undefined && params.signal.aborted;
+    if (timeoutSignal.aborted && !userAborted && isUserAbortError(error)) {
+      throw new ChatModelCallTimeoutError(MODEL_CALL_TIMEOUT_MS);
+    }
+    throw error;
+  }
 };

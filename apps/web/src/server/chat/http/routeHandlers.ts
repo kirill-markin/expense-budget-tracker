@@ -148,7 +148,7 @@ export const postChatRouteWithDeps = async (
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const diagnostics = buildChatRequestDiagnostics(requestId, body.model, body.content);
-    dependencies.log(createChatErrorLogEvent(diagnostics, "auth", message));
+    dependencies.log(createChatErrorLogEvent(diagnostics, "auth", error));
     return new Response(message, { status: 401 });
   }
 
@@ -253,7 +253,7 @@ export const postChatRouteWithDeps = async (
       context.workspaceId,
       body.sessionId,
     );
-    dependencies.log(createChatErrorLogEvent(diagnostics, "agent", error instanceof Error ? error.message : String(error)));
+    dependencies.log(createChatErrorLogEvent(diagnostics, "agent", error));
     throw error;
   }
 };

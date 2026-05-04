@@ -17,22 +17,70 @@ import {
   buildOpenAIResponsesRequest,
   buildOpenAIResponsesRequestWithOptions,
   buildPromptCacheKey,
+  type OpenAIResponsesRequest,
 } from "@/server/chat/openai/request";
 import {
   runOneModelCall,
 } from "@/server/chat/openai/modelCall";
 import { runOneToolCall } from "@/server/chat/openai/toolExecutor";
+import {
+  classifyOpenAITransientError,
+  extractOpenAIErrorContext,
+  parseRetryAfterMs,
+} from "@/server/chat/logging";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 
 export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 30;
 const TOOL_LIMIT_FALLBACK_ITEM_ID = "tool-limit-summary";
 
+const MODEL_CALL_RETRY_BACKOFF_MS: ReadonlyArray<number> = [5_000, 20_000];
+const MODEL_CALL_RETRY_JITTER = 0.2;
+const MODEL_CALL_RETRY_MAX_DELAY_MS = 60_000;
+
+const computeRetryDelayMs = (
+  backoffMs: ReadonlyArray<number>,
+  attempt: number,
+): number => {
+  const base = backoffMs[attempt - 1];
+  if (base === undefined) {
+    throw new Error(`No backoff defined for retry attempt ${String(attempt)}`);
+  }
+  const jitter = base * MODEL_CALL_RETRY_JITTER * (Math.random() * 2 - 1);
+  return Math.max(0, Math.round(base + jitter));
+};
+
+const sleepWithAbort = (
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> =>
+  new Promise<void>((resolve, reject) => {
+    if (signal !== undefined && signal.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("Aborted"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (signal !== undefined) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal?.reason instanceof Error ? signal.reason : new Error("Aborted"));
+    };
+    if (signal !== undefined) {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+
 type OpenAILoopDependencies = Readonly<{
   buildChatCompletionInput: typeof buildChatCompletionInput;
   getObservedOpenAIClient: typeof getObservedOpenAIClient;
   runOneModelCall: typeof runOneModelCall;
   runOneToolCall: typeof runOneToolCall;
+  getModelCallRetryBackoffMs: () => ReadonlyArray<number>;
+  sleep: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
 }>;
 
 export type OpenAILoopCompletion = Readonly<{
@@ -70,6 +118,8 @@ const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   getObservedOpenAIClient,
   runOneModelCall,
   runOneToolCall,
+  getModelCallRetryBackoffMs: (): ReadonlyArray<number> => MODEL_CALL_RETRY_BACKOFF_MS,
+  sleep: sleepWithAbort,
 };
 
 const createInputTextMessage = (
@@ -142,10 +192,105 @@ const pushSyntheticAssistantDelta = async (
   });
 };
 
+/**
+ * Builds an emitEvent wrapper that flips a flag on first invocation.
+ *
+ * Used by the retry helper to gate retries: if the failed attempt already
+ * streamed any user-visible event (delta, tool_call, reasoning_summary), we
+ * cannot retry without producing duplicate transcript content, so we surface
+ * the error instead.
+ */
+const wrapEmitEventWithTracking = (
+  emitEvent: OpenAILoopEventHandler,
+): Readonly<{ trackingEmit: OpenAILoopEventHandler; hasEmitted: () => boolean }> => {
+  let emittedAnyEvent = false;
+  const trackingEmit: OpenAILoopEventHandler = async (event) => {
+    emittedAnyEvent = true;
+    await emitEvent(event);
+  };
+  return {
+    trackingEmit,
+    hasEmitted: (): boolean => emittedAnyEvent,
+  };
+};
+
+type RunOneModelCallWithRetryArgs = Readonly<{
+  runOneModelCallFn: typeof runOneModelCall;
+  backoffMs: ReadonlyArray<number>;
+  sleep: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
+  client: OpenAI;
+  params: StartOpenAILoopParams;
+  emitEvent: OpenAILoopEventHandler;
+  request: OpenAIResponsesRequest;
+  promptCacheKey: string;
+  callIndex: number;
+}>;
+
+const runOneModelCallWithRetry = async (
+  args: RunOneModelCallWithRetryArgs,
+): Promise<Awaited<ReturnType<typeof runOneModelCall>>> => {
+  const { runOneModelCallFn, backoffMs, sleep, client, params, emitEvent, request, promptCacheKey, callIndex } = args;
+  const maxAttempts = backoffMs.length + 1;
+  for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
+    const { trackingEmit, hasEmitted } = wrapEmitEventWithTracking(emitEvent);
+    try {
+      return await runOneModelCallFn(
+        client,
+        params,
+        trackingEmit,
+        request,
+        promptCacheKey,
+        callIndex,
+      );
+    } catch (error) {
+      const classification = classifyOpenAITransientError(error);
+      if (!classification.retryable || hasEmitted()) {
+        throw error;
+      }
+
+      const retryAfterMs = parseRetryAfterMs(error);
+      if (retryAfterMs !== undefined && retryAfterMs > MODEL_CALL_RETRY_MAX_DELAY_MS) {
+        throw error;
+      }
+
+      const baseDelayMs = computeRetryDelayMs(backoffMs, attempt);
+      const delayMs = Math.max(retryAfterMs ?? 0, baseDelayMs);
+      log({
+        domain: "chat",
+        action: "model_call_retry",
+        vendor: "openai",
+        requestId: params.requestId,
+        sessionId: params.sessionId,
+        callIndex,
+        attempt,
+        maxAttempts,
+        reason: classification.reason,
+        delayMs,
+        ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+        error: error instanceof Error ? error.message : String(error),
+        ...extractOpenAIErrorContext(error),
+      });
+      await sleep(delayMs, params.signal);
+    }
+  }
+
+  // Final attempt: no retry follows, so emit directly without the tracking wrapper.
+  return runOneModelCallFn(
+    client,
+    params,
+    emitEvent,
+    request,
+    promptCacheKey,
+    callIndex,
+  );
+};
+
 const completeToolLimitSummaryTurn = async (
   params: StartOpenAILoopParams,
   emitEvent: OpenAILoopEventHandler,
   runOneModelCallFn: typeof runOneModelCall,
+  backoffMs: ReadonlyArray<number>,
+  sleep: (ms: number, signal: AbortSignal | undefined) => Promise<void>,
   client: OpenAI,
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
   continuationItems: Array<StoredOpenAIReplayItem>,
@@ -162,11 +307,14 @@ const completeToolLimitSummaryTurn = async (
   });
 
   const summaryCallIndex = CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS + 1;
-  const summaryCall = await runOneModelCallFn(
+  const summaryCall = await runOneModelCallWithRetry({
+    runOneModelCallFn,
+    backoffMs,
+    sleep,
     client,
     params,
     emitEvent,
-    buildOpenAIResponsesRequestWithOptions(
+    request: buildOpenAIResponsesRequestWithOptions(
       baseInput,
       continuationItems,
       params.userId,
@@ -176,8 +324,8 @@ const completeToolLimitSummaryTurn = async (
       [buildToolLimitSummaryInstruction(CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS)],
     ),
     promptCacheKey,
-    summaryCallIndex,
-  );
+    callIndex: summaryCallIndex,
+  });
 
   const finalResponseText = summaryCall.finalResponse.output_text.trim();
   const finalAssistantText = finalResponseText.length > 0
@@ -219,12 +367,16 @@ const runLoopWithDeps = async (
   const continuationItems: Array<StoredOpenAIReplayItem> = [];
   const promptCacheKey = buildPromptCacheKey(params.sessionId);
 
+  const retryBackoffMs = dependencies.getModelCallRetryBackoffMs();
   for (let callIndex = 1; callIndex <= CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS; callIndex += 1) {
-    const modelCall = await dependencies.runOneModelCall(
+    const modelCall = await runOneModelCallWithRetry({
+      runOneModelCallFn: dependencies.runOneModelCall,
+      backoffMs: retryBackoffMs,
+      sleep: dependencies.sleep,
       client,
       params,
       emitEvent,
-      buildOpenAIResponsesRequest(
+      request: buildOpenAIResponsesRequest(
         baseInput,
         continuationItems,
         params.userId,
@@ -233,7 +385,7 @@ const runLoopWithDeps = async (
       ),
       promptCacheKey,
       callIndex,
-    );
+    });
 
     continuationItems.push(...modelCall.replayItems);
 
@@ -278,6 +430,8 @@ const runLoopWithDeps = async (
         params,
         emitEvent,
         dependencies.runOneModelCall,
+        retryBackoffMs,
+        dependencies.sleep,
         client,
         baseInput,
         continuationItems,

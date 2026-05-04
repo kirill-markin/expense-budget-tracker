@@ -2,6 +2,22 @@ type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
 type ChatReplayDropReason = "missing_encrypted_content";
+
+/**
+ * Optional vendor-side error context attached to chat error and retry log
+ * events. Populated by extractOpenAIErrorContext from the OpenAI SDK error
+ * shape so CloudWatch can filter by status / code / req_… without parsing
+ * free-form message text.
+ */
+type ChatOpenAIErrorContextFields = Readonly<{
+  errorClass?: string;
+  httpStatus?: number;
+  openaiErrorCode?: string;
+  openaiErrorType?: string;
+  openaiErrorParam?: string;
+  openaiRequestId?: string;
+  causeCode?: string;
+}>;
 type TaskProtectionAction =
   | "task_protection_enabled"
   | "task_protection_enable_failed"
@@ -83,6 +99,20 @@ type ChatEvent =
     toolEnabledModelCallLimit: number;
     callIndex: number;
   }>
+  | (Readonly<{
+    domain: "chat";
+    action: "model_call_retry";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    callIndex: number;
+    attempt: number;
+    maxAttempts: number;
+    reason: string;
+    delayMs: number;
+    retryAfterMs?: number;
+    error: string;
+  }> & ChatOpenAIErrorContextFields)
   | Readonly<{
     domain: "chat";
     action: "replay_item_dropped";
@@ -113,7 +143,7 @@ type ChatEvent =
     targetState?: "idle" | "interrupted";
     error: string;
   }>
-  | Readonly<{
+  | (Readonly<{
     domain: "chat";
     action: "error";
     vendor: ChatVendor;
@@ -127,7 +157,7 @@ type ChatEvent =
     messageCount?: number;
     hasAttachments?: boolean;
     attachmentFileNames?: ReadonlyArray<string>;
-  } & ChatAttemptMetadata>;
+  } & ChatAttemptMetadata> & ChatOpenAIErrorContextFields);
 type ChatTranscriptionEvent = Readonly<{
   domain: "chat";
   action: "transcription_failed";
