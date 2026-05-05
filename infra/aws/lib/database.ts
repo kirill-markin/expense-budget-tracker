@@ -15,6 +15,11 @@ export interface DatabaseResult {
   workerDbSecret: cdk.aws_secretsmanager.Secret;
 }
 
+const POSTGRES_ENGINE_VERSION = rds.PostgresEngineVersion.of("18.3", "18", {
+  s3Import: true,
+  s3Export: true,
+});
+
 export function database(scope: Construct, props: DatabaseProps): DatabaseResult {
   // --- RDS Postgres ---
   const dbCredentials = rds.Credentials.fromGeneratedSecret("tracker", {
@@ -26,7 +31,7 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
   // Note: rds.force_ssl requires RDS reboot on first apply (~1-2 min downtime).
   const parameterGroup = new rds.ParameterGroup(scope, "DbParams", {
     engine: rds.DatabaseInstanceEngine.postgres({
-      version: rds.PostgresEngineVersion.VER_18,
+      version: POSTGRES_ENGINE_VERSION,
     }),
     parameters: {
       "log_connections": "all",
@@ -37,7 +42,7 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
 
   const db = new rds.DatabaseInstance(scope, "Db", {
     engine: rds.DatabaseInstanceEngine.postgres({
-      version: rds.PostgresEngineVersion.VER_18,
+      version: POSTGRES_ENGINE_VERSION,
     }),
     instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO),
     vpc: props.vpc,
