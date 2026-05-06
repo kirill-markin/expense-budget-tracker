@@ -8,8 +8,8 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1041.0",
-    "fast-xml-parser": "^5.7.2",
+    "@aws-sdk/client-secrets-manager": "^3.1043.0",
+    "fast-xml-parser": "^5.7.3",
     "node-cron": "^4.2.1",
     "pg": "^8.20.0"
   },
