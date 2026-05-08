@@ -19,7 +19,7 @@
     "constructs": "^10.6.0"
   },
   "devDependencies": {
-    "@types/node": "^24.12.2",
+    "@types/node": "^24.12.3",
     "aws-cdk": "^2.1121.0",
     "esbuild": "^0.28.0",
     "typescript": "^6.0.3"
