@@ -10,7 +10,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1046.0",
+    "@aws-sdk/client-secrets-manager": "^3.1047.0",
     "@expense-budget-tracker/agent-shared": "1.0.0",
     "pg": "^8.20.0"
   },
