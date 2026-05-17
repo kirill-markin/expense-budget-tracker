@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # First-time AWS deployment: bootstrap CDK and deploy all infrastructure.
 #
-# Run once after configuring cdk.context.local.json (step 4 in the README).
+# Run once after configuring cdk.context.local.json (step 5 in the README).
 # After this, CI/CD handles all subsequent deploys on push to main.
 #
 # Both bootstrap and CI/CD use the same method: `cdk deploy`.
@@ -42,7 +42,7 @@ fi
 
 if [[ ! -f "${CDK_DIR}/cdk.context.local.json" ]]; then
   echo "ERROR: ${CDK_DIR}/cdk.context.local.json not found." >&2
-  echo "Copy cdk.context.local.example.json and fill in your values (see README step 4)." >&2
+  echo "Copy cdk.context.local.example.json and fill in your values (see README step 5)." >&2
   exit 1
 fi
 
@@ -111,7 +111,7 @@ echo "=== Bootstrap complete ==="
 echo "ECS service is live. Database readiness confirmed. Exchange rates seeded."
 echo ""
 echo "Next steps:"
-echo "  1. Run scripts/cloudflare/setup-dns.sh to create DNS records (see README step 5)"
+echo "  1. Run scripts/cloudflare/setup-dns.sh to create DNS records (see README step 6)"
 echo "  2. Set Secrets Manager values for expense-tracker/openai-api-key, expense-tracker/langfuse-public-key, and expense-tracker/langfuse-secret-key"
 echo "  3. Restart the ECS web service so it picks up the AI and Langfuse secrets"
 echo "  4. Send one real chat message and verify a chat_turn trace in Langfuse (see docs/langfuse-operations.md)"

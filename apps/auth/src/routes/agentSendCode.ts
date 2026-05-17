@@ -160,7 +160,7 @@ export const createAgentSendCodeApp = (dependencies: AgentSendCodeDependencies):
       buildSuccessEnvelope(
         { otpSessionToken },
         [buildVerifyCodeAction()],
-        "Ask the user for the 8-digit code from email, then call verify_code.",
+        "Tell the user to check their email for the 8-digit code. If the email is not visible, tell them to check spam or junk. Then ask for the code and call verify_code. Do not suggest immediately requesting another code.",
       ),
       200,
     );

@@ -25,7 +25,7 @@ if (!region) {
 
 const domainName = app.node.tryGetContext("domainName") as string | undefined;
 if (!domainName) {
-  throw new Error("Missing required context: 'domainName'. Set it in cdk.context.local.json (e.g. \"myfinance.com\")");
+  throw new Error("Missing required context: 'domainName'. Set it in cdk.context.local.json (e.g. \"yourdomain.com\")");
 }
 
 const certificateArn = app.node.tryGetContext("certificateArn") as string | undefined;
@@ -41,6 +41,16 @@ if (!alertEmail) {
 const githubRepo = app.node.tryGetContext("githubRepo") as string | undefined;
 if (!githubRepo) {
   throw new Error("Missing required context: 'githubRepo'. Set it in cdk.context.local.json (e.g. \"user/expense-budget-tracker\")");
+}
+
+const resendApiKeySecretArn = app.node.tryGetContext("resendApiKeySecretArn") as string | undefined;
+if (!resendApiKeySecretArn) {
+  throw new Error("Missing required context: 'resendApiKeySecretArn'. Set it in cdk.context.local.json after running scripts/create-resend-runtime-key.sh");
+}
+
+const resendSenderEmail = app.node.tryGetContext("resendSenderEmail") as string | undefined;
+if (!resendSenderEmail) {
+  throw new Error("Missing required context: 'resendSenderEmail'. Set it in cdk.context.local.json (e.g. \"no-reply@mail.yourdomain.com\")");
 }
 
 new ExpenseBudgetTrackerStack(app, "ExpenseBudgetTracker", {

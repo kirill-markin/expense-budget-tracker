@@ -39,6 +39,7 @@ type AgentUrlTarget = Readonly<{
 export type AgentAction = Readonly<{
   name: string;
   method: "GET" | "POST";
+  description?: string;
   url?: string;
   urlTemplate?: string;
   input?: Readonly<Record<string, string>>;
@@ -140,6 +141,7 @@ export const buildErrorEnvelope = (
 export const buildSendCodeAction = (target: AgentUrlTarget): AgentAction => ({
   name: "send_code",
   method: "POST",
+  description: "Start email OTP. After this succeeds, tell the user to check spam or junk if the email is not visible, then ask for the 8-digit code and call verify_code. Do not suggest immediately requesting another code.",
   url: resolveActionUrl(target),
   input: SEND_CODE_INPUT,
   auth: "none",

@@ -1,8 +1,10 @@
 {
   "region": "eu-central-1",
-  "domainName": "myfinance.com",
+  "domainName": "example.com",
   "certificateArn": "arn:aws:acm:eu-central-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "apiCertificateArn": "arn:aws:acm:eu-central-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "resendApiKeySecretArn": "arn:aws:secretsmanager:eu-central-1:123456789012:secret:expense-tracker/resend-api-key-xxxxxx",
+  "resendSenderEmail": "no-reply@mail.example.com",
   "langfuseBaseUrl": "https://cloud.langfuse.com",
   "alertEmail": "your-email@gmail.com",
   "githubRepo": "your-github-user/expense-budget-tracker"

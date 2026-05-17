@@ -15,6 +15,8 @@ on:
     branches: [main]
     paths:
       - 'apps/**'
+      - 'packages/**'
+      - 'api/openapi.yaml'
       - 'db/migrations/**'
       - 'db/views/**'
       - 'infra/**'
@@ -22,6 +24,8 @@ on:
       - 'scripts/run-migration-task.sh'
       - 'scripts/check-web-readiness.sh'
       - 'scripts/live-agent-api-smoke.mjs'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -103,6 +107,8 @@ jobs:
             "domainName": "${{ vars.CDK_DOMAIN_NAME }}",
             "certificateArn": "${{ secrets.CDK_CERTIFICATE_ARN }}",
             "apiCertificateArn": "${{ secrets.CDK_API_CERTIFICATE_ARN }}",
+            "resendApiKeySecretArn": "${{ vars.CDK_RESEND_API_KEY_SECRET_ARN }}",
+            "resendSenderEmail": "${{ vars.CDK_RESEND_SENDER_EMAIL }}",
             "langfuseBaseUrl": "${{ vars.CDK_LANGFUSE_BASE_URL }}",
             "alertEmail": "${{ vars.CDK_ALERT_EMAIL }}",
             "githubRepo": "${{ vars.CDK_GITHUB_REPO }}",
