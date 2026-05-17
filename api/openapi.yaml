@@ -19,7 +19,7 @@
     "/": {
       "get": {
         "summary": "API discovery index",
-        "description": "Start here for agent onboarding. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login. Use /schema before mutating SQL to inspect allowed relations, constraints, and write semantics. Restricted SQL does not support ON CONFLICT. Only SUM, COUNT, MIN, MAX, AVG, and COALESCE function calls are allowed; all other functions are blocked. Use ILIKE instead of LOWER(...) for case-insensitive text search and explicit date ranges instead of NOW() or DATE_TRUNC(). Use regular single-quoted literals. Dollar-quoted strings are not allowed.",
+        "description": "Start here for agent onboarding. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login. After send_code succeeds, tell the user to check spam or junk if the email is not visible, then ask for the 8-digit code and call verify_code. Do not suggest immediately requesting another code. Use /schema before mutating SQL to inspect allowed relations, constraints, and write semantics. Restricted SQL does not support ON CONFLICT. Only SUM, COUNT, MIN, MAX, AVG, and COALESCE function calls are allowed; all other functions are blocked. Use ILIKE instead of LOWER(...) for case-insensitive text search and explicit date ranges instead of NOW() or DATE_TRUNC(). Use regular single-quoted literals. Dollar-quoted strings are not allowed.",
         "responses": {
           "200": {
             "description": "Discovery envelope"
@@ -30,7 +30,7 @@
     "/agent": {
       "get": {
         "summary": "Agent discovery",
-        "description": "Agent onboarding entrypoint. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login. Use /schema before mutating SQL to inspect allowed relations, constraints, and write semantics. Restricted SQL does not support ON CONFLICT. Only SUM, COUNT, MIN, MAX, AVG, and COALESCE function calls are allowed; all other functions are blocked. Use ILIKE instead of LOWER(...) for case-insensitive text search and explicit date ranges instead of NOW() or DATE_TRUNC(). Use regular single-quoted literals. Dollar-quoted strings are not allowed.",
+        "description": "Agent onboarding entrypoint. Ask the user for their email address first, call send_code, and use the same email OTP flow for both signup and login. After send_code succeeds, tell the user to check spam or junk if the email is not visible, then ask for the 8-digit code and call verify_code. Do not suggest immediately requesting another code. Use /schema before mutating SQL to inspect allowed relations, constraints, and write semantics. Restricted SQL does not support ON CONFLICT. Only SUM, COUNT, MIN, MAX, AVG, and COALESCE function calls are allowed; all other functions are blocked. Use ILIKE instead of LOWER(...) for case-insensitive text search and explicit date ranges instead of NOW() or DATE_TRUNC(). Use regular single-quoted literals. Dollar-quoted strings are not allowed.",
         "responses": {
           "200": {
             "description": "Discovery envelope"
@@ -209,6 +209,7 @@
     "/api/agent/send-code": {
       "post": {
         "summary": "Start OTP login",
+        "description": "After this succeeds, tell the user to check spam or junk if the email is not visible, then ask for the 8-digit code and call verify_code. Do not suggest immediately requesting another code.",
         "responses": {
           "200": {
             "description": "OTP challenge created"

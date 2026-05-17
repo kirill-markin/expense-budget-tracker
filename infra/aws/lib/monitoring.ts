@@ -20,6 +20,7 @@ export interface MonitoringProps {
   restApi: apigw.RestApi;
   authorizerFn: lambda.IFunction;
   sqlApiFn: lambda.IFunction;
+  customEmailSenderFn: lambda.IFunction;
 }
 
 export interface MonitoringResult {
@@ -176,6 +177,30 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 1,
     evaluationPeriods: 1,
     alarmDescription: "SQL API executor Lambda had errors",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // Cognito custom email sender Lambda errors
+  new cloudwatch.Alarm(scope, "CustomEmailSenderLambdaErrorAlarm", {
+    metric: props.customEmailSenderFn.metricErrors({
+      period: cdk.Duration.minutes(15),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "Custom email sender Lambda had errors",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // Cognito custom email sender Lambda throttles
+  new cloudwatch.Alarm(scope, "CustomEmailSenderLambdaThrottleAlarm", {
+    metric: props.customEmailSenderFn.metricThrottles({
+      period: cdk.Duration.minutes(15),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "Custom email sender Lambda was throttled",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 

@@ -15,6 +15,16 @@ import { ciCd } from "./ci-cd";
 import { backupPlan } from "./backup";
 import { outputs } from "./outputs";
 
+function getOptionalContextValue(stack: cdk.Stack, key: string): string | undefined {
+  const value = stack.node.tryGetContext(key);
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmedValue = value.trim();
+  return trimmedValue === "" ? undefined : trimmedValue;
+}
+
 export class ExpenseBudgetTrackerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -28,6 +38,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const langfuseBaseUrl = this.node.tryGetContext("langfuseBaseUrl") as string | undefined
       ?? "https://cloud.langfuse.com";
     const demoEmailDostip = this.node.tryGetContext("demoEmailDostip") as string | undefined ?? "";
+    const resendApiKeySecretArn = getOptionalContextValue(this, "resendApiKeySecretArn");
+    const resendSenderEmail = getOptionalContextValue(this, "resendSenderEmail");
 
     const appDomain = `app.${baseDomain}`;
     const authDomain = `auth.${baseDomain}`;
@@ -39,7 +51,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
 
     const net = networking(this);
     const preSignUpFn = preSignUp(this);
-    const authResult = auth(this, { preSignUpFn });
+    const authResult = auth(this, {
+      preSignUpFn,
+      resendApiKeySecretArn,
+      resendSenderEmail,
+    });
     const dbResult = database(this, { vpc: net.vpc, dbSg: net.dbSg });
     const sec = secrets(this);
     const comp = compute(this, {
@@ -96,6 +112,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       restApi: api.restApi,
       authorizerFn: api.authorizerFn,
       sqlApiFn: api.sqlApiFn,
+      customEmailSenderFn: authResult.customEmailSenderFn,
     });
     ciCd(this, {
       stackId: this.stackId,

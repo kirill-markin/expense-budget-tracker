@@ -61,9 +61,9 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → Mach
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
-- **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth, managed by the app directly (no Hosted UI)
+- **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth with a CustomEmailSender Lambda through Resend, managed by the app directly (no Hosted UI)
 - **AWS WAF** on ALB — SQLi/XSS protection, common threat rules (rate limiting handled by Cloudflare)
-- **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC
+- **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC, and Cognito custom email delivery through Resend
 - **API Gateway** (REST API) + two Lambdas (authorizer + SQL executor) for machine client SQL API; per-key rate limiting via Usage Plans, no auth cache (revoked keys stop working on the next request)
 - **CloudWatch Alarms + SNS** — alerts on ALB 5xx, API Gateway 5xx, ECS CPU/memory, ECS scale-out, DB connections, DB storage, Lambda errors
 - **S3** — ALB access logs (90-day retention)
@@ -228,7 +228,7 @@ bash scripts/cloudflare/setup-certificate.sh \
   --region eu-central-1
 ```
 
-The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the API and imports it into AWS ACM. It prints the **certificate ARN** — you need this for step 4.
+The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the API and imports it into AWS ACM. It prints the **certificate ARN** — you need this for step 5.
 
 > **Why Origin Certificate?** Cloudflare Origin Certificates are free, long-lived (15 years), and trusted by Cloudflare's edge servers. Since all traffic flows through Cloudflare proxy, browsers see Cloudflare's edge certificate (Universal SSL, free). The Origin Certificate secures the connection between Cloudflare and your ALB.
 
@@ -245,11 +245,55 @@ bash scripts/cloudflare/setup-api-domain.sh \
   --region eu-central-1
 ```
 
-The script requests the certificate, validates it via Cloudflare DNS, and waits for it to be issued. It prints the **API certificate ARN** — you need this for step 4.
+The script requests the certificate, validates it via Cloudflare DNS, and waits for it to be issued. It prints the **API certificate ARN** — you need this for step 5.
 
 > **Note:** The ACM validation CNAME record must stay in Cloudflare permanently — ACM needs it for automatic certificate renewal. Do not delete it.
 
-### 4. Configure the stack
+### 4. Configure Resend for OTP emails
+
+Cognito email OTP delivery uses a `CustomEmailSender` Lambda that sends through Resend from `no-reply@mail.yourdomain.com`. The CDK stack requires the Resend secret ARN and sender email during synth/deploy, so complete this step before creating `cdk.context.local.json`, bootstrapping, or deploying.
+
+1. Add the local-only admin Resend key to your local root `.env`:
+
+```dotenv
+RESEND_ADMIN_API_KEY=re_...
+```
+
+2. Configure and verify the Resend sending domain:
+
+```bash
+set -a; source scripts/cloudflare/.env; set +a
+bash scripts/setup-resend-domain.sh \
+  --domain yourdomain.com \
+  --subdomain mail
+```
+
+The script creates or reuses `mail.yourdomain.com`, writes the required DNS records to Cloudflare, skips the Resend verification call when the domain is already verified, and otherwise requests verification before polling briefly. If DNS is still propagating, it exits non-zero; wait and rerun this step before continuing.
+
+3. Create the domain-scoped send-only runtime API key and store it in AWS Secrets Manager:
+
+```bash
+bash scripts/create-resend-runtime-key.sh \
+  --domain yourdomain.com \
+  --subdomain mail \
+  --region eu-central-1 \
+  --profile expense-tracker
+```
+
+This confirms the AWS caller identity, creates `expense-tracker/resend-api-key`, and prints the ARN for `resendApiKeySecretArn`. To rotate an existing runtime key, rerun the command with `--rotate-secret --previous-api-key-id <resend_key_id>` so the old key can be deleted after AWS Secrets Manager is updated. If you manually create the runtime key instead, export it as `RESEND_API_KEY` and run `bash scripts/setup-resend-secret.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker`.
+
+Keep the printed secret ARN and derived sender email for the next step:
+
+```json
+{
+  "resendApiKeySecretArn": "arn:aws:secretsmanager:eu-central-1:123456789012:secret:expense-tracker/resend-api-key-xxxxxx",
+  "resendSenderEmail": "no-reply@mail.yourdomain.com"
+}
+```
+
+See [`docs/resend-setup.md`](../../docs/resend-setup.md) for the full Resend setup flow.
+
+### 5. Configure local CDK context
 
 ```bash
 cd infra/aws
@@ -262,20 +306,22 @@ Edit `cdk.context.local.json` with your values:
 | Parameter | Description |
 |---|---|
 | `region` | AWS region, e.g. `eu-central-1` |
-| `domainName` | Your domain, e.g. `myfinance.com` |
+| `domainName` | Your domain, e.g. `yourdomain.com` |
 | `certificateArn` | ACM certificate ARN from step 3d (Cloudflare Origin Cert) |
-| `apiCertificateArn` | ACM certificate ARN from step 3e (public cert for `api.myfinance.com`) |
+| `apiCertificateArn` | ACM certificate ARN from step 3e (public cert for `api.yourdomain.com`) |
+| `resendApiKeySecretArn` | Secrets Manager ARN for `expense-tracker/resend-api-key` from step 4 |
+| `resendSenderEmail` | Cognito sender address from step 4, e.g. `no-reply@mail.yourdomain.com` |
 | `langfuseBaseUrl` | Langfuse base URL, defaults to `https://cloud.langfuse.com` |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
 
 #### Custom public site (optional)
 
-By default, the root domain (`myfinance.com`) redirects to `app.myfinance.com` via an ALB rule — no extra container or code needed.
+By default, the root domain (`yourdomain.com`) redirects to `app.yourdomain.com` via an ALB rule — no extra container or code needed.
 
 To serve your own site on the root domain, deploy it independently (Vercel, Cloudflare Pages, your own server, etc.) and update the Cloudflare DNS CNAME for `@` (root) to point to your site's hosting instead of the ALB. This repo does not manage the public site — they are fully independent.
 
-### 5. Bootstrap and first deploy
+### 6. Bootstrap and first deploy
 
 ```bash
 export AWS_PROFILE=expense-tracker
@@ -305,12 +351,13 @@ After deploy completes, **create the DNS record** pointing to the ALB and config
 set -a; source scripts/cloudflare/.env; set +a
 
 bash scripts/cloudflare/setup-dns.sh \
-  --stack-name ExpenseBudgetTracker
+  --stack-name ExpenseBudgetTracker \
+  --region eu-central-1
 ```
 
 The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Cloudflare), sets SSL/TLS to Full (Strict), and configures cache bypass.
 
-### 6. Post-deploy
+### 7. Post-deploy
 
 1. **Confirm SNS email** — check the `alertEmail` inbox for a message from "AWS Notifications" with subject "AWS Notification - Subscription Confirmation". Click the "Confirm subscription" link inside. Without this, CloudWatch alarm notifications will not be delivered
 2. **Visit your domain** — Email OTP login page appears. Open registration: anyone can sign up with email. Each user gets an isolated workspace via RLS — no shared data between users
@@ -352,68 +399,9 @@ The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Clou
 
    The production runtime is fully app-managed now: transcript state lives in Postgres, the tool loop runs in the web process, and recovery uses `/api/chat` snapshots instead of provider-managed conversation state. For ongoing operations and troubleshooting, use [`docs/langfuse-operations.md`](../../docs/langfuse-operations.md).
 
-### 7. Configure SES for OTP emails (when needed)
-
-Cognito uses its built-in email sender by default, which caps at **~50 emails/day**. This is enough for early use. When you hit the limit, Cognito returns `LimitExceededException` and users cannot log in until the next day.
-
-To remove the limit, switch Cognito to send via Amazon SES:
-
-#### 7a. Verify your domain in SES
-
-```bash
-aws sesv2 create-email-identity \
-  --email-identity yourdomain.com \
-  --profile expense-tracker
-```
-
-SES will return DKIM tokens. Add them as CNAME records in Cloudflare:
-
-```bash
-# SES prints 3 DKIM tokens — add each as a CNAME in Cloudflare DNS:
-# Name: <token>._domainkey.yourdomain.com
-# Target: <token>.dkim.amazonses.com
-# Proxy status: DNS only (grey cloud)
-```
-
-Wait for verification (usually a few minutes):
-
-```bash
-aws sesv2 get-email-identity \
-  --email-identity yourdomain.com \
-  --query 'DkimAttributes.Status' \
-  --profile expense-tracker
-# Expected: "SUCCESS"
-```
-
-#### 7b. Request SES production access
-
-By default SES is in **sandbox mode** (can only send to verified emails). Request production access:
-
-1. Go to **AWS Console → SES → Account dashboard → Request production access**
-2. Fill in:
-   - **Mail type**: Transactional
-   - **Use case**: "One-time login codes (OTP) for a web application. No marketing emails."
-   - **Expected volume**: your estimate (e.g. "under 100/day")
-
-Approval is usually within 24 hours.
-
-#### 7c. Update CDK to use SES
-
-Add SES email configuration to the Cognito User Pool in `infra/aws/lib/auth.ts`:
-
-```typescript
-email: cognito.UserPoolEmail.withSES({
-  fromEmail: "noreply@yourdomain.com",
-  fromName: "Expense Tracker",
-  sesRegion: "<your-region>",
-}),
-```
-
-Deploy the change. After this, Cognito sends OTP emails through SES with no daily limit.
-
 ## CI/CD (automatic deploys on push)
 
-CDK creates an IAM OIDC role for GitHub Actions. Requires step 5 (first deploy + initial image push) to be completed first — CI/CD reads stack outputs and pushes to existing ECR repos.
+CDK creates an IAM OIDC role for GitHub Actions. Requires step 6 (first deploy + initial image push) to be completed first — CI/CD reads stack outputs and pushes to existing ECR repos.
 
 After first deploy:
 1. Copy `GithubDeployRoleArn` from CDK outputs
@@ -426,9 +414,11 @@ After first deploy:
 
    **Variables** (Settings → Secrets and variables → Actions → Variables):
    - `AWS_REGION` — target region (e.g. `eu-central-1`)
-   - `CDK_DOMAIN_NAME` — your domain (e.g. `myfinance.com`)
+   - `CDK_DOMAIN_NAME` — your domain (e.g. `yourdomain.com`)
    - `CDK_ALERT_EMAIL` — email for CloudWatch alarm notifications
    - `CDK_GITHUB_REPO` — GitHub repo (e.g. `user/expense-budget-tracker`)
+   - `CDK_RESEND_API_KEY_SECRET_ARN` — Secrets Manager ARN for `expense-tracker/resend-api-key`
+   - `CDK_RESEND_SENDER_EMAIL` — `no-reply@mail.yourdomain.com`
    - `CDK_LANGFUSE_BASE_URL` — optional custom Langfuse base URL; omit it to use `https://cloud.langfuse.com`
 
 3. Every push to `main` will automatically:
@@ -457,7 +447,7 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 
 ## Monitoring
 
-- **Alarms**: ALB 5xx (>5 in 5min), API Gateway 5xx (>5 in 5min), ECS CPU (>80% for 15min), ECS memory (>80% for 15min), ECS scale-out (>1 task), DB connections (>80%), DB storage (<2GB), Lambda errors (FX fetcher, SQL API authorizer, SQL API executor)
+- **Alarms**: ALB 5xx (>5 in 5min), API Gateway 5xx (>5 in 5min), ECS CPU (>80% for 15min), ECS memory (>80% for 15min), ECS scale-out (>1 task), DB connections (>80%), DB storage (<2GB), Lambda errors (FX fetcher, SQL API authorizer, SQL API executor, Cognito custom email sender)
 - **Access logs**: S3 bucket with all HTTP requests, 90-day retention
 - **Container logs**: CloudWatch Logs `/expense-tracker/web` and `/expense-tracker/migrate`, 30-day retention
 - **Lambda logs**: CloudWatch Logs (automatic), searchable in console

@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["bin/**/*.ts", "lib/**/*.ts"]
+  "include": ["bin/**/*.ts", "lambda/**/*.ts", "lib/**/*.ts"]
 }
