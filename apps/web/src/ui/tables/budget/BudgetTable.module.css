@@ -255,10 +255,14 @@ tbody tr:last-child .currentMonthActual {
 .popover {
   position: fixed;
   z-index: 200;
-  width: 240px;
+  box-sizing: border-box;
+  inline-size: min(240px, max(1px, calc(100vw - 16px)));
+  max-block-size: max(1px, calc(100dvh - 16px));
+  overflow-y: auto;
   background: var(--bg);
   border: 1px solid var(--panel-border);
-  padding: 10px 12px;
+  padding-block: 10px;
+  padding-inline: 12px;
   font-size: 13px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
@@ -345,8 +349,12 @@ tbody tr:last-child .currentMonthActual {
 
 .popoverComment {
   display: block;
-  width: 100%;
-  padding: 4px 6px;
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-height: calc(3 * 1.4em + 8px);
+  max-height: 180px;
+  padding-block: 4px;
+  padding-inline: 6px;
   border: none;
   outline: 1px solid var(--panel-border);
   background: var(--bg);
@@ -354,7 +362,7 @@ tbody tr:last-child .currentMonthActual {
   font-family: inherit;
   font-size: 12px;
   line-height: 1.4;
-  resize: none;
+  resize: vertical;
 }
 
 .popoverComment:focus {

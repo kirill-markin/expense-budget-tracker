@@ -1,6 +1,6 @@
 import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
@@ -11,6 +11,68 @@ import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 
 const POPOVER_WIDTH = 240;
+const POPOVER_VIEWPORT_MARGIN = 8;
+const POPOVER_CELL_GAP = 4;
+
+type PopoverPosition = Readonly<{
+  top: number;
+  left: number;
+}>;
+
+type PopoverSize = Readonly<{
+  width: number;
+  height: number;
+}>;
+
+type TextDirection = "ltr" | "rtl";
+
+const getClampedCoordinate = (preferred: number, min: number, max: number): number => {
+  const normalizedMax = Math.max(min, max);
+  return Math.min(Math.max(preferred, min), normalizedMax);
+};
+
+const getViewportPopoverWidth = (viewportWidth: number): number => (
+  Math.min(POPOVER_WIDTH, Math.max(1, viewportWidth - (POPOVER_VIEWPORT_MARGIN * 2)))
+);
+
+const getDocumentDirection = (): TextDirection => (
+  document.documentElement.dir === "rtl" ? "rtl" : "ltr"
+);
+
+const getPreferredPopoverLeft = (cellRect: DOMRect, popoverWidth: number, textDirection: TextDirection): number => (
+  textDirection === "rtl" ? cellRect.left : cellRect.right - popoverWidth
+);
+
+const getPopoverPosition = (
+  cellRect: DOMRect,
+  popoverSize: PopoverSize,
+  viewportWidth: number,
+  viewportHeight: number,
+  textDirection: TextDirection,
+): PopoverPosition => {
+  const preferredLeft = getPreferredPopoverLeft(cellRect, popoverSize.width, textDirection);
+  const left = getClampedCoordinate(
+    preferredLeft,
+    POPOVER_VIEWPORT_MARGIN,
+    viewportWidth - popoverSize.width - POPOVER_VIEWPORT_MARGIN,
+  );
+
+  const belowTop = cellRect.bottom + POPOVER_CELL_GAP;
+  const aboveTop = cellRect.top - popoverSize.height - POPOVER_CELL_GAP;
+  const belowFits = belowTop + popoverSize.height <= viewportHeight - POPOVER_VIEWPORT_MARGIN;
+  const aboveFits = aboveTop >= POPOVER_VIEWPORT_MARGIN;
+  const preferredTop = belowFits || !aboveFits ? belowTop : aboveTop;
+  const top = getClampedCoordinate(
+    preferredTop,
+    POPOVER_VIEWPORT_MARGIN,
+    viewportHeight - popoverSize.height - POPOVER_VIEWPORT_MARGIN,
+  );
+
+  return {
+    top: Math.round(top),
+    left: Math.round(left),
+  };
+};
 
 export type BudgetPlanCellProps = Readonly<{
   month: string;
@@ -42,7 +104,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const [modifierInput, setModifierInput] = useState<string>("");
   const [commentInput, setCommentInput] = useState<string>("");
   const [isLoadingComment, setIsLoadingComment] = useState<boolean>(false);
-  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [popoverPos, setPopoverPos] = useState<PopoverPosition>({ top: 0, left: 0 });
 
   const cellRef = useRef<HTMLTableCellElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -63,9 +125,13 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
     const rect = cellRef.current?.getBoundingClientRect();
     if (rect !== undefined && rect !== null) {
-      let left = rect.right - POPOVER_WIDTH;
-      if (left < 0) left = rect.left;
-      setPopoverPos({ top: rect.bottom + 4, left });
+      setPopoverPos(getPopoverPosition(
+        rect,
+        { width: getViewportPopoverWidth(window.innerWidth), height: 0 },
+        window.innerWidth,
+        window.innerHeight,
+        getDocumentDirection(),
+      ));
     }
     setIsOpen(true);
 
@@ -81,6 +147,55 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       .catch((error) => console.error(error))
       .finally(() => setIsLoadingComment(false));
   };
+
+  const updatePopoverPosition = useCallback((): void => {
+    const cell = cellRef.current;
+    const popover = popoverRef.current;
+    if (cell === null || popover === null) return;
+
+    const cellRect = cell.getBoundingClientRect();
+    const popoverRect = popover.getBoundingClientRect();
+    const nextPosition = getPopoverPosition(
+      cellRect,
+      { width: popoverRect.width, height: popoverRect.height },
+      window.innerWidth,
+      window.innerHeight,
+      getDocumentDirection(),
+    );
+
+    setPopoverPos((currentPosition) => (
+      currentPosition.top === nextPosition.top && currentPosition.left === nextPosition.left
+        ? currentPosition
+        : nextPosition
+    ));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    updatePopoverPosition();
+  }, [isOpen, isLoadingComment, updatePopoverPosition]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleViewportChange = (): void => {
+      updatePopoverPosition();
+    };
+
+    const resizeObserver = new ResizeObserver(handleViewportChange);
+    if (popoverRef.current !== null) {
+      resizeObserver.observe(popoverRef.current);
+    }
+
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [isOpen, updatePopoverPosition]);
 
   useEffect(() => {
     if (isOpen && adjustInputRef.current !== null) {
@@ -277,7 +392,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
             : (
               <textarea
                 className={styles.popoverComment}
-                rows={2}
+                rows={3}
                 placeholder={t("budget.popoverNote")}
                 value={commentInput}
                 onChange={(e) => setCommentInput(e.target.value)}

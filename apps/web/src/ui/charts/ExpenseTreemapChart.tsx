@@ -321,7 +321,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
               {hover.entry.category ?? uncategorizedLabel} · {fmtDate(hover.entry.ts)}
             </div>
             {hover.entry.note !== null && (
-              <div className={cn(styles.tooltipRow, styles.tooltipMuted)}>{hover.entry.note}</div>
+              <div className={cn(styles.tooltipRow, styles.tooltipMuted, styles.tooltipNote)}>{hover.entry.note}</div>
             )}
           </div>
         )}

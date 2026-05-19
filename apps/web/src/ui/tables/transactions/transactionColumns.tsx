@@ -8,6 +8,7 @@ import { EditableAmount } from "@/ui/tables/editable/EditableAmount";
 import { EditableCategory } from "@/ui/tables/editable/EditableCategory";
 import { EditableDateTime } from "@/ui/tables/editable/EditableDateTime";
 import { EditableKind } from "@/ui/tables/editable/EditableKind";
+import { EditableNote } from "@/ui/tables/editable/EditableNote";
 import { EditableText } from "@/ui/tables/editable/EditableText";
 import type { ColumnDef } from "@/ui/tables/shared/data-table/types";
 import { formatAmount, formatDateTime } from "@/ui/tables/shared/format";
@@ -177,7 +178,7 @@ export const editableNoteColumn = (
   key: "note",
   header: "Note",
   renderCell: (row: LedgerEntry): ReactElement => (
-    <EditableText
+    <EditableNote
       key="note"
       entryId={row.entryId}
       currentValue={row.note}
@@ -197,7 +198,7 @@ export const editableDeleteColumn = (
   key: "delete",
   header: "",
   renderCell: (row: LedgerEntry): ReactElement => (
-    <span className={transactionStyles.cellDelete}>
+    <td key="delete" className={cn(tableStyles.cell, transactionStyles.cellDelete)}>
       <button
         type="button"
         className={transactionStyles.deleteButton}
@@ -205,7 +206,7 @@ export const editableDeleteColumn = (
       >
         &#x2715;
       </button>
-    </span>
+    </td>
   ),
   rightAlign: false,
   sortKey: null,
@@ -279,7 +280,9 @@ export const buildTransactionColumns = (maskClass: string, fmt: FormatParams): R
     key: "note",
     header: fmt.t("table.note"),
     renderCell: (row: LedgerEntry): ReactElement => (
-      <td key="note" className={cn(tableStyles.cell, transactionStyles.cellNote, maskClass)}>{row.note ?? ""}</td>
+      <td key="note" className={cn(tableStyles.cell, transactionStyles.cellNote, maskClass)}>
+        <span className={tableStyles.cellMultilinePreview}>{row.note ?? ""}</span>
+      </td>
     ),
     rightAlign: false,
     sortKey: null,

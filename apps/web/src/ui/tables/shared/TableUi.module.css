@@ -44,6 +44,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+.cellMultilinePreview {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .cellRight {
   text-align: end;
   min-width: 90px;
@@ -167,6 +177,68 @@
 }
 
 .selectOptionActive {
+  font-weight: 650;
+}
+
+.textareaOverlay {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--panel-border), 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-sizing: border-box;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.textareaEditor {
+  display: block;
+  width: 100%;
+  min-height: calc(3 * 1.4em + 12px);
+  max-height: 220px;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.textareaHints {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 160px;
+  padding: 4px 0;
+}
+
+.textareaHint {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: var(--cursor-pointer);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.textareaHint:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.textareaHintActive {
   font-weight: 650;
 }
 
