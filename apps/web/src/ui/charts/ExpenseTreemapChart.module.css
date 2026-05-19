@@ -57,3 +57,14 @@
   color: #aaa;
   font-size: 11px;
 }
+
+.tooltipNote {
+  display: -webkit-box;
+  max-block-size: 12em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  line-clamp: 8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

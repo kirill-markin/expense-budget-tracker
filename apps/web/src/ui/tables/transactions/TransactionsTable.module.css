@@ -44,14 +44,16 @@
 }
 
 .cellNote {
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  width: clamp(360px, 40vw, 680px);
+  min-width: 360px;
+  max-width: 680px;
+  white-space: normal;
+  vertical-align: top;
 }
 
 .cellDelete {
   width: 24px;
-  display: inline-block;
+  min-width: 24px;
   text-align: center;
 }
 
