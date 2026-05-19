@@ -40,18 +40,21 @@
 }
 
 .cell {
-  padding: 4px 10px;
+  --table-cell-padding-inline: 10px;
+
+  padding-block: 4px;
+  padding-inline: var(--table-cell-padding-inline);
   font-variant-numeric: tabular-nums;
 }
 
-.cellMultilinePreview {
-  display: -webkit-box;
+.cellSingleLinePreview {
+  display: block;
+  inline-size: var(--cell-single-line-preview-inline-size, 100%);
+  max-inline-size: 100%;
+  min-inline-size: 0;
   overflow: hidden;
-  line-height: 1.35;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cellRight {
