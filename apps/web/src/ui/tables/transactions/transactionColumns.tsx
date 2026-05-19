@@ -281,7 +281,9 @@ export const buildTransactionColumns = (maskClass: string, fmt: FormatParams): R
     header: fmt.t("table.note"),
     renderCell: (row: LedgerEntry): ReactElement => (
       <td key="note" className={cn(tableStyles.cell, transactionStyles.cellNote, maskClass)}>
-        <span className={tableStyles.cellMultilinePreview}>{row.note ?? ""}</span>
+        <span className={tableStyles.cellSingleLinePreview}>
+          {row.note === null || row.note.length === 0 ? "\u2014" : row.note}
+        </span>
       </td>
     ),
     rightAlign: false,

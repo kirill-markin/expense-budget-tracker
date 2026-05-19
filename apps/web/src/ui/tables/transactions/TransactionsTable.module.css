@@ -44,11 +44,16 @@
 }
 
 .cellNote {
-  width: clamp(360px, 40vw, 680px);
-  min-width: 360px;
-  max-width: 680px;
-  white-space: normal;
-  vertical-align: top;
+  --transaction-note-inline-size: clamp(360px, 40vw, 680px);
+  --cell-single-line-preview-inline-size: calc(
+    var(--transaction-note-inline-size) -
+    var(--table-cell-padding-inline) -
+    var(--table-cell-padding-inline)
+  );
+
+  inline-size: var(--transaction-note-inline-size);
+  min-inline-size: var(--transaction-note-inline-size);
+  max-inline-size: var(--transaction-note-inline-size);
 }
 
 .cellDelete {

@@ -72,7 +72,7 @@ export const EditableNote = (props: Props): ReactElement => {
       className={cn(styles.cell, cellClass, !isMasked ? styles.editable : "", maskClass)}
       onClick={isMasked || editing ? undefined : startEditing}
     >
-      <span className={styles.cellMultilinePreview}>
+      <span className={styles.cellSingleLinePreview}>
         {currentValue === null || currentValue.length === 0 ? "\u2014" : currentValue}
       </span>
       {editing && rect !== null && (
