@@ -10,6 +10,6 @@
     "mammoth": {
       "@xmldom/xmldom": "0.9.10"
     },
-    "postcss": "8.5.14"
+    "postcss": "8.5.15"
   }
 }
