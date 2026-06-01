@@ -39,7 +39,7 @@ export async function getDatabaseUrl(): Promise<string> {
 // USD is the target — no rate needed (implicit 1.0).
 // RUB is fetched separately via CBR (ECB suspended RUB since March 2022).
 // RSD is fetched separately via NBS (National Bank of Serbia).
-export const ECB_CURRENCIES: string[] = ["BGN", "EUR", "GBP", "TRY"];
+export const ECB_CURRENCIES: string[] = ["BGN", "DKK", "EUR", "GBP", "TRY"];
 
 export const ECB_EARLIEST_DATE: string = "1999-01-04";
 
