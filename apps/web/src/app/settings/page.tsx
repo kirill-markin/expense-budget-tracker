@@ -14,10 +14,10 @@ import { getCategories } from "@/server/transactions/getTransactions";
 import { getUserSettings } from "@/server/userSettings";
 import { queryAs } from "@/server/db";
 import { listAgentConnections } from "@/server/agent/connections";
-import { AgentConnectionsManager } from "@/ui/AgentConnectionsManager";
-import { FilteredCategorySettings } from "@/ui/FilteredCategorySettings";
-import { UserSettingsForm } from "@/ui/UserSettingsForm";
-import { WorkspaceSettings } from "@/ui/WorkspaceSettings";
+import { AgentConnectionsManager } from "@/ui/settings/AgentConnectionsManager";
+import { FilteredCategorySettings } from "@/ui/settings/FilteredCategorySettings";
+import { UserSettingsForm } from "@/ui/settings/UserSettingsForm";
+import { WorkspaceSettings } from "@/ui/settings/WorkspaceSettings";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
 export const dynamic = "force-dynamic";

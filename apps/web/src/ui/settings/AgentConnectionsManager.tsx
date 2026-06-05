@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
 import { fetchWithCsrf } from "@/lib/csrf";
 import type { AgentConnectionRow } from "@/server/agent/connections";
 
-import settingsStyles from "@/ui/SettingsForm.module.css";
+import settingsStyles from "./SettingsForm.module.css";
 
 const MACHINE_API_BASE_URL = "https://api.expense-budget-tracker.com/v1";
 const MACHINE_API_DISCOVERY_URL = `${MACHINE_API_BASE_URL}/`;
