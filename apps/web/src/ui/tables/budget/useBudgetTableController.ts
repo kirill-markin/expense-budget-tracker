@@ -15,10 +15,10 @@ import type {
   YearTotalComputed,
 } from "@/ui/tables/budget/budgetTableLogic";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
-import { useBudgetTableDerivedState } from "@/ui/tables/budget/table/useBudgetTableDerivedState";
-import { useBudgetTableRangeState } from "@/ui/tables/budget/table/useBudgetTableRangeState";
-import { useBudgetTableViewport } from "@/ui/tables/budget/table/useBudgetTableViewport";
-import { useBudgetTableYearTotals } from "@/ui/tables/budget/table/useBudgetTableYearTotals";
+import { useBudgetTableDerivedState } from "@/ui/tables/budget/table/state/useBudgetTableDerivedState";
+import { useBudgetTableRangeState } from "@/ui/tables/budget/table/state/useBudgetTableRangeState";
+import { useBudgetTableViewport } from "@/ui/tables/budget/table/state/useBudgetTableViewport";
+import { useBudgetTableYearTotals } from "@/ui/tables/budget/table/state/useBudgetTableYearTotals";
 
 export type BudgetTableProps = Readonly<{
   rows: ReadonlyArray<BudgetRow>;

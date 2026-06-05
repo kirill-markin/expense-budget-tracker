@@ -15,7 +15,7 @@ export {
   buildDirectionYearDrillDownFilter,
   isDirectionActualOverPlanned,
   isNegativeValueOver,
-} from "./helpers";
+} from "../helpers";
 
 export type RenderValueCellsParams = Readonly<{
   key: string;

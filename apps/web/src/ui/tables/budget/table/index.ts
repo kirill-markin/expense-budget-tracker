@@ -5,8 +5,8 @@ export {
 export {
   BudgetDirectionSection,
   type BudgetDirectionSectionProps,
-} from "./BudgetDirectionSection";
+} from "./sections/BudgetDirectionSection";
 export {
   BudgetDerivedSection,
   type BudgetDerivedSectionProps,
-} from "./BudgetDerivedSection";
+} from "./sections/BudgetDerivedSection";

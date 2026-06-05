@@ -5,7 +5,7 @@ import type { ColumnEntry, YearFetchResult, YearTotalComputed } from "@/ui/table
 import { buildColumnSequence, computeYearTotal } from "@/ui/tables/budget/budgetTableLogic";
 import { generateMonthRange } from "@/lib/monthUtils";
 import { fetchBudgetRange } from "@/ui/tables/budget/budgetTableApi";
-import { logBudgetTableError } from "./logBudgetTableError";
+import { logBudgetTableError } from "../logBudgetTableError";
 
 export type BudgetTableYearTotalsState = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
