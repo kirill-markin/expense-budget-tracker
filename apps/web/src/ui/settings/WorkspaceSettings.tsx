@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { fetchWithCsrf } from "@/lib/csrf";
 import { listSupportedTimezones } from "@/lib/timezone";
 
-import styles from "@/ui/SettingsForm.module.css";
+import styles from "./SettingsForm.module.css";
 
 type Props = Readonly<{
   reportingCurrency: string;

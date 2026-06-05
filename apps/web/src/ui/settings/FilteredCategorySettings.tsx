@@ -7,7 +7,7 @@ import { fetchWithCsrf } from "@/lib/csrf";
 import { cn } from "@/lib/cn";
 
 import controlStyles from "@/ui/Controls.module.css";
-import settingsStyles from "@/ui/SettingsForm.module.css";
+import settingsStyles from "./SettingsForm.module.css";
 
 type Props = Readonly<{
   filteredCategories: ReadonlyArray<string> | null;

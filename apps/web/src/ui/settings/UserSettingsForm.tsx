@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { fetchWithCsrf } from "@/lib/csrf";
 import { type SupportedLocale, type NumberFormat, type DateFormat, SUPPORTED_LOCALES, LOCALE_LABELS, NUMBER_FORMATS, DATE_FORMATS } from "@/lib/locale";
 
-import styles from "@/ui/SettingsForm.module.css";
+import styles from "./SettingsForm.module.css";
 
 type Props = Readonly<{
   locale: SupportedLocale;
