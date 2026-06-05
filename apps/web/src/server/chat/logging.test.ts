@@ -9,7 +9,7 @@ import {
   parseRetryAfterMs,
   type ChatErrorLogDiagnostics,
 } from "@/server/chat/logging";
-import { ChatModelCallTimeoutError } from "@/server/chat/openai/modelCall";
+import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
 
 const DIAGNOSTICS: ChatErrorLogDiagnostics = {
   requestId: "req-1",

@@ -10,7 +10,7 @@ import {
 import type {
   ServerChatMessage,
   StoredOpenAIReplayItem,
-} from "@/server/chat/openai/replayItems";
+} from "@/server/chat/openai/responses/replayItems";
 import { runOpenAILoop } from "@/server/chat/openai/loop";
 import { isOpenAITransientError } from "@/server/chat/logging";
 import { startChatTurnObservation } from "@/server/chat/openai/langfuse";

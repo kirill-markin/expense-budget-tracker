@@ -8,13 +8,13 @@ import {
   type OpenAILoopCompletion,
   type StartOpenAILoopParams,
 } from "@/server/chat/openai/loop";
-import { ChatModelCallTimeoutError } from "@/server/chat/openai/modelCall";
-import type { StoredOpenAIReplayItem } from "@/server/chat/openai/replayItems";
+import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
+import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import {
   applyToolCallStarted,
   createToolCallStateMap,
-} from "@/server/chat/openai/toolCalls";
-import type { OpenAIResponsesRequest } from "@/server/chat/openai/request";
+} from "@/server/chat/openai/tooling/toolCalls";
+import type { OpenAIResponsesRequest } from "@/server/chat/openai/responses/request";
 import type { ChatStreamEvent } from "@/server/chat/types";
 
 const EXPECTED_USER_1_SAFETY_IDENTIFIER = "v1_xsKJ5J6cBbIUWGA4e3O8sY30P7CaHkpKlxPHbIi7VBs";

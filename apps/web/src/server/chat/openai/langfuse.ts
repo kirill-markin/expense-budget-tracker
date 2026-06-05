@@ -4,7 +4,7 @@ import type { LangfuseObservation } from "@langfuse/tracing";
 import { createTraceId, propagateAttributes, startObservation } from "@langfuse/tracing";
 import type { ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
-import { sanitizeContentPartsForTelemetry } from "./input";
+import { sanitizeContentPartsForTelemetry } from "./responses/input";
 
 type ChatTraceMetadata = Readonly<{
   requestId: string;

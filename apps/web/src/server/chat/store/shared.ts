@@ -1,7 +1,7 @@
 import type {
   ServerChatMessage,
   StoredOpenAIReplayItem,
-} from "@/server/chat/openai/replayItems";
+} from "@/server/chat/openai/responses/replayItems";
 import type { ContentPart } from "@/server/chat/types";
 
 export type ChatSessionRunState = "idle" | "running" | "interrupted";

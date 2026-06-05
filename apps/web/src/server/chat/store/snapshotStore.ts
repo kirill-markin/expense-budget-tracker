@@ -1,5 +1,5 @@
 import { withUserContext } from "@/server/db";
-import type { ServerChatMessage } from "@/server/chat/openai/replayItems";
+import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
 import {
   type ChatSessionSnapshot,
   type PersistedChatMessageItem,

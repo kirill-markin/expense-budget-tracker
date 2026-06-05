@@ -6,18 +6,18 @@ import {
   createToolCallStateMap,
   type FunctionToolCallRawItem,
   type ToolCallPosition,
-} from "@/server/chat/openai/toolCalls";
+} from "@/server/chat/openai/tooling/toolCalls";
 import {
   toStoredOpenAIReplayItem,
   type StoredOpenAIReplayItem,
-} from "@/server/chat/openai/replayItems";
+} from "@/server/chat/openai/responses/replayItems";
 import {
   buildChatResponseLogEvent,
   type OpenAIResponsesRequest,
-} from "@/server/chat/openai/request";
+} from "@/server/chat/openai/responses/request";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import { log } from "@/server/logger";
-import type { OpenAILoopEventHandler, StartOpenAILoopParams } from "./loop";
+import type { OpenAILoopEventHandler, StartOpenAILoopParams } from "../loop";
 
 const MAX_REASONING_ITEMS = 8;
 

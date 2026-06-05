@@ -16,7 +16,7 @@ import {
   normalizeStoredOpenAIReplayItems,
   toOpenAIResponseInputItem,
   type ServerChatMessage,
-} from "@/server/chat/openai/replayItems";
+} from "@/server/chat/openai/responses/replayItems";
 import { buildSystemInstructions } from "@/server/chat/shared";
 import { log } from "@/server/logger";
 
