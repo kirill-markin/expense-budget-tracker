@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { LangfuseObservation } from "@langfuse/tracing";
-import type { StoredOpenAIReplayItem } from "@/server/chat/openai/replayItems";
+import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import {
   clearActiveChatRunForTests,
   createActiveChatRunForTests,

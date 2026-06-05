@@ -3,7 +3,7 @@ import type { LangfuseObservation } from "@langfuse/tracing";
 import {
   executeChatToolCall,
   type ExecutedChatToolCall,
-} from "@/server/chat/openai/tools";
+} from "@/server/chat/openai/tooling/tools";
 
 const sanitizeToolOutputForTelemetry = (
   output: string,

@@ -4,26 +4,26 @@ import type { SupportedLocale } from "@/lib/locale";
 import { ti } from "@/i18n/serverT";
 import {
   applyToolCallOutput,
-} from "@/server/chat/openai/toolCalls";
-import { buildChatCompletionInput } from "@/server/chat/openai/input";
+} from "@/server/chat/openai/tooling/toolCalls";
+import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
   type StoredOpenAIReplayMessage,
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
   toStoredOpenAIReplayItem,
-} from "@/server/chat/openai/replayItems";
+} from "@/server/chat/openai/responses/replayItems";
 import {
   buildOpenAIResponsesRequest,
   buildOpenAIResponsesRequestWithOptions,
   buildPromptCacheKey,
   type OpenAIResponsesRequest,
-} from "@/server/chat/openai/request";
+} from "@/server/chat/openai/responses/request";
 import {
   runOneModelCall,
   type ModelCallResult,
-} from "@/server/chat/openai/modelCall";
-import { runOneToolCall } from "@/server/chat/openai/toolExecutor";
+} from "@/server/chat/openai/responses/modelCall";
+import { runOneToolCall } from "@/server/chat/openai/tooling/toolExecutor";
 import {
   classifyOpenAITransientError,
   extractOpenAIErrorContext,

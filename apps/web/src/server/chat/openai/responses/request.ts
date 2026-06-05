@@ -7,9 +7,9 @@ import {
 import {
   toOpenAIResponseInputItem,
   type StoredOpenAIReplayItem,
-} from "@/server/chat/openai/replayItems";
+} from "@/server/chat/openai/responses/replayItems";
 import { buildOpenAISafetyIdentifier } from "@/server/chat/openai/safetyIdentifier";
-import { OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tools";
+import { OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tooling/tools";
 
 export type OpenAIResponsesRequest = Readonly<{
   model: typeof CHAT_MODEL_ID;

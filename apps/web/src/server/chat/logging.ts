@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { CHAT_VENDOR } from "@/lib/chatModels";
-import { ChatModelCallTimeoutError } from "@/server/chat/openai/modelCall";
+import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
 import type { ChatErrorStage } from "@/server/logger";
 
 export type ChatErrorLogDiagnostics = Readonly<{

@@ -11,7 +11,7 @@ import {
   type UpdateChatMessageItemAndInvalidateMainContentParams,
   type UpdateChatMessageItemParams,
 } from "./shared";
-import type { StoredOpenAIReplayItem } from "@/server/chat/openai/replayItems";
+import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import { lockActiveChatSessionRunWithQuery } from "./sessionStore";
 
 type ChatItemPayload = Readonly<{
