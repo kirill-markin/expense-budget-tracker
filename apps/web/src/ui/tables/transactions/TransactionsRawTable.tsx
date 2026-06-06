@@ -15,18 +15,18 @@ import type { ColumnDef, PageResult } from "@/ui/tables/shared/data-table/types"
 import { useTableSort } from "@/ui/tables/shared/data-table/useTableSort";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
 import transactionStyles from "./TransactionsTable.module.css";
-import { serializeFilterValues } from "./transactionsFiltersState";
+import { serializeFilterValues } from "./filters/transactionsFiltersState";
 import {
   TransactionsFiltersOverlay,
   type TransactionsFiltersOverlayOptions,
-} from "./TransactionsFiltersOverlay";
+} from "./filters/TransactionsFiltersOverlay";
 import {
   buildTransactionsCreateEntryRequest,
   buildTransactionsPageUrl,
   CREATE_ERROR_PREFIX,
   type TransactionsTableFilter,
   useEditableTransactionsTable,
-} from "./useEditableTransactionsTable";
+} from "./editing/useEditableTransactionsTable";
 import {
   editableAccountColumn,
   editableAmountColumn,
@@ -37,7 +37,7 @@ import {
   editableDeleteColumn,
   editableKindColumn,
   editableNoteColumn,
-} from "./transactionColumns";
+} from "./editing/transactionColumns";
 
 type Props = Readonly<{
   filterOptions: TransactionsFilterOptions;
