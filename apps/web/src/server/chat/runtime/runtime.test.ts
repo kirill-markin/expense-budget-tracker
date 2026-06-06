@@ -15,7 +15,7 @@ import {
   type ChatRunStartReservation,
   type ChatRuntimeDependencies,
   type StartPersistedChatRunParams,
-} from "@/server/chat/runtime";
+} from "./runtime";
 import { ChatSessionRunTransitionError } from "@/server/chat/store";
 import type { PersistedChatMessageItem } from "@/server/chat/store/shared";
 import type { ChatStreamEvent } from "@/server/chat/types";
