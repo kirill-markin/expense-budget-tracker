@@ -13,7 +13,7 @@ import { EditableText } from "@/ui/tables/editable/EditableText";
 import type { ColumnDef } from "@/ui/tables/shared/data-table/types";
 import { formatAmount, formatDateTime } from "@/ui/tables/shared/format";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
-import transactionStyles from "./TransactionsTable.module.css";
+import transactionStyles from "../TransactionsTable.module.css";
 
 type FormatParams = Readonly<{
   numberFormat: NumberFormat;

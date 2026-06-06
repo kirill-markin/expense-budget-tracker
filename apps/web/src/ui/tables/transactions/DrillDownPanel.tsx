@@ -20,7 +20,7 @@ import {
   buildDrillDownPageUrl,
   CREATE_ERROR_PREFIX,
   useEditableTransactionsTable,
-} from "./useEditableTransactionsTable";
+} from "./editing/useEditableTransactionsTable";
 import {
   editableAccountColumn,
   editableAmountColumn,
@@ -32,7 +32,7 @@ import {
   editableKindColumn,
   editableNoteColumn,
   reportAmountColumn,
-} from "./transactionColumns";
+} from "./editing/transactionColumns";
 import transactionStyles from "./TransactionsTable.module.css";
 
 type Props = Readonly<{

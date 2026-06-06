@@ -10,8 +10,8 @@ import { cn } from "@/lib/cn";
 import type { FilterMultiSelectOption } from "@/ui/tables/shared/filterMultiSelectOption";
 import panelStyles from "@/ui/tables/shared/TablePanel.module.css";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
-import type { TransactionsTableFilter } from "./useEditableTransactionsTable";
-import transactionStyles from "./TransactionsTable.module.css";
+import type { TransactionsTableFilter } from "../editing/useEditableTransactionsTable";
+import transactionStyles from "../TransactionsTable.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
