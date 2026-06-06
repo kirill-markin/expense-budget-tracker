@@ -5,8 +5,8 @@
  * keys and are stored separately from workspace-scoped machine tokens.
  */
 import crypto from "node:crypto";
-import { createCrockfordToken } from "./crockford.js";
-import { withTransaction } from "./db.js";
+import { createCrockfordToken } from "../crockford.js";
+import { withTransaction } from "../db.js";
 
 const KEY_ID_LENGTH = 8;
 const SECRET_LENGTH = 26;

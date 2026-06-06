@@ -7,13 +7,13 @@
  */
 import { randomInt } from "node:crypto";
 import { Hono, type Context } from "hono";
-import { createAgentOtpChallenge, reissueLatestAgentOtpChallenge } from "../server/otpChallengeStore.js";
-import { buildErrorEnvelope, buildSuccessEnvelope, buildVerifyCodeAction } from "../server/agentEnvelope.js";
+import { createAgentOtpChallenge, reissueLatestAgentOtpChallenge } from "../server/otp/otpChallengeStore.js";
+import { buildErrorEnvelope, buildSuccessEnvelope, buildVerifyCodeAction } from "../server/agent/agentEnvelope.js";
 import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp } from "../server/cognitoAuth.js";
 import { createDemoAgentOtpSession, getDemoEmailPassword } from "../server/demoEmailAccess.js";
 import { log, maskEmail } from "../server/logger.js";
-import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otpRateLimit.js";
+import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otp/otpRateLimit.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const JITTER_MIN_MS = 200;

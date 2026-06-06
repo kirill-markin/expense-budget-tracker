@@ -4,7 +4,7 @@
  * Email-level limits and IP-level limits share the same counters across all
  * OTP send entry points so callers cannot bypass quotas by switching paths.
  */
-import { withTransaction } from "./db.js";
+import { withTransaction } from "../db.js";
 
 export type OtpSendDecision = "allowed" | "blocked_email_limit" | "blocked_ip_limit";
 

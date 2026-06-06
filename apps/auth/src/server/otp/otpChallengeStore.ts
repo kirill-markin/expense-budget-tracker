@@ -1,5 +1,5 @@
-import { query, withTransaction } from "./db.js";
-import { createCrockfordToken, hashOpaqueToken, normalizeCrockfordToken } from "./crockford.js";
+import { query, withTransaction } from "../db.js";
+import { createCrockfordToken, hashOpaqueToken, normalizeCrockfordToken } from "../crockford.js";
 import { isChallengeExpired, OTP_CHALLENGE_TTL_MS, OTP_VERIFY_MAX_ATTEMPTS } from "./otpChallenges.js";
 
 const OTP_HANDLE_LENGTH = 20;
