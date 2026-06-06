@@ -28,7 +28,7 @@ import {
 import {
   beginChatTaskProtection,
   endChatTaskProtection,
-} from "@/server/chat/taskProtection";
+} from "./taskProtection";
 import { createChatErrorLogEvent } from "@/server/chat/logging";
 import type {
   ChatStreamEvent,

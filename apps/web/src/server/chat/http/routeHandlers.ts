@@ -24,7 +24,7 @@ import {
   releaseChatRunStartReservation,
   reserveChatRunStart,
   startPersistedChatRun,
-} from "@/server/chat/runtime";
+} from "@/server/chat/runtime/runtime";
 import {
   ChatSessionConflictError,
   ChatSessionNotFoundError,

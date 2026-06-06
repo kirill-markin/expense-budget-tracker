@@ -12,7 +12,7 @@ import {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
 } from "@/server/chat/store";
-import type { ChatRunStartReservation } from "@/server/chat/runtime";
+import type { ChatRunStartReservation } from "@/server/chat/runtime/runtime";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 
 const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";

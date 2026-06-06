@@ -4,7 +4,7 @@ import {
   hasActiveChatSessionRun,
   markActiveChatRunCancellationPersisted,
   stopActiveChatRun,
-} from "@/server/chat/runtime";
+} from "@/server/chat/runtime/runtime";
 import {
   cancelActiveChatRunByUser,
   ChatSessionNotFoundError,

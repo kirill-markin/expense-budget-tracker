@@ -2,7 +2,7 @@ import { ApiRouteError } from "@/server/api/errors";
 import {
   CHAT_RUN_STALE_HEARTBEAT_MS,
   hasActiveChatRun,
-} from "@/server/chat/runtime";
+} from "@/server/chat/runtime/runtime";
 import {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
