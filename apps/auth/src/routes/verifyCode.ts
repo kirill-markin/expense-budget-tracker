@@ -17,7 +17,7 @@ import {
   markBrowserOtpChallengeUsed,
   recordBrowserOtpChallengeFailure,
   type BrowserOtpChallengeLookup,
-} from "../server/otpChallengeStore.js";
+} from "../server/otp/otpChallengeStore.js";
 import { verifyEmailOtp } from "../server/cognitoAuth.js";
 import { log, maskEmail } from "../server/logger.js";
 

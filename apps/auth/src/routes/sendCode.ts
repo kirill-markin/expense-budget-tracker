@@ -14,12 +14,12 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { setCookie } from "hono/cookie";
-import { createBrowserOtpChallenge } from "../server/otpChallengeStore.js";
+import { createBrowserOtpChallenge } from "../server/otp/otpChallengeStore.js";
 import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp, signInWithPassword, type TokenResult } from "../server/cognitoAuth.js";
 import { getDemoEmailPassword } from "../server/demoEmailAccess.js";
 import { log, maskEmail } from "../server/logger.js";
-import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otpRateLimit.js";
+import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otp/otpRateLimit.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

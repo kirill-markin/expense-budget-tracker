@@ -10,8 +10,8 @@ import {
   markAgentOtpChallengeUsed,
   recordAgentOtpChallengeFailure,
   type AgentOtpChallengeLookup,
-} from "../server/otpChallengeStore.js";
-import { createAgentConnection, type AgentConnectionResult } from "../server/agentApiKeys.js";
+} from "../server/otp/otpChallengeStore.js";
+import { createAgentConnection, type AgentConnectionResult } from "../server/agent/agentApiKeys.js";
 import {
   buildErrorEnvelope,
   buildListWorkspacesAction,
@@ -19,7 +19,7 @@ import {
   buildSchemaAction,
   buildSelectWorkspaceAction,
   buildSuccessEnvelope,
-} from "../server/agentEnvelope.js";
+} from "../server/agent/agentEnvelope.js";
 import {
   extractIdentityFromIdToken,
   signInWithPassword,
