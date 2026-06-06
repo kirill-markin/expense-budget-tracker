@@ -5,9 +5,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ROOT_ENV_FILE="${ROOT_DIR}/.env"
-CLOUDFLARE_ENV_FILE="${SCRIPT_DIR}/cloudflare/.env"
+CLOUDFLARE_ENV_FILE="${ROOT_DIR}/scripts/cloudflare/.env"
 
 if [[ -f "$ROOT_ENV_FILE" ]]; then
   set -a

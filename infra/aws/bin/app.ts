@@ -45,7 +45,7 @@ if (!githubRepo) {
 
 const resendApiKeySecretArn = app.node.tryGetContext("resendApiKeySecretArn") as string | undefined;
 if (!resendApiKeySecretArn) {
-  throw new Error("Missing required context: 'resendApiKeySecretArn'. Set it in cdk.context.local.json after running scripts/create-resend-runtime-key.sh");
+  throw new Error("Missing required context: 'resendApiKeySecretArn'. Set it in cdk.context.local.json after running scripts/resend/create-resend-runtime-key.sh");
 }
 
 const resendSenderEmail = app.node.tryGetContext("resendSenderEmail") as string | undefined;

@@ -31,7 +31,7 @@ Keep these values in root `.env` or export them in the current shell:
 1. Create or reuse the Resend transactional domain, write its DNS records to Cloudflare, and verify it when needed:
 
 ```bash
-bash scripts/setup-resend-domain.sh --domain yourdomain.com --subdomain mail
+bash scripts/resend/setup-resend-domain.sh --domain yourdomain.com --subdomain mail
 ```
 
 This script:
@@ -48,7 +48,7 @@ If DNS is still propagating, the script exits non-zero with the current Resend s
 2. Create a separate domain-scoped send-only API key and store it in AWS Secrets Manager:
 
 ```bash
-bash scripts/create-resend-runtime-key.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker
+bash scripts/resend/create-resend-runtime-key.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker
 ```
 
 This confirms the AWS caller identity, creates AWS secret `expense-tracker/resend-api-key`, and prints its ARN. Use that ARN as CDK context `resendApiKeySecretArn`.
@@ -56,7 +56,7 @@ This confirms the AWS caller identity, creates AWS secret `expense-tracker/resen
 To rotate an existing runtime key, pass the non-secret id of the previous Resend key so the script can delete it after AWS Secrets Manager is updated:
 
 ```bash
-bash scripts/create-resend-runtime-key.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker --rotate-secret --previous-api-key-id <previous_resend_api_key_id>
+bash scripts/resend/create-resend-runtime-key.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker --rotate-secret --previous-api-key-id <previous_resend_api_key_id>
 ```
 
 If the AWS secret already exists and `--previous-api-key-id` is missing, the script fails before creating a new key. The AWS secret stores only the raw runtime token, so the previous key id must come from the Resend dashboard or API.
@@ -64,7 +64,7 @@ If the AWS secret already exists and `--previous-api-key-id` is missing, the scr
 If you already created a send-only runtime key manually, export it as `RESEND_API_KEY` and run:
 
 ```bash
-bash scripts/setup-resend-secret.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker
+bash scripts/resend/setup-resend-secret.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker
 ```
 
 3. Populate deploy-time config:
@@ -81,7 +81,7 @@ bash scripts/setup-resend-secret.sh --domain yourdomain.com --subdomain mail --r
 Preview DNS changes without mutating Resend or Cloudflare:
 
 ```bash
-bash scripts/setup-resend-domain.sh --domain yourdomain.com --subdomain mail --dry-run
+bash scripts/resend/setup-resend-domain.sh --domain yourdomain.com --subdomain mail --dry-run
 ```
 
 ## Notes
