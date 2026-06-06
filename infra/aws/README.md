@@ -263,7 +263,7 @@ RESEND_ADMIN_API_KEY=re_...
 
 ```bash
 set -a; source scripts/cloudflare/.env; set +a
-bash scripts/setup-resend-domain.sh \
+bash scripts/resend/setup-resend-domain.sh \
   --domain yourdomain.com \
   --subdomain mail
 ```
@@ -273,14 +273,14 @@ The script creates or reuses `mail.yourdomain.com`, writes the required DNS reco
 3. Create the domain-scoped send-only runtime API key and store it in AWS Secrets Manager:
 
 ```bash
-bash scripts/create-resend-runtime-key.sh \
+bash scripts/resend/create-resend-runtime-key.sh \
   --domain yourdomain.com \
   --subdomain mail \
   --region eu-central-1 \
   --profile expense-tracker
 ```
 
-This confirms the AWS caller identity, creates `expense-tracker/resend-api-key`, and prints the ARN for `resendApiKeySecretArn`. To rotate an existing runtime key, rerun the command with `--rotate-secret --previous-api-key-id <resend_key_id>` so the old key can be deleted after AWS Secrets Manager is updated. If you manually create the runtime key instead, export it as `RESEND_API_KEY` and run `bash scripts/setup-resend-secret.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker`.
+This confirms the AWS caller identity, creates `expense-tracker/resend-api-key`, and prints the ARN for `resendApiKeySecretArn`. To rotate an existing runtime key, rerun the command with `--rotate-secret --previous-api-key-id <resend_key_id>` so the old key can be deleted after AWS Secrets Manager is updated. If you manually create the runtime key instead, export it as `RESEND_API_KEY` and run `bash scripts/resend/setup-resend-secret.sh --domain yourdomain.com --subdomain mail --region eu-central-1 --profile expense-tracker`.
 
 Keep the printed secret ARN and derived sender email for the next step:
 

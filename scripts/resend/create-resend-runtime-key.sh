@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ROOT_ENV_FILE="${ROOT_DIR}/.env"
 
 if [[ -f "$ROOT_ENV_FILE" ]]; then
@@ -199,7 +199,7 @@ if [[ -n "$SECRET_ARN" && "$SECRET_ARN" != "None" && "$ROTATE_SECRET" == "true" 
   echo "ERROR: --rotate-secret requires --previous-api-key-id when the AWS secret already exists." >&2
   echo "The current AWS secret value contains only the Resend token, not its non-secret key id." >&2
   echo "Find the active runtime key id in the Resend dashboard or API, then rerun:" >&2
-  echo "  bash scripts/create-resend-runtime-key.sh --rotate-secret --previous-api-key-id <resend_key_id> --domain ${DOMAIN} --subdomain ${SUBDOMAIN} --region ${REGION} --profile ${PROFILE}" >&2
+  echo "  bash scripts/resend/create-resend-runtime-key.sh --rotate-secret --previous-api-key-id <resend_key_id> --domain ${DOMAIN} --subdomain ${SUBDOMAIN} --region ${REGION} --profile ${PROFILE}" >&2
   exit 1
 fi
 
@@ -220,7 +220,7 @@ PY
 )"
 
 if [[ -z "$DOMAIN_ID" ]]; then
-  echo "ERROR: Resend domain ${FULL_DOMAIN} was not found. Run scripts/setup-resend-domain.sh first." >&2
+  echo "ERROR: Resend domain ${FULL_DOMAIN} was not found. Run scripts/resend/setup-resend-domain.sh first." >&2
   exit 1
 fi
 
