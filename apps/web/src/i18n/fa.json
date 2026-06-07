@@ -109,6 +109,7 @@
   "balances.conversionSingular": "این ارز",
   "balances.conversionPlural": "این ارزها",
   "balances.saveFailed": "ذخیره ناموفق",
+  "balances.loadFailed": "به‌روزرسانی موجودی‌ها ناموفق بود",
   "budget.category": "دسته‌بندی",
   "budget.remainder": "مانده",
   "budget.fxAdjust": "تعدیل نرخ ارز",

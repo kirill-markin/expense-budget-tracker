@@ -45,7 +45,8 @@ export type ChatSessionControllerAction =
   | Readonly<{ type: "stop_completed" }>
   | Readonly<{ type: "stopped_session_cleared"; sessionId: string }>
   | Readonly<{ type: "conversation_cleared"; sessionId: string }>
-  | Readonly<{ type: "server_session_accepted"; sessionId: string }>;
+  | Readonly<{ type: "server_session_accepted"; sessionId: string }>
+  | Readonly<{ type: "server_session_created"; sessionId: string }>;
 
 const mergeInvalidationVersion = (
   previousVersion: number | null,
@@ -166,6 +167,7 @@ export const reduceChatSessionControllerState = (
         runState: "idle",
         isLiveStreamConnected: false,
         isStopping: false,
+        lastMainContentInvalidationVersion: 0,
         stoppedSessionIds: state.currentSessionId === null
           ? state.stoppedSessionIds
           : removeStoppedSession(state.stoppedSessionIds, state.currentSessionId),
@@ -174,6 +176,12 @@ export const reduceChatSessionControllerState = (
       return {
         ...state,
         currentSessionId: action.sessionId,
+      };
+    case "server_session_created":
+      return {
+        ...state,
+        currentSessionId: action.sessionId,
+        lastMainContentInvalidationVersion: 0,
       };
     default:
       return state;

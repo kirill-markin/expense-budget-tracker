@@ -109,6 +109,7 @@
   "balances.conversionSingular": "هذه العملة",
   "balances.conversionPlural": "هذه العملات",
   "balances.saveFailed": "فشل الحفظ",
+  "balances.loadFailed": "فشل تحديث الأرصدة",
   "budget.category": "الفئة",
   "budget.remainder": "المتبقي",
   "budget.fxAdjust": "تعديل سعر الصرف",
