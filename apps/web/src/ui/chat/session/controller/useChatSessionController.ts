@@ -50,6 +50,10 @@ import {
   type ChatMainContentInvalidationSource,
   type ChatSessionControllerAction,
 } from "./chatSessionControllerState";
+import {
+  getMainContentInvalidationSourceId,
+  publishMainContentInvalidation,
+} from "../invalidation/mainContentInvalidationChannel";
 
 type UseChatSessionControllerParams = Readonly<{
   mode: "sidebar" | "fullscreen";
@@ -112,6 +116,7 @@ export const useChatSessionController = (
   const stateRef = useRef(state);
   const abortRef = useRef<AbortController | null>(null);
   const pendingSessionIdRef = useRef<Promise<string> | null>(null);
+  const invalidationSourceIdRef = useRef<string | null>(null);
 
   const dispatchAction = useCallback((
     action: ChatSessionControllerAction,
@@ -126,6 +131,29 @@ export const useChatSessionController = (
 
   const isAssistantRunActive = selectIsAssistantRunActive(state);
   const composerAction = selectComposerAction(state);
+
+  const getInvalidationSourceId = useCallback((): string => {
+    if (invalidationSourceIdRef.current === null) {
+      invalidationSourceIdRef.current = getMainContentInvalidationSourceId();
+    }
+
+    return invalidationSourceIdRef.current;
+  }, []);
+
+  const refreshMainContent = useCallback((nextVersion: number): void => {
+    publishMainContentInvalidation({
+      workspaceId,
+      version: nextVersion,
+      sourceId: getInvalidationSourceId(),
+      emittedAt: Date.now(),
+    });
+
+    if (mode === "sidebar") {
+      startTransition(() => {
+        router.refresh();
+      });
+    }
+  }, [getInvalidationSourceId, mode, router, workspaceId]);
 
   const applyMainContentInvalidationVersion = useCallback((
     nextVersion: number,
@@ -143,14 +171,12 @@ export const useChatSessionController = (
       version: nextVersion,
     });
 
-    if (!shouldRefresh || mode !== "sidebar") {
+    if (!shouldRefresh) {
       return;
     }
 
-    startTransition(() => {
-      router.refresh();
-    });
-  }, [dispatchAction, mode, router]);
+    refreshMainContent(nextVersion);
+  }, [dispatchAction, refreshMainContent]);
 
   const loadChatSnapshot = useCallback(async (
     sessionId: string | undefined,
@@ -184,17 +210,15 @@ export const useChatSessionController = (
       replaceMessages(payload.messages);
     }
 
-    if (shouldRefresh && mode === "sidebar") {
-      startTransition(() => {
-        router.refresh();
-      });
+    if (shouldRefresh) {
+      refreshMainContent(payload.mainContentInvalidationVersion);
     }
 
     return {
       ...payload,
       runState: effectiveRunState,
     };
-  }, [dispatchAction, mode, replaceMessages, router, t]);
+  }, [dispatchAction, refreshMainContent, replaceMessages, t]);
 
   useEffect(() => {
     if (!state.isHistoryLoaded) {
@@ -379,7 +403,7 @@ export const useChatSessionController = (
       .then((writableSessionId) => {
         if (stateRef.current.currentSessionId !== writableSessionId) {
           dispatchAction({
-            type: "server_session_accepted",
+            type: "server_session_created",
             sessionId: writableSessionId,
           });
         }

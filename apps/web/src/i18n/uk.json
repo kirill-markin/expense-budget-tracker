@@ -109,6 +109,7 @@
   "balances.conversionSingular": "цій валюті",
   "balances.conversionPlural": "цих валютах",
   "balances.saveFailed": "Помилка збереження",
+  "balances.loadFailed": "Не вдалося оновити баланси",
   "budget.category": "Категорія",
   "budget.remainder": "Залишок",
   "budget.fxAdjust": "Курсове коригування",

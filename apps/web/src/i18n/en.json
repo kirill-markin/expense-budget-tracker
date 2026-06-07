@@ -109,6 +109,7 @@
   "balances.conversionSingular": "this currency",
   "balances.conversionPlural": "these currencies",
   "balances.saveFailed": "Save failed",
+  "balances.loadFailed": "Failed to refresh balances",
   "budget.category": "Category",
   "budget.remainder": "Remainder",
   "budget.fxAdjust": "FX adjust",

@@ -109,6 +109,7 @@
   "balances.conversionSingular": "esta moneda",
   "balances.conversionPlural": "estas monedas",
   "balances.saveFailed": "No se pudo guardar",
+  "balances.loadFailed": "No se pudieron actualizar los saldos",
   "budget.category": "Categoría",
   "budget.remainder": "Remanente",
   "budget.fxAdjust": "Ajuste por tipo de cambio",

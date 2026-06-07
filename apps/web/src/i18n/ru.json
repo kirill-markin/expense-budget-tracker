@@ -109,6 +109,7 @@
   "balances.conversionSingular": "этой валюте",
   "balances.conversionPlural": "этих валютах",
   "balances.saveFailed": "Не удалось сохранить",
+  "balances.loadFailed": "Не удалось обновить балансы",
   "budget.category": "Категория",
   "budget.remainder": "Остаток",
   "budget.fxAdjust": "Валютная корректировка",

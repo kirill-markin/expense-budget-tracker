@@ -109,6 +109,7 @@
   "balances.conversionSingular": "该币种",
   "balances.conversionPlural": "这些币种",
   "balances.saveFailed": "保存失败",
+  "balances.loadFailed": "刷新余额失败",
   "budget.category": "分类",
   "budget.remainder": "结余",
   "budget.fxAdjust": "汇兑差额",

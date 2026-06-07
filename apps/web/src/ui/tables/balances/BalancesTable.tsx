@@ -7,11 +7,12 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import { fetchWithCsrf } from "@/lib/csrf";
+import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
 import alertStyles from "@/ui/Alert.module.css";
 import controlsStyles from "@/ui/Controls.module.css";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 
-import type { AccountRow, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
+import type { AccountRow, BalancesSummaryResult, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import { useFormat } from "@/ui/FormatProvider";
@@ -31,6 +32,13 @@ type Props = Readonly<{
   totals: ReadonlyArray<CurrencyTotal>;
   conversionWarnings: ReadonlyArray<ConversionWarning>;
   reportingCurrency: string;
+  refreshToken: string;
+}>;
+
+type BalancesSummaryState = Readonly<{
+  accounts: ReadonlyArray<AccountRow>;
+  totals: ReadonlyArray<CurrencyTotal>;
+  conversionWarnings: ReadonlyArray<ConversionWarning>;
 }>;
 
 type TotalsSortKey = "currency" | "balance" | "balancePositive" | "balanceNegative" | "balanceReport";
@@ -182,8 +190,24 @@ const saveLiquidity = async (accountId: string, liquidity: string): Promise<void
   }
 };
 
+const fetchBalancesSummary = async (
+  refreshToken: string,
+): Promise<BalancesSummaryState> => {
+  const response = await fetchLiveData(buildLiveDataUrl("/api/balances-summary", new URLSearchParams(), refreshToken));
+  if (!response.ok) {
+    throw new Error(`Balances summary refresh failed: ${response.status} ${await response.text()}`);
+  }
+
+  const payload = await response.json() as BalancesSummaryResult;
+  return {
+    accounts: payload.accounts,
+    totals: payload.totals,
+    conversionWarnings: payload.conversionWarnings,
+  };
+};
+
 export const BalancesTable = (props: Props): ReactElement => {
-  const { accounts: accountsProp, totals, conversionWarnings, reportingCurrency } = props;
+  const { accounts: accountsProp, totals: totalsProp, conversionWarnings: conversionWarningsProp, reportingCurrency, refreshToken } = props;
   const { effectiveAllowlist } = useFilteredMode();
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
@@ -192,11 +216,50 @@ export const BalancesTable = (props: Props): ReactElement => {
   const { toastMessage, copyToClipboard } = useCopyToast();
 
   const [localAccounts, setLocalAccounts] = useState<ReadonlyArray<AccountRow>>(accountsProp);
+  const [localTotals, setLocalTotals] = useState<ReadonlyArray<CurrencyTotal>>(totalsProp);
+  const [localConversionWarnings, setLocalConversionWarnings] = useState<ReadonlyArray<ConversionWarning>>(conversionWarningsProp);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const refreshTokenRef = useRef<string>(refreshToken);
 
   useEffect(() => {
     setLocalAccounts(accountsProp);
-  }, [accountsProp]);
+    setLocalTotals(totalsProp);
+    setLocalConversionWarnings(conversionWarningsProp);
+    setLoadError(null);
+  }, [accountsProp, conversionWarningsProp, totalsProp]);
+
+  useEffect(() => {
+    if (refreshTokenRef.current === refreshToken) {
+      return;
+    }
+
+    refreshTokenRef.current = refreshToken;
+    let ignoreResult = false;
+
+    fetchBalancesSummary(refreshToken)
+      .then((summary) => {
+        if (ignoreResult) {
+          return;
+        }
+
+        setLocalAccounts(summary.accounts);
+        setLocalTotals(summary.totals);
+        setLocalConversionWarnings(summary.conversionWarnings);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        if (ignoreResult) {
+          return;
+        }
+
+        setLoadError(err instanceof Error ? err.message : String(err));
+      });
+
+    return () => {
+      ignoreResult = true;
+    };
+  }, [refreshToken]);
 
   const totalsSort = useTableSort("multi", "balanceReport", "desc", TOTALS_SORT_DEFAULTS);
   const liquiditySort = useTableSort("multi", "liquidity", "asc", LIQUIDITY_SORT_DEFAULTS);
@@ -243,14 +306,14 @@ export const BalancesTable = (props: Props): ReactElement => {
   }, []);
 
   const sortedTotals = useMemo<ReadonlyArray<CurrencyTotal>>(
-    () => [...totals].filter((t) => t.balance !== 0).sort((a, b) => {
+    () => [...localTotals].filter((t) => t.balance !== 0).sort((a, b) => {
       for (const entry of totalsSort.sort) {
         const cmp = compareTotals(a, b, entry.key as TotalsSortKey, entry.dir);
         if (cmp !== 0) return cmp;
       }
       return 0;
     }),
-    [totals, totalsSort.sort],
+    [localTotals, totalsSort.sort],
   );
 
   const sortedLiquidityTotals = useMemo<ReadonlyArray<LiquidityTotal>>(() => {
@@ -312,7 +375,7 @@ export const BalancesTable = (props: Props): ReactElement => {
   const totalUsd = useMemo<number | null>(() => {
     let sum = 0;
     let hasNull = false;
-    for (const t of totals) {
+    for (const t of localTotals) {
       if (t.balanceReport === null) {
         hasNull = true;
       } else {
@@ -321,31 +384,41 @@ export const BalancesTable = (props: Props): ReactElement => {
     }
     if (hasNull) return null;
     return sum;
-  }, [totals]);
+  }, [localTotals]);
 
   const totalPositiveUsd = useMemo<number>(() => {
     let sum = 0;
-    for (const t of totals) {
+    for (const t of localTotals) {
       if (t.balanceReport !== null && t.balanceReport > 0) sum += t.balanceReport;
       else if (t.balanceReport === null && t.balance > 0) sum += t.balancePositive;
     }
     return sum;
-  }, [totals]);
+  }, [localTotals]);
 
   const totalNegativeUsd = useMemo<number>(() => {
     let sum = 0;
-    for (const t of totals) {
+    for (const t of localTotals) {
       if (t.balanceReport !== null && t.balanceReport < 0) sum += t.balanceReport;
       else if (t.balanceReport === null && t.balance < 0) sum += t.balanceNegative;
     }
     return sum;
-  }, [totals]);
+  }, [localTotals]);
 
   if (localAccounts.length === 0) {
-    return <p className={tableStyles.empty}>{t("balances.noData")}</p>;
+    return (
+      <>
+        {loadError !== null && (
+          <div className={alertStyles.alert}>
+            <strong>{t("balances.loadFailed")}</strong>
+            <span>{loadError}</span>
+          </div>
+        )}
+        <p className={tableStyles.empty}>{t("balances.noData")}</p>
+      </>
+    );
   }
 
-  const currencyList = conversionWarnings.map((w) => w.currency).join(", ");
+  const currencyList = localConversionWarnings.map((w) => w.currency).join(", ");
 
   const totalsColumns: ReadonlyArray<ColumnDef<CurrencyTotal>> = [
     {
@@ -630,16 +703,22 @@ export const BalancesTable = (props: Props): ReactElement => {
 
   return (
     <>
-      {conversionWarnings.length > 0 && (
+      {localConversionWarnings.length > 0 && (
         <div className={alertStyles.alert}>
           <strong>{t("balances.conversionTitle")}</strong>
           <span>
             {t("balances.conversionMessage", {
               currencies: currencyList,
-              qualifier: conversionWarnings.length === 1 ? t("balances.conversionSingular") : t("balances.conversionPlural"),
+              qualifier: localConversionWarnings.length === 1 ? t("balances.conversionSingular") : t("balances.conversionPlural"),
               currency: reportingCurrency,
             })}
           </span>
+        </div>
+      )}
+      {loadError !== null && (
+        <div className={alertStyles.alert}>
+          <strong>{t("balances.loadFailed")}</strong>
+          <span>{loadError}</span>
         </div>
       )}
       {saveError !== null && (

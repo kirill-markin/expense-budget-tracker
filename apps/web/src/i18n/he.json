@@ -109,6 +109,7 @@
   "balances.conversionSingular": "מטבע זה",
   "balances.conversionPlural": "מטבעות אלה",
   "balances.saveFailed": "השמירה נכשלה",
+  "balances.loadFailed": "רענון היתרות נכשל",
   "budget.category": "קטגוריה",
   "budget.remainder": "יתרה",
   "budget.fxAdjust": "התאמת מט״ח",

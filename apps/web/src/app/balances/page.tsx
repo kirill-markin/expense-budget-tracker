@@ -17,10 +17,13 @@ export const dynamic = "force-dynamic";
 
 async function BalancesData() {
   const demo = await isDemoMode();
+  // A route refresh regenerates this token so the client table can confirm the
+  // latest no-store balance summary without relying only on the RSC payload.
+  const refreshToken = crypto.randomUUID();
 
   if (demo) {
     const { accounts, totals, conversionWarnings } = getDemoBalancesSummary();
-    return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} reportingCurrency="USD" />;
+    return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} reportingCurrency="USD" refreshToken={refreshToken} />;
   }
 
   const headersList = await headers();
@@ -31,7 +34,7 @@ async function BalancesData() {
     getReportCurrency(userId, workspaceId),
   ]);
 
-  return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} reportingCurrency={reportingCurrency} />;
+  return <BalancesTable accounts={accounts} totals={totals} conversionWarnings={conversionWarnings} reportingCurrency={reportingCurrency} refreshToken={refreshToken} />;
 }
 
 export default async function BalancesDashboardPage() {
