@@ -2,7 +2,6 @@
 
 import type { ReactElement } from "react";
 
-import type { NumberFormat } from "@/lib/locale";
 import {
   type ColumnEntry,
   type YearTotalComputed,
@@ -20,8 +19,6 @@ type MetricRowProps = Readonly<{
   currentMonth: string;
   currentYear: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
-  numberFormat: NumberFormat;
-  derivedMaskClass: string;
   renderPastYear: (year: string, yearData: YearTotalComputed) => ReactElement;
   renderFutureYear: (year: string, yearData: YearTotalComputed) => ReactElement;
   renderCurrentYear: (year: string, yearData: YearTotalComputed) => ReactElement;
