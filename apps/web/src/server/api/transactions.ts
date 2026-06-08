@@ -77,6 +77,13 @@ const sortDirSchema = z.unknown().superRefine((value, ctx) => {
   }
 }).transform((value): "asc" | "desc" => value as "asc" | "desc");
 
+const booleanFlagSchema = (fieldName: string) =>
+  z.unknown().superRefine((value, ctx) => {
+    if (value !== "true" && value !== "false") {
+      ctx.addIssue({ code: "custom", message: `${fieldName} must be true or false` });
+    }
+  }).transform((value): boolean => value === "true");
+
 const categoriesEntrySchema = maxLengthParamSchema("categories entry too long (max 200 chars)", 200);
 
 const transactionBodySchema = z.object({
@@ -136,6 +143,11 @@ export const parseTransactionsFilterQuery = (searchParams: URLSearchParams): Tra
     "counterparties",
     maxLengthParamSchema("counterparties entry too long (max 200 chars)", 200),
   );
+  const businessPersonalTransfers = parseOptionalQueryParam(
+    searchParams,
+    "businessPersonalTransfers",
+    booleanFlagSchema("businessPersonalTransfers"),
+  ) ?? false;
 
   return {
     dateFrom,
@@ -148,6 +160,7 @@ export const parseTransactionsFilterQuery = (searchParams: URLSearchParams): Tra
     category,
     categories: categories.length > 0 ? categories : null,
     counterparties: counterparties.length > 0 ? counterparties : null,
+    businessPersonalTransfers,
     sortKey,
     sortDir,
     limit,

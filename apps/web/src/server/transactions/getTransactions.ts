@@ -42,6 +42,7 @@ export type TransactionsFilter = Readonly<{
   category: string | null;
   categories: ReadonlyArray<string> | null;
   counterparties: ReadonlyArray<string> | null;
+  businessPersonalTransfers: boolean;
   sortKey: string;
   sortDir: "asc" | "desc";
   limit: number;
@@ -167,6 +168,33 @@ const buildWhereClause = (
   }
   if (filter.counterparties !== null) {
     appendNullableAnyTextCondition("le.counterparty", filter.counterparties, params, conditions);
+  }
+  if (filter.businessPersonalTransfers) {
+    conditions.push(`
+      le.kind = 'transfer'
+      AND EXISTS (
+        SELECT 1
+        FROM ledger_entries business_le
+        LEFT JOIN account_metadata business_am
+          ON business_am.account_id = business_le.account_id
+         AND business_am.workspace_id = business_le.workspace_id
+        WHERE business_le.workspace_id = le.workspace_id
+          AND business_le.event_id = le.event_id
+          AND business_le.kind = 'transfer'
+          AND COALESCE(business_am.account_type, 'personal') = 'business'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM ledger_entries personal_le
+        LEFT JOIN account_metadata personal_am
+          ON personal_am.account_id = personal_le.account_id
+         AND personal_am.workspace_id = personal_le.workspace_id
+        WHERE personal_le.workspace_id = le.workspace_id
+          AND personal_le.event_id = le.event_id
+          AND personal_le.kind = 'transfer'
+          AND COALESCE(personal_am.account_type, 'personal') = 'personal'
+      )
+    `);
   }
 
   if (conditions.length === 0) return "";

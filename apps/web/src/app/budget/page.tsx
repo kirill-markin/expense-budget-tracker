@@ -30,7 +30,15 @@ async function BudgetData() {
   const monthTo = offsetMonth(currentMonth, INITIAL_FUTURE_MONTHS);
 
   if (demo) {
-    const { rows, conversionWarnings, cumulativeBefore, monthEndBalances, monthEndBalancesByLiquidity } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
+    const {
+      rows,
+      conversionWarnings,
+      cumulativeBefore,
+      monthEndBalances,
+      monthEndBalancesByLiquidity,
+      businessPersonalTransfers,
+      hasBusinessAccount,
+    } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
     const hints = getDemoFieldHints();
     return (
       <BudgetTable
@@ -39,6 +47,8 @@ async function BudgetData() {
         cumulativeBefore={cumulativeBefore}
         monthEndBalances={monthEndBalances}
         monthEndBalancesByLiquidity={monthEndBalancesByLiquidity}
+        businessPersonalTransfers={businessPersonalTransfers}
+        hasBusinessAccount={hasBusinessAccount}
         initialMonthFrom={monthFrom}
         initialMonthTo={monthTo}
         reportingCurrency="USD"
@@ -52,7 +62,15 @@ async function BudgetData() {
   const userId = extractUserIdFromHeaders(headersList);
   const workspaceId = extractWorkspaceIdFromHeaders(headersList);
 
-  const [{ rows, conversionWarnings, cumulativeBefore, monthEndBalances, monthEndBalancesByLiquidity }, reportingCurrency, hints] = await Promise.all([
+  const [{
+    rows,
+    conversionWarnings,
+    cumulativeBefore,
+    monthEndBalances,
+    monthEndBalancesByLiquidity,
+    businessPersonalTransfers,
+    hasBusinessAccount,
+  }, reportingCurrency, hints] = await Promise.all([
     getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth),
     getReportCurrency(userId, workspaceId),
     getFieldHints(userId, workspaceId),
@@ -65,6 +83,8 @@ async function BudgetData() {
       cumulativeBefore={cumulativeBefore}
       monthEndBalances={monthEndBalances}
       monthEndBalancesByLiquidity={monthEndBalancesByLiquidity}
+      businessPersonalTransfers={businessPersonalTransfers}
+      hasBusinessAccount={hasBusinessAccount}
       initialMonthFrom={monthFrom}
       initialMonthTo={monthTo}
       reportingCurrency={reportingCurrency}

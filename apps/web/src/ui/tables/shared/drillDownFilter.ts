@@ -4,4 +4,5 @@ export type DrillDownFilter = Readonly<{
   direction: string | null;
   category: string | null;
   categories: ReadonlyArray<string> | null;
+  businessPersonalTransfers: boolean;
 }>;

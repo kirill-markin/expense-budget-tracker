@@ -73,6 +73,7 @@ type Transfer = Readonly<{
 const TRANSFERS: ReadonlyArray<Transfer> = [
   { from: "checking-usd", to: "savings-usd",  fromCur: "USD", toCur: "USD", fromAmt: -2000, toAmt: 2000, day: 15, every: 3, offset: 1 },
   { from: "checking-usd", to: "checking-gbp", fromCur: "USD", toCur: "GBP", fromAmt: -500,  toAmt: 400,  day: 8,  every: 6, offset: 3 },
+  { from: "checking-eur", to: "checking-usd", fromCur: "EUR", toCur: "USD", fromAmt: -600,  toAmt: 610,  day: 22, every: 3, offset: 2 },
 ];
 
 const BUDGET_PLAN: ReadonlyArray<Readonly<{ direction: string; category: string; planned: number }>> = [
@@ -99,6 +100,9 @@ const BUDGET_PLAN: ReadonlyArray<Readonly<{ direction: string; category: string;
 const ACCOUNT_CURRENCIES: Readonly<Record<string, string>> = {
   "checking-usd": "USD", "checking-eur": "EUR", "checking-gbp": "GBP", "savings-usd": "USD",
 };
+
+const DEMO_LIQUIDITY: Readonly<Record<string, string>> = { "savings-usd": "medium" };
+const DEMO_ACCOUNT_TYPES: Readonly<Record<string, string>> = { "checking-eur": "business" };
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -140,6 +144,8 @@ type DemoData = Readonly<{
   budgetRows: ReadonlyArray<BudgetRow>;
   monthEndBalances: Readonly<Record<string, number>>;
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  businessPersonalTransfers: Readonly<Record<string, Readonly<{ actual: number; hasUnconvertible: boolean }>>>;
+  hasBusinessAccount: boolean;
   currencyNative: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }>;
 
@@ -155,11 +161,10 @@ const generate = (): DemoData => {
   const accBal: Record<string, number> = { "checking-usd": 0, "checking-eur": 0, "checking-gbp": 0, "savings-usd": 0 };
   const monthEndBal: Record<string, number> = {};
   const monthEndBalByLiq: Record<string, Record<string, number>> = {};
+  const businessPersonalTransfers: Record<string, { actual: number; hasUnconvertible: boolean }> = {};
   const curNative: Record<string, Record<string, number>> = {};
   let entryN = 0;
   let eventN = 0;
-
-  const DEMO_LIQUIDITY: Readonly<Record<string, string>> = { "savings-usd": "medium" };
 
   monthEndBal[offsetMonth(pastMonths[0], -1)] = 0;
   monthEndBalByLiq[offsetMonth(pastMonths[0], -1)] = { high: 0 };
@@ -203,6 +208,16 @@ const generate = (): DemoData => {
       accBal[t.from] = round2((accBal[t.from] ?? 0) + t.fromAmt);
       accBal[t.to] = round2((accBal[t.to] ?? 0) + t.toAmt);
       transferNet = round2(transferNet + fromUsd + toUsd);
+      const fromType = DEMO_ACCOUNT_TYPES[t.from] ?? "personal";
+      const toType = DEMO_ACCOUNT_TYPES[t.to] ?? "personal";
+      if (fromType !== toType && (fromType === "business" || toType === "business")) {
+        const personalAmount = fromType === "personal" ? fromUsd : toUsd;
+        const previous = businessPersonalTransfers[month] ?? { actual: 0, hasUnconvertible: false };
+        businessPersonalTransfers[month] = {
+          actual: round2(previous.actual + personalAmount),
+          hasUnconvertible: false,
+        };
+      }
     }
     actuals.set(`${month}|transfer|`, round2((actuals.get(`${month}|transfer|`) ?? 0) + transferNet));
 
@@ -230,6 +245,7 @@ const generate = (): DemoData => {
       const balance = round2(accBal[accountId] ?? 0);
       return {
         accountId, currency, liquidity: DEMO_LIQUIDITY[accountId] ?? "high",
+        accountType: DEMO_ACCOUNT_TYPES[accountId] ?? "personal",
         status: "active" as const, balance,
         balanceReport: round2(balance * (FX[currency] ?? 1)),
         lastTransactionTs: entries.find((e) => e.accountId === accountId)?.ts ?? null,
@@ -277,7 +293,18 @@ const generate = (): DemoData => {
     });
   }
 
-  const data: DemoData = { entries, accounts, totals, budgetRows, monthEndBalances: monthEndBal, monthEndBalancesByLiquidity: monthEndBalByLiq, currencyNative: curNative };
+  const hasBusinessAccount = Object.values(DEMO_ACCOUNT_TYPES).some((accountType) => accountType === "business");
+  const data: DemoData = {
+    entries,
+    accounts,
+    totals,
+    budgetRows,
+    monthEndBalances: monthEndBal,
+    monthEndBalancesByLiquidity: monthEndBalByLiq,
+    businessPersonalTransfers,
+    hasBusinessAccount,
+    currencyNative: curNative,
+  };
   cached = { month: now, data };
   return data;
 };
@@ -372,6 +399,24 @@ const applyFilter = (entries: ReadonlyArray<LedgerEntry>, filter: TransactionsFi
       );
     }
   }
+  if (filter.businessPersonalTransfers) {
+    const eligibleEventIds = new Set<string>();
+    const eventAccountTypes = new Map<string, Set<string>>();
+    for (const entry of entries) {
+      if (entry.kind !== "transfer") {
+        continue;
+      }
+      const accountTypes = eventAccountTypes.get(entry.eventId) ?? new Set<string>();
+      accountTypes.add(DEMO_ACCOUNT_TYPES[entry.accountId] ?? "personal");
+      eventAccountTypes.set(entry.eventId, accountTypes);
+    }
+    for (const [eventId, accountTypes] of eventAccountTypes) {
+      if (accountTypes.has("business") && accountTypes.has("personal")) {
+        eligibleEventIds.add(eventId);
+      }
+    }
+    result = result.filter((entry) => entry.kind === "transfer" && eligibleEventIds.has(entry.eventId));
+  }
   return result;
 };
 
@@ -459,7 +504,7 @@ export const getDemoBudgetGrid = (
   _planFrom: string,
   _actualTo: string,
 ): BudgetGridResult => {
-  const { budgetRows, monthEndBalances, monthEndBalancesByLiquidity } = generate();
+  const { budgetRows, monthEndBalances, monthEndBalancesByLiquidity, businessPersonalTransfers, hasBusinessAccount } = generate();
   const months = new Set(generateMonthRange(monthFrom, monthTo));
   return {
     rows: budgetRows.filter((r) => months.has(r.month)),
@@ -467,6 +512,8 @@ export const getDemoBudgetGrid = (
     cumulativeBefore: { incomeActual: 0, spendActual: 0, transferActual: 0 },
     monthEndBalances,
     monthEndBalancesByLiquidity,
+    businessPersonalTransfers,
+    hasBusinessAccount,
   };
 };
 

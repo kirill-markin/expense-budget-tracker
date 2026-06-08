@@ -152,6 +152,9 @@ export const buildDrillDownPageUrl = (
       params.append("categories", category);
     }
   }
+  if (filter.businessPersonalTransfers) {
+    params.set("businessPersonalTransfers", "true");
+  }
   params.set("sortKey", sortKey);
   params.set("sortDir", sortDir);
   params.set("limit", String(limit));
@@ -180,7 +183,7 @@ export const buildDrillDownCreateEntryRequest = (
   accountId: "",
   amount: 0,
   currency: "",
-  kind: filter.direction ?? "spend",
+  kind: filter.businessPersonalTransfers ? "transfer" : (filter.direction ?? "spend"),
   category: filter.category === null ? null : (filter.category === "" ? null : filter.category),
   counterparty: null,
   note: null,

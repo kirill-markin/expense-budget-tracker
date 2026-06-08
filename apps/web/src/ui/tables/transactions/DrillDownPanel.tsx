@@ -70,6 +70,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   const { filter, categories, hints, reportingCurrency, refreshToken, onClose } = props;
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
+  const title = filter.businessPersonalTransfers ? t("budget.businessPersonalTransfer") : buildTitle(filter);
   const getMaskClass = useCallback((row: LedgerEntry): string => {
     void row;
     return "";
@@ -135,7 +136,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   } = useEditableTransactionsTable({
     fetchPage,
     createEntryRequest: () => buildDrillDownCreateEntryRequest(filter),
-    resetDeps: [filter.dateFrom, filter.dateTo, filter.direction, filter.category, categoriesKey, sort[0].key, sort[0].dir, refreshToken],
+    resetDeps: [filter.dateFrom, filter.dateTo, filter.direction, filter.category, categoriesKey, filter.businessPersonalTransfers, sort[0].key, sort[0].dir, refreshToken],
     onDirty: () => {
       dirtyRef.current = true;
     },
@@ -229,13 +230,15 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         />
         <div className={panelStyles.panelHeader}>
           <div>
-            <div className={panelStyles.panelTitle}>{buildTitle(filter)}</div>
+            <div className={panelStyles.panelTitle}>{title}</div>
             <div className={panelStyles.panelSubtitle}>{buildSubtitle(filter)}</div>
           </div>
           <div className={panelStyles.panelHeaderActions}>
-            <button className={transactionStyles.addRowButton} type="button" onClick={addRow}>
-              {t("txn.addRow")}
-            </button>
+            {!filter.businessPersonalTransfers && (
+              <button className={transactionStyles.addRowButton} type="button" onClick={addRow}>
+                {t("txn.addRow")}
+              </button>
+            )}
             <button className={panelStyles.panelCloseButton} type="button" onClick={closePanel}>
               &times;
             </button>

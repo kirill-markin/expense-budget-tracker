@@ -96,12 +96,15 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
               transferSubtotals={controller.transferSubtotals}
               taintedMonths={controller.taintedMonths}
               fxAdjustments={controller.fxAdjustments}
+              businessPersonalTransfers={controller.businessPersonalTransfers}
+              hasBusinessAccount={controller.hasBusinessAccount}
               cumulativeBalances={controller.cumulativeBalances}
               hasLiquidityBreakdown={controller.hasLiquidityBreakdown}
               liquidityTiers={controller.liquidityTiers}
               mebByLiq={controller.mebByLiq}
               projectedLiqBalances={controller.projectedLiqBalances}
               numberFormat={numberFormat}
+              openDrillDown={controller.openDrillDown}
               openFxBreakdown={controller.openFxBreakdown}
             />
           </tbody>

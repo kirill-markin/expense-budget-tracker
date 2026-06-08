@@ -53,13 +53,15 @@ type LiquidityTotal = Readonly<{
 
 type LiquiditySortKey = "liquidity" | "balance" | "balancePositive" | "balanceNegative" | "accountCount";
 
-type AccountsSortKey = "accountId" | "currency" | "liquidity" | "balance" | "balanceReport" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
+type AccountsSortKey = "accountId" | "currency" | "liquidity" | "accountType" | "balance" | "balanceReport" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 const LIQUIDITY_OPTIONS: ReadonlyArray<string> = ["high", "medium", "low"];
+const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<string> = ["personal", "business"];
 
 const LIQUIDITY_ORDER: Readonly<Record<string, number>> = { high: 0, medium: 1, low: 2 };
+const ACCOUNT_TYPE_ORDER: Readonly<Record<string, number>> = { personal: 0, business: 1 };
 
 const TOTALS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   currency: "asc",
@@ -81,6 +83,7 @@ const ACCOUNTS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   accountId: "asc",
   currency: "asc",
   liquidity: "asc",
+  accountType: "asc",
   balance: "desc",
   balanceReport: "desc",
   lastTransactionTs: "asc",
@@ -150,6 +153,9 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
     case "liquidity":
       cmp = (LIQUIDITY_ORDER[a.liquidity] ?? 0) - (LIQUIDITY_ORDER[b.liquidity] ?? 0);
       break;
+    case "accountType":
+      cmp = (ACCOUNT_TYPE_ORDER[a.accountType] ?? 0) - (ACCOUNT_TYPE_ORDER[b.accountType] ?? 0);
+      break;
     case "balance":
       cmp = a.balance - b.balance;
       break;
@@ -179,14 +185,14 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
   return dir === "asc" ? cmp : -cmp;
 };
 
-const saveLiquidity = async (accountId: string, liquidity: string): Promise<void> => {
+const saveAccountMetadata = async (accountId: string, liquidity: string, accountType: string): Promise<void> => {
   const response = await fetchWithCsrf("/api/account-metadata", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accountId, liquidity }),
+    body: JSON.stringify({ accountId, liquidity, accountType }),
   });
   if (!response.ok) {
-    throw new Error(`Failed to save liquidity: ${response.status}`);
+    throw new Error(`Failed to save account metadata: ${response.status} ${await response.text()}`);
   }
 };
 
@@ -273,16 +279,21 @@ export const BalancesTable = (props: Props): ReactElement => {
   const [liquidityOpen, setLiquidityOpen] = useState<string | null>(null);
   const [liquidityRect, setLiquidityRect] = useState<Rect | null>(null);
   const liquidityCellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
+  const [accountTypeOpen, setAccountTypeOpen] = useState<string | null>(null);
+  const [accountTypeRect, setAccountTypeRect] = useState<Rect | null>(null);
+  const accountTypeCellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
 
   const handleLiquidityClick = useCallback((accountId: string): void => {
     const cell = liquidityCellRefs.current.get(accountId);
     if (cell === undefined) return;
     const r = cell.getBoundingClientRect();
+    setAccountTypeOpen(null);
+    setAccountTypeRect(null);
     setLiquidityRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     setLiquidityOpen(accountId);
   }, []);
 
-  const handleLiquiditySelect = useCallback((accountId: string, oldLiquidity: string, value: string | null): void => {
+  const handleLiquiditySelect = useCallback((accountId: string, oldLiquidity: string, accountType: string, value: string | null): void => {
     setLiquidityOpen(null);
     setLiquidityRect(null);
     if (value === null || value === oldLiquidity) return;
@@ -292,7 +303,7 @@ export const BalancesTable = (props: Props): ReactElement => {
     );
     setSaveError(null);
 
-    saveLiquidity(accountId, value).catch((err) => {
+    saveAccountMetadata(accountId, value, accountType).catch((err) => {
       setLocalAccounts((prev) =>
         prev.map((a) => a.accountId === accountId ? { ...a, liquidity: oldLiquidity } : a),
       );
@@ -303,6 +314,39 @@ export const BalancesTable = (props: Props): ReactElement => {
   const handleLiquidityClose = useCallback((): void => {
     setLiquidityOpen(null);
     setLiquidityRect(null);
+  }, []);
+
+  const handleAccountTypeClick = useCallback((accountId: string): void => {
+    const cell = accountTypeCellRefs.current.get(accountId);
+    if (cell === undefined) return;
+    const r = cell.getBoundingClientRect();
+    setLiquidityOpen(null);
+    setLiquidityRect(null);
+    setAccountTypeRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    setAccountTypeOpen(accountId);
+  }, []);
+
+  const handleAccountTypeSelect = useCallback((accountId: string, liquidity: string, oldAccountType: string, value: string | null): void => {
+    setAccountTypeOpen(null);
+    setAccountTypeRect(null);
+    if (value === null || value === oldAccountType) return;
+
+    setLocalAccounts((prev) =>
+      prev.map((a) => a.accountId === accountId ? { ...a, accountType: value } : a),
+    );
+    setSaveError(null);
+
+    saveAccountMetadata(accountId, liquidity, value).catch((err) => {
+      setLocalAccounts((prev) =>
+        prev.map((a) => a.accountId === accountId ? { ...a, accountType: oldAccountType } : a),
+      );
+      setSaveError(err instanceof Error ? err.message : String(err));
+    });
+  }, []);
+
+  const handleAccountTypeClose = useCallback((): void => {
+    setAccountTypeOpen(null);
+    setAccountTypeRect(null);
   }, []);
 
   const sortedTotals = useMemo<ReadonlyArray<CurrencyTotal>>(
@@ -583,7 +627,7 @@ export const BalancesTable = (props: Props): ReactElement => {
               currentValue={a.liquidity}
               allowEmpty={false}
               rect={liquidityRect}
-              onSelect={(value) => handleLiquiditySelect(a.accountId, a.liquidity, value)}
+              onSelect={(value) => handleLiquiditySelect(a.accountId, a.liquidity, a.accountType, value)}
               onClose={handleLiquidityClose}
             />
           )}
@@ -591,6 +635,35 @@ export const BalancesTable = (props: Props): ReactElement => {
       ),
       rightAlign: false,
       sortKey: "liquidity",
+    },
+    {
+      key: "accountType",
+      header: t("balances.accountType"),
+      renderCell: (a: AccountRow): ReactElement => (
+        <td
+          key="accountType"
+          ref={(el) => {
+            if (el !== null) accountTypeCellRefs.current.set(a.accountId, el);
+            else accountTypeCellRefs.current.delete(a.accountId);
+          }}
+          className={cn(tableStyles.cell, !isMasked ? tableStyles.editable : "", !isMasked ? tableStyles.editableSelect : "", maskClass)}
+          onClick={isMasked ? undefined : () => handleAccountTypeClick(a.accountId)}
+        >
+          {t(`balances.accountType${a.accountType.charAt(0).toUpperCase()}${a.accountType.slice(1)}`)}
+          {accountTypeOpen === a.accountId && accountTypeRect !== null && (
+            <CellSelectOverlay
+              options={ACCOUNT_TYPE_OPTIONS}
+              currentValue={a.accountType}
+              allowEmpty={false}
+              rect={accountTypeRect}
+              onSelect={(value) => handleAccountTypeSelect(a.accountId, a.liquidity, a.accountType, value)}
+              onClose={handleAccountTypeClose}
+            />
+          )}
+        </td>
+      ),
+      rightAlign: false,
+      sortKey: "accountType",
     },
     {
       key: "balance",

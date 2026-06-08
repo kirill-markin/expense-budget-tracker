@@ -71,6 +71,7 @@ export type AgentSchemaHints = Readonly<{
 }>;
 
 const ACCOUNT_METADATA_LIQUIDITY_VALUES = ["high", "medium", "low"] as const;
+const ACCOUNT_METADATA_ACCOUNT_TYPE_VALUES = ["personal", "business"] as const;
 
 const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>> = {
   account_metadata: {
@@ -78,16 +79,23 @@ const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSche
     primaryKey: ["workspace_id", "account_id"],
     notes: [
       "Optional sidecar table for per-account metadata.",
-      "Missing row is allowed. Balances and budget queries treat missing liquidity as 'high'.",
-      "Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity.",
+      "Missing row is allowed. Balances and budget queries treat missing liquidity as 'high' and missing account_type as 'personal'.",
+      "Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity or account type.",
       "Restricted agent SQL does not support ON CONFLICT for this table. Read first, then use an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists.",
       "Before a long mutating INSERT or UPDATE, first try the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. The user's explicit approval covers the full approved change set, including that probe and all remaining sequential batches. If the probe fails, fix the SQL and retry the small version. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.",
     ],
-    columnConstraints: [{
-      column: "liquidity",
-      allowedValues: ACCOUNT_METADATA_LIQUIDITY_VALUES,
-      notes: ["Only high, medium, or low are accepted."],
-    }],
+    columnConstraints: [
+      {
+        column: "liquidity",
+        allowedValues: ACCOUNT_METADATA_LIQUIDITY_VALUES,
+        notes: ["Only high, medium, or low are accepted."],
+      },
+      {
+        column: "account_type",
+        allowedValues: ACCOUNT_METADATA_ACCOUNT_TYPE_VALUES,
+        notes: ["Only personal or business are accepted."],
+      },
+    ],
   },
   workspace_settings: {
     optional: false,
