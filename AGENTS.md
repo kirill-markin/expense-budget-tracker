@@ -84,6 +84,20 @@ For UI work, run the Next.js dev server directly:
 cd apps/web && npm run dev
 ```
 
+For local browser tryouts, set local auth explicitly and make `CORS_ORIGIN` match the exact origin opened in the browser:
+
+```bash
+cd apps/web
+AUTH_MODE=none CORS_ORIGIN=http://localhost:3000 npm run dev
+```
+
+If the browser uses another local host or port, set the same origin in `CORS_ORIGIN` and in the dev server command:
+
+```bash
+cd apps/web
+AUTH_MODE=none CORS_ORIGIN=http://127.0.0.1:3001 npm run dev -- -H 127.0.0.1 -p 3001
+```
+
 Toggle Demo mode with the All/Demo button in the header. It sets a `demo=true` browser cookie and serves data from `apps/web/src/server/demo/data.ts` in memory, so no Postgres is required and code changes hot-reload immediately.
 
 Use `make dev` (Docker Compose) only when you need a real database, such as for migrations, SQL queries, or the worker. Docker runs a production Next.js build, so each code change requires `docker compose -f infra/docker/compose.yml build web`.
