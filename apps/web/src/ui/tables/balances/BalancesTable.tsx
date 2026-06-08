@@ -1,5 +1,16 @@
 "use client";
 
+import {
+  ACCOUNT_METADATA_ACCOUNT_TYPE_VALUES,
+  ACCOUNT_METADATA_GROUP_VALUES,
+  ACCOUNT_METADATA_LIQUIDITY_VALUES,
+  type AccountMetadataAccountType,
+  type AccountMetadataGroup,
+  type AccountMetadataLiquidity,
+  isAccountMetadataAccountType,
+  isAccountMetadataGroup,
+  isAccountMetadataLiquidity,
+} from "@expense-budget-tracker/agent-shared";
 import { type ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -44,7 +55,15 @@ type BalancesSummaryState = Readonly<{
 type TotalsSortKey = "currency" | "balance" | "balancePositive" | "balanceNegative" | "balanceReport";
 
 type LiquidityTotal = Readonly<{
-  liquidity: string;
+  liquidity: AccountMetadataLiquidity;
+  balance: number;
+  balancePositive: number;
+  balanceNegative: number;
+  accountCount: number;
+}>;
+
+type AccountGroupTotal = Readonly<{
+  accountGroup: AccountMetadataGroup;
   balance: number;
   balancePositive: number;
   balanceNegative: number;
@@ -52,16 +71,19 @@ type LiquidityTotal = Readonly<{
 }>;
 
 type LiquiditySortKey = "liquidity" | "balance" | "balancePositive" | "balanceNegative" | "accountCount";
+type AccountGroupSortKey = "accountGroup" | "balance" | "balancePositive" | "balanceNegative" | "accountCount";
 
-type AccountsSortKey = "accountId" | "currency" | "liquidity" | "accountType" | "balance" | "balanceReport" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
+type AccountsSortKey = "accountId" | "currency" | "liquidity" | "accountType" | "accountGroup" | "balance" | "balanceReport" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
-const LIQUIDITY_OPTIONS: ReadonlyArray<string> = ["high", "medium", "low"];
-const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<string> = ["personal", "business"];
+const LIQUIDITY_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_LIQUIDITY_VALUES;
+const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_ACCOUNT_TYPE_VALUES;
+const ACCOUNT_GROUP_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_GROUP_VALUES;
 
-const LIQUIDITY_ORDER: Readonly<Record<string, number>> = { high: 0, medium: 1, low: 2 };
-const ACCOUNT_TYPE_ORDER: Readonly<Record<string, number>> = { personal: 0, business: 1 };
+const LIQUIDITY_ORDER: Readonly<Record<AccountMetadataLiquidity, number>> = { high: 0, medium: 1, low: 2 };
+const ACCOUNT_TYPE_ORDER: Readonly<Record<AccountMetadataAccountType, number>> = { personal: 0, business: 1 };
+const ACCOUNT_GROUP_ORDER: Readonly<Record<AccountMetadataGroup, number>> = { regular: 0, investment: 1 };
 
 const TOTALS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   currency: "asc",
@@ -79,11 +101,20 @@ const LIQUIDITY_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   accountCount: "desc",
 };
 
+const ACCOUNT_GROUP_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
+  accountGroup: "asc",
+  balancePositive: "desc",
+  balanceNegative: "desc",
+  balance: "desc",
+  accountCount: "desc",
+};
+
 const ACCOUNTS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   accountId: "asc",
   currency: "asc",
   liquidity: "asc",
   accountType: "asc",
+  accountGroup: "asc",
   balance: "desc",
   balanceReport: "desc",
   lastTransactionTs: "asc",
@@ -141,6 +172,28 @@ const compareLiquidityTotals = (a: LiquidityTotal, b: LiquidityTotal, key: Liqui
   return dir === "asc" ? cmp : -cmp;
 };
 
+const compareAccountGroupTotals = (a: AccountGroupTotal, b: AccountGroupTotal, key: AccountGroupSortKey, dir: "asc" | "desc"): number => {
+  let cmp = 0;
+  switch (key) {
+    case "accountGroup":
+      cmp = ACCOUNT_GROUP_ORDER[a.accountGroup] - ACCOUNT_GROUP_ORDER[b.accountGroup];
+      break;
+    case "balance":
+      cmp = a.balance - b.balance;
+      break;
+    case "balancePositive":
+      cmp = a.balancePositive - b.balancePositive;
+      break;
+    case "balanceNegative":
+      cmp = a.balanceNegative - b.balanceNegative;
+      break;
+    case "accountCount":
+      cmp = a.accountCount - b.accountCount;
+      break;
+  }
+  return dir === "asc" ? cmp : -cmp;
+};
+
 const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir: "asc" | "desc", now: Date): number => {
   let cmp = 0;
   switch (key) {
@@ -154,7 +207,10 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
       cmp = (LIQUIDITY_ORDER[a.liquidity] ?? 0) - (LIQUIDITY_ORDER[b.liquidity] ?? 0);
       break;
     case "accountType":
-      cmp = (ACCOUNT_TYPE_ORDER[a.accountType] ?? 0) - (ACCOUNT_TYPE_ORDER[b.accountType] ?? 0);
+      cmp = ACCOUNT_TYPE_ORDER[a.accountType] - ACCOUNT_TYPE_ORDER[b.accountType];
+      break;
+    case "accountGroup":
+      cmp = ACCOUNT_GROUP_ORDER[a.accountGroup] - ACCOUNT_GROUP_ORDER[b.accountGroup];
       break;
     case "balance":
       cmp = a.balance - b.balance;
@@ -185,7 +241,11 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
   return dir === "asc" ? cmp : -cmp;
 };
 
-const saveAccountMetadata = async (accountId: string, liquidity: string, accountType: string): Promise<void> => {
+const saveAccountMetadata = async (
+  accountId: string,
+  liquidity: AccountMetadataLiquidity,
+  accountType: AccountMetadataAccountType,
+): Promise<void> => {
   const response = await fetchWithCsrf("/api/account-metadata", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -193,6 +253,17 @@ const saveAccountMetadata = async (accountId: string, liquidity: string, account
   });
   if (!response.ok) {
     throw new Error(`Failed to save account metadata: ${response.status} ${await response.text()}`);
+  }
+};
+
+const saveAccountGroup = async (accountId: string, accountGroup: AccountMetadataGroup): Promise<void> => {
+  const response = await fetchWithCsrf("/api/account-metadata/account-group", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, accountGroup }),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to save account group: ${response.status} ${await response.text()}`);
   }
 };
 
@@ -269,6 +340,7 @@ export const BalancesTable = (props: Props): ReactElement => {
 
   const totalsSort = useTableSort("multi", "balanceReport", "desc", TOTALS_SORT_DEFAULTS);
   const liquiditySort = useTableSort("multi", "liquidity", "asc", LIQUIDITY_SORT_DEFAULTS);
+  const accountGroupSort = useTableSort("multi", "accountGroup", "asc", ACCOUNT_GROUP_SORT_DEFAULTS);
   const accountsSort = useTableSort("multi", "freshness", "desc", ACCOUNTS_SORT_DEFAULTS);
 
   const [lastTxInfoOpen, setLastTxInfoOpen] = useState<boolean>(false);
@@ -282,6 +354,9 @@ export const BalancesTable = (props: Props): ReactElement => {
   const [accountTypeOpen, setAccountTypeOpen] = useState<string | null>(null);
   const [accountTypeRect, setAccountTypeRect] = useState<Rect | null>(null);
   const accountTypeCellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
+  const [accountGroupOpen, setAccountGroupOpen] = useState<string | null>(null);
+  const [accountGroupRect, setAccountGroupRect] = useState<Rect | null>(null);
+  const accountGroupCellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
 
   const handleLiquidityClick = useCallback((accountId: string): void => {
     const cell = liquidityCellRefs.current.get(accountId);
@@ -289,14 +364,20 @@ export const BalancesTable = (props: Props): ReactElement => {
     const r = cell.getBoundingClientRect();
     setAccountTypeOpen(null);
     setAccountTypeRect(null);
+    setAccountGroupOpen(null);
+    setAccountGroupRect(null);
     setLiquidityRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     setLiquidityOpen(accountId);
   }, []);
 
-  const handleLiquiditySelect = useCallback((accountId: string, oldLiquidity: string, accountType: string, value: string | null): void => {
+  const handleLiquiditySelect = useCallback((accountId: string, oldLiquidity: AccountMetadataLiquidity, accountType: AccountMetadataAccountType, value: string | null): void => {
     setLiquidityOpen(null);
     setLiquidityRect(null);
     if (value === null || value === oldLiquidity) return;
+    if (!isAccountMetadataLiquidity(value)) {
+      setSaveError(`Invalid liquidity selection: ${value}`);
+      return;
+    }
 
     setLocalAccounts((prev) =>
       prev.map((a) => a.accountId === accountId ? { ...a, liquidity: value } : a),
@@ -322,14 +403,20 @@ export const BalancesTable = (props: Props): ReactElement => {
     const r = cell.getBoundingClientRect();
     setLiquidityOpen(null);
     setLiquidityRect(null);
+    setAccountGroupOpen(null);
+    setAccountGroupRect(null);
     setAccountTypeRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     setAccountTypeOpen(accountId);
   }, []);
 
-  const handleAccountTypeSelect = useCallback((accountId: string, liquidity: string, oldAccountType: string, value: string | null): void => {
+  const handleAccountTypeSelect = useCallback((accountId: string, liquidity: AccountMetadataLiquidity, oldAccountType: AccountMetadataAccountType, value: string | null): void => {
     setAccountTypeOpen(null);
     setAccountTypeRect(null);
     if (value === null || value === oldAccountType) return;
+    if (!isAccountMetadataAccountType(value)) {
+      setSaveError(`Invalid account type selection: ${value}`);
+      return;
+    }
 
     setLocalAccounts((prev) =>
       prev.map((a) => a.accountId === accountId ? { ...a, accountType: value } : a),
@@ -349,6 +436,45 @@ export const BalancesTable = (props: Props): ReactElement => {
     setAccountTypeRect(null);
   }, []);
 
+  const handleAccountGroupClick = useCallback((accountId: string): void => {
+    const cell = accountGroupCellRefs.current.get(accountId);
+    if (cell === undefined) return;
+    const r = cell.getBoundingClientRect();
+    setLiquidityOpen(null);
+    setLiquidityRect(null);
+    setAccountTypeOpen(null);
+    setAccountTypeRect(null);
+    setAccountGroupRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    setAccountGroupOpen(accountId);
+  }, []);
+
+  const handleAccountGroupSelect = useCallback((accountId: string, oldAccountGroup: AccountMetadataGroup, value: string | null): void => {
+    setAccountGroupOpen(null);
+    setAccountGroupRect(null);
+    if (value === null || value === oldAccountGroup) return;
+    if (!isAccountMetadataGroup(value)) {
+      setSaveError(`Invalid account group selection: ${value}`);
+      return;
+    }
+
+    setLocalAccounts((prev) =>
+      prev.map((a) => a.accountId === accountId ? { ...a, accountGroup: value } : a),
+    );
+    setSaveError(null);
+
+    saveAccountGroup(accountId, value).catch((err) => {
+      setLocalAccounts((prev) =>
+        prev.map((a) => a.accountId === accountId ? { ...a, accountGroup: oldAccountGroup } : a),
+      );
+      setSaveError(err instanceof Error ? err.message : String(err));
+    });
+  }, []);
+
+  const handleAccountGroupClose = useCallback((): void => {
+    setAccountGroupOpen(null);
+    setAccountGroupRect(null);
+  }, []);
+
   const sortedTotals = useMemo<ReadonlyArray<CurrencyTotal>>(
     () => [...localTotals].filter((t) => t.balance !== 0).sort((a, b) => {
       for (const entry of totalsSort.sort) {
@@ -361,7 +487,7 @@ export const BalancesTable = (props: Props): ReactElement => {
   );
 
   const sortedLiquidityTotals = useMemo<ReadonlyArray<LiquidityTotal>>(() => {
-    const groups = new Map<string, { balance: number; balancePositive: number; balanceNegative: number; accountCount: number }>();
+    const groups = new Map<AccountMetadataLiquidity, { balance: number; balancePositive: number; balanceNegative: number; accountCount: number }>();
     for (const a of localAccounts) {
       if (a.status !== "active") continue;
       const usd = a.balanceReport ?? 0;
@@ -393,6 +519,40 @@ export const BalancesTable = (props: Props): ReactElement => {
       return 0;
     });
   }, [localAccounts, liquiditySort.sort]);
+
+  const sortedAccountGroupTotals = useMemo<ReadonlyArray<AccountGroupTotal>>(() => {
+    const groups = new Map<AccountMetadataGroup, { balance: number; balancePositive: number; balanceNegative: number; accountCount: number }>();
+    for (const a of localAccounts) {
+      if (a.status !== "active") continue;
+      const usd = a.balanceReport ?? 0;
+      const existing = groups.get(a.accountGroup);
+      if (existing !== undefined) {
+        existing.balance += usd;
+        if (usd > 0) existing.balancePositive += usd;
+        if (usd < 0) existing.balanceNegative += usd;
+        existing.accountCount += 1;
+      } else {
+        groups.set(a.accountGroup, {
+          balance: usd,
+          balancePositive: usd > 0 ? usd : 0,
+          balanceNegative: usd < 0 ? usd : 0,
+          accountCount: 1,
+        });
+      }
+    }
+    const rows: Array<AccountGroupTotal> = [];
+    for (const [accountGroup, g] of groups) {
+      if (g.accountCount === 0) continue;
+      rows.push({ accountGroup, balance: g.balance, balancePositive: g.balancePositive, balanceNegative: g.balanceNegative, accountCount: g.accountCount });
+    }
+    return rows.sort((a, b) => {
+      for (const entry of accountGroupSort.sort) {
+        const cmp = compareAccountGroupTotals(a, b, entry.key as AccountGroupSortKey, entry.dir);
+        if (cmp !== 0) return cmp;
+      }
+      return 0;
+    });
+  }, [accountGroupSort.sort, localAccounts]);
 
   const inactiveCount = useMemo<number>(
     () => localAccounts.filter((a) => a.status !== "active").length,
@@ -463,6 +623,8 @@ export const BalancesTable = (props: Props): ReactElement => {
   }
 
   const currencyList = localConversionWarnings.map((w) => w.currency).join(", ");
+  const getAccountGroupLabel = (accountGroup: AccountMetadataGroup): string =>
+    t(`balances.accountGroup${accountGroup.charAt(0).toUpperCase()}${accountGroup.slice(1)}`);
 
   const totalsColumns: ReadonlyArray<ColumnDef<CurrencyTotal>> = [
     {
@@ -586,6 +748,66 @@ export const BalancesTable = (props: Props): ReactElement => {
     </tr>,
   ];
 
+  const accountGroupColumns: ReadonlyArray<ColumnDef<AccountGroupTotal>> = [
+    {
+      key: "accountGroup",
+      header: t("balances.accountGroup"),
+      renderCell: (row: AccountGroupTotal): ReactElement => (
+        <td key="accountGroup" className={cn(tableStyles.cell, maskClass)}>{getAccountGroupLabel(row.accountGroup)}</td>
+      ),
+      rightAlign: false,
+      sortKey: "accountGroup",
+    },
+    {
+      key: "balancePositive",
+      header: t("balances.totalPlus"),
+      renderCell: (row: AccountGroupTotal): ReactElement => (
+        <td key="balancePositive" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balancePositive, numberFormat)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balancePositive",
+    },
+    {
+      key: "balanceNegative",
+      header: t("balances.totalMinus"),
+      renderCell: (row: AccountGroupTotal): ReactElement => (
+        <td key="balanceNegative" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balanceNegative, numberFormat)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balanceNegative",
+    },
+    {
+      key: "balance",
+      header: t("balances.balance"),
+      renderCell: (row: AccountGroupTotal): ReactElement => (
+        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balance, numberFormat)}</td>
+      ),
+      rightAlign: true,
+      sortKey: "balance",
+    },
+    {
+      key: "accountCount",
+      header: t("balances.accountCount"),
+      renderCell: (row: AccountGroupTotal): ReactElement => (
+        <td key="accountCount" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{row.accountCount}</td>
+      ),
+      rightAlign: true,
+      sortKey: "accountCount",
+    },
+  ];
+
+  const accountGroupFooterRows: ReadonlyArray<ReactElement> = [
+    <tr key="total" className={cn(tableStyles.row, tableStyles.rowTotal)}>
+      <td className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
+      <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>{formatAmount(totalPositiveUsd, numberFormat)}</td>
+      <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>{formatAmount(totalNegativeUsd, numberFormat)}</td>
+      <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
+        {totalUsd !== null ? formatAmount(totalUsd, numberFormat) : "\u2014"}
+      </td>
+      <td className={tableStyles.cell} />
+    </tr>,
+  ];
+
   const accountsColumns: ReadonlyArray<ColumnDef<AccountRow>> = [
     {
       key: "accountId",
@@ -664,6 +886,35 @@ export const BalancesTable = (props: Props): ReactElement => {
       ),
       rightAlign: false,
       sortKey: "accountType",
+    },
+    {
+      key: "accountGroup",
+      header: t("balances.accountGroup"),
+      renderCell: (a: AccountRow): ReactElement => (
+        <td
+          key="accountGroup"
+          ref={(el) => {
+            if (el !== null) accountGroupCellRefs.current.set(a.accountId, el);
+            else accountGroupCellRefs.current.delete(a.accountId);
+          }}
+          className={cn(tableStyles.cell, !isMasked ? tableStyles.editable : "", !isMasked ? tableStyles.editableSelect : "", maskClass)}
+          onClick={isMasked ? undefined : () => handleAccountGroupClick(a.accountId)}
+        >
+          {getAccountGroupLabel(a.accountGroup)}
+          {accountGroupOpen === a.accountId && accountGroupRect !== null && (
+            <CellSelectOverlay
+              options={ACCOUNT_GROUP_OPTIONS}
+              currentValue={a.accountGroup}
+              allowEmpty={false}
+              rect={accountGroupRect}
+              onSelect={(value) => handleAccountGroupSelect(a.accountId, a.accountGroup, value)}
+              onClose={handleAccountGroupClose}
+            />
+          )}
+        </td>
+      ),
+      rightAlign: false,
+      sortKey: "accountGroup",
     },
     {
       key: "balance",
@@ -829,6 +1080,22 @@ export const BalancesTable = (props: Props): ReactElement => {
           loadingMore={false}
           sentinelRef={null}
           footerRows={liquidityFooterRows}
+        />
+      </div>
+
+      <h2 className={balancesStyles.sectionTitle}>{t("balances.byAccountGroup")}</h2>
+      <div className={tableStyles.scroll}>
+        <DataTable<AccountGroupTotal>
+          columns={accountGroupColumns}
+          rows={sortedAccountGroupTotals}
+          rowKey={(row) => row.accountGroup}
+          sort={accountGroupSort.sort}
+          onSort={accountGroupSort.onSort}
+          emptyMessage={t("balances.noAccountGroupData")}
+          loading={false}
+          loadingMore={false}
+          sentinelRef={null}
+          footerRows={accountGroupFooterRows}
         />
       </div>
 

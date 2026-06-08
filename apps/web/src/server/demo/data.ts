@@ -2,6 +2,15 @@
  * Dynamic demo data generator. Data is generated relative to the current month
  * so the demo always looks fresh. To adjust: edit PATTERNS, TRANSFERS, or BUDGET_PLAN.
  */
+import {
+  ACCOUNT_METADATA_DEFAULT_ACCOUNT_TYPE,
+  ACCOUNT_METADATA_DEFAULT_GROUP,
+  ACCOUNT_METADATA_DEFAULT_LIQUIDITY,
+  type AccountMetadataAccountType,
+  type AccountMetadataGroup,
+  type AccountMetadataLiquidity,
+} from "@expense-budget-tracker/agent-shared";
+
 import type { AccountRow, BalancesSummaryResult, CurrencyTotal } from "@/server/balances/getBalancesSummary";
 import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
@@ -101,8 +110,9 @@ const ACCOUNT_CURRENCIES: Readonly<Record<string, string>> = {
   "checking-usd": "USD", "checking-eur": "EUR", "checking-gbp": "GBP", "savings-usd": "USD",
 };
 
-const DEMO_LIQUIDITY: Readonly<Record<string, string>> = { "savings-usd": "medium" };
-const DEMO_ACCOUNT_TYPES: Readonly<Record<string, string>> = { "checking-eur": "business" };
+const DEMO_LIQUIDITY: Readonly<Record<string, AccountMetadataLiquidity>> = { "savings-usd": "medium" };
+const DEMO_ACCOUNT_TYPES: Readonly<Record<string, AccountMetadataAccountType>> = { "checking-eur": "business" };
+const DEMO_ACCOUNT_GROUPS: Readonly<Record<string, AccountMetadataGroup>> = { "savings-usd": "investment" };
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -208,8 +218,8 @@ const generate = (): DemoData => {
       accBal[t.from] = round2((accBal[t.from] ?? 0) + t.fromAmt);
       accBal[t.to] = round2((accBal[t.to] ?? 0) + t.toAmt);
       transferNet = round2(transferNet + fromUsd + toUsd);
-      const fromType = DEMO_ACCOUNT_TYPES[t.from] ?? "personal";
-      const toType = DEMO_ACCOUNT_TYPES[t.to] ?? "personal";
+      const fromType = DEMO_ACCOUNT_TYPES[t.from] ?? ACCOUNT_METADATA_DEFAULT_ACCOUNT_TYPE;
+      const toType = DEMO_ACCOUNT_TYPES[t.to] ?? ACCOUNT_METADATA_DEFAULT_ACCOUNT_TYPE;
       if (fromType !== toType && (fromType === "business" || toType === "business")) {
         const personalAmount = fromType === "personal" ? fromUsd : toUsd;
         const previous = businessPersonalTransfers[month] ?? { actual: 0, hasUnconvertible: false };
@@ -226,7 +236,7 @@ const generate = (): DemoData => {
     const liqBal: Record<string, number> = {};
     for (const [acc, bal] of Object.entries(accBal)) {
       const cur = ACCOUNT_CURRENCIES[acc] ?? "USD";
-      const liq = DEMO_LIQUIDITY[acc] ?? "high";
+      const liq = DEMO_LIQUIDITY[acc] ?? ACCOUNT_METADATA_DEFAULT_LIQUIDITY;
       const balUsd = round2(bal * (FX[cur] ?? 1));
       nativeBal[cur] = round2((nativeBal[cur] ?? 0) + bal);
       totalUsd = round2(totalUsd + balUsd);
@@ -244,8 +254,9 @@ const generate = (): DemoData => {
     .map(([accountId, currency]) => {
       const balance = round2(accBal[accountId] ?? 0);
       return {
-        accountId, currency, liquidity: DEMO_LIQUIDITY[accountId] ?? "high",
-        accountType: DEMO_ACCOUNT_TYPES[accountId] ?? "personal",
+        accountId, currency, liquidity: DEMO_LIQUIDITY[accountId] ?? ACCOUNT_METADATA_DEFAULT_LIQUIDITY,
+        accountType: DEMO_ACCOUNT_TYPES[accountId] ?? ACCOUNT_METADATA_DEFAULT_ACCOUNT_TYPE,
+        accountGroup: DEMO_ACCOUNT_GROUPS[accountId] ?? ACCOUNT_METADATA_DEFAULT_GROUP,
         status: "active" as const, balance,
         balanceReport: round2(balance * (FX[currency] ?? 1)),
         lastTransactionTs: entries.find((e) => e.accountId === accountId)?.ts ?? null,

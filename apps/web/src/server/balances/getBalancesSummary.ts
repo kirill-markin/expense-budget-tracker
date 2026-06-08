@@ -10,6 +10,18 @@
  * FX conversion uses the latest fully built day from fx_rates_daily.
  * Accounts are classified as active/inactive based on balance and 90-day activity.
  */
+import {
+  ACCOUNT_METADATA_DEFAULT_ACCOUNT_TYPE,
+  ACCOUNT_METADATA_DEFAULT_GROUP,
+  ACCOUNT_METADATA_DEFAULT_LIQUIDITY,
+  type AccountMetadataAccountType,
+  type AccountMetadataGroup,
+  type AccountMetadataLiquidity,
+  isAccountMetadataAccountType,
+  isAccountMetadataGroup,
+  isAccountMetadataLiquidity,
+} from "@expense-budget-tracker/agent-shared";
+
 import { withUserContext } from "@/server/db";
 import { getLatestFxCalendarDate } from "@/server/fxRates";
 import { getReportCurrency } from "@/server/reportCurrency";
@@ -18,8 +30,9 @@ import { type StalenessInput, isAccountOverdue } from "@/server/balances/account
 export type AccountRow = Readonly<{
   accountId: string;
   currency: string;
-  liquidity: string;
-  accountType: string;
+  liquidity: AccountMetadataLiquidity;
+  accountType: AccountMetadataAccountType;
+  accountGroup: AccountMetadataGroup;
   status: string;
   balance: number;
   balanceReport: number | null;
@@ -161,7 +174,12 @@ const STALENESS_QUERY = `
 `;
 
 const METADATA_QUERY = `
-  SELECT account_id, liquidity, account_type FROM account_metadata
+  SELECT
+    am.account_id,
+    am.liquidity,
+    COALESCE(to_jsonb(am)->>'account_type', $1) AS account_type,
+    COALESCE(to_jsonb(am)->>'account_group', $2) AS account_group
+  FROM account_metadata am
 `;
 
 export const WARNINGS_QUERY = `
@@ -195,16 +213,25 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
       q(TOTALS_QUERY, [reportCurrency, latestFxCalendarDate]),
       q(WARNINGS_QUERY, [reportCurrency, latestFxCalendarDate]),
       q(STALENESS_QUERY, []),
-      q(METADATA_QUERY, []),
+      q(METADATA_QUERY, [ACCOUNT_METADATA_DEFAULT_ACCOUNT_TYPE, ACCOUNT_METADATA_DEFAULT_GROUP]),
     ]);
 
-    const metadataMap = new Map<string, Readonly<{ liquidity: string; accountType: string }>>();
+    const metadataMap = new Map<string, Readonly<{
+      liquidity: AccountMetadataLiquidity;
+      accountType: AccountMetadataAccountType;
+      accountGroup: AccountMetadataGroup;
+    }>>();
     for (const row of metadataResult.rows as ReadonlyArray<{
       account_id: string;
       liquidity: string;
       account_type: string;
+      account_group: string;
     }>) {
-      metadataMap.set(row.account_id, { liquidity: row.liquidity, accountType: row.account_type });
+      metadataMap.set(row.account_id, {
+        liquidity: parseLiquidity(row.account_id, row.liquidity),
+        accountType: parseAccountType(row.account_id, row.account_type),
+        accountGroup: parseAccountGroup(row.account_id, row.account_group),
+      });
     }
 
     const stalenessMap = new Map<string, StalenessInput>();
@@ -244,8 +271,9 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
         return {
           accountId: row.account_id,
           currency: row.currency,
-          liquidity: metadata?.liquidity ?? "high",
-          accountType: metadata?.accountType ?? "personal",
+          liquidity: metadata?.liquidity ?? ACCOUNT_METADATA_DEFAULT_LIQUIDITY,
+          accountType: metadata?.accountType ?? ACCOUNT_METADATA_DEFAULT_ACCOUNT_TYPE,
+          accountGroup: metadata?.accountGroup ?? ACCOUNT_METADATA_DEFAULT_GROUP,
           status: computeAccountStatus(Number(row.balance), lastTransactionTs),
           balance: Number(row.balance),
           balanceReport: row.balance_report !== null ? Number(row.balance_report) : null,
@@ -274,4 +302,19 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
       })),
     };
   });
+};
+
+const parseLiquidity = (accountId: string, value: string): AccountMetadataLiquidity => {
+  if (isAccountMetadataLiquidity(value)) return value;
+  throw new Error(`Invalid account_metadata.liquidity "${value}" for account_id "${accountId}"`);
+};
+
+const parseAccountType = (accountId: string, value: string): AccountMetadataAccountType => {
+  if (isAccountMetadataAccountType(value)) return value;
+  throw new Error(`Invalid account_metadata.account_type "${value}" for account_id "${accountId}"`);
+};
+
+const parseAccountGroup = (accountId: string, value: string): AccountMetadataGroup => {
+  if (isAccountMetadataGroup(value)) return value;
+  throw new Error(`Invalid account_metadata.account_group "${value}" for account_id "${accountId}"`);
 };
