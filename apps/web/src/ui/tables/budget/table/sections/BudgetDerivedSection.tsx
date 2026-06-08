@@ -74,8 +74,6 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         currentMonth={currentMonth}
         currentYear={currentYear}
         yearComputed={yearComputed}
-        numberFormat={numberFormat}
-        derivedMaskClass={derivedMaskClass}
         loadingKind="subtotal"
         rowClassName={styles.directionRow}
         renderPastYear={(year, yearData) => {
@@ -179,8 +177,6 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         currentMonth={currentMonth}
         currentYear={currentYear}
         yearComputed={yearComputed}
-        numberFormat={numberFormat}
-        derivedMaskClass={derivedMaskClass}
         loadingKind="subtotal"
         rowClassName={styles.categoryRow}
         renderPastYear={(year, yearData) => (
@@ -260,8 +256,6 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         currentMonth={currentMonth}
         currentYear={currentYear}
         yearComputed={yearComputed}
-        numberFormat={numberFormat}
-        derivedMaskClass={derivedMaskClass}
         loadingKind="subtotal"
         rowClassName={styles.directionRow}
         renderPastYear={(year, yearData) => {
