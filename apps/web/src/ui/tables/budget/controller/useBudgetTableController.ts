@@ -5,7 +5,7 @@ import type { RefObject } from "react";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { useCommentPresence } from "@/ui/hooks/useCommentPresence";
 import type { FieldHints } from "@/server/transactions/getTransactions";
-import type { BudgetRow, ConversionWarning, CumulativeBefore } from "@/server/budget/getBudgetGrid";
+import type { BudgetRow, BusinessPersonalTransferCell, ConversionWarning, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 import { getCurrentMonth, getYear } from "@/lib/monthUtils";
 import type {
   CellValue,
@@ -26,6 +26,8 @@ export type BudgetTableProps = Readonly<{
   cumulativeBefore: CumulativeBefore;
   monthEndBalances: Readonly<Record<string, number>>;
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  hasBusinessAccount: boolean;
   initialMonthFrom: string;
   initialMonthTo: string;
   reportingCurrency: string;
@@ -50,6 +52,8 @@ export type BudgetTableController = Readonly<{
   taintedMonths: ReadonlySet<string>;
   cumulativeBalances: ReadonlyMap<string, CumulativeBalance>;
   fxAdjustments: ReadonlyMap<string, number>;
+  businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  hasBusinessAccount: boolean;
   liquidityTiers: ReadonlyArray<string>;
   hasLiquidityBreakdown: boolean;
   projectedLiqBalances: ReadonlyMap<string, Readonly<Record<string, number>>>;
@@ -119,6 +123,8 @@ export const useBudgetTableController = (
     cumulativeBefore: props.cumulativeBefore,
     monthEndBalances: props.monthEndBalances,
     monthEndBalancesByLiquidity: props.monthEndBalancesByLiquidity,
+    businessPersonalTransfers: props.businessPersonalTransfers,
+    hasBusinessAccount: props.hasBusinessAccount,
     currentMonth,
     refreshToken: props.refreshToken,
     fetchCommentRange,
@@ -194,6 +200,8 @@ export const useBudgetTableController = (
     taintedMonths: derivedState.taintedMonths,
     cumulativeBalances: derivedState.cumulativeBalances,
     fxAdjustments: derivedState.fxAdjustments,
+    businessPersonalTransfers: rangeState.businessPersonalTransfers,
+    hasBusinessAccount: rangeState.hasBusinessAccount,
     liquidityTiers: derivedState.liquidityTiers,
     hasLiquidityBreakdown: derivedState.hasLiquidityBreakdown,
     projectedLiqBalances: derivedState.projectedLiqBalances,

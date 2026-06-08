@@ -63,6 +63,7 @@ export const useBudgetTableYearTotals = ({
                 cumulativeBefore: result.cumulativeBefore,
                 monthEndBalances: result.monthEndBalances,
                 monthEndBalancesByLiquidity: result.monthEndBalancesByLiquidity,
+                businessPersonalTransfers: result.businessPersonalTransfers,
               },
             ],
           ]));
@@ -86,6 +87,7 @@ export const useBudgetTableYearTotals = ({
           data.cumulativeBefore,
           data.monthEndBalances,
           data.monthEndBalancesByLiquidity,
+          data.businessPersonalTransfers,
           year,
           currentMonth,
           effectiveAllowlist,

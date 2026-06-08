@@ -11,6 +11,7 @@ export const buildDirectionYearDrillDownFilter = (
   direction,
   category: null,
   categories,
+  businessPersonalTransfers: false,
 });
 
 export const buildDirectionMonthDrillDownFilter = (
@@ -23,6 +24,7 @@ export const buildDirectionMonthDrillDownFilter = (
   direction,
   category: null,
   categories,
+  businessPersonalTransfers: false,
 });
 
 export const buildCategoryYearDrillDownFilter = (
@@ -35,6 +37,7 @@ export const buildCategoryYearDrillDownFilter = (
   direction,
   category,
   categories: null,
+  businessPersonalTransfers: false,
 });
 
 export const buildCategoryMonthDrillDownFilter = (
@@ -47,6 +50,29 @@ export const buildCategoryMonthDrillDownFilter = (
   direction,
   category,
   categories: null,
+  businessPersonalTransfers: false,
+});
+
+export const buildBusinessPersonalTransferYearDrillDownFilter = (
+  year: string,
+): DrillDownFilter => ({
+  dateFrom: `${year}-01-01`,
+  dateTo: `${year}-12-31`,
+  direction: null,
+  category: null,
+  categories: null,
+  businessPersonalTransfers: true,
+});
+
+export const buildBusinessPersonalTransferMonthDrillDownFilter = (
+  month: string,
+): DrillDownFilter => ({
+  dateFrom: monthToDateFrom(month),
+  dateTo: monthToDateTo(month),
+  direction: null,
+  category: null,
+  categories: null,
+  businessPersonalTransfers: true,
 });
 
 export const isDirectionActualOverPlanned = (

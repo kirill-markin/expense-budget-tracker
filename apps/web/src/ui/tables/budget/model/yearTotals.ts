@@ -1,5 +1,5 @@
 import { getYearMonths } from "@/lib/monthUtils";
-import type { BudgetRow, CumulativeBefore } from "@/server/budget/getBudgetGrid";
+import type { BudgetRow, BusinessPersonalTransferCell, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 import { computeCumulativeBalances, computeCumulativeBalancesByLiquidity, computeFxAdjustments } from "@/ui/tables/budget/model/balances";
 import type { CumulativeBalance } from "@/ui/tables/budget/model/balances";
 import { buildBlocks, computeAllowedSubtotals } from "@/ui/tables/budget/model/blocks";
@@ -14,6 +14,7 @@ export type YearFetchResult = Readonly<{
   cumulativeBefore: CumulativeBefore;
   monthEndBalances: Readonly<Record<string, number>>;
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
 }>;
 
 /**
@@ -28,6 +29,7 @@ export type YearTotalComputed = Readonly<{
   remainder: CellValue;
   /** Sum of per-month FX adjustments for all months in this year. */
   yearFxAdjust: number;
+  businessPersonalTransfer: BusinessPersonalTransferCell;
   decemberBalance: CumulativeBalance;
   /** December balance per liquidity tier (actual), for year-total column. */
   decemberBalancesByLiquidity: Readonly<Record<string, number>>;
@@ -49,6 +51,7 @@ export const computeYearTotal = (
   cumulativeBefore: CumulativeBefore,
   monthEndBalances: Readonly<Record<string, number>>,
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>,
+  businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>,
   year: string,
   currentMonth: string,
   allowlist: ReadonlySet<string> | null,
@@ -117,6 +120,19 @@ export const computeYearTotal = (
     yearFxAdjust += val;
   }
 
+  let businessPersonalTransferActual = 0;
+  let businessPersonalTransferHasUnconvertible = false;
+  for (const month of yearMonths) {
+    const cell = businessPersonalTransfers[month];
+    if (cell === undefined) {
+      continue;
+    }
+    businessPersonalTransferActual += cell.actual;
+    if (cell.hasUnconvertible) {
+      businessPersonalTransferHasUnconvertible = true;
+    }
+  }
+
   const decemberBalancesByLiquidity = monthEndBalancesByLiquidity[`${year}-12`] ?? {};
 
   const projectedLiqMap = computeCumulativeBalancesByLiquidity(yearMonths, inc, spd, txf, currentMonth, monthEndBalancesByLiquidity);
@@ -128,6 +144,10 @@ export const computeYearTotal = (
     filteredSubtotals,
     remainder,
     yearFxAdjust,
+    businessPersonalTransfer: {
+      actual: businessPersonalTransferActual,
+      hasUnconvertible: businessPersonalTransferHasUnconvertible,
+    },
     decemberBalance,
     decemberBalancesByLiquidity,
     decemberBalancesByLiquidityPlan,

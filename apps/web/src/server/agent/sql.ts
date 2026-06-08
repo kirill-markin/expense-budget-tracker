@@ -71,7 +71,7 @@ const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
     related: ["ledger_entries", "budget_lines", "accounts"],
   },
   account_metadata: {
-    summary: "Per-account metadata such as liquidity classification.",
+    summary: "Per-account metadata such as liquidity and personal/business classification.",
     related: ["accounts", "ledger_entries", "workspace_settings"],
   },
   fx_rates_raw: {

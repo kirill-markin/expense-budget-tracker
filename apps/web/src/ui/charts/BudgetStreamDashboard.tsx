@@ -164,6 +164,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       direction: null,
       category: null,
       categories: null,
+      businessPersonalTransfers: false,
     });
   }, []);
 
@@ -174,6 +175,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
       direction: "spend",
       category,
       categories: null,
+      businessPersonalTransfers: false,
     });
   }, [monthFrom, monthTo]);
 

@@ -9,6 +9,8 @@ import {
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 export {
+  buildBusinessPersonalTransferMonthDrillDownFilter,
+  buildBusinessPersonalTransferYearDrillDownFilter,
   buildCategoryMonthDrillDownFilter,
   buildCategoryYearDrillDownFilter,
   buildDirectionMonthDrillDownFilter,

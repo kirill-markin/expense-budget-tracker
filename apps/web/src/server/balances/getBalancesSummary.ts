@@ -19,6 +19,7 @@ export type AccountRow = Readonly<{
   accountId: string;
   currency: string;
   liquidity: string;
+  accountType: string;
   status: string;
   balance: number;
   balanceReport: number | null;
@@ -160,7 +161,7 @@ const STALENESS_QUERY = `
 `;
 
 const METADATA_QUERY = `
-  SELECT account_id, liquidity FROM account_metadata
+  SELECT account_id, liquidity, account_type FROM account_metadata
 `;
 
 export const WARNINGS_QUERY = `
@@ -197,12 +198,13 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
       q(METADATA_QUERY, []),
     ]);
 
-    const liquidityMap = new Map<string, string>();
+    const metadataMap = new Map<string, Readonly<{ liquidity: string; accountType: string }>>();
     for (const row of metadataResult.rows as ReadonlyArray<{
       account_id: string;
       liquidity: string;
+      account_type: string;
     }>) {
-      liquidityMap.set(row.account_id, row.liquidity);
+      metadataMap.set(row.account_id, { liquidity: row.liquidity, accountType: row.account_type });
     }
 
     const stalenessMap = new Map<string, StalenessInput>();
@@ -238,10 +240,12 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
         const overdue = staleness !== undefined
           ? isAccountOverdue({ ...staleness, daysSinceLast })
           : false;
+        const metadata = metadataMap.get(row.account_id);
         return {
           accountId: row.account_id,
           currency: row.currency,
-          liquidity: liquidityMap.get(row.account_id) ?? "high",
+          liquidity: metadata?.liquidity ?? "high",
+          accountType: metadata?.accountType ?? "personal",
           status: computeAccountStatus(Number(row.balance), lastTransactionTs),
           balance: Number(row.balance),
           balanceReport: row.balance_report !== null ? Number(row.balance_report) : null,

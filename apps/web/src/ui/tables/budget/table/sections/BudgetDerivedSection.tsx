@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { getCellVisibility } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
+import type { BusinessPersonalTransferCell } from "@/server/budget/getBudgetGrid";
 import {
   formatAmount,
   zeroCellValue,
@@ -16,12 +17,20 @@ import {
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import { formatFxAmount } from "@/ui/tables/fx/format";
 import {
+  buildBusinessPersonalTransferMonthDrillDownFilter,
+  buildBusinessPersonalTransferYearDrillDownFilter,
   buildYearTotalStateClass,
   isNegativeValueOver,
   renderValueCells,
 } from "./shared";
 import { LiquidityRow } from "./derived/LiquidityRow";
 import { MetricRow } from "./derived/MetricRow";
+import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
+
+const ZERO_BUSINESS_PERSONAL_TRANSFER: BusinessPersonalTransferCell = {
+  actual: 0,
+  hasUnconvertible: false,
+};
 
 export type BudgetDerivedSectionProps = Readonly<{
   effectiveAllowlist: ReadonlySet<string> | null;
@@ -34,12 +43,15 @@ export type BudgetDerivedSectionProps = Readonly<{
   transferSubtotals: ReadonlyMap<string, CellValue> | undefined;
   taintedMonths: ReadonlySet<string>;
   fxAdjustments: ReadonlyMap<string, number>;
+  businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  hasBusinessAccount: boolean;
   cumulativeBalances: ReadonlyMap<string, CumulativeBalance>;
   hasLiquidityBreakdown: boolean;
   liquidityTiers: ReadonlyArray<string>;
   mebByLiq: Readonly<Record<string, Readonly<Record<string, number>>>>;
   projectedLiqBalances: ReadonlyMap<string, Readonly<Record<string, number>>>;
   numberFormat: NumberFormat;
+  openDrillDown: (filter: DrillDownFilter) => void;
   openFxBreakdown: (month: string) => void;
 }>;
 
@@ -55,16 +67,21 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
     transferSubtotals,
     taintedMonths,
     fxAdjustments,
+    businessPersonalTransfers,
+    hasBusinessAccount,
     cumulativeBalances,
     hasLiquidityBreakdown,
     liquidityTiers,
     mebByLiq,
     projectedLiqBalances,
     numberFormat,
+    openDrillDown,
     openFxBreakdown,
   } = props;
   const { t } = useTranslation();
-  const derivedMaskClass = getCellVisibility(effectiveAllowlist, null).maskClass;
+  const derivedVisibility = getCellVisibility(effectiveAllowlist, null);
+  const derivedMaskClass = derivedVisibility.maskClass;
+  const canOpenDerivedDrillDown = derivedVisibility.showData;
 
   return (
     <>
@@ -358,6 +375,100 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           projectedLiqBalances={projectedLiqBalances}
         />
       ))}
+
+      {hasBusinessAccount && (
+        <MetricRow
+          label={t("budget.businessPersonalTransfer")}
+          columnSequence={columnSequence}
+          currentMonth={currentMonth}
+          currentYear={currentYear}
+          yearComputed={yearComputed}
+          loadingKind="subtotal"
+          rowClassName={styles.categoryRow}
+          renderPastYear={(year, yearData) => {
+            const cell = yearData.businessPersonalTransfer;
+            const stateClass = buildYearTotalStateClass(cell.hasUnconvertible, false);
+            return (
+              <td
+                key={`total-${year}`}
+                className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${stateClass}${canOpenDerivedDrillDown ? ` ${styles.cellClickable}` : ""}`}
+                onClick={canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferYearDrillDownFilter(year)) : undefined}
+              >
+                {formatAmount(cell.actual, numberFormat)}
+              </td>
+            );
+          }}
+          renderFutureYear={(year) => (
+            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}`} />
+          )}
+          renderCurrentYear={(year, yearData) => {
+            const cell = yearData.businessPersonalTransfer;
+            const stateClass = buildYearTotalStateClass(cell.hasUnconvertible, false);
+            return (
+              <Fragment key={`total-${year}`}>
+                <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}`} />
+                <td
+                  className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${stateClass}${canOpenDerivedDrillDown ? ` ${styles.cellClickable}` : ""}`}
+                  onClick={canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferYearDrillDownFilter(year)) : undefined}
+                >
+                  {formatAmount(cell.actual, numberFormat)}
+                </td>
+              </Fragment>
+            );
+          }}
+          renderPastMonth={(month) => {
+            const cell = businessPersonalTransfers[month] ?? ZERO_BUSINESS_PERSONAL_TRANSFER;
+            return renderValueCells({
+              key: month,
+              month,
+              currentMonth,
+              planned: 0,
+              actual: cell.actual,
+              isTainted: cell.hasUnconvertible,
+              isPlanOver: false,
+              isActualOver: false,
+              isSubtotal: true,
+              maskClass: derivedMaskClass,
+              numberFormat,
+              formatter: formatAmount,
+              onActualClick: canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferMonthDrillDownFilter(month)) : null,
+            });
+          }}
+          renderFutureMonth={(month) => renderValueCells({
+            key: month,
+            month,
+            currentMonth,
+            planned: 0,
+            actual: 0,
+            isTainted: false,
+            isPlanOver: false,
+            isActualOver: false,
+            isSubtotal: true,
+            maskClass: derivedMaskClass,
+            numberFormat,
+            formatter: formatAmount,
+            onActualClick: null,
+          })}
+          renderCurrentMonth={(month) => {
+            const cell = businessPersonalTransfers[month] ?? ZERO_BUSINESS_PERSONAL_TRANSFER;
+            return renderValueCells({
+              key: month,
+              month,
+              currentMonth,
+              planned: 0,
+              actual: cell.actual,
+              isTainted: cell.hasUnconvertible,
+              isPlanOver: false,
+              isActualOver: false,
+              isSubtotal: true,
+              maskClass: derivedMaskClass,
+              numberFormat,
+              formatter: formatAmount,
+              onActualClick: canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferMonthDrillDownFilter(month)) : null,
+            });
+          }}
+        />
+      )}
     </>
   );
 };

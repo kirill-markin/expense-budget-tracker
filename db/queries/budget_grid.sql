@@ -221,3 +221,58 @@ WHERE rb.month >= to_char(to_date($2, 'YYYY-MM') - interval '1 month', 'YYYY-MM'
   AND rb.month <= $3
 GROUP BY rb.month
 ORDER BY rb.month;
+
+----
+
+-- BUSINESS_PERSONAL_TRANSFER_QUERY: net transfers between business and personal accounts.
+-- Parameters: $1 = report_currency, $2 = month_from, $3 = month_to, $4 = actual_to
+-- Missing account_metadata rows count as account_type='personal'.
+WITH transfer_rows AS (
+  SELECT
+    le.event_id,
+    le.ts,
+    COALESCE(am.account_type, 'personal') AS account_type,
+    CASE
+      WHEN le.currency = $1 THEN le.amount::double precision
+      WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
+      ELSE NULL
+    END AS amount_report,
+    le.currency != $1 AND r.rate IS NULL AS has_unconvertible
+  FROM ledger_entries le
+  LEFT JOIN account_metadata am
+    ON am.account_id = le.account_id AND am.workspace_id = le.workspace_id
+  LEFT JOIN fx_rates_daily r
+    ON r.quote_currency = $1
+    AND r.base_currency = le.currency
+    AND r.calendar_date = le.ts::date
+  WHERE le.kind = 'transfer'
+    AND le.ts::date >= to_date($2, 'YYYY-MM')
+    AND le.ts::date < (LEAST(to_date($3, 'YYYY-MM'), to_date($4, 'YYYY-MM')) + interval '1 month')::date
+),
+eligible_events AS (
+  SELECT event_id
+  FROM transfer_rows
+  GROUP BY event_id
+  HAVING bool_or(account_type = 'business')
+     AND bool_or(account_type = 'personal')
+)
+SELECT
+  to_char(tr.ts::date, 'YYYY-MM') AS month,
+  COALESCE(SUM(CASE WHEN tr.account_type = 'personal' THEN tr.amount_report ELSE 0 END), 0) AS actual,
+  bool_or(tr.account_type = 'personal' AND tr.has_unconvertible) AS has_unconvertible
+FROM transfer_rows tr
+JOIN eligible_events ee ON ee.event_id = tr.event_id
+GROUP BY 1
+ORDER BY 1;
+
+----
+
+-- HAS_BUSINESS_ACCOUNT_QUERY: whether any current account is explicitly marked business.
+SELECT EXISTS (
+  SELECT 1
+  FROM accounts a
+  JOIN account_metadata am
+    ON am.account_id = a.account_id
+   AND am.workspace_id = current_setting('app.workspace_id', true)
+  WHERE am.account_type = 'business'
+) AS has_business_account;

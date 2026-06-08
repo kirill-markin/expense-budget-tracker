@@ -17,6 +17,11 @@ const accountMetadataBodySchema = z.object({
       ctx.addIssue({ code: "custom", message: "Invalid liquidity. Expected one of: high, medium, low" });
     }
   }).transform((value): string => value as string),
+  accountType: z.unknown().superRefine((value, ctx) => {
+    if (value !== "personal" && value !== "business") {
+      ctx.addIssue({ code: "custom", message: "Invalid accountType. Expected one of: personal, business" });
+    }
+  }).transform((value): string => value as string),
 });
 
 export const POST = async (request: Request): Promise<Response> =>

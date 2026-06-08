@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BudgetGridResult, BudgetRow, CumulativeBefore } from "@/server/budget/getBudgetGrid";
+import type { BudgetGridResult, BudgetRow, BusinessPersonalTransferCell, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 import { offsetMonth } from "@/lib/monthUtils";
 import {
   adjustCumulativeBeforeForPrependedRows,
@@ -19,6 +19,8 @@ type UseBudgetTableRangeStateParams = Readonly<{
   cumulativeBefore: CumulativeBefore;
   monthEndBalances: Readonly<Record<string, number>>;
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  hasBusinessAccount: boolean;
   currentMonth: string;
   refreshToken: string;
   fetchCommentRange: (monthFrom: string, monthTo: string) => void;
@@ -33,6 +35,8 @@ export type BudgetTableRangeState = Readonly<{
   cumBefore: CumulativeBefore;
   meb: Readonly<Record<string, number>>;
   mebByLiq: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  hasBusinessAccount: boolean;
   pendingSaves: number;
   isLoadingLeft: boolean;
   isLoadingRight: boolean;
@@ -61,12 +65,16 @@ const applyFetchedBudgetResult = (
   setCumBefore: (value: CumulativeBefore) => void,
   setMeb: (value: Readonly<Record<string, number>>) => void,
   setMebByLiq: (value: Readonly<Record<string, Readonly<Record<string, number>>>>) => void,
+  setBusinessPersonalTransfers: (value: Readonly<Record<string, BusinessPersonalTransferCell>>) => void,
+  setHasBusinessAccount: (value: boolean) => void,
   result: BudgetGridResult,
 ): void => {
   setAllRows(result.rows);
   setCumBefore(result.cumulativeBefore);
   setMeb(result.monthEndBalances);
   setMebByLiq(result.monthEndBalancesByLiquidity);
+  setBusinessPersonalTransfers(result.businessPersonalTransfers);
+  setHasBusinessAccount(result.hasBusinessAccount);
 };
 
 const buildNewBudgetRow = (
@@ -152,6 +160,8 @@ export const useBudgetTableRangeState = ({
   cumulativeBefore,
   monthEndBalances,
   monthEndBalancesByLiquidity,
+  businessPersonalTransfers: initialBusinessPersonalTransfers,
+  hasBusinessAccount: initialHasBusinessAccount,
   currentMonth,
   refreshToken,
   fetchCommentRange,
@@ -164,6 +174,8 @@ export const useBudgetTableRangeState = ({
   const [cumBefore, setCumBefore] = useState<CumulativeBefore>(cumulativeBefore);
   const [meb, setMeb] = useState<Readonly<Record<string, number>>>(monthEndBalances);
   const [mebByLiq, setMebByLiq] = useState<Readonly<Record<string, Readonly<Record<string, number>>>>>(monthEndBalancesByLiquidity);
+  const [businessPersonalTransfers, setBusinessPersonalTransfers] = useState<Readonly<Record<string, BusinessPersonalTransferCell>>>(initialBusinessPersonalTransfers);
+  const [hasBusinessAccount, setHasBusinessAccount] = useState<boolean>(initialHasBusinessAccount);
   const [isLoadingLeft, setIsLoadingLeft] = useState<boolean>(false);
   const [isLoadingRight, setIsLoadingRight] = useState<boolean>(false);
   const [pendingSaves, setPendingSaves] = useState<number>(0);
@@ -185,7 +197,7 @@ export const useBudgetTableRangeState = ({
 
     try {
       const result = await fetchBudgetRange(loadedFrom, loadedTo, currentMonth, currentMonth, refreshToken);
-      applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, result);
+      applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setHasBusinessAccount, result);
       reloadCommentRange(loadedFrom, loadedTo);
     } catch (error) {
       logBudgetTableError("visible range refresh", error);
@@ -243,6 +255,8 @@ export const useBudgetTableRangeState = ({
       setLoadedFrom(newFrom);
       setMeb((previous) => ({ ...previous, ...result.monthEndBalances }));
       setMebByLiq((previous) => ({ ...previous, ...result.monthEndBalancesByLiquidity }));
+      setBusinessPersonalTransfers((previous) => ({ ...previous, ...result.businessPersonalTransfers }));
+      setHasBusinessAccount(result.hasBusinessAccount);
       fetchCommentRange(newFrom, newTo);
     } catch (error) {
       logBudgetTableError("load previous month range", error);
@@ -269,6 +283,8 @@ export const useBudgetTableRangeState = ({
       setLoadedTo(newTo);
       setMeb((previous) => ({ ...previous, ...result.monthEndBalances }));
       setMebByLiq((previous) => ({ ...previous, ...result.monthEndBalancesByLiquidity }));
+      setBusinessPersonalTransfers((previous) => ({ ...previous, ...result.businessPersonalTransfers }));
+      setHasBusinessAccount(result.hasBusinessAccount);
       fetchCommentRange(newFrom, newTo);
     } catch (error) {
       logBudgetTableError("load next month range", error);
@@ -285,6 +301,8 @@ export const useBudgetTableRangeState = ({
     cumBefore,
     meb,
     mebByLiq,
+    businessPersonalTransfers,
+    hasBusinessAccount,
     pendingSaves,
     isLoadingLeft,
     isLoadingRight,
