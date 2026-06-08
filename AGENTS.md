@@ -17,6 +17,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - The web app supports multiple languages. When adding or changing any translation in `apps/web/src/i18n/`, update the same keys in every locale file in that directory in the same change.
 - Change schema via new files in `db/migrations/` only; never edit already-applied migrations.
 - CI/CD is GitHub Actions on push to `main` (`.github/workflows/deploy.yml`).
+- The deploy process intentionally may update the web service before running migrations; this accepted deploy order is not an issue by itself.
 - Do not build AWS SDK bundles or other AWS deployment artifacts locally. Push code to `main`, and let CI/CD build and deploy everything.
 - RTL support is required:
   - In CSS, use logical properties such as `inset-inline-start`/`end`, `margin-inline-start`/`end`, `padding-inline-start`/`end`, `border-inline-start`/`end`, and `text-align: start`/`end` instead of physical left/right variants.
