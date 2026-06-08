@@ -8,7 +8,7 @@ import {
   getTargetFillMonths,
 } from "@/ui/tables/budget/budgetTableLogic";
 import { fetchBudgetRange } from "@/ui/tables/budget/budgetTableApi";
-import { logBudgetTableError } from "../logBudgetTableError";
+import { logBudgetTableError } from "@/ui/tables/budget/table/logBudgetTableError";
 
 const BATCH_SIZE = 6;
 
