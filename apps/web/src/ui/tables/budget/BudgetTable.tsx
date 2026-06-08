@@ -15,7 +15,7 @@ import {
 import {
   type BudgetTableProps,
   useBudgetTableController,
-} from "@/ui/tables/budget/useBudgetTableController";
+} from "@/ui/tables/budget/controller/useBudgetTableController";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 
