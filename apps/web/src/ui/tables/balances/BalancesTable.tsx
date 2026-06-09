@@ -32,7 +32,7 @@ import type { ColumnDef } from "@/ui/tables/shared/data-table/types";
 import { useTableSort } from "@/ui/tables/shared/data-table/useTableSort";
 import { formatAmount } from "@/ui/tables/shared/format";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
-import { BalanceSummaryTables, type AccountGroupTotal, type LiquidityTotal } from "./BalanceSummaryTables";
+import { BalanceSummaryTables } from "./BalanceSummaryTables";
 import balancesStyles from "./BalancesTable.module.css";
 import {
   fetchBalancesSummary,
@@ -42,7 +42,22 @@ import {
   withAccountLiquidity,
   withAccountType,
 } from "./balancesTableApi";
-import { compareDaysAgoTimestamps, formatDaysAgoLabel, getDaysAgoValue } from "./balancesTableDaysAgo";
+import { formatDaysAgoLabel, getDaysAgoValue } from "./balancesTableDaysAgo";
+import {
+  ACCOUNTS_SORT_DEFAULTS,
+  ACCOUNT_GROUP_SORT_DEFAULTS,
+  LIQUIDITY_SORT_DEFAULTS,
+  TOTALS_SORT_DEFAULTS,
+  buildSortedAccountGroupTotals,
+  buildSortedLiquidityTotals,
+  filterAndSortAccounts,
+  sortCurrencyTotals,
+  sumConvertedBalance,
+  sumNegativeConvertedBalance,
+  sumPositiveConvertedBalance,
+  type AccountGroupTotal,
+  type LiquidityTotal,
+} from "./balancesTableModel";
 
 type Props = Readonly<{
   accounts: ReadonlyArray<AccountRow>;
@@ -52,177 +67,15 @@ type Props = Readonly<{
   refreshToken: string;
 }>;
 
-type TotalsSortKey = "currency" | "balance" | "balancePositive" | "balanceNegative" | "balanceReport";
-
-type LiquiditySortKey = "liquidity" | "balance" | "balancePositive" | "balanceNegative" | "accountCount";
-type AccountGroupSortKey = "accountGroup" | "balance" | "balancePositive" | "balanceNegative" | "accountCount";
-
-type AccountsSortKey = "accountId" | "currency" | "liquidity" | "accountType" | "accountGroup" | "balance" | "balanceReport" | "lastTransactionTs" | "daysAgo" | "status" | "freshness";
-
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 const LIQUIDITY_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_LIQUIDITY_VALUES;
 const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_ACCOUNT_TYPE_VALUES;
 const ACCOUNT_GROUP_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_GROUP_VALUES;
 
-const LIQUIDITY_ORDER: Readonly<Record<AccountMetadataLiquidity, number>> = { high: 0, medium: 1, low: 2 };
-const ACCOUNT_TYPE_ORDER: Readonly<Record<AccountMetadataAccountType, number>> = { personal: 0, business: 1 };
-const ACCOUNT_GROUP_ORDER: Readonly<Record<AccountMetadataGroup, number>> = { regular: 0, investment: 1 };
-
-const TOTALS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
-  currency: "asc",
-  balancePositive: "desc",
-  balanceNegative: "desc",
-  balance: "desc",
-  balanceReport: "desc",
-};
-
-const LIQUIDITY_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
-  liquidity: "asc",
-  balancePositive: "desc",
-  balanceNegative: "desc",
-  balance: "desc",
-  accountCount: "desc",
-};
-
-const ACCOUNT_GROUP_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
-  accountGroup: "asc",
-  balancePositive: "desc",
-  balanceNegative: "desc",
-  balance: "desc",
-  accountCount: "desc",
-};
-
-const ACCOUNTS_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
-  accountId: "asc",
-  currency: "asc",
-  liquidity: "asc",
-  accountType: "asc",
-  accountGroup: "asc",
-  balance: "desc",
-  balanceReport: "desc",
-  lastTransactionTs: "asc",
-  daysAgo: "asc",
-  status: "asc",
-  freshness: "desc",
-};
-
 const formatDate = (isoString: string): string => {
   const date = new Date(isoString);
   return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-};
-
-const compareTotals = (a: CurrencyTotal, b: CurrencyTotal, key: TotalsSortKey, dir: "asc" | "desc"): number => {
-  let cmp = 0;
-  switch (key) {
-    case "currency":
-      cmp = a.currency.localeCompare(b.currency);
-      break;
-    case "balance":
-      cmp = a.balance - b.balance;
-      break;
-    case "balancePositive":
-      cmp = a.balancePositive - b.balancePositive;
-      break;
-    case "balanceNegative":
-      cmp = a.balanceNegative - b.balanceNegative;
-      break;
-    case "balanceReport":
-      cmp = (a.balanceReport ?? -Infinity) - (b.balanceReport ?? -Infinity);
-      break;
-  }
-  return dir === "asc" ? cmp : -cmp;
-};
-
-const compareLiquidityTotals = (a: LiquidityTotal, b: LiquidityTotal, key: LiquiditySortKey, dir: "asc" | "desc"): number => {
-  let cmp = 0;
-  switch (key) {
-    case "liquidity":
-      cmp = (LIQUIDITY_ORDER[a.liquidity] ?? 0) - (LIQUIDITY_ORDER[b.liquidity] ?? 0);
-      break;
-    case "balance":
-      cmp = a.balance - b.balance;
-      break;
-    case "balancePositive":
-      cmp = a.balancePositive - b.balancePositive;
-      break;
-    case "balanceNegative":
-      cmp = a.balanceNegative - b.balanceNegative;
-      break;
-    case "accountCount":
-      cmp = a.accountCount - b.accountCount;
-      break;
-  }
-  return dir === "asc" ? cmp : -cmp;
-};
-
-const compareAccountGroupTotals = (a: AccountGroupTotal, b: AccountGroupTotal, key: AccountGroupSortKey, dir: "asc" | "desc"): number => {
-  let cmp = 0;
-  switch (key) {
-    case "accountGroup":
-      cmp = ACCOUNT_GROUP_ORDER[a.accountGroup] - ACCOUNT_GROUP_ORDER[b.accountGroup];
-      break;
-    case "balance":
-      cmp = a.balance - b.balance;
-      break;
-    case "balancePositive":
-      cmp = a.balancePositive - b.balancePositive;
-      break;
-    case "balanceNegative":
-      cmp = a.balanceNegative - b.balanceNegative;
-      break;
-    case "accountCount":
-      cmp = a.accountCount - b.accountCount;
-      break;
-  }
-  return dir === "asc" ? cmp : -cmp;
-};
-
-const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir: "asc" | "desc", now: Date): number => {
-  let cmp = 0;
-  switch (key) {
-    case "accountId":
-      cmp = a.accountId.localeCompare(b.accountId);
-      break;
-    case "currency":
-      cmp = a.currency.localeCompare(b.currency);
-      break;
-    case "liquidity":
-      cmp = (LIQUIDITY_ORDER[a.liquidity] ?? 0) - (LIQUIDITY_ORDER[b.liquidity] ?? 0);
-      break;
-    case "accountType":
-      cmp = ACCOUNT_TYPE_ORDER[a.accountType] - ACCOUNT_TYPE_ORDER[b.accountType];
-      break;
-    case "accountGroup":
-      cmp = ACCOUNT_GROUP_ORDER[a.accountGroup] - ACCOUNT_GROUP_ORDER[b.accountGroup];
-      break;
-    case "balance":
-      cmp = a.balance - b.balance;
-      break;
-    case "balanceReport":
-      cmp = (a.balanceReport ?? -Infinity) - (b.balanceReport ?? -Infinity);
-      break;
-    case "lastTransactionTs": {
-      const aTs = a.lastTransactionTs ?? "";
-      const bTs = b.lastTransactionTs ?? "";
-      cmp = aTs.localeCompare(bTs);
-      break;
-    }
-    case "daysAgo":
-      cmp = compareDaysAgoTimestamps(a.lastTransactionTs, b.lastTransactionTs, now);
-      break;
-    case "status":
-      cmp = a.status.localeCompare(b.status);
-      break;
-    case "freshness": {
-      const aOverdue = a.overdue ? 1 : 0;
-      const bOverdue = b.overdue ? 1 : 0;
-      cmp = aOverdue - bOverdue;
-      if (cmp === 0) cmp = (a.balanceReport ?? -Infinity) - (b.balanceReport ?? -Infinity);
-      break;
-    }
-  }
-  return dir === "asc" ? cmp : -cmp;
 };
 
 export const BalancesTable = (props: Props): ReactElement => {
@@ -406,137 +259,33 @@ export const BalancesTable = (props: Props): ReactElement => {
   }, []);
 
   const sortedTotals = useMemo<ReadonlyArray<CurrencyTotal>>(
-    () => [...localTotals].filter((t) => t.balance !== 0).sort((a, b) => {
-      for (const entry of totalsSort.sort) {
-        const cmp = compareTotals(a, b, entry.key as TotalsSortKey, entry.dir);
-        if (cmp !== 0) return cmp;
-      }
-      return 0;
-    }),
+    () => sortCurrencyTotals(localTotals, totalsSort.sort),
     [localTotals, totalsSort.sort],
   );
 
-  const sortedLiquidityTotals = useMemo<ReadonlyArray<LiquidityTotal>>(() => {
-    const groups = new Map<AccountMetadataLiquidity, { balance: number; balancePositive: number; balanceNegative: number; accountCount: number }>();
-    for (const a of localAccounts) {
-      if (a.status !== "active") continue;
-      const usd = a.balanceReport ?? 0;
-      const existing = groups.get(a.liquidity);
-      if (existing !== undefined) {
-        existing.balance += usd;
-        if (usd > 0) existing.balancePositive += usd;
-        if (usd < 0) existing.balanceNegative += usd;
-        existing.accountCount += 1;
-      } else {
-        groups.set(a.liquidity, {
-          balance: usd,
-          balancePositive: usd > 0 ? usd : 0,
-          balanceNegative: usd < 0 ? usd : 0,
-          accountCount: 1,
-        });
-      }
-    }
-    const rows: Array<LiquidityTotal> = [];
-    for (const [liquidity, g] of groups) {
-      if (g.accountCount === 0) continue;
-      rows.push({ liquidity, balance: g.balance, balancePositive: g.balancePositive, balanceNegative: g.balanceNegative, accountCount: g.accountCount });
-    }
-    return rows.sort((a, b) => {
-      for (const entry of liquiditySort.sort) {
-        const cmp = compareLiquidityTotals(a, b, entry.key as LiquiditySortKey, entry.dir);
-        if (cmp !== 0) return cmp;
-      }
-      return 0;
-    });
-  }, [localAccounts, liquiditySort.sort]);
+  const sortedLiquidityTotals = useMemo<ReadonlyArray<LiquidityTotal>>(
+    () => buildSortedLiquidityTotals(localAccounts, liquiditySort.sort),
+    [localAccounts, liquiditySort.sort],
+  );
 
-  const sortedAccountGroupTotals = useMemo<ReadonlyArray<AccountGroupTotal>>(() => {
-    const groups = new Map<AccountMetadataGroup, { balance: number; balancePositive: number; balanceNegative: number; accountCount: number }>();
-    for (const a of localAccounts) {
-      if (a.status !== "active") continue;
-      const usd = a.balanceReport ?? 0;
-      const existing = groups.get(a.accountGroup);
-      if (existing !== undefined) {
-        existing.balance += usd;
-        if (usd > 0) existing.balancePositive += usd;
-        if (usd < 0) existing.balanceNegative += usd;
-        existing.accountCount += 1;
-      } else {
-        groups.set(a.accountGroup, {
-          balance: usd,
-          balancePositive: usd > 0 ? usd : 0,
-          balanceNegative: usd < 0 ? usd : 0,
-          accountCount: 1,
-        });
-      }
-    }
-    const rows: Array<AccountGroupTotal> = [];
-    for (const [accountGroup, g] of groups) {
-      if (g.accountCount === 0) continue;
-      rows.push({ accountGroup, balance: g.balance, balancePositive: g.balancePositive, balanceNegative: g.balanceNegative, accountCount: g.accountCount });
-    }
-    return rows.sort((a, b) => {
-      for (const entry of accountGroupSort.sort) {
-        const cmp = compareAccountGroupTotals(a, b, entry.key as AccountGroupSortKey, entry.dir);
-        if (cmp !== 0) return cmp;
-      }
-      return 0;
-    });
-  }, [accountGroupSort.sort, localAccounts]);
+  const sortedAccountGroupTotals = useMemo<ReadonlyArray<AccountGroupTotal>>(
+    () => buildSortedAccountGroupTotals(localAccounts, accountGroupSort.sort),
+    [accountGroupSort.sort, localAccounts],
+  );
 
   const inactiveCount = useMemo<number>(
     () => localAccounts.filter((a) => a.status !== "active").length,
     [localAccounts],
   );
 
-  const sortedAccounts = useMemo<ReadonlyArray<AccountRow>>(() => {
-    const filtered = showInactive ? localAccounts : localAccounts.filter((a) => a.status === "active");
-    const now = new Date();
-    return [...filtered].sort((a, b) => {
-      if (showInactive) {
-        const aInactive = a.status !== "active" ? 1 : 0;
-        const bInactive = b.status !== "active" ? 1 : 0;
-        if (aInactive !== bInactive) return aInactive - bInactive;
-      }
-      for (const entry of accountsSort.sort) {
-        const cmp = compareAccounts(a, b, entry.key as AccountsSortKey, entry.dir, now);
-        if (cmp !== 0) return cmp;
-      }
-      return 0;
-    });
-  }, [localAccounts, accountsSort.sort, showInactive]);
+  const sortedAccounts = useMemo<ReadonlyArray<AccountRow>>(
+    () => filterAndSortAccounts(localAccounts, showInactive, accountsSort.sort, new Date()),
+    [localAccounts, accountsSort.sort, showInactive],
+  );
 
-  const totalUsd = useMemo<number | null>(() => {
-    let sum = 0;
-    let hasNull = false;
-    for (const t of localTotals) {
-      if (t.balanceReport === null) {
-        hasNull = true;
-      } else {
-        sum += t.balanceReport;
-      }
-    }
-    if (hasNull) return null;
-    return sum;
-  }, [localTotals]);
-
-  const totalPositiveUsd = useMemo<number>(() => {
-    let sum = 0;
-    for (const t of localTotals) {
-      if (t.balanceReport !== null && t.balanceReport > 0) sum += t.balanceReport;
-      else if (t.balanceReport === null && t.balance > 0) sum += t.balancePositive;
-    }
-    return sum;
-  }, [localTotals]);
-
-  const totalNegativeUsd = useMemo<number>(() => {
-    let sum = 0;
-    for (const t of localTotals) {
-      if (t.balanceReport !== null && t.balanceReport < 0) sum += t.balanceReport;
-      else if (t.balanceReport === null && t.balance < 0) sum += t.balanceNegative;
-    }
-    return sum;
-  }, [localTotals]);
+  const totalUsd = useMemo<number | null>(() => sumConvertedBalance(localTotals), [localTotals]);
+  const totalPositiveUsd = useMemo<number>(() => sumPositiveConvertedBalance(localTotals), [localTotals]);
+  const totalNegativeUsd = useMemo<number>(() => sumNegativeConvertedBalance(localTotals), [localTotals]);
 
   if (localAccounts.length === 0) {
     return (
