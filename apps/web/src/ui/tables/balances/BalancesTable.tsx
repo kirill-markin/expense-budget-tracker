@@ -17,13 +17,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
-import { fetchWithCsrf } from "@/lib/csrf";
-import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
 import alertStyles from "@/ui/Alert.module.css";
 import controlsStyles from "@/ui/Controls.module.css";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 
-import type { AccountRow, BalancesSummaryResult, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
+import type { AccountRow, ConversionWarning, CurrencyTotal } from "@/server/balances/getBalancesSummary";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import { useFormat } from "@/ui/FormatProvider";
@@ -36,6 +34,14 @@ import { useTableSort } from "@/ui/tables/shared/data-table/useTableSort";
 import { formatAmount } from "@/ui/tables/shared/format";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
 import balancesStyles from "./BalancesTable.module.css";
+import {
+  fetchBalancesSummary,
+  saveAccountGroup,
+  saveAccountMetadata,
+  withAccountGroup,
+  withAccountLiquidity,
+  withAccountType,
+} from "./balancesTableApi";
 import { compareDaysAgoTimestamps, formatDaysAgoLabel, getDaysAgoValue } from "./balancesTableDaysAgo";
 
 type Props = Readonly<{
@@ -44,12 +50,6 @@ type Props = Readonly<{
   conversionWarnings: ReadonlyArray<ConversionWarning>;
   reportingCurrency: string;
   refreshToken: string;
-}>;
-
-type BalancesSummaryState = Readonly<{
-  accounts: ReadonlyArray<AccountRow>;
-  totals: ReadonlyArray<CurrencyTotal>;
-  conversionWarnings: ReadonlyArray<ConversionWarning>;
 }>;
 
 type TotalsSortKey = "currency" | "balance" | "balancePositive" | "balanceNegative" | "balanceReport";
@@ -241,48 +241,6 @@ const compareAccounts = (a: AccountRow, b: AccountRow, key: AccountsSortKey, dir
   return dir === "asc" ? cmp : -cmp;
 };
 
-const saveAccountMetadata = async (
-  accountId: string,
-  liquidity: AccountMetadataLiquidity,
-  accountType: AccountMetadataAccountType,
-): Promise<void> => {
-  const response = await fetchWithCsrf("/api/account-metadata", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accountId, liquidity, accountType }),
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to save account metadata: ${response.status} ${await response.text()}`);
-  }
-};
-
-const saveAccountGroup = async (accountId: string, accountGroup: AccountMetadataGroup): Promise<void> => {
-  const response = await fetchWithCsrf("/api/account-metadata/account-group", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accountId, accountGroup }),
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to save account group: ${response.status} ${await response.text()}`);
-  }
-};
-
-const fetchBalancesSummary = async (
-  refreshToken: string,
-): Promise<BalancesSummaryState> => {
-  const response = await fetchLiveData(buildLiveDataUrl("/api/balances-summary", new URLSearchParams(), refreshToken));
-  if (!response.ok) {
-    throw new Error(`Balances summary refresh failed: ${response.status} ${await response.text()}`);
-  }
-
-  const payload = await response.json() as BalancesSummaryResult;
-  return {
-    accounts: payload.accounts,
-    totals: payload.totals,
-    conversionWarnings: payload.conversionWarnings,
-  };
-};
-
 export const BalancesTable = (props: Props): ReactElement => {
   const { accounts: accountsProp, totals: totalsProp, conversionWarnings: conversionWarningsProp, reportingCurrency, refreshToken } = props;
   const { effectiveAllowlist } = useFilteredMode();
@@ -379,15 +337,11 @@ export const BalancesTable = (props: Props): ReactElement => {
       return;
     }
 
-    setLocalAccounts((prev) =>
-      prev.map((a) => a.accountId === accountId ? { ...a, liquidity: value } : a),
-    );
+    setLocalAccounts((prev) => withAccountLiquidity(prev, accountId, value));
     setSaveError(null);
 
     saveAccountMetadata(accountId, value, accountType).catch((err) => {
-      setLocalAccounts((prev) =>
-        prev.map((a) => a.accountId === accountId ? { ...a, liquidity: oldLiquidity } : a),
-      );
+      setLocalAccounts((prev) => withAccountLiquidity(prev, accountId, oldLiquidity));
       setSaveError(err instanceof Error ? err.message : String(err));
     });
   }, []);
@@ -418,15 +372,11 @@ export const BalancesTable = (props: Props): ReactElement => {
       return;
     }
 
-    setLocalAccounts((prev) =>
-      prev.map((a) => a.accountId === accountId ? { ...a, accountType: value } : a),
-    );
+    setLocalAccounts((prev) => withAccountType(prev, accountId, value));
     setSaveError(null);
 
     saveAccountMetadata(accountId, liquidity, value).catch((err) => {
-      setLocalAccounts((prev) =>
-        prev.map((a) => a.accountId === accountId ? { ...a, accountType: oldAccountType } : a),
-      );
+      setLocalAccounts((prev) => withAccountType(prev, accountId, oldAccountType));
       setSaveError(err instanceof Error ? err.message : String(err));
     });
   }, []);
@@ -457,15 +407,11 @@ export const BalancesTable = (props: Props): ReactElement => {
       return;
     }
 
-    setLocalAccounts((prev) =>
-      prev.map((a) => a.accountId === accountId ? { ...a, accountGroup: value } : a),
-    );
+    setLocalAccounts((prev) => withAccountGroup(prev, accountId, value));
     setSaveError(null);
 
     saveAccountGroup(accountId, value).catch((err) => {
-      setLocalAccounts((prev) =>
-        prev.map((a) => a.accountId === accountId ? { ...a, accountGroup: oldAccountGroup } : a),
-      );
+      setLocalAccounts((prev) => withAccountGroup(prev, accountId, oldAccountGroup));
       setSaveError(err instanceof Error ? err.message : String(err));
     });
   }, []);
