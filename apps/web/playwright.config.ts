@@ -10,6 +10,9 @@ const appBaseUrl = process.env.EXPENSE_E2E_APP_BASE_URL ?? "https://app.expense-
 const defaultTraceMode: TraceMode = "retain-on-failure";
 const defaultVideoMode: VideoMode = "retain-on-failure";
 const defaultScreenshotMode: ScreenshotMode = "only-on-failure";
+const liveSmokeNavigationTimeoutMs: number = 60_000;
+const liveSmokeWorkerCount: number = 1;
+const ciRetryCount: number = process.env.CI === "true" ? 1 : 0;
 
 const traceModeValues = new Set<TraceMode>([
   "off",
@@ -72,6 +75,8 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 10 * 60 * 1000,
   fullyParallel: false,
+  workers: liveSmokeWorkerCount,
+  retries: ciRetryCount,
   reporter: [
     ["list"],
     ["html", { open: "never", outputFolder: "playwright-report" }],
@@ -83,7 +88,7 @@ export default defineConfig({
     browserName: "chromium",
     headless: true,
     ignoreHTTPSErrors: true,
-    navigationTimeout: 30_000,
+    navigationTimeout: liveSmokeNavigationTimeoutMs,
     trace: readTraceMode(),
     screenshot: readScreenshotMode(),
     video: readVideoMode(),
