@@ -10,13 +10,13 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1059.0",
+    "@aws-sdk/client-secrets-manager": "^3.1065.0",
     "@expense-budget-tracker/agent-shared": "1.0.0",
     "pg": "^8.21.0"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.161",
-    "@types/node": "^24.12.4",
+    "@types/aws-lambda": "^8.10.162",
+    "@types/node": "^24.13.1",
     "@types/pg": "^8.20.0",
     "typescript": "^6.0.3"
   },
