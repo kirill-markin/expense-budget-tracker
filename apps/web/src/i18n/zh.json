@@ -98,6 +98,7 @@
   "publicShare.emptyNoSelectedCategories": "未选择公开分类。",
   "publicShare.categoryOnlyMaskedValue": "数值已隐藏",
   "publicShare.publishedWithAttribution": "由 Expense Budget Tracker 发布",
+  "publicShare.loadEarlier": "加载更早月份",
   "publicShare.downloadJson": "下载 JSON",
   "publicShare.tableMonth": "月份",
   "publicShare.tableYear": "年份",

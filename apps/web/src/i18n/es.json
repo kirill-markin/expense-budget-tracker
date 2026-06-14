@@ -98,6 +98,7 @@
   "publicShare.emptyNoSelectedCategories": "No hay categorías públicas seleccionadas.",
   "publicShare.categoryOnlyMaskedValue": "Valor oculto",
   "publicShare.publishedWithAttribution": "Publicado con Expense Budget Tracker",
+  "publicShare.loadEarlier": "Cargar anteriores",
   "publicShare.downloadJson": "Descargar JSON",
   "publicShare.tableMonth": "Mes",
   "publicShare.tableYear": "Año",

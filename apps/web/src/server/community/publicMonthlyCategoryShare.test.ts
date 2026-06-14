@@ -5,7 +5,10 @@ import test from "node:test";
 import type { QueryResult } from "pg";
 
 import { clampMonthWindow } from "@/server/community/months";
-import { getPublicMonthlyCategoryShareWithQuery } from "@/server/community/publicMonthlyCategoryShare";
+import {
+  getPublicMonthlyCategoryShareMetadataWithQuery,
+  getPublicMonthlyCategoryShareWithQuery,
+} from "@/server/community/publicMonthlyCategoryShare";
 
 const createQueryResult = (
   rows: ReadonlyArray<Record<string, unknown>>,
@@ -23,8 +26,28 @@ const readPublicShareReaderMigration = (): string =>
     "utf8",
   );
 
+const readPublicShareMetadataMigration = (): string =>
+  readFileSync(
+    fileURLToPath(new URL("../../../../../db/migrations/0048_community_public_monthly_share_metadata.sql", import.meta.url)),
+    "utf8",
+  );
+
+const readPublicShareLoadedYearTotalsMigration = (): string =>
+  readFileSync(
+    fileURLToPath(new URL("../../../../../db/migrations/0049_community_public_monthly_share_loaded_year_totals.sql", import.meta.url)),
+    "utf8",
+  );
+
 const countMatches = (source: string, pattern: RegExp): number =>
   Array.from(source.matchAll(pattern)).length;
+
+const requireMatch = (source: string, pattern: RegExp): string => {
+  const match = source.match(pattern);
+  if (match === null) {
+    throw new Error(`Expected SQL pattern was not found: ${pattern.source}`);
+  }
+  return match[0];
+};
 
 test("clampMonthWindow caps public share requests to the configured month count", (): void => {
   assert.deepEqual(
@@ -55,7 +78,8 @@ test("getPublicMonthlyCategoryShareWithQuery maps database dates to public month
           { month: "2025-04-01", category: "Groceries", amount: 80 },
         ],
         year_totals: [
-          { year: 2025, category: "Groceries", amount: 200.5 },
+          { year: 2024, category: "Groceries", amount: 999 },
+          { year: 2025, category: "Groceries", amount: 999 },
         ],
       },
     ]);
@@ -103,6 +127,28 @@ test("getPublicMonthlyCategoryShareWithQuery returns null for every missing toke
   assert.equal(result, null);
 });
 
+test("getPublicMonthlyCategoryShareMetadataWithQuery reads through the public metadata function", async (): Promise<void> => {
+  let observedParams: ReadonlyArray<unknown> = [];
+  const queryFn = async (text: string, params: ReadonlyArray<unknown>): Promise<QueryResult> => {
+    assert.match(text, /community\.read_public_monthly_category_share_metadata/);
+    observedParams = params;
+    return createQueryResult([{ indexing_enabled: true }]);
+  };
+
+  const result = await getPublicMonthlyCategoryShareMetadataWithQuery(queryFn, "token-1");
+
+  assert.deepEqual(observedParams, ["token-1"]);
+  assert.deepEqual(result, { indexingEnabled: true });
+});
+
+test("getPublicMonthlyCategoryShareMetadataWithQuery returns null for missing tokens", async (): Promise<void> => {
+  const queryFn = async (): Promise<QueryResult> => createQueryResult([]);
+
+  const result = await getPublicMonthlyCategoryShareMetadataWithQuery(queryFn, "missing-token");
+
+  assert.equal(result, null);
+});
+
 test("public reader migration keeps amount aggregates spend-only and monthly-values-only", (): void => {
   const sql = readPublicShareReaderMigration();
 
@@ -121,4 +167,32 @@ test("public reader migration does not expose indexing settings in the aggregate
   const sql = readPublicShareReaderMigration();
 
   assert.doesNotMatch(sql, /indexing_enabled/);
+});
+
+test("public metadata migration exposes only indexing through a security definer function", (): void => {
+  const sql = readPublicShareMetadataMigration();
+
+  assert.match(sql, /CREATE FUNCTION community\.read_public_monthly_category_share_metadata/);
+  assert.match(sql, /SECURITY DEFINER/);
+  assert.match(sql, /share\.indexing_enabled/);
+  assert.match(sql, /key\.public_token = p_public_token/);
+  assert.match(sql, /key\.revoked_at IS NULL/);
+  assert.match(sql, /share\.enabled = true/);
+  assert.match(sql, /share\.blocked_at IS NULL/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION community\.read_public_monthly_category_share_metadata\(TEXT\) TO app/);
+  assert.doesNotMatch(sql, /ledger_entries/);
+});
+
+test("public loaded year totals migration bounds totals to the loaded request window", (): void => {
+  const sql = readPublicShareLoadedYearTotalsMigration();
+  const loadedYearTotalsSql = requireMatch(sql, /loaded_year_totals AS \([\s\S]*?\n  \)\n  SELECT/);
+
+  assert.match(sql, /CREATE OR REPLACE FUNCTION community\.read_public_monthly_category_share/);
+  assert.equal(countMatches(sql, /AND v_loaded_month_from IS NOT NULL/g), 2);
+  assert.equal(countMatches(sql, /local_entry\.local_date >= v_loaded_month_from/g), 2);
+  assert.equal(countMatches(sql, /local_entry\.local_date < \(v_loaded_month_to \+ INTERVAL '1 month'\)::date/g), 2);
+  assert.match(loadedYearTotalsSql, /category\.access_level = 'monthly_values'/);
+  assert.match(loadedYearTotalsSql, /AND converted\.amount_report IS NOT NULL/);
+  assert.doesNotMatch(loadedYearTotalsSql, /v_available_month_/);
+  assert.doesNotMatch(sql, /configured_year_totals/);
 });

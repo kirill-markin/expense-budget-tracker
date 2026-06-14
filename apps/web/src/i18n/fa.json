@@ -98,6 +98,7 @@
   "publicShare.emptyNoSelectedCategories": "هیچ دسته عمومی انتخاب نشده است.",
   "publicShare.categoryOnlyMaskedValue": "مقدار پنهان است",
   "publicShare.publishedWithAttribution": "منتشرشده با Expense Budget Tracker",
+  "publicShare.loadEarlier": "بارگذاری ماه‌های قبل",
   "publicShare.downloadJson": "دانلود JSON",
   "publicShare.tableMonth": "ماه",
   "publicShare.tableYear": "سال",

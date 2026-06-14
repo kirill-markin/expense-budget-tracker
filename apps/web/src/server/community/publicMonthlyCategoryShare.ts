@@ -39,6 +39,14 @@ type DbPublicMonthlyShareYearTotal = Readonly<{
   amount: number;
 }>;
 
+export type PublicMonthlyCategoryShareMetadata = Readonly<{
+  indexingEnabled: boolean;
+}>;
+
+type PublicMonthlyCategoryShareMetadataRow = Readonly<{
+  indexing_enabled: boolean;
+}>;
+
 type BareQueryFn = (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
 
 const PUBLIC_MONTHLY_CATEGORY_SHARE_QUERY = `
@@ -53,6 +61,11 @@ const PUBLIC_MONTHLY_CATEGORY_SHARE_QUERY = `
     cells,
     year_totals
   FROM community.read_public_monthly_category_share($1, $2::date, $3::date)
+`;
+
+const PUBLIC_MONTHLY_CATEGORY_SHARE_METADATA_QUERY = `
+  SELECT indexing_enabled
+  FROM community.read_public_monthly_category_share_metadata($1)
 `;
 
 const toFiniteNumber = (value: number): number => {
@@ -81,25 +94,55 @@ const mapCell = (cell: DbPublicMonthlyShareCell): PublicMonthlyShareCell => ({
   amount: toFiniteNumber(cell.amount),
 });
 
-const mapYearTotal = (total: DbPublicMonthlyShareYearTotal): PublicMonthlyShareYearTotal => ({
-  year: total.year.toString(),
-  category: total.category,
-  amount: toFiniteNumber(total.amount),
-});
+const compareYearTotals = (
+  left: PublicMonthlyShareYearTotal,
+  right: PublicMonthlyShareYearTotal,
+): number => {
+  const yearCompare = left.year.localeCompare(right.year);
+  if (yearCompare !== 0) {
+    return yearCompare;
+  }
+  return left.category.localeCompare(right.category);
+};
+
+const yearTotalKey = (category: string, year: string): string =>
+  `${year}\u0000${category}`;
+
+const buildLoadedYearTotalsFromCells = (
+  cells: ReadonlyArray<PublicMonthlyShareCell>,
+): ReadonlyArray<PublicMonthlyShareYearTotal> => {
+  const totals = new Map<string, PublicMonthlyShareYearTotal>();
+
+  for (const cell of cells) {
+    const year = cell.month.slice(0, 4);
+    const key = yearTotalKey(cell.category, year);
+    const currentAmount = totals.get(key)?.amount ?? 0;
+    totals.set(key, {
+      year,
+      category: cell.category,
+      amount: toFiniteNumber(currentAmount + cell.amount),
+    });
+  }
+
+  return Array.from(totals.values()).sort(compareYearTotals);
+};
 
 export const mapPublicMonthlyCategoryShareRow = (
   row: PublicMonthlyCategoryShareRow,
-): PublicMonthlyCategoryShare => ({
-  label: row.label,
-  currency: row.currency,
-  availableMonthFrom: dateStringToMonth(row.available_month_from),
-  availableMonthTo: dateStringToMonth(row.available_month_to),
-  loadedMonthFrom: dateStringToMonth(row.loaded_month_from),
-  loadedMonthTo: dateStringToMonth(row.loaded_month_to),
-  categories: row.categories.map(mapCategory),
-  cells: row.cells.map(mapCell),
-  yearTotals: row.year_totals.map(mapYearTotal),
-});
+): PublicMonthlyCategoryShare => {
+  const cells = row.cells.map(mapCell);
+  return {
+    label: row.label,
+    currency: row.currency,
+    availableMonthFrom: dateStringToMonth(row.available_month_from),
+    availableMonthTo: dateStringToMonth(row.available_month_to),
+    loadedMonthFrom: dateStringToMonth(row.loaded_month_from),
+    loadedMonthTo: dateStringToMonth(row.loaded_month_to),
+    categories: row.categories.map(mapCategory),
+    cells,
+    yearTotals: buildLoadedYearTotalsFromCells(cells),
+  };
+};
 
 export const getPublicMonthlyCategoryShareWithQuery = async (
   queryFn: BareQueryFn,
@@ -127,3 +170,22 @@ export const getPublicMonthlyCategoryShare = async (
   monthTo: string,
 ): Promise<PublicMonthlyCategoryShare | null> =>
   getPublicMonthlyCategoryShareWithQuery(query, publicToken, monthFrom, monthTo);
+
+export const getPublicMonthlyCategoryShareMetadataWithQuery = async (
+  queryFn: BareQueryFn,
+  publicToken: string,
+): Promise<PublicMonthlyCategoryShareMetadata | null> => {
+  const result = await queryFn(PUBLIC_MONTHLY_CATEGORY_SHARE_METADATA_QUERY, [publicToken]);
+  const row = result.rows[0] as PublicMonthlyCategoryShareMetadataRow | undefined;
+  if (row === undefined) {
+    return null;
+  }
+  return {
+    indexingEnabled: row.indexing_enabled,
+  };
+};
+
+export const getPublicMonthlyCategoryShareMetadata = async (
+  publicToken: string,
+): Promise<PublicMonthlyCategoryShareMetadata | null> =>
+  getPublicMonthlyCategoryShareMetadataWithQuery(query, publicToken);
