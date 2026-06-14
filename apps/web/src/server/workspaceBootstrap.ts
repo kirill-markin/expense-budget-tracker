@@ -81,6 +81,7 @@ export const resolveWorkspaceForIdentity = async (
 
       if (requestedWorkspaceResult.rows.length === 1) {
         const workspace = mapWorkspaceRow(requestedWorkspaceResult.rows[0] as WorkspaceRow);
+        await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspace.workspaceId]);
         await ensureWorkspaceSettingsRow(client, workspace.workspaceId, workspaceTimezone);
         await client.query("COMMIT");
         return {
