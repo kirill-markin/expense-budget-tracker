@@ -4,6 +4,7 @@ import { parsePublicMonthWindowQuery } from "@/server/community/months";
 import { getPublicMonthlyCategoryShare } from "@/server/community/publicMonthlyCategoryShare";
 import type { PublicMonthlyCategoryShare } from "@/server/community/publicMonthlyCategoryShareTypes";
 import { log } from "@/server/logger";
+import { getCurrentMonth, offsetMonth } from "@/lib/monthUtils";
 
 export const dynamic = "force-dynamic";
 
@@ -21,18 +22,26 @@ type PublicMonthlyShareRouteDependencies = Readonly<{
   ) => Promise<PublicMonthlyCategoryShare | null>;
 }>;
 
+type PublicMonthlyShareWindow = Readonly<{
+  monthFrom: string;
+  monthTo: string;
+}>;
+
 const DEFAULT_PUBLIC_MONTHLY_SHARE_ROUTE_DEPENDENCIES: PublicMonthlyShareRouteDependencies = {
   getPublicMonthlyCategoryShare,
 };
 
-const CORS_HEADERS: HeadersInit = {
+const DEFAULT_PUBLIC_MONTHLY_SHARE_ROUTE_WINDOW_MONTHS = 12;
+
+const PUBLIC_HEADERS: HeadersInit = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+  "X-Robots-Tag": "noindex, nofollow",
 };
 
 const buildPublicHeaders = (headers: HeadersInit): Headers => {
-  const result = new Headers(CORS_HEADERS);
+  const result = new Headers(PUBLIC_HEADERS);
   const providedHeaders = new Headers(headers);
   providedHeaders.forEach((value: string, key: string): void => {
     result.set(key, value);
@@ -58,6 +67,60 @@ const badRequestResponse = (message: string): Response =>
 const internalErrorResponse = (): Response =>
   jsonPublicNoStore({ error: "Public monthly share is temporarily unavailable" }, { status: 500 });
 
+const maxMonth = (left: string, right: string): string =>
+  left > right ? left : right;
+
+const buildDefaultPublicMonthlyShareProbeWindow = (): PublicMonthlyShareWindow => {
+  const previousMonth = offsetMonth(getCurrentMonth(), -1);
+  return {
+    monthFrom: previousMonth,
+    monthTo: previousMonth,
+  };
+};
+
+const buildLatestPublicMonthlyShareWindow = (
+  availableMonthFrom: string | null,
+  availableMonthTo: string | null,
+): PublicMonthlyShareWindow | null => {
+  if (availableMonthFrom === null || availableMonthTo === null) {
+    return null;
+  }
+  const candidateFrom = offsetMonth(availableMonthTo, -(DEFAULT_PUBLIC_MONTHLY_SHARE_ROUTE_WINDOW_MONTHS - 1));
+  return {
+    monthFrom: maxMonth(availableMonthFrom, candidateFrom),
+    monthTo: availableMonthTo,
+  };
+};
+
+const readDefaultPublicMonthlyShare = async (
+  token: string,
+  dependencies: PublicMonthlyShareRouteDependencies,
+): Promise<PublicMonthlyCategoryShare | null> => {
+  const probeWindow = buildDefaultPublicMonthlyShareProbeWindow();
+  const probeShare = await dependencies.getPublicMonthlyCategoryShare(
+    token,
+    probeWindow.monthFrom,
+    probeWindow.monthTo,
+  );
+  if (probeShare === null) {
+    return null;
+  }
+
+  const latestWindow = buildLatestPublicMonthlyShareWindow(
+    probeShare.availableMonthFrom,
+    probeShare.availableMonthTo,
+  );
+  if (latestWindow === null) {
+    return probeShare;
+  }
+
+  return dependencies.getPublicMonthlyCategoryShare(
+    token,
+    latestWindow.monthFrom,
+    latestWindow.monthTo,
+  );
+};
+
 export const getPublicMonthlyShareRouteWithDeps = async (
   request: Request,
   context: RouteContext,
@@ -65,12 +128,19 @@ export const getPublicMonthlyShareRouteWithDeps = async (
 ): Promise<Response> => {
   try {
     const { token } = await context.params;
-    const query = parsePublicMonthWindowQuery(new URL(request.url).searchParams);
-    const share = await dependencies.getPublicMonthlyCategoryShare(
-      token,
-      query.monthFrom,
-      query.monthTo,
-    );
+    const searchParams = new URL(request.url).searchParams;
+    const monthFrom = searchParams.get("monthFrom");
+    const monthTo = searchParams.get("monthTo");
+    const explicitWindow = monthFrom === null && monthTo === null
+      ? null
+      : parsePublicMonthWindowQuery(searchParams);
+    const share = explicitWindow === null
+      ? await readDefaultPublicMonthlyShare(token, dependencies)
+      : await dependencies.getPublicMonthlyCategoryShare(
+        token,
+        explicitWindow.monthFrom,
+        explicitWindow.monthTo,
+      );
 
     if (share === null) {
       return missingPublicShareResponse();
@@ -101,5 +171,5 @@ export const GET = async (
 export const OPTIONS = (): Response =>
   new Response(null, {
     status: 204,
-    headers: applyNoStoreHeaders(CORS_HEADERS),
+    headers: applyNoStoreHeaders(PUBLIC_HEADERS),
   });

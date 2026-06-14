@@ -98,6 +98,7 @@
   "publicShare.emptyNoSelectedCategories": "Публичные категории не выбраны.",
   "publicShare.categoryOnlyMaskedValue": "Значение скрыто",
   "publicShare.publishedWithAttribution": "Опубликовано с Expense Budget Tracker",
+  "publicShare.loadEarlier": "Загрузить раньше",
   "publicShare.downloadJson": "Скачать JSON",
   "publicShare.tableMonth": "Месяц",
   "publicShare.tableYear": "Год",

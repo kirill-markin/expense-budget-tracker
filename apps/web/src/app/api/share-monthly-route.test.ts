@@ -33,6 +33,11 @@ const createContext = (token: string): { params: Promise<{ token: string }> } =>
 const createGetRequest = (query: string): Request =>
   new Request(`http://localhost/api/share/monthly/token-1${query}`, { method: "GET" });
 
+const assertPublicShareHeaders = (response: Response): void => {
+  assert.equal(response.headers.get("access-control-allow-origin"), "*");
+  assert.equal(response.headers.get("x-robots-tag"), "noindex, nofollow");
+};
+
 test("getPublicMonthlyShareRouteWithDeps returns public JSON with CORS and no-store headers", async (): Promise<void> => {
   const calls: Array<Readonly<{ token: string; monthFrom: string; monthTo: string }>> = [];
   const response = await getPublicMonthlyShareRouteWithDeps(
@@ -47,9 +52,30 @@ test("getPublicMonthlyShareRouteWithDeps returns public JSON with CORS and no-st
   );
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("access-control-allow-origin"), "*");
+  assertPublicShareHeaders(response);
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
   assert.deepEqual(calls, [{ token: "token-1", monthFrom: "2024-01", monthTo: "2025-12" }]);
+  assert.deepEqual(await response.json(), SHARE);
+});
+
+test("getPublicMonthlyShareRouteWithDeps uses a bounded latest window when query params are omitted", async (): Promise<void> => {
+  const calls: Array<Readonly<{ token: string; monthFrom: string; monthTo: string }>> = [];
+  const response = await getPublicMonthlyShareRouteWithDeps(
+    createGetRequest(""),
+    createContext("token-1"),
+    {
+      getPublicMonthlyCategoryShare: async (token: string, monthFrom: string, monthTo: string): Promise<PublicMonthlyCategoryShare | null> => {
+        calls.push({ token, monthFrom, monthTo });
+        return SHARE;
+      },
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assertPublicShareHeaders(response);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].token, "token-1");
+  assert.deepEqual(calls[1], { token: "token-1", monthFrom: "2025-01", monthTo: "2025-12" });
   assert.deepEqual(await response.json(), SHARE);
 });
 
@@ -71,7 +97,8 @@ test("getPublicMonthlyShareRouteWithDeps returns equivalent 404 responses for mi
 
   assert.equal(first.status, 404);
   assert.equal(second.status, 404);
-  assert.equal(first.headers.get("access-control-allow-origin"), "*");
+  assertPublicShareHeaders(first);
+  assertPublicShareHeaders(second);
   assert.equal(await first.text(), await second.text());
 });
 
@@ -89,7 +116,7 @@ test("getPublicMonthlyShareRouteWithDeps rejects invalid month queries before da
   );
 
   assert.equal(response.status, 400);
-  assert.equal(response.headers.get("access-control-allow-origin"), "*");
+  assertPublicShareHeaders(response);
   assert.deepEqual(await response.json(), { error: "Invalid month format. Expected YYYY-MM" });
   assert.equal(callCount, 0);
 });
@@ -98,7 +125,7 @@ test("OPTIONS returns public CORS preflight headers with no-store policy", (): v
   const response = OPTIONS();
 
   assert.equal(response.status, 204);
-  assert.equal(response.headers.get("access-control-allow-origin"), "*");
+  assertPublicShareHeaders(response);
   assert.equal(response.headers.get("access-control-allow-methods"), "GET, OPTIONS");
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
 });

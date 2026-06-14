@@ -98,6 +98,7 @@
   "publicShare.emptyNoSelectedCategories": "لم يتم تحديد فئات عامة.",
   "publicShare.categoryOnlyMaskedValue": "القيمة مخفية",
   "publicShare.publishedWithAttribution": "نُشر باستخدام Expense Budget Tracker",
+  "publicShare.loadEarlier": "تحميل الأقدم",
   "publicShare.downloadJson": "تنزيل JSON",
   "publicShare.tableMonth": "الشهر",
   "publicShare.tableYear": "السنة",

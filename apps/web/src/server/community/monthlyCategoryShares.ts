@@ -111,10 +111,10 @@ const mapItem = (row: ShareItemRow): MonthlyCategoryShareItem => {
 };
 
 const buildDashboardUrl = (appOrigin: string, publicToken: string): string =>
-  `${appOrigin}/community/monthly-category-share/${encodeURIComponent(publicToken)}`;
+  `${appOrigin}/share/monthly/${encodeURIComponent(publicToken)}`;
 
 const buildJsonUrl = (appOrigin: string, publicToken: string): string =>
-  `${appOrigin}/api/community/monthly-category-share/public/${encodeURIComponent(publicToken)}`;
+  `${appOrigin}/api/share/monthly/${encodeURIComponent(publicToken)}`;
 
 const buildResponse = (
   share: ShareRow | null,
