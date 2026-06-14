@@ -33,6 +33,24 @@ export const metadata: Metadata = {
 
 export default async function RootLayout(props: Readonly<{ children: React.ReactNode }>) {
   const { children } = props;
+  const headersList = await headers();
+  const requestPath = headersList.get("x-request-path") ?? "";
+  const isPublicMonthlySharePage = requestPath.startsWith("/share/monthly/");
+
+  if (isPublicMonthlySharePage) {
+    const publicLocale = await getLocaleCookie();
+
+    return (
+      <html lang={publicLocale} dir={RTL_LOCALES.has(publicLocale) ? "rtl" : "ltr"}>
+        <body>
+          <I18nProvider locale={publicLocale}>
+            {children}
+          </I18nProvider>
+        </body>
+      </html>
+    );
+  }
+
   const demo = await isDemoMode();
   const { chatOpen, chatWidth } = await readChatCookies();
 
@@ -48,7 +66,6 @@ export default async function RootLayout(props: Readonly<{ children: React.React
     locale = await getLocaleCookie();
   } else {
     try {
-      const headersList = await headers();
       const userId = extractUserIdFromHeaders(headersList);
       const workspaceId = extractWorkspaceIdFromHeaders(headersList);
       if (authEnabled) {
