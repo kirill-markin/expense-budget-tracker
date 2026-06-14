@@ -42,6 +42,10 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/health",
   "/.well-known/agent.json",
 ];
+const PUBLIC_PATH_PREFIXES: ReadonlyArray<string> = [
+  "/share/monthly/",
+  "/api/share/monthly/",
+];
 
 const getAuthDomain = (): string => {
   const domain = process.env.AUTH_DOMAIN ?? "";
@@ -217,8 +221,9 @@ const forwardWithIdentity = (
   return response;
 };
 
-const isPublicPath = (pathname: string): boolean =>
-  PUBLIC_PATHS.includes(pathname);
+export const isPublicPath = (pathname: string): boolean =>
+  PUBLIC_PATHS.includes(pathname)
+  || PUBLIC_PATH_PREFIXES.some((prefix: string): boolean => pathname.startsWith(prefix));
 
 export const resolveWorkspaceIdFromCookie = (workspaceCookie: string | undefined): string | null =>
   (workspaceCookie !== undefined && workspaceCookie !== "" && WORKSPACE_ID_RE.test(workspaceCookie))
@@ -306,6 +311,7 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
     headers.delete(WORKSPACE_ID_HEADER);
     headers.delete(USER_EMAIL_HEADER);
     headers.delete(USER_EMAIL_VERIFIED_HEADER);
+    headers.set(REQUEST_PATH_HEADER, request.nextUrl.pathname + request.nextUrl.search);
     headers.set("x-nonce", nonce);
     headers.set("Content-Security-Policy", csp);
     const response = NextResponse.next({ request: { headers } });
