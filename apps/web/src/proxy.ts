@@ -42,9 +42,9 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/health",
   "/.well-known/agent.json",
 ];
-const PUBLIC_PATH_PREFIXES: ReadonlyArray<string> = [
-  "/share/monthly/",
-  "/api/share/monthly/",
+const PUBLIC_PATH_PATTERNS: ReadonlyArray<RegExp> = [
+  /^\/share\/monthly\/[^/]+$/u,
+  /^\/api\/share\/monthly\/[^/]+$/u,
 ];
 
 const getAuthDomain = (): string => {
@@ -223,7 +223,7 @@ const forwardWithIdentity = (
 
 export const isPublicPath = (pathname: string): boolean =>
   PUBLIC_PATHS.includes(pathname)
-  || PUBLIC_PATH_PREFIXES.some((prefix: string): boolean => pathname.startsWith(prefix));
+  || PUBLIC_PATH_PATTERNS.some((pattern: RegExp): boolean => pattern.test(pathname));
 
 export const resolveWorkspaceIdFromCookie = (workspaceCookie: string | undefined): string | null =>
   (workspaceCookie !== undefined && workspaceCookie !== "" && WORKSPACE_ID_RE.test(workspaceCookie))

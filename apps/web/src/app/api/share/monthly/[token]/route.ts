@@ -67,6 +67,31 @@ const badRequestResponse = (message: string): Response =>
 const internalErrorResponse = (): Response =>
   jsonPublicNoStore({ error: "Public monthly share is temporarily unavailable" }, { status: 500 });
 
+const toPublicMonthlyShareResponseBody = (
+  share: PublicMonthlyCategoryShare,
+): PublicMonthlyCategoryShare => ({
+  label: share.label,
+  currency: share.currency,
+  availableMonthFrom: share.availableMonthFrom,
+  availableMonthTo: share.availableMonthTo,
+  loadedMonthFrom: share.loadedMonthFrom,
+  loadedMonthTo: share.loadedMonthTo,
+  categories: share.categories.map((category) => ({
+    category: category.category,
+    accessLevel: category.accessLevel,
+  })),
+  cells: share.cells.map((cell) => ({
+    month: cell.month,
+    category: cell.category,
+    amount: cell.amount,
+  })),
+  yearTotals: share.yearTotals.map((total) => ({
+    year: total.year,
+    category: total.category,
+    amount: total.amount,
+  })),
+});
+
 const maxMonth = (left: string, right: string): string =>
   left > right ? left : right;
 
@@ -146,7 +171,7 @@ export const getPublicMonthlyShareRouteWithDeps = async (
       return missingPublicShareResponse();
     }
 
-    return jsonPublicNoStore(share, { status: 200 });
+    return jsonPublicNoStore(toPublicMonthlyShareResponseBody(share), { status: 200 });
   } catch (error) {
     if (error instanceof ApiRouteError) {
       return badRequestResponse(error.publicMessage);

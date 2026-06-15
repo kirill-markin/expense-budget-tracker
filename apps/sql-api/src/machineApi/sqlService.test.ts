@@ -3,7 +3,7 @@ import test from "node:test";
 import type { QueryResult } from "pg";
 import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { createQueryResult } from "../handlerTestUtils.js";
-import { runSql } from "./sqlService.js";
+import { runSqlWithWorkspaceGetter } from "./sqlService.js";
 import type {
   AuthenticatedContext,
   MachineApiDependencies,
@@ -47,6 +47,11 @@ const createDependencies = (
       }) as QueryResult)),
 });
 
+const workspaceGetter = async (): Promise<WorkspaceSummary> => ({
+  workspaceId: "user-1",
+  name: "Personal",
+});
+
 test("runSql rejects function-only SQL before executing restricted queries", async (): Promise<void> => {
   let restrictedContextCalled = false;
   const dependencies = createDependencies({
@@ -57,7 +62,47 @@ test("runSql rejects function-only SQL before executing restricted queries", asy
   });
 
   await assert.rejects(
-    () => runSql(dependencies, createAuthenticatedContext(), "user-1", "SELECT delete_workspace_for_current_user('user-1')"),
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "SELECT delete_workspace_for_current_user('user-1')",
+      workspaceGetter,
+    ),
+    (error: unknown) => error instanceof SqlPolicyError && error.code === "function_calls_not_allowed",
+  );
+
+  assert.equal(restrictedContextCalled, false);
+});
+
+test("runSql rejects community public share relations before executing restricted queries", async (): Promise<void> => {
+  let restrictedContextCalled = false;
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: async () => {
+      restrictedContextCalled = true;
+      throw new Error("restricted context should not run");
+    },
+  });
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "SELECT * FROM community.monthly_category_shares",
+      workspaceGetter,
+    ),
+    (error: unknown) => error instanceof SqlPolicyError && error.code === "relation_not_allowed",
+  );
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "SELECT * FROM community.read_public_monthly_category_share('token', '2025-01-01', '2025-12-01')",
+      workspaceGetter,
+    ),
     (error: unknown) => error instanceof SqlPolicyError && error.code === "function_calls_not_allowed",
   );
 
@@ -85,11 +130,12 @@ test("runSql executes allowed aggregate relation queries with row metadata", asy
     },
   });
 
-  const result = await runSql(
+  const result = await runSqlWithWorkspaceGetter(
     dependencies,
     createAuthenticatedContext(),
     "user-1",
     "SELECT SUM(amount) AS balance FROM ledger_entries WHERE account_id = 'a-main-usd'",
+    workspaceGetter,
   );
   const workspace = (result?.workspace ?? null) as WorkspaceSummary | null;
   const statements = (result?.statements ?? []) as ReadonlyArray<Readonly<Record<string, unknown>>>;
