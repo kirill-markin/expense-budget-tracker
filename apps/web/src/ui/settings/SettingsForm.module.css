@@ -103,6 +103,22 @@
   margin-bottom: 8px;
 }
 
+.dangerPanel {
+  border-color: rgba(192, 57, 43, 0.45);
+}
+
+.dangerKicker {
+  margin: 0 0 4px;
+  color: #c0392b;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.dangerTitle {
+  color: #7a2e25;
+}
+
 .codeblock {
   position: relative;
   border: 1px solid var(--panel-border);

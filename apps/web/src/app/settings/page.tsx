@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { headers } from "next/headers";
 
+import { cn } from "@/lib/cn";
 import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
@@ -16,9 +17,11 @@ import { queryAs } from "@/server/db";
 import { listAgentConnections } from "@/server/agent/connections";
 import { AgentConnectionsManager } from "@/ui/settings/AgentConnectionsManager";
 import { FilteredCategorySettings } from "@/ui/settings/FilteredCategorySettings";
+import { PublicMonthlyShareSettings } from "@/ui/settings/PublicMonthlyShareSettings";
 import { UserSettingsForm } from "@/ui/settings/UserSettingsForm";
 import { WorkspaceSettings } from "@/ui/settings/WorkspaceSettings";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
+import settingsStyles from "@/ui/settings/SettingsForm.module.css";
 
 export const dynamic = "force-dynamic";
 
@@ -152,6 +155,12 @@ export default async function SettingsPage() {
         <Suspense fallback={<LoadingIndicator />}>
           <FilteredCategoriesData />
         </Suspense>
+      </section>
+
+      <section className={cn("panel", settingsStyles.dangerPanel)}>
+        <p className={settingsStyles.dangerKicker}>{t(locale, "publicShare.dangerZone")}</p>
+        <h1 className={cn("title", settingsStyles.dangerTitle)}>{t(locale, "publicShare.title")}</h1>
+        <PublicMonthlyShareSettings demoMode={demo} />
       </section>
 
       <section className="panel">

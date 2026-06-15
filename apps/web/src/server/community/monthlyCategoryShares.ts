@@ -1,3 +1,5 @@
+import { offsetMonth } from "@/lib/monthUtils";
+import { clampMonthWindow, PUBLIC_MONTHLY_SHARE_MAX_WINDOW_MONTHS } from "@/server/community/months";
 import { withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
 import {
@@ -113,25 +115,47 @@ const mapItem = (row: ShareItemRow): MonthlyCategoryShareItem => {
 const buildDashboardUrl = (appOrigin: string, publicToken: string): string =>
   `${appOrigin}/share/monthly/${encodeURIComponent(publicToken)}`;
 
-const buildJsonUrl = (appOrigin: string, publicToken: string): string =>
-  `${appOrigin}/api/share/monthly/${encodeURIComponent(publicToken)}`;
+const getJsonUrlMonthTo = (settings: MonthlyCategoryShareSettings): string | null => {
+  if (settings.monthFrom === null) return null;
+  const requestedMonthTo = settings.monthTo ?? offsetMonth(settings.monthFrom, PUBLIC_MONTHLY_SHARE_MAX_WINDOW_MONTHS - 1);
+  return clampMonthWindow(
+    settings.monthFrom,
+    requestedMonthTo,
+    PUBLIC_MONTHLY_SHARE_MAX_WINDOW_MONTHS,
+  ).monthTo;
+};
+
+const buildMonthlyCategoryShareJsonUrl = (
+  appOrigin: string,
+  publicToken: string | null,
+  settings: MonthlyCategoryShareSettings,
+): string | null => {
+  const monthTo = getJsonUrlMonthTo(settings);
+  if (publicToken === null || settings.monthFrom === null || monthTo === null) return null;
+
+  const url = new URL(`${appOrigin}/api/share/monthly/${encodeURIComponent(publicToken)}`);
+  url.searchParams.set("monthFrom", settings.monthFrom);
+  url.searchParams.set("monthTo", monthTo);
+  return url.toString();
+};
 
 const buildResponse = (
   share: ShareRow | null,
   selectedItems: ReadonlyArray<MonthlyCategoryShareItem>,
   availableSpendCategories: ReadonlyArray<string>,
   appOrigin: string,
-): MonthlyCategoryShareSettingsResponse => ({
-  settings: mapShareSettings(share),
-  dashboardUrl: share?.public_token === null || share?.public_token === undefined
-    ? null
-    : buildDashboardUrl(appOrigin, share.public_token),
-  jsonUrl: share?.public_token === null || share?.public_token === undefined
-    ? null
-    : buildJsonUrl(appOrigin, share.public_token),
-  selectedItems,
-  availableSpendCategories,
-});
+): MonthlyCategoryShareSettingsResponse => {
+  const settings = mapShareSettings(share);
+  const publicToken = share?.public_token ?? null;
+
+  return {
+    settings,
+    dashboardUrl: publicToken === null ? null : buildDashboardUrl(appOrigin, publicToken),
+    jsonUrl: buildMonthlyCategoryShareJsonUrl(appOrigin, publicToken, settings),
+    selectedItems,
+    availableSpendCategories,
+  };
+};
 
 const getShareByWorkspace = async (queryFn: QueryFn, workspaceId: string): Promise<ShareRow | null> => {
   const result = await queryFn(
