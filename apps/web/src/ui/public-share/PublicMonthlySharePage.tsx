@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { SupportedLocale } from "@/lib/locale";
@@ -62,6 +62,7 @@ export const PublicMonthlySharePage = (props: PublicMonthlySharePageProps): Reac
   } = props;
   const { t } = useTranslation();
   const [share, setShare] = useState<PublicMonthlyCategoryShare>(initialShare);
+  const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [isLoadingEarlier, setIsLoadingEarlier] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const isLoadingEarlierRef = useRef<boolean>(false);
@@ -95,6 +96,10 @@ export const PublicMonthlySharePage = (props: PublicMonthlySharePageProps): Reac
     PUBLIC_MONTHLY_SHARE_BACKFILL_WINDOW_MONTHS,
   );
   const canLoadEarlier = earlierWindow !== null;
+
+  useEffect((): void => {
+    setIsHydrated(true);
+  }, []);
 
   const handleLoadEarlier = useCallback(async (): Promise<void> => {
     if (isLoadingEarlierRef.current) {
@@ -147,8 +152,9 @@ export const PublicMonthlySharePage = (props: PublicMonthlySharePageProps): Reac
           {model.hasSelectedCategories && canLoadEarlier && (
             <button
               className={styles.loadEarlierButton}
+              data-testid="public-share-load-earlier"
               type="button"
-              disabled={isLoadingEarlier}
+              disabled={!isHydrated || isLoadingEarlier}
               onClick={(): void => {
                 void handleLoadEarlier();
               }}

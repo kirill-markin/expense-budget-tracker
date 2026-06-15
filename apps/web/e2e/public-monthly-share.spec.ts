@@ -405,8 +405,9 @@ test("public monthly share exposes only public aggregate data without private sh
     await publicPage.goto(settings.dashboardUrl, { waitUntil: "domcontentloaded" });
     await expect(publicPage.locator("main table")).toBeVisible({ timeout: externalUiTimeoutMs });
 
-    const loadEarlierButton = publicPage.locator('main button[type="button"]').first();
+    const loadEarlierButton = publicPage.getByTestId("public-share-load-earlier");
     await expect(loadEarlierButton).toBeVisible({ timeout: externalUiTimeoutMs });
+    await expect(loadEarlierButton).toBeEnabled({ timeout: externalUiTimeoutMs });
     const earlierResponse = await Promise.all([
       publicPage.waitForResponse((response) => new URL(response.url()).pathname.startsWith("/api/share/monthly/")),
       loadEarlierButton.click(),
