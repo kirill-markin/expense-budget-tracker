@@ -94,6 +94,17 @@ const mapCell = (cell: DbPublicMonthlyShareCell): PublicMonthlyShareCell => ({
   amount: toFiniteNumber(cell.amount),
 });
 
+const mapYearTotal = (total: DbPublicMonthlyShareYearTotal): PublicMonthlyShareYearTotal => {
+  if (!Number.isInteger(total.year)) {
+    throw new Error(`Invalid public monthly share year from database: ${total.year}`);
+  }
+  return {
+    year: String(total.year),
+    category: total.category,
+    amount: toFiniteNumber(total.amount),
+  };
+};
+
 const compareYearTotals = (
   left: PublicMonthlyShareYearTotal,
   right: PublicMonthlyShareYearTotal,
@@ -103,28 +114,6 @@ const compareYearTotals = (
     return yearCompare;
   }
   return left.category.localeCompare(right.category);
-};
-
-const yearTotalKey = (category: string, year: string): string =>
-  `${year}\u0000${category}`;
-
-const buildLoadedYearTotalsFromCells = (
-  cells: ReadonlyArray<PublicMonthlyShareCell>,
-): ReadonlyArray<PublicMonthlyShareYearTotal> => {
-  const totals = new Map<string, PublicMonthlyShareYearTotal>();
-
-  for (const cell of cells) {
-    const year = cell.month.slice(0, 4);
-    const key = yearTotalKey(cell.category, year);
-    const currentAmount = totals.get(key)?.amount ?? 0;
-    totals.set(key, {
-      year,
-      category: cell.category,
-      amount: toFiniteNumber(currentAmount + cell.amount),
-    });
-  }
-
-  return Array.from(totals.values()).sort(compareYearTotals);
 };
 
 export const mapPublicMonthlyCategoryShareRow = (
@@ -140,7 +129,7 @@ export const mapPublicMonthlyCategoryShareRow = (
     loadedMonthTo: dateStringToMonth(row.loaded_month_to),
     categories: row.categories.map(mapCategory),
     cells,
-    yearTotals: buildLoadedYearTotalsFromCells(cells),
+    yearTotals: row.year_totals.map(mapYearTotal).sort(compareYearTotals),
   };
 };
 

@@ -5,7 +5,7 @@ import {
   SqlPolicyError,
   type AllowedRelationName,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
-import type { AuthenticatedContext, EntityHints, MachineApiDependencies, PgError } from "./types.js";
+import type { AuthenticatedContext, EntityHints, MachineApiDependencies, PgError, WorkspaceSummary } from "./types.js";
 import { getWorkspace } from "./workspaceService.js";
 
 const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
@@ -95,6 +95,12 @@ export const getUserSqlExecutionMessage = (error: unknown): string => {
 const isSchemaExplorationAttempt = (message: string): boolean =>
   /information_schema|pg_catalog|pg_/iu.test(message);
 
+type WorkspaceGetter = (
+  dependencies: MachineApiDependencies,
+  identity: AuthenticatedContext["identity"],
+  workspaceId: string,
+) => Promise<WorkspaceSummary | null>;
+
 export const getSqlPolicyInstructions = (
   error: SqlPolicyError,
   apiBaseUrl: string,
@@ -138,13 +144,14 @@ export const getSqlPolicyInstructions = (
   return "Fix the SQL statement and retry. Use only supported relations.";
 };
 
-export const runSql = async (
+export const runSqlWithWorkspaceGetter = async (
   dependencies: MachineApiDependencies,
   authenticated: AuthenticatedContext,
   workspaceId: string,
   sql: string,
+  workspaceGetter: WorkspaceGetter,
 ): Promise<Readonly<Record<string, unknown>> | null> => {
-  const workspace = await getWorkspace(dependencies, authenticated.identity, workspaceId);
+  const workspace = await workspaceGetter(dependencies, authenticated.identity, workspaceId);
   if (workspace === null) {
     return null;
   }
@@ -188,3 +195,17 @@ export const runSql = async (
     },
   };
 };
+
+export const runSql = async (
+  dependencies: MachineApiDependencies,
+  authenticated: AuthenticatedContext,
+  workspaceId: string,
+  sql: string,
+): Promise<Readonly<Record<string, unknown>> | null> =>
+  runSqlWithWorkspaceGetter(
+    dependencies,
+    authenticated,
+    workspaceId,
+    sql,
+    getWorkspace,
+  );

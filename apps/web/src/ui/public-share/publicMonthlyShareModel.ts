@@ -183,25 +183,6 @@ const buildYearTotalsByCategory = (
 const yearTotalKey = (category: string, year: string): string =>
   `${year}\u0000${category}`;
 
-const buildYearTotalsFromCells = (
-  cells: ReadonlyArray<PublicMonthlyShareCell>,
-): ReadonlyArray<PublicMonthlyShareYearTotal> => {
-  const totals = new Map<string, PublicMonthlyShareYearTotal>();
-
-  for (const cell of cells) {
-    const year = getYear(cell.month);
-    const key = yearTotalKey(cell.category, year);
-    const currentAmount = totals.get(key)?.amount ?? 0;
-    totals.set(key, {
-      year,
-      category: cell.category,
-      amount: currentAmount + cell.amount,
-    });
-  }
-
-  return Array.from(totals.values()).sort(compareYearTotals);
-};
-
 const buildVisibleYears = (months: ReadonlyArray<string>): ReadonlyArray<string> => {
   const years: Array<string> = [];
   for (const month of months) {
@@ -211,6 +192,35 @@ const buildVisibleYears = (months: ReadonlyArray<string>): ReadonlyArray<string>
     }
   }
   return years;
+};
+
+const buildVisibleYearSet = (
+  loadedMonthFrom: string | null,
+  loadedMonthTo: string | null,
+): ReadonlySet<string> => {
+  if (loadedMonthFrom === null || loadedMonthTo === null) {
+    return new Set<string>();
+  }
+  return new Set(buildVisibleYears(generateMonthRange(loadedMonthFrom, loadedMonthTo)));
+};
+
+const mergeYearTotals = (
+  currentYearTotals: ReadonlyArray<PublicMonthlyShareYearTotal>,
+  fetchedYearTotals: ReadonlyArray<PublicMonthlyShareYearTotal>,
+  mergedShare: PublicMonthlyCategoryShare,
+): ReadonlyArray<PublicMonthlyShareYearTotal> => {
+  const visibleYears = buildVisibleYearSet(mergedShare.loadedMonthFrom, mergedShare.loadedMonthTo);
+  const monthlyValueCategories = buildMonthlyValueCategorySet(mergedShare);
+  const totals = new Map<string, PublicMonthlyShareYearTotal>();
+
+  for (const total of [...currentYearTotals, ...fetchedYearTotals]) {
+    if (!visibleYears.has(total.year) || !monthlyValueCategories.has(total.category)) {
+      continue;
+    }
+    totals.set(yearTotalKey(total.category, total.year), total);
+  }
+
+  return Array.from(totals.values()).sort(compareYearTotals);
 };
 
 const sumVisibleYearTotals = (
@@ -320,7 +330,7 @@ export const mergePublicMonthlyShareWindows = (
   return {
     ...mergedShare,
     cells: mergedCells,
-    yearTotals: buildYearTotalsFromCells(mergedCells),
+    yearTotals: mergeYearTotals(currentShare.yearTotals, fetchedShare.yearTotals, mergedShare),
   };
 };
 

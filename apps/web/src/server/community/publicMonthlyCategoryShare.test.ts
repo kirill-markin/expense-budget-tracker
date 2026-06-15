@@ -22,7 +22,7 @@ const createQueryResult = (
 
 const readPublicShareReaderMigration = (): string =>
   readFileSync(
-    fileURLToPath(new URL("../../../../../db/migrations/0047_community_public_monthly_share_reader.sql", import.meta.url)),
+    fileURLToPath(new URL("../../../../../db/migrations/0050_community_public_monthly_share_visible_year_totals.sql", import.meta.url)),
     "utf8",
   );
 
@@ -32,9 +32,9 @@ const readPublicShareMetadataMigration = (): string =>
     "utf8",
   );
 
-const readPublicShareLoadedYearTotalsMigration = (): string =>
+const readPublicShareSettingsMigration = (): string =>
   readFileSync(
-    fileURLToPath(new URL("../../../../../db/migrations/0049_community_public_monthly_share_loaded_year_totals.sql", import.meta.url)),
+    fileURLToPath(new URL("../../../../../db/migrations/0046_community_monthly_category_shares.sql", import.meta.url)),
     "utf8",
   );
 
@@ -78,7 +78,6 @@ test("getPublicMonthlyCategoryShareWithQuery maps database dates to public month
           { month: "2025-04-01", category: "Groceries", amount: 80 },
         ],
         year_totals: [
-          { year: 2024, category: "Groceries", amount: 999 },
           { year: 2025, category: "Groceries", amount: 999 },
         ],
       },
@@ -109,9 +108,51 @@ test("getPublicMonthlyCategoryShareWithQuery maps database dates to public month
       { month: "2025-04", category: "Groceries", amount: 80 },
     ],
     yearTotals: [
-      { year: "2025", category: "Groceries", amount: 200.5 },
+      { year: "2025", category: "Groceries", amount: 999 },
     ],
   });
+});
+
+test("getPublicMonthlyCategoryShareWithQuery keeps database year totals authoritative", async (): Promise<void> => {
+  const queryFn = async (): Promise<QueryResult> => createQueryResult([
+    {
+      label: "Shared spend",
+      currency: "USD",
+      available_month_from: "2025-01-01",
+      available_month_to: "2025-12-01",
+      loaded_month_from: "2025-03-01",
+      loaded_month_to: "2025-03-01",
+      categories: [
+        { category: "Groceries", accessLevel: "monthly_values" },
+        { category: "Travel", accessLevel: "category_only" },
+      ],
+      cells: [
+        { month: "2025-03-01", category: "Groceries", amount: 1 },
+      ],
+      year_totals: [
+        { year: 2025, category: "Groceries", amount: 365 },
+      ],
+    },
+  ]);
+
+  const result = await getPublicMonthlyCategoryShareWithQuery(
+    queryFn,
+    "token-1",
+    "2025-03",
+    "2025-03",
+  );
+
+  assert.deepEqual(result?.yearTotals, [
+    { year: "2025", category: "Groceries", amount: 365 },
+  ]);
+  assert.deepEqual(
+    result?.cells.filter((cell) => cell.category === "Travel"),
+    [],
+  );
+  assert.deepEqual(
+    result?.yearTotals.filter((total) => total.category === "Travel"),
+    [],
+  );
 });
 
 test("getPublicMonthlyCategoryShareWithQuery returns null for every missing token equivalent", async (): Promise<void> => {
@@ -149,7 +190,7 @@ test("getPublicMonthlyCategoryShareMetadataWithQuery returns null for missing to
   assert.equal(result, null);
 });
 
-test("public reader migration keeps amount aggregates spend-only and monthly-values-only", (): void => {
+test("current public reader migration keeps amount aggregates spend-only and monthly-values-only", (): void => {
   const sql = readPublicShareReaderMigration();
 
   assert.match(sql, /AND item\.direction = 'spend'/);
@@ -157,16 +198,36 @@ test("public reader migration keeps amount aggregates spend-only and monthly-val
   assert.equal(countMatches(sql, /category\.access_level = 'monthly_values'/g), 2);
 });
 
-test("public reader migration excludes unconvertible rows from every amount aggregate", (): void => {
+test("current public reader migration excludes unconvertible rows from every amount aggregate", (): void => {
   const sql = readPublicShareReaderMigration();
 
   assert.equal(countMatches(sql, /AND converted\.amount_report IS NOT NULL/g), 2);
 });
 
-test("public reader migration does not expose indexing settings in the aggregate function result", (): void => {
+test("current public reader migration does not expose indexing settings in the aggregate function result", (): void => {
   const sql = readPublicShareReaderMigration();
 
   assert.doesNotMatch(sql, /indexing_enabled/);
+});
+
+test("current public reader migration treats missing token states equivalently", (): void => {
+  const sql = readPublicShareReaderMigration();
+
+  assert.match(sql, /IF p_public_token IS NULL OR btrim\(p_public_token\) = '' THEN\s+RETURN;/);
+  assert.match(sql, /key\.public_token = p_public_token/);
+  assert.match(sql, /key\.revoked_at IS NULL/);
+  assert.match(sql, /share\.enabled = true/);
+  assert.match(sql, /share\.blocked_at IS NULL/);
+  assert.match(sql, /IF v_share_id IS NULL THEN\s+RETURN;/);
+});
+
+test("current public reader migration excludes the current month using workspace timezone and sixth-day policy", (): void => {
+  const sql = readPublicShareReaderMigration();
+
+  assert.match(sql, /CURRENT_TIMESTAMP AT TIME ZONE v_timezone/);
+  assert.match(sql, /WHEN EXTRACT\(DAY FROM v_local_current_date\)::integer >= 6 THEN INTERVAL '1 month'/);
+  assert.match(sql, /ELSE INTERVAL '2 months'/);
+  assert.match(sql, /v_available_month_to := LEAST\(\s+COALESCE\(v_config_month_to, v_latest_eligible_month\),\s+v_latest_eligible_month\s+\);/);
 });
 
 test("public metadata migration exposes only indexing through a security definer function", (): void => {
@@ -183,16 +244,34 @@ test("public metadata migration exposes only indexing through a security definer
   assert.doesNotMatch(sql, /ledger_entries/);
 });
 
-test("public loaded year totals migration bounds totals to the loaded request window", (): void => {
-  const sql = readPublicShareLoadedYearTotalsMigration();
-  const loadedYearTotalsSql = requireMatch(sql, /loaded_year_totals AS \([\s\S]*?\n  \)\n  SELECT/);
+test("current public reader migration returns full eligible year totals only for visible years", (): void => {
+  const sql = readPublicShareReaderMigration();
+  const visibleYearTotalsSql = requireMatch(sql, /visible_year_totals AS \([\s\S]*?\n  \)\n  SELECT/);
 
   assert.match(sql, /CREATE OR REPLACE FUNCTION community\.read_public_monthly_category_share/);
-  assert.equal(countMatches(sql, /AND v_loaded_month_from IS NOT NULL/g), 2);
-  assert.equal(countMatches(sql, /local_entry\.local_date >= v_loaded_month_from/g), 2);
-  assert.equal(countMatches(sql, /local_entry\.local_date < \(v_loaded_month_to \+ INTERVAL '1 month'\)::date/g), 2);
-  assert.match(loadedYearTotalsSql, /category\.access_level = 'monthly_values'/);
-  assert.match(loadedYearTotalsSql, /AND converted\.amount_report IS NOT NULL/);
-  assert.doesNotMatch(loadedYearTotalsSql, /v_available_month_/);
+  assert.match(sql, /visible_years AS/);
+  assert.match(sql, /generate_series\(\s+v_loaded_month_from::timestamp,\s+v_loaded_month_to::timestamp,/);
+  assert.match(sql, /visible_year_bounds AS/);
+  assert.match(sql, /GREATEST\(v_available_month_from, make_date\(visible_year\.total_year, 1, 1\)\)/);
+  assert.match(sql, /LEAST\(v_available_month_to, make_date\(visible_year\.total_year, 12, 1\)\)/);
+  assert.match(visibleYearTotalsSql, /category\.access_level = 'monthly_values'/);
+  assert.match(visibleYearTotalsSql, /local_entry\.local_date >= year_bound\.year_month_from/);
+  assert.match(visibleYearTotalsSql, /local_entry\.local_date < \(year_bound\.year_month_to \+ INTERVAL '1 month'\)::date/);
+  assert.match(visibleYearTotalsSql, /AND converted\.amount_report IS NOT NULL/);
+  assert.doesNotMatch(visibleYearTotalsSql, /v_loaded_month_from/);
+  assert.doesNotMatch(visibleYearTotalsSql, /v_loaded_month_to/);
   assert.doesNotMatch(sql, /configured_year_totals/);
+});
+
+test("community share objects remain unavailable to api_sql_executor", (): void => {
+  const settingsSql = readPublicShareSettingsMigration();
+  const readerSql = readPublicShareReaderMigration();
+  const metadataSql = readPublicShareMetadataMigration();
+
+  assert.match(settingsSql, /REVOKE ALL ON SCHEMA community FROM api_sql_executor/);
+  assert.match(settingsSql, /REVOKE ALL ON TABLE community\.monthly_category_shares FROM api_sql_executor/);
+  assert.match(settingsSql, /REVOKE ALL ON TABLE community\.monthly_category_share_items FROM api_sql_executor/);
+  assert.match(settingsSql, /REVOKE ALL ON TABLE community\.monthly_category_share_keys FROM api_sql_executor/);
+  assert.match(readerSql, /REVOKE ALL ON FUNCTION community\.read_public_monthly_category_share\(TEXT, DATE, DATE\) FROM api_sql_executor/);
+  assert.match(metadataSql, /REVOKE ALL ON FUNCTION community\.read_public_monthly_category_share_metadata\(TEXT\) FROM api_sql_executor/);
 });

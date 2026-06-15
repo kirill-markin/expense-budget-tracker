@@ -26,7 +26,7 @@ const createShare = (
   yearTotals,
 });
 
-test("mergePublicMonthlyShareWindows recomputes year totals from loaded public cells", (): void => {
+test("mergePublicMonthlyShareWindows keeps server-provided year totals for visible years", (): void => {
   const currentShare = createShare(
     "2025-03",
     "2025-03",
@@ -34,7 +34,7 @@ test("mergePublicMonthlyShareWindows recomputes year totals from loaded public c
       { month: "2025-03", category: "Groceries", amount: 30 },
     ],
     [
-      { year: "2025", category: "Groceries", amount: 999 },
+      { year: "2025", category: "Groceries", amount: 300 },
     ],
   );
   const fetchedShare = createShare(
@@ -45,8 +45,8 @@ test("mergePublicMonthlyShareWindows recomputes year totals from loaded public c
       { month: "2025-01", category: "Groceries", amount: 10 },
     ],
     [
-      { year: "2024", category: "Groceries", amount: 999 },
-      { year: "2025", category: "Groceries", amount: 999 },
+      { year: "2024", category: "Groceries", amount: 50 },
+      { year: "2025", category: "Groceries", amount: 300 },
     ],
   );
 
@@ -55,10 +55,10 @@ test("mergePublicMonthlyShareWindows recomputes year totals from loaded public c
   const groceryRow = model.rows.find((row) => row.category === "Groceries");
 
   assert.deepEqual(merged.yearTotals, [
-    { year: "2024", category: "Groceries", amount: 5 },
-    { year: "2025", category: "Groceries", amount: 40 },
+    { year: "2024", category: "Groceries", amount: 50 },
+    { year: "2025", category: "Groceries", amount: 300 },
   ]);
   assert.ok(groceryRow !== undefined);
-  assert.equal(groceryRow.yearTotals.get("2024"), 5);
-  assert.equal(groceryRow.yearTotals.get("2025"), 40);
+  assert.equal(groceryRow.yearTotals.get("2024"), 50);
+  assert.equal(groceryRow.yearTotals.get("2025"), 300);
 });

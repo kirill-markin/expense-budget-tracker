@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createQueryResult } from "../handlerTestUtils.js";
-import { loadAllowedSchemaWithResolver } from "./schemaService.js";
+import { ALLOWED_RELATION_NAMES, loadAllowedSchemaWithResolver } from "./schemaService.js";
 import type { MachineApiDependencies } from "./types.js";
+
+test("machine API schema allowlist excludes community public share relations", (): void => {
+  const relationNames: ReadonlyArray<string> = ALLOWED_RELATION_NAMES;
+  assert.equal(relationNames.includes("monthly_category_shares"), false);
+  assert.equal(relationNames.includes("monthly_category_share_items"), false);
+  assert.equal(relationNames.includes("monthly_category_share_keys"), false);
+});
 
 test("loadAllowedSchema resolves a real workspace context before querying", async (): Promise<void> => {
   const identity = {

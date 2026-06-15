@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { executeExpenseSql, MAX_SQL_ROWS, SqlPolicyError, validateExpenseSql } from "./sql-policy.js";
+import {
+  executeExpenseSql,
+  getAllowedRelationNames,
+  MAX_SQL_ROWS,
+  SqlPolicyError,
+  validateExpenseSql,
+} from "./sql-policy.js";
 
 const assertFunctionCallRejected = (sql: string): void => {
   assert.throws(
@@ -53,6 +59,32 @@ test("validateExpenseSql still allows direct relation queries without function c
   const validated = validateExpenseSql("SELECT account_id FROM ledger_entries ORDER BY account_id LIMIT 1");
   assert.equal(validated.statements.length, 1);
   assert.deepEqual(validated.statements[0]?.referencedRelations, ["ledger_entries"]);
+});
+
+test("restricted SQL policy does not expose community public share objects", (): void => {
+  assert.deepEqual(
+    getAllowedRelationNames().filter((relationName) => relationName.startsWith("community")),
+    [],
+  );
+
+  const rejectedRelations: ReadonlyArray<string> = [
+    "SELECT * FROM community.monthly_category_shares",
+    "SELECT * FROM monthly_category_shares",
+  ];
+
+  for (const sql of rejectedRelations) {
+    assert.throws(
+      () => validateExpenseSql(sql),
+      (error: unknown) =>
+        error instanceof SqlPolicyError && error.code === "relation_not_allowed",
+    );
+  }
+
+  assert.throws(
+    () => validateExpenseSql("SELECT * FROM community.read_public_monthly_category_share('token', '2025-01-01', '2025-12-01')"),
+    (error: unknown) =>
+      error instanceof SqlPolicyError && error.code === "function_calls_not_allowed",
+  );
 });
 
 test("executeExpenseSql reports truncation metadata without removing rowCount", async (): Promise<void> => {
