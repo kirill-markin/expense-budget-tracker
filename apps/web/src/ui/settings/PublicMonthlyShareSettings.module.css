@@ -1,0 +1,244 @@
+.shell {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--panel-border);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.statusEnabled {
+  color: #116329;
+  border-color: rgba(17, 99, 41, 0.35);
+  background: rgba(17, 99, 41, 0.08);
+}
+
+.statusDisabled {
+  color: #7a2e25;
+  border-color: rgba(192, 57, 43, 0.35);
+  background: rgba(192, 57, 43, 0.07);
+}
+
+.warningStack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.warningText,
+.demoText {
+  margin: 0;
+  padding-inline-start: 10px;
+  border-inline-start: 3px solid rgba(192, 57, 43, 0.55);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.demoText {
+  border-inline-start-color: var(--panel-border);
+  color: var(--muted);
+}
+
+.mutedText {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--panel-border);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.fieldsGrid,
+.categoryAddGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px;
+  max-width: 920px;
+}
+
+.categoryAddGrid {
+  grid-template-columns: minmax(180px, 1.3fr) minmax(160px, 1fr) auto;
+  align-items: end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.input,
+.select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+}
+
+.input::placeholder {
+  color: var(--muted);
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--text);
+  outline: none;
+}
+
+.input:disabled,
+.select:disabled {
+  opacity: 0.65;
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.generatedLinks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.generatedLink {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.linkValue {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.addAction {
+  display: flex;
+  align-items: end;
+}
+
+.itemList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 920px;
+}
+
+.categoryItem {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-block: 8px;
+  border-block-start: 1px solid var(--panel-border);
+}
+
+.categoryItemMain {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) minmax(160px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.categoryName {
+  min-width: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.inlineWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #7a2e25;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.inlineWarning input {
+  flex: 0 0 auto;
+  margin-block-start: 2px;
+  accent-color: #c0392b;
+}
+
+.copyToast {
+  position: fixed;
+  inset-inline-end: 16px;
+  inset-block-end: 16px;
+  z-index: 20;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 860px) {
+  .fieldsGrid,
+  .categoryAddGrid,
+  .generatedLinks,
+  .categoryItemMain {
+    grid-template-columns: 1fr;
+  }
+
+  .addAction {
+    align-items: start;
+  }
+}

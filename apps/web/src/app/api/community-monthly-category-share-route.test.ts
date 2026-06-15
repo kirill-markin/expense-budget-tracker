@@ -17,7 +17,7 @@ const createResponsePayload = (): MonthlyCategoryShareSettingsResponse => ({
     monthTo: null,
   },
   dashboardUrl: "http://localhost/share/monthly/token",
-  jsonUrl: "http://localhost/api/share/monthly/token",
+  jsonUrl: "http://localhost/api/share/monthly/token?monthFrom=2026-01&monthTo=2027-12",
   selectedItems: [],
   availableSpendCategories: ["Food"],
 });
