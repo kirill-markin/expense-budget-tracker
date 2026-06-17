@@ -1,6 +1,7 @@
 {
   "name": "expense-budget-tracker",
   "private": true,
+  "packageManager": "npm@11.17.0",
   "workspaces": [
     "apps/*",
     "packages/*",
