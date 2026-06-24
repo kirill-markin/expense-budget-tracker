@@ -48,7 +48,7 @@ jobs:
     outputs:
       domain_name: ${{ vars.CDK_DOMAIN_NAME }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
 
       - name: Detect changed paths
         id: changes
@@ -165,7 +165,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6.4.0
         with:
@@ -226,7 +226,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6.4.0
         with:
