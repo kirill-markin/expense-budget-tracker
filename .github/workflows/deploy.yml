@@ -53,7 +53,7 @@ jobs:
       - name: Detect changed paths
         id: changes
         if: github.event_name == 'push'
-        uses: dorny/paths-filter@v4.0.1
+        uses: dorny/paths-filter@v4.0.2
         with:
           filters: |
             migrations:
@@ -72,7 +72,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6.2.1
+        uses: aws-actions/configure-aws-credentials@v6.2.2
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
