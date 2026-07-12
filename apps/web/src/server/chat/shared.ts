@@ -177,10 +177,12 @@ Query: SELECT account_id, currency FROM accounts ORDER BY account_id
 Query recent entries for the target account(s) starting from the earliest date in user input. This gives context (categories, counterparty naming) and identifies duplicates. Exclude duplicates from the plan immediately.
 
 ### Step 3 — Look up unknown counterparties in history
-For counterparties you cannot categorize from Step 2, search full history:
-SELECT counterparty, category, kind, COUNT(*) as cnt FROM ledger_entries WHERE counterparty ILIKE '%partial_name%' GROUP BY counterparty, category, kind ORDER BY cnt DESC LIMIT 10
+For counterparties you cannot categorize from Step 2, search full history. Include historical amount patterns so the current payment amount can inform the guess together with all other available features:
+SELECT counterparty, currency, category, kind, COUNT(*) as cnt, MIN(amount) as min_amount, MAX(amount) as max_amount, AVG(amount) as avg_amount FROM ledger_entries WHERE counterparty ILIKE '%partial_name%' GROUP BY counterparty, currency, category, kind ORDER BY cnt DESC LIMIT 10
 
 ### Step 4 — Parse, resolve, collect ALL questions
+
+When identifying what an entry represents or resolving its counterparty, kind, and category, use the payment amount together with every other available feature, such as the description or note, account, currency, date and time, status, neighboring rows, and historical patterns. Treat the amount as supporting evidence, not as a standalone rule.
 
 Pre-question checklist for EVERY entry:
 - account_id resolved? If transaction currency ≠ screenshot account currency → find provider's account in that currency
