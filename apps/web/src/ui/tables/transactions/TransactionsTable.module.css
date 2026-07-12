@@ -56,6 +56,73 @@
   max-inline-size: var(--transaction-note-inline-size);
 }
 
+.cellCopy {
+  inline-size: 28px;
+  min-inline-size: 28px;
+  padding-inline: 2px;
+  text-align: center;
+}
+
+.copyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 3px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--muted);
+  cursor: var(--cursor-pointer);
+  opacity: 0;
+}
+
+:global(tr:hover) .copyButton,
+.copyButton:focus-visible {
+  opacity: 1;
+}
+
+.copyButton:hover {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.copyButton:focus-visible {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.06);
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.copyIcon {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.copyFeedback {
+  position: fixed;
+  z-index: 300;
+  inset-inline-end: 20px;
+  inset-block-end: 20px;
+  max-inline-size: min(320px, calc(100vw - 40px));
+  padding: 8px 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.copyFeedback:empty {
+  display: none;
+}
+
+.copyFeedbackError {
+  border-color: #c0392b;
+  color: #c0392b;
+}
+
 .cellDelete {
   width: 24px;
   min-width: 24px;
@@ -80,6 +147,12 @@
 
 .deleteButton:hover {
   color: #c0392b;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .copyButton {
+    opacity: 1;
+  }
 }
 
 .transactionsFiltersOverlay {

@@ -13,6 +13,7 @@ import { EditableText } from "@/ui/tables/editable/EditableText";
 import type { ColumnDef } from "@/ui/tables/shared/data-table/types";
 import { formatAmount, formatDateTime } from "@/ui/tables/shared/format";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
+import { isTransactionCopyAvailable } from "../transactionClipboard";
 import transactionStyles from "../TransactionsTable.module.css";
 
 type FormatParams = Readonly<{
@@ -28,6 +29,42 @@ type TextCommitHandler = (
   newValue: string | null,
   oldValue: string | null,
 ) => void;
+
+export const transactionCopyColumn = (
+  effectiveAllowlist: ReadonlySet<string> | null,
+  pendingEntryIds: ReadonlySet<string>,
+  onCopy: (entry: LedgerEntry) => Promise<void>,
+  label: string,
+): ColumnDef<LedgerEntry> => ({
+  key: "copy",
+  header: "",
+  renderCell: (row: LedgerEntry): ReactElement => (
+    <td key="copy" className={cn(tableStyles.cell, transactionStyles.cellCopy)}>
+      {isTransactionCopyAvailable(row, effectiveAllowlist, pendingEntryIds) && (
+        <button
+          type="button"
+          className={transactionStyles.copyButton}
+          aria-label={label}
+          title={label}
+          data-testid={`transaction-copy-${row.entryId}`}
+          onClick={() => { void onCopy(row); }}
+        >
+          <svg
+            className={transactionStyles.copyIcon}
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <rect x="5.25" y="5.25" width="8" height="8" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M10.75 3.75V3A1.25 1.25 0 0 0 9.5 1.75H3A1.25 1.25 0 0 0 1.75 3v6.5A1.25 1.25 0 0 0 3 10.75h.75" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+      )}
+    </td>
+  ),
+  rightAlign: false,
+  sortKey: null,
+});
 
 export const editableDateColumn = (
   getMaskClass: MaskClassGetter,

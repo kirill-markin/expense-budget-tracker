@@ -5,9 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
+import { getCellVisibility } from "@/lib/dataMask";
 import { fetchLiveData } from "@/lib/liveDataFetch";
 import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFormat } from "@/ui/FormatProvider";
+import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
 import { DataTable } from "@/ui/tables/shared/data-table/DataTable";
@@ -19,6 +21,7 @@ import {
   buildDrillDownCreateEntryRequest,
   buildDrillDownPageUrl,
   CREATE_ERROR_PREFIX,
+  UPDATE_ERROR_PREFIX,
   useEditableTransactionsTable,
 } from "./editing/useEditableTransactionsTable";
 import {
@@ -32,8 +35,11 @@ import {
   editableKindColumn,
   editableNoteColumn,
   reportAmountColumn,
+  transactionCopyColumn,
 } from "./editing/transactionColumns";
 import transactionStyles from "./TransactionsTable.module.css";
+import { TransactionCopyFeedback } from "./TransactionCopyFeedback";
+import { useTransactionClipboard } from "./useTransactionClipboard";
 
 type Props = Readonly<{
   filter: DrillDownFilter;
@@ -70,11 +76,16 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   const { filter, categories, hints, reportingCurrency, refreshToken, onClose } = props;
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
+  const { effectiveAllowlist } = useFilteredMode();
+  const { feedback: copyFeedback, copyTransaction } = useTransactionClipboard(
+    t("txn.copySuccess"),
+    t("txn.copyFailed"),
+  );
   const title = filter.businessPersonalTransfers ? t("budget.businessPersonalTransfer") : buildTitle(filter);
-  const getMaskClass = useCallback((row: LedgerEntry): string => {
-    void row;
-    return "";
-  }, []);
+  const getMaskClass = useCallback(
+    (row: LedgerEntry): string => getCellVisibility(effectiveAllowlist, row.category).maskClass,
+    [effectiveAllowlist],
+  );
 
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -129,6 +140,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     loading,
     loadingMore,
     error,
+    pendingEntryIds,
     sentinelRef,
     addRow,
     updateEntry,
@@ -202,6 +214,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   };
 
   const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = [
+    transactionCopyColumn(effectiveAllowlist, pendingEntryIds, copyTransaction, t("txn.copyAction")),
     editableDateColumn(getMaskClass, handleDateTimeCommit),
     editableAccountColumn(getMaskClass, handleAccountCommit, hints.accounts),
     editableAmountColumn(getMaskClass, handleAmountCommit),
@@ -215,10 +228,14 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   ];
   const errorTitle = error !== null && error.startsWith(CREATE_ERROR_PREFIX)
     ? t("txn.failedToCreate")
-    : t("txn.failedToLoad");
+    : error !== null && error.startsWith(UPDATE_ERROR_PREFIX)
+      ? t("txn.failedToUpdate")
+      : t("txn.failedToLoad");
   const errorMessage = error !== null && error.startsWith(CREATE_ERROR_PREFIX)
     ? error.slice(CREATE_ERROR_PREFIX.length)
-    : error;
+    : error !== null && error.startsWith(UPDATE_ERROR_PREFIX)
+      ? error.slice(UPDATE_ERROR_PREFIX.length)
+      : error;
 
   return (
     <>
@@ -257,6 +274,8 @@ export const DrillDownPanel = (props: Props): ReactElement => {
             <span>{errorMessage}</span>
           </div>
         )}
+
+        <TransactionCopyFeedback feedback={copyFeedback} />
 
         <div className={panelStyles.panelBody}>
           <DataTable<LedgerEntry>

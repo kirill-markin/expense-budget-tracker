@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3000} -H ${HOST:-127.0.0.1}",
     "lint": "tsc --noEmit",
-    "test:e2e": "npx playwright test"
+    "test:e2e": "npx playwright test",
+    "test:e2e:local-demo": "npx playwright test --config=playwright.local-demo.config.ts"
   },
   "dependencies": {
     "@expense-budget-tracker/agent-shared": "1.0.0",

@@ -1,3 +1,4 @@
+import { getCellVisibility } from "@/lib/dataMask";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
 export type TransactionClipboardPayload = Readonly<{
@@ -32,3 +33,11 @@ export const toTransactionClipboardPayload = (
 
 export const serializeTransactionClipboard = (entry: LedgerEntry): string =>
   JSON.stringify(toTransactionClipboardPayload(entry), null, 2);
+
+export const isTransactionCopyAvailable = (
+  entry: LedgerEntry,
+  effectiveAllowlist: ReadonlySet<string> | null,
+  pendingEntryIds: ReadonlySet<string>,
+): boolean =>
+  getCellVisibility(effectiveAllowlist, entry.category).showData
+  && !pendingEntryIds.has(entry.entryId);

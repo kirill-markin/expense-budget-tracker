@@ -4,6 +4,7 @@ import test from "node:test";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
 import {
+  isTransactionCopyAvailable,
   serializeTransactionClipboard,
   toTransactionClipboardPayload,
 } from "./transactionClipboard";
@@ -84,4 +85,26 @@ test("serializeTransactionClipboard preserves nulls and returns deterministic re
   "note": null
 }`,
   );
+});
+
+test("isTransactionCopyAvailable follows filtered visibility and pending-save state", (): void => {
+  const entry: LedgerEntry = {
+    entryId: "entry-visible",
+    eventId: "event-visible",
+    ts: "2026-07-12T09:30:00.000Z",
+    accountId: "account-main",
+    amount: -10,
+    amountReport: -10,
+    currency: "USD",
+    kind: "spend",
+    category: "Groceries",
+    counterparty: null,
+    note: null,
+  };
+
+  assert.equal(isTransactionCopyAvailable(entry, null, new Set()), true);
+  assert.equal(isTransactionCopyAvailable(entry, new Set(["Groceries"]), new Set()), true);
+  assert.equal(isTransactionCopyAvailable(entry, new Set(["Rent"]), new Set()), false);
+  assert.equal(isTransactionCopyAvailable({ ...entry, category: null }, new Set(["Groceries"]), new Set()), false);
+  assert.equal(isTransactionCopyAvailable(entry, null, new Set([entry.entryId])), false);
 });
