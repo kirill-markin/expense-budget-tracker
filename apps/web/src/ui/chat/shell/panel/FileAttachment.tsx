@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type ReactElement } from "react";
+import { useRef, type ChangeEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import styles from "./ChatPanel.module.css";
 
@@ -11,7 +11,7 @@ export type PendingAttachment = Readonly<{
 }>;
 
 type Props = Readonly<{
-  onAttach: (attachment: PendingAttachment) => void;
+  onIngestFiles: (files: ReadonlyArray<File>) => Promise<number>;
   disabled?: boolean;
 }>;
 
@@ -82,29 +82,16 @@ export const prepareAttachment = async (file: File): Promise<PendingAttachment> 
 };
 
 export const FileAttachment = (props: Props): ReactElement => {
-  const { onAttach, disabled = false } = props;
+  const { onIngestFiles, disabled = false } = props;
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleChange = async (): Promise<void> => {
-    const files = inputRef.current?.files;
-    if (files === null || files === undefined) return;
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const sizeError = checkFileSize(file);
-      if (sizeError !== null) {
-        alert(sizeError);
-        continue;
-      }
-      const attachment = await prepareAttachment(file);
-      onAttach(attachment);
-    }
+  const handleChange = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const files = Array.from(event.currentTarget.files ?? []);
 
     // Reset input so the same file can be attached again
-    if (inputRef.current !== null) {
-      inputRef.current.value = "";
-    }
+    event.currentTarget.value = "";
+    await onIngestFiles(files);
   };
 
   return (
@@ -116,7 +103,7 @@ export const FileAttachment = (props: Props): ReactElement => {
         multiple
         style={{ display: "none" }}
         disabled={disabled}
-        onChange={() => void handleChange()}
+        onChange={(event) => void handleChange(event)}
       />
       <button
         type="button"
