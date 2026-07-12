@@ -22,6 +22,13 @@ export const formatAmount = (value: number, numberFormat: NumberFormat): string 
   return rounded.toLocaleString(NUMBER_FORMAT_LOCALE[numberFormat]);
 };
 
+export const formatSignedAmount = (value: number, numberFormat: NumberFormat): string => {
+  const rounded = Math.round(value);
+  if (rounded === 0) return "0";
+  const formatted = rounded.toLocaleString(NUMBER_FORMAT_LOCALE[numberFormat]);
+  return rounded > 0 ? `+${formatted}` : formatted;
+};
+
 /**
  * Sums CellValues produced by a lookup function over a list of months.
  * Used for both per-category totals and direction subtotals.

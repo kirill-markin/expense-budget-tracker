@@ -30,6 +30,8 @@ export type RenderValueCellsParams = Readonly<{
   isActualOver: boolean;
   isSubtotal: boolean;
   maskClass: string;
+  plannedValueClass: string;
+  actualValueClass: string;
   numberFormat: NumberFormat;
   formatter: (value: number, numberFormat: NumberFormat) => string;
   onActualClick: (() => void) | null;
@@ -79,6 +81,8 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     isActualOver,
     isSubtotal,
     maskClass,
+    plannedValueClass,
+    actualValueClass,
     numberFormat,
     formatter,
     onActualClick,
@@ -91,7 +95,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     return (
       <td
         key={key}
-        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${clickableClass}`}
+        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${clickableClass} ${actualValueClass}`}
         onClick={onActualClick ?? undefined}
       >
         {formatter(actual, numberFormat)}
@@ -103,7 +107,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     return (
       <td
         key={key}
-        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${isPlanOver ? ` ${tableStateStyles.over}` : ""}`}
+        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${isPlanOver ? ` ${tableStateStyles.over}` : ""} ${plannedValueClass}`}
       >
         {formatter(planned, numberFormat)}
       </td>
@@ -114,12 +118,12 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
   return (
     <Fragment key={key}>
       <td
-        className={`${styles.cell} ${styles.currentMonthPlan}${subtotalClass}${maskClass}${taintedClass}${isPlanOver ? ` ${tableStateStyles.over}` : ""}`}
+        className={`${styles.cell} ${styles.currentMonthPlan}${subtotalClass}${maskClass}${taintedClass}${isPlanOver ? ` ${tableStateStyles.over}` : ""} ${plannedValueClass}`}
       >
         {formatter(planned, numberFormat)}
       </td>
       <td
-        className={`${styles.cell} ${styles.currentMonthActual}${subtotalClass}${maskClass}${taintedClass}${isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass}`}
+        className={`${styles.cell} ${styles.currentMonthActual}${subtotalClass}${maskClass}${taintedClass}${isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass} ${actualValueClass}`}
         onClick={onActualClick ?? undefined}
       >
         {formatter(actual, numberFormat)}
