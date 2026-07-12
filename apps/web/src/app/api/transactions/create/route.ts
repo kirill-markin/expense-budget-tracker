@@ -6,17 +6,9 @@ import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { handleRoute } from "@/server/api/handleRoute";
 import { parseTransactionsCreateBody } from "@/server/api/transactions";
 import { parseJsonBody } from "@/server/api/validation";
+import { getDemoAmountReport } from "@/server/demo/transactions";
 import { createLedgerEntry } from "@/server/transactions/createLedgerEntry";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
-
-const DEMO_FX_RATES: Readonly<Record<string, number>> = { USD: 1, EUR: 1.029, GBP: 1.24 };
-
-const getDemoAmountReport = (amount: number, currency: string): number | null => {
-  if (currency.length === 0) return null;
-  const rate = DEMO_FX_RATES[currency];
-  if (rate === undefined) return null;
-  return Math.round(amount * rate * 100) / 100;
-};
 
 export const POST = async (request: Request): Promise<Response> =>
   handleRoute(

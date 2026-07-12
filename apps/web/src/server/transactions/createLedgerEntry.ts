@@ -6,6 +6,7 @@
  */
 import { queryAs } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
+import { mapLedgerEntryRow, type LedgerEntry, type LedgerEntryRow } from "@/server/transactions/getTransactions";
 
 type CreateLedgerEntryParams = Readonly<{
   ts: string;
@@ -20,37 +21,11 @@ type CreateLedgerEntryParams = Readonly<{
 
 export type { CreateLedgerEntryParams };
 
-type LedgerEntryRow = Readonly<{
-  entry_id: string;
-  event_id: string;
-  ts: string;
-  account_id: string;
-  amount: number;
-  amount_report: number | null;
-  currency: string;
-  kind: string;
-  category: string | null;
-  counterparty: string | null;
-  note: string | null;
-}>;
-
 export const createLedgerEntry = async (
   userId: string,
   workspaceId: string,
   params: CreateLedgerEntryParams,
-): Promise<Readonly<{
-  entryId: string;
-  eventId: string;
-  ts: string;
-  accountId: string;
-  amount: number;
-  amountReport: number | null;
-  currency: string;
-  kind: string;
-  category: string | null;
-  counterparty: string | null;
-  note: string | null;
-}>> => {
+): Promise<LedgerEntry> => {
   const reportCurrency = await getReportCurrency(userId, workspaceId);
   const result = await queryAs(
     userId,
@@ -124,17 +99,5 @@ export const createLedgerEntry = async (
     throw new Error("Failed to create ledger entry: insert returned no row");
   }
 
-  return {
-    entryId: row.entry_id,
-    eventId: row.event_id,
-    ts: new Date(row.ts).toISOString(),
-    accountId: row.account_id,
-    amount: Number(row.amount),
-    amountReport: row.amount_report !== null ? Number(row.amount_report) : null,
-    currency: row.currency,
-    kind: row.kind,
-    category: row.category,
-    counterparty: row.counterparty,
-    note: row.note,
-  };
+  return mapLedgerEntryRow(row);
 };
