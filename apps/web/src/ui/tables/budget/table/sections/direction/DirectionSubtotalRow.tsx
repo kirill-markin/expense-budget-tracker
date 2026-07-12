@@ -21,6 +21,7 @@ import {
   buildYearTotalStateClass,
   isDirectionActualOverPlanned,
   renderColumnCells,
+  renderDerivedYearLoadingCells,
   renderSubtotalYearLoadingCells,
   renderValueCells,
 } from "../shared";
@@ -55,10 +56,14 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
   } = props;
   const { t } = useTranslation();
   const dirVis: CellVisibility = { showData: true, maskClass: "" };
+  const isTransfer = block.direction === "transfer";
+  const labelClass = isTransfer ? styles.categoryLabel : styles.directionLabel;
+  const subtotalClass = isTransfer ? "" : ` ${styles.cellSubtotal}`;
+  const renderYearLoading = isTransfer ? renderDerivedYearLoadingCells : renderSubtotalYearLoadingCells;
 
   return (
     <tr className={styles.directionRow}>
-      <td className={`${styles.directionLabel} ${styles.stickyCol}`}>
+      <td className={`${labelClass} ${styles.stickyCol}`}>
         {t(`budget.direction${block.direction.charAt(0).toUpperCase()}${block.direction.slice(1)}`)}
       </td>
       <td className={styles.leftSpacer} />
@@ -70,10 +75,10 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
           currentYear,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
           renderYearLoading: (isCurrentYearValue) =>
-            renderSubtotalYearLoadingCells(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+            renderYearLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
-              return renderSubtotalYearLoadingCells(column.kind === "year-total" ? column.year : "", false);
+              return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
             }
             const yearSubtotal = useFilteredSubtotals
               ? (yearData.filteredSubtotals.get(block.direction) ?? zeroCellValue)
@@ -82,7 +87,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
             return (
               <td
                 key={`total-${column.year}`}
-                className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${dirVis.maskClass}${yearTotalStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
+                className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
                 onClick={dirVis.showData
                   ? () => openDrillDown(buildDirectionYearDrillDownFilter(column.year, block.direction, allowedCategoriesArray))
                   : undefined}
@@ -93,21 +98,21 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
           },
           renderFutureYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
-              return renderSubtotalYearLoadingCells(column.kind === "year-total" ? column.year : "", false);
+              return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
             }
             const yearSubtotal = useFilteredSubtotals
               ? (yearData.filteredSubtotals.get(block.direction) ?? zeroCellValue)
               : (yearData.directionSubtotals.get(block.direction) ?? zeroCellValue);
             const yearTotalStateClass = buildYearTotalStateClass(yearData.taintedDirections.has(block.direction), false);
             return (
-              <td key={`total-${column.year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${dirVis.maskClass}${yearTotalStateClass}`}>
+              <td key={`total-${column.year}`} className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalStateClass}`}>
                 {formatAmount(yearSubtotal.planned, numberFormat)}
               </td>
             );
           },
           renderCurrentYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
-              return renderSubtotalYearLoadingCells(column.kind === "year-total" ? column.year : "", true);
+              return renderYearLoading(column.kind === "year-total" ? column.year : "", true);
             }
             const yearSubtotal = useFilteredSubtotals
               ? (yearData.filteredSubtotals.get(block.direction) ?? zeroCellValue)
@@ -117,11 +122,11 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
             const yearTotalActualStateClass = buildYearTotalStateClass(yearData.taintedDirections.has(block.direction), isActualOver);
             return (
               <Fragment key={`total-${column.year}`}>
-                <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${dirVis.maskClass}${yearTotalPlanStateClass}`}>
+                <td className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalPlanStateClass}`}>
                   {formatAmount(yearSubtotal.planned, numberFormat)}
                 </td>
                 <td
-                  className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${dirVis.maskClass}${yearTotalActualStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
+                  className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalActualStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
                   onClick={dirVis.showData
                     ? () => openDrillDown(buildDirectionYearDrillDownFilter(column.year, block.direction, allowedCategoriesArray))
                     : undefined}
@@ -133,7 +138,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
           },
           renderPastMonth: () => {
             if (column.kind !== "month") {
-              return renderSubtotalYearLoadingCells("invalid", false);
+              return renderYearLoading("invalid", false);
             }
             const subtotal = (useFilteredSubtotals
               ? filteredSubtotalsMap.get(block.direction)?.get(column.month)
@@ -148,8 +153,10 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               isTainted,
               isPlanOver: false,
               isActualOver: false,
-              isSubtotal: true,
+              isSubtotal: !isTransfer,
               maskClass: dirVis.maskClass,
+              plannedValueClass: "",
+              actualValueClass: "",
               numberFormat,
               formatter: formatAmount,
               onActualClick: dirVis.showData
@@ -159,7 +166,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
           },
           renderFutureMonth: () => {
             if (column.kind !== "month") {
-              return renderSubtotalYearLoadingCells("invalid", false);
+              return renderYearLoading("invalid", false);
             }
             const subtotal = (useFilteredSubtotals
               ? filteredSubtotalsMap.get(block.direction)?.get(column.month)
@@ -174,8 +181,10 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               isTainted,
               isPlanOver: false,
               isActualOver: false,
-              isSubtotal: true,
+              isSubtotal: !isTransfer,
               maskClass: dirVis.maskClass,
+              plannedValueClass: "",
+              actualValueClass: "",
               numberFormat,
               formatter: formatAmount,
               onActualClick: null,
@@ -183,7 +192,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
           },
           renderCurrentMonth: () => {
             if (column.kind !== "month") {
-              return renderSubtotalYearLoadingCells("invalid", false);
+              return renderYearLoading("invalid", false);
             }
             const subtotal = (useFilteredSubtotals
               ? filteredSubtotalsMap.get(block.direction)?.get(column.month)
@@ -198,8 +207,10 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               isTainted,
               isPlanOver: false,
               isActualOver: isDirectionActualOverPlanned(block.direction, subtotal.planned, subtotal.actual),
-              isSubtotal: true,
+              isSubtotal: !isTransfer,
               maskClass: dirVis.maskClass,
+              plannedValueClass: "",
+              actualValueClass: "",
               numberFormat,
               formatter: formatAmount,
               onActualClick: dirVis.showData

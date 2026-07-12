@@ -112,6 +112,10 @@
   border-top: 1px solid var(--panel-border);
 }
 
+.businessPersonalDivider {
+  border-block-start: 1px solid var(--panel-border);
+}
+
 .directionLabel {
   padding: 4px 10px;
   font-weight: 650;
@@ -135,6 +139,14 @@
 
 .cellSubtotal {
   font-weight: 650;
+}
+
+.remainderPositive:not(:global(.data-masked)) {
+  color: #2e7d32;
+}
+
+.remainderNegative:not(:global(.data-masked)) {
+  color: #c0392b;
 }
 
 .currentMonth {
@@ -185,6 +197,14 @@ tbody tr:last-child .currentMonthActual {
 .yearTotalDanger {
   --budget-table-year-total-color: #e74c3c;
   --table-state-danger-color: #e74c3c;
+}
+
+.yearTotal.remainderNegative:not(:global(.data-masked)) {
+  color: #e74c3c;
+}
+
+.yearTotal.remainderPositive:not(:global(.data-masked)) {
+  color: #4caf50;
 }
 
 .yearTotal:has(+ .yearTotal) {
