@@ -226,8 +226,22 @@ export const ChatPanel = (props: Props): ReactElement => {
     shouldRestoreTextareaFocusAfterDictationRef.current = false;
   }, [dictationState, inputText]);
 
-  const handleAttach = useCallback((attachment: PendingAttachment): void => {
-    setPendingAttachments((prev) => [...prev, attachment]);
+  const ingestFiles = useCallback(async (files: ReadonlyArray<File>): Promise<number> => {
+    let attachedFileCount = 0;
+
+    for (const file of files) {
+      const sizeError = checkFileSize(file);
+      if (sizeError !== null) {
+        alert(sizeError);
+        continue;
+      }
+
+      const attachment = await prepareAttachment(file);
+      setPendingAttachments((prev) => [...prev, attachment]);
+      attachedFileCount += 1;
+    }
+
+    return attachedFileCount;
   }, []);
 
   const removeAttachment = useCallback((index: number): void => {
@@ -288,24 +302,13 @@ export const ChatPanel = (props: Props): ReactElement => {
       return;
     }
 
-    const files = e.dataTransfer.files;
-    let hasAttachedFile = false;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const sizeError = checkFileSize(file);
-      if (sizeError !== null) {
-        alert(sizeError);
-        continue;
-      }
-      const attachment = await prepareAttachment(file);
-      handleAttach(attachment);
-      hasAttachedFile = true;
-    }
+    const files = Array.from(e.dataTransfer.files);
+    const attachedFileCount = await ingestFiles(files);
 
-    if (hasAttachedFile) {
+    if (attachedFileCount > 0) {
       textareaRef.current?.focus();
     }
-  }, [composerCapabilities.isDropTargetEnabled, handleAttach]);
+  }, [composerCapabilities.isDropTargetEnabled, ingestFiles]);
 
   const canSendPendingMessage = isHistoryLoaded
     && !isStopping
@@ -560,7 +563,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         capabilities={composerCapabilities}
         textareaRef={textareaRef}
         onInputChange={setInputText}
-        onAttach={handleAttach}
+        onIngestFiles={ingestFiles}
         onRemoveAttachment={removeAttachment}
         onToggleDictation={handleToggleDictation}
         onSend={sendPendingMessage}

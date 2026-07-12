@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  ClipboardEvent,
   KeyboardEvent,
   ReactElement,
   RefObject,
@@ -26,7 +27,7 @@ type Props = Readonly<{
   capabilities: ChatComposerCapabilities;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onInputChange: (value: string) => void;
-  onAttach: (attachment: PendingAttachment) => void;
+  onIngestFiles: (files: ReadonlyArray<File>) => Promise<number>;
   onRemoveAttachment: (index: number) => void;
   onToggleDictation: () => Promise<void>;
   onSend: () => Promise<void>;
@@ -43,7 +44,7 @@ export const ChatComposer = (props: Props): ReactElement => {
     capabilities,
     textareaRef,
     onInputChange,
-    onAttach,
+    onIngestFiles,
     onRemoveAttachment,
     onToggleDictation,
     onSend,
@@ -69,6 +70,28 @@ export const ChatComposer = (props: Props): ReactElement => {
 
     event.preventDefault();
     void onSend();
+  };
+
+  const handleTextareaPaste = (
+    event: ClipboardEvent<HTMLTextAreaElement>,
+  ): void => {
+    const imageFiles = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null)
+      .map((file) => file.name === ""
+        ? new File([file], "clipboard-image.png", {
+          type: file.type,
+          lastModified: file.lastModified,
+        })
+        : file);
+
+    if (imageFiles.length === 0 || !capabilities.isDropTargetEnabled) {
+      return;
+    }
+
+    event.preventDefault();
+    void onIngestFiles(imageFiles);
   };
 
   const handleSubmitButtonClick = (): void => {
@@ -108,6 +131,7 @@ export const ChatComposer = (props: Props): ReactElement => {
         enterKeyHint={enterKeyHint}
         onChange={(event) => onInputChange(event.target.value)}
         onKeyDown={handleTextareaKeyDown}
+        onPaste={handleTextareaPaste}
         rows={1}
       />
       {dictationStatusLabel !== null && (
@@ -138,7 +162,10 @@ export const ChatComposer = (props: Props): ReactElement => {
               )}
             </svg>
           </button>
-          <FileAttachment onAttach={onAttach} disabled={capabilities.isAttachButtonDisabled} />
+          <FileAttachment
+            onIngestFiles={onIngestFiles}
+            disabled={capabilities.isAttachButtonDisabled}
+          />
           <button
             type="button"
             className={styles.sendButton}
