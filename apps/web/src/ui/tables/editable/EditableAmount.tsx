@@ -70,6 +70,7 @@ export const EditableAmount = (props: Props): ReactElement => {
     <td
       ref={cellRef}
       className={cn(styles.cell, styles.cellRight, !isMasked ? styles.editable : "", maskClass)}
+      data-testid={`transaction-amount-${entryId}`}
       onClick={isMasked ? undefined : startEditing}
     >
       {formatAmount(currentValue, numberFormat)}
@@ -79,6 +80,7 @@ export const EditableAmount = (props: Props): ReactElement => {
           className={styles.editorOverlay}
           type="text"
           inputMode="decimal"
+          data-testid={`transaction-amount-input-${entryId}`}
           value={editValue}
           style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height, textAlign: "right" }}
           onChange={(e) => setEditValue(e.target.value)}

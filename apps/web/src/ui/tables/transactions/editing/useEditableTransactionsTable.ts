@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { fetchWithCsrf } from "@/lib/csrf";
 import { buildLiveDataUrl } from "@/lib/liveDataFetch";
@@ -7,6 +7,17 @@ import type { LedgerEntry } from "@/server/transactions/getTransactions";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import type { PageResult } from "@/ui/tables/shared/data-table/types";
 import { useInfiniteScroll } from "@/ui/tables/shared/data-table/useInfiniteScroll";
+import {
+  acceptTransactionSave,
+  createAuthoritativeRowOverride,
+  enqueueTransactionSave,
+  readLedgerEntryUpdateResponse,
+  reconcileDisplayedLedgerEntries,
+  rejectTransactionSave,
+  startTransactionSave,
+  type AuthoritativeRowOverride,
+  type TransactionSaveState,
+} from "./transactionSaveQueue";
 
 export type CreateLedgerEntryRequest = Readonly<{
   ts: string;
@@ -42,14 +53,21 @@ type UseEditableTransactionsTableResult = Readonly<{
   loading: boolean;
   loadingMore: boolean;
   error: string | null;
+  pendingEntryIds: ReadonlySet<string>;
   sentinelRef: ReturnType<typeof useInfiniteScroll<LedgerEntry>>["sentinelRef"];
   addRow: () => void;
-  updateEntry: (entryId: string, patch: Partial<LedgerEntry>) => void;
+  updateEntry: (entryId: string, patch: EditableLedgerEntryPatch) => void;
   deleteEntry: (entryId: string) => void;
 }>;
 
+type EditableLedgerEntryPatch = Partial<Pick<
+  LedgerEntry,
+  "ts" | "accountId" | "amount" | "currency" | "kind" | "category" | "counterparty" | "note"
+>>;
+
 export const PAGE_SIZE = 100;
 export const CREATE_ERROR_PREFIX = "__create__:";
+export const UPDATE_ERROR_PREFIX = "__update__:";
 
 export const toLocalNoonIso = (dateValue: string): string => {
   return new Date(`${dateValue}T12:00`).toISOString();
@@ -204,12 +222,13 @@ const deleteTransactionEntry = async (entryId: string): Promise<void> => {
   }
 };
 
-const saveTransactionEntry = async (entry: LedgerEntry): Promise<void> => {
+const saveTransactionEntry = async (entry: LedgerEntry): Promise<LedgerEntry> => {
   const response = await fetchWithCsrf("/api/transactions/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       entryId: entry.entryId,
+      eventId: entry.eventId,
       category: entry.category,
       note: entry.note,
       counterparty: entry.counterparty,
@@ -221,8 +240,9 @@ const saveTransactionEntry = async (entry: LedgerEntry): Promise<void> => {
     }),
   });
   if (!response.ok) {
-    throw new Error(`Update failed: ${response.status} ${await response.text()}`);
+    throw new Error(`Update failed for entry ${entry.entryId}: ${response.status} ${await response.text()}`);
   }
+  return readLedgerEntryUpdateResponse(response, entry);
 };
 
 const createTransactionEntry = async (entry: CreateLedgerEntryRequest): Promise<LedgerEntry> => {
@@ -242,36 +262,144 @@ export const useEditableTransactionsTable = (
 ): UseEditableTransactionsTableResult => {
   const { fetchPage, createEntryRequest, resetDeps, onDirty } = params;
   const [createdRows, setCreatedRows] = useState<ReadonlyArray<LedgerEntry>>([]);
+  const [pendingEntryIds, setPendingEntryIds] = useState<ReadonlySet<string>>(new Set<string>());
+  const saveStatesRef = useRef<Map<string, TransactionSaveState>>(new Map<string, TransactionSaveState>());
+  const authoritativeOverridesRef = useRef<Map<string, AuthoritativeRowOverride>>(new Map<string, AuthoritativeRowOverride>());
+  const fetchedRowVersionsRef = useRef<WeakMap<LedgerEntry, number>>(new WeakMap<LedgerEntry, number>());
+  const fetchVersionRef = useRef<number>(0);
+  const rowsRef = useRef<ReadonlyArray<LedgerEntry>>([]);
 
-  const scroll = useInfiniteScroll<LedgerEntry>(fetchPage, PAGE_SIZE, resetDeps);
+  const fetchVersionedPage = useCallback(async (
+    limit: number,
+    offset: number,
+  ): Promise<PageResult<LedgerEntry>> => {
+    const fetchVersion = ++fetchVersionRef.current;
+    const page = await fetchPage(limit, offset);
+    const items = page.items.map((row): LedgerEntry => ({ ...row }));
+    for (const row of items) {
+      fetchedRowVersionsRef.current.set(row, fetchVersion);
+    }
+    return { items, total: page.total };
+  }, [fetchPage]);
 
-  const rows = useMemo<ReadonlyArray<LedgerEntry>>(
-    () => mergeLedgerEntries(createdRows, scroll.rows),
-    [createdRows, scroll.rows],
+  const scroll = useInfiniteScroll<LedgerEntry>(fetchVersionedPage, PAGE_SIZE, resetDeps);
+
+  const displayReconciliation = useMemo(
+    () => reconcileDisplayedLedgerEntries(
+      mergeLedgerEntries(createdRows, scroll.rows),
+      (row: LedgerEntry): number | null => fetchedRowVersionsRef.current.get(row) ?? null,
+      saveStatesRef.current,
+      authoritativeOverridesRef.current,
+    ),
+    [createdRows, pendingEntryIds, scroll.rows],
   );
+  const rows = displayReconciliation.rows;
+
+  useEffect(() => {
+    if (displayReconciliation.overrideRetirements.length === 0) return;
+
+    const nextOverrides = new Map(authoritativeOverridesRef.current);
+    let changed = false;
+    for (const retirement of displayReconciliation.overrideRetirements) {
+      if (nextOverrides.get(retirement.entryId) !== retirement.override) continue;
+      nextOverrides.delete(retirement.entryId);
+      changed = true;
+    }
+    if (changed) {
+      authoritativeOverridesRef.current = nextOverrides;
+    }
+  }, [displayReconciliation.overrideRetirements]);
+
+  useLayoutEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
 
   useEffect(() => {
     setCreatedRows([]);
   }, resetDeps);
 
   const replaceEntry = useCallback((entry: LedgerEntry): void => {
+    rowsRef.current = replaceLedgerEntry(rowsRef.current, entry);
     setCreatedRows((prev) => replaceLedgerEntry(prev, entry));
     scroll.setRows((prev) => replaceLedgerEntry(prev, entry));
   }, [scroll]);
 
-  const updateEntry = useCallback((entryId: string, patch: Partial<LedgerEntry>): void => {
-    const entry = rows.find((item) => item.entryId === entryId);
+  const markEntryPending = useCallback((entryId: string): void => {
+    setPendingEntryIds((current) => new Set([...current, entryId]));
+  }, []);
+
+  const clearEntryPending = useCallback((entryId: string): void => {
+    setPendingEntryIds((current) => {
+      const next = new Set(current);
+      next.delete(entryId);
+      return next;
+    });
+  }, []);
+
+  const protectAuthoritativeEntry = useCallback((entry: LedgerEntry): void => {
+    const nextOverrides = new Map(authoritativeOverridesRef.current);
+    nextOverrides.set(
+      entry.entryId,
+      createAuthoritativeRowOverride(entry, fetchVersionRef.current),
+    );
+    authoritativeOverridesRef.current = nextOverrides;
+  }, []);
+
+  const processEntryQueue = useCallback(async (entryId: string): Promise<void> => {
+    while (true) {
+      const state = saveStatesRef.current.get(entryId);
+      if (state === undefined) return;
+
+      let authoritative: LedgerEntry;
+      try {
+        authoritative = await saveTransactionEntry(state.active);
+      } catch (error: unknown) {
+        const failedState = saveStatesRef.current.get(entryId);
+        if (failedState === undefined) return;
+
+        const rollbackEntry = rejectTransactionSave(failedState);
+        protectAuthoritativeEntry(rollbackEntry);
+        saveStatesRef.current.delete(entryId);
+        replaceEntry(rollbackEntry);
+        clearEntryPending(entryId);
+        scroll.setError(`${UPDATE_ERROR_PREFIX}${getErrorMessage(error)}`);
+        return;
+      }
+
+      const latestState = saveStatesRef.current.get(entryId);
+      if (latestState === undefined) return;
+      const accepted = acceptTransactionSave(latestState, authoritative);
+      if (accepted.status === "complete") {
+        protectAuthoritativeEntry(accepted.row);
+        saveStatesRef.current.delete(entryId);
+        replaceEntry(accepted.row);
+        clearEntryPending(entryId);
+        return;
+      }
+
+      saveStatesRef.current.set(entryId, accepted.state);
+    }
+  }, [clearEntryPending, protectAuthoritativeEntry, replaceEntry, scroll]);
+
+  const updateEntry = useCallback((entryId: string, patch: EditableLedgerEntryPatch): void => {
+    const entry = rowsRef.current.find((item) => item.entryId === entryId);
     if (entry === undefined) return;
 
     onDirty();
     const updated = { ...entry, ...patch };
     replaceEntry(updated);
+    scroll.setError(null);
 
-    saveTransactionEntry(updated).catch((error: unknown) => {
-      replaceEntry(entry);
-      scroll.setError(getErrorMessage(error));
-    });
-  }, [onDirty, replaceEntry, rows, scroll]);
+    const existingState = saveStatesRef.current.get(entryId);
+    if (existingState === undefined) {
+      saveStatesRef.current.set(entryId, startTransactionSave(entry, updated));
+      markEntryPending(entryId);
+      void processEntryQueue(entryId);
+      return;
+    }
+
+    saveStatesRef.current.set(entryId, enqueueTransactionSave(existingState, updated));
+  }, [markEntryPending, onDirty, processEntryQueue, replaceEntry, scroll]);
 
   const addRow = useCallback((): void => {
     scroll.setError(null);
@@ -315,6 +443,7 @@ export const useEditableTransactionsTable = (
     loading: scroll.loading,
     loadingMore: scroll.loadingMore,
     error: scroll.error,
+    pendingEntryIds,
     sentinelRef: scroll.sentinelRef,
     addRow,
     updateEntry,

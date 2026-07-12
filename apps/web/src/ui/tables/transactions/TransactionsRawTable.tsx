@@ -5,6 +5,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchLiveData } from "@/lib/liveDataFetch";
+import { getCellVisibility } from "@/lib/dataMask";
 import type { FieldHints, LedgerEntry, TransactionsFilterOptions, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import alertStyles from "@/ui/Alert.module.css";
@@ -15,6 +16,7 @@ import type { ColumnDef, PageResult } from "@/ui/tables/shared/data-table/types"
 import { useTableSort } from "@/ui/tables/shared/data-table/useTableSort";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
 import transactionStyles from "./TransactionsTable.module.css";
+import { TransactionCopyFeedback } from "./TransactionCopyFeedback";
 import { serializeFilterValues } from "./filters/transactionsFiltersState";
 import {
   TransactionsFiltersOverlay,
@@ -24,6 +26,7 @@ import {
   buildTransactionsCreateEntryRequest,
   buildTransactionsPageUrl,
   CREATE_ERROR_PREFIX,
+  UPDATE_ERROR_PREFIX,
   type TransactionsTableFilter,
   useEditableTransactionsTable,
 } from "./editing/useEditableTransactionsTable";
@@ -37,7 +40,9 @@ import {
   editableDeleteColumn,
   editableKindColumn,
   editableNoteColumn,
+  transactionCopyColumn,
 } from "./editing/transactionColumns";
+import { useTransactionClipboard } from "./useTransactionClipboard";
 
 type Props = Readonly<{
   filterOptions: TransactionsFilterOptions;
@@ -59,13 +64,15 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   const { t } = useTranslation();
   const { effectiveAllowlist } = useFilteredMode();
   const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const { feedback: copyFeedback, copyTransaction } = useTransactionClipboard(
+    t("txn.copySuccess"),
+    t("txn.copyFailed"),
+  );
 
-  const getMaskClass = (category: string | null): string => {
-    if (effectiveAllowlist === null) return "";
-    if (category !== null && effectiveAllowlist.has(category)) return "";
-    return " data-masked";
-  };
-  const getRowMaskClass = useCallback((row: LedgerEntry): string => getMaskClass(row.category), [effectiveAllowlist]);
+  const getRowMaskClass = useCallback(
+    (row: LedgerEntry): string => getCellVisibility(effectiveAllowlist, row.category).maskClass,
+    [effectiveAllowlist],
+  );
 
   const now = new Date();
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
@@ -158,6 +165,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     loading,
     loadingMore,
     error,
+    pendingEntryIds,
     sentinelRef,
     addRow,
     updateEntry,
@@ -234,6 +242,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   };
 
   const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = [
+    transactionCopyColumn(effectiveAllowlist, pendingEntryIds, copyTransaction, t("txn.copyAction")),
     editableDateColumn(getRowMaskClass, handleDateTimeCommit),
     editableAccountColumn(getRowMaskClass, handleAccountCommit, hints.accounts),
     editableAmountColumn(getRowMaskClass, handleAmountCommit),
@@ -246,10 +255,14 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
   ];
   const errorTitle = error !== null && error.startsWith(CREATE_ERROR_PREFIX)
     ? t("txn.failedToCreate")
-    : t("txn.failedToLoad");
+    : error !== null && error.startsWith(UPDATE_ERROR_PREFIX)
+      ? t("txn.failedToUpdate")
+      : t("txn.failedToLoad");
   const errorMessage = error !== null && error.startsWith(CREATE_ERROR_PREFIX)
     ? error.slice(CREATE_ERROR_PREFIX.length)
-    : error;
+    : error !== null && error.startsWith(UPDATE_ERROR_PREFIX)
+      ? error.slice(UPDATE_ERROR_PREFIX.length)
+      : error;
 
   return (
     <>
@@ -320,6 +333,8 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           <span>{errorMessage}</span>
         </div>
       )}
+
+      <TransactionCopyFeedback feedback={copyFeedback} />
 
       <div className={tableStyles.scroll}>
         <DataTable<LedgerEntry>
