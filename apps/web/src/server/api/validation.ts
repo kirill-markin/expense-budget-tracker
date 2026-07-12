@@ -140,6 +140,14 @@ export const entryIdSchema: ZodType<string> = createStringSchema(
 );
 
 /**
+ * Accept an event identifier string up to 200 characters.
+ */
+export const eventIdSchema: ZodType<string> = createStringSchema(
+  (value: string): boolean => value.length > 0 && value.length <= 200,
+  "Invalid eventId. Expected non-empty string (max 200 chars)",
+);
+
+/**
  * Accept a finite number for the named field.
  */
 export const finiteNumberSchema = (fieldName: string): ZodType<number> =>

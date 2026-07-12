@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { TransactionsFilter } from "@/server/transactions/getTransactions";
-import { accountIdSchema, counterpartySchema, currencySchema, entryIdSchema, finiteNumberSchema, isoDateTimeSchema, noteSchema, nullableCategorySchema, parseOptionalQueryParam, parseRepeatedQueryParam, parseWithSchema, transactionKindSchema } from "@/server/api/validation";
+import { accountIdSchema, counterpartySchema, currencySchema, entryIdSchema, eventIdSchema, finiteNumberSchema, isoDateTimeSchema, noteSchema, nullableCategorySchema, parseOptionalQueryParam, parseRepeatedQueryParam, parseWithSchema, transactionKindSchema } from "@/server/api/validation";
 
 type CreateTransactionBody = Readonly<{
   ts: string;
@@ -16,6 +16,7 @@ type CreateTransactionBody = Readonly<{
 
 type UpdateTransactionBody = Readonly<{
   entryId: string;
+  eventId?: string;
   category: string | null;
   note: string | null;
   counterparty: string | null;
@@ -107,7 +108,10 @@ export const parseTransactionsCreateBody = (input: unknown): CreateTransactionBo
  * Validate the POST /api/transactions/update request body.
  */
 export const parseTransactionsUpdateBody = (input: unknown): UpdateTransactionBody =>
-  parseWithSchema(input, transactionBodySchema.extend({ entryId: entryIdSchema }));
+  parseWithSchema(input, transactionBodySchema.extend({
+    entryId: entryIdSchema,
+    eventId: eventIdSchema.optional(),
+  }));
 
 /**
  * Validate the POST /api/transactions/delete request body.

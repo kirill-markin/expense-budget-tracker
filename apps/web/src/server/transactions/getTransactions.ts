@@ -23,6 +23,34 @@ export type LedgerEntry = Readonly<{
   note: string | null;
 }>;
 
+export type LedgerEntryRow = Readonly<{
+  entry_id: string;
+  event_id: string;
+  ts: string;
+  account_id: string;
+  amount: number;
+  amount_report: number | null;
+  currency: string;
+  kind: string;
+  category: string | null;
+  counterparty: string | null;
+  note: string | null;
+}>;
+
+export const mapLedgerEntryRow = (row: LedgerEntryRow): LedgerEntry => ({
+  entryId: row.entry_id,
+  eventId: row.event_id,
+  ts: new Date(row.ts).toISOString(),
+  accountId: row.account_id,
+  amount: Number(row.amount),
+  amountReport: row.amount_report !== null ? Number(row.amount_report) : null,
+  currency: row.currency,
+  kind: row.kind,
+  category: row.category,
+  counterparty: row.counterparty,
+  note: row.note,
+});
+
 export type AccountOption = Readonly<{
   accountId: string;
 }>;
@@ -253,31 +281,7 @@ export const getTransactionsPage = async (
     ]);
 
     return {
-      entries: entriesResult.rows.map((row: {
-        entry_id: string;
-        event_id: string;
-        ts: string;
-        account_id: string;
-        amount: number;
-        amount_report: number | null;
-        currency: string;
-        kind: string;
-        category: string | null;
-        counterparty: string | null;
-        note: string | null;
-      }) => ({
-        entryId: row.entry_id,
-        eventId: row.event_id,
-        ts: new Date(row.ts).toISOString(),
-        accountId: row.account_id,
-        amount: Number(row.amount),
-        amountReport: row.amount_report !== null ? Number(row.amount_report) : null,
-        currency: row.currency,
-        kind: row.kind,
-        category: row.category,
-        counterparty: row.counterparty,
-        note: row.note,
-      })),
+      entries: entriesResult.rows.map((row: LedgerEntryRow): LedgerEntry => mapLedgerEntryRow(row)),
       total: Number((countResult.rows[0] as { total: string }).total),
     };
   });
