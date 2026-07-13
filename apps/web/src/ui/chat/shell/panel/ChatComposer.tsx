@@ -14,13 +14,30 @@ import type { ChatDictationState } from "../../stream/hooks/chatDictation";
 import type { ChatComposerAction } from "../../stream/streamRecovery";
 import {
   FileAttachment,
+  isAmbiguousClipboardFile,
+  isSupportedClipboardImage,
+  normalizeClipboardImageFile,
   type PendingAttachment,
 } from "./FileAttachment";
 import styles from "./ChatPanel.module.css";
 
+export type AttachmentPreparationError = Readonly<{
+  fileName: string;
+  message: string;
+}>;
+
+const getBase64DecodedByteLength = (base64Data: string): number => {
+  const paddingBytes = base64Data.endsWith("==")
+    ? 2
+    : base64Data.endsWith("=") ? 1 : 0;
+  return Math.floor(base64Data.length * 3 / 4) - paddingBytes;
+};
+
 type Props = Readonly<{
   inputText: string;
   pendingAttachments: ReadonlyArray<PendingAttachment>;
+  attachmentErrors: ReadonlyArray<AttachmentPreparationError>;
+  isAttachmentProcessing: boolean;
   composerAction: ChatComposerAction;
   dictationState: ChatDictationState;
   dictationStatusLabel: string | null;
@@ -38,6 +55,8 @@ export const ChatComposer = (props: Props): ReactElement => {
   const {
     inputText,
     pendingAttachments,
+    attachmentErrors,
+    isAttachmentProcessing,
     composerAction,
     dictationState,
     dictationStatusLabel,
@@ -75,23 +94,29 @@ export const ChatComposer = (props: Props): ReactElement => {
   const handleTextareaPaste = (
     event: ClipboardEvent<HTMLTextAreaElement>,
   ): void => {
-    const imageFiles = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    const clipboardFileCandidates = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
       .filter((file): file is File => file !== null)
-      .map((file) => file.name === ""
-        ? new File([file], "clipboard-image.png", {
-          type: file.type,
-          lastModified: file.lastModified,
-        })
-        : file);
+      .filter((file: File): boolean =>
+        isSupportedClipboardImage(file) || isAmbiguousClipboardFile(file));
+    const shouldOwnPasteEvent = clipboardFileCandidates.some(isSupportedClipboardImage);
+    const imageFiles = clipboardFileCandidates
+      .map(normalizeClipboardImageFile);
 
     if (imageFiles.length === 0 || !capabilities.isDropTargetEnabled) {
       return;
     }
 
-    event.preventDefault();
-    void onIngestFiles(imageFiles);
+    if (shouldOwnPasteEvent) {
+      event.preventDefault();
+      void onIngestFiles(imageFiles);
+      return;
+    }
+
+    window.setTimeout((): void => {
+      void onIngestFiles(imageFiles);
+    }, 0);
   };
 
   const handleSubmitButtonClick = (): void => {
@@ -109,7 +134,13 @@ export const ChatComposer = (props: Props): ReactElement => {
       {pendingAttachments.length > 0 && (
         <div className={styles.attachmentPreview}>
           {pendingAttachments.map((attachment, index) => (
-            <span key={`${attachment.fileName}-${index}`} className={styles.attachmentChip}>
+            <span
+              key={`${attachment.fileName}-${index}`}
+              className={styles.attachmentChip}
+              data-testid="chat-prepared-attachment"
+              data-media-type={attachment.mediaType}
+              data-encoded-size={getBase64DecodedByteLength(attachment.base64Data)}
+            >
               {attachment.fileName}
               <button
                 type="button"
@@ -119,6 +150,31 @@ export const ChatComposer = (props: Props): ReactElement => {
                 &times;
               </button>
             </span>
+          ))}
+        </div>
+      )}
+      {isAttachmentProcessing && (
+        <div
+          className={styles.attachmentProcessing}
+          data-testid="chat-attachment-processing"
+          role="status"
+          aria-live="polite"
+        >
+          {t("chat.attachmentProcessing")}
+        </div>
+      )}
+      {attachmentErrors.length > 0 && (
+        <div className={styles.attachmentErrors}>
+          {attachmentErrors.map((error, index) => (
+            <div
+              key={`${error.fileName}-${index}`}
+              className={styles.attachmentError}
+              data-testid="chat-attachment-error"
+              data-file-name={error.fileName}
+              role="alert"
+            >
+              {error.message}
+            </div>
           ))}
         </div>
       )}
@@ -170,6 +226,7 @@ export const ChatComposer = (props: Props): ReactElement => {
           <button
             type="button"
             className={styles.sendButton}
+            data-testid="chat-submit"
             disabled={capabilities.isSubmitButtonDisabled}
             onClick={handleSubmitButtonClick}
           >

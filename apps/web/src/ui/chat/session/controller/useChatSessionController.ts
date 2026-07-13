@@ -439,6 +439,11 @@ export const useChatSessionController = (
     if (preparedRequest.kind === "empty") {
       return;
     }
+    if (preparedRequest.kind === "invalid_attachment") {
+      startAssistantMessage();
+      markAssistantError(preparedRequest.errorMessage);
+      return;
+    }
 
     appendUserMessage(preparedRequest.contentParts);
     dispatchAction({ type: "run_started" });

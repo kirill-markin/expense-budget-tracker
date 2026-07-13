@@ -1,6 +1,12 @@
 "use client";
 
 import { fetchWithCsrf } from "@/lib/csrf";
+import {
+  hasHeicFileSignature,
+  isHeicFileExtension,
+  normalizeHeicImageMimeType,
+  OPENAI_IMAGE_MIME_TYPES,
+} from "@/lib/chatImageFormats";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import type { ContentPart } from "@/server/chat/types";
 import type { PendingAttachment } from "../../shell/panel/FileAttachment";
@@ -32,6 +38,10 @@ type ChatSendRequestBody = Readonly<{
 
 export type PreparedChatSendRequest =
   | Readonly<{ kind: "empty" }>
+  | Readonly<{
+    kind: "invalid_attachment";
+    errorMessage: string;
+  }>
   | Readonly<{
     kind: "too_large";
     contentParts: ReadonlyArray<ContentPart>;
@@ -66,15 +76,25 @@ export type StreamChatResponseResult = Readonly<{
   wasAborted: boolean;
 }>;
 
-const IMAGE_MEDIA_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-]);
+const IMAGE_MEDIA_TYPES = new Set<string>(OPENAI_IMAGE_MIME_TYPES);
+const HEIC_SIGNATURE_PREFIX_BASE64_CHARACTERS = 16;
 
 const MAX_BODY_BYTES = 90 * 1024 * 1024;
 const STREAM_TIMEOUT_MS = 6 * 60 * 1000;
+
+const decodeBase64Prefix = (base64Data: string): Uint8Array => {
+  const binary = atob(base64Data.slice(0, HEIC_SIGNATURE_PREFIX_BASE64_CHARACTERS));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+};
+
+const isRawHeicAttachment = (attachment: PendingAttachment): boolean =>
+  normalizeHeicImageMimeType(attachment.mediaType) !== null
+  || isHeicFileExtension(attachment.fileName)
+  || hasHeicFileSignature(decodeBase64Prefix(attachment.base64Data));
 
 const buildContentParts = (
   text: string,
@@ -136,6 +156,17 @@ export const prepareChatSendRequest = (
   attachments: ReadonlyArray<PendingAttachment>,
   t: ChatTranslation,
 ): PreparedChatSendRequest => {
+  const rawHeicAttachment = attachments.find(isRawHeicAttachment);
+  if (rawHeicAttachment !== undefined) {
+    return {
+      kind: "invalid_attachment",
+      errorMessage: t("chat.attachmentConversionFailed", {
+        fileName: rawHeicAttachment.fileName,
+        reason: t("chat.attachmentFailureInvalidFormat"),
+      }),
+    };
+  }
+
   const contentParts = buildContentParts(text, attachments);
   if (contentParts.length === 0) {
     return { kind: "empty" };

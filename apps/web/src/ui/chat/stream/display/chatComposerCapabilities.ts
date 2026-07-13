@@ -6,6 +6,7 @@ export type ChatComposerCapabilitiesParams = Readonly<{
   isHistoryLoaded: boolean;
   isStopping: boolean;
   isLiveStreamConnected: boolean;
+  isAttachmentProcessing: boolean;
   dictationState: ChatDictationState;
   hasPendingMessage: boolean;
   shouldSubmitOnEnter: boolean;
@@ -32,17 +33,22 @@ export const getChatComposerCapabilities = (
     isHistoryLoaded,
     isStopping,
     isLiveStreamConnected,
+    isAttachmentProcessing,
     dictationState,
     hasPendingMessage,
     shouldSubmitOnEnter,
   } = params;
   const isDictationActive = dictationState !== "idle";
-  const canAttachFiles = isHistoryLoaded && !isStopping && !isDictationActive;
+  const canAttachFiles = isHistoryLoaded
+    && !isStopping
+    && !isDictationActive
+    && !isAttachmentProcessing;
   const isSubmitButtonDisabled = composerAction === "stop"
     ? !isHistoryLoaded || isStopping
     : !isHistoryLoaded
       || isStopping
       || isDictationActive
+      || isAttachmentProcessing
       || isLiveStreamConnected
       || !hasPendingMessage;
   const isEnterSubmissionEnabled = shouldSubmitOnEnter
@@ -56,6 +62,7 @@ export const getChatComposerCapabilities = (
     isAttachButtonDisabled: !canAttachFiles,
     isMicrophoneButtonDisabled: !isHistoryLoaded
       || isStopping
+      || isAttachmentProcessing
       || isDictationBusy(dictationState),
     isDropTargetEnabled: canAttachFiles,
     shouldSubmitOnEnter,
