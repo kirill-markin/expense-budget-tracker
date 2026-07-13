@@ -2,7 +2,24 @@
 
 import { useRef, type ChangeEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+
+import {
+  detectOpenAIImageMimeTypeFromFileName,
+  getFileExtension,
+  isHeicFileExtension,
+  normalizeHeicImageMimeType,
+  normalizeOpenAIImageMimeType,
+} from "@/lib/chatImageFormats";
+import {
+  CHAT_IMAGE_PREPROCESSING_CONSTRAINTS,
+  preprocessImageAttachment,
+  UnsupportedImageFormatError,
+} from "../../attachments/imagePreprocessing";
 import styles from "./ChatPanel.module.css";
+import {
+  AttachmentReadError,
+  hasSupportedImageAttachmentSignature,
+} from "./chatPanelRuntime";
 
 export type PendingAttachment = Readonly<{
   fileName: string;
@@ -15,9 +32,38 @@ type Props = Readonly<{
   disabled?: boolean;
 }>;
 
-const ACCEPTED_TYPES = "image/*,.pdf,.txt,.csv,.json,.xml,.xlsx,.xls,.md,.html,.py,.js,.ts,.yaml,.yml,.sql,.log,.docx";
+const DOCUMENT_FILE_EXTENSIONS = [
+  ".pdf",
+  ".txt",
+  ".csv",
+  ".json",
+  ".xml",
+  ".xlsx",
+  ".xls",
+  ".md",
+  ".html",
+  ".py",
+  ".js",
+  ".ts",
+  ".yaml",
+  ".yml",
+  ".sql",
+  ".log",
+  ".docx",
+] as const;
+const DOCUMENT_FILE_EXTENSION_SET = new Set<string>(DOCUMENT_FILE_EXTENSIONS);
+const ACCEPTED_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/*",
+  ".heic",
+  ".heif",
+  ...DOCUMENT_FILE_EXTENSIONS,
+].join(",");
 
-export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+export const MAX_FILE_SIZE_BYTES = CHAT_IMAGE_PREPROCESSING_CONSTRAINTS.maximumSourceBytes;
 
 export const checkFileSize = (file: File): string | null => {
   if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -28,61 +74,110 @@ export const checkFileSize = (file: File): string | null => {
   return null;
 };
 
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 const readFileAsBase64 = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
+  new Promise<string>((resolve, reject): void => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // Strip the data:...;base64, prefix
-      const base64 = result.split(",")[1];
-      resolve(base64);
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-
-const IMAGE_COMPRESS_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-
-const compressImage = (file: File): Promise<{ base64Data: string; mediaType: string }> =>
-  new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext("2d");
-      if (ctx === null) {
-        reject(new Error(`Canvas 2D context unavailable — cannot compress image: ${file.name}`));
+    reader.onload = (): void => {
+      if (typeof reader.result !== "string") {
+        reject(new AttachmentReadError(file.name, "FileReader returned a non-string result"));
         return;
       }
-      ctx.drawImage(img, 0, 0);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-      const base64 = dataUrl.split(",")[1];
-      resolve({ base64Data: base64, mediaType: "image/jpeg" });
+      const commaIndex = reader.result.indexOf(",");
+      if (commaIndex < 0) {
+        reject(new AttachmentReadError(file.name, "FileReader returned an invalid data URL"));
+        return;
+      }
+      resolve(reader.result.slice(commaIndex + 1));
     };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error(`Failed to load image: ${file.name}`));
+    reader.onerror = (): void => {
+      reject(new AttachmentReadError(file.name, errorMessage(reader.error)));
     };
-
-    img.src = url;
+    try {
+      reader.readAsDataURL(file);
+    } catch (error) {
+      reject(new AttachmentReadError(file.name, errorMessage(error)));
+    }
   });
 
-export const prepareAttachment = async (file: File): Promise<PendingAttachment> => {
-  if (IMAGE_COMPRESS_TYPES.has(file.type)) {
-    const { base64Data, mediaType } = await compressImage(file);
-    return { fileName: file.name, mediaType, base64Data };
+const isImageAttachment = (file: File): boolean =>
+  file.type.trim().toLowerCase().startsWith("image/")
+  || detectOpenAIImageMimeTypeFromFileName(file.name) !== null
+  || isHeicFileExtension(file.name);
+
+export const isSupportedClipboardImage = (file: File): boolean =>
+  normalizeOpenAIImageMimeType(file.type) !== null
+  || normalizeHeicImageMimeType(file.type) !== null
+  || detectOpenAIImageMimeTypeFromFileName(file.name) !== null
+  || isHeicFileExtension(file.name);
+
+export const isAmbiguousClipboardFile = (file: File): boolean => {
+  const normalizedMediaType = file.type.trim().toLowerCase();
+  return normalizedMediaType === ""
+    || normalizedMediaType === "application/octet-stream";
+};
+
+const getClipboardImageExtension = (mediaType: string): string => {
+  const openAIType = normalizeOpenAIImageMimeType(mediaType);
+  if (openAIType === "image/png") return ".png";
+  if (openAIType === "image/jpeg") return ".jpg";
+  if (openAIType === "image/gif") return ".gif";
+  if (openAIType === "image/webp") return ".webp";
+
+  const heicType = normalizeHeicImageMimeType(mediaType);
+  if (heicType === "image/heif" || heicType === "image/heif-sequence") {
+    return ".heif";
   }
+  if (heicType === "image/heic" || heicType === "image/heic-sequence") {
+    return ".heic";
+  }
+
+  const normalizedMediaType = mediaType.trim().toLowerCase();
+  if (normalizedMediaType === "" || normalizedMediaType === "application/octet-stream") {
+    return "";
+  }
+
+  throw new TypeError(`Unsupported clipboard image MIME type: ${mediaType}`);
+};
+
+export const normalizeClipboardImageFile = (file: File, index: number): File => {
+  if (file.name.trim() !== "") {
+    return file;
+  }
+
+  const sequenceSuffix = index === 0 ? "" : `-${index + 1}`;
+  return new File(
+    [file],
+    `clipboard-image${sequenceSuffix}${getClipboardImageExtension(file.type)}`,
+    { type: file.type, lastModified: file.lastModified },
+  );
+};
+
+export const prepareAttachment = async (file: File): Promise<PendingAttachment> => {
+  const sizeError = checkFileSize(file);
+  if (sizeError !== null) {
+    throw new RangeError(sizeError);
+  }
+
+  if (isImageAttachment(file) || await hasSupportedImageAttachmentSignature(file)) {
+    return preprocessImageAttachment(file, CHAT_IMAGE_PREPROCESSING_CONSTRAINTS);
+  }
+
+  if (
+    isAmbiguousClipboardFile(file)
+    && !DOCUMENT_FILE_EXTENSION_SET.has(getFileExtension(file.name))
+  ) {
+    throw new UnsupportedImageFormatError(file.name, file.type);
+  }
+
   const base64Data = await readFileAsBase64(file);
   return { fileName: file.name, mediaType: file.type || "application/octet-stream", base64Data };
 };
 
 export const FileAttachment = (props: Props): ReactElement => {
-  const { onIngestFiles, disabled = false } = props;
+  const { onIngestFiles, disabled } = props;
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -98,6 +193,7 @@ export const FileAttachment = (props: Props): ReactElement => {
     <>
       <input
         ref={inputRef}
+        data-testid="chat-file-input"
         type="file"
         accept={ACCEPTED_TYPES}
         multiple

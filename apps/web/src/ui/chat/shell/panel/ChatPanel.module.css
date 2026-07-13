@@ -430,6 +430,25 @@
   color: #c0392b;
 }
 
+.attachmentProcessing {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.attachmentErrors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.attachmentError {
+  border-inline-start: 2px solid #c0392b;
+  padding-inline-start: 6px;
+  color: #c0392b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .dropOverlay {
   position: absolute;
   inset: 0;

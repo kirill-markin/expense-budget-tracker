@@ -13,10 +13,17 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import { useChatLayout } from "../layout/ChatLayoutProvider";
-import { ChatComposer } from "./ChatComposer";
+import {
+  ChatComposer,
+  type AttachmentPreparationError,
+} from "./ChatComposer";
 import { ChatPanelHeader } from "./ChatPanelHeader";
 import { ChatTranscript } from "./ChatTranscript";
-import { prepareAttachment, checkFileSize, type PendingAttachment } from "./FileAttachment";
+import { prepareAttachment, type PendingAttachment } from "./FileAttachment";
+import {
+  getAttachmentFailureReasonKey,
+  startMountedLifecycle,
+} from "./chatPanelRuntime";
 import { getChatComposerCapabilities } from "../../stream/display/chatComposerCapabilities";
 import { buildChatTranscriptMarkdown } from "../../stream/display/chatTranscriptMarkdown";
 import {
@@ -150,12 +157,15 @@ export const ChatPanel = (props: Props): ReactElement => {
   const [localWidth, setLocalWidth] = useState<number>(chatWidth);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [pendingAttachments, setPendingAttachments] = useState<ReadonlyArray<PendingAttachment>>([]);
+  const [attachmentErrors, setAttachmentErrors] = useState<ReadonlyArray<AttachmentPreparationError>>([]);
+  const [isAttachmentProcessing, setIsAttachmentProcessing] = useState<boolean>(false);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const [dictationState, setDictationState] = useState<ChatDictationState>("idle");
   const shouldSubmitOnEnter = useDesktopEnterToSend();
 
   const dragCounterRef = useRef<number>(0);
+  const isAttachmentProcessingRef = useRef<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const copyStatusResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -194,8 +204,10 @@ export const ChatPanel = (props: Props): ReactElement => {
   }, [isDragging, localWidth, setChatWidth]);
 
   useEffect(() => {
+    const finishMountedLifecycle = startMountedLifecycle(isMountedRef);
+
     return () => {
-      isMountedRef.current = false;
+      finishMountedLifecycle();
       if (copyStatusResetRef.current !== null) {
         clearTimeout(copyStatusResetRef.current);
       }
@@ -232,22 +244,48 @@ export const ChatPanel = (props: Props): ReactElement => {
   }, [dictationState, inputText]);
 
   const ingestFiles = useCallback(async (files: ReadonlyArray<File>): Promise<number> => {
+    if (files.length === 0 || isAttachmentProcessingRef.current) {
+      return 0;
+    }
+
+    isAttachmentProcessingRef.current = true;
+    setIsAttachmentProcessing(true);
+    setAttachmentErrors([]);
     let attachedFileCount = 0;
 
-    for (const file of files) {
-      const sizeError = checkFileSize(file);
-      if (sizeError !== null) {
-        alert(sizeError);
-        continue;
+    try {
+      for (const file of files) {
+        try {
+          const attachment = await prepareAttachment(file);
+          if (isMountedRef.current) {
+            setPendingAttachments((prev) => [...prev, attachment]);
+          }
+          attachedFileCount += 1;
+        } catch (error) {
+          const reason = t(getAttachmentFailureReasonKey(error));
+          if (isMountedRef.current) {
+            setAttachmentErrors((previousErrors) => [
+              ...previousErrors,
+              {
+                fileName: file.name,
+                message: t("chat.attachmentConversionFailed", {
+                  fileName: file.name,
+                  reason,
+                }),
+              },
+            ]);
+          }
+        }
       }
-
-      const attachment = await prepareAttachment(file);
-      setPendingAttachments((prev) => [...prev, attachment]);
-      attachedFileCount += 1;
+    } finally {
+      isAttachmentProcessingRef.current = false;
+      if (isMountedRef.current) {
+        setIsAttachmentProcessing(false);
+      }
     }
 
     return attachedFileCount;
-  }, []);
+  }, [t]);
 
   const removeAttachment = useCallback((index: number): void => {
     setPendingAttachments((prev) => [...prev.slice(0, index), ...prev.slice(index + 1)]);
@@ -259,6 +297,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     isHistoryLoaded,
     isStopping,
     isLiveStreamConnected,
+    isAttachmentProcessing,
     dictationState,
     hasPendingMessage,
     shouldSubmitOnEnter,
@@ -319,6 +358,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     && !isStopping
     && !isAssistantRunActive
     && !isLiveStreamConnected
+    && !isAttachmentProcessing
     && dictationState === "idle"
     && hasPendingMessage;
 
@@ -467,7 +507,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   }, [dictationState, startDictation, stopDictation]);
 
   const sendPendingMessage = useCallback(async (): Promise<void> => {
-    if (!canSendPendingMessage) {
+    if (!canSendPendingMessage || isAttachmentProcessingRef.current) {
       return;
     }
 
@@ -531,6 +571,7 @@ export const ChatPanel = (props: Props): ReactElement => {
   return (
     <div
       className={rootClass}
+      data-testid="chat-panel"
       style={sidebarStyle}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -538,7 +579,9 @@ export const ChatPanel = (props: Props): ReactElement => {
       onDrop={(e) => void handleDrop(e)}
     >
       {isDragOver && composerCapabilities.isDropTargetEnabled && (
-        <div className={styles.dropOverlay}>{t("chat.dropFiles")}</div>
+        <div className={styles.dropOverlay} data-testid="chat-drop-overlay">
+          {t("chat.dropFiles")}
+        </div>
       )}
       {mode === "sidebar" && (
         <div
@@ -562,6 +605,8 @@ export const ChatPanel = (props: Props): ReactElement => {
       <ChatComposer
         inputText={inputText}
         pendingAttachments={pendingAttachments}
+        attachmentErrors={attachmentErrors}
+        isAttachmentProcessing={isAttachmentProcessing}
         composerAction={composerAction}
         dictationState={dictationState}
         dictationStatusLabel={dictationStatusLabel}
