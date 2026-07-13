@@ -124,6 +124,7 @@ export const ChatComposer = (props: Props): ReactElement => {
       )}
       <textarea
         ref={textareaRef}
+        data-testid="chat-composer-input"
         className={styles.textarea}
         placeholder={t("chat.placeholder")}
         value={inputText}
