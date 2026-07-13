@@ -125,7 +125,13 @@ const getMicrophoneErrorMessage = (
 export const ChatPanel = (props: Props): ReactElement => {
   const { mode, workspaceId } = props;
   const { t } = useTranslation();
-  const { setIsOpen, chatWidth, setChatWidth } = useChatLayout();
+  const {
+    setIsOpen,
+    chatWidth,
+    setChatWidth,
+    chatDraftText: inputText,
+    setChatDraftText: setInputText,
+  } = useChatLayout();
   const {
     messages,
     runState,
@@ -143,7 +149,6 @@ export const ChatPanel = (props: Props): ReactElement => {
 
   const [localWidth, setLocalWidth] = useState<number>(chatWidth);
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [inputText, setInputText] = useState<string>("");
   const [pendingAttachments, setPendingAttachments] = useState<ReadonlyArray<PendingAttachment>>([]);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");

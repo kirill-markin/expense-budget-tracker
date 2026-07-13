@@ -12,6 +12,7 @@ export const ChatToggle = (): ReactElement => {
   return (
     <button
       type="button"
+      data-testid="chat-sidebar-open"
       className={styles.toggleFloating}
       onClick={() => setIsOpen(true)}
     >

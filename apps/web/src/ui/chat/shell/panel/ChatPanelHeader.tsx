@@ -62,6 +62,7 @@ export const ChatPanelHeader = (props: Props): ReactElement => {
         {mode === "sidebar" && (
           <button
             type="button"
+            data-testid="chat-sidebar-close"
             className={styles.closeButton}
             onClick={onCloseSidebar}
           >

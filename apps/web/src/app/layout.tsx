@@ -18,6 +18,7 @@ import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/serve
 import { resolveWorkspaceForCurrentRequestIdentity } from "@/server/workspaceBootstrap";
 import { AccountMenu } from "@/ui/AccountMenu";
 import { ChatLayoutProvider, ChatLayoutShell } from "@/ui/chat";
+import type { ChatDraftScope } from "@/ui/chat/shell/layout/chatDraftStorage";
 import { CurrencySelector } from "@/ui/CurrencySelector";
 import { FilteredBanner } from "@/ui/FilteredBanner";
 import { FilteredModeProvider } from "@/ui/FilteredModeProvider";
@@ -53,6 +54,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
 
   const demo = await isDemoMode();
   const { chatOpen, chatWidth } = await readChatCookies();
+  const currentUserId = extractUserIdFromHeaders(headersList);
 
   const authEnabled = process.env.AUTH_MODE === "cognito";
   let reportingCurrency = "USD";
@@ -66,8 +68,8 @@ export default async function RootLayout(props: Readonly<{ children: React.React
     locale = await getLocaleCookie();
   } else {
     try {
-      const userId = extractUserIdFromHeaders(headersList);
       const workspaceId = extractWorkspaceIdFromHeaders(headersList);
+      currentWorkspaceId = workspaceId;
       if (authEnabled) {
         const resolvedWorkspace = await resolveWorkspaceForCurrentRequestIdentity(
           buildRequestIdentity(headersList),
@@ -78,13 +80,12 @@ export default async function RootLayout(props: Readonly<{ children: React.React
           redirect(`/api/workspaces/bootstrap?returnTo=${encodeURIComponent(returnTo)}`);
         }
       }
-      reportingCurrency = await getReportCurrency(userId, workspaceId);
-      currentWorkspaceId = workspaceId;
+      reportingCurrency = await getReportCurrency(currentUserId, workspaceId);
       if (authEnabled) {
-        workspaces = await listWorkspaces(userId, workspaceId);
+        workspaces = await listWorkspaces(currentUserId, workspaceId);
       }
       const initialLocale = await getLocaleCookie();
-      const userSettings = await getUserSettings(userId, workspaceId, initialLocale);
+      const userSettings = await getUserSettings(currentUserId, workspaceId, initialLocale);
       locale = userSettings.locale;
       numberFormat = userSettings.numberFormat;
       dateFormat = userSettings.dateFormat;
@@ -94,6 +95,10 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       locale = await getLocaleCookie();
     }
   }
+
+  const chatDraftScope: ChatDraftScope = demo
+    ? { mode: "demo", userId: currentUserId }
+    : { mode: "workspace", userId: currentUserId, workspaceId: currentWorkspaceId };
 
   return (
     <html lang={locale} dir={RTL_LOCALES.has(locale) ? "rtl" : "ltr"}>
@@ -129,7 +134,11 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                   <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
                 </nav>
               </div>
-              <ChatLayoutProvider initialChatOpen={chatOpen} initialChatWidth={chatWidth}>
+              <ChatLayoutProvider
+                initialChatOpen={chatOpen}
+                initialChatWidth={chatWidth}
+                draftScope={chatDraftScope}
+              >
                 <ChatLayoutShell workspaceId={currentWorkspaceId}>
                   {children}
                 </ChatLayoutShell>
