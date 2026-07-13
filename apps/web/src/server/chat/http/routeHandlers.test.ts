@@ -16,6 +16,10 @@ import type { ChatRunStartReservation } from "@/server/chat/runtime/runtime";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 
 const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
+const HEIC_BASE64_PREFIX = "AAAAGGZ0eXBoZWljAAAAAA==";
+const HEIC_COMPATIBLE_BRAND_BASE64 = "AAAAFGZ0eXBpc29tAAAAAGhlaWM=";
+const HEIC_UNPADDED_BASE64_PREFIX = HEIC_BASE64_PREFIX.slice(0, -2);
+const HEIC_WHITESPACE_BASE64_PREFIX = "AAAA GGZ0eXBo\nZWljAAAAAA==";
 
 const createHeaders = (): Headers =>
   new Headers({
@@ -125,6 +129,114 @@ test("postChatRouteWithDeps returns 400 for invalid request bodies", async (): P
 
     assert.equal(response.status, 400);
     assert.equal(await response.text(), "content array is empty");
+  });
+});
+
+test("postChatRouteWithDeps rejects unsupported images before reserving or persisting a run", async (): Promise<void> => {
+  await withOpenAiApiKey("test-key", async (): Promise<void> => {
+    let snapshotCallCount = 0;
+    let reservationCallCount = 0;
+    let prepareCallCount = 0;
+    let modelStartCallCount = 0;
+    const response = await postChatRouteWithDeps(
+      createChatRequest({
+        sessionId: "session-1",
+        content: [{
+          type: "image",
+          mediaType: "image/jpeg",
+          base64Data: HEIC_BASE64_PREFIX,
+        }],
+        model: CHAT_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+      createPostDependencies({
+        resolveSnapshotWithRunRecovery: async () => {
+          snapshotCallCount += 1;
+          return createSnapshot();
+        },
+        reserveChatRunStart: (sessionId) => {
+          reservationCallCount += 1;
+          return createReservation(sessionId);
+        },
+        prepareChatRun: async () => {
+          prepareCallCount += 1;
+          return createPreparedRun("session-1");
+        },
+        startPersistedChatRun: () => {
+          modelStartCallCount += 1;
+          return (async function* (): AsyncGenerator<ChatStreamEvent> {
+            yield { type: "done" };
+          })();
+        },
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /image\/heic signature/);
+    assert.equal(response.headers.get("content-type"), "text/plain;charset=UTF-8");
+    assert.equal(snapshotCallCount, 0);
+    assert.equal(reservationCallCount, 0);
+    assert.equal(prepareCallCount, 0);
+    assert.equal(modelStartCallCount, 0);
+  });
+});
+
+test("postChatRouteWithDeps rejects generic HEIC signatures before persistence", async (): Promise<void> => {
+  await withOpenAiApiKey("test-key", async (): Promise<void> => {
+    let snapshotCallCount = 0;
+    let reservationCallCount = 0;
+    let prepareCallCount = 0;
+    let modelStartCallCount = 0;
+    const disguisedHeicData: ReadonlyArray<string> = [
+      HEIC_UNPADDED_BASE64_PREFIX,
+      HEIC_WHITESPACE_BASE64_PREFIX,
+      HEIC_COMPATIBLE_BRAND_BASE64,
+    ];
+
+    for (const base64Data of disguisedHeicData) {
+      const response = await postChatRouteWithDeps(
+        createChatRequest({
+          sessionId: "session-1",
+          content: [{
+            type: "file",
+            fileName: "camera.bin",
+            mediaType: "application/octet-stream",
+            base64Data,
+          }],
+          model: CHAT_MODEL_ID,
+          timezone: "Europe/Madrid",
+        }),
+        createPostDependencies({
+          resolveSnapshotWithRunRecovery: async () => {
+            snapshotCallCount += 1;
+            return createSnapshot();
+          },
+          reserveChatRunStart: (sessionId) => {
+            reservationCallCount += 1;
+            return createReservation(sessionId);
+          },
+          prepareChatRun: async () => {
+            prepareCallCount += 1;
+            return createPreparedRun("session-1");
+          },
+          startPersistedChatRun: () => {
+            modelStartCallCount += 1;
+            return (async function* (): AsyncGenerator<ChatStreamEvent> {
+              yield { type: "done" };
+            })();
+          },
+        }),
+      );
+
+      assert.equal(response.status, 400);
+      assert.match(await response.text(), /file signature/);
+      assert.equal(response.headers.get("content-type"), "text/plain;charset=UTF-8");
+    }
+
+    assert.equal(snapshotCallCount, 0);
+    assert.equal(reservationCallCount, 0);
+    assert.equal(prepareCallCount, 0);
+    assert.equal(modelStartCallCount, 0);
   });
 });
 
