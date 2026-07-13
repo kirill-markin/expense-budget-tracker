@@ -259,6 +259,7 @@
   "chat.toolCallLimitReachedContinue": "He alcanzado el límite de {{limit}} llamadas a herramientas para este turno. Envía otro mensaje, por ejemplo \"continuar\", y reanudaré esta misma sesión de chat.",
   "chat.openaiTransientError": "El servicio de IA tuvo un problema temporal y se detuvo a mitad de turno. Envía \"continuar\" para reanudar desde el último paso completado.",
   "chat.contentPolicyBlocked": "El servicio de IA bloqueó esta solicitud por una infracción de la política de contenido. Intenta reformular el mensaje.",
+  "chat.unsupportedStoredAttachment": "Esta conversación contiene una imagen antigua en un formato no compatible. Haz clic en «Nuevo» para iniciar una conversación nueva y vuelve a adjuntar la imagen.",
   "chat.unexpectedError": "Error inesperado del servicio de IA. Por favor, inténtalo de nuevo.",
   "chat.stopped": "Detenido",
   "chat.copyTranscript": "Copiar conversación",

@@ -17,6 +17,13 @@ import {
   toOpenAIResponseInputItem,
   type ServerChatMessage,
 } from "@/server/chat/openai/responses/replayItems";
+import {
+  HeicFileAttachmentError,
+  ImageMimeSignatureMismatchError,
+  InvalidBase64ImageDataError,
+  UnsupportedImageMediaTypeError,
+  validateChatAttachments,
+} from "@/server/chat/attachments/validation";
 import { buildSystemInstructions } from "@/server/chat/shared";
 import { log } from "@/server/logger";
 
@@ -33,6 +40,38 @@ type AttachmentSummary = Readonly<{
 const MAX_TEXT_HISTORY_LENGTH = 8_000;
 const MAX_TOOL_PAYLOAD_LENGTH = 4_000;
 const MAX_REASONING_SUMMARY_LENGTH = 2_000;
+
+const isChatAttachmentValidationError = (error: unknown): error is Error =>
+  error instanceof HeicFileAttachmentError
+  || error instanceof ImageMimeSignatureMismatchError
+  || error instanceof InvalidBase64ImageDataError
+  || error instanceof UnsupportedImageMediaTypeError;
+
+export class UnsupportedStoredChatAttachmentError extends Error {
+  public readonly fileName: string | null;
+  public readonly mediaType: string;
+
+  public constructor(
+    messageIndex: number,
+    partIndex: number,
+    part: FileContentPart | ImageContentPart,
+    cause: Error,
+  ) {
+    const fileName = part.type === "file" ? part.fileName : null;
+    const fileNameContext = fileName === null
+      ? ""
+      : `, filename ${JSON.stringify(fileName)}`;
+    super(
+      `Stored user message ${String(messageIndex)} content part ${String(partIndex)} `
+      + `(media type ${JSON.stringify(part.mediaType)}${fileNameContext}) cannot be replayed `
+      + "because the attachment is unsupported.",
+      { cause },
+    );
+    this.name = "UnsupportedStoredChatAttachmentError";
+    this.fileName = fileName;
+    this.mediaType = part.mediaType;
+  }
+}
 
 const buildFileDataUrl = (
   part: FileContentPart,
@@ -201,6 +240,43 @@ const normalizeHistoryMessages = (
   return localMessages.slice(0, -1);
 };
 
+const validateStoredUserMessageAttachments = (
+  content: ReadonlyArray<ContentPart>,
+  messageIndex: number,
+): void => {
+  content.forEach((part, partIndex): void => {
+    if (part.type !== "image" && part.type !== "file") {
+      return;
+    }
+
+    try {
+      validateChatAttachments([part]);
+    } catch (error) {
+      if (!isChatAttachmentValidationError(error)) {
+        throw error;
+      }
+      throw new UnsupportedStoredChatAttachmentError(
+        messageIndex,
+        partIndex,
+        part,
+        error,
+      );
+    }
+  });
+};
+
+const validateReplayAttachments = (
+  localMessages: ReadonlyArray<ServerChatMessage>,
+  turnInput: ReadonlyArray<ContentPart>,
+): void => {
+  localMessages.forEach((message, messageIndex): void => {
+    if (message.role === "user") {
+      validateStoredUserMessageAttachments(message.content, messageIndex);
+    }
+  });
+  validateChatAttachments(turnInput);
+};
+
 const buildAssistantHistoryItems = (
   message: ServerChatMessage,
 ): ReadonlyArray<OpenAIInputItem> => {
@@ -279,13 +355,15 @@ export const buildChatCompletionInput = async (
    * rehydrated with the same policy as the current turn. Assistant turns replay
    * only from persisted native OpenAI items stored in `openaiItems`.
    */
+  const normalizedHistory = normalizeHistoryMessages(localMessages, turnInput);
+  validateReplayAttachments(normalizedHistory, turnInput);
+
   const input: Array<OpenAIInputItem> = [{
     role: "system",
     type: "message",
     content: buildSystemInstructions(timezone),
   }];
 
-  const normalizedHistory = normalizeHistoryMessages(localMessages, turnInput);
   for (const message of normalizedHistory) {
     if (message.role === "assistant") {
       input.push(...buildAssistantHistoryItems(message));

@@ -259,6 +259,7 @@
   "chat.toolCallLimitReachedContinue": "הגעתי למגבלה של {{limit}} קריאות לכלים בתור הזה. שלח הודעה נוספת, למשל \"continue\", ואמשיך מאותה שיחה.",
   "chat.openaiTransientError": "לשירות ה-AI הייתה תקלה זמנית והוא נעצר באמצע התור. שלח \"continue\" כדי להמשיך מהשלב המוצלח האחרון.",
   "chat.contentPolicyBlocked": "שירות ה-AI חסם את הבקשה בשל הפרת מדיניות התוכן. נסה לנסח את ההודעה מחדש.",
+  "chat.unsupportedStoredAttachment": "השיחה הזו מכילה תמונה ישנה בפורמט שאינו נתמך. לחץ על „חדש” כדי להתחיל שיחה חדשה, ואז צרף שוב את התמונה.",
   "chat.unexpectedError": "שגיאה בלתי צפויה משירות ה-AI. אנא נסה שוב.",
   "chat.stopped": "נעצר",
   "chat.copyTranscript": "העתק שיחה",

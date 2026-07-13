@@ -11,6 +11,7 @@ import type {
   ServerChatMessage,
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
+import { UnsupportedStoredChatAttachmentError } from "@/server/chat/openai/responses/input";
 import { runOpenAILoop } from "@/server/chat/openai/loop";
 import { isOpenAITransientError } from "@/server/chat/logging";
 import { startChatTurnObservation } from "@/server/chat/openai/langfuse";
@@ -134,6 +135,9 @@ const buildUserFacingChatErrorMessage = (
   locale: SupportedLocale,
   error: unknown,
 ): string => {
+  if (error instanceof UnsupportedStoredChatAttachmentError) {
+    return t(locale, "chat.unsupportedStoredAttachment");
+  }
   if (isOpenAITransientError(error)) {
     return t(locale, "chat.openaiTransientError");
   }

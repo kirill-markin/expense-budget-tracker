@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { LangfuseObservation } from "@langfuse/tracing";
+import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import {
   clearActiveChatRunForTests,
@@ -260,6 +261,77 @@ test("runPersistedChatSessionWithDeps persists terminal errors when the provider
   assert.notEqual(recorded.terminalErrorPayload, null);
   assert.equal((recorded.terminalErrorPayload as ActiveRunPayload).activeRunId, params.activeRunId);
   assert.equal(recorded.completedPayload, null);
+});
+
+test("startPersistedChatRunWithDeps persists and streams recovery for poisoned HEIC history", async (): Promise<void> => {
+  const sessionId = "session-legacy-heic";
+  const params: StartPersistedChatRunParams = {
+    ...createRunParams(sessionId),
+    localMessages: [{
+      role: "user",
+      content: [{
+        type: "file",
+        fileName: "IMG_7071.HEIC",
+        mediaType: "image/heic",
+        base64Data: "AAAAGGZ0eXBoZWljAAAAAA==",
+      }],
+    }],
+    turnInput: [{ type: "text", text: "Continue" }],
+  };
+  const originalMessages = structuredClone(params.localMessages);
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  const expectedMessage = "This conversation contains an older unsupported image. Click New to start a new conversation, then attach the image again.";
+  const originalLog = console.log;
+  console.log = (): void => undefined;
+
+  try {
+    const events = startPersistedChatRunWithDeps(
+      params,
+      requireReservation(sessionId),
+      createRuntimeDependencies(
+        {
+          runOpenAILoop: async (loopParams): Promise<Readonly<{
+            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
+          }>> => {
+            await buildChatCompletionInput(
+              loopParams.localMessages,
+              loopParams.turnInput,
+              loopParams.timezone,
+            );
+            throw new Error("Expected stored attachment preflight to reject the input");
+          },
+        },
+        recorded,
+      ),
+    );
+
+    assert.deepEqual(await events.next(), {
+      done: false,
+      value: { type: "error", message: expectedMessage },
+    });
+    assert.deepEqual(await events.next(), { done: true, value: undefined });
+  } finally {
+    clearActiveChatRunForTests(sessionId);
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(params.localMessages, originalMessages);
+  assert.deepEqual(recorded.terminalErrorPayload, {
+    sessionId,
+    activeRunId: params.activeRunId,
+    assistantItemId: params.assistantItemId,
+    assistantContent: [],
+    errorMessage: expectedMessage,
+    sessionState: "idle",
+  });
+  assert.equal(recorded.completedPayload, null);
+  assert.equal(recorded.cancelledPayload, null);
 });
 
 test("runPersistedChatSessionWithDeps skips terminal error persistence when provider error lost the active-run race", async (): Promise<void> => {
