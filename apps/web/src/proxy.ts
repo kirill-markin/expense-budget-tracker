@@ -90,6 +90,7 @@ const buildCsp = (nonce: string): string => {
     "style-src-elem 'self'",
     "img-src 'self' blob: data:",
     "font-src 'self'",
+    "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
