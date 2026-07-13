@@ -2,6 +2,7 @@ import type {
   ChatSessionRunState,
   ChatSessionSnapshot,
 } from "@/server/chat/store";
+import { validateChatAttachments } from "@/server/chat/attachments/validation";
 import type { ContentPart } from "@/server/chat/types";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -129,6 +130,8 @@ export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
   if (typeof candidate.sessionId !== "string" || candidate.sessionId.trim().length === 0) {
     throw new Error("sessionId must be a non-empty string");
   }
+
+  validateChatAttachments(candidate.content);
 
   return {
     sessionId: candidate.sessionId,

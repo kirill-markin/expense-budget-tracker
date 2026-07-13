@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  HEIC_FTYP_BRANDS,
+  MAX_HEIC_FTYP_BOX_BYTES,
   detectHeicFtypBrand,
   detectOpenAIImageMimeTypeFromFileName,
   detectOpenAIImageMimeType,
@@ -10,17 +12,29 @@ import {
   normalizeOpenAIImageMimeType,
 } from "./chatImageFormats";
 
-const HEIC_PREFIXES: ReadonlyArray<Readonly<{
-  brand: "heic" | "heix" | "hevc" | "hevx" | "mif1" | "msf1";
-  bytes: ReadonlyArray<number>;
-}>> = [
-  { brand: "heic", bytes: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00] },
-  { brand: "heix", bytes: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x78, 0x00, 0x00, 0x00, 0x00] },
-  { brand: "hevc", bytes: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x76, 0x63, 0x00, 0x00, 0x00, 0x00] },
-  { brand: "hevx", bytes: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x76, 0x78, 0x00, 0x00, 0x00, 0x00] },
-  { brand: "mif1", bytes: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x69, 0x66, 0x31, 0x00, 0x00, 0x00, 0x00] },
-  { brand: "msf1", bytes: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x73, 0x66, 0x31, 0x00, 0x00, 0x00, 0x00] },
+const asciiBytes = (value: string): ReadonlyArray<number> =>
+  Array.from(value, (character): number => character.charCodeAt(0));
+
+const uint32BigEndianBytes = (value: number): ReadonlyArray<number> => [
+  (value >>> 24) & 0xff,
+  (value >>> 16) & 0xff,
+  (value >>> 8) & 0xff,
+  value & 0xff,
 ];
+
+const createFtypBox = (
+  majorBrand: string,
+  compatibleBrands: ReadonlyArray<string>,
+): Uint8Array => {
+  const boxSize = 16 + (compatibleBrands.length * 4);
+  return Uint8Array.from([
+    ...uint32BigEndianBytes(boxSize),
+    ...asciiBytes("ftyp"),
+    ...asciiBytes(majorBrand),
+    0x00, 0x00, 0x00, 0x00,
+    ...compatibleBrands.flatMap(asciiBytes),
+  ]);
+};
 
 test("normalizes supported image MIME aliases", (): void => {
   assert.equal(normalizeOpenAIImageMimeType(" IMAGE/JPG "), "image/jpeg");
@@ -47,10 +61,24 @@ test("recognizes HEIC and HEIF extensions case-insensitively", (): void => {
   assert.equal(detectOpenAIImageMimeTypeFromFileName("photo.heic"), null);
 });
 
-test("recognizes common HEIC and HEIF ftyp major brands", (): void => {
-  for (const prefix of HEIC_PREFIXES) {
-    assert.equal(detectHeicFtypBrand(Uint8Array.from(prefix.bytes)), prefix.brand);
+test("recognizes HEIC and HEIF ftyp major and compatible brands", (): void => {
+  for (const brand of HEIC_FTYP_BRANDS) {
+    assert.equal(detectHeicFtypBrand(createFtypBox(brand, [])), brand);
+    assert.equal(detectHeicFtypBrand(createFtypBox("isom", ["iso2", brand])), brand);
   }
+});
+
+test("checks compatible brands through the complete bounded ftyp box", (): void => {
+  const compatibleBrandCount = (MAX_HEIC_FTYP_BOX_BYTES - 16) / 4;
+  const compatibleBrands = Array.from(
+    { length: compatibleBrandCount },
+    (_value, index): string => index === compatibleBrandCount - 1 ? "heic" : "isom",
+  );
+
+  assert.equal(
+    detectHeicFtypBrand(createFtypBox("isom", compatibleBrands)),
+    "heic",
+  );
 });
 
 test("rejects malformed and unrelated ISO-BMFF prefixes", (): void => {
@@ -62,9 +90,20 @@ test("rejects malformed and unrelated ISO-BMFF prefixes", (): void => {
     null,
   );
   assert.equal(
+    detectHeicFtypBrand(createFtypBox("avif", [])),
+    null,
+  );
+  assert.equal(
+    detectHeicFtypBrand(createFtypBox("isom", ["heic"]).slice(0, -4)),
+    null,
+  );
+  assert.equal(
     detectHeicFtypBrand(Uint8Array.from([
-      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66,
-      0x00, 0x00, 0x00, 0x00,
+      (MAX_HEIC_FTYP_BOX_BYTES + 4) >>> 24,
+      ((MAX_HEIC_FTYP_BOX_BYTES + 4) >>> 16) & 0xff,
+      ((MAX_HEIC_FTYP_BOX_BYTES + 4) >>> 8) & 0xff,
+      (MAX_HEIC_FTYP_BOX_BYTES + 4) & 0xff,
+      0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63,
     ])),
     null,
   );

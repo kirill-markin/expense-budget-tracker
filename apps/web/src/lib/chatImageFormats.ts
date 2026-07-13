@@ -31,13 +31,23 @@ export type HeicFileExtension = (typeof HEIC_FILE_EXTENSIONS)[number];
 export const HEIC_FTYP_BRANDS = [
   "heic",
   "heix",
+  "heim",
+  "heis",
   "hevc",
   "hevx",
+  "hevm",
+  "hevs",
   "mif1",
   "msf1",
 ] as const;
 
 export type HeicFtypBrand = (typeof HEIC_FTYP_BRANDS)[number];
+
+export const MAX_HEIC_FTYP_BOX_BYTES = 4 * 1024;
+
+const MINIMUM_FTYP_BOX_BYTES = 16;
+const FTYP_COMPATIBLE_BRANDS_OFFSET = 16;
+const FTYP_BRAND_BYTES = 4;
 
 const hasString = (values: ReadonlyArray<string>, value: string): boolean =>
   values.includes(value);
@@ -118,12 +128,33 @@ export const detectHeicFtypBrand = (bytes: Uint8Array): HeicFtypBrand | null => 
   }
 
   const boxSize = readUint32BigEndian(bytes, 0);
-  if (boxSize < 16) {
+  if (
+    boxSize < MINIMUM_FTYP_BOX_BYTES
+    || boxSize > MAX_HEIC_FTYP_BOX_BYTES
+    || (boxSize - MINIMUM_FTYP_BOX_BYTES) % FTYP_BRAND_BYTES !== 0
+  ) {
     return null;
   }
 
-  const brand = readAscii(bytes, 8, 4);
-  return hasString(HEIC_FTYP_BRANDS, brand) ? brand as HeicFtypBrand : null;
+  const majorBrand = readAscii(bytes, 8, FTYP_BRAND_BYTES);
+  if (hasString(HEIC_FTYP_BRANDS, majorBrand)) {
+    return majorBrand as HeicFtypBrand;
+  }
+  if (bytes.byteLength < boxSize) {
+    return null;
+  }
+
+  for (
+    let offset = FTYP_COMPATIBLE_BRANDS_OFFSET;
+    offset < boxSize;
+    offset += FTYP_BRAND_BYTES
+  ) {
+    const compatibleBrand = readAscii(bytes, offset, FTYP_BRAND_BYTES);
+    if (hasString(HEIC_FTYP_BRANDS, compatibleBrand)) {
+      return compatibleBrand as HeicFtypBrand;
+    }
+  }
+  return null;
 };
 
 export const hasHeicFileSignature = (bytes: Uint8Array): boolean =>
