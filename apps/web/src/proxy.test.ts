@@ -7,12 +7,14 @@ type EnvSnapshot = Readonly<{
   AUTH_MODE: string | undefined;
   AUTH_DOMAIN: string | undefined;
   CORS_ORIGIN: string | undefined;
+  NODE_ENV: string | undefined;
 }>;
 
 const captureEnv = (): EnvSnapshot => ({
   AUTH_MODE: process.env.AUTH_MODE,
   AUTH_DOMAIN: process.env.AUTH_DOMAIN,
   CORS_ORIGIN: process.env.CORS_ORIGIN,
+  NODE_ENV: process.env.NODE_ENV,
 });
 
 const restoreEnv = (snapshot: EnvSnapshot): void => {
@@ -30,6 +32,11 @@ const restoreEnv = (snapshot: EnvSnapshot): void => {
     delete process.env.CORS_ORIGIN;
   } else {
     process.env.CORS_ORIGIN = snapshot.CORS_ORIGIN;
+  }
+  if (snapshot.NODE_ENV === undefined) {
+    Reflect.deleteProperty(process.env, "NODE_ENV");
+  } else {
+    Reflect.set(process.env, "NODE_ENV", snapshot.NODE_ENV);
   }
 };
 
@@ -111,5 +118,16 @@ test("proxy keeps unrelated app and API routes authenticated", async (): Promise
     assert.match(appResponse.headers.get("location") ?? "", /^https:\/\/auth\.example\.com\/login/u);
     assert.equal(apiResponse.status, 307);
     assert.match(apiResponse.headers.get("location") ?? "", /^https:\/\/auth\.example\.com\/login/u);
+  });
+});
+
+test("production CSP allows only same-origin and blob workers", async (): Promise<void> => {
+  await withCognitoEnv(async (): Promise<void> => {
+    Reflect.set(process.env, "NODE_ENV", "production");
+    const response = await proxy(createRequest("/api/health"));
+    const csp = response.headers.get("Content-Security-Policy") ?? "";
+
+    assert.match(csp, /(?:^|; )worker-src 'self' blob:(?:;|$)/u);
+    assert.doesNotMatch(csp, /script-src[^;]*'unsafe-eval'/u);
   });
 });
