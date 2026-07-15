@@ -52,6 +52,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   >;
   const webDockerAssetExclude = [
     "**",
+    "!.npmrc",
     "!package.json",
     "!package-lock.json",
     "!apps",
@@ -79,6 +80,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   ];
   const authDockerAssetExclude = [
     "**",
+    "!.npmrc",
     "!package.json",
     "!package-lock.json",
     "!apps",

@@ -1,4 +1,7 @@
-FROM node:24.18.0-alpine AS builder
+FROM node:24.18.0-alpine AS npm
+RUN npm install --global npm@12.0.1
+
+FROM npm AS builder
 
 WORKDIR /app
 
@@ -9,7 +12,7 @@ COPY tsconfig.json ./
 COPY src/ src/
 RUN npx tsc
 
-FROM node:24.18.0-alpine
+FROM npm
 
 WORKDIR /app
 
