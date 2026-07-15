@@ -1,8 +1,11 @@
-FROM node:24.18.0-alpine AS deps
+FROM node:24.18.0-alpine AS npm
+RUN npm install --global npm@12.0.1
+
+FROM npm AS deps
 
 WORKDIR /workspace
 
-COPY package.json package-lock.json ./
+COPY .npmrc package.json package-lock.json ./
 COPY apps/auth/package.json apps/auth/package.json
 COPY apps/sql-api/package.json apps/sql-api/package.json
 COPY apps/web/package.json apps/web/package.json
@@ -19,11 +22,11 @@ COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
 RUN cd apps/auth && ../../node_modules/.bin/tsc -p tsconfig.json
 
-FROM node:24.18.0-alpine AS prod-deps
+FROM npm AS prod-deps
 
 WORKDIR /workspace
 
-COPY package.json package-lock.json ./
+COPY .npmrc package.json package-lock.json ./
 COPY apps/auth/package.json apps/auth/package.json
 COPY apps/sql-api/package.json apps/sql-api/package.json
 COPY apps/web/package.json apps/web/package.json
