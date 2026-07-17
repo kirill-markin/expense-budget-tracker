@@ -1,6 +1,15 @@
 import { z } from "zod";
 
-import { DATE_FORMATS, NUMBER_FORMATS, SUPPORTED_LOCALES, type DateFormat, type NumberFormat, type SupportedLocale } from "@/lib/locale";
+import {
+  AUTO_FILTER_DELAY_MINUTES,
+  DATE_FORMATS,
+  NUMBER_FORMATS,
+  SUPPORTED_LOCALES,
+  type AutoFilterDelayMinutes,
+  type DateFormat,
+  type NumberFormat,
+  type SupportedLocale,
+} from "@/lib/locale";
 import { INVALID_TIMEZONE_MESSAGE, parseTimezone } from "@/lib/timezone";
 import { createBadRequestError } from "@/server/api/errors";
 import { integerRangeSchema, parseWithSchema } from "@/server/api/validation";
@@ -9,9 +18,11 @@ type ParsedUserSettingsBody = Readonly<{
   locale?: SupportedLocale;
   numberFormat?: NumberFormat;
   dateFormat?: DateFormat;
+  autoFilterDelayMinutes?: AutoFilterDelayMinutes;
   hasLocale: boolean;
   hasNumberFormat: boolean;
   hasDateFormat: boolean;
+  hasAutoFilterDelayMinutes: boolean;
 }>;
 
 type ParsedWorkspaceSettingsBody = Readonly<{
@@ -47,6 +58,15 @@ const dateFormatSchema = z.unknown().superRefine((value, ctx) => {
     ctx.addIssue({ code: "custom", message: `Invalid dateFormat. Expected one of: ${DATE_FORMATS.join(", ")}` });
   }
 }).transform((value): DateFormat => value as DateFormat);
+
+const autoFilterDelayMinutesSchema = z.unknown().superRefine((value, ctx) => {
+  if (value === null) {
+    return;
+  }
+  if (typeof value !== "number" || !(AUTO_FILTER_DELAY_MINUTES as ReadonlyArray<number>).includes(value)) {
+    ctx.addIssue({ code: "custom", message: `Invalid autoFilterDelayMinutes. Expected one of: ${AUTO_FILTER_DELAY_MINUTES.join(", ")} or null` });
+  }
+}).transform((value): AutoFilterDelayMinutes => value as AutoFilterDelayMinutes);
 
 const reportingCurrencySchema = z.unknown().superRefine((value, ctx) => {
   if (typeof value !== "string" || !/^[A-Z]{3}$/.test(value)) {
@@ -87,13 +107,15 @@ export const parseUserSettingsBody = (input: unknown): ParsedUserSettingsBody =>
     locale: localeSchema.optional(),
     numberFormat: numberFormatSchema.optional(),
     dateFormat: dateFormatSchema.optional(),
+    autoFilterDelayMinutes: autoFilterDelayMinutesSchema.optional(),
   }));
 
   const hasLocale = parsed.locale !== undefined;
   const hasNumberFormat = parsed.numberFormat !== undefined;
   const hasDateFormat = parsed.dateFormat !== undefined;
+  const hasAutoFilterDelayMinutes = parsed.autoFilterDelayMinutes !== undefined;
 
-  if (!hasLocale && !hasNumberFormat && !hasDateFormat) {
+  if (!hasLocale && !hasNumberFormat && !hasDateFormat && !hasAutoFilterDelayMinutes) {
     throw createBadRequestError("No fields to update");
   }
 
@@ -101,9 +123,11 @@ export const parseUserSettingsBody = (input: unknown): ParsedUserSettingsBody =>
     locale: parsed.locale,
     numberFormat: parsed.numberFormat,
     dateFormat: parsed.dateFormat,
+    autoFilterDelayMinutes: parsed.autoFilterDelayMinutes,
     hasLocale,
     hasNumberFormat,
     hasDateFormat,
+    hasAutoFilterDelayMinutes,
   };
 };
 

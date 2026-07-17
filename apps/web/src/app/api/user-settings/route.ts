@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { isDemoModeFromRequest } from "@/lib/demoMode";
-import { DEFAULT_USER_SETTINGS, SUPPORTED_LOCALES, NUMBER_FORMATS, DATE_FORMATS, type SupportedLocale, type NumberFormat, type DateFormat } from "@/lib/locale";
+import { DEFAULT_USER_SETTINGS, type AutoFilterDelayMinutes, type SupportedLocale, type NumberFormat, type DateFormat } from "@/lib/locale";
 import { getLocaleFromRequest } from "@/lib/localeCookie";
 import { handleRoute } from "@/server/api/handleRoute";
 import { parseUserSettingsBody } from "@/server/api/settings";
@@ -35,6 +35,7 @@ export const PUT = async (request: Request): Promise<Response> =>
         if (body.hasLocale) result.locale = body.locale;
         if (body.hasNumberFormat) result.numberFormat = body.numberFormat;
         if (body.hasDateFormat) result.dateFormat = body.dateFormat;
+        if (body.hasAutoFilterDelayMinutes) result.autoFilterDelayMinutes = body.autoFilterDelayMinutes;
         const responseHeaders = new Headers({ "Content-Type": "application/json" });
         if (body.hasLocale) {
           responseHeaders.set("Set-Cookie", `locale=${body.locale as string}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`);
@@ -49,10 +50,12 @@ export const PUT = async (request: Request): Promise<Response> =>
         locale?: SupportedLocale;
         numberFormat?: NumberFormat;
         dateFormat?: DateFormat;
+        autoFilterDelayMinutes?: AutoFilterDelayMinutes;
       } = {};
       if (body.hasLocale) updates.locale = body.locale as SupportedLocale;
       if (body.hasNumberFormat) updates.numberFormat = body.numberFormat as NumberFormat;
       if (body.hasDateFormat) updates.dateFormat = body.dateFormat as DateFormat;
+      if (body.hasAutoFilterDelayMinutes) updates.autoFilterDelayMinutes = body.autoFilterDelayMinutes as AutoFilterDelayMinutes;
 
       const result = await updateUserSettings(userId, workspaceId, updates, initialLocale);
       const responseHeaders = new Headers({ "Content-Type": "application/json" });

@@ -1,10 +1,23 @@
-import { type SupportedLocale, type NumberFormat, type DateFormat, type UserSettings, DEFAULT_USER_SETTINGS, resolveLocale, NUMBER_FORMATS, DATE_FORMATS } from "@/lib/locale";
+import {
+  type SupportedLocale,
+  type NumberFormat,
+  type DateFormat,
+  type UserSettings,
+  type AutoFilterDelayMinutes,
+  type EnabledAutoFilterDelayMinutes,
+  DEFAULT_USER_SETTINGS,
+  resolveLocale,
+  NUMBER_FORMATS,
+  DATE_FORMATS,
+  AUTO_FILTER_DELAY_MINUTES,
+} from "@/lib/locale";
 import { queryAs } from "@/server/db";
 
 type UserSettingsRow = Readonly<{
   locale: string;
   number_format: string;
   date_format: string;
+  auto_filter_delay_minutes: unknown;
 }>;
 
 const parseNumberFormat = (raw: string): NumberFormat => {
@@ -21,11 +34,21 @@ const parseDateFormat = (raw: string): DateFormat => {
   return DEFAULT_USER_SETTINGS.dateFormat;
 };
 
+const parseAutoFilterDelayMinutes = (raw: unknown): AutoFilterDelayMinutes => {
+  if (raw === null) {
+    return null;
+  }
+  if (typeof raw === "number" && (AUTO_FILTER_DELAY_MINUTES as ReadonlyArray<number>).includes(raw)) {
+    return raw as EnabledAutoFilterDelayMinutes;
+  }
+  throw new Error(`Unexpected user_settings.auto_filter_delay_minutes value ${String(raw)}. Expected one of: ${AUTO_FILTER_DELAY_MINUTES.join(", ")} or null`);
+};
+
 export const getUserSettings = async (userId: string, workspaceId: string, initialLocale: SupportedLocale): Promise<UserSettings> => {
   const result = await queryAs(
     userId,
     workspaceId,
-    "SELECT locale, number_format, date_format FROM user_settings WHERE user_id = $1",
+    "SELECT locale, number_format, date_format, auto_filter_delay_minutes FROM user_settings WHERE user_id = $1",
     [userId],
   );
   if (result.rows.length === 0) {
@@ -36,13 +59,14 @@ export const getUserSettings = async (userId: string, workspaceId: string, initi
     locale: resolveLocale(row.locale),
     numberFormat: parseNumberFormat(row.number_format),
     dateFormat: parseDateFormat(row.date_format),
+    autoFilterDelayMinutes: parseAutoFilterDelayMinutes(row.auto_filter_delay_minutes),
   };
 };
 
 export const updateUserSettings = async (
   userId: string,
   workspaceId: string,
-  settings: Partial<Pick<UserSettings, "locale" | "numberFormat" | "dateFormat">>,
+  settings: Partial<Pick<UserSettings, "locale" | "numberFormat" | "dateFormat" | "autoFilterDelayMinutes">>,
   initialLocale: SupportedLocale,
 ): Promise<UserSettings> => {
   const setClauses: Array<string> = [];
@@ -64,6 +88,11 @@ export const updateUserSettings = async (
     params.push(settings.dateFormat);
     idx++;
   }
+  if (settings.autoFilterDelayMinutes !== undefined) {
+    setClauses.push(`auto_filter_delay_minutes = $${idx}`);
+    params.push(settings.autoFilterDelayMinutes);
+    idx++;
+  }
 
   if (setClauses.length === 0) {
     return getUserSettings(userId, workspaceId, initialLocale);
@@ -72,7 +101,7 @@ export const updateUserSettings = async (
   const result = await queryAs(
     userId,
     workspaceId,
-    `UPDATE user_settings SET ${setClauses.join(", ")} WHERE user_id = $1 RETURNING locale, number_format, date_format`,
+    `UPDATE user_settings SET ${setClauses.join(", ")} WHERE user_id = $1 RETURNING locale, number_format, date_format, auto_filter_delay_minutes`,
     params,
   );
 
@@ -85,5 +114,6 @@ export const updateUserSettings = async (
     locale: resolveLocale(row.locale),
     numberFormat: parseNumberFormat(row.number_format),
     dateFormat: parseDateFormat(row.date_format),
+    autoFilterDelayMinutes: parseAutoFilterDelayMinutes(row.auto_filter_delay_minutes),
   };
 };
