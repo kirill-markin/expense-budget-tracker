@@ -7,8 +7,11 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import { isCategoryVisible } from "@/lib/dataMask";
+import type { NumberFormat } from "@/lib/locale";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
+import { useFormat } from "@/ui/FormatProvider";
 import styles from "@/ui/charts/BudgetStreamChart.module.css";
+import { formatNumber } from "@/ui/tables/shared/format";
 
 type Props = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -94,16 +97,16 @@ const pivotByMonth = (
   }));
 };
 
-const formatAmount = (value: number): string => {
+const formatAmount = (value: number, numberFormat: NumberFormat): string => {
   const abs = Math.abs(value);
   if (abs >= 1000) {
-    return `${(value / 1000).toFixed(1)}k`;
+    return `${formatNumber(value / 1000, numberFormat, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}k`;
   }
-  return Math.round(value).toLocaleString("en-US");
+  return formatNumber(Math.round(value), numberFormat, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 };
 
-const formatAmountFull = (value: number): string =>
-  Math.round(value).toLocaleString("en-US");
+const formatAmountFull = (value: number, numberFormat: NumberFormat): string =>
+  formatNumber(Math.round(value), numberFormat, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
 const formatMonthToYYYYMM = (date: Date): string => {
   const y = date.getUTCFullYear();
@@ -142,6 +145,7 @@ const findClosestDateIndex = (
 export const BudgetStreamChart = (props: Props): ReactElement => {
   const { rows, allowlist, reportingCurrency, onMonthClick } = props;
   const { t } = useTranslation();
+  const { numberFormat } = useFormat();
   const masked = allowlist !== null && allowlist.size === 0;
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -404,7 +408,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                     fill="#898989"
                     fontSize={11}
                   >
-                    {formatAmount(tick)}
+                    {formatAmount(tick, numberFormat)}
                   </text>
                 </g>
               );
@@ -507,13 +511,13 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           {hover.incomeItems.length > 0 && (
             <>
               <div className={styles.tooltipSection}>
-                {t("chart.income")}: {formatAmountFull(hover.incomeTotal)}
+                {t("chart.income")}: {formatAmountFull(hover.incomeTotal, numberFormat)}
               </div>
               {hover.incomeItems.map((item) => (
                 <div key={`tip-i-${item.category}`} className={styles.tooltipRow}>
                   <span className={styles.legendSwatch} style={{ background: item.color }} />
                   <span>{item.category}</span>
-                  <span className={styles.tooltipValue}>{formatAmountFull(item.value)}</span>
+                  <span className={styles.tooltipValue}>{formatAmountFull(item.value, numberFormat)}</span>
                 </div>
               ))}
             </>
@@ -521,13 +525,13 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           {hover.spendItems.length > 0 && (
             <>
               <div className={styles.tooltipSection}>
-                {t("chart.spend")}: {formatAmountFull(hover.spendTotal)}
+                {t("chart.spend")}: {formatAmountFull(hover.spendTotal, numberFormat)}
               </div>
               {hover.spendItems.map((item) => (
                 <div key={`tip-s-${item.category}`} className={styles.tooltipRow}>
                   <span className={styles.legendSwatch} style={{ background: item.color }} />
                   <span>{item.category}</span>
-                  <span className={styles.tooltipValue}>{formatAmountFull(item.value)}</span>
+                  <span className={styles.tooltipValue}>{formatAmountFull(item.value, numberFormat)}</span>
                 </div>
               ))}
             </>
