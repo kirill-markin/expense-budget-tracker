@@ -15,9 +15,9 @@ export const LOCALE_LABELS: Readonly<Record<SupportedLocale, string>> = {
 
 export const RTL_LOCALES: ReadonlySet<SupportedLocale> = new Set(["fa", "ar", "he"]);
 
-export type NumberFormat = "1,234.56" | "1 234,56" | "1.234,56";
+export type NumberFormat = "1,234.56" | "1 234,56" | "1.234,56" | "1 234.56";
 
-export const NUMBER_FORMATS: ReadonlyArray<NumberFormat> = ["1,234.56", "1 234,56", "1.234,56"];
+export const NUMBER_FORMATS: ReadonlyArray<NumberFormat> = ["1,234.56", "1 234,56", "1.234,56", "1 234.56"];
 
 export type DateFormat = "DD.MM.YYYY" | "MM/DD/YYYY" | "YYYY-MM-DD";
 

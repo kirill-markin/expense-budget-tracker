@@ -1,5 +1,5 @@
 import type { NumberFormat } from "@/lib/locale";
-import { NUMBER_FORMAT_LOCALE } from "@/ui/tables/shared/format";
+import { formatNumber } from "@/ui/tables/shared/format";
 
 export type CellValue = Readonly<{
   plannedBase: number;
@@ -19,13 +19,13 @@ export const lookupCell = (cells: ReadonlyMap<string, CellValue>, month: string,
 export const formatAmount = (value: number, numberFormat: NumberFormat): string => {
   const rounded = Math.round(value);
   if (rounded === 0) return "0";
-  return rounded.toLocaleString(NUMBER_FORMAT_LOCALE[numberFormat]);
+  return formatNumber(rounded, numberFormat, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 };
 
 export const formatSignedAmount = (value: number, numberFormat: NumberFormat): string => {
   const rounded = Math.round(value);
   if (rounded === 0) return "0";
-  const formatted = rounded.toLocaleString(NUMBER_FORMAT_LOCALE[numberFormat]);
+  const formatted = formatNumber(rounded, numberFormat, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   return rounded > 0 ? `+${formatted}` : formatted;
 };
 

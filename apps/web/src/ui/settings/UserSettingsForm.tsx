@@ -48,7 +48,7 @@ export const UserSettingsForm = (props: Props): ReactElement => {
       return;
     }
 
-    if (locale !== props.locale) {
+    if (locale !== props.locale || numberFormat !== props.numberFormat || dateFormat !== props.dateFormat) {
       window.location.reload();
       return;
     }
