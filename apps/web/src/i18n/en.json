@@ -43,6 +43,7 @@
   "common.today": "Today",
   "common.from": "From",
   "common.to": "To",
+  "common.invalidNumber": "Enter a valid number in the selected format.",
   "currency.title": "Reporting currency",
   "apiKeys.copyWarning": "Copy the API key now — it will not be shown again.",
   "apiKeys.copy": "Copy",

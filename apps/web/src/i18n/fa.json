@@ -43,6 +43,7 @@
   "common.today": "امروز",
   "common.from": "از",
   "common.to": "تا",
+  "common.invalidNumber": "یک عدد معتبر با قالب انتخاب‌شده وارد کنید.",
   "currency.title": "ارز گزارش",
   "apiKeys.copyWarning": "کلید API را الان کپی کنید — دوباره نمایش داده نخواهد شد.",
   "apiKeys.copy": "کپی",

@@ -43,6 +43,7 @@
   "common.today": "Hoy",
   "common.from": "Desde",
   "common.to": "Hasta",
+  "common.invalidNumber": "Introduzca un número válido en el formato seleccionado.",
   "currency.title": "Moneda de reporte",
   "apiKeys.copyWarning": "Copie la clave API ahora — no se mostrará de nuevo.",
   "apiKeys.copy": "Copiar",

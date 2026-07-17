@@ -5,6 +5,10 @@ type NumberFormatSeparators = Readonly<{
   decimal: string;
 }>;
 
+export type ParseMonetaryNumberResult =
+  | Readonly<{ ok: true; value: number }>
+  | Readonly<{ ok: false; reason: "empty-input" | "invalid-format" | "non-finite" }>;
+
 export type FormatNumberOptions = Readonly<{
   minimumFractionDigits: number;
   maximumFractionDigits: number;
@@ -15,6 +19,72 @@ const NUMBER_FORMAT_SEPARATORS: Readonly<Record<NumberFormat, NumberFormatSepara
   "1 234,56": { group: "\u00a0", decimal: "," },
   "1.234,56": { group: ".", decimal: "," },
   "1 234.56": { group: " ", decimal: "." },
+};
+
+const CANONICAL_NUMBER_PATTERN = /^[+-]?\d+(?:\.\d+)?$/;
+const SPACE_GROUP_PATTERN = "[\\u0020\\u00a0\\u202f]";
+const SPACE_GROUP_CHARACTERS_PATTERN = /[\u0020\u00a0\u202f]/g;
+
+const escapeRegularExpression = (value: string): string => (
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+);
+
+const isSpaceGroup = (separator: string): boolean => (
+  separator === "\u0020" || separator === "\u00a0" || separator === "\u202f"
+);
+
+const getSelectedNumberPattern = (separators: NumberFormatSeparators): RegExp => {
+  const groupPattern = isSpaceGroup(separators.group)
+    ? SPACE_GROUP_PATTERN
+    : escapeRegularExpression(separators.group);
+  const decimalPattern = escapeRegularExpression(separators.decimal);
+  return new RegExp(
+    `^[+-]?(?:\\d+|\\d{1,3}(?:${groupPattern}\\d{3})+)(?:${decimalPattern}\\d+)?$`,
+  );
+};
+
+const parseNormalizedNumber = (value: string): ParseMonetaryNumberResult => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return { ok: false, reason: "non-finite" };
+  }
+  return { ok: true, value: parsed };
+};
+
+export const parseMonetaryNumber = (
+  input: string,
+  numberFormat: NumberFormat,
+): ParseMonetaryNumberResult => {
+  const value = input.trim();
+  if (value.length === 0) {
+    return { ok: false, reason: "empty-input" };
+  }
+
+  if (CANONICAL_NUMBER_PATTERN.test(value)) {
+    return parseNormalizedNumber(value);
+  }
+
+  const separators = NUMBER_FORMAT_SEPARATORS[numberFormat];
+  if (!getSelectedNumberPattern(separators).test(value)) {
+    return { ok: false, reason: "invalid-format" };
+  }
+
+  const ungrouped = isSpaceGroup(separators.group)
+    ? value.replace(SPACE_GROUP_CHARACTERS_PATTERN, "")
+    : value.replaceAll(separators.group, "");
+  const normalized = ungrouped.replace(separators.decimal, ".");
+  return parseNormalizedNumber(normalized);
+};
+
+export const parseMonetaryNumberEdit = (
+  input: string,
+  originalValue: number,
+  numberFormat: NumberFormat,
+): ParseMonetaryNumberResult => {
+  if (Number.isFinite(originalValue) && input === String(originalValue)) {
+    return { ok: true, value: originalValue };
+  }
+  return parseMonetaryNumber(input, numberFormat);
 };
 
 export const formatNumber = (

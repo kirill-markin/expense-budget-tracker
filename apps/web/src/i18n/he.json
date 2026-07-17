@@ -43,6 +43,7 @@
   "common.today": "היום",
   "common.from": "מ",
   "common.to": "עד",
+  "common.invalidNumber": "יש להזין מספר תקין בתבנית שנבחרה.",
   "currency.title": "מטבע דיווח",
   "apiKeys.copyWarning": "העתק את מפתח ה-API עכשיו — הוא לא יוצג שוב.",
   "apiKeys.copy": "העתק",
