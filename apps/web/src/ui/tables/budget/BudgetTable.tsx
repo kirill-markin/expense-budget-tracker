@@ -16,6 +16,7 @@ import {
   type BudgetTableProps,
   useBudgetTableController,
 } from "@/ui/tables/budget/controller/useBudgetTableController";
+import { TableEditorActivationProvider } from "@/ui/tables/shared/TableEditorActivationProvider";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 
@@ -53,62 +54,64 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
         {controller.pendingSaves > 0 && <span className={styles.syncStatus}>{t("common.syncing")}</span>}
       </div>
       <div className={styles.scroll} ref={controller.scrollRef}>
-        <table className={styles.table}>
-          <BudgetTableHeader
-            columnSequence={controller.columnSequence}
-            currentMonth={controller.currentMonth}
-            currentYear={controller.currentYear}
-            isLoadingLeft={controller.isLoadingLeft}
-          />
-          <tbody>
-            {controller.blocks.map((block) => (
-              <Fragment key={block.direction}>
-                <BudgetDirectionSection
-                  block={block}
-                  effectiveAllowlist={controller.effectiveAllowlist}
-                  columnSequence={controller.columnSequence}
-                  currentMonth={controller.currentMonth}
-                  currentYear={controller.currentYear}
-                  yearComputed={controller.yearComputed}
-                  filteredSubtotalsMap={controller.filteredSubtotalsMap}
-                  taintedDirectionMonths={controller.taintedDirectionMonths}
-                  taintedCells={controller.taintedCells}
-                  commentedCells={controller.commentedCells}
-                  numberFormat={numberFormat}
-                  copyToClipboard={copyToClipboard}
-                  openDrillDown={controller.openDrillDown}
-                  onPlanSave={controller.handlePlanSave}
-                  onFillMonths={controller.handleFillMonths}
-                  onCommentPresenceChange={controller.updateCommentCell}
-                  onSyncStart={controller.onSyncStart}
-                  onSyncEnd={controller.onSyncEnd}
-                />
-              </Fragment>
-            ))}
-            <BudgetDerivedSection
-              effectiveAllowlist={controller.effectiveAllowlist}
+        <TableEditorActivationProvider>
+          <table className={styles.table}>
+            <BudgetTableHeader
               columnSequence={controller.columnSequence}
               currentMonth={controller.currentMonth}
               currentYear={controller.currentYear}
-              yearComputed={controller.yearComputed}
-              incomeSubtotals={controller.incomeSubtotals}
-              spendSubtotals={controller.spendSubtotals}
-              transferSubtotals={controller.transferSubtotals}
-              taintedMonths={controller.taintedMonths}
-              fxAdjustments={controller.fxAdjustments}
-              businessPersonalTransfers={controller.businessPersonalTransfers}
-              hasBusinessAccount={controller.hasBusinessAccount}
-              cumulativeBalances={controller.cumulativeBalances}
-              hasLiquidityBreakdown={controller.hasLiquidityBreakdown}
-              liquidityTiers={controller.liquidityTiers}
-              mebByLiq={controller.mebByLiq}
-              projectedLiqBalances={controller.projectedLiqBalances}
-              numberFormat={numberFormat}
-              openDrillDown={controller.openDrillDown}
-              openFxBreakdown={controller.openFxBreakdown}
+              isLoadingLeft={controller.isLoadingLeft}
             />
-          </tbody>
-        </table>
+            <tbody>
+              {controller.blocks.map((block) => (
+                <Fragment key={block.direction}>
+                  <BudgetDirectionSection
+                    block={block}
+                    effectiveAllowlist={controller.effectiveAllowlist}
+                    columnSequence={controller.columnSequence}
+                    currentMonth={controller.currentMonth}
+                    currentYear={controller.currentYear}
+                    yearComputed={controller.yearComputed}
+                    filteredSubtotalsMap={controller.filteredSubtotalsMap}
+                    taintedDirectionMonths={controller.taintedDirectionMonths}
+                    taintedCells={controller.taintedCells}
+                    commentedCells={controller.commentedCells}
+                    numberFormat={numberFormat}
+                    copyToClipboard={copyToClipboard}
+                    openDrillDown={controller.openDrillDown}
+                    onPlanSave={controller.handlePlanSave}
+                    onFillMonths={controller.handleFillMonths}
+                    onCommentPresenceChange={controller.updateCommentCell}
+                    onSyncStart={controller.onSyncStart}
+                    onSyncEnd={controller.onSyncEnd}
+                  />
+                </Fragment>
+              ))}
+              <BudgetDerivedSection
+                effectiveAllowlist={controller.effectiveAllowlist}
+                columnSequence={controller.columnSequence}
+                currentMonth={controller.currentMonth}
+                currentYear={controller.currentYear}
+                yearComputed={controller.yearComputed}
+                incomeSubtotals={controller.incomeSubtotals}
+                spendSubtotals={controller.spendSubtotals}
+                transferSubtotals={controller.transferSubtotals}
+                taintedMonths={controller.taintedMonths}
+                fxAdjustments={controller.fxAdjustments}
+                businessPersonalTransfers={controller.businessPersonalTransfers}
+                hasBusinessAccount={controller.hasBusinessAccount}
+                cumulativeBalances={controller.cumulativeBalances}
+                hasLiquidityBreakdown={controller.hasLiquidityBreakdown}
+                liquidityTiers={controller.liquidityTiers}
+                mebByLiq={controller.mebByLiq}
+                projectedLiqBalances={controller.projectedLiqBalances}
+                numberFormat={numberFormat}
+                openDrillDown={controller.openDrillDown}
+                openFxBreakdown={controller.openFxBreakdown}
+              />
+            </tbody>
+          </table>
+        </TableEditorActivationProvider>
         <div className={tableStateStyles.loadingEdge}>{controller.isLoadingRight ? t("common.loading") : ""}</div>
       </div>
       {toastMessage !== null && <div className="copy-toast">{toastMessage}</div>}

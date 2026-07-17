@@ -43,6 +43,7 @@
   "common.today": "今天",
   "common.from": "从",
   "common.to": "到",
+  "common.invalidNumber": "请按所选格式输入有效数字。",
   "currency.title": "报告货币",
   "apiKeys.copyWarning": "请立即复制 API 密钥 — 之后将不再显示。",
   "apiKeys.copy": "复制",

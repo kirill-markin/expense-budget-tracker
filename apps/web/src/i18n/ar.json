@@ -43,6 +43,7 @@
   "common.today": "اليوم",
   "common.from": "من",
   "common.to": "إلى",
+  "common.invalidNumber": "أدخل رقمًا صالحًا بالتنسيق المحدد.",
   "currency.title": "عملة التقارير",
   "apiKeys.copyWarning": "انسخ مفتاح API الآن — لن يظهر مرة أخرى.",
   "apiKeys.copy": "نسخ",

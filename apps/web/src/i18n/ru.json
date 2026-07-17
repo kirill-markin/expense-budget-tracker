@@ -43,6 +43,7 @@
   "common.today": "Сегодня",
   "common.from": "С",
   "common.to": "По",
+  "common.invalidNumber": "Введите корректное число в выбранном формате.",
   "currency.title": "Валюта отчётности",
   "apiKeys.copyWarning": "Скопируйте API-ключ сейчас — он больше не будет показан.",
   "apiKeys.copy": "Копировать",

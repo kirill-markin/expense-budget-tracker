@@ -4,10 +4,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
+import type { NumberFormat } from "@/lib/locale";
 import { useFormat } from "@/ui/FormatProvider";
 import { postBudgetPlan, postBudgetPlanFill, fetchComment, postComment } from "@/ui/tables/budget/budgetTableApi";
 import { formatAmount, isDecember } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
+import { parseMonetaryNumberEdit } from "@/ui/tables/shared/format";
+import { useTableEditorActivation } from "@/ui/tables/shared/TableEditorActivationProvider";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 
 const POPOVER_WIDTH = 240;
@@ -25,6 +28,33 @@ type PopoverSize = Readonly<{
 }>;
 
 type TextDirection = "ltr" | "rtl";
+
+type RoundedBudgetInputsResult =
+  | Readonly<{ ok: true; base: number; modifier: number }>
+  | Readonly<{ ok: false; baseInvalid: boolean; modifierInvalid: boolean }>;
+
+const parseRoundedBudgetInputs = (
+  baseInput: string,
+  modifierInput: string,
+  originalBase: number,
+  originalModifier: number,
+  numberFormat: NumberFormat,
+): RoundedBudgetInputsResult => {
+  const base = parseMonetaryNumberEdit(baseInput, originalBase, numberFormat);
+  const modifier = parseMonetaryNumberEdit(modifierInput, originalModifier, numberFormat);
+  if (!base.ok || !modifier.ok) {
+    return {
+      ok: false,
+      baseInvalid: !base.ok,
+      modifierInvalid: !modifier.ok,
+    };
+  }
+  return {
+    ok: true,
+    base: Math.round(base.value),
+    modifier: Math.round(modifier.value),
+  };
+};
 
 const getClampedCoordinate = (preferred: number, min: number, max: number): number => {
   const normalizedMax = Math.max(min, max);
@@ -99,9 +129,13 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
+  const editorId = `budget-plan:${month}:${direction}:${category}`;
+  const { requestActivation, releaseActivation } = useTableEditorActivation(editorId);
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [baseInput, setBaseInput] = useState<string>("");
   const [modifierInput, setModifierInput] = useState<string>("");
+  const [baseValidationError, setBaseValidationError] = useState<string | null>(null);
+  const [modifierValidationError, setModifierValidationError] = useState<string | null>(null);
   const [commentInput, setCommentInput] = useState<string>("");
   const [isLoadingComment, setIsLoadingComment] = useState<boolean>(false);
   const [popoverPos, setPopoverPos] = useState<PopoverPosition>({ top: 0, left: 0 });
@@ -109,6 +143,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const cellRef = useRef<HTMLTableCellElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const adjustInputRef = useRef<HTMLInputElement>(null);
+  const baseInputRef = useRef<HTMLInputElement>(null);
 
   const originalBase = useRef<number>(0);
   const originalModifier = useRef<number>(0);
@@ -116,10 +151,13 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
   const openPopover = (): void => {
     if (!showData) return;
+    if (!requestActivation()) return;
     const roundedBase = Math.round(plannedBase);
     const roundedModifier = Math.round(plannedModifier);
     setBaseInput(String(roundedBase));
     setModifierInput(String(roundedModifier));
+    setBaseValidationError(null);
+    setModifierValidationError(null);
     originalBase.current = roundedBase;
     originalModifier.current = roundedModifier;
 
@@ -204,17 +242,39 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     }
   }, [isOpen]);
 
-  const saveChanges = useCallback((): void => {
-    const newBase = Math.round(Number(baseInput));
-    const newMod = Math.round(Number(modifierInput));
+  const reportInvalidInputs = useCallback((result: Extract<RoundedBudgetInputsResult, { ok: false }>): void => {
+    const message = t("common.invalidNumber");
+    const baseError = result.baseInvalid ? message : null;
+    const modifierError = result.modifierInvalid ? message : null;
+    setBaseValidationError(baseError);
+    setModifierValidationError(modifierError);
+    baseInputRef.current?.setCustomValidity(baseError ?? "");
+    adjustInputRef.current?.setCustomValidity(modifierError ?? "");
 
-    const baseChanged = Number.isFinite(newBase) && newBase !== originalBase.current;
-    const modChanged = Number.isFinite(newMod) && newMod !== originalModifier.current;
+    const firstInvalidInput = result.modifierInvalid ? adjustInputRef.current : baseInputRef.current;
+    firstInvalidInput?.reportValidity();
+  }, [t]);
+
+  const saveChanges = useCallback((): boolean => {
+    const parsedInputs = parseRoundedBudgetInputs(
+      baseInput,
+      modifierInput,
+      originalBase.current,
+      originalModifier.current,
+      numberFormat,
+    );
+    if (!parsedInputs.ok) {
+      reportInvalidInputs(parsedInputs);
+      return false;
+    }
+
+    const baseChanged = parsedInputs.base !== originalBase.current;
+    const modChanged = parsedInputs.modifier !== originalModifier.current;
 
     if (baseChanged) {
       onSyncStart();
-      onPlanSave(month, direction, category, "base", newBase);
-      postBudgetPlan({ month, direction, category, kind: "base", plannedValue: newBase })
+      onPlanSave(month, direction, category, "base", parsedInputs.base);
+      postBudgetPlan({ month, direction, category, kind: "base", plannedValue: parsedInputs.base })
         .catch((error) => {
           onPlanSave(month, direction, category, "base", originalBase.current);
           console.error(error);
@@ -224,8 +284,8 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
     if (modChanged) {
       onSyncStart();
-      onPlanSave(month, direction, category, "modifier", newMod);
-      postBudgetPlan({ month, direction, category, kind: "modifier", plannedValue: newMod })
+      onPlanSave(month, direction, category, "modifier", parsedInputs.modifier);
+      postBudgetPlan({ month, direction, category, kind: "modifier", plannedValue: parsedInputs.modifier })
         .catch((error) => {
           onPlanSave(month, direction, category, "modifier", originalModifier.current);
           console.error(error);
@@ -240,23 +300,34 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
         .catch((error) => console.error(error))
         .finally(onSyncEnd);
     }
-  }, [baseInput, modifierInput, commentInput, month, direction, category, onPlanSave, onCommentPresenceChange, onSyncStart, onSyncEnd]);
+    return true;
+  }, [baseInput, modifierInput, commentInput, month, direction, category, numberFormat, onPlanSave, onCommentPresenceChange, onSyncStart, onSyncEnd, reportInvalidInputs]);
 
   const closePopover = useCallback((): void => {
     if (!isOpen) return;
-    saveChanges();
+    if (!saveChanges()) return;
     setIsOpen(false);
-  }, [isOpen, saveChanges]);
+    releaseActivation();
+  }, [isOpen, releaseActivation, saveChanges]);
 
   const handleFill = useCallback((): void => {
-    const newBase = Math.round(Number(baseInput));
-    if (!Number.isFinite(newBase)) return;
+    const parsedInputs = parseRoundedBudgetInputs(
+      baseInput,
+      modifierInput,
+      originalBase.current,
+      originalModifier.current,
+      numberFormat,
+    );
+    if (!parsedInputs.ok) {
+      reportInvalidInputs(parsedInputs);
+      return;
+    }
 
     // Save base for current month if changed
-    if (newBase !== originalBase.current) {
+    if (parsedInputs.base !== originalBase.current) {
       onSyncStart();
-      onPlanSave(month, direction, category, "base", newBase);
-      postBudgetPlan({ month, direction, category, kind: "base", plannedValue: newBase })
+      onPlanSave(month, direction, category, "base", parsedInputs.base);
+      postBudgetPlan({ month, direction, category, kind: "base", plannedValue: parsedInputs.base })
         .catch((error) => {
           onPlanSave(month, direction, category, "base", originalBase.current);
           console.error(error);
@@ -265,11 +336,10 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     }
 
     // Save modifier for current month if changed
-    const newMod = Math.round(Number(modifierInput));
-    if (Number.isFinite(newMod) && newMod !== originalModifier.current) {
+    if (parsedInputs.modifier !== originalModifier.current) {
       onSyncStart();
-      onPlanSave(month, direction, category, "modifier", newMod);
-      postBudgetPlan({ month, direction, category, kind: "modifier", plannedValue: newMod })
+      onPlanSave(month, direction, category, "modifier", parsedInputs.modifier);
+      postBudgetPlan({ month, direction, category, kind: "modifier", plannedValue: parsedInputs.modifier })
         .catch((error) => {
           onPlanSave(month, direction, category, "modifier", originalModifier.current);
           console.error(error);
@@ -279,15 +349,16 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
     // Fill base to following months
     onSyncStart();
-    onFillMonths(month, direction, category, newBase);
-    postBudgetPlanFill({ fromMonth: month, direction, category, baseValue: newBase })
+    onFillMonths(month, direction, category, parsedInputs.base);
+    postBudgetPlanFill({ fromMonth: month, direction, category, baseValue: parsedInputs.base })
       .catch((error) => {
         console.error(error);
       })
       .finally(onSyncEnd);
 
     setIsOpen(false);
-  }, [baseInput, modifierInput, month, direction, category, onPlanSave, onFillMonths, onSyncStart, onSyncEnd]);
+    releaseActivation();
+  }, [baseInput, modifierInput, month, direction, category, numberFormat, onPlanSave, onFillMonths, onSyncStart, onSyncEnd, releaseActivation, reportInvalidInputs]);
 
   // Click outside → close
   useEffect(() => {
@@ -311,11 +382,12 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
         setIsOpen(false); // close without saving
+        releaseActivation();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen]);
+  }, [isOpen, releaseActivation]);
 
   const handleBaseKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === "Enter") closePopover();
@@ -325,7 +397,14 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     if (e.key === "Enter") closePopover();
   };
 
-  const computedTotal = Math.round(Number(baseInput) || 0) + Math.round(Number(modifierInput) || 0);
+  const parsedInputs = parseRoundedBudgetInputs(
+    baseInput,
+    modifierInput,
+    originalBase.current,
+    originalModifier.current,
+    numberFormat,
+  );
+  const computedTotal = parsedInputs.ok ? parsedInputs.base + parsedInputs.modifier : 0;
   const canFill = !isDecember(month);
 
   const modifierIconClass = direction === "income"
@@ -336,6 +415,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     <td
       ref={cellRef}
       className={cn(styles.cell, styles.cellEditable, cmClass, maskClass, taintedClass, isPlanOver ? tableStateStyles.over : "")}
+      data-testid={`budget-plan-cell-${editorId}`}
       onClick={isOpen ? undefined : openPopover}
     >
       {showData && plannedModifier !== 0 && (
@@ -352,20 +432,35 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
             <span className={styles.popoverLabel}>{t("budget.popoverAdjust")}</span>
             <input
               ref={adjustInputRef}
-              type="number"
+              type="text"
+              inputMode="decimal"
               className={styles.popoverInput}
+              data-testid={`budget-plan-modifier-input-${editorId}`}
               value={modifierInput}
-              onChange={(e) => setModifierInput(e.target.value)}
+              aria-invalid={modifierValidationError !== null}
+              onChange={(e) => {
+                setModifierInput(e.target.value);
+                setModifierValidationError(null);
+                e.currentTarget.setCustomValidity("");
+              }}
               onKeyDown={handleModifierKeyDown}
             />
           </label>
           <label className={styles.popoverField}>
             <span className={styles.popoverLabel}>{t("budget.popoverBase")}</span>
             <input
-              type="number"
+              ref={baseInputRef}
+              type="text"
+              inputMode="decimal"
               className={styles.popoverInput}
+              data-testid={`budget-plan-base-input-${editorId}`}
               value={baseInput}
-              onChange={(e) => setBaseInput(e.target.value)}
+              aria-invalid={baseValidationError !== null}
+              onChange={(e) => {
+                setBaseInput(e.target.value);
+                setBaseValidationError(null);
+                e.currentTarget.setCustomValidity("");
+              }}
               onKeyDown={handleBaseKeyDown}
             />
           </label>
