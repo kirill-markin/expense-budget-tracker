@@ -11,6 +11,7 @@ import {
   type AccountMetadataLiquidity,
 } from "@expense-budget-tracker/agent-shared";
 
+import type { AccountSuggestion } from "@/server/accounts/getAccountSuggestions";
 import type { AccountRow, BalancesSummaryResult, CurrencyTotal } from "@/server/balances/getBalancesSummary";
 import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
@@ -327,6 +328,42 @@ const generate = (): DemoData => {
 export const getDemoBalancesSummary = (): BalancesSummaryResult => {
   const { accounts, totals } = generate();
   return { accounts, totals, conversionWarnings: [] };
+};
+
+export const getDemoAccountSuggestions = (): ReadonlyArray<AccountSuggestion> => {
+  const { accounts, entries } = generate();
+  const latestOperationTimeByAccount = new Map<string, number>();
+
+  for (const entry of entries) {
+    const operationTimeMs = Date.parse(entry.ts);
+    if (!Number.isFinite(operationTimeMs)) {
+      throw new Error(`Invalid demo ledger timestamp "${entry.ts}" for entry "${entry.entryId}"`);
+    }
+    const latestOperationTimeMs = latestOperationTimeByAccount.get(entry.accountId);
+    if (latestOperationTimeMs === undefined || operationTimeMs > latestOperationTimeMs) {
+      latestOperationTimeByAccount.set(entry.accountId, operationTimeMs);
+    }
+  }
+
+  return accounts
+    .filter((account) => account.status === "active")
+    .map((account) => {
+      const latestOperationTimeMs = latestOperationTimeByAccount.get(account.accountId);
+      if (latestOperationTimeMs === undefined) {
+        throw new Error(`Demo account "${account.accountId}" has no ledger operations`);
+      }
+      return {
+        accountId: account.accountId,
+        currency: account.currency,
+        latestOperationTimeMs,
+      };
+    })
+    .sort((left, right) => {
+      const timeComparison = right.latestOperationTimeMs - left.latestOperationTimeMs;
+      if (timeComparison !== 0) return timeComparison;
+      return left.accountId < right.accountId ? -1 : left.accountId > right.accountId ? 1 : 0;
+    })
+    .map(({ accountId, currency }) => ({ accountId, currency }));
 };
 
 // ---------------------------------------------------------------------------
