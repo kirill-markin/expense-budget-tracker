@@ -26,6 +26,7 @@ import { withUserContext } from "@/server/db";
 import { getLatestFxCalendarDate } from "@/server/fxRates";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { type StalenessInput, isAccountOverdue } from "@/server/balances/accountStaleness";
+import { computeAccountStatus, type AccountStatus } from "@/server/balances/accountStatus";
 
 export type AccountRow = Readonly<{
   accountId: string;
@@ -33,7 +34,7 @@ export type AccountRow = Readonly<{
   liquidity: AccountMetadataLiquidity;
   accountType: AccountMetadataAccountType;
   accountGroup: AccountMetadataGroup;
-  status: string;
+  status: AccountStatus;
   balance: number;
   balanceReport: number | null;
   lastTransactionTs: string | null;
@@ -59,18 +60,6 @@ export type BalancesSummaryResult = Readonly<{
   totals: ReadonlyArray<CurrencyTotal>;
   conversionWarnings: ReadonlyArray<ConversionWarning>;
 }>;
-
-const THREE_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
-
-function computeAccountStatus(
-  balance: number,
-  lastTransactionTs: string | null,
-): "active" | "inactive" {
-  if (balance !== 0) return "active";
-  if (lastTransactionTs === null) return "inactive";
-  const diffMs = Date.now() - new Date(lastTransactionTs).getTime();
-  return diffMs > THREE_MONTHS_MS ? "inactive" : "active";
-}
 
 export const ACCOUNTS_QUERY = `
   WITH latest_rates AS (
@@ -249,6 +238,8 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
       });
     }
 
+    const currentTimeMs = Date.now();
+
     return {
       accounts: accountResult.rows.map((row: {
         account_id: string;
@@ -260,8 +251,11 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
         const lastTransactionTs = row.last_transaction_ts !== null
           ? new Date(row.last_transaction_ts).toISOString()
           : null;
-        const daysSinceLast = lastTransactionTs !== null
-          ? Math.floor((Date.now() - new Date(lastTransactionTs).getTime()) / (1000 * 60 * 60 * 24))
+        const lastTransactionTimeMs = lastTransactionTs !== null
+          ? new Date(lastTransactionTs).getTime()
+          : null;
+        const daysSinceLast = lastTransactionTimeMs !== null
+          ? Math.floor((currentTimeMs - lastTransactionTimeMs) / (1000 * 60 * 60 * 24))
           : null;
         const staleness = stalenessMap.get(row.account_id);
         const overdue = staleness !== undefined
@@ -274,7 +268,7 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
           liquidity: metadata?.liquidity ?? ACCOUNT_METADATA_DEFAULT_LIQUIDITY,
           accountType: metadata?.accountType ?? ACCOUNT_METADATA_DEFAULT_ACCOUNT_TYPE,
           accountGroup: metadata?.accountGroup ?? ACCOUNT_METADATA_DEFAULT_GROUP,
-          status: computeAccountStatus(Number(row.balance), lastTransactionTs),
+          status: computeAccountStatus(Number(row.balance), lastTransactionTimeMs, currentTimeMs),
           balance: Number(row.balance),
           balanceReport: row.balance_report !== null ? Number(row.balance_report) : null,
           lastTransactionTs,
