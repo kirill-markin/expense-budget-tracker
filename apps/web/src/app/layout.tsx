@@ -63,6 +63,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   let locale: SupportedLocale = "en";
   let numberFormat = DEFAULT_USER_SETTINGS.numberFormat;
   let dateFormat = DEFAULT_USER_SETTINGS.dateFormat;
+  let autoFilterDelayMinutes = DEFAULT_USER_SETTINGS.autoFilterDelayMinutes;
 
   if (demo) {
     locale = await getLocaleCookie();
@@ -89,6 +90,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       locale = userSettings.locale;
       numberFormat = userSettings.numberFormat;
       dateFormat = userSettings.dateFormat;
+      autoFilterDelayMinutes = userSettings.autoFilterDelayMinutes;
     } catch (err) {
       unstable_rethrow(err);
       console.error("Layout DB unavailable, using defaults: %s", err instanceof Error ? err.message : String(err));
@@ -105,7 +107,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       <body>
         <I18nProvider locale={locale}>
           <FormatProvider numberFormat={numberFormat} dateFormat={dateFormat}>
-            <FilteredModeProvider isDemoMode={demo}>
+            <FilteredModeProvider isDemoMode={demo} autoFilterDelayMinutes={autoFilterDelayMinutes}>
               <div className="header-sticky">
                 {demo && (
                   <div className="demo-banner">

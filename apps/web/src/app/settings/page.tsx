@@ -30,7 +30,14 @@ async function UserSettingsData() {
 
   if (demo) {
     const locale = await getLocaleCookie();
-    return <UserSettingsForm locale={locale} numberFormat={DEFAULT_USER_SETTINGS.numberFormat} dateFormat={DEFAULT_USER_SETTINGS.dateFormat} />;
+    return (
+      <UserSettingsForm
+        locale={locale}
+        numberFormat={DEFAULT_USER_SETTINGS.numberFormat}
+        dateFormat={DEFAULT_USER_SETTINGS.dateFormat}
+        autoFilterDelayMinutes={DEFAULT_USER_SETTINGS.autoFilterDelayMinutes}
+      />
+    );
   }
 
   const headersList = await headers();
@@ -39,7 +46,14 @@ async function UserSettingsData() {
   const initialLocale = await getLocaleCookie();
   const settings = await getUserSettings(userId, workspaceId, initialLocale);
 
-  return <UserSettingsForm locale={settings.locale} numberFormat={settings.numberFormat} dateFormat={settings.dateFormat} />;
+  return (
+    <UserSettingsForm
+      locale={settings.locale}
+      numberFormat={settings.numberFormat}
+      dateFormat={settings.dateFormat}
+      autoFilterDelayMinutes={settings.autoFilterDelayMinutes}
+    />
+  );
 }
 
 async function SettingsData() {
