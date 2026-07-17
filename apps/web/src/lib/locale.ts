@@ -23,16 +23,24 @@ export type DateFormat = "DD.MM.YYYY" | "MM/DD/YYYY" | "YYYY-MM-DD";
 
 export const DATE_FORMATS: ReadonlyArray<DateFormat> = ["DD.MM.YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
 
+export type EnabledAutoFilterDelayMinutes = 1 | 2 | 5 | 10 | 30;
+
+export type AutoFilterDelayMinutes = EnabledAutoFilterDelayMinutes | null;
+
+export const AUTO_FILTER_DELAY_MINUTES: ReadonlyArray<EnabledAutoFilterDelayMinutes> = [1, 2, 5, 10, 30];
+
 export type UserSettings = Readonly<{
   locale: SupportedLocale;
   numberFormat: NumberFormat;
   dateFormat: DateFormat;
+  autoFilterDelayMinutes: AutoFilterDelayMinutes;
 }>;
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   locale: "en",
   numberFormat: "1,234.56",
   dateFormat: "YYYY-MM-DD",
+  autoFilterDelayMinutes: 2,
 };
 
 export const resolveLocale = (raw: string): SupportedLocale => {
