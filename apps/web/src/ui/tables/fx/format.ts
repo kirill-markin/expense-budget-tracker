@@ -1,6 +1,6 @@
 import type { NumberFormat } from "@/lib/locale";
 
-import { NUMBER_FORMAT_LOCALE } from "@/ui/tables/shared/format";
+import { formatNumber } from "@/ui/tables/shared/format";
 
 /**
  * Formats an FX adjustment for display.
@@ -13,5 +13,5 @@ export const formatFxAmount = (value: number, numberFormat: NumberFormat): strin
   const display = Math.round(-value);
   if (display === 0) return "0";
   const prefix = display > 0 ? "+" : "";
-  return prefix + display.toLocaleString(NUMBER_FORMAT_LOCALE[numberFormat]);
+  return prefix + formatNumber(display, numberFormat, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 };

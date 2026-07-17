@@ -1,15 +1,42 @@
 import type { NumberFormat, DateFormat } from "@/lib/locale";
 
-export const NUMBER_FORMAT_LOCALE: Readonly<Record<NumberFormat, string>> = {
-  "1,234.56": "en-US",
-  "1 234,56": "ru-RU",
-  "1.234,56": "de-DE",
+type NumberFormatSeparators = Readonly<{
+  group: string;
+  decimal: string;
+}>;
+
+export type FormatNumberOptions = Readonly<{
+  minimumFractionDigits: number;
+  maximumFractionDigits: number;
+}>;
+
+const NUMBER_FORMAT_SEPARATORS: Readonly<Record<NumberFormat, NumberFormatSeparators>> = {
+  "1,234.56": { group: ",", decimal: "." },
+  "1 234,56": { group: "\u00a0", decimal: "," },
+  "1.234,56": { group: ".", decimal: "," },
+  "1 234.56": { group: " ", decimal: "." },
+};
+
+export const formatNumber = (
+  value: number,
+  numberFormat: NumberFormat,
+  options: FormatNumberOptions,
+): string => {
+  const separators = NUMBER_FORMAT_SEPARATORS[numberFormat];
+  const formatter = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: options.minimumFractionDigits,
+    maximumFractionDigits: options.maximumFractionDigits,
+  });
+  return formatter.formatToParts(value).map((part): string => {
+    if (part.type === "group") return separators.group;
+    if (part.type === "decimal") return separators.decimal;
+    return part.value;
+  }).join("");
 };
 
 export const formatAmount = (value: number, numberFormat: NumberFormat): string => {
   if (value === 0) return "0";
-  const locale = NUMBER_FORMAT_LOCALE[numberFormat];
-  return value.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatNumber(value, numberFormat, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 export const formatDateTime = (isoString: string, dateFormat: DateFormat): string => {
