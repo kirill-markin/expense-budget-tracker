@@ -5,13 +5,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
+import type { NumberFormat } from "@/lib/locale";
 import { getMonthEndDate } from "@/lib/monthUtils";
 import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBreakdown";
 import { useFormat } from "@/ui/FormatProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
 import { formatFxAmount } from "@/ui/tables/fx/format";
-import { formatAmount } from "@/ui/tables/shared/format";
+import { formatAmount, formatNumber } from "@/ui/tables/shared/format";
 import panelStyles from "@/ui/tables/shared/TablePanel.module.css";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
@@ -24,15 +25,15 @@ type Props = Readonly<{
   onClose: () => void;
 }>;
 
-const formatRate = (value: number): string => {
+const formatRate = (value: number, numberFormat: NumberFormat): string => {
   if (value === 0) return "—";
   if (value === 1) return "1";
-  return value.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+  return formatNumber(value, numberFormat, { minimumFractionDigits: 4, maximumFractionDigits: 6 });
 };
 
-const formatNative = (value: number): string => {
+const formatNative = (value: number, numberFormat: NumberFormat): string => {
   if (value === 0) return "0";
-  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatNumber(value, numberFormat, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 export const FxBreakdownPanel = (props: Props): ReactElement => {
@@ -158,12 +159,12 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
               {rows.map((row) => (
                 <tr key={row.currency} className={tableStyles.row}>
                   <td className={cn(tableStyles.cell, tableStyles.cellMono)}>{row.currency}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.openNative)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.openRate)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.openNative, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.openRate, numberFormat)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.openReport, numberFormat)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.flowReport, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative, numberFormat)}</td>
+                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate, numberFormat)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeReport, numberFormat)}</td>
                   <td className={cn(tableStyles.cell, tableStyles.cellRight, row.fxAdjustReport < 0 ? tableStateStyles.over : "")}>{formatFxAmount(row.fxAdjustReport, numberFormat)}</td>
                 </tr>

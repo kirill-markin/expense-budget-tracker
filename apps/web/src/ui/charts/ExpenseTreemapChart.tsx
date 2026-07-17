@@ -8,8 +8,11 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import { isCategoryVisible } from "@/lib/dataMask";
+import type { NumberFormat } from "@/lib/locale";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
+import { useFormat } from "@/ui/FormatProvider";
 import styles from "@/ui/charts/ExpenseTreemapChart.module.css";
+import { formatNumber } from "@/ui/tables/shared/format";
 
 type Props = Readonly<{
   entries: ReadonlyArray<LedgerEntry>;
@@ -42,14 +45,14 @@ const HEIGHT = 600;
 const HEADER_H = 18;
 const PAD_TOP = HEADER_H + 3;
 
-const fmtTotal = (value: number, currency: string): string =>
-  `${Math.round(value).toLocaleString("en-US")} ${currency}`;
+const fmtTotal = (value: number, currency: string, numberFormat: NumberFormat): string =>
+  `${formatNumber(Math.round(value), numberFormat, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${currency}`;
 
-const fmtAmount = (value: number): string =>
-  Math.round(value).toLocaleString("en-US");
+const fmtAmount = (value: number, numberFormat: NumberFormat): string =>
+  formatNumber(Math.round(value), numberFormat, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
-const fmtCurrency = (amount: number, currency: string): string =>
-  `${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+const fmtCurrency = (amount: number, currency: string, numberFormat: NumberFormat): string =>
+  `${formatNumber(amount, numberFormat, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
 
 const fmtDate = (ts: string): string => {
   const d = new Date(ts);
@@ -112,6 +115,7 @@ const buildHierarchy = (
 export const ExpenseTreemapChart = (props: Props): ReactElement => {
   const { entries, allowlist, reportingCurrency, onCellClick } = props;
   const { t } = useTranslation();
+  const { numberFormat } = useFormat();
   const masked = allowlist !== null && allowlist.size === 0;
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
@@ -181,7 +185,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
     <>
       {!masked && (
         <div className={styles.total}>
-          {fmtTotal(grandTotal, reportingCurrency)}
+          {fmtTotal(grandTotal, reportingCurrency, numberFormat)}
         </div>
       )}
 
@@ -196,7 +200,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
             const clipId = `tm-clip-${ci}`;
             const showHeader = cw > 40 && ch > PAD_TOP;
 
-            const headerText = `${catName} — ${fmtTotal(catTotal, reportingCurrency)}`;
+            const headerText = `${catName} — ${fmtTotal(catTotal, reportingCurrency, numberFormat)}`;
             const headerLabel = estTextW(headerText, 11) < cw - 8 ? headerText : catName;
 
             return (
@@ -227,7 +231,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                     const lh = leaf.y1 - leaf.y0;
                     const val = leaf.value ?? 0;
                     const fs = cellFontSize(lw, lh);
-                    const amt = fmtAmount(val);
+                    const amt = fmtAmount(val, numberFormat);
                     const amtFits = estTextW(amt, fs) < lw - 6 && fs + 4 < lh;
                     const cp = leaf.data.counterparty;
                     const cpFits = amtFits && lh > fs + 18 && lw > 40
@@ -307,11 +311,11 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
             }}
           >
             <div className={styles.tooltipAmount}>
-              {fmtCurrency(Math.abs(hover.entry.amount), hover.entry.currency)}
+              {fmtCurrency(Math.abs(hover.entry.amount), hover.entry.currency, numberFormat)}
             </div>
             {hover.entry.amountReport !== null && hover.entry.currency !== reportingCurrency && (
               <div className={styles.tooltipConverted}>
-                ≈ {fmtCurrency(Math.abs(hover.entry.amountReport), reportingCurrency)}
+                ≈ {fmtCurrency(Math.abs(hover.entry.amountReport), reportingCurrency, numberFormat)}
               </div>
             )}
             {hover.entry.counterparty !== null && (
