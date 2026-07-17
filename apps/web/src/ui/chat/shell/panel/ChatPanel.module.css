@@ -331,6 +331,57 @@
   cursor: default;
 }
 
+.accountMentionPopover {
+  position: fixed;
+  z-index: 200;
+  transform: translateY(-100%);
+  overflow-y: auto;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.16);
+}
+
+.accountMentionOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 36px;
+  padding-block: 7px;
+  padding-inline: 8px;
+  cursor: var(--cursor-pointer);
+}
+
+.accountMentionOption + .accountMentionOption {
+  border-top: 1px solid var(--panel-border);
+}
+
+.accountMentionOption[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg));
+}
+
+.accountMentionAccountId {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.accountMentionCurrency {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.accountMentionState {
+  padding-block: 9px;
+  padding-inline: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .sendButton,
 .attachButton,
 .microphoneButton {
@@ -501,5 +552,9 @@
 
   .textarea {
     font-size: 16px;
+  }
+
+  .accountMentionOption {
+    min-block-size: 40px;
   }
 }
