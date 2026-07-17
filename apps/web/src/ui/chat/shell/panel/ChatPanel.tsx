@@ -24,6 +24,7 @@ import {
   getAttachmentFailureReasonKey,
   startMountedLifecycle,
 } from "./chatPanelRuntime";
+import { useAccountSuggestions } from "./useAccountSuggestions";
 import { getChatComposerCapabilities } from "../../stream/display/chatComposerCapabilities";
 import { buildChatTranscriptMarkdown } from "../../stream/display/chatTranscriptMarkdown";
 import {
@@ -132,6 +133,7 @@ const getMicrophoneErrorMessage = (
 export const ChatPanel = (props: Props): ReactElement => {
   const { mode, workspaceId } = props;
   const { t } = useTranslation();
+  const accountSuggestionsState = useAccountSuggestions();
   const {
     setIsOpen,
     chatWidth,
@@ -611,6 +613,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         dictationState={dictationState}
         dictationStatusLabel={dictationStatusLabel}
         capabilities={composerCapabilities}
+        accountSuggestionsState={accountSuggestionsState}
         textareaRef={textareaRef}
         onInputChange={setInputText}
         onIngestFiles={ingestFiles}

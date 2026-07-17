@@ -132,6 +132,13 @@ Format: {category}-{name}-{currency}
 Examples: a-rv_buss-usd (Revolut Business USD), c-pocket-eur (cash EUR), i-rv_pers_stocks-eur (stocks)
 Same {category}-{provider} prefix = same financial institution (a-rv_buss-usd and a-rv_buss-eur are both Revolut Business).
 
+## Account Mentions
+
+The user may tag existing accounts in plain text as @account_id when the ID uses letters, numbers, underscores, and hyphens, or as @"Account ID" with JSON-style escaping for other IDs.
+A valid tag is an exact, case-sensitive account_id value. Multiple account tags may appear in one message.
+Mention order alone never determines transfer direction. Use the user's prose to determine source and destination, and keep all existing transfer-pair and plan/confirmation rules authoritative.
+If a tagged account is unknown or was deleted, surface it to the user for clarification. Never fuzzy-match the tag or silently create an account from it.
+
 ## Categories
 
 Categories are free-form TEXT values shared across ledger_entries and budget_lines. Each user defines their own categories — there is no fixed list. Before inserting transactions, always discover the user's categories from their existing data:
