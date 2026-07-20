@@ -30,7 +30,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsc --noEmit -p tsconfig.test.json && node --import tsx --test src/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
