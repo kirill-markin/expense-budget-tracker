@@ -2,7 +2,6 @@ import {
   lexSqlPolicyInfrastructure,
   type SqlCommentToken,
   type SqlLexedScript,
-  type SqlNumericToken,
   type SqlPolicyToken,
   type SqlSourceRange,
   type SqlWhitespaceToken,
@@ -25,12 +24,12 @@ export type SqlParserLimits = Readonly<{
   maxWorkUnits: number;
 }>;
 
-export const DEFAULT_SQL_PARSER_LIMITS: SqlParserLimits = {
+export const DEFAULT_SQL_PARSER_LIMITS: SqlParserLimits = Object.freeze({
   maxSourceCodeUnits: 1_000_000,
   maxTokens: 100_000,
   maxNestingDepth: 256,
   maxWorkUnits: 500_000,
-};
+});
 
 export type SqlParserStatementSpan = Readonly<{
   range: SqlSourceRange;
@@ -39,8 +38,13 @@ export type SqlParserStatementSpan = Readonly<{
   endIndex: number;
 }>;
 
+export type SqlDelimiterLookup = Readonly<{
+  get: (index: number) => number | undefined;
+  size: number;
+}>;
+
 export type SqlDelimiterIndex = Readonly<{
-  matchingIndexes: ReadonlyMap<number, number>;
+  matchingIndexes: SqlDelimiterLookup;
   scanSteps: number;
 }>;
 
@@ -68,44 +72,217 @@ type OpenDelimiter = Readonly<{
 const isPositiveInteger = (value: number): boolean =>
   Number.isSafeInteger(value) && value > 0;
 
-const validateLimits = (limits: SqlParserLimits): void => {
-  if (!isPositiveInteger(limits.maxSourceCodeUnits)) {
+const isNonNegativeInteger = (value: number): boolean =>
+  Number.isSafeInteger(value) && value >= 0;
+
+const PARSER_LIMIT_FIELDS: ReadonlyArray<string> = Object.freeze([
+  "maxSourceCodeUnits",
+  "maxTokens",
+  "maxNestingDepth",
+  "maxWorkUnits",
+]);
+
+const hasExactOwnParserLimitFields = (limits: SqlParserLimits): boolean => {
+  if (
+    typeof limits !== "object"
+    || limits === null
+    || Array.isArray(limits)
+    || Object.getPrototypeOf(limits) !== Object.prototype
+  ) {
+    return false;
+  }
+  const keys = Reflect.ownKeys(limits);
+  if (
+    keys.length !== PARSER_LIMIT_FIELDS.length
+    || keys.some((key) => typeof key !== "string")
+    || PARSER_LIMIT_FIELDS.some((field) => !keys.includes(field))
+  ) {
+    return false;
+  }
+  return PARSER_LIMIT_FIELDS.every((field) => {
+    const descriptor = Object.getOwnPropertyDescriptor(limits, field);
+    return descriptor !== undefined && "value" in descriptor;
+  });
+};
+
+const validatePositiveLimit = (
+  field: keyof SqlParserLimits,
+  value: number,
+): void => {
+  if (typeof value !== "number") {
     return throwSqlPolicyParserError(
       "invalid_configuration",
-      `SQL parser maxSourceCodeUnits must be a positive safe integer; received ${String(limits.maxSourceCodeUnits)}`,
+      `SQL parser ${field} must be a primitive number; received value type ${typeof value}`,
       emptySqlSourceRange(0),
     );
   }
-  if (!isPositiveInteger(limits.maxTokens)) {
+  if (!isPositiveInteger(value)) {
     return throwSqlPolicyParserError(
       "invalid_configuration",
-      `SQL parser maxTokens must be a positive safe integer; received ${String(limits.maxTokens)}`,
-      emptySqlSourceRange(0),
-    );
-  }
-  if (!isPositiveInteger(limits.maxNestingDepth)) {
-    return throwSqlPolicyParserError(
-      "invalid_configuration",
-      `SQL parser maxNestingDepth must be a positive safe integer; received ${String(limits.maxNestingDepth)}`,
-      emptySqlSourceRange(0),
-    );
-  }
-  if (!isPositiveInteger(limits.maxWorkUnits)) {
-    return throwSqlPolicyParserError(
-      "invalid_configuration",
-      `SQL parser maxWorkUnits must be a positive safe integer; received ${String(limits.maxWorkUnits)}`,
+      `SQL parser ${field} must be a positive safe integer; received ${String(value)}`,
       emptySqlSourceRange(0),
     );
   }
 };
 
+const validateLimits = (limits: SqlParserLimits): void => {
+  validatePositiveLimit("maxSourceCodeUnits", limits.maxSourceCodeUnits);
+  validatePositiveLimit("maxTokens", limits.maxTokens);
+  validatePositiveLimit("maxNestingDepth", limits.maxNestingDepth);
+  validatePositiveLimit("maxWorkUnits", limits.maxWorkUnits);
+};
+
+const snapshotParserLimits = (limits: SqlParserLimits): SqlParserLimits => {
+  if (!hasExactOwnParserLimitFields(limits)) {
+    return throwSqlPolicyParserError(
+      "invalid_configuration",
+      `SQL parser limits must be a plain object with exactly the own data fields ${PARSER_LIMIT_FIELDS.join(", ")}`,
+      emptySqlSourceRange(0),
+    );
+  }
+  const owned: SqlParserLimits = {
+    maxNestingDepth: limits.maxNestingDepth,
+    maxSourceCodeUnits: limits.maxSourceCodeUnits,
+    maxTokens: limits.maxTokens,
+    maxWorkUnits: limits.maxWorkUnits,
+  };
+  validateLimits(owned);
+  return Object.freeze(owned);
+};
+
+const ownSqlSourceRange = (range: SqlSourceRange): SqlSourceRange =>
+  Object.freeze({ start: range.start, end: range.end });
+
+const unsupportedSqlPolicyToken = (token: never): never => {
+  void token;
+  return throwSqlPolicyParserError(
+    "internal_invariant",
+    "SQL lexer returned an unsupported token discriminant",
+    emptySqlSourceRange(0),
+  );
+};
+
+const ownSqlPolicyToken = (token: SqlPolicyToken): SqlPolicyToken => {
+  const range = ownSqlSourceRange(token.range);
+  if (token.kind === "whitespace") {
+    return Object.freeze({ kind: "whitespace", range, text: token.text });
+  }
+  if (token.kind === "comment") {
+    return Object.freeze({
+      kind: "comment",
+      range,
+      style: token.style,
+      text: token.text,
+    });
+  }
+  if (token.kind === "identifier") {
+    return Object.freeze({
+      kind: "identifier",
+      normalized: token.normalized,
+      quoted: token.quoted,
+      range,
+      text: token.text,
+      truncated: token.truncated,
+      unicodeEscapeCharacter: token.unicodeEscapeCharacter,
+      unicodeEscaped: token.unicodeEscaped,
+      untruncatedNormalized: token.untruncatedNormalized,
+    });
+  }
+  if (token.kind === "string") {
+    const semanticSegments = Object.freeze(
+      token.semanticSegments.map((segment) =>
+        Object.freeze({
+          range: ownSqlSourceRange(segment.range),
+          value: segment.value,
+        }),
+      ),
+    );
+    return Object.freeze({
+      dollarTag: token.dollarTag,
+      kind: "string",
+      range,
+      semanticSegments,
+      semanticValue: token.semanticValue,
+      style: token.style,
+      text: token.text,
+      unicodeEscapeCharacter: token.unicodeEscapeCharacter,
+    });
+  }
+  if (token.kind === "parameter") {
+    return Object.freeze({
+      kind: "parameter",
+      position: token.position,
+      positionText: token.positionText,
+      range,
+      text: token.text,
+    });
+  }
+  if (token.kind === "numeric") {
+    if (token.valid) {
+      return Object.freeze({
+        form: token.form,
+        kind: "numeric",
+        normalized: token.normalized,
+        range,
+        text: token.text,
+        valid: true,
+      });
+    }
+    return Object.freeze({
+      diagnostic: Object.freeze({
+        code: token.diagnostic.code,
+        message: token.diagnostic.message,
+      }),
+      kind: "numeric",
+      range,
+      text: token.text,
+      valid: false,
+    });
+  }
+  if (token.kind === "operator") {
+    return Object.freeze({ kind: "operator", range, text: token.text });
+  }
+  if (token.kind === "punctuation") {
+    return Object.freeze({ kind: "punctuation", range, text: token.text });
+  }
+  return unsupportedSqlPolicyToken(token);
+};
+
+const ownSqlSourceTokens = (
+  tokens: ReadonlyArray<SqlPolicyToken>,
+): ReadonlyArray<SqlPolicyToken> =>
+  Object.freeze(tokens.map(ownSqlPolicyToken));
+
+type SignificantTokenLimitScan = Readonly<{
+  count: number;
+  firstExcess: SqlPolicyToken | null;
+}>;
+
+const scanSignificantTokenLimit = (
+  tokens: ReadonlyArray<SqlPolicyToken>,
+  maxTokens: number,
+): SignificantTokenLimitScan => {
+  let count = 0;
+  let firstExcess: SqlPolicyToken | null = null;
+  for (const token of tokens) {
+    if (token.kind === "comment" || token.kind === "whitespace") {
+      continue;
+    }
+    if (count === maxTokens) {
+      firstExcess = token;
+    }
+    count++;
+  }
+  return { count, firstExcess };
+};
+
 const significantTokens = (
-  lexed: SqlLexedScript,
+  sourceTokens: ReadonlyArray<SqlPolicyToken>,
 ): ReadonlyArray<SqlParserToken> =>
-  lexed.tokens.filter(
+  Object.freeze(sourceTokens.filter(
     (token): token is SqlParserToken =>
       token.kind !== "comment" && token.kind !== "whitespace",
-  );
+  ));
 
 const errorRangeAtIndex = (
   sql: string,
@@ -115,21 +292,18 @@ const errorRangeAtIndex = (
   tokens[index]?.range ?? emptySqlSourceRange(sql.length);
 
 const assertNumericTokensValid = (
-  sql: string,
   tokens: ReadonlyArray<SqlParserToken>,
 ): void => {
   for (const token of tokens) {
     if (token.kind !== "numeric" || token.valid) {
       continue;
     }
-    const invalid = token as SqlNumericToken & Readonly<{ valid: false }>;
     return throwSqlPolicyParserError(
       "invalid_numeric",
-      `Invalid PostgreSQL numeric token at offset ${String(token.range.start)}: ${invalid.diagnostic.message}`,
+      `Invalid PostgreSQL numeric token at offset ${String(token.range.start)}: ${token.diagnostic.message}`,
       token.range,
     );
   }
-  void sql;
 };
 
 const expectedOpenDelimiter = (text: string): "(" | "[" | null => {
@@ -166,9 +340,13 @@ const buildDelimiterIndex = (
   tokens: ReadonlyArray<SqlParserToken>,
   limits: SqlParserLimits,
 ): SqlDelimiterIndex => {
-  const matchingIndexes = new Map<number, number>();
+  const matchingIndexes: Array<number | null> = Array.from(
+    { length: tokens.length },
+    (): null => null,
+  );
   const stack: Array<OpenDelimiter> = [];
   let scanSteps = 0;
+  let matchedDelimiterCount = 0;
 
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
@@ -233,8 +411,9 @@ const buildDelimiterIndex = (
         token.range,
       );
     }
-    matchingIndexes.set(open.index, index);
-    matchingIndexes.set(index, open.index);
+    matchingIndexes[open.index] = index;
+    matchingIndexes[index] = open.index;
+    matchedDelimiterCount += 2;
   }
 
   const unclosed = stack.at(-1);
@@ -247,7 +426,20 @@ const buildDelimiterIndex = (
     );
   }
 
-  return { matchingIndexes, scanSteps };
+  const ownedMatches = Object.freeze(matchingIndexes);
+  const get = Object.freeze((index: number): number | undefined => {
+    if (!isNonNegativeInteger(index) || index >= ownedMatches.length) {
+      return undefined;
+    }
+    return ownedMatches[index] ?? undefined;
+  });
+  return Object.freeze({
+    matchingIndexes: Object.freeze({
+      get,
+      size: matchedDelimiterCount,
+    }),
+    scanSteps,
+  });
 };
 
 const buildStatementSpans = (
@@ -289,7 +481,7 @@ const buildStatementSpans = (
       emptySqlSourceRange(sql.length),
     );
   }
-  return tokenSpans.map((span, index) => {
+  return Object.freeze(tokenSpans.map((span, index) => {
     const statement = lexed.statements[index];
     if (statement === undefined) {
       return throwSqlPolicyParserError(
@@ -298,49 +490,57 @@ const buildStatementSpans = (
         emptySqlSourceRange(sql.length),
       );
     }
-    return {
-      ...span,
-      range: statement.range,
-      terminatorRange: statement.terminatorRange,
-    };
-  });
+    return Object.freeze({
+      endIndex: span.endIndex,
+      range: ownSqlSourceRange(statement.range),
+      startIndex: span.startIndex,
+      terminatorRange: statement.terminatorRange === null
+        ? null
+        : ownSqlSourceRange(statement.terminatorRange),
+    });
+  }));
 };
 
 export const createSqlParserKernel = (
   sql: string,
   limits: SqlParserLimits,
 ): SqlParserKernel => {
-  validateLimits(limits);
-  if (sql.length > limits.maxSourceCodeUnits) {
+  const ownedLimits = snapshotParserLimits(limits);
+  if (sql.length > ownedLimits.maxSourceCodeUnits) {
     return throwSqlPolicyParserError(
       "limit_source_length",
-      `SQL source length ${String(sql.length)} UTF-16 code units exceeds maxSourceCodeUnits=${String(limits.maxSourceCodeUnits)}; the first excess code unit is at offset ${String(limits.maxSourceCodeUnits)}`,
+      `SQL source length ${String(sql.length)} UTF-16 code units exceeds maxSourceCodeUnits=${String(ownedLimits.maxSourceCodeUnits)}; the first excess code unit is at offset ${String(ownedLimits.maxSourceCodeUnits)}`,
       {
-        start: limits.maxSourceCodeUnits,
-        end: limits.maxSourceCodeUnits + 1,
+        start: ownedLimits.maxSourceCodeUnits,
+        end: ownedLimits.maxSourceCodeUnits + 1,
       },
     );
   }
   const lexed = lexSqlPolicyInfrastructure(sql);
-  const tokens = significantTokens(lexed);
-  if (tokens.length > limits.maxTokens) {
-    const token = tokens[limits.maxTokens];
+  const limitScan = scanSignificantTokenLimit(
+    lexed.tokens,
+    ownedLimits.maxTokens,
+  );
+  if (limitScan.firstExcess !== null) {
     return throwSqlPolicyParserError(
       "limit_tokens",
-      `SQL parser token count ${String(tokens.length)} exceeds maxTokens=${String(limits.maxTokens)}`,
-      token?.range ?? emptySqlSourceRange(sql.length),
+      `SQL parser token count ${String(limitScan.count)} exceeds maxTokens=${String(ownedLimits.maxTokens)}`,
+      limitScan.firstExcess.range,
     );
   }
-  assertNumericTokensValid(sql, tokens);
-  const delimiters = buildDelimiterIndex(sql, tokens, limits);
-  return {
-    sql,
+  const sourceTokens = ownSqlSourceTokens(lexed.tokens);
+  const tokens = significantTokens(sourceTokens);
+  assertNumericTokensValid(tokens);
+  const delimiters = buildDelimiterIndex(sql, tokens, ownedLimits);
+  const statements = buildStatementSpans(sql, tokens, lexed);
+  return Object.freeze({
     delimiters,
-    limits,
-    sourceTokens: lexed.tokens,
-    statements: buildStatementSpans(sql, tokens, lexed),
+    limits: ownedLimits,
+    sourceTokens,
+    sql,
+    statements,
     tokens,
-  };
+  });
 };
 
 export const createSqlTokenCursor = (
