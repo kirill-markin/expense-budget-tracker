@@ -7,11 +7,16 @@ import type {
   SqlExpressionPrefixReader,
   SqlExpressionResult,
 } from "./sql-policy-read-expression.js";
-import type { SqlExpressionMetadata } from "./sql-policy-read-model.js";
+import {
+  concatSqlExpressionMetadataSequences,
+  emptySqlExpressionMetadataSequence,
+  type SqlExpressionMetadataSequence,
+} from "./sql-policy-read-metadata.js";
 import {
   consumeSqlReadToken,
   enterSqlReadDepth,
   inspectSqlReadToken,
+  resumeEnteredSqlReadCursor,
   resumeSqlReadCursor,
   sqlReadRangeForSpan,
   sqlTokenCursorFromReadCursor,
@@ -30,7 +35,7 @@ type SqlWindowFrameBoundRank = 0 | 1 | 2 | 3 | 4;
 type SqlWindowFrameBound = Readonly<{
   cursor: SqlReadCursor;
   kind: SqlWindowFrameBoundKind;
-  metadata: SqlExpressionMetadata;
+  metadata: SqlExpressionMetadataSequence;
   range: SqlSourceRange;
   rank: SqlWindowFrameBoundRank;
 }>;
@@ -39,27 +44,6 @@ type SqlWindowFrameSpecialBoundRead = Readonly<{
   bound: SqlWindowFrameBound | null;
   cursor: SqlReadCursor;
 }>;
-
-const emptyExpressionMetadata = (): SqlExpressionMetadata => Object.freeze({
-  calls: Object.freeze([]),
-  nestedQueries: Object.freeze([]),
-  typeConstructs: Object.freeze([]),
-});
-
-const mergeExpressionMetadata = (
-  first: SqlExpressionMetadata,
-  second: SqlExpressionMetadata,
-): SqlExpressionMetadata => Object.freeze({
-  calls: Object.freeze([...first.calls, ...second.calls]),
-  nestedQueries: Object.freeze([
-    ...first.nestedQueries,
-    ...second.nestedQueries,
-  ]),
-  typeConstructs: Object.freeze([
-    ...first.typeConstructs,
-    ...second.typeConstructs,
-  ]),
-});
 
 const readCursorRange = (
   cursor: SqlReadCursor,
@@ -108,7 +92,7 @@ const consumeRequiredWord = (
 const windowFrameBound = (
   initial: SqlReadCursor,
   cursor: SqlReadCursor,
-  metadata: SqlExpressionMetadata,
+  metadata: SqlExpressionMetadataSequence,
   kind: SqlWindowFrameBoundKind,
   rank: SqlWindowFrameBoundRank,
 ): SqlWindowFrameBound => Object.freeze({
@@ -152,7 +136,7 @@ const readSpecialWindowFrameBound = (
       bound: windowFrameBound(
         initial,
         completed,
-        emptyExpressionMetadata(),
+        emptySqlExpressionMetadataSequence(),
         "current_row",
         2,
       ),
@@ -175,7 +159,7 @@ const readSpecialWindowFrameBound = (
       bound: windowFrameBound(
         initial,
         completed,
-        emptyExpressionMetadata(),
+        emptySqlExpressionMetadataSequence(),
         secondWord === "preceding"
           ? "unbounded_preceding"
           : "unbounded_following",
@@ -198,8 +182,9 @@ const readOffsetWindowFrameBound = (
     "Enter window frame offset expression",
   );
   const expression = readExpressionPrefix(environment, nested);
-  const resumed = resumeSqlReadCursor(
+  const resumed = resumeEnteredSqlReadCursor(
     cursor,
+    nested,
     expression.cursor,
     "Resume window frame offset expression",
   );
@@ -480,8 +465,11 @@ export const readSqlWindowFrame = (
   return Object.freeze({
     cursor: current,
     metadata: end === null
-      ? mergeExpressionMetadata(start.metadata, emptyExpressionMetadata())
-      : mergeExpressionMetadata(start.metadata, end.metadata),
+      ? concatSqlExpressionMetadataSequences(
+        start.metadata,
+        emptySqlExpressionMetadataSequence(),
+      )
+      : concatSqlExpressionMetadataSequences(start.metadata, end.metadata),
     range: sqlReadRangeForSpan(initial.state, initial.index, current.index),
   });
 };

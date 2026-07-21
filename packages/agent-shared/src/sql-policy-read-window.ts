@@ -13,29 +13,23 @@ import type {
   SqlExpressionPrefixReader,
   SqlExpressionResult,
 } from "./sql-policy-read-expression.js";
-import type {
-  SqlCallNode,
-  SqlExpressionMetadata,
-  SqlNestedQueryNode,
-  SqlTypeConstructNode,
-} from "./sql-policy-read-model.js";
+import {
+  concatSqlExpressionMetadataSequences,
+  emptySqlExpressionMetadataSequence,
+  type SqlExpressionMetadataSequence,
+} from "./sql-policy-read-metadata.js";
 import { readSqlWindowFrame } from "./sql-policy-read-frame.js";
 import { readSqlSortListPrefix } from "./sql-policy-read-sort.js";
 import {
   consumeSqlReadToken,
   enterSqlReadDepth,
   inspectSqlReadToken,
+  resumeEnteredSqlReadCursor,
   resumeSqlReadCursor,
   sqlReadRangeForSpan,
   sqlTokenCursorFromReadCursor,
   type SqlReadCursor,
 } from "./sql-policy-read-state.js";
-
-type SqlMetadataAccumulator = {
-  calls: Array<SqlCallNode>;
-  nestedQueries: Array<SqlNestedQueryNode>;
-  typeConstructs: Array<SqlTypeConstructNode>;
-};
 
 type SqlReadProbe = Readonly<{
   cursor: SqlReadCursor;
@@ -44,37 +38,8 @@ type SqlReadProbe = Readonly<{
 
 type SqlPartitionExpressionRead = Readonly<{
   cursor: SqlReadCursor;
-  metadata: SqlExpressionMetadata;
+  metadata: SqlExpressionMetadataSequence;
 }>;
-
-const metadataAccumulator = (): SqlMetadataAccumulator => ({
-  calls: [],
-  nestedQueries: [],
-  typeConstructs: [],
-});
-
-const appendExpressionMetadata = (
-  target: SqlMetadataAccumulator,
-  metadata: SqlExpressionMetadata,
-): void => {
-  for (const call of metadata.calls) {
-    target.calls.push(call);
-  }
-  for (const nestedQuery of metadata.nestedQueries) {
-    target.nestedQueries.push(nestedQuery);
-  }
-  for (const typeConstruct of metadata.typeConstructs) {
-    target.typeConstructs.push(typeConstruct);
-  }
-};
-
-const expressionMetadata = (
-  accumulator: SqlMetadataAccumulator,
-): SqlExpressionMetadata => Object.freeze({
-  calls: Object.freeze(accumulator.calls),
-  nestedQueries: Object.freeze(accumulator.nestedQueries),
-  typeConstructs: Object.freeze(accumulator.typeConstructs),
-});
 
 const readCursorRange = (
   cursor: SqlReadCursor,
@@ -120,10 +85,10 @@ const isExistingWindowName = (token: SqlParserToken): boolean => {
 const expressionResult = (
   initial: SqlReadCursor,
   cursor: SqlReadCursor,
-  metadata: SqlMetadataAccumulator,
+  metadata: SqlExpressionMetadataSequence,
 ): SqlExpressionResult => Object.freeze({
   cursor,
-  metadata: expressionMetadata(metadata),
+  metadata,
   range: sqlReadRangeForSpan(initial.state, initial.index, cursor.index),
 });
 
@@ -157,8 +122,9 @@ const readPartitionExpression = (
     "Enter PARTITION BY expression prefix",
   );
   const result = readExpressionPrefix(environment, nested);
-  const resumed = resumeSqlReadCursor(
+  const resumed = resumeEnteredSqlReadCursor(
     cursor,
+    nested,
     result.cursor,
     "Resume PARTITION BY expression prefix",
   );
@@ -197,9 +163,9 @@ const readPartitionListPrefix = (
   readExpressionPrefix: SqlExpressionPrefixReader,
 ): Readonly<{
   cursor: SqlReadCursor;
-  metadata: SqlExpressionMetadata;
+  metadata: SqlExpressionMetadataSequence;
 }> => {
-  const metadata = metadataAccumulator();
+  let metadata = emptySqlExpressionMetadataSequence();
   let current = cursor;
   let itemCount = 0;
 
@@ -218,7 +184,10 @@ const readPartitionListPrefix = (
       current,
       readExpressionPrefix,
     );
-    appendExpressionMetadata(metadata, expression.metadata);
+    metadata = concatSqlExpressionMetadataSequences(
+      metadata,
+      expression.metadata,
+    );
     current = expression.cursor;
     itemCount++;
 
@@ -230,7 +199,7 @@ const readPartitionListPrefix = (
     if (separator.token?.text !== ",") {
       return Object.freeze({
         cursor: current,
-        metadata: expressionMetadata(metadata),
+        metadata,
       });
     }
 
@@ -280,7 +249,7 @@ export const readSqlWindowSpecification = (
   readExpressionPrefix: SqlExpressionPrefixReader,
 ): SqlExpressionResult => {
   const initial = cursor;
-  const metadata = metadataAccumulator();
+  let metadata = emptySqlExpressionMetadataSequence();
   let current = cursor;
   let hasPartition = false;
   let hasOrder = false;
@@ -334,7 +303,10 @@ export const readSqlWindowSpecification = (
         current,
         readExpressionPrefix,
       );
-      appendExpressionMetadata(metadata, partition.metadata);
+      metadata = concatSqlExpressionMetadataSequences(
+        metadata,
+        partition.metadata,
+      );
       current = partition.cursor;
       hasPartition = true;
       continue;
@@ -357,7 +329,10 @@ export const readSqlWindowSpecification = (
         current,
         readExpressionPrefix,
       );
-      appendExpressionMetadata(metadata, sorted.metadata);
+      metadata = concatSqlExpressionMetadataSequences(
+        metadata,
+        sorted.metadata,
+      );
       current = resumeSqlReadCursor(
         current,
         sorted.cursor,
@@ -373,7 +348,10 @@ export const readSqlWindowSpecification = (
         current,
         readExpressionPrefix,
       );
-      appendExpressionMetadata(metadata, frame.metadata);
+      metadata = concatSqlExpressionMetadataSequences(
+        metadata,
+        frame.metadata,
+      );
       current = resumeSqlReadCursor(
         current,
         frame.cursor,

@@ -15,12 +15,11 @@ import type {
   SqlExpressionReader,
   SqlExpressionResult,
 } from "./sql-policy-read-expression.js";
-import type {
-  SqlCallNode,
-  SqlExpressionMetadata,
-  SqlNestedQueryNode,
-  SqlTypeConstructNode,
-} from "./sql-policy-read-model.js";
+import {
+  concatSqlExpressionMetadataSequences,
+  emptySqlExpressionMetadataSequence,
+  type SqlExpressionMetadataSequence,
+} from "./sql-policy-read-metadata.js";
 import {
   adoptSqlTokenCursor,
   advanceSqlReadCursor,
@@ -29,17 +28,12 @@ import {
   inspectSqlReadToken,
   matchingSqlReadDelimiter,
   narrowSqlReadCursor,
+  resumeEnteredSqlReadCursor,
   resumeSqlReadCursor,
   sqlReadRangeForSpan,
   sqlTokenCursorFromReadCursor,
   type SqlReadCursor,
 } from "./sql-policy-read-state.js";
-
-type SqlMetadataAccumulator = {
-  calls: Array<SqlCallNode>;
-  nestedQueries: Array<SqlNestedQueryNode>;
-  typeConstructs: Array<SqlTypeConstructNode>;
-};
 
 type SqlReadProbe = Readonly<{
   cursor: SqlReadCursor;
@@ -48,37 +42,8 @@ type SqlReadProbe = Readonly<{
 
 type SqlSortExpressionRead = Readonly<{
   cursor: SqlReadCursor;
-  metadata: SqlExpressionMetadata;
+  metadata: SqlExpressionMetadataSequence;
 }>;
-
-const metadataAccumulator = (): SqlMetadataAccumulator => ({
-  calls: [],
-  nestedQueries: [],
-  typeConstructs: [],
-});
-
-const appendExpressionMetadata = (
-  target: SqlMetadataAccumulator,
-  metadata: SqlExpressionMetadata,
-): void => {
-  for (const call of metadata.calls) {
-    target.calls.push(call);
-  }
-  for (const nestedQuery of metadata.nestedQueries) {
-    target.nestedQueries.push(nestedQuery);
-  }
-  for (const typeConstruct of metadata.typeConstructs) {
-    target.typeConstructs.push(typeConstruct);
-  }
-};
-
-const expressionMetadata = (
-  accumulator: SqlMetadataAccumulator,
-): SqlExpressionMetadata => Object.freeze({
-  calls: Object.freeze(accumulator.calls),
-  nestedQueries: Object.freeze(accumulator.nestedQueries),
-  typeConstructs: Object.freeze(accumulator.typeConstructs),
-});
 
 const readCursorRange = (
   cursor: SqlReadCursor,
@@ -265,7 +230,8 @@ const readExactSqlExpression = (
   );
   const nested = enterSqlReadDepth(bounded, `Enter ${subject}`);
   const result = reader(environment, nested);
-  const completedChild = resumeSqlReadCursor(
+  const completedChild = resumeEnteredSqlReadCursor(
+    bounded,
     nested,
     result.cursor,
     `Resume ${subject} result`,
@@ -299,8 +265,9 @@ const readPrefixSqlExpression = (
     "Enter ORDER BY expression prefix",
   );
   const result = reader(environment, nested);
-  const resumed = resumeSqlReadCursor(
+  const resumed = resumeEnteredSqlReadCursor(
     cursor,
+    nested,
     result.cursor,
     "Resume ORDER BY expression prefix",
   );
@@ -319,10 +286,10 @@ const readPrefixSqlExpression = (
 const expressionResult = (
   initial: SqlReadCursor,
   cursor: SqlReadCursor,
-  metadata: SqlMetadataAccumulator,
+  metadata: SqlExpressionMetadataSequence,
 ): SqlExpressionResult => Object.freeze({
   cursor,
-  metadata: expressionMetadata(metadata),
+  metadata,
   range: sqlReadRangeForSpan(
     initial.state,
     initial.index,
@@ -616,7 +583,7 @@ export const readSqlSortList = (
   readExpression: SqlExpressionReader<SqlExpressionResult>,
 ): SqlExpressionResult => {
   const initial = cursor;
-  const metadata = metadataAccumulator();
+  let metadata = emptySqlExpressionMetadataSequence();
   let current = cursor;
   let itemCount = 0;
 
@@ -646,7 +613,10 @@ export const readSqlSortList = (
       readExpression,
       "ORDER BY expression",
     );
-    appendExpressionMetadata(metadata, expression.metadata);
+    metadata = concatSqlExpressionMetadataSequences(
+      metadata,
+      expression.metadata,
+    );
     current = expression.cursor;
     itemCount++;
 
@@ -695,7 +665,7 @@ export const readSqlSortListPrefix = (
   readExpressionPrefix: SqlExpressionPrefixReader,
 ): SqlExpressionResult => {
   const initial = cursor;
-  const metadata = metadataAccumulator();
+  let metadata = emptySqlExpressionMetadataSequence();
   let current = cursor;
   const first = inspectCurrentSqlReadToken(
     current,
@@ -712,7 +682,10 @@ export const readSqlSortListPrefix = (
       current,
       readExpressionPrefix,
     );
-    appendExpressionMetadata(metadata, expression.metadata);
+    metadata = concatSqlExpressionMetadataSequences(
+      metadata,
+      expression.metadata,
+    );
     current = expression.cursor;
 
     const suffix = readSortItemSuffix(current);

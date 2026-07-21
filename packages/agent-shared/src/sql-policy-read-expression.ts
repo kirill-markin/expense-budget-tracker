@@ -1,9 +1,9 @@
 import type { SqlSourceRange } from "./sql-policy-lexer.js";
 import type {
-  SqlExpressionMetadata,
   SqlExpressionSyntaxContext,
   SqlQueryContext,
 } from "./sql-policy-read-model.js";
+import type { SqlExpressionMetadataSequence } from "./sql-policy-read-metadata.js";
 import type { SqlReadCursor } from "./sql-policy-read-state.js";
 
 export type SqlExpressionEnvironment = Readonly<{
@@ -14,14 +14,14 @@ export type SqlExpressionEnvironment = Readonly<{
 
 export type SqlExpressionResult = Readonly<{
   cursor: SqlReadCursor;
-  metadata: SqlExpressionMetadata;
+  metadata: SqlExpressionMetadataSequence;
   range: SqlSourceRange;
 }>;
 
 export type SqlExpressionListResult = Readonly<{
   count: number;
   cursor: SqlReadCursor;
-  metadata: SqlExpressionMetadata;
+  metadata: SqlExpressionMetadataSequence;
   range: SqlSourceRange;
 }>;
 

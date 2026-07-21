@@ -29,6 +29,15 @@ import type {
   SqlNestedQueryNode,
   SqlTypeConstructNode,
 } from "./sql-policy-read-model.js";
+import {
+  concatSqlExpressionMetadataSequences,
+  emptySqlExpressionMetadataSequence,
+  materializeSqlExpressionMetadataSequence,
+  sqlCallMetadataSequence,
+  sqlNestedQueryMetadataSequence,
+  sqlTypeConstructMetadataSequence,
+  type SqlExpressionMetadataSequence,
+} from "./sql-policy-read-metadata.js";
 import type { SqlTypeNameNode } from "./sql-policy-type-model.js";
 import {
   advanceSqlReadCursor,
@@ -70,6 +79,66 @@ type PrefixReaderHarness = Readonly<{
   snapshot: () => PrefixReaderSnapshot;
 }>;
 
+type CursorContractCase = Readonly<{
+  message: string;
+  mutate: (
+    cursor: SqlReadCursor,
+    foreign: SqlReadCursor,
+  ) => SqlReadCursor;
+}>;
+
+const cursorContractCases = (
+  operation: string,
+  enteredEndIndex: number,
+  enteredDepth: number,
+): ReadonlyArray<CursorContractCase> => Object.freeze([
+  Object.freeze({
+    message: `${operation} returned cursor end ${String(enteredEndIndex - 1)} must equal the entered child end ${String(enteredEndIndex)}`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      endIndex: cursor.endIndex - 1,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor end ${String(enteredEndIndex + 1)} must equal the entered child end ${String(enteredEndIndex)}`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      endIndex: cursor.endIndex + 1,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor nesting depth ${String(enteredDepth - 1)} must equal the entered child depth ${String(enteredDepth)}`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      depth: cursor.depth - 1,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor nesting depth ${String(enteredDepth + 1)} must equal the entered child depth ${String(enteredDepth)}`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      depth: cursor.depth + 1,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor must use the entered child SQL read state`,
+    mutate: (
+      cursor: SqlReadCursor,
+      foreign: SqlReadCursor,
+    ): SqlReadCursor => Object.freeze({
+      ...cursor,
+      state: foreign.state,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor workUnits must be a non-negative safe integer; received -1`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      workUnits: -1,
+    }),
+  }),
+]);
+
 const limits = (
   maxSourceCodeUnits: number,
   maxTokens: number,
@@ -88,18 +157,14 @@ const environment = (queryId: number): SqlExpressionEnvironment => ({
   syntaxContext: "expression",
 });
 
-const emptyMetadata = (): SqlExpressionMetadata => Object.freeze({
-  calls: Object.freeze([]),
-  nestedQueries: Object.freeze([]),
-  typeConstructs: Object.freeze([]),
-});
+const emptyMetadata = (): SqlExpressionMetadataSequence =>
+  emptySqlExpressionMetadataSequence();
 
-const callMetadata = (
+const callNode = (
   expressionEnvironment: SqlExpressionEnvironment,
   token: SqlIdentifierToken,
   range: SqlSourceRange,
-): SqlExpressionMetadata => {
-  const call: SqlCallNode = Object.freeze({
+): SqlCallNode => Object.freeze({
     argumentsRange: range,
     context: expressionEnvironment.context,
     path: Object.freeze([token]),
@@ -107,12 +172,14 @@ const callMetadata = (
     range,
     syntaxContext: expressionEnvironment.syntaxContext,
   });
-  return Object.freeze({
-    calls: Object.freeze([call]),
-    nestedQueries: Object.freeze([]),
-    typeConstructs: Object.freeze([]),
-  });
-};
+
+const callMetadata = (
+  expressionEnvironment: SqlExpressionEnvironment,
+  token: SqlIdentifierToken,
+  range: SqlSourceRange,
+): SqlExpressionMetadataSequence => sqlCallMetadataSequence(
+  callNode(expressionEnvironment, token, range),
+);
 
 const readMinimalExpression: SqlExpressionReader<SqlExpressionResult> = (
   expressionEnvironment: SqlExpressionEnvironment,
@@ -155,11 +222,11 @@ const readRichMetadataExpression: SqlExpressionReader<SqlExpressionResult> = (
   cursor: SqlReadCursor,
 ): SqlExpressionResult => {
   const result = readMinimalExpression(expressionEnvironment, cursor);
-  const call = result.metadata.calls[0];
-  const name = call?.path[0];
-  if (call === undefined || name === undefined) {
+  const name = cursor.state.kernel.tokens[cursor.index];
+  if (name?.kind !== "identifier") {
     return result;
   }
+  const call = callNode(expressionEnvironment, name, result.range);
   const sql = cursor.state.kernel.sql.slice(
     result.range.start,
     result.range.end,
@@ -194,11 +261,13 @@ const readRichMetadataExpression: SqlExpressionReader<SqlExpressionResult> = (
   });
   return Object.freeze({
     ...result,
-    metadata: Object.freeze({
-      calls: result.metadata.calls,
-      nestedQueries: Object.freeze([nestedQuery]),
-      typeConstructs: Object.freeze([typeConstruct]),
-    }),
+    metadata: concatSqlExpressionMetadataSequences(
+      concatSqlExpressionMetadataSequences(
+        sqlCallMetadataSequence(call),
+        sqlNestedQueryMetadataSequence(nestedQuery),
+      ),
+      sqlTypeConstructMetadataSequence(typeConstruct),
+    ),
   });
 };
 
@@ -452,15 +521,12 @@ const prefixExpressionMetadata = (
   cursor: SqlReadCursor,
   endIndex: number,
   range: SqlSourceRange,
-): SqlExpressionMetadata => {
+): SqlExpressionMetadataSequence => {
   const token = cursor.state.kernel.tokens[cursor.index];
   if (token?.kind !== "identifier") {
     return emptyMetadata();
   }
-  const call = callMetadata(expressionEnvironment, token, range).calls[0];
-  if (call === undefined) {
-    return emptyMetadata();
-  }
+  const call = callNode(expressionEnvironment, token, range);
   const nestedQuery: SqlNestedQueryNode = Object.freeze({
     bodyRange: range,
     context: "nested",
@@ -489,11 +555,13 @@ const prefixExpressionMetadata = (
     syntax: "cast",
     typeName,
   });
-  return Object.freeze({
-    calls: Object.freeze([call]),
-    nestedQueries: Object.freeze([nestedQuery]),
-    typeConstructs: Object.freeze([typeConstruct]),
-  });
+  return concatSqlExpressionMetadataSequences(
+    concatSqlExpressionMetadataSequences(
+      sqlCallMetadataSequence(call),
+      sqlNestedQueryMetadataSequence(nestedQuery),
+    ),
+    sqlTypeConstructMetadataSequence(typeConstruct),
+  );
 };
 
 const readDeterministicExpressionPrefix = (
@@ -594,9 +662,42 @@ const createReadCursor = (
 
 const normalizedCalls = (
   result: SqlExpressionResult,
-): ReadonlyArray<string> => result.metadata.calls.map((call) =>
+): ReadonlyArray<string> => materializedMetadata(result).calls.map((call) =>
   call.path.map((part) => part.untruncatedNormalized).join(".")
 );
+
+const materializedMetadata = (
+  result: SqlExpressionResult,
+): SqlExpressionMetadata => materializeSqlExpressionMetadataSequence(
+  result.metadata,
+);
+
+const countMetadataConcatNodes = (
+  sequence: SqlExpressionMetadataSequence,
+): number => {
+  const stack: Array<SqlExpressionMetadataSequence> = [sequence];
+  let count = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    assert.notEqual(current, undefined);
+    if (current?.kind === "concat") {
+      count++;
+      stack.push(current.right, current.left);
+    }
+  }
+  return count;
+};
+
+const repeatMetadataSequence = (
+  sequence: SqlExpressionMetadataSequence,
+  count: number,
+): SqlExpressionMetadataSequence => {
+  let repeated = emptySqlExpressionMetadataSequence();
+  for (let index = 0; index < count; index++) {
+    repeated = concatSqlExpressionMetadataSequences(repeated, sequence);
+  }
+  return repeated;
+};
 
 const sourceRange = (
   sql: string,
@@ -666,7 +767,7 @@ test("ORDER BY reads expressions, direction, USING, and NULLS suffixes", (): voi
     "delta",
   ]);
   assert.deepEqual(
-    result.metadata.calls.map((call) => sql.slice(
+    materializedMetadata(result).calls.map((call) => sql.slice(
       call.range.start,
       call.range.end,
     )),
@@ -685,7 +786,7 @@ test("ORDER BY keeps contextual NULLS identifiers inside expressions", (): void 
 
   assert.deepEqual(normalizedCalls(result), ["nulls", "nulls", "value"]);
   assert.deepEqual(
-    result.metadata.calls.map((call) => sql.slice(
+    materializedMetadata(result).calls.map((call) => sql.slice(
       call.range.start,
       call.range.end,
     )),
@@ -738,7 +839,7 @@ test("ORDER BY keeps contextual direction words inside expressions", (): void =>
       readMinimalExpression,
     );
     assert.deepEqual(
-      result.metadata.calls.map((call) => expected.sql.slice(
+      materializedMetadata(result).calls.map((call) => expected.sql.slice(
         call.range.start,
         call.range.end,
       )),
@@ -883,7 +984,7 @@ test("ORDER BY ignores nested commas and suffix keywords", (): void => {
 
   assert.deepEqual(normalizedCalls(result), ["outer_fn", "array_value"]);
   assert.deepEqual(
-    result.metadata.calls.map((call) => sql.slice(
+    materializedMetadata(result).calls.map((call) => sql.slice(
       call.range.start,
       call.range.end,
     )),
@@ -1128,20 +1229,109 @@ test("ORDER BY preserves every child metadata collection in order", (): void => 
   const expected = ["first", "second", "third"];
 
   assert.deepEqual(normalizedCalls(result), expected);
-  assert.equal(result.metadata.nestedQueries.length, expected.length);
-  assert.equal(result.metadata.typeConstructs.length, expected.length);
+  const metadata = materializedMetadata(result);
+  assert.equal(metadata.nestedQueries.length, expected.length);
+  assert.equal(metadata.typeConstructs.length, expected.length);
   assert.deepEqual(
-    result.metadata.typeConstructs.map((construct) =>
+    metadata.nestedQueries.map((query) => sql.slice(
+      query.range.start,
+      query.range.end,
+    )),
+    expected,
+  );
+  assert.deepEqual(
+    metadata.typeConstructs.map((construct) =>
       construct.typeName.nameParts[0]?.untruncatedNormalized
     ),
     expected,
   );
-  assert.equal(Object.isFrozen(result.metadata.calls), true);
-  assert.equal(Object.isFrozen(result.metadata.nestedQueries), true);
-  assert.equal(Object.isFrozen(result.metadata.typeConstructs), true);
+  assert.equal(Object.isFrozen(metadata.calls), true);
+  assert.equal(Object.isFrozen(metadata.nestedQueries), true);
+  assert.equal(Object.isFrozen(metadata.typeConstructs), true);
+  assert.equal(countMetadataConcatNodes(result.metadata), 8);
 });
 
-test("bounded parent cursors and deeper child cursors resume exactly", (): void => {
+test("sort readers preserve canonical empty and deep child sequences", (): void => {
+  const emptyExact = createReadCursor("1", DEFAULT_SQL_PARSER_LIMITS);
+  const emptyExactResult = readSqlSortList(
+    environment(36),
+    emptyExact.cursor,
+    readMinimalExpression,
+  );
+  assert.equal(
+    emptyExactResult.metadata,
+    emptySqlExpressionMetadataSequence(),
+  );
+
+  const emptyPrefix = createReadCursor("1 RANGE", DEFAULT_SQL_PARSER_LIMITS);
+  const emptyPrefixResult = readSqlSortListPrefix(
+    environment(36),
+    emptyPrefix.cursor,
+    readDeterministicExpressionPrefix,
+  );
+  assert.equal(
+    emptyPrefixResult.metadata,
+    emptySqlExpressionMetadataSequence(),
+  );
+
+  const deepCount = 20_000;
+  const exact = createReadCursor("alpha", DEFAULT_SQL_PARSER_LIMITS);
+  const token = exact.kernel.tokens[0];
+  assert.equal(token?.kind, "identifier");
+  assert.ok(token?.kind === "identifier");
+  const range = sqlReadRangeForSpan(exact.cursor.state, 0, 1);
+  const deepMetadata = repeatMetadataSequence(
+    callMetadata(environment(36), token, range),
+    deepCount,
+  );
+  const exactReader: SqlExpressionReader<SqlExpressionResult> = (
+    expressionEnvironment: SqlExpressionEnvironment,
+    child: SqlReadCursor,
+  ): SqlExpressionResult => Object.freeze({
+    ...readMinimalExpression(expressionEnvironment, child),
+    metadata: deepMetadata,
+  });
+  const exactBaseline = readSqlSortList(
+    environment(36),
+    exact.cursor,
+    readMinimalExpression,
+  );
+  const exactResult = readSqlSortList(
+    environment(36),
+    exact.cursor,
+    exactReader,
+  );
+  assert.equal(exactResult.metadata, deepMetadata);
+  assert.equal(materializedMetadata(exactResult).calls.length, deepCount);
+  assert.equal(exactResult.cursor.workUnits, exactBaseline.cursor.workUnits);
+
+  const prefix = createReadCursor(
+    "alpha RANGE",
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  const prefixReader: SqlExpressionPrefixReader = (
+    expressionEnvironment: SqlExpressionEnvironment,
+    child: SqlReadCursor,
+  ): SqlExpressionResult => Object.freeze({
+    ...readDeterministicExpressionPrefix(expressionEnvironment, child),
+    metadata: deepMetadata,
+  });
+  const prefixBaseline = readSqlSortListPrefix(
+    environment(36),
+    prefix.cursor,
+    readDeterministicExpressionPrefix,
+  );
+  const prefixResult = readSqlSortListPrefix(
+    environment(36),
+    prefix.cursor,
+    prefixReader,
+  );
+  assert.equal(prefixResult.metadata, deepMetadata);
+  assert.equal(materializedMetadata(prefixResult).calls.length, deepCount);
+  assert.equal(prefixResult.cursor.workUnits, prefixBaseline.cursor.workUnits);
+});
+
+test("bounded parent cursors and exact child cursors resume exactly", (): void => {
   const sql = "prefix alpha DESC trailing";
   const kernel = createSqlParserKernel(sql, DEFAULT_SQL_PARSER_LIMITS);
   const state = createSqlReadState(kernel);
@@ -1149,17 +1339,10 @@ test("bounded parent cursors and deeper child cursors resume exactly", (): void 
     createSqlReadCursor(state, 1, kernel.tokens.length - 1),
     "Enter bounded test parent",
   );
-  const deeperReader: SqlExpressionReader<SqlExpressionResult> = (
-    expressionEnvironment: SqlExpressionEnvironment,
-    cursor: SqlReadCursor,
-  ): SqlExpressionResult => readMinimalExpression(
-    expressionEnvironment,
-    enterSqlReadDepth(cursor, "Enter deterministic child depth"),
-  );
   const result = readSqlSortList(
     environment(41),
     parent,
-    deeperReader,
+    readMinimalExpression,
   );
 
   assert.equal(result.cursor.state, parent.state);
@@ -1266,6 +1449,36 @@ test("expression collaborators must consume their exact bounded span", (): void 
   );
 });
 
+test("exact ORDER BY collaborators must preserve the entered cursor", (): void => {
+  const sql = "alpha DESC";
+  const { cursor } = createReadCursor(sql, DEFAULT_SQL_PARSER_LIMITS);
+  const foreign = createReadCursor("other", DEFAULT_SQL_PARSER_LIMITS).cursor;
+  const cases = cursorContractCases(
+    "Resume ORDER BY expression result",
+    1,
+    1,
+  );
+
+  for (const current of cases) {
+    const reader: SqlExpressionReader<SqlExpressionResult> = (
+      expressionEnvironment: SqlExpressionEnvironment,
+      child: SqlReadCursor,
+    ): SqlExpressionResult => {
+      const result = readMinimalExpression(expressionEnvironment, child);
+      return Object.freeze({
+        ...result,
+        cursor: current.mutate(result.cursor, foreign),
+      });
+    };
+    expectParserError(
+      () => readSqlSortList(environment(46), cursor, reader),
+      "internal_invariant",
+      sourceRange(sql, "alpha", 0),
+      current.message,
+    );
+  }
+});
+
 test("runtime work accepts the exact maximum and fails at first excess", (): void => {
   const sql = "value";
   const ample = createReadCursor(
@@ -1319,7 +1532,8 @@ test("large ORDER BY metadata aggregation remains ordered and iterative", (): vo
     readMinimalExpression,
   );
 
-  assert.equal(result.metadata.calls.length, count);
+  assert.equal(materializedMetadata(result).calls.length, count);
+  assert.equal(countMetadataConcatNodes(result.metadata), count - 1);
   assert.equal(normalizedCalls(result)[0], "item_0");
   assert.equal(normalizedCalls(result).at(-1), `item_${String(count - 1)}`);
   assert.equal(result.cursor.index, cursor.endIndex);
@@ -1367,7 +1581,7 @@ test("prefix ORDER BY reads every suffix form and leaves caller terminators", ()
       "qualified",
     ], terminator);
     assert.deepEqual(
-      result.metadata.calls.map((call) => sql.slice(
+      materializedMetadata(result).calls.map((call) => sql.slice(
         call.range.start,
         call.range.end,
       )),
@@ -1435,7 +1649,7 @@ test("prefix ORDER BY leaves contextual words to the expression grammar", (): vo
       expected.sql,
     );
     assert.deepEqual(
-      result.metadata.calls.map((call) => expected.sql.slice(
+      materializedMetadata(result).calls.map((call) => expected.sql.slice(
         call.range.start,
         call.range.end,
       )),
@@ -1467,6 +1681,7 @@ test("prefix ORDER BY preserves nested quoted expressions, metadata, bounds, and
   );
   const snapshot = harness.snapshot();
   const rangeTerminator = sourceRange(sql, "RANGE", 0);
+  const metadata = materializedMetadata(result);
 
   assert.equal(result.cursor.state, parent.state);
   assert.equal(result.cursor.index, tokenIndexForRange(kernel, rangeTerminator));
@@ -1477,17 +1692,17 @@ test("prefix ORDER BY preserves nested quoted expressions, metadata, bounds, and
     end: sourceRange(sql, "LAST", 0).end,
   });
   assert.deepEqual(
-    result.metadata.calls.map((call) => sql.slice(
+    metadata.calls.map((call) => sql.slice(
       call.range.start,
       call.range.end,
     )),
     [expression, "beta"],
   );
-  assert.equal(result.metadata.nestedQueries.length, 2);
-  assert.equal(result.metadata.typeConstructs.length, 2);
-  assert.equal(Object.isFrozen(result.metadata.calls), true);
-  assert.equal(Object.isFrozen(result.metadata.nestedQueries), true);
-  assert.equal(Object.isFrozen(result.metadata.typeConstructs), true);
+  assert.equal(metadata.nestedQueries.length, 2);
+  assert.equal(metadata.typeConstructs.length, 2);
+  assert.equal(Object.isFrozen(metadata.calls), true);
+  assert.equal(Object.isFrozen(metadata.nestedQueries), true);
+  assert.equal(Object.isFrozen(metadata.typeConstructs), true);
   assert.equal(snapshot.calls, 2);
   assert.deepEqual(
     snapshot.invocations.map((invocation) => invocation.depth),
@@ -1598,6 +1813,54 @@ test("prefix ORDER BY rejects empty items and strict incomplete expressions prec
     );
     assert.equal(harness.snapshot().calls, 1, invalid.sql);
   }
+});
+
+test("prefix ORDER BY collaborators must preserve the entered cursor", (): void => {
+  const sql = "alpha RANGE";
+  const { cursor } = createReadCursor(sql, DEFAULT_SQL_PARSER_LIMITS);
+  const foreign = createReadCursor("other", DEFAULT_SQL_PARSER_LIMITS).cursor;
+  const cases = cursorContractCases(
+    "Resume ORDER BY expression prefix",
+    2,
+    1,
+  );
+
+  for (const current of cases) {
+    const reader: SqlExpressionPrefixReader = (
+      expressionEnvironment: SqlExpressionEnvironment,
+      child: SqlReadCursor,
+    ): SqlExpressionResult => {
+      const result = readDeterministicExpressionPrefix(
+        expressionEnvironment,
+        child,
+      );
+      return Object.freeze({
+        ...result,
+        cursor: current.mutate(result.cursor, foreign),
+      });
+    };
+    expectParserError(
+      () => readSqlSortListPrefix(environment(59), cursor, reader),
+      "internal_invariant",
+      sourceRange(sql, "alpha", 0),
+      current.message,
+    );
+  }
+
+  const emptyReader: SqlExpressionPrefixReader = (
+    _expressionEnvironment: SqlExpressionEnvironment,
+    child: SqlReadCursor,
+  ): SqlExpressionResult => Object.freeze({
+    cursor: child,
+    metadata: emptyMetadata(),
+    range: sqlReadRangeForSpan(child.state, child.index, child.index),
+  });
+  expectParserError(
+    () => readSqlSortListPrefix(environment(59), cursor, emptyReader),
+    "internal_invariant",
+    sourceRange(sql, "alpha", 0),
+    "ORDER BY expression prefix reader returned an empty expression",
+  );
 });
 
 test("prefix ORDER BY validates direct and qualified PostgreSQL all_Op spellings", (): void => {
@@ -1717,7 +1980,8 @@ test("prefix ORDER BY uses one collaborator call per item and linear transitions
   assert.equal(collaboratorTransitions, count * 4);
   assert.equal(sortTransitions, count * 5 - 1);
   assert.equal(totalTransitions, count * 9 - 1);
-  assert.equal(result.metadata.calls.length, count);
+  assert.equal(materializedMetadata(result).calls.length, count);
+  assert.equal(countMetadataConcatNodes(result.metadata), count * 3 - 1);
   assert.equal(normalizedCalls(result)[0], "item_0");
   assert.equal(normalizedCalls(result).at(-1), `item_${String(count - 1)}`);
   assert.equal(
