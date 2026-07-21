@@ -64,6 +64,16 @@ export type SqlTokenCursor = Readonly<{
   workUnits: number;
 }>;
 
+export type SqlTokenInspection = Readonly<{
+  cursor: SqlTokenCursor;
+  token: SqlParserToken | undefined;
+}>;
+
+export type SqlTokenConsumption = Readonly<{
+  cursor: SqlTokenCursor;
+  token: SqlParserToken;
+}>;
+
 type OpenDelimiter = Readonly<{
   index: number;
   text: "(" | "[";
@@ -569,6 +579,11 @@ export const createSqlTokenCursor = (
   };
 };
 
+const sqlTokenCursorEndOffset = (cursor: SqlTokenCursor): number =>
+  cursor.kernel.tokens[cursor.endIndex - 1]?.range.end
+  ?? cursor.kernel.tokens[cursor.endIndex]?.range.start
+  ?? cursor.kernel.sql.length;
+
 const sqlTokenCursorRange = (
   cursor: SqlTokenCursor,
 ): SqlSourceRange => {
@@ -576,10 +591,78 @@ const sqlTokenCursorRange = (
     ? cursor.kernel.tokens[cursor.index]
     : undefined;
   return current?.range
-    ?? emptySqlSourceRange(
-      cursor.kernel.tokens[cursor.endIndex - 1]?.range.end
-      ?? cursor.kernel.sql.length,
+    ?? emptySqlSourceRange(sqlTokenCursorEndOffset(cursor));
+};
+
+const sqlTokenCursorIndexRange = (
+  cursor: SqlTokenCursor,
+  index: number,
+): SqlSourceRange =>
+  index < cursor.endIndex
+    ? errorRangeAtIndex(cursor.kernel.sql, cursor.kernel.tokens, index)
+    : emptySqlSourceRange(sqlTokenCursorEndOffset(cursor));
+
+const validateSqlTokenCursor = (
+  cursor: SqlTokenCursor,
+  operation: string,
+): void => {
+  if (
+    !isNonNegativeInteger(cursor.index)
+    || !isNonNegativeInteger(cursor.endIndex)
+    || cursor.index > cursor.endIndex
+    || cursor.endIndex > cursor.kernel.tokens.length
+  ) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `Invalid SQL token cursor bounds ${String(cursor.index)}..${String(cursor.endIndex)} for ${String(cursor.kernel.tokens.length)} tokens during ${operation}`,
+      isNonNegativeInteger(cursor.index)
+        ? errorRangeAtIndex(
+          cursor.kernel.sql,
+          cursor.kernel.tokens,
+          cursor.index,
+        )
+        : emptySqlSourceRange(cursor.kernel.sql.length),
     );
+  }
+  if (!isNonNegativeInteger(cursor.workUnits)) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `SQL token cursor workUnits must be a non-negative safe integer during ${operation}; received ${String(cursor.workUnits)}`,
+      sqlTokenCursorRange(cursor),
+    );
+  }
+  if (cursor.workUnits < cursor.kernel.delimiters.scanSteps) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `SQL token cursor workUnits=${String(cursor.workUnits)} cannot precede delimiter scanSteps=${String(cursor.kernel.delimiters.scanSteps)} during ${operation}`,
+      sqlTokenCursorRange(cursor),
+    );
+  }
+  if (cursor.workUnits > cursor.kernel.limits.maxWorkUnits) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `SQL token cursor workUnits=${String(cursor.workUnits)} exceeds maxWorkUnits=${String(cursor.kernel.limits.maxWorkUnits)} before ${operation}`,
+      sqlTokenCursorRange(cursor),
+    );
+  }
+};
+
+const chargeSqlTokenCursor = (
+  cursor: SqlTokenCursor,
+  chargedIndex: number,
+  operation: string,
+): SqlTokenCursor => {
+  if (cursor.workUnits === cursor.kernel.limits.maxWorkUnits) {
+    return throwSqlPolicyParserError(
+      "limit_complexity",
+      `SQL parser ${operation} exceeded maxWorkUnits=${String(cursor.kernel.limits.maxWorkUnits)} at token ${String(chargedIndex)}`,
+      sqlTokenCursorIndexRange(cursor, chargedIndex),
+    );
+  }
+  return {
+    ...cursor,
+    workUnits: cursor.workUnits + 1,
+  };
 };
 
 export const sqlTokenAt = (
@@ -602,6 +685,101 @@ export const sqlTokenAt = (
     );
   }
   return index >= cursor.endIndex ? undefined : cursor.kernel.tokens[index];
+};
+
+export const inspectSqlTokenCursor = (
+  cursor: SqlTokenCursor,
+  offset: number,
+  operation: string,
+): SqlTokenInspection => {
+  validateSqlTokenCursor(cursor, operation);
+  if (!isNonNegativeInteger(offset)) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `SQL token inspection offset must be a non-negative safe integer during ${operation}; received ${String(offset)}`,
+      sqlTokenCursorRange(cursor),
+    );
+  }
+  const inspectedIndex = cursor.index + offset;
+  if (
+    !Number.isSafeInteger(inspectedIndex)
+    || inspectedIndex > cursor.endIndex
+  ) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `Cannot inspect SQL token offset ${String(offset)} during ${operation} from ${String(cursor.index)} with end ${String(cursor.endIndex)}`,
+      sqlTokenCursorRange(cursor),
+    );
+  }
+  const chargedCursor = chargeSqlTokenCursor(
+    cursor,
+    inspectedIndex,
+    operation,
+  );
+  return {
+    cursor: chargedCursor,
+    token: inspectedIndex === cursor.endIndex
+      ? undefined
+      : cursor.kernel.tokens[inspectedIndex],
+  };
+};
+
+export const consumeSqlTokenCursor = (
+  cursor: SqlTokenCursor,
+  operation: string,
+): SqlTokenConsumption => {
+  validateSqlTokenCursor(cursor, operation);
+  const token = cursor.index === cursor.endIndex
+    ? undefined
+    : cursor.kernel.tokens[cursor.index];
+  if (token === undefined) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `Cannot consume SQL token at bounded end ${String(cursor.endIndex)} during ${operation}`,
+      sqlTokenCursorIndexRange(cursor, cursor.index),
+    );
+  }
+  const chargedCursor = chargeSqlTokenCursor(cursor, cursor.index, operation);
+  return {
+    cursor: {
+      ...chargedCursor,
+      index: cursor.index + 1,
+    },
+    token,
+  };
+};
+
+export const restoreSqlTokenCursorPosition = (
+  original: SqlTokenCursor,
+  attempted: SqlTokenCursor,
+): SqlTokenCursor => {
+  validateSqlTokenCursor(original, "SQL token cursor position restoration");
+  validateSqlTokenCursor(attempted, "SQL token cursor position restoration");
+  if (original.kernel !== attempted.kernel) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      "Cannot restore SQL token cursor position across different parser kernels",
+      sqlTokenCursorRange(original),
+    );
+  }
+  if (original.endIndex !== attempted.endIndex) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `Cannot restore SQL token cursor position across different ends ${String(original.endIndex)} and ${String(attempted.endIndex)}`,
+      sqlTokenCursorRange(original),
+    );
+  }
+  if (attempted.workUnits < original.workUnits) {
+    return throwSqlPolicyParserError(
+      "internal_invariant",
+      `Cannot restore SQL token cursor position with work rewind from ${String(original.workUnits)} to ${String(attempted.workUnits)}`,
+      sqlTokenCursorRange(original),
+    );
+  }
+  return {
+    ...attempted,
+    index: original.index,
+  };
 };
 
 export const sqlCursorRange = (cursor: SqlTokenCursor): SqlSourceRange =>

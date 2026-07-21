@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
+  consumeSqlTokenCursor,
   createSqlParserKernel,
+  createSqlTokenCursor,
   DEFAULT_SQL_PARSER_LIMITS,
+  inspectSqlTokenCursor,
+  restoreSqlTokenCursorPosition,
+  sqlCursorRange,
   type SqlParserLimits,
+  type SqlTokenCursor,
 } from "./sql-policy-parser-kernel.js";
 import {
   SqlPolicyParserError,
@@ -287,6 +293,390 @@ test("statements and delimiter lookup are deeply immutable and reciprocal", (): 
   assert.equal(lookup.get(kernel.tokens.length), undefined);
   cannotSet(lookup, "size", 0);
   cannotSet(kernel.statements, "0", null);
+});
+
+test("charged inspection and consumption each cost one constant work unit", (): void => {
+  const kernel = createSqlParserKernel(
+    "alpha beta",
+    limits(20, 10, 10, 8),
+  );
+  const initial = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+
+  const inspected = inspectSqlTokenCursor(initial, 0, "inspect alpha");
+  assert.equal(inspected.token, kernel.tokens[0]);
+  assert.equal(inspected.cursor.kernel, kernel);
+  assert.equal(inspected.cursor.index, 0);
+  assert.equal(inspected.cursor.endIndex, 2);
+  assert.equal(inspected.cursor.workUnits, initial.workUnits + 1);
+
+  const consumed = consumeSqlTokenCursor(
+    inspected.cursor,
+    "consume alpha",
+  );
+  assert.equal(consumed.token, kernel.tokens[0]);
+  assert.equal(consumed.cursor.kernel, kernel);
+  assert.equal(consumed.cursor.index, 1);
+  assert.equal(consumed.cursor.endIndex, 2);
+  assert.equal(consumed.cursor.workUnits, inspected.cursor.workUnits + 1);
+  assert.equal(initial.index, 0);
+  assert.equal(initial.workUnits, kernel.delimiters.scanSteps);
+});
+
+test("charged transitions preserve exact unbounded and bounded EOF ranges", (): void => {
+  const unboundedKernel = createSqlParserKernel(
+    "x",
+    limits(10, 10, 10, 3),
+  );
+  const unboundedEof = createSqlTokenCursor(unboundedKernel, 1, 1);
+  const unboundedInspection = inspectSqlTokenCursor(
+    unboundedEof,
+    0,
+    "inspect unbounded EOF",
+  );
+  assert.equal(unboundedInspection.token, undefined);
+  assert.equal(unboundedInspection.cursor.index, 1);
+  assert.equal(unboundedInspection.cursor.endIndex, 1);
+  assert.equal(unboundedInspection.cursor.workUnits, 2);
+  assert.deepEqual(sqlCursorRange(unboundedInspection.cursor), {
+    start: 1,
+    end: 1,
+  });
+  expectParserError(
+    () => {
+      consumeSqlTokenCursor(
+        unboundedInspection.cursor,
+        "consume unbounded EOF",
+      );
+    },
+    "internal_invariant",
+    { start: 1, end: 1 },
+  );
+  const exhaustedUnboundedInspection = inspectSqlTokenCursor(
+    unboundedInspection.cursor,
+    0,
+    "exhaust unbounded EOF work",
+  );
+  assert.equal(
+    exhaustedUnboundedInspection.cursor.workUnits,
+    unboundedKernel.limits.maxWorkUnits,
+  );
+  expectParserError(
+    () => {
+      consumeSqlTokenCursor(
+        exhaustedUnboundedInspection.cursor,
+        "consume exhausted unbounded EOF",
+      );
+    },
+    "internal_invariant",
+    { start: 1, end: 1 },
+  );
+
+  const boundedKernel = createSqlParserKernel(
+    "x trailing",
+    limits(20, 10, 10, 3),
+  );
+  const bounded = createSqlTokenCursor(boundedKernel, 0, 1);
+  const boundedInspection = inspectSqlTokenCursor(
+    bounded,
+    1,
+    "inspect bounded EOF",
+  );
+  assert.equal(boundedInspection.token, undefined);
+  assert.equal(boundedInspection.cursor.index, 0);
+  assert.equal(boundedInspection.cursor.endIndex, 1);
+  assert.equal(boundedInspection.cursor.workUnits, 3);
+  expectParserError(
+    () => {
+      inspectSqlTokenCursor(
+        boundedInspection.cursor,
+        1,
+        "repeat bounded EOF inspection",
+      );
+    },
+    "limit_complexity",
+    { start: 1, end: 1 },
+  );
+
+  const boundedEof = createSqlTokenCursor(boundedKernel, 1, 1);
+  const boundedConsumeError = expectParserError(
+    () => {
+      consumeSqlTokenCursor(boundedEof, "consume bounded EOF");
+    },
+    "internal_invariant",
+    { start: 1, end: 1 },
+  );
+  assert.match(boundedConsumeError.message, /bounded end 1/u);
+
+  const emptyBounded = createSqlTokenCursor(boundedKernel, 0, 0);
+  assert.deepEqual(sqlCursorRange(emptyBounded), { start: 0, end: 0 });
+  expectParserError(
+    () => {
+      consumeSqlTokenCursor(emptyBounded, "consume empty bounded range");
+    },
+    "internal_invariant",
+    { start: 0, end: 0 },
+  );
+  const emptyInspection = inspectSqlTokenCursor(
+    emptyBounded,
+    0,
+    "inspect empty bounded range",
+  );
+  assert.equal(emptyInspection.token, undefined);
+  assert.equal(
+    emptyInspection.cursor.workUnits,
+    boundedKernel.limits.maxWorkUnits,
+  );
+  expectParserError(
+    () => {
+      inspectSqlTokenCursor(
+        emptyInspection.cursor,
+        0,
+        "repeat empty bounded inspection",
+      );
+    },
+    "limit_complexity",
+    { start: 0, end: 0 },
+  );
+});
+
+test("charged transitions allow exact maxWorkUnits and reject the first excess", (): void => {
+  const kernel = createSqlParserKernel(
+    "alpha beta",
+    limits(20, 10, 10, 3),
+  );
+  const initial = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+
+  const exact = consumeSqlTokenCursor(initial, "consume at exact work limit");
+  assert.equal(exact.token, kernel.tokens[0]);
+  assert.equal(exact.cursor.index, 1);
+  assert.equal(exact.cursor.workUnits, kernel.limits.maxWorkUnits);
+
+  const firstExcess = expectParserError(
+    () => {
+      consumeSqlTokenCursor(exact.cursor, "consume first excess");
+    },
+    "limit_complexity",
+    { start: 6, end: 10 },
+  );
+  assert.match(firstExcess.message, /at token 1$/u);
+});
+
+test("failed speculation restores position without rewinding attempted work", (): void => {
+  const kernel = createSqlParserKernel(
+    "alpha beta",
+    limits(20, 10, 10, 8),
+  );
+  const original = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+  const inspected = inspectSqlTokenCursor(
+    original,
+    1,
+    "inspect speculative beta",
+  );
+  const attempted = consumeSqlTokenCursor(
+    inspected.cursor,
+    "consume speculative alpha",
+  ).cursor;
+
+  const restored = restoreSqlTokenCursorPosition(original, attempted);
+  assert.equal(restored.kernel, kernel);
+  assert.equal(restored.index, original.index);
+  assert.equal(restored.endIndex, original.endIndex);
+  assert.equal(restored.workUnits, attempted.workUnits);
+  assert.equal(restored.workUnits, original.workUnits + 2);
+  assert.equal(original.workUnits, kernel.delimiters.scanSteps);
+  assert.equal(attempted.index, 1);
+});
+
+test("charged cursor contracts reject mismatches, rewinds, and invalid numbers", (): void => {
+  const kernel = createSqlParserKernel(
+    "alpha beta",
+    limits(20, 10, 10, 8),
+  );
+  const otherKernel = createSqlParserKernel(
+    "other value",
+    limits(20, 10, 10, 8),
+  );
+  const cursor = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+  const otherCursor = createSqlTokenCursor(
+    otherKernel,
+    0,
+    otherKernel.tokens.length,
+  );
+  const kernelMismatch = expectParserError(
+    () => restoreSqlTokenCursorPosition(cursor, otherCursor),
+    "internal_invariant",
+    { start: 0, end: 5 },
+  );
+  assert.match(kernelMismatch.message, /different parser kernels/u);
+
+  const differentEnd = createSqlTokenCursor(kernel, 0, 1);
+  const endMismatch = expectParserError(
+    () => restoreSqlTokenCursorPosition(cursor, differentEnd),
+    "internal_invariant",
+    { start: 0, end: 5 },
+  );
+  assert.match(endMismatch.message, /different ends 2 and 1/u);
+
+  const charged = inspectSqlTokenCursor(
+    cursor,
+    0,
+    "prepare work rewind",
+  ).cursor;
+  const workRewind = expectParserError(
+    () => restoreSqlTokenCursorPosition(charged, cursor),
+    "internal_invariant",
+    { start: 0, end: 5 },
+  );
+  assert.match(workRewind.message, /work rewind from 3 to 2/u);
+
+  const invalidNumbers: ReadonlyArray<number> = [
+    Number.NaN,
+    Number.NEGATIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    -1,
+    0.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ];
+  for (const invalid of invalidNumbers) {
+    const invalidIndex: SqlTokenCursor = { ...cursor, index: invalid };
+    const indexError = expectParserError(
+      () => inspectSqlTokenCursor(invalidIndex, 0, "invalid index"),
+      "internal_invariant",
+      { start: kernel.sql.length, end: kernel.sql.length },
+    );
+    assert.match(indexError.message, /Invalid SQL token cursor bounds/u);
+
+    const invalidEnd: SqlTokenCursor = { ...cursor, endIndex: invalid };
+    const endError = expectParserError(
+      () => inspectSqlTokenCursor(invalidEnd, 0, "invalid end"),
+      "internal_invariant",
+      { start: 0, end: 5 },
+    );
+    assert.match(endError.message, /Invalid SQL token cursor bounds/u);
+
+    const invalidWork: SqlTokenCursor = { ...cursor, workUnits: invalid };
+    const workError = expectParserError(
+      () => inspectSqlTokenCursor(invalidWork, 0, "invalid work"),
+      "internal_invariant",
+      { start: 0, end: 5 },
+    );
+    assert.match(workError.message, /non-negative safe integer/u);
+
+    const offsetError = expectParserError(
+      () => inspectSqlTokenCursor(cursor, invalid, "invalid offset"),
+      "internal_invariant",
+      { start: 0, end: 5 },
+    );
+    assert.match(offsetError.message, /inspection offset/u);
+  }
+
+  const indexPastEnd: SqlTokenCursor = {
+    ...cursor,
+    index: cursor.endIndex + 1,
+  };
+  expectParserError(
+    () => inspectSqlTokenCursor(indexPastEnd, 0, "index past end"),
+    "internal_invariant",
+    { start: kernel.sql.length, end: kernel.sql.length },
+  );
+
+  const endPastTokens: SqlTokenCursor = {
+    ...cursor,
+    endIndex: kernel.tokens.length + 1,
+  };
+  expectParserError(
+    () => inspectSqlTokenCursor(endPastTokens, 0, "end past tokens"),
+    "internal_invariant",
+    { start: 0, end: 5 },
+  );
+
+  expectParserError(
+    () => inspectSqlTokenCursor(cursor, cursor.endIndex + 1, "offset past end"),
+    "internal_invariant",
+    { start: 0, end: 5 },
+  );
+
+  const workUnderflow: SqlTokenCursor = {
+    ...cursor,
+    workUnits: kernel.delimiters.scanSteps - 1,
+  };
+  const underflowError = expectParserError(
+    () => consumeSqlTokenCursor(workUnderflow, "invalid work underflow"),
+    "internal_invariant",
+    { start: 0, end: 5 },
+  );
+  assert.match(underflowError.message, /cannot precede delimiter scanSteps/u);
+
+  const workOverflow: SqlTokenCursor = {
+    ...cursor,
+    workUnits: kernel.limits.maxWorkUnits + 1,
+  };
+  const overflowError = expectParserError(
+    () => consumeSqlTokenCursor(workOverflow, "invalid work overflow"),
+    "internal_invariant",
+    { start: 0, end: 5 },
+  );
+  assert.match(overflowError.message, /exceeds maxWorkUnits/u);
+});
+
+test("sequential failed matches cannot reset the charged work budget", (): void => {
+  const kernel = createSqlParserKernel(
+    "only",
+    limits(10, 10, 10, 3),
+  );
+  let cursor = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const original = cursor;
+    const consumed = consumeSqlTokenCursor(
+      cursor,
+      `failed match ${String(attempt + 1)}`,
+    );
+    cursor = restoreSqlTokenCursorPosition(original, consumed.cursor);
+    assert.equal(cursor.index, 0);
+    assert.equal(cursor.workUnits, kernel.delimiters.scanSteps + attempt + 1);
+  }
+
+  const firstExcess = expectParserError(
+    () => {
+      consumeSqlTokenCursor(cursor, "failed match 3");
+    },
+    "limit_complexity",
+    { start: 0, end: 4 },
+  );
+  assert.match(firstExcess.message, /maxWorkUnits=3 at token 0/u);
+});
+
+test("long flat input keeps charged token operations constant-step", (): void => {
+  const tokenCount = 20_000;
+  const sql = Array.from(
+    { length: tokenCount },
+    (_value, index): string => `c${String(index)}`,
+  ).join(" ");
+  const kernel = createSqlParserKernel(
+    sql,
+    limits(sql.length, tokenCount, 10, tokenCount + 2),
+  );
+  const cursor = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+
+  const last = inspectSqlTokenCursor(
+    cursor,
+    tokenCount - 1,
+    "inspect last flat token",
+  );
+  assert.equal(last.token, kernel.tokens[tokenCount - 1]);
+  assert.equal(last.token?.text, `c${String(tokenCount - 1)}`);
+  assert.equal(last.cursor.index, 0);
+  assert.equal(last.cursor.workUnits, kernel.delimiters.scanSteps + 1);
+
+  const first = consumeSqlTokenCursor(
+    last.cursor,
+    "consume first flat token",
+  );
+  assert.equal(first.token, kernel.tokens[0]);
+  assert.equal(first.cursor.index, 1);
+  assert.equal(first.cursor.workUnits, kernel.delimiters.scanSteps + 2);
+  assert.equal(kernel.delimiters.scanSteps, tokenCount);
 });
 
 test("token limit reports the first excess before owned graph construction", (): void => {
