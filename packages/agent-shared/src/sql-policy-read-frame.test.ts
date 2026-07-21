@@ -28,6 +28,15 @@ import type {
   SqlNestedQueryNode,
   SqlTypeConstructNode,
 } from "./sql-policy-read-model.js";
+import {
+  concatSqlExpressionMetadataSequences,
+  emptySqlExpressionMetadataSequence,
+  materializeSqlExpressionMetadataSequence,
+  sqlCallMetadataSequence,
+  sqlNestedQueryMetadataSequence,
+  sqlTypeConstructMetadataSequence,
+  type SqlExpressionMetadataSequence,
+} from "./sql-policy-read-metadata.js";
 import { readSqlWindowFrame } from "./sql-policy-read-frame.js";
 import {
   advanceSqlReadCursor,
@@ -64,6 +73,66 @@ type PrefixReaderHarness = Readonly<{
   snapshot: () => PrefixReaderSnapshot;
 }>;
 
+type CursorContractCase = Readonly<{
+  message: string;
+  mutate: (
+    cursor: SqlReadCursor,
+    foreign: SqlReadCursor,
+  ) => SqlReadCursor;
+}>;
+
+const cursorContractCases = (
+  operation: string,
+  enteredEndIndex: number,
+  enteredDepth: number,
+): ReadonlyArray<CursorContractCase> => Object.freeze([
+  Object.freeze({
+    message: `${operation} returned cursor end ${String(enteredEndIndex - 1)} must equal the entered child end ${String(enteredEndIndex)}`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      endIndex: cursor.endIndex - 1,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor end ${String(enteredEndIndex + 1)} must equal the entered child end ${String(enteredEndIndex)}`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      endIndex: cursor.endIndex + 1,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor nesting depth ${String(enteredDepth - 1)} must equal the entered child depth ${String(enteredDepth)}`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      depth: cursor.depth - 1,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor nesting depth ${String(enteredDepth + 1)} must equal the entered child depth ${String(enteredDepth)}`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      depth: cursor.depth + 1,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor must use the entered child SQL read state`,
+    mutate: (
+      cursor: SqlReadCursor,
+      foreign: SqlReadCursor,
+    ): SqlReadCursor => Object.freeze({
+      ...cursor,
+      state: foreign.state,
+    }),
+  }),
+  Object.freeze({
+    message: `${operation} returned cursor workUnits must be a non-negative safe integer; received -1`,
+    mutate: (cursor: SqlReadCursor): SqlReadCursor => Object.freeze({
+      ...cursor,
+      workUnits: -1,
+    }),
+  }),
+]);
+
 type DeterministicDelimiterRead = Readonly<{
   cursor: SqlReadCursor;
   itemCount: number;
@@ -87,11 +156,8 @@ const environment = (queryId: number): SqlExpressionEnvironment => ({
   syntaxContext: "expression",
 });
 
-const emptyMetadata = (): SqlExpressionMetadata => Object.freeze({
-  calls: Object.freeze([]),
-  nestedQueries: Object.freeze([]),
-  typeConstructs: Object.freeze([]),
-});
+const emptyMetadata = (): SqlExpressionMetadataSequence =>
+  emptySqlExpressionMetadataSequence();
 
 const expressionMetadata = (
   expressionEnvironment: SqlExpressionEnvironment,
@@ -99,7 +165,7 @@ const expressionMetadata = (
   range: SqlSourceRange,
   startIndex: number,
   endIndex: number,
-): SqlExpressionMetadata => {
+): SqlExpressionMetadataSequence => {
   if (token === undefined) {
     return emptyMetadata();
   }
@@ -139,11 +205,13 @@ const expressionMetadata = (
     syntax: "cast",
     typeName,
   });
-  return Object.freeze({
-    calls: Object.freeze([call]),
-    nestedQueries: Object.freeze([nestedQuery]),
-    typeConstructs: Object.freeze([typeConstruct]),
-  });
+  return concatSqlExpressionMetadataSequences(
+    concatSqlExpressionMetadataSequences(
+      sqlCallMetadataSequence(call),
+      sqlNestedQueryMetadataSequence(nestedQuery),
+    ),
+    sqlTypeConstructMetadataSequence(typeConstruct),
+  );
 };
 
 const isOpeningDelimiter = (token: SqlParserToken): boolean =>
@@ -674,9 +742,42 @@ const sourceRange = (
 const expressionSql = (
   sql: string,
   result: SqlExpressionResult,
-): ReadonlyArray<string> => result.metadata.calls.map((call) =>
+): ReadonlyArray<string> => materializedMetadata(result).calls.map((call) =>
   sql.slice(call.range.start, call.range.end)
 );
+
+const materializedMetadata = (
+  result: SqlExpressionResult,
+): SqlExpressionMetadata => materializeSqlExpressionMetadataSequence(
+  result.metadata,
+);
+
+const countMetadataConcatNodes = (
+  sequence: SqlExpressionMetadataSequence,
+): number => {
+  const stack: Array<SqlExpressionMetadataSequence> = [sequence];
+  let count = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    assert.notEqual(current, undefined);
+    if (current?.kind === "concat") {
+      count++;
+      stack.push(current.right, current.left);
+    }
+  }
+  return count;
+};
+
+const repeatMetadataSequence = (
+  sequence: SqlExpressionMetadataSequence,
+  count: number,
+): SqlExpressionMetadataSequence => {
+  let repeated = emptySqlExpressionMetadataSequence();
+  for (let index = 0; index < count; index++) {
+    repeated = concatSqlExpressionMetadataSequences(repeated, sequence);
+  }
+  return repeated;
+};
 
 const expectParserError = (
   action: () => unknown,
@@ -973,29 +1074,71 @@ test("ranked bounds enforce PostgreSQL endpoint restrictions", (): void => {
 test("offset metadata stays ordered, exact, and frozen", (): void => {
   const sql = "ROWS BETWEEN alpha + 1 PRECEDING AND beta + 2 FOLLOWING";
   const { harness, result } = readFrame(sql, 58);
+  const metadata = materializedMetadata(result);
 
   assert.equal(harness.snapshot().calls, 2);
   assert.deepEqual(expressionSql(sql, result), ["alpha + 1", "beta + 2"]);
   assert.deepEqual(
-    result.metadata.nestedQueries.map((query) =>
+    metadata.nestedQueries.map((query) =>
       sql.slice(query.range.start, query.range.end)
     ),
     ["alpha + 1", "beta + 2"],
   );
   assert.deepEqual(
-    result.metadata.typeConstructs.map((construct) =>
+    metadata.typeConstructs.map((construct) =>
       sql.slice(construct.range.start, construct.range.end)
     ),
     ["alpha + 1", "beta + 2"],
   );
   assert.equal(Object.isFrozen(result), true);
   assert.equal(Object.isFrozen(result.metadata), true);
-  assert.equal(Object.isFrozen(result.metadata.calls), true);
-  assert.equal(Object.isFrozen(result.metadata.nestedQueries), true);
-  assert.equal(Object.isFrozen(result.metadata.typeConstructs), true);
+  assert.equal(Object.isFrozen(metadata.calls), true);
+  assert.equal(Object.isFrozen(metadata.nestedQueries), true);
+  assert.equal(Object.isFrozen(metadata.typeConstructs), true);
+  assert.equal(countMetadataConcatNodes(result.metadata), 5);
 });
 
-test("bounded parents and deeper prefix cursors resume their exact bound and depth", (): void => {
+test("frame reader preserves canonical empty and deep child sequences", (): void => {
+  const empty = readFrame("ROWS CURRENT ROW", 64).result;
+  assert.equal(empty.metadata, emptySqlExpressionMetadataSequence());
+
+  const deepCount = 20_000;
+  const sql = "ROWS offset_value PRECEDING";
+  const { cursor, kernel } = createReadCursor(
+    sql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  const token = kernel.tokens[1];
+  assert.equal(token?.kind, "identifier");
+  assert.ok(token?.kind === "identifier");
+  const range = sourceRange(sql, "offset_value", 0);
+  const deepMetadata = repeatMetadataSequence(
+    expressionMetadata(environment(64), token, range, 1, 2),
+    deepCount,
+  );
+  const reader: SqlExpressionPrefixReader = (
+    expressionEnvironment: SqlExpressionEnvironment,
+    child: SqlReadCursor,
+  ): SqlExpressionResult => Object.freeze({
+    ...readDeterministicExpressionPrefix(expressionEnvironment, child),
+    metadata: deepMetadata,
+  });
+  const baseline = readSqlWindowFrame(
+    environment(64),
+    cursor,
+    readDeterministicExpressionPrefix,
+  );
+  const result = readSqlWindowFrame(environment(64), cursor, reader);
+  const metadata = materializedMetadata(result);
+
+  assert.equal(result.metadata, deepMetadata);
+  assert.equal(metadata.calls.length, deepCount);
+  assert.equal(metadata.nestedQueries.length, deepCount);
+  assert.equal(metadata.typeConstructs.length, deepCount);
+  assert.equal(result.cursor.workUnits, baseline.cursor.workUnits);
+});
+
+test("bounded parents and exact prefix cursors resume their bound and depth", (): void => {
   const sql = "prefix ROWS offset_value PRECEDING EXCLUDE TIES trailing";
   const kernel = createSqlParserKernel(sql, DEFAULT_SQL_PARSER_LIMITS);
   const state = createSqlReadState(kernel);
@@ -1007,23 +1150,10 @@ test("bounded parents and deeper prefix cursors resume their exact bound and dep
     "Enter deeper bounded frame parent",
   );
   const harness = createPrefixReaderHarness();
-  const deeperReader: SqlExpressionPrefixReader = (
-    expressionEnvironment: SqlExpressionEnvironment,
-    cursor: SqlReadCursor,
-  ): SqlExpressionResult => {
-    const result = harness.reader(expressionEnvironment, cursor);
-    return Object.freeze({
-      ...result,
-      cursor: enterSqlReadDepth(
-        result.cursor,
-        "Enter deeper returned prefix cursor",
-      ),
-    });
-  };
   const result = readSqlWindowFrame(
     environment(59),
     parent,
-    deeperReader,
+    harness.reader,
   );
   const invocation = harness.snapshot().invocations[0];
 
@@ -1059,6 +1189,39 @@ test("empty prefix results fail as cursor-contract invariants", (): void => {
     sourceRange(sql, "value", 0),
     "Window frame offset prefix reader returned an empty expression",
   );
+});
+
+test("frame offset collaborators must preserve the entered cursor", (): void => {
+  const sql = "ROWS value PRECEDING";
+  const { cursor } = createReadCursor(sql, DEFAULT_SQL_PARSER_LIMITS);
+  const foreign = createReadCursor("other", DEFAULT_SQL_PARSER_LIMITS).cursor;
+  const cases = cursorContractCases(
+    "Resume window frame offset expression",
+    3,
+    1,
+  );
+
+  for (const current of cases) {
+    const reader: SqlExpressionPrefixReader = (
+      expressionEnvironment: SqlExpressionEnvironment,
+      child: SqlReadCursor,
+    ): SqlExpressionResult => {
+      const result = readDeterministicExpressionPrefix(
+        expressionEnvironment,
+        child,
+      );
+      return Object.freeze({
+        ...result,
+        cursor: current.mutate(result.cursor, foreign),
+      });
+    };
+    expectParserError(
+      () => readSqlWindowFrame(environment(65), cursor, reader),
+      "internal_invariant",
+      sourceRange(sql, "value", 0),
+      current.message,
+    );
+  }
 });
 
 test("frame and collaborator nesting fail at the exact opening token", (): void => {
