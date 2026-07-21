@@ -447,6 +447,66 @@ export const narrowSqlReadCursor = (
   );
 };
 
+export const resumeSqlReadCursor = (
+  parent: SqlReadCursor,
+  returned: SqlReadCursor,
+  operation: string,
+): SqlReadCursor => {
+  const adaptedParent = sqlTokenCursorFromReadCursor(parent, operation);
+  const range = sqlCursorRange(adaptedParent);
+  if (returned.state !== parent.state) {
+    return sqlReadInvariant(
+      `${operation} returned a cursor for a different SQL read state`,
+      range,
+    );
+  }
+  if (
+    !Number.isSafeInteger(returned.endIndex)
+    || returned.endIndex < parent.index
+    || returned.endIndex > parent.endIndex
+  ) {
+    return sqlReadInvariant(
+      `${operation} returned cursor end ${String(returned.endIndex)} must be a safe integer within the parent read cursor range ${String(parent.index)}..${String(parent.endIndex)}`,
+      range,
+    );
+  }
+  if (
+    !Number.isSafeInteger(returned.index)
+    || returned.index < parent.index
+    || returned.index > returned.endIndex
+  ) {
+    return sqlReadInvariant(
+      `${operation} returned cursor index ${String(returned.index)} outside the permitted read cursor range ${String(parent.index)}..${String(returned.endIndex)}`,
+      range,
+    );
+  }
+  const adoptedWork = adoptSqlTokenCursor(
+    parent,
+    { ...adaptedParent, workUnits: returned.workUnits },
+    operation,
+  );
+  const returnedDepth = checkedSqlReadDepthAtRange(
+    parent.state,
+    returned.depth,
+    range,
+    `${operation} returned cursor`,
+  );
+  if (returnedDepth < parent.depth) {
+    return sqlReadInvariant(
+      `${operation} returned cursor nesting depth ${String(returnedDepth)} would rewind the parent depth ${String(parent.depth)}`,
+      range,
+    );
+  }
+
+  return sqlReadCursor(
+    parent.state,
+    returned.index,
+    parent.endIndex,
+    adoptedWork.workUnits,
+    parent.depth,
+  );
+};
+
 export const enterSqlReadDepth = (
   cursor: SqlReadCursor,
   operation: string,
