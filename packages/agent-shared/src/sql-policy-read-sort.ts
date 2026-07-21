@@ -11,6 +11,7 @@ import {
 import { throwSqlPolicyParserError } from "./sql-policy-parser-model.js";
 import type {
   SqlExpressionEnvironment,
+  SqlExpressionPrefixReader,
   SqlExpressionReader,
   SqlExpressionResult,
 } from "./sql-policy-read-expression.js";
@@ -45,7 +46,7 @@ type SqlReadProbe = Readonly<{
   token: SqlParserToken | undefined;
 }>;
 
-type SqlExactExpressionRead = Readonly<{
+type SqlSortExpressionRead = Readonly<{
   cursor: SqlReadCursor;
   metadata: SqlExpressionMetadata;
 }>;
@@ -256,7 +257,7 @@ const readExactSqlExpression = (
   endIndex: number,
   reader: SqlExpressionReader<SqlExpressionResult>,
   subject: string,
-): SqlExactExpressionRead => {
+): SqlSortExpressionRead => {
   const bounded = narrowSqlReadCursor(
     cursor,
     endIndex,
@@ -284,6 +285,33 @@ const readExactSqlExpression = (
       completedChild,
       `Resume exact ${subject}`,
     ),
+    metadata: result.metadata,
+  });
+};
+
+const readPrefixSqlExpression = (
+  environment: SqlExpressionEnvironment,
+  cursor: SqlReadCursor,
+  reader: SqlExpressionPrefixReader,
+): SqlSortExpressionRead => {
+  const nested = enterSqlReadDepth(
+    cursor,
+    "Enter ORDER BY expression prefix",
+  );
+  const result = reader(environment, nested);
+  const resumed = resumeSqlReadCursor(
+    cursor,
+    result.cursor,
+    "Resume ORDER BY expression prefix",
+  );
+  if (resumed.index === cursor.index) {
+    return sqlReadInvariant(
+      resumed,
+      "ORDER BY expression prefix reader returned an empty expression",
+    );
+  }
+  return Object.freeze({
+    cursor: resumed,
     metadata: result.metadata,
   });
 };
@@ -508,6 +536,80 @@ const readSortOperator = (
   );
 };
 
+const readSortItemSuffix = (
+  cursor: SqlReadCursor,
+): SqlReadProbe => {
+  let current = cursor;
+  let direction: "keyword" | "using" | null = null;
+  let inspected = inspectCurrentSqlReadToken(
+    current,
+    "Inspect ORDER BY direction",
+  );
+  current = inspected.cursor;
+  let word = postgreSqlTokenWord(inspected.token);
+  if (word === "asc" || word === "desc") {
+    direction = "keyword";
+    current = consumeSqlReadToken(
+      current,
+      "Consume ORDER BY direction",
+    ).cursor;
+  } else if (word === "using") {
+    direction = "using";
+    current = consumeSqlReadToken(
+      current,
+      "Consume ORDER BY USING",
+    ).cursor;
+    current = readSortOperator(current);
+  }
+
+  let hasNulls = false;
+  inspected = inspectCurrentSqlReadToken(
+    current,
+    "Inspect ORDER BY NULLS ordering",
+  );
+  current = inspected.cursor;
+  word = postgreSqlTokenWord(inspected.token);
+  if (word === "nulls") {
+    hasNulls = true;
+    current = consumeSqlReadToken(
+      current,
+      "Consume ORDER BY NULLS",
+    ).cursor;
+    const ordering = inspectCurrentSqlReadToken(
+      current,
+      "Inspect ORDER BY NULLS keyword",
+    );
+    current = ordering.cursor;
+    const orderingWord = postgreSqlTokenWord(ordering.token);
+    if (orderingWord !== "first" && orderingWord !== "last") {
+      return unexpectedSqlReadToken(
+        current,
+        "ORDER BY NULLS requires FIRST or LAST",
+      );
+    }
+    current = consumeSqlReadToken(
+      current,
+      "Consume ORDER BY NULLS keyword",
+    ).cursor;
+  }
+
+  const terminator = inspectCurrentSqlReadToken(
+    current,
+    "Inspect ORDER BY item terminator",
+  );
+  current = terminator.cursor;
+  const terminatorWord = postgreSqlTokenWord(terminator.token);
+  if (isSortSuffixWord(terminatorWord)) {
+    return malformedSortSuffix(
+      current,
+      terminatorWord ?? "suffix",
+      direction,
+      hasNulls,
+    );
+  }
+  return Object.freeze({ cursor: current, token: terminator.token });
+};
+
 export const readSqlSortList = (
   environment: SqlExpressionEnvironment,
   cursor: SqlReadCursor,
@@ -548,83 +650,78 @@ export const readSqlSortList = (
     current = expression.cursor;
     itemCount++;
 
-    let direction: "keyword" | "using" | null = null;
-    let inspected = inspectCurrentSqlReadToken(
-      current,
-      "Inspect ORDER BY direction",
-    );
-    current = inspected.cursor;
-    let word = postgreSqlTokenWord(inspected.token);
-    if (word === "asc" || word === "desc") {
-      direction = "keyword";
-      current = consumeSqlReadToken(
-        current,
-        "Consume ORDER BY direction",
-      ).cursor;
-    } else if (word === "using") {
-      direction = "using";
-      current = consumeSqlReadToken(
-        current,
-        "Consume ORDER BY USING",
-      ).cursor;
-      current = readSortOperator(current);
-    }
-
-    let hasNulls = false;
-    inspected = inspectCurrentSqlReadToken(
-      current,
-      "Inspect ORDER BY NULLS ordering",
-    );
-    current = inspected.cursor;
-    word = postgreSqlTokenWord(inspected.token);
-    if (word === "nulls") {
-      hasNulls = true;
-      current = consumeSqlReadToken(
-        current,
-        "Consume ORDER BY NULLS",
-      ).cursor;
-      const ordering = inspectCurrentSqlReadToken(
-        current,
-        "Inspect ORDER BY NULLS keyword",
-      );
-      current = ordering.cursor;
-      const orderingWord = postgreSqlTokenWord(ordering.token);
-      if (orderingWord !== "first" && orderingWord !== "last") {
-        return unexpectedSqlReadToken(
-          current,
-          "ORDER BY NULLS requires FIRST or LAST",
-        );
-      }
-      current = consumeSqlReadToken(
-        current,
-        "Consume ORDER BY NULLS keyword",
-      ).cursor;
-    }
-
-    const terminator = inspectCurrentSqlReadToken(
-      current,
-      "Inspect ORDER BY item terminator",
-    );
-    current = terminator.cursor;
-    if (terminator.token === undefined) {
+    const suffix = readSortItemSuffix(current);
+    current = suffix.cursor;
+    const terminator = suffix.token;
+    if (terminator === undefined) {
       return expressionResult(initial, current, metadata);
     }
-    const terminatorWord = postgreSqlTokenWord(terminator.token);
-    if (isSortSuffixWord(terminatorWord)) {
-      return malformedSortSuffix(
-        current,
-        terminatorWord ?? "suffix",
-        direction,
-        hasNulls,
-      );
-    }
-    if (terminator.token.text !== ",") {
+    if (terminator.text !== ",") {
       return unexpectedSqlReadToken(
         current,
         "Expected a comma between ORDER BY items",
       );
     }
-    const commaRange = terminator.token.range;
+    const commaRange = terminator.range;
+    current = consumeSqlReadToken(
+      current,
+      "Consume ORDER BY item comma",
+    ).cursor;
+    const next = inspectCurrentSqlReadToken(
+      current,
+      "Inspect expression after ORDER BY comma",
+    );
+    current = next.cursor;
+    if (next.token === undefined) {
+      return throwSqlPolicyParserError(
+        "unexpected_token",
+        "ORDER BY cannot end with a comma",
+        commaRange,
+      );
+    }
+    if (next.token.text === ",") {
+      return unexpectedSqlReadToken(
+        current,
+        "ORDER BY item requires an expression before comma",
+      );
+    }
+  }
+};
+
+/** @internal Reads an ORDER BY sort list prefix and leaves its terminator unconsumed. */
+export const readSqlSortListPrefix = (
+  environment: SqlExpressionEnvironment,
+  cursor: SqlReadCursor,
+  readExpressionPrefix: SqlExpressionPrefixReader,
+): SqlExpressionResult => {
+  const initial = cursor;
+  const metadata = metadataAccumulator();
+  let current = cursor;
+  const first = inspectCurrentSqlReadToken(
+    current,
+    "Inspect first ORDER BY prefix expression",
+  );
+  current = first.cursor;
+  if (first.token === undefined || first.token.text === ",") {
+    return emptySortExpressionMessage(current, first.token, 0);
+  }
+
+  while (true) {
+    const expression = readPrefixSqlExpression(
+      environment,
+      current,
+      readExpressionPrefix,
+    );
+    appendExpressionMetadata(metadata, expression.metadata);
+    current = expression.cursor;
+
+    const suffix = readSortItemSuffix(current);
+    current = suffix.cursor;
+    if (suffix.token?.text !== ",") {
+      return expressionResult(initial, current, metadata);
+    }
+
+    const commaRange = suffix.token.range;
     current = consumeSqlReadToken(
       current,
       "Consume ORDER BY item comma",
