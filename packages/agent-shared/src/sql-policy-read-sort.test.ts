@@ -4,11 +4,13 @@ import type {
   SqlIdentifierToken,
   SqlSourceRange,
 } from "./sql-policy-lexer.js";
+import { postgreSqlTokenWord } from "./sql-policy-parser-keywords.js";
 import {
   createSqlParserKernel,
   DEFAULT_SQL_PARSER_LIMITS,
   type SqlParserKernel,
   type SqlParserLimits,
+  type SqlParserToken,
 } from "./sql-policy-parser-kernel.js";
 import {
   SqlPolicyParserError,
@@ -17,6 +19,7 @@ import {
 } from "./sql-policy-parser-model.js";
 import type {
   SqlExpressionEnvironment,
+  SqlExpressionPrefixReader,
   SqlExpressionReader,
   SqlExpressionResult,
 } from "./sql-policy-read-expression.js";
@@ -29,14 +32,43 @@ import type {
 import type { SqlTypeNameNode } from "./sql-policy-type-model.js";
 import {
   advanceSqlReadCursor,
+  consumeSqlReadToken,
   createSqlReadCursor,
   createSqlReadState,
   enterSqlReadDepth,
   inspectSqlReadToken,
+  matchingSqlReadDelimiter,
+  narrowSqlReadCursor,
+  resumeSqlReadCursor,
   sqlReadRangeForSpan,
   type SqlReadCursor,
 } from "./sql-policy-read-state.js";
-import { readSqlSortList } from "./sql-policy-read-sort.js";
+import {
+  readSqlSortList,
+  readSqlSortListPrefix,
+} from "./sql-policy-read-sort.js";
+
+type PrefixReaderInvocation = Readonly<{
+  depth: number;
+  endIndex: number;
+  resultWorkUnits: number;
+  resultIndex: number;
+  startIndex: number;
+  startWorkUnits: number;
+  workUnits: number;
+}>;
+
+type PrefixReaderSnapshot = Readonly<{
+  calls: number;
+  invocations: ReadonlyArray<PrefixReaderInvocation>;
+  lastReturnedWorkUnits: number | null;
+  transitions: number;
+}>;
+
+type PrefixReaderHarness = Readonly<{
+  reader: SqlExpressionPrefixReader;
+  snapshot: () => PrefixReaderSnapshot;
+}>;
 
 const limits = (
   maxSourceCodeUnits: number,
@@ -170,6 +202,384 @@ const readRichMetadataExpression: SqlExpressionReader<SqlExpressionResult> = (
   });
 };
 
+const deterministicPrefixError = (
+  cursor: SqlReadCursor,
+  message: string,
+): never => throwSqlPolicyParserError(
+  "unexpected_token",
+  message,
+  sqlReadRangeForSpan(
+    cursor.state,
+    cursor.index,
+    cursor.index === cursor.endIndex ? cursor.index : cursor.index + 1,
+  ),
+);
+
+const isPrefixOpeningDelimiter = (token: SqlParserToken): boolean =>
+  token.text === "(" || token.text === "[";
+
+const isPrefixUnaryOperator = (token: SqlParserToken): boolean =>
+  token.kind === "operator"
+  && (token.text === "+" || token.text === "-" || token.text === "~");
+
+const isPrefixBooleanOperator = (word: string | null): boolean =>
+  word === "and" || word === "or";
+
+const isPrefixExpressionAtom = (token: SqlParserToken): boolean =>
+  (
+    token.kind === "identifier"
+    && !isPrefixBooleanOperator(postgreSqlTokenWord(token))
+  )
+  || token.kind === "numeric"
+  || token.kind === "parameter"
+  || token.kind === "string";
+
+const readDeterministicNestedExpression = (
+  cursor: SqlReadCursor,
+): SqlReadCursor => {
+  let current = readDeterministicPrefixPrimary(cursor);
+  while (true) {
+    const inspected = inspectSqlReadToken(
+      current,
+      0,
+      "Inspect deterministic nested sort expression continuation",
+    );
+    current = inspected.cursor;
+    if (inspected.token === undefined || inspected.token.text === ",") {
+      return current;
+    }
+    const word = postgreSqlTokenWord(inspected.token);
+    if (
+      inspected.token.kind !== "operator"
+      && !isPrefixBooleanOperator(word)
+    ) {
+      return deterministicPrefixError(
+        current,
+        "Deterministic nested sort expression has a trailing token",
+      );
+    }
+    current = consumeSqlReadToken(
+      current,
+      "Consume deterministic nested sort expression operator",
+    ).cursor;
+    current = readDeterministicPrefixPrimary(current);
+  }
+};
+
+const readDeterministicPrefixDelimiter = (
+  cursor: SqlReadCursor,
+): SqlReadCursor => {
+  const nested = enterSqlReadDepth(
+    cursor,
+    "Enter deterministic sort prefix-expression delimiter",
+  );
+  const matched = matchingSqlReadDelimiter(
+    nested,
+    "Match deterministic sort prefix-expression delimiter",
+  );
+  const afterOpening = advanceSqlReadCursor(
+    matched.cursor,
+    1,
+    "Consume deterministic sort prefix-expression opening delimiter",
+  );
+  let current = narrowSqlReadCursor(
+    afterOpening,
+    matched.closeIndex,
+    "Bound deterministic sort prefix-expression delimiter contents",
+  );
+  let itemCount = 0;
+
+  while (true) {
+    const item = inspectSqlReadToken(
+      current,
+      0,
+      "Inspect deterministic sort delimiter item",
+    );
+    current = item.cursor;
+    if (item.token === undefined) {
+      if (itemCount === 0) {
+        return deterministicPrefixError(
+          current,
+          "Deterministic grouped sort expression cannot be empty",
+        );
+      }
+      break;
+    }
+
+    current = readDeterministicNestedExpression(current);
+    itemCount++;
+    const separator = inspectSqlReadToken(
+      current,
+      0,
+      "Inspect deterministic sort delimiter separator",
+    );
+    current = separator.cursor;
+    if (separator.token === undefined) {
+      break;
+    }
+    if (separator.token.text !== ",") {
+      return deterministicPrefixError(
+        current,
+        "Deterministic nested sort expression has a trailing token",
+      );
+    }
+    current = consumeSqlReadToken(
+      current,
+      "Consume deterministic sort delimiter comma",
+    ).cursor;
+    const next = inspectSqlReadToken(
+      current,
+      0,
+      "Inspect deterministic sort delimiter item after comma",
+    );
+    current = next.cursor;
+    if (next.token === undefined) {
+      return deterministicPrefixError(
+        current,
+        "Deterministic sort delimiter requires an expression after comma",
+      );
+    }
+  }
+
+  const atClosing = resumeSqlReadCursor(
+    matched.cursor,
+    current,
+    "Resume deterministic sort prefix-expression delimiter contents",
+  );
+  const afterClosing = consumeSqlReadToken(
+    atClosing,
+    "Consume deterministic sort prefix-expression closing delimiter",
+  ).cursor;
+  return resumeSqlReadCursor(
+    cursor,
+    afterClosing,
+    "Resume deterministic sort prefix-expression delimiter",
+  );
+};
+
+const readDeterministicPrefixPostfix = (
+  cursor: SqlReadCursor,
+): SqlReadCursor => {
+  let current = cursor;
+  while (true) {
+    const inspected = inspectSqlReadToken(
+      current,
+      0,
+      "Inspect deterministic sort expression postfix",
+    );
+    current = inspected.cursor;
+    if (inspected.token === undefined) {
+      return current;
+    }
+    if (isPrefixOpeningDelimiter(inspected.token)) {
+      current = readDeterministicPrefixDelimiter(current);
+      continue;
+    }
+    if (inspected.token.text !== ".") {
+      return current;
+    }
+
+    current = consumeSqlReadToken(
+      current,
+      "Consume deterministic sort expression field dot",
+    ).cursor;
+    const field = inspectSqlReadToken(
+      current,
+      0,
+      "Inspect deterministic sort expression field",
+    );
+    current = field.cursor;
+    if (
+      field.token?.kind !== "identifier"
+      && !(field.token?.kind === "operator" && field.token.text === "*")
+    ) {
+      return deterministicPrefixError(
+        current,
+        "Deterministic sort expression field selection is incomplete",
+      );
+    }
+    current = consumeSqlReadToken(
+      current,
+      "Consume deterministic sort expression field",
+    ).cursor;
+  }
+};
+
+const readDeterministicPrefixPrimary = (
+  cursor: SqlReadCursor,
+): SqlReadCursor => {
+  let current = cursor;
+  while (true) {
+    const inspected = inspectSqlReadToken(
+      current,
+      0,
+      "Inspect deterministic sort expression primary",
+    );
+    current = inspected.cursor;
+    if (inspected.token === undefined) {
+      return deterministicPrefixError(
+        current,
+        "Deterministic sort prefix expression requires an operand",
+      );
+    }
+    if (isPrefixUnaryOperator(inspected.token)) {
+      current = consumeSqlReadToken(
+        current,
+        "Consume deterministic sort expression unary operator",
+      ).cursor;
+      continue;
+    }
+    if (isPrefixOpeningDelimiter(inspected.token)) {
+      return readDeterministicPrefixPostfix(
+        readDeterministicPrefixDelimiter(current),
+      );
+    }
+    if (!isPrefixExpressionAtom(inspected.token)) {
+      return deterministicPrefixError(
+        current,
+        "Deterministic sort prefix expression requires an operand",
+      );
+    }
+    return readDeterministicPrefixPostfix(consumeSqlReadToken(
+      current,
+      "Consume deterministic sort expression atom",
+    ).cursor);
+  }
+};
+
+const prefixExpressionMetadata = (
+  expressionEnvironment: SqlExpressionEnvironment,
+  cursor: SqlReadCursor,
+  endIndex: number,
+  range: SqlSourceRange,
+): SqlExpressionMetadata => {
+  const token = cursor.state.kernel.tokens[cursor.index];
+  if (token?.kind !== "identifier") {
+    return emptyMetadata();
+  }
+  const call = callMetadata(expressionEnvironment, token, range).calls[0];
+  if (call === undefined) {
+    return emptyMetadata();
+  }
+  const nestedQuery: SqlNestedQueryNode = Object.freeze({
+    bodyRange: range,
+    context: "nested",
+    endIndex,
+    kind: "expression",
+    parentQueryId: expressionEnvironment.queryId,
+    range,
+    startIndex: cursor.index,
+  });
+  const typeName: SqlTypeNameNode = Object.freeze({
+    arrayBounds: Object.freeze([]),
+    form: "generic",
+    intervalQualifier: null,
+    modifiers: Object.freeze([]),
+    nameParts: call.path,
+    nameRange: token.range,
+    range,
+    setOf: false,
+    sql: cursor.state.kernel.sql.slice(range.start, range.end),
+    timeZone: null,
+  });
+  const typeConstruct: SqlTypeConstructNode = Object.freeze({
+    context: expressionEnvironment.context,
+    queryId: expressionEnvironment.queryId,
+    range,
+    syntax: "cast",
+    typeName,
+  });
+  return Object.freeze({
+    calls: Object.freeze([call]),
+    nestedQueries: Object.freeze([nestedQuery]),
+    typeConstructs: Object.freeze([typeConstruct]),
+  });
+};
+
+const readDeterministicExpressionPrefix = (
+  expressionEnvironment: SqlExpressionEnvironment,
+  cursor: SqlReadCursor,
+): SqlExpressionResult => {
+  const startIndex = cursor.index;
+  let current = readDeterministicPrefixPrimary(cursor);
+  while (true) {
+    const inspected = inspectSqlReadToken(
+      current,
+      0,
+      "Inspect deterministic sort expression continuation",
+    );
+    current = inspected.cursor;
+    if (inspected.token === undefined || inspected.token.text === ",") {
+      break;
+    }
+    const word = postgreSqlTokenWord(inspected.token);
+    if (
+      inspected.token.kind !== "operator"
+      && !isPrefixBooleanOperator(word)
+    ) {
+      break;
+    }
+    current = consumeSqlReadToken(
+      current,
+      "Consume deterministic sort expression operator",
+    ).cursor;
+    current = readDeterministicPrefixPrimary(current);
+  }
+
+  const range = sqlReadRangeForSpan(
+    cursor.state,
+    startIndex,
+    current.index,
+  );
+  return Object.freeze({
+    cursor: current,
+    metadata: prefixExpressionMetadata(
+      expressionEnvironment,
+      cursor,
+      current.index,
+      range,
+    ),
+    range,
+  });
+};
+
+const createPrefixReaderHarness = (): PrefixReaderHarness => {
+  let calls = 0;
+  let lastReturnedWorkUnits: number | null = null;
+  let transitions = 0;
+  const invocations: Array<PrefixReaderInvocation> = [];
+  const reader: SqlExpressionPrefixReader = (
+    expressionEnvironment: SqlExpressionEnvironment,
+    cursor: SqlReadCursor,
+  ): SqlExpressionResult => {
+    calls++;
+    const result = readDeterministicExpressionPrefix(
+      expressionEnvironment,
+      cursor,
+    );
+    const invocation = Object.freeze({
+      depth: cursor.depth,
+      endIndex: cursor.endIndex,
+      resultIndex: result.cursor.index,
+      resultWorkUnits: result.cursor.workUnits,
+      startIndex: cursor.index,
+      startWorkUnits: cursor.workUnits,
+      workUnits: result.cursor.workUnits - cursor.workUnits,
+    });
+    invocations.push(invocation);
+    lastReturnedWorkUnits = result.cursor.workUnits;
+    transitions += invocation.workUnits;
+    return result;
+  };
+  const snapshot = (): PrefixReaderSnapshot => Object.freeze({
+    calls,
+    invocations: Object.freeze([...invocations]),
+    lastReturnedWorkUnits,
+    transitions,
+  });
+  return Object.freeze({ reader, snapshot });
+};
+
 const createReadCursor = (
   sql: string,
   parserLimits: SqlParserLimits,
@@ -187,6 +597,32 @@ const normalizedCalls = (
 ): ReadonlyArray<string> => result.metadata.calls.map((call) =>
   call.path.map((part) => part.untruncatedNormalized).join(".")
 );
+
+const sourceRange = (
+  sql: string,
+  text: string,
+  occurrence: number,
+): SqlSourceRange => {
+  let start = -1;
+  let from = 0;
+  for (let index = 0; index <= occurrence; index++) {
+    start = sql.indexOf(text, from);
+    assert.notEqual(start, -1, `Missing ${text} occurrence ${String(occurrence)}`);
+    from = start + text.length;
+  }
+  return { start, end: start + text.length };
+};
+
+const tokenIndexForRange = (
+  kernel: SqlParserKernel,
+  range: SqlSourceRange,
+): number => {
+  const index = kernel.tokens.findIndex((token) =>
+    token.range.start === range.start && token.range.end === range.end
+  );
+  assert.notEqual(index, -1, `Missing token at ${String(range.start)}..${String(range.end)}`);
+  return index;
+};
 
 const expectParserError = (
   action: () => unknown,
@@ -887,4 +1323,450 @@ test("large ORDER BY metadata aggregation remains ordered and iterative", (): vo
   assert.equal(normalizedCalls(result)[0], "item_0");
   assert.equal(normalizedCalls(result).at(-1), `item_${String(count - 1)}`);
   assert.equal(result.cursor.index, cursor.endIndex);
+});
+
+test("prefix ORDER BY reads every suffix form and leaves caller terminators", (): void => {
+  const terminators: ReadonlyArray<string> = [
+    "RANGE",
+    "ROWS",
+    "GROUPS",
+    "FILTER",
+  ];
+
+  for (const terminator of terminators) {
+    const sql = [
+      "alpha DESC NULLS LAST",
+      "beta USING > NULLS FIRST",
+      "qualified USING OPERATOR(pg_catalog.<) NULLS LAST",
+    ].join(", ") + ` ${terminator} caller_owned`;
+    const { cursor, kernel } = createReadCursor(
+      sql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const harness = createPrefixReaderHarness();
+    const result = readSqlSortListPrefix(
+      environment(51),
+      cursor,
+      harness.reader,
+    );
+    const terminatorRange = sourceRange(sql, terminator, 0);
+
+    assert.equal(
+      result.cursor.index,
+      tokenIndexForRange(kernel, terminatorRange),
+      terminator,
+    );
+    assert.equal(result.cursor.endIndex, cursor.endIndex, terminator);
+    assert.equal(result.cursor.depth, cursor.depth, terminator);
+    assert.equal(result.cursor.state, cursor.state, terminator);
+    assert.equal(result.range.start, 0, terminator);
+    assert.equal(result.range.end, terminatorRange.start - 1, terminator);
+    assert.deepEqual(normalizedCalls(result), [
+      "alpha",
+      "beta",
+      "qualified",
+    ], terminator);
+    assert.deepEqual(
+      result.metadata.calls.map((call) => sql.slice(
+        call.range.start,
+        call.range.end,
+      )),
+      ["alpha", "beta", "qualified"],
+      terminator,
+    );
+    assert.equal(harness.snapshot().calls, 3, terminator);
+  }
+});
+
+test("prefix ORDER BY leaves contextual words to the expression grammar", (): void => {
+  const cases: ReadonlyArray<Readonly<{
+    expression: string;
+    sql: string;
+    terminator: string;
+  }>> = [
+    {
+      expression: "ASC",
+      sql: "ASC RANGE caller_owned",
+      terminator: "RANGE",
+    },
+    {
+      expression: "using",
+      sql: "using ROWS caller_owned",
+      terminator: "ROWS",
+    },
+    {
+      expression: "using + desc",
+      sql: "using + desc DESC GROUPS caller_owned",
+      terminator: "GROUPS",
+    },
+    {
+      expression: "nulls + asc",
+      sql: "nulls + asc NULLS FIRST RANGE caller_owned",
+      terminator: "RANGE",
+    },
+    {
+      expression: "value AND using",
+      sql: "value AND using DESC boundary caller_owned",
+      terminator: "boundary",
+    },
+    {
+      expression: "\"desc\" + \"nulls\"",
+      sql: "\"desc\" + \"nulls\" ASC owner caller_owned",
+      terminator: "owner",
+    },
+  ];
+
+  for (const expected of cases) {
+    const { cursor, kernel } = createReadCursor(
+      expected.sql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const harness = createPrefixReaderHarness();
+    const result = readSqlSortListPrefix(
+      environment(52),
+      cursor,
+      harness.reader,
+    );
+    const terminatorRange = sourceRange(expected.sql, expected.terminator, 0);
+
+    assert.equal(
+      result.cursor.index,
+      tokenIndexForRange(kernel, terminatorRange),
+      expected.sql,
+    );
+    assert.deepEqual(
+      result.metadata.calls.map((call) => expected.sql.slice(
+        call.range.start,
+        call.range.end,
+      )),
+      [expected.expression],
+      expected.sql,
+    );
+    assert.equal(harness.snapshot().calls, 1, expected.sql);
+  }
+});
+
+test("prefix ORDER BY preserves nested quoted expressions, metadata, bounds, and depth", (): void => {
+  const expression = [
+    "\"schema\".\"desc\"",
+    "+ outer_fn(inner + 1, array_value[using + 2, nested(\"nulls\")])",
+  ].join(" ");
+  const sortList = `${expression} DESC NULLS FIRST, beta USING > NULLS LAST`;
+  const sql = `prefix ${sortList} RANGE trailing`;
+  const kernel = createSqlParserKernel(sql, DEFAULT_SQL_PARSER_LIMITS);
+  const state = createSqlReadState(kernel);
+  const parent = enterSqlReadDepth(
+    createSqlReadCursor(state, 1, kernel.tokens.length - 1),
+    "Enter bounded prefix ORDER BY test parent",
+  );
+  const harness = createPrefixReaderHarness();
+  const result = readSqlSortListPrefix(
+    environment(53),
+    parent,
+    harness.reader,
+  );
+  const snapshot = harness.snapshot();
+  const rangeTerminator = sourceRange(sql, "RANGE", 0);
+
+  assert.equal(result.cursor.state, parent.state);
+  assert.equal(result.cursor.index, tokenIndexForRange(kernel, rangeTerminator));
+  assert.equal(result.cursor.endIndex, parent.endIndex);
+  assert.equal(result.cursor.depth, parent.depth);
+  assert.deepEqual(result.range, {
+    start: sourceRange(sql, "\"schema\"", 0).start,
+    end: sourceRange(sql, "LAST", 0).end,
+  });
+  assert.deepEqual(
+    result.metadata.calls.map((call) => sql.slice(
+      call.range.start,
+      call.range.end,
+    )),
+    [expression, "beta"],
+  );
+  assert.equal(result.metadata.nestedQueries.length, 2);
+  assert.equal(result.metadata.typeConstructs.length, 2);
+  assert.equal(Object.isFrozen(result.metadata.calls), true);
+  assert.equal(Object.isFrozen(result.metadata.nestedQueries), true);
+  assert.equal(Object.isFrozen(result.metadata.typeConstructs), true);
+  assert.equal(snapshot.calls, 2);
+  assert.deepEqual(
+    snapshot.invocations.map((invocation) => invocation.depth),
+    [parent.depth + 1, parent.depth + 1],
+  );
+  assert.deepEqual(
+    snapshot.invocations.map((invocation) => invocation.endIndex),
+    [parent.endIndex, parent.endIndex],
+  );
+  const firstInvocation = snapshot.invocations[0];
+  const secondInvocation = snapshot.invocations[1];
+  assert.notEqual(firstInvocation, undefined);
+  assert.notEqual(secondInvocation, undefined);
+  assert.equal(
+    firstInvocation.startWorkUnits < firstInvocation.resultWorkUnits,
+    true,
+  );
+  assert.equal(
+    firstInvocation.resultWorkUnits < secondInvocation.startWorkUnits,
+    true,
+  );
+  assert.equal(
+    secondInvocation.startWorkUnits < secondInvocation.resultWorkUnits,
+    true,
+  );
+  assert.equal(
+    snapshot.lastReturnedWorkUnits !== null
+      && result.cursor.workUnits > snapshot.lastReturnedWorkUnits,
+    true,
+  );
+});
+
+test("prefix ORDER BY rejects empty items and strict incomplete expressions precisely", (): void => {
+  const emptyItems: ReadonlyArray<Readonly<{
+    calls: number;
+    message: string;
+    range: SqlSourceRange;
+    sql: string;
+  }>> = [
+    {
+      calls: 0,
+      message: "ORDER BY requires at least one expression",
+      range: { start: 0, end: 0 },
+      sql: "",
+    },
+    {
+      calls: 0,
+      message: "ORDER BY item requires an expression before comma",
+      range: { start: 0, end: 1 },
+      sql: ", value",
+    },
+    {
+      calls: 1,
+      message: "ORDER BY cannot end with a comma",
+      range: { start: 5, end: 6 },
+      sql: "value,",
+    },
+    {
+      calls: 1,
+      message: "ORDER BY item requires an expression before comma",
+      range: { start: 7, end: 8 },
+      sql: "value, , other",
+    },
+  ];
+
+  for (const invalid of emptyItems) {
+    const { cursor } = createReadCursor(
+      invalid.sql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const harness = createPrefixReaderHarness();
+    expectParserError(
+      () => readSqlSortListPrefix(
+        environment(54),
+        cursor,
+        harness.reader,
+      ),
+      "unexpected_token",
+      invalid.range,
+      invalid.message,
+    );
+    assert.equal(harness.snapshot().calls, invalid.calls, invalid.sql);
+  }
+
+  const incomplete: ReadonlyArray<Readonly<{
+    range: SqlSourceRange;
+    sql: string;
+  }>> = [
+    { range: { start: 7, end: 7 }, sql: "value +" },
+    { range: { start: 7, end: 8 }, sql: "value +, other" },
+    { range: { start: 9, end: 9 }, sql: "value AND" },
+  ];
+  for (const invalid of incomplete) {
+    const { cursor } = createReadCursor(
+      invalid.sql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const harness = createPrefixReaderHarness();
+    expectParserError(
+      () => readSqlSortListPrefix(
+        environment(54),
+        cursor,
+        harness.reader,
+      ),
+      "unexpected_token",
+      invalid.range,
+      "Deterministic sort prefix expression requires an operand",
+    );
+    assert.equal(harness.snapshot().calls, 1, invalid.sql);
+  }
+});
+
+test("prefix ORDER BY validates direct and qualified PostgreSQL all_Op spellings", (): void => {
+  const specialOperators: ReadonlyArray<string> = ["::", ":=", "..", "=>"];
+
+  for (const operator of specialOperators) {
+    const directSql = `value USING ${operator} RANGE caller_owned`;
+    const direct = createReadCursor(
+      directSql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const directHarness = createPrefixReaderHarness();
+    expectParserError(
+      () => readSqlSortListPrefix(
+        environment(55),
+        direct.cursor,
+        directHarness.reader,
+      ),
+      "unexpected_token",
+      sourceRange(directSql, operator, 0),
+      `ORDER BY USING requires a PostgreSQL all_Op operator; "${operator}" is reserved syntax`,
+    );
+    assert.equal(directHarness.snapshot().calls, 1);
+
+    const qualifiedSql = `value USING OPERATOR(pg_catalog. ${operator}) RANGE caller_owned`;
+    const qualified = createReadCursor(
+      qualifiedSql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const qualifiedHarness = createPrefixReaderHarness();
+    expectParserError(
+      () => readSqlSortListPrefix(
+        environment(55),
+        qualified.cursor,
+        qualifiedHarness.reader,
+      ),
+      "unexpected_token",
+      sourceRange(qualifiedSql, operator, 0),
+      `ORDER BY USING OPERATOR requires a PostgreSQL all_Op operator; "${operator}" is reserved syntax`,
+    );
+    assert.equal(qualifiedHarness.snapshot().calls, 1);
+  }
+});
+
+test("prefix ORDER BY rejects missing, repeated, and misordered suffixes", (): void => {
+  const cases: ReadonlyArray<Readonly<{
+    message: string;
+    rangeText: string;
+    sql: string;
+  }>> = [
+    {
+      message: "ORDER BY NULLS requires FIRST or LAST",
+      rangeText: "RANGE",
+      sql: "value NULLS RANGE caller_owned",
+    },
+    {
+      message: "ORDER BY item cannot contain more than one ASC, DESC, or USING clause",
+      rangeText: "DESC",
+      sql: "value ASC DESC RANGE caller_owned",
+    },
+    {
+      message: "USING must appear before NULLS ordering in an ORDER BY item",
+      rangeText: "USING",
+      sql: "value NULLS FIRST USING > RANGE caller_owned",
+    },
+    {
+      message: "ORDER BY USING requires an operator",
+      rangeText: "RANGE",
+      sql: "value USING RANGE caller_owned",
+    },
+  ];
+
+  for (const invalid of cases) {
+    const { cursor } = createReadCursor(
+      invalid.sql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const harness = createPrefixReaderHarness();
+    expectParserError(
+      () => readSqlSortListPrefix(
+        environment(58),
+        cursor,
+        harness.reader,
+      ),
+      "unexpected_token",
+      sourceRange(invalid.sql, invalid.rangeText, 0),
+      invalid.message,
+    );
+    assert.equal(harness.snapshot().calls, 1, invalid.sql);
+  }
+});
+
+test("prefix ORDER BY uses one collaborator call per item and linear transitions", (): void => {
+  const count = 2_000;
+  const list = Array.from(
+    { length: count },
+    (_unused, index) => `item_${String(index)}`,
+  ).join(",");
+  const sql = `${list} RANGE caller_owned`;
+  const { cursor, kernel } = createReadCursor(
+    sql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  const harness = createPrefixReaderHarness();
+  const result = readSqlSortListPrefix(
+    environment(56),
+    cursor,
+    harness.reader,
+  );
+  const snapshot = harness.snapshot();
+  const collaboratorTransitions = snapshot.transitions;
+  const totalTransitions = result.cursor.workUnits - cursor.workUnits;
+  const sortTransitions = totalTransitions - collaboratorTransitions;
+
+  assert.equal(snapshot.calls, count);
+  assert.equal(snapshot.invocations.length, count);
+  assert.equal(collaboratorTransitions, count * 4);
+  assert.equal(sortTransitions, count * 5 - 1);
+  assert.equal(totalTransitions, count * 9 - 1);
+  assert.equal(result.metadata.calls.length, count);
+  assert.equal(normalizedCalls(result)[0], "item_0");
+  assert.equal(normalizedCalls(result).at(-1), `item_${String(count - 1)}`);
+  assert.equal(
+    result.cursor.index,
+    tokenIndexForRange(kernel, sourceRange(sql, "RANGE", 0)),
+  );
+});
+
+test("prefix ORDER BY work accepts the exact maximum and fails at first excess", (): void => {
+  const sql = "first, second DESC NULLS LAST RANGE caller_owned";
+  const ample = createReadCursor(
+    sql,
+    limits(sql.length, 20, 3, 200),
+  );
+  const ampleHarness = createPrefixReaderHarness();
+  const measured = readSqlSortListPrefix(
+    environment(57),
+    ample.cursor,
+    ampleHarness.reader,
+  );
+  const exactLimit = measured.cursor.workUnits;
+
+  const exact = createReadCursor(
+    sql,
+    limits(sql.length, 20, 3, exactLimit),
+  );
+  const exactHarness = createPrefixReaderHarness();
+  const exactResult = readSqlSortListPrefix(
+    environment(57),
+    exact.cursor,
+    exactHarness.reader,
+  );
+  assert.equal(exactResult.cursor.workUnits, exactLimit);
+  assert.equal(exactHarness.snapshot().calls, 2);
+
+  const firstExcess = createReadCursor(
+    sql,
+    limits(sql.length, 20, 3, exactLimit - 1),
+  );
+  const firstExcessHarness = createPrefixReaderHarness();
+  expectParserError(
+    () => readSqlSortListPrefix(
+      environment(57),
+      firstExcess.cursor,
+      firstExcessHarness.reader,
+    ),
+    "limit_complexity",
+    sourceRange(sql, "RANGE", 0),
+    `SQL parser Inspect ORDER BY item terminator exceeded maxWorkUnits=${String(exactLimit - 1)} at token 6`,
+  );
+  assert.equal(firstExcessHarness.snapshot().calls, 2);
 });
