@@ -53,6 +53,23 @@ const sqlReadInvariant = (
   range: SqlSourceRange,
 ): never => throwSqlPolicyParserError("internal_invariant", message, range);
 
+const validateSqlReadCursorObject = (
+  cursor: SqlReadCursor,
+  subject: string,
+  range: SqlSourceRange,
+): void => {
+  if (
+    typeof cursor !== "object"
+    || cursor === null
+    || Array.isArray(cursor)
+  ) {
+    return sqlReadInvariant(
+      `${subject} must be a non-null, non-array object`,
+      range,
+    );
+  }
+};
+
 const checkedNonNegativeSafeInteger = (
   value: number,
   subject: string,
@@ -503,6 +520,127 @@ export const resumeSqlReadCursor = (
     returned.index,
     parent.endIndex,
     adoptedWork.workUnits,
+    parent.depth,
+  );
+};
+
+export const resumeEnteredSqlReadCursor = (
+  parent: SqlReadCursor,
+  entered: SqlReadCursor,
+  returned: SqlReadCursor,
+  operation: string,
+): SqlReadCursor => {
+  validateSqlReadCursorObject(
+    parent,
+    `${operation} parent cursor`,
+    sqlReadRange(0, 0),
+  );
+  const adaptedParent = sqlTokenCursorFromReadCursor(parent, operation);
+  const range = sqlCursorRange(adaptedParent);
+  validateSqlReadCursorObject(
+    entered,
+    `${operation} entered cursor`,
+    range,
+  );
+  if (entered.state !== parent.state) {
+    return sqlReadInvariant(
+      `${operation} entered cursor must use the parent SQL read state`,
+      range,
+    );
+  }
+  if (entered.index !== parent.index) {
+    return sqlReadInvariant(
+      `${operation} entered cursor index ${String(entered.index)} must equal the parent index ${String(parent.index)}`,
+      range,
+    );
+  }
+  if (entered.endIndex !== parent.endIndex) {
+    return sqlReadInvariant(
+      `${operation} entered cursor end ${String(entered.endIndex)} must equal the parent end ${String(parent.endIndex)}`,
+      range,
+    );
+  }
+  if (entered.workUnits !== parent.workUnits) {
+    return sqlReadInvariant(
+      `${operation} entered cursor workUnits=${String(entered.workUnits)} must equal the parent workUnits=${String(parent.workUnits)}`,
+      range,
+    );
+  }
+  const expectedDepth = parent.depth + 1;
+  if (
+    !Number.isSafeInteger(expectedDepth)
+    || expectedDepth > parent.state.limits.maxNestingDepth
+  ) {
+    return sqlReadInvariant(
+      `${operation} cannot resume an entered child from parent nesting depth ${String(parent.depth)} with maxNestingDepth=${String(parent.state.limits.maxNestingDepth)}`,
+      range,
+    );
+  }
+  if (entered.depth !== expectedDepth) {
+    return sqlReadInvariant(
+      `${operation} entered cursor nesting depth ${String(entered.depth)} must equal parent depth ${String(parent.depth)} plus one`,
+      range,
+    );
+  }
+  sqlTokenCursorFromReadCursor(entered, operation);
+
+  validateSqlReadCursorObject(
+    returned,
+    `${operation} returned cursor`,
+    range,
+  );
+  if (returned.state !== parent.state) {
+    return sqlReadInvariant(
+      `${operation} returned cursor must use the entered child SQL read state`,
+      range,
+    );
+  }
+  if (returned.endIndex !== entered.endIndex) {
+    return sqlReadInvariant(
+      `${operation} returned cursor end ${String(returned.endIndex)} must equal the entered child end ${String(entered.endIndex)}`,
+      range,
+    );
+  }
+  if (returned.depth !== entered.depth) {
+    return sqlReadInvariant(
+      `${operation} returned cursor nesting depth ${String(returned.depth)} must equal the entered child depth ${String(entered.depth)}`,
+      range,
+    );
+  }
+  if (
+    !Number.isSafeInteger(returned.index)
+    || returned.index < entered.index
+    || returned.index > entered.endIndex
+  ) {
+    return sqlReadInvariant(
+      `${operation} returned cursor index ${String(returned.index)} outside the exact entered child range ${String(entered.index)}..${String(entered.endIndex)}`,
+      range,
+    );
+  }
+  checkedNonNegativeSafeInteger(
+    returned.workUnits,
+    `${operation} returned cursor workUnits`,
+    range,
+  );
+  if (returned.workUnits < entered.workUnits) {
+    return sqlReadInvariant(
+      `${operation} returned cursor workUnits=${String(returned.workUnits)} would rewind entered child work from ${String(entered.workUnits)}`,
+      range,
+    );
+  }
+  if (returned.workUnits > parent.state.limits.maxWorkUnits) {
+    return sqlReadInvariant(
+      `${operation} returned cursor workUnits=${String(returned.workUnits)} exceeds maxWorkUnits=${String(parent.state.limits.maxWorkUnits)}`,
+      range,
+    );
+  }
+  sqlTokenCursorFromReadCursor(returned, operation);
+
+  return sqlReadCursor(
+    parent.state,
+    returned.index,
+    parent.endIndex,
+    returned.workUnits,
     parent.depth,
   );
 };
