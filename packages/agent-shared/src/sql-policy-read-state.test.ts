@@ -25,6 +25,7 @@ import {
   inspectSqlReadToken,
   matchingSqlReadDelimiter,
   narrowSqlReadCursor,
+  resumeEnteredSqlReadCursor,
   resumeSqlReadCursor,
   sqlReadRangeAt,
   sqlReadRangeForSpan,
@@ -56,6 +57,22 @@ const expectParserError = (
   assert.match(error.message, message);
   return true;
 });
+
+type SqlReadCursorRuntimeValue = object | number | null | undefined;
+
+const resumeEnteredSqlReadCursorAtRuntime = (
+  parent: SqlReadCursorRuntimeValue,
+  entered: SqlReadCursorRuntimeValue,
+  returned: SqlReadCursorRuntimeValue,
+  operation: string,
+): void => {
+  Reflect.apply(resumeEnteredSqlReadCursor, null, [
+    parent,
+    entered,
+    returned,
+    operation,
+  ]);
+};
 
 test("read state is a frozen constant-time view of the canonical kernel", (): void => {
   const cases: ReadonlyArray<Readonly<{
@@ -802,6 +819,314 @@ test("read cursor resumption rejects incompatible returned cursors at the parent
     parentRange,
     /workUnits=21 exceeds maxWorkUnits=20/u,
   );
+});
+
+test("entered-child resumption adopts exact progress and restores the parent frame", (): void => {
+  const kernel = createSqlParserKernel(
+    "prefix alpha beta trailing",
+    limits(40, 10, 4, 40),
+  );
+  const state = createSqlReadState(kernel);
+  const parent = narrowSqlReadCursor(
+    enterSqlReadDepth(
+      advanceSqlReadCursor(
+        createSqlReadCursor(state, 0, state.tokenCount),
+        1,
+        "Prepare exact-child parent",
+      ),
+      "Enter exact-child parent depth",
+    ),
+    3,
+    "Bound exact-child parent",
+  );
+  const entered = enterSqlReadDepth(parent, "Enter exact child");
+  const partial = advanceSqlReadCursor(
+    entered,
+    1,
+    "Read exact child prefix",
+  );
+  const parentBefore = { ...parent };
+  const enteredBefore = { ...entered };
+  const partialBefore = { ...partial };
+  const resumedPartial = resumeEnteredSqlReadCursor(
+    parent,
+    entered,
+    partial,
+    "Resume partial exact child",
+  );
+
+  assert.ok(Object.isFrozen(resumedPartial));
+  assert.equal(resumedPartial.state, state);
+  assert.equal(resumedPartial.index, partial.index);
+  assert.equal(resumedPartial.endIndex, parent.endIndex);
+  assert.equal(resumedPartial.workUnits, partial.workUnits);
+  assert.equal(resumedPartial.depth, parent.depth);
+  assert.deepEqual(parent, parentBefore);
+  assert.deepEqual(entered, enteredBefore);
+  assert.deepEqual(partial, partialBefore);
+
+  const atEof = advanceSqlReadCursor(
+    entered,
+    entered.endIndex - entered.index,
+    "Read exact child to EOF",
+  );
+  const resumedEof = resumeEnteredSqlReadCursor(
+    parent,
+    entered,
+    atEof,
+    "Resume exact child at EOF",
+  );
+  assert.equal(resumedEof.index, parent.endIndex);
+  assert.equal(resumedEof.endIndex, parent.endIndex);
+  assert.equal(resumedEof.workUnits, atEof.workUnits);
+  assert.equal(resumedEof.depth, parent.depth);
+
+  const zeroProgress = resumeEnteredSqlReadCursor(
+    parent,
+    entered,
+    entered,
+    "Resume zero-progress exact child",
+  );
+  assert.deepEqual(zeroProgress, parent);
+  assert.notEqual(zeroProgress, parent);
+});
+
+test("entered-child resumption rejects altered returned child state at the entry range", (): void => {
+  const kernel = createSqlParserKernel(
+    "prefix alpha beta gamma trailing",
+    limits(50, 10, 4, 20),
+  );
+  const state = createSqlReadState(kernel);
+  const parent = advanceSqlReadCursor(
+    createSqlReadCursor(state, 0, 4),
+    1,
+    "Prepare returned exact-child checks",
+  );
+  const entered = enterSqlReadDepth(parent, "Enter returned exact child");
+  const equivalentState = createSqlReadState(kernel);
+  const entryRange = { start: 7, end: 12 };
+  const cases: ReadonlyArray<Readonly<{
+    cursor: typeof entered;
+    message: RegExp;
+  }>> = [
+    {
+      cursor: { ...entered, state: equivalentState },
+      message: /returned cursor must use the entered child SQL read state/u,
+    },
+    {
+      cursor: { ...entered, endIndex: entered.endIndex - 1 },
+      message: /returned cursor end 3 must equal the entered child end 4/u,
+    },
+    {
+      cursor: { ...entered, endIndex: entered.endIndex + 1 },
+      message: /returned cursor end 5 must equal the entered child end 4/u,
+    },
+    {
+      cursor: { ...entered, endIndex: Number.NaN },
+      message: /returned cursor end NaN must equal the entered child end 4/u,
+    },
+    {
+      cursor: { ...entered, depth: entered.depth - 1 },
+      message: /returned cursor nesting depth 0 must equal the entered child depth 1/u,
+    },
+    {
+      cursor: { ...entered, depth: entered.depth + 1 },
+      message: /returned cursor nesting depth 2 must equal the entered child depth 1/u,
+    },
+    {
+      cursor: { ...entered, depth: Number.NaN },
+      message: /returned cursor nesting depth NaN must equal the entered child depth 1/u,
+    },
+    {
+      cursor: { ...entered, index: entered.index - 1 },
+      message: /returned cursor index 0 outside the exact entered child range 1\.\.4/u,
+    },
+    {
+      cursor: { ...entered, index: entered.endIndex + 1 },
+      message: /returned cursor index 5 outside the exact entered child range 1\.\.4/u,
+    },
+    {
+      cursor: { ...entered, index: Number.NaN },
+      message: /returned cursor index NaN outside the exact entered child range 1\.\.4/u,
+    },
+    {
+      cursor: { ...entered, workUnits: entered.workUnits - 1 },
+      message: /would rewind entered child work/u,
+    },
+    {
+      cursor: {
+        ...entered,
+        workUnits: state.limits.maxWorkUnits + 1,
+      },
+      message: /workUnits=21 exceeds maxWorkUnits=20/u,
+    },
+  ];
+  const invalidWorkUnits: ReadonlyArray<number> = [
+    Number.NaN,
+    Number.NEGATIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    -1,
+    0.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ];
+
+  for (const invalid of cases) {
+    expectParserError(
+      () => {
+        resumeEnteredSqlReadCursor(
+          parent,
+          entered,
+          invalid.cursor,
+          "Reject altered returned exact child",
+        );
+      },
+      "internal_invariant",
+      entryRange,
+      invalid.message,
+    );
+  }
+  for (const workUnits of invalidWorkUnits) {
+    expectParserError(
+      () => {
+        resumeEnteredSqlReadCursor(
+          parent,
+          entered,
+          { ...entered, workUnits },
+          "Reject invalid returned exact-child work",
+        );
+      },
+      "internal_invariant",
+      entryRange,
+      /returned cursor workUnits must be a non-negative safe integer/u,
+    );
+  }
+});
+
+test("entered-child resumption requires the original one-depth entry transition", (): void => {
+  const kernel = createSqlParserKernel(
+    "prefix alpha beta gamma trailing",
+    limits(50, 10, 4, 30),
+  );
+  const state = createSqlReadState(kernel);
+  const parent = enterSqlReadDepth(
+    advanceSqlReadCursor(
+      createSqlReadCursor(state, 0, 4),
+      1,
+      "Prepare entered exact-child checks",
+    ),
+    "Enter exact-child check parent depth",
+  );
+  const entered = enterSqlReadDepth(parent, "Enter checked exact child");
+  const equivalentState = createSqlReadState(kernel);
+  const entryRange = { start: 7, end: 12 };
+  const cases: ReadonlyArray<Readonly<{
+    cursor: typeof entered;
+    message: RegExp;
+  }>> = [
+    {
+      cursor: { ...entered, state: equivalentState },
+      message: /entered cursor must use the parent SQL read state/u,
+    },
+    {
+      cursor: { ...entered, index: entered.index - 1 },
+      message: /entered cursor index 0 must equal the parent index 1/u,
+    },
+    {
+      cursor: { ...entered, endIndex: entered.endIndex - 1 },
+      message: /entered cursor end 3 must equal the parent end 4/u,
+    },
+    {
+      cursor: { ...entered, workUnits: entered.workUnits + 1 },
+      message: /entered cursor workUnits=7 must equal the parent workUnits=6/u,
+    },
+    {
+      cursor: { ...entered, depth: parent.depth },
+      message: /entered cursor nesting depth 1 must equal parent depth 1 plus one/u,
+    },
+    {
+      cursor: { ...entered, depth: entered.depth + 1 },
+      message: /entered cursor nesting depth 3 must equal parent depth 1 plus one/u,
+    },
+  ];
+
+  for (const invalid of cases) {
+    expectParserError(
+      () => {
+        resumeEnteredSqlReadCursor(
+          parent,
+          invalid.cursor,
+          entered,
+          "Reject malformed entered exact child",
+        );
+      },
+      "internal_invariant",
+      entryRange,
+      invalid.message,
+    );
+  }
+});
+
+test("entered-child resumption rejects malformed cursor roots before dereference", (): void => {
+  const kernel = createSqlParserKernel(
+    "prefix alpha beta trailing",
+    limits(40, 10, 4, 40),
+  );
+  const state = createSqlReadState(kernel);
+  const parent = advanceSqlReadCursor(
+    createSqlReadCursor(state, 0, state.tokenCount),
+    1,
+    "Prepare malformed exact-child roots",
+  );
+  const entered = enterSqlReadDepth(parent, "Enter exact child root check");
+  const entryRange = { start: 7, end: 12 };
+  const malformedRoots: ReadonlyArray<SqlReadCursorRuntimeValue> = [
+    null,
+    undefined,
+    7,
+    [],
+  ];
+
+  for (const malformed of malformedRoots) {
+    expectParserError(
+      () => {
+        resumeEnteredSqlReadCursorAtRuntime(
+          parent,
+          malformed,
+          entered,
+          "Reject malformed entered root",
+        );
+      },
+      "internal_invariant",
+      entryRange,
+      /entered cursor must be a non-null, non-array object/u,
+    );
+    expectParserError(
+      () => {
+        resumeEnteredSqlReadCursorAtRuntime(
+          parent,
+          entered,
+          malformed,
+          "Reject malformed returned root",
+        );
+      },
+      "internal_invariant",
+      entryRange,
+      /returned cursor must be a non-null, non-array object/u,
+    );
+    expectParserError(
+      () => {
+        resumeEnteredSqlReadCursorAtRuntime(
+          malformed,
+          entered,
+          entered,
+          "Reject malformed parent root",
+        );
+      },
+      "internal_invariant",
+      { start: 0, end: 0 },
+      /parent cursor must be a non-null, non-array object/u,
+    );
+  }
 });
 
 test("repeated nested resumption cannot reset cumulative read work", (): void => {
