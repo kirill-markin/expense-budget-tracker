@@ -78,6 +78,17 @@ export type SqlTypedConstantNode = Readonly<{
   value: SqlStringToken;
 }>;
 
+export type SqlTypedConstantParseAttempt =
+  | Readonly<{
+    cursor: SqlTokenCursor;
+    matched: false;
+  }>
+  | Readonly<{
+    cursor: SqlTokenCursor;
+    matched: true;
+    node: SqlTypedConstantNode;
+  }>;
+
 export type SqlTypeParseResult<Node> = Readonly<{
   cursor: SqlTokenCursor;
   node: Node;

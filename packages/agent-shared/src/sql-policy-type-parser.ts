@@ -11,10 +11,13 @@ import {
 } from "./sql-policy-parser-keywords.js";
 import {
   advanceSqlTokenCursor,
+  consumeSqlTokenCursor,
   createSqlParserKernel,
   createSqlTokenCursor,
+  inspectSqlTokenCursor,
   matchingSqlDelimiterIndexAtCursor,
   matchingSqlDelimiterIndexWithinCursor,
+  restoreSqlTokenCursorPosition,
   sqlCursorRange,
   sqlRangeFromTokenIndexes,
   sqlTokenAt,
@@ -27,6 +30,7 @@ import {
   isPostgreSqlStringConstant as isStringConstant,
   parsePostgreSqlIntegerModifier as parseIntegerModifier,
   parsePostgreSqlIntervalQualifier as parseIntervalQualifier,
+  parsePostgreSqlIntervalQualifierAttempt as parseIntervalQualifierAttempt,
   parsePostgreSqlTypeModifierList as parseModifierList,
   postgreSqlIntegerConstant,
 } from "./sql-policy-type-modifiers.js";
@@ -34,6 +38,7 @@ import type {
   SqlArrayBoundNode,
   SqlIntervalQualifierNode,
   SqlTimeZoneNode,
+  SqlTypedConstantParseAttempt,
   SqlTypedConstantNode,
   SqlTypeModifierNode,
   SqlTypeNameForm,
@@ -45,6 +50,7 @@ export type {
   SqlArrayBoundNode,
   SqlIntervalQualifierNode,
   SqlTimeZoneNode,
+  SqlTypedConstantParseAttempt,
   SqlTypedConstantNode,
   SqlTypeModifierNode,
   SqlTypeNameForm,
@@ -63,6 +69,35 @@ type ParsedTypeBase = Readonly<{
   nameRange: SqlSourceRange;
   timeZone: SqlTimeZoneNode | null;
 }>;
+
+type ParsedTypeBaseAttempt =
+  | Readonly<{
+    cursor: SqlTokenCursor;
+    matched: false;
+  }>
+  | Readonly<{
+    base: ParsedTypeBase;
+    matched: true;
+  }>;
+
+type SqlTypeNameParseAttempt =
+  | Readonly<{
+    cursor: SqlTokenCursor;
+    matched: false;
+  }>
+  | Readonly<{
+    cursor: SqlTokenCursor;
+    matched: true;
+    node: SqlTypeNameNode;
+  }>;
+
+const noTypeBaseMatch = (
+  original: SqlTokenCursor,
+  attempted: SqlTokenCursor,
+): ParsedTypeBaseAttempt => ({
+  cursor: restoreSqlTokenCursorPosition(original, attempted),
+  matched: false,
+});
 
 const isWord = (
   cursor: SqlTokenCursor,
@@ -87,10 +122,10 @@ const identifierAt = (
 const parseGenericType = (
   cursor: SqlTokenCursor,
   context: TypeNameContext,
-): ParsedTypeBase | null => {
+): ParsedTypeBaseAttempt => {
   const first = identifierAt(cursor, 0);
   if (first === null) {
-    return null;
+    return noTypeBaseMatch(cursor, cursor);
   }
   const qualified = isText(cursor, 1, ".");
   if (
@@ -116,7 +151,7 @@ const parseGenericType = (
     ? true
     : isTypeFunctionName(first);
   if (!firstAllowed) {
-    return null;
+    return noTypeBaseMatch(cursor, cursor);
   }
 
   const nameStart = cursor.index;
@@ -161,7 +196,7 @@ const parseGenericType = (
           ),
         )
       ) {
-        return null;
+        return noTypeBaseMatch(cursor, current);
       }
     }
     const parsed = parseModifierList(current);
@@ -169,13 +204,16 @@ const parseGenericType = (
     current = parsed.cursor;
   }
   return {
-    cursor: current,
-    form: "generic",
-    intervalQualifier: null,
-    modifiers,
-    nameParts,
-    nameRange,
-    timeZone: null,
+    base: {
+      cursor: current,
+      form: "generic",
+      intervalQualifier: null,
+      modifiers,
+      nameParts,
+      nameRange,
+      timeZone: null,
+    },
+    matched: true,
   };
 };
 
@@ -230,18 +268,21 @@ const typeBase = (
   modifiers: ReadonlyArray<SqlTypeModifierNode>,
   intervalQualifier: SqlIntervalQualifierNode | null,
   timeZone: SqlTimeZoneNode | null,
-): ParsedTypeBase => ({
-  cursor,
-  form,
-  intervalQualifier,
-  modifiers,
-  nameParts,
-  nameRange: sqlRangeFromTokenIndexes(
-    cursor.kernel,
-    nameStart,
-    nameStart + nameParts.length,
-  ),
-  timeZone,
+): ParsedTypeBaseAttempt => ({
+  base: {
+    cursor,
+    form,
+    intervalQualifier,
+    modifiers,
+    nameParts,
+    nameRange: sqlRangeFromTokenIndexes(
+      cursor.kernel,
+      nameStart,
+      nameStart + nameParts.length,
+    ),
+    timeZone,
+  },
+  matched: true,
 });
 
 const simpleTypeForm = (
@@ -269,11 +310,11 @@ const simpleTypeForm = (
 const parseSpecialType = (
   cursor: SqlTokenCursor,
   context: TypeNameContext,
-): ParsedTypeBase | null => {
+): ParsedTypeBaseAttempt => {
   const first = identifierAt(cursor, 0);
   const word = tokenWord(first ?? undefined);
   if (first === null || word === null || isText(cursor, 1, ".")) {
-    return null;
+    return noTypeBaseMatch(cursor, cursor);
   }
   const nameStart = cursor.index;
 
@@ -432,7 +473,7 @@ const parseSpecialType = (
     );
     if (word === "national") {
       if (!isWord(current, 0, "char") && !isWord(current, 0, "character")) {
-        return null;
+        return noTypeBaseMatch(cursor, current);
       }
       const nationalKind = identifierAt(current, 0);
       if (nationalKind !== null) {
@@ -550,7 +591,7 @@ const parseSpecialType = (
     );
   }
 
-  return null;
+  return noTypeBaseMatch(cursor, cursor);
 };
 
 const parseArrayBounds = (
@@ -662,10 +703,10 @@ const parseArrayBounds = (
   return { bounds, cursor: current };
 };
 
-export const parsePostgreSqlTypeNameAtCursor = (
+const parsePostgreSqlTypeNameAttemptAtCursor = (
   cursor: SqlTokenCursor,
   context: TypeNameContext,
-): SqlTypeParseResult<SqlTypeNameNode> | null => {
+): SqlTypeNameParseAttempt => {
   const startIndex = cursor.index;
   let current = cursor;
   let setOf = false;
@@ -678,11 +719,17 @@ export const parsePostgreSqlTypeNameAtCursor = (
     );
   }
 
-  const special = parseSpecialType(current, context);
-  const base = special ?? parseGenericType(current, context);
-  if (base === null) {
-    return null;
+  const specialAttempt = parseSpecialType(current, context);
+  const baseAttempt = specialAttempt.matched
+    ? specialAttempt
+    : parseGenericType(specialAttempt.cursor, context);
+  if (!baseAttempt.matched) {
+    return {
+      cursor: restoreSqlTokenCursorPosition(cursor, baseAttempt.cursor),
+      matched: false,
+    };
   }
+  const base = baseAttempt.base;
   current = base.cursor;
 
   let arrayBounds: ReadonlyArray<SqlArrayBoundNode> = [];
@@ -699,6 +746,7 @@ export const parsePostgreSqlTypeNameAtCursor = (
   );
   return {
     cursor: current,
+    matched: true,
     node: {
       arrayBounds,
       form: base.form,
@@ -714,29 +762,64 @@ export const parsePostgreSqlTypeNameAtCursor = (
   };
 };
 
+export const parsePostgreSqlTypeNameAtCursor = (
+  cursor: SqlTokenCursor,
+  context: TypeNameContext,
+): SqlTypeParseResult<SqlTypeNameNode> | null => {
+  const attempt = parsePostgreSqlTypeNameAttemptAtCursor(cursor, context);
+  return attempt.matched
+    ? { cursor: attempt.cursor, node: attempt.node }
+    : null;
+};
+
+const typedConstantNoMatch = (
+  original: SqlTokenCursor,
+  attempted: SqlTokenCursor,
+): SqlTypedConstantParseAttempt => ({
+  cursor: restoreSqlTokenCursorPosition(original, attempted),
+  matched: false,
+});
+
 export const parsePostgreSqlTypedConstantAtCursor = (
   cursor: SqlTokenCursor,
-): SqlTypeParseResult<SqlTypedConstantNode> | null => {
-  const parsedType = parsePostgreSqlTypeNameAtCursor(
+): SqlTypedConstantParseAttempt => {
+  const parsedType = parsePostgreSqlTypeNameAttemptAtCursor(
     cursor,
     "typed_constant",
   );
-  if (parsedType === null) {
-    return null;
+  if (!parsedType.matched) {
+    const inspected = parsedType.cursor.workUnits === cursor.workUnits
+      ? inspectSqlTokenCursor(
+        parsedType.cursor,
+        0,
+        "PostgreSQL typed-constant type inspection",
+      ).cursor
+      : parsedType.cursor;
+    return typedConstantNoMatch(cursor, inspected);
   }
-  const value = sqlTokenAt(parsedType.cursor, 0);
-  if (!isStringConstant(value)) {
-    return null;
-  }
-  let current = advanceSqlTokenCursor(
+  const valueInspection = inspectSqlTokenCursor(
     parsedType.cursor,
-    1,
-    "PostgreSQL typed constant value",
+    0,
+    "PostgreSQL typed-constant value inspection",
   );
+  if (!isStringConstant(valueInspection.token)) {
+    return typedConstantNoMatch(cursor, valueInspection.cursor);
+  }
+  const value = valueInspection.token;
+  let current = consumeSqlTokenCursor(
+    valueInspection.cursor,
+    "PostgreSQL typed-constant value",
+  ).cursor;
   let qualifier: SqlIntervalQualifierNode | null = null;
   if (parsedType.node.form === "interval") {
     if (parsedType.node.modifiers.length > 0) {
-      const following = tokenWord(sqlTokenAt(current, 0));
+      const qualifierInspection = inspectSqlTokenCursor(
+        current,
+        0,
+        "PostgreSQL typed-constant interval qualifier inspection",
+      );
+      current = qualifierInspection.cursor;
+      const following = tokenWord(qualifierInspection.token);
       if (following !== null && INTERVAL_FIELDS.has(following)) {
         return throwSqlPolicyParserError(
           "invalid_typed_constant",
@@ -745,10 +828,10 @@ export const parsePostgreSqlTypedConstantAtCursor = (
         );
       }
     } else {
-      const parsedQualifier = parseIntervalQualifier(current);
-      if (parsedQualifier !== null) {
-        qualifier = parsedQualifier.node;
-        current = parsedQualifier.cursor;
+      const qualifierAttempt = parseIntervalQualifierAttempt(current);
+      current = qualifierAttempt.cursor;
+      if (qualifierAttempt.matched) {
+        qualifier = qualifierAttempt.node;
       }
     }
   }
@@ -759,6 +842,7 @@ export const parsePostgreSqlTypedConstantAtCursor = (
   );
   return {
     cursor: current,
+    matched: true,
     node: {
       intervalQualifier: qualifier,
       range,
@@ -841,11 +925,11 @@ export const parsePostgreSqlTypedConstantInfrastructure = (
     "PostgreSQL typed-constant parsing",
   );
   const result = parsePostgreSqlTypedConstantAtCursor(cursor);
-  if (result === null) {
+  if (!result.matched) {
     return throwSqlPolicyParserError(
       "invalid_typed_constant",
       "Expected a complete PostgreSQL 18 typed constant",
-      sqlCursorRange(cursor),
+      sqlCursorRange(result.cursor),
     );
   }
   assertFullyConsumed(result, "PostgreSQL typed constant");

@@ -10,7 +10,10 @@ import {
 } from "./sql-policy-parser-keywords.js";
 import {
   advanceSqlTokenCursor,
+  consumeSqlTokenCursor,
+  inspectSqlTokenCursor,
   matchingSqlDelimiterIndexWithinCursor,
+  restoreSqlTokenCursorPosition,
   sqlCursorRange,
   sqlRangeFromTokenIndexes,
   sqlTokenAt,
@@ -36,17 +39,22 @@ export type ParsedModifierList = Readonly<{
   modifiers: ReadonlyArray<SqlTypeModifierNode>;
 }>;
 
+export type PostgreSqlIntervalQualifierParseAttempt =
+  | Readonly<{
+    cursor: SqlTokenCursor;
+    matched: false;
+  }>
+  | Readonly<{
+    cursor: SqlTokenCursor;
+    matched: true;
+    node: SqlIntervalQualifierNode;
+  }>;
+
 const isText = (
   cursor: SqlTokenCursor,
   offset: number,
   expected: string,
 ): boolean => sqlTokenAt(cursor, offset)?.text === expected;
-
-const isWord = (
-  cursor: SqlTokenCursor,
-  offset: number,
-  expected: string,
-): boolean => postgreSqlTokenWord(sqlTokenAt(cursor, offset)) === expected;
 
 export const isPostgreSqlStringConstant = (
   token: SqlParserToken | undefined,
@@ -445,46 +453,75 @@ export const parsePostgreSqlTypeModifierList = (
   };
 };
 
-export const parsePostgreSqlIntervalQualifier = (
+export const parsePostgreSqlIntervalQualifierAttempt = (
   cursor: SqlTokenCursor,
-): SqlTypeParseResult<SqlIntervalQualifierNode> | null => {
-  const firstWord = postgreSqlTokenWord(sqlTokenAt(cursor, 0));
+): PostgreSqlIntervalQualifierParseAttempt => {
+  const firstInspection = inspectSqlTokenCursor(
+    cursor,
+    0,
+    "PostgreSQL interval qualifier first field inspection",
+  );
+  const firstWord = postgreSqlTokenWord(firstInspection.token);
   if (
     firstWord === null
     || !POSTGRESQL_INTERVAL_FIELDS.has(firstWord)
   ) {
-    return null;
+    return {
+      cursor: restoreSqlTokenCursorPosition(cursor, firstInspection.cursor),
+      matched: false,
+    };
   }
   const startIndex = cursor.index;
-  let current = advanceSqlTokenCursor(
-    cursor,
-    1,
-    "PostgreSQL interval qualifier",
-  );
+  let current = consumeSqlTokenCursor(
+    firstInspection.cursor,
+    "PostgreSQL interval qualifier first field",
+  ).cursor;
   let endField = firstWord as SqlIntervalField;
 
-  if (isWord(current, 0, "to")) {
-    const secondWord = postgreSqlTokenWord(sqlTokenAt(current, 1));
+  let nextInspection = inspectSqlTokenCursor(
+    current,
+    0,
+    "PostgreSQL interval qualifier TO inspection",
+  );
+  current = nextInspection.cursor;
+  if (postgreSqlTokenWord(nextInspection.token) === "to") {
+    const toRange = sqlCursorRange(current);
+    current = consumeSqlTokenCursor(
+      current,
+      "PostgreSQL interval qualifier TO",
+    ).cursor;
+    const secondInspection = inspectSqlTokenCursor(
+      current,
+      0,
+      "PostgreSQL interval qualifier second field inspection",
+    );
+    current = secondInspection.cursor;
+    const secondWord = postgreSqlTokenWord(secondInspection.token);
     if (
       secondWord === null
       || !POSTGRESQL_INTERVAL_FIELD_PAIRS.has(`${firstWord}:${secondWord}`)
     ) {
       return throwSqlPolicyParserError(
         "invalid_type_modifier",
-        `PostgreSQL does not allow INTERVAL ${firstWord.toUpperCase()} TO ${(secondWord ?? sqlTokenAt(current, 1)?.text ?? "end of input").toUpperCase()}`,
-        sqlTokenAt(current, 1)?.range ?? sqlCursorRange(current),
+        `PostgreSQL does not allow INTERVAL ${firstWord.toUpperCase()} TO ${(secondWord ?? secondInspection.token?.text ?? "end of input").toUpperCase()}`,
+        secondInspection.token?.range ?? toRange,
       );
     }
     endField = secondWord as SqlIntervalField;
-    current = advanceSqlTokenCursor(
+    current = consumeSqlTokenCursor(
       current,
-      2,
-      "PostgreSQL interval field range",
+      "PostgreSQL interval qualifier second field",
+    ).cursor;
+    nextInspection = inspectSqlTokenCursor(
+      current,
+      0,
+      "PostgreSQL interval qualifier precision inspection",
     );
+    current = nextInspection.cursor;
   }
 
   let secondPrecision: string | null = null;
-  if (isText(current, 0, "(")) {
+  if (nextInspection.token?.text === "(") {
     if (endField !== "second") {
       return throwSqlPolicyParserError(
         "invalid_type_modifier",
@@ -507,6 +544,7 @@ export const parsePostgreSqlIntervalQualifier = (
   );
   return {
     cursor: current,
+    matched: true,
     node: {
       endField,
       range,
@@ -515,4 +553,13 @@ export const parsePostgreSqlIntervalQualifier = (
       startField: firstWord as SqlIntervalField,
     },
   };
+};
+
+export const parsePostgreSqlIntervalQualifier = (
+  cursor: SqlTokenCursor,
+): SqlTypeParseResult<SqlIntervalQualifierNode> | null => {
+  const attempt = parsePostgreSqlIntervalQualifierAttempt(cursor);
+  return attempt.matched
+    ? { cursor: attempt.cursor, node: attempt.node }
+    : null;
 };

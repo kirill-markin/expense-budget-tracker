@@ -12,6 +12,9 @@ import {
   type SqlPolicyParserErrorCode,
 } from "./sql-policy-parser-model.js";
 import {
+  parsePostgreSqlIntervalQualifierAttempt,
+} from "./sql-policy-type-modifiers.js";
+import {
   parsePostgreSqlTypedConstantAtCursor,
   parsePostgreSqlTypedConstantInfrastructure,
   parsePostgreSqlTypeNameAtCursor,
@@ -1457,7 +1460,14 @@ test("typed-constant speculation preserves generic function applications", (): v
     );
     const cursor = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
 
-    assert.equal(parsePostgreSqlTypedConstantAtCursor(cursor), null);
+    const attempt = parsePostgreSqlTypedConstantAtCursor(cursor);
+    assert.equal(attempt.matched, false);
+    assert.equal(attempt.cursor.index, cursor.index);
+    assert.equal(attempt.cursor.endIndex, cursor.endIndex);
+    assert.equal(
+      attempt.cursor.workUnits,
+      cursor.workUnits + functionCase.nameWorkUnits,
+    );
     assert.equal(cursor.index, 0);
     assert.equal(cursor.workUnits, kernel.delimiters.scanSteps);
     assert.equal(kernel.delimiters.scanSteps, kernel.tokens.length);
@@ -1471,12 +1481,12 @@ test("typed-constant speculation preserves generic function applications", (): v
   const closeIndex = boundedKernel.delimiters.matchingIndexes.get(1);
   assert.equal(closeIndex, 3);
   for (const endIndex of [3, 4]) {
-    assert.equal(
-      parsePostgreSqlTypedConstantAtCursor(
-        createSqlTokenCursor(boundedKernel, 0, endIndex),
-      ),
-      null,
+    const attempt = parsePostgreSqlTypedConstantAtCursor(
+      createSqlTokenCursor(boundedKernel, 0, endIndex),
     );
+    assert.equal(attempt.matched, false);
+    assert.equal(attempt.cursor.index, 0);
+    assert.equal(attempt.cursor.endIndex, endIndex);
   }
 
   const committedErrors: ReadonlyArray<Readonly<{
@@ -1519,7 +1529,7 @@ test("typed-constant speculation preserves generic function applications", (): v
       committedKernel.tokens.length,
     ),
   );
-  if (committed === null) {
+  if (!committed.matched) {
     assert.fail("Expected committed PostgreSQL typed constant");
   }
   assert.equal(committed.node.sql, "foo(((1))) 'value'");
@@ -1527,7 +1537,490 @@ test("typed-constant speculation preserves generic function applications", (): v
   assert.equal(sqlTokenAt(committed.cursor, 0)?.text, "+");
   assert.equal(
     committed.cursor.workUnits,
-    committedKernel.delimiters.scanSteps + committed.cursor.index,
+    committedKernel.delimiters.scanSteps + committed.cursor.index + 1,
+  );
+});
+
+test("typed-constant no-match attempts restore position and retain work", (): void => {
+  const cases: ReadonlyArray<Readonly<{
+    endIndex: number | null;
+    expectedAttemptWork: number;
+    name: string;
+    sql: string;
+  }>> = [
+    {
+      endIndex: null,
+      expectedAttemptWork: 1,
+      name: "immediate non-type",
+      sql: "select",
+    },
+    {
+      endIndex: 0,
+      expectedAttemptWork: 1,
+      name: "source EOF",
+      sql: "",
+    },
+    {
+      endIndex: null,
+      expectedAttemptWork: 2,
+      name: "parsed type and non-string",
+      sql: "integer + 1",
+    },
+    {
+      endIndex: null,
+      expectedAttemptWork: 4,
+      name: "qualified type and non-string",
+      sql: "schema.money + 1",
+    },
+    {
+      endIndex: null,
+      expectedAttemptWork: 2,
+      name: "interval field before value",
+      sql: "interval day + 1",
+    },
+    {
+      endIndex: null,
+      expectedAttemptWork: 5,
+      name: "interval precision and non-string",
+      sql: "interval(3) + 1",
+    },
+    {
+      endIndex: 1,
+      expectedAttemptWork: 2,
+      name: "parsed type and bounded EOF",
+      sql: "integer trailing",
+    },
+  ];
+
+  for (const noMatchCase of cases) {
+    const kernel = createSqlParserKernel(
+      noMatchCase.sql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const endIndex = noMatchCase.endIndex ?? kernel.tokens.length;
+    const cursor = createSqlTokenCursor(kernel, 0, endIndex);
+    const attempt = parsePostgreSqlTypedConstantAtCursor(cursor);
+
+    assert.equal(attempt.matched, false, noMatchCase.name);
+    assert.equal(attempt.cursor.kernel, cursor.kernel, noMatchCase.name);
+    assert.equal(attempt.cursor.index, cursor.index, noMatchCase.name);
+    assert.equal(attempt.cursor.endIndex, cursor.endIndex, noMatchCase.name);
+    assert.equal(
+      attempt.cursor.workUnits,
+      cursor.workUnits + noMatchCase.expectedAttemptWork,
+      noMatchCase.name,
+    );
+    assert.equal(cursor.index, 0, noMatchCase.name);
+    assert.equal(
+      cursor.workUnits,
+      kernel.delimiters.scanSteps,
+      noMatchCase.name,
+    );
+  }
+});
+
+test("threaded typed-constant no-match attempts exhaust cumulative work", (): void => {
+  const sql = "select";
+  const baseline = createSqlParserKernel(sql, DEFAULT_SQL_PARSER_LIMITS);
+  const kernel = createSqlParserKernel(
+    sql,
+    limits(sql.length, 1, 4, baseline.delimiters.scanSteps + 2),
+  );
+  const initial = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+  let current = initial;
+
+  for (let attemptIndex = 0; attemptIndex < 2; attemptIndex++) {
+    const attempt = parsePostgreSqlTypedConstantAtCursor(current);
+    assert.equal(attempt.matched, false);
+    current = attempt.cursor;
+    assert.equal(current.index, initial.index);
+    assert.equal(current.workUnits, initial.workUnits + attemptIndex + 1);
+  }
+
+  const error = expectParserError(
+    () => parsePostgreSqlTypedConstantAtCursor(current),
+    "limit_complexity",
+    { start: 0, end: sql.length },
+  );
+  assert.match(error.message, /at token 0$/u);
+  assert.equal(current.index, initial.index);
+  assert.equal(current.workUnits, kernel.limits.maxWorkUnits);
+});
+
+test("typed-constant value decisions have exact work boundaries", (): void => {
+  const nonStringSql = "integer +";
+  const nonStringBaseline = createSqlParserKernel(
+    nonStringSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  const nonStringKernel = createSqlParserKernel(
+    nonStringSql,
+    limits(
+      nonStringSql.length,
+      nonStringBaseline.tokens.length,
+      4,
+      nonStringBaseline.delimiters.scanSteps + 2,
+    ),
+  );
+  const nonString = parsePostgreSqlTypedConstantAtCursor(
+    createSqlTokenCursor(nonStringKernel, 0, nonStringKernel.tokens.length),
+  );
+  assert.equal(nonString.matched, false);
+  assert.equal(nonString.cursor.index, 0);
+  assert.equal(nonString.cursor.workUnits, nonStringKernel.limits.maxWorkUnits);
+
+  const inspectLimitedKernel = createSqlParserKernel(
+    nonStringSql,
+    limits(
+      nonStringSql.length,
+      nonStringBaseline.tokens.length,
+      4,
+      nonStringBaseline.delimiters.scanSteps + 1,
+    ),
+  );
+  expectParserError(
+    () => parsePostgreSqlTypedConstantAtCursor(
+      createSqlTokenCursor(
+        inspectLimitedKernel,
+        0,
+        inspectLimitedKernel.tokens.length,
+      ),
+    ),
+    "limit_complexity",
+    { start: 8, end: 9 },
+  );
+
+  const valueSql = `integer '1'`;
+  const valueBaseline = createSqlParserKernel(
+    valueSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  const exactKernel = createSqlParserKernel(
+    valueSql,
+    limits(
+      valueSql.length,
+      valueBaseline.tokens.length,
+      4,
+      valueBaseline.delimiters.scanSteps + 3,
+    ),
+  );
+  const exact = parsePostgreSqlTypedConstantAtCursor(
+    createSqlTokenCursor(exactKernel, 0, exactKernel.tokens.length),
+  );
+  assert.equal(exact.matched, true);
+  if (!exact.matched) {
+    assert.fail("Expected exact-budget PostgreSQL typed constant");
+  }
+  assert.equal(exact.node.sql, valueSql);
+  assert.equal(exact.cursor.index, exactKernel.tokens.length);
+  assert.equal(exact.cursor.workUnits, exactKernel.limits.maxWorkUnits);
+
+  const consumeLimitedKernel = createSqlParserKernel(
+    valueSql,
+    limits(
+      valueSql.length,
+      valueBaseline.tokens.length,
+      4,
+      valueBaseline.delimiters.scanSteps + 2,
+    ),
+  );
+  expectParserError(
+    () => parsePostgreSqlTypedConstantAtCursor(
+      createSqlTokenCursor(
+        consumeLimitedKernel,
+        0,
+        consumeLimitedKernel.tokens.length,
+      ),
+    ),
+    "limit_complexity",
+    { start: 8, end: 11 },
+  );
+});
+
+test("interval qualifier attempts charge bounded lookaheads predictably", (): void => {
+  const absentSql = "trailing";
+  const absentKernel = createSqlParserKernel(
+    absentSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  const absentCursor = createSqlTokenCursor(
+    absentKernel,
+    0,
+    absentKernel.tokens.length,
+  );
+  const absent = parsePostgreSqlIntervalQualifierAttempt(absentCursor);
+  assert.equal(absent.matched, false);
+  assert.equal(absent.cursor.index, absentCursor.index);
+  assert.equal(absent.cursor.endIndex, absentCursor.endIndex);
+  assert.equal(absent.cursor.workUnits, absentCursor.workUnits + 1);
+
+  const validCases: ReadonlyArray<Readonly<{
+    expectedIndex: number;
+    expectedSql: string;
+    expectedWork: number;
+    sql: string;
+  }>> = [
+    {
+      expectedIndex: 1,
+      expectedSql: "hour",
+      expectedWork: 3,
+      sql: "hour trailing",
+    },
+    {
+      expectedIndex: 6,
+      expectedSql: "day to second(3)",
+      expectedWork: 10,
+      sql: "day to second(3) trailing",
+    },
+  ];
+  for (const validCase of validCases) {
+    const kernel = createSqlParserKernel(
+      validCase.sql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const cursor = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+    const attempt = parsePostgreSqlIntervalQualifierAttempt(cursor);
+    assert.equal(attempt.matched, true, validCase.sql);
+    if (!attempt.matched) {
+      assert.fail(`Expected interval qualifier: ${validCase.sql}`);
+    }
+    assert.equal(attempt.node.sql, validCase.expectedSql);
+    assert.equal(attempt.cursor.index, validCase.expectedIndex);
+    assert.equal(
+      attempt.cursor.workUnits,
+      cursor.workUnits + validCase.expectedWork,
+    );
+    assert.equal(sqlTokenAt(attempt.cursor, 0)?.text, "trailing");
+  }
+
+  const malformedSql = "year to day";
+  const malformedKernel = createSqlParserKernel(
+    malformedSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  expectParserError(
+    () => parsePostgreSqlIntervalQualifierAttempt(
+      createSqlTokenCursor(
+        malformedKernel,
+        0,
+        malformedKernel.tokens.length,
+      ),
+    ),
+    "invalid_type_modifier",
+    { start: 8, end: 11 },
+  );
+
+  const missingSecondSql = "year to";
+  const missingSecondKernel = createSqlParserKernel(
+    missingSecondSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  expectParserError(
+    () => parsePostgreSqlIntervalQualifierAttempt(
+      createSqlTokenCursor(
+        missingSecondKernel,
+        0,
+        missingSecondKernel.tokens.length,
+      ),
+    ),
+    "invalid_type_modifier",
+    { start: 5, end: 7 },
+  );
+
+  const boundedSql = "year to trailing";
+  const boundedKernel = createSqlParserKernel(
+    boundedSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  expectParserError(
+    () => parsePostgreSqlIntervalQualifierAttempt(
+      createSqlTokenCursor(boundedKernel, 0, 2),
+    ),
+    "invalid_type_modifier",
+    { start: 5, end: 7 },
+  );
+});
+
+test("interval qualifier inspection honors exact and first-excess limits", (): void => {
+  const sql = "hour trailing";
+  const baseline = createSqlParserKernel(sql, DEFAULT_SQL_PARSER_LIMITS);
+  const exactKernel = createSqlParserKernel(
+    sql,
+    limits(sql.length, baseline.tokens.length, 4, baseline.delimiters.scanSteps + 3),
+  );
+  const exact = parsePostgreSqlIntervalQualifierAttempt(
+    createSqlTokenCursor(exactKernel, 0, exactKernel.tokens.length),
+  );
+  assert.equal(exact.matched, true);
+  assert.equal(exact.cursor.workUnits, exactKernel.limits.maxWorkUnits);
+
+  const limitedKernel = createSqlParserKernel(
+    sql,
+    limits(sql.length, baseline.tokens.length, 4, baseline.delimiters.scanSteps + 2),
+  );
+  const error = expectParserError(
+    () => parsePostgreSqlIntervalQualifierAttempt(
+      createSqlTokenCursor(limitedKernel, 0, limitedKernel.tokens.length),
+    ),
+    "limit_complexity",
+    { start: 5, end: 13 },
+  );
+  assert.match(error.message, /at token 1$/u);
+
+  const absentKernel = createSqlParserKernel(
+    "other",
+    limits(5, 1, 4, 1),
+  );
+  expectParserError(
+    () => parsePostgreSqlIntervalQualifierAttempt(
+      createSqlTokenCursor(absentKernel, 0, absentKernel.tokens.length),
+    ),
+    "limit_complexity",
+    { start: 0, end: 5 },
+  );
+});
+
+test("typed-constant interval paths retain exact charged work", (): void => {
+  const cases: ReadonlyArray<Readonly<{
+    expectedIndex: number;
+    expectedQualifier: string | null;
+    expectedWork: number;
+    sql: string;
+  }>> = [
+    {
+      expectedIndex: 2,
+      expectedQualifier: null,
+      expectedWork: 4,
+      sql: `interval '1'`,
+    },
+    {
+      expectedIndex: 3,
+      expectedQualifier: "hour",
+      expectedWork: 6,
+      sql: `interval '1' hour`,
+    },
+    {
+      expectedIndex: 8,
+      expectedQualifier: "day to second(3)",
+      expectedWork: 13,
+      sql: `interval '1' day to second(3)`,
+    },
+    {
+      expectedIndex: 5,
+      expectedQualifier: null,
+      expectedWork: 7,
+      sql: `interval(3) '1'`,
+    },
+  ];
+
+  for (const typedCase of cases) {
+    const kernel = createSqlParserKernel(
+      typedCase.sql,
+      DEFAULT_SQL_PARSER_LIMITS,
+    );
+    const cursor = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
+    const attempt = parsePostgreSqlTypedConstantAtCursor(cursor);
+    assert.equal(attempt.matched, true, typedCase.sql);
+    if (!attempt.matched) {
+      assert.fail(`Expected interval typed constant: ${typedCase.sql}`);
+    }
+    assert.equal(attempt.node.sql, typedCase.sql);
+    assert.equal(
+      attempt.node.intervalQualifier?.sql ?? null,
+      typedCase.expectedQualifier,
+    );
+    assert.equal(attempt.cursor.index, typedCase.expectedIndex);
+    assert.equal(
+      attempt.cursor.workUnits,
+      cursor.workUnits + typedCase.expectedWork,
+    );
+  }
+});
+
+test("typed-constant attempts keep committed errors and bounded ranges", (): void => {
+  const conflictSql = "interval(3) '1' day";
+  const conflictKernel = createSqlParserKernel(
+    conflictSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  expectParserError(
+    () => parsePostgreSqlTypedConstantAtCursor(
+      createSqlTokenCursor(conflictKernel, 0, conflictKernel.tokens.length),
+    ),
+    "invalid_typed_constant",
+    { start: 16, end: 19 },
+  );
+
+  const malformedSql = "interval '1' year to day";
+  const malformedKernel = createSqlParserKernel(
+    malformedSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  expectParserError(
+    () => parsePostgreSqlTypedConstantAtCursor(
+      createSqlTokenCursor(
+        malformedKernel,
+        0,
+        malformedKernel.tokens.length,
+      ),
+    ),
+    "invalid_type_modifier",
+    { start: 21, end: 24 },
+  );
+
+  const missingSecondSql = "interval '1' year to";
+  const missingSecondKernel = createSqlParserKernel(
+    missingSecondSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  expectParserError(
+    () => parsePostgreSqlTypedConstantAtCursor(
+      createSqlTokenCursor(
+        missingSecondKernel,
+        0,
+        missingSecondKernel.tokens.length,
+      ),
+    ),
+    "invalid_type_modifier",
+    { start: 18, end: 20 },
+  );
+
+  const boundedSql = "integer trailing";
+  const boundedBaseline = createSqlParserKernel(
+    boundedSql,
+    DEFAULT_SQL_PARSER_LIMITS,
+  );
+  const boundedKernel = createSqlParserKernel(
+    boundedSql,
+    limits(
+      boundedSql.length,
+      boundedBaseline.tokens.length,
+      4,
+      boundedBaseline.delimiters.scanSteps + 1,
+    ),
+  );
+  const boundedCursor = createSqlTokenCursor(boundedKernel, 0, 1);
+  const boundedError = expectParserError(
+    () => parsePostgreSqlTypedConstantAtCursor(boundedCursor),
+    "limit_complexity",
+    { start: 7, end: 7 },
+  );
+  assert.match(boundedError.message, /at token 1$/u);
+
+  const emptyKernel = createSqlParserKernel(
+    "",
+    limits(1, 1, 4, 1),
+  );
+  const emptyAttempt = parsePostgreSqlTypedConstantAtCursor(
+    createSqlTokenCursor(emptyKernel, 0, 0),
+  );
+  assert.equal(emptyAttempt.matched, false);
+  assert.equal(emptyAttempt.cursor.index, 0);
+  assert.equal(emptyAttempt.cursor.workUnits, 1);
+  expectParserError(
+    () => parsePostgreSqlTypedConstantAtCursor(emptyAttempt.cursor),
+    "limit_complexity",
+    { start: 0, end: 0 },
   );
 });
 
@@ -1667,8 +2160,11 @@ test("typed-constant cursor parsing leaves neighboring expression tokens", (): v
   const cursor = createSqlTokenCursor(kernel, 0, kernel.tokens.length);
   const parsed = parsePostgreSqlTypedConstantAtCursor(cursor);
 
-  assert.notEqual(parsed, null);
-  assert.equal(parsed?.node.sql, "interval '2' hour");
-  assert.equal(parsed?.node.intervalQualifier?.sql, "hour");
-  assert.equal(kernel.tokens[parsed?.cursor.index]?.text, "+");
+  assert.equal(parsed.matched, true);
+  if (!parsed.matched) {
+    assert.fail("Expected PostgreSQL typed constant");
+  }
+  assert.equal(parsed.node.sql, "interval '2' hour");
+  assert.equal(parsed.node.intervalQualifier?.sql, "hour");
+  assert.equal(kernel.tokens[parsed.cursor.index]?.text, "+");
 });
