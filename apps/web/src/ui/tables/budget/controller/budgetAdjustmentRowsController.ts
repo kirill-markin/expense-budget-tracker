@@ -4,6 +4,7 @@ import type {
   CreateBudgetAdjustmentParams,
   PatchBudgetAdjustmentParams,
 } from "@/server/budget/budgetAdjustments";
+import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import {
   addOptimisticBudgetAdjustmentRow,
   createBudgetAdjustmentRowsReconciliationState,
@@ -12,6 +13,7 @@ import {
   issueBudgetAdjustmentCreateRequest,
   issueBudgetAdjustmentDeleteRequest,
   issueBudgetAdjustmentPatchRequest,
+  issueBudgetAdjustmentRangeRequest,
   reconcileBudgetAdjustmentCreateAcknowledgement,
   reconcileBudgetAdjustmentCreateFailure,
   reconcileBudgetAdjustmentDeleteAcknowledgement,
@@ -20,10 +22,13 @@ import {
   reconcileBudgetAdjustmentPatchAcknowledgement,
   reconcileBudgetAdjustmentPatchAmbiguousFailure,
   reconcileBudgetAdjustmentPatchDefinitiveFailure,
+  reconcileBudgetAdjustmentRangeFailure,
+  reconcileBudgetAdjustmentRangeResponse,
   replaceBudgetAdjustmentReconciliationDraft,
   type BudgetAdjustmentRowsReconciliationState,
 } from "@/ui/tables/budget/budgetAdjustmentRowsReconciliation";
 import {
+  applyBudgetAdjustmentRows,
   getBudgetAdjustmentCellRows,
   getBudgetAdjustmentCellTotal,
   parseBudgetAdjustmentDraft,
@@ -53,6 +58,18 @@ export type BudgetAdjustmentRowError = Readonly<{
   action: "retry-save" | "refresh-range";
 }>;
 
+export type BudgetAdjustmentRangeError = Readonly<{
+  monthFrom: string;
+  monthTo: string;
+  message: string;
+  httpStatus: number | null;
+}>;
+
+type BudgetAdjustmentRangeFailure = Readonly<{
+  error: BudgetAdjustmentRangeError;
+  requestId: number;
+}>;
+
 export type BudgetAdjustmentFlushOutcome =
   | "saved"
   | "unchanged"
@@ -61,13 +78,19 @@ export type BudgetAdjustmentFlushOutcome =
   | "refresh-required"
   | "deleted";
 
+export type BudgetAdjustmentRangeLoadOutcome =
+  | Readonly<{ status: "accepted"; result: BudgetGridResult }>
+  | Readonly<{ status: "superseded" }>;
+
 export type BudgetAdjustmentRowsControllerState = Readonly<{
   rows: ReadonlyArray<BudgetAdjustmentEditorRow>;
   invalidatedCellKeys: ReadonlySet<string>;
   validationByAdjustmentId: ReadonlyMap<string, BudgetAdjustmentDraftError>;
   errorByAdjustmentId: ReadonlyMap<string, BudgetAdjustmentRowError>;
   operationByAdjustmentId: ReadonlyMap<string, BudgetAdjustmentRowOperation>;
+  rangeErrorByKey: ReadonlyMap<string, BudgetAdjustmentRangeError>;
   pendingMutationCount: number;
+  pendingRangeCount: number;
 }>;
 
 export type BudgetAdjustmentRowsControllerCommands = Readonly<{
@@ -75,8 +98,15 @@ export type BudgetAdjustmentRowsControllerCommands = Readonly<{
   replaceDraft: (adjustmentId: string, draft: BudgetAdjustmentDraft) => void;
   flushRow: (adjustmentId: string) => Promise<BudgetAdjustmentFlushOutcome>;
   requestDelete: (adjustmentId: string) => Promise<BudgetAdjustmentFlushOutcome>;
+  loadRange: (monthFrom: string, monthTo: string) => Promise<BudgetAdjustmentRangeLoadOutcome>;
+  refreshRow: (adjustmentId: string) => Promise<BudgetAdjustmentRangeLoadOutcome>;
   getCellRows: (location: BudgetAdjustmentCellLocation) => ReadonlyArray<BudgetAdjustmentEditorRow>;
   getCellTotal: (location: BudgetAdjustmentCellLocation) => number;
+  applyToBudgetRows: (
+    budgetRows: ReadonlyArray<BudgetRow>,
+    loadedFrom: string,
+    loadedTo: string,
+  ) => ReadonlyArray<BudgetRow>;
 }>;
 
 export type BudgetAdjustmentRowsController =
@@ -94,6 +124,7 @@ export type BudgetAdjustmentRowsControllerDependencies = Readonly<{
     params: PatchBudgetAdjustmentParams,
   ) => Promise<BudgetAdjustment>;
   deleteAdjustment: (adjustmentId: string) => Promise<DeleteBudgetAdjustmentOutcome>;
+  fetchRange: (monthFrom: string, monthTo: string) => Promise<BudgetGridResult>;
   generateAdjustmentId: () => string;
   schedule: (callback: () => void, delayMs: number) => TimerHandle;
   cancelScheduled: (handle: TimerHandle) => void;
@@ -107,6 +138,9 @@ export type BudgetAdjustmentRowsControllerRuntime = Readonly<{
   activate: () => void;
   dispose: () => void;
 }>;
+
+const getRangeKey = (monthFrom: string, monthTo: string): string =>
+  `${monthFrom}\u0000${monthTo}`;
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -125,6 +159,28 @@ export const classifyBudgetAdjustmentFailure = (
 
 const getAffectedYears = (months: ReadonlyArray<string>): ReadonlySet<string> =>
   new Set(months.map((month): string => month.slice(0, 4)));
+
+const enumerateMonths = (monthFrom: string, monthTo: string): ReadonlyArray<string> => {
+  const months: Array<string> = [];
+  let current = monthFrom;
+  while (true) {
+    months.push(current);
+    if (current === monthTo) return months;
+    const year = Number(current.slice(0, 4));
+    const month = Number(current.slice(5, 7));
+    current = month === 12
+      ? `${String(year + 1).padStart(4, "0")}-01`
+      : `${current.slice(0, 5)}${String(month + 1).padStart(2, "0")}`;
+  }
+};
+
+const isRangeFailureSuperseded = (
+  state: BudgetAdjustmentRowsReconciliationState,
+  requestId: number,
+  monthFrom: string,
+  monthTo: string,
+): boolean => enumerateMonths(monthFrom, monthTo).every((month): boolean =>
+  (state.acceptedRangeRequestIdByMonth.get(month) ?? 0) > requestId);
 
 const buildValidationMap = (
   rows: ReadonlyArray<BudgetAdjustmentEditorRow>,
@@ -160,6 +216,8 @@ export const createBudgetAdjustmentRowsController = (
   const deleteRequestedIds = new Set<string>();
   let rowErrors = new Map<string, BudgetAdjustmentRowError>();
   let rowOperations = new Map<string, BudgetAdjustmentRowOperation>();
+  let rangeFailuresByKey = new Map<string, BudgetAdjustmentRangeFailure>();
+  let pendingRangeCount = 0;
 
   const getDisposedError = (operation: string): Error | null => disposed
     ? new Error(`Cannot ${operation}: controller is disposed`)
@@ -171,10 +229,15 @@ export const createBudgetAdjustmentRowsController = (
     validationByAdjustmentId: buildValidationMap(reconciliation.rows, dependencies.planFrom),
     errorByAdjustmentId: new Map(rowErrors),
     operationByAdjustmentId: new Map(rowOperations),
+    rangeErrorByKey: new Map([...rangeFailuresByKey].map(
+      ([rangeKey, failure]): readonly [string, BudgetAdjustmentRangeError] =>
+        [rangeKey, failure.error],
+    )),
     pendingMutationCount: new Set([
       ...timers.keys(),
       ...activeFlushes.keys(),
     ]).size,
+    pendingRangeCount,
   });
 
   snapshot = createSnapshot();
@@ -251,6 +314,32 @@ export const createBudgetAdjustmentRowsController = (
     clearRowError(adjustmentId);
     setRowOperation(adjustmentId, null);
     publish();
+  };
+
+  const clearRemovedRowState = (
+    previousRows: ReadonlyArray<BudgetAdjustmentEditorRow>,
+  ): void => {
+    const currentAdjustmentIds = new Set(reconciliation.rows.map(
+      (row): string => row.adjustmentId,
+    ));
+    for (const row of previousRows) {
+      if (currentAdjustmentIds.has(row.adjustmentId)) continue;
+      deleteRequestedIds.delete(row.adjustmentId);
+      suspendedAutosaveIds.delete(row.adjustmentId);
+      clearTimer(row.adjustmentId);
+      clearRowError(row.adjustmentId);
+      setRowOperation(row.adjustmentId, null);
+    }
+  };
+
+  const clearRecoveredRangeErrors = (): void => {
+    rangeFailuresByKey = new Map([...rangeFailuresByKey].filter(([, failure]): boolean =>
+      !isRangeFailureSuperseded(
+        reconciliation,
+        failure.requestId,
+        failure.error.monthFrom,
+        failure.error.monthTo,
+      )));
   };
 
   const runCreate = async (adjustmentId: string): Promise<boolean> => {
@@ -504,6 +593,114 @@ export const createBudgetAdjustmentRowsController = (
     return flushRow(adjustmentId);
   };
 
+  const loadRange = async (
+    monthFrom: string,
+    monthTo: string,
+  ): Promise<BudgetAdjustmentRangeLoadOutcome> => {
+    const disposedError = getDisposedError(
+      `load budget adjustment range ${monthFrom}..${monthTo}`,
+    );
+    if (disposedError !== null) throw disposedError;
+    const issued = issueBudgetAdjustmentRangeRequest(reconciliation, monthFrom, monthTo);
+    reconciliation = issued.state;
+    const rangeKey = getRangeKey(monthFrom, monthTo);
+    pendingRangeCount += 1;
+    publish();
+    try {
+      const result = await dependencies.fetchRange(monthFrom, monthTo);
+      const previousRows = reconciliation.rows;
+      reconciliation = reconcileBudgetAdjustmentRangeResponse(
+        reconciliation,
+        issued.request,
+        result.adjustments,
+      );
+      clearRemovedRowState(previousRows);
+      clearRecoveredRangeErrors();
+      for (const [adjustmentId, rowError] of rowErrors) {
+        if (rowError.action !== "refresh-range"
+          || reconciliation.ambiguousRangeRequirementByAdjustmentId.has(adjustmentId)) {
+          continue;
+        }
+        const rowExists = reconciliation.rows.some((row): boolean =>
+          row.adjustmentId === adjustmentId);
+        const hasLocalWork = reconciliation.dirtyFieldsByAdjustmentId.has(adjustmentId)
+          || deleteRequestedIds.has(adjustmentId);
+        if (!rowExists || !hasLocalWork) {
+          if (!rowExists) deleteRequestedIds.delete(adjustmentId);
+          clearRowError(adjustmentId);
+          continue;
+        }
+        rowErrors = new Map(rowErrors);
+        rowErrors.set(adjustmentId, { ...rowError, action: "retry-save" });
+      }
+      const accepted = enumerateMonths(monthFrom, monthTo).every((month): boolean =>
+        reconciliation.acceptedRangeRequestIdByMonth.get(month)
+          === issued.request.requestId);
+      return accepted ? { status: "accepted", result } : { status: "superseded" };
+    } catch (error: unknown) {
+      reconciliation = reconcileBudgetAdjustmentRangeFailure(reconciliation, issued.request);
+      if (!isRangeFailureSuperseded(
+        reconciliation,
+        issued.request.requestId,
+        monthFrom,
+        monthTo,
+      )) {
+        const currentFailure = rangeFailuresByKey.get(rangeKey);
+        if (currentFailure === undefined
+          || currentFailure.requestId < issued.request.requestId) {
+          rangeFailuresByKey = new Map(rangeFailuresByKey);
+          rangeFailuresByKey.set(rangeKey, {
+            error: {
+              monthFrom,
+              monthTo,
+              message: getErrorMessage(error),
+              httpStatus: getHttpStatus(error),
+            },
+            requestId: issued.request.requestId,
+          });
+        }
+      }
+      throw error;
+    } finally {
+      pendingRangeCount -= 1;
+      publish();
+    }
+  };
+
+  const refreshRow = (
+    adjustmentId: string,
+  ): Promise<BudgetAdjustmentRangeLoadOutcome> => {
+    const requirement = reconciliation.ambiguousRangeRequirementByAdjustmentId.get(
+      adjustmentId,
+    );
+    if (requirement !== undefined) {
+      return loadRange(
+        requirement.sourceMonth < requirement.targetMonth
+          ? requirement.sourceMonth
+          : requirement.targetMonth,
+        requirement.sourceMonth > requirement.targetMonth
+          ? requirement.sourceMonth
+          : requirement.targetMonth,
+      );
+    }
+    const row = reconciliation.rows.find((candidate): boolean =>
+      candidate.adjustmentId === adjustmentId);
+    if (row === undefined) {
+      return Promise.reject(new Error(
+        `Cannot refresh missing budget adjustment "${adjustmentId}"`,
+      ));
+    }
+    const parsed = parseBudgetAdjustmentDraft(row.draft, dependencies.planFrom);
+    const draftMonth = parsed.ok ? parsed.snapshot.month : row.confirmed.month;
+    const monthFrom = row.confirmed.month < draftMonth
+      ? row.confirmed.month
+      : draftMonth;
+    const monthTo = row.confirmed.month > draftMonth
+      ? row.confirmed.month
+      : draftMonth;
+    return loadRange(monthFrom, monthTo);
+  };
+
   const getCellRows = (
     location: BudgetAdjustmentCellLocation,
   ): ReadonlyArray<BudgetAdjustmentEditorRow> => getBudgetAdjustmentCellRows(
@@ -523,13 +720,29 @@ export const createBudgetAdjustmentRowsController = (
       dependencies.planFrom,
     );
 
+  const applyToBudgetRows = (
+    budgetRows: ReadonlyArray<BudgetRow>,
+    loadedFrom: string,
+    loadedTo: string,
+  ): ReadonlyArray<BudgetRow> => applyBudgetAdjustmentRows(
+    budgetRows,
+    reconciliation.rows,
+    loadedFrom,
+    loadedTo,
+    dependencies.planFrom,
+    getBudgetAdjustmentInvalidatedCellKeys(reconciliation),
+  );
+
   const commands: BudgetAdjustmentRowsControllerCommands = {
     addRow,
     replaceDraft,
     flushRow,
     requestDelete,
+    loadRange,
+    refreshRow,
     getCellRows,
     getCellTotal,
+    applyToBudgetRows,
   };
 
   return {

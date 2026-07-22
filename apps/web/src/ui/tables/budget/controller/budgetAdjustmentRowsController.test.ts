@@ -6,6 +6,7 @@ import type {
   CreateBudgetAdjustmentParams,
   PatchBudgetAdjustmentParams,
 } from "@/server/budget/budgetAdjustments";
+import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import {
   createBudgetAdjustmentRowsController,
   type BudgetAdjustmentRowsControllerRuntime,
@@ -27,6 +28,11 @@ type PatchCall = Readonly<{
   params: PatchBudgetAdjustmentParams;
 }>;
 
+type RangeCall = Readonly<{
+  monthFrom: string;
+  monthTo: string;
+}>;
+
 type FakeClock = Readonly<{
   schedule: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   cancel: (handle: ReturnType<typeof setTimeout>) => void;
@@ -41,6 +47,7 @@ type ControllerHarness = Readonly<{
   createCalls: Array<CreateBudgetAdjustmentParams>;
   patchCalls: Array<PatchCall>;
   deleteCalls: Array<string>;
+  rangeCalls: Array<RangeCall>;
   invalidatedYears: Array<ReadonlySet<string>>;
   setCreateHandler: (
     handler: (params: CreateBudgetAdjustmentParams) => Promise<BudgetAdjustment>,
@@ -50,6 +57,9 @@ type ControllerHarness = Readonly<{
   ) => void;
   setDeleteHandler: (
     handler: (adjustmentId: string) => Promise<DeleteBudgetAdjustmentOutcome>,
+  ) => void;
+  setRangeHandler: (
+    handler: (monthFrom: string, monthTo: string) => Promise<BudgetGridResult>,
   ) => void;
 }>;
 
@@ -128,6 +138,19 @@ const createDraft = (
   noteInput: string,
 ): BudgetAdjustmentDraft => ({ amountInput, month, category, noteInput });
 
+const createGrid = (
+  adjustments: ReadonlyArray<BudgetAdjustment>,
+  rows: ReadonlyArray<BudgetRow>,
+): BudgetGridResult => ({
+  rows,
+  adjustments,
+  conversionWarnings: [],
+  cumulativeBefore: { incomeActual: 0, spendActual: 0, transferActual: 0 },
+  monthEndBalances: {},
+  monthEndBalancesByLiquidity: {},
+  businessPersonalTransfers: {},
+  hasBusinessAccount: false,
+});
 
 const applyPatch = (
   adjustment: BudgetAdjustment,
@@ -159,6 +182,7 @@ const createHarness = (
   const createCalls: Array<CreateBudgetAdjustmentParams> = [];
   const patchCalls: Array<PatchCall> = [];
   const deleteCalls: Array<string> = [];
+  const rangeCalls: Array<RangeCall> = [];
   const invalidatedYears: Array<ReadonlySet<string>> = [];
   let createHandler = async (params: CreateBudgetAdjustmentParams): Promise<BudgetAdjustment> =>
     fromCreateParams(params);
@@ -173,6 +197,10 @@ const createHarness = (
   };
   let deleteHandler = async (_adjustmentId: string): Promise<DeleteBudgetAdjustmentOutcome> =>
     "deleted";
+  let rangeHandler = async (
+    _monthFrom: string,
+    _monthTo: string,
+  ): Promise<BudgetGridResult> => createGrid(initialAdjustments, []);
 
   const runtime = createBudgetAdjustmentRowsController({
     initialAdjustments,
@@ -190,6 +218,10 @@ const createHarness = (
       deleteCalls.push(adjustmentId);
       return deleteHandler(adjustmentId);
     },
+    fetchRange: async (monthFrom, monthTo): Promise<BudgetGridResult> => {
+      rangeCalls.push({ monthFrom, monthTo });
+      return rangeHandler(monthFrom, monthTo);
+    },
     generateAdjustmentId: (): string => CREATED_ID,
     schedule: clock.schedule,
     cancelScheduled: clock.cancel,
@@ -204,6 +236,7 @@ const createHarness = (
     createCalls,
     patchCalls,
     deleteCalls,
+    rangeCalls,
     invalidatedYears,
     setCreateHandler: (handler): void => {
       createHandler = handler;
@@ -213,6 +246,9 @@ const createHarness = (
     },
     setDeleteHandler: (handler): void => {
       deleteHandler = handler;
+    },
+    setRangeHandler: (handler): void => {
+      rangeHandler = handler;
     },
   };
 };
@@ -404,7 +440,7 @@ test("retries a lost create with the identical UUID and payload before patching 
   assert.equal(await retryFlush, "saved");
 });
 
-test("classifies definitive patch failures and blocks after ambiguous failures", async (): Promise<void> => {
+test("classifies definitive patch failures and reconciles ambiguous failures by range", async (): Promise<void> => {
   const initial = createAdjustment(FIRST_ID, 1, "2026-12", "Food", null);
   const harness = createHarness([initial]);
   let patchAttempt = 0;
@@ -444,9 +480,44 @@ test("classifies definitive patch failures and blocks after ambiguous failures",
   );
   assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "refresh-required");
   assert.equal(harness.patchCalls.length, 2);
+
+  const canonical = applyPatch(initial, { amount: 2, month: "2027-01" });
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([canonical], []));
+  assert.deepEqual(await harness.runtime.commands.refreshRow(FIRST_ID), {
+    status: "accepted",
+    result: createGrid([canonical], []),
+  });
+  assert.deepEqual(harness.rangeCalls, [{ monthFrom: "2026-12", monthTo: "2027-01" }]);
+  assert.equal(harness.runtime.getSnapshot().errorByAdjustmentId.has(FIRST_ID), false);
+  assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "unchanged");
 });
 
-test("records a typed PATCH 404 as a refresh requirement", async (): Promise<void> => {
+test("keeps an ambiguous patch retryable when refresh returns the unchanged row", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const harness = createHarness([initial]);
+  let patchAttempt = 0;
+  harness.setPatchHandler(async (_adjustmentId, params): Promise<BudgetAdjustment> => {
+    patchAttempt += 1;
+    if (patchAttempt === 1) throw new Error("patch response lost");
+    return applyPatch(initial, params);
+  });
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("2", "2026-07", "Food", ""),
+  );
+  assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "error");
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([initial], []));
+
+  await harness.runtime.commands.refreshRow(FIRST_ID);
+  const refreshed = harness.runtime.getSnapshot();
+  assert.equal(refreshed.rows[0]?.confirmed.amount, 1);
+  assert.equal(refreshed.rows[0]?.draft.amountInput, "2");
+  assert.equal(refreshed.errorByAdjustmentId.get(FIRST_ID)?.action, "retry-save");
+  assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "saved");
+  assert.equal(harness.runtime.getSnapshot().errorByAdjustmentId.has(FIRST_ID), false);
+});
+
+test("reconciles a typed PATCH 404 as authoritative absence", async (): Promise<void> => {
   const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
   const harness = createHarness([initial]);
   harness.setPatchHandler(async (): Promise<BudgetAdjustment> => {
@@ -479,9 +550,49 @@ test("records a typed PATCH 404 as a refresh requirement", async (): Promise<voi
   );
   assert.equal(harness.clock.size(), 0);
   assert.equal(harness.runtime.getSnapshot().pendingMutationCount, 0);
+
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([], []));
+  await harness.runtime.commands.refreshRow(FIRST_ID);
+  assert.equal(harness.runtime.getSnapshot().rows.length, 0);
+  assert.equal(harness.runtime.getSnapshot().errorByAdjustmentId.has(FIRST_ID), false);
 });
 
-test("keeps an ambiguous delete blocked pending reconciliation", async (): Promise<void> => {
+test("clears timer and row state when authoritative reconciliation removes a row", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const patch = createDeferred<BudgetAdjustment>();
+  const harness = createHarness([initial]);
+  harness.setPatchHandler((_adjustmentId, _params) => patch.promise);
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("2", "2026-07", "Food", ""),
+  );
+  const activeFlush = harness.runtime.commands.flushRow(FIRST_ID);
+  await settleStart();
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("3", "2026-07", "Food", ""),
+  );
+  assert.equal(harness.clock.size(), 1);
+
+  patch.reject(new BudgetAdjustmentApiError(
+    "Budget adjustment update",
+    404,
+    "not found",
+  ));
+  assert.equal(await activeFlush, "error");
+  assert.equal(harness.runtime.getSnapshot().pendingMutationCount, 1);
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([], []));
+
+  await harness.runtime.commands.refreshRow(FIRST_ID);
+  const snapshot = harness.runtime.getSnapshot();
+  assert.equal(harness.clock.size(), 0);
+  assert.equal(snapshot.pendingMutationCount, 0);
+  assert.equal(snapshot.rows.length, 0);
+  assert.equal(snapshot.errorByAdjustmentId.has(FIRST_ID), false);
+  assert.equal(snapshot.operationByAdjustmentId.has(FIRST_ID), false);
+});
+
+test("keeps an ambiguous delete retryable when refresh returns the unchanged row", async (): Promise<void> => {
   const first = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
   const second = createAdjustment(SECOND_ID, 2, "2026-08", "Travel", null);
   const harness = createHarness([first, second]);
@@ -514,11 +625,37 @@ test("keeps an ambiguous delete blocked pending reconciliation", async (): Promi
     harness.runtime.getSnapshot().errorByAdjustmentId.get(SECOND_ID)?.action,
     "refresh-range",
   );
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([second], []));
+  await harness.runtime.commands.refreshRow(SECOND_ID);
   assert.equal(
-    await harness.runtime.commands.flushRow(SECOND_ID),
-    "refresh-required",
+    harness.runtime.getSnapshot().errorByAdjustmentId.get(SECOND_ID)?.action,
+    "retry-save",
   );
-  assert.equal(harness.deleteCalls.length, 3);
+  harness.setDeleteHandler(async (): Promise<DeleteBudgetAdjustmentOutcome> => "deleted");
+  assert.equal(await harness.runtime.commands.flushRow(SECOND_ID), "deleted");
+  assert.equal(harness.runtime.getSnapshot().rows.length, 0);
+});
+
+test("reconciles an ambiguous delete as authoritative absence", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const harness = createHarness([initial]);
+  harness.setDeleteHandler(async (): Promise<DeleteBudgetAdjustmentOutcome> => {
+    throw new Error("delete response lost");
+  });
+  assert.equal(await harness.runtime.commands.requestDelete(FIRST_ID), "error");
+  assert.equal(
+    harness.runtime.getSnapshot().errorByAdjustmentId.get(FIRST_ID)?.action,
+    "refresh-range",
+  );
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([], []));
+
+  await harness.runtime.commands.refreshRow(FIRST_ID);
+  const snapshot = harness.runtime.getSnapshot();
+  assert.equal(snapshot.rows.length, 0);
+  assert.equal(snapshot.errorByAdjustmentId.has(FIRST_ID), false);
+  assert.equal(snapshot.operationByAdjustmentId.has(FIRST_ID), false);
+  assert.equal(snapshot.pendingMutationCount, 0);
+  assert.deepEqual(harness.deleteCalls, [FIRST_ID]);
 });
 
 test("discards unsent and definitively failed optimistic rows without network deletion", async (): Promise<void> => {
@@ -595,6 +732,244 @@ test("publishes mutation snapshots until unsubscribed and exposes cell selectors
     createDraft("3", "2026-07", "Food", ""),
   );
   assert.equal(snapshots.length, 1);
+});
+
+test("accepts exact-overlap ranges in response order and supersedes stale results", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const older = createDeferred<BudgetGridResult>();
+  const newer = createDeferred<BudgetGridResult>();
+  const harness = createHarness([initial]);
+  harness.setRangeHandler((_monthFrom, _monthTo) =>
+    harness.rangeCalls.length === 1 ? older.promise : newer.promise);
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("9", "2026-07", "Food", "local"),
+  );
+
+  const olderLoad = harness.runtime.commands.loadRange("2026-07", "2026-07");
+  const newerLoad = harness.runtime.commands.loadRange("2026-07", "2026-07");
+  assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 2);
+  const newerGrid = createGrid([{ ...initial, amount: 3 }], []);
+  newer.resolve(newerGrid);
+  assert.deepEqual(await newerLoad, { status: "accepted", result: newerGrid });
+  assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 1);
+  older.resolve(createGrid([{ ...initial, amount: 2 }], []));
+  assert.deepEqual(await olderLoad, { status: "superseded" });
+  assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 0);
+
+  const row = harness.runtime.getSnapshot().rows[0];
+  assert.equal(row?.confirmed.amount, 3);
+  assert.equal(row?.draft.amountInput, "9");
+  assert.equal(row?.draft.noteInput, "local");
+});
+
+test("accepts exact-overlap ranges when the older response settles first", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const older = createDeferred<BudgetGridResult>();
+  const newer = createDeferred<BudgetGridResult>();
+  const harness = createHarness([initial]);
+  harness.setRangeHandler((_monthFrom, _monthTo) =>
+    harness.rangeCalls.length === 1 ? older.promise : newer.promise);
+
+  const olderLoad = harness.runtime.commands.loadRange("2026-07", "2026-07");
+  const newerLoad = harness.runtime.commands.loadRange("2026-07", "2026-07");
+  const olderGrid = createGrid([{ ...initial, amount: 2 }], []);
+  older.resolve(olderGrid);
+  assert.deepEqual(await olderLoad, { status: "accepted", result: olderGrid });
+  assert.equal(harness.runtime.getSnapshot().rows[0]?.confirmed.amount, 2);
+
+  const newerGrid = createGrid([{ ...initial, amount: 3 }], []);
+  newer.resolve(newerGrid);
+  assert.deepEqual(await newerLoad, { status: "accepted", result: newerGrid });
+  assert.equal(harness.runtime.getSnapshot().rows[0]?.confirmed.amount, 3);
+});
+
+test("loads the maximum supported month without advancing beyond the range", async (): Promise<void> => {
+  const harness = createHarness([]);
+  const grid = createGrid([], []);
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => grid);
+
+  assert.deepEqual(
+    await harness.runtime.commands.loadRange("9999-12", "9999-12"),
+    { status: "accepted", result: grid },
+  );
+  assert.deepEqual(harness.rangeCalls, [{ monthFrom: "9999-12", monthTo: "9999-12" }]);
+  assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 0);
+});
+
+test("reconciles safe months but withholds a partially superseded range result", async (): Promise<void> => {
+  const july = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const august = createAdjustment(SECOND_ID, 10, "2026-08", "Travel", null);
+  const older = createDeferred<BudgetGridResult>();
+  const newer = createDeferred<BudgetGridResult>();
+  const harness = createHarness([july, august]);
+  harness.setRangeHandler((_monthFrom, _monthTo) =>
+    harness.rangeCalls.length === 1 ? older.promise : newer.promise);
+
+  const olderLoad = harness.runtime.commands.loadRange("2026-07", "2026-08");
+  const newerLoad = harness.runtime.commands.loadRange("2026-08", "2026-09");
+  const newerGrid = createGrid([{ ...august, amount: 30 }], []);
+  newer.resolve(newerGrid);
+  assert.deepEqual(await newerLoad, { status: "accepted", result: newerGrid });
+  older.resolve(createGrid([
+    { ...july, amount: 2 },
+    { ...august, amount: 20 },
+  ], []));
+  assert.deepEqual(await olderLoad, { status: "superseded" });
+
+  const rows = harness.runtime.getSnapshot().rows;
+  assert.equal(rows.find((row) => row.adjustmentId === FIRST_ID)?.confirmed.amount, 2);
+  assert.equal(rows.find((row) => row.adjustmentId === SECOND_ID)?.confirmed.amount, 30);
+});
+
+test("rejects range failures and clears them after a broader accepted recovery", async (): Promise<void> => {
+  const harness = createHarness([]);
+  const network = createDeferred<BudgetGridResult>();
+  harness.setRangeHandler((_monthFrom, _monthTo) => network.promise);
+  const networkLoad = harness.runtime.commands.loadRange("2026-07", "2026-08");
+  assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 1);
+  network.reject(new BudgetAdjustmentApiError(
+    "Budget grid load",
+    503,
+    "unavailable",
+  ));
+  await assert.rejects(networkLoad, /Budget grid load failed: 503 unavailable/);
+  assert.deepEqual([...harness.runtime.getSnapshot().rangeErrorByKey.values()], [{
+    monthFrom: "2026-07",
+    monthTo: "2026-08",
+    message: "Budget grid load failed: 503 unavailable",
+    httpStatus: 503,
+  }]);
+
+  const broader = createDeferred<BudgetGridResult>();
+  harness.setRangeHandler((_monthFrom, _monthTo) => broader.promise);
+  const recovery = harness.runtime.commands.loadRange("2026-06", "2026-09");
+  assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 1);
+  const recoveredGrid = createGrid([], []);
+  broader.resolve(recoveredGrid);
+  assert.deepEqual(await recovery, { status: "accepted", result: recoveredGrid });
+  assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 0);
+
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([
+    createAdjustment(FIRST_ID, 1, "invalid-month", "Food", null),
+  ], []));
+  await assert.rejects(
+    harness.runtime.commands.loadRange("2026-09", "2026-09"),
+    /Budget adjustment range response row 0 is invalid/,
+  );
+  assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 1);
+  assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 0);
+});
+
+test("keeps the newest identical-range failure when responses settle in reverse", async (): Promise<void> => {
+  const older = createDeferred<BudgetGridResult>();
+  const newer = createDeferred<BudgetGridResult>();
+  const harness = createHarness([]);
+  harness.setRangeHandler((_monthFrom, _monthTo) =>
+    harness.rangeCalls.length === 1 ? older.promise : newer.promise);
+  const olderLoad = harness.runtime.commands.loadRange("2026-07", "2026-08");
+  const newerLoad = harness.runtime.commands.loadRange("2026-07", "2026-08");
+
+  newer.reject(new Error("newer range failure"));
+  await assert.rejects(newerLoad, /newer range failure/);
+  older.reject(new Error("older range failure"));
+  await assert.rejects(olderLoad, /older range failure/);
+
+  assert.deepEqual([...harness.runtime.getSnapshot().rangeErrorByKey.values()], [{
+    monthFrom: "2026-07",
+    monthTo: "2026-08",
+    message: "newer range failure",
+    httpStatus: null,
+  }]);
+  assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 0);
+});
+
+test("keeps a failed range error until accepted partitions cover every month", async (): Promise<void> => {
+  const harness = createHarness([]);
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => {
+    throw new Error("range offline");
+  });
+  await assert.rejects(
+    harness.runtime.commands.loadRange("2026-07", "2026-09"),
+    /range offline/,
+  );
+  assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 1);
+
+  const partitionGrid = createGrid([], []);
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => partitionGrid);
+  assert.equal(
+    (await harness.runtime.commands.loadRange("2026-07", "2026-07")).status,
+    "accepted",
+  );
+  assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 1);
+  assert.equal(
+    (await harness.runtime.commands.loadRange("2026-08", "2026-09")).status,
+    "accepted",
+  );
+  assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 0);
+});
+
+test("projects normalized drafts onto budget rows across the loaded range", (): void => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const harness = createHarness([initial]);
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("4", "2026-08", "Dining", ""),
+  );
+  const budgetRows: ReadonlyArray<BudgetRow> = [
+    {
+      month: "2026-07",
+      direction: "spend",
+      category: "Food",
+      plannedBase: 10,
+      plannedModifier: 1,
+      planned: 11,
+      actual: 0,
+      hasUnconvertible: false,
+    },
+    {
+      month: "2026-07",
+      direction: "spend",
+      category: "Travel",
+      plannedBase: 0,
+      plannedModifier: 6,
+      planned: 6,
+      actual: 0,
+      hasUnconvertible: false,
+    },
+    {
+      month: "2026-07",
+      direction: "transfer",
+      category: "Internal",
+      plannedBase: 0,
+      plannedModifier: 0,
+      planned: 0,
+      actual: 5,
+      hasUnconvertible: false,
+    },
+  ];
+
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows(budgetRows, "2026-07", "2026-08"),
+    [
+      {
+        ...budgetRows[0],
+        plannedModifier: 0,
+        planned: 10,
+      },
+      budgetRows[2],
+      {
+        month: "2026-08",
+        direction: "spend",
+        category: "Dining",
+        plannedBase: 0,
+        plannedModifier: 4,
+        planned: 4,
+        actual: 0,
+        hasUnconvertible: false,
+      },
+    ],
+  );
 });
 
 test("dispose cancels every pending autosave timer without marking a mutation complete", (): void => {
