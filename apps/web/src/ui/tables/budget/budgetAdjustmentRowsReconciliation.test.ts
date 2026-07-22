@@ -3,12 +3,16 @@ import test from "node:test";
 
 import type { BudgetAdjustment, BudgetAdjustmentDirection } from "@/server/budget/budgetAdjustments";
 import {
+  addOptimisticBudgetAdjustmentRow,
   buildBudgetAdjustmentPatch,
   createBudgetAdjustmentRowsReconciliationState,
   getBudgetAdjustmentInvalidatedCellKeys,
+  issueBudgetAdjustmentCreateRequest,
   issueBudgetAdjustmentDeleteRequest,
   issueBudgetAdjustmentPatchRequest,
   issueBudgetAdjustmentRangeRequest,
+  reconcileBudgetAdjustmentCreateAcknowledgement,
+  reconcileBudgetAdjustmentCreateFailure,
   reconcileBudgetAdjustmentDeleteAcknowledgement,
   reconcileBudgetAdjustmentDeleteAmbiguousFailure,
   reconcileBudgetAdjustmentDeleteDefinitiveFailure,
@@ -18,6 +22,7 @@ import {
   reconcileBudgetAdjustmentRangeFailure,
   reconcileBudgetAdjustmentRangeResponse,
   replaceBudgetAdjustmentReconciliationDraft,
+  type BudgetAdjustmentCreateRequest,
   type BudgetAdjustmentPatchRequest,
   type BudgetAdjustmentRowsReconciliationState,
 } from "@/ui/tables/budget/budgetAdjustmentRowsReconciliation";
@@ -37,6 +42,337 @@ const createDraft = (amountInput: string, month: string, category: string,
 const editDraft = (state: BudgetAdjustmentRowsReconciliationState,
   adjustmentId: string, draft: BudgetAdjustmentDraft,
 ): BudgetAdjustmentRowsReconciliationState => replaceBudgetAdjustmentReconciliationDraft(state, adjustmentId, draft);
+
+const createUuid = (index: number): string =>
+  `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+
+test("optimistic create installs a blank final-ID row and issues one immutable request", (): void => {
+  const adjustmentId = createUuid(1);
+  const initial = createBudgetAdjustmentRowsReconciliationState([], "2026-07");
+  const optimistic = addOptimisticBudgetAdjustmentRow(
+    initial,
+    adjustmentId,
+    "2026-07",
+    "spend",
+    "Food",
+  );
+
+  assert.deepEqual(optimistic.rows[0], {
+    adjustmentId,
+    direction: "spend",
+    draft: createDraft("", "2026-07", "Food", ""),
+    confirmed: { amount: 0, note: null, month: "2026-07", category: "Food" },
+    createdAt: "9999-12-31T23:59:59.999Z",
+    updatedAt: "9999-12-31T23:59:59.999Z",
+  });
+  const issued = issueBudgetAdjustmentCreateRequest(optimistic, adjustmentId);
+  assert.deepEqual(initial.rows, []);
+  assert.equal(initial.optimisticCreateByAdjustmentId.size, 0);
+  assert.equal(
+    optimistic.optimisticCreateByAdjustmentId.get(adjustmentId)?.status,
+    "ready",
+  );
+  assert.equal(
+    issued.state.optimisticCreateByAdjustmentId.get(adjustmentId)?.status,
+    "pending",
+  );
+  assert.deepEqual(issued.request.params, {
+    adjustmentId,
+    month: "2026-07",
+    direction: "spend",
+    category: "Food",
+    amount: 0,
+    note: null,
+  });
+  assert.throws(
+    () => issueBudgetAdjustmentCreateRequest(issued.state, adjustmentId),
+    /second create.*pending/,
+  );
+  assert.throws(
+    () => issueBudgetAdjustmentPatchRequest(issued.state, adjustmentId),
+    /until its create request is acknowledged.*pending/,
+  );
+  assert.throws(
+    () => issueBudgetAdjustmentDeleteRequest(issued.state, adjustmentId),
+    /until its create request is acknowledged.*pending/,
+  );
+  assert.throws(
+    () => addOptimisticBudgetAdjustmentRow(initial, "temporary-1", "2026-07", "spend", "Food"),
+    /must be a UUID/,
+  );
+});
+
+test("create acknowledgement preserves newer edits and survives ranges issued before it", (): void => {
+  const adjustmentId = createUuid(2);
+  const optimistic = addOptimisticBudgetAdjustmentRow(
+    createBudgetAdjustmentRowsReconciliationState([], "2026-07"),
+    adjustmentId,
+    "2026-07",
+    "spend",
+    "Food",
+  );
+  const create = issueBudgetAdjustmentCreateRequest(optimistic, adjustmentId);
+  const beforeAcknowledgement = issueBudgetAdjustmentRangeRequest(
+    create.state,
+    "2026-07",
+    "2026-07",
+  );
+  const preservedBefore = reconcileBudgetAdjustmentRangeResponse(
+    beforeAcknowledgement.state,
+    beforeAcknowledgement.request,
+    [],
+  );
+  assert.equal(preservedBefore.rows[0]?.adjustmentId, adjustmentId);
+
+  const staleAfterAcknowledgement = issueBudgetAdjustmentRangeRequest(
+    preservedBefore,
+    "2026-07",
+    "2026-07",
+  );
+  const edited = editDraft(
+    staleAfterAcknowledgement.state,
+    adjustmentId,
+    createDraft("7", "2026-07", "Food", "local"),
+  );
+  const serverRow = createAdjustment(
+    adjustmentId,
+    0,
+    "2026-07",
+    "spend",
+    "Food",
+    null,
+    2,
+  );
+  const acknowledged = reconcileBudgetAdjustmentCreateAcknowledgement(
+    edited,
+    create.request,
+    serverRow,
+  );
+  assert.equal(acknowledged.outcome, "accepted");
+  assert.deepEqual(
+    acknowledged.state.rows[0]?.draft,
+    createDraft("7", "2026-07", "Food", "local"),
+  );
+  assert.equal(acknowledged.state.rows[0]?.confirmed.amount, 0);
+  assert.deepEqual(
+    issueBudgetAdjustmentPatchRequest(acknowledged.state, adjustmentId).request.params,
+    { amount: 7, note: "local" },
+  );
+
+  const stale = reconcileBudgetAdjustmentRangeResponse(
+    acknowledged.state,
+    staleAfterAcknowledgement.request,
+    [{ ...serverRow, amount: 99 }],
+  );
+  assert.equal(stale.rows[0]?.confirmed.amount, 0);
+  assert.equal(stale.rows[0]?.draft.amountInput, "7");
+});
+
+test("a clean acknowledged create is removable only by a later authoritative range", (): void => {
+  const adjustmentId = createUuid(3);
+  const optimistic = addOptimisticBudgetAdjustmentRow(
+    createBudgetAdjustmentRowsReconciliationState([], "2026-07"),
+    adjustmentId,
+    "2026-07",
+    "income",
+    "Bonus",
+  );
+  const create = issueBudgetAdjustmentCreateRequest(optimistic, adjustmentId);
+  const staleRange = issueBudgetAdjustmentRangeRequest(create.state, "2026-07", "2026-07");
+  const serverRow = createAdjustment(
+    adjustmentId,
+    0,
+    "2026-07",
+    "income",
+    "Bonus",
+    null,
+    2,
+  );
+  const acknowledged = reconcileBudgetAdjustmentCreateAcknowledgement(
+    staleRange.state,
+    create.request,
+    serverRow,
+  );
+  const stale = reconcileBudgetAdjustmentRangeResponse(
+    acknowledged.state,
+    staleRange.request,
+    [],
+  );
+  assert.equal(stale.rows.length, 1);
+  const freshRange = issueBudgetAdjustmentRangeRequest(stale, "2026-07", "2026-07");
+  const absent = reconcileBudgetAdjustmentRangeResponse(
+    freshRange.state,
+    freshRange.request,
+    [],
+  );
+  assert.deepEqual(absent.rows, []);
+  assert.equal(absent.confirmedMutationRevisionById.has(adjustmentId), false);
+});
+
+test("failed create retains its exact payload for retry while newer drafts stay local", (): void => {
+  const adjustmentId = createUuid(4);
+  const optimistic = addOptimisticBudgetAdjustmentRow(
+    createBudgetAdjustmentRowsReconciliationState([], "2026-07"),
+    adjustmentId,
+    "2026-07",
+    "spend",
+    "Food",
+  );
+  const first = issueBudgetAdjustmentCreateRequest(optimistic, adjustmentId);
+  const edited = editDraft(
+    first.state,
+    adjustmentId,
+    createDraft("9", "2026-08", "Dining", "newer"),
+  );
+  const failed = reconcileBudgetAdjustmentCreateFailure(edited, first.request);
+  assert.equal(failed.optimisticCreateByAdjustmentId.get(adjustmentId)?.status, "failed");
+  assert.deepEqual(failed.rows[0]?.draft, createDraft("9", "2026-08", "Dining", "newer"));
+  assert.throws(
+    () => issueBudgetAdjustmentDeleteRequest(failed, adjustmentId),
+    /until its create request is acknowledged.*failed/,
+  );
+  const range = issueBudgetAdjustmentRangeRequest(failed, "2026-07", "2026-07");
+  const rangePreserved = reconcileBudgetAdjustmentRangeResponse(range.state, range.request, []);
+  assert.equal(rangePreserved.rows.length, 1);
+
+  const retry = issueBudgetAdjustmentCreateRequest(rangePreserved, adjustmentId);
+  assert.deepEqual(retry.request.params, first.request.params);
+  assert.deepEqual(retry.request.draft, first.request.draft);
+  const serverRow = createAdjustment(
+    adjustmentId,
+    0,
+    "2026-07",
+    "spend",
+    "Food",
+    null,
+    1,
+  );
+  const acknowledged = reconcileBudgetAdjustmentCreateAcknowledgement(
+    retry.state,
+    retry.request,
+    serverRow,
+  );
+  assert.deepEqual(
+    acknowledged.state.rows[0]?.draft,
+    createDraft("9", "2026-08", "Dining", "newer"),
+  );
+  assert.deepEqual(
+    issueBudgetAdjustmentPatchRequest(acknowledged.state, adjustmentId).request.params,
+    { amount: 9, note: "newer", month: "2026-08", category: "Dining" },
+  );
+  assert.equal(
+    reconcileBudgetAdjustmentCreateAcknowledgement(
+      acknowledged.state,
+      first.request,
+      serverRow,
+    ).outcome,
+    "stale",
+  );
+  assert.equal(
+    reconcileBudgetAdjustmentCreateAcknowledgement(
+      acknowledged.state,
+      retry.request,
+      serverRow,
+    ).outcome,
+    "already-applied",
+  );
+});
+
+test("create acknowledgements require exact provenance and strict matching rows", (): void => {
+  const adjustmentId = createUuid(5);
+  const optimistic = addOptimisticBudgetAdjustmentRow(
+    createBudgetAdjustmentRowsReconciliationState([], "2026-07"),
+    adjustmentId,
+    "2026-07",
+    "spend",
+    "Food",
+  );
+  const create = issueBudgetAdjustmentCreateRequest(optimistic, adjustmentId);
+  const serverRow = createAdjustment(adjustmentId, 0, "2026-07", "spend", "Food", null, 1);
+  assert.throws(
+    () => reconcileBudgetAdjustmentCreateAcknowledgement(
+      create.state,
+      { ...create.request, params: { ...create.request.params, amount: 1 } },
+      serverRow,
+    ),
+    /fields do not match/,
+  );
+  assert.throws(
+    () => reconcileBudgetAdjustmentCreateAcknowledgement(
+      create.state,
+      create.request,
+      { ...serverRow, adjustmentId: createUuid(6) },
+    ),
+    /does not match requested id/,
+  );
+  assert.throws(
+    () => reconcileBudgetAdjustmentCreateAcknowledgement(
+      create.state,
+      create.request,
+      { ...serverRow, direction: "income" },
+    ),
+    /immutable direction/,
+  );
+  assert.throws(
+    () => reconcileBudgetAdjustmentCreateAcknowledgement(
+      create.state,
+      create.request,
+      { ...serverRow, unexpected: true },
+    ),
+    /create acknowledgement is invalid/,
+  );
+});
+
+test("settled create acknowledgement history is bounded", (): void => {
+  let state = createBudgetAdjustmentRowsReconciliationState([], "2026-07");
+  const requests: Array<BudgetAdjustmentCreateRequest> = [];
+  for (let index = 10; index < 22; index += 1) {
+    const adjustmentId = createUuid(index);
+    state = addOptimisticBudgetAdjustmentRow(
+      state,
+      adjustmentId,
+      "2026-07",
+      "income",
+      `Income ${index}`,
+    );
+    const create = issueBudgetAdjustmentCreateRequest(state, adjustmentId);
+    requests.push(create.request);
+    state = reconcileBudgetAdjustmentCreateAcknowledgement(
+      create.state,
+      create.request,
+      createAdjustment(
+        adjustmentId,
+        0,
+        "2026-07",
+        "income",
+        `Income ${index}`,
+        null,
+        1,
+      ),
+    ).state;
+  }
+
+  assert.equal(state.settledMutationRequestIds.size, 8);
+  assert.equal(state.mutationRequestsById.size, 8);
+  assert.equal(state.appliedCreateRequestIds.size, 8);
+  assert.throws(
+    () => reconcileBudgetAdjustmentCreateAcknowledgement(
+      state,
+      requests[0]!,
+      createAdjustment(createUuid(10), 0, "2026-07", "income", "Income 10", null, 1),
+    ),
+    /outside the recent settled request history/,
+  );
+  const latest = requests.at(-1)!;
+  assert.equal(
+    reconcileBudgetAdjustmentCreateAcknowledgement(
+      state,
+      latest,
+      createAdjustment(latest.adjustmentId, 0, "2026-07", "income", "Income 21", null, 1),
+    ).outcome,
+    "already-applied",
+  );
+});
 
 test("patch params are minimal and blank amount parses as zero", (): void => {
   const adjustment = createAdjustment("minimal", 5, "2026-07", "spend", "Food", null, 1);
