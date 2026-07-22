@@ -18,15 +18,29 @@ const hasCodePointLengthBetween = (
 };
 
 const budgetAdjustmentSchema: z.ZodType<BudgetAdjustment> = z.object({
-  adjustmentId: z.string().refine((value): boolean => hasCodePointLengthBetween(value, 1, 200)),
+  adjustmentId: z.string().refine((value): boolean => hasCodePointLengthBetween(value, 1, 200), {
+    message: "must contain between 1 and 200 characters",
+  }),
   month: z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/),
   direction: z.enum(["income", "spend"]),
-  category: z.string().refine((value): boolean => hasCodePointLengthBetween(value, 1, 200)),
+  category: z.string().refine((value): boolean => hasCodePointLengthBetween(value, 1, 200), {
+    message: "must contain between 1 and 200 characters",
+  }),
   amount: z.number().safe().int(),
-  note: z.string().refine((value): boolean => hasCodePointLengthBetween(value, 0, 2000)).nullable(),
+  note: z.string().refine((value): boolean => hasCodePointLengthBetween(value, 0, 2000), {
+    message: "must contain at most 2000 characters",
+  }).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).strict();
+
+export const parseBudgetAdjustment = (input: unknown, context: string): BudgetAdjustment => {
+  const parsed = budgetAdjustmentSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(`${context} is invalid: ${parsed.error.message}`);
+  }
+  return parsed.data;
+};
 
 const deleteBudgetAdjustmentResponseSchema = z.object({ ok: z.literal(true) }).strict();
 
