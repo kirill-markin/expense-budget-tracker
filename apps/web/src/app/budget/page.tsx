@@ -40,6 +40,7 @@ async function BudgetData() {
     );
     const {
       rows,
+      adjustments: initialAdjustments,
       conversionWarnings,
       cumulativeBefore,
       monthEndBalances,
@@ -57,6 +58,7 @@ async function BudgetData() {
     return (
       <BudgetTable
         rows={rows}
+        adjustments={initialAdjustments}
         conversionWarnings={conversionWarnings}
         cumulativeBefore={cumulativeBefore}
         monthEndBalances={monthEndBalances}
@@ -78,6 +80,7 @@ async function BudgetData() {
 
   const [{
     rows,
+    adjustments,
     conversionWarnings,
     cumulativeBefore,
     monthEndBalances,
@@ -93,6 +96,7 @@ async function BudgetData() {
   return (
     <BudgetTable
       rows={rows}
+      adjustments={adjustments}
       conversionWarnings={conversionWarnings}
       cumulativeBefore={cumulativeBefore}
       monthEndBalances={monthEndBalances}

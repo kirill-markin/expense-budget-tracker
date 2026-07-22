@@ -5,6 +5,7 @@ import type { RefObject } from "react";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { useCommentPresence } from "@/ui/hooks/useCommentPresence";
 import type { FieldHints } from "@/server/transactions/getTransactions";
+import type { BudgetAdjustment } from "@/server/budget/budgetAdjustments";
 import type { BudgetRow, BusinessPersonalTransferCell, ConversionWarning, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 import { getCurrentMonth, getYear } from "@/lib/monthUtils";
 import type {
@@ -19,9 +20,12 @@ import { useBudgetTableDerivedState } from "@/ui/tables/budget/controller/useBud
 import { useBudgetTableRangeState } from "@/ui/tables/budget/controller/useBudgetTableRangeState";
 import { useBudgetTableViewport } from "@/ui/tables/budget/controller/useBudgetTableViewport";
 import { useBudgetTableYearTotals } from "@/ui/tables/budget/controller/useBudgetTableYearTotals";
+import { useBudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/useBudgetAdjustmentRowsController";
+import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 
 export type BudgetTableProps = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
+  adjustments: ReadonlyArray<BudgetAdjustment>;
   conversionWarnings: ReadonlyArray<ConversionWarning>;
   cumulativeBefore: CumulativeBefore;
   monthEndBalances: Readonly<Record<string, number>>;
@@ -60,6 +64,7 @@ export type BudgetTableController = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   commentedCells: ReadonlySet<string>;
   pendingSaves: number;
+  budgetAdjustments: BudgetAdjustmentRowsController;
   isLoadingLeft: boolean;
   isLoadingRight: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -112,9 +117,24 @@ export const useBudgetTableController = (
   const currentMonth = useMemo(() => getCurrentMonth(), []);
   const currentYear = useMemo(() => getYear(currentMonth), [currentMonth]);
   const resetYearTotalsRef = useRef<() => void>(() => undefined);
+  const invalidateYearTotalsRef = useRef<(years: ReadonlySet<string>) => void>(
+    () => undefined,
+  );
   const handleVisibleRangeRefreshStart = useCallback((): void => {
     resetYearTotalsRef.current();
   }, []);
+
+  const invalidateAdjustmentYears = useCallback((years: ReadonlySet<string>): void => {
+    invalidateYearTotalsRef.current(years);
+  }, []);
+
+  const budgetAdjustments = useBudgetAdjustmentRowsController({
+    adjustments: props.adjustments,
+    planFrom: currentMonth,
+    actualTo: currentMonth,
+    refreshToken: props.refreshToken,
+    invalidateYears: invalidateAdjustmentYears,
+  });
 
   const rangeState = useBudgetTableRangeState({
     rows: props.rows,
@@ -125,14 +145,14 @@ export const useBudgetTableController = (
     monthEndBalancesByLiquidity: props.monthEndBalancesByLiquidity,
     businessPersonalTransfers: props.businessPersonalTransfers,
     hasBusinessAccount: props.hasBusinessAccount,
-    currentMonth,
     refreshToken: props.refreshToken,
     fetchCommentRange,
     reloadCommentRange,
     onVisibleRangeRefreshStart: handleVisibleRangeRefreshStart,
+    loadBudgetRange: budgetAdjustments.loadRange,
   });
 
-  const { yearComputed, resetYearTotals } = useBudgetTableYearTotals({
+  const { yearComputed, invalidateYearTotals, resetYearTotals } = useBudgetTableYearTotals({
     loadedFrom: rangeState.loadedFrom,
     loadedTo: rangeState.loadedTo,
     currentMonth,
@@ -140,16 +160,31 @@ export const useBudgetTableController = (
     refreshToken: props.refreshToken,
   });
   resetYearTotalsRef.current = resetYearTotals;
+  invalidateYearTotalsRef.current = invalidateYearTotals;
+
+  const rowsWithAdjustments = useMemo<ReadonlyArray<BudgetRow>>(
+    () => budgetAdjustments.applyToBudgetRows(
+      rangeState.allRows,
+      rangeState.loadedFrom,
+      rangeState.loadedTo,
+    ),
+    [
+      budgetAdjustments,
+      rangeState.allRows,
+      rangeState.loadedFrom,
+      rangeState.loadedTo,
+    ],
+  );
 
   const viewportState = useBudgetTableViewport({
     currentMonth,
-    pendingSaves: rangeState.pendingSaves,
+    pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
     onReachLeft: rangeState.loadLeft,
     onReachRight: rangeState.loadRight,
   });
 
   const derivedState = useBudgetTableDerivedState({
-    allRows: rangeState.allRows,
+    allRows: rowsWithAdjustments,
     loadedFrom: rangeState.loadedFrom,
     loadedTo: rangeState.loadedTo,
     cumBefore: rangeState.cumBefore,
@@ -207,7 +242,8 @@ export const useBudgetTableController = (
     projectedLiqBalances: derivedState.projectedLiqBalances,
     yearComputed,
     commentedCells,
-    pendingSaves: rangeState.pendingSaves,
+    pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
+    budgetAdjustments,
     isLoadingLeft: rangeState.isLoadingLeft,
     isLoadingRight: rangeState.isLoadingRight,
     scrollRef: viewportState.scrollRef,
