@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
+import { DEMO_BUDGET_ADJUSTMENTS_COOKIE } from "@/lib/demoCookies";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import styles from "./Controls.module.css";
@@ -32,6 +33,7 @@ export const ModeToggle = (props: Props): ReactElement => {
       // Leaving demo mode — store target mode in localStorage before reload
       localStorage.setItem("expense-tracker-visibility-mode", target);
       document.cookie = "demo=; path=/; max-age=0";
+      document.cookie = `${DEMO_BUDGET_ADJUSTMENTS_COOKIE}=; path=/; max-age=0`;
       window.location.reload();
       return;
     }

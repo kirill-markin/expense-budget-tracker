@@ -3,6 +3,7 @@ import { parseBudgetGridQuery } from "@/server/api/budget";
 import { handleRoute } from "@/server/api/handleRoute";
 import { jsonNoStore } from "@/server/api/noStore";
 import { getBudgetGrid } from "@/server/budget/getBudgetGrid";
+import { getDemoBudgetAdjustmentsForSession, readDemoBudgetAdjustmentSession } from "@/server/demo/budgetAdjustments";
 import { getDemoBudgetGrid } from "@/server/demo/data";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
@@ -15,7 +16,16 @@ export const GET = async (request: Request): Promise<Response> =>
       const query = parseBudgetGridQuery(new URL(request.url).searchParams);
 
       if (isDemoModeFromRequest(request)) {
-        return jsonNoStore(getDemoBudgetGrid(query.monthFrom, query.monthTo, query.planFrom, query.actualTo));
+        const adjustments = getDemoBudgetAdjustmentsForSession(
+          readDemoBudgetAdjustmentSession(request),
+        );
+        return jsonNoStore(getDemoBudgetGrid(
+          query.monthFrom,
+          query.monthTo,
+          query.planFrom,
+          query.actualTo,
+          adjustments,
+        ));
       }
 
       const userId = extractUserId(request);

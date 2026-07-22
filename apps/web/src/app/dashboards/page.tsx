@@ -1,6 +1,7 @@
 import { Suspense } from "react";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 
+import { DEMO_BUDGET_ADJUSTMENTS_COOKIE } from "@/lib/demoCookies";
 import { offsetMonth, getCurrentMonth } from "@/lib/monthUtils";
 import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
@@ -10,6 +11,7 @@ import { getBudgetGrid } from "@/server/budget/getBudgetGrid";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getUserSettings } from "@/server/userSettings";
+import { getDemoBudgetAdjustmentsForSession, parseDemoBudgetAdjustmentSessionCookie } from "@/server/demo/budgetAdjustments";
 import { getDemoBudgetGrid } from "@/server/demo/data";
 import { BudgetStreamDashboard } from "@/ui/charts/BudgetStreamDashboard";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
@@ -28,7 +30,19 @@ async function BudgetStreamData() {
   const monthTo = currentMonth;
 
   if (demo) {
-    const { rows } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
+    const cookieStore = await cookies();
+    const adjustments = getDemoBudgetAdjustmentsForSession(
+      parseDemoBudgetAdjustmentSessionCookie(
+        cookieStore.get(DEMO_BUDGET_ADJUSTMENTS_COOKIE)?.value ?? null,
+      ),
+    );
+    const { rows } = getDemoBudgetGrid(
+      monthFrom,
+      monthTo,
+      currentMonth,
+      currentMonth,
+      adjustments,
+    );
     return (
       <BudgetStreamDashboard
         initialRows={rows}

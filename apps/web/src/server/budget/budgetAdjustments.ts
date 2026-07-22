@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 import { budgetAdjustmentNoteSchema, categorySchema } from "@/server/api/validation";
-import { queryAs } from "@/server/db";
+import { queryAs, withUserContext } from "@/server/db";
+import type { QueryFn } from "@/server/db/contextRunner";
 
 export type BudgetAdjustmentDirection = "income" | "spend";
 
@@ -17,6 +18,7 @@ export type BudgetAdjustment = Readonly<{
 }>;
 
 export type CreateBudgetAdjustmentParams = Readonly<{
+  adjustmentId: string;
   month: string;
   direction: BudgetAdjustmentDirection;
   category: string;
@@ -60,6 +62,7 @@ const RETURNING_BUDGET_ADJUSTMENT = `
 
 export const CREATE_BUDGET_ADJUSTMENT_QUERY = `
   INSERT INTO budget_adjustments (
+    adjustment_id,
     workspace_id,
     budget_month,
     direction,
@@ -67,8 +70,17 @@ export const CREATE_BUDGET_ADJUSTMENT_QUERY = `
     amount,
     note
   )
-  VALUES ($1, to_date($2, 'YYYY-MM'), $3, $4, $5, $6)
+  VALUES ($2, $1, to_date($3, 'YYYY-MM'), $4, $5, $6, $7)
+  ON CONFLICT (adjustment_id) DO NOTHING
   RETURNING ${RETURNING_BUDGET_ADJUSTMENT}
+`;
+
+export const BUDGET_ADJUSTMENT_BY_ID_QUERY = `
+  SELECT
+    ${RETURNING_BUDGET_ADJUSTMENT}
+  FROM budget_adjustments
+  WHERE workspace_id = $1
+    AND adjustment_id = $2
 `;
 
 export const DELETE_BUDGET_ADJUSTMENT_QUERY = `
@@ -92,6 +104,13 @@ export class BudgetAdjustmentNotFoundError extends Error {
   public constructor(adjustmentId: string) {
     super(`Budget adjustment "${adjustmentId}" was not found`);
     this.name = "BudgetAdjustmentNotFoundError";
+  }
+}
+
+export class BudgetAdjustmentConflictError extends Error {
+  public constructor(adjustmentId: string) {
+    super(`Budget adjustment ID "${adjustmentId}" is already in use`);
+    this.name = "BudgetAdjustmentConflictError";
   }
 }
 
@@ -171,6 +190,54 @@ const mapCreatedAdjustment = (rows: ReadonlyArray<unknown>): BudgetAdjustment =>
   return mapBudgetAdjustmentRow(rows[0], "create budget adjustment");
 };
 
+export const budgetAdjustmentMatchesCreateParams = (
+  params: CreateBudgetAdjustmentParams,
+  adjustment: BudgetAdjustment,
+): boolean => params.adjustmentId === adjustment.adjustmentId
+  && params.month === adjustment.month
+  && params.direction === adjustment.direction
+  && params.category === adjustment.category
+  && params.amount === adjustment.amount
+  && params.note === adjustment.note;
+
+export const createBudgetAdjustmentWithQuery = async (
+  queryFn: QueryFn,
+  workspaceId: string,
+  params: CreateBudgetAdjustmentParams,
+): Promise<BudgetAdjustment> => {
+  const inserted = await queryFn(
+    CREATE_BUDGET_ADJUSTMENT_QUERY,
+    [
+      workspaceId,
+      params.adjustmentId,
+      params.month,
+      params.direction,
+      params.category,
+      params.amount,
+      params.note,
+    ],
+  );
+  if (inserted.rows.length > 0) return mapCreatedAdjustment(inserted.rows);
+
+  const existingResult = await queryFn(
+    BUDGET_ADJUSTMENT_BY_ID_QUERY,
+    [workspaceId, params.adjustmentId],
+  );
+  if (existingResult.rows.length === 1) {
+    const existing = mapBudgetAdjustmentRow(
+      existingResult.rows[0],
+      "existing budget adjustment after create conflict",
+    );
+    if (budgetAdjustmentMatchesCreateParams(params, existing)) return existing;
+  } else if (existingResult.rows.length > 1) {
+    throw new Error(
+      `Failed to resolve budget adjustment create conflict for "${params.adjustmentId}": expected at most one visible row, received ${existingResult.rows.length}`,
+    );
+  }
+
+  throw new BudgetAdjustmentConflictError(params.adjustmentId);
+};
+
 const mapExistingAdjustment = (
   rows: ReadonlyArray<unknown>,
   adjustmentId: string,
@@ -190,14 +257,12 @@ export const createBudgetAdjustment = async (
   workspaceId: string,
   params: CreateBudgetAdjustmentParams,
 ): Promise<BudgetAdjustment> => {
-  const result = await queryAs(
+  return withUserContext(
     userId,
     workspaceId,
-    CREATE_BUDGET_ADJUSTMENT_QUERY,
-    [workspaceId, params.month, params.direction, params.category, params.amount, params.note],
+    async (queryFn): Promise<BudgetAdjustment> =>
+      createBudgetAdjustmentWithQuery(queryFn, workspaceId, params),
   );
-
-  return mapCreatedAdjustment(result.rows);
 };
 
 export const patchBudgetAdjustment = async (

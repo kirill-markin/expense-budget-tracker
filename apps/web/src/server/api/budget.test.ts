@@ -6,6 +6,7 @@ import { parseBudgetAdjustmentCreateBody, parseBudgetAdjustmentId, parseBudgetAd
 import { ApiRouteError } from "@/server/api/errors";
 
 const SAFE_INTEGER_MESSAGE = /JavaScript-safe integer between -9007199254740991 and 9007199254740991, inclusive/;
+const ADJUSTMENT_ID = "6d09f70d-c767-4a43-9ab7-89559af99c41";
 
 const assertBadRequest = (run: () => unknown, message: RegExp): void => {
   assert.throws(
@@ -23,12 +24,14 @@ test("budget adjustment create accepts zero, signed integers, and nullable notes
   const month = getCurrentMonth();
 
   assert.deepEqual(parseBudgetAdjustmentCreateBody({
+    adjustmentId: ADJUSTMENT_ID,
     month,
     direction: "spend",
     category: "Groceries",
     amount: 0,
     note: null,
   }), {
+    adjustmentId: ADJUSTMENT_ID,
     month,
     direction: "spend",
     category: "Groceries",
@@ -37,6 +40,7 @@ test("budget adjustment create accepts zero, signed integers, and nullable notes
   });
 
   assert.equal(parseBudgetAdjustmentCreateBody({
+    adjustmentId: ADJUSTMENT_ID,
     month,
     direction: "income",
     category: "Bonus",
@@ -45,6 +49,7 @@ test("budget adjustment create accepts zero, signed integers, and nullable notes
   }).amount, -125);
 
   assert.equal(parseBudgetAdjustmentCreateBody({
+    adjustmentId: ADJUSTMENT_ID,
     month,
     direction: "income",
     category: "Maximum boundary",
@@ -52,6 +57,7 @@ test("budget adjustment create accepts zero, signed integers, and nullable notes
     note: null,
   }).amount, Number.MAX_SAFE_INTEGER);
   assert.equal(parseBudgetAdjustmentCreateBody({
+    adjustmentId: ADJUSTMENT_ID,
     month,
     direction: "spend",
     category: "Minimum boundary",
@@ -64,6 +70,7 @@ test("budget adjustment category and note limits count Unicode code points", ():
   const category = "\u{1F600}".repeat(200);
   const note = "\u{1F680}".repeat(2000);
   const valid = {
+    adjustmentId: ADJUSTMENT_ID,
     month: getCurrentMonth(),
     direction: "spend",
     category,
@@ -85,6 +92,7 @@ test("budget adjustment category and note limits count Unicode code points", ():
 
 test("budget adjustment create rejects past months, non-integers, and unknown fields", (): void => {
   const valid = {
+    adjustmentId: ADJUSTMENT_ID,
     month: getCurrentMonth(),
     direction: "spend",
     category: "Groceries",
@@ -92,6 +100,10 @@ test("budget adjustment create rejects past months, non-integers, and unknown fi
     note: null,
   } as const;
 
+  assertBadRequest(
+    () => parseBudgetAdjustmentCreateBody({ ...valid, adjustmentId: "not-a-uuid" }),
+    /Expected UUID/,
+  );
   assertBadRequest(
     () => parseBudgetAdjustmentCreateBody({ ...valid, month: offsetMonth(valid.month, -1) }),
     /current or future month/,

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { getCurrentMonth } from "@/lib/monthUtils";
 import { createBadRequestError } from "@/server/api/errors";
-import { adjustmentIdSchema, budgetAdjustmentNoteSchema, budgetPlanKindSchema, categorySchema, directionSchema, finiteIntegerSchema, finiteNumberSchema, monthSchema, parseRequiredQueryParam, parseWithSchema } from "@/server/api/validation";
+import { adjustmentIdSchema, adjustmentUuidSchema, budgetAdjustmentNoteSchema, budgetPlanKindSchema, categorySchema, directionSchema, finiteIntegerSchema, finiteNumberSchema, monthSchema, parseRequiredQueryParam, parseWithSchema } from "@/server/api/validation";
 import type { CreateBudgetAdjustmentParams, PatchBudgetAdjustmentParams } from "@/server/budget/budgetAdjustments";
 
 type BudgetPlanBody = Readonly<{
@@ -64,6 +64,7 @@ const currentOrFutureMonthSchema = monthSchema.superRefine((value, ctx) => {
 });
 
 const budgetAdjustmentCreateBodySchema = z.object({
+  adjustmentId: adjustmentUuidSchema,
   month: currentOrFutureMonthSchema,
   direction: directionSchema,
   category: categorySchema,

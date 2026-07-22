@@ -1,4 +1,5 @@
 import { fetchWithCsrf } from "@/lib/csrf";
+import { DEMO_MODE_COOKIE } from "@/lib/demoCookies";
 import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
 import type {
   BudgetAdjustment,
@@ -33,6 +34,36 @@ const budgetAdjustmentSchema: z.ZodType<BudgetAdjustment> = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).strict();
+
+const budgetAdjustmentUuidSchema = z.uuid();
+const DEMO_BUDGET_ADJUSTMENT_MUTATION_LOCK = "demo-budget-adjustment-session-cookie-mutation";
+
+const runBudgetAdjustmentMutation = <T>(
+  mutation: () => Promise<T>,
+): Promise<T> => {
+  const isDemoMode = typeof document !== "undefined"
+    && document.cookie.split(";").some((part): boolean =>
+      part.trim() === `${DEMO_MODE_COOKIE}=true`);
+  if (!isDemoMode) return mutation();
+
+  if (typeof navigator === "undefined" || navigator.locks === undefined) {
+    return Promise.reject(new Error(
+      "Cannot mutate demo budget adjustments: this browser does not support the Web Locks API required to serialize changes across tabs",
+    ));
+  }
+  return navigator.locks.request(
+    DEMO_BUDGET_ADJUSTMENT_MUTATION_LOCK,
+    mutation,
+  );
+};
+
+export const parseBudgetAdjustmentUuid = (input: unknown, context: string): string => {
+  const parsed = budgetAdjustmentUuidSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(`${context} must be a UUID: ${parsed.error.message}`);
+  }
+  return parsed.data;
+};
 
 export const parseBudgetAdjustment = (input: unknown, context: string): BudgetAdjustment => {
   const parsed = budgetAdjustmentSchema.safeParse(input);
@@ -76,6 +107,41 @@ export const readBudgetAdjustmentResponse = async (
   operation: string,
 ): Promise<BudgetAdjustment> =>
   readJsonResponse(response, operation, budgetAdjustmentSchema);
+
+export const readBudgetAdjustmentCreateResponse = async (
+  response: Response,
+  params: CreateBudgetAdjustmentParams,
+): Promise<BudgetAdjustment> => {
+  const adjustment = await readBudgetAdjustmentResponse(
+    response,
+    `Budget adjustment ${params.adjustmentId} create`,
+  );
+  if (adjustment.adjustmentId !== params.adjustmentId) {
+    throw new Error(
+      `Budget adjustment create response id "${adjustment.adjustmentId}" does not match requested id "${params.adjustmentId}"`,
+    );
+  }
+  if (adjustment.direction !== params.direction) {
+    throw new Error(
+      `Budget adjustment create response changed immutable direction for "${params.adjustmentId}" from ${params.direction} to ${adjustment.direction}`,
+    );
+  }
+  return adjustment;
+};
+
+export const serializeBudgetAdjustmentCreateParams = (
+  params: CreateBudgetAdjustmentParams,
+): string => JSON.stringify({
+  adjustmentId: parseBudgetAdjustmentUuid(
+    params.adjustmentId,
+    "Budget adjustment create adjustmentId",
+  ),
+  month: params.month,
+  direction: params.direction,
+  category: params.category,
+  amount: params.amount,
+  note: params.note,
+});
 
 /**
  * Reads the budget grid for the current client-visible range.
@@ -139,26 +205,30 @@ export const postBudgetPlanFill = async (params: {
 
 export const createBudgetAdjustment = async (
   params: CreateBudgetAdjustmentParams,
-): Promise<BudgetAdjustment> => {
-  const response = await fetchWithCsrf("/api/budget-adjustments", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  return readBudgetAdjustmentResponse(response, "Budget adjustment create");
-};
+): Promise<BudgetAdjustment> => runBudgetAdjustmentMutation(
+  async (): Promise<BudgetAdjustment> => {
+    const response = await fetchWithCsrf("/api/budget-adjustments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeBudgetAdjustmentCreateParams(params),
+    });
+    return readBudgetAdjustmentCreateResponse(response, params);
+  },
+);
 
 export const patchBudgetAdjustment = async (
   adjustmentId: string,
   params: PatchBudgetAdjustmentParams,
-): Promise<BudgetAdjustment> => {
-  const response = await fetchWithCsrf(`/api/budget-adjustments/${encodeURIComponent(adjustmentId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  return readBudgetAdjustmentResponse(response, `Budget adjustment ${adjustmentId} update`);
-};
+): Promise<BudgetAdjustment> => runBudgetAdjustmentMutation(
+  async (): Promise<BudgetAdjustment> => {
+    const response = await fetchWithCsrf(`/api/budget-adjustments/${encodeURIComponent(adjustmentId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    return readBudgetAdjustmentResponse(response, `Budget adjustment ${adjustmentId} update`);
+  },
+);
 
 export const readBudgetAdjustmentDeleteResponse = async (
   response: Response,
@@ -177,12 +247,14 @@ export const readBudgetAdjustmentDeleteResponse = async (
 
 export const deleteBudgetAdjustment = async (
   adjustmentId: string,
-): Promise<DeleteBudgetAdjustmentOutcome> => {
-  const response = await fetchWithCsrf(`/api/budget-adjustments/${encodeURIComponent(adjustmentId)}`, {
-    method: "DELETE",
-  });
-  return readBudgetAdjustmentDeleteResponse(response, adjustmentId);
-};
+): Promise<DeleteBudgetAdjustmentOutcome> => runBudgetAdjustmentMutation(
+  async (): Promise<DeleteBudgetAdjustmentOutcome> => {
+    const response = await fetchWithCsrf(`/api/budget-adjustments/${encodeURIComponent(adjustmentId)}`, {
+      method: "DELETE",
+    });
+    return readBudgetAdjustmentDeleteResponse(response, adjustmentId);
+  },
+);
 
 export const fetchComment = async (month: string, direction: string, category: string): Promise<string | null> => {
   const params = new URLSearchParams({ month, direction, category });
