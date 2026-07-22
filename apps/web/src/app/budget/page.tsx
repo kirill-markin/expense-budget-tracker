@@ -1,6 +1,7 @@
 import { Suspense } from "react";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 
+import { DEMO_BUDGET_ADJUSTMENTS_COOKIE } from "@/lib/demoCookies";
 import { offsetMonth, getCurrentMonth } from "@/lib/monthUtils";
 import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
@@ -11,6 +12,7 @@ import { getReportCurrency } from "@/server/reportCurrency";
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getFieldHints } from "@/server/transactions/getTransactions";
 import { getUserSettings } from "@/server/userSettings";
+import { getDemoBudgetAdjustmentsForSession, parseDemoBudgetAdjustmentSessionCookie } from "@/server/demo/budgetAdjustments";
 import { getDemoBudgetGrid, getDemoFieldHints } from "@/server/demo/data";
 import { BudgetTable } from "@/ui/tables/budget/BudgetTable";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
@@ -30,6 +32,12 @@ async function BudgetData() {
   const monthTo = offsetMonth(currentMonth, INITIAL_FUTURE_MONTHS);
 
   if (demo) {
+    const cookieStore = await cookies();
+    const adjustments = getDemoBudgetAdjustmentsForSession(
+      parseDemoBudgetAdjustmentSessionCookie(
+        cookieStore.get(DEMO_BUDGET_ADJUSTMENTS_COOKIE)?.value ?? null,
+      ),
+    );
     const {
       rows,
       conversionWarnings,
@@ -38,7 +46,13 @@ async function BudgetData() {
       monthEndBalancesByLiquidity,
       businessPersonalTransfers,
       hasBusinessAccount,
-    } = getDemoBudgetGrid(monthFrom, monthTo, currentMonth, currentMonth);
+    } = getDemoBudgetGrid(
+      monthFrom,
+      monthTo,
+      currentMonth,
+      currentMonth,
+      adjustments,
+    );
     const hints = getDemoFieldHints();
     return (
       <BudgetTable

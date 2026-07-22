@@ -6,7 +6,7 @@ import { ApiRouteError } from "@/server/api/errors";
 import { handleRoute } from "@/server/api/handleRoute";
 import { parseJsonBody } from "@/server/api/validation";
 import { BudgetAdjustmentNotFoundError, deleteBudgetAdjustment, patchBudgetAdjustment } from "@/server/budget/budgetAdjustments";
-import { deleteDemoBudgetAdjustment, patchDemoBudgetAdjustment } from "@/server/demo/budgetAdjustments";
+import { deleteDemoBudgetAdjustment, patchDemoBudgetAdjustment, readDemoBudgetAdjustmentSession, serializeDemoBudgetAdjustmentSessionCookie } from "@/server/demo/budgetAdjustments";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 type RouteContext = Readonly<{
@@ -32,7 +32,18 @@ export const PATCH = async (request: Request, context: RouteContext): Promise<Re
 
       try {
         if (isDemoModeFromRequest(request)) {
-          return Response.json(patchDemoBudgetAdjustment(adjustmentId, body));
+          const patched = patchDemoBudgetAdjustment(
+            readDemoBudgetAdjustmentSession(request),
+            adjustmentId,
+            body,
+            new Date().toISOString(),
+          );
+          const response = Response.json(patched.adjustment);
+          response.headers.set(
+            "Set-Cookie",
+            serializeDemoBudgetAdjustmentSessionCookie(patched.state),
+          );
+          return response;
         }
 
         const userId = extractUserId(request);
@@ -53,8 +64,16 @@ export const DELETE = async (request: Request, context: RouteContext): Promise<R
 
       try {
         if (isDemoModeFromRequest(request)) {
-          deleteDemoBudgetAdjustment(adjustmentId);
-          return Response.json({ ok: true });
+          const state = deleteDemoBudgetAdjustment(
+            readDemoBudgetAdjustmentSession(request),
+            adjustmentId,
+          );
+          const response = Response.json({ ok: true });
+          response.headers.set(
+            "Set-Cookie",
+            serializeDemoBudgetAdjustmentSessionCookie(state),
+          );
+          return response;
         }
 
         const userId = extractUserId(request);

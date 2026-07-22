@@ -10,6 +10,7 @@ import { createBadRequestError, fromZodError } from "@/server/api/errors";
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_SCHEMA = z.uuid();
 
 const addCustomIssue = (ctx: RefinementCtx, message: string): void => {
   ctx.addIssue({ code: "custom", message });
@@ -162,6 +163,14 @@ export const entryIdSchema: ZodType<string> = createStringSchema(
 export const adjustmentIdSchema: ZodType<string> = createStringSchema(
   (value: string): boolean => value.length > 0 && value.length <= 200,
   "Invalid adjustmentId. Expected non-empty string (max 200 chars)",
+);
+
+/**
+ * Accept a UUID supplied by a client when creating a budget adjustment.
+ */
+export const adjustmentUuidSchema: ZodType<string> = createStringSchema(
+  (value: string): boolean => UUID_SCHEMA.safeParse(value).success,
+  "Invalid adjustmentId. Expected UUID",
 );
 
 /**

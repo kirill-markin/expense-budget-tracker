@@ -13,7 +13,7 @@ import {
 
 import type { AccountSuggestion } from "@/server/accounts/getAccountSuggestions";
 import type { AccountRow, BalancesSummaryResult, CurrencyTotal } from "@/server/balances/getBalancesSummary";
-import type { BudgetAdjustment } from "@/server/budget/budgetAdjustments";
+import type { BudgetAdjustment, BudgetAdjustmentDirection } from "@/server/budget/budgetAdjustments";
 import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
 import type { FxBreakdownResult, FxBreakdownRow } from "@/server/budget/getFxBreakdown";
@@ -217,7 +217,6 @@ type DemoData = Readonly<{
   accounts: ReadonlyArray<AccountRow>;
   totals: ReadonlyArray<CurrencyTotal>;
   budgetRows: ReadonlyArray<BudgetRow>;
-  budgetAdjustments: ReadonlyArray<BudgetAdjustment>;
   monthEndBalances: Readonly<Record<string, number>>;
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, Readonly<{ actual: number; hasUnconvertible: boolean }>>>;
@@ -348,12 +347,6 @@ const generate = (): DemoData => {
 
   // Budget rows (past months with actuals + future months plan-only)
   const allBudgetMonths = [...pastMonths, ...Array.from({ length: FUTURE_MONTHS }, (_, i) => offsetMonth(now, i + 1))];
-  const budgetAdjustments = getDemoBudgetAdjustments();
-  const adjustmentTotals = new Map<string, number>();
-  for (const adjustment of budgetAdjustments) {
-    const key = `${adjustment.month}|${adjustment.direction}|${adjustment.category}`;
-    adjustmentTotals.set(key, (adjustmentTotals.get(key) ?? 0) + adjustment.amount);
-  }
   const budgetRows: Array<BudgetRow> = [];
   for (const month of allBudgetMonths) {
     const isPast = month <= now;
@@ -361,29 +354,11 @@ const generate = (): DemoData => {
       const key = `${month}|${bp.direction}|${bp.category}`;
       const raw = actuals.get(key) ?? 0;
       const actual = bp.direction === "spend" ? -raw : raw;
-      const plannedModifier = adjustmentTotals.get(key) ?? 0;
-      if (bp.planned === 0 && plannedModifier === 0 && actual === 0) continue;
+      if (bp.planned === 0 && actual === 0) continue;
       budgetRows.push({
         month, direction: bp.direction, category: bp.category,
-        plannedBase: bp.planned, plannedModifier, planned: bp.planned + plannedModifier,
+        plannedBase: bp.planned, plannedModifier: 0, planned: bp.planned,
         actual: isPast ? round2(actual) : 0, hasUnconvertible: false,
-      });
-    }
-    for (const [key, plannedModifier] of adjustmentTotals) {
-      const [adjustmentMonth, direction, category] = key.split("|");
-      if (adjustmentMonth !== month || budgetRows.some((row) =>
-        row.month === month && row.direction === direction && row.category === category)) {
-        continue;
-      }
-      budgetRows.push({
-        month,
-        direction,
-        category,
-        plannedBase: 0,
-        plannedModifier,
-        planned: plannedModifier,
-        actual: 0,
-        hasUnconvertible: false,
       });
     }
     budgetRows.push({
@@ -400,7 +375,6 @@ const generate = (): DemoData => {
     accounts,
     totals,
     budgetRows,
-    budgetAdjustments,
     monthEndBalances: monthEndBal,
     monthEndBalancesByLiquidity: monthEndBalByLiq,
     businessPersonalTransfers,
@@ -636,17 +610,106 @@ export const getDemoFieldHints = (): FieldHints => {
 // Budget grid
 // ---------------------------------------------------------------------------
 
+type DemoAdjustmentCellTotal = Readonly<{
+  month: string;
+  direction: BudgetAdjustmentDirection;
+  category: string;
+  total: bigint;
+}>;
+
+const getDemoAdjustmentCellKey = (
+  month: string,
+  direction: string,
+  category: string,
+): string => JSON.stringify([month, direction, category]);
+
+const toSafeDemoBudgetInteger = (value: bigint, context: string): number => {
+  const minimum = BigInt(Number.MIN_SAFE_INTEGER);
+  const maximum = BigInt(Number.MAX_SAFE_INTEGER);
+  if (value < minimum || value > maximum) {
+    throw new RangeError(`${context} is outside the JavaScript safe integer range: ${value.toString()}`);
+  }
+  return Number(value);
+};
+
+const addDemoPlannedValue = (
+  plannedBase: number,
+  plannedModifier: number,
+  context: string,
+): number => {
+  if (!Number.isFinite(plannedBase) || Math.abs(plannedBase) > Number.MAX_SAFE_INTEGER) {
+    throw new RangeError(`${context} base is outside the JavaScript safe numeric range: ${String(plannedBase)}`);
+  }
+  if (Number.isInteger(plannedBase)) {
+    return toSafeDemoBudgetInteger(
+      BigInt(plannedBase) + BigInt(plannedModifier),
+      `${context} planned value`,
+    );
+  }
+  const planned = plannedBase + plannedModifier;
+  if (!Number.isFinite(planned) || Math.abs(planned) > Number.MAX_SAFE_INTEGER) {
+    throw new RangeError(`${context} planned value is outside the JavaScript safe numeric range: ${String(planned)}`);
+  }
+  return planned;
+};
+
 export const getDemoBudgetGrid = (
   monthFrom: string,
   monthTo: string,
   _planFrom: string,
   _actualTo: string,
+  adjustments: ReadonlyArray<BudgetAdjustment>,
 ): BudgetGridResult => {
-  const { budgetRows, budgetAdjustments, monthEndBalances, monthEndBalancesByLiquidity, businessPersonalTransfers, hasBusinessAccount } = generate();
+  const { budgetRows, monthEndBalances, monthEndBalancesByLiquidity, businessPersonalTransfers, hasBusinessAccount } = generate();
   const months = new Set(generateMonthRange(monthFrom, monthTo));
+  const adjustmentTotals = new Map<string, DemoAdjustmentCellTotal>();
+  for (const adjustment of adjustments) {
+    if (!months.has(adjustment.month)) continue;
+    const key = getDemoAdjustmentCellKey(
+      adjustment.month,
+      adjustment.direction,
+      adjustment.category,
+    );
+    const previous = adjustmentTotals.get(key);
+    adjustmentTotals.set(key, {
+      month: adjustment.month,
+      direction: adjustment.direction,
+      category: adjustment.category,
+      total: (previous?.total ?? BigInt(0)) + BigInt(adjustment.amount),
+    });
+  }
+  const rows = budgetRows
+    .filter((row) => months.has(row.month))
+    .map((row): BudgetRow => {
+      if (row.direction === "transfer") return row;
+      const key = getDemoAdjustmentCellKey(row.month, row.direction, row.category);
+      const total = adjustmentTotals.get(key)?.total ?? BigInt(0);
+      const context = `Demo budget adjustment for ${row.month}/${row.direction}/${row.category}`;
+      const plannedModifier = toSafeDemoBudgetInteger(total, `${context} modifier`);
+      adjustmentTotals.delete(key);
+      return {
+        ...row,
+        plannedModifier,
+        planned: addDemoPlannedValue(row.plannedBase, plannedModifier, context),
+      };
+    });
+  for (const { month, direction, category, total } of adjustmentTotals.values()) {
+    const context = `Demo budget adjustment for ${month}/${direction}/${category}`;
+    const plannedModifier = toSafeDemoBudgetInteger(total, `${context} modifier`);
+    rows.push({
+      month,
+      direction,
+      category,
+      plannedBase: 0,
+      plannedModifier,
+      planned: plannedModifier,
+      actual: 0,
+      hasUnconvertible: false,
+    });
+  }
   return {
-    rows: budgetRows.filter((r) => months.has(r.month)),
-    adjustments: budgetAdjustments.filter((adjustment) => months.has(adjustment.month)),
+    rows,
+    adjustments: adjustments.filter((adjustment) => months.has(adjustment.month)),
     conversionWarnings: [],
     cumulativeBefore: { incomeActual: 0, spendActual: 0, transferActual: 0 },
     monthEndBalances,
