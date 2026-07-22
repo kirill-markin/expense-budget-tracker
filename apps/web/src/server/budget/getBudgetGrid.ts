@@ -1,18 +1,20 @@
 /**
  * Budget grid assembly for the budget dashboard.
  *
- * Runs six queries in true parallel (separate DB connections via queryAs):
- * 1. QUERY — planned (base + modifier) vs actual per month/direction/category,
- *    with FX conversion via exact-date joins on fx_rates_daily. Plan uses
- *    last-write-wins on inserted_at.
- * 2. CUMULATIVE_BALANCE — actual income/spend/transfer totals before the loaded
+ * Runs seven queries in true parallel (separate DB connections via queryAs):
+ * 1. QUERY — planned Base plus grouped normalized adjustments vs actual per
+ *    month/direction/category, with FX conversion via exact-date joins on
+ *    fx_rates_daily. Base uses last-write-wins on inserted_at.
+ * 2. BUDGET_ADJUSTMENTS_DETAIL_QUERY — normalized adjustment rows for the
+ *    loaded month range.
+ * 3. CUMULATIVE_BALANCE — actual income/spend/transfer totals before the loaded
  *    range, used as the Balance row starting point.
- * 3. WARNINGS — currencies missing exchange rates.
- * 4. MONTH_END_BALANCES — mark-to-market portfolio balance at each month-end,
+ * 4. WARNINGS — currencies missing exchange rates.
+ * 5. MONTH_END_BALANCES — mark-to-market portfolio balance at each month-end,
  *    used to anchor the Balance row and derive FX adjustments.
- * 5. BUSINESS_PERSONAL_TRANSFER — net transfer amount on the personal side of
+ * 6. BUSINESS_PERSONAL_TRANSFER — net transfer amount on the personal side of
  *    events crossing explicitly business and personal accounts.
- * 6. HAS_BUSINESS_ACCOUNT — whether the workspace has any explicit business
+ * 7. HAS_BUSINESS_ACCOUNT — whether the workspace has any explicit business
  *    account classification, used to show or hide the derived row.
  *
  * Performance notes:
@@ -26,6 +28,7 @@
  *   connection, serializing all queries despite Promise.all.
  */
 import { queryAs } from "@/server/db";
+import { BUDGET_ADJUSTMENTS_DETAIL_QUERY, mapBudgetAdjustmentRows, type BudgetAdjustment } from "@/server/budget/budgetAdjustments";
 import { getLatestFxCalendarDate } from "@/server/fxRates";
 import { getReportCurrency } from "@/server/reportCurrency";
 
@@ -65,6 +68,7 @@ export type BusinessPersonalTransferCell = Readonly<{
 
 export type BudgetGridResult = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
+  adjustments: ReadonlyArray<BudgetAdjustment>;
   conversionWarnings: ReadonlyArray<ConversionWarning>;
   cumulativeBefore: CumulativeBefore;
   /**
@@ -91,27 +95,49 @@ export type BudgetGridResult = Readonly<{
 }>;
 
 export const QUERY = `
-  WITH latest_plans AS (
+  WITH latest_base_plans AS (
     SELECT
-      budget_month, direction, category, kind, planned_value,
+      budget_month, direction, category, planned_value,
       ROW_NUMBER() OVER (
-        PARTITION BY budget_month, direction, category, kind
+        PARTITION BY budget_month, direction, category
         ORDER BY inserted_at DESC
       ) AS rn
     FROM budget_lines
-    WHERE budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
+    WHERE kind = 'base'
+      AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
       AND budget_month < to_date($3, 'YYYY-MM') + interval '1 month'
   ),
-  planned AS (
+  planned_base AS (
     SELECT
       to_char(budget_month, 'YYYY-MM') AS month,
       direction,
       category,
-      COALESCE(MAX(CASE WHEN kind = 'base' THEN planned_value::double precision END), 0) AS planned_base,
-      COALESCE(MAX(CASE WHEN kind = 'modifier' THEN planned_value::double precision END), 0) AS planned_modifier
-    FROM latest_plans
+      planned_value::double precision AS planned_base
+    FROM latest_base_plans
     WHERE rn = 1
+  ),
+  adjustments AS (
+    SELECT
+      to_char(budget_month, 'YYYY-MM') AS month,
+      direction,
+      category,
+      SUM(amount)::double precision AS planned_modifier
+    FROM budget_adjustments
+    WHERE workspace_id = current_setting('app.workspace_id', true)
+      AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
+      AND budget_month < (to_date($3, 'YYYY-MM') + interval '1 month')::date
     GROUP BY 1, 2, 3
+  ),
+  planned AS (
+    SELECT
+      COALESCE(base.month, adjustment.month) AS month,
+      COALESCE(base.direction, adjustment.direction) AS direction,
+      COALESCE(base.category, adjustment.category) AS category,
+      COALESCE(base.planned_base, 0) AS planned_base,
+      COALESCE(adjustment.planned_modifier, 0) AS planned_modifier
+    FROM planned_base base
+    FULL OUTER JOIN adjustments adjustment
+      USING (month, direction, category)
   ),
   actual AS (
     SELECT
@@ -214,7 +240,7 @@ const WARNINGS_QUERY = `
     FROM fx_rates_daily
   ),
   data_currencies AS (
-    SELECT DISTINCT currency FROM budget_lines
+    SELECT DISTINCT currency FROM budget_lines WHERE kind = 'base'
     UNION
     SELECT DISTINCT currency FROM ledger_entries
   ),
@@ -370,12 +396,13 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
   ]);
 
   // Each queryAs acquires its own connection from the pool and sets RLS context
-  // independently, so Promise.all runs all 4 queries on separate connections
+  // independently, so Promise.all runs all 7 queries on separate connections
   // in true DB-level parallel. The old withUserContext shared one connection,
   // which serialized all queries despite Promise.all (a single pg.Client can
   // only execute one query at a time).
   const [
     rowsResult,
+    adjustmentsResult,
     warningResult,
     cumulativeResult,
     balanceResult,
@@ -383,6 +410,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
     hasBusinessAccountResult,
   ] = await Promise.all([
     queryAs(userId, workspaceId, QUERY, [reportCurrency, monthFrom, monthTo, planFrom, actualTo]),
+    queryAs(userId, workspaceId, BUDGET_ADJUSTMENTS_DETAIL_QUERY, [workspaceId, monthFrom, monthTo]),
     queryAs(userId, workspaceId, WARNINGS_QUERY, [reportCurrency]),
     queryAs(userId, workspaceId, CUMULATIVE_BALANCE_QUERY, [reportCurrency, monthFrom]),
     queryAs(userId, workspaceId, MONTH_END_BALANCES_QUERY, [reportCurrency, monthFrom, actualTo, latestFxCalendarDate]),
@@ -427,6 +455,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
       actual: Number(row.actual),
       hasUnconvertible: row.has_unconvertible,
     })),
+    adjustments: mapBudgetAdjustmentRows(adjustmentsResult.rows, "budget grid adjustment details"),
     conversionWarnings: warningResult.rows.map((row: { currency: string }) => ({
       currency: row.currency,
       reason: `No exchange rates available for ${row.currency}`,

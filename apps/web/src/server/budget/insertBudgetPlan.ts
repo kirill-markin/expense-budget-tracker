@@ -8,7 +8,7 @@
 import { queryAs } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 
-type BudgetLineKind = "base" | "modifier";
+type BudgetLineKind = "base";
 
 type InsertBudgetPlanParams = Readonly<{
   month: string;

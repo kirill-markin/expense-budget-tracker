@@ -1,13 +1,15 @@
 import { z } from "zod";
 
+import { getCurrentMonth } from "@/lib/monthUtils";
 import { createBadRequestError } from "@/server/api/errors";
-import { budgetPlanKindSchema, categorySchema, directionSchema, finiteNumberSchema, monthSchema, parseRequiredQueryParam, parseWithSchema } from "@/server/api/validation";
+import { adjustmentIdSchema, budgetAdjustmentNoteSchema, budgetPlanKindSchema, categorySchema, directionSchema, finiteIntegerSchema, finiteNumberSchema, monthSchema, parseRequiredQueryParam, parseWithSchema } from "@/server/api/validation";
+import type { CreateBudgetAdjustmentParams, PatchBudgetAdjustmentParams } from "@/server/budget/budgetAdjustments";
 
 type BudgetPlanBody = Readonly<{
   month: string;
   direction: "income" | "spend";
   category: string;
-  kind: "base" | "modifier";
+  kind: "base";
   plannedValue: number;
 }>;
 
@@ -55,6 +57,30 @@ const budgetPlanBodySchema = z.object({
   plannedValue: finiteNumberSchema("plannedValue"),
 });
 
+const currentOrFutureMonthSchema = monthSchema.superRefine((value, ctx) => {
+  if (value < getCurrentMonth()) {
+    ctx.addIssue({ code: "custom", message: "Invalid month. Expected current or future month" });
+  }
+});
+
+const budgetAdjustmentCreateBodySchema = z.object({
+  month: currentOrFutureMonthSchema,
+  direction: directionSchema,
+  category: categorySchema,
+  amount: finiteIntegerSchema("amount"),
+  note: budgetAdjustmentNoteSchema,
+}).strict();
+
+const budgetAdjustmentPatchBodySchema = z.object({
+  amount: finiteIntegerSchema("amount").optional(),
+  note: budgetAdjustmentNoteSchema.optional(),
+  month: currentOrFutureMonthSchema.optional(),
+  category: categorySchema.optional(),
+}).strict().refine(
+  (value): boolean => Object.keys(value).length > 0,
+  { message: "Budget adjustment patch must include at least one editable field" },
+);
+
 const fromMonthSchema = z.unknown().superRefine((value, ctx) => {
   if (typeof value !== "string") {
     ctx.addIssue({ code: "custom", message: "Invalid fromMonth format. Expected YYYY-MM" });
@@ -98,6 +124,24 @@ export const parseBudgetPlanBody = (input: unknown): BudgetPlanBody =>
  */
 export const parseBudgetPlanFillBody = (input: unknown): BudgetPlanFillBody =>
   parseWithSchema(input, budgetPlanFillBodySchema);
+
+/**
+ * Validate the POST /api/budget-adjustments request body.
+ */
+export const parseBudgetAdjustmentCreateBody = (input: unknown): CreateBudgetAdjustmentParams =>
+  parseWithSchema(input, budgetAdjustmentCreateBodySchema);
+
+/**
+ * Validate the PATCH /api/budget-adjustments/[adjustmentId] request body.
+ */
+export const parseBudgetAdjustmentPatchBody = (input: unknown): PatchBudgetAdjustmentParams =>
+  parseWithSchema(input, budgetAdjustmentPatchBodySchema);
+
+/**
+ * Validate a budget adjustment route identifier.
+ */
+export const parseBudgetAdjustmentId = (input: unknown): string =>
+  parseWithSchema(input, adjustmentIdSchema);
 
 /**
  * Validate the GET /api/budget-comment query string.
