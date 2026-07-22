@@ -9,6 +9,7 @@ import { logBudgetTableError } from "@/ui/tables/budget/table/logBudgetTableErro
 
 export type BudgetTableYearTotalsState = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
+  invalidateYearTotals: (years: ReadonlySet<string>) => void;
   resetYearTotals: () => void;
 }>;
 
@@ -26,6 +27,21 @@ const getVisibleYearColumns = (
 ): ReadonlyArray<ColumnEntry> =>
   buildColumnSequence(generateMonthRange(loadedFrom, loadedTo)).filter((column) => column.kind === "year-total");
 
+export const removeInvalidatedYearFetchResults = (
+  previous: ReadonlyMap<string, YearFetchResult>,
+  years: ReadonlySet<string>,
+): ReadonlyMap<string, YearFetchResult> => {
+  const next = new Map(previous);
+  for (const year of years) {
+    next.delete(year);
+  }
+  return next;
+};
+
+export const snapshotYearTotalInvalidation = (
+  years: ReadonlySet<string>,
+): ReadonlySet<string> => new Set(years);
+
 export const useBudgetTableYearTotals = ({
   loadedFrom,
   loadedTo,
@@ -34,7 +50,8 @@ export const useBudgetTableYearTotals = ({
   refreshToken,
 }: UseBudgetTableYearTotalsParams): BudgetTableYearTotalsState => {
   const [yearFetchResults, setYearFetchResults] = useState<ReadonlyMap<string, YearFetchResult>>(new Map());
-  const yearFetchingRef = useRef<Set<string>>(new Set());
+  const yearFetchingRef = useRef<Map<string, number>>(new Map());
+  const yearRevisionRef = useRef<Map<string, number>>(new Map());
   const visibleYearColumns = useMemo<ReadonlyArray<ColumnEntry>>(
     () => getVisibleYearColumns(loadedFrom, loadedTo),
     [loadedFrom, loadedTo],
@@ -47,13 +64,17 @@ export const useBudgetTableYearTotals = ({
       }
 
       const { year } = column;
-      if (yearFetchResults.has(year) || yearFetchingRef.current.has(year)) {
+      const revision = yearRevisionRef.current.get(year) ?? 0;
+      if (yearFetchResults.has(year) || yearFetchingRef.current.get(year) === revision) {
         continue;
       }
 
-      yearFetchingRef.current.add(year);
+      yearFetchingRef.current.set(year, revision);
       fetchBudgetRange(`${year}-01`, `${year}-12`, `${year}-01`, currentMonth, refreshToken)
         .then((result) => {
+          if ((yearRevisionRef.current.get(year) ?? 0) !== revision) {
+            return;
+          }
           setYearFetchResults((previous) => new Map([
             ...previous,
             [
@@ -72,7 +93,9 @@ export const useBudgetTableYearTotals = ({
           logBudgetTableError(`year total background fetch for ${year}`, error);
         })
         .finally(() => {
-          yearFetchingRef.current.delete(year);
+          if (yearFetchingRef.current.get(year) === revision) {
+            yearFetchingRef.current.delete(year);
+          }
         });
     }
   }, [currentMonth, refreshToken, visibleYearColumns, yearFetchResults]);
@@ -97,13 +120,29 @@ export const useBudgetTableYearTotals = ({
     return result;
   }, [yearFetchResults, currentMonth, effectiveAllowlist]);
 
-  const resetYearTotals = useCallback((): void => {
-    setYearFetchResults(new Map());
-    yearFetchingRef.current.clear();
+  const invalidateYearTotals = useCallback((years: ReadonlySet<string>): void => {
+    const invalidatedYears = snapshotYearTotalInvalidation(years);
+    for (const year of invalidatedYears) {
+      yearRevisionRef.current.set(year, (yearRevisionRef.current.get(year) ?? 0) + 1);
+      yearFetchingRef.current.delete(year);
+    }
+    setYearFetchResults((previous) => removeInvalidatedYearFetchResults(previous, invalidatedYears));
   }, []);
+
+  const resetYearTotals = useCallback((): void => {
+    const years = new Set<string>([
+      ...yearFetchResults.keys(),
+      ...yearFetchingRef.current.keys(),
+      ...visibleYearColumns
+        .filter((column) => column.kind === "year-total")
+        .map((column) => column.kind === "year-total" ? column.year : ""),
+    ]);
+    invalidateYearTotals(years);
+  }, [invalidateYearTotals, visibleYearColumns, yearFetchResults]);
 
   return {
     yearComputed,
+    invalidateYearTotals,
     resetYearTotals,
   };
 };
