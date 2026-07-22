@@ -13,6 +13,7 @@ import {
 
 import type { AccountSuggestion } from "@/server/accounts/getAccountSuggestions";
 import type { AccountRow, BalancesSummaryResult, CurrencyTotal } from "@/server/balances/getBalancesSummary";
+import type { BudgetAdjustment } from "@/server/budget/budgetAdjustments";
 import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 import type { CommentedCell } from "@/server/budget/getCommentedCells";
 import type { FxBreakdownResult, FxBreakdownRow } from "@/server/budget/getFxBreakdown";
@@ -107,6 +108,44 @@ const BUDGET_PLAN: ReadonlyArray<Readonly<{ direction: string; category: string;
   { direction: "spend",  category: "Adjustment",       planned: 0 },
 ];
 
+const DEMO_ADJUSTMENT_TEMPLATES: ReadonlyArray<Readonly<{
+  adjustmentId: string;
+  monthOffset: number;
+  direction: "income" | "spend";
+  category: string;
+  amount: number;
+  note: string | null;
+  createdDay: number;
+}>> = [
+  {
+    adjustmentId: "demo-adjustment-groceries-seasonal",
+    monthOffset: 0,
+    direction: "spend",
+    category: "Groceries",
+    amount: 75,
+    note: "Seasonal groceries",
+    createdDay: 2,
+  },
+  {
+    adjustmentId: "demo-adjustment-groceries-discount",
+    monthOffset: 0,
+    direction: "spend",
+    category: "Groceries",
+    amount: -25,
+    note: null,
+    createdDay: 3,
+  },
+  {
+    adjustmentId: "demo-adjustment-travel-reserve",
+    monthOffset: 1,
+    direction: "spend",
+    category: "Travel reserve",
+    amount: 300,
+    note: "Weekend trip",
+    createdDay: 4,
+  },
+];
+
 const ACCOUNT_CURRENCIES: Readonly<Record<string, string>> = {
   "checking-usd": "USD", "checking-eur": "EUR", "checking-gbp": "GBP", "savings-usd": "USD",
 };
@@ -132,6 +171,31 @@ const vary = (month: string, idx: number, range: number): number =>
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+export const getDemoBudgetAdjustments = (): ReadonlyArray<BudgetAdjustment> => {
+  const currentMonth = getCurrentMonth();
+  return DEMO_ADJUSTMENT_TEMPLATES
+    .map((template): BudgetAdjustment => {
+      const month = offsetMonth(currentMonth, template.monthOffset);
+      const timestamp = `${month}-${String(template.createdDay).padStart(2, "0")}T09:00:00.000Z`;
+      return {
+        adjustmentId: template.adjustmentId,
+        month,
+        direction: template.direction,
+        category: template.category,
+        amount: template.amount,
+        note: template.note,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+    })
+    .sort((left, right): number =>
+      left.month.localeCompare(right.month)
+      || left.direction.localeCompare(right.direction)
+      || left.category.localeCompare(right.category)
+      || left.createdAt.localeCompare(right.createdAt)
+      || left.adjustmentId.localeCompare(right.adjustmentId));
+};
+
 const noteFor = (category: string, monthAbbr: string): string | null => {
   if (category === "Salary") return `${monthAbbr} salary`;
   if (category === "Rent") return `${monthAbbr} rent`;
@@ -153,6 +217,7 @@ type DemoData = Readonly<{
   accounts: ReadonlyArray<AccountRow>;
   totals: ReadonlyArray<CurrencyTotal>;
   budgetRows: ReadonlyArray<BudgetRow>;
+  budgetAdjustments: ReadonlyArray<BudgetAdjustment>;
   monthEndBalances: Readonly<Record<string, number>>;
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, Readonly<{ actual: number; hasUnconvertible: boolean }>>>;
@@ -283,6 +348,12 @@ const generate = (): DemoData => {
 
   // Budget rows (past months with actuals + future months plan-only)
   const allBudgetMonths = [...pastMonths, ...Array.from({ length: FUTURE_MONTHS }, (_, i) => offsetMonth(now, i + 1))];
+  const budgetAdjustments = getDemoBudgetAdjustments();
+  const adjustmentTotals = new Map<string, number>();
+  for (const adjustment of budgetAdjustments) {
+    const key = `${adjustment.month}|${adjustment.direction}|${adjustment.category}`;
+    adjustmentTotals.set(key, (adjustmentTotals.get(key) ?? 0) + adjustment.amount);
+  }
   const budgetRows: Array<BudgetRow> = [];
   for (const month of allBudgetMonths) {
     const isPast = month <= now;
@@ -290,11 +361,29 @@ const generate = (): DemoData => {
       const key = `${month}|${bp.direction}|${bp.category}`;
       const raw = actuals.get(key) ?? 0;
       const actual = bp.direction === "spend" ? -raw : raw;
-      if (bp.planned === 0 && actual === 0) continue;
+      const plannedModifier = adjustmentTotals.get(key) ?? 0;
+      if (bp.planned === 0 && plannedModifier === 0 && actual === 0) continue;
       budgetRows.push({
         month, direction: bp.direction, category: bp.category,
-        plannedBase: bp.planned, plannedModifier: 0, planned: bp.planned,
+        plannedBase: bp.planned, plannedModifier, planned: bp.planned + plannedModifier,
         actual: isPast ? round2(actual) : 0, hasUnconvertible: false,
+      });
+    }
+    for (const [key, plannedModifier] of adjustmentTotals) {
+      const [adjustmentMonth, direction, category] = key.split("|");
+      if (adjustmentMonth !== month || budgetRows.some((row) =>
+        row.month === month && row.direction === direction && row.category === category)) {
+        continue;
+      }
+      budgetRows.push({
+        month,
+        direction,
+        category,
+        plannedBase: 0,
+        plannedModifier,
+        planned: plannedModifier,
+        actual: 0,
+        hasUnconvertible: false,
       });
     }
     budgetRows.push({
@@ -311,6 +400,7 @@ const generate = (): DemoData => {
     accounts,
     totals,
     budgetRows,
+    budgetAdjustments,
     monthEndBalances: monthEndBal,
     monthEndBalancesByLiquidity: monthEndBalByLiq,
     businessPersonalTransfers,
@@ -552,10 +642,11 @@ export const getDemoBudgetGrid = (
   _planFrom: string,
   _actualTo: string,
 ): BudgetGridResult => {
-  const { budgetRows, monthEndBalances, monthEndBalancesByLiquidity, businessPersonalTransfers, hasBusinessAccount } = generate();
+  const { budgetRows, budgetAdjustments, monthEndBalances, monthEndBalancesByLiquidity, businessPersonalTransfers, hasBusinessAccount } = generate();
   const months = new Set(generateMonthRange(monthFrom, monthTo));
   return {
     rows: budgetRows.filter((r) => months.has(r.month)),
+    adjustments: budgetAdjustments.filter((adjustment) => months.has(adjustment.month)),
     conversionWarnings: [],
     cumulativeBefore: { incomeActual: 0, spendActual: 0, transferActual: 0 },
     monthEndBalances,

@@ -35,6 +35,15 @@ const createNullableStringSchema = (
     }
   }).transform((value): string | null => value as string | null);
 
+const hasCodePointLengthBetween = (
+  value: string,
+  minLength: number,
+  maxLength: number,
+): boolean => {
+  const length = Array.from(value).length;
+  return length >= minLength && length <= maxLength;
+};
+
 /**
  * Accept a calendar month string in YYYY-MM form.
  */
@@ -68,12 +77,12 @@ export const directionSchema: ZodType<"income" | "spend"> = createStringSchema(
 ) as ZodType<"income" | "spend">;
 
 /**
- * Accept a budget line kind: base or modifier.
+ * Accept the only writable budget line kind: base.
  */
-export const budgetPlanKindSchema: ZodType<"base" | "modifier"> = createStringSchema(
-  (value: string): boolean => value === "base" || value === "modifier",
-  "Invalid kind. Expected 'base' or 'modifier'",
-) as ZodType<"base" | "modifier">;
+export const budgetPlanKindSchema: ZodType<"base"> = createStringSchema(
+  (value: string): boolean => value === "base",
+  "Invalid kind. Expected 'base'",
+) as ZodType<"base">;
 
 /**
  * Accept a transaction kind: income, spend, or transfer.
@@ -87,8 +96,16 @@ export const transactionKindSchema: ZodType<"income" | "spend" | "transfer"> = c
  * Accept a non-empty category string up to 200 characters.
  */
 export const categorySchema: ZodType<string> = createStringSchema(
-  (value: string): boolean => value.length > 0 && value.length <= 200,
+  (value: string): boolean => hasCodePointLengthBetween(value, 1, 200),
   "Invalid category. Expected non-empty string (max 200 chars)",
+);
+
+/**
+ * Accept a nullable budget adjustment note up to 2000 Unicode code points.
+ */
+export const budgetAdjustmentNoteSchema: ZodType<string | null> = createNullableStringSchema(
+  (value: string): boolean => hasCodePointLengthBetween(value, 0, 2000),
+  "Invalid note. Expected string (max 2000 chars) or null",
 );
 
 /**
@@ -140,6 +157,14 @@ export const entryIdSchema: ZodType<string> = createStringSchema(
 );
 
 /**
+ * Accept a budget adjustment identifier string up to 200 characters.
+ */
+export const adjustmentIdSchema: ZodType<string> = createStringSchema(
+  (value: string): boolean => value.length > 0 && value.length <= 200,
+  "Invalid adjustmentId. Expected non-empty string (max 200 chars)",
+);
+
+/**
  * Accept an event identifier string up to 200 characters.
  */
 export const eventIdSchema: ZodType<string> = createStringSchema(
@@ -154,6 +179,16 @@ export const finiteNumberSchema = (fieldName: string): ZodType<number> =>
   z.unknown().superRefine((value, ctx) => {
     if (typeof value !== "number" || !Number.isFinite(value)) {
       addCustomIssue(ctx, `Invalid ${fieldName}. Expected finite number`);
+    }
+  }).transform((value): number => value as number);
+
+/**
+ * Accept a JavaScript-safe integer for the named field.
+ */
+export const finiteIntegerSchema = (fieldName: string): ZodType<number> =>
+  z.unknown().superRefine((value, ctx) => {
+    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value)) {
+      addCustomIssue(ctx, `Invalid ${fieldName}. Expected a JavaScript-safe integer between ${Number.MIN_SAFE_INTEGER} and ${Number.MAX_SAFE_INTEGER}, inclusive`);
     }
   }).transform((value): number => value as number);
 
