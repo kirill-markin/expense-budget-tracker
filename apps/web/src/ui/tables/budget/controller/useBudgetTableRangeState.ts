@@ -7,7 +7,7 @@ import {
   adjustCumulativeBeforeForPrependedRows,
   getTargetFillMonths,
 } from "@/ui/tables/budget/budgetTableLogic";
-import { fetchBudgetRange } from "@/ui/tables/budget/budgetTableApi";
+import type { BudgetAdjustmentRangeLoadOutcome } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import { logBudgetTableError } from "@/ui/tables/budget/table/logBudgetTableError";
 
 const BATCH_SIZE = 6;
@@ -21,11 +21,14 @@ type UseBudgetTableRangeStateParams = Readonly<{
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
   hasBusinessAccount: boolean;
-  currentMonth: string;
   refreshToken: string;
   fetchCommentRange: (monthFrom: string, monthTo: string) => void;
   reloadCommentRange: (monthFrom: string, monthTo: string) => void;
   onVisibleRangeRefreshStart: () => void;
+  loadBudgetRange: (
+    monthFrom: string,
+    monthTo: string,
+  ) => Promise<BudgetAdjustmentRangeLoadOutcome>;
 }>;
 
 export type BudgetTableRangeState = Readonly<{
@@ -162,11 +165,11 @@ export const useBudgetTableRangeState = ({
   monthEndBalancesByLiquidity,
   businessPersonalTransfers: initialBusinessPersonalTransfers,
   hasBusinessAccount: initialHasBusinessAccount,
-  currentMonth,
   refreshToken,
   fetchCommentRange,
   reloadCommentRange,
   onVisibleRangeRefreshStart,
+  loadBudgetRange,
 }: UseBudgetTableRangeStateParams): BudgetTableRangeState => {
   const [allRows, setAllRows] = useState<ReadonlyArray<BudgetRow>>(rows);
   const [loadedFrom, setLoadedFrom] = useState<string>(initialMonthFrom);
@@ -196,13 +199,15 @@ export const useBudgetTableRangeState = ({
     onVisibleRangeRefreshStart();
 
     try {
-      const result = await fetchBudgetRange(loadedFrom, loadedTo, currentMonth, currentMonth, refreshToken);
+      const outcome = await loadBudgetRange(loadedFrom, loadedTo);
+      if (outcome.status === "superseded") return;
+      const result = outcome.result;
       applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setHasBusinessAccount, result);
       reloadCommentRange(loadedFrom, loadedTo);
     } catch (error) {
       logBudgetTableError("visible range refresh", error);
     }
-  }, [currentMonth, loadedFrom, loadedTo, onVisibleRangeRefreshStart, refreshToken, reloadCommentRange]);
+  }, [loadBudgetRange, loadedFrom, loadedTo, onVisibleRangeRefreshStart, refreshToken, reloadCommentRange]);
 
   useEffect(() => {
     if (!initialRefreshHandledRef.current) {
@@ -248,7 +253,9 @@ export const useBudgetTableRangeState = ({
     const newFrom = offsetMonth(loadedFrom, -BATCH_SIZE);
 
     try {
-      const result = await fetchBudgetRange(newFrom, newTo, currentMonth, currentMonth, refreshToken);
+      const outcome = await loadBudgetRange(newFrom, newTo);
+      if (outcome.status === "superseded") return;
+      const result = outcome.result;
       const prependedRows = result.rows;
       setAllRows((previous) => [...prependedRows, ...previous]);
       setCumBefore((previous) => adjustCumulativeBeforeForPrependedRows(previous, prependedRows));
@@ -264,7 +271,7 @@ export const useBudgetTableRangeState = ({
       isLoadingLeftRef.current = false;
       setIsLoadingLeft(false);
     }
-  }, [currentMonth, fetchCommentRange, loadedFrom, refreshToken]);
+  }, [fetchCommentRange, loadBudgetRange, loadedFrom]);
 
   const loadRight = useCallback(async (): Promise<void> => {
     if (isLoadingRightRef.current) {
@@ -278,7 +285,9 @@ export const useBudgetTableRangeState = ({
     const newTo = offsetMonth(loadedTo, BATCH_SIZE);
 
     try {
-      const result = await fetchBudgetRange(newFrom, newTo, currentMonth, currentMonth, refreshToken);
+      const outcome = await loadBudgetRange(newFrom, newTo);
+      if (outcome.status === "superseded") return;
+      const result = outcome.result;
       setAllRows((previous) => [...previous, ...result.rows]);
       setLoadedTo(newTo);
       setMeb((previous) => ({ ...previous, ...result.monthEndBalances }));
@@ -292,7 +301,7 @@ export const useBudgetTableRangeState = ({
       isLoadingRightRef.current = false;
       setIsLoadingRight(false);
     }
-  }, [currentMonth, fetchCommentRange, loadedTo, refreshToken]);
+  }, [fetchCommentRange, loadBudgetRange, loadedTo]);
 
   return {
     allRows,
