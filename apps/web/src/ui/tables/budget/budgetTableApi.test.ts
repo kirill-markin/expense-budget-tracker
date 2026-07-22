@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { BudgetAdjustment, CreateBudgetAdjustmentParams } from "@/server/budget/budgetAdjustments";
 import {
+  BudgetAdjustmentApiError,
   createBudgetAdjustment,
   deleteBudgetAdjustment,
   patchBudgetAdjustment,
@@ -86,7 +87,13 @@ test("budget adjustment responses reject errors and malformed JSON with response
       new Response("upstream unavailable", { status: 503 }),
       "Budget adjustment create",
     ),
-    /Budget adjustment create failed: 503 upstream unavailable/,
+    (error: unknown): boolean => {
+      assert.ok(error instanceof BudgetAdjustmentApiError);
+      assert.equal(error.status, 503);
+      assert.equal(error.responseBody, "upstream unavailable");
+      assert.match(error.message, /Budget adjustment create failed: 503 upstream unavailable/);
+      return true;
+    },
   );
   await assert.rejects(
     readBudgetAdjustmentResponse(

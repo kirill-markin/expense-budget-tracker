@@ -77,6 +77,18 @@ const deleteBudgetAdjustmentResponseSchema = z.object({ ok: z.literal(true) }).s
 
 export type DeleteBudgetAdjustmentOutcome = "deleted" | "already-absent";
 
+export class BudgetAdjustmentApiError extends Error {
+  public readonly status: number;
+  public readonly responseBody: string;
+
+  public constructor(operation: string, status: number, responseBody: string) {
+    super(`${operation} failed: ${status} ${responseBody}`);
+    this.name = "BudgetAdjustmentApiError";
+    this.status = status;
+    this.responseBody = responseBody;
+  }
+}
+
 const readJsonResponse = async <T>(
   response: Response,
   operation: string,
@@ -84,7 +96,7 @@ const readJsonResponse = async <T>(
 ): Promise<T> => {
   const responseBody = await response.text();
   if (!response.ok) {
-    throw new Error(`${operation} failed: ${response.status} ${responseBody}`);
+    throw new BudgetAdjustmentApiError(operation, response.status, responseBody);
   }
 
   let payload: unknown;
