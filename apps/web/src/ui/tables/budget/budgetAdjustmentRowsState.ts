@@ -449,6 +449,27 @@ export const recordBudgetAdjustmentCellMove = (
   return next;
 };
 
+export const recordBudgetAdjustmentCellInvalidation = (
+  current: ReadonlyMap<string, number>,
+  direction: BudgetAdjustmentDirection,
+  snapshot: BudgetAdjustmentSnapshot,
+  mutationRevision: number,
+): ReadonlyMap<string, number> => {
+  validateRevision(mutationRevision, "Budget adjustment cell invalidation revision");
+  validateMonth(snapshot.month, "Budget adjustment cell invalidation month");
+  if (!isValidCategory(snapshot.category)) {
+    throw new RangeError(
+      "Budget adjustment cell invalidation category must contain between 1 and 200 characters",
+    );
+  }
+  const next = new Map(current);
+  next.set(
+    getBudgetAdjustmentCellKey(snapshot.month, direction, snapshot.category),
+    mutationRevision,
+  );
+  return next;
+};
+
 export const clearBudgetAdjustmentCellInvalidations = (
   current: ReadonlyMap<string, number>,
   monthFrom: string,
