@@ -510,6 +510,41 @@ export const addOptimisticBudgetAdjustmentRow = (
   };
 };
 
+export const discardOptimisticBudgetAdjustmentRow = (
+  state: BudgetAdjustmentRowsReconciliationState,
+  adjustmentId: string,
+): BudgetAdjustmentRowsReconciliationState => {
+  const optimistic = state.optimisticCreateByAdjustmentId.get(adjustmentId);
+  if (optimistic === undefined) {
+    throw new Error(
+      `Cannot discard budget adjustment "${adjustmentId}": the row is not optimistic`,
+    );
+  }
+  if (optimistic.status === "pending"
+    || state.latestCreateRequestIdByAdjustmentId.has(adjustmentId)) {
+    throw new Error(
+      `Cannot discard budget adjustment "${adjustmentId}" while its create request is pending`,
+    );
+  }
+  const optimisticCreateByAdjustmentId = new Map(
+    state.optimisticCreateByAdjustmentId,
+  );
+  optimisticCreateByAdjustmentId.delete(adjustmentId);
+  const rangeProvenanceByAdjustmentId = new Map(
+    state.rangeProvenanceByAdjustmentId,
+  );
+  rangeProvenanceByAdjustmentId.delete(adjustmentId);
+  const dirtyFieldsByAdjustmentId = new Map(state.dirtyFieldsByAdjustmentId);
+  dirtyFieldsByAdjustmentId.delete(adjustmentId);
+  return {
+    ...state,
+    rows: state.rows.filter((row): boolean => row.adjustmentId !== adjustmentId),
+    optimisticCreateByAdjustmentId,
+    rangeProvenanceByAdjustmentId,
+    dirtyFieldsByAdjustmentId,
+  };
+};
+
 export const replaceBudgetAdjustmentReconciliationDraft = (
   state: BudgetAdjustmentRowsReconciliationState,
   adjustmentId: string,
