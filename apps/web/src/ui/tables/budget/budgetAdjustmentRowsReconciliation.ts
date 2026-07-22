@@ -1,5 +1,6 @@
 import type {
   BudgetAdjustmentDirection,
+  CreateBudgetAdjustmentParams,
   PatchBudgetAdjustmentParams,
 } from "@/server/budget/budgetAdjustments";
 import {
@@ -9,11 +10,13 @@ import {
   replaceBudgetAdjustmentRangeDraft,
   createBudgetAdjustmentRangeReconciliationState,
   type BudgetAdjustmentRangeDirtyFields,
+  type BudgetAdjustmentRangeProvenance,
   type BudgetAdjustmentRangeReconciliationState,
   type BudgetAdjustmentRangeRequest as BaseRangeRequest,
 } from "@/ui/tables/budget/budgetAdjustmentRangeReconciliation";
 import {
   parseBudgetAdjustment,
+  parseBudgetAdjustmentUuid,
   type DeleteBudgetAdjustmentOutcome,
 } from "@/ui/tables/budget/budgetTableApi";
 import {
@@ -34,12 +37,23 @@ import {
 
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const RECENT_SETTLED_MUTATION_LIMIT = 8;
+const OPTIMISTIC_ROW_TIMESTAMP = "9999-12-31T23:59:59.999Z";
 
 export type BudgetAdjustmentRangeRequest = Readonly<{
   kind: "range";
   requestId: number;
   monthFrom: string;
   monthTo: string;
+  mutationRevision: number;
+}>;
+
+export type BudgetAdjustmentCreateRequest = Readonly<{
+  kind: "create";
+  requestId: number;
+  adjustmentId: string;
+  direction: BudgetAdjustmentDirection;
+  draft: BudgetAdjustmentDraft;
+  params: CreateBudgetAdjustmentParams;
   mutationRevision: number;
 }>;
 
@@ -64,7 +78,10 @@ export type BudgetAdjustmentDeleteRequest = Readonly<{
   mutationRevision: number;
 }>;
 
-export type BudgetAdjustmentMutationRequest = BudgetAdjustmentPatchRequest | BudgetAdjustmentDeleteRequest;
+export type BudgetAdjustmentMutationRequest =
+  BudgetAdjustmentCreateRequest
+  | BudgetAdjustmentPatchRequest
+  | BudgetAdjustmentDeleteRequest;
 
 export type BudgetAdjustmentReconciliationRequest = BudgetAdjustmentRangeRequest | BudgetAdjustmentMutationRequest;
 
@@ -72,6 +89,12 @@ export type BudgetAdjustmentAmbiguousRangeRequirement = Readonly<{
   afterRequestId: number;
   sourceMonth: string;
   targetMonth: string;
+}>;
+
+export type BudgetAdjustmentOptimisticCreate = Readonly<{
+  status: "ready" | "pending" | "failed";
+  draft: BudgetAdjustmentDraft;
+  params: CreateBudgetAdjustmentParams;
 }>;
 
 export type BudgetAdjustmentRowsReconciliationState =
@@ -85,7 +108,10 @@ export type BudgetAdjustmentRowsReconciliationState =
     rangeInvalidationRequestIdByCellKey: ReadonlyMap<string, number>;
     mutationRequestsById: ReadonlyMap<number, BudgetAdjustmentMutationRequest>;
     settledMutationRequestIds: ReadonlySet<number>;
+    appliedCreateRequestIds: ReadonlySet<number>;
     appliedDeleteRequestIds: ReadonlySet<number>;
+    optimisticCreateByAdjustmentId: ReadonlyMap<string, BudgetAdjustmentOptimisticCreate>;
+    latestCreateRequestIdByAdjustmentId: ReadonlyMap<string, number>;
     latestPatchRequestIdByAdjustmentId: ReadonlyMap<string, number>;
     latestDeleteRequestIdByAdjustmentId: ReadonlyMap<string, number>;
     ambiguousRangeRequirementByAdjustmentId: ReadonlyMap<string, BudgetAdjustmentAmbiguousRangeRequirement>;
@@ -100,6 +126,11 @@ export type IssuedBudgetAdjustmentRequest<Request extends BudgetAdjustmentReconc
 export type BudgetAdjustmentPatchAcknowledgement = Readonly<{
   state: BudgetAdjustmentRowsReconciliationState;
   outcome: "accepted" | "stale";
+}>;
+
+export type BudgetAdjustmentCreateAcknowledgement = Readonly<{
+  state: BudgetAdjustmentRowsReconciliationState;
+  outcome: "accepted" | "already-applied" | "stale";
 }>;
 
 export type BudgetAdjustmentDeleteAcknowledgement = Readonly<{
@@ -148,6 +179,18 @@ const paramsEqual = (
   && left.month === right.month
   && left.category === right.category;
 
+const createParamsEqual = (
+  left: CreateBudgetAdjustmentParams,
+  right: CreateBudgetAdjustmentParams,
+): boolean => Object.keys(left).length === 6
+  && Object.keys(right).length === 6
+  && left.adjustmentId === right.adjustmentId
+  && left.month === right.month
+  && left.direction === right.direction
+  && left.category === right.category
+  && left.amount === right.amount
+  && left.note === right.note;
+
 const mutationRequestsEqual = (
   left: BudgetAdjustmentMutationRequest,
   right: BudgetAdjustmentMutationRequest,
@@ -160,6 +203,10 @@ const mutationRequestsEqual = (
     || left.mutationRevision !== right.mutationRevision
     || Object.keys(left).length !== Object.keys(right).length
   ) return false;
+  if (left.kind === "create" && right.kind === "create") {
+    return draftsEqual(left.draft, right.draft)
+      && createParamsEqual(left.params, right.params);
+  }
   if (left.kind === "patch" && right.kind === "patch") {
     return draftsEqual(left.draft, right.draft)
       && snapshotsEqual(left.requested, right.requested)
@@ -257,9 +304,17 @@ const pruneMutationLifecycle = (
   }
   const appliedDeleteRequestIds = new Set([...state.appliedDeleteRequestIds]
     .filter((requestId): boolean => state.mutationRequestsById.has(requestId)));
+  const appliedCreateRequestIds = new Set([...state.appliedCreateRequestIds]
+    .filter((requestId): boolean => state.mutationRequestsById.has(requestId)));
   if (deletedMutationRevisionById.size === state.deletedMutationRevisionById.size
+    && appliedCreateRequestIds.size === state.appliedCreateRequestIds.size
     && appliedDeleteRequestIds.size === state.appliedDeleteRequestIds.size) return state;
-  return { ...state, deletedMutationRevisionById, appliedDeleteRequestIds };
+  return {
+    ...state,
+    deletedMutationRevisionById,
+    appliedCreateRequestIds,
+    appliedDeleteRequestIds,
+  };
 };
 
 const settleMutationRequest = (
@@ -360,11 +415,98 @@ export const createBudgetAdjustmentRowsReconciliationState = (
     rangeInvalidationRequestIdByCellKey: new Map(),
     mutationRequestsById: new Map(),
     settledMutationRequestIds: new Set(),
+    appliedCreateRequestIds: new Set(),
     appliedDeleteRequestIds: new Set(),
+    optimisticCreateByAdjustmentId: new Map(),
+    latestCreateRequestIdByAdjustmentId: new Map(),
     latestPatchRequestIdByAdjustmentId: new Map(),
     latestDeleteRequestIdByAdjustmentId: new Map(),
     ambiguousRangeRequirementByAdjustmentId: new Map(),
     rangeMutationRevisionByRequestId: new Map(),
+  };
+};
+
+const createOptimisticRangeProvenance = (
+  direction: BudgetAdjustmentDirection,
+  month: string,
+  requestId: number,
+): BudgetAdjustmentRangeProvenance => ({
+  direction,
+  presenceRequestIdByMonth: new Map([[month, requestId]]),
+  absenceRequestIdByMonth: new Map(),
+  deletedThroughRequestId: null,
+});
+
+export const addOptimisticBudgetAdjustmentRow = (
+  state: BudgetAdjustmentRowsReconciliationState,
+  adjustmentId: string,
+  month: string,
+  direction: BudgetAdjustmentDirection,
+  category: string,
+): BudgetAdjustmentRowsReconciliationState => {
+  const parsedAdjustmentId = parseBudgetAdjustmentUuid(
+    adjustmentId,
+    "Optimistic budget adjustment ID",
+  );
+  if (direction !== "income" && direction !== "spend") {
+    throw new Error(
+      `Cannot add optimistic budget adjustment "${parsedAdjustmentId}": direction must be income or spend`,
+    );
+  }
+  if (state.rows.some((row) => row.adjustmentId === parsedAdjustmentId)) {
+    throw new Error(
+      `Cannot add optimistic budget adjustment "${parsedAdjustmentId}": the ID already exists`,
+    );
+  }
+
+  const draft: BudgetAdjustmentDraft = {
+    amountInput: "",
+    noteInput: "",
+    month,
+    category,
+  };
+  const parsed = parseBudgetAdjustmentDraft(draft, state.planFrom);
+  if (!parsed.ok) {
+    throw new Error(
+      `Cannot add optimistic budget adjustment "${parsedAdjustmentId}": ${parsed.error.message}`,
+    );
+  }
+  const params: CreateBudgetAdjustmentParams = {
+    adjustmentId: parsedAdjustmentId,
+    month: parsed.snapshot.month,
+    direction,
+    category: parsed.snapshot.category,
+    amount: parsed.snapshot.amount,
+    note: parsed.snapshot.note,
+  };
+  const row: BudgetAdjustmentEditorRow = {
+    adjustmentId: parsedAdjustmentId,
+    direction,
+    draft: { ...draft },
+    confirmed: { ...parsed.snapshot },
+    createdAt: OPTIMISTIC_ROW_TIMESTAMP,
+    updatedAt: OPTIMISTIC_ROW_TIMESTAMP,
+  };
+  const optimisticCreateByAdjustmentId = new Map(
+    state.optimisticCreateByAdjustmentId,
+  );
+  optimisticCreateByAdjustmentId.set(parsedAdjustmentId, {
+    status: "ready",
+    draft: { ...draft },
+    params: { ...params },
+  });
+  const rangeProvenanceByAdjustmentId = new Map(
+    state.rangeProvenanceByAdjustmentId,
+  );
+  rangeProvenanceByAdjustmentId.set(
+    parsedAdjustmentId,
+    createOptimisticRangeProvenance(direction, month, state.latestRequestId),
+  );
+  return {
+    ...state,
+    rows: sortBudgetAdjustmentRows([...state.rows, row]),
+    optimisticCreateByAdjustmentId,
+    rangeProvenanceByAdjustmentId,
   };
 };
 
@@ -471,6 +613,57 @@ export const reconcileBudgetAdjustmentRangeFailure = (
   });
 };
 
+export const issueBudgetAdjustmentCreateRequest = (
+  state: BudgetAdjustmentRowsReconciliationState,
+  adjustmentId: string,
+): IssuedBudgetAdjustmentRequest<BudgetAdjustmentCreateRequest> => {
+  const row = requireRow(state, adjustmentId, "create");
+  const optimistic = state.optimisticCreateByAdjustmentId.get(adjustmentId);
+  if (optimistic === undefined) {
+    throw new Error(
+      `Cannot create budget adjustment "${adjustmentId}": the row is not optimistic`,
+    );
+  }
+  if (optimistic.status === "pending") {
+    throw new Error(
+      `Cannot issue a second create for budget adjustment "${adjustmentId}" while its create request is pending`,
+    );
+  }
+  if (row.direction !== optimistic.params.direction) {
+    throw new Error(
+      `Cannot create budget adjustment "${adjustmentId}": row direction does not match its immutable create payload`,
+    );
+  }
+  const request: BudgetAdjustmentCreateRequest = {
+    kind: "create",
+    requestId: getNextMutationRequestId(state),
+    adjustmentId,
+    direction: row.direction,
+    draft: { ...optimistic.draft },
+    params: { ...optimistic.params },
+    mutationRevision: state.latestMutationRevision,
+  };
+  const optimisticCreateByAdjustmentId = new Map(
+    state.optimisticCreateByAdjustmentId,
+  );
+  optimisticCreateByAdjustmentId.set(adjustmentId, {
+    ...optimistic,
+    status: "pending",
+  });
+  const latestCreateRequestIdByAdjustmentId = new Map(
+    state.latestCreateRequestIdByAdjustmentId,
+  );
+  latestCreateRequestIdByAdjustmentId.set(adjustmentId, request.requestId);
+  return {
+    state: {
+      ...addMutationRequest(state, request),
+      optimisticCreateByAdjustmentId,
+      latestCreateRequestIdByAdjustmentId,
+    },
+    request,
+  };
+};
+
 export const buildBudgetAdjustmentPatch = (
   requested: BudgetAdjustmentSnapshot,
   baseline: BudgetAdjustmentSnapshot,
@@ -499,6 +692,12 @@ export const issueBudgetAdjustmentPatchRequest = (
   adjustmentId: string,
 ): IssuedBudgetAdjustmentRequest<BudgetAdjustmentPatchRequest> => {
   const row = requireRow(state, adjustmentId, "patch");
+  const optimisticCreate = state.optimisticCreateByAdjustmentId.get(adjustmentId);
+  if (optimisticCreate !== undefined) {
+    throw new Error(
+      `Cannot patch budget adjustment "${adjustmentId}" until its create request is acknowledged; create status is ${optimisticCreate.status}`,
+    );
+  }
   if (state.latestDeleteRequestIdByAdjustmentId.has(adjustmentId)) {
     throw new Error(`Cannot patch budget adjustment "${adjustmentId}" while its delete request is pending`);
   }
@@ -547,6 +746,12 @@ export const issueBudgetAdjustmentDeleteRequest = (
   adjustmentId: string,
 ): IssuedBudgetAdjustmentRequest<BudgetAdjustmentDeleteRequest> => {
   const row = requireRow(state, adjustmentId, "delete");
+  const optimisticCreate = state.optimisticCreateByAdjustmentId.get(adjustmentId);
+  if (optimisticCreate !== undefined) {
+    throw new Error(
+      `Cannot delete budget adjustment "${adjustmentId}" until its create request is acknowledged; create status is ${optimisticCreate.status}`,
+    );
+  }
   if (state.latestPatchRequestIdByAdjustmentId.has(adjustmentId)) {
     throw new Error(`Cannot delete budget adjustment "${adjustmentId}" while its patch request is pending`);
   }
@@ -585,6 +790,7 @@ const getRangeProtectedIds = (
   resolvedAmbiguityIds: ReadonlySet<string>,
 ): ReadonlySet<string> => {
   const ids = new Set<string>();
+  for (const adjustmentId of state.optimisticCreateByAdjustmentId.keys()) ids.add(adjustmentId);
   for (const adjustmentId of state.latestPatchRequestIdByAdjustmentId.keys()) ids.add(adjustmentId);
   for (const adjustmentId of state.latestDeleteRequestIdByAdjustmentId.keys()) ids.add(adjustmentId);
   for (const [adjustmentId, revision] of state.confirmedMutationRevisionById) {
@@ -757,6 +963,182 @@ export const reconcileBudgetAdjustmentRangeResponse = (
       rangeState,
     ),
   });
+};
+
+const rebaseDraftAfterCreate = (
+  row: BudgetAdjustmentEditorRow,
+  request: BudgetAdjustmentCreateRequest,
+  confirmed: BudgetAdjustmentSnapshot,
+): BudgetAdjustmentDraft => {
+  const amount = parseBudgetAdjustmentAmount(row.draft.amountInput);
+  const hasNewerAmount = !amount.ok || amount.amount !== request.params.amount;
+  return {
+    amountInput: hasNewerAmount
+      ? row.draft.amountInput
+      : request.params.amount === confirmed.amount
+        ? row.draft.amountInput
+        : String(confirmed.amount),
+    noteInput: budgetAdjustmentNoteFromInput(row.draft.noteInput) !== request.params.note
+      ? row.draft.noteInput
+      : budgetAdjustmentNoteToInput(confirmed.note),
+    month: row.draft.month !== request.params.month ? row.draft.month : confirmed.month,
+    category: row.draft.category !== request.params.category
+      ? row.draft.category
+      : confirmed.category,
+  };
+};
+
+export const reconcileBudgetAdjustmentCreateAcknowledgement = (
+  state: BudgetAdjustmentRowsReconciliationState,
+  request: BudgetAdjustmentCreateRequest,
+  input: unknown,
+): BudgetAdjustmentCreateAcknowledgement => {
+  const issued = requireMutationRequest(state, request, "create");
+  const adjustment = parseBudgetAdjustment(input, "Budget adjustment create acknowledgement");
+  if (adjustment.adjustmentId !== issued.adjustmentId) {
+    throw new Error(
+      `Budget adjustment create acknowledgement id "${adjustment.adjustmentId}" does not match requested id "${issued.adjustmentId}"`,
+    );
+  }
+  if (adjustment.direction !== issued.direction) {
+    throw new Error(
+      `Budget adjustment create acknowledgement changed immutable direction for "${issued.adjustmentId}" from ${issued.direction} to ${adjustment.direction}`,
+    );
+  }
+  if (state.settledMutationRequestIds.has(issued.requestId)) {
+    const alreadyApplied = state.appliedCreateRequestIds.has(issued.requestId)
+      && state.rows.some((row) => row.adjustmentId === issued.adjustmentId);
+    return { state, outcome: alreadyApplied ? "already-applied" : "stale" };
+  }
+  const isStale = state.latestCreateRequestIdByAdjustmentId.get(issued.adjustmentId)
+    !== issued.requestId
+    || (state.confirmedMutationRevisionById.get(issued.adjustmentId) ?? 0)
+      > issued.mutationRevision
+    || (state.deletedMutationRevisionById.get(issued.adjustmentId) ?? 0)
+      > issued.mutationRevision;
+  if (isStale) {
+    return { state: settleMutationRequest(state, issued.requestId), outcome: "stale" };
+  }
+  const optimistic = state.optimisticCreateByAdjustmentId.get(issued.adjustmentId);
+  if (
+    optimistic === undefined
+    || optimistic.status !== "pending"
+    || !draftsEqual(optimistic.draft, issued.draft)
+    || !createParamsEqual(optimistic.params, issued.params)
+  ) {
+    throw new Error(
+      `Cannot acknowledge create for "${issued.adjustmentId}": optimistic create state does not match the request`,
+    );
+  }
+  const row = requireRow(state, issued.adjustmentId, "acknowledge create for");
+  if (row.direction !== issued.direction) {
+    throw new Error(
+      `Cannot acknowledge create for "${issued.adjustmentId}": row direction does not match the request`,
+    );
+  }
+
+  const canonical = createBudgetAdjustmentEditorRow(adjustment);
+  const reconciled: BudgetAdjustmentEditorRow = {
+    ...canonical,
+    draft: rebaseDraftAfterCreate(row, issued, canonical.confirmed),
+  };
+  const latestMutationRevision = getNextMutationRevision(state);
+  const confirmedMutationRevisionById = new Map(state.confirmedMutationRevisionById);
+  confirmedMutationRevisionById.set(issued.adjustmentId, latestMutationRevision);
+  const deletedMutationRevisionById = new Map(state.deletedMutationRevisionById);
+  deletedMutationRevisionById.delete(issued.adjustmentId);
+  const appliedCreateRequestIds = new Set(state.appliedCreateRequestIds);
+  appliedCreateRequestIds.add(issued.requestId);
+  const optimisticCreateByAdjustmentId = new Map(
+    state.optimisticCreateByAdjustmentId,
+  );
+  optimisticCreateByAdjustmentId.delete(issued.adjustmentId);
+  const latestCreateRequestIdByAdjustmentId = new Map(
+    state.latestCreateRequestIdByAdjustmentId,
+  );
+  latestCreateRequestIdByAdjustmentId.delete(issued.adjustmentId);
+  const rows = sortBudgetAdjustmentRows(state.rows.map((candidate): BudgetAdjustmentEditorRow =>
+    candidate.adjustmentId === issued.adjustmentId ? reconciled : candidate));
+  const rangeProvenanceByAdjustmentId = new Map(state.rangeProvenanceByAdjustmentId);
+  rangeProvenanceByAdjustmentId.set(
+    issued.adjustmentId,
+    createOptimisticRangeProvenance(
+      issued.direction,
+      canonical.confirmed.month,
+      state.latestRequestId,
+    ),
+  );
+  const next = settleMutationRequest({
+    ...state,
+    rows,
+    latestMutationRevision,
+    confirmedMutationRevisionById,
+    deletedMutationRevisionById,
+    appliedCreateRequestIds,
+    optimisticCreateByAdjustmentId,
+    latestCreateRequestIdByAdjustmentId,
+    rangeProvenanceByAdjustmentId,
+    dirtyFieldsByAdjustmentId: replaceDirtyFields(
+      state.dirtyFieldsByAdjustmentId,
+      reconciled,
+    ),
+    cellInvalidationRevisionByKey: recordBudgetAdjustmentCellInvalidation(
+      state.cellInvalidationRevisionByKey,
+      issued.direction,
+      canonical.confirmed,
+      latestMutationRevision,
+    ),
+  }, issued.requestId);
+  return { state: next, outcome: "accepted" };
+};
+
+export const reconcileBudgetAdjustmentCreateFailure = (
+  state: BudgetAdjustmentRowsReconciliationState,
+  request: BudgetAdjustmentCreateRequest,
+): BudgetAdjustmentRowsReconciliationState => {
+  const issued = requireMutationRequest(state, request, "create");
+  if (state.settledMutationRequestIds.has(issued.requestId)) {
+    throw new Error(`Cannot fail settled budget adjustment create request ${issued.requestId}`);
+  }
+  if (state.latestCreateRequestIdByAdjustmentId.get(issued.adjustmentId)
+    !== issued.requestId) {
+    throw new Error(
+      `Cannot fail budget adjustment create request ${issued.requestId}: it is not pending for "${issued.adjustmentId}"`,
+    );
+  }
+  const optimistic = state.optimisticCreateByAdjustmentId.get(issued.adjustmentId);
+  if (
+    optimistic === undefined
+    || optimistic.status !== "pending"
+    || !draftsEqual(optimistic.draft, issued.draft)
+    || !createParamsEqual(optimistic.params, issued.params)
+  ) {
+    throw new Error(
+      `Cannot fail create for "${issued.adjustmentId}": optimistic create state does not match the request`,
+    );
+  }
+  const row = requireRow(state, issued.adjustmentId, "fail create for");
+  if (row.direction !== issued.direction) {
+    throw new Error(
+      `Cannot fail create for "${issued.adjustmentId}": row direction does not match the request`,
+    );
+  }
+  const optimisticCreateByAdjustmentId = new Map(
+    state.optimisticCreateByAdjustmentId,
+  );
+  optimisticCreateByAdjustmentId.set(issued.adjustmentId, {
+    ...optimistic,
+    status: "failed",
+  });
+  const latestCreateRequestIdByAdjustmentId = new Map(
+    state.latestCreateRequestIdByAdjustmentId,
+  );
+  latestCreateRequestIdByAdjustmentId.delete(issued.adjustmentId);
+  return settleMutationRequest({
+    ...state,
+    optimisticCreateByAdjustmentId,
+    latestCreateRequestIdByAdjustmentId,
+  }, issued.requestId);
 };
 
 const rebaseDraftAfterPatch = (
