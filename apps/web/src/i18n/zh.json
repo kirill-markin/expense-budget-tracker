@@ -221,6 +221,7 @@
   "budget.actual": "实际",
   "budget.openPlanEditor": "编辑 {{month}} 的“{{category}}”预算，计划金额 {{amount}}",
   "budget.popoverBase": "基础值",
+  "budget.baseSaveFailed": "无法保存基础金额。请重试。",
   "budget.popoverTotal": "总计",
   "budget.popoverFill": "应用到后续月份 →",
   "budget.adjustments": "调整项",

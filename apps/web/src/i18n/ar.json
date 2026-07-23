@@ -221,6 +221,7 @@
   "budget.actual": "الفعلي",
   "budget.openPlanEditor": "تعديل ميزانية {{category}} لشهر {{month}}، المبلغ المخطط {{amount}}",
   "budget.popoverBase": "الأساس",
+  "budget.baseSaveFailed": "تعذر حفظ المبلغ الأساسي. حاول مرة أخرى.",
   "budget.popoverTotal": "المجموع",
   "budget.popoverFill": "ملء الأشهر →",
   "budget.adjustments": "التعديلات",

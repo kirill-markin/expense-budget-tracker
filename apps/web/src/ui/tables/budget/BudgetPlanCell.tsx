@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -24,6 +25,12 @@ import { postBudgetPlan, postBudgetPlanFill } from "@/ui/tables/budget/budgetTab
 import { formatAmount, isDecember } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
+import {
+  createBudgetBaseEditorController,
+  type BudgetBaseDraftSnapshot,
+  type BudgetBaseEditorController,
+  type BudgetBaseSettlementOutcome,
+} from "@/ui/tables/budget/controller/budgetBaseEditorController";
 import { logBudgetTableError } from "@/ui/tables/budget/table/logBudgetTableError";
 import { parseMonetaryNumberEdit } from "@/ui/tables/shared/format";
 import { useTableEditorActivation } from "@/ui/tables/shared/TableEditorActivationProvider";
@@ -32,6 +39,7 @@ import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 const POPOVER_WIDTH = 720;
 const POPOVER_VIEWPORT_MARGIN = 8;
 const POPOVER_CELL_GAP = 4;
+const BASE_AUTOSAVE_DELAY_MS = 600;
 
 type PopoverPosition = Readonly<{
   top: number;
@@ -48,6 +56,13 @@ type TextDirection = "ltr" | "rtl";
 type RoundedBaseInputResult =
   | Readonly<{ ok: true; value: number }>
   | Readonly<{ ok: false }>;
+
+type PresentedBaseMutation = Readonly<{
+  snapshot: BudgetBaseDraftSnapshot;
+  mutationGeneration: number;
+}>;
+
+type PopoverCloseOutcome = "closed" | "transferred" | "retained";
 
 const parseRoundedBaseInput = (
   input: string,
@@ -198,10 +213,17 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
+  const accessibilityId = useId();
   const editorId = `budget-plan:${month}:${direction}:${category}`;
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [baseInput, setBaseInput] = useState<string>("");
   const [baseValidationError, setBaseValidationError] = useState<string | null>(null);
+  const [baseSaveError, setBaseSaveError] = useState<string | null>(null);
+  const [isPopoverActionPending, setIsPopoverActionPending] = useState<boolean>(false);
+  const [shouldFocusBaseAfterAction, setShouldFocusBaseAfterAction] =
+    useState<boolean>(false);
+  const [shouldRestoreTriggerFocus, setShouldRestoreTriggerFocus] =
+    useState<boolean>(false);
   const [popoverPos, setPopoverPos] = useState<PopoverPosition>({ top: 0, left: 0 });
 
   const cellRef = useRef<HTMLTableCellElement>(null);
@@ -211,14 +233,36 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const adjustmentInitialFocusRef = useRef<
     HTMLInputElement | HTMLButtonElement | null
   >(null);
-  const originalBaseRef = useRef<number>(Math.round(plannedBase));
   const isOpenRef = useRef<boolean>(false);
-  const pendingBaseSaveCountRef = useRef<number>(0);
+  const showDataRef = useRef<boolean>(showData);
+  const previousShowDataRef = useRef<boolean>(showData);
+  const baseInputValueRef = useRef<string>("");
+  const persistBaseSnapshotRef = useRef<
+    (snapshot: BudgetBaseDraftSnapshot) => Promise<void>
+  >((_snapshot): Promise<void> => Promise.reject(
+    new Error(`Budget Base persistence is not initialized for ${editorId}`),
+  ));
+  const baseControllerRef = useRef<BudgetBaseEditorController | null>(null);
+  if (baseControllerRef.current === null) {
+    baseControllerRef.current = createBudgetBaseEditorController(
+      Math.round(plannedBase),
+      (snapshot): Promise<void> => persistBaseSnapshotRef.current(snapshot),
+    );
+  }
+  const baseController = baseControllerRef.current;
   const consumedLocalBaseAcknowledgementVersionRef = useRef<number>(0);
+  const presentedBaseMutationRef = useRef<PresentedBaseMutation | null>(null);
+  const handledBaseFailureRevisionRef = useRef<number | null>(null);
+  const needsBaseSaveRecoveryRef = useRef<boolean>(false);
+  const needsBaseValidationRecoveryRef = useRef<boolean>(false);
+  const popoverActionPendingRef = useRef<boolean>(false);
+  const activePopoverActionRef = useRef<Promise<boolean> | null>(null);
+  const hiddenSettlementRef = useRef<Promise<boolean> | null>(null);
   const interactedAdjustmentIdsRef = useRef<Set<string>>(new Set());
   const settleLifecycleRef = useRef<() => Promise<boolean>>(
     (): Promise<boolean> => Promise.resolve(true),
   );
+  showDataRef.current = showData;
 
   const adjustmentDirection = getAdjustmentDirection(direction);
   const adjustmentLocation = adjustmentDirection === null
@@ -240,12 +284,82 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     adjustmentInitialFocusRef.current = target;
   }, []);
 
+  const persistBaseSnapshot = useCallback(async (
+    snapshot: BudgetBaseDraftSnapshot,
+  ): Promise<void> => {
+    if (snapshot.value === null) {
+      throw new Error(
+        `Cannot persist invalid Base draft revision ${String(snapshot.revision)} for ${month}/${direction}/${category}`,
+      );
+    }
+    const mutationGeneration = onBaseMutationIssued(
+      month,
+      direction,
+      category,
+    );
+    presentedBaseMutationRef.current = { snapshot, mutationGeneration };
+    onSyncStart();
+    onPlanSave(month, direction, category, "base", snapshot.value);
+    try {
+      await postBudgetPlan({
+        month,
+        direction,
+        category,
+        kind: "base",
+        plannedValue: snapshot.value,
+      });
+      onBaseAcknowledged(
+        month,
+        direction,
+        category,
+        snapshot.value,
+        mutationGeneration,
+      );
+    } catch (error: unknown) {
+      logBudgetTableError(`save base for ${month}/${direction}/${category}`, error);
+      throw error;
+    } finally {
+      onSyncEnd();
+    }
+  }, [
+    category,
+    direction,
+    month,
+    onBaseAcknowledged,
+    onBaseMutationIssued,
+    onPlanSave,
+    onSyncEnd,
+    onSyncStart,
+  ]);
+  persistBaseSnapshotRef.current = persistBaseSnapshot;
+
   const initializePopover = (): boolean => {
     const cell = cellRef.current;
-    if (!showData || cell === null) return false;
+    if (
+      !showDataRef.current
+      || cell === null
+      || hiddenSettlementRef.current !== null
+      || baseController.isPersistencePending()
+    ) {
+      return false;
+    }
 
-    let roundedBase = Math.round(plannedBase);
-    if (pendingBaseSaveCountRef.current === 0) {
+    const recoveringSave = needsBaseSaveRecoveryRef.current;
+    const recoveringValidation = needsBaseValidationRecoveryRef.current;
+    if (recoveringSave) {
+      const acknowledgedBase = baseController.getAcknowledgement().value;
+      baseInputValueRef.current = String(acknowledgedBase);
+      setBaseInput(baseInputValueRef.current);
+      setBaseValidationError(null);
+      setBaseSaveError(t("budget.baseSaveFailed"));
+      setShouldFocusBaseAfterAction(true);
+    } else if (recoveringValidation) {
+      setBaseInput(baseInputValueRef.current);
+      setBaseValidationError(t("common.invalidNumber"));
+      setBaseSaveError(null);
+      setShouldFocusBaseAfterAction(true);
+    } else {
+      let roundedBase = Math.round(plannedBase);
       const consumed = consumeBudgetBaseLocalAcknowledgement(
         roundedBase,
         localBaseAcknowledgement,
@@ -254,13 +368,17 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       roundedBase = consumed.value;
       consumedLocalBaseAcknowledgementVersionRef.current =
         consumed.version;
+      baseController.synchronizeAcknowledgement(roundedBase);
+      presentedBaseMutationRef.current = null;
+      baseInputValueRef.current = String(roundedBase);
+      setBaseInput(baseInputValueRef.current);
+      setBaseValidationError(null);
+      setBaseSaveError(null);
+      setShouldFocusBaseAfterAction(false);
+      interactedAdjustmentIdsRef.current = new Set();
     }
-    originalBaseRef.current = roundedBase;
-    setBaseInput(String(roundedBase));
-    setBaseValidationError(null);
     baseInputRef.current?.setCustomValidity("");
     adjustmentInitialFocusRef.current = null;
-    interactedAdjustmentIdsRef.current = new Set();
 
     const rect = cell.getBoundingClientRect();
     setPopoverPos(getPopoverPosition(
@@ -283,8 +401,16 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   } = useTableEditorActivation(editorId, initializePopover);
 
   const openPopover = (): void => {
-    if (!showData || isOpenRef.current) return;
-    requestActivation();
+    if (!showDataRef.current || isOpenRef.current) return;
+    const hiddenSettlement = hiddenSettlementRef.current;
+    if (hiddenSettlement === null) {
+      requestActivation();
+      return;
+    }
+    void hiddenSettlement.then((): void => {
+      if (!showDataRef.current || isOpenRef.current) return;
+      requestActivation();
+    });
   };
 
   const updatePopoverPosition = useCallback((): void => {
@@ -347,70 +473,126 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     if (focusTarget instanceof HTMLInputElement) focusTarget.select();
   }, [isOpen]);
 
-  const parseAndReportBase = useCallback((): RoundedBaseInputResult => {
-    const parsed = parseRoundedBaseInput(
-      baseInput,
-      originalBaseRef.current,
-      numberFormat,
-    );
-    if (parsed.ok) {
+  useEffect(() => {
+    if (
+      !isOpen
+      || !showData
+      || !shouldFocusBaseAfterAction
+      || isPopoverActionPending
+    ) {
+      return;
+    }
+    const animationFrameId = window.requestAnimationFrame((): void => {
+      const input = baseInputRef.current;
+      if (input === null) return;
+      input.setCustomValidity(baseValidationError ?? "");
+      input.focus();
+      input.select();
+      if (baseValidationError !== null) input.reportValidity();
+      setShouldFocusBaseAfterAction(false);
+    });
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [
+    baseValidationError,
+    isOpen,
+    isPopoverActionPending,
+    shouldFocusBaseAfterAction,
+    showData,
+  ]);
+
+  useEffect(() => {
+    if (isOpen || !shouldRestoreTriggerFocus || !showData) return;
+    setShouldRestoreTriggerFocus(false);
+    triggerButtonRef.current?.focus();
+  }, [isOpen, shouldRestoreTriggerFocus, showData]);
+
+  const validateCurrentBase = useCallback((): boolean => {
+    const draft = baseController.getDraft();
+    if (draft.value !== null) {
       setBaseValidationError(null);
       baseInputRef.current?.setCustomValidity("");
-      return parsed;
+      return true;
     }
+    needsBaseValidationRecoveryRef.current = true;
     const message = t("common.invalidNumber");
     setBaseValidationError(message);
+    setShouldFocusBaseAfterAction(true);
     baseInputRef.current?.setCustomValidity(message);
     baseInputRef.current?.reportValidity();
-    return parsed;
-  }, [baseInput, numberFormat, t]);
+    return false;
+  }, [baseController, t]);
 
-  const saveBase = useCallback((value: number): void => {
-    if (value === originalBaseRef.current) return;
-    const mutationGeneration = onBaseMutationIssued(
-      month,
-      direction,
-      category,
-    );
-    const previousBase = originalBaseRef.current;
-    originalBaseRef.current = value;
-    pendingBaseSaveCountRef.current += 1;
-    onSyncStart();
-    onPlanSave(month, direction, category, "base", value);
-    void postBudgetPlan({
-      month,
-      direction,
-      category,
-      kind: "base",
-      plannedValue: value,
-    })
-      .then((): void => {
+  const handleDefinitiveBaseFailure = useCallback((
+    outcome: Extract<BudgetBaseSettlementOutcome, { status: "failed" }>,
+  ): void => {
+    if (handledBaseFailureRevisionRef.current === outcome.draft.revision) return;
+    handledBaseFailureRevisionRef.current = outcome.draft.revision;
+    const rolledBack = baseController.rollbackToAcknowledgement();
+    if (rolledBack.value === null) {
+      throw new Error(
+        `Budget Base rollback produced an invalid draft for ${month}/${direction}/${category}`,
+      );
+    }
+    baseInputValueRef.current = String(rolledBack.value);
+    onPlanSave(month, direction, category, "base", rolledBack.value);
+    needsBaseSaveRecoveryRef.current = true;
+    needsBaseValidationRecoveryRef.current = false;
+    setBaseInput(baseInputValueRef.current);
+    setBaseValidationError(null);
+    baseInputRef.current?.setCustomValidity("");
+    if (showDataRef.current) {
+      setBaseSaveError(t("budget.baseSaveFailed"));
+      setShouldFocusBaseAfterAction(true);
+    } else {
+      setBaseSaveError(null);
+    }
+  }, [
+    baseController,
+    category,
+    direction,
+    month,
+    onPlanSave,
+    t,
+  ]);
+
+  const settleCurrentBase = useCallback(async (): Promise<BudgetBaseSettlementOutcome> => {
+    const outcome = await baseController.settleLatest();
+    if (outcome.status === "failed") {
+      handleDefinitiveBaseFailure(outcome);
+    } else if (outcome.status === "settled") {
+      const presentedMutation = presentedBaseMutationRef.current;
+      if (
+        presentedMutation !== null
+        && presentedMutation.snapshot.value !== outcome.acknowledgement.value
+      ) {
         onBaseAcknowledged(
           month,
           direction,
           category,
-          value,
-          mutationGeneration,
+          outcome.acknowledgement.value,
+          presentedMutation.mutationGeneration,
         );
-      })
-      .catch((error: unknown): void => {
-        originalBaseRef.current = previousBase;
-        onPlanSave(month, direction, category, "base", previousBase);
-        logBudgetTableError(`save base for ${month}/${direction}/${category}`, error);
-      })
-      .finally((): void => {
-        pendingBaseSaveCountRef.current -= 1;
-        onSyncEnd();
-      });
+        presentedBaseMutationRef.current = {
+          snapshot: {
+            revision: outcome.acknowledgement.revision,
+            value: outcome.acknowledgement.value,
+          },
+          mutationGeneration: presentedMutation.mutationGeneration,
+        };
+      }
+      needsBaseSaveRecoveryRef.current = false;
+      needsBaseValidationRecoveryRef.current = false;
+      handledBaseFailureRevisionRef.current = null;
+      if (showDataRef.current) setBaseSaveError(null);
+    }
+    return outcome;
   }, [
+    baseController,
     category,
     direction,
+    handleDefinitiveBaseFailure,
     month,
     onBaseAcknowledged,
-    onBaseMutationIssued,
-    onPlanSave,
-    onSyncEnd,
-    onSyncStart,
   ]);
 
   const focusAdjustmentFlushFailure = useCallback((
@@ -472,111 +654,170 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     focusAdjustmentFlushFailure,
   ]);
 
-  const finishPopoverClose = useCallback((): void => {
+  const finishPopoverClose = useCallback((): boolean => {
     interactedAdjustmentIdsRef.current = new Set();
     setPopoverOpen(false);
-    releaseActivation();
+    return releaseActivation();
   }, [releaseActivation, setPopoverOpen]);
 
-  const closePopover = useCallback(async (): Promise<boolean> => {
-    if (!isOpenRef.current) return true;
-    prepareActivationRelease();
-    const parsedBase = parseAndReportBase();
-    if (!parsedBase.ok) {
-      cancelActivationRelease();
-      return false;
+  const runExclusivePopoverAction = useCallback((
+    action: () => Promise<boolean>,
+  ): Promise<boolean> => {
+    if (activePopoverActionRef.current !== null) {
+      return activePopoverActionRef.current;
     }
-    saveBase(parsedBase.value);
-    if (!await flushInteractedAdjustments()) {
-      cancelActivationRelease();
-      return false;
-    }
-    finishPopoverClose();
-    return true;
-  }, [
-    cancelActivationRelease,
-    finishPopoverClose,
-    flushInteractedAdjustments,
-    parseAndReportBase,
-    prepareActivationRelease,
-    saveBase,
-  ]);
-
-  const cancelBaseAndClosePopover = useCallback(async (): Promise<boolean> => {
-    if (!isOpenRef.current) return true;
-    prepareActivationRelease();
-    const originalBase = String(originalBaseRef.current);
-    setBaseInput(originalBase);
-    setBaseValidationError(null);
-    baseInputRef.current?.setCustomValidity("");
-    if (!await flushInteractedAdjustments()) {
-      cancelActivationRelease();
-      return false;
-    }
-    finishPopoverClose();
-    return true;
-  }, [
-    cancelActivationRelease,
-    finishPopoverClose,
-    flushInteractedAdjustments,
-    prepareActivationRelease,
-  ]);
-
-  const restoreTriggerFocus = useCallback((): void => {
-    window.requestAnimationFrame((): void => triggerButtonRef.current?.focus());
+    popoverActionPendingRef.current = true;
+    setIsPopoverActionPending(true);
+    let request: Promise<boolean>;
+    request = Promise.resolve()
+      .then(action)
+      .finally((): void => {
+        if (activePopoverActionRef.current !== request) return;
+        activePopoverActionRef.current = null;
+        popoverActionPendingRef.current = false;
+        setIsPopoverActionPending(false);
+      });
+    activePopoverActionRef.current = request;
+    return request;
   }, []);
 
+  const closePopover = useCallback(async (): Promise<PopoverCloseOutcome> => {
+    if (!isOpenRef.current) return "closed";
+    if (activePopoverActionRef.current !== null) return "retained";
+    if (!validateCurrentBase()) return "retained";
+    prepareActivationRelease();
+    let activationReleased = false;
+    let transferred = false;
+    const settled = await runExclusivePopoverAction(async (): Promise<boolean> => {
+      const baseOutcome = await settleCurrentBase();
+      if (baseOutcome.status !== "settled") return false;
+      if (!await flushInteractedAdjustments()) return false;
+      transferred = finishPopoverClose();
+      activationReleased = true;
+      return true;
+    });
+    if (!activationReleased) cancelActivationRelease();
+    if (!settled) return "retained";
+    return transferred ? "transferred" : "closed";
+  }, [
+    cancelActivationRelease,
+    finishPopoverClose,
+    flushInteractedAdjustments,
+    prepareActivationRelease,
+    runExclusivePopoverAction,
+    settleCurrentBase,
+    validateCurrentBase,
+  ]);
+
+  const cancelBaseAndClosePopover = useCallback(async (): Promise<PopoverCloseOutcome> => {
+    if (!isOpenRef.current) return "closed";
+    if (activePopoverActionRef.current !== null) return "retained";
+    prepareActivationRelease();
+    let activationReleased = false;
+    let transferred = false;
+    const settled = await runExclusivePopoverAction(async (): Promise<boolean> => {
+      const cancellationOutcome = await baseController.cancelDraft();
+      if (cancellationOutcome.status === "failed") {
+        handleDefinitiveBaseFailure({
+          status: "failed",
+          acknowledgement: cancellationOutcome.acknowledgement,
+          draft: cancellationOutcome.draft,
+          error: cancellationOutcome.error,
+        });
+        return false;
+      }
+
+      const rolledBack = cancellationOutcome.draft;
+      if (rolledBack.value === null) {
+        throw new Error(
+          `Budget Base rollback produced an invalid draft for ${month}/${direction}/${category}`,
+        );
+      }
+      baseInputValueRef.current = String(rolledBack.value);
+      onPlanSave(month, direction, category, "base", rolledBack.value);
+      needsBaseSaveRecoveryRef.current = false;
+      needsBaseValidationRecoveryRef.current = false;
+      handledBaseFailureRevisionRef.current = null;
+      setBaseInput(baseInputValueRef.current);
+      setBaseValidationError(null);
+      setBaseSaveError(null);
+      baseInputRef.current?.setCustomValidity("");
+      if (!await flushInteractedAdjustments()) return false;
+      transferred = finishPopoverClose();
+      activationReleased = true;
+      return true;
+    });
+    if (!activationReleased) cancelActivationRelease();
+    if (!settled) return "retained";
+    return transferred ? "transferred" : "closed";
+  }, [
+    baseController,
+    cancelActivationRelease,
+    category,
+    direction,
+    finishPopoverClose,
+    flushInteractedAdjustments,
+    handleDefinitiveBaseFailure,
+    month,
+    onPlanSave,
+    prepareActivationRelease,
+    runExclusivePopoverAction,
+  ]);
+
   const closePopoverAndRestoreFocus = useCallback(async (): Promise<void> => {
-    if (await closePopover()) restoreTriggerFocus();
-  }, [closePopover, restoreTriggerFocus]);
+    if (await closePopover() === "closed") setShouldRestoreTriggerFocus(true);
+  }, [closePopover]);
 
   const cancelBaseAndRestoreFocus = useCallback(async (): Promise<void> => {
-    if (await cancelBaseAndClosePopover()) restoreTriggerFocus();
-  }, [cancelBaseAndClosePopover, restoreTriggerFocus]);
+    if (await cancelBaseAndClosePopover() === "closed") {
+      setShouldRestoreTriggerFocus(true);
+    }
+  }, [cancelBaseAndClosePopover]);
 
   const handleFill = useCallback(async (): Promise<void> => {
-    if (!isOpenRef.current) return;
+    if (!isOpenRef.current || activePopoverActionRef.current !== null) return;
+    if (!validateCurrentBase()) return;
     prepareActivationRelease();
-    const parsedBase = parseAndReportBase();
-    if (!parsedBase.ok) {
-      cancelActivationRelease();
-      return;
-    }
-    saveBase(parsedBase.value);
-    if (!await flushInteractedAdjustments()) {
-      cancelActivationRelease();
-      return;
-    }
-
-    const mutationGeneration = onFillMonths(
-      month,
-      direction,
-      category,
-      parsedBase.value,
-    );
-    onSyncStart();
-    void postBudgetPlanFill({
-      fromMonth: month,
-      direction,
-      category,
-      baseValue: parsedBase.value,
-    })
-      .then((): void => {
-        onFillMonthsAcknowledged(
-          month,
-          direction,
-          category,
-          parsedBase.value,
-          mutationGeneration,
-        );
+    let activationReleased = false;
+    const settled = await runExclusivePopoverAction(async (): Promise<boolean> => {
+      const baseOutcome = await settleCurrentBase();
+      if (baseOutcome.status !== "settled") return false;
+      if (!await flushInteractedAdjustments()) return false;
+      const baseValue = baseOutcome.acknowledgement.value;
+      const mutationGeneration = onFillMonths(
+        month,
+        direction,
+        category,
+        baseValue,
+      );
+      onSyncStart();
+      void postBudgetPlanFill({
+        fromMonth: month,
+        direction,
+        category,
+        baseValue,
       })
-      .catch((error: unknown): void => {
-        logBudgetTableError(`fill base from ${month}/${direction}/${category}`, error);
-      })
-      .finally(onSyncEnd);
+        .then((): void => {
+          onFillMonthsAcknowledged(
+            month,
+            direction,
+            category,
+            baseValue,
+            mutationGeneration,
+          );
+        })
+        .catch((error: unknown): void => {
+          logBudgetTableError(`fill base from ${month}/${direction}/${category}`, error);
+        })
+        .finally(onSyncEnd);
 
-    finishPopoverClose();
-    restoreTriggerFocus();
+      const transferred = finishPopoverClose();
+      activationReleased = true;
+      if (!transferred) setShouldRestoreTriggerFocus(true);
+      return true;
+    });
+    if (!activationReleased) cancelActivationRelease();
+    if (!settled && showDataRef.current) setShouldFocusBaseAfterAction(true);
   }, [
     cancelActivationRelease,
     category,
@@ -588,37 +829,144 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     onFillMonthsAcknowledged,
     onSyncEnd,
     onSyncStart,
-    parseAndReportBase,
     prepareActivationRelease,
-    restoreTriggerFocus,
-    saveBase,
+    runExclusivePopoverAction,
+    settleCurrentBase,
+    validateCurrentBase,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isOpen
+      || !showData
+      || isPopoverActionPending
+      || !baseController.isDirty()
+      || baseController.getDraft().value === null
+    ) {
+      return;
+    }
+    const timer = window.setTimeout((): void => {
+      void settleCurrentBase();
+    }, BASE_AUTOSAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    baseController,
+    baseInput,
+    isOpen,
+    isPopoverActionPending,
+    settleCurrentBase,
+    showData,
   ]);
 
   const settleLifecycle = useCallback(async (): Promise<boolean> => {
-    if (isOpenRef.current) return closePopover();
+    const hiddenSettlement = hiddenSettlementRef.current;
+    if (hiddenSettlement !== null) return hiddenSettlement;
+
+    const activeAction = activePopoverActionRef.current;
+    if (activeAction !== null && !await activeAction) return false;
+    if (isOpenRef.current) return await closePopover() !== "retained";
+    if (baseController.isDirty() || baseController.isPersistencePending()) {
+      const baseOutcome = await settleCurrentBase();
+      if (baseOutcome.status !== "settled") return false;
+    }
     if (interactedAdjustmentIdsRef.current.size === 0) return true;
     return flushInteractedAdjustments();
-  }, [closePopover, flushInteractedAdjustments]);
+  }, [
+    baseController,
+    closePopover,
+    flushInteractedAdjustments,
+    settleCurrentBase,
+  ]);
   settleLifecycleRef.current = settleLifecycle;
 
   useEffect(() => registerTransitionGate({
     isLifecycleUnresolved: (): boolean => (
-      isOpenRef.current || interactedAdjustmentIdsRef.current.size > 0
+      isOpenRef.current
+      || baseController.isDirty()
+      || baseController.isPersistencePending()
+      || activePopoverActionRef.current !== null
+      || hiddenSettlementRef.current !== null
+      || interactedAdjustmentIdsRef.current.size > 0
     ),
     settleLifecycle: (): Promise<boolean> => settleLifecycleRef.current(),
-  }), [registerTransitionGate]);
+  }), [baseController, registerTransitionGate]);
 
-  useEffect(() => {
-    if (showData) return;
+  useLayoutEffect(() => {
+    const previouslyShowedData = previousShowDataRef.current;
+    previousShowDataRef.current = showData;
+    if (showData) {
+      if (
+        !previouslyShowedData
+        && hiddenSettlementRef.current === null
+        && (
+          needsBaseSaveRecoveryRef.current
+          || needsBaseValidationRecoveryRef.current
+        )
+      ) {
+        requestActivation();
+      }
+      return;
+    }
+    if (!previouslyShowedData) return;
+
     cancelActivationRequest();
-    if (!isOpenRef.current) return;
+    setShouldRestoreTriggerFocus(false);
+    setShouldFocusBaseAfterAction(false);
+    setBaseValidationError(null);
+    setBaseSaveError(null);
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement
+      && (
+        popoverRef.current?.contains(activeElement) === true
+        || cellRef.current?.contains(activeElement) === true
+      )
+    ) {
+      activeElement.blur();
+    }
+
+    const wasOpen = isOpenRef.current;
+    if (!wasOpen && activePopoverActionRef.current === null) return;
+    if (activePopoverActionRef.current === null) prepareActivationRelease();
     setPopoverOpen(false);
-    releaseActivation();
-    void flushInteractedAdjustments();
+    let hiddenSettlement: Promise<boolean>;
+    hiddenSettlement = Promise.resolve()
+      .then(async (): Promise<boolean> => {
+        const activeAction = activePopoverActionRef.current;
+        if (activeAction !== null) return activeAction;
+        return runExclusivePopoverAction(async (): Promise<boolean> => {
+          const baseOutcome = await settleCurrentBase();
+          if (baseOutcome.status !== "settled") return false;
+          if (!await flushInteractedAdjustments()) return false;
+          interactedAdjustmentIdsRef.current = new Set();
+          return true;
+        });
+      })
+      .finally((): void => {
+        releaseActivation();
+        if (hiddenSettlementRef.current === hiddenSettlement) {
+          hiddenSettlementRef.current = null;
+        }
+        if (
+          showDataRef.current
+          && (
+            needsBaseSaveRecoveryRef.current
+            || needsBaseValidationRecoveryRef.current
+          )
+          && !isOpenRef.current
+        ) {
+          requestActivation();
+        }
+      });
+    hiddenSettlementRef.current = hiddenSettlement;
   }, [
     cancelActivationRequest,
     flushInteractedAdjustments,
+    prepareActivationRelease,
     releaseActivation,
+    requestActivation,
+    runExclusivePopoverAction,
+    settleCurrentBase,
     setPopoverOpen,
     showData,
   ]);
@@ -648,8 +996,25 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
   useEffect(() => {
     if (!isOpen) return;
+    const handleFocusIn = (event: FocusEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (
+        popoverRef.current?.contains(target) === true
+        || cellRef.current?.contains(target) === true
+      ) {
+        return;
+      }
+      void closePopover();
+    };
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, [closePopover, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || popoverActionPendingRef.current) return;
       if (
         popoverRef.current?.querySelector(
           '[data-budget-adjustment-delete-dialog="true"]',
@@ -666,7 +1031,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
   const parsedBase = parseRoundedBaseInput(
     baseInput,
-    originalBaseRef.current,
+    baseController.getAcknowledgement().value,
     numberFormat,
   );
   const computedTotal = parsedBase.ok ? parsedBase.value + adjustmentTotal : 0;
@@ -682,6 +1047,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       amount: formattedPlanned,
     })
     : "";
+  const baseError = baseSaveError ?? baseValidationError;
 
   return (
     <td
@@ -720,6 +1086,8 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           className={styles.popover}
           style={{ top: popoverPos.top, left: popoverPos.left }}
           data-testid={`budget-plan-popover-${editorId}`}
+          aria-busy={isPopoverActionPending}
+          inert={isPopoverActionPending}
           role="dialog"
           aria-label={accessibleName}
         >
@@ -750,10 +1118,26 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
               className={styles.popoverInput}
               data-testid={`budget-plan-base-input-${editorId}`}
               value={baseInput}
-              aria-invalid={baseValidationError !== null}
+              aria-invalid={baseError !== null}
+              aria-describedby={baseError === null
+                ? undefined
+                : `${accessibilityId}-base-error`}
+              disabled={isPopoverActionPending}
               onChange={(event) => {
-                setBaseInput(event.target.value);
+                const nextInput = event.target.value;
+                const parsed = parseRoundedBaseInput(
+                  nextInput,
+                  baseController.getAcknowledgement().value,
+                  numberFormat,
+                );
+                baseInputValueRef.current = nextInput;
+                baseController.updateDraft(parsed.ok ? parsed.value : null);
+                needsBaseSaveRecoveryRef.current = false;
+                needsBaseValidationRecoveryRef.current = !parsed.ok;
+                handledBaseFailureRevisionRef.current = null;
+                setBaseInput(nextInput);
                 setBaseValidationError(null);
+                setBaseSaveError(null);
                 event.currentTarget.setCustomValidity("");
               }}
               onKeyDown={(event) => {
@@ -763,6 +1147,16 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
               }}
             />
           </label>
+          {baseError !== null && (
+            <span
+              id={`${accessibilityId}-base-error`}
+              className={styles.adjustmentError}
+              data-testid={`budget-plan-base-error-${editorId}`}
+              role="alert"
+            >
+              {baseError}
+            </span>
+          )}
           <div className={styles.popoverDivider} />
           <div className={styles.popoverTotal}>
             <span className={styles.popoverLabel}>{t("budget.popoverTotal")}</span>
@@ -777,6 +1171,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
                 type="button"
                 className={styles.popoverFillButton}
                 data-testid={`budget-plan-fill-${editorId}`}
+                disabled={isPopoverActionPending}
                 onClick={() => void handleFill()}
               >
                 {t("budget.popoverFill")}

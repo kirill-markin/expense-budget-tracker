@@ -221,6 +221,7 @@
   "budget.actual": "בפועל",
   "budget.openPlanEditor": "עריכת התקציב של {{category}} עבור {{month}}, סכום מתוכנן {{amount}}",
   "budget.popoverBase": "בסיס",
+  "budget.baseSaveFailed": "לא ניתן לשמור את סכום הבסיס. נסו שוב.",
   "budget.popoverTotal": "סה״כ",
   "budget.popoverFill": "מלא חודשים →",
   "budget.adjustments": "התאמות",
