@@ -388,12 +388,12 @@ test("serializes and coalesces one row while allowing another row to save indepe
     month: "2026-12",
     direction: "spend",
     category: "Food",
-  }), 0);
+  }, null), 0);
   assert.equal(harness.runtime.commands.getCellTotal({
     month: "2027-01",
     direction: "spend",
     category: "Dining",
-  }), 3);
+  }, null), 3);
   finalPatch.resolve(applyPatch(first, harness.patchCalls[2]?.params ?? {}));
   assert.equal(await firstFlush, "saved");
   assert.deepEqual(
@@ -515,6 +515,41 @@ test("keeps an ambiguous patch retryable when refresh returns the unchanged row"
   assert.equal(refreshed.errorByAdjustmentId.get(FIRST_ID)?.action, "retry-save");
   assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "saved");
   assert.equal(harness.runtime.getSnapshot().errorByAdjustmentId.has(FIRST_ID), false);
+});
+
+test("coalesces recovery for one adjustment and publishes shared pending state", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const range = createDeferred<BudgetGridResult>();
+  const harness = createHarness([initial]);
+  let patchAttempt = 0;
+  harness.setPatchHandler(async (_adjustmentId, params): Promise<BudgetAdjustment> => {
+    patchAttempt += 1;
+    if (patchAttempt === 1) throw new Error("patch response lost");
+    return applyPatch(initial, params);
+  });
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("2", "2026-07", "Food", ""),
+  );
+  assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "error");
+  harness.setRangeHandler((_monthFrom, _monthTo) => range.promise);
+
+  const popoverRecovery = harness.runtime.commands.recoverRow(FIRST_ID);
+  const tableRecovery = harness.runtime.commands.recoverRow(FIRST_ID);
+  assert.equal(tableRecovery, popoverRecovery);
+  assert.equal(harness.runtime.getSnapshot().recoveringAdjustmentIds.has(FIRST_ID), true);
+  await settleStart();
+  assert.deepEqual(harness.rangeCalls, [{ monthFrom: "2026-07", monthTo: "2026-07" }]);
+
+  range.resolve(createGrid([initial], []));
+  assert.equal(await popoverRecovery, "recovered");
+  assert.equal(await tableRecovery, "recovered");
+  const snapshot = harness.runtime.getSnapshot();
+  assert.equal(snapshot.recoveringAdjustmentIds.has(FIRST_ID), false);
+  assert.equal(snapshot.errorByAdjustmentId.has(FIRST_ID), false);
+  assert.equal(snapshot.rows[0]?.confirmed.amount, 2);
+  assert.equal(harness.rangeCalls.length, 1);
+  assert.equal(harness.patchCalls.length, 2);
 });
 
 test("reconciles a typed PATCH 404 as authoritative absence", async (): Promise<void> => {
@@ -723,8 +758,10 @@ test("publishes mutation snapshots until unsubscribed and exposes cell selectors
   );
   assert.equal(snapshots.length, 1);
   assert.equal(snapshots[0]?.pendingMutationCount, 1);
-  assert.equal(harness.runtime.commands.getCellRows(location).length, 1);
-  assert.equal(harness.runtime.commands.getCellTotal(location), 2);
+  assert.equal(harness.runtime.commands.getRow(FIRST_ID, null)?.draft.amountInput, "2");
+  assert.equal(harness.runtime.commands.getRow(SECOND_ID, null), null);
+  assert.equal(harness.runtime.commands.getCellRows(location, null).length, 1);
+  assert.equal(harness.runtime.commands.getCellTotal(location, null), 2);
 
   unsubscribe();
   harness.runtime.commands.replaceDraft(
@@ -732,6 +769,188 @@ test("publishes mutation snapshots until unsubscribed and exposes cell selectors
     createDraft("3", "2026-07", "Food", ""),
   );
   assert.equal(snapshots.length, 1);
+});
+
+test("uses one filtered presentation rule for selectors and projected budget rows", (): void => {
+  const harness = createHarness([
+    createAdjustment(FIRST_ID, 47, "2026-07", "Masked", "private note"),
+  ]);
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("47", "2026-07", "Allowed", "private note"),
+  );
+  const allowlist = new Set(["Allowed"]);
+  const destination = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Allowed",
+  };
+  const protectedPrivateCell = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Masked",
+  };
+  const release = harness.runtime.commands.retainCell(
+    "filtered-presentation",
+    protectedPrivateCell,
+  );
+  const budgetRows: ReadonlyArray<BudgetRow> = [{
+    month: "2026-07",
+    direction: "spend",
+    category: "Allowed",
+    plannedBase: 100,
+    plannedModifier: 47,
+    planned: 147,
+    actual: 0,
+    hasUnconvertible: false,
+  }];
+
+  assert.deepEqual(harness.runtime.commands.getCellRows(destination, allowlist), []);
+  assert.equal(harness.runtime.commands.getCellTotal(destination, allowlist), 0);
+  assert.equal(harness.runtime.commands.getRow(FIRST_ID, allowlist), null);
+  assert.equal(
+    harness.runtime.commands.getRow(FIRST_ID, null)?.confirmed.category,
+    "Masked",
+  );
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows(
+      budgetRows,
+      "2026-07",
+      "2026-07",
+      allowlist,
+    ),
+    [{
+      ...budgetRows[0],
+      plannedModifier: 0,
+      planned: 100,
+    }],
+  );
+  assert.deepEqual(
+    [...harness.runtime.getSnapshot().protectedCellKeys],
+    ["2026-07\u0000spend\u0000Masked"],
+  );
+  assert.equal(harness.runtime.commands.getCellRows(destination, null).length, 1);
+  assert.equal(
+    harness.runtime.commands.applyToBudgetRows(
+      budgetRows,
+      "2026-07",
+      "2026-07",
+      null,
+    ).some((row): boolean => row.category === protectedPrivateCell.category),
+    true,
+  );
+  release();
+});
+
+test("keeps an unknown draft category private in the public row selector", (): void => {
+  const harness = createHarness([
+    createAdjustment(FIRST_ID, 12, "2026-07", "Allowed", null),
+  ]);
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("12", "2026-07", "Unknown", ""),
+  );
+  const allowlist = new Set(["Allowed"]);
+
+  assert.equal(harness.runtime.commands.getRow(FIRST_ID, allowlist), null);
+  assert.equal(
+    harness.runtime.commands.getRow(FIRST_ID, null)?.draft.category,
+    "Unknown",
+  );
+});
+
+test("retains protected adjustment cells by explicit remount-safe owner identity", (): void => {
+  const harness = createHarness([]);
+  const location = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Adjustment only",
+  };
+  const projectedRow: BudgetRow = {
+    month: "2026-07",
+    direction: "spend",
+    category: "Adjustment only",
+    plannedBase: 0,
+    plannedModifier: 0,
+    planned: 0,
+    actual: 0,
+    hasUnconvertible: false,
+  };
+  const releaseFirst = harness.runtime.commands.retainCell("first-editor", location);
+  const releaseSecond = harness.runtime.commands.retainCell("second-editor", location);
+
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows([], "2026-07", "2026-07", null),
+    [projectedRow],
+  );
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows(
+      [],
+      "2026-07",
+      "2026-07",
+      new Set(["Allowed"]),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    [...harness.runtime.getSnapshot().protectedCellKeys],
+    ["2026-07\u0000spend\u0000Adjustment only"],
+  );
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows([], "2026-07", "2026-07", null),
+    [projectedRow],
+  );
+
+  releaseFirst();
+  assert.equal(harness.runtime.getSnapshot().protectedCellKeys.size, 1);
+  releaseFirst();
+  assert.equal(harness.runtime.getSnapshot().protectedCellKeys.size, 1);
+  releaseSecond();
+  assert.equal(harness.runtime.getSnapshot().protectedCellKeys.size, 0);
+
+  const releaseStaleMount = harness.runtime.commands.retainCell("remounted-editor", location);
+  const releaseCurrentMount = harness.runtime.commands.retainCell("remounted-editor", location);
+  releaseStaleMount();
+  assert.equal(harness.runtime.getSnapshot().protectedCellKeys.size, 1);
+  releaseCurrentMount();
+  assert.equal(harness.runtime.getSnapshot().protectedCellKeys.size, 0);
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows([], "2026-07", "2026-07", null),
+    [],
+  );
+});
+
+test("keeps a protected source cell projected through authoritative range absence", async (): Promise<void> => {
+  const adjustment = createAdjustment(
+    FIRST_ID,
+    12,
+    "2026-07",
+    "Adjustment only",
+    null,
+  );
+  const harness = createHarness([adjustment]);
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([], []));
+  const location = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Adjustment only",
+  };
+  const release = harness.runtime.commands.retainCell("source-editor", location);
+
+  const outcome = await harness.runtime.commands.loadRange("2026-07", "2026-07");
+  assert.equal(outcome.status, "accepted");
+  assert.equal(harness.runtime.commands.getRow(FIRST_ID, null), null);
+  assert.equal(
+    harness.runtime.commands.applyToBudgetRows([], "2026-07", "2026-07", null)
+      .some((row): boolean => row.category === location.category),
+    true,
+  );
+
+  release();
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows([], "2026-07", "2026-07", null),
+    [],
+  );
 });
 
 test("accepts exact-overlap ranges in response order and supersedes stale results", async (): Promise<void> => {
@@ -950,7 +1169,12 @@ test("projects normalized drafts onto budget rows across the loaded range", (): 
   ];
 
   assert.deepEqual(
-    harness.runtime.commands.applyToBudgetRows(budgetRows, "2026-07", "2026-08"),
+    harness.runtime.commands.applyToBudgetRows(
+      budgetRows,
+      "2026-07",
+      "2026-08",
+      null,
+    ),
     [
       {
         ...budgetRows[0],

@@ -167,9 +167,11 @@ export const useBudgetTableController = (
       rangeState.allRows,
       rangeState.loadedFrom,
       rangeState.loadedTo,
+      effectiveAllowlist,
     ),
     [
       budgetAdjustments,
+      effectiveAllowlist,
       rangeState.allRows,
       rangeState.loadedFrom,
       rangeState.loadedTo,

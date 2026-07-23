@@ -49,6 +49,12 @@ export type BudgetAdjustmentCellMove = Readonly<{
   current: BudgetAdjustmentSnapshot;
 }>;
 
+export type ProtectedBudgetAdjustmentCell = Readonly<{
+  month: string;
+  direction: BudgetAdjustmentDirection;
+  category: string;
+}>;
+
 type BudgetAdjustmentLocation = Readonly<{
   month: string;
   category: string;
@@ -85,12 +91,27 @@ export const isValidBudgetAdjustmentCategory = (category: string): boolean => {
   return length >= 1 && length <= 200;
 };
 
+export const isValidBudgetAdjustmentNoteInput = (noteInput: string): boolean =>
+  Array.from(noteInput).length <= 2000;
+
+export const isBudgetAdjustmentCategoryVisible = (
+  category: string,
+  effectiveAllowlist: ReadonlySet<string> | null,
+): boolean => effectiveAllowlist === null || effectiveAllowlist.has(category);
+
 export const getBudgetAdjustmentCategoryOptions = (
   categories: ReadonlyArray<string>,
   effectiveAllowlist: ReadonlySet<string> | null,
 ): ReadonlyArray<string> => [...new Set(categories.filter((category): boolean =>
   isValidBudgetAdjustmentCategory(category)
-  && (effectiveAllowlist === null || effectiveAllowlist.has(category))))];
+  && isBudgetAdjustmentCategoryVisible(category, effectiveAllowlist)))];
+
+export const isBudgetAdjustmentRowVisible = (
+  row: BudgetAdjustmentEditorRow,
+  effectiveAllowlist: ReadonlySet<string> | null,
+): boolean =>
+  isBudgetAdjustmentCategoryVisible(row.confirmed.category, effectiveAllowlist)
+  && isBudgetAdjustmentCategoryVisible(row.draft.category, effectiveAllowlist);
 
 const isValidDraftLocation = (draft: BudgetAdjustmentDraft, planFrom: string): boolean =>
   MONTH_PATTERN.test(draft.month)
@@ -170,7 +191,7 @@ export const parseBudgetAdjustmentDraft = (
       },
     };
   }
-  if (Array.from(draft.noteInput).length > 2000) {
+  if (!isValidBudgetAdjustmentNoteInput(draft.noteInput)) {
     return {
       ok: false,
       error: {
@@ -424,6 +445,60 @@ export const applyBudgetAdjustmentRows = (
     });
   }
   return sortBudgetRows(result);
+};
+
+export const applyBudgetAdjustmentRowsWithProtectedCells = (
+  budgetRows: ReadonlyArray<BudgetRow>,
+  adjustmentRows: ReadonlyArray<BudgetAdjustmentEditorRow>,
+  loadedFrom: string,
+  loadedTo: string,
+  planFrom: string,
+  invalidatedCellKeys: ReadonlySet<string>,
+  protectedCells: ReadonlyArray<ProtectedBudgetAdjustmentCell>,
+  effectiveAllowlist: ReadonlySet<string> | null,
+): ReadonlyArray<BudgetRow> => {
+  const projectedRows = applyBudgetAdjustmentRows(
+    budgetRows,
+    adjustmentRows,
+    loadedFrom,
+    loadedTo,
+    planFrom,
+    invalidatedCellKeys,
+  );
+  const existingKeys = new Set(projectedRows
+    .filter((row): boolean => row.direction === "income" || row.direction === "spend")
+    .map((row): string => getBudgetAdjustmentCellKey(
+      row.month,
+      row.direction as BudgetAdjustmentDirection,
+      row.category,
+    )));
+  const retainedRows = [...projectedRows];
+
+  for (const cell of protectedCells) {
+    if (
+      cell.month < loadedFrom
+      || cell.month > loadedTo
+      || cell.month < planFrom
+      || !isBudgetAdjustmentCategoryVisible(cell.category, effectiveAllowlist)
+    ) {
+      continue;
+    }
+    const key = getBudgetAdjustmentCellKey(cell.month, cell.direction, cell.category);
+    if (existingKeys.has(key)) continue;
+    existingKeys.add(key);
+    retainedRows.push({
+      month: cell.month,
+      direction: cell.direction,
+      category: cell.category,
+      plannedBase: 0,
+      plannedModifier: 0,
+      planned: 0,
+      actual: 0,
+      hasUnconvertible: false,
+    });
+  }
+
+  return sortBudgetRows(retainedRows);
 };
 
 export const recordBudgetAdjustmentCellMove = (
