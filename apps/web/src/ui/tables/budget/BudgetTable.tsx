@@ -51,7 +51,11 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
         <button className={styles.todayButton} type="button" onClick={controller.scrollToCurrentMonth}>
           {t("common.today")}
         </button>
-        {controller.pendingSaves > 0 && <span className={styles.syncStatus}>{t("common.syncing")}</span>}
+        {controller.pendingSaves > 0 && (
+          <span className={styles.syncStatus} data-testid="budget-sync-status">
+            {t("common.syncing")}
+          </span>
+        )}
       </div>
       <div className={styles.scroll} ref={controller.scrollRef}>
         <TableEditorActivationProvider>
@@ -68,6 +72,9 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
                   <BudgetDirectionSection
                     block={block}
                     effectiveAllowlist={controller.effectiveAllowlist}
+                    localBaseAcknowledgementByCell={
+                      controller.localBaseAcknowledgementByCell
+                    }
                     columnSequence={controller.columnSequence}
                     currentMonth={controller.currentMonth}
                     currentYear={controller.currentYear}
@@ -80,7 +87,14 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
                     copyToClipboard={copyToClipboard}
                     openDrillDown={controller.openDrillDown}
                     onPlanSave={controller.handlePlanSave}
+                    onBaseMutationIssued={
+                      controller.handleBaseMutationIssued
+                    }
                     onFillMonths={controller.handleFillMonths}
+                    onBaseAcknowledged={controller.handleBaseAcknowledged}
+                    onFillMonthsAcknowledged={
+                      controller.handleFillMonthsAcknowledged
+                    }
                     onSyncStart={controller.onSyncStart}
                     onSyncEnd={controller.onSyncEnd}
                   />

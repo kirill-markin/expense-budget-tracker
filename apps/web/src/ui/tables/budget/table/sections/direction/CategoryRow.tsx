@@ -5,6 +5,10 @@ import { Fragment, type ReactElement } from "react";
 import { getCellVisibility } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import { BudgetPlanCell } from "@/ui/tables/budget/BudgetPlanCell";
+import {
+  getBudgetBaseCellKey,
+  type BudgetBaseLocalAcknowledgementByCell,
+} from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import {
   formatAmount,
@@ -30,6 +34,7 @@ type CategoryRowProps = Readonly<{
   block: DirectionBlock;
   category: string;
   effectiveAllowlist: ReadonlySet<string> | null;
+  localBaseAcknowledgementByCell: BudgetBaseLocalAcknowledgementByCell;
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
@@ -46,11 +51,30 @@ type CategoryRowProps = Readonly<{
     kind: "base" | "modifier",
     value: number,
   ) => void;
+  onBaseMutationIssued: (
+    month: string,
+    direction: string,
+    category: string,
+  ) => number;
   onFillMonths: (
     sourceMonth: string,
     direction: string,
     category: string,
     baseValue: number,
+  ) => number;
+  onBaseAcknowledged: (
+    month: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
+  ) => void;
+  onFillMonthsAcknowledged: (
+    sourceMonth: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
   ) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
@@ -61,6 +85,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     block,
     category,
     effectiveAllowlist,
+    localBaseAcknowledgementByCell,
     columnSequence,
     currentMonth,
     currentYear,
@@ -71,7 +96,10 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     copyToClipboard,
     openDrillDown,
     onPlanSave,
+    onBaseMutationIssued,
     onFillMonths,
+    onBaseAcknowledged,
+    onFillMonthsAcknowledged,
     onSyncStart,
     onSyncEnd,
   } = props;
@@ -190,6 +218,13 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 effectiveAllowlist={effectiveAllowlist}
                 currentMonth={currentMonth}
                 plannedBase={cell.plannedBase}
+                localBaseAcknowledgement={localBaseAcknowledgementByCell.get(
+                  getBudgetBaseCellKey({
+                    month: column.month,
+                    direction: block.direction,
+                    category,
+                  }),
+                ) ?? null}
                 plannedModifier={cell.plannedModifier}
                 planned={cell.planned}
                 showData={categoryVisibility.showData}
@@ -199,7 +234,10 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 cmClass=""
                 budgetAdjustments={budgetAdjustments}
                 onPlanSave={onPlanSave}
+                onBaseMutationIssued={onBaseMutationIssued}
                 onFillMonths={onFillMonths}
+                onBaseAcknowledged={onBaseAcknowledged}
+                onFillMonthsAcknowledged={onFillMonthsAcknowledged}
                 onSyncStart={onSyncStart}
                 onSyncEnd={onSyncEnd}
               />
@@ -224,6 +262,13 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   effectiveAllowlist={effectiveAllowlist}
                   currentMonth={currentMonth}
                   plannedBase={cell.plannedBase}
+                  localBaseAcknowledgement={localBaseAcknowledgementByCell.get(
+                    getBudgetBaseCellKey({
+                      month: column.month,
+                      direction: block.direction,
+                      category,
+                    }),
+                  ) ?? null}
                   plannedModifier={cell.plannedModifier}
                   planned={cell.planned}
                   showData={categoryVisibility.showData}
@@ -233,7 +278,10 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   cmClass={` ${styles.currentMonthPlan}`}
                   budgetAdjustments={budgetAdjustments}
                   onPlanSave={onPlanSave}
+                  onBaseMutationIssued={onBaseMutationIssued}
                   onFillMonths={onFillMonths}
+                  onBaseAcknowledged={onBaseAcknowledged}
+                  onFillMonthsAcknowledged={onFillMonthsAcknowledged}
                   onSyncStart={onSyncStart}
                   onSyncEnd={onSyncEnd}
                 />
