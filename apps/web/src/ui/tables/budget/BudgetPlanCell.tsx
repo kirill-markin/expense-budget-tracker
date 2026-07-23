@@ -16,6 +16,10 @@ import { useFormat } from "@/ui/FormatProvider";
 import { BudgetAdjustmentEditor } from "@/ui/tables/budget/BudgetAdjustmentEditor";
 import { isSuccessfulBudgetAdjustmentFlushOutcome } from "@/ui/tables/budget/budgetAdjustmentRecovery";
 import { isValidBudgetAdjustmentCategory } from "@/ui/tables/budget/budgetAdjustmentRowsState";
+import {
+  consumeBudgetBaseLocalAcknowledgement,
+  type BudgetBaseLocalAcknowledgement,
+} from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import { postBudgetPlan, postBudgetPlanFill } from "@/ui/tables/budget/budgetTableApi";
 import { formatAmount, isDecember } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
@@ -120,6 +124,7 @@ export type BudgetPlanCellProps = Readonly<{
   effectiveAllowlist: ReadonlySet<string> | null;
   currentMonth: string;
   plannedBase: number;
+  localBaseAcknowledgement: BudgetBaseLocalAcknowledgement | null;
   plannedModifier: number;
   planned: number;
   showData: boolean;
@@ -135,11 +140,30 @@ export type BudgetPlanCellProps = Readonly<{
     kind: "base" | "modifier",
     value: number,
   ) => void;
+  onBaseMutationIssued: (
+    month: string,
+    direction: string,
+    category: string,
+  ) => number;
   onFillMonths: (
     sourceMonth: string,
     direction: string,
     category: string,
     baseValue: number,
+  ) => number;
+  onBaseAcknowledged: (
+    month: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
+  ) => void;
+  onFillMonthsAcknowledged: (
+    sourceMonth: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
   ) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
@@ -154,6 +178,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     effectiveAllowlist,
     currentMonth,
     plannedBase,
+    localBaseAcknowledgement,
     plannedModifier,
     planned,
     showData,
@@ -163,7 +188,10 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     cmClass,
     budgetAdjustments,
     onPlanSave,
+    onBaseMutationIssued,
     onFillMonths,
+    onBaseAcknowledged,
+    onFillMonthsAcknowledged,
     onSyncStart,
     onSyncEnd,
   } = props;
@@ -185,6 +213,8 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   >(null);
   const originalBaseRef = useRef<number>(Math.round(plannedBase));
   const isOpenRef = useRef<boolean>(false);
+  const pendingBaseSaveCountRef = useRef<number>(0);
+  const consumedLocalBaseAcknowledgementVersionRef = useRef<number>(0);
   const interactedAdjustmentIdsRef = useRef<Set<string>>(new Set());
   const settleLifecycleRef = useRef<() => Promise<boolean>>(
     (): Promise<boolean> => Promise.resolve(true),
@@ -214,7 +244,17 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     const cell = cellRef.current;
     if (!showData || cell === null) return false;
 
-    const roundedBase = Math.round(plannedBase);
+    let roundedBase = Math.round(plannedBase);
+    if (pendingBaseSaveCountRef.current === 0) {
+      const consumed = consumeBudgetBaseLocalAcknowledgement(
+        roundedBase,
+        localBaseAcknowledgement,
+        consumedLocalBaseAcknowledgementVersionRef.current,
+      );
+      roundedBase = consumed.value;
+      consumedLocalBaseAcknowledgementVersionRef.current =
+        consumed.version;
+    }
     originalBaseRef.current = roundedBase;
     setBaseInput(String(roundedBase));
     setBaseValidationError(null);
@@ -327,8 +367,14 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
   const saveBase = useCallback((value: number): void => {
     if (value === originalBaseRef.current) return;
+    const mutationGeneration = onBaseMutationIssued(
+      month,
+      direction,
+      category,
+    );
     const previousBase = originalBaseRef.current;
     originalBaseRef.current = value;
+    pendingBaseSaveCountRef.current += 1;
     onSyncStart();
     onPlanSave(month, direction, category, "base", value);
     void postBudgetPlan({
@@ -338,16 +384,30 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       kind: "base",
       plannedValue: value,
     })
+      .then((): void => {
+        onBaseAcknowledged(
+          month,
+          direction,
+          category,
+          value,
+          mutationGeneration,
+        );
+      })
       .catch((error: unknown): void => {
         originalBaseRef.current = previousBase;
         onPlanSave(month, direction, category, "base", previousBase);
         logBudgetTableError(`save base for ${month}/${direction}/${category}`, error);
       })
-      .finally(onSyncEnd);
+      .finally((): void => {
+        pendingBaseSaveCountRef.current -= 1;
+        onSyncEnd();
+      });
   }, [
     category,
     direction,
     month,
+    onBaseAcknowledged,
+    onBaseMutationIssued,
     onPlanSave,
     onSyncEnd,
     onSyncStart,
@@ -488,14 +548,28 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       return;
     }
 
+    const mutationGeneration = onFillMonths(
+      month,
+      direction,
+      category,
+      parsedBase.value,
+    );
     onSyncStart();
-    onFillMonths(month, direction, category, parsedBase.value);
     void postBudgetPlanFill({
       fromMonth: month,
       direction,
       category,
       baseValue: parsedBase.value,
     })
+      .then((): void => {
+        onFillMonthsAcknowledged(
+          month,
+          direction,
+          category,
+          parsedBase.value,
+          mutationGeneration,
+        );
+      })
       .catch((error: unknown): void => {
         logBudgetTableError(`fill base from ${month}/${direction}/${category}`, error);
       })
@@ -511,6 +585,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     flushInteractedAdjustments,
     month,
     onFillMonths,
+    onFillMonthsAcknowledged,
     onSyncEnd,
     onSyncStart,
     parseAndReportBase,

@@ -7,6 +7,20 @@ import {
   adjustCumulativeBeforeForPrependedRows,
   getTargetFillMonths,
 } from "@/ui/tables/budget/budgetTableLogic";
+import {
+  applyBudgetBaseToRows,
+  getCurrentBudgetBaseMutationCells,
+  issueBudgetBaseMutation,
+  publishBudgetBaseLocalAcknowledgements,
+  protectBudgetBaseAcknowledgement,
+  reconcileBudgetBaseRange,
+  retainProtectedBudgetBaseLocalAcknowledgements,
+  type BudgetBaseCell,
+  type BudgetBaseLocalAcknowledgementByCell,
+  type BudgetBaseMutationGenerationByCell,
+  type BudgetBaseProtectionByCell,
+  type BudgetBaseRangeRequest,
+} from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import type { BudgetAdjustmentRangeLoadOutcome } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import { logBudgetTableError } from "@/ui/tables/budget/table/logBudgetTableError";
 
@@ -33,6 +47,7 @@ type UseBudgetTableRangeStateParams = Readonly<{
 
 export type BudgetTableRangeState = Readonly<{
   allRows: ReadonlyArray<BudgetRow>;
+  localBaseAcknowledgementByCell: BudgetBaseLocalAcknowledgementByCell;
   loadedFrom: string;
   loadedTo: string;
   cumBefore: CumulativeBefore;
@@ -52,11 +67,30 @@ export type BudgetTableRangeState = Readonly<{
     kind: "base" | "modifier",
     value: number,
   ) => void;
+  handleBaseMutationIssued: (
+    month: string,
+    direction: string,
+    category: string,
+  ) => number;
   handleFillMonths: (
     sourceMonth: string,
     direction: string,
     category: string,
     baseValue: number,
+  ) => number;
+  handleBaseAcknowledged: (
+    month: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
+  ) => void;
+  handleFillMonthsAcknowledged: (
+    sourceMonth: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
   ) => void;
   refreshLoadedRange: () => void;
   loadLeft: () => Promise<void>;
@@ -71,13 +105,43 @@ const applyFetchedBudgetResult = (
   setBusinessPersonalTransfers: (value: Readonly<Record<string, BusinessPersonalTransferCell>>) => void,
   setHasBusinessAccount: (value: boolean) => void,
   result: BudgetGridResult,
+  rows: ReadonlyArray<BudgetRow>,
 ): void => {
-  setAllRows(result.rows);
+  setAllRows(rows);
   setCumBefore(result.cumulativeBefore);
   setMeb(result.monthEndBalances);
   setMebByLiq(result.monthEndBalancesByLiquidity);
   setBusinessPersonalTransfers(result.businessPersonalTransfers);
   setHasBusinessAccount(result.hasBusinessAccount);
+};
+
+type GeneratedBudgetRangeLoadOutcome =
+  | Readonly<{
+    status: "accepted";
+    result: BudgetGridResult;
+    request: BudgetBaseRangeRequest;
+  }>
+  | Readonly<{
+    status: "superseded";
+    request: BudgetBaseRangeRequest;
+  }>;
+
+const enumerateRangeMonths = (
+  monthFrom: string,
+  monthTo: string,
+): ReadonlyArray<string> => {
+  if (monthFrom > monthTo) {
+    throw new RangeError(
+      `Budget range monthFrom "${monthFrom}" must not be after monthTo "${monthTo}"`,
+    );
+  }
+  const months: Array<string> = [];
+  let current = monthFrom;
+  while (true) {
+    months.push(current);
+    if (current === monthTo) return months;
+    current = offsetMonth(current, 1);
+  }
 };
 
 const buildNewBudgetRow = (
@@ -172,6 +236,10 @@ export const useBudgetTableRangeState = ({
   loadBudgetRange,
 }: UseBudgetTableRangeStateParams): BudgetTableRangeState => {
   const [allRows, setAllRows] = useState<ReadonlyArray<BudgetRow>>(rows);
+  const [
+    localBaseAcknowledgementByCell,
+    setLocalBaseAcknowledgementByCell,
+  ] = useState<BudgetBaseLocalAcknowledgementByCell>(new Map());
   const [loadedFrom, setLoadedFrom] = useState<string>(initialMonthFrom);
   const [loadedTo, setLoadedTo] = useState<string>(initialMonthTo);
   const [cumBefore, setCumBefore] = useState<CumulativeBefore>(cumulativeBefore);
@@ -186,6 +254,59 @@ export const useBudgetTableRangeState = ({
   const isLoadingLeftRef = useRef<boolean>(false);
   const isLoadingRightRef = useRef<boolean>(false);
   const initialRefreshHandledRef = useRef<boolean>(false);
+  const latestRangeRequestGenerationRef = useRef<number>(0);
+  const latestRangeRequestGenerationByMonthRef = useRef<Map<string, number>>(
+    new Map(),
+  );
+  const baseProtectionsRef = useRef<BudgetBaseProtectionByCell>(new Map());
+  const latestBaseMutationGenerationRef = useRef<number>(0);
+  const baseMutationGenerationByCellRef =
+    useRef<BudgetBaseMutationGenerationByCell>(new Map());
+
+  const loadGeneratedBudgetRange = useCallback(async (
+    monthFrom: string,
+    monthTo: string,
+  ): Promise<GeneratedBudgetRangeLoadOutcome> => {
+    if (latestRangeRequestGenerationRef.current === Number.MAX_SAFE_INTEGER) {
+      throw new RangeError("Cannot issue another budget range request: generation limit reached");
+    }
+    const generation = latestRangeRequestGenerationRef.current + 1;
+    latestRangeRequestGenerationRef.current = generation;
+    const request: BudgetBaseRangeRequest = {
+      generation,
+      monthFrom,
+      monthTo,
+    };
+    for (const month of enumerateRangeMonths(monthFrom, monthTo)) {
+      latestRangeRequestGenerationByMonthRef.current.set(month, generation);
+    }
+
+    const outcome = await loadBudgetRange(monthFrom, monthTo);
+    return outcome.status === "accepted"
+      ? { status: "accepted", result: outcome.result, request }
+      : { status: "superseded", request };
+  }, [loadBudgetRange]);
+
+  const reconcileAcceptedBaseRange = useCallback((
+    result: BudgetGridResult,
+    request: BudgetBaseRangeRequest,
+  ): ReadonlyArray<BudgetRow> => {
+    const reconciled = reconcileBudgetBaseRange(
+      result.rows,
+      baseProtectionsRef.current,
+      request,
+    );
+    baseProtectionsRef.current = reconciled.protections;
+    setLocalBaseAcknowledgementByCell(
+      (previous): BudgetBaseLocalAcknowledgementByCell => (
+        retainProtectedBudgetBaseLocalAcknowledgements(
+          previous,
+          reconciled.protections,
+        )
+      ),
+    );
+    return reconciled.rows;
+  }, []);
 
   const onSyncStart = useCallback((): void => {
     setPendingSaves((count) => count + 1);
@@ -199,15 +320,16 @@ export const useBudgetTableRangeState = ({
     onVisibleRangeRefreshStart();
 
     try {
-      const outcome = await loadBudgetRange(loadedFrom, loadedTo);
+      const outcome = await loadGeneratedBudgetRange(loadedFrom, loadedTo);
       if (outcome.status === "superseded") return;
       const result = outcome.result;
-      applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setHasBusinessAccount, result);
+      const reconciledRows = reconcileAcceptedBaseRange(result, outcome.request);
+      applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setHasBusinessAccount, result, reconciledRows);
       reloadCommentRange(loadedFrom, loadedTo);
     } catch (error) {
       logBudgetTableError("visible range refresh", error);
     }
-  }, [loadBudgetRange, loadedFrom, loadedTo, onVisibleRangeRefreshStart, refreshToken, reloadCommentRange]);
+  }, [loadGeneratedBudgetRange, loadedFrom, loadedTo, onVisibleRangeRefreshStart, reconcileAcceptedBaseRange, refreshToken, reloadCommentRange]);
 
   useEffect(() => {
     if (!initialRefreshHandledRef.current) {
@@ -228,14 +350,122 @@ export const useBudgetTableRangeState = ({
     setAllRows((previous) => applyPlanSaveToRows(previous, month, direction, category, kind, value));
   }, []);
 
+  const issueBaseMutation = useCallback((
+    cells: ReadonlyArray<BudgetBaseCell>,
+  ): number => {
+    const issued = issueBudgetBaseMutation(
+      latestBaseMutationGenerationRef.current,
+      baseMutationGenerationByCellRef.current,
+      cells,
+    );
+    latestBaseMutationGenerationRef.current = issued.generation;
+    baseMutationGenerationByCellRef.current = issued.generationByCell;
+    return issued.generation;
+  }, []);
+
+  const handleBaseMutationIssued = useCallback((
+    month: string,
+    direction: string,
+    category: string,
+  ): number => issueBaseMutation([{ month, direction, category }]), [
+    issueBaseMutation,
+  ]);
+
   const handleFillMonths = useCallback((
     sourceMonth: string,
     direction: string,
     category: string,
     baseValue: number,
-  ): void => {
+  ): number => {
+    const targetCells = getTargetFillMonths(sourceMonth).map(
+      (month): BudgetBaseCell => ({ month, direction, category }),
+    );
+    const mutationGeneration = issueBaseMutation(targetCells);
     setAllRows((previous) => applyFillMonthsToRows(previous, sourceMonth, direction, category, baseValue));
+    return mutationGeneration;
+  }, [issueBaseMutation]);
+
+  const publishBaseAcknowledgements = useCallback((
+    cells: ReadonlyArray<BudgetBaseCell>,
+    baseValue: number,
+    mutationGeneration: number,
+  ): void => {
+    let protections = baseProtectionsRef.current;
+    for (const cell of cells) {
+      protections = protectBudgetBaseAcknowledgement(protections, {
+        cell,
+        value: baseValue,
+        throughRequestGeneration:
+          latestRangeRequestGenerationByMonthRef.current.get(cell.month) ?? 0,
+      });
+    }
+    baseProtectionsRef.current = protections;
+    setLocalBaseAcknowledgementByCell(
+      (previous): BudgetBaseLocalAcknowledgementByCell => (
+        publishBudgetBaseLocalAcknowledgements(
+          previous,
+          cells,
+          baseValue,
+          mutationGeneration,
+        )
+      ),
+    );
   }, []);
+
+  const handleBaseAcknowledged = useCallback((
+    month: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
+  ): void => {
+    const cell = { month, direction, category };
+    const currentCells = getCurrentBudgetBaseMutationCells(
+      baseMutationGenerationByCellRef.current,
+      [cell],
+      mutationGeneration,
+    );
+    if (currentCells.length === 0) return;
+    publishBaseAcknowledgements(
+      currentCells,
+      baseValue,
+      mutationGeneration,
+    );
+    setAllRows((previous): ReadonlyArray<BudgetRow> => (
+      applyBudgetBaseToRows(previous, cell, baseValue)
+    ));
+  }, [publishBaseAcknowledgements]);
+
+  const handleFillMonthsAcknowledged = useCallback((
+    sourceMonth: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
+  ): void => {
+    const targetCells = getTargetFillMonths(sourceMonth).map(
+      (month): BudgetBaseCell => ({ month, direction, category }),
+    );
+    const currentCells = getCurrentBudgetBaseMutationCells(
+      baseMutationGenerationByCellRef.current,
+      targetCells,
+      mutationGeneration,
+    );
+    if (currentCells.length === 0) return;
+    publishBaseAcknowledgements(
+      currentCells,
+      baseValue,
+      mutationGeneration,
+    );
+    setAllRows((previous): ReadonlyArray<BudgetRow> => (
+      currentCells.reduce(
+        (updatedRows, cell): ReadonlyArray<BudgetRow> => (
+          applyBudgetBaseToRows(updatedRows, cell, baseValue)
+        ),
+        previous,
+      )
+    ));
+  }, [publishBaseAcknowledgements]);
 
   const refreshLoadedRange = useCallback((): void => {
     void runVisibleRangeRefresh();
@@ -253,10 +483,10 @@ export const useBudgetTableRangeState = ({
     const newFrom = offsetMonth(loadedFrom, -BATCH_SIZE);
 
     try {
-      const outcome = await loadBudgetRange(newFrom, newTo);
+      const outcome = await loadGeneratedBudgetRange(newFrom, newTo);
       if (outcome.status === "superseded") return;
       const result = outcome.result;
-      const prependedRows = result.rows;
+      const prependedRows = reconcileAcceptedBaseRange(result, outcome.request);
       setAllRows((previous) => [...prependedRows, ...previous]);
       setCumBefore((previous) => adjustCumulativeBeforeForPrependedRows(previous, prependedRows));
       setLoadedFrom(newFrom);
@@ -271,7 +501,7 @@ export const useBudgetTableRangeState = ({
       isLoadingLeftRef.current = false;
       setIsLoadingLeft(false);
     }
-  }, [fetchCommentRange, loadBudgetRange, loadedFrom]);
+  }, [fetchCommentRange, loadGeneratedBudgetRange, loadedFrom, reconcileAcceptedBaseRange]);
 
   const loadRight = useCallback(async (): Promise<void> => {
     if (isLoadingRightRef.current) {
@@ -285,10 +515,11 @@ export const useBudgetTableRangeState = ({
     const newTo = offsetMonth(loadedTo, BATCH_SIZE);
 
     try {
-      const outcome = await loadBudgetRange(newFrom, newTo);
+      const outcome = await loadGeneratedBudgetRange(newFrom, newTo);
       if (outcome.status === "superseded") return;
       const result = outcome.result;
-      setAllRows((previous) => [...previous, ...result.rows]);
+      const appendedRows = reconcileAcceptedBaseRange(result, outcome.request);
+      setAllRows((previous) => [...previous, ...appendedRows]);
       setLoadedTo(newTo);
       setMeb((previous) => ({ ...previous, ...result.monthEndBalances }));
       setMebByLiq((previous) => ({ ...previous, ...result.monthEndBalancesByLiquidity }));
@@ -301,10 +532,11 @@ export const useBudgetTableRangeState = ({
       isLoadingRightRef.current = false;
       setIsLoadingRight(false);
     }
-  }, [fetchCommentRange, loadBudgetRange, loadedTo]);
+  }, [fetchCommentRange, loadGeneratedBudgetRange, loadedTo, reconcileAcceptedBaseRange]);
 
   return {
     allRows,
+    localBaseAcknowledgementByCell,
     loadedFrom,
     loadedTo,
     cumBefore,
@@ -318,7 +550,10 @@ export const useBudgetTableRangeState = ({
     onSyncStart,
     onSyncEnd,
     handlePlanSave,
+    handleBaseMutationIssued,
     handleFillMonths,
+    handleBaseAcknowledged,
+    handleFillMonthsAcknowledged,
     refreshLoadedRange,
     loadLeft,
     loadRight,

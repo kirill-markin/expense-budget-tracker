@@ -22,6 +22,7 @@ import { useBudgetTableViewport } from "@/ui/tables/budget/controller/useBudgetT
 import { useBudgetTableYearTotals } from "@/ui/tables/budget/controller/useBudgetTableYearTotals";
 import { useBudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/useBudgetAdjustmentRowsController";
 import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
+import type { BudgetBaseLocalAcknowledgementByCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 
 export type BudgetTableProps = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -41,6 +42,7 @@ export type BudgetTableProps = Readonly<{
 
 export type BudgetTableController = Readonly<{
   effectiveAllowlist: ReadonlySet<string> | null;
+  localBaseAcknowledgementByCell: BudgetBaseLocalAcknowledgementByCell;
   currentMonth: string;
   currentYear: string;
   months: ReadonlyArray<string>;
@@ -81,11 +83,30 @@ export type BudgetTableController = Readonly<{
     kind: "base" | "modifier",
     value: number,
   ) => void;
+  handleBaseMutationIssued: (
+    month: string,
+    direction: string,
+    category: string,
+  ) => number;
   handleFillMonths: (
     sourceMonth: string,
     direction: string,
     category: string,
     baseValue: number,
+  ) => number;
+  handleBaseAcknowledged: (
+    month: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
+  ) => void;
+  handleFillMonthsAcknowledged: (
+    sourceMonth: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
   ) => void;
   updateCommentCell: (
     month: string,
@@ -222,6 +243,8 @@ export const useBudgetTableController = (
 
   return {
     effectiveAllowlist,
+    localBaseAcknowledgementByCell:
+      rangeState.localBaseAcknowledgementByCell,
     currentMonth,
     currentYear,
     months: derivedState.months,
@@ -256,7 +279,10 @@ export const useBudgetTableController = (
     onSyncStart: rangeState.onSyncStart,
     onSyncEnd: rangeState.onSyncEnd,
     handlePlanSave: rangeState.handlePlanSave,
+    handleBaseMutationIssued: rangeState.handleBaseMutationIssued,
     handleFillMonths: rangeState.handleFillMonths,
+    handleBaseAcknowledged: rangeState.handleBaseAcknowledged,
+    handleFillMonthsAcknowledged: rangeState.handleFillMonthsAcknowledged,
     updateCommentCell,
     openDrillDown,
     handleDrillDownClose,

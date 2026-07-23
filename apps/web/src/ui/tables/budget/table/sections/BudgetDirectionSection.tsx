@@ -3,6 +3,7 @@
 import { Fragment, type ReactElement } from "react";
 
 import type { NumberFormat } from "@/lib/locale";
+import type { BudgetBaseLocalAcknowledgementByCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import {
   type CellValue,
   type ColumnEntry,
@@ -17,6 +18,7 @@ import { DirectionSubtotalRow } from "./direction/DirectionSubtotalRow";
 export type BudgetDirectionSectionProps = Readonly<{
   block: DirectionBlock;
   effectiveAllowlist: ReadonlySet<string> | null;
+  localBaseAcknowledgementByCell: BudgetBaseLocalAcknowledgementByCell;
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
@@ -35,11 +37,30 @@ export type BudgetDirectionSectionProps = Readonly<{
     kind: "base" | "modifier",
     value: number,
   ) => void;
+  onBaseMutationIssued: (
+    month: string,
+    direction: string,
+    category: string,
+  ) => number;
   onFillMonths: (
     sourceMonth: string,
     direction: string,
     category: string,
     baseValue: number,
+  ) => number;
+  onBaseAcknowledged: (
+    month: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
+  ) => void;
+  onFillMonthsAcknowledged: (
+    sourceMonth: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+    mutationGeneration: number,
   ) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
@@ -49,6 +70,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
   const {
     block,
     effectiveAllowlist,
+    localBaseAcknowledgementByCell,
     columnSequence,
     currentMonth,
     currentYear,
@@ -61,7 +83,10 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
     copyToClipboard,
     openDrillDown,
     onPlanSave,
+    onBaseMutationIssued,
     onFillMonths,
+    onBaseAcknowledged,
+    onFillMonthsAcknowledged,
     onSyncStart,
     onSyncEnd,
   } = props;
@@ -92,6 +117,9 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
             block={block}
             category={category}
             effectiveAllowlist={effectiveAllowlist}
+            localBaseAcknowledgementByCell={
+              localBaseAcknowledgementByCell
+            }
             columnSequence={columnSequence}
             currentMonth={currentMonth}
             currentYear={currentYear}
@@ -102,7 +130,10 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
             copyToClipboard={copyToClipboard}
             openDrillDown={openDrillDown}
             onPlanSave={onPlanSave}
+            onBaseMutationIssued={onBaseMutationIssued}
             onFillMonths={onFillMonths}
+            onBaseAcknowledged={onBaseAcknowledged}
+            onFillMonthsAcknowledged={onFillMonthsAcknowledged}
             onSyncStart={onSyncStart}
             onSyncEnd={onSyncEnd}
           />
