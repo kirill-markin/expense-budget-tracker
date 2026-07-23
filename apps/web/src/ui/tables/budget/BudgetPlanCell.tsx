@@ -1,19 +1,31 @@
 import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import type { NumberFormat } from "@/lib/locale";
+import type { BudgetAdjustmentDirection } from "@/server/budget/budgetAdjustments";
 import { useFormat } from "@/ui/FormatProvider";
-import { postBudgetPlan, postBudgetPlanFill, fetchComment, postComment } from "@/ui/tables/budget/budgetTableApi";
+import { BudgetAdjustmentEditor } from "@/ui/tables/budget/BudgetAdjustmentEditor";
+import { isSuccessfulBudgetAdjustmentFlushOutcome } from "@/ui/tables/budget/budgetAdjustmentRecovery";
+import { isValidBudgetAdjustmentCategory } from "@/ui/tables/budget/budgetAdjustmentRowsState";
+import { postBudgetPlan, postBudgetPlanFill } from "@/ui/tables/budget/budgetTableApi";
 import { formatAmount, isDecember } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
+import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
+import { logBudgetTableError } from "@/ui/tables/budget/table/logBudgetTableError";
 import { parseMonetaryNumberEdit } from "@/ui/tables/shared/format";
 import { useTableEditorActivation } from "@/ui/tables/shared/TableEditorActivationProvider";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 
-const POPOVER_WIDTH = 240;
+const POPOVER_WIDTH = 720;
 const POPOVER_VIEWPORT_MARGIN = 8;
 const POPOVER_CELL_GAP = 4;
 
@@ -29,31 +41,17 @@ type PopoverSize = Readonly<{
 
 type TextDirection = "ltr" | "rtl";
 
-type RoundedBudgetInputsResult =
-  | Readonly<{ ok: true; base: number; modifier: number }>
-  | Readonly<{ ok: false; baseInvalid: boolean; modifierInvalid: boolean }>;
+type RoundedBaseInputResult =
+  | Readonly<{ ok: true; value: number }>
+  | Readonly<{ ok: false }>;
 
-const parseRoundedBudgetInputs = (
-  baseInput: string,
-  modifierInput: string,
-  originalBase: number,
-  originalModifier: number,
+const parseRoundedBaseInput = (
+  input: string,
+  originalValue: number,
   numberFormat: NumberFormat,
-): RoundedBudgetInputsResult => {
-  const base = parseMonetaryNumberEdit(baseInput, originalBase, numberFormat);
-  const modifier = parseMonetaryNumberEdit(modifierInput, originalModifier, numberFormat);
-  if (!base.ok || !modifier.ok) {
-    return {
-      ok: false,
-      baseInvalid: !base.ok,
-      modifierInvalid: !modifier.ok,
-    };
-  }
-  return {
-    ok: true,
-    base: Math.round(base.value),
-    modifier: Math.round(modifier.value),
-  };
+): RoundedBaseInputResult => {
+  const parsed = parseMonetaryNumberEdit(input, originalValue, numberFormat);
+  return parsed.ok ? { ok: true, value: Math.round(parsed.value) } : { ok: false };
 };
 
 const getClampedCoordinate = (preferred: number, min: number, max: number): number => {
@@ -69,7 +67,11 @@ const getDocumentDirection = (): TextDirection => (
   document.documentElement.dir === "rtl" ? "rtl" : "ltr"
 );
 
-const getPreferredPopoverLeft = (cellRect: DOMRect, popoverWidth: number, textDirection: TextDirection): number => (
+const getPreferredPopoverLeft = (
+  cellRect: DOMRect,
+  popoverWidth: number,
+  textDirection: TextDirection,
+): number => (
   textDirection === "rtl" ? cellRect.left : cellRect.right - popoverWidth
 );
 
@@ -104,61 +106,121 @@ const getPopoverPosition = (
   };
 };
 
+const getAdjustmentDirection = (
+  direction: string,
+): BudgetAdjustmentDirection | null => (
+  direction === "income" || direction === "spend" ? direction : null
+);
+
 export type BudgetPlanCellProps = Readonly<{
   month: string;
   direction: string;
   category: string;
+  directionCategories: ReadonlyArray<string>;
+  effectiveAllowlist: ReadonlySet<string> | null;
+  currentMonth: string;
   plannedBase: number;
   plannedModifier: number;
   planned: number;
-  hasComment: boolean;
   showData: boolean;
   maskClass: string;
   taintedClass: string;
   isPlanOver: boolean;
   cmClass: string;
-  onPlanSave: (month: string, direction: string, category: string, kind: "base" | "modifier", value: number) => void;
-  onFillMonths: (sourceMonth: string, direction: string, category: string, baseValue: number) => void;
-  onCommentPresenceChange: (month: string, direction: string, category: string, hasComment: boolean) => void;
+  budgetAdjustments: BudgetAdjustmentRowsController;
+  onPlanSave: (
+    month: string,
+    direction: string,
+    category: string,
+    kind: "base" | "modifier",
+    value: number,
+  ) => void;
+  onFillMonths: (
+    sourceMonth: string,
+    direction: string,
+    category: string,
+    baseValue: number,
+  ) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
 }>;
 
 export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
-  const { month, direction, category, plannedBase, plannedModifier, planned, hasComment, showData, maskClass, taintedClass, isPlanOver, cmClass, onPlanSave, onFillMonths, onCommentPresenceChange, onSyncStart, onSyncEnd } = props;
+  const {
+    month,
+    direction,
+    category,
+    directionCategories,
+    effectiveAllowlist,
+    currentMonth,
+    plannedBase,
+    plannedModifier,
+    planned,
+    showData,
+    maskClass,
+    taintedClass,
+    isPlanOver,
+    cmClass,
+    budgetAdjustments,
+    onPlanSave,
+    onFillMonths,
+    onSyncStart,
+    onSyncEnd,
+  } = props;
 
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
   const editorId = `budget-plan:${month}:${direction}:${category}`;
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [baseInput, setBaseInput] = useState<string>("");
-  const [modifierInput, setModifierInput] = useState<string>("");
   const [baseValidationError, setBaseValidationError] = useState<string | null>(null);
-  const [modifierValidationError, setModifierValidationError] = useState<string | null>(null);
-  const [commentInput, setCommentInput] = useState<string>("");
-  const [isLoadingComment, setIsLoadingComment] = useState<boolean>(false);
   const [popoverPos, setPopoverPos] = useState<PopoverPosition>({ top: 0, left: 0 });
 
   const cellRef = useRef<HTMLTableCellElement>(null);
+  const triggerButtonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const adjustInputRef = useRef<HTMLInputElement>(null);
   const baseInputRef = useRef<HTMLInputElement>(null);
+  const adjustmentInitialFocusRef = useRef<
+    HTMLInputElement | HTMLButtonElement | null
+  >(null);
+  const originalBaseRef = useRef<number>(Math.round(plannedBase));
+  const isOpenRef = useRef<boolean>(false);
+  const interactedAdjustmentIdsRef = useRef<Set<string>>(new Set());
+  const settleLifecycleRef = useRef<() => Promise<boolean>>(
+    (): Promise<boolean> => Promise.resolve(true),
+  );
 
-  const originalBase = useRef<number>(0);
-  const originalModifier = useRef<number>(0);
-  const originalComment = useRef<string>("");
+  const adjustmentDirection = getAdjustmentDirection(direction);
+  const adjustmentLocation = adjustmentDirection === null
+    || !isValidBudgetAdjustmentCategory(category)
+    ? null
+    : { month, direction: adjustmentDirection, category };
+  const adjustmentTotal = adjustmentLocation === null
+    ? 0
+    : budgetAdjustments.getCellTotal(adjustmentLocation, effectiveAllowlist);
+
+  const setPopoverOpen = useCallback((open: boolean): void => {
+    isOpenRef.current = open;
+    setIsOpen(open);
+  }, []);
+
+  const setAdjustmentInitialFocusTarget = useCallback((
+    target: HTMLInputElement | HTMLButtonElement | null,
+  ): void => {
+    adjustmentInitialFocusRef.current = target;
+  }, []);
 
   const initializePopover = (): boolean => {
     const cell = cellRef.current;
     if (!showData || cell === null) return false;
+
     const roundedBase = Math.round(plannedBase);
-    const roundedModifier = Math.round(plannedModifier);
+    originalBaseRef.current = roundedBase;
     setBaseInput(String(roundedBase));
-    setModifierInput(String(roundedModifier));
     setBaseValidationError(null);
-    setModifierValidationError(null);
-    originalBase.current = roundedBase;
-    originalModifier.current = roundedModifier;
+    baseInputRef.current?.setCustomValidity("");
+    adjustmentInitialFocusRef.current = null;
+    interactedAdjustmentIdsRef.current = new Set();
 
     const rect = cell.getBoundingClientRect();
     setPopoverPos(getPopoverPosition(
@@ -168,27 +230,20 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       window.innerHeight,
       getDocumentDirection(),
     ));
-    setIsOpen(true);
-
-    setIsLoadingComment(true);
-    setCommentInput("");
-    originalComment.current = "";
-    fetchComment(month, direction, category)
-      .then((c) => {
-        const val = c ?? "";
-        setCommentInput(val);
-        originalComment.current = val;
-      })
-      .catch((error) => console.error(error))
-      .finally(() => setIsLoadingComment(false));
+    setPopoverOpen(true);
     return true;
   };
-  const { requestActivation, releaseActivation } = useTableEditorActivation(
-    editorId,
-    initializePopover,
-  );
+  const {
+    requestActivation,
+    prepareActivationRelease,
+    cancelActivationRelease,
+    cancelActivationRequest,
+    releaseActivation,
+    registerTransitionGate,
+  } = useTableEditorActivation(editorId, initializePopover);
 
   const openPopover = (): void => {
+    if (!showData || isOpenRef.current) return;
     requestActivation();
   };
 
@@ -206,9 +261,9 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       window.innerHeight,
       getDocumentDirection(),
     );
-
     setPopoverPos((currentPosition) => (
-      currentPosition.top === nextPosition.top && currentPosition.left === nextPosition.left
+      currentPosition.top === nextPosition.top
+        && currentPosition.left === nextPosition.left
         ? currentPosition
         : nextPosition
     ));
@@ -217,241 +272,400 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   useLayoutEffect(() => {
     if (!isOpen) return;
     updatePopoverPosition();
-  }, [isOpen, isLoadingComment, updatePopoverPosition]);
+  }, [isOpen, updatePopoverPosition]);
 
   useEffect(() => {
     if (!isOpen) return;
 
-    const handleViewportChange = (): void => {
-      updatePopoverPosition();
+    let animationFrameId: number | null = null;
+    const schedulePositionUpdate = (): void => {
+      if (animationFrameId !== null) return;
+      animationFrameId = window.requestAnimationFrame((): void => {
+        animationFrameId = null;
+        updatePopoverPosition();
+      });
     };
-
-    const resizeObserver = new ResizeObserver(handleViewportChange);
-    if (popoverRef.current !== null) {
-      resizeObserver.observe(popoverRef.current);
-    }
-
-    window.addEventListener("resize", handleViewportChange);
-    window.addEventListener("scroll", handleViewportChange, true);
+    const resizeObserver = new ResizeObserver(schedulePositionUpdate);
+    if (cellRef.current !== null) resizeObserver.observe(cellRef.current);
+    if (popoverRef.current !== null) resizeObserver.observe(popoverRef.current);
+    window.addEventListener("resize", schedulePositionUpdate);
+    window.addEventListener("scroll", schedulePositionUpdate, true);
 
     return () => {
       resizeObserver.disconnect();
-      window.removeEventListener("resize", handleViewportChange);
-      window.removeEventListener("scroll", handleViewportChange, true);
+      if (animationFrameId !== null) window.cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", schedulePositionUpdate);
+      window.removeEventListener("scroll", schedulePositionUpdate, true);
     };
   }, [isOpen, updatePopoverPosition]);
 
   useEffect(() => {
-    if (isOpen && adjustInputRef.current !== null) {
-      adjustInputRef.current.focus();
-      adjustInputRef.current.select();
-    }
+    if (!isOpen) return;
+    const focusTarget = adjustmentInitialFocusRef.current ?? baseInputRef.current;
+    if (focusTarget === null) return;
+    focusTarget.focus();
+    if (focusTarget instanceof HTMLInputElement) focusTarget.select();
   }, [isOpen]);
 
-  const reportInvalidInputs = useCallback((result: Extract<RoundedBudgetInputsResult, { ok: false }>): void => {
-    const message = t("common.invalidNumber");
-    const baseError = result.baseInvalid ? message : null;
-    const modifierError = result.modifierInvalid ? message : null;
-    setBaseValidationError(baseError);
-    setModifierValidationError(modifierError);
-    baseInputRef.current?.setCustomValidity(baseError ?? "");
-    adjustInputRef.current?.setCustomValidity(modifierError ?? "");
-
-    const firstInvalidInput = result.modifierInvalid ? adjustInputRef.current : baseInputRef.current;
-    firstInvalidInput?.reportValidity();
-  }, [t]);
-
-  const saveChanges = useCallback((): boolean => {
-    const parsedInputs = parseRoundedBudgetInputs(
+  const parseAndReportBase = useCallback((): RoundedBaseInputResult => {
+    const parsed = parseRoundedBaseInput(
       baseInput,
-      modifierInput,
-      originalBase.current,
-      originalModifier.current,
+      originalBaseRef.current,
       numberFormat,
     );
-    if (!parsedInputs.ok) {
-      reportInvalidInputs(parsedInputs);
+    if (parsed.ok) {
+      setBaseValidationError(null);
+      baseInputRef.current?.setCustomValidity("");
+      return parsed;
+    }
+    const message = t("common.invalidNumber");
+    setBaseValidationError(message);
+    baseInputRef.current?.setCustomValidity(message);
+    baseInputRef.current?.reportValidity();
+    return parsed;
+  }, [baseInput, numberFormat, t]);
+
+  const saveBase = useCallback((value: number): void => {
+    if (value === originalBaseRef.current) return;
+    const previousBase = originalBaseRef.current;
+    originalBaseRef.current = value;
+    onSyncStart();
+    onPlanSave(month, direction, category, "base", value);
+    void postBudgetPlan({
+      month,
+      direction,
+      category,
+      kind: "base",
+      plannedValue: value,
+    })
+      .catch((error: unknown): void => {
+        originalBaseRef.current = previousBase;
+        onPlanSave(month, direction, category, "base", previousBase);
+        logBudgetTableError(`save base for ${month}/${direction}/${category}`, error);
+      })
+      .finally(onSyncEnd);
+  }, [
+    category,
+    direction,
+    month,
+    onPlanSave,
+    onSyncEnd,
+    onSyncStart,
+  ]);
+
+  const focusAdjustmentFlushFailure = useCallback((
+    adjustmentIds: ReadonlyArray<string>,
+  ): void => {
+    window.requestAnimationFrame((): void => {
+      const popover = popoverRef.current;
+      if (popover === null) return;
+      for (const adjustmentId of adjustmentIds) {
+        const row = popover.querySelector<HTMLElement>(
+          `[data-testid="budget-adjustment-row-${adjustmentId}"]`,
+        );
+        const target = row?.querySelector<HTMLElement>('[aria-invalid="true"]')
+          ?? row?.querySelector<HTMLElement>("input, textarea, select, button");
+        if (target !== undefined && target !== null) {
+          target.focus();
+          return;
+        }
+      }
+    });
+  }, []);
+
+  const clearTrackedAdjustment = useCallback((adjustmentId: string): void => {
+    interactedAdjustmentIdsRef.current.delete(adjustmentId);
+  }, []);
+
+  const flushInteractedAdjustments = useCallback(async (): Promise<boolean> => {
+    const adjustmentIds = [...interactedAdjustmentIdsRef.current].filter(
+      (adjustmentId): boolean => (
+        budgetAdjustments.getRow(adjustmentId, effectiveAllowlist) !== null
+      ),
+    );
+    interactedAdjustmentIdsRef.current = new Set(adjustmentIds);
+    const failedAdjustmentIds = (await Promise.all(adjustmentIds.map(
+      async (adjustmentId): Promise<string | null> => {
+        try {
+          const outcome = await budgetAdjustments.flushRow(adjustmentId);
+          return isSuccessfulBudgetAdjustmentFlushOutcome(outcome)
+            ? null
+            : adjustmentId;
+        } catch (error: unknown) {
+          logBudgetTableError(
+            `flush budget adjustment ${adjustmentId} on editor settlement`,
+            error,
+          );
+          return adjustmentId;
+        }
+      },
+    ))).filter((adjustmentId): adjustmentId is string => adjustmentId !== null);
+    if (failedAdjustmentIds.length > 0) {
+      focusAdjustmentFlushFailure(failedAdjustmentIds);
       return false;
     }
-
-    const baseChanged = parsedInputs.base !== originalBase.current;
-    const modChanged = parsedInputs.modifier !== originalModifier.current;
-
-    if (baseChanged) {
-      onSyncStart();
-      onPlanSave(month, direction, category, "base", parsedInputs.base);
-      postBudgetPlan({ month, direction, category, kind: "base", plannedValue: parsedInputs.base })
-        .catch((error) => {
-          onPlanSave(month, direction, category, "base", originalBase.current);
-          console.error(error);
-        })
-        .finally(onSyncEnd);
-    }
-
-    if (modChanged) {
-      onSyncStart();
-      onPlanSave(month, direction, category, "modifier", parsedInputs.modifier);
-      postBudgetPlan({ month, direction, category, kind: "modifier", plannedValue: parsedInputs.modifier })
-        .catch((error) => {
-          onPlanSave(month, direction, category, "modifier", originalModifier.current);
-          console.error(error);
-        })
-        .finally(onSyncEnd);
-    }
-
-    if (commentInput !== originalComment.current) {
-      onSyncStart();
-      onCommentPresenceChange(month, direction, category, commentInput.trim().length > 0);
-      postComment({ month, direction, category, comment: commentInput })
-        .catch((error) => console.error(error))
-        .finally(onSyncEnd);
-    }
+    interactedAdjustmentIdsRef.current = new Set();
     return true;
-  }, [baseInput, modifierInput, commentInput, month, direction, category, numberFormat, onPlanSave, onCommentPresenceChange, onSyncStart, onSyncEnd, reportInvalidInputs]);
+  }, [
+    budgetAdjustments,
+    effectiveAllowlist,
+    focusAdjustmentFlushFailure,
+  ]);
 
-  const closePopover = useCallback((): void => {
-    if (!isOpen) return;
-    if (!saveChanges()) return;
-    setIsOpen(false);
+  const finishPopoverClose = useCallback((): void => {
+    interactedAdjustmentIdsRef.current = new Set();
+    setPopoverOpen(false);
     releaseActivation();
-  }, [isOpen, releaseActivation, saveChanges]);
+  }, [releaseActivation, setPopoverOpen]);
 
-  const handleFill = useCallback((): void => {
-    const parsedInputs = parseRoundedBudgetInputs(
-      baseInput,
-      modifierInput,
-      originalBase.current,
-      originalModifier.current,
-      numberFormat,
-    );
-    if (!parsedInputs.ok) {
-      reportInvalidInputs(parsedInputs);
+  const closePopover = useCallback(async (): Promise<boolean> => {
+    if (!isOpenRef.current) return true;
+    prepareActivationRelease();
+    const parsedBase = parseAndReportBase();
+    if (!parsedBase.ok) {
+      cancelActivationRelease();
+      return false;
+    }
+    saveBase(parsedBase.value);
+    if (!await flushInteractedAdjustments()) {
+      cancelActivationRelease();
+      return false;
+    }
+    finishPopoverClose();
+    return true;
+  }, [
+    cancelActivationRelease,
+    finishPopoverClose,
+    flushInteractedAdjustments,
+    parseAndReportBase,
+    prepareActivationRelease,
+    saveBase,
+  ]);
+
+  const cancelBaseAndClosePopover = useCallback(async (): Promise<boolean> => {
+    if (!isOpenRef.current) return true;
+    prepareActivationRelease();
+    const originalBase = String(originalBaseRef.current);
+    setBaseInput(originalBase);
+    setBaseValidationError(null);
+    baseInputRef.current?.setCustomValidity("");
+    if (!await flushInteractedAdjustments()) {
+      cancelActivationRelease();
+      return false;
+    }
+    finishPopoverClose();
+    return true;
+  }, [
+    cancelActivationRelease,
+    finishPopoverClose,
+    flushInteractedAdjustments,
+    prepareActivationRelease,
+  ]);
+
+  const restoreTriggerFocus = useCallback((): void => {
+    window.requestAnimationFrame((): void => triggerButtonRef.current?.focus());
+  }, []);
+
+  const closePopoverAndRestoreFocus = useCallback(async (): Promise<void> => {
+    if (await closePopover()) restoreTriggerFocus();
+  }, [closePopover, restoreTriggerFocus]);
+
+  const cancelBaseAndRestoreFocus = useCallback(async (): Promise<void> => {
+    if (await cancelBaseAndClosePopover()) restoreTriggerFocus();
+  }, [cancelBaseAndClosePopover, restoreTriggerFocus]);
+
+  const handleFill = useCallback(async (): Promise<void> => {
+    if (!isOpenRef.current) return;
+    prepareActivationRelease();
+    const parsedBase = parseAndReportBase();
+    if (!parsedBase.ok) {
+      cancelActivationRelease();
+      return;
+    }
+    saveBase(parsedBase.value);
+    if (!await flushInteractedAdjustments()) {
+      cancelActivationRelease();
       return;
     }
 
-    // Save base for current month if changed
-    if (parsedInputs.base !== originalBase.current) {
-      onSyncStart();
-      onPlanSave(month, direction, category, "base", parsedInputs.base);
-      postBudgetPlan({ month, direction, category, kind: "base", plannedValue: parsedInputs.base })
-        .catch((error) => {
-          onPlanSave(month, direction, category, "base", originalBase.current);
-          console.error(error);
-        })
-        .finally(onSyncEnd);
-    }
-
-    // Save modifier for current month if changed
-    if (parsedInputs.modifier !== originalModifier.current) {
-      onSyncStart();
-      onPlanSave(month, direction, category, "modifier", parsedInputs.modifier);
-      postBudgetPlan({ month, direction, category, kind: "modifier", plannedValue: parsedInputs.modifier })
-        .catch((error) => {
-          onPlanSave(month, direction, category, "modifier", originalModifier.current);
-          console.error(error);
-        })
-        .finally(onSyncEnd);
-    }
-
-    // Fill base to following months
     onSyncStart();
-    onFillMonths(month, direction, category, parsedInputs.base);
-    postBudgetPlanFill({ fromMonth: month, direction, category, baseValue: parsedInputs.base })
-      .catch((error) => {
-        console.error(error);
+    onFillMonths(month, direction, category, parsedBase.value);
+    void postBudgetPlanFill({
+      fromMonth: month,
+      direction,
+      category,
+      baseValue: parsedBase.value,
+    })
+      .catch((error: unknown): void => {
+        logBudgetTableError(`fill base from ${month}/${direction}/${category}`, error);
       })
       .finally(onSyncEnd);
 
-    setIsOpen(false);
-    releaseActivation();
-  }, [baseInput, modifierInput, month, direction, category, numberFormat, onPlanSave, onFillMonths, onSyncStart, onSyncEnd, releaseActivation, reportInvalidInputs]);
+    finishPopoverClose();
+    restoreTriggerFocus();
+  }, [
+    cancelActivationRelease,
+    category,
+    direction,
+    finishPopoverClose,
+    flushInteractedAdjustments,
+    month,
+    onFillMonths,
+    onSyncEnd,
+    onSyncStart,
+    parseAndReportBase,
+    prepareActivationRelease,
+    restoreTriggerFocus,
+    saveBase,
+  ]);
 
-  // Click outside → close
+  const settleLifecycle = useCallback(async (): Promise<boolean> => {
+    if (isOpenRef.current) return closePopover();
+    if (interactedAdjustmentIdsRef.current.size === 0) return true;
+    return flushInteractedAdjustments();
+  }, [closePopover, flushInteractedAdjustments]);
+  settleLifecycleRef.current = settleLifecycle;
+
+  useEffect(() => registerTransitionGate({
+    isLifecycleUnresolved: (): boolean => (
+      isOpenRef.current || interactedAdjustmentIdsRef.current.size > 0
+    ),
+    settleLifecycle: (): Promise<boolean> => settleLifecycleRef.current(),
+  }), [registerTransitionGate]);
+
+  useEffect(() => {
+    if (showData) return;
+    cancelActivationRequest();
+    if (!isOpenRef.current) return;
+    setPopoverOpen(false);
+    releaseActivation();
+    void flushInteractedAdjustments();
+  }, [
+    cancelActivationRequest,
+    flushInteractedAdjustments,
+    releaseActivation,
+    setPopoverOpen,
+    showData,
+  ]);
+
   useEffect(() => {
     if (!isOpen) return;
-    const handleMouseDown = (e: MouseEvent): void => {
-      const target = e.target as Node;
+    const handleMouseDown = (event: MouseEvent): void => {
+      const target = event.target as Node;
       if (
-        popoverRef.current !== null && !popoverRef.current.contains(target) &&
-        cellRef.current !== null && !cellRef.current.contains(target)
+        target instanceof Element
+        && target.closest('[data-table-editor-visibility-control="true"]') !== null
       ) {
-        closePopover();
+        return;
+      }
+      if (
+        popoverRef.current !== null
+        && !popoverRef.current.contains(target)
+        && cellRef.current !== null
+        && !cellRef.current.contains(target)
+      ) {
+        void closePopover();
       }
     };
     document.addEventListener("mousedown", handleMouseDown);
     return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [isOpen, closePopover]);
+  }, [closePopover, isOpen]);
 
-  // Escape → close
   useEffect(() => {
     if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") {
-        setIsOpen(false); // close without saving
-        releaseActivation();
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      if (
+        popoverRef.current?.querySelector(
+          '[data-budget-adjustment-delete-dialog="true"]',
+        ) !== null
+      ) {
+        return;
       }
+      event.preventDefault();
+      void cancelBaseAndRestoreFocus();
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, releaseActivation]);
+  }, [cancelBaseAndRestoreFocus, isOpen]);
 
-  const handleBaseKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === "Enter") closePopover();
-  };
-
-  const handleModifierKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === "Enter") closePopover();
-  };
-
-  const parsedInputs = parseRoundedBudgetInputs(
+  const parsedBase = parseRoundedBaseInput(
     baseInput,
-    modifierInput,
-    originalBase.current,
-    originalModifier.current,
+    originalBaseRef.current,
     numberFormat,
   );
-  const computedTotal = parsedInputs.ok ? parsedInputs.base + parsedInputs.modifier : 0;
+  const computedTotal = parsedBase.ok ? parsedBase.value + adjustmentTotal : 0;
   const canFill = !isDecember(month);
-
   const modifierIconClass = direction === "income"
     ? (plannedModifier > 0 ? styles.iconGood : styles.iconBad)
     : (plannedModifier > 0 ? styles.iconBadUp : styles.iconGoodDown);
+  const formattedPlanned = showData ? formatAmount(planned, numberFormat) : "";
+  const accessibleName = showData
+    ? t("budget.openPlanEditor", {
+      month,
+      category,
+      amount: formattedPlanned,
+    })
+    : "";
 
   return (
     <td
       ref={cellRef}
-      className={cn(styles.cell, styles.cellEditable, cmClass, maskClass, taintedClass, isPlanOver ? tableStateStyles.over : "")}
-      data-testid={`budget-plan-cell-${editorId}`}
-      onClick={isOpen ? undefined : openPopover}
-    >
-      {showData && plannedModifier !== 0 && (
-        <span className={cn(styles.iconModifier, modifierIconClass)} />
+      className={cn(
+        styles.cell,
+        styles.cellEditable,
+        cmClass,
+        maskClass,
+        taintedClass,
+        isPlanOver ? tableStateStyles.over : "",
       )}
-      {formatAmount(planned, numberFormat)}
-      {isOpen && createPortal(
+      data-testid={showData ? `budget-plan-cell-${editorId}` : undefined}
+    >
+      {showData && (
+        <button
+          ref={triggerButtonRef}
+          type="button"
+          className={styles.planCellButton}
+          data-testid={`budget-plan-open-${editorId}`}
+          aria-label={accessibleName}
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
+          disabled={isOpen}
+          onClick={openPopover}
+        >
+          {plannedModifier !== 0 && (
+            <span className={cn(styles.iconModifier, modifierIconClass)} />
+          )}
+          {formattedPlanned}
+        </button>
+      )}
+      {showData && isOpen && createPortal(
         <div
           ref={popoverRef}
           className={styles.popover}
           style={{ top: popoverPos.top, left: popoverPos.left }}
+          data-testid={`budget-plan-popover-${editorId}`}
+          role="dialog"
+          aria-label={accessibleName}
         >
-          <label className={styles.popoverField}>
-            <span className={styles.popoverLabel}>{t("budget.popoverAdjust")}</span>
-            <input
-              ref={adjustInputRef}
-              type="text"
-              inputMode="decimal"
-              className={styles.popoverInput}
-              data-testid={`budget-plan-modifier-input-${editorId}`}
-              value={modifierInput}
-              aria-invalid={modifierValidationError !== null}
-              onChange={(e) => {
-                setModifierInput(e.target.value);
-                setModifierValidationError(null);
-                e.currentTarget.setCustomValidity("");
-              }}
-              onKeyDown={handleModifierKeyDown}
-            />
-          </label>
+          {adjustmentLocation !== null && (
+            <>
+              <BudgetAdjustmentEditor
+                editorId={editorId}
+                location={adjustmentLocation}
+                currentMonth={currentMonth}
+                categories={directionCategories}
+                effectiveAllowlist={effectiveAllowlist}
+                controller={budgetAdjustments}
+                onInitialFocusTargetChange={setAdjustmentInitialFocusTarget}
+                onInteraction={(adjustmentId): void => {
+                  interactedAdjustmentIdsRef.current.add(adjustmentId);
+                }}
+                onDeleteSuccess={clearTrackedAdjustment}
+              />
+              <div className={styles.popoverDivider} />
+            </>
+          )}
           <label className={styles.popoverField}>
             <span className={styles.popoverLabel}>{t("budget.popoverBase")}</span>
             <input
@@ -462,18 +676,24 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
               data-testid={`budget-plan-base-input-${editorId}`}
               value={baseInput}
               aria-invalid={baseValidationError !== null}
-              onChange={(e) => {
-                setBaseInput(e.target.value);
+              onChange={(event) => {
+                setBaseInput(event.target.value);
                 setBaseValidationError(null);
-                e.currentTarget.setCustomValidity("");
+                event.currentTarget.setCustomValidity("");
               }}
-              onKeyDown={handleBaseKeyDown}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                void closePopoverAndRestoreFocus();
+              }}
             />
           </label>
           <div className={styles.popoverDivider} />
           <div className={styles.popoverTotal}>
             <span className={styles.popoverLabel}>{t("budget.popoverTotal")}</span>
-            <span className={styles.popoverTotalValue}>{formatAmount(computedTotal, numberFormat)}</span>
+            <span className={styles.popoverTotalValue}>
+              {formatAmount(computedTotal, numberFormat)}
+            </span>
           </div>
           {canFill && (
             <>
@@ -481,25 +701,13 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
               <button
                 type="button"
                 className={styles.popoverFillButton}
-                onClick={handleFill}
+                data-testid={`budget-plan-fill-${editorId}`}
+                onClick={() => void handleFill()}
               >
                 {t("budget.popoverFill")}
               </button>
             </>
           )}
-          <div className={styles.popoverDivider} />
-          {isLoadingComment
-            ? <span className={styles.popoverLoading}>{t("common.loading")}</span>
-            : (
-              <textarea
-                className={styles.popoverComment}
-                rows={3}
-                placeholder={t("budget.popoverNote")}
-                value={commentInput}
-                onChange={(e) => setCommentInput(e.target.value)}
-              />
-            )
-          }
         </div>,
         document.body,
       )}

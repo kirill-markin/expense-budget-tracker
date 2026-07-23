@@ -9,6 +9,7 @@ import {
   type DirectionBlock,
   type YearTotalComputed,
 } from "@/ui/tables/budget/budgetTableLogic";
+import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import { CategoryRow } from "./direction/CategoryRow";
 import { DirectionSubtotalRow } from "./direction/DirectionSubtotalRow";
@@ -23,8 +24,8 @@ export type BudgetDirectionSectionProps = Readonly<{
   filteredSubtotalsMap: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
   taintedDirectionMonths: ReadonlySet<string>;
   taintedCells: ReadonlySet<string>;
-  commentedCells: ReadonlySet<string>;
   numberFormat: NumberFormat;
+  budgetAdjustments: BudgetAdjustmentRowsController;
   copyToClipboard: (value: string) => void;
   openDrillDown: (filter: DrillDownFilter) => void;
   onPlanSave: (
@@ -39,12 +40,6 @@ export type BudgetDirectionSectionProps = Readonly<{
     direction: string,
     category: string,
     baseValue: number,
-  ) => void;
-  onCommentPresenceChange: (
-    month: string,
-    direction: string,
-    category: string,
-    hasComment: boolean,
   ) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
@@ -61,13 +56,12 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
     filteredSubtotalsMap,
     taintedDirectionMonths,
     taintedCells,
-    commentedCells,
     numberFormat,
+    budgetAdjustments,
     copyToClipboard,
     openDrillDown,
     onPlanSave,
     onFillMonths,
-    onCommentPresenceChange,
     onSyncStart,
     onSyncEnd,
   } = props;
@@ -103,13 +97,12 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
             currentYear={currentYear}
             yearComputed={yearComputed}
             taintedCells={taintedCells}
-            commentedCells={commentedCells}
             numberFormat={numberFormat}
+            budgetAdjustments={budgetAdjustments}
             copyToClipboard={copyToClipboard}
             openDrillDown={openDrillDown}
             onPlanSave={onPlanSave}
             onFillMonths={onFillMonths}
-            onCommentPresenceChange={onCommentPresenceChange}
             onSyncStart={onSyncStart}
             onSyncEnd={onSyncEnd}
           />
