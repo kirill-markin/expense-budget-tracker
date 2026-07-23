@@ -287,6 +287,9 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 />
                 <td
                   className={`${styles.cell} ${styles.currentMonthActual}${categoryVisibility.maskClass}${taintedClass}${isActualOver ? ` ${tableStateStyles.over}` : ""}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                  data-testid={categoryVisibility.showData
+                    ? `budget-actual-${column.month}:${block.direction}:${category}`
+                    : undefined}
                   onClick={categoryVisibility.showData
                     ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                     : undefined}

@@ -262,9 +262,15 @@ export const BudgetAdjustmentEditor = (
 
   const flushRow = (adjustmentId: string): void => {
     onInteraction(adjustmentId);
-    void controller.flushRow(adjustmentId).catch((error: unknown): void => {
-      logBudgetTableError(`flush budget adjustment ${adjustmentId}`, error);
-    });
+    void controller.flushRow(adjustmentId)
+      .then((outcome): void => {
+        if (isSuccessfulBudgetAdjustmentFlushOutcome(outcome)) {
+          onSettlementSuccess(adjustmentId);
+        }
+      })
+      .catch((error: unknown): void => {
+        logBudgetTableError(`flush budget adjustment ${adjustmentId}`, error);
+      });
   };
 
   const handleAdd = (): void => {

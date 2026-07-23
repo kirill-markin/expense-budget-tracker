@@ -4,7 +4,6 @@ import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
-import { DEMO_BUDGET_ADJUSTMENTS_COOKIE } from "@/lib/demoCookies";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 import styles from "./Controls.module.css";
@@ -15,41 +14,32 @@ type Props = Readonly<{
 
 export const ModeToggle = (props: Props): ReactElement => {
   const { isDemoMode } = props;
-  const { visibilityMode, setVisibilityMode } = useFilteredMode();
+  const {
+    visibilityMode,
+    modeTransitionPending,
+    requestModeTransition,
+  } = useFilteredMode();
   const { t } = useTranslation();
 
   const activeMode: "all" | "filtered" | "demo" = isDemoMode ? "demo" : visibilityMode;
 
   const switchTo = (target: "all" | "filtered" | "demo"): void => {
     if (target === activeMode) return;
-
-    if (target === "demo") {
-      document.cookie = "demo=true; path=/; max-age=31536000";
-      window.location.reload();
-      return;
-    }
-
-    if (isDemoMode) {
-      // Leaving demo mode — store target mode in localStorage before reload
-      localStorage.setItem("expense-tracker-visibility-mode", target);
-      document.cookie = "demo=; path=/; max-age=0";
-      document.cookie = `${DEMO_BUDGET_ADJUSTMENTS_COOKIE}=; path=/; max-age=0`;
-      window.location.reload();
-      return;
-    }
-
-    // All ↔ Filtered: instant, no reload
-    setVisibilityMode(target);
+    void requestModeTransition(target);
   };
 
   return (
     <div
       className={styles.segmented}
       data-table-editor-visibility-control="true"
+      aria-busy={modeTransitionPending}
     >
       <button
         className={cn(styles.segment, activeMode === "all" ? styles.segmentActive : "")}
         type="button"
+        data-testid="mode-all"
+        aria-pressed={activeMode === "all"}
+        disabled={modeTransitionPending}
         onClick={() => switchTo("all")}
       >
         {t("mode.all")}
@@ -57,6 +47,9 @@ export const ModeToggle = (props: Props): ReactElement => {
       <button
         className={cn(styles.segment, activeMode === "filtered" ? styles.segmentActive : "")}
         type="button"
+        data-testid="mode-filtered"
+        aria-pressed={activeMode === "filtered"}
+        disabled={modeTransitionPending}
         onClick={() => switchTo("filtered")}
       >
         {t("mode.filtered")}
@@ -64,6 +57,9 @@ export const ModeToggle = (props: Props): ReactElement => {
       <button
         className={cn(styles.segment, activeMode === "demo" ? styles.segmentActive : "")}
         type="button"
+        data-testid="mode-demo"
+        aria-pressed={activeMode === "demo"}
+        disabled={modeTransitionPending}
         onClick={() => switchTo("demo")}
       >
         {t("mode.demo")}

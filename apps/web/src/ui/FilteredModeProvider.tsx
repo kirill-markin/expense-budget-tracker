@@ -1,11 +1,13 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 
+import { DEMO_BUDGET_ADJUSTMENTS_COOKIE } from "@/lib/demoCookies";
 import type { AutoFilterDelayMinutes } from "@/lib/locale";
 import {
   getAutoFilterDelayMs,
   parseStoredLastActiveAt,
+  resolveAutoFilterSettlementFailureTimerDecision,
   resolveManualModeTimerDecision,
   resolvePolicyChangeTimerDecision,
   resolveStoredVisibilityMode,
@@ -13,11 +15,19 @@ import {
   type TimerDecision,
   type VisibilityMode,
 } from "@/ui/filteredModeState";
+import {
+  createModeTransitionCoordinator,
+  type ApplicationMode,
+  type ModeTransitionRequest,
+} from "@/ui/modeTransitionCoordinator";
+import { useTableEditorTransition } from "@/ui/tables/shared/TableEditorActivationProvider";
 
 type FilteredModeContextValue = Readonly<{
   visibilityMode: VisibilityMode;
   autoFilterDelayMinutes: AutoFilterDelayMinutes;
-  setVisibilityMode: (mode: VisibilityMode) => void;
+  modeTransitionPending: boolean;
+  requestModeTransition: (mode: ApplicationMode) => Promise<boolean>;
+  resumePendingModeTransition: () => Promise<boolean> | null;
   updateAutoFilterDelayMinutes: (autoFilterDelayMinutes: AutoFilterDelayMinutes) => void;
   allowedCategories: ReadonlySet<string>;
   effectiveAllowlist: ReadonlySet<string> | null;
@@ -38,16 +48,23 @@ type ProviderProps = Readonly<{
 
 export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
   const { isDemoMode, autoFilterDelayMinutes: initialAutoFilterDelayMinutes, children } = props;
+  const { requestEditorTransition } = useTableEditorTransition();
 
   const initialVisibilityMode: VisibilityMode = isDemoMode ? "all" : "filtered";
   const [visibilityMode, setVisibilityModeState] = useState<VisibilityMode>(initialVisibilityMode);
   const [autoFilterDelayMinutes, setAutoFilterDelayMinutesState] = useState<AutoFilterDelayMinutes>(
     initialAutoFilterDelayMinutes,
   );
+  const [modeTransitionPending, setModeTransitionPending] = useState<boolean>(false);
   const visibilityModeRef = useRef<VisibilityMode>(initialVisibilityMode);
   const autoFilterDelayMinutesRef = useRef<AutoFilterDelayMinutes>(initialAutoFilterDelayMinutes);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timerGenerationRef = useRef<number>(0);
+  const requestModeTransitionRef = useRef<
+    (request: ModeTransitionRequest) => Promise<boolean>
+  >((_request): Promise<boolean> => Promise.reject(
+    new Error("Mode transition coordinator is not initialized"),
+  ));
 
   const setVisibilityModeAndRef = useCallback((mode: VisibilityMode): void => {
     visibilityModeRef.current = mode;
@@ -65,14 +82,6 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     }
     timerGenerationRef.current += 1;
   }, []);
-
-  const switchToFiltered = useCallback((): void => {
-    clearInactivityTimer();
-    setVisibilityModeAndRef("filtered");
-    if (!isDemoMode) {
-      localStorage.setItem(STORAGE_MODE_KEY, "filtered");
-    }
-  }, [clearInactivityTimer, isDemoMode, setVisibilityModeAndRef]);
 
   const armInactivityTimer = useCallback((delayMs: number): void => {
     clearInactivityTimer();
@@ -92,7 +101,10 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
       });
 
       if (decision.kind === "switchToFiltered") {
-        switchToFiltered();
+        void requestModeTransitionRef.current({
+          target: "filtered",
+          source: "automatic",
+        });
         return;
       }
 
@@ -100,7 +112,7 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
         armInactivityTimer(decision.delayMs);
       }
     }, delayMs);
-  }, [clearInactivityTimer, switchToFiltered]);
+  }, [clearInactivityTimer]);
 
   const applyTimerDecision = useCallback((decision: TimerDecision): void => {
     if (decision.kind === "cancel") {
@@ -109,13 +121,16 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     }
 
     if (decision.kind === "switchToFiltered") {
-      switchToFiltered();
+      void requestModeTransitionRef.current({
+        target: "filtered",
+        source: "automatic",
+      });
       return;
     }
 
     localStorage.setItem(STORAGE_LAST_ACTIVE_KEY, String(decision.lastActiveAt));
     armInactivityTimer(decision.delayMs);
-  }, [armInactivityTimer, clearInactivityTimer, switchToFiltered]);
+  }, [armInactivityTimer, clearInactivityTimer]);
 
   // Restore saved mode from validated localStorage after hydration.
   useEffect(() => {
@@ -165,13 +180,7 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
       .finally(() => setCategoriesLoading(false));
   }, []);
 
-  const setVisibilityMode = useCallback((mode: VisibilityMode): void => {
-    if (isDemoMode) {
-      setVisibilityModeAndRef("all");
-      clearInactivityTimer();
-      return;
-    }
-
+  const commitVisibilityMode = useCallback((mode: VisibilityMode): void => {
     const decision = resolveManualModeTimerDecision({
       autoFilterDelayMinutes: autoFilterDelayMinutesRef.current,
       visibilityMode: mode,
@@ -180,7 +189,93 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     setVisibilityModeAndRef(mode);
     localStorage.setItem(STORAGE_MODE_KEY, mode);
     applyTimerDecision(decision);
-  }, [applyTimerDecision, clearInactivityTimer, isDemoMode, setVisibilityModeAndRef]);
+  }, [applyTimerDecision, setVisibilityModeAndRef]);
+
+  const commitModeTransition = useCallback((
+    request: ModeTransitionRequest,
+  ): void => {
+    if (request.target === "demo") {
+      document.cookie = "demo=true; path=/; max-age=31536000";
+      window.location.reload();
+      return;
+    }
+
+    if (isDemoMode) {
+      localStorage.setItem(STORAGE_MODE_KEY, request.target);
+      document.cookie = "demo=; path=/; max-age=0";
+      document.cookie = `${DEMO_BUDGET_ADJUSTMENTS_COOKIE}=; path=/; max-age=0`;
+      window.location.reload();
+      return;
+    }
+
+    commitVisibilityMode(request.target);
+  }, [commitVisibilityMode, isDemoMode]);
+
+  const handleModeSettlementFailure = useCallback((
+    request: ModeTransitionRequest,
+  ): void => {
+    if (request.source !== "automatic") return;
+    applyTimerDecision(resolveAutoFilterSettlementFailureTimerDecision({
+      autoFilterDelayMinutes: autoFilterDelayMinutesRef.current,
+      visibilityMode: visibilityModeRef.current,
+      nowMs: Date.now(),
+    }));
+  }, [applyTimerDecision]);
+
+  const handleModeSettlementError = useCallback((
+    request: ModeTransitionRequest,
+    error: unknown,
+  ): void => {
+    handleModeSettlementFailure(request);
+    console.error(
+      `${request.source} mode transition to "${request.target}" failed during editor settlement:`,
+      error,
+    );
+  }, [handleModeSettlementFailure]);
+
+  const modeTransitionCoordinator = useMemo(
+    () => createModeTransitionCoordinator({
+      settleEditors: requestEditorTransition,
+      commitTransition: commitModeTransition,
+      handleSettlementFailure: handleModeSettlementFailure,
+      handleSettlementError: handleModeSettlementError,
+    }),
+    [
+      commitModeTransition,
+      handleModeSettlementError,
+      handleModeSettlementFailure,
+      requestEditorTransition,
+    ],
+  );
+  const requestTransition = useCallback((
+    request: ModeTransitionRequest,
+  ): Promise<boolean> => {
+    setModeTransitionPending(true);
+    return modeTransitionCoordinator.requestTransition(request)
+      .finally((): void => {
+        setModeTransitionPending(false);
+      });
+  }, [modeTransitionCoordinator]);
+  requestModeTransitionRef.current = requestTransition;
+
+  const requestModeTransition = useCallback((
+    target: ApplicationMode,
+  ): Promise<boolean> => requestTransition({
+    target,
+    source: "manual",
+  }), [requestTransition]);
+
+  const resumePendingModeTransition = useCallback(
+    (): Promise<boolean> | null => {
+      const transition = modeTransitionCoordinator.retryPendingTransition();
+      if (transition === null) return null;
+      setModeTransitionPending(true);
+      return transition.finally((): void => {
+        setModeTransitionPending(false);
+      });
+    },
+    [modeTransitionCoordinator],
+  );
 
   const updateAutoFilterDelayMinutes = useCallback((nextAutoFilterDelayMinutes: AutoFilterDelayMinutes): void => {
     setAutoFilterDelayMinutesState(nextAutoFilterDelayMinutes);
@@ -255,7 +350,9 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
   const value: FilteredModeContextValue = {
     visibilityMode: isDemoMode ? "all" : visibilityMode,
     autoFilterDelayMinutes,
-    setVisibilityMode,
+    modeTransitionPending,
+    requestModeTransition,
+    resumePendingModeTransition,
     updateAutoFilterDelayMinutes,
     allowedCategories,
     effectiveAllowlist,

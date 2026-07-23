@@ -16,6 +16,11 @@ type Deferred = Readonly<{
   resolve: () => void;
 }>;
 
+type ModeReloadCapture = Readonly<{
+  started: Promise<void>;
+  getRequestCount: () => number;
+}>;
+
 const createDeferred = (): Deferred => {
   let resolvePromise = (): void => {
     throw new Error("Deferred resolver was used before initialization");
@@ -111,6 +116,32 @@ const gotoBudgetAndWaitForGrid = async (page: Page): Promise<void> => {
   const initialBudgetGridResponse = page.waitForResponse(isBudgetGridResponse);
   await page.goto("/budget", { waitUntil: "domcontentloaded" });
   expect((await initialBudgetGridResponse).ok()).toBe(true);
+};
+
+const captureModeReload = async (page: Page): Promise<ModeReloadCapture> => {
+  const started = createDeferred();
+  let requestCount = 0;
+  await page.route("**/budget", async (route): Promise<void> => {
+    const request = route.request();
+    if (
+      !request.isNavigationRequest()
+      || new URL(request.url()).pathname !== "/budget"
+    ) {
+      await route.continue();
+      return;
+    }
+    requestCount += 1;
+    started.resolve();
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><body data-testid=\"mode-transition-complete\"></body>",
+    });
+  });
+  return {
+    started: started.promise,
+    getRequestCount: (): number => requestCount,
+  };
 };
 
 const adjustmentRequestFieldEquals = (
@@ -891,6 +922,191 @@ test("keeps failed adjustment settlement editable and retryable across editor ha
   await expect(sourcePopover).toHaveCount(0);
   await expect(destinationPopover).toBeVisible();
   expect(baseRequestCount).toBe(0);
+});
+
+test("keeps invalid Base visible until a retried mode transition settles once", async ({ page, baseURL }) => {
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  await setDemoCookies(page, baseURL, "en");
+  await gotoBudgetAndWaitForGrid(page);
+
+  const editorId = await getEditorId(page, "spend", "Groceries", 0);
+  const popover = page.getByTestId(`budget-plan-popover-${editorId}`);
+  const baseInput = page.getByTestId(`budget-plan-base-input-${editorId}`);
+  const baseError = page.getByTestId(`budget-plan-base-error-${editorId}`);
+  const filteredMode = page.getByTestId("mode-filtered");
+  const demoMode = page.getByTestId("mode-demo");
+  const modeReload = await captureModeReload(page);
+
+  await page.getByTestId(`budget-plan-open-${editorId}`).click();
+  const originalBase = Number(await baseInput.inputValue());
+  await baseInput.fill("invalid");
+  await filteredMode.click();
+
+  await expect(popover).toBeVisible();
+  await expect(baseInput).toBeFocused();
+  await expect(baseInput).toHaveAttribute("aria-invalid", "true");
+  await expect(baseError).toBeVisible();
+  await expect(demoMode).toHaveAttribute("aria-pressed", "true");
+  await expect(filteredMode).toHaveAttribute("aria-pressed", "false");
+  expect(modeReload.getRequestCount()).toBe(0);
+  expect((await page.context().cookies(baseURL)).some(
+    (cookie): boolean => cookie.name === "demo" && cookie.value === "true",
+  )).toBe(true);
+
+  const retryBase = originalBase + 17;
+  await baseInput.fill(String(retryBase));
+  await modeReload.started;
+  await expect(page.getByTestId("mode-transition-complete")).toHaveCount(1);
+
+  expect(modeReload.getRequestCount()).toBe(1);
+  expect(await page.evaluate((): string | null => (
+    localStorage.getItem("expense-tracker-visibility-mode")
+  ))).toBe("filtered");
+  expect((await page.context().cookies(baseURL)).some(
+    (cookie): boolean => cookie.name === "demo",
+  )).toBe(false);
+});
+
+test("keeps an invalid drill-down editor visible until the global mode gate settles", async ({ page, baseURL }) => {
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  await setDemoCookies(page, baseURL, "en");
+  await gotoBudgetAndWaitForGrid(page);
+
+  const editorId = await getEditorId(page, "spend", "Groceries", 0);
+  const month = editorId.split(":")[1];
+  if (month === undefined) throw new Error(`Cannot read month from editor ID "${editorId}"`);
+  await page.getByTestId(`budget-actual-${month}:spend:Groceries`).click();
+
+  const amountCell = page.locator('td[data-testid^="transaction-amount-"]').first();
+  await expect(amountCell).toBeVisible();
+  const amountCellTestId = await amountCell.getAttribute("data-testid");
+  if (amountCellTestId === null) {
+    throw new Error("Drill-down amount cell is missing its stable test ID");
+  }
+  const entryId = amountCellTestId.slice("transaction-amount-".length);
+  const amountInput = page.getByTestId(`transaction-amount-input-${entryId}`);
+  const allMode = page.getByTestId("mode-all");
+  const demoMode = page.getByTestId("mode-demo");
+  const modeReload = await captureModeReload(page);
+
+  await amountCell.click();
+  const originalAmount = await amountInput.inputValue();
+  await amountInput.fill("invalid");
+  await allMode.focus();
+  await page.keyboard.press("Enter");
+
+  await expect(amountInput).toBeVisible();
+  await expect(amountInput).toBeFocused();
+  await expect(amountInput).toHaveAttribute("aria-invalid", "true");
+  await expect(demoMode).toHaveAttribute("aria-pressed", "true");
+  await expect(allMode).toHaveAttribute("aria-pressed", "false");
+  expect(modeReload.getRequestCount()).toBe(0);
+
+  await amountInput.fill(originalAmount);
+  await amountInput.press("Enter");
+  await expect(amountInput).toHaveCount(0);
+  await allMode.focus();
+  await page.keyboard.press("Enter");
+  await modeReload.started;
+  await expect(page.getByTestId("mode-transition-complete")).toHaveCount(1);
+
+  expect(modeReload.getRequestCount()).toBe(1);
+  expect(await page.evaluate((): string | null => (
+    localStorage.getItem("expense-tracker-visibility-mode")
+  ))).toBe("all");
+  expect((await page.context().cookies(baseURL)).some(
+    (cookie): boolean => cookie.name === "demo",
+  )).toBe(false);
+});
+
+test("keeps a moved adjustment anchored through failed mode settlement and retries once", async ({ page, baseURL }) => {
+  test.slow();
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  await setDemoCookies(page, baseURL, "en");
+  await gotoBudgetAndWaitForGrid(page);
+
+  const adjustmentId = "demo-adjustment-groceries-seasonal";
+  const editorId = await getEditorId(page, "spend", "Groceries", 0);
+  const sourcePopover = page.getByTestId(`budget-plan-popover-${editorId}`);
+  const row = page.getByTestId(`budget-adjustment-row-${adjustmentId}`);
+  const amountInput = page.getByTestId(`budget-adjustment-amount-${adjustmentId}`);
+  const categoryInput = page.getByTestId(`budget-adjustment-category-${adjustmentId}`);
+  const recoveryButton = page.getByTestId(`budget-adjustment-recovery-${adjustmentId}`);
+  const allMode = page.getByTestId("mode-all");
+  const demoMode = page.getByTestId("mode-demo");
+  const moveCaptured = createDeferred();
+  const moveGate = createDeferred();
+  let patchAttempt = 0;
+  let allowRetry = false;
+  await page.route(
+    `**/api/budget-adjustments/${adjustmentId}`,
+    async (route): Promise<void> => {
+      if (route.request().method() !== "PATCH") {
+        await route.continue();
+        return;
+      }
+      patchAttempt += 1;
+      if (patchAttempt === 1) {
+        const response = await route.fetch();
+        moveCaptured.resolve();
+        await moveGate.promise;
+        await route.fulfill({ response });
+        return;
+      }
+      if (allowRetry) {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Private forced moved-row failure" }),
+      });
+    },
+  );
+  const modeReload = await captureModeReload(page);
+
+  await page.getByTestId(`budget-plan-open-${editorId}`).click();
+  await categoryInput.selectOption("Dining");
+  await moveCaptured.promise;
+  await amountInput.fill("37");
+  const failedFollowUp = page.waitForResponse((response): boolean => (
+    response.url().includes(`/api/budget-adjustments/${adjustmentId}`)
+    && response.request().method() === "PATCH"
+    && response.status() === 500
+  ));
+  moveGate.resolve();
+  expect((await failedFollowUp).ok()).toBe(false);
+  await expect(recoveryButton).toBeVisible();
+
+  await allMode.click();
+  await expect(allMode).toBeEnabled();
+
+  await expect(sourcePopover).toBeVisible();
+  await expect(row).toBeVisible();
+  await expect(categoryInput).toHaveValue("Dining");
+  await expect(amountInput).toHaveValue("37");
+  await expect(recoveryButton).toBeVisible();
+  await expect(sourcePopover).toContainText("The adjustment could not be saved.");
+  await expect(sourcePopover).not.toContainText("Private forced moved-row failure");
+  await expect(demoMode).toHaveAttribute("aria-pressed", "true");
+  expect(modeReload.getRequestCount()).toBe(0);
+
+  allowRetry = true;
+  const successfulRecovery = page.waitForResponse((response): boolean => (
+    response.url().includes(`/api/budget-adjustments/${adjustmentId}`)
+    && response.request().method() === "PATCH"
+    && response.ok()
+  ));
+  await recoveryButton.click();
+  expect((await successfulRecovery).ok()).toBe(true);
+  await modeReload.started;
+  await expect(page.getByTestId("mode-transition-complete")).toHaveCount(1);
+
+  expect(modeReload.getRequestCount()).toBe(1);
+  expect(await page.evaluate((): string | null => (
+    localStorage.getItem("expense-tracker-visibility-mode")
+  ))).toBe("all");
 });
 
 test("keeps a stale Base save open until its acknowledgement is safe to reopen", async ({ page, baseURL }) => {

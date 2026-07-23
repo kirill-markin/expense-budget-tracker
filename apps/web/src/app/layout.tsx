@@ -24,6 +24,7 @@ import { FilteredBanner } from "@/ui/FilteredBanner";
 import { FilteredModeProvider } from "@/ui/FilteredModeProvider";
 import { FormatProvider } from "@/ui/FormatProvider";
 import { ModeToggle } from "@/ui/ModeToggle";
+import { TableEditorActivationProvider } from "@/ui/tables/shared/TableEditorActivationProvider";
 
 import "./globals.css";
 
@@ -107,45 +108,47 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       <body>
         <I18nProvider locale={locale}>
           <FormatProvider numberFormat={numberFormat} dateFormat={dateFormat}>
-            <FilteredModeProvider isDemoMode={demo} autoFilterDelayMinutes={autoFilterDelayMinutes}>
-              <div className="header-sticky">
-                {demo && (
-                  <div className="demo-banner">
-                    {t(locale, "demo.banner")}<span className="demo-banner-detail"> {t(locale, "demo.bannerDetail")}</span>
-                  </div>
-                )}
-                <FilteredBanner />
-                <header className="topbar">
-                  <Link href="/" className="topbar-brand">
-                    <span className="brand-full">{t(locale, "brand.full")}</span>
-                    <span className="brand-short">{t(locale, "brand.short")}</span>
-                  </Link>
-                  <div className="topbar-actions">
-                    <ModeToggle isDemoMode={demo} />
-                    <AccountMenu
-                      authEnabled={authEnabled}
-                      workspaces={workspaces}
-                      currentWorkspaceId={currentWorkspaceId}
-                    />
-                  </div>
-                </header>
-                <nav className="nav">
-                  {NAV_LINKS.map((link) => (
-                    <Link key={link.href} href={link.href}>{t(locale, link.labelKey)}</Link>
-                  ))}
-                  <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
-                </nav>
-              </div>
-              <ChatLayoutProvider
-                initialChatOpen={chatOpen}
-                initialChatWidth={chatWidth}
-                draftScope={chatDraftScope}
-              >
-                <ChatLayoutShell workspaceId={currentWorkspaceId}>
-                  {children}
-                </ChatLayoutShell>
-              </ChatLayoutProvider>
-            </FilteredModeProvider>
+            <TableEditorActivationProvider>
+              <FilteredModeProvider isDemoMode={demo} autoFilterDelayMinutes={autoFilterDelayMinutes}>
+                <div className="header-sticky">
+                  {demo && (
+                    <div className="demo-banner">
+                      {t(locale, "demo.banner")}<span className="demo-banner-detail"> {t(locale, "demo.bannerDetail")}</span>
+                    </div>
+                  )}
+                  <FilteredBanner />
+                  <header className="topbar">
+                    <Link href="/" className="topbar-brand">
+                      <span className="brand-full">{t(locale, "brand.full")}</span>
+                      <span className="brand-short">{t(locale, "brand.short")}</span>
+                    </Link>
+                    <div className="topbar-actions">
+                      <ModeToggle isDemoMode={demo} />
+                      <AccountMenu
+                        authEnabled={authEnabled}
+                        workspaces={workspaces}
+                        currentWorkspaceId={currentWorkspaceId}
+                      />
+                    </div>
+                  </header>
+                  <nav className="nav">
+                    {NAV_LINKS.map((link) => (
+                      <Link key={link.href} href={link.href}>{t(locale, link.labelKey)}</Link>
+                    ))}
+                    <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
+                  </nav>
+                </div>
+                <ChatLayoutProvider
+                  initialChatOpen={chatOpen}
+                  initialChatWidth={chatWidth}
+                  draftScope={chatDraftScope}
+                >
+                  <ChatLayoutShell workspaceId={currentWorkspaceId}>
+                    {children}
+                  </ChatLayoutShell>
+                </ChatLayoutProvider>
+              </FilteredModeProvider>
+            </TableEditorActivationProvider>
           </FormatProvider>
         </I18nProvider>
       </body>

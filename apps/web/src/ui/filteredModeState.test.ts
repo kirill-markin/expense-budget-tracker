@@ -6,6 +6,7 @@ import {
   getRemainingDelayMs,
   parseStoredLastActiveAt,
   parseStoredVisibilityMode,
+  resolveAutoFilterSettlementFailureTimerDecision,
   resolveManualModeTimerDecision,
   resolvePolicyChangeTimerDecision,
   resolveStoredVisibilityMode,
@@ -255,5 +256,32 @@ test("resolveManualModeTimerDecision cancels filtered and arms all only when ena
       nowMs: NOW_MS,
     }),
     { kind: "arm", delayMs: getAutoFilterDelayMs(5), lastActiveAt: NOW_MS },
+  );
+});
+
+test("failed automatic settlement re-arms a fresh interval only while all mode remains visible", (): void => {
+  assert.deepEqual(
+    resolveAutoFilterSettlementFailureTimerDecision({
+      autoFilterDelayMinutes: 5,
+      visibilityMode: "all",
+      nowMs: NOW_MS,
+    }),
+    { kind: "arm", delayMs: getAutoFilterDelayMs(5), lastActiveAt: NOW_MS },
+  );
+  assert.deepEqual(
+    resolveAutoFilterSettlementFailureTimerDecision({
+      autoFilterDelayMinutes: null,
+      visibilityMode: "all",
+      nowMs: NOW_MS,
+    }),
+    { kind: "cancel" },
+  );
+  assert.deepEqual(
+    resolveAutoFilterSettlementFailureTimerDecision({
+      autoFilterDelayMinutes: 5,
+      visibilityMode: "filtered",
+      nowMs: NOW_MS,
+    }),
+    { kind: "cancel" },
   );
 });

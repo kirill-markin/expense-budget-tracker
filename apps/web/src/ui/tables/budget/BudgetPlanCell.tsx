@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
 import type { NumberFormat } from "@/lib/locale";
 import type { BudgetAdjustmentDirection } from "@/server/budget/budgetAdjustments";
+import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { useFormat } from "@/ui/FormatProvider";
 import { BudgetAdjustmentEditor } from "@/ui/tables/budget/BudgetAdjustmentEditor";
 import {
@@ -218,6 +219,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   } = props;
 
   const { numberFormat } = useFormat();
+  const { resumePendingModeTransition } = useFilteredMode();
   const { t } = useTranslation();
   const accessibilityId = useId();
   const editorId = `budget-plan:${month}:${direction}:${category}`;
@@ -615,6 +617,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       needsBaseValidationRecoveryRef.current = false;
       handledBaseFailureRevisionRef.current = null;
       if (showDataRef.current) setBaseSaveError(null);
+      void resumePendingModeTransition();
     }
     return outcome;
   }, [
@@ -624,6 +627,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     handleDefinitiveBaseFailure,
     month,
     onBaseAcknowledged,
+    resumePendingModeTransition,
   ]);
 
   const focusAdjustmentFlushFailure = useCallback((
@@ -649,6 +653,13 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const clearTrackedAdjustment = useCallback((adjustmentId: string): void => {
     interactedAdjustmentAnchorByIdRef.current.delete(adjustmentId);
   }, []);
+
+  const handleAdjustmentSettlementSuccess = useCallback((
+    adjustmentId: string,
+  ): void => {
+    clearTrackedAdjustment(adjustmentId);
+    void resumePendingModeTransition();
+  }, [clearTrackedAdjustment, resumePendingModeTransition]);
 
   const flushInteractedAdjustments = useCallback(async (): Promise<boolean> => {
     const existingAdjustmentIds = new Set(
@@ -709,8 +720,8 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
         `Budget adjustment "${adjustmentId}" could not be recovered`,
       );
     }
-    clearTrackedAdjustment(adjustmentId);
-  }, [budgetAdjustments, clearTrackedAdjustment]);
+    handleAdjustmentSettlementSuccess(adjustmentId);
+  }, [budgetAdjustments, handleAdjustmentSettlementSuccess]);
 
   useEffect(() => registerRecoveryGate({
     ownsAdjustment: (adjustmentId): boolean =>
@@ -809,6 +820,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       if (!await flushInteractedAdjustments()) return false;
       transferred = finishPopoverClose();
       activationReleased = true;
+      void resumePendingModeTransition();
       return true;
     });
     if (!activationReleased) cancelActivationRelease();
@@ -825,6 +837,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     month,
     onPlanSave,
     prepareActivationRelease,
+    resumePendingModeTransition,
     runExclusivePopoverAction,
   ]);
 
@@ -1176,8 +1189,8 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
                     adjustmentLocation,
                   );
                 }}
-                onDeleteSuccess={clearTrackedAdjustment}
-                onSettlementSuccess={clearTrackedAdjustment}
+                onDeleteSuccess={handleAdjustmentSettlementSuccess}
+                onSettlementSuccess={handleAdjustmentSettlementSuccess}
               />
               <div className={styles.popoverDivider} />
             </>
