@@ -80,15 +80,22 @@ const validateRevision = (revision: number, context: string): void => {
   }
 };
 
-const isValidCategory = (category: string): boolean => {
+export const isValidBudgetAdjustmentCategory = (category: string): boolean => {
   const length = Array.from(category).length;
   return length >= 1 && length <= 200;
 };
 
+export const getBudgetAdjustmentCategoryOptions = (
+  categories: ReadonlyArray<string>,
+  effectiveAllowlist: ReadonlySet<string> | null,
+): ReadonlyArray<string> => [...new Set(categories.filter((category): boolean =>
+  isValidBudgetAdjustmentCategory(category)
+  && (effectiveAllowlist === null || effectiveAllowlist.has(category))))];
+
 const isValidDraftLocation = (draft: BudgetAdjustmentDraft, planFrom: string): boolean =>
   MONTH_PATTERN.test(draft.month)
   && draft.month >= planFrom
-  && isValidCategory(draft.category);
+  && isValidBudgetAdjustmentCategory(draft.category);
 
 const getEffectiveLocation = (
   row: BudgetAdjustmentEditorRow,
@@ -154,7 +161,7 @@ export const parseBudgetAdjustmentDraft = (
       },
     };
   }
-  if (!isValidCategory(draft.category)) {
+  if (!isValidBudgetAdjustmentCategory(draft.category)) {
     return {
       ok: false,
       error: {
@@ -430,7 +437,7 @@ export const recordBudgetAdjustmentCellMove = (
   const next = new Map(current);
   const currentLocation = MONTH_PATTERN.test(move.current.month)
     && move.current.month >= planFrom
-    && isValidCategory(move.current.category)
+    && isValidBudgetAdjustmentCategory(move.current.category)
     ? move.current
     : move.previous;
   if (
@@ -457,7 +464,7 @@ export const recordBudgetAdjustmentCellInvalidation = (
 ): ReadonlyMap<string, number> => {
   validateRevision(mutationRevision, "Budget adjustment cell invalidation revision");
   validateMonth(snapshot.month, "Budget adjustment cell invalidation month");
-  if (!isValidCategory(snapshot.category)) {
+  if (!isValidBudgetAdjustmentCategory(snapshot.category)) {
     throw new RangeError(
       "Budget adjustment cell invalidation category must contain between 1 and 200 characters",
     );
