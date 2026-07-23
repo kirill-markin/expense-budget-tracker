@@ -113,6 +113,34 @@ export const isBudgetAdjustmentRowVisible = (
   isBudgetAdjustmentCategoryVisible(row.confirmed.category, effectiveAllowlist)
   && isBudgetAdjustmentCategoryVisible(row.draft.category, effectiveAllowlist);
 
+export const getBudgetAdjustmentEditorCellRows = (
+  rows: ReadonlyArray<BudgetAdjustmentEditorRow>,
+  month: string,
+  direction: BudgetAdjustmentDirection,
+  category: string,
+  effectiveAllowlist: ReadonlySet<string> | null,
+  unresolvedEditorAnchorByAdjustmentId: ReadonlyMap<
+    string,
+    ProtectedBudgetAdjustmentCell
+  >,
+): ReadonlyArray<BudgetAdjustmentEditorRow> => sortBudgetAdjustmentRows(
+  rows.filter((row): boolean => {
+    const editorAnchor = unresolvedEditorAnchorByAdjustmentId.get(
+      row.adjustmentId,
+    );
+    if (editorAnchor !== undefined) {
+      return editorAnchor.month === month
+        && editorAnchor.direction === direction
+        && editorAnchor.category === category
+        && isBudgetAdjustmentCategoryVisible(category, effectiveAllowlist);
+    }
+    return row.confirmed.month === month
+      && row.direction === direction
+      && row.confirmed.category === category
+      && isBudgetAdjustmentRowVisible(row, effectiveAllowlist);
+  }),
+);
+
 const isValidDraftLocation = (draft: BudgetAdjustmentDraft, planFrom: string): boolean =>
   MONTH_PATTERN.test(draft.month)
   && draft.month >= planFrom

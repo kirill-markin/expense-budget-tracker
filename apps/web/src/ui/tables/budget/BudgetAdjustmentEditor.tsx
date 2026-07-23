@@ -8,12 +8,18 @@ import {
   getBudgetAdjustmentCategoryOptions,
   isValidBudgetAdjustmentNoteInput,
   parseBudgetAdjustmentAmount,
+  parseBudgetAdjustmentDraft,
   type BudgetAdjustmentDraftError,
   type BudgetAdjustmentEditorRow,
 } from "@/ui/tables/budget/budgetAdjustmentRowsState";
+import {
+  isSuccessfulBudgetAdjustmentFlushOutcome,
+  recoverBudgetAdjustment,
+} from "@/ui/tables/budget/budgetAdjustmentRecovery";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import type {
   BudgetAdjustmentCellLocation,
+  BudgetAdjustmentFlushOutcome,
   BudgetAdjustmentRowsController,
 } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import { logBudgetTableError } from "@/ui/tables/budget/table/logBudgetTableError";
@@ -26,12 +32,17 @@ type BudgetAdjustmentEditorProps = Readonly<{
   currentMonth: string;
   categories: ReadonlyArray<string>;
   effectiveAllowlist: ReadonlySet<string> | null;
+  editorAnchorByAdjustmentId: ReadonlyMap<
+    string,
+    BudgetAdjustmentCellLocation
+  >;
   controller: BudgetAdjustmentRowsController;
   onInitialFocusTargetChange: (
     target: HTMLInputElement | HTMLButtonElement | null,
   ) => void;
   onInteraction: (adjustmentId: string) => void;
   onDeleteSuccess: (adjustmentId: string) => void;
+  onSettlementSuccess: (adjustmentId: string) => void;
 }>;
 
 const getValidationMessageKey = (
@@ -48,6 +59,30 @@ const getValidationMessageKey = (
       return "budget.adjustmentInvalidCategory";
     case "invalidNote":
       return "budget.adjustmentInvalidNote";
+  }
+};
+
+type BudgetAdjustmentLocationField = "month" | "category";
+
+type AsyncFocusRestorer = (
+  getFocusTarget: () => HTMLElement | null | undefined,
+) => void;
+
+const getLocationValidationField = (
+  error: BudgetAdjustmentDraftError,
+): BudgetAdjustmentLocationField => {
+  switch (error.code) {
+    case "invalidMonth":
+    case "pastMonth":
+      return "month";
+    case "invalidCategory":
+      return "category";
+    case "invalidAmount":
+    case "unsafeAmount":
+    case "invalidNote":
+      throw new Error(
+        `Expected a budget adjustment location error; received "${error.code}"`,
+      );
   }
 };
 
@@ -79,20 +114,36 @@ export const BudgetAdjustmentEditor = (
     currentMonth,
     categories,
     effectiveAllowlist,
+    editorAnchorByAdjustmentId,
     controller,
     onInitialFocusTargetChange,
     onInteraction,
     onDeleteSuccess,
+    onSettlementSuccess,
   } = props;
   const { t } = useTranslation();
   const accessibilityId = useId();
-  const rows = controller.getCellRows(location, effectiveAllowlist);
+  const rows = controller.getCellRows(
+    location,
+    effectiveAllowlist,
+    editorAnchorByAdjustmentId,
+  );
   const categoryOptions = useMemo<ReadonlyArray<string>>(
     () => getBudgetAdjustmentCategoryOptions(categories, effectiveAllowlist),
     [categories, effectiveAllowlist],
   );
+  const categoryOptionSet = useMemo<ReadonlySet<string>>(
+    () => new Set(categoryOptions),
+    [categoryOptions],
+  );
   const amountInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const noteInputRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
+  const monthInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const categoryInputRefs = useRef<Map<string, HTMLSelectElement>>(new Map());
+  const focusedAdjustmentIdRef = useRef<string | null>(null);
+  const locationValidationFrameByAdjustmentIdRef = useRef<Map<string, number>>(
+    new Map(),
+  );
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const deleteDialogRef = useRef<HTMLDialogElement>(null);
   const deleteCancelButtonRef = useRef<HTMLButtonElement>(null);
@@ -114,6 +165,13 @@ export const BudgetAdjustmentEditor = (
     () => (): void => onInitialFocusTargetChange(null),
     [onInitialFocusTargetChange],
   );
+
+  useEffect(() => (): void => {
+    for (const frame of locationValidationFrameByAdjustmentIdRef.current.values()) {
+      window.cancelAnimationFrame(frame);
+    }
+    locationValidationFrameByAdjustmentIdRef.current.clear();
+  }, []);
 
   useEffect(() => {
     if (deleteCandidate === null) return;
@@ -141,6 +199,66 @@ export const BudgetAdjustmentEditor = (
     }
     addButtonRef.current?.focus();
   }, [controller.rows, deleteCandidate]);
+
+  useEffect(() => {
+    for (const row of rows) {
+      if (
+        row.draft.category === ""
+        || categoryOptionSet.has(row.draft.category)
+      ) {
+        continue;
+      }
+      onInteraction(row.adjustmentId);
+      controller.replaceDraft(row.adjustmentId, {
+        ...row.draft,
+        category: "",
+      });
+    }
+  }, [categoryOptionSet, controller, onInteraction, rows]);
+
+  useEffect(() => {
+    const displayedAdjustmentIds = new Set(
+      rows.map((row): string => row.adjustmentId),
+    );
+    for (const [adjustmentId, anchor] of editorAnchorByAdjustmentId) {
+      if (
+        anchor.month !== location.month
+        || anchor.direction !== location.direction
+        || anchor.category !== location.category
+        || displayedAdjustmentIds.has(adjustmentId)
+      ) {
+        continue;
+      }
+      const currentRow = controller.getRow(adjustmentId, null);
+      if (
+        currentRow === null
+        || (
+          currentRow.confirmed.month === location.month
+          && currentRow.direction === location.direction
+          && currentRow.confirmed.category === location.category
+        )
+      ) {
+        continue;
+      }
+      const rowOwnedFocus = focusedAdjustmentIdRef.current === adjustmentId;
+      if (rowOwnedFocus) focusedAdjustmentIdRef.current = null;
+      onSettlementSuccess(adjustmentId);
+      if (!rowOwnedFocus) continue;
+      window.requestAnimationFrame((): void => {
+        const activeElement = document.activeElement;
+        if (activeElement !== document.body && activeElement !== null) return;
+        addButtonRef.current?.focus();
+      });
+    }
+  }, [
+    controller,
+    editorAnchorByAdjustmentId,
+    location.category,
+    location.direction,
+    location.month,
+    onSettlementSuccess,
+    rows,
+  ]);
 
   const flushRow = (adjustmentId: string): void => {
     onInteraction(adjustmentId);
@@ -185,14 +303,131 @@ export const BudgetAdjustmentEditor = (
     return false;
   };
 
-  const replaceLocationDraft = (
+  const cancelLocationValidationFrame = (adjustmentId: string): void => {
+    const frame = locationValidationFrameByAdjustmentIdRef.current.get(
+      adjustmentId,
+    );
+    if (frame === undefined) return;
+    window.cancelAnimationFrame(frame);
+    locationValidationFrameByAdjustmentIdRef.current.delete(adjustmentId);
+  };
+
+  const clearLocationInputValidity = (adjustmentId: string): void => {
+    cancelLocationValidationFrame(adjustmentId);
+    monthInputRefs.current.get(adjustmentId)?.setCustomValidity("");
+    categoryInputRefs.current.get(adjustmentId)?.setCustomValidity("");
+  };
+
+  const getLocationInput = (
+    adjustmentId: string,
+    field: BudgetAdjustmentLocationField,
+  ): HTMLInputElement | HTMLSelectElement | undefined => (
+    field === "month"
+      ? monthInputRefs.current.get(adjustmentId)
+      : categoryInputRefs.current.get(adjustmentId)
+  );
+
+  const reportLocationValidation = (
+    adjustmentId: string,
+    error: BudgetAdjustmentDraftError,
+    actionTarget: HTMLElement,
+  ): void => {
+    const field = getLocationValidationField(error);
+    const message = t(getValidationMessageKey(error));
+    let frame = 0;
+    frame = window.requestAnimationFrame((): void => {
+      if (
+        locationValidationFrameByAdjustmentIdRef.current.get(adjustmentId)
+        !== frame
+      ) {
+        return;
+      }
+      locationValidationFrameByAdjustmentIdRef.current.delete(adjustmentId);
+      const currentRow = controller.getRow(adjustmentId, null);
+      if (currentRow === null) return;
+      const currentValidation = parseBudgetAdjustmentDraft(
+        currentRow.draft,
+        currentMonth,
+      );
+      if (currentValidation.ok || currentValidation.error.code !== error.code) {
+        return;
+      }
+      const input = getLocationInput(adjustmentId, field);
+      if (input === undefined) return;
+      input.setCustomValidity(message);
+      if (document.activeElement !== actionTarget) return;
+      input.focus();
+      input.reportValidity();
+    });
+    locationValidationFrameByAdjustmentIdRef.current.set(adjustmentId, frame);
+  };
+
+  const captureFocusAfterAsyncAction = (
+    actionTarget: HTMLElement,
+  ): AsyncFocusRestorer => {
+    const actionOwnedFocus = document.activeElement === actionTarget;
+    return (getFocusTarget): void => {
+      window.requestAnimationFrame((): void => {
+        const activeElement = document.activeElement;
+        const actionLostFocus = (
+          actionOwnedFocus
+          || !actionTarget.isConnected
+        ) && (activeElement === document.body || activeElement === null);
+        if (activeElement !== actionTarget && !actionLostFocus) return;
+        getFocusTarget()?.focus();
+      });
+    };
+  };
+
+  const replaceLocationDraft = async (
     row: BudgetAdjustmentEditorRow,
     draft: BudgetAdjustmentEditorRow["draft"],
-  ): void => {
+    field: BudgetAdjustmentLocationField,
+    actionTarget: HTMLButtonElement | HTMLInputElement | HTMLSelectElement,
+  ): Promise<void> => {
     if (draft.month === row.draft.month && draft.category === row.draft.category) return;
     if (reportInvalidNonLocationField(row)) return;
+
+    clearLocationInputValidity(row.adjustmentId);
     replaceDraft(row, draft);
-    window.requestAnimationFrame((): void => addButtonRef.current?.focus());
+    const parsed = parseBudgetAdjustmentDraft(draft, currentMonth);
+    if (!parsed.ok) {
+      reportLocationValidation(
+        row.adjustmentId,
+        parsed.error,
+        actionTarget,
+      );
+      return;
+    }
+
+    const restoreFocus = captureFocusAfterAsyncAction(actionTarget);
+    let outcome: BudgetAdjustmentFlushOutcome;
+    try {
+      outcome = await controller.flushRow(row.adjustmentId);
+    } catch (error: unknown) {
+      logBudgetTableError(
+        `move budget adjustment ${row.adjustmentId}`,
+        error,
+      );
+      restoreFocus(() => getLocationInput(row.adjustmentId, field));
+      return;
+    }
+    if (!isSuccessfulBudgetAdjustmentFlushOutcome(outcome)) {
+      restoreFocus(() => getLocationInput(row.adjustmentId, field));
+      return;
+    }
+
+    const currentRow = controller.getRow(row.adjustmentId, null);
+    const remainsInCell = currentRow !== null
+      && currentRow.confirmed.month === location.month
+      && currentRow.direction === location.direction
+      && currentRow.confirmed.category === location.category;
+    if (remainsInCell) {
+      restoreFocus(() => getLocationInput(row.adjustmentId, field));
+      return;
+    }
+    onSettlementSuccess(row.adjustmentId);
+    restoreFocus(() => addButtonRef.current);
   };
 
   const setAddButton = (element: HTMLButtonElement | null): void => {
@@ -221,16 +456,58 @@ export const BudgetAdjustmentEditor = (
     flushRow(adjustmentId);
   };
 
-  const handleErrorAction = (row: BudgetAdjustmentEditorRow): void => {
-    const error = controller.errorByAdjustmentId.get(row.adjustmentId);
-    if (error === undefined) return;
+  const getRecoveryFocusTarget = (
+    adjustmentId: string,
+  ): HTMLElement | undefined => {
+    const currentRow = controller.getRow(adjustmentId, null);
+    if (currentRow === null) return undefined;
+    const parsed = parseBudgetAdjustmentDraft(currentRow.draft, currentMonth);
+    if (parsed.ok) return amountInputRefs.current.get(adjustmentId);
+    switch (parsed.error.code) {
+      case "invalidAmount":
+      case "unsafeAmount":
+        return amountInputRefs.current.get(adjustmentId);
+      case "invalidMonth":
+      case "pastMonth":
+        return monthInputRefs.current.get(adjustmentId);
+      case "invalidCategory":
+        return categoryInputRefs.current.get(adjustmentId);
+      case "invalidNote":
+        return noteInputRefs.current.get(adjustmentId);
+    }
+  };
+
+  const handleErrorAction = async (
+    row: BudgetAdjustmentEditorRow,
+    actionTarget: HTMLButtonElement,
+  ): Promise<void> => {
+    if (!controller.errorByAdjustmentId.has(row.adjustmentId)) return;
+    const restoreFocus = captureFocusAfterAsyncAction(actionTarget);
     onInteraction(row.adjustmentId);
-    const operation = error.action === "refresh-range"
-      ? controller.refreshRow(row.adjustmentId)
-      : controller.flushRow(row.adjustmentId);
-    void operation.catch((cause: unknown): void => {
+    try {
+      const outcome = await recoverBudgetAdjustment(
+        controller,
+        row.adjustmentId,
+      );
+      if (outcome !== "recovered") {
+        restoreFocus(() => getRecoveryFocusTarget(row.adjustmentId));
+        return;
+      }
+      const currentRow = controller.getRow(row.adjustmentId, null);
+      const rowLeftEditor = (
+        currentRow === null
+        || currentRow.confirmed.month !== location.month
+        || currentRow.direction !== location.direction
+        || currentRow.confirmed.category !== location.category
+      );
+      onSettlementSuccess(row.adjustmentId);
+      restoreFocus(() => rowLeftEditor
+        ? addButtonRef.current
+        : getRecoveryFocusTarget(row.adjustmentId));
+    } catch (cause: unknown) {
       logBudgetTableError(`recover budget adjustment ${row.adjustmentId}`, cause);
-    });
+      restoreFocus(() => getRecoveryFocusTarget(row.adjustmentId));
+    }
   };
 
   const closeDeleteDialog = (): void => {
@@ -320,13 +597,21 @@ export const BudgetAdjustmentEditor = (
             ? null
             : t(getValidationMessageKey(validation));
           const errorId = `${accessibilityId}-${row.adjustmentId}-error`;
+          const categoryCorrectionErrorId =
+            `${accessibilityId}-${row.adjustmentId}-category-correction`;
           const previousMonth = getPreviousMonth(row.draft.month, currentMonth);
           const nextMonth = getNextMonth(row.draft.month);
+          const categoryUnavailable = !categoryOptionSet.has(
+            row.draft.category,
+          );
+          const showCategoryCorrectionError = categoryUnavailable
+            && validation?.code !== "invalidCategory";
           const amountInvalid = validation?.code === "invalidAmount"
             || validation?.code === "unsafeAmount";
           const monthInvalid = validation?.code === "invalidMonth"
             || validation?.code === "pastMonth";
-          const categoryInvalid = validation?.code === "invalidCategory";
+          const categoryInvalid = categoryUnavailable
+            || validation?.code === "invalidCategory";
           const noteInvalid = validation?.code === "invalidNote";
 
           return (
@@ -335,6 +620,29 @@ export const BudgetAdjustmentEditor = (
               className={styles.adjustmentRow}
               role="row"
               data-testid={`budget-adjustment-row-${row.adjustmentId}`}
+              onFocusCapture={(): void => {
+                focusedAdjustmentIdRef.current = row.adjustmentId;
+              }}
+              onBlurCapture={(event): void => {
+                const nextTarget = event.relatedTarget;
+                if (
+                  nextTarget instanceof Node
+                  && event.currentTarget.contains(nextTarget)
+                ) {
+                  return;
+                }
+                const rowElement = event.currentTarget;
+                queueMicrotask((): void => {
+                  if (
+                    !rowElement.isConnected
+                    || focusedAdjustmentIdRef.current !== row.adjustmentId
+                    || rowElement.contains(document.activeElement)
+                  ) {
+                    return;
+                  }
+                  focusedAdjustmentIdRef.current = null;
+                });
+              }}
             >
               <label className={styles.adjustmentField} role="cell">
                 <span className={styles.adjustmentMobileLabel}>{t("budget.adjustmentAmount")}</span>
@@ -397,14 +705,26 @@ export const BudgetAdjustmentEditor = (
                     data-testid={`budget-adjustment-month-previous-${row.adjustmentId}`}
                     aria-label={t("budget.adjustmentPreviousMonth")}
                     disabled={previousMonth === null}
-                    onClick={() => {
+                    onClick={(event) => {
                       if (previousMonth === null) return;
-                      replaceLocationDraft(row, { ...row.draft, month: previousMonth });
+                      void replaceLocationDraft(
+                        row,
+                        { ...row.draft, month: previousMonth },
+                        "month",
+                        event.currentTarget,
+                      );
                     }}
                   >
                     −1
                   </button>
                   <input
+                    ref={(element) => {
+                      if (element === null) {
+                        monthInputRefs.current.delete(row.adjustmentId);
+                      } else {
+                        monthInputRefs.current.set(row.adjustmentId, element);
+                      }
+                    }}
                     type="month"
                     className={styles.adjustmentMonthInput}
                     data-testid={`budget-adjustment-month-${row.adjustmentId}`}
@@ -415,10 +735,14 @@ export const BudgetAdjustmentEditor = (
                     min={currentMonth}
                     max={MAX_MONTH}
                     value={row.draft.month}
-                    onChange={(event) => replaceLocationDraft(row, {
-                      ...row.draft,
-                      month: event.target.value,
-                    })}
+                    onChange={(event) => {
+                      void replaceLocationDraft(
+                        row,
+                        { ...row.draft, month: event.target.value },
+                        "month",
+                        event.currentTarget,
+                      );
+                    }}
                     onBlur={() => flushRow(row.adjustmentId)}
                     onKeyDown={(event) => handleEditorKeyDown(event, row.adjustmentId)}
                   />
@@ -428,9 +752,14 @@ export const BudgetAdjustmentEditor = (
                     data-testid={`budget-adjustment-month-next-${row.adjustmentId}`}
                     aria-label={t("budget.adjustmentNextMonth")}
                     disabled={nextMonth === null}
-                    onClick={() => {
+                    onClick={(event) => {
                       if (nextMonth === null) return;
-                      replaceLocationDraft(row, { ...row.draft, month: nextMonth });
+                      void replaceLocationDraft(
+                        row,
+                        { ...row.draft, month: nextMonth },
+                        "month",
+                        event.currentTarget,
+                      );
                     }}
                   >
                     +1
@@ -440,20 +769,38 @@ export const BudgetAdjustmentEditor = (
               <label className={styles.adjustmentField} role="cell">
                 <span className={styles.adjustmentMobileLabel}>{t("budget.adjustmentCategory")}</span>
                 <select
+                  ref={(element) => {
+                    if (element === null) {
+                      categoryInputRefs.current.delete(row.adjustmentId);
+                    } else {
+                      categoryInputRefs.current.set(row.adjustmentId, element);
+                    }
+                  }}
                   className={styles.adjustmentSelect}
                   data-testid={`budget-adjustment-category-${row.adjustmentId}`}
                   aria-label={t("budget.adjustmentCategory")}
                   aria-invalid={categoryInvalid}
-                  aria-describedby={categoryInvalid && validationMessage !== null ? errorId : undefined}
+                  aria-describedby={
+                    showCategoryCorrectionError
+                      ? categoryCorrectionErrorId
+                      : categoryInvalid && validationMessage !== null
+                        ? errorId
+                        : undefined
+                  }
                   required
-                  value={row.draft.category}
-                  onChange={(event) => replaceLocationDraft(row, {
-                    ...row.draft,
-                    category: event.target.value,
-                  })}
+                  value={categoryUnavailable ? "" : row.draft.category}
+                  onChange={(event) => {
+                    void replaceLocationDraft(
+                      row,
+                      { ...row.draft, category: event.target.value },
+                      "category",
+                      event.currentTarget,
+                    );
+                  }}
                   onBlur={() => flushRow(row.adjustmentId)}
                   onKeyDown={(event) => handleEditorKeyDown(event, row.adjustmentId)}
                 >
+                  {categoryUnavailable && <option value="" disabled />}
                   {categoryOptions.map((category) => (
                     <option key={category} value={category}>{category}</option>
                   ))}
@@ -485,17 +832,29 @@ export const BudgetAdjustmentEditor = (
                   {validationMessage}
                 </span>
               )}
+              {showCategoryCorrectionError && (
+                <span
+                  id={categoryCorrectionErrorId}
+                  className={styles.adjustmentError}
+                  role="alert"
+                >
+                  {t("budget.adjustmentInvalidCategory")}
+                </span>
+              )}
               {rowError !== undefined && (
                 <span className={styles.adjustmentError} role="alert">
-                  <span>
-                    {effectiveAllowlist === null
-                      ? rowError.message
-                      : t("budget.adjustmentSaveFailed")}
-                  </span>
+                  <span>{t("budget.adjustmentSaveFailed")}</span>
                   <button
                     type="button"
                     className={styles.adjustmentRecoveryButton}
-                    onClick={() => handleErrorAction(row)}
+                    data-testid={`budget-adjustment-recovery-${row.adjustmentId}`}
+                    disabled={controller.recoveringAdjustmentIds.has(
+                      row.adjustmentId,
+                    )}
+                    onClick={(event) => void handleErrorAction(
+                      row,
+                      event.currentTarget,
+                    )}
                   >
                     {rowError.action === "refresh-range"
                       ? t("budget.adjustmentRefresh")

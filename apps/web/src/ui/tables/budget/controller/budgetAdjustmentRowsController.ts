@@ -30,8 +30,8 @@ import {
 import {
   applyBudgetAdjustmentRowsWithProtectedCells,
   getBudgetAdjustmentCellKey,
-  getBudgetAdjustmentCellRows,
   getBudgetAdjustmentCellTotal,
+  getBudgetAdjustmentEditorCellRows,
   isBudgetAdjustmentRowVisible,
   parseBudgetAdjustmentDraft,
   type BudgetAdjustmentDraft,
@@ -115,6 +115,10 @@ export type BudgetAdjustmentRowsControllerCommands = Readonly<{
   getCellRows: (
     location: BudgetAdjustmentCellLocation,
     effectiveAllowlist: ReadonlySet<string> | null,
+    editorAnchorByAdjustmentId: ReadonlyMap<
+      string,
+      BudgetAdjustmentCellLocation
+    >,
   ) => ReadonlyArray<BudgetAdjustmentEditorRow>;
   getCellTotal: (
     location: BudgetAdjustmentCellLocation,
@@ -783,12 +787,31 @@ export const createBudgetAdjustmentRowsController = (
   const getCellRows = (
     location: BudgetAdjustmentCellLocation,
     effectiveAllowlist: ReadonlySet<string> | null,
-  ): ReadonlyArray<BudgetAdjustmentEditorRow> => getBudgetAdjustmentCellRows(
-    getVisibleRows(effectiveAllowlist),
+    editorAnchorByAdjustmentId: ReadonlyMap<
+      string,
+      BudgetAdjustmentCellLocation
+    >,
+  ): ReadonlyArray<BudgetAdjustmentEditorRow> => getBudgetAdjustmentEditorCellRows(
+    reconciliation.rows,
     location.month,
     location.direction,
     location.category,
-    dependencies.planFrom,
+    effectiveAllowlist,
+    new Map([...editorAnchorByAdjustmentId].filter(
+      ([adjustmentId]): boolean => (
+        reconciliation.optimisticCreateByAdjustmentId.has(adjustmentId)
+        || reconciliation.ambiguousRangeRequirementByAdjustmentId.has(
+          adjustmentId,
+        )
+        || hasDirtyFields(reconciliation, adjustmentId)
+        || timers.has(adjustmentId)
+        || suspendedAutosaveIds.has(adjustmentId)
+        || activeFlushes.has(adjustmentId)
+        || activeRecoveries.has(adjustmentId)
+        || deleteRequestedIds.has(adjustmentId)
+        || rowErrors.has(adjustmentId)
+      )
+    )),
   );
 
   const getRow = (
