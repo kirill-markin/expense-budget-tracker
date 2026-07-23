@@ -402,6 +402,156 @@ test("serializes and coalesces one row while allowing another row to save indepe
   );
 });
 
+test("keeps an acknowledged move anchored while a newer invalid draft is unresolved", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const moved = applyPatch(initial, { month: "2026-08" });
+  const firstPatch = createDeferred<BudgetAdjustment>();
+  const harness = createHarness([initial]);
+  harness.setPatchHandler((_adjustmentId, _params) => firstPatch.promise);
+  const source = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Food",
+  };
+  const destination = {
+    month: "2026-08",
+    direction: "spend" as const,
+    category: "Food",
+  };
+  const editorAnchors = new Map([[FIRST_ID, source]]);
+
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("1", "2026-08", "Food", ""),
+  );
+  const flush = harness.runtime.commands.flushRow(FIRST_ID);
+  await settleStart();
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("1", "2026-08", "", ""),
+  );
+  firstPatch.resolve(moved);
+
+  assert.equal(await flush, "invalid");
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      source,
+      null,
+      editorAnchors,
+    ).map((row) => row.adjustmentId),
+    [FIRST_ID],
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      destination,
+      null,
+      editorAnchors,
+    ),
+    [],
+  );
+
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("1", "2026-08", "Food", ""),
+  );
+  assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "unchanged");
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(source, null, editorAnchors),
+    [],
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      destination,
+      null,
+      editorAnchors,
+    ).map((row) => row.adjustmentId),
+    [FIRST_ID],
+  );
+});
+
+test("keeps an acknowledged move anchored through a failed follow-up patch", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const moved = applyPatch(initial, { month: "2026-08" });
+  const firstPatch = createDeferred<BudgetAdjustment>();
+  const harness = createHarness([initial]);
+  let patchAttempt = 0;
+  harness.setPatchHandler(async (_adjustmentId, params): Promise<BudgetAdjustment> => {
+    patchAttempt += 1;
+    if (patchAttempt === 1) return firstPatch.promise;
+    if (patchAttempt === 2) {
+      throw new BudgetAdjustmentApiError(
+        "Budget adjustment update",
+        409,
+        "forced follow-up conflict",
+      );
+    }
+    return applyPatch(moved, params);
+  });
+  const source = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Food",
+  };
+  const destination = {
+    month: "2026-08",
+    direction: "spend" as const,
+    category: "Food",
+  };
+  const editorAnchors = new Map([[FIRST_ID, source]]);
+
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("1", "2026-08", "Food", ""),
+  );
+  const flush = harness.runtime.commands.flushRow(FIRST_ID);
+  await settleStart();
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("2", "2026-08", "Food", ""),
+  );
+  firstPatch.resolve(moved);
+
+  assert.equal(await flush, "error");
+  assert.equal(
+    harness.runtime.getSnapshot().errorByAdjustmentId.get(FIRST_ID)?.classification,
+    "definitive",
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      source,
+      null,
+      editorAnchors,
+    ).map((row) => row.adjustmentId),
+    [FIRST_ID],
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      destination,
+      null,
+      editorAnchors,
+    ),
+    [],
+  );
+
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("3", "2026-08", "Food", ""),
+  );
+  assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "saved");
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(source, null, editorAnchors),
+    [],
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      destination,
+      null,
+      editorAnchors,
+    ).map((row) => row.adjustmentId),
+    [FIRST_ID],
+  );
+});
+
 test("retries a lost create with the identical UUID and payload before patching a newer edit", async (): Promise<void> => {
   const lostCreate = createDeferred<BudgetAdjustment>();
   const retryCreate = createDeferred<BudgetAdjustment>();
@@ -760,7 +910,10 @@ test("publishes mutation snapshots until unsubscribed and exposes cell selectors
   assert.equal(snapshots[0]?.pendingMutationCount, 1);
   assert.equal(harness.runtime.commands.getRow(FIRST_ID, null)?.draft.amountInput, "2");
   assert.equal(harness.runtime.commands.getRow(SECOND_ID, null), null);
-  assert.equal(harness.runtime.commands.getCellRows(location, null).length, 1);
+  assert.equal(
+    harness.runtime.commands.getCellRows(location, null, new Map()).length,
+    1,
+  );
   assert.equal(harness.runtime.commands.getCellTotal(location, null), 2);
 
   unsubscribe();
@@ -771,7 +924,7 @@ test("publishes mutation snapshots until unsubscribed and exposes cell selectors
   assert.equal(snapshots.length, 1);
 });
 
-test("uses one filtered presentation rule for selectors and projected budget rows", (): void => {
+test("keeps filtered editor ownership private while projected budget rows stay masked", (): void => {
   const harness = createHarness([
     createAdjustment(FIRST_ID, 47, "2026-07", "Masked", "private note"),
   ]);
@@ -784,6 +937,11 @@ test("uses one filtered presentation rule for selectors and projected budget row
     month: "2026-07",
     direction: "spend" as const,
     category: "Allowed",
+  };
+  const source = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Masked",
   };
   const protectedPrivateCell = {
     month: "2026-07",
@@ -805,7 +963,10 @@ test("uses one filtered presentation rule for selectors and projected budget row
     hasUnconvertible: false,
   }];
 
-  assert.deepEqual(harness.runtime.commands.getCellRows(destination, allowlist), []);
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(destination, allowlist, new Map()),
+    [],
+  );
   assert.equal(harness.runtime.commands.getCellTotal(destination, allowlist), 0);
   assert.equal(harness.runtime.commands.getRow(FIRST_ID, allowlist), null);
   assert.equal(
@@ -829,7 +990,18 @@ test("uses one filtered presentation rule for selectors and projected budget row
     [...harness.runtime.getSnapshot().protectedCellKeys],
     ["2026-07\u0000spend\u0000Masked"],
   );
-  assert.equal(harness.runtime.commands.getCellRows(destination, null).length, 1);
+  assert.equal(
+    harness.runtime.commands.getCellRows(source, null, new Map()).length,
+    1,
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      source,
+      allowlist,
+      new Map([[FIRST_ID, source]]),
+    ),
+    [],
+  );
   assert.equal(
     harness.runtime.commands.applyToBudgetRows(
       budgetRows,
@@ -842,10 +1014,15 @@ test("uses one filtered presentation rule for selectors and projected budget row
   release();
 });
 
-test("keeps an unknown draft category private in the public row selector", (): void => {
+test("reveals invalid filtered drafts only in their owning confirmed editor cell", (): void => {
   const harness = createHarness([
     createAdjustment(FIRST_ID, 12, "2026-07", "Allowed", null),
   ]);
+  const source = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Allowed",
+  };
   harness.runtime.commands.replaceDraft(
     FIRST_ID,
     createDraft("12", "2026-07", "Unknown", ""),
@@ -853,9 +1030,38 @@ test("keeps an unknown draft category private in the public row selector", (): v
   const allowlist = new Set(["Allowed"]);
 
   assert.equal(harness.runtime.commands.getRow(FIRST_ID, allowlist), null);
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(source, allowlist, new Map()),
+    [],
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      source,
+      allowlist,
+      new Map([[FIRST_ID, source]]),
+    ).map((row) => row.adjustmentId),
+    [FIRST_ID],
+  );
   assert.equal(
     harness.runtime.commands.getRow(FIRST_ID, null)?.draft.category,
     "Unknown",
+  );
+
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("12", "2026-07", "", ""),
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(source, allowlist, new Map()),
+    [],
+  );
+  assert.deepEqual(
+    harness.runtime.commands.getCellRows(
+      source,
+      allowlist,
+      new Map([[FIRST_ID, source]]),
+    ).map((row) => row.adjustmentId),
+    [FIRST_ID],
   );
 });
 

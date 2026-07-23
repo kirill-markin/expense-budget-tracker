@@ -15,7 +15,10 @@ import type { NumberFormat } from "@/lib/locale";
 import type { BudgetAdjustmentDirection } from "@/server/budget/budgetAdjustments";
 import { useFormat } from "@/ui/FormatProvider";
 import { BudgetAdjustmentEditor } from "@/ui/tables/budget/BudgetAdjustmentEditor";
-import { isSuccessfulBudgetAdjustmentFlushOutcome } from "@/ui/tables/budget/budgetAdjustmentRecovery";
+import {
+  isSuccessfulBudgetAdjustmentFlushOutcome,
+  recoverBudgetAdjustment,
+} from "@/ui/tables/budget/budgetAdjustmentRecovery";
 import { isValidBudgetAdjustmentCategory } from "@/ui/tables/budget/budgetAdjustmentRowsState";
 import {
   consumeBudgetBaseLocalAcknowledgement,
@@ -24,7 +27,10 @@ import {
 import { postBudgetPlan, postBudgetPlanFill } from "@/ui/tables/budget/budgetTableApi";
 import { formatAmount, isDecember } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
-import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
+import type {
+  BudgetAdjustmentCellLocation,
+  BudgetAdjustmentRowsController,
+} from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import {
   createBudgetBaseEditorController,
   type BudgetBaseDraftSnapshot,
@@ -258,7 +264,9 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const popoverActionPendingRef = useRef<boolean>(false);
   const activePopoverActionRef = useRef<Promise<boolean> | null>(null);
   const hiddenSettlementRef = useRef<Promise<boolean> | null>(null);
-  const interactedAdjustmentIdsRef = useRef<Set<string>>(new Set());
+  const interactedAdjustmentAnchorByIdRef = useRef<
+    Map<string, BudgetAdjustmentCellLocation>
+  >(new Map());
   const settleLifecycleRef = useRef<() => Promise<boolean>>(
     (): Promise<boolean> => Promise.resolve(true),
   );
@@ -375,7 +383,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       setBaseValidationError(null);
       setBaseSaveError(null);
       setShouldFocusBaseAfterAction(false);
-      interactedAdjustmentIdsRef.current = new Set();
     }
     baseInputRef.current?.setCustomValidity("");
     adjustmentInitialFocusRef.current = null;
@@ -397,8 +404,32 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     cancelActivationRelease,
     cancelActivationRequest,
     releaseActivation,
+    registerRecoveryGate,
     registerTransitionGate,
   } = useTableEditorActivation(editorId, initializePopover);
+  const retainAdjustmentCell = budgetAdjustments.retainCell;
+
+  useEffect(() => {
+    if (
+      !isOpen
+      || adjustmentDirection === null
+      || !isValidBudgetAdjustmentCategory(category)
+    ) {
+      return;
+    }
+    return retainAdjustmentCell(editorId, {
+      month,
+      direction: adjustmentDirection,
+      category,
+    });
+  }, [
+    adjustmentDirection,
+    category,
+    editorId,
+    isOpen,
+    month,
+    retainAdjustmentCell,
+  ]);
 
   const openPopover = (): void => {
     if (!showDataRef.current || isOpenRef.current) return;
@@ -616,16 +647,23 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   }, []);
 
   const clearTrackedAdjustment = useCallback((adjustmentId: string): void => {
-    interactedAdjustmentIdsRef.current.delete(adjustmentId);
+    interactedAdjustmentAnchorByIdRef.current.delete(adjustmentId);
   }, []);
 
   const flushInteractedAdjustments = useCallback(async (): Promise<boolean> => {
-    const adjustmentIds = [...interactedAdjustmentIdsRef.current].filter(
-      (adjustmentId): boolean => (
-        budgetAdjustments.getRow(adjustmentId, effectiveAllowlist) !== null
+    const existingAdjustmentIds = new Set(
+      budgetAdjustments.rows.map((row): string => row.adjustmentId),
+    );
+    const adjustmentIds = [
+      ...interactedAdjustmentAnchorByIdRef.current.keys(),
+    ].filter(
+      (adjustmentId): boolean => existingAdjustmentIds.has(adjustmentId),
+    );
+    interactedAdjustmentAnchorByIdRef.current = new Map(
+      [...interactedAdjustmentAnchorByIdRef.current].filter(
+        ([adjustmentId]): boolean => existingAdjustmentIds.has(adjustmentId),
       ),
     );
-    interactedAdjustmentIdsRef.current = new Set(adjustmentIds);
     const failedAdjustmentIds = (await Promise.all(adjustmentIds.map(
       async (adjustmentId): Promise<string | null> => {
         try {
@@ -643,19 +681,45 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       },
     ))).filter((adjustmentId): adjustmentId is string => adjustmentId !== null);
     if (failedAdjustmentIds.length > 0) {
+      const failedAdjustmentIdSet = new Set(failedAdjustmentIds);
+      interactedAdjustmentAnchorByIdRef.current = new Map(
+        [...interactedAdjustmentAnchorByIdRef.current].filter(
+          ([adjustmentId]): boolean => failedAdjustmentIdSet.has(adjustmentId),
+        ),
+      );
       focusAdjustmentFlushFailure(failedAdjustmentIds);
       return false;
     }
-    interactedAdjustmentIdsRef.current = new Set();
+    interactedAdjustmentAnchorByIdRef.current = new Map();
     return true;
   }, [
     budgetAdjustments,
-    effectiveAllowlist,
     focusAdjustmentFlushFailure,
   ]);
 
+  const recoverTrackedAdjustment = useCallback(async (
+    adjustmentId: string,
+  ): Promise<void> => {
+    const outcome = await recoverBudgetAdjustment(
+      budgetAdjustments,
+      adjustmentId,
+    );
+    if (outcome !== "recovered") {
+      throw new Error(
+        `Budget adjustment "${adjustmentId}" could not be recovered`,
+      );
+    }
+    clearTrackedAdjustment(adjustmentId);
+  }, [budgetAdjustments, clearTrackedAdjustment]);
+
+  useEffect(() => registerRecoveryGate({
+    ownsAdjustment: (adjustmentId): boolean =>
+      interactedAdjustmentAnchorByIdRef.current.has(adjustmentId),
+    recoverAdjustment: recoverTrackedAdjustment,
+  }), [recoverTrackedAdjustment, registerRecoveryGate]);
+
   const finishPopoverClose = useCallback((): boolean => {
-    interactedAdjustmentIdsRef.current = new Set();
+    interactedAdjustmentAnchorByIdRef.current = new Map();
     setPopoverOpen(false);
     return releaseActivation();
   }, [releaseActivation, setPopoverOpen]);
@@ -869,7 +933,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       const baseOutcome = await settleCurrentBase();
       if (baseOutcome.status !== "settled") return false;
     }
-    if (interactedAdjustmentIdsRef.current.size === 0) return true;
+    if (interactedAdjustmentAnchorByIdRef.current.size === 0) return true;
     return flushInteractedAdjustments();
   }, [
     baseController,
@@ -886,7 +950,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       || baseController.isPersistencePending()
       || activePopoverActionRef.current !== null
       || hiddenSettlementRef.current !== null
-      || interactedAdjustmentIdsRef.current.size > 0
+      || interactedAdjustmentAnchorByIdRef.current.size > 0
     ),
     settleLifecycle: (): Promise<boolean> => settleLifecycleRef.current(),
   }), [baseController, registerTransitionGate]);
@@ -901,6 +965,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
         && (
           needsBaseSaveRecoveryRef.current
           || needsBaseValidationRecoveryRef.current
+          || interactedAdjustmentAnchorByIdRef.current.size > 0
         )
       ) {
         requestActivation();
@@ -938,7 +1003,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           const baseOutcome = await settleCurrentBase();
           if (baseOutcome.status !== "settled") return false;
           if (!await flushInteractedAdjustments()) return false;
-          interactedAdjustmentIdsRef.current = new Set();
+          interactedAdjustmentAnchorByIdRef.current = new Map();
           return true;
         });
       })
@@ -952,6 +1017,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           && (
             needsBaseSaveRecoveryRef.current
             || needsBaseValidationRecoveryRef.current
+            || interactedAdjustmentAnchorByIdRef.current.size > 0
           )
           && !isOpenRef.current
         ) {
@@ -1099,12 +1165,19 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
                 currentMonth={currentMonth}
                 categories={directionCategories}
                 effectiveAllowlist={effectiveAllowlist}
+                editorAnchorByAdjustmentId={
+                  interactedAdjustmentAnchorByIdRef.current
+                }
                 controller={budgetAdjustments}
                 onInitialFocusTargetChange={setAdjustmentInitialFocusTarget}
                 onInteraction={(adjustmentId): void => {
-                  interactedAdjustmentIdsRef.current.add(adjustmentId);
+                  interactedAdjustmentAnchorByIdRef.current.set(
+                    adjustmentId,
+                    adjustmentLocation,
+                  );
                 }}
                 onDeleteSuccess={clearTrackedAdjustment}
+                onSettlementSuccess={clearTrackedAdjustment}
               />
               <div className={styles.popoverDivider} />
             </>

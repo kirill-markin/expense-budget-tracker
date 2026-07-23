@@ -17,6 +17,7 @@ import {
   getBudgetAdjustmentCellKey,
   getBudgetAdjustmentCellRows,
   getBudgetAdjustmentCellTotal,
+  getBudgetAdjustmentEditorCellRows,
   getBudgetAdjustmentRowCellKey,
   isBudgetAdjustmentCategoryVisible,
   isBudgetAdjustmentRowVisible,
@@ -236,6 +237,115 @@ test("keeps moved drafts private until confirmed and draft categories are both v
       new Set(),
     ),
     [createBudgetRow("2026-07", "spend", "Allowed", 100, 0)],
+  );
+});
+
+test("anchors editor rows to confirmed cells and reveals invalid drafts only to their owner", (): void => {
+  const confirmed = createBudgetAdjustmentEditorRow(createAdjustment(
+    "owned-row",
+    47,
+    "2026-07",
+    "spend",
+    "Allowed",
+    "owner-visible note",
+    "2026-07-01T00:00:00.000Z",
+  ));
+  const invalid = replaceBudgetAdjustmentDraft([confirmed], confirmed.adjustmentId, {
+    ...confirmed.draft,
+    month: "2026-08",
+    category: "Masked",
+  })[0];
+  const allowlist = new Set(["Allowed"]);
+  const sourceParams = [
+    [invalid],
+    "2026-07",
+    "spend",
+    "Allowed",
+    allowlist,
+  ] as const;
+  const sourceAnchor = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Allowed",
+  };
+  const editorAnchors = new Map([
+    [invalid.adjustmentId, sourceAnchor],
+  ]);
+
+  assert.deepEqual(
+    getBudgetAdjustmentEditorCellRows(...sourceParams, new Map()),
+    [],
+  );
+  assert.deepEqual(
+    getBudgetAdjustmentEditorCellRows(
+      ...sourceParams,
+      editorAnchors,
+    ).map((row) => row.adjustmentId),
+    [invalid.adjustmentId],
+  );
+  assert.deepEqual(
+    getBudgetAdjustmentEditorCellRows(
+      [invalid],
+      "2026-08",
+      "spend",
+      "Masked",
+      allowlist,
+      editorAnchors,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    getBudgetAdjustmentEditorCellRows(
+      [invalid],
+      "2026-08",
+      "spend",
+      "Masked",
+      null,
+      editorAnchors,
+    ),
+    [],
+  );
+
+  const acknowledgedMove = {
+    ...invalid,
+    confirmed: {
+      ...invalid.confirmed,
+      month: "2026-08",
+      category: "Masked",
+    },
+  };
+  assert.deepEqual(
+    getBudgetAdjustmentEditorCellRows(
+      [acknowledgedMove],
+      "2026-07",
+      "spend",
+      "Allowed",
+      allowlist,
+      editorAnchors,
+    ).map((row) => row.adjustmentId),
+    [invalid.adjustmentId],
+  );
+  assert.deepEqual(
+    getBudgetAdjustmentEditorCellRows(
+      [acknowledgedMove],
+      "2026-08",
+      "spend",
+      "Masked",
+      null,
+      editorAnchors,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    getBudgetAdjustmentEditorCellRows(
+      [acknowledgedMove],
+      "2026-08",
+      "spend",
+      "Masked",
+      null,
+      new Map(),
+    ).map((row) => row.adjustmentId),
+    [invalid.adjustmentId],
   );
 });
 
