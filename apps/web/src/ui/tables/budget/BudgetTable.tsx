@@ -75,13 +75,12 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
                     filteredSubtotalsMap={controller.filteredSubtotalsMap}
                     taintedDirectionMonths={controller.taintedDirectionMonths}
                     taintedCells={controller.taintedCells}
-                    commentedCells={controller.commentedCells}
                     numberFormat={numberFormat}
+                    budgetAdjustments={controller.budgetAdjustments}
                     copyToClipboard={copyToClipboard}
                     openDrillDown={controller.openDrillDown}
                     onPlanSave={controller.handlePlanSave}
                     onFillMonths={controller.handleFillMonths}
-                    onCommentPresenceChange={controller.updateCommentCell}
                     onSyncStart={controller.onSyncStart}
                     onSyncEnd={controller.onSyncEnd}
                   />

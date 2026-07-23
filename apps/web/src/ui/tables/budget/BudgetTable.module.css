@@ -236,6 +236,32 @@ tbody tr:last-child .currentMonthActual {
   text-underline-offset: 2px;
 }
 
+.planCellButton {
+  display: block;
+  box-sizing: border-box;
+  inline-size: calc(100% + 20px);
+  margin-block: -4px;
+  margin-inline: -10px;
+  padding-block: 4px;
+  padding-inline: 10px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: inherit;
+  text-align: end;
+  cursor: var(--cursor-pointer);
+}
+
+.planCellButton:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+.planCellButton:disabled {
+  cursor: default;
+}
+
 .cellSaving {
   opacity: 0.5;
 }
@@ -276,7 +302,7 @@ tbody tr:last-child .currentMonthActual {
   position: fixed;
   z-index: 200;
   box-sizing: border-box;
-  inline-size: min(240px, max(1px, calc(100vw - 16px)));
+  inline-size: min(720px, max(1px, calc(100vw - 16px)));
   max-block-size: max(1px, calc(100dvh - 16px));
   overflow-y: auto;
   background: var(--bg);
@@ -291,7 +317,7 @@ tbody tr:last-child .currentMonthActual {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-block-end: 6px;
 }
 
 .popoverLabel {
@@ -327,8 +353,9 @@ tbody tr:last-child .currentMonthActual {
 }
 
 .popoverDivider {
-  border-top: 1px solid var(--panel-border);
-  margin: 8px 0;
+  border-block-start: 1px solid var(--panel-border);
+  margin-block: 8px;
+  margin-inline: 0;
 }
 
 .popoverTotal {
@@ -365,33 +392,6 @@ tbody tr:last-child .currentMonthActual {
 .popoverFillButton:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.popoverComment {
-  display: block;
-  box-sizing: border-box;
-  inline-size: 100%;
-  min-height: calc(3 * 1.4em + 8px);
-  max-height: 180px;
-  padding-block: 4px;
-  padding-inline: 6px;
-  border: none;
-  outline: 1px solid var(--panel-border);
-  background: var(--bg);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  resize: vertical;
-}
-
-.popoverComment:focus {
-  outline-color: var(--text);
-}
-
-.popoverLoading {
-  font-size: 12px;
-  color: var(--muted);
 }
 
 .adjustmentSection {
@@ -561,7 +561,9 @@ tbody tr:last-child .currentMonthActual {
 }
 
 .adjustmentStatus {
+  min-block-size: 1.2em;
   color: var(--muted);
+  line-height: 1.2;
 }
 
 .adjustmentError {
@@ -671,6 +673,11 @@ tbody tr:last-child .currentMonthActual {
 @media (max-width: 768px) {
   .scroll {
     padding-inline-start: 0;
+  }
+
+  .popover {
+    padding-block: 12px;
+    padding-inline: 10px;
   }
 
   .adjustmentTableHeader {

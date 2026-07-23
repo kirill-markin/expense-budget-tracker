@@ -5,6 +5,7 @@ import { Fragment, type ReactElement } from "react";
 import { getCellVisibility } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import { BudgetPlanCell } from "@/ui/tables/budget/BudgetPlanCell";
+import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import {
   formatAmount,
   lookupCell,
@@ -34,8 +35,8 @@ type CategoryRowProps = Readonly<{
   currentYear: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   taintedCells: ReadonlySet<string>;
-  commentedCells: ReadonlySet<string>;
   numberFormat: NumberFormat;
+  budgetAdjustments: BudgetAdjustmentRowsController;
   copyToClipboard: (value: string) => void;
   openDrillDown: (filter: DrillDownFilter) => void;
   onPlanSave: (
@@ -51,12 +52,6 @@ type CategoryRowProps = Readonly<{
     category: string,
     baseValue: number,
   ) => void;
-  onCommentPresenceChange: (
-    month: string,
-    direction: string,
-    category: string,
-    hasComment: boolean,
-  ) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
 }>;
@@ -71,13 +66,12 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     currentYear,
     yearComputed,
     taintedCells,
-    commentedCells,
     numberFormat,
+    budgetAdjustments,
     copyToClipboard,
     openDrillDown,
     onPlanSave,
     onFillMonths,
-    onCommentPresenceChange,
     onSyncStart,
     onSyncEnd,
   } = props;
@@ -87,9 +81,9 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     <tr key={category} className={styles.categoryRow}>
       <td
         className={`${styles.categoryLabel} ${styles.stickyCol} copyable-cell${categoryVisibility.maskClass}`}
-        onClick={() => copyToClipboard(category)}
+        onClick={categoryVisibility.showData ? () => copyToClipboard(category) : undefined}
       >
-        {category}
+        {categoryVisibility.showData ? category : ""}
       </td>
       <td className={styles.leftSpacer} />
       {columnSequence.map((column) => {
@@ -116,7 +110,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   ? () => openDrillDown(buildCategoryYearDrillDownFilter(column.year, block.direction, category))
                   : undefined}
               >
-                {formatAmount(yearCell.actual, numberFormat)}
+                {categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : ""}
               </td>
             );
           },
@@ -129,7 +123,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
             const yearTotalStateClass = buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false);
             return (
               <td key={`total-${column.year}`} className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalStateClass}`}>
-                {formatAmount(yearCell.planned, numberFormat)}
+                {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : ""}
               </td>
             );
           },
@@ -145,7 +139,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
             return (
               <Fragment key={`total-${column.year}`}>
                 <td className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalPlanStateClass}`}>
-                  {formatAmount(yearCell.planned, numberFormat)}
+                  {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : ""}
                 </td>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalActualStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
@@ -153,7 +147,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                     ? () => openDrillDown(buildCategoryYearDrillDownFilter(column.year, block.direction, category))
                     : undefined}
                 >
-                  {formatAmount(yearCell.actual, numberFormat)}
+                  {categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : ""}
                 </td>
               </Fragment>
             );
@@ -174,7 +168,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                   : undefined}
               >
-                {formatAmount(cell.actual, numberFormat)}
+                {categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : ""}
               </td>
             );
           },
@@ -192,18 +186,20 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 month={column.month}
                 direction={block.direction}
                 category={category}
+                directionCategories={block.categories}
+                effectiveAllowlist={effectiveAllowlist}
+                currentMonth={currentMonth}
                 plannedBase={cell.plannedBase}
                 plannedModifier={cell.plannedModifier}
                 planned={cell.planned}
-                hasComment={commentedCells.has(`${column.month}::${block.direction}::${category}`)}
                 showData={categoryVisibility.showData}
                 maskClass={categoryVisibility.maskClass}
                 taintedClass={taintedClass}
                 isPlanOver={false}
                 cmClass=""
+                budgetAdjustments={budgetAdjustments}
                 onPlanSave={onPlanSave}
                 onFillMonths={onFillMonths}
-                onCommentPresenceChange={onCommentPresenceChange}
                 onSyncStart={onSyncStart}
                 onSyncEnd={onSyncEnd}
               />
@@ -224,18 +220,20 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   month={column.month}
                   direction={block.direction}
                   category={category}
+                  directionCategories={block.categories}
+                  effectiveAllowlist={effectiveAllowlist}
+                  currentMonth={currentMonth}
                   plannedBase={cell.plannedBase}
                   plannedModifier={cell.plannedModifier}
                   planned={cell.planned}
-                  hasComment={commentedCells.has(`${column.month}::${block.direction}::${category}`)}
                   showData={categoryVisibility.showData}
                   maskClass={categoryVisibility.maskClass}
                   taintedClass={taintedClass}
                   isPlanOver={false}
                   cmClass={` ${styles.currentMonthPlan}`}
+                  budgetAdjustments={budgetAdjustments}
                   onPlanSave={onPlanSave}
                   onFillMonths={onFillMonths}
-                  onCommentPresenceChange={onCommentPresenceChange}
                   onSyncStart={onSyncStart}
                   onSyncEnd={onSyncEnd}
                 />
@@ -245,7 +243,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                     ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                     : undefined}
                 >
-                  {formatAmount(cell.actual, numberFormat)}
+                  {categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : ""}
                 </td>
               </Fragment>
             );

@@ -79,26 +79,26 @@ test("keeps the invalid budget plan popover as the only active popover", async (
   await setDemoCookies(page, baseURL);
   await page.goto("/budget", { waitUntil: "domcontentloaded" });
 
-  const planCells = page.locator('[data-testid^="budget-plan-cell-budget-plan:"]');
-  await expect(planCells).not.toHaveCount(0);
-  const planCellCount = await planCells.count();
-  expect(planCellCount).toBeGreaterThan(1);
+  const planOpenButtons = page.locator('[data-testid^="budget-plan-open-budget-plan:"]');
+  await expect(planOpenButtons).not.toHaveCount(0);
+  const planOpenButtonCount = await planOpenButtons.count();
+  expect(planOpenButtonCount).toBeGreaterThan(1);
 
-  const firstCell = planCells.nth(0);
-  const secondCell = planCells.nth(1);
-  const firstCellTestId = await firstCell.getAttribute("data-testid");
-  if (firstCellTestId === null) {
-    throw new Error("First budget plan cell is missing its stable test ID");
+  const firstOpenButton = planOpenButtons.nth(0);
+  const secondOpenButton = planOpenButtons.nth(1);
+  const firstOpenButtonTestId = await firstOpenButton.getAttribute("data-testid");
+  if (firstOpenButtonTestId === null) {
+    throw new Error("First budget plan button is missing its stable test ID");
   }
-  const firstEditorId = firstCellTestId.slice("budget-plan-cell-".length);
+  const firstEditorId = firstOpenButtonTestId.slice("budget-plan-open-".length);
 
-  await firstCell.click();
-  const firstInput = page.getByTestId(`budget-plan-modifier-input-${firstEditorId}`);
+  await firstOpenButton.click();
+  const firstInput = page.getByTestId(`budget-plan-base-input-${firstEditorId}`);
   await expect(firstInput).toBeVisible();
   await firstInput.fill("invalid amount");
 
-  await secondCell.click();
+  await secondOpenButton.click();
 
   await expect(firstInput).toHaveAttribute("aria-invalid", "true");
-  await expect(page.locator('[data-testid^="budget-plan-modifier-input-budget-plan:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="budget-plan-base-input-budget-plan:"]')).toHaveCount(1);
 });

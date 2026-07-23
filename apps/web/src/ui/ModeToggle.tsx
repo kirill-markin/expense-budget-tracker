@@ -43,7 +43,10 @@ export const ModeToggle = (props: Props): ReactElement => {
   };
 
   return (
-    <div className={styles.segmented}>
+    <div
+      className={styles.segmented}
+      data-table-editor-visibility-control="true"
+    >
       <button
         className={cn(styles.segment, activeMode === "all" ? styles.segmentActive : "")}
         type="button"
