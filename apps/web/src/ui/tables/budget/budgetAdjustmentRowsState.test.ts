@@ -8,6 +8,7 @@ import type {
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
 import {
   applyBudgetAdjustmentRows,
+  applyBudgetAdjustmentRowsWithProtectedCells,
   budgetAdjustmentNoteFromInput,
   budgetAdjustmentNoteToInput,
   clearBudgetAdjustmentCellInvalidations,
@@ -17,7 +18,10 @@ import {
   getBudgetAdjustmentCellRows,
   getBudgetAdjustmentCellTotal,
   getBudgetAdjustmentRowCellKey,
+  isBudgetAdjustmentCategoryVisible,
+  isBudgetAdjustmentRowVisible,
   isValidBudgetAdjustmentCategory,
+  isValidBudgetAdjustmentNoteInput,
   parseBudgetAdjustmentAmount,
   parseBudgetAdjustmentDraft,
   recordBudgetAdjustmentCellMove,
@@ -157,6 +161,8 @@ test("validates category and note limits by code point", (): void => {
 
   assert.equal(emptyCategory.ok ? null : emptyCategory.error.code, "invalidCategory");
   assert.equal(longNote.ok ? null : longNote.error.code, "invalidNote");
+  assert.equal(isValidBudgetAdjustmentNoteInput("\u{1F680}".repeat(2000)), true);
+  assert.equal(isValidBudgetAdjustmentNoteInput("\u{1F680}".repeat(2001)), false);
 });
 
 test("accepts adjustment editor categories only within the category contract", (): void => {
@@ -179,6 +185,118 @@ test("does not expose masked categories in filtered adjustment options", (): voi
   assert.deepEqual(
     getBudgetAdjustmentCategoryOptions(categories, new Set(["Groceries", "Utilities"])),
     ["Groceries", "Utilities"],
+  );
+  assert.equal(
+    isBudgetAdjustmentCategoryVisible("Unknown", new Set(["Groceries", "Utilities"])),
+    false,
+  );
+});
+
+test("keeps moved drafts private until confirmed and draft categories are both visible", (): void => {
+  const confirmed = createBudgetAdjustmentEditorRow(createAdjustment(
+    "masked-move",
+    47,
+    "2026-07",
+    "spend",
+    "Masked",
+    "private note",
+    "2026-07-01T00:00:00.000Z",
+  ));
+  const moved = replaceBudgetAdjustmentDraft([confirmed], confirmed.adjustmentId, {
+    ...confirmed.draft,
+    category: "Allowed",
+  })[0];
+  const allowlist = new Set(["Allowed"]);
+  const visibleRows = [moved].filter((row): boolean =>
+    isBudgetAdjustmentRowVisible(row, allowlist));
+
+  assert.equal(isBudgetAdjustmentRowVisible(moved, allowlist), false);
+  assert.equal(isBudgetAdjustmentRowVisible(moved, null), true);
+  assert.deepEqual(getBudgetAdjustmentCellRows(
+    visibleRows,
+    "2026-07",
+    "spend",
+    "Allowed",
+    "2026-07",
+  ), []);
+  assert.equal(getBudgetAdjustmentCellTotal(
+    visibleRows,
+    "2026-07",
+    "spend",
+    "Allowed",
+    "2026-07",
+  ), 0);
+  assert.deepEqual(
+    applyBudgetAdjustmentRows(
+      [createBudgetRow("2026-07", "spend", "Allowed", 100, 47)],
+      visibleRows,
+      "2026-07",
+      "2026-07",
+      "2026-07",
+      new Set(),
+    ),
+    [createBudgetRow("2026-07", "spend", "Allowed", 100, 0)],
+  );
+});
+
+test("projects a retained adjustment-only cell only when its category is visible", (): void => {
+  const protectedCell = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Adjustment only",
+  };
+
+  const allProjection = applyBudgetAdjustmentRowsWithProtectedCells(
+    [],
+    [],
+    "2026-07",
+    "2026-07",
+    "2026-07",
+    new Set(),
+    [protectedCell],
+    null,
+  );
+  assert.deepEqual(allProjection, [
+    createBudgetRow("2026-07", "spend", "Adjustment only", 0, 0),
+  ]);
+  assert.deepEqual(
+    applyBudgetAdjustmentRowsWithProtectedCells(
+      [],
+      [],
+      "2026-07",
+      "2026-07",
+      "2026-07",
+      new Set(),
+      [protectedCell],
+      new Set(["Allowed"]),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    applyBudgetAdjustmentRowsWithProtectedCells(
+      [],
+      [],
+      "2026-07",
+      "2026-07",
+      "2026-07",
+      new Set(),
+      [protectedCell],
+      null,
+    ),
+    allProjection,
+  );
+  assert.deepEqual(
+    applyBudgetAdjustmentRowsWithProtectedCells(
+      [],
+      [],
+      "2026-07",
+      "2026-07",
+      "2026-07",
+      new Set(),
+      [],
+      null,
+    ),
+    [],
   );
 });
 

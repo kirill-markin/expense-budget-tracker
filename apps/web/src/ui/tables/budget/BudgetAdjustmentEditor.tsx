@@ -81,7 +81,7 @@ export const BudgetAdjustmentEditor = (
   } = props;
   const { t } = useTranslation();
   const accessibilityId = useId();
-  const rows = controller.getCellRows(location);
+  const rows = controller.getCellRows(location, effectiveAllowlist);
   const categoryOptions = useMemo<ReadonlyArray<string>>(
     () => getBudgetAdjustmentCategoryOptions(categories, effectiveAllowlist),
     [categories, effectiveAllowlist],

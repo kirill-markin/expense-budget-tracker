@@ -28,13 +28,16 @@ import {
   type BudgetAdjustmentRowsReconciliationState,
 } from "@/ui/tables/budget/budgetAdjustmentRowsReconciliation";
 import {
-  applyBudgetAdjustmentRows,
+  applyBudgetAdjustmentRowsWithProtectedCells,
+  getBudgetAdjustmentCellKey,
   getBudgetAdjustmentCellRows,
   getBudgetAdjustmentCellTotal,
+  isBudgetAdjustmentRowVisible,
   parseBudgetAdjustmentDraft,
   type BudgetAdjustmentDraft,
   type BudgetAdjustmentDraftError,
   type BudgetAdjustmentEditorRow,
+  type ProtectedBudgetAdjustmentCell,
 } from "@/ui/tables/budget/budgetAdjustmentRowsState";
 import {
   BudgetAdjustmentApiError,
@@ -78,6 +81,8 @@ export type BudgetAdjustmentFlushOutcome =
   | "refresh-required"
   | "deleted";
 
+export type BudgetAdjustmentRecoveryOutcome = "recovered" | "unsuccessful";
+
 export type BudgetAdjustmentRangeLoadOutcome =
   | Readonly<{ status: "accepted"; result: BudgetGridResult }>
   | Readonly<{ status: "superseded" }>;
@@ -88,6 +93,8 @@ export type BudgetAdjustmentRowsControllerState = Readonly<{
   validationByAdjustmentId: ReadonlyMap<string, BudgetAdjustmentDraftError>;
   errorByAdjustmentId: ReadonlyMap<string, BudgetAdjustmentRowError>;
   operationByAdjustmentId: ReadonlyMap<string, BudgetAdjustmentRowOperation>;
+  recoveringAdjustmentIds: ReadonlySet<string>;
+  protectedCellKeys: ReadonlySet<string>;
   rangeErrorByKey: ReadonlyMap<string, BudgetAdjustmentRangeError>;
   pendingMutationCount: number;
   pendingRangeCount: number;
@@ -97,15 +104,31 @@ export type BudgetAdjustmentRowsControllerCommands = Readonly<{
   addRow: (location: BudgetAdjustmentCellLocation) => string;
   replaceDraft: (adjustmentId: string, draft: BudgetAdjustmentDraft) => void;
   flushRow: (adjustmentId: string) => Promise<BudgetAdjustmentFlushOutcome>;
+  recoverRow: (adjustmentId: string) => Promise<BudgetAdjustmentRecoveryOutcome>;
   requestDelete: (adjustmentId: string) => Promise<BudgetAdjustmentFlushOutcome>;
   loadRange: (monthFrom: string, monthTo: string) => Promise<BudgetAdjustmentRangeLoadOutcome>;
   refreshRow: (adjustmentId: string) => Promise<BudgetAdjustmentRangeLoadOutcome>;
-  getCellRows: (location: BudgetAdjustmentCellLocation) => ReadonlyArray<BudgetAdjustmentEditorRow>;
-  getCellTotal: (location: BudgetAdjustmentCellLocation) => number;
+  getRow: (
+    adjustmentId: string,
+    effectiveAllowlist: ReadonlySet<string> | null,
+  ) => BudgetAdjustmentEditorRow | null;
+  getCellRows: (
+    location: BudgetAdjustmentCellLocation,
+    effectiveAllowlist: ReadonlySet<string> | null,
+  ) => ReadonlyArray<BudgetAdjustmentEditorRow>;
+  getCellTotal: (
+    location: BudgetAdjustmentCellLocation,
+    effectiveAllowlist: ReadonlySet<string> | null,
+  ) => number;
+  retainCell: (
+    ownerId: string,
+    location: BudgetAdjustmentCellLocation,
+  ) => () => void;
   applyToBudgetRows: (
     budgetRows: ReadonlyArray<BudgetRow>,
     loadedFrom: string,
     loadedTo: string,
+    effectiveAllowlist: ReadonlySet<string> | null,
   ) => ReadonlyArray<BudgetRow>;
 }>;
 
@@ -213,7 +236,12 @@ export const createBudgetAdjustmentRowsController = (
   const suspendedAutosaveIds = new Set<string>();
   const suspendedInvalidationYears = new Set<string>();
   const activeFlushes = new Map<string, Promise<BudgetAdjustmentFlushOutcome>>();
+  const activeRecoveries = new Map<string, Promise<BudgetAdjustmentRecoveryOutcome>>();
   const deleteRequestedIds = new Set<string>();
+  const protectedCellOwners = new Map<string, Readonly<{
+    cell: ProtectedBudgetAdjustmentCell;
+    lease: symbol;
+  }>>();
   let rowErrors = new Map<string, BudgetAdjustmentRowError>();
   let rowOperations = new Map<string, BudgetAdjustmentRowOperation>();
   let rangeFailuresByKey = new Map<string, BudgetAdjustmentRangeFailure>();
@@ -229,6 +257,14 @@ export const createBudgetAdjustmentRowsController = (
     validationByAdjustmentId: buildValidationMap(reconciliation.rows, dependencies.planFrom),
     errorByAdjustmentId: new Map(rowErrors),
     operationByAdjustmentId: new Map(rowOperations),
+    recoveringAdjustmentIds: new Set(activeRecoveries.keys()),
+    protectedCellKeys: new Set([...protectedCellOwners.values()].map(
+      (owner): string => getBudgetAdjustmentCellKey(
+        owner.cell.month,
+        owner.cell.direction,
+        owner.cell.category,
+      ),
+    )),
     rangeErrorByKey: new Map([...rangeFailuresByKey].map(
       ([rangeKey, failure]): readonly [string, BudgetAdjustmentRangeError] =>
         [rangeKey, failure.error],
@@ -701,47 +737,136 @@ export const createBudgetAdjustmentRowsController = (
     return loadRange(monthFrom, monthTo);
   };
 
+  const recoverRow = (
+    adjustmentId: string,
+  ): Promise<BudgetAdjustmentRecoveryOutcome> => {
+    const disposedError = getDisposedError(`recover budget adjustment "${adjustmentId}"`);
+    if (disposedError !== null) return Promise.reject(disposedError);
+    const active = activeRecoveries.get(adjustmentId);
+    if (active !== undefined) return active;
+
+    const promise = Promise.resolve()
+      .then(async (): Promise<BudgetAdjustmentRecoveryOutcome> => {
+        const rowError = rowErrors.get(adjustmentId);
+        if (rowError?.action === "refresh-range") {
+          const rangeOutcome = await refreshRow(adjustmentId);
+          if (rangeOutcome.status !== "accepted") return "unsuccessful";
+          const rowExists = rangeOutcome.result.adjustments.some(
+            (adjustment): boolean => adjustment.adjustmentId === adjustmentId,
+          );
+          if (!rowExists) return "recovered";
+        }
+
+        const flushOutcome = await flushRow(adjustmentId);
+        return flushOutcome === "saved"
+          || flushOutcome === "unchanged"
+          || flushOutcome === "deleted"
+          ? "recovered"
+          : "unsuccessful";
+      })
+      .finally((): void => {
+        if (activeRecoveries.get(adjustmentId) !== promise) return;
+        activeRecoveries.delete(adjustmentId);
+        publish();
+      });
+    activeRecoveries.set(adjustmentId, promise);
+    publish();
+    return promise;
+  };
+
+  const getVisibleRows = (
+    effectiveAllowlist: ReadonlySet<string> | null,
+  ): ReadonlyArray<BudgetAdjustmentEditorRow> => reconciliation.rows.filter(
+    (row): boolean => isBudgetAdjustmentRowVisible(row, effectiveAllowlist),
+  );
+
   const getCellRows = (
     location: BudgetAdjustmentCellLocation,
+    effectiveAllowlist: ReadonlySet<string> | null,
   ): ReadonlyArray<BudgetAdjustmentEditorRow> => getBudgetAdjustmentCellRows(
-    reconciliation.rows,
+    getVisibleRows(effectiveAllowlist),
     location.month,
     location.direction,
     location.category,
     dependencies.planFrom,
   );
 
-  const getCellTotal = (location: BudgetAdjustmentCellLocation): number =>
+  const getRow = (
+    adjustmentId: string,
+    effectiveAllowlist: ReadonlySet<string> | null,
+  ): BudgetAdjustmentEditorRow | null =>
+    getVisibleRows(effectiveAllowlist).find(
+      (row): boolean => row.adjustmentId === adjustmentId,
+    ) ?? null;
+
+  const getCellTotal = (
+    location: BudgetAdjustmentCellLocation,
+    effectiveAllowlist: ReadonlySet<string> | null,
+  ): number =>
     getBudgetAdjustmentCellTotal(
-      reconciliation.rows,
+      getVisibleRows(effectiveAllowlist),
       location.month,
       location.direction,
       location.category,
       dependencies.planFrom,
     );
 
+  const retainCell = (
+    ownerId: string,
+    location: BudgetAdjustmentCellLocation,
+  ): (() => void) => {
+    const disposedError = getDisposedError(
+      `retain budget adjustment cell ${location.month}/${location.direction}/${location.category}`,
+    );
+    if (disposedError !== null) throw disposedError;
+    if (ownerId.length === 0) {
+      throw new RangeError("Budget adjustment cell ownerId must not be empty");
+    }
+
+    const lease = Symbol(ownerId);
+    protectedCellOwners.set(ownerId, {
+      cell: { ...location },
+      lease,
+    });
+    publish();
+
+    return (): void => {
+      if (protectedCellOwners.get(ownerId)?.lease !== lease) return;
+      protectedCellOwners.delete(ownerId);
+      publish();
+    };
+  };
+
   const applyToBudgetRows = (
     budgetRows: ReadonlyArray<BudgetRow>,
     loadedFrom: string,
     loadedTo: string,
-  ): ReadonlyArray<BudgetRow> => applyBudgetAdjustmentRows(
+    effectiveAllowlist: ReadonlySet<string> | null,
+  ): ReadonlyArray<BudgetRow> => applyBudgetAdjustmentRowsWithProtectedCells(
     budgetRows,
-    reconciliation.rows,
+    getVisibleRows(effectiveAllowlist),
     loadedFrom,
     loadedTo,
     dependencies.planFrom,
     getBudgetAdjustmentInvalidatedCellKeys(reconciliation),
+    [...protectedCellOwners.values()].map(
+      (owner): ProtectedBudgetAdjustmentCell => owner.cell,
+    ),
+    effectiveAllowlist,
   );
 
   const commands: BudgetAdjustmentRowsControllerCommands = {
     addRow,
     replaceDraft,
     flushRow,
+    recoverRow,
     requestDelete,
     loadRange,
     refreshRow,
+    getRow,
     getCellRows,
     getCellTotal,
+    retainCell,
     applyToBudgetRows,
   };
 
