@@ -1,6 +1,6 @@
 import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
@@ -24,7 +24,6 @@ export const EditableAmount = (props: Props): ReactElement => {
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
   const editorId = `transaction-amount:${entryId}`;
-  const { requestActivation, releaseActivation } = useTableEditorActivation(editorId);
 
   const [editing, setEditing] = useState<boolean>(false);
   const [editValue, setEditValue] = useState<string>("");
@@ -32,6 +31,7 @@ export const EditableAmount = (props: Props): ReactElement => {
   const [rect, setRect] = useState<Rect | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cellRef = useRef<HTMLTableCellElement | null>(null);
+  const editingRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (editing && inputRef.current !== null) {
@@ -40,17 +40,27 @@ export const EditableAmount = (props: Props): ReactElement => {
     }
   }, [editing]);
 
-  const startEditing = (): void => {
-    if (cellRef.current === null) return;
-    if (!requestActivation()) return;
+  const initializeEditing = (): boolean => {
+    if (cellRef.current === null) return false;
     const r = cellRef.current.getBoundingClientRect();
     setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     setEditValue(String(currentValue));
     setValidationError(null);
+    editingRef.current = true;
     setEditing(true);
+    return true;
+  };
+  const {
+    requestActivation,
+    releaseActivation,
+    registerTransitionGate,
+  } = useTableEditorActivation(editorId, initializeEditing);
+
+  const startEditing = (): void => {
+    requestActivation();
   };
 
-  const commitEdit = (): void => {
+  const commitEdit = useCallback((): boolean => {
     const parsed = parseMonetaryNumberEdit(editValue, currentValue, numberFormat);
     if (!parsed.ok) {
       const message = t("common.invalidNumber");
@@ -59,15 +69,27 @@ export const EditableAmount = (props: Props): ReactElement => {
         inputRef.current.setCustomValidity(message);
         inputRef.current.reportValidity();
       }
-      return;
+      return false;
     }
 
+    editingRef.current = false;
     setEditing(false);
     setRect(null);
     releaseActivation();
-    if (parsed.value === currentValue) return;
-    onAmountCommit(entryId, parsed.value, currentValue);
-  };
+    if (parsed.value !== currentValue) {
+      onAmountCommit(entryId, parsed.value, currentValue);
+    }
+    return true;
+  }, [currentValue, editValue, entryId, numberFormat, onAmountCommit, releaseActivation, t]);
+  const commitEditRef = useRef<() => boolean>(commitEdit);
+  useLayoutEffect((): void => {
+    commitEditRef.current = commitEdit;
+  }, [commitEdit]);
+
+  useEffect(() => registerTransitionGate({
+    isLifecycleUnresolved: (): boolean => editingRef.current,
+    settleLifecycle: (): Promise<boolean> => Promise.resolve(commitEditRef.current()),
+  }), [registerTransitionGate]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === "Enter") {
@@ -77,6 +99,7 @@ export const EditableAmount = (props: Props): ReactElement => {
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
+      editingRef.current = false;
       setEditing(false);
       setRect(null);
       releaseActivation();

@@ -130,7 +130,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
   const editorId = `budget-plan:${month}:${direction}:${category}`;
-  const { requestActivation, releaseActivation } = useTableEditorActivation(editorId);
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [baseInput, setBaseInput] = useState<string>("");
   const [modifierInput, setModifierInput] = useState<string>("");
@@ -149,9 +148,9 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const originalModifier = useRef<number>(0);
   const originalComment = useRef<string>("");
 
-  const openPopover = (): void => {
-    if (!showData) return;
-    if (!requestActivation()) return;
+  const initializePopover = (): boolean => {
+    const cell = cellRef.current;
+    if (!showData || cell === null) return false;
     const roundedBase = Math.round(plannedBase);
     const roundedModifier = Math.round(plannedModifier);
     setBaseInput(String(roundedBase));
@@ -161,16 +160,14 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     originalBase.current = roundedBase;
     originalModifier.current = roundedModifier;
 
-    const rect = cellRef.current?.getBoundingClientRect();
-    if (rect !== undefined && rect !== null) {
-      setPopoverPos(getPopoverPosition(
-        rect,
-        { width: getViewportPopoverWidth(window.innerWidth), height: 0 },
-        window.innerWidth,
-        window.innerHeight,
-        getDocumentDirection(),
-      ));
-    }
+    const rect = cell.getBoundingClientRect();
+    setPopoverPos(getPopoverPosition(
+      rect,
+      { width: getViewportPopoverWidth(window.innerWidth), height: 0 },
+      window.innerWidth,
+      window.innerHeight,
+      getDocumentDirection(),
+    ));
     setIsOpen(true);
 
     setIsLoadingComment(true);
@@ -184,6 +181,15 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       })
       .catch((error) => console.error(error))
       .finally(() => setIsLoadingComment(false));
+    return true;
+  };
+  const { requestActivation, releaseActivation } = useTableEditorActivation(
+    editorId,
+    initializePopover,
+  );
+
+  const openPopover = (): void => {
+    requestActivation();
   };
 
   const updatePopoverPosition = useCallback((): void => {

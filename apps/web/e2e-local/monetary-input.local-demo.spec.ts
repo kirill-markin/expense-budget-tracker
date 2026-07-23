@@ -42,6 +42,36 @@ test("keeps the invalid transaction amount editor as the only active editor", as
   await expect(page.locator('[data-testid^="transaction-amount-input-"]')).toHaveCount(1);
 });
 
+test("reopens a transaction amount editor from its latest committed value", async ({ page, baseURL }) => {
+  if (baseURL === undefined) {
+    throw new Error("Local Demo Playwright baseURL is required");
+  }
+  await setDemoCookies(page, baseURL);
+  await page.goto("/transactions", { waitUntil: "domcontentloaded" });
+
+  const amountCell = page.locator('td[data-testid^="transaction-amount-"]').first();
+  await expect(amountCell).toBeVisible({ timeout: 15_000 });
+  const amountCellTestId = await amountCell.getAttribute("data-testid");
+  if (amountCellTestId === null) {
+    throw new Error("Transaction amount cell is missing its stable test ID");
+  }
+  const entryId = amountCellTestId.slice("transaction-amount-".length);
+  const amountInput = page.getByTestId(`transaction-amount-input-${entryId}`);
+
+  await amountCell.click();
+  await amountInput.fill("123");
+  const updateResponsePromise = page.waitForResponse((response): boolean =>
+    response.url().endsWith("/api/transactions/update")
+      && response.request().method() === "POST");
+  await amountInput.press("Enter");
+  const updateResponse = await updateResponsePromise;
+  expect(updateResponse.ok()).toBe(true);
+  await expect(amountInput).toHaveCount(0);
+
+  await amountCell.click();
+  await expect(amountInput).toHaveValue("123");
+});
+
 test("keeps the invalid budget plan popover as the only active popover", async ({ page, baseURL }) => {
   if (baseURL === undefined) {
     throw new Error("Local Demo Playwright baseURL is required");
