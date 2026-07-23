@@ -12,10 +12,12 @@ import {
   budgetAdjustmentNoteToInput,
   clearBudgetAdjustmentCellInvalidations,
   createBudgetAdjustmentEditorRow,
+  getBudgetAdjustmentCategoryOptions,
   getBudgetAdjustmentCellKey,
   getBudgetAdjustmentCellRows,
   getBudgetAdjustmentCellTotal,
   getBudgetAdjustmentRowCellKey,
+  isValidBudgetAdjustmentCategory,
   parseBudgetAdjustmentAmount,
   parseBudgetAdjustmentDraft,
   recordBudgetAdjustmentCellMove,
@@ -155,6 +157,29 @@ test("validates category and note limits by code point", (): void => {
 
   assert.equal(emptyCategory.ok ? null : emptyCategory.error.code, "invalidCategory");
   assert.equal(longNote.ok ? null : longNote.error.code, "invalidNote");
+});
+
+test("accepts adjustment editor categories only within the category contract", (): void => {
+  const maximumCategory = "\u{1F680}".repeat(200);
+  const overlongCategory = "\u{1F680}".repeat(201);
+  const categories = ["Groceries", "Dining", "", maximumCategory, overlongCategory, "Dining"];
+
+  assert.equal(isValidBudgetAdjustmentCategory(""), false);
+  assert.equal(isValidBudgetAdjustmentCategory(maximumCategory), true);
+  assert.equal(isValidBudgetAdjustmentCategory(overlongCategory), false);
+  assert.deepEqual(
+    getBudgetAdjustmentCategoryOptions(categories, null),
+    ["Groceries", "Dining", maximumCategory],
+  );
+});
+
+test("does not expose masked categories in filtered adjustment options", (): void => {
+  const categories = ["Groceries", "Dining", "Utilities"];
+
+  assert.deepEqual(
+    getBudgetAdjustmentCategoryOptions(categories, new Set(["Groceries", "Utilities"])),
+    ["Groceries", "Utilities"],
+  );
 });
 
 test("orders rows deterministically and selects an exact cell", (): void => {
