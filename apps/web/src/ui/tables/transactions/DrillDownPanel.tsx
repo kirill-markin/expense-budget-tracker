@@ -17,7 +17,6 @@ import type { ColumnDef, PageResult } from "@/ui/tables/shared/data-table/types"
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import panelStyles from "@/ui/tables/shared/TablePanel.module.css";
 import { useTableSort } from "@/ui/tables/shared/data-table/useTableSort";
-import { TableEditorActivationProvider } from "@/ui/tables/shared/TableEditorActivationProvider";
 import {
   buildDrillDownCreateEntryRequest,
   buildDrillDownPageUrl,
@@ -279,19 +278,17 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         <TransactionCopyFeedback feedback={copyFeedback} />
 
         <div className={panelStyles.panelBody}>
-          <TableEditorActivationProvider>
-            <DataTable<LedgerEntry>
-              columns={columns}
-              rows={rows}
-              rowKey={(row) => row.entryId}
-              sort={sort}
-              onSort={onSort}
-              emptyMessage={t("txn.noMatch")}
-              loading={loading}
-              loadingMore={loadingMore}
-              sentinelRef={sentinelRef}
-            />
-          </TableEditorActivationProvider>
+          <DataTable<LedgerEntry>
+            columns={columns}
+            rows={rows}
+            rowKey={(row) => row.entryId}
+            sort={sort}
+            onSort={onSort}
+            emptyMessage={t("txn.noMatch")}
+            loading={loading}
+            loadingMore={loadingMore}
+            sentinelRef={sentinelRef}
+          />
         </div>
       </div>
     </>

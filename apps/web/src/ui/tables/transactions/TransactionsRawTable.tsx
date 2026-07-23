@@ -14,7 +14,6 @@ import filterStyles from "@/ui/FilterControls.module.css";
 import { DataTable } from "@/ui/tables/shared/data-table/DataTable";
 import type { ColumnDef, PageResult } from "@/ui/tables/shared/data-table/types";
 import { useTableSort } from "@/ui/tables/shared/data-table/useTableSort";
-import { TableEditorActivationProvider } from "@/ui/tables/shared/TableEditorActivationProvider";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
 import transactionStyles from "./TransactionsTable.module.css";
 import { TransactionCopyFeedback } from "./TransactionCopyFeedback";
@@ -338,19 +337,17 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
       <TransactionCopyFeedback feedback={copyFeedback} />
 
       <div className={tableStyles.scroll}>
-        <TableEditorActivationProvider>
-          <DataTable<LedgerEntry>
-            columns={columns}
-            rows={rows}
-            rowKey={(row) => row.entryId}
-            sort={sort}
-            onSort={onSort}
-            emptyMessage={t("txn.noMatch")}
-            loading={loading}
-            loadingMore={loadingMore}
-            sentinelRef={sentinelRef}
-          />
-        </TableEditorActivationProvider>
+        <DataTable<LedgerEntry>
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.entryId}
+          sort={sort}
+          onSort={onSort}
+          emptyMessage={t("txn.noMatch")}
+          loading={loading}
+          loadingMore={loadingMore}
+          sentinelRef={sentinelRef}
+        />
       </div>
     </>
   );

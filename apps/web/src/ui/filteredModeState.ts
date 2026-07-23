@@ -39,6 +39,12 @@ type ManualModeTimerDecisionInput = Readonly<{
   nowMs: number;
 }>;
 
+type AutoFilterSettlementFailureTimerDecisionInput = Readonly<{
+  autoFilterDelayMinutes: AutoFilterDelayMinutes;
+  visibilityMode: VisibilityMode;
+  nowMs: number;
+}>;
+
 export const parseStoredVisibilityMode = (raw: string | null): VisibilityMode | null => {
   if (raw === "all" || raw === "filtered") {
     return raw;
@@ -139,6 +145,20 @@ export const resolvePolicyChangeTimerDecision = (
 
 export const resolveManualModeTimerDecision = (
   input: ManualModeTimerDecisionInput,
+): TimerDecision => {
+  if (input.autoFilterDelayMinutes === null || input.visibilityMode === "filtered") {
+    return { kind: "cancel" };
+  }
+
+  return {
+    kind: "arm",
+    delayMs: getAutoFilterDelayMs(input.autoFilterDelayMinutes),
+    lastActiveAt: input.nowMs,
+  };
+};
+
+export const resolveAutoFilterSettlementFailureTimerDecision = (
+  input: AutoFilterSettlementFailureTimerDecisionInput,
 ): TimerDecision => {
   if (input.autoFilterDelayMinutes === null || input.visibilityMode === "filtered") {
     return { kind: "cancel" };
