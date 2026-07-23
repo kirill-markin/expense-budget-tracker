@@ -221,6 +221,7 @@
   "budget.actual": "Real",
   "budget.openPlanEditor": "Editar el presupuesto de {{category}} para {{month}}, plan {{amount}}",
   "budget.popoverBase": "Base",
+  "budget.baseSaveFailed": "No se pudo guardar el importe base. Inténtalo de nuevo.",
   "budget.popoverTotal": "Total",
   "budget.popoverFill": "Copiar a los meses siguientes →",
   "budget.adjustments": "Ajustes",

@@ -221,6 +221,7 @@
   "budget.actual": "Факт",
   "budget.openPlanEditor": "Редагувати бюджет «{{category}}» за {{month}}, план {{amount}}",
   "budget.popoverBase": "Базова сума",
+  "budget.baseSaveFailed": "Не вдалося зберегти базову суму. Спробуйте ще раз.",
   "budget.popoverTotal": "Разом",
   "budget.popoverFill": "Заповнити наступні місяці →",
   "budget.adjustments": "Коригування",

@@ -221,6 +221,7 @@
   "budget.actual": "عملکرد",
   "budget.openPlanEditor": "ویرایش بودجه {{category}} برای {{month}}، مبلغ برنامه {{amount}}",
   "budget.popoverBase": "مبلغ پایه",
+  "budget.baseSaveFailed": "ذخیره مبلغ پایه ممکن نشد. دوباره تلاش کنید.",
   "budget.popoverTotal": "مجموع",
   "budget.popoverFill": "پر کردن ماه‌ها →",
   "budget.adjustments": "تعدیل‌ها",

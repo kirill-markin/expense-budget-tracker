@@ -99,6 +99,15 @@ test("keeps the invalid budget plan popover as the only active popover", async (
 
   await secondOpenButton.click();
 
+  const baseError = page.getByTestId(`budget-plan-base-error-${firstEditorId}`);
   await expect(firstInput).toHaveAttribute("aria-invalid", "true");
+  await expect(firstInput).toBeEnabled();
+  await expect(firstInput).toBeFocused();
+  await expect(baseError).toHaveText("Enter a valid number in the selected format.");
+  const describedBy = await firstInput.getAttribute("aria-describedby");
+  if (describedBy === null) {
+    throw new Error("Invalid Budget Base input must describe its validation error");
+  }
+  await expect(baseError).toHaveAttribute("id", describedBy);
   await expect(page.locator('[data-testid^="budget-plan-base-input-budget-plan:"]')).toHaveCount(1);
 });

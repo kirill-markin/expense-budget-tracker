@@ -26,6 +26,18 @@ const createDeferred = (): Deferred => {
   return { promise, resolve: resolvePromise };
 };
 
+const readBudgetBasePlannedValue = (requestBody: unknown): number => {
+  if (
+    typeof requestBody !== "object"
+    || requestBody === null
+    || !("plannedValue" in requestBody)
+    || typeof requestBody.plannedValue !== "number"
+  ) {
+    throw new Error("Budget Base request is missing a numeric plannedValue");
+  }
+  return requestBody.plannedValue;
+};
+
 const setDemoCookies = async (
   page: Page,
   baseURL: string,
@@ -65,15 +77,17 @@ const requestMainContentRefresh = async (
   version: number,
 ): Promise<void> => {
   await page.evaluate((nextVersion): void => {
-    const channel = new BroadcastChannel("expense-tracker-main-content-invalidation");
-    channel.postMessage({
+    const message = {
       type: "main_content_invalidation",
       workspaceId: "",
       version: nextVersion,
       sourceId: "budget-base-e2e",
       emittedAt: Date.now(),
-    });
-    channel.close();
+    };
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: "expense-tracker-main-content-invalidation",
+      newValue: JSON.stringify(message),
+    }));
   }, version);
 };
 
@@ -308,7 +322,7 @@ test("creates, autosaves, moves, and deletes normalized adjustment rows", async 
   await expect(page.getByTestId(`budget-adjustment-add-${diningEditorId}`)).toBeFocused();
 });
 
-test("acknowledges the current Base after a stale response reopens its pending editor", async ({ page, baseURL }) => {
+test("keeps a stale Base save open until its acknowledgement is safe to reopen", async ({ page, baseURL }) => {
   if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
   await setDemoCookies(page, baseURL, "en");
   await page.goto("/budget", { waitUntil: "domcontentloaded" });
@@ -365,22 +379,244 @@ test("acknowledges the current Base after a stale response reopens its pending e
   await baseInput.fill(String(savedBase));
   await page.keyboard.press("Enter");
   await delayedBase.captured;
-  await expect(popover).toHaveCount(0);
+  await expect(popover).toHaveAttribute("aria-busy", "true");
+  await expect(baseInput).toBeDisabled();
   await expect(page.getByTestId("budget-sync-status")).toHaveCount(1);
   await expect(openButton).not.toHaveText(originalPlanText);
 
   staleRangeGate.resolve();
   expect((await staleRangeResponse).ok()).toBe(true);
   await expect(openButton).toHaveText(originalPlanText);
-  await openButton.click();
-  await expect(baseInput).toHaveValue(String(originalBase));
+  await expect(baseInput).toHaveValue(String(savedBase));
 
   delayedBase.release();
   await expect(page.getByTestId("budget-sync-status")).toHaveCount(0);
-  await page.keyboard.press("Escape");
   await expect(popover).toHaveCount(0);
   await openButton.click();
   await expect(baseInput).toHaveValue(String(savedBase));
+});
+
+test("reprojects the final Base acknowledgement after a superseded save fails", async ({ page, baseURL }) => {
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  await setDemoCookies(page, baseURL, "en");
+  await page.goto("/budget", { waitUntil: "domcontentloaded" });
+
+  const editorId = await getEditorId(page, "spend", "Groceries", 0);
+  const openButton = page.getByTestId(`budget-plan-open-${editorId}`);
+  const popover = page.getByTestId(`budget-plan-popover-${editorId}`);
+  const baseInput = page.getByTestId(`budget-plan-base-input-${editorId}`);
+  const failedSaveStarted = createDeferred();
+  const failedSaveGate = createDeferred();
+  const requestedValues: Array<number> = [];
+  await page.route("**/api/budget-plan", async (route): Promise<void> => {
+    const request = route.request();
+    if (
+      request.method() !== "POST"
+      || new URL(request.url()).pathname !== "/api/budget-plan"
+    ) {
+      await route.continue();
+      return;
+    }
+
+    requestedValues.push(readBudgetBasePlannedValue(request.postDataJSON()));
+    failedSaveStarted.resolve();
+    await failedSaveGate.promise;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Forced superseded Base failure" }),
+    });
+  });
+
+  await openButton.click();
+  const originalBase = Number(await baseInput.inputValue());
+  const originalPlanText = await openButton.textContent();
+  if (originalPlanText === null) {
+    throw new Error(`Cannot read plan button ${editorId}`);
+  }
+  const supersededBase = originalBase + 83;
+  await baseInput.fill(String(supersededBase));
+  await failedSaveStarted.promise;
+  await baseInput.fill(String(originalBase));
+  await baseInput.press("Enter");
+  await expect(popover).toHaveAttribute("aria-busy", "true");
+
+  const failedSave = page.waitForResponse((response): boolean => (
+    response.url().endsWith("/api/budget-plan")
+    && response.request().method() === "POST"
+    && response.status() === 500
+  ));
+  failedSaveGate.resolve();
+  expect((await failedSave).ok()).toBe(false);
+  await expect(popover).toHaveCount(0);
+  await expect(openButton).toHaveText(originalPlanText);
+  expect(requestedValues).toEqual([supersededBase]);
+
+  await openButton.click();
+  await expect(baseInput).toHaveValue(String(originalBase));
+  await page.keyboard.press("Escape");
+});
+
+test("Escape finishes the active Base save without persisting a newer draft", async ({ page, baseURL }) => {
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  await setDemoCookies(page, baseURL, "en");
+  await page.goto("/budget", { waitUntil: "domcontentloaded" });
+
+  const editorId = await getEditorId(page, "spend", "Groceries", 0);
+  const openButton = page.getByTestId(`budget-plan-open-${editorId}`);
+  const popover = page.getByTestId(`budget-plan-popover-${editorId}`);
+  const baseInput = page.getByTestId(`budget-plan-base-input-${editorId}`);
+  const activeSaveStarted = createDeferred();
+  const activeSaveGate = createDeferred();
+  const requestedValues: Array<number> = [];
+  await page.route("**/api/budget-plan", async (route): Promise<void> => {
+    const request = route.request();
+    if (
+      request.method() !== "POST"
+      || new URL(request.url()).pathname !== "/api/budget-plan"
+    ) {
+      await route.continue();
+      return;
+    }
+
+    requestedValues.push(readBudgetBasePlannedValue(request.postDataJSON()));
+    if (requestedValues.length === 1) {
+      const response = await route.fetch();
+      activeSaveStarted.resolve();
+      await activeSaveGate.promise;
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
+  });
+
+  await openButton.click();
+  const originalBase = Number(await baseInput.inputValue());
+  const activeBase = originalBase + 91;
+  const discardedBase = activeBase + 1;
+  await baseInput.fill(String(activeBase));
+  await activeSaveStarted.promise;
+  await baseInput.fill(String(discardedBase));
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveAttribute("aria-busy", "true");
+  await expect(baseInput).toBeDisabled();
+  expect(requestedValues).toEqual([activeBase]);
+
+  activeSaveGate.resolve();
+  await expect(popover).toHaveCount(0);
+  await expect(openButton).toBeFocused();
+  await page.waitForTimeout(700);
+  expect(requestedValues).toEqual([activeBase]);
+
+  await openButton.click();
+  await expect(baseInput).toHaveValue(String(activeBase));
+  await page.keyboard.press("Escape");
+});
+
+test("serializes superseding Base saves and rolls a definitive failure back for retry", async ({ page, baseURL }) => {
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  await setDemoCookies(page, baseURL, "en");
+  await page.goto("/budget", { waitUntil: "domcontentloaded" });
+
+  const editorId = await getEditorId(page, "spend", "Groceries", 0);
+  const openButton = page.getByTestId(`budget-plan-open-${editorId}`);
+  const popover = page.getByTestId(`budget-plan-popover-${editorId}`);
+  const baseInput = page.getByTestId(`budget-plan-base-input-${editorId}`);
+  const firstSaveStarted = createDeferred();
+  const firstSaveGate = createDeferred();
+  const requestedValues: Array<number> = [];
+  let saveCount = 0;
+  await page.route("**/api/budget-plan", async (route): Promise<void> => {
+    const request = route.request();
+    if (
+      request.method() !== "POST"
+      || new URL(request.url()).pathname !== "/api/budget-plan"
+    ) {
+      await route.continue();
+      return;
+    }
+
+    requestedValues.push(readBudgetBasePlannedValue(request.postDataJSON()));
+    saveCount += 1;
+    if (saveCount === 1) {
+      const response = await route.fetch();
+      firstSaveStarted.resolve();
+      await firstSaveGate.promise;
+      await route.fulfill({ response });
+      return;
+    }
+    if (saveCount === 2) {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Forced latest Base failure" }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await openButton.click();
+  const originalBase = Number(await baseInput.inputValue());
+  const firstValue = originalBase + 101;
+  const failedValue = firstValue + 1;
+  const retryValue = failedValue + 1;
+  await baseInput.fill(String(firstValue));
+  await firstSaveStarted.promise;
+  await baseInput.fill(String(failedValue));
+  await baseInput.press("Enter");
+  await expect(popover).toHaveAttribute("aria-busy", "true");
+  await expect(baseInput).toBeDisabled();
+  expect(requestedValues).toEqual([firstValue]);
+
+  const failedSave = page.waitForResponse((response): boolean => (
+    response.url().endsWith("/api/budget-plan")
+    && response.request().method() === "POST"
+    && response.status() === 500
+  ));
+  firstSaveGate.resolve();
+  expect((await failedSave).ok()).toBe(false);
+  await expect(popover).toBeVisible();
+  await expect(popover).toHaveAttribute("aria-busy", "false");
+  await expect(baseInput).toHaveValue(String(firstValue));
+  await expect(baseInput).toBeFocused();
+  await expect(page.getByTestId(`budget-plan-base-error-${editorId}`)).toHaveText(
+    "The Base amount could not be saved. Try again.",
+  );
+  expect(requestedValues).toEqual([firstValue, failedValue]);
+  expect(await baseInput.evaluate((element): Readonly<{
+    start: number | null;
+    end: number | null;
+  }> => {
+    if (!(element instanceof HTMLInputElement)) {
+      throw new Error("Budget Base control must be an input");
+    }
+    return {
+      start: element.selectionStart,
+      end: element.selectionEnd,
+    };
+  })).toEqual({
+    start: 0,
+    end: String(firstValue).length,
+  });
+
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveCount(0);
+  await expect(openButton).toBeFocused();
+  await openButton.click();
+  await expect(baseInput).toHaveValue(String(firstValue));
+
+  const retrySave = page.waitForResponse((response): boolean => (
+    response.url().endsWith("/api/budget-plan")
+    && response.request().method() === "POST"
+    && response.ok()
+  ));
+  await baseInput.fill(String(retryValue));
+  await baseInput.press("Enter");
+  expect((await retrySave).ok()).toBe(true);
+  await expect(popover).toHaveCount(0);
+  await openButton.click();
+  await expect(baseInput).toHaveValue(String(retryValue));
 });
 
 test("publishes successful Fill targets through captured range generations", async ({ page, baseURL }) => {
@@ -414,9 +650,10 @@ test("publishes successful Fill targets through captured range generations", asy
   await targetBaseInput.fill(String(pendingTargetBase));
   await page.keyboard.press("Enter");
   await delayedBase.captured;
-  await expect(
-    page.getByTestId(`budget-plan-popover-${targetEditorId}`),
-  ).toHaveCount(0);
+  const targetPopover = page.getByTestId(
+    `budget-plan-popover-${targetEditorId}`,
+  );
+  await expect(targetPopover).toHaveAttribute("aria-busy", "true");
   await expect(page.getByTestId("budget-sync-status")).toHaveCount(1);
 
   const visibleMonthFrom = offsetMonth(sourceMonth, -6);
@@ -487,7 +724,30 @@ test("publishes successful Fill targets through captured range generations", asy
   await requestMainContentRefresh(page, 1);
   await staleRangeCaptured.promise;
 
+  const beforeStaleRangeClass = await targetPlanCell.getAttribute("class");
+  if (beforeStaleRangeClass === null) {
+    throw new Error(`Cannot read target cell ${targetEditorId}`);
+  }
   await page.getByTestId(`budget-plan-open-${sourceEditorId}`).click();
+  const sourcePopover = page.getByTestId(
+    `budget-plan-popover-${sourceEditorId}`,
+  );
+  await expect(targetPopover).toHaveAttribute("aria-busy", "true");
+  await expect(sourcePopover).toHaveCount(0);
+  staleRangeGate.resolve();
+  expect((await staleRangeResponse).ok()).toBe(true);
+  await expect(targetPlanCell).not.toHaveAttribute(
+    "class",
+    beforeStaleRangeClass,
+  );
+  const staleRangeClass = await targetPlanCell.getAttribute("class");
+  if (staleRangeClass === null) {
+    throw new Error(`Cannot read updated target cell ${targetEditorId}`);
+  }
+
+  delayedBase.release();
+  await expect(targetPopover).toHaveCount(0);
+  await expect(sourcePopover).toBeVisible();
   const sourceBaseInput = page.getByTestId(
     `budget-plan-base-input-${sourceEditorId}`,
   );
@@ -499,22 +759,7 @@ test("publishes successful Fill targets through captured range generations", asy
   ));
   await page.getByTestId(`budget-plan-fill-${sourceEditorId}`).click();
   expect((await acknowledgedFill).ok()).toBe(true);
-  delayedBase.release();
   await expect(page.getByTestId("budget-sync-status")).toHaveCount(0);
-  const beforeStaleRangeClass = await targetPlanCell.getAttribute("class");
-  if (beforeStaleRangeClass === null) {
-    throw new Error(`Cannot read target cell ${targetEditorId}`);
-  }
-  staleRangeGate.resolve();
-  expect((await staleRangeResponse).ok()).toBe(true);
-  await expect(targetPlanCell).not.toHaveAttribute(
-    "class",
-    beforeStaleRangeClass,
-  );
-  const staleRangeClass = await targetPlanCell.getAttribute("class");
-  if (staleRangeClass === null) {
-    throw new Error(`Cannot read updated target cell ${targetEditorId}`);
-  }
 
   await targetOpenButton.click();
   await expect(targetBaseInput).toHaveValue(String(filledBase));
