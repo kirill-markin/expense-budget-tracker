@@ -15,6 +15,8 @@
   "mode.all": "الكل",
   "mode.filtered": "مُصفّى",
   "mode.demo": "تجريبي",
+  "pageError.resetDemoChanges": "إعادة ضبط تغييرات الوضع التجريبي",
+  "pageError.resetDemoChangesConfirm": "هل تريد إعادة ضبط جميع تغييرات الميزانية التجريبية؟ لا يمكن التراجع عن ذلك.",
   "account.workspaces": "مساحات العمل",
   "account.newWorkspace": "+ مساحة عمل جديدة",
   "account.workspaceName": "اسم مساحة العمل",

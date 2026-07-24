@@ -118,6 +118,72 @@ const gotoBudgetAndWaitForGrid = async (page: Page): Promise<void> => {
   expect((await initialBudgetGridResponse).ok()).toBe(true);
 };
 
+const reloadBudgetAndWaitForGrid = async (page: Page): Promise<void> => {
+  const initialBudgetGridResponse = page.waitForResponse(isBudgetGridResponse);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  expect((await initialBudgetGridResponse).ok()).toBe(true);
+};
+
+const extendBudgetThroughMonth = async (
+  page: Page,
+  targetMonth: string,
+): Promise<void> => {
+  const targetHeader = page.locator(`[data-month="${targetMonth}"]`);
+  while (await targetHeader.count() === 0) {
+    const loadedMonthHeaders = page.locator("[data-month]");
+    const loadedMonthCount = await loadedMonthHeaders.count();
+    if (loadedMonthCount === 0) {
+      throw new Error("Budget table has no rendered month headers");
+    }
+    const loadedTo = await loadedMonthHeaders.nth(loadedMonthCount - 1)
+      .getAttribute("data-month");
+    if (loadedTo === null) {
+      throw new Error("Last budget month header has no data-month");
+    }
+    const monthTo = offsetMonth(loadedTo, 6);
+    await page.getByTestId("budget-table-scroll").evaluate((element): void => {
+      element.scrollLeft = element.scrollWidth;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await expect(page.locator(`[data-month="${monthTo}"]`)).toHaveCount(
+      1,
+      { timeout: 15_000 },
+    );
+  }
+};
+
+const readFormattedAmount = async (
+  page: Page,
+  testId: string,
+): Promise<number> => {
+  const text = await page.getByTestId(testId).textContent();
+  if (text === null) {
+    throw new Error(`Budget amount ${testId} has no text content`);
+  }
+  const amount = Number(text.replaceAll(",", "").trim());
+  if (!Number.isFinite(amount)) {
+    throw new Error(`Budget amount ${testId} is not numeric: "${text}"`);
+  }
+  return amount;
+};
+
+const expectFormattedAmount = async (
+  page: Page,
+  testId: string,
+  expected: number,
+): Promise<void> => {
+  await expect.poll(() => readFormattedAmount(page, testId)).toBe(expected);
+};
+
+const getCookieValue = async (
+  page: Page,
+  baseURL: string,
+  name: string,
+): Promise<string | null> => (
+  (await page.context().cookies(baseURL)).find((cookie) => cookie.name === name)
+    ?.value ?? null
+);
+
 const captureModeReload = async (page: Page): Promise<ModeReloadCapture> => {
   const started = createDeferred();
   let requestCount = 0;
@@ -490,6 +556,292 @@ test("creates, autosaves, moves, and deletes normalized adjustment rows", async 
   await page.keyboard.press("Escape");
   await page.getByTestId(`budget-plan-open-${diningEditorId}`).click();
   await expect(page.getByTestId(`budget-adjustment-add-${diningEditorId}`)).toBeFocused();
+});
+
+test("keeps cross-year totals and Demo adjustment state coherent across reloads and mode transitions", async ({ page, baseURL }) => {
+  test.slow();
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  await setDemoCookies(page, baseURL, "en");
+  await gotoBudgetAndWaitForGrid(page);
+
+  const seasonalId = "demo-adjustment-groceries-seasonal";
+  const deletedSeedId = "demo-adjustment-groceries-discount";
+  const currentEditorId = await getEditorId(page, "spend", "Groceries", 0);
+  const currentMonth = currentEditorId.split(":")[1];
+  if (currentMonth === undefined) {
+    throw new Error(`Cannot read month from editor ID "${currentEditorId}"`);
+  }
+  const currentYear = currentMonth.slice(0, 4);
+  const destinationYear = String(Number(currentYear) + 1);
+  const destinationMonth = `${destinationYear}-01`;
+  const destinationYearEnd = `${destinationYear}-12`;
+  await extendBudgetThroughMonth(page, destinationYearEnd);
+
+  const currentYearTestId =
+    `budget-year-plan-${currentYear}:spend:Groceries`;
+  const destinationYearTestId =
+    `budget-year-plan-${destinationYear}:spend:Groceries`;
+  const destinationEditorId =
+    `budget-plan:${destinationMonth}:spend:Groceries`;
+  const currentPlanBeforeEdit = await readFormattedAmount(
+    page,
+    currentYearTestId,
+  );
+  const destinationPlanBeforeMove = await readFormattedAmount(
+    page,
+    destinationYearTestId,
+  );
+  const currentCellBeforeEdit = await readFormattedAmount(
+    page,
+    `budget-plan-open-${currentEditorId}`,
+  );
+  const destinationCellBeforeMove = await readFormattedAmount(
+    page,
+    `budget-plan-open-${destinationEditorId}`,
+  );
+
+  await page.getByTestId(`budget-plan-open-${currentEditorId}`).click();
+  const seasonalAmount = page.getByTestId(
+    `budget-adjustment-amount-${seasonalId}`,
+  );
+  const seasonalNote = page.getByTestId(
+    `budget-adjustment-note-${seasonalId}`,
+  );
+  const seasonalMonth = page.getByTestId(
+    `budget-adjustment-month-${seasonalId}`,
+  );
+  const originalSeasonalAmount = Number(await seasonalAmount.inputValue());
+  if (!Number.isFinite(originalSeasonalAmount)) {
+    throw new Error("Seasonal Demo adjustment amount is not numeric");
+  }
+  const editedSeasonalAmount = 80;
+  const editedSeasonalDelta = editedSeasonalAmount - originalSeasonalAmount;
+  const editedYearRefresh = page.waitForResponse((response): boolean =>
+    isBudgetGridRangeResponse(
+      response,
+      `${currentYear}-01`,
+      `${currentYear}-12`,
+    ));
+  const editedPatch = page.waitForResponse((response): boolean =>
+    response.url().includes(`/api/budget-adjustments/${seasonalId}`)
+      && response.request().method() === "PATCH"
+      && response.ok());
+  await seasonalAmount.fill(String(editedSeasonalAmount));
+  await seasonalNote.fill("Cross-year persisted");
+  await seasonalNote.press("Tab");
+  expect((await editedPatch).ok()).toBe(true);
+  expect((await editedYearRefresh).ok()).toBe(true);
+
+  const currentPlanBeforeMove = currentPlanBeforeEdit + editedSeasonalDelta;
+  const currentCellBeforeMove = currentCellBeforeEdit + editedSeasonalDelta;
+  await expectFormattedAmount(
+    page,
+    currentYearTestId,
+    currentPlanBeforeMove,
+  );
+  await expectFormattedAmount(
+    page,
+    `budget-plan-open-${currentEditorId}`,
+    currentCellBeforeMove,
+  );
+
+  const currentYearRefresh = page.waitForResponse((response): boolean =>
+    isBudgetGridRangeResponse(
+      response,
+      `${currentYear}-01`,
+      `${currentYear}-12`,
+    ));
+  const destinationYearRefresh = page.waitForResponse((response): boolean =>
+    isBudgetGridRangeResponse(
+      response,
+      `${destinationYear}-01`,
+      `${destinationYear}-12`,
+    ));
+  const movePatch = page.waitForResponse((response): boolean =>
+    response.url().includes(`/api/budget-adjustments/${seasonalId}`)
+      && response.request().method() === "PATCH"
+      && adjustmentRequestFieldEquals(response, "month", destinationMonth)
+      && response.ok());
+  await seasonalMonth.fill(destinationMonth);
+  expect((await movePatch).ok()).toBe(true);
+  expect((await currentYearRefresh).ok()).toBe(true);
+  expect((await destinationYearRefresh).ok()).toBe(true);
+
+  await expectFormattedAmount(
+    page,
+    currentYearTestId,
+    currentPlanBeforeMove - editedSeasonalAmount,
+  );
+  await expectFormattedAmount(
+    page,
+    destinationYearTestId,
+    destinationPlanBeforeMove + editedSeasonalAmount,
+  );
+  await expectFormattedAmount(
+    page,
+    `budget-plan-open-${currentEditorId}`,
+    currentCellBeforeMove - editedSeasonalAmount,
+  );
+  await expectFormattedAmount(
+    page,
+    `budget-plan-open-${destinationEditorId}`,
+    destinationCellBeforeMove + editedSeasonalAmount,
+  );
+
+  const zeroMonth = offsetMonth(currentMonth, 2);
+  const zeroEditorId =
+    `budget-plan:${zeroMonth}:spend:Travel reserve`;
+  await page.getByTestId(`budget-plan-open-${zeroEditorId}`).click();
+  const zeroCreate = page.waitForResponse((response): boolean =>
+    response.url().endsWith("/api/budget-adjustments")
+      && response.request().method() === "POST"
+      && response.ok());
+  await page.getByTestId(`budget-adjustment-add-${zeroEditorId}`).click();
+  const zeroAdjustment = await (await zeroCreate).json() as CreatedAdjustment;
+  expect(zeroAdjustment).toMatchObject({
+    month: zeroMonth,
+    direction: "spend",
+    category: "Travel reserve",
+    amount: 0,
+    note: null,
+  });
+  const zeroId = zeroAdjustment.adjustmentId;
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId(`budget-plan-open-${currentEditorId}`).click();
+  await page.getByTestId(`budget-adjustment-delete-${deletedSeedId}`).click();
+  const deleteSeed = page.waitForResponse((response): boolean =>
+    response.url().includes(`/api/budget-adjustments/${deletedSeedId}`)
+      && response.request().method() === "DELETE"
+      && response.ok());
+  await page.getByTestId(
+    `budget-adjustment-delete-confirm-${deletedSeedId}`,
+  ).click();
+  expect((await deleteSeed).ok()).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("budget-sync-status")).toHaveCount(0);
+
+  await reloadBudgetAndWaitForGrid(page);
+  await extendBudgetThroughMonth(page, destinationYearEnd);
+  await expectFormattedAmount(
+    page,
+    currentYearTestId,
+    currentPlanBeforeMove - 55,
+  );
+  await expectFormattedAmount(
+    page,
+    destinationYearTestId,
+    destinationPlanBeforeMove + editedSeasonalAmount,
+  );
+  await page.getByTestId(`budget-plan-open-${currentEditorId}`).click();
+  await expect(
+    page.getByTestId(`budget-adjustment-row-${deletedSeedId}`),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId(`budget-plan-open-${destinationEditorId}`).click();
+  await expect(
+    page.getByTestId(`budget-adjustment-amount-${seasonalId}`),
+  ).toHaveValue(String(editedSeasonalAmount));
+  await expect(
+    page.getByTestId(`budget-adjustment-note-${seasonalId}`),
+  ).toHaveValue("Cross-year persisted");
+  await expect(
+    page.getByTestId(`budget-adjustment-month-${seasonalId}`),
+  ).toHaveValue(destinationMonth);
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId(`budget-plan-open-${zeroEditorId}`).click();
+  await expect(
+    page.getByTestId(`budget-adjustment-amount-${zeroId}`),
+  ).toHaveValue("0");
+  await expect(
+    page.getByTestId(`budget-adjustment-note-${zeroId}`),
+  ).toHaveValue("");
+  await page.keyboard.press("Escape");
+
+  const sessionCookieBeforeTransitions = await getCookieValue(
+    page,
+    baseURL,
+    "demo_budget_adjustments",
+  );
+  expect(sessionCookieBeforeTransitions).not.toBeNull();
+
+  const allModeReload = await captureModeReload(page);
+  await page.getByTestId("mode-all").click();
+  await allModeReload.started;
+  await expect(page.getByTestId("mode-transition-complete")).toHaveCount(1);
+  expect(await getCookieValue(
+    page,
+    baseURL,
+    "demo_budget_adjustments",
+  )).toBe(sessionCookieBeforeTransitions);
+
+  await page.unroute("**/budget");
+  await setDemoCookies(page, baseURL, "en");
+  await gotoBudgetAndWaitForGrid(page);
+  await page.getByTestId(`budget-plan-open-${destinationEditorId}`).click();
+  await expect(
+    page.getByTestId(`budget-adjustment-note-${seasonalId}`),
+  ).toHaveValue("Cross-year persisted");
+  await page.keyboard.press("Escape");
+
+  const filteredModeReload = await captureModeReload(page);
+  await page.getByTestId("mode-filtered").click();
+  await filteredModeReload.started;
+  await expect(page.getByTestId("mode-transition-complete")).toHaveCount(1);
+  expect(await getCookieValue(
+    page,
+    baseURL,
+    "demo_budget_adjustments",
+  )).toBe(sessionCookieBeforeTransitions);
+
+  await page.unroute("**/budget");
+  await setDemoCookies(page, baseURL, "en");
+  await gotoBudgetAndWaitForGrid(page);
+  await page.getByTestId(`budget-plan-open-${currentEditorId}`).click();
+  await expect(
+    page.getByTestId(`budget-adjustment-row-${deletedSeedId}`),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.getByTestId(`budget-plan-open-${zeroEditorId}`).click();
+  await expect(
+    page.getByTestId(`budget-adjustment-amount-${zeroId}`),
+  ).toHaveValue("0");
+});
+
+test("recovers a malformed Demo adjustment session through the explicit reset", async ({ page, baseURL }) => {
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  await setDemoCookies(page, baseURL, "en");
+  const origin = new URL(baseURL);
+  await page.context().addCookies([{
+    name: "demo_budget_adjustments",
+    value: "invalid-cookie",
+    domain: origin.hostname,
+    path: "/",
+    sameSite: "Lax",
+  }]);
+
+  await page.goto("/budget", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("page-load-error")).toBeVisible();
+  const resetDemoAdjustments = page.getByTestId(
+    "page-load-error-reset-demo-adjustments",
+  );
+  await expect(resetDemoAdjustments).toBeVisible();
+
+  page.once("dialog", (dialog): void => {
+    void dialog.accept();
+  });
+  const recoveredGrid = page.waitForResponse(isBudgetGridResponse);
+  await resetDemoAdjustments.click();
+  expect((await recoveredGrid).ok()).toBe(true);
+
+  await expect(page.getByTestId("page-load-error")).toHaveCount(0);
+  expect(await getCookieValue(
+    page,
+    baseURL,
+    "demo_budget_adjustments",
+  )).toBeNull();
 });
 
 test("keeps a delayed move editable in its source when a newer location draft is invalid", async ({ page, baseURL }) => {

@@ -628,18 +628,221 @@ test("classifies definitive patch failures and reconciles ambiguous failures by 
     harness.runtime.getSnapshot().errorByAdjustmentId.get(FIRST_ID)?.httpStatus,
     503,
   );
+  assert.deepEqual(
+    harness.invalidatedYears.map((years) => [...years].sort()),
+    [["2026", "2027"]],
+  );
   assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "refresh-required");
   assert.equal(harness.patchCalls.length, 2);
 
   const canonical = applyPatch(initial, { amount: 2, month: "2027-01" });
-  harness.setRangeHandler(async (): Promise<BudgetGridResult> => createGrid([canonical], []));
-  assert.deepEqual(await harness.runtime.commands.refreshRow(FIRST_ID), {
-    status: "accepted",
-    result: createGrid([canonical], []),
-  });
+  const rangeResult = createGrid([canonical], []);
+  harness.setRangeHandler(async (): Promise<BudgetGridResult> => rangeResult);
+  assert.deepEqual(
+    await harness.runtime.commands.loadRange("2026-12", "2027-01"),
+    { status: "accepted", result: rangeResult },
+  );
   assert.deepEqual(harness.rangeCalls, [{ monthFrom: "2026-12", monthTo: "2027-01" }]);
+  assert.deepEqual(
+    harness.invalidatedYears.map((years) => [...years].sort()),
+    [["2026", "2027"], ["2026", "2027"]],
+  );
   assert.equal(harness.runtime.getSnapshot().errorByAdjustmentId.has(FIRST_ID), false);
   assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "unchanged");
+});
+
+test("rolls definitive patch projections back while keeping the failed draft editable", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-12", "Food", null);
+  const harness = createHarness([initial]);
+  const source = {
+    month: "2026-12",
+    direction: "spend" as const,
+    category: "Food",
+  };
+  const destination = {
+    month: "2027-01",
+    direction: "spend" as const,
+    category: "Dining",
+  };
+  harness.setPatchHandler(async (): Promise<BudgetAdjustment> => {
+    throw new BudgetAdjustmentApiError(
+      "Budget adjustment update",
+      409,
+      "conflict",
+    );
+  });
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("9", "2027-01", "Dining", "retry me"),
+  );
+
+  assert.equal(harness.runtime.commands.getCellTotal(source, null), 0);
+  assert.equal(harness.runtime.commands.getCellTotal(destination, null), 9);
+  assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "error");
+
+  const failed = harness.runtime.getSnapshot();
+  assert.equal(failed.rows[0]?.draft.amountInput, "9");
+  assert.equal(failed.rows[0]?.draft.month, "2027-01");
+  assert.equal(failed.rows[0]?.draft.category, "Dining");
+  assert.equal(failed.rows[0]?.draft.noteInput, "retry me");
+  assert.equal(harness.runtime.commands.getCellTotal(source, null), 1);
+  assert.equal(harness.runtime.commands.getCellTotal(destination, null), 0);
+  assert.equal(
+    harness.runtime.commands.getCellTotal(source, new Set(["Food"])),
+    1,
+  );
+  assert.equal(
+    harness.runtime.commands.getCellTotal(destination, new Set(["Food"])),
+    0,
+  );
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows(
+      [
+        {
+          month: "2026-12",
+          direction: "spend",
+          category: "Food",
+          plannedBase: 100,
+          plannedModifier: 1,
+          planned: 101,
+          actual: 0,
+          hasUnconvertible: false,
+        },
+        {
+          month: "2027-01",
+          direction: "spend",
+          category: "Dining",
+          plannedBase: 200,
+          plannedModifier: 0,
+          planned: 200,
+          actual: 0,
+          hasUnconvertible: false,
+        },
+      ],
+      "2026-12",
+      "2027-01",
+      null,
+    ).map((row) => [
+      row.month,
+      row.category,
+      row.plannedModifier,
+      row.planned,
+    ]),
+    [
+      ["2026-12", "Food", 1, 101],
+      ["2027-01", "Dining", 0, 200],
+    ],
+  );
+  assert.deepEqual(harness.invalidatedYears, []);
+});
+
+test("rolls definitive delete projections back and permits editing before an explicit retry", async (): Promise<void> => {
+  const initial = createAdjustment(FIRST_ID, 1, "2026-12", "Food", null);
+  const harness = createHarness([initial]);
+  const source = {
+    month: "2026-12",
+    direction: "spend" as const,
+    category: "Food",
+  };
+  const destination = {
+    month: "2027-01",
+    direction: "spend" as const,
+    category: "Dining",
+  };
+  harness.setDeleteHandler(async (): Promise<DeleteBudgetAdjustmentOutcome> => {
+    throw new BudgetAdjustmentApiError(
+      "Budget adjustment delete",
+      409,
+      "conflict",
+    );
+  });
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("9", "2027-01", "Dining", "retry me"),
+  );
+
+  assert.equal(harness.runtime.commands.getCellTotal(source, null), 0);
+  assert.equal(harness.runtime.commands.getCellTotal(destination, null), 9);
+  assert.equal(
+    await harness.runtime.commands.requestDelete(FIRST_ID),
+    "error",
+  );
+
+  const failed = harness.runtime.getSnapshot();
+  assert.equal(
+    failed.errorByAdjustmentId.get(FIRST_ID)?.classification,
+    "definitive",
+  );
+  assert.equal(failed.errorByAdjustmentId.get(FIRST_ID)?.operation, "delete");
+  assert.equal(failed.rows[0]?.draft.amountInput, "9");
+  assert.equal(failed.rows[0]?.draft.month, "2027-01");
+  assert.equal(failed.rows[0]?.draft.category, "Dining");
+  assert.equal(failed.rows[0]?.draft.noteInput, "retry me");
+  assert.equal(harness.runtime.commands.getCellTotal(source, null), 1);
+  assert.equal(harness.runtime.commands.getCellTotal(destination, null), 0);
+
+  assert.doesNotThrow(() => harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("10", "2027-01", "Dining", "editable"),
+  ));
+  const edited = harness.runtime.getSnapshot();
+  assert.equal(edited.errorByAdjustmentId.has(FIRST_ID), false);
+  assert.equal(edited.rows[0]?.draft.amountInput, "10");
+  assert.equal(edited.rows[0]?.draft.noteInput, "editable");
+  assert.equal(harness.runtime.commands.getCellTotal(source, null), 0);
+  assert.equal(harness.runtime.commands.getCellTotal(destination, null), 10);
+
+  harness.setDeleteHandler(
+    async (): Promise<DeleteBudgetAdjustmentOutcome> => "deleted",
+  );
+  assert.equal(
+    await harness.runtime.commands.requestDelete(FIRST_ID),
+    "deleted",
+  );
+  assert.deepEqual(harness.deleteCalls, [FIRST_ID, FIRST_ID]);
+  assert.equal(harness.runtime.getSnapshot().rows.length, 0);
+});
+
+test("removes a definitively failed optimistic create from projections without losing its editor", async (): Promise<void> => {
+  const harness = createHarness([]);
+  harness.setCreateHandler(async (): Promise<BudgetAdjustment> => {
+    throw new BudgetAdjustmentApiError(
+      "Budget adjustment create",
+      409,
+      "conflict",
+    );
+  });
+  const location = {
+    month: "2026-07",
+    direction: "spend" as const,
+    category: "Adjustment only",
+  };
+  const adjustmentId = harness.runtime.commands.addRow(location);
+  harness.runtime.commands.replaceDraft(
+    adjustmentId,
+    createDraft("5", "2026-07", "Adjustment only", "retry me"),
+  );
+
+  assert.equal(harness.runtime.commands.getCellTotal(location, null), 5);
+  assert.equal(await harness.runtime.commands.flushRow(adjustmentId), "error");
+  assert.equal(
+    harness.runtime.getSnapshot().errorByAdjustmentId.get(adjustmentId)?.classification,
+    "definitive",
+  );
+  assert.equal(
+    harness.runtime.commands.getRow(adjustmentId, null)?.draft.amountInput,
+    "5",
+  );
+  assert.equal(harness.runtime.commands.getCellTotal(location, null), 0);
+  assert.deepEqual(
+    harness.runtime.commands.applyToBudgetRows(
+      [],
+      "2026-07",
+      "2026-07",
+      null,
+    ),
+    [],
+  );
 });
 
 test("keeps an ambiguous patch retryable when refresh returns the unchanged row", async (): Promise<void> => {

@@ -471,6 +471,9 @@ export const createBudgetAdjustmentRowsController = (
       reconciliation = classification === "definitive"
         ? reconcileBudgetAdjustmentDeleteDefinitiveFailure(reconciliation, issued.request)
         : reconcileBudgetAdjustmentDeleteAmbiguousFailure(reconciliation, issued.request);
+      if (classification === "definitive") {
+        deleteRequestedIds.delete(adjustmentId);
+      }
       setRowError(adjustmentId, "delete", error, classification === "ambiguous");
       if (classification === "ambiguous") {
         invalidateYears([issued.request.confirmed.month]);
@@ -648,12 +651,35 @@ export const createBudgetAdjustmentRowsController = (
     publish();
     try {
       const result = await dependencies.fetchRange(monthFrom, monthTo);
+      const ambiguityRequirementsBeforeResponse =
+        reconciliation.ambiguousRangeRequirementByAdjustmentId;
       const previousRows = reconciliation.rows;
       reconciliation = reconcileBudgetAdjustmentRangeResponse(
         reconciliation,
         issued.request,
         result.adjustments,
       );
+      const resolvedAmbiguityMonths = [
+        ...ambiguityRequirementsBeforeResponse,
+      ].flatMap(([adjustmentId, requirement]): ReadonlyArray<string> => {
+        if (
+          reconciliation.ambiguousRangeRequirementByAdjustmentId.has(
+            adjustmentId,
+          )
+        ) {
+          return [];
+        }
+        const refreshedRow = reconciliation.rows.find((row): boolean =>
+          row.adjustmentId === adjustmentId);
+        return [
+          requirement.sourceMonth,
+          requirement.targetMonth,
+          ...(refreshedRow === undefined ? [] : [refreshedRow.confirmed.month]),
+        ];
+      });
+      if (resolvedAmbiguityMonths.length > 0) {
+        invalidateYears(resolvedAmbiguityMonths);
+      }
       clearRemovedRowState(previousRows);
       clearRecoveredRangeErrors();
       for (const [adjustmentId, rowError] of rowErrors) {
@@ -784,6 +810,36 @@ export const createBudgetAdjustmentRowsController = (
     (row): boolean => isBudgetAdjustmentRowVisible(row, effectiveAllowlist),
   );
 
+  const getProjectedRows = (
+    effectiveAllowlist: ReadonlySet<string> | null,
+  ): ReadonlyArray<BudgetAdjustmentEditorRow> => reconciliation.rows.flatMap(
+    (row): ReadonlyArray<BudgetAdjustmentEditorRow> => {
+      const rowError = rowErrors.get(row.adjustmentId);
+      if (
+        rowError?.classification === "definitive"
+        && rowError.operation === "create"
+        && reconciliation.optimisticCreateByAdjustmentId.has(row.adjustmentId)
+      ) {
+        return [];
+      }
+      const projectedRow = rowError?.classification === "definitive"
+        && (rowError.operation === "patch" || rowError.operation === "delete")
+        ? {
+          ...row,
+          draft: {
+            amountInput: String(row.confirmed.amount),
+            noteInput: row.confirmed.note ?? "",
+            month: row.confirmed.month,
+            category: row.confirmed.category,
+          },
+        }
+        : row;
+      return isBudgetAdjustmentRowVisible(projectedRow, effectiveAllowlist)
+        ? [projectedRow]
+        : [];
+    },
+  );
+
   const getCellRows = (
     location: BudgetAdjustmentCellLocation,
     effectiveAllowlist: ReadonlySet<string> | null,
@@ -827,7 +883,7 @@ export const createBudgetAdjustmentRowsController = (
     effectiveAllowlist: ReadonlySet<string> | null,
   ): number =>
     getBudgetAdjustmentCellTotal(
-      getVisibleRows(effectiveAllowlist),
+      getProjectedRows(effectiveAllowlist),
       location.month,
       location.direction,
       location.category,
@@ -867,7 +923,7 @@ export const createBudgetAdjustmentRowsController = (
     effectiveAllowlist: ReadonlySet<string> | null,
   ): ReadonlyArray<BudgetRow> => applyBudgetAdjustmentRowsWithProtectedCells(
     budgetRows,
-    getVisibleRows(effectiveAllowlist),
+    getProjectedRows(effectiveAllowlist),
     loadedFrom,
     loadedTo,
     dependencies.planFrom,

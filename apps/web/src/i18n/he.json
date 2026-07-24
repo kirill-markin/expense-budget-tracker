@@ -15,6 +15,8 @@
   "mode.all": "הכל",
   "mode.filtered": "מסונן",
   "mode.demo": "הדגמה",
+  "pageError.resetDemoChanges": "איפוס שינויי הדגמה",
+  "pageError.resetDemoChangesConfirm": "לאפס את כל שינויי תקציב ההדגמה? לא ניתן לבטל פעולה זו.",
   "account.workspaces": "סביבות עבודה",
   "account.newWorkspace": "+ סביבת עבודה חדשה",
   "account.workspaceName": "שם סביבת העבודה",

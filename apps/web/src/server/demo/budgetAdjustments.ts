@@ -55,7 +55,7 @@ const validateSessionIds = (state: DemoBudgetAdjustmentSessionState): void => {
     if (rowIds.has(row.adjustmentId)) {
       throw new ApiRouteError(
         400,
-        "Invalid demo budget adjustment session: duplicate row ID. Leave Demo mode to reset it.",
+        "Invalid demo budget adjustment session: duplicate row ID. Use Reset Demo changes on the error page.",
       );
     }
     rowIds.add(row.adjustmentId);
@@ -65,7 +65,7 @@ const validateSessionIds = (state: DemoBudgetAdjustmentSessionState): void => {
     if (deletedIds.has(adjustmentId) || rowIds.has(adjustmentId)) {
       throw new ApiRouteError(
         400,
-        "Invalid demo budget adjustment session: conflicting deleted ID. Leave Demo mode to reset it.",
+        "Invalid demo budget adjustment session: conflicting deleted ID. Use Reset Demo changes on the error page.",
       );
     }
     deletedIds.add(adjustmentId);
@@ -83,14 +83,14 @@ export const parseDemoBudgetAdjustmentSessionCookie = (
   } catch {
     throw new ApiRouteError(
       400,
-      "Invalid demo budget adjustment session cookie. Leave Demo mode to reset it.",
+      "Invalid demo budget adjustment session cookie. Use Reset Demo changes on the error page.",
     );
   }
   const parsed = demoBudgetAdjustmentSessionSchema.safeParse(input);
   if (!parsed.success) {
     throw new ApiRouteError(
       400,
-      "Invalid demo budget adjustment session cookie. Leave Demo mode to reset it.",
+      "Invalid demo budget adjustment session cookie. Use Reset Demo changes on the error page.",
     );
   }
   const state: DemoBudgetAdjustmentSessionState = {
@@ -121,7 +121,7 @@ export const serializeDemoBudgetAdjustmentSessionCookie = (
     || state.deletedAdjustmentIds.length > MAX_SESSION_ROWS) {
     throw new ApiRouteError(
       409,
-      `Demo budget adjustment session supports at most ${MAX_SESSION_ROWS} changed rows. Delete an adjustment or leave Demo mode to reset it.`,
+      `Demo budget adjustment session supports at most ${MAX_SESSION_ROWS} changed rows. Delete an adjustment to free space.`,
     );
   }
   validateSessionIds(state);
@@ -136,7 +136,7 @@ export const serializeDemoBudgetAdjustmentSessionCookie = (
   if (value.length > MAX_SESSION_COOKIE_VALUE_LENGTH) {
     throw new ApiRouteError(
       409,
-      "Demo budget adjustment session is full. Shorten notes, delete an adjustment, or leave Demo mode to reset it.",
+      "Demo budget adjustment session is full. Shorten notes or delete an adjustment to free space.",
     );
   }
   return `${DEMO_BUDGET_ADJUSTMENTS_COOKIE}=${value}; Path=/; SameSite=Lax`;

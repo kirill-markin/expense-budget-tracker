@@ -2,7 +2,6 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 
-import { DEMO_BUDGET_ADJUSTMENTS_COOKIE } from "@/lib/demoCookies";
 import type { AutoFilterDelayMinutes } from "@/lib/locale";
 import {
   getAutoFilterDelayMs,
@@ -203,7 +202,6 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     if (isDemoMode) {
       localStorage.setItem(STORAGE_MODE_KEY, request.target);
       document.cookie = "demo=; path=/; max-age=0";
-      document.cookie = `${DEMO_BUDGET_ADJUSTMENTS_COOKIE}=; path=/; max-age=0`;
       window.location.reload();
       return;
     }
