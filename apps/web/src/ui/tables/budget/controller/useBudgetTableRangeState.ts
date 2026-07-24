@@ -35,9 +35,6 @@ type UseBudgetTableRangeStateParams = Readonly<{
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
   hasBusinessAccount: boolean;
-  refreshToken: string;
-  fetchCommentRange: (monthFrom: string, monthTo: string) => void;
-  reloadCommentRange: (monthFrom: string, monthTo: string) => void;
   onVisibleRangeRefreshStart: () => void;
   loadBudgetRange: (
     monthFrom: string,
@@ -64,7 +61,6 @@ export type BudgetTableRangeState = Readonly<{
     month: string,
     direction: string,
     category: string,
-    kind: "base" | "modifier",
     value: number,
   ) => void;
   handleBaseMutationIssued: (
@@ -166,7 +162,6 @@ const applyPlanSaveToRows = (
   month: string,
   direction: string,
   category: string,
-  kind: "base" | "modifier",
   value: number,
 ): ReadonlyArray<BudgetRow> => {
   const rowIndex = previous.findIndex((row) =>
@@ -174,20 +169,15 @@ const applyPlanSaveToRows = (
 
   if (rowIndex >= 0) {
     const row = previous[rowIndex];
-    const plannedBase = kind === "base" ? value : row.plannedBase;
-    const plannedModifier = kind === "modifier" ? value : row.plannedModifier;
     const updatedRow: BudgetRow = {
       ...row,
-      plannedBase,
-      plannedModifier,
-      planned: plannedBase + plannedModifier,
+      plannedBase: value,
+      planned: value + row.plannedModifier,
     };
     return [...previous.slice(0, rowIndex), updatedRow, ...previous.slice(rowIndex + 1)];
   }
 
-  const plannedBase = kind === "base" ? value : 0;
-  const plannedModifier = kind === "modifier" ? value : 0;
-  return [...previous, buildNewBudgetRow(month, direction, category, plannedBase, plannedModifier)];
+  return [...previous, buildNewBudgetRow(month, direction, category, value, 0)];
 };
 
 const applyFillMonthsToRows = (
@@ -229,9 +219,6 @@ export const useBudgetTableRangeState = ({
   monthEndBalancesByLiquidity,
   businessPersonalTransfers: initialBusinessPersonalTransfers,
   hasBusinessAccount: initialHasBusinessAccount,
-  refreshToken,
-  fetchCommentRange,
-  reloadCommentRange,
   onVisibleRangeRefreshStart,
   loadBudgetRange,
 }: UseBudgetTableRangeStateParams): BudgetTableRangeState => {
@@ -325,11 +312,10 @@ export const useBudgetTableRangeState = ({
       const result = outcome.result;
       const reconciledRows = reconcileAcceptedBaseRange(result, outcome.request);
       applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setHasBusinessAccount, result, reconciledRows);
-      reloadCommentRange(loadedFrom, loadedTo);
     } catch (error) {
       logBudgetTableError("visible range refresh", error);
     }
-  }, [loadGeneratedBudgetRange, loadedFrom, loadedTo, onVisibleRangeRefreshStart, reconcileAcceptedBaseRange, refreshToken, reloadCommentRange]);
+  }, [loadGeneratedBudgetRange, loadedFrom, loadedTo, onVisibleRangeRefreshStart, reconcileAcceptedBaseRange]);
 
   useEffect(() => {
     if (!initialRefreshHandledRef.current) {
@@ -344,10 +330,9 @@ export const useBudgetTableRangeState = ({
     month: string,
     direction: string,
     category: string,
-    kind: "base" | "modifier",
     value: number,
   ): void => {
-    setAllRows((previous) => applyPlanSaveToRows(previous, month, direction, category, kind, value));
+    setAllRows((previous) => applyPlanSaveToRows(previous, month, direction, category, value));
   }, []);
 
   const issueBaseMutation = useCallback((
@@ -494,14 +479,13 @@ export const useBudgetTableRangeState = ({
       setMebByLiq((previous) => ({ ...previous, ...result.monthEndBalancesByLiquidity }));
       setBusinessPersonalTransfers((previous) => ({ ...previous, ...result.businessPersonalTransfers }));
       setHasBusinessAccount(result.hasBusinessAccount);
-      fetchCommentRange(newFrom, newTo);
     } catch (error) {
       logBudgetTableError("load previous month range", error);
     } finally {
       isLoadingLeftRef.current = false;
       setIsLoadingLeft(false);
     }
-  }, [fetchCommentRange, loadGeneratedBudgetRange, loadedFrom, reconcileAcceptedBaseRange]);
+  }, [loadGeneratedBudgetRange, loadedFrom, reconcileAcceptedBaseRange]);
 
   const loadRight = useCallback(async (): Promise<void> => {
     if (isLoadingRightRef.current) {
@@ -525,14 +509,13 @@ export const useBudgetTableRangeState = ({
       setMebByLiq((previous) => ({ ...previous, ...result.monthEndBalancesByLiquidity }));
       setBusinessPersonalTransfers((previous) => ({ ...previous, ...result.businessPersonalTransfers }));
       setHasBusinessAccount(result.hasBusinessAccount);
-      fetchCommentRange(newFrom, newTo);
     } catch (error) {
       logBudgetTableError("load next month range", error);
     } finally {
       isLoadingRightRef.current = false;
       setIsLoadingRight(false);
     }
-  }, [fetchCommentRange, loadGeneratedBudgetRange, loadedTo, reconcileAcceptedBaseRange]);
+  }, [loadGeneratedBudgetRange, loadedTo, reconcileAcceptedBaseRange]);
 
   return {
     allRows,

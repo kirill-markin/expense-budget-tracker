@@ -3,7 +3,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
-import { useCommentPresence } from "@/ui/hooks/useCommentPresence";
 import type { FieldHints } from "@/server/transactions/getTransactions";
 import type { BudgetAdjustment } from "@/server/budget/budgetAdjustments";
 import type { BudgetRow, BusinessPersonalTransferCell, ConversionWarning, CumulativeBefore } from "@/server/budget/getBudgetGrid";
@@ -64,7 +63,6 @@ export type BudgetTableController = Readonly<{
   hasLiquidityBreakdown: boolean;
   projectedLiqBalances: ReadonlyMap<string, Readonly<Record<string, number>>>;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
-  commentedCells: ReadonlySet<string>;
   pendingSaves: number;
   budgetAdjustments: BudgetAdjustmentRowsController;
   isLoadingLeft: boolean;
@@ -80,7 +78,6 @@ export type BudgetTableController = Readonly<{
     month: string,
     direction: string,
     category: string,
-    kind: "base" | "modifier",
     value: number,
   ) => void;
   handleBaseMutationIssued: (
@@ -108,12 +105,6 @@ export type BudgetTableController = Readonly<{
     baseValue: number,
     mutationGeneration: number,
   ) => void;
-  updateCommentCell: (
-    month: string,
-    direction: string,
-    category: string,
-    hasComment: boolean,
-  ) => void;
   openDrillDown: (filter: DrillDownFilter) => void;
   handleDrillDownClose: (dirty: boolean) => void;
   openFxBreakdown: (month: string) => void;
@@ -128,12 +119,6 @@ export const useBudgetTableController = (
   props: BudgetTableProps,
 ): BudgetTableController => {
   const { effectiveAllowlist } = useFilteredMode();
-  const {
-    commentedCells,
-    fetchRange: fetchCommentRange,
-    reloadRange: reloadCommentRange,
-    updateCell: updateCommentCell,
-  } = useCommentPresence(props.initialMonthFrom, props.initialMonthTo, props.refreshToken);
 
   const currentMonth = useMemo(() => getCurrentMonth(), []);
   const currentYear = useMemo(() => getYear(currentMonth), [currentMonth]);
@@ -166,9 +151,6 @@ export const useBudgetTableController = (
     monthEndBalancesByLiquidity: props.monthEndBalancesByLiquidity,
     businessPersonalTransfers: props.businessPersonalTransfers,
     hasBusinessAccount: props.hasBusinessAccount,
-    refreshToken: props.refreshToken,
-    fetchCommentRange,
-    reloadCommentRange,
     onVisibleRangeRefreshStart: handleVisibleRangeRefreshStart,
     loadBudgetRange: budgetAdjustments.loadRange,
   });
@@ -266,7 +248,6 @@ export const useBudgetTableController = (
     hasLiquidityBreakdown: derivedState.hasLiquidityBreakdown,
     projectedLiqBalances: derivedState.projectedLiqBalances,
     yearComputed,
-    commentedCells,
     pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
     budgetAdjustments,
     isLoadingLeft: rangeState.isLoadingLeft,
@@ -283,7 +264,6 @@ export const useBudgetTableController = (
     handleFillMonths: rangeState.handleFillMonths,
     handleBaseAcknowledged: rangeState.handleBaseAcknowledged,
     handleFillMonthsAcknowledged: rangeState.handleFillMonthsAcknowledged,
-    updateCommentCell,
     openDrillDown,
     handleDrillDownClose,
     openFxBreakdown,

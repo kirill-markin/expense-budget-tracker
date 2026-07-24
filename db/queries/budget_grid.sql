@@ -5,28 +5,50 @@
 -- Performance: raw market data is pre-expanded by the worker into exact-date
 -- all-pairs rows in fx_rates_daily, so budget reads use simple equality joins.
 
--- QUERY: main budget grid — planned (base + modifier) vs actual per month/direction/category.
-WITH latest_plans AS (
+-- QUERY: main budget grid — planned (Base plus normalized adjustments) vs actual per month/direction/category.
+WITH latest_base_plans AS (
   SELECT
-    budget_month, direction, category, kind, planned_value,
+    budget_month, direction, category, planned_value,
     ROW_NUMBER() OVER (
-      PARTITION BY budget_month, direction, category, kind
+      PARTITION BY budget_month, direction, category
       ORDER BY inserted_at DESC
     ) AS rn
   FROM budget_lines
-  WHERE budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
+  WHERE kind = 'base'
+    AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
     AND budget_month < to_date($3, 'YYYY-MM') + interval '1 month'
 ),
-planned AS (
+planned_base AS (
   SELECT
     to_char(budget_month, 'YYYY-MM') AS month,
     direction,
     category,
-    COALESCE(MAX(CASE WHEN kind = 'base' THEN planned_value::double precision END), 0) AS planned_base,
-    COALESCE(MAX(CASE WHEN kind = 'modifier' THEN planned_value::double precision END), 0) AS planned_modifier
-  FROM latest_plans
+    planned_value::double precision AS planned_base
+  FROM latest_base_plans
   WHERE rn = 1
+),
+adjustments AS (
+  SELECT
+    to_char(budget_month, 'YYYY-MM') AS month,
+    direction,
+    category,
+    SUM(amount)::double precision AS planned_modifier
+  FROM budget_adjustments
+  WHERE workspace_id = current_setting('app.workspace_id', true)
+    AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
+    AND budget_month < (to_date($3, 'YYYY-MM') + interval '1 month')::date
   GROUP BY 1, 2, 3
+),
+planned AS (
+  SELECT
+    COALESCE(base.month, adjustment.month) AS month,
+    COALESCE(base.direction, adjustment.direction) AS direction,
+    COALESCE(base.category, adjustment.category) AS category,
+    COALESCE(base.planned_base, 0) AS planned_base,
+    COALESCE(adjustment.planned_modifier, 0) AS planned_modifier
+  FROM planned_base base
+  FULL OUTER JOIN adjustments adjustment
+    USING (month, direction, category)
 ),
 actual AS (
   SELECT
@@ -133,7 +155,7 @@ WITH latest_day AS (
   FROM fx_rates_daily
 ),
 data_currencies AS (
-  SELECT DISTINCT currency FROM budget_lines
+  SELECT DISTINCT currency FROM budget_lines WHERE kind = 'base'
   UNION
   SELECT DISTINCT currency FROM ledger_entries
 ),

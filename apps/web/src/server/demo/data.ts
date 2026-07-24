@@ -15,7 +15,6 @@ import type { AccountSuggestion } from "@/server/accounts/getAccountSuggestions"
 import type { AccountRow, BalancesSummaryResult, CurrencyTotal } from "@/server/balances/getBalancesSummary";
 import type { BudgetAdjustment, BudgetAdjustmentDirection } from "@/server/budget/budgetAdjustments";
 import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
-import type { CommentedCell } from "@/server/budget/getCommentedCells";
 import type { FxBreakdownResult, FxBreakdownRow } from "@/server/budget/getFxBreakdown";
 import {
   TRANSACTION_KINDS,
@@ -718,28 +717,6 @@ export const getDemoBudgetGrid = (
     hasBusinessAccount,
   };
 };
-
-// ---------------------------------------------------------------------------
-// Budget comments (relative to current month)
-// ---------------------------------------------------------------------------
-
-const COMMENT_TEMPLATES: ReadonlyArray<Readonly<{ monthOffset: number; direction: string; category: string; comment: string }>> = [
-  { monthOffset: -1, direction: "spend", category: "Groceries", comment: "Reduced budget due to travel" },
-  { monthOffset: 0, direction: "spend", category: "Utilities", comment: "Expected higher bill this month" },
-];
-
-const resolveComments = (): ReadonlyArray<Readonly<{ month: string; direction: string; category: string; comment: string }>> => {
-  const now = getCurrentMonth();
-  return COMMENT_TEMPLATES.map((c) => ({ month: offsetMonth(now, c.monthOffset), direction: c.direction, category: c.category, comment: c.comment }));
-};
-
-export const getDemoLatestComment = (params: Readonly<{ month: string; direction: string; category: string }>): string | null =>
-  resolveComments().find((c) => c.month === params.month && c.direction === params.direction && c.category === params.category)?.comment ?? null;
-
-export const getDemoCommentedCells = (params: Readonly<{ monthFrom: string; monthTo: string }>): ReadonlyArray<CommentedCell> =>
-  resolveComments()
-    .filter((c) => c.month >= params.monthFrom && c.month <= params.monthTo)
-    .map((c) => ({ month: c.month, direction: c.direction, category: c.category }));
 
 // ---------------------------------------------------------------------------
 // FX breakdown

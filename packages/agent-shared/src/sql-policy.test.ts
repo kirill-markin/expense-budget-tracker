@@ -61,7 +61,7 @@ test("validateExpenseSql still allows direct relation queries without function c
   assert.deepEqual(validated.statements[0]?.referencedRelations, ["ledger_entries"]);
 });
 
-test("restricted SQL policy does not expose community public share objects", (): void => {
+test("restricted SQL policy does not expose internal or removed relations", (): void => {
   assert.deepEqual(
     getAllowedRelationNames().filter((relationName) => relationName.startsWith("community")),
     [],
@@ -70,6 +70,7 @@ test("restricted SQL policy does not expose community public share objects", ():
   const rejectedRelations: ReadonlyArray<string> = [
     "SELECT * FROM community.monthly_category_shares",
     "SELECT * FROM monthly_category_shares",
+    "SELECT * FROM budget_comments",
   ];
 
   for (const sql of rejectedRelations) {

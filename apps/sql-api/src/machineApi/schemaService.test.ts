@@ -4,11 +4,13 @@ import { createQueryResult } from "../handlerTestUtils.js";
 import { ALLOWED_RELATION_NAMES, loadAllowedSchemaWithResolver } from "./schemaService.js";
 import type { MachineApiDependencies } from "./types.js";
 
-test("machine API schema allowlist excludes community public share relations", (): void => {
+test("machine API schema allowlist excludes internal and removed relations", (): void => {
   const relationNames: ReadonlyArray<string> = ALLOWED_RELATION_NAMES;
   assert.equal(relationNames.includes("monthly_category_shares"), false);
   assert.equal(relationNames.includes("monthly_category_share_items"), false);
   assert.equal(relationNames.includes("monthly_category_share_keys"), false);
+  assert.equal(relationNames.includes("budget_comments"), false);
+  assert.equal(relationNames.includes("budget_adjustments"), false);
 });
 
 test("loadAllowedSchema resolves a real workspace context before querying", async (): Promise<void> => {
@@ -34,7 +36,7 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
     },
   };
 
-  await loadAllowedSchemaWithResolver(
+  const schema = await loadAllowedSchemaWithResolver(
     dependencies,
     identity,
     async () => ({ workspaceId: contextWorkspaceId, created: false }),
@@ -42,4 +44,18 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
 
   assert.equal(queryWorkspaceId, contextWorkspaceId);
   assert.notEqual(queryWorkspaceId, identity.userId);
+  assert.deepEqual(
+    schema.find((relation) => relation.name === "budget_lines")?.hints,
+    {
+      optional: false,
+      notes: [
+        "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
+      ],
+      columnConstraints: [{
+        column: "kind",
+        allowedValues: ["base"],
+        notes: ["Only base is accepted."],
+      }],
+    },
+  );
 });

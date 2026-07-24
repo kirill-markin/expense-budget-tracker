@@ -92,6 +92,17 @@ export const isAccountMetadataGroup = (value: string): value is AccountMetadataG
   (ACCOUNT_METADATA_GROUP_VALUES as ReadonlyArray<string>).includes(value);
 
 const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>> = {
+  budget_lines: {
+    optional: false,
+    notes: [
+      "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
+    ],
+    columnConstraints: [{
+      column: "kind",
+      allowedValues: ["base"],
+      notes: ["Only base is accepted."],
+    }],
+  },
   account_metadata: {
     optional: true,
     primaryKey: ["workspace_id", "account_id"],

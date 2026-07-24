@@ -44,7 +44,6 @@ const ALLOWED_RELATION_NAMES = [
   "ledger_entries",
   "accounts",
   "budget_lines",
-  "budget_comments",
   "workspace_settings",
   "account_metadata",
   "fx_rates_raw",
