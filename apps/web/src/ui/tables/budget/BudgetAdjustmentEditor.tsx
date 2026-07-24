@@ -3,7 +3,6 @@
 import { type ReactElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { offsetMonth } from "@/lib/monthUtils";
 import {
   getBudgetAdjustmentCategoryOptions,
   isValidBudgetAdjustmentNoteInput,
@@ -37,9 +36,6 @@ type BudgetAdjustmentEditorProps = Readonly<{
     BudgetAdjustmentCellLocation
   >;
   controller: BudgetAdjustmentRowsController;
-  onInitialFocusTargetChange: (
-    target: HTMLInputElement | HTMLButtonElement | null,
-  ) => void;
   onInteraction: (adjustmentId: string) => void;
   onDeleteSuccess: (adjustmentId: string) => void;
   onSettlementSuccess: (adjustmentId: string) => void;
@@ -86,20 +82,6 @@ const getLocationValidationField = (
   }
 };
 
-const isValidMonth = (month: string): boolean => (
-  /^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)
-);
-
-const getPreviousMonth = (month: string, currentMonth: string): string | null => {
-  if (!isValidMonth(month) || month <= currentMonth) return null;
-  return offsetMonth(month, -1);
-};
-
-const getNextMonth = (month: string): string | null => {
-  if (!isValidMonth(month) || month >= MAX_MONTH) return null;
-  return offsetMonth(month, 1);
-};
-
 const getDeleteAmount = (row: BudgetAdjustmentEditorRow): string => {
   const parsed = parseBudgetAdjustmentAmount(row.draft.amountInput);
   return parsed.ok ? String(parsed.amount) : row.draft.amountInput;
@@ -116,7 +98,6 @@ export const BudgetAdjustmentEditor = (
     effectiveAllowlist,
     editorAnchorByAdjustmentId,
     controller,
-    onInitialFocusTargetChange,
     onInteraction,
     onDeleteSuccess,
     onSettlementSuccess,
@@ -160,11 +141,6 @@ export const BudgetAdjustmentEditor = (
     input.focus();
     setPendingFocusId(null);
   }, [controller.rows, pendingFocusId]);
-
-  useEffect(
-    () => (): void => onInitialFocusTargetChange(null),
-    [onInitialFocusTargetChange],
-  );
 
   useEffect(() => (): void => {
     for (const frame of locationValidationFrameByAdjustmentIdRef.current.values()) {
@@ -438,19 +414,14 @@ export const BudgetAdjustmentEditor = (
 
   const setAddButton = (element: HTMLButtonElement | null): void => {
     addButtonRef.current = element;
-    if (rows.length === 0) onInitialFocusTargetChange(element);
   };
 
   const setAmountInput = (
     adjustmentId: string,
-    isFirstRow: boolean,
     element: HTMLInputElement | null,
   ): void => {
     if (element === null) amountInputRefs.current.delete(adjustmentId);
     else amountInputRefs.current.set(adjustmentId, element);
-    if (isFirstRow) {
-      onInitialFocusTargetChange(element ?? addButtonRef.current);
-    }
   };
 
   const handleEditorKeyDown = (
@@ -595,7 +566,7 @@ export const BudgetAdjustmentEditor = (
           <span role="columnheader">{t("budget.adjustmentCategory")}</span>
           <span aria-hidden="true" />
         </div>
-        {rows.map((row, rowIndex) => {
+        {rows.map((row) => {
           const validation = controller.validationByAdjustmentId.get(row.adjustmentId);
           const rowError = controller.errorByAdjustmentId.get(row.adjustmentId);
           const operation = controller.operationByAdjustmentId.get(row.adjustmentId);
@@ -605,8 +576,6 @@ export const BudgetAdjustmentEditor = (
           const errorId = `${accessibilityId}-${row.adjustmentId}-error`;
           const categoryCorrectionErrorId =
             `${accessibilityId}-${row.adjustmentId}-category-correction`;
-          const previousMonth = getPreviousMonth(row.draft.month, currentMonth);
-          const nextMonth = getNextMonth(row.draft.month);
           const categoryUnavailable = !categoryOptionSet.has(
             row.draft.category,
           );
@@ -655,7 +624,6 @@ export const BudgetAdjustmentEditor = (
                 <input
                   ref={(element) => setAmountInput(
                     row.adjustmentId,
-                    rowIndex === 0,
                     element,
                   )}
                   type="text"
@@ -704,73 +672,35 @@ export const BudgetAdjustmentEditor = (
               </label>
               <div className={styles.adjustmentField} role="cell">
                 <span className={styles.adjustmentMobileLabel}>{t("budget.adjustmentMonth")}</span>
-                <div className={styles.adjustmentMonthControls}>
-                  <button
-                    type="button"
-                    className={styles.adjustmentMonthButton}
-                    data-testid={`budget-adjustment-month-previous-${row.adjustmentId}`}
-                    aria-label={t("budget.adjustmentPreviousMonth")}
-                    disabled={previousMonth === null}
-                    onClick={(event) => {
-                      if (previousMonth === null) return;
-                      void replaceLocationDraft(
-                        row,
-                        { ...row.draft, month: previousMonth },
-                        "month",
-                        event.currentTarget,
-                      );
-                    }}
-                  >
-                    −1
-                  </button>
-                  <input
-                    ref={(element) => {
-                      if (element === null) {
-                        monthInputRefs.current.delete(row.adjustmentId);
-                      } else {
-                        monthInputRefs.current.set(row.adjustmentId, element);
-                      }
-                    }}
-                    type="month"
-                    className={styles.adjustmentMonthInput}
-                    data-testid={`budget-adjustment-month-${row.adjustmentId}`}
-                    aria-label={t("budget.adjustmentMonth")}
-                    aria-invalid={monthInvalid}
-                    aria-describedby={monthInvalid && validationMessage !== null ? errorId : undefined}
-                    required
-                    min={currentMonth}
-                    max={MAX_MONTH}
-                    value={row.draft.month}
-                    onChange={(event) => {
-                      void replaceLocationDraft(
-                        row,
-                        { ...row.draft, month: event.target.value },
-                        "month",
-                        event.currentTarget,
-                      );
-                    }}
-                    onBlur={() => flushRow(row.adjustmentId)}
-                    onKeyDown={(event) => handleEditorKeyDown(event, row.adjustmentId)}
-                  />
-                  <button
-                    type="button"
-                    className={styles.adjustmentMonthButton}
-                    data-testid={`budget-adjustment-month-next-${row.adjustmentId}`}
-                    aria-label={t("budget.adjustmentNextMonth")}
-                    disabled={nextMonth === null}
-                    onClick={(event) => {
-                      if (nextMonth === null) return;
-                      void replaceLocationDraft(
-                        row,
-                        { ...row.draft, month: nextMonth },
-                        "month",
-                        event.currentTarget,
-                      );
-                    }}
-                  >
-                    +1
-                  </button>
-                </div>
+                <input
+                  ref={(element) => {
+                    if (element === null) {
+                      monthInputRefs.current.delete(row.adjustmentId);
+                    } else {
+                      monthInputRefs.current.set(row.adjustmentId, element);
+                    }
+                  }}
+                  type="month"
+                  className={styles.adjustmentMonthInput}
+                  data-testid={`budget-adjustment-month-${row.adjustmentId}`}
+                  aria-label={t("budget.adjustmentMonth")}
+                  aria-invalid={monthInvalid}
+                  aria-describedby={monthInvalid && validationMessage !== null ? errorId : undefined}
+                  required
+                  min={currentMonth}
+                  max={MAX_MONTH}
+                  value={row.draft.month}
+                  onChange={(event) => {
+                    void replaceLocationDraft(
+                      row,
+                      { ...row.draft, month: event.target.value },
+                      "month",
+                      event.currentTarget,
+                    );
+                  }}
+                  onBlur={() => flushRow(row.adjustmentId)}
+                  onKeyDown={(event) => handleEditorKeyDown(event, row.adjustmentId)}
+                />
               </div>
               <label className={styles.adjustmentField} role="cell">
                 <span className={styles.adjustmentMobileLabel}>{t("budget.adjustmentCategory")}</span>

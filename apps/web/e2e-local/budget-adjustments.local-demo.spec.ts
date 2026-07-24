@@ -269,17 +269,8 @@ test("creates, autosaves, moves, and deletes normalized adjustment rows", async 
   const openButton = page.getByTestId(`budget-plan-open-${editorId}`);
   await openButton.click();
 
-  const firstAmountInput = page.getByTestId(
-    "budget-adjustment-amount-demo-adjustment-groceries-seasonal",
-  );
-  const firstNoteInput = page.getByTestId(
-    "budget-adjustment-note-demo-adjustment-groceries-seasonal",
-  );
-  await expect(firstAmountInput).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(firstNoteInput).toBeFocused();
-
   const baseInput = page.getByTestId(`budget-plan-base-input-${editorId}`);
+  await expect(baseInput).toBeFocused();
   const originalBase = await baseInput.inputValue();
   let baseRequestCount = 0;
   page.on("request", (request): void => {
@@ -334,14 +325,11 @@ test("creates, autosaves, moves, and deletes normalized adjustment rows", async 
   const noteInput = page.getByTestId(`budget-adjustment-note-${adjustmentId}`);
   const monthInput = page.getByTestId(`budget-adjustment-month-${adjustmentId}`);
   const categoryInput = page.getByTestId(`budget-adjustment-category-${adjustmentId}`);
-  const nextMonthButton = page.getByTestId(
-    `budget-adjustment-month-next-${adjustmentId}`,
-  );
   await expect(row).toBeVisible();
   await expect(amountInput).toHaveValue("");
 
   await amountInput.fill("not-an-integer");
-  await nextMonthButton.click();
+  await monthInput.fill(offsetMonth(month, 1));
   await expect(row).toBeVisible();
   await expect(amountInput).toBeFocused();
   await expect(monthInput).toHaveValue(month);
@@ -501,11 +489,8 @@ test("creates, autosaves, moves, and deletes normalized adjustment rows", async 
   const destinationAddButton = page.getByTestId(
     `budget-adjustment-add-${destinationEditorId}`,
   );
-  const previousMonthButton = page.getByTestId(
-    `budget-adjustment-month-previous-${adjustmentId}`,
-  );
   await noteInput.fill("x".repeat(2001));
-  await previousMonthButton.click();
+  await monthInput.fill(offsetMonth(destinationMonth, -1));
   await expect(row).toBeVisible();
   await expect(noteInput).toBeFocused();
   await expect(monthInput).toHaveValue(destinationMonth);
@@ -555,7 +540,7 @@ test("creates, autosaves, moves, and deletes normalized adjustment rows", async 
 
   await page.keyboard.press("Escape");
   await page.getByTestId(`budget-plan-open-${diningEditorId}`).click();
-  await expect(page.getByTestId(`budget-adjustment-add-${diningEditorId}`)).toBeFocused();
+  await expect(page.getByTestId(`budget-plan-base-input-${diningEditorId}`)).toBeFocused();
 });
 
 test("keeps cross-year totals and Demo adjustment state coherent across reloads and mode transitions", async ({ page, baseURL }) => {

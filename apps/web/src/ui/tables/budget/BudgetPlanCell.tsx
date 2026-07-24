@@ -237,9 +237,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const triggerButtonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const baseInputRef = useRef<HTMLInputElement>(null);
-  const adjustmentInitialFocusRef = useRef<
-    HTMLInputElement | HTMLButtonElement | null
-  >(null);
   const isOpenRef = useRef<boolean>(false);
   const showDataRef = useRef<boolean>(showData);
   const previousShowDataRef = useRef<boolean>(showData);
@@ -285,12 +282,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
   const setPopoverOpen = useCallback((open: boolean): void => {
     isOpenRef.current = open;
     setIsOpen(open);
-  }, []);
-
-  const setAdjustmentInitialFocusTarget = useCallback((
-    target: HTMLInputElement | HTMLButtonElement | null,
-  ): void => {
-    adjustmentInitialFocusRef.current = target;
   }, []);
 
   const persistBaseSnapshot = useCallback(async (
@@ -386,7 +377,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       setShouldFocusBaseAfterAction(false);
     }
     baseInputRef.current?.setCustomValidity("");
-    adjustmentInitialFocusRef.current = null;
 
     const rect = cell.getBoundingClientRect();
     setPopoverPos(getPopoverPosition(
@@ -499,10 +489,10 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
   useEffect(() => {
     if (!isOpen) return;
-    const focusTarget = adjustmentInitialFocusRef.current ?? baseInputRef.current;
-    if (focusTarget === null) return;
-    focusTarget.focus();
-    if (focusTarget instanceof HTMLInputElement) focusTarget.select();
+    const input = baseInputRef.current;
+    if (input === null) return;
+    input.focus();
+    input.select();
   }, [isOpen]);
 
   useEffect(() => {
@@ -1169,31 +1159,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           role="dialog"
           aria-label={accessibleName}
         >
-          {adjustmentLocation !== null && (
-            <>
-              <BudgetAdjustmentEditor
-                editorId={editorId}
-                location={adjustmentLocation}
-                currentMonth={currentMonth}
-                categories={directionCategories}
-                effectiveAllowlist={effectiveAllowlist}
-                editorAnchorByAdjustmentId={
-                  interactedAdjustmentAnchorByIdRef.current
-                }
-                controller={budgetAdjustments}
-                onInitialFocusTargetChange={setAdjustmentInitialFocusTarget}
-                onInteraction={(adjustmentId): void => {
-                  interactedAdjustmentAnchorByIdRef.current.set(
-                    adjustmentId,
-                    adjustmentLocation,
-                  );
-                }}
-                onDeleteSuccess={handleAdjustmentSettlementSuccess}
-                onSettlementSuccess={handleAdjustmentSettlementSuccess}
-              />
-              <div className={styles.popoverDivider} />
-            </>
-          )}
           <label className={styles.popoverField}>
             <span className={styles.popoverLabel}>{t("budget.popoverBase")}</span>
             <input
@@ -1242,13 +1207,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
               {baseError}
             </span>
           )}
-          <div className={styles.popoverDivider} />
-          <div className={styles.popoverTotal}>
-            <span className={styles.popoverLabel}>{t("budget.popoverTotal")}</span>
-            <span className={styles.popoverTotalValue}>
-              {formatAmount(computedTotal, numberFormat)}
-            </span>
-          </div>
           {canFill && (
             <>
               <div className={styles.popoverDivider} />
@@ -1263,6 +1221,37 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
               </button>
             </>
           )}
+          {adjustmentLocation !== null && (
+            <>
+              <div className={styles.popoverDivider} />
+              <BudgetAdjustmentEditor
+                editorId={editorId}
+                location={adjustmentLocation}
+                currentMonth={currentMonth}
+                categories={directionCategories}
+                effectiveAllowlist={effectiveAllowlist}
+                editorAnchorByAdjustmentId={
+                  interactedAdjustmentAnchorByIdRef.current
+                }
+                controller={budgetAdjustments}
+                onInteraction={(adjustmentId): void => {
+                  interactedAdjustmentAnchorByIdRef.current.set(
+                    adjustmentId,
+                    adjustmentLocation,
+                  );
+                }}
+                onDeleteSuccess={handleAdjustmentSettlementSuccess}
+                onSettlementSuccess={handleAdjustmentSettlementSuccess}
+              />
+            </>
+          )}
+          <div className={styles.popoverDivider} />
+          <div className={styles.popoverTotal}>
+            <span className={styles.popoverLabel}>{t("budget.popoverTotal")}</span>
+            <span className={styles.popoverTotalValue}>
+              {formatAmount(computedTotal, numberFormat)}
+            </span>
+          </div>
         </div>,
         document.body,
       )}
