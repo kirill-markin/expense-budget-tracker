@@ -134,6 +134,9 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               <td
                 key={`total-${column.year}`}
                 className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                data-testid={categoryVisibility.showData
+                  ? `budget-year-actual-${column.year}:${block.direction}:${category}`
+                  : undefined}
                 onClick={categoryVisibility.showData
                   ? () => openDrillDown(buildCategoryYearDrillDownFilter(column.year, block.direction, category))
                   : undefined}
@@ -150,7 +153,13 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               yearData.directionCategoryTotals.get(block.direction)?.get(category) ?? zeroCellValue;
             const yearTotalStateClass = buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false);
             return (
-              <td key={`total-${column.year}`} className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalStateClass}`}>
+              <td
+                key={`total-${column.year}`}
+                className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalStateClass}`}
+                data-testid={categoryVisibility.showData
+                  ? `budget-year-plan-${column.year}:${block.direction}:${category}`
+                  : undefined}
+              >
                 {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : ""}
               </td>
             );
@@ -166,11 +175,19 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
             const yearTotalActualStateClass = buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), isActualOver);
             return (
               <Fragment key={`total-${column.year}`}>
-                <td className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalPlanStateClass}`}>
+                <td
+                  className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalPlanStateClass}`}
+                  data-testid={categoryVisibility.showData
+                    ? `budget-year-plan-${column.year}:${block.direction}:${category}`
+                    : undefined}
+                >
                   {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : ""}
                 </td>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalActualStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                  data-testid={categoryVisibility.showData
+                    ? `budget-year-actual-${column.year}:${block.direction}:${category}`
+                    : undefined}
                   onClick={categoryVisibility.showData
                     ? () => openDrillDown(buildCategoryYearDrillDownFilter(column.year, block.direction, category))
                     : undefined}

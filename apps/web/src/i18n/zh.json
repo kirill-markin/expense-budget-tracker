@@ -15,6 +15,8 @@
   "mode.all": "全部",
   "mode.filtered": "筛选",
   "mode.demo": "演示",
+  "pageError.resetDemoChanges": "重置演示更改",
+  "pageError.resetDemoChangesConfirm": "要重置所有演示预算更改吗？此操作无法撤销。",
   "account.workspaces": "工作区",
   "account.newWorkspace": "+ 新建工作区",
   "account.workspaceName": "工作区名称",

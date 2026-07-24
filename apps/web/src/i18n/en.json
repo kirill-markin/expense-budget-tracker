@@ -15,6 +15,8 @@
   "mode.all": "All",
   "mode.filtered": "Filtered",
   "mode.demo": "Demo",
+  "pageError.resetDemoChanges": "Reset Demo changes",
+  "pageError.resetDemoChangesConfirm": "Reset all Demo budget changes? This cannot be undone.",
   "account.workspaces": "Workspaces",
   "account.newWorkspace": "+ New workspace",
   "account.workspaceName": "Workspace name",

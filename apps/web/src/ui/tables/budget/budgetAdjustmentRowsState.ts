@@ -132,7 +132,11 @@ export const getBudgetAdjustmentEditorCellRows = (
       return editorAnchor.month === month
         && editorAnchor.direction === direction
         && editorAnchor.category === category
-        && isBudgetAdjustmentCategoryVisible(category, effectiveAllowlist);
+        && isBudgetAdjustmentCategoryVisible(category, effectiveAllowlist)
+        && isBudgetAdjustmentCategoryVisible(
+          row.confirmed.category,
+          effectiveAllowlist,
+        );
     }
     return row.confirmed.month === month
       && row.direction === direction

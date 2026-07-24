@@ -15,6 +15,8 @@
   "mode.all": "Todo",
   "mode.filtered": "Filtrado",
   "mode.demo": "Demo",
+  "pageError.resetDemoChanges": "Restablecer cambios de Demo",
+  "pageError.resetDemoChangesConfirm": "¿Restablecer todos los cambios del presupuesto de Demo? Esta acción no se puede deshacer.",
   "account.workspaces": "Espacios de trabajo",
   "account.newWorkspace": "+ Nuevo espacio",
   "account.workspaceName": "Nombre del espacio",

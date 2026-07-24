@@ -5,7 +5,16 @@ import type { QueryResult } from "pg";
 import { getCurrentMonth, offsetMonth } from "@/lib/monthUtils";
 import { BUDGET_ADJUSTMENT_BY_ID_QUERY, BUDGET_ADJUSTMENTS_DETAIL_QUERY, BudgetAdjustmentConflictError, CREATE_BUDGET_ADJUSTMENT_QUERY, buildPatchBudgetAdjustmentQuery, createBudgetAdjustmentWithQuery, mapBudgetAdjustmentRow, type BudgetAdjustment, type CreateBudgetAdjustmentParams } from "@/server/budget/budgetAdjustments";
 import type { QueryFn } from "@/server/db/contextRunner";
-import { createDemoBudgetAdjustment, EMPTY_DEMO_BUDGET_ADJUSTMENT_SESSION, parseDemoBudgetAdjustmentSessionCookie, serializeDemoBudgetAdjustmentSessionCookie, type DemoBudgetAdjustmentSessionState } from "@/server/demo/budgetAdjustments";
+import {
+  createDemoBudgetAdjustment,
+  deleteDemoBudgetAdjustment,
+  EMPTY_DEMO_BUDGET_ADJUSTMENT_SESSION,
+  getDemoBudgetAdjustmentsForSession,
+  parseDemoBudgetAdjustmentSessionCookie,
+  patchDemoBudgetAdjustment,
+  serializeDemoBudgetAdjustmentSessionCookie,
+  type DemoBudgetAdjustmentSessionState,
+} from "@/server/demo/budgetAdjustments";
 import { getDemoBudgetAdjustments, getDemoBudgetGrid } from "@/server/demo/data";
 
 const CREATE_PARAMS: CreateBudgetAdjustmentParams = {
@@ -291,6 +300,65 @@ test("demo adjustment session state is validated and bounded without eviction", 
   assert.throws(
     () => serializeDemoBudgetAdjustmentSessionCookie(state),
     /supports at most 8 changed rows/,
+  );
+});
+
+test("demo adjustment session serialization preserves zero rows, null notes, moves, and seeded deletions", (): void => {
+  const adjustmentId = "00000000-0000-4000-8000-000000000010";
+  const destinationMonth = offsetMonth(getCurrentMonth(), 3);
+  const seededAdjustment = getDemoBudgetAdjustments()[0];
+  assert.ok(seededAdjustment);
+  let state = createDemoBudgetAdjustment(
+    EMPTY_DEMO_BUDGET_ADJUSTMENT_SESSION,
+    {
+      adjustmentId,
+      month: getCurrentMonth(),
+      direction: "spend",
+      category: "Groceries",
+      amount: 0,
+      note: null,
+    },
+  ).state;
+  state = patchDemoBudgetAdjustment(
+    state,
+    adjustmentId,
+    {
+      month: destinationMonth,
+      category: "Travel reserve",
+      amount: 0,
+      note: null,
+    },
+    "2026-07-24T12:00:00.000Z",
+  ).state;
+  state = deleteDemoBudgetAdjustment(
+    state,
+    seededAdjustment.adjustmentId,
+  );
+
+  const cookie = serializeDemoBudgetAdjustmentSessionCookie(state);
+  const cookieValue = cookie.split(";", 1)[0]?.split("=", 2)[1];
+  assert.ok(cookieValue);
+  const restored = getDemoBudgetAdjustmentsForSession(
+    parseDemoBudgetAdjustmentSessionCookie(cookieValue),
+  );
+
+  assert.equal(
+    restored.some((adjustment) =>
+      adjustment.adjustmentId === seededAdjustment.adjustmentId),
+    false,
+  );
+  assert.deepEqual(
+    restored.find((adjustment) => adjustment.adjustmentId === adjustmentId),
+    {
+      adjustmentId,
+      month: destinationMonth,
+      direction: "spend",
+      category: "Travel reserve",
+      amount: 0,
+      note: null,
+      createdAt: "2000-01-01T00:00:00.000Z",
+      updatedAt: "2026-07-24T12:00:00.000Z",
+    },
   );
 });
 

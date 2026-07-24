@@ -56,7 +56,11 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
           </span>
         )}
       </div>
-      <div className={styles.scroll} ref={controller.scrollRef}>
+      <div
+        className={styles.scroll}
+        data-testid="budget-table-scroll"
+        ref={controller.scrollRef}
+      >
         <table className={styles.table}>
           <BudgetTableHeader
             columnSequence={controller.columnSequence}

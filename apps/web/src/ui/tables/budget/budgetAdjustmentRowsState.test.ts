@@ -322,8 +322,8 @@ test("anchors editor rows to confirmed cells and reveals invalid drafts only to 
       "Allowed",
       allowlist,
       editorAnchors,
-    ).map((row) => row.adjustmentId),
-    [invalid.adjustmentId],
+    ),
+    [],
   );
   assert.deepEqual(
     getBudgetAdjustmentEditorCellRows(
