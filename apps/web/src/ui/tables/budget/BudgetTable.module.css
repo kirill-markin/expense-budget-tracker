@@ -440,7 +440,7 @@ tbody tr:last-child .currentMonthActual {
   grid-template-columns:
     minmax(72px, 0.8fr)
     minmax(120px, 1.3fr)
-    minmax(210px, 1.4fr)
+    minmax(120px, 1fr)
     minmax(120px, 1fr)
     36px;
   gap: 8px;
@@ -487,7 +487,6 @@ tbody tr:last-child .currentMonthActual {
 .adjustmentInput:focus,
 .adjustmentMonthInput:focus,
 .adjustmentSelect:focus,
-.adjustmentMonthButton:focus,
 .adjustmentDeleteButton:focus,
 .adjustmentAddButton:focus,
 .adjustmentRecoveryButton:focus,
@@ -514,13 +513,6 @@ tbody tr:last-child .currentMonthActual {
   white-space: pre-wrap;
 }
 
-.adjustmentMonthControls {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 42px;
-  gap: 4px;
-}
-
-.adjustmentMonthButton,
 .adjustmentDeleteButton {
   min-block-size: 36px;
   padding: 0;
@@ -531,7 +523,6 @@ tbody tr:last-child .currentMonthActual {
   cursor: var(--cursor-pointer);
 }
 
-.adjustmentMonthButton:disabled,
 .adjustmentDeleteButton:disabled,
 .adjustmentAddButton:disabled,
 .adjustmentRecoveryButton:disabled,
@@ -708,7 +699,6 @@ tbody tr:last-child .currentMonthActual {
   .adjustmentInput,
   .adjustmentMonthInput,
   .adjustmentSelect,
-  .adjustmentMonthButton,
   .adjustmentDeleteButton,
   .adjustmentAddButton,
   .adjustmentModalCancel,
