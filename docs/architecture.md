@@ -19,7 +19,7 @@ Four components, one database:
 1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool` with per-request RLS context.
 2. **sql-api** (`apps/sql-api/`) — Two AWS Lambdas behind API Gateway (REST API) for machine clients. Lambda Authorizer validates `ApiKey` agent tokens; the handler serves discovery, workspace setup, and SQL with the same v1 machine surface. Separate from the web stack — no ALB involved.
 3. **worker** (`apps/worker/`) — TypeScript process that fetches daily raw exchange rates from ECB, CBR, NBS, NBU, and USDT, stores them in `fx_rates_raw`, and rebuilds query-ready all-pairs daily rates in `fx_rates_daily`. Runs on a schedule (local Docker) or as a Lambda (AWS).
-4. **Postgres** — single source of truth. Eight tables (six with RLS), one view.
+4. **Postgres** — single source of truth with workspace-scoped RLS and derived reporting views.
 
 ## Data model
 
@@ -36,7 +36,7 @@ entry_id (PK)           base_currency (PK)     budget_month
 workspace_id (RLS)      quote_currency (PK)    workspace_id (RLS)
 event_id                rate_date (PK)         direction
 ts                      rate                   category
-account_id              source                 kind (base|modifier)
+account_id              source                 kind (base)
 amount                  inserted_at            currency
 currency                                       planned_value
 kind (income|spend|                            inserted_at
@@ -46,14 +46,17 @@ counterparty            ─────────────          ──�
 note                    base_currency (PK)     workspace_id (PK,RLS)
                         quote_currency (PK)    reporting_currency
 accounts (VIEW)         calendar_date (PK)
-──────────────          rate                   budget_comments
-derived from            source_rate_date       ───────────────
-ledger_entries          inserted_at            budget_month
+──────────────          rate                   budget_adjustments
+derived from            source_rate_date       ──────────────────
+ledger_entries          inserted_at            adjustment_id (PK)
                                                workspace_id (RLS)
+                                               budget_month
                                                direction
                                                category
-                                               comment
-                                               inserted_at
+                                               amount
+                                               note
+                                               created_at
+                                               updated_at
 ```
 
 - `workspaces` — one row per workspace. RLS: user sees only workspaces they belong to.
@@ -61,8 +64,8 @@ ledger_entries          inserted_at            budget_month
 - `ledger_entries` — one row per account movement. Immutable except category/note. RLS by `workspace_id`.
 - `fx_rates_raw` — canonical FX source-of-truth. One row per `(base, USD, rate_date)` triple plus source metadata. **No RLS** — global data.
 - `fx_rates_daily` — query-ready daily all-pairs FX read model. One row per `(base, quote, calendar_date)` triple. **No RLS** — global data.
-- `budget_lines` — append-only. Effective value resolved by latest `inserted_at` per cell. RLS by `workspace_id`.
-- `budget_comments` — append-only. Same last-write-wins pattern. RLS by `workspace_id`.
+- `budget_lines` — append-only Base plan rows. Effective value resolved by latest `inserted_at` per cell. RLS by `workspace_id`.
+- `budget_adjustments` — normalized adjustment rows with optional row notes. Budget reads sum adjustments per cell. RLS by `workspace_id`.
 - `workspace_settings` — one row per workspace storing reporting currency. RLS by `workspace_id`.
 - `accounts` — view derived from `ledger_entries` (inherits RLS automatically).
 

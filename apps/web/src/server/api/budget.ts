@@ -20,24 +20,6 @@ type BudgetPlanFillBody = Readonly<{
   baseValue: number;
 }>;
 
-type BudgetCommentQuery = Readonly<{
-  month: string;
-  direction: "income" | "spend";
-  category: string;
-}>;
-
-type BudgetCommentBody = Readonly<{
-  month: string;
-  direction: "income" | "spend";
-  category: string;
-  comment: string;
-}>;
-
-type BudgetMonthRangeQuery = Readonly<{
-  monthFrom: string;
-  monthTo: string;
-}>;
-
 type BudgetGridQuery = Readonly<{
   monthFrom: string;
   monthTo: string;
@@ -103,17 +85,6 @@ const budgetPlanFillBodySchema = z.object({
   baseValue: finiteNumberSchema("baseValue"),
 });
 
-const budgetCommentBodySchema = z.object({
-  month: monthSchema,
-  direction: directionSchema,
-  category: categorySchema,
-  comment: z.unknown().superRefine((value, ctx) => {
-    if (typeof value !== "string" || value.length > 2000) {
-      ctx.addIssue({ code: "custom", message: "Invalid comment. Expected string (max 2000 chars)" });
-    }
-  }).transform((value): string => value as string),
-});
-
 /**
  * Validate the POST /api/budget-plan request body.
  */
@@ -143,41 +114,6 @@ export const parseBudgetAdjustmentPatchBody = (input: unknown): PatchBudgetAdjus
  */
 export const parseBudgetAdjustmentId = (input: unknown): string =>
   parseWithSchema(input, adjustmentIdSchema);
-
-/**
- * Validate the GET /api/budget-comment query string.
- */
-export const parseBudgetCommentQuery = (searchParams: URLSearchParams): BudgetCommentQuery => ({
-  month: parseRequiredQueryParam(searchParams, "month", monthSchema, "Invalid month format. Expected YYYY-MM"),
-  direction: parseRequiredQueryParam(searchParams, "direction", directionSchema, "Invalid direction. Expected 'income' or 'spend'"),
-  category: parseRequiredQueryParam(searchParams, "category", categorySchema, "Invalid category. Expected non-empty string (max 200 chars)"),
-});
-
-/**
- * Validate the POST /api/budget-comment request body.
- */
-export const parseBudgetCommentBody = (input: unknown): BudgetCommentBody =>
-  parseWithSchema(input, budgetCommentBodySchema);
-
-/**
- * Validate the month-range query used by budget comment presence endpoints.
- */
-export const parseBudgetMonthRangeQuery = (searchParams: URLSearchParams): BudgetMonthRangeQuery => {
-  const monthFrom = searchParams.get("monthFrom");
-  const monthTo = searchParams.get("monthTo");
-
-  if (monthFrom === null || monthTo === null) {
-    throw createBadRequestError("Missing required query params: monthFrom, monthTo");
-  }
-
-  const parsedMonthFrom = parseWithSchema(monthFrom, monthSchema);
-  const parsedMonthTo = parseWithSchema(monthTo, monthSchema);
-  if (parsedMonthFrom > parsedMonthTo) {
-    throw createBadRequestError("monthFrom must be <= monthTo");
-  }
-
-  return { monthFrom: parsedMonthFrom, monthTo: parsedMonthTo };
-};
 
 /**
  * Validate the GET /api/budget-grid query string.

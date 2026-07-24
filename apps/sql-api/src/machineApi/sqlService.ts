@@ -21,12 +21,8 @@ const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
     related: ["ledger_entries", "account_metadata", "workspace_settings"],
   },
   budget_lines: {
-    summary: "Append-only monthly budget plan rows with last-write-wins semantics.",
-    related: ["budget_comments", "workspace_settings"],
-  },
-  budget_comments: {
-    summary: "Append-only comments attached to monthly budget categories.",
-    related: ["budget_lines", "workspace_settings"],
+    summary: "Append-only monthly Base budget rows with last-write-wins semantics.",
+    related: ["workspace_settings"],
   },
   workspace_settings: {
     summary: "Per-workspace reporting configuration such as reporting currency.",

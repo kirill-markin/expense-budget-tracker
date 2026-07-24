@@ -159,7 +159,6 @@ export type BudgetPlanCellProps = Readonly<{
     month: string,
     direction: string,
     category: string,
-    kind: "base" | "modifier",
     value: number,
   ) => void;
   onBaseMutationIssued: (
@@ -309,7 +308,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     );
     presentedBaseMutationRef.current = { snapshot, mutationGeneration };
     onSyncStart();
-    onPlanSave(month, direction, category, "base", snapshot.value);
+    onPlanSave(month, direction, category, snapshot.value);
     try {
       await postBudgetPlan({
         month,
@@ -567,7 +566,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       );
     }
     baseInputValueRef.current = String(rolledBack.value);
-    onPlanSave(month, direction, category, "base", rolledBack.value);
+    onPlanSave(month, direction, category, rolledBack.value);
     needsBaseSaveRecoveryRef.current = true;
     needsBaseValidationRecoveryRef.current = false;
     setBaseInput(baseInputValueRef.current);
@@ -809,7 +808,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
         );
       }
       baseInputValueRef.current = String(rolledBack.value);
-      onPlanSave(month, direction, category, "base", rolledBack.value);
+      onPlanSave(month, direction, category, rolledBack.value);
       needsBaseSaveRecoveryRef.current = false;
       needsBaseValidationRecoveryRef.current = false;
       handledBaseFailureRevisionRef.current = null;

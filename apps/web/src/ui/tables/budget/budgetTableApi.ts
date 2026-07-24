@@ -186,7 +186,7 @@ export const postBudgetPlan = async (params: {
   month: string;
   direction: string;
   category: string;
-  kind: "base" | "modifier";
+  kind: "base";
   plannedValue: number;
 }): Promise<void> => {
   const response = await fetchWithCsrf("/api/budget-plan", {
@@ -267,29 +267,3 @@ export const deleteBudgetAdjustment = async (
     return readBudgetAdjustmentDeleteResponse(response, adjustmentId);
   },
 );
-
-export const fetchComment = async (month: string, direction: string, category: string): Promise<string | null> => {
-  const params = new URLSearchParams({ month, direction, category });
-  const response = await fetchLiveData(`/api/budget-comment?${params.toString()}`);
-  if (!response.ok) {
-    throw new Error(`Comment fetch failed: ${response.status} ${await response.text()}`);
-  }
-  const data = await response.json() as { comment: string | null };
-  return data.comment;
-};
-
-export const postComment = async (params: {
-  month: string;
-  direction: string;
-  category: string;
-  comment: string;
-}): Promise<void> => {
-  const response = await fetchWithCsrf("/api/budget-comment", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  if (!response.ok) {
-    throw new Error(`Comment save failed: ${response.status} ${await response.text()}`);
-  }
-};

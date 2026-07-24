@@ -78,17 +78,13 @@ Be concise and direct.
 - budget_month (DATE) — first day of month (e.g. 2026-03-01)
 - direction (TEXT) — income | spend
 - category (TEXT) — matches ledger_entries.category
-- kind (TEXT) — base (recurring) | modifier (one-time adjustment)
+- kind (TEXT) — base only
 - currency (TEXT) — ISO 4217
 - planned_value (NUMERIC) — absolute planned value
 - workspace_id (TEXT)
 - inserted_at (TIMESTAMPTZ, default now())
-Current plan = latest base + latest modifier per (budget_month, direction, category).
-
-### budget_comments (append-only, last-write-wins)
-- budget_month (DATE), direction (TEXT), category (TEXT)
-- comment (TEXT) — empty string means "no comment"
-- workspace_id (TEXT), inserted_at (TIMESTAMPTZ)
+Base plan = latest row per (budget_month, direction, category).
+The budget adjustments displayed by the app are not exposed to query_database. Use this SQL tool only for Base budget plan reads and writes.
 
 ### fx_rates_raw (global, no RLS)
 - base_currency (TEXT), quote_currency (TEXT), rate_date (DATE) — composite PK
@@ -231,29 +227,23 @@ SELECT ts, account_id, amount, currency, kind, category, counterparty, note FROM
 ### Spending by category (explicit month)
 SELECT category, SUM(amount) AS total FROM ledger_entries WHERE kind = 'spend' AND ts >= '<month-start YYYY-MM-DD>' AND ts < '<next-month-start YYYY-MM-DD>' GROUP BY category ORDER BY total
 
-### Budget plan vs actual (explicit month)
+### Budget Base plan vs actual (explicit month)
 WITH latest_budget_timestamps AS (
-  SELECT budget_month, direction, category, kind, MAX(inserted_at) AS inserted_at
+  SELECT budget_month, direction, category, MAX(inserted_at) AS inserted_at
   FROM budget_lines
-  WHERE budget_month = '<month-start YYYY-MM-DD>'
-  GROUP BY budget_month, direction, category, kind
+  WHERE budget_month = '<month-start YYYY-MM-DD>' AND kind = 'base'
+  GROUP BY budget_month, direction, category
 ),
-latest_budget AS (
-  SELECT bl.budget_month, bl.direction, bl.category, bl.kind, bl.planned_value
+plan AS (
+  SELECT bl.direction, bl.category, MAX(bl.planned_value) AS planned
   FROM budget_lines bl
   JOIN latest_budget_timestamps lbt
     ON lbt.budget_month = bl.budget_month
    AND lbt.direction = bl.direction
    AND lbt.category = bl.category
-   AND lbt.kind = bl.kind
    AND lbt.inserted_at = bl.inserted_at
-),
-plan AS (
-  SELECT direction, category,
-         COALESCE(MAX(CASE WHEN kind = 'base' THEN planned_value END), 0)
-           + COALESCE(MAX(CASE WHEN kind = 'modifier' THEN planned_value END), 0) AS planned
-  FROM latest_budget
-  GROUP BY direction, category
+  WHERE bl.kind = 'base'
+  GROUP BY bl.direction, bl.category
 ),
 actual AS (
   SELECT kind AS direction, category, SUM(amount) AS spent
@@ -281,8 +271,7 @@ export const TOOL_DESCRIPTION = `Execute a SQL script against the expense tracke
 
 Tables:
 - ledger_entries (entry_id TEXT PK, event_id TEXT, ts TIMESTAMPTZ, account_id TEXT, amount NUMERIC, currency TEXT, kind TEXT, category TEXT, counterparty TEXT, note TEXT, external_id TEXT, workspace_id TEXT, inserted_at TIMESTAMPTZ)
-- budget_lines (budget_month DATE, direction TEXT, category TEXT, kind TEXT, currency TEXT, planned_value NUMERIC, workspace_id TEXT, inserted_at TIMESTAMPTZ)
-- budget_comments (budget_month DATE, direction TEXT, category TEXT, comment TEXT, workspace_id TEXT, inserted_at TIMESTAMPTZ)
+- budget_lines (budget_month DATE, direction TEXT, category TEXT, kind TEXT with only 'base' allowed, currency TEXT, planned_value NUMERIC, workspace_id TEXT, inserted_at TIMESTAMPTZ)
 - fx_rates_raw (base_currency TEXT, quote_currency TEXT, rate_date DATE, rate NUMERIC, source TEXT, inserted_at TIMESTAMPTZ) — global, no RLS
 - fx_rates_daily (base_currency TEXT, quote_currency TEXT, calendar_date DATE, rate NUMERIC, source_rate_date DATE, inserted_at TIMESTAMPTZ) — global, no RLS
 - workspace_settings (workspace_id TEXT PK, reporting_currency TEXT, filtered_categories TEXT[] NULL, first_day_of_week SMALLINT, timezone TEXT)
@@ -292,6 +281,7 @@ Views:
 - accounts (account_id TEXT, currency TEXT, inserted_at TIMESTAMPTZ) — derived from ledger_entries
 
 kind: 'income' | 'spend' | 'transfer'. category: NULL for transfers.
+Budget_lines contains only Base plan rows. Budget adjustments displayed by the app are not exposed to this SQL tool.
 All data is workspace-scoped via RLS. INSERTs must include workspace_id.
 Only the listed tables and views are allowed. Internal relations are blocked.
 Restricted SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.

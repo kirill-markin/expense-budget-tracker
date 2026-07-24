@@ -254,7 +254,7 @@ export const setBudgetPlan = async (
     month: string;
     direction: "income" | "spend";
     category: string;
-    kind: "base" | "modifier";
+    kind: "base";
     plannedValue: number;
   }>,
 ): Promise<void> => {

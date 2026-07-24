@@ -34,7 +34,6 @@ export type BudgetDirectionSectionProps = Readonly<{
     month: string,
     direction: string,
     category: string,
-    kind: "base" | "modifier",
     value: number,
   ) => void;
   onBaseMutationIssued: (
