@@ -58,6 +58,10 @@ export type ChatMessage = Readonly<{
 
 export type ChatStreamEvent =
   | Readonly<{
+    type: "session";
+    sessionId: string;
+  }>
+  | Readonly<{
     type: "delta";
     text: string;
     itemId: string;

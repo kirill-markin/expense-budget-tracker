@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { LangfuseObservation } from "@langfuse/tracing";
+import { prependSessionEvent } from "@/server/chat/http/freshSessionRoute";
+import { createChatEventStream } from "@/server/chat/http/sse";
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import {
   clearActiveChatRunForTests,
   createActiveChatRunForTests,
+  getActiveChatRunSubscriberCountForTests,
   hasActiveChatRun,
   markActiveChatRunCancellationPersisted,
   releaseChatRunStartReservation,
@@ -43,6 +46,26 @@ const createDeferred = (): Deferred => {
     resolve: resolvePromise,
   };
 };
+
+const resolvesWithin = async (
+  promise: Promise<unknown>,
+  timeoutMs: number,
+): Promise<boolean> =>
+  new Promise<boolean>((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve(false);
+    }, timeoutMs);
+    void promise.then(
+      (): void => {
+        clearTimeout(timeout);
+        resolve(true);
+      },
+      (): void => {
+        clearTimeout(timeout);
+        resolve(true);
+      },
+    );
+  });
 
 const requireReservation = (
   sessionId: string,
@@ -475,6 +498,99 @@ test("reserveChatRunStart can be released before runtime start", (): void => {
 
   const secondReservation = requireReservation(sessionId);
   releaseChatRunStartReservation(secondReservation);
+});
+
+test("cancelling the session-prefixed SSE stream unsubscribes a pending read without aborting the backend run", async (): Promise<void> => {
+  const sessionId = "session-unconsumed-subscriber";
+  const params = createRunParams(sessionId);
+  const runStarted = createDeferred();
+  const releaseBackendRun = createDeferred();
+  const backendRunFinished = createDeferred();
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  const runtimeEvents = startPersistedChatRunWithDeps(
+    params,
+    requireReservation(sessionId),
+    createRuntimeDependencies(
+      {
+        runOpenAILoop: async (): Promise<Readonly<{
+          openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
+        }>> => {
+          runStarted.resolve();
+          await releaseBackendRun.promise;
+          return { openaiItems: [] };
+        },
+        endTaskProtection: async (): Promise<void> => {
+          backendRunFinished.resolve();
+        },
+      },
+      recorded,
+    ),
+  );
+  const stream = createChatEventStream({
+    events: prependSessionEvent(sessionId, runtimeEvents),
+    heartbeatIntervalMs: 10_000,
+    onStreamError: () => undefined,
+  });
+  const reader = stream.getReader();
+
+  try {
+    await runStarted.promise;
+    const firstChunk = await reader.read();
+    assert.equal(firstChunk.done, false);
+    assert.equal(
+      new TextDecoder().decode(firstChunk.value),
+      `data: ${JSON.stringify({ type: "session", sessionId })}\n\n`,
+    );
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    assert.equal(getActiveChatRunSubscriberCountForTests(sessionId), 1);
+    assert.equal(hasActiveChatRun(sessionId, params.activeRunId), true);
+
+    const cancellation = reader.cancel();
+
+    assert.equal(await resolvesWithin(cancellation, 250), true);
+    await cancellation;
+    assert.equal(getActiveChatRunSubscriberCountForTests(sessionId), 0);
+    assert.equal(hasActiveChatRun(sessionId, params.activeRunId), true);
+
+    releaseBackendRun.resolve();
+    await backendRunFinished.promise;
+    assert.equal(hasActiveChatRun(sessionId, params.activeRunId), false);
+  } finally {
+    releaseBackendRun.resolve();
+    await reader.cancel().catch((): void => undefined);
+    clearActiveChatRunForTests(sessionId);
+  }
+});
+
+test("separate session ids keep independent active backend runs", (): void => {
+  const firstSessionId = "session-parallel-1";
+  const secondSessionId = "session-parallel-2";
+  const firstActiveRunId = "run-parallel-1";
+  const secondActiveRunId = "run-parallel-2";
+
+  createActiveChatRunForTests(firstSessionId, firstActiveRunId);
+  createActiveChatRunForTests(secondSessionId, secondActiveRunId);
+
+  try {
+    assert.equal(hasActiveChatRun(firstSessionId, firstActiveRunId), true);
+    assert.equal(hasActiveChatRun(secondSessionId, secondActiveRunId), true);
+    assert.deepEqual(stopActiveChatRun(firstSessionId, firstActiveRunId), {
+      stopped: true,
+      activeRunId: firstActiveRunId,
+    });
+    assert.equal(hasActiveChatRun(secondSessionId, secondActiveRunId), true);
+  } finally {
+    clearActiveChatRunForTests(firstSessionId);
+    clearActiveChatRunForTests(secondSessionId);
+  }
 });
 
 test("stopActiveChatRun ignores mismatched active run ids", (): void => {

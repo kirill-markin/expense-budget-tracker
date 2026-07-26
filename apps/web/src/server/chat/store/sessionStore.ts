@@ -1,5 +1,6 @@
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
+import type { ContentPart } from "@/server/chat/types";
 import {
   ChatSessionRunTransitionError,
   ChatSessionNotFoundError,
@@ -71,6 +72,22 @@ const INSERT_SESSION_SQL = `
     updated_at
   )
   VALUES ($1, $2, 'idle', NULL, NULL, 0, now())
+  RETURNING session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+`;
+
+const INSERT_RUNNING_SESSION_SQL = `
+  INSERT INTO public.chat_sessions (
+    user_id,
+    workspace_id,
+    status,
+    active_run_id,
+    active_run_heartbeat_at,
+    main_content_invalidation_version,
+    title,
+    last_message_at,
+    updated_at
+  )
+  VALUES ($1, $2, 'running', $3, now(), 0, $4, now(), now())
   RETURNING session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
 `;
 
@@ -179,6 +196,52 @@ export const createChatSessionWithQuery = async (
 ): Promise<ChatSessionRow> => {
   const result = await queryFn(INSERT_SESSION_SQL, [userId, workspaceId]);
   return requireSessionRow(result.rows[0] as ChatSessionRow | undefined, "insert");
+};
+
+const normalizeChatSessionTitle = (value: string): string | null => {
+  const normalizedValue = value.replace(/\s+/gu, " ").trim();
+  if (normalizedValue === "") {
+    return null;
+  }
+
+  return Array.from(normalizedValue).slice(0, 200).join("");
+};
+
+export const deriveChatSessionTitle = (
+  content: ReadonlyArray<ContentPart>,
+): string | null => {
+  const textTitle = normalizeChatSessionTitle(
+    content
+      .filter((part): part is Extract<ContentPart, { type: "text" }> => part.type === "text")
+      .map((part) => part.text)
+      .join(""),
+  );
+  if (textTitle !== null) {
+    return textTitle;
+  }
+
+  const firstFile = content.find(
+    (part): part is Extract<ContentPart, { type: "file" }> => part.type === "file",
+  );
+  return firstFile === undefined
+    ? null
+    : normalizeChatSessionTitle(firstFile.fileName);
+};
+
+export const createRunningChatSessionWithQuery = async (
+  queryFn: QueryFn,
+  userId: string,
+  workspaceId: string,
+  activeRunId: string,
+  title: string | null,
+): Promise<ChatSessionRow> => {
+  const result = await queryFn(INSERT_RUNNING_SESSION_SQL, [
+    userId,
+    workspaceId,
+    activeRunId,
+    title,
+  ]);
+  return requireSessionRow(result.rows[0] as ChatSessionRow | undefined, "running insert");
 };
 
 export const resolveRequestedChatSessionWithQuery = async (
