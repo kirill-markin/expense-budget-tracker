@@ -1,0 +1,282 @@
+.historyButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 28px;
+  block-size: 24px;
+  padding: 0;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--muted);
+  font-family: inherit;
+}
+
+.historyButton:hover,
+.historyButton[aria-expanded="true"] {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.historyButton:focus-visible,
+.dialogAction:focus-visible,
+.sessionButton:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.historyButtonIcon {
+  display: block;
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.runningBadge {
+  position: absolute;
+  inset-block-start: -7px;
+  inset-inline-end: -7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 17px;
+  block-size: 17px;
+  padding-inline: 4px;
+  border: 1px solid var(--bg);
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.dialog {
+  position: fixed;
+  inset: 0;
+  box-sizing: border-box;
+  inline-size: min(400px, calc(100vw - 24px));
+  max-block-size: min(560px, calc(100dvh - 24px));
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  font-family: inherit;
+}
+
+.dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.dialogHeader {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 8px;
+  padding-inline: 12px;
+  border-block-end: 1px solid var(--panel-border);
+  background: var(--panel);
+}
+
+.dialogTitle,
+.sectionTitle {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.dialogActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dialogAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 24px;
+  padding-block: 2px;
+  padding-inline: 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.dialogAction:hover {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.closeAction {
+  inline-size: 24px;
+  padding: 0;
+}
+
+.closeIcon {
+  display: block;
+  inline-size: 12px;
+  block-size: 12px;
+}
+
+.dialogBody {
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--panel);
+}
+
+.section + .section {
+  border-block-start: 1px solid var(--panel-border);
+}
+
+.sectionTitle {
+  padding-block: 8px 5px;
+  padding-inline: 12px;
+}
+
+.sessionList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sessionListItem + .sessionListItem {
+  border-block-start: 1px solid var(--panel-border);
+}
+
+.sessionButton {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  inline-size: 100%;
+  min-block-size: 36px;
+  padding-block: 7px;
+  padding-inline: 12px;
+  border: 0;
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.sessionButton:hover,
+.sessionButtonSelected {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.sessionButtonSelected:focus-visible {
+  outline-color: var(--bg);
+  outline-offset: -3px;
+}
+
+.statusMarkerSlot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 8px;
+  block-size: 8px;
+}
+
+.runningMarker {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: runningPulse 1.4s ease-in-out infinite;
+}
+
+.sessionTitle {
+  display: flex;
+  justify-content: flex-start;
+  min-inline-size: 0;
+}
+
+.sessionTitle bdi {
+  display: block;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessionActivity {
+  max-inline-size: 150px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessionButton:hover .sessionActivity,
+.sessionButtonSelected .sessionActivity {
+  color: inherit;
+}
+
+.emptyState {
+  margin: 0;
+  padding-block: 20px;
+  padding-inline: 12px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  text-align: start;
+}
+
+@keyframes runningPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.45;
+    transform: scale(0.7);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runningMarker {
+    animation: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .dialog {
+    inline-size: calc(100vw - 16px);
+    max-block-size: calc(100dvh - 16px);
+  }
+
+  .dialogHeader,
+  .sectionTitle,
+  .sessionButton,
+  .emptyState {
+    padding-inline: 10px;
+  }
+
+  .sessionActivity {
+    max-inline-size: 38vw;
+  }
+}
