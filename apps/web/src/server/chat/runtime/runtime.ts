@@ -308,6 +308,16 @@ const createChatRunSubscriber = (
     });
   };
 
+  const closeSubscriber = (): void => {
+    const activeRun = activeChatRuns.get(sessionId);
+    if (activeRun !== undefined && subscriber !== null) {
+      activeRun.subscribers.delete(subscriber);
+    }
+    if (subscriber !== null) {
+      subscriber.close();
+    }
+  };
+
   subscriber = {
     push: (event: ChatStreamEvent): void => {
       if (isClosed) {
@@ -329,25 +339,28 @@ const createChatRunSubscriber = (
       isClosed = true;
       resolvePending({ done: true, value: undefined });
     },
-    createIterator: async function* (): AsyncGenerator<ChatStreamEvent> {
-      try {
-        while (true) {
-          const next = await nextEvent();
-          if (next.done) {
-            return;
-          }
+    createIterator: (): AsyncGenerator<ChatStreamEvent> => {
+      const iterator = (async function* (): AsyncGenerator<ChatStreamEvent> {
+        try {
+          while (true) {
+            const next = await nextEvent();
+            if (next.done) {
+              return;
+            }
 
-          yield next.value;
+            yield next.value;
+          }
+        } finally {
+          closeSubscriber();
         }
-      } finally {
-        const activeRun = activeChatRuns.get(sessionId);
-        if (activeRun !== undefined && subscriber !== null) {
-          activeRun.subscribers.delete(subscriber);
-        }
-        if (subscriber !== null) {
-          subscriber.close();
-        }
-      }
+      })();
+
+      const returnIterator = iterator.return.bind(iterator);
+      iterator.return = async (value): Promise<IteratorResult<ChatStreamEvent>> => {
+        closeSubscriber();
+        return returnIterator(value);
+      };
+      return iterator;
     },
   };
 
@@ -878,3 +891,8 @@ export const clearActiveChatRunForTests = (
   activeChatRuns.delete(sessionId);
   chatRunStartReservations.delete(sessionId);
 };
+
+export const getActiveChatRunSubscriberCountForTests = (
+  sessionId: string,
+): number =>
+  activeChatRuns.get(sessionId)?.subscribers.size ?? 0;

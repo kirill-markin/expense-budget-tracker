@@ -13,6 +13,12 @@ export type ChatRequestBody = Readonly<{
   timezone: string;
 }>;
 
+export type FreshChatRequestBody = Readonly<{
+  content: ReadonlyArray<ContentPart>;
+  model: string;
+  timezone: string;
+}>;
+
 export type ChatRequestContext = Readonly<{
   userId: string;
   workspaceId: string;
@@ -103,7 +109,7 @@ export const extractChatRequestContext = (request: Request): ChatRequestContext 
   workspaceId: extractWorkspaceId(request),
 });
 
-export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
+const parseChatMessageRequestBody = (body: unknown): FreshChatRequestBody => {
   if (!isRecord(body)) {
     throw new Error("Invalid chat request body");
   }
@@ -114,7 +120,7 @@ export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
     }
   }
 
-  const candidate = body as Partial<ChatRequestBody>;
+  const candidate = body as Partial<FreshChatRequestBody>;
   if (!Array.isArray(candidate.content) || candidate.content.length === 0) {
     throw new Error("content array is empty");
   }
@@ -127,18 +133,34 @@ export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
   if (typeof candidate.timezone !== "string" || candidate.timezone.length === 0) {
     throw new Error("timezone must be a non-empty string");
   }
-  if (typeof candidate.sessionId !== "string" || candidate.sessionId.trim().length === 0) {
-    throw new Error("sessionId must be a non-empty string");
-  }
 
   validateChatAttachments(candidate.content);
 
   return {
-    sessionId: candidate.sessionId,
     content: candidate.content,
     model: candidate.model,
     timezone: candidate.timezone,
   };
+};
+
+export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
+  const parsedBody = parseChatMessageRequestBody(body);
+  if (!isRecord(body) || typeof body.sessionId !== "string" || body.sessionId.trim().length === 0) {
+    throw new Error("sessionId must be a non-empty string");
+  }
+
+  return {
+    sessionId: body.sessionId,
+    ...parsedBody,
+  };
+};
+
+export const parseFreshChatRequestBody = (body: unknown): FreshChatRequestBody => {
+  if (isRecord(body) && "sessionId" in body) {
+    throw new Error("sessionId is not supported for fresh chat requests");
+  }
+
+  return parseChatMessageRequestBody(body);
 };
 
 export const buildChatRequestDiagnostics = (

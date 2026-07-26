@@ -63,6 +63,7 @@ export {
   persistAssistantCancelled,
   persistAssistantTerminalError,
   prepareChatRun,
+  prepareFreshChatRun,
   recoverStaleChatSession,
   recoverStaleChatSessionWithQuery,
 } from "./store/lifecycleStore";

@@ -60,9 +60,14 @@ const INSERT_CHAT_ITEM_SQL = `
     RETURNING item_id, session_id, state, payload, created_at, updated_at
   ),
   touched_session AS (
-    UPDATE public.chat_sessions
-    SET updated_at = now()
-    WHERE session_id = (SELECT session_id FROM inserted_item)
+    UPDATE public.chat_sessions AS session
+    SET updated_at = inserted_item.updated_at,
+        last_message_at = CASE
+          WHEN $4 THEN inserted_item.updated_at
+          ELSE session.last_message_at
+        END
+    FROM inserted_item
+    WHERE session.session_id = inserted_item.session_id
   )
   SELECT item_id, session_id, state, payload, created_at, updated_at
   FROM inserted_item
@@ -79,9 +84,14 @@ const UPDATE_CHAT_ITEM_SQL = `
     RETURNING item_id, session_id, state, payload, created_at, updated_at
   ),
   touched_session AS (
-    UPDATE public.chat_sessions
-    SET updated_at = now()
-    WHERE session_id = (SELECT session_id FROM updated_item)
+    UPDATE public.chat_sessions AS session
+    SET updated_at = updated_item.updated_at,
+        last_message_at = CASE
+          WHEN $5 THEN updated_item.updated_at
+          ELSE session.last_message_at
+        END
+    FROM updated_item
+    WHERE session.session_id = updated_item.session_id
   )
   SELECT item_id, session_id, state, payload, created_at, updated_at
   FROM updated_item
@@ -98,10 +108,15 @@ const UPDATE_CHAT_ITEM_AND_INVALIDATE_MAIN_CONTENT_SQL = `
     RETURNING item_id, session_id, state, payload, created_at, updated_at
   ),
   invalidated_session AS (
-    UPDATE public.chat_sessions
+    UPDATE public.chat_sessions AS session
     SET main_content_invalidation_version = main_content_invalidation_version + 1,
-        updated_at = now()
-    WHERE session_id = (SELECT session_id FROM updated_item)
+        updated_at = updated_item.updated_at,
+        last_message_at = CASE
+          WHEN $5 THEN updated_item.updated_at
+          ELSE session.last_message_at
+        END
+    FROM updated_item
+    WHERE session.session_id = updated_item.session_id
     RETURNING main_content_invalidation_version
   )
   SELECT
@@ -139,6 +154,16 @@ const toChatItemPayload = (
     : {}),
 });
 
+const isVisibleChatItemActivity = (
+  role: "user" | "assistant",
+  state: ChatItemState,
+  content: ReadonlyArray<ContentPart>,
+): boolean =>
+  role === "user"
+  || content.length > 0
+  || state === "error"
+  || state === "cancelled";
+
 export const mapChatItemRow = (row: ChatItemRow): PersistedChatMessageItem => ({
   itemId: row.item_id,
   sessionId: row.session_id,
@@ -168,6 +193,7 @@ export const insertChatItemWithQuery = async (
     params.sessionId,
     params.state,
     JSON.stringify(toChatItemPayload(params.role, params.content, params.assistantOpenAIItems)),
+    isVisibleChatItemActivity(params.role, params.state, params.content),
   ]);
 
   return mapChatItemRow(
@@ -184,6 +210,7 @@ export const updateChatItemWithQuery = async (
     params.sessionId,
     JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
     params.state,
+    isVisibleChatItemActivity("assistant", params.state, params.content),
   ]);
 
   return mapChatItemRow(
@@ -203,6 +230,7 @@ export const updateChatItemAndInvalidateMainContentWithQuery = async (
     params.sessionId,
     JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
     params.state,
+    isVisibleChatItemActivity("assistant", params.state, params.content),
   ]);
 
   const row = result.rows[0] as ChatItemWithInvalidationRow | undefined;

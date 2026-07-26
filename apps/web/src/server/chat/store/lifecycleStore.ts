@@ -26,6 +26,8 @@ import {
 import { buildLocalChatMessages } from "./snapshotStore";
 import {
   completeChatSessionRunWithQuery,
+  createRunningChatSessionWithQuery,
+  deriveChatSessionTitle,
   lockActiveChatSessionRunWithQuery,
   lockChatSessionWithQuery,
   lockRequestedChatSessionWithQuery,
@@ -127,6 +129,52 @@ export const prepareChatRun = async (
 ): Promise<PreparedChatRun> =>
   withUserContext(userId, workspaceId, async (queryFn) =>
     prepareChatRunWithQuery(queryFn, userId, workspaceId, requestedSessionId, content));
+
+export const prepareFreshChatRunWithQuery = async (
+  queryFn: QueryFn,
+  userId: string,
+  workspaceId: string,
+  content: ReadonlyArray<ContentPart>,
+): Promise<PreparedChatRun> => {
+  const activeRunId = randomUUID();
+  const sessionRow = await createRunningChatSessionWithQuery(
+    queryFn,
+    userId,
+    workspaceId,
+    activeRunId,
+    deriveChatSessionTitle(content),
+  );
+  await insertChatItemWithQuery(queryFn, {
+    sessionId: sessionRow.session_id,
+    role: "user",
+    state: "completed",
+    content,
+  });
+
+  const persistedMessages = await listChatMessagesWithQuery(queryFn, sessionRow.session_id);
+  const assistantItem = await insertChatItemWithQuery(queryFn, {
+    sessionId: sessionRow.session_id,
+    role: "assistant",
+    state: "in_progress",
+    content: [],
+  });
+
+  return {
+    sessionId: sessionRow.session_id,
+    activeRunId,
+    assistantItem,
+    localMessages: buildLocalChatMessages(persistedMessages),
+    turnInput: content,
+  };
+};
+
+export const prepareFreshChatRun = async (
+  userId: string,
+  workspaceId: string,
+  content: ReadonlyArray<ContentPart>,
+): Promise<PreparedChatRun> =>
+  withUserContext(userId, workspaceId, async (queryFn) =>
+    prepareFreshChatRunWithQuery(queryFn, userId, workspaceId, content));
 
 export const completeChatRunWithQuery = async (
   queryFn: QueryFn,

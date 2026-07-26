@@ -6,10 +6,15 @@ import {
   completeChatRunWithQuery,
   persistAssistantCancelledWithQuery,
   persistAssistantTerminalErrorWithQuery,
+  prepareChatRunWithQuery,
+  prepareFreshChatRunWithQuery,
   recoverStaleChatSessionWithQuery,
 } from "@/server/chat/store/lifecycleStore";
 import { updateAssistantMessageItemWithQuery } from "@/server/chat/store/messageStore";
-import { ChatSessionRunTransitionError } from "@/server/chat/store/shared";
+import {
+  ChatSessionConflictError,
+  ChatSessionRunTransitionError,
+} from "@/server/chat/store/shared";
 import type { QueryFn } from "@/server/db/contextRunner";
 
 type RecordedQuery = Readonly<{
@@ -174,6 +179,51 @@ const createTerminalRunParams = (): Readonly<{
   assistantContent: [{ type: "text", text: "Answer" }],
 });
 
+const createFreshRunQueryFn = (
+  recordedQueries: Array<RecordedQuery>,
+  failAssistantInsert: boolean,
+): QueryFn => async (text, params): Promise<QueryResult> => {
+  recordedQueries.push({ text, params });
+
+  if (text.includes("INSERT INTO public.chat_sessions")) {
+    return createQueryResult([createSessionRow("running", String(params[2]))]);
+  }
+
+  if (text.includes("INSERT INTO public.chat_items")) {
+    const payload = JSON.parse(String(params[2])) as Readonly<{
+      role: "user" | "assistant";
+      content: ReadonlyArray<Readonly<{ type: "text"; text: string }>>;
+    }>;
+    if (payload.role === "assistant" && failAssistantInsert) {
+      throw new Error("assistant insert failed");
+    }
+    return createQueryResult([{
+      item_id: `${payload.role}-1`,
+      session_id: "session-1",
+      state: String(params[1]),
+      payload,
+      created_at: "2026-05-02T13:00:00.000Z",
+      updated_at: "2026-05-02T13:00:00.000Z",
+    }]);
+  }
+
+  if (text.includes("FROM public.chat_items")) {
+    return createQueryResult([{
+      item_id: "user-1",
+      session_id: "session-1",
+      state: "completed",
+      payload: {
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      },
+      created_at: "2026-05-02T13:00:00.000Z",
+      updated_at: "2026-05-02T13:00:00.000Z",
+    }]);
+  }
+
+  throw new Error(`Unexpected query: ${text}`);
+};
+
 const withSuppressedConsoleLog = async (
   run: () => Promise<void>,
 ): Promise<void> => {
@@ -198,6 +248,81 @@ test("completeChatRunWithQuery locks the active run before updating the assistan
   assert.match(recordedQueries[0].text, /active_run_id = \$2/);
   assert.equal(recordedQueries[1].text.includes("UPDATE public.chat_items"), true);
   assert.equal(recordedQueries[2].text.includes("UPDATE public.chat_sessions"), true);
+});
+
+test("prepareFreshChatRunWithQuery creates one running session and the two required items", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+
+  const preparedRun = await prepareFreshChatRunWithQuery(
+    createFreshRunQueryFn(recordedQueries, false),
+    "user-1",
+    "workspace-1",
+    [{ type: "text", text: "  Hello\nworld  " }],
+  );
+
+  assert.equal(preparedRun.sessionId, "session-1");
+  assert.equal(preparedRun.assistantItem.role, "assistant");
+  assert.equal(preparedRun.assistantItem.state, "in_progress");
+  assert.equal(preparedRun.localMessages.length, 1);
+  assert.equal(recordedQueries.length, 4);
+  assert.equal(recordedQueries[0].text.includes("INSERT INTO public.chat_sessions"), true);
+  assert.equal(recordedQueries[0].params[3], "Hello world");
+  assert.equal(recordedQueries[1].text.includes("INSERT INTO public.chat_items"), true);
+  assert.equal(recordedQueries[2].text.includes("FROM public.chat_items"), true);
+  assert.equal(recordedQueries[3].text.includes("INSERT INTO public.chat_items"), true);
+});
+
+test("prepareFreshChatRunWithQuery propagates item failures to the enclosing transaction", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+
+  await assert.rejects(
+    prepareFreshChatRunWithQuery(
+      createFreshRunQueryFn(recordedQueries, true),
+      "user-1",
+      "workspace-1",
+      [{ type: "text", text: "Hello" }],
+    ),
+    /assistant insert failed/,
+  );
+
+  assert.equal(
+    recordedQueries.filter((query) => query.text.includes("INSERT INTO public.chat_sessions")).length,
+    1,
+  );
+  assert.equal(
+    recordedQueries.filter((query) => query.text.includes("INSERT INTO public.chat_items")).length,
+    2,
+  );
+});
+
+test("prepareChatRunWithQuery explicitly rejects a second run in the same session", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions")) {
+      return createQueryResult([createSessionRow("running", "run-1")]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  await assert.rejects(
+    prepareChatRunWithQuery(
+      queryFn,
+      "user-1",
+      "workspace-1",
+      "session-1",
+      [{ type: "text", text: "Another message" }],
+    ),
+    (error: unknown): boolean =>
+      error instanceof ChatSessionConflictError
+      && error.message.includes("session-1"),
+  );
+
+  assert.equal(recordedQueries.length, 2);
+  assert.equal(
+    recordedQueries.some((query) => query.text.includes("INSERT INTO public.chat_items")),
+    false,
+  );
 });
 
 test("persistAssistantTerminalErrorWithQuery locks the active run before updating chat items", async (): Promise<void> => {
