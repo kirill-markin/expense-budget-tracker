@@ -13,6 +13,10 @@ export type {
   StaleChatSessionRecoveryResult,
 } from "./store/lifecycleStore";
 
+export type {
+  ChatSessionCatalogCursor,
+} from "./store/sessionCatalogStore";
+
 export {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
@@ -33,6 +37,12 @@ export {
   touchChatSessionHeartbeat,
   touchChatSessionHeartbeatWithQuery,
 } from "./store/sessionStore";
+
+export {
+  decodeChatSessionCatalogCursor,
+  InvalidChatSessionCatalogCursorError,
+  listChatSessions,
+} from "./store/sessionCatalogStore";
 
 export {
   listChatMessages,
