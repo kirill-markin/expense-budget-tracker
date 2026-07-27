@@ -20,7 +20,7 @@ type ChatTraceMetadata = Readonly<{
 export type ChatTranscriptionTraceMetadata = Readonly<{
   requestId: string;
   userId: string;
-  sessionId: string;
+  workspaceId: string;
   source: "web";
   fileName: string;
   mediaType: string;
@@ -78,7 +78,7 @@ const buildChatTranscriptionTraceMetadata = (
 ): TelemetryMetadata => ({
   requestId: metadataValue(params.requestId),
   userId: metadataValue(params.userId),
-  sessionId: metadataValue(params.sessionId),
+  workspaceId: metadataValue(params.workspaceId),
   source: metadataValue(params.source),
   fileName: metadataValue(params.fileName),
   mediaType: metadataValue(params.mediaType),
@@ -149,7 +149,7 @@ export const sanitizeChatTranscriptionForTelemetry = (
   params: ChatTranscriptionTraceMetadata,
 ): Readonly<{
   upload: Readonly<{
-    sessionId: string;
+    workspaceId: string;
     source: string;
     fileName: string;
     mediaType: string;
@@ -157,7 +157,7 @@ export const sanitizeChatTranscriptionForTelemetry = (
   }>;
 }> => ({
   upload: {
-    sessionId: params.sessionId,
+    workspaceId: params.workspaceId,
     source: params.source,
     fileName: params.fileName,
     mediaType: params.mediaType,

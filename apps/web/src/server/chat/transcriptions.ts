@@ -26,7 +26,7 @@ type OpenAITranscriptionClient = Readonly<{
 export type ChatTranscriptionUpload = Readonly<{
   file: File;
   source: ChatTranscriptionSource;
-  sessionId: string;
+  sessionId: string | null;
 }>;
 
 export type ChatTranscriptionTelemetryContext = ChatTranscriptionTraceMetadata;
@@ -121,22 +121,19 @@ export const parseChatTranscriptionUpload = async (request: Request): Promise<Ch
     throw new ApiRouteError(400, "source must be web");
   }
 
+  const sessionValue = formData.get("sessionId");
+  if (sessionValue !== null && typeof sessionValue !== "string") {
+    throw new ApiRouteError(400, "sessionId must be a string when provided");
+  }
+  const sessionId = sessionValue?.trim() ?? null;
+  if (sessionId === "") {
+    throw new ApiRouteError(400, "sessionId must not be empty when provided");
+  }
+
   return {
     file: fileValue,
     source: sourceValue,
-    sessionId: (() => {
-      const sessionValue = formData.get("sessionId");
-      if (typeof sessionValue !== "string") {
-        throw new ApiRouteError(400, "sessionId is required");
-      }
-
-      const normalizedSessionId = sessionValue.trim();
-      if (normalizedSessionId === "") {
-        throw new ApiRouteError(400, "sessionId is required");
-      }
-
-      return normalizedSessionId;
-    })(),
+    sessionId,
   };
 };
 
@@ -206,7 +203,7 @@ const logChatTranscriptionFailure = (
     vendor: "openai",
     requestId: telemetryContext.requestId,
     userId: telemetryContext.userId,
-    sessionId: telemetryContext.sessionId,
+    workspaceId: telemetryContext.workspaceId,
     source: upload.source,
     fileName: upload.file.name,
     fileSize: upload.file.size,

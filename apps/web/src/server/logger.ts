@@ -164,7 +164,7 @@ type ChatTranscriptionEvent = Readonly<{
   vendor: ChatVendor;
   requestId: string;
   userId: string;
-  sessionId: string;
+  workspaceId: string;
   source: "web";
   fileName: string;
   fileSize: number;
