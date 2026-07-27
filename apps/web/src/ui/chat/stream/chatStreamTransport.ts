@@ -86,6 +86,13 @@ export const applyChatStreamEvent = (
   event: ChatStreamEvent,
   handlers: ChatStreamTransportHandlers,
 ): ChatStreamTransportResult => {
+  if (event.type === "session") {
+    return {
+      receivedContent: false,
+      reachedTerminalState: false,
+    };
+  }
+
   if (event.type === "delta") {
     handlers.appendAssistantChunk(event.text, buildToolContentStreamPosition(event));
     return {

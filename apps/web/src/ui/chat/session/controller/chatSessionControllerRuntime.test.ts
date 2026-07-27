@@ -17,6 +17,7 @@ import {
   ChatTurnCancellationRequestError,
   classifyConfirmedChatStopSnapshotFailure,
   completeChatTurnCancellation,
+  createChatSendTransport,
   createChatSnapshotRequestCoordinator,
   createSingleFlightChatClearOperationRunner,
   createSingleFlightChatSendReconciliationRunner,
@@ -26,6 +27,7 @@ import {
   fetchChatSessionSnapshot,
   isChatClearOperationOwnerCurrent,
   isChatPreSessionSendOwnerCurrent,
+  isChatSelectionGuardCurrent,
   isCanonicalChatUuid,
   isChatSnapshotPollingOwnerCurrent,
   isChatSnapshotRequestCurrent,
@@ -47,10 +49,14 @@ import {
   resolveDefinitiveChatSendSnapshotFailureHistory,
   resolveConfirmedChatStopSnapshotDisposition,
   resolveConfirmedChatTurnStopHistory,
+  resolveSelectedChatSessionGuard,
   resolveChatSnapshotFailureDisposition,
   resolveChatSnapshotRequest,
   restorePendingChatTurnAfterCancellationRejection,
   selectSupersedingChatSnapshotRequestResult,
+  shouldAbortChatStreamForControllerCleanup,
+  shouldAbortChatStreamForSelectionChange,
+  shouldAbortChatStreamForSelectionEpoch,
   shouldRestoreChatRunAfterSnapshotFailure,
   shouldRestoreChatTurnAfterCancellationRejection,
   streamChatResponse,
@@ -124,6 +130,138 @@ test("buildChatSendRequestBody serializes explicit session ids", (): void => {
   assert.equal(parsedRequestBody.sessionId, "session-4");
   assert.equal(parsedRequestBody.turnId, TURN_ID);
   assert.deepEqual(parsedRequestBody.content, [{ type: "text", text: "Hello" }]);
+});
+
+test("fresh drafts send through the lazy creation route without session or turn ids", (): void => {
+  const transport = createChatSendTransport(
+    { kind: "draft", draftId: "draft-1" },
+    [{ type: "text", text: "Hello" }],
+    TURN_ID,
+  );
+  const payload = JSON.parse(transport.requestBody) as Readonly<Record<string, unknown>>;
+
+  assert.equal(transport.url, "/api/chat/new");
+  assert.equal("sessionId" in payload, false);
+  assert.equal("turnId" in payload, false);
+});
+
+test("existing sessions retain exact-turn identity on the session route", (): void => {
+  const transport = createChatSendTransport(
+    { kind: "session", sessionId: "session-1" },
+    [{ type: "text", text: "Continue" }],
+    TURN_ID,
+  );
+  const payload = JSON.parse(transport.requestBody) as Readonly<Record<string, unknown>>;
+
+  assert.equal(transport.url, "/api/chat");
+  assert.equal(payload.sessionId, "session-1");
+  assert.equal(payload.turnId, TURN_ID);
+});
+
+test("selection guards require both the target id and monotonic epoch", (): void => {
+  const guard = {
+    target: { kind: "session", sessionId: "session-a" },
+    selectionEpoch: 3,
+  } as const;
+
+  assert.equal(
+    isChatSelectionGuardCurrent(
+      guard,
+      { kind: "session", sessionId: "session-a" },
+      3,
+    ),
+    true,
+  );
+  assert.equal(
+    isChatSelectionGuardCurrent(
+      guard,
+      { kind: "session", sessionId: "session-b" },
+      3,
+    ),
+    false,
+  );
+  assert.equal(
+    isChatSelectionGuardCurrent(
+      guard,
+      { kind: "session", sessionId: "session-a" },
+      4,
+    ),
+    false,
+  );
+});
+
+test("a delayed failed Stop refreshes the latest A selection after A to B to A", (): void => {
+  const initiatingGuard = {
+    target: { kind: "session", sessionId: "session-a" },
+    selectionEpoch: 1,
+  } as const;
+  let controllerState = reduceChatSessionControllerState(
+    createInitialChatSessionControllerState(),
+    { type: "selection_changed", sessionId: "session-a" },
+  );
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "run_started",
+  });
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "stop_requested",
+    sessionId: "session-a",
+  });
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "selection_changed",
+    sessionId: "session-b",
+  });
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "selection_changed",
+    sessionId: "session-a",
+  });
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "snapshot_applied",
+    sessionId: "session-a",
+    runState: "running",
+    updatedAt: 10,
+    mainContentInvalidationVersion: 0,
+  });
+  assert.equal(controllerState.runState, "idle");
+
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "stop_failed",
+    sessionId: "session-a",
+  });
+  const latestTarget = {
+    kind: "session",
+    sessionId: "session-a",
+  } as const;
+  const latestGuard = resolveSelectedChatSessionGuard(
+    "session-a",
+    latestTarget,
+    3,
+  );
+
+  assert.equal(
+    isChatSelectionGuardCurrent(initiatingGuard, latestTarget, 3),
+    false,
+  );
+  assert.notEqual(latestGuard, null);
+  if (latestGuard === null) {
+    assert.fail("Expected the latest A selection to produce a refresh guard");
+  }
+  assert.equal(
+    isChatSelectionGuardCurrent(latestGuard, latestTarget, 3),
+    true,
+  );
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "snapshot_applied",
+    sessionId: "session-a",
+    runState: "running",
+    updatedAt: 20,
+    mainContentInvalidationVersion: 0,
+  });
+
+  assert.equal(controllerState.runState, "running");
+  assert.equal(controllerState.lastSnapshotUpdatedAt, 20);
+  assert.equal(controllerState.stoppedSessionIds.has("session-a"), false);
+  assert.equal(controllerState.stoppingSessionIds.has("session-a"), false);
+  assert.equal(selectComposerAction(controllerState), "stop");
 });
 
 test("client, active-turn, and persisted-message identities match canonical Zod UUID semantics", (): void => {
@@ -2813,7 +2951,7 @@ test("a pre-Stop running poll cannot overwrite the idle Stop snapshot", async ()
 
   assert.equal(controllerState.runState, "idle");
   assert.equal(controllerState.lastSnapshotUpdatedAt, 20);
-  assert.equal(controllerState.isHistoryLoaded, false);
+  assert.equal(controllerState.isHistoryLoaded, true);
   assert.equal(selectIsAssistantRunActive(controllerState), false);
   assert.equal(selectComposerAction(controllerState), "send");
   assert.equal(appliedMessage, "stopped transcript");
@@ -2901,6 +3039,141 @@ test("a superseded ambiguous reconciliation cannot roll back its accepted owner"
   assert.equal(disposition, "preserve_success");
   assert.deepEqual(appliedMessages, acceptedMessages);
   assert.equal(controllerState.runState, "running");
+});
+
+test("same-epoch draft adoption keeps session SSE and delayed chunks attached", async (): Promise<void> => {
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  const encoder = new TextEncoder();
+  const receivedChunks: Array<string> = [];
+  const streamSelectionEpoch = 7;
+  let pullCount = 0;
+  const adoption = Promise.withResolvers<void>();
+  const firstChunkHandled = Promise.withResolvers<void>();
+  const laterChunkGate = Promise.withResolvers<void>();
+  const responseBody = new ReadableStream<Uint8Array>({
+    pull: async (controller): Promise<void> => {
+      pullCount += 1;
+      if (pullCount === 1) {
+        controller.enqueue(encoder.encode([
+          "data: {\"type\":\"session\",\"sessionId\":\"session-adopted\"}",
+          "data: {\"type\":\"delta\",\"text\":\"first\",\"itemId\":\"assistant-1\",\"responseIndex\":0,\"outputIndex\":0,\"contentIndex\":0,\"sequenceNumber\":0}",
+          "",
+        ].join("\n\n")));
+        return;
+      }
+
+      await laterChunkGate.promise;
+      controller.enqueue(encoder.encode([
+        "data: {\"type\":\"delta\",\"text\":\"later\",\"itemId\":\"assistant-1\",\"responseIndex\":0,\"outputIndex\":0,\"contentIndex\":0,\"sequenceNumber\":1}",
+        "data: {\"type\":\"done\"}",
+        "",
+      ].join("\n\n")));
+      controller.close();
+    },
+  });
+
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { cookie: "__Host-csrf=test-token" },
+  });
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (): Promise<Response> =>
+      new Response(responseBody, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "X-Chat-Session-Id": "session-adopted",
+        },
+      }),
+  });
+
+  const abortController = new AbortController();
+  try {
+    const resultPromise = streamChatResponse({
+      url: "/api/chat/new",
+      requestBody: "{}",
+      signal: abortController.signal,
+      abortStream: (): void => abortController.abort(),
+      t: (key: string): string => key,
+      handlers: {
+        appendAssistantChunk: (text): void => {
+          receivedChunks.push(text);
+          if (text === "first") {
+            firstChunkHandled.resolve();
+          }
+        },
+        upsertReasoningSummary: (): void => {},
+        upsertToolCall: (): void => {},
+        markAssistantError: (): void => {},
+        applyMainContentInvalidationVersion: (): void => {},
+      },
+      onSessionIdReceived: (sessionId: string): void => {
+        assert.equal(sessionId, "session-adopted");
+        if (shouldAbortChatStreamForSelectionEpoch(
+          streamSelectionEpoch,
+          streamSelectionEpoch,
+        )) {
+          abortController.abort();
+        }
+        adoption.resolve();
+      },
+      onLiveStreamConnected: (): void => {},
+    });
+
+    await adoption.promise;
+    assert.equal(abortController.signal.aborted, false);
+    await firstChunkHandled.promise;
+    assert.deepEqual(receivedChunks, ["first"]);
+    laterChunkGate.resolve();
+    const result = await resultPromise;
+
+    assert.deepEqual(receivedChunks, ["first", "later"]);
+    assert.equal(result.responseSessionId, "session-adopted");
+    assert.equal(result.receivedContent, true);
+    assert.equal(result.wasAborted, false);
+    assert.equal(result.requestAcceptance, "accepted");
+    assert.equal(
+      shouldAbortChatStreamForSelectionEpoch(
+        streamSelectionEpoch,
+        streamSelectionEpoch + 1,
+      ),
+      true,
+    );
+  } finally {
+    laterChunkGate.resolve();
+    abortController.abort();
+    if (originalDocument === undefined) {
+      Reflect.deleteProperty(globalThis, "document");
+    } else {
+      Object.defineProperty(globalThis, "document", originalDocument);
+    }
+    if (originalFetch === undefined) {
+      Reflect.deleteProperty(globalThis, "fetch");
+    } else {
+      Object.defineProperty(globalThis, "fetch", originalFetch);
+    }
+  }
+});
+
+test("an unadopted draft create survives selection and controller cleanup", (): void => {
+  assert.equal(
+    shouldAbortChatStreamForSelectionChange(2, 3, "draft-pending"),
+    false,
+  );
+  assert.equal(
+    shouldAbortChatStreamForControllerCleanup("draft-pending"),
+    false,
+  );
+  assert.equal(
+    shouldAbortChatStreamForSelectionChange(2, 3, null),
+    true,
+  );
+  assert.equal(
+    shouldAbortChatStreamForControllerCleanup(null),
+    true,
+  );
 });
 
 test("a deferred Stop cannot abort, disconnect, or adopt into a newer session stream", async (): Promise<void> => {
@@ -3094,6 +3367,72 @@ test("outer Stop ownership fences every continuation after unmount, session swit
   }
 });
 
+test("fresh-session transport distinguishes rejection from ambiguous failures", async (): Promise<void> => {
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { cookie: "__Host-csrf=test-token" },
+  });
+  const createParams = (): Parameters<typeof streamChatResponse>[0] => ({
+    url: "/api/chat/new",
+    requestBody: "{}",
+    signal: new AbortController().signal,
+    abortStream: (): void => {},
+    t: (key: string): string => key,
+    handlers: {
+      appendAssistantChunk: (): void => {},
+      upsertReasoningSummary: (): void => {},
+      upsertToolCall: (): void => {},
+      markAssistantError: (): void => {},
+      applyMainContentInvalidationVersion: (): void => {},
+    },
+    onSessionIdReceived: (): void => {},
+    onLiveStreamConnected: (): void => {},
+  });
+
+  try {
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (): Promise<Response> =>
+        new Response("Fresh chat rejected", { status: 400 }),
+    });
+    const rejectedResult = await streamChatResponse(createParams());
+    assert.equal(rejectedResult.requestAcceptance, "rejected");
+    assert.equal(rejectedResult.failureStage, "request");
+
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (): Promise<Response> =>
+        new Response("Upstream response unavailable", { status: 503 }),
+    });
+    const ambiguousServerResult = await streamChatResponse(createParams());
+    assert.equal(ambiguousServerResult.requestAcceptance, "unknown");
+    assert.equal(ambiguousServerResult.failureStage, "request");
+
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (): Promise<Response> => {
+        throw new TypeError("network unavailable");
+      },
+    });
+    const ambiguousNetworkResult = await streamChatResponse(createParams());
+    assert.equal(ambiguousNetworkResult.requestAcceptance, "unknown");
+    assert.equal(ambiguousNetworkResult.failureStage, "request");
+  } finally {
+    if (originalDocument === undefined) {
+      Reflect.deleteProperty(globalThis, "document");
+    } else {
+      Object.defineProperty(globalThis, "document", originalDocument);
+    }
+    if (originalFetch === undefined) {
+      Reflect.deleteProperty(globalThis, "fetch");
+    } else {
+      Object.defineProperty(globalThis, "fetch", originalFetch);
+    }
+  }
+});
+
 test("existing-session transport reconciles ambiguous failures and fast-fails explicit rejection", async (): Promise<void> => {
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
@@ -3102,6 +3441,7 @@ test("existing-session transport reconciles ambiguous failures and fast-fails ex
     value: { cookie: "__Host-csrf=test-token" },
   });
   const createParams = (): Parameters<typeof streamChatResponse>[0] => ({
+    url: "/api/chat",
     requestBody: "{}",
     signal: new AbortController().signal,
     abortStream: (): void => {},
