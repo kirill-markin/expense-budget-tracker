@@ -14,20 +14,31 @@ const createTranscriptionRequest = (
     body: formData,
   });
 
-test("parseChatTranscriptionUpload requires a session id", async (): Promise<void> => {
+test("parseChatTranscriptionUpload accepts audio without a session id", async (): Promise<void> => {
   const formData = new FormData();
   formData.append("file", new File(["audio"], "audio.webm", { type: "audio/webm" }));
   formData.append("source", "web");
 
-  await assert.rejects(
-    async (): Promise<void> => {
-      await parseChatTranscriptionUpload(createTranscriptionRequest(formData));
-    },
-    (error: unknown) =>
-      error instanceof ApiRouteError
-      && error.status === 400
-      && error.message === "sessionId is required",
+  const upload = await parseChatTranscriptionUpload(
+    createTranscriptionRequest(formData),
   );
+
+  assert.equal(upload.file.name, "audio.webm");
+  assert.equal(upload.source, "web");
+  assert.equal(upload.sessionId, null);
+});
+
+test("parseChatTranscriptionUpload preserves an optional legacy session id", async (): Promise<void> => {
+  const formData = new FormData();
+  formData.append("file", new File(["audio"], "audio.webm", { type: "audio/webm" }));
+  formData.append("source", "web");
+  formData.append("sessionId", " session-legacy ");
+
+  const upload = await parseChatTranscriptionUpload(
+    createTranscriptionRequest(formData),
+  );
+
+  assert.equal(upload.sessionId, "session-legacy");
 });
 
 test("parseChatTranscriptionUpload rejects audio above the transcription size limit", async (): Promise<void> => {
@@ -41,7 +52,6 @@ test("parseChatTranscriptionUpload rejects audio above the transcription size li
     ),
   );
   formData.append("source", "web");
-  formData.append("sessionId", "session-1");
 
   await assert.rejects(
     async (): Promise<void> => {
