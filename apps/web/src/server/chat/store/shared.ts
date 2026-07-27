@@ -27,6 +27,13 @@ export class ChatSessionConflictError extends Error {
   }
 }
 
+export class ChatTurnCancelledError extends Error {
+  public constructor(sessionId: string, turnId: string) {
+    super(`Chat turn was cancelled: sessionId=${sessionId}, turnId=${turnId}`);
+    this.name = "ChatTurnCancelledError";
+  }
+}
+
 export class ChatSessionRunTransitionError extends Error {
   public readonly sessionId: string;
   public readonly activeRunId: string;
@@ -84,7 +91,18 @@ export type PreparedChatRun = Readonly<{
   turnInput: ReadonlyArray<ContentPart>;
 }>;
 
+export type PrepareChatRunResult =
+  | Readonly<{
+    kind: "started";
+    preparedRun: PreparedChatRun;
+  }>
+  | Readonly<{
+    kind: "already_accepted";
+    sessionId: string;
+  }>;
+
 export type InsertChatItemParams = Readonly<{
+  itemId: string | null;
   sessionId: string;
   role: "user" | "assistant";
   state: ChatItemState;
@@ -153,6 +171,11 @@ export type UserCancelChatRunResult =
   | "cancelled"
   | "not_running"
   | "run_changed";
+
+export type UserCancelChatTurnResult =
+  | "active_run_cancelled"
+  | "cancellation_recorded"
+  | "already_cancelled";
 
 export const parseMainContentInvalidationVersion = (
   rawValue: string,

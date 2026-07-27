@@ -2,12 +2,14 @@ import type {
   ChatSessionRunState,
   ChatSessionSnapshot,
 } from "@/server/chat/store";
+import { z } from "zod";
 import { validateChatAttachments } from "@/server/chat/attachments/validation";
 import type { ContentPart } from "@/server/chat/types";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 export type ChatRequestBody = Readonly<{
   sessionId: string;
+  turnId: string | null;
   content: ReadonlyArray<ContentPart>;
   model: string;
   timezone: string;
@@ -46,9 +48,11 @@ export type ChatRequestDiagnostics = Readonly<{
 export type ChatHistoryResponse = Readonly<{
   sessionId: string;
   runState: ChatSessionRunState;
+  activeTurnId: string | null;
   updatedAt: number;
   mainContentInvalidationVersion: number;
   messages: ReadonlyArray<Readonly<{
+    messageId: string;
     role: "user" | "assistant";
     content: ReadonlyArray<ContentPart>;
     timestamp: number;
@@ -61,6 +65,10 @@ const LEGACY_CHAT_REQUEST_FIELDS = [
   "chatSessionId",
   "codeInterpreterContainerId",
 ] as const;
+
+const CHAT_TURN_ID_SCHEMA = z.uuid().transform(
+  (turnId): string => turnId.toLowerCase(),
+);
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -97,12 +105,28 @@ const collectChatAttachmentFileNames = (
 const toChatHistoryMessage = (
   message: ChatSessionSnapshot["messages"][number],
 ): ChatHistoryResponse["messages"][number] => ({
+  messageId: message.itemId,
   role: message.role,
   content: message.content,
   timestamp: message.timestamp,
   isError: message.isError,
   isStopped: message.isStopped,
 });
+
+const getActiveTurnId = (
+  snapshot: ChatSessionSnapshot,
+): string | null => {
+  if (snapshot.runState !== "running") {
+    return null;
+  }
+  if (snapshot.activeRunId === null) {
+    throw new Error(
+      `Running chat snapshot has no active run id: sessionId=${snapshot.sessionId}`,
+    );
+  }
+
+  return snapshot.activeRunId;
+};
 
 export const extractChatRequestContext = (request: Request): ChatRequestContext => ({
   userId: extractUserId(request),
@@ -149,8 +173,18 @@ export const parseChatRequestBody = (body: unknown): ChatRequestBody => {
     throw new Error("sessionId must be a non-empty string");
   }
 
+  let turnId: string | null = null;
+  if (body.turnId !== undefined) {
+    const parsedTurnId = CHAT_TURN_ID_SCHEMA.safeParse(body.turnId);
+    if (!parsedTurnId.success) {
+      throw new Error("turnId must be a UUID");
+    }
+    turnId = parsedTurnId.data;
+  }
+
   return {
     sessionId: body.sessionId,
+    turnId,
     ...parsedBody,
   };
 };
@@ -186,6 +220,7 @@ export const toChatHistoryResponse = (
 ): ChatHistoryResponse => ({
   sessionId: snapshot.sessionId,
   runState: snapshot.runState,
+  activeTurnId: getActiveTurnId(snapshot),
   updatedAt: snapshot.updatedAt,
   mainContentInvalidationVersion: snapshot.mainContentInvalidationVersion,
   messages: snapshot.messages.map(toChatHistoryMessage),

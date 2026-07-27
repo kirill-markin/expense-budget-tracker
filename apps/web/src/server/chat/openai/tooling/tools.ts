@@ -6,7 +6,17 @@ import { TOOL_DESCRIPTION, execQuery } from "@/server/chat/shared";
 export type OpenAIToolContext = Readonly<{
   userId: string;
   workspaceId: string;
+  sessionId: string;
+  turnId: string;
 }>;
+
+type ChatToolDependencies = Readonly<{
+  execQuery: typeof execQuery;
+}>;
+
+const DEFAULT_CHAT_TOOL_DEPENDENCIES: ChatToolDependencies = {
+  execQuery,
+};
 
 type ToolSuccessPayload = Readonly<Record<string, unknown>>;
 
@@ -138,10 +148,11 @@ export const OPENAI_CHAT_TOOLS: ReadonlyArray<OpenAI.Responses.FunctionTool> = [
   },
 }];
 
-export const executeChatToolCall = async (
+export const executeChatToolCallWithDependencies = async (
   toolName: string,
   rawArguments: string,
   context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
 ): Promise<ExecutedChatToolCall> => {
   /**
    * This function is the canonical source of tool completion metadata consumed
@@ -158,7 +169,7 @@ export const executeChatToolCall = async (
 
   try {
     const parsed = queryDatabaseInputSchema.parse(JSON.parse(rawArguments));
-    const result = await execQuery(parsed.sql, context.userId, context.workspaceId);
+    const result = await dependencies.execQuery(parsed.sql, context);
     return {
       output: createToolSuccessResult("query_database", {
         sql: parsed.sql,
@@ -179,3 +190,15 @@ export const executeChatToolCall = async (
     };
   }
 };
+
+export const executeChatToolCall = async (
+  toolName: string,
+  rawArguments: string,
+  context: OpenAIToolContext,
+): Promise<ExecutedChatToolCall> =>
+  executeChatToolCallWithDependencies(
+    toolName,
+    rawArguments,
+    context,
+    DEFAULT_CHAT_TOOL_DEPENDENCIES,
+  );

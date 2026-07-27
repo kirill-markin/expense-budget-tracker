@@ -1,6 +1,13 @@
-import { MAX_SQL_ROWS, SqlPolicyError, validateExpenseSql } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  MAX_SQL_ROWS,
+  SqlPolicyError,
+  validateExpenseSql,
+  type ValidatedExpenseSqlStatement,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ContentPart } from "@/server/chat/types";
-import { withRestrictedUserContext } from "@/server/db";
+import { withRestrictedUserContext, withUserContext } from "@/server/db";
+import type { QueryFn } from "@/server/db/contextRunner";
+import { lockUncancelledChatTurnForMutationWithQuery } from "@/server/chat/store/turnCancellationStore";
 
 export const MAX_ROWS = MAX_SQL_ROWS;
 export const STATEMENT_TIMEOUT_MS = 10_000;
@@ -331,10 +338,64 @@ export type QueryResult = Readonly<{
   json: string;
 }>;
 
-export const execQuery = async (
-  sql: string,
+export type ChatSqlExecutionContext = Readonly<{
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  turnId: string;
+}>;
+
+type UserContextRunner = <T>(
   userId: string,
   workspaceId: string,
+  callback: (queryFn: QueryFn) => Promise<T>,
+) => Promise<T>;
+
+type RestrictedUserContextRunner = <T>(
+  userId: string,
+  workspaceId: string,
+  statementTimeoutMs: number,
+  callback: (queryFn: QueryFn) => Promise<T>,
+) => Promise<T>;
+
+export type ExecQueryDependencies = Readonly<{
+  withUserContext: UserContextRunner;
+  withRestrictedUserContext: RestrictedUserContextRunner;
+  lockUncancelledChatTurnForMutationWithQuery: typeof lockUncancelledChatTurnForMutationWithQuery;
+}>;
+
+const DEFAULT_EXEC_QUERY_DEPENDENCIES: ExecQueryDependencies = {
+  withUserContext,
+  withRestrictedUserContext,
+  lockUncancelledChatTurnForMutationWithQuery,
+};
+
+const executeValidatedChatSql = async (
+  queryFn: QueryFn,
+  statements: ReadonlyArray<ValidatedExpenseSqlStatement>,
+): Promise<ReadonlyArray<Readonly<Record<string, unknown>>>> => {
+  const results: Array<Readonly<Record<string, unknown>>> = [];
+  for (const statement of statements) {
+    const result = await queryFn(statement.sql, []);
+    const rows = result.rows.slice(0, MAX_ROWS);
+    results.push({
+      sql: statement.sql,
+      command: result.command,
+      rows,
+      rowCount: rows.length > 0 ? rows.length : (result.rowCount ?? 0),
+      returnedRowCount: rows.length,
+      totalRowCount: result.rows.length > 0 ? result.rows.length : (result.rowCount ?? 0),
+      truncated: result.rows.length > rows.length,
+      referencedRelations: statement.referencedRelations,
+    });
+  }
+  return results;
+};
+
+export const execQueryWithDependencies = async (
+  sql: string,
+  context: ChatSqlExecutionContext,
+  dependencies: ExecQueryDependencies,
 ): Promise<QueryResult> => {
   let validated;
   try {
@@ -346,32 +407,39 @@ export const execQuery = async (
     throw error;
   }
 
-  const statements = await withRestrictedUserContext(
-    userId,
-    workspaceId,
-    STATEMENT_TIMEOUT_MS,
-    async (queryFn) => {
-      const results: Array<Readonly<Record<string, unknown>>> = [];
-      for (const statement of validated.statements) {
-        const result = await queryFn(statement.sql, []);
-        const rows = result.rows.slice(0, MAX_ROWS);
-        results.push({
-          sql: statement.sql,
-          command: result.command,
-          rows,
-          rowCount: rows.length > 0 ? rows.length : (result.rowCount ?? 0),
-          returnedRowCount: rows.length,
-          totalRowCount: result.rows.length > 0 ? result.rows.length : (result.rowCount ?? 0),
-          truncated: result.rows.length > rows.length,
-          referencedRelations: statement.referencedRelations,
-        });
-      }
-      return results;
-    },
-  );
+  const isMutating = validated.statements.some((statement) => statement.isMutating);
+  const statements = isMutating
+    ? await dependencies.withUserContext(
+      context.userId,
+      context.workspaceId,
+      async (queryFn) => {
+        await queryFn("SELECT set_config('statement_timeout', $1, true)", [
+          String(STATEMENT_TIMEOUT_MS),
+        ]);
+        await dependencies.lockUncancelledChatTurnForMutationWithQuery(
+          queryFn,
+          context.sessionId,
+          context.turnId,
+        );
+        await queryFn("SET LOCAL ROLE api_sql_executor", []);
+        return executeValidatedChatSql(queryFn, validated.statements);
+      },
+    )
+    : await dependencies.withRestrictedUserContext(
+      context.userId,
+      context.workspaceId,
+      STATEMENT_TIMEOUT_MS,
+      async (queryFn) => executeValidatedChatSql(queryFn, validated.statements),
+    );
 
   return { json: JSON.stringify({ statements }) };
 };
+
+export const execQuery = async (
+  sql: string,
+  context: ChatSqlExecutionContext,
+): Promise<QueryResult> =>
+  execQueryWithDependencies(sql, context, DEFAULT_EXEC_QUERY_DEPENDENCIES);
 
 export const extractText = (content: ReadonlyArray<ContentPart>): string =>
   content

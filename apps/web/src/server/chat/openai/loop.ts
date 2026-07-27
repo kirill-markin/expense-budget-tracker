@@ -102,6 +102,7 @@ export type StartOpenAILoopParams = Readonly<{
   userId: string;
   workspaceId: string;
   sessionId: string;
+  turnId: string;
   locale: SupportedLocale;
   timezone: string;
   localMessages: ReadonlyArray<ServerChatMessage>;
@@ -413,6 +414,8 @@ const runLoopWithDeps = async (
         item: functionCall,
         userId: params.userId,
         workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        turnId: params.turnId,
         rootObservation: params.rootObservation,
       });
       const update = applyToolCallOutput(

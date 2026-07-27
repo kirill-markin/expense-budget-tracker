@@ -69,13 +69,16 @@ const resolvesWithin = async (
 
 const requireReservation = (
   sessionId: string,
+  activeRunId: string,
 ): ChatRunStartReservation => {
-  const reservation = reserveChatRunStart(sessionId);
-  if (reservation === null) {
-    throw new Error(`Expected chat run start reservation for sessionId=${sessionId}`);
+  const result = reserveChatRunStart(sessionId, activeRunId);
+  if (result.kind !== "reserved") {
+    throw new Error(
+      `Expected chat run start reservation for sessionId=${sessionId}, result=${result.kind}`,
+    );
   }
 
-  return reservation;
+  return result.reservation;
 };
 
 const createRunParams = (
@@ -162,8 +165,9 @@ const createRuntimeDependencies = (
     workspaceId,
     sessionId,
     activeRunId,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     recorded.heartbeatPayloads.push({ userId, workspaceId, sessionId, activeRunId });
+    return true;
   }),
   updateAssistantMessageItem: overrides.updateAssistantMessageItem ?? (async (
     _userId,
@@ -215,11 +219,13 @@ test("runPersistedChatSessionWithDeps persists stopped state for user aborts wit
       createRuntimeDependencies(
         {
           runOpenAILoop: async (
-            _loopParams,
+            loopParams,
             onEvent,
           ): Promise<Readonly<{
             openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
           }>> => {
+            assert.equal(loopParams.sessionId, params.sessionId);
+            assert.equal(loopParams.turnId, params.activeRunId);
             await onEvent(createDeltaEvent("Partial answer"));
             assert.deepEqual(stopActiveChatRun(sessionId, params.activeRunId), {
               stopped: true,
@@ -316,7 +322,7 @@ test("startPersistedChatRunWithDeps persists and streams recovery for poisoned H
   try {
     const events = startPersistedChatRunWithDeps(
       params,
-      requireReservation(sessionId),
+      requireReservation(sessionId, params.activeRunId),
       createRuntimeDependencies(
         {
           runOpenAILoop: async (loopParams): Promise<Readonly<{
@@ -479,12 +485,18 @@ test("reserveChatRunStart rejects active and requested local runs before DB prep
   createActiveChatRunForTests(sessionId, activeRunId);
 
   try {
-    assert.equal(reserveChatRunStart(sessionId), null);
+    assert.deepEqual(
+      reserveChatRunStart(sessionId, "run-other"),
+      { kind: "conflict" },
+    );
     assert.deepEqual(stopActiveChatRun(sessionId, activeRunId), {
       stopped: true,
       activeRunId,
     });
-    assert.equal(reserveChatRunStart(sessionId), null);
+    assert.deepEqual(
+      reserveChatRunStart(sessionId, "run-other"),
+      { kind: "conflict" },
+    );
   } finally {
     clearActiveChatRunForTests(sessionId);
   }
@@ -492,12 +504,50 @@ test("reserveChatRunStart rejects active and requested local runs before DB prep
 
 test("reserveChatRunStart can be released before runtime start", (): void => {
   const sessionId = "session-reserve-release";
-  const reservation = requireReservation(sessionId);
+  const activeRunId = `run-${sessionId}`;
+  const reservation = requireReservation(sessionId, activeRunId);
 
   releaseChatRunStartReservation(reservation);
 
-  const secondReservation = requireReservation(sessionId);
+  const secondReservation = requireReservation(sessionId, activeRunId);
   releaseChatRunStartReservation(secondReservation);
+});
+
+test("reserveChatRunStart correlates same-turn retries without admitting duplicate runs", (): void => {
+  const pendingSessionId = "session-same-turn-pending";
+  const pendingActiveRunId = `run-${pendingSessionId}`;
+  const pendingReservation = requireReservation(
+    pendingSessionId,
+    pendingActiveRunId,
+  );
+  try {
+    assert.deepEqual(
+      reserveChatRunStart(pendingSessionId, pendingReservation.activeRunId),
+      { kind: "same_turn_pending" },
+    );
+    assert.deepEqual(
+      reserveChatRunStart(pendingSessionId, "run-other"),
+      { kind: "conflict" },
+    );
+  } finally {
+    releaseChatRunStartReservation(pendingReservation);
+  }
+
+  const activeSessionId = "session-same-turn-active";
+  const activeRunId = "run-active";
+  createActiveChatRunForTests(activeSessionId, activeRunId);
+  try {
+    assert.deepEqual(
+      reserveChatRunStart(activeSessionId, activeRunId),
+      { kind: "same_turn_accepted" },
+    );
+    assert.deepEqual(
+      reserveChatRunStart(activeSessionId, "run-other"),
+      { kind: "conflict" },
+    );
+  } finally {
+    clearActiveChatRunForTests(activeSessionId);
+  }
 });
 
 test("cancelling the session-prefixed SSE stream unsubscribes a pending read without aborting the backend run", async (): Promise<void> => {
@@ -515,7 +565,7 @@ test("cancelling the session-prefixed SSE stream unsubscribes a pending read wit
   };
   const runtimeEvents = startPersistedChatRunWithDeps(
     params,
-    requireReservation(sessionId),
+    requireReservation(sessionId, params.activeRunId),
     createRuntimeDependencies(
       {
         runOpenAILoop: async (): Promise<Readonly<{
@@ -687,7 +737,10 @@ test("startPersistedChatRunWithDeps replaces persisted local stop state without 
     });
     markActiveChatRunCancellationPersisted(sessionId, oldParams.activeRunId);
 
-    const newReservation = requireReservation(sessionId);
+    const newReservation = requireReservation(
+      sessionId,
+      newParams.activeRunId,
+    );
     const newEvents = startPersistedChatRunWithDeps(
       newParams,
       newReservation,
@@ -782,7 +835,10 @@ test("late done from a replaced run does not close the newer stream", async (): 
     });
     markActiveChatRunCancellationPersisted(sessionId, oldParams.activeRunId);
 
-    const newReservation = requireReservation(sessionId);
+    const newReservation = requireReservation(
+      sessionId,
+      newParams.activeRunId,
+    );
     const newEvents = startPersistedChatRunWithDeps(
       newParams,
       newReservation,
@@ -872,6 +928,111 @@ test("runPersistedChatSessionWithDeps passes the same active run id to heartbeat
   assert.equal((recorded.completedPayload as { sessionId: string }).sessionId, params.sessionId);
   assert.equal(recorded.cancelledPayload, null);
   assert.equal(recorded.terminalErrorPayload, null);
+});
+
+test("runPersistedChatSessionWithDeps does not enter OpenAI when startup admission is lost", async (): Promise<void> => {
+  const params = createRunParams("session-startup-admission-lost");
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  let openAILoopCallCount = 0;
+  const originalLog = console.log;
+  console.log = (): void => undefined;
+  createActiveChatRunForTests(params.sessionId, params.activeRunId);
+
+  try {
+    await runPersistedChatSessionWithDeps(
+      params,
+      createRuntimeDependencies(
+        {
+          touchChatSessionHeartbeat: async (): Promise<boolean> => false,
+          runOpenAILoop: async (): Promise<Readonly<{
+            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
+          }>> => {
+            openAILoopCallCount += 1;
+            return { openaiItems: [] };
+          },
+        },
+        recorded,
+      ),
+    );
+  } finally {
+    clearActiveChatRunForTests(params.sessionId);
+    console.log = originalLog;
+  }
+
+  assert.equal(openAILoopCallCount, 0);
+  assert.equal(recorded.completedPayload, null);
+  assert.equal(recorded.cancelledPayload, null);
+  assert.equal(recorded.terminalErrorPayload, null);
+});
+
+test("runPersistedChatSessionWithDeps logs startup store errors without terminalizing the accepted run", async (): Promise<void> => {
+  const params = createRunParams("session-startup-store-error");
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  const storeError = new Error("heartbeat store unavailable");
+  const logLines: Array<string> = [];
+  let openAILoopCallCount = 0;
+  const originalLog = console.log;
+  console.log = (message?: unknown): void => {
+    logLines.push(String(message));
+  };
+  createActiveChatRunForTests(params.sessionId, params.activeRunId);
+
+  try {
+    await runPersistedChatSessionWithDeps(
+      params,
+      createRuntimeDependencies(
+        {
+          touchChatSessionHeartbeat: async (): Promise<boolean> => {
+            throw storeError;
+          },
+          runOpenAILoop: async (): Promise<Readonly<{
+            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
+          }>> => {
+            openAILoopCallCount += 1;
+            return { openaiItems: [] };
+          },
+        },
+        recorded,
+      ),
+    );
+  } finally {
+    clearActiveChatRunForTests(params.sessionId);
+    console.log = originalLog;
+  }
+
+  assert.equal(openAILoopCallCount, 0);
+  assert.equal(recorded.completedPayload, null);
+  assert.equal(recorded.cancelledPayload, null);
+  assert.equal(recorded.terminalErrorPayload, null);
+  assert.equal(logLines.length, 1);
+  assert.deepEqual(JSON.parse(logLines[0]), {
+    domain: "chat",
+    action: "error",
+    vendor: "openai",
+    stage: "stream",
+    error: storeError.message,
+    requestId: params.requestId,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    model: params.diagnostics.model,
+    messageCount: params.diagnostics.messageCount,
+    hasAttachments: params.diagnostics.hasAttachments,
+    attachmentFileNames: params.diagnostics.attachmentFileNames,
+    errorClass: "Error",
+  });
 });
 
 test("runPersistedChatSessionWithDeps skips terminal error persistence when completion lost the active-run race", async (): Promise<void> => {

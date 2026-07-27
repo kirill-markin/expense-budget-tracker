@@ -24,6 +24,7 @@ const createLoopParams = (): StartOpenAILoopParams => ({
   userId: "user-1",
   workspaceId: "workspace-1",
   sessionId: "session-1",
+  turnId: "turn-1",
   locale: "en",
   timezone: "Europe/Madrid",
   localMessages: [],
@@ -223,6 +224,10 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
   const toolOutput = "{\"ok\":true}";
   let modelCallCount = 0;
   const openAIRequests: Array<OpenAIResponsesRequest> = [];
+  let executedToolScope: Readonly<{
+    sessionId: string;
+    turnId: string;
+  }> | null = null;
 
   const completion = await runOpenAILoopWithDeps(
     params,
@@ -256,19 +261,29 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
           toolStates: createToolCallStateMap(),
         };
       },
-      runOneToolCall: async (): Promise<Readonly<{
+      runOneToolCall: async (toolParams): Promise<Readonly<{
         output: string;
         isMutating: boolean;
         succeeded: boolean;
-      }>> => ({
-        output: toolOutput,
-        isMutating: false,
-        succeeded: true,
-      }),
+      }>> => {
+        executedToolScope = {
+          sessionId: toolParams.sessionId,
+          turnId: toolParams.turnId,
+        };
+        return {
+          output: toolOutput,
+          isMutating: false,
+          succeeded: true,
+        };
+      },
     }),
   );
 
   assert.equal(modelCallCount, 2);
+  assert.deepEqual(executedToolScope, {
+    sessionId: params.sessionId,
+    turnId: params.turnId,
+  });
   assert.deepEqual(
     openAIRequests.map((request) => request.safety_identifier),
     [

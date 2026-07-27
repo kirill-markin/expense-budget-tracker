@@ -24,6 +24,8 @@ export const runOneToolCall = async (
     item: OpenAI.Responses.ResponseFunctionToolCall;
     userId: string;
     workspaceId: string;
+    sessionId: string;
+    turnId: string;
     rootObservation: LangfuseObservation | null;
   }>,
 ): Promise<ExecutedChatToolCall> => {
@@ -51,6 +53,8 @@ export const runOneToolCall = async (
       {
         userId: params.userId,
         workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        turnId: params.turnId,
       },
     );
     toolObservation?.updateOtelSpanAttributes({

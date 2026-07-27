@@ -2,18 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult } from "pg";
 import {
+  admitChatRunStartWithQuery,
   cancelActiveChatRunByUserWithQuery,
+  cancelChatTurnByUserWithQuery,
   completeChatRunWithQuery,
   persistAssistantCancelledWithQuery,
   persistAssistantTerminalErrorWithQuery,
   prepareChatRunWithQuery,
   prepareFreshChatRunWithQuery,
   recoverStaleChatSessionWithQuery,
+  requireAcceptedChatTurnWithQuery,
 } from "@/server/chat/store/lifecycleStore";
 import { updateAssistantMessageItemWithQuery } from "@/server/chat/store/messageStore";
 import {
   ChatSessionConflictError,
   ChatSessionRunTransitionError,
+  ChatTurnCancelledError,
 } from "@/server/chat/store/shared";
 import type { QueryFn } from "@/server/db/contextRunner";
 
@@ -190,7 +194,7 @@ const createFreshRunQueryFn = (
   }
 
   if (text.includes("INSERT INTO public.chat_items")) {
-    const payload = JSON.parse(String(params[2])) as Readonly<{
+    const payload = JSON.parse(String(params[3])) as Readonly<{
       role: "user" | "assistant";
       content: ReadonlyArray<Readonly<{ type: "text"; text: string }>>;
     }>;
@@ -198,9 +202,9 @@ const createFreshRunQueryFn = (
       throw new Error("assistant insert failed");
     }
     return createQueryResult([{
-      item_id: `${payload.role}-1`,
+      item_id: params[0] === null ? `${payload.role}-1` : String(params[0]),
       session_id: "session-1",
-      state: String(params[1]),
+      state: String(params[2]),
       payload,
       created_at: "2026-05-02T13:00:00.000Z",
       updated_at: "2026-05-02T13:00:00.000Z",
@@ -302,6 +306,12 @@ test("prepareChatRunWithQuery explicitly rejects a second run in the same sessio
     if (text.includes("FROM public.chat_sessions")) {
       return createQueryResult([createSessionRow("running", "run-1")]);
     }
+    if (text.includes("FROM public.chat_turn_cancellations")) {
+      return createQueryResult([]);
+    }
+    if (text.includes("FROM public.chat_items")) {
+      return createQueryResult([]);
+    }
     throw new Error(`Unexpected query: ${text}`);
   };
 
@@ -312,15 +322,228 @@ test("prepareChatRunWithQuery explicitly rejects a second run in the same sessio
       "workspace-1",
       "session-1",
       [{ type: "text", text: "Another message" }],
+      "00000000-0000-4000-8000-000000000002",
     ),
     (error: unknown): boolean =>
       error instanceof ChatSessionConflictError
       && error.message.includes("session-1"),
   );
 
-  assert.equal(recordedQueries.length, 2);
+  assert.equal(recordedQueries.length, 4);
   assert.equal(
     recordedQueries.some((query) => query.text.includes("INSERT INTO public.chat_items")),
+    false,
+  );
+});
+
+test("prepareChatRunWithQuery treats a persisted matching turn as already accepted", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000003";
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions")) {
+      return createQueryResult([createSessionRow("running", turnId)]);
+    }
+    if (text.includes("FROM public.chat_turn_cancellations")) {
+      return createQueryResult([]);
+    }
+    if (text.includes("FROM public.chat_items")) {
+      return createQueryResult([{ item_id: turnId }]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  const result = await prepareChatRunWithQuery(
+    queryFn,
+    "user-1",
+    "workspace-1",
+    "session-1",
+    [{ type: "text", text: "Same message" }],
+    turnId,
+  );
+
+  assert.deepEqual(result, {
+    kind: "already_accepted",
+    sessionId: "session-1",
+  });
+  assert.equal(
+    recordedQueries.some((query) => query.text.includes("INSERT INTO public.chat_items")),
+    false,
+  );
+  assert.equal(
+    recordedQueries.some((query) => query.text.includes("UPDATE public.chat_sessions")),
+    false,
+  );
+});
+
+test("prepareChatRunWithQuery rejects a durably cancelled turn before reading or writing chat items", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000004";
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions")) {
+      return createQueryResult([createSessionRow("idle", null)]);
+    }
+    if (text.includes("FROM public.chat_turn_cancellations")) {
+      return createQueryResult([{ turn_id: turnId }]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  await assert.rejects(
+    prepareChatRunWithQuery(
+      queryFn,
+      "user-1",
+      "workspace-1",
+      "session-1",
+      [{ type: "text", text: "Cancelled message" }],
+      turnId,
+    ),
+    ChatTurnCancelledError,
+  );
+
+  assert.match(recordedQueries[1].text, /FOR UPDATE/);
+  assert.equal(
+    recordedQueries[2].text.includes("FROM public.chat_turn_cancellations"),
+    true,
+  );
+  assert.equal(
+    recordedQueries.some((query) => query.text.includes("public.chat_items")),
+    false,
+  );
+  assert.equal(
+    recordedQueries.some((query) => query.text.includes("UPDATE public.chat_sessions")),
+    false,
+  );
+});
+
+test("admitChatRunStartWithQuery locks and admits only the exact uncancelled run", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000005";
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions") && text.includes("FOR UPDATE")) {
+      return createQueryResult([createSessionRow("running", turnId)]);
+    }
+    if (text.includes("FROM public.chat_turn_cancellations")) {
+      return createQueryResult([]);
+    }
+    if (text.includes("SET active_run_heartbeat_at")) {
+      return createQueryResult([createSessionRow("running", turnId)]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  await admitChatRunStartWithQuery(
+    queryFn,
+    "user-1",
+    "workspace-1",
+    "session-1",
+    turnId,
+  );
+
+  assert.equal(recordedQueries.length, 3);
+  assert.match(recordedQueries[0].text, /FOR UPDATE/u);
+  assert.deepEqual(recordedQueries[0].params, [
+    "user-1",
+    "workspace-1",
+    "session-1",
+  ]);
+  assert.match(recordedQueries[1].text, /chat_turn_cancellations/u);
+  assert.match(recordedQueries[2].text, /active_run_heartbeat_at/u);
+  assert.equal(recordedQueries[2].params[0], "session-1");
+  assert.equal(recordedQueries[2].params[1], turnId);
+});
+
+test("admitChatRunStartWithQuery rejects a tombstone before touching the runtime heartbeat", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000006";
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions") && text.includes("FOR UPDATE")) {
+      return createQueryResult([createSessionRow("idle", null)]);
+    }
+    if (text.includes("FROM public.chat_turn_cancellations")) {
+      return createQueryResult([{ turn_id: turnId }]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  await assert.rejects(
+    admitChatRunStartWithQuery(
+      queryFn,
+      "user-1",
+      "workspace-1",
+      "session-1",
+      turnId,
+    ),
+    ChatTurnCancelledError,
+  );
+
+  assert.equal(recordedQueries.length, 2);
+  assert.match(recordedQueries[0].text, /FOR UPDATE/u);
+  assert.match(recordedQueries[1].text, /chat_turn_cancellations/u);
+});
+
+test("requireAcceptedChatTurnWithQuery confirms an uncancelled persisted user turn", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000007";
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions") && text.includes("FOR UPDATE")) {
+      return createQueryResult([createSessionRow("running", turnId)]);
+    }
+    if (text.includes("FROM public.chat_turn_cancellations")) {
+      return createQueryResult([]);
+    }
+    if (text.includes("FROM public.chat_items")) {
+      return createQueryResult([{ item_id: turnId }]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  await requireAcceptedChatTurnWithQuery(
+    queryFn,
+    "user-1",
+    "workspace-1",
+    "session-1",
+    turnId,
+  );
+
+  assert.equal(recordedQueries.length, 3);
+  assert.match(recordedQueries[0].text, /FOR UPDATE/u);
+  assert.match(recordedQueries[1].text, /chat_turn_cancellations/u);
+  assert.match(recordedQueries[2].text, /public\.chat_items/u);
+});
+
+test("requireAcceptedChatTurnWithQuery rejects a tombstone before accepting the persisted user turn", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000008";
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions") && text.includes("FOR UPDATE")) {
+      return createQueryResult([createSessionRow("idle", null)]);
+    }
+    if (text.includes("FROM public.chat_turn_cancellations")) {
+      return createQueryResult([{ turn_id: turnId }]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  await assert.rejects(
+    requireAcceptedChatTurnWithQuery(
+      queryFn,
+      "user-1",
+      "workspace-1",
+      "session-1",
+      turnId,
+    ),
+    ChatTurnCancelledError,
+  );
+
+  assert.equal(recordedQueries.length, 2);
+  assert.equal(
+    recordedQueries.some((query) => query.text.includes("public.chat_items")),
     false,
   );
 });
@@ -439,6 +662,128 @@ test("cancelActiveChatRunByUserWithQuery skips item writes when the session is n
   assert.equal(recordedQueries.some((query) => query.text.includes("FROM public.chat_items")), false);
   assert.equal(recordedQueries.some((query) => query.text.includes("UPDATE public.chat_items")), false);
   assert.equal(recordedQueries.some((query) => query.text.includes("UPDATE public.chat_sessions")), false);
+});
+
+test("cancelChatTurnByUserWithQuery records a tombstone before an unpersisted turn can prepare", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000105";
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions") && text.includes("FOR UPDATE")) {
+      return createQueryResult([createSessionRow("idle", null)]);
+    }
+    if (text.includes("INSERT INTO public.chat_turn_cancellations")) {
+      return createQueryResult([{ turn_id: turnId }]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  const result = await cancelChatTurnByUserWithQuery(
+    queryFn,
+    "user-1",
+    "workspace-1",
+    "session-1",
+    turnId,
+  );
+
+  assert.equal(result, "cancellation_recorded");
+  assert.match(recordedQueries[0].text, /FOR UPDATE/);
+  assert.deepEqual(recordedQueries[1].params, ["session-1", turnId]);
+  assert.equal(
+    recordedQueries.some((query) => query.text.includes("public.chat_items")),
+    false,
+  );
+});
+
+test("cancelChatTurnByUserWithQuery stops the exact run when send persistence wins the session lock first", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000106";
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions") && text.includes("FOR UPDATE")) {
+      return createQueryResult([createSessionRow("running", turnId)]);
+    }
+    if (text.includes("INSERT INTO public.chat_turn_cancellations")) {
+      return createQueryResult([{ turn_id: turnId }]);
+    }
+    if (text.includes("FROM public.chat_items")) {
+      return createQueryResult([createChatItemRow("in_progress")]);
+    }
+    if (text.includes("UPDATE public.chat_items")) {
+      return createQueryResult([createChatItemRow("cancelled")]);
+    }
+    if (text.includes("UPDATE public.chat_sessions")) {
+      return createQueryResult([createSessionRow("idle", null)]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  const result = await cancelChatTurnByUserWithQuery(
+    queryFn,
+    "user-1",
+    "workspace-1",
+    "session-1",
+    turnId,
+  );
+
+  assert.equal(result, "active_run_cancelled");
+  assert.match(recordedQueries[0].text, /FOR UPDATE/);
+  assert.equal(
+    recordedQueries[1].text.includes("INSERT INTO public.chat_turn_cancellations"),
+    true,
+  );
+  assert.equal(
+    recordedQueries.some((query) => query.text.includes("UPDATE public.chat_items")),
+    true,
+  );
+  assert.deepEqual(recordedQueries.at(-1)?.params, [
+    "session-1",
+    turnId,
+    "idle",
+  ]);
+});
+
+test("cancelChatTurnByUserWithQuery is idempotent across repeated server instances", async (): Promise<void> => {
+  const recordedQueries: Array<RecordedQuery> = [];
+  const turnId = "00000000-0000-4000-8000-000000000107";
+  let cancellationRecorded = false;
+  const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
+    recordedQueries.push({ text, params });
+    if (text.includes("FROM public.chat_sessions") && text.includes("FOR UPDATE")) {
+      return createQueryResult([createSessionRow("idle", null)]);
+    }
+    if (text.includes("INSERT INTO public.chat_turn_cancellations")) {
+      if (cancellationRecorded) {
+        return createQueryResult([]);
+      }
+      cancellationRecorded = true;
+      return createQueryResult([{ turn_id: turnId }]);
+    }
+    throw new Error(`Unexpected query: ${text}`);
+  };
+
+  const firstResult = await cancelChatTurnByUserWithQuery(
+    queryFn,
+    "user-1",
+    "workspace-1",
+    "session-1",
+    turnId,
+  );
+  const secondResult = await cancelChatTurnByUserWithQuery(
+    queryFn,
+    "user-1",
+    "workspace-1",
+    "session-1",
+    turnId,
+  );
+
+  assert.equal(firstResult, "cancellation_recorded");
+  assert.equal(secondResult, "already_cancelled");
+  assert.equal(
+    recordedQueries.filter((query) =>
+      query.text.includes("INSERT INTO public.chat_turn_cancellations")).length,
+    2,
+  );
 });
 
 test("recoverStaleChatSessionWithQuery interrupts stale in-progress assistant messages", async (): Promise<void> => {

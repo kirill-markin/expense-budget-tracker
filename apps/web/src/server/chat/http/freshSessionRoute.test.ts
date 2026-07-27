@@ -56,6 +56,7 @@ const createPreparedRun = (
 
 const createReservation = (): ChatRunStartReservation => ({
   sessionId: "session-1",
+  activeRunId: "run-1",
   reservationId: Symbol("session-1"),
 });
 
@@ -65,7 +66,10 @@ const createDependencies = (
   getLocaleFromRequest: overrides.getLocaleFromRequest
     ?? (() => "en" as SupportedLocale),
   reserveChatRunStart: overrides.reserveChatRunStart
-    ?? (() => createReservation()),
+    ?? (() => ({
+      kind: "reserved",
+      reservation: createReservation(),
+    })),
   releaseChatRunStartReservation: overrides.releaseChatRunStartReservation
     ?? (() => undefined),
   prepareFreshChatRun: overrides.prepareFreshChatRun
@@ -289,7 +293,10 @@ test("POST /api/chat/new returns session then safe error after persisting a runt
           timezone: "Europe/Madrid",
         }),
         createDependencies({
-          reserveChatRunStart: () => reservation,
+          reserveChatRunStart: () => ({
+            kind: "reserved",
+            reservation,
+          }),
           releaseChatRunStartReservation: (released) => {
             releasedReservation = released;
           },
