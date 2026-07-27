@@ -13,6 +13,10 @@ import type { ContentPart } from "@/server/chat/types";
 import type { PendingAttachment } from "../../shell/panel/FileAttachment";
 import type { ChatSessionSnapshot } from "../bootstrap/chatSessionSnapshot";
 import {
+  areChatTargetsEqual,
+  type ChatTarget,
+} from "../../workspace/chatWorkspaceState";
+import {
   applyChatStreamEvent,
   drainChatStreamChunk,
   type ChatStreamTransportHandlers,
@@ -53,12 +57,15 @@ export type StopChatSessionResponse =
   | SessionLevelStopChatSessionResponse
   | ExactTurnStopChatSessionResponse;
 
-type ChatSendRequestBody = Readonly<{
-  sessionId: string;
-  turnId: string;
+type ChatMessageRequestBody = Readonly<{
   model: string;
   content: ReadonlyArray<ContentPart>;
   timezone: string;
+}>;
+
+type ExistingChatSendRequestBody = ChatMessageRequestBody & Readonly<{
+  sessionId: string;
+  turnId: string;
 }>;
 
 export type PreparedChatSendRequest =
@@ -78,6 +85,7 @@ export type PreparedChatSendRequest =
   }>;
 
 export type StreamChatResponseParams = Readonly<{
+  url?: "/api/chat" | "/api/chat/new";
   requestBody: string;
   signal: AbortSignal;
   abortStream: () => void;
@@ -128,6 +136,16 @@ export type ChatPreSessionSendOwner = Readonly<{
   ownerId: symbol;
   initialSessionId: string | null;
   turnId: string;
+}>;
+
+export type ChatSendTransport = Readonly<{
+  url: "/api/chat" | "/api/chat/new";
+  requestBody: string;
+}>;
+
+export type ChatSelectionGuard = Readonly<{
+  target: ChatTarget;
+  selectionEpoch: number;
 }>;
 
 type ChatRequestStartResult =
@@ -1103,7 +1121,7 @@ export const prepareChatSendRequest = (
     model: CHAT_MODEL_ID,
     content: contentParts,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  } satisfies ChatSendRequestBody);
+  } satisfies ExistingChatSendRequestBody);
 
   if (requestBody.length > MAX_BODY_BYTES) {
     const sizeMb = (requestBody.length / (1024 * 1024)).toFixed(1);
@@ -1132,7 +1150,35 @@ export const buildChatSendRequestBody = (
     model: CHAT_MODEL_ID,
     content,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  } satisfies ChatSendRequestBody);
+  } satisfies ExistingChatSendRequestBody);
+
+export const buildFreshChatSendRequestBody = (
+  content: ReadonlyArray<ContentPart>,
+): string =>
+  JSON.stringify({
+    model: CHAT_MODEL_ID,
+    content,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  } satisfies ChatMessageRequestBody);
+
+export const createChatSendTransport = (
+  target: ChatTarget,
+  content: ReadonlyArray<ContentPart>,
+  turnId: string,
+): ChatSendTransport =>
+  target.kind === "draft"
+    ? {
+      url: "/api/chat/new",
+      requestBody: buildFreshChatSendRequestBody(content),
+    }
+    : {
+      url: "/api/chat",
+      requestBody: buildChatSendRequestBody(
+        content,
+        target.sessionId,
+        turnId,
+      ),
+    };
 
 export type ChatSessionSnapshotRequestErrorKind =
   | "not_found"
@@ -1687,6 +1733,48 @@ export const deleteChatConversation = async (
   return response.json() as Promise<ChatClearConversationResponse>;
 };
 
+export const isChatSelectionGuardCurrent = (
+  guard: ChatSelectionGuard,
+  target: ChatTarget,
+  selectionEpoch: number,
+): boolean =>
+  guard.selectionEpoch === selectionEpoch
+  && areChatTargetsEqual(guard.target, target);
+
+export const resolveSelectedChatSessionGuard = (
+  sessionId: string,
+  target: ChatTarget,
+  selectionEpoch: number,
+): ChatSelectionGuard | null =>
+  target.kind === "session" && target.sessionId === sessionId
+    ? {
+      target,
+      selectionEpoch,
+    }
+    : null;
+
+export const shouldAbortChatStreamForSelectionEpoch = (
+  streamSelectionEpoch: number,
+  nextSelectionEpoch: number,
+): boolean =>
+  streamSelectionEpoch !== nextSelectionEpoch;
+
+export const shouldAbortChatStreamForSelectionChange = (
+  streamSelectionEpoch: number,
+  nextSelectionEpoch: number,
+  unadoptedDraftId: string | null,
+): boolean =>
+  unadoptedDraftId === null
+  && shouldAbortChatStreamForSelectionEpoch(
+    streamSelectionEpoch,
+    nextSelectionEpoch,
+  );
+
+export const shouldAbortChatStreamForControllerCleanup = (
+  unadoptedDraftId: string | null,
+): boolean =>
+  unadoptedDraftId === null;
+
 export const isChatStreamControllerOwnedByStop = (
   stopStreamController: AbortController | null,
   activeStreamController: AbortController | null,
@@ -1748,7 +1836,7 @@ export const streamChatResponse = async (
   let receivedContent = false;
   let requestAcceptance: ChatRequestAcceptance = "unknown";
 
-  const request = startChatRequest("/api/chat", {
+  const request = startChatRequest(params.url ?? "/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: params.requestBody,
@@ -1782,23 +1870,23 @@ export const streamChatResponse = async (
     }
 
     requestAcceptance = "accepted";
+    responseSessionId = response.headers.get("X-Chat-Session-Id");
+    if (responseSessionId !== null && responseSessionId.length > 0) {
+      params.onSessionIdReceived(responseSessionId);
+    } else {
+      responseSessionId = null;
+    }
+
     const reader = response.body?.getReader();
     if (reader === undefined) {
       return {
-        responseSessionId: null,
+        responseSessionId,
         streamFailure: new Error(params.t("chat.errorNoResponse")),
         failureStage: "request",
         receivedContent: false,
         wasAborted: false,
         requestAcceptance,
       };
-    }
-
-    responseSessionId = response.headers.get("X-Chat-Session-Id");
-    if (responseSessionId !== null && responseSessionId.length > 0) {
-      params.onSessionIdReceived(responseSessionId);
-    } else {
-      responseSessionId = null;
     }
 
     params.onLiveStreamConnected();

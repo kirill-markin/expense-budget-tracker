@@ -590,6 +590,7 @@ export const useChatSessionController = (
       ));
       abortRef.current = attemptAbortController;
       const streamResult = await streamChatResponse({
+        url: "/api/chat",
         requestBody: pendingChatTurn.requestBody,
         signal: attemptAbortController.signal,
         abortStream: (): void => {

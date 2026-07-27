@@ -33,10 +33,48 @@ test("initial historical snapshot does not refresh without an invalidation basel
   assert.equal(shouldRefreshMainContentForVersion(state, "snapshot", 1), false);
 });
 
+test("selection changes detach local state without recording a stop", (): void => {
+  const runningState = reduceChatSessionControllerState(
+    reduceChatSessionControllerState(
+      createInitialChatSessionControllerState(),
+      { type: "selection_changed", sessionId: "session-a" },
+    ),
+    { type: "run_started" },
+  );
+  const selectedB = reduceChatSessionControllerState(
+    runningState,
+    { type: "selection_changed", sessionId: "session-b" },
+  );
+
+  assert.equal(selectedB.currentSessionId, "session-b");
+  assert.equal(selectedB.runState, "idle");
+  assert.equal(selectedB.isLiveStreamConnected, false);
+  assert.deepEqual([...selectedB.stoppedSessionIds], []);
+});
+
+test("returning to a running session restores persisted run state", (): void => {
+  const selectedA = reduceChatSessionControllerState(
+    createInitialChatSessionControllerState(),
+    { type: "selection_changed", sessionId: "session-a" },
+  );
+  const restoredA = reduceChatSessionControllerState(selectedA, {
+    type: "snapshot_applied",
+    sessionId: "session-a",
+    runState: "running",
+    updatedAt: 10,
+    mainContentInvalidationVersion: 0,
+  });
+
+  assert.equal(restoredA.currentSessionId, "session-a");
+  assert.equal(restoredA.runState, "running");
+  assert.equal(restoredA.bootstrapStatus, "ready");
+  assert.equal(restoredA.isHistoryLoaded, true);
+});
+
 test("stop suppression is scoped to the explicitly stopped session", (): void => {
   const selectedA = reduceChatSessionControllerState(
     createInitialChatSessionControllerState(),
-    { type: "server_session_created", sessionId: "session-a" },
+    { type: "selection_changed", sessionId: "session-a" },
   );
   const stoppingA = reduceChatSessionControllerState(selectedA, {
     type: "stop_requested",
@@ -50,14 +88,14 @@ test("stop suppression is scoped to the explicitly stopped session", (): void =>
 test("a delayed failed Stop for A does not mutate B stop state", (): void => {
   const selectedA = reduceChatSessionControllerState(
     createInitialChatSessionControllerState(),
-    { type: "server_session_created", sessionId: "session-a" },
+    { type: "selection_changed", sessionId: "session-a" },
   );
   const stoppingA = reduceChatSessionControllerState(selectedA, {
     type: "stop_requested",
     sessionId: "session-a",
   });
   const selectedB = reduceChatSessionControllerState(stoppingA, {
-    type: "server_session_created",
+    type: "selection_changed",
     sessionId: "session-b",
   });
   const stoppingB = reduceChatSessionControllerState(selectedB, {
@@ -77,10 +115,47 @@ test("a delayed failed Stop for A does not mutate B stop state", (): void => {
   assert.equal(selectIsSelectedSessionStopping(failedA), true);
 });
 
+test("workspace reload conflicts keep history blocked", (): void => {
+  const selectedState = reduceChatSessionControllerState(
+    createInitialChatSessionControllerState(),
+    { type: "selection_changed", sessionId: "session-a" },
+  );
+  const blockedState = reduceChatSessionControllerState(selectedState, {
+    type: "bootstrap_blocked",
+  });
+
+  assert.equal(blockedState.currentSessionId, "session-a");
+  assert.equal(blockedState.bootstrapStatus, "blocked");
+  assert.equal(blockedState.isHistoryLoaded, false);
+});
+
+test("matching cross-tab session changes block sending until the snapshot refreshes", (): void => {
+  const selectedA = reduceChatSessionControllerState(
+    reduceChatSessionControllerState(
+      createInitialChatSessionControllerState(),
+      { type: "selection_changed", sessionId: "session-a" },
+    ),
+    { type: "bootstrap_succeeded" },
+  );
+  const ignoredB = reduceChatSessionControllerState(selectedA, {
+    type: "external_session_change_observed",
+    sessionId: "session-b",
+  });
+  const refreshingA = reduceChatSessionControllerState(selectedA, {
+    type: "external_session_change_observed",
+    sessionId: "session-a",
+  });
+
+  assert.equal(ignoredB, selectedA);
+  assert.equal(refreshingA.currentSessionId, "session-a");
+  assert.equal(refreshingA.isHistoryLoaded, false);
+  assert.equal(refreshingA.bootstrapStatus, "loading");
+});
+
 test("idle snapshot retains a pending Stop marker until explicit completion", (): void => {
   const selectedA = reduceChatSessionControllerState(
     createInitialChatSessionControllerState(),
-    { type: "server_session_created", sessionId: "session-a" },
+    { type: "selection_changed", sessionId: "session-a" },
   );
   const stoppingA = reduceChatSessionControllerState(selectedA, {
     type: "stop_requested",
@@ -115,7 +190,7 @@ test("idle snapshot retains a pending Stop marker until explicit completion", ()
 test("completed Stop clears suppression for later cross-tab runs", (): void => {
   const selectedA = reduceChatSessionControllerState(
     createInitialChatSessionControllerState(),
-    { type: "server_session_created", sessionId: "session-a" },
+    { type: "selection_changed", sessionId: "session-a" },
   );
   const stoppingA = reduceChatSessionControllerState(selectedA, {
     type: "stop_requested",

@@ -12,9 +12,11 @@ import {
 } from "../../stream/streamRecovery";
 
 export type ChatMainContentInvalidationSource = "live" | "snapshot";
+export type ChatBootstrapStatus = "loading" | "ready" | "failed" | "blocked";
 
 export type ChatSessionControllerState = Readonly<{
   isHistoryLoaded: boolean;
+  bootstrapStatus: ChatBootstrapStatus;
   currentSessionId: string | null;
   runState: ChatRunState;
   isLiveStreamConnected: boolean;
@@ -26,8 +28,14 @@ export type ChatSessionControllerState = Readonly<{
 
 export type ChatSessionControllerAction =
   | Readonly<{ type: "workspace_reset" }>
+  | Readonly<{ type: "selection_changed"; sessionId: string | null }>
   | Readonly<{ type: "bootstrap_succeeded" }>
   | Readonly<{ type: "bootstrap_failed" }>
+  | Readonly<{ type: "bootstrap_blocked" }>
+  | Readonly<{
+    type: "external_session_change_observed";
+    sessionId: string;
+  }>
   | Readonly<{
     type: "snapshot_applied";
     sessionId: string;
@@ -72,6 +80,7 @@ const removeSessionId = (
 
 export const createInitialChatSessionControllerState = (): ChatSessionControllerState => ({
   isHistoryLoaded: false,
+  bootstrapStatus: "loading",
   currentSessionId: null,
   runState: "idle",
   isLiveStreamConnected: false,
@@ -88,11 +97,39 @@ export const reduceChatSessionControllerState = (
   switch (action.type) {
     case "workspace_reset":
       return createInitialChatSessionControllerState();
+    case "selection_changed":
+      return {
+        ...createInitialChatSessionControllerState(),
+        currentSessionId: action.sessionId,
+        stoppedSessionIds: state.stoppedSessionIds,
+        stoppingSessionIds: state.stoppingSessionIds,
+      };
     case "bootstrap_succeeded":
+      return {
+        ...state,
+        isHistoryLoaded: true,
+        bootstrapStatus: "ready",
+      };
     case "bootstrap_failed":
       return {
         ...state,
         isHistoryLoaded: true,
+        bootstrapStatus: "failed",
+      };
+    case "bootstrap_blocked":
+      return {
+        ...state,
+        isHistoryLoaded: false,
+        bootstrapStatus: "blocked",
+      };
+    case "external_session_change_observed":
+      if (state.currentSessionId !== action.sessionId) {
+        return state;
+      }
+      return {
+        ...state,
+        isHistoryLoaded: false,
+        bootstrapStatus: "loading",
       };
     case "snapshot_applied": {
       const stoppedSessionIds = action.runState === "idle"
@@ -100,6 +137,8 @@ export const reduceChatSessionControllerState = (
         : state.stoppedSessionIds;
       return {
         ...state,
+        isHistoryLoaded: true,
+        bootstrapStatus: "ready",
         currentSessionId: action.sessionId,
         runState: getEffectiveSnapshotRunState(
           action.runState,
