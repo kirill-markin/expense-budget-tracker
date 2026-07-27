@@ -206,6 +206,256 @@ export const buildChatSendRequestBody = (
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   } satisfies ChatSendRequestBody);
 
+export type ChatSessionSnapshotRequestErrorKind =
+  | "not_found"
+  | "active_response_conflict"
+  | "workspace_reload_required"
+  | "other";
+
+export type ChatSnapshotFailureDisposition =
+  | "recover_unavailable"
+  | "retry_active_response"
+  | "block_workspace_reload"
+  | "fail";
+
+export type ChatSnapshotRequestToken = Readonly<{
+  sessionId: string;
+  selectionEpoch: number;
+  generation: number;
+}>;
+
+export type ChatSnapshotRequestResult = Readonly<{
+  request: ChatSnapshotRequestToken;
+  snapshot: Promise<ChatSessionSnapshot>;
+}>;
+
+export type ChatSnapshotRequestResolution =
+  | Readonly<{
+    kind: "current";
+    snapshot: ChatSessionSnapshot;
+  }>
+  | Readonly<{
+    kind: "superseded";
+    snapshot: ChatSessionSnapshot | null;
+  }>;
+
+export type ChatSnapshotRequestCoordinator = Readonly<{
+  lastGeneration: number;
+  latestRequest: ChatSnapshotRequestToken | null;
+  latestResult: ChatSnapshotRequestResult | null;
+}>;
+
+export const createChatSnapshotRequestCoordinator =
+  (): ChatSnapshotRequestCoordinator => ({
+    lastGeneration: 0,
+    latestRequest: null,
+    latestResult: null,
+  });
+
+export const createSingleFlightChatSnapshotPoller = (
+  pollSnapshot: () => Promise<void>,
+): (() => Promise<void>) => {
+  let activePoll: Promise<void> | null = null;
+
+  return (): Promise<void> => {
+    if (activePoll !== null) {
+      return activePoll;
+    }
+
+    activePoll = pollSnapshot().finally((): void => {
+      activePoll = null;
+    });
+    return activePoll;
+  };
+};
+
+export const beginChatSnapshotRequest = (
+  coordinator: ChatSnapshotRequestCoordinator,
+  sessionId: string,
+  selectionEpoch: number,
+  snapshot: Promise<ChatSessionSnapshot>,
+): Readonly<{
+  coordinator: ChatSnapshotRequestCoordinator;
+  request: ChatSnapshotRequestToken;
+}> => {
+  const request: ChatSnapshotRequestToken = {
+    sessionId,
+    selectionEpoch,
+    generation: coordinator.lastGeneration + 1,
+  };
+  return {
+    coordinator: {
+      lastGeneration: request.generation,
+      latestRequest: request,
+      latestResult: {
+        request,
+        snapshot,
+      },
+    },
+    request,
+  };
+};
+
+export const isChatSnapshotRequestCurrent = (
+  coordinator: ChatSnapshotRequestCoordinator,
+  request: ChatSnapshotRequestToken,
+): boolean =>
+  coordinator.latestRequest?.sessionId === request.sessionId
+  && coordinator.latestRequest.selectionEpoch === request.selectionEpoch
+  && coordinator.latestRequest.generation === request.generation;
+
+export const selectSupersedingChatSnapshotRequestResult = (
+  coordinator: ChatSnapshotRequestCoordinator,
+  request: ChatSnapshotRequestToken,
+): ChatSnapshotRequestResult | null =>
+  isChatSnapshotRequestCurrent(coordinator, request)
+    ? null
+    : coordinator.latestResult;
+
+const areChatSnapshotRequestTokensEqual = (
+  first: ChatSnapshotRequestToken,
+  second: ChatSnapshotRequestToken,
+): boolean =>
+  first.sessionId === second.sessionId
+  && first.selectionEpoch === second.selectionEpoch
+  && first.generation === second.generation;
+
+export const resolveChatSnapshotRequest = async (
+  getCoordinator: () => ChatSnapshotRequestCoordinator,
+  initialResult: ChatSnapshotRequestResult,
+): Promise<ChatSnapshotRequestResolution> => {
+  let candidate = initialResult;
+
+  while (true) {
+    let snapshot: ChatSessionSnapshot;
+    try {
+      snapshot = await candidate.snapshot;
+    } catch (error) {
+      const coordinator = getCoordinator();
+      if (isChatSnapshotRequestCurrent(coordinator, candidate.request)) {
+        if (areChatSnapshotRequestTokensEqual(
+          candidate.request,
+          initialResult.request,
+        )) {
+          throw error;
+        }
+        return {
+          kind: "superseded",
+          snapshot: null,
+        };
+      }
+
+      const supersedingResult = selectSupersedingChatSnapshotRequestResult(
+        coordinator,
+        candidate.request,
+      );
+      if (supersedingResult === null) {
+        return {
+          kind: "superseded",
+          snapshot: null,
+        };
+      }
+      candidate = supersedingResult;
+      continue;
+    }
+
+    const coordinator = getCoordinator();
+    if (isChatSnapshotRequestCurrent(coordinator, candidate.request)) {
+      return areChatSnapshotRequestTokensEqual(
+        candidate.request,
+        initialResult.request,
+      )
+        ? {
+          kind: "current",
+          snapshot,
+        }
+        : {
+          kind: "superseded",
+          snapshot,
+        };
+    }
+
+    const supersedingResult = selectSupersedingChatSnapshotRequestResult(
+      coordinator,
+      candidate.request,
+    );
+    if (supersedingResult === null) {
+      return {
+        kind: "superseded",
+        snapshot: null,
+      };
+    }
+    candidate = supersedingResult;
+  }
+};
+
+const ACTIVE_RESPONSE_CONFLICT_MESSAGE =
+  "Chat session already has an active response";
+const WORKSPACE_RELOAD_MESSAGE =
+  "Active workspace is unavailable. Reload to re-establish workspace context.";
+
+const classifyChatSessionSnapshotRequestError = (
+  status: number,
+  rawError: string,
+): ChatSessionSnapshotRequestErrorKind => {
+  if (status === 404) {
+    return "not_found";
+  }
+  if (status !== 409) {
+    return "other";
+  }
+
+  const message = rawError.trim();
+  if (message === ACTIVE_RESPONSE_CONFLICT_MESSAGE) {
+    return "active_response_conflict";
+  }
+  if (message === WORKSPACE_RELOAD_MESSAGE) {
+    return "workspace_reload_required";
+  }
+  return "other";
+};
+
+export class ChatSessionSnapshotRequestError extends Error {
+  public readonly status: number;
+  public readonly kind: ChatSessionSnapshotRequestErrorKind;
+
+  public constructor(
+    status: number,
+    message: string,
+    kind: ChatSessionSnapshotRequestErrorKind,
+  ) {
+    super(message);
+    this.name = "ChatSessionSnapshotRequestError";
+    this.status = status;
+    this.kind = kind;
+  }
+}
+
+export const isUnavailableChatSessionSnapshotError = (
+  error: unknown,
+): error is ChatSessionSnapshotRequestError =>
+  error instanceof ChatSessionSnapshotRequestError
+  && error.kind === "not_found";
+
+export const resolveChatSnapshotFailureDisposition = (
+  error: unknown,
+): ChatSnapshotFailureDisposition => {
+  if (!(error instanceof ChatSessionSnapshotRequestError)) {
+    return "fail";
+  }
+
+  switch (error.kind) {
+    case "not_found":
+      return "recover_unavailable";
+    case "active_response_conflict":
+      return "retry_active_response";
+    case "workspace_reload_required":
+      return "block_workspace_reload";
+    case "other":
+      return "fail";
+  }
+};
+
 export const fetchChatSessionSnapshot = async (
   sessionId: string | undefined,
   signal: AbortSignal | undefined,
@@ -221,7 +471,11 @@ export const fetchChatSessionSnapshot = async (
 
   if (!response.ok) {
     const rawError = await response.text();
-    throw new Error(`Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`);
+    throw new ChatSessionSnapshotRequestError(
+      response.status,
+      `Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`,
+      classifyChatSessionSnapshotRequestError(response.status, rawError),
+    );
   }
 
   return response.json() as Promise<ChatSessionSnapshot>;

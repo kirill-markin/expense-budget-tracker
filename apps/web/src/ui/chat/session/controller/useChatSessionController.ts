@@ -31,12 +31,16 @@ import {
   type ChatRunState,
 } from "../../stream/streamRecovery";
 import {
+  beginChatSnapshotRequest,
   buildChatSendRequestBody,
   createChatSession,
+  createChatSnapshotRequestCoordinator,
+  createSingleFlightChatSnapshotPoller,
   deleteChatConversation,
   fetchChatSessionSnapshot,
   postStopChatSession,
   prepareChatSendRequest,
+  resolveChatSnapshotRequest,
   streamChatResponse,
 } from "./chatSessionControllerRuntime";
 import {
@@ -89,6 +93,24 @@ type NormalizedChatSessionSnapshot = Readonly<{
   messages: ChatSessionSnapshot["messages"];
 }>;
 
+type ChatSnapshotLoadResult =
+  | Readonly<{
+    kind: "applied";
+    snapshot: NormalizedChatSessionSnapshot;
+  }>
+  | Readonly<{
+    kind: "superseded";
+    snapshot: NormalizedChatSessionSnapshot | null;
+  }>;
+
+const assertValidChatSessionSnapshot = (
+  snapshot: ChatSessionSnapshot,
+): void => {
+  if (typeof snapshot.sessionId !== "string" || snapshot.sessionId.trim() === "") {
+    throw new Error("Chat session snapshot did not include a sessionId");
+  }
+};
+
 export const useChatSessionController = (
   params: UseChatSessionControllerParams,
 ): ChatSessionController => {
@@ -117,6 +139,9 @@ export const useChatSessionController = (
   const abortRef = useRef<AbortController | null>(null);
   const pendingSessionIdRef = useRef<Promise<string> | null>(null);
   const invalidationSourceIdRef = useRef<string | null>(null);
+  const snapshotRequestCoordinatorRef = useRef(
+    createChatSnapshotRequestCoordinator(),
+  );
 
   const dispatchAction = useCallback((
     action: ChatSessionControllerAction,
@@ -182,8 +207,46 @@ export const useChatSessionController = (
     sessionId: string | undefined,
     signal: AbortSignal | undefined,
     replaceHistory: boolean,
-  ): Promise<NormalizedChatSessionSnapshot> => {
-    const payload = await fetchChatSessionSnapshot(sessionId, signal, t);
+  ): Promise<ChatSnapshotLoadResult> => {
+    const snapshotPromise = fetchChatSessionSnapshot(sessionId, signal, t);
+    const snapshotRequest = beginChatSnapshotRequest(
+      snapshotRequestCoordinatorRef.current,
+      sessionId ?? stateRef.current.currentSessionId ?? workspaceId,
+      0,
+      snapshotPromise,
+    );
+    snapshotRequestCoordinatorRef.current = snapshotRequest.coordinator;
+
+    const resolution = await resolveChatSnapshotRequest(
+      () => snapshotRequestCoordinatorRef.current,
+      {
+        request: snapshotRequest.request,
+        snapshot: snapshotPromise,
+      },
+    );
+    if (resolution.snapshot === null) {
+      return {
+        kind: "superseded",
+        snapshot: null,
+      };
+    }
+
+    const payload = resolution.snapshot;
+    assertValidChatSessionSnapshot(payload);
+    if (resolution.kind === "superseded") {
+      return {
+        kind: "superseded",
+        snapshot: {
+          ...payload,
+          runState: selectEffectiveSnapshotRunState(
+            stateRef.current,
+            payload.sessionId,
+            payload.runState,
+          ),
+        },
+      };
+    }
+
     const currentState = stateRef.current;
     const shouldRefresh = shouldRefreshMainContentForVersion(
       currentState,
@@ -215,10 +278,13 @@ export const useChatSessionController = (
     }
 
     return {
-      ...payload,
-      runState: effectiveRunState,
+      kind: "applied",
+      snapshot: {
+        ...payload,
+        runState: effectiveRunState,
+      },
     };
-  }, [dispatchAction, refreshMainContent, replaceMessages, t]);
+  }, [dispatchAction, refreshMainContent, replaceMessages, t, workspaceId]);
 
   useEffect(() => {
     if (!state.isHistoryLoaded) {
@@ -366,16 +432,27 @@ export const useChatSessionController = (
       return;
     }
 
-    const intervalId = setInterval(() => {
-      void loadChatSnapshot(state.currentSessionId ?? undefined, undefined, true).catch((error) => {
-        if (stateRef.current.isLiveStreamConnected) {
-          return;
-        }
+    const pollSnapshot = createSingleFlightChatSnapshotPoller(
+      async (): Promise<void> => {
+        try {
+          await loadChatSnapshot(
+            state.currentSessionId ?? undefined,
+            undefined,
+            true,
+          );
+        } catch (error) {
+          if (stateRef.current.isLiveStreamConnected) {
+            return;
+          }
 
-        const message = error instanceof Error ? error.message : String(error);
-        markAssistantError(t("chat.errorFailed", { message }));
-        dispatchAction({ type: "run_interrupted" });
-      });
+          const message = error instanceof Error ? error.message : String(error);
+          markAssistantError(t("chat.errorFailed", { message }));
+          dispatchAction({ type: "run_interrupted" });
+        }
+      },
+    );
+    const intervalId = setInterval(() => {
+      void pollSnapshot();
     }, ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
@@ -516,8 +593,15 @@ export const useChatSessionController = (
     const sessionIdToReload = streamResult.responseSessionId ?? stateRef.current.currentSessionId ?? undefined;
     if (!streamResult.wasAborted && sessionIdToReload !== undefined) {
       try {
-        const snapshot = await loadChatSnapshot(sessionIdToReload, undefined, true);
-        if (shouldSuppressStreamFailure(snapshot)) {
+        const snapshotResult = await loadChatSnapshot(
+          sessionIdToReload,
+          undefined,
+          true,
+        );
+        if (snapshotResult.snapshot === null) {
+          return;
+        }
+        if (shouldSuppressStreamFailure(snapshotResult.snapshot)) {
           return;
         }
       } catch (error) {
