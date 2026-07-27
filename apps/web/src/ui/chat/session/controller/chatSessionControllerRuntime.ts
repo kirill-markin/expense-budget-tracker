@@ -8,6 +8,7 @@ import {
   OPENAI_IMAGE_MIME_TYPES,
 } from "@/lib/chatImageFormats";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import type { StoredMessage } from "@/lib/chatHistory";
 import type { ContentPart } from "@/server/chat/types";
 import type { PendingAttachment } from "../../shell/panel/FileAttachment";
 import type { ChatSessionSnapshot } from "../bootstrap/chatSessionSnapshot";
@@ -29,8 +30,32 @@ type ChatClearConversationResponse = Readonly<{
   sessionId: string;
 }>;
 
+type StopChatSessionResponseBase = Readonly<{
+  ok: true;
+  sessionId: string;
+  stopped: boolean;
+  stillRunning: boolean;
+}>;
+
+export type SessionLevelStopChatSessionResponse =
+  StopChatSessionResponseBase & Readonly<{
+    turnId?: undefined;
+    cancellationConfirmed?: undefined;
+  }>;
+
+export type ExactTurnStopChatSessionResponse =
+  StopChatSessionResponseBase & Readonly<{
+    turnId: string;
+    cancellationConfirmed: true;
+  }>;
+
+export type StopChatSessionResponse =
+  | SessionLevelStopChatSessionResponse
+  | ExactTurnStopChatSessionResponse;
+
 type ChatSendRequestBody = Readonly<{
   sessionId: string;
+  turnId: string;
   model: string;
   content: ReadonlyArray<ContentPart>;
   timezone: string;
@@ -64,6 +89,11 @@ export type StreamChatResponseParams = Readonly<{
 
 export type StreamChatFailureStage = "request" | "stream" | null;
 
+export type ChatRequestAcceptance =
+  | "unknown"
+  | "rejected"
+  | "accepted";
+
 type ChatCreateSessionResponse = Readonly<{
   sessionId: string;
 }>;
@@ -74,13 +104,908 @@ export type StreamChatResponseResult = Readonly<{
   failureStage: StreamChatFailureStage;
   receivedContent: boolean;
   wasAborted: boolean;
+  requestAcceptance: ChatRequestAcceptance;
 }>;
+
+export type ChatSendReconciliationOwner = Readonly<{
+  ownerId: symbol;
+  sessionId: string;
+  turnId: string;
+}>;
+
+export type ChatClearOperationOwner = Readonly<{
+  ownerId: symbol;
+  targetSessionId: string | null;
+}>;
+
+export type ChatStopOperationOwner = Readonly<{
+  ownerId: symbol;
+  sessionId: string;
+  abortController: AbortController;
+}>;
+
+export type ChatPreSessionSendOwner = Readonly<{
+  ownerId: symbol;
+  initialSessionId: string | null;
+  turnId: string;
+}>;
+
+type ChatRequestStartResult =
+  | Readonly<{
+    kind: "started";
+    response: Promise<Response>;
+  }>
+  | Readonly<{
+    kind: "preflight_rejected";
+    error: Error;
+  }>;
+
+const toError = (error: unknown): Error =>
+  error instanceof Error ? error : new Error(String(error));
+
+const RFC_CHAT_UUID_PATTERN =
+  /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/u;
+
+export const isCanonicalChatUuid = (value: string): boolean =>
+  value === value.toLowerCase()
+  && RFC_CHAT_UUID_PATTERN.test(value);
+
+export const assertCanonicalChatTurnId = (turnId: string): void => {
+  if (!isCanonicalChatUuid(turnId)) {
+    throw new Error(
+      `Client chat turn identity was not a canonical lowercase UUID: turnId=${turnId}`,
+    );
+  }
+};
+
+const isRecord = (
+  value: unknown,
+): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object"
+  && value !== null
+  && !Array.isArray(value);
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number"
+  && Number.isInteger(value)
+  && value >= 0;
+
+const isNullableNonNegativeInteger = (
+  value: unknown,
+): value is number | null =>
+  value === null || isNonNegativeInteger(value);
+
+const isValidStreamPosition = (value: unknown): boolean => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return typeof value.itemId === "string"
+    && value.itemId.trim() !== ""
+    && (
+      value.responseIndex === undefined
+      || isNonNegativeInteger(value.responseIndex)
+    )
+    && isNonNegativeInteger(value.outputIndex)
+    && isNullableNonNegativeInteger(value.contentIndex)
+    && isNullableNonNegativeInteger(value.sequenceNumber);
+};
+
+const hasValidOptionalStreamPosition = (
+  value: Readonly<Record<string, unknown>>,
+): boolean =>
+  value.streamPosition === undefined
+  || isValidStreamPosition(value.streamPosition);
+
+const isValidChatSnapshotContentPart = (value: unknown): boolean => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  switch (value.type) {
+    case "text":
+      return typeof value.text === "string"
+        && hasValidOptionalStreamPosition(value);
+    case "image":
+      return typeof value.mediaType === "string"
+        && typeof value.base64Data === "string";
+    case "file":
+      return typeof value.mediaType === "string"
+        && typeof value.base64Data === "string"
+        && typeof value.fileName === "string";
+    case "tool_call":
+      return (value.id === undefined || typeof value.id === "string")
+        && typeof value.name === "string"
+        && (value.status === "started" || value.status === "completed")
+        && (
+          value.providerStatus === undefined
+          || value.providerStatus === null
+          || typeof value.providerStatus === "string"
+        )
+        && (value.input === null || typeof value.input === "string")
+        && (value.output === null || typeof value.output === "string")
+        && hasValidOptionalStreamPosition(value);
+    case "reasoning_summary":
+      return typeof value.summary === "string"
+        && isValidStreamPosition(value.streamPosition);
+    default:
+      return false;
+  }
+};
+
+export class ChatSessionSnapshotSchemaError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "ChatSessionSnapshotSchemaError";
+  }
+}
+
+export function assertValidChatSessionSnapshot(
+  snapshot: unknown,
+): asserts snapshot is ChatSessionSnapshot {
+  if (!isRecord(snapshot)) {
+    throw new ChatSessionSnapshotSchemaError(
+      "Chat session snapshot was not an object",
+    );
+  }
+  if (
+    typeof snapshot.sessionId !== "string"
+    || snapshot.sessionId.trim() === ""
+  ) {
+    throw new ChatSessionSnapshotSchemaError(
+      "Chat session snapshot did not include a sessionId",
+    );
+  }
+  if (
+    snapshot.runState !== "idle"
+    && snapshot.runState !== "running"
+    && snapshot.runState !== "interrupted"
+  ) {
+    throw new ChatSessionSnapshotSchemaError(
+      `Chat session snapshot included an invalid runState: sessionId=${snapshot.sessionId}, runState=${String(snapshot.runState)}`,
+    );
+  }
+  if (
+    snapshot.activeTurnId !== null
+    && (
+      typeof snapshot.activeTurnId !== "string"
+      || !isCanonicalChatUuid(snapshot.activeTurnId)
+    )
+  ) {
+    throw new ChatSessionSnapshotSchemaError(
+      `Chat session snapshot included an invalid activeTurnId: sessionId=${snapshot.sessionId}, activeTurnId=${String(snapshot.activeTurnId)}`,
+    );
+  }
+  if (
+    (snapshot.runState === "running") !== (snapshot.activeTurnId !== null)
+  ) {
+    throw new ChatSessionSnapshotSchemaError(
+      `Chat session snapshot run state did not match active turn identity: sessionId=${snapshot.sessionId}, runState=${snapshot.runState}, activeTurnId=${snapshot.activeTurnId ?? "none"}`,
+    );
+  }
+  if (
+    typeof snapshot.updatedAt !== "number"
+    || !Number.isFinite(snapshot.updatedAt)
+    || typeof snapshot.mainContentInvalidationVersion !== "number"
+    || !Number.isFinite(snapshot.mainContentInvalidationVersion)
+    || !Array.isArray(snapshot.messages)
+  ) {
+    throw new ChatSessionSnapshotSchemaError(
+      `Chat session snapshot included invalid metadata: sessionId=${snapshot.sessionId}`,
+    );
+  }
+
+  for (
+    const [messageIndex, message] of snapshot.messages.entries()
+  ) {
+    if (
+      !isRecord(message)
+      || typeof message.messageId !== "string"
+      || !isCanonicalChatUuid(message.messageId)
+    ) {
+      throw new ChatSessionSnapshotSchemaError(
+        `Chat session snapshot included an invalid message identity: sessionId=${snapshot.sessionId}, messageIndex=${String(messageIndex)}`,
+      );
+    }
+    if (
+      (message.role !== "user" && message.role !== "assistant")
+      || !Array.isArray(message.content)
+      || !message.content.every(isValidChatSnapshotContentPart)
+      || typeof message.timestamp !== "number"
+      || !Number.isFinite(message.timestamp)
+      || typeof message.isError !== "boolean"
+      || typeof message.isStopped !== "boolean"
+    ) {
+      throw new ChatSessionSnapshotSchemaError(
+        `Chat session snapshot included an invalid persisted message: sessionId=${snapshot.sessionId}, messageId=${message.messageId}`,
+      );
+    }
+  }
+}
+
+const startChatRequest = (
+  input: RequestInfo | URL,
+  init: RequestInit,
+): ChatRequestStartResult => {
+  try {
+    return {
+      kind: "started",
+      response: fetchWithCsrf(input, init),
+    };
+  } catch (error) {
+    return {
+      kind: "preflight_rejected",
+      error: toError(error),
+    };
+  }
+};
+
+export const isChatPreSessionSendOwnerCurrent = (
+  owner: ChatPreSessionSendOwner,
+  currentOwner: ChatPreSessionSendOwner | null,
+  currentSessionId: string | null,
+): boolean =>
+  currentOwner?.ownerId === owner.ownerId
+  && currentSessionId === owner.initialSessionId;
+
+export const resolveChatPreSessionSendAdoption = (
+  owner: ChatPreSessionSendOwner,
+  currentOwner: ChatPreSessionSendOwner | null,
+  currentSessionId: string | null,
+  writableSessionId: string,
+  signal: AbortSignal,
+): ChatSendReconciliationOwner | null => {
+  if (
+    signal.aborted
+    || !isChatPreSessionSendOwnerCurrent(
+      owner,
+      currentOwner,
+      currentSessionId,
+    )
+  ) {
+    return null;
+  }
+  if (
+    owner.initialSessionId !== null
+    && owner.initialSessionId !== writableSessionId
+  ) {
+    throw new Error(
+      `Chat session changed while preparing a send: expectedSessionId=${owner.initialSessionId}, writableSessionId=${writableSessionId}`,
+    );
+  }
+
+  return {
+    ownerId: owner.ownerId,
+    sessionId: writableSessionId,
+    turnId: owner.turnId,
+  };
+};
+
+type ChatOperationOwner = Readonly<{
+  ownerId: symbol;
+}>;
+
+type ChatSingleFlightRunner<
+  Owner extends ChatOperationOwner,
+  Result,
+> = Readonly<{
+  run: (owner: Owner) => Promise<Result>;
+  cancel: (owner: Owner) => void;
+  cancelActive: () => void;
+}>;
+
+export type ChatSendReconciliationRunner<
+  Owner extends ChatSendReconciliationOwner,
+> = ChatSingleFlightRunner<Owner, void>;
+
+export type ChatTurnCancellationResolution =
+  | Readonly<{
+    kind: "confirmed";
+    response: ExactTurnStopChatSessionResponse;
+  }>
+  | Readonly<{
+    kind: "superseded";
+  }>;
+
+export type ChatTurnCancellationRunner<
+  Owner extends ChatSendReconciliationOwner,
+> = ChatSingleFlightRunner<Owner, ChatTurnCancellationResolution>;
+
+export type ChatClearOperationRunner =
+  ChatSingleFlightRunner<ChatClearOperationOwner, void>;
+
+export const isChatClearOperationOwnerCurrent = (
+  owner: ChatClearOperationOwner,
+  currentOwner: ChatClearOperationOwner | null,
+  currentSessionId: string | null,
+): boolean =>
+  currentOwner?.ownerId === owner.ownerId
+  && currentSessionId === owner.targetSessionId;
+
+export const isChatSendReconciliationOwnerCurrent = (
+  owner: ChatSendReconciliationOwner,
+  currentOwner: ChatSendReconciliationOwner | null,
+  currentSessionId: string | null,
+): boolean =>
+  currentOwner?.ownerId === owner.ownerId
+  && currentSessionId === owner.sessionId;
+
+export const isChatTurnOwnerForSession = (
+  owner: ChatSendReconciliationOwner | null,
+  sessionId: string | null,
+): boolean =>
+  owner !== null
+  && owner.sessionId === sessionId;
+
+export const isChatStopOperationOwnerCurrent = (
+  owner: ChatStopOperationOwner,
+  currentOwner: ChatStopOperationOwner | null,
+  currentSessionId: string | null,
+): boolean =>
+  !owner.abortController.signal.aborted
+  && currentOwner?.ownerId === owner.ownerId
+  && currentSessionId === owner.sessionId;
+
+export const isChatSnapshotPollingOwnerCurrent = (
+  requestedSessionId: string,
+  currentSessionId: string | null,
+  signal: AbortSignal,
+): boolean =>
+  !signal.aborted
+  && currentSessionId === requestedSessionId;
+
+export const isChatTurnCancellationSettlementOwned = (
+  cancellation: ChatSendReconciliationOwner,
+  currentCancellation: ChatSendReconciliationOwner | null,
+  currentExactTurn: ChatSendReconciliationOwner | null,
+  currentSessionId: string | null,
+): boolean =>
+  isChatSendReconciliationOwnerCurrent(
+    cancellation,
+    currentCancellation,
+    currentSessionId,
+  )
+  && currentExactTurn?.ownerId === cancellation.ownerId;
+
+const createSingleFlightChatRunner = <
+  Owner extends ChatOperationOwner,
+  Result,
+>(
+  runCycle: (
+    owner: Owner,
+    abortController: AbortController,
+  ) => Promise<Result>,
+): ChatSingleFlightRunner<Owner, Result> => {
+  let activeCycle: Readonly<{
+    ownerId: symbol;
+    abortController: AbortController;
+    promise: Promise<Result>;
+  }> | null = null;
+
+  const run = (owner: Owner): Promise<Result> => {
+    if (activeCycle?.ownerId === owner.ownerId) {
+      return activeCycle.promise;
+    }
+
+    activeCycle?.abortController.abort();
+    const abortController = new AbortController();
+    let cyclePromise: Promise<Result>;
+    cyclePromise = runCycle(owner, abortController).finally((): void => {
+      if (activeCycle?.promise === cyclePromise) {
+        activeCycle = null;
+      }
+    });
+    activeCycle = {
+      ownerId: owner.ownerId,
+      abortController,
+      promise: cyclePromise,
+    };
+    return cyclePromise;
+  };
+
+  const cancel = (owner: Owner): void => {
+    if (activeCycle?.ownerId === owner.ownerId) {
+      activeCycle.abortController.abort();
+    }
+  };
+
+  const cancelActive = (): void => {
+    activeCycle?.abortController.abort();
+  };
+
+  return {
+    run,
+    cancel,
+    cancelActive,
+  };
+};
+
+export const createSingleFlightChatSendReconciliationRunner = <
+  Owner extends ChatSendReconciliationOwner,
+>(
+  reconcile: (
+    owner: Owner,
+    abortController: AbortController,
+  ) => Promise<void>,
+): ChatSendReconciliationRunner<Owner> =>
+  createSingleFlightChatRunner(reconcile);
+
+export const createSingleFlightChatTurnCancellationRunner = <
+  Owner extends ChatSendReconciliationOwner,
+>(
+  reconcile: (
+    owner: Owner,
+    abortController: AbortController,
+  ) => Promise<ChatTurnCancellationResolution>,
+): ChatTurnCancellationRunner<Owner> =>
+  createSingleFlightChatRunner(reconcile);
+
+export const createSingleFlightChatClearOperationRunner = (
+  clear: (
+    owner: ChatClearOperationOwner,
+    abortController: AbortController,
+  ) => Promise<void>,
+): ChatClearOperationRunner =>
+  createSingleFlightChatRunner(clear);
+
+export type ChatTurnCancellationRequestErrorKind =
+  | "acceptance_unknown"
+  | "rejected";
+
+export class ChatTurnCancellationRequestError extends Error {
+  public readonly status: number | null;
+  public readonly kind: ChatTurnCancellationRequestErrorKind;
+
+  public constructor(
+    message: string,
+    status: number | null,
+    kind: ChatTurnCancellationRequestErrorKind,
+  ) {
+    super(message);
+    this.name = "ChatTurnCancellationRequestError";
+    this.status = status;
+    this.kind = kind;
+  }
+}
+
+export const shouldRestoreChatTurnAfterCancellationRejection = (
+  error: unknown,
+  rejectedTurn: ChatSendReconciliationOwner,
+  currentTurn: ChatSendReconciliationOwner | null,
+  currentSessionId: string | null,
+): boolean =>
+  error instanceof ChatTurnCancellationRequestError
+  && error.kind === "rejected"
+  && isChatSendReconciliationOwnerCurrent(
+    rejectedTurn,
+    currentTurn,
+    currentSessionId,
+  );
+
+export const shouldRestoreChatRunAfterSnapshotFailure = (
+  stoppedTurn: ChatSendReconciliationOwner,
+  activeTurn: ChatSendReconciliationOwner | null,
+  currentSessionId: string | null,
+): boolean =>
+  currentSessionId === stoppedTurn.sessionId
+  && activeTurn?.sessionId === stoppedTurn.sessionId
+  && activeTurn.turnId === stoppedTurn.turnId;
+
+export type ChatPendingTurnRetryOwner =
+  ChatSendReconciliationOwner & Readonly<{
+    requestBody: string;
+    retryAbortController: AbortController;
+  }>;
+
+export const restorePendingChatTurnAfterCancellationRejection = <
+  Owner extends ChatPendingTurnRetryOwner,
+>(
+  error: unknown,
+  rejectedTurn: ChatSendReconciliationOwner,
+  currentTurn: Owner | null,
+  currentSessionId: string | null,
+): Owner | null => {
+  if (
+    currentTurn === null
+    || !currentTurn.retryAbortController.signal.aborted
+    || !shouldRestoreChatTurnAfterCancellationRejection(
+      error,
+      rejectedTurn,
+      currentTurn,
+      currentSessionId,
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    ...currentTurn,
+    retryAbortController: new AbortController(),
+  };
+};
+
+export type ReconcileChatTurnCancellationParams = Readonly<{
+  signal: AbortSignal;
+  isOwnerCurrent: () => boolean;
+  requestCancellation: (
+    signal: AbortSignal,
+  ) => Promise<ExactTurnStopChatSessionResponse>;
+  waitForRetry: (signal: AbortSignal) => Promise<void>;
+}>;
+
+export const reconcileChatTurnCancellation = async (
+  params: ReconcileChatTurnCancellationParams,
+): Promise<ChatTurnCancellationResolution> => {
+  while (!params.signal.aborted && params.isOwnerCurrent()) {
+    try {
+      const response = await params.requestCancellation(params.signal);
+      return params.signal.aborted || !params.isOwnerCurrent()
+        ? { kind: "superseded" }
+        : {
+          kind: "confirmed",
+          response,
+        };
+    } catch (error) {
+      if (params.signal.aborted || !params.isOwnerCurrent()) {
+        return { kind: "superseded" };
+      }
+      if (
+        error instanceof ChatTurnCancellationRequestError
+        && error.kind === "rejected"
+      ) {
+        throw error;
+      }
+      await params.waitForRetry(params.signal);
+    }
+  }
+
+  return { kind: "superseded" };
+};
+
+export type CompleteChatTurnCancellationParams =
+  ReconcileChatTurnCancellationParams & Readonly<{
+    clearCancellationAttempt: () => void;
+    clearExactTurnOwnership: () => void;
+  }>;
+
+export const completeChatTurnCancellation = async (
+  params: CompleteChatTurnCancellationParams,
+): Promise<ChatTurnCancellationResolution> => {
+  let resolution: ChatTurnCancellationResolution;
+  try {
+    resolution = await reconcileChatTurnCancellation(params);
+  } catch (error) {
+    if (
+      error instanceof ChatTurnCancellationRequestError
+      && error.kind === "rejected"
+      && params.isOwnerCurrent()
+    ) {
+      params.clearCancellationAttempt();
+    }
+    throw error;
+  }
+
+  if (resolution.kind !== "confirmed" || !params.isOwnerCurrent()) {
+    params.clearCancellationAttempt();
+    return { kind: "superseded" };
+  }
+
+  params.clearExactTurnOwnership();
+  params.clearCancellationAttempt();
+  return resolution;
+};
+
+export type ChatConfirmedStopSnapshotResolution<Snapshot> =
+  | Readonly<{
+    kind: "settled";
+    snapshot: Snapshot;
+  }>
+  | Readonly<{
+    kind: "superseded";
+    snapshot: Snapshot | null;
+  }>;
+
+export type ChatConfirmedStopSnapshotDisposition =
+  | "retry"
+  | "settled"
+  | "superseded";
+
+export type ChatConfirmedStopSnapshotFailureDisposition =
+  | "retry"
+  | "fail";
+
+export type ReconcileConfirmedChatStopSnapshotParams<Snapshot> = Readonly<{
+  signal: AbortSignal;
+  isOwnerCurrent: () => boolean;
+  loadSnapshot: (signal: AbortSignal) => Promise<Snapshot | null>;
+  resolveSnapshot: (
+    snapshot: Snapshot,
+  ) => ChatConfirmedStopSnapshotDisposition;
+  classifyFailure: (
+    error: unknown,
+  ) => ChatConfirmedStopSnapshotFailureDisposition;
+  waitForRetry: (signal: AbortSignal) => Promise<void>;
+}>;
+
+export const reconcileConfirmedChatStopSnapshot = async <Snapshot>(
+  params: ReconcileConfirmedChatStopSnapshotParams<Snapshot>,
+): Promise<ChatConfirmedStopSnapshotResolution<Snapshot>> => {
+  while (!params.signal.aborted && params.isOwnerCurrent()) {
+    let snapshot: Snapshot | null;
+    try {
+      snapshot = await params.loadSnapshot(params.signal);
+    } catch (error) {
+      if (params.signal.aborted || !params.isOwnerCurrent()) {
+        return {
+          kind: "superseded",
+          snapshot: null,
+        };
+      }
+      if (params.classifyFailure(error) === "fail") {
+        throw error;
+      }
+      await params.waitForRetry(params.signal);
+      continue;
+    }
+
+    if (params.signal.aborted || !params.isOwnerCurrent()) {
+      return {
+        kind: "superseded",
+        snapshot: null,
+      };
+    }
+    if (snapshot === null) {
+      await params.waitForRetry(params.signal);
+      continue;
+    }
+    const disposition = params.resolveSnapshot(snapshot);
+    if (disposition === "settled") {
+      return {
+        kind: "settled",
+        snapshot,
+      };
+    }
+    if (disposition === "superseded") {
+      return {
+        kind: "superseded",
+        snapshot,
+      };
+    }
+    await params.waitForRetry(params.signal);
+  }
+
+  return {
+    kind: "superseded",
+    snapshot: null,
+  };
+};
+
+export const resolveConfirmedChatStopSnapshotDisposition = (
+  turnId: string | null,
+  snapshot: Pick<ChatSessionSnapshot, "activeTurnId" | "runState">,
+): ChatConfirmedStopSnapshotDisposition => {
+  if (
+    snapshot.runState !== "idle"
+    && snapshot.runState !== "running"
+    && snapshot.runState !== "interrupted"
+  ) {
+    throw new Error(
+      `Chat snapshot included an invalid runState while settling Stop: turnId=${turnId ?? "none"}, runState=${String(snapshot.runState)}`,
+    );
+  }
+  if (snapshot.runState === "running") {
+    if (snapshot.activeTurnId === null) {
+      throw new Error(
+        `Running chat snapshot did not include an activeTurnId while settling Stop: turnId=${turnId ?? "none"}`,
+      );
+    }
+    return turnId !== null && snapshot.activeTurnId !== turnId
+      ? "superseded"
+      : "retry";
+  }
+  if (snapshot.activeTurnId !== null) {
+    throw new Error(
+      `Terminal chat snapshot retained an activeTurnId while settling Stop: turnId=${turnId ?? "none"}, activeTurnId=${snapshot.activeTurnId}`,
+    );
+  }
+
+  return "settled";
+};
+
+export const isDefinitiveChatRequestRejection = (
+  result: StreamChatResponseResult,
+): boolean =>
+  result.failureStage === "request"
+  && result.requestAcceptance === "rejected";
+
+export type ChatSendReconciliationDisposition =
+  | "preserve_success"
+  | "acceptance_unknown";
+
+export const resolveChatSendReconciliationDisposition = (
+  turnId: string,
+  snapshot: Pick<ChatSessionSnapshot, "messages">,
+): ChatSendReconciliationDisposition =>
+  snapshot.messages.some((message) => message.messageId === turnId)
+    ? "preserve_success"
+    : "acceptance_unknown";
+
+export type ChatExactTurnOwnership = Readonly<{
+  pendingTurn: ChatSendReconciliationOwner | null;
+  activeTurn: ChatSendReconciliationOwner | null;
+}>;
+
+export const resolveChatExactTurnOwnership = (
+  snapshot: ChatSessionSnapshot,
+  pendingTurn: ChatSendReconciliationOwner | null,
+  activeTurn: ChatSendReconciliationOwner | null,
+  cancellation: ChatSendReconciliationOwner | null,
+): ChatExactTurnOwnership => {
+  let nextPendingTurn = pendingTurn;
+  let nextActiveTurn = activeTurn;
+  const pendingTurnWasAccepted = pendingTurn !== null
+    && pendingTurn.sessionId === snapshot.sessionId
+    && resolveChatSendReconciliationDisposition(
+      pendingTurn.turnId,
+      snapshot,
+    ) === "preserve_success";
+
+  if (pendingTurnWasAccepted && pendingTurn !== null) {
+    if (
+      (
+        snapshot.runState === "running"
+        && snapshot.activeTurnId === pendingTurn.turnId
+      )
+      || cancellation?.ownerId === pendingTurn.ownerId
+    ) {
+      nextActiveTurn = pendingTurn;
+    }
+    nextPendingTurn = null;
+  }
+
+  if (snapshot.runState === "running") {
+    if (snapshot.activeTurnId === null) {
+      throw new Error(
+        `Running chat snapshot did not include an activeTurnId: sessionId=${snapshot.sessionId}`,
+      );
+    }
+    if (
+      nextActiveTurn?.sessionId !== snapshot.sessionId
+      || nextActiveTurn.turnId !== snapshot.activeTurnId
+    ) {
+      nextActiveTurn = {
+        ownerId: Symbol(snapshot.activeTurnId),
+        sessionId: snapshot.sessionId,
+        turnId: snapshot.activeTurnId,
+      };
+    }
+  } else if (
+    nextActiveTurn?.sessionId === snapshot.sessionId
+    && cancellation?.ownerId !== nextActiveTurn.ownerId
+  ) {
+    nextActiveTurn = null;
+  }
+
+  return {
+    pendingTurn: nextPendingTurn,
+    activeTurn: nextActiveTurn,
+  };
+};
+
+export const buildFailedChatSendHistory = (
+  authoritativeMessages: ReadonlyArray<StoredMessage>,
+  submittedContent: ReadonlyArray<ContentPart>,
+  errorMessage: string,
+  timestamp: number,
+): ReadonlyArray<StoredMessage> => [
+  ...authoritativeMessages,
+  {
+    role: "user",
+    content: submittedContent,
+    timestamp,
+    isError: false,
+    isStopped: false,
+  },
+  {
+    role: "assistant",
+    content: [{ type: "text", text: errorMessage }],
+    timestamp,
+    isError: true,
+    isStopped: false,
+  },
+];
+
+export const buildPendingChatSendHistory = (
+  authoritativeMessages: ReadonlyArray<StoredMessage>,
+  submittedContent: ReadonlyArray<ContentPart>,
+  timestamp: number,
+): ReadonlyArray<StoredMessage> => [
+  ...authoritativeMessages,
+  {
+    role: "user",
+    content: submittedContent,
+    timestamp,
+    isError: false,
+    isStopped: false,
+  },
+  {
+    role: "assistant",
+    content: [],
+    timestamp,
+    isError: false,
+    isStopped: false,
+  },
+];
+
+export const buildStoppedChatSendHistory = (
+  authoritativeMessages: ReadonlyArray<StoredMessage>,
+  submittedContent: ReadonlyArray<ContentPart>,
+  timestamp: number,
+): ReadonlyArray<StoredMessage> => [
+  ...authoritativeMessages,
+  {
+    role: "user",
+    content: submittedContent,
+    timestamp,
+    isError: false,
+    isStopped: false,
+  },
+  {
+    role: "assistant",
+    content: [],
+    timestamp,
+    isError: false,
+    isStopped: true,
+  },
+];
+
+export type PendingChatTurnTranscript = Readonly<{
+  authoritativeMessages: ReadonlyArray<StoredMessage>;
+  submittedContent: ReadonlyArray<ContentPart>;
+  turnId: string;
+}>;
+
+export const resolveConfirmedChatTurnStopHistory = (
+  snapshot: Pick<
+    ChatSessionSnapshot,
+    "activeTurnId" | "messages" | "runState"
+  >,
+  pendingTurn: PendingChatTurnTranscript,
+  timestamp: number,
+): ReadonlyArray<StoredMessage> | null => {
+  if (
+    snapshot.runState === "running"
+    || snapshot.activeTurnId !== null
+    || resolveChatSendReconciliationDisposition(
+      pendingTurn.turnId,
+      snapshot,
+    ) === "preserve_success"
+  ) {
+    return null;
+  }
+
+  return buildStoppedChatSendHistory(
+    snapshot.messages,
+    pendingTurn.submittedContent,
+    timestamp,
+  );
+};
 
 const IMAGE_MEDIA_TYPES = new Set<string>(OPENAI_IMAGE_MIME_TYPES);
 const HEIC_SIGNATURE_PREFIX_BASE64_CHARACTERS = 16;
 
 const MAX_BODY_BYTES = 90 * 1024 * 1024;
 const STREAM_TIMEOUT_MS = 6 * 60 * 1000;
+
+const resolveRejectedChatRequestAcceptance = (
+  response: Response,
+): Exclude<ChatRequestAcceptance, "accepted"> => {
+  if (response.status >= 500) {
+    return "unknown";
+  }
+
+  return "rejected";
+};
 
 const decodeBase64Prefix = (base64Data: string): Uint8Array => {
   const binary = atob(base64Data.slice(0, HEIC_SIGNATURE_PREFIX_BASE64_CHARACTERS));
@@ -174,6 +1099,7 @@ export const prepareChatSendRequest = (
 
   const requestBody = JSON.stringify({
     sessionId: "session-size-check",
+    turnId: "00000000-0000-4000-8000-000000000000",
     model: CHAT_MODEL_ID,
     content: contentParts,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -198,9 +1124,11 @@ export const prepareChatSendRequest = (
 export const buildChatSendRequestBody = (
   content: ReadonlyArray<ContentPart>,
   sessionId: string,
+  turnId: string,
 ): string =>
   JSON.stringify({
     sessionId,
+    turnId,
     model: CHAT_MODEL_ID,
     content,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -431,6 +1359,66 @@ export class ChatSessionSnapshotRequestError extends Error {
   }
 }
 
+export type ChatSessionSnapshotTransportErrorKind =
+  | "network"
+  | "preflight_rejected";
+
+export class ChatSessionSnapshotTransportError extends Error {
+  public readonly kind: ChatSessionSnapshotTransportErrorKind;
+
+  public constructor(
+    message: string,
+    kind: ChatSessionSnapshotTransportErrorKind,
+  ) {
+    super(message);
+    this.name = "ChatSessionSnapshotTransportError";
+    this.kind = kind;
+  }
+}
+
+export const classifyConfirmedChatStopSnapshotFailure = (
+  error: unknown,
+): ChatConfirmedStopSnapshotFailureDisposition => {
+  if (error instanceof ChatSessionSnapshotTransportError) {
+    return error.kind === "network" ? "retry" : "fail";
+  }
+  if (error instanceof ChatSessionSnapshotRequestError) {
+    return error.status >= 500
+      || error.kind === "active_response_conflict"
+      ? "retry"
+      : "fail";
+  }
+
+  return "fail";
+};
+
+export const resolveDefinitiveChatSendSnapshotFailureHistory = (
+  error: unknown,
+  pendingTurn: ChatSendReconciliationOwner & PendingChatTurnTranscript,
+  currentPendingTurn: ChatSendReconciliationOwner | null,
+  currentSessionId: string | null,
+  errorMessage: string,
+  timestamp: number,
+): ReadonlyArray<StoredMessage> | null => {
+  if (
+    classifyConfirmedChatStopSnapshotFailure(error) !== "fail"
+    || !isChatSendReconciliationOwnerCurrent(
+      pendingTurn,
+      currentPendingTurn,
+      currentSessionId,
+    )
+  ) {
+    return null;
+  }
+
+  return buildFailedChatSendHistory(
+    pendingTurn.authoritativeMessages,
+    pendingTurn.submittedContent,
+    errorMessage,
+    timestamp,
+  );
+};
+
 export const isUnavailableChatSessionSnapshotError = (
   error: unknown,
 ): error is ChatSessionSnapshotRequestError =>
@@ -464,13 +1452,43 @@ export const fetchChatSessionSnapshot = async (
   const url = sessionId === undefined
     ? "/api/chat"
     : `/api/chat?sessionId=${encodeURIComponent(sessionId)}`;
-  const response = await fetchWithCsrf(url, {
+  const request = startChatRequest(url, {
     method: "GET",
     signal,
   });
+  if (request.kind === "preflight_rejected") {
+    throw new ChatSessionSnapshotTransportError(
+      `Chat snapshot request was rejected before sending: sessionId=${sessionId ?? "current"}, error=${request.error.message}`,
+      "preflight_rejected",
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await request.response;
+  } catch (error) {
+    const requestError = toError(error);
+    throw new ChatSessionSnapshotTransportError(
+      `Chat snapshot request failed before receiving a response: sessionId=${sessionId ?? "current"}, error=${requestError.message}`,
+      "network",
+    );
+  }
 
   if (!response.ok) {
-    const rawError = await response.text();
+    let rawError: string;
+    try {
+      rawError = await response.text();
+    } catch (error) {
+      const statusText = response.statusText.trim() === ""
+        ? "Snapshot request failed"
+        : response.statusText;
+      const readFailure = toError(error);
+      throw new ChatSessionSnapshotRequestError(
+        response.status,
+        `Error ${String(response.status)}: ${statusText}; response body could not be read: ${readFailure.message}`,
+        classifyChatSessionSnapshotRequestError(response.status, ""),
+      );
+    }
     throw new ChatSessionSnapshotRequestError(
       response.status,
       `Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`,
@@ -478,24 +1496,144 @@ export const fetchChatSessionSnapshot = async (
     );
   }
 
-  return response.json() as Promise<ChatSessionSnapshot>;
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    const readFailure = toError(error);
+    if (error instanceof SyntaxError) {
+      throw new ChatSessionSnapshotSchemaError(
+        `Chat snapshot response contained malformed JSON: sessionId=${sessionId ?? "current"}, error=${readFailure.message}`,
+      );
+    }
+    throw new ChatSessionSnapshotTransportError(
+      `Chat snapshot response body could not be read: sessionId=${sessionId ?? "current"}, error=${readFailure.message}`,
+      "network",
+    );
+  }
+  assertValidChatSessionSnapshot(payload);
+  if (sessionId !== undefined && payload.sessionId !== sessionId) {
+    throw new ChatSessionSnapshotSchemaError(
+      `Chat snapshot response session did not match the requested session: requestedSessionId=${sessionId}, returnedSessionId=${payload.sessionId}`,
+    );
+  }
+  return payload;
 };
 
-export const postStopChatSession = async (
+const isStopChatSessionResponse = (
+  payload: unknown,
   sessionId: string,
+  turnId: string | null,
+): payload is StopChatSessionResponse => {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return false;
+  }
+
+  const candidate = payload as Readonly<Record<string, unknown>>;
+  if (
+    candidate.ok !== true
+    || candidate.sessionId !== sessionId
+    || typeof candidate.stopped !== "boolean"
+    || typeof candidate.stillRunning !== "boolean"
+  ) {
+    return false;
+  }
+
+  return turnId === null
+    || (
+      candidate.turnId === turnId
+      && candidate.cancellationConfirmed === true
+    );
+};
+
+export function postStopChatSession(
+  sessionId: string,
+  turnId: string,
+  signal: AbortSignal | undefined,
   t: ChatTranslation,
-): Promise<void> => {
-  const response = await fetchWithCsrf("/api/chat/stop", {
+): Promise<ExactTurnStopChatSessionResponse>;
+export function postStopChatSession(
+  sessionId: string,
+  turnId: null,
+  signal: AbortSignal | undefined,
+  t: ChatTranslation,
+): Promise<SessionLevelStopChatSessionResponse>;
+export function postStopChatSession(
+  sessionId: string,
+  turnId: string | null,
+  signal: AbortSignal | undefined,
+  t: ChatTranslation,
+): Promise<StopChatSessionResponse>;
+export async function postStopChatSession(
+  sessionId: string,
+  turnId: string | null,
+  signal: AbortSignal | undefined,
+  t: ChatTranslation,
+): Promise<StopChatSessionResponse> {
+  const request = startChatRequest("/api/chat/stop", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({
+      sessionId,
+      ...(turnId === null ? {} : { turnId }),
+    }),
+    signal,
   });
+  if (request.kind === "preflight_rejected") {
+    throw new ChatTurnCancellationRequestError(
+      `Chat stop request was rejected before sending: sessionId=${sessionId}, turnId=${turnId ?? "none"}, error=${request.error.message}`,
+      null,
+      "rejected",
+    );
+  }
+  const response = await request.response;
 
   if (!response.ok) {
-    const rawError = await response.text();
-    throw new Error(`Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`);
+    const kind: ChatTurnCancellationRequestErrorKind =
+      response.status >= 500 ? "acceptance_unknown" : "rejected";
+    let rawError: string;
+    try {
+      rawError = await response.text();
+    } catch (error) {
+      const statusText = response.statusText.trim() === ""
+        ? (kind === "rejected" ? "Request rejected" : "Server error")
+        : response.statusText;
+      const readFailure = error instanceof Error
+        ? error.message
+        : String(error);
+      throw new ChatTurnCancellationRequestError(
+        `Error ${String(response.status)}: ${statusText}; response body could not be read: ${readFailure}`,
+        response.status,
+        kind,
+      );
+    }
+    throw new ChatTurnCancellationRequestError(
+      `Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`,
+      response.status,
+      kind,
+    );
   }
-};
+
+  let payload: unknown;
+  try {
+    payload = await response.json() as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ChatTurnCancellationRequestError(
+      `Chat stop confirmation could not be read: sessionId=${sessionId}, turnId=${turnId ?? "none"}, status=${String(response.status)}, error=${message}`,
+      response.status,
+      "acceptance_unknown",
+    );
+  }
+  if (!isStopChatSessionResponse(payload, sessionId, turnId)) {
+    throw new ChatTurnCancellationRequestError(
+      `Chat stop returned an invalid confirmation: sessionId=${sessionId}, turnId=${turnId ?? "none"}`,
+      response.status,
+      "acceptance_unknown",
+    );
+  }
+  return payload;
+}
 
 export const createChatSession = async (
   t: ChatTranslation,
@@ -530,6 +1668,7 @@ export const ensureWritableChatSession = async (
 
 export const deleteChatConversation = async (
   sessionId: string | null,
+  signal: AbortSignal,
   t: ChatTranslation,
 ): Promise<ChatClearConversationResponse> => {
   const clearUrl = sessionId === null
@@ -537,6 +1676,7 @@ export const deleteChatConversation = async (
     : `/api/chat?sessionId=${encodeURIComponent(sessionId)}`;
   const response = await fetchWithCsrf(clearUrl, {
     method: "DELETE",
+    signal,
   });
 
   if (!response.ok) {
@@ -606,16 +1746,30 @@ export const streamChatResponse = async (
   let streamFailure: Error | null = null;
   let failureStage: StreamChatFailureStage = null;
   let receivedContent = false;
+  let requestAcceptance: ChatRequestAcceptance = "unknown";
+
+  const request = startChatRequest("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: params.requestBody,
+    signal: params.signal,
+  });
+  if (request.kind === "preflight_rejected") {
+    return {
+      responseSessionId: null,
+      streamFailure: request.error,
+      failureStage: "request",
+      receivedContent: false,
+      wasAborted: params.signal.aborted,
+      requestAcceptance: "rejected",
+    };
+  }
 
   try {
-    const response = await fetchWithCsrf("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: params.requestBody,
-      signal: params.signal,
-    });
+    const response = await request.response;
 
     if (!response.ok) {
+      requestAcceptance = resolveRejectedChatRequestAcceptance(response);
       const rawError = await response.text();
       return {
         responseSessionId: null,
@@ -623,9 +1777,11 @@ export const streamChatResponse = async (
         failureStage: "request",
         receivedContent: false,
         wasAborted: false,
+        requestAcceptance,
       };
     }
 
+    requestAcceptance = "accepted";
     const reader = response.body?.getReader();
     if (reader === undefined) {
       return {
@@ -634,6 +1790,7 @@ export const streamChatResponse = async (
         failureStage: "request",
         receivedContent: false,
         wasAborted: false,
+        requestAcceptance,
       };
     }
 
@@ -691,7 +1848,7 @@ export const streamChatResponse = async (
   } catch (error) {
     if (!params.signal.aborted) {
       streamFailure = error instanceof Error ? error : new Error(String(error));
-      failureStage = "stream";
+      failureStage = requestAcceptance === "accepted" ? "stream" : "request";
     }
   }
 
@@ -701,5 +1858,6 @@ export const streamChatResponse = async (
     failureStage,
     receivedContent,
     wasAborted: params.signal.aborted,
+    requestAcceptance,
   };
 };

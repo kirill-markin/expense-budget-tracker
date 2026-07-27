@@ -6,6 +6,7 @@ import type { ChatRunState } from "../../stream/streamRecovery";
 export type ChatSessionSnapshot = Readonly<{
   sessionId: string;
   runState: ChatRunState;
+  activeTurnId: string | null;
   updatedAt: number;
   mainContentInvalidationVersion: number;
   messages: ReadonlyArray<StoredMessage>;
