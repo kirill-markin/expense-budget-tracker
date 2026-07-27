@@ -10,6 +10,8 @@ import {
   ensureWritableChatSession,
   fetchChatSessionSnapshot,
   isChatSnapshotRequestCurrent,
+  isChatStopSettlementOwned,
+  isChatStreamControllerOwnedByStop,
   isUnavailableChatSessionSnapshotError,
   prepareChatSendRequest,
   resolveChatSnapshotFailureDisposition,
@@ -268,6 +270,171 @@ test("a rejected stale generation waits for a later successful owner", async ():
     kind: "superseded",
     snapshot: authoritativeSnapshot,
   });
+});
+
+test("a pre-Stop running poll cannot overwrite the idle Stop snapshot", async (): Promise<void> => {
+  type RaceSnapshot = ChatSessionSnapshot & Readonly<{
+    message: string;
+  }>;
+
+  let coordinator = createChatSnapshotRequestCoordinator();
+  let controllerState = reduceChatSessionControllerState(
+    createInitialChatSessionControllerState(),
+    { type: "server_session_created", sessionId: "session-a" },
+  );
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "run_started",
+  });
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "stop_requested",
+    sessionId: "session-a",
+  });
+  let appliedMessage = "";
+  const preStopPoll = Promise.withResolvers<RaceSnapshot>();
+  const stopSnapshot = Promise.withResolvers<RaceSnapshot>();
+
+  const preStopRequest = beginChatSnapshotRequest(
+    coordinator,
+    "session-a",
+    4,
+    preStopPoll.promise,
+  );
+  coordinator = preStopRequest.coordinator;
+  const applySnapshot = async (
+    request: typeof preStopRequest.request,
+    snapshotPromise: Promise<RaceSnapshot>,
+  ): Promise<void> => {
+    const snapshot = await snapshotPromise;
+    if (!isChatSnapshotRequestCurrent(coordinator, request)) {
+      return;
+    }
+    controllerState = reduceChatSessionControllerState(controllerState, {
+      type: "snapshot_applied",
+      sessionId: request.sessionId,
+      runState: snapshot.runState,
+      updatedAt: snapshot.updatedAt,
+      mainContentInvalidationVersion: snapshot.updatedAt,
+    });
+    appliedMessage = snapshot.message;
+  };
+  const preStopApplyPromise = applySnapshot(
+    preStopRequest.request,
+    preStopPoll.promise,
+  );
+
+  const stopRequest = beginChatSnapshotRequest(
+    coordinator,
+    "session-a",
+    4,
+    stopSnapshot.promise,
+  );
+  coordinator = stopRequest.coordinator;
+  const stopApplyPromise = applySnapshot(
+    stopRequest.request,
+    stopSnapshot.promise,
+  );
+  stopSnapshot.resolve({
+    sessionId: "session-a",
+    runState: "idle",
+    updatedAt: 20,
+    mainContentInvalidationVersion: 0,
+    messages: [],
+    message: "stopped transcript",
+  });
+  await stopApplyPromise;
+  controllerState = reduceChatSessionControllerState(controllerState, {
+    type: "stop_completed",
+    sessionId: "session-a",
+  });
+
+  preStopPoll.resolve({
+    sessionId: "session-a",
+    runState: "running",
+    updatedAt: 10,
+    mainContentInvalidationVersion: 0,
+    messages: [],
+    message: "stale running transcript",
+  });
+  await preStopApplyPromise;
+
+  assert.equal(controllerState.runState, "idle");
+  assert.equal(controllerState.lastSnapshotUpdatedAt, 20);
+  assert.equal(controllerState.isHistoryLoaded, false);
+  assert.equal(selectIsAssistantRunActive(controllerState), false);
+  assert.equal(selectComposerAction(controllerState), "send");
+  assert.equal(appliedMessage, "stopped transcript");
+});
+
+test("a deferred Stop cannot abort, disconnect, or adopt into a newer session stream", async (): Promise<void> => {
+  const stopRequest = Promise.withResolvers<void>();
+  const stoppedRunController = new AbortController();
+  const newerRunController = new AbortController();
+  let currentSessionId = "session-a";
+  let activeStreamController: AbortController | null = stoppedRunController;
+  let disconnectCount = 0;
+  let adoptedSnapshotSessionId: string | null = null;
+
+  const stopSettlement = (async (): Promise<void> => {
+    const stoppedSessionId = currentSessionId;
+    const stopStreamController = activeStreamController;
+    await stopRequest.promise;
+
+    stopStreamController?.abort();
+    if (!isChatStopSettlementOwned(
+      stoppedSessionId,
+      currentSessionId,
+      stopStreamController,
+      activeStreamController,
+    )) {
+      return;
+    }
+
+    activeStreamController = null;
+    disconnectCount += 1;
+    if (isChatStopSettlementOwned(
+      stoppedSessionId,
+      currentSessionId,
+      null,
+      activeStreamController,
+    )) {
+      adoptedSnapshotSessionId = stoppedSessionId;
+    }
+  })();
+
+  currentSessionId = "session-b";
+  activeStreamController = newerRunController;
+  stopRequest.resolve();
+  await stopSettlement;
+
+  assert.equal(stoppedRunController.signal.aborted, true);
+  assert.equal(newerRunController.signal.aborted, false);
+  assert.equal(activeStreamController, newerRunController);
+  assert.equal(disconnectCount, 0);
+  assert.equal(adoptedSnapshotSessionId, null);
+  assert.equal(
+    isChatStopSettlementOwned(
+      "session-a",
+      "session-a",
+      stoppedRunController,
+      stoppedRunController,
+    ),
+    true,
+  );
+  assert.equal(
+    isChatStopSettlementOwned("session-a", "session-a", null, null),
+    true,
+  );
+  assert.equal(
+    isChatStreamControllerOwnedByStop(
+      stoppedRunController,
+      stoppedRunController,
+    ),
+    true,
+  );
+  assert.equal(
+    isChatStreamControllerOwnedByStop(null, newerRunController),
+    false,
+  );
 });
 
 test("snapshot transport preserves response status for safe URL recovery", async (): Promise<void> => {

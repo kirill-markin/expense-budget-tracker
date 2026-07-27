@@ -483,12 +483,18 @@ export const fetchChatSessionSnapshot = async (
 
 export const postStopChatSession = async (
   sessionId: string,
+  t: ChatTranslation,
 ): Promise<void> => {
-  await fetchWithCsrf("/api/chat/stop", {
+  const response = await fetchWithCsrf("/api/chat/stop", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionId }),
   });
+
+  if (!response.ok) {
+    const rawError = await response.text();
+    throw new Error(`Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`);
+  }
 };
 
 export const createChatSession = async (
@@ -540,6 +546,29 @@ export const deleteChatConversation = async (
 
   return response.json() as Promise<ChatClearConversationResponse>;
 };
+
+export const isChatStreamControllerOwnedByStop = (
+  stopStreamController: AbortController | null,
+  activeStreamController: AbortController | null,
+): boolean =>
+  stopStreamController !== null
+  && stopStreamController === activeStreamController;
+
+export const isChatStopSettlementOwned = (
+  stoppedSessionId: string,
+  currentSessionId: string | null,
+  stopStreamController: AbortController | null,
+  activeStreamController: AbortController | null,
+): boolean =>
+  stoppedSessionId === currentSessionId
+  && (
+    stopStreamController === null
+      ? activeStreamController === null
+      : isChatStreamControllerOwnedByStop(
+        stopStreamController,
+        activeStreamController,
+      )
+  );
 
 const readStreamChunkWithTimeout = async (
   reader: ReadableStreamDefaultReader<Uint8Array>,

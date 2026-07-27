@@ -18,10 +18,10 @@ export type ChatSessionControllerState = Readonly<{
   currentSessionId: string | null;
   runState: ChatRunState;
   isLiveStreamConnected: boolean;
-  isStopping: boolean;
   lastSnapshotUpdatedAt: number | null;
   lastMainContentInvalidationVersion: number | null;
   stoppedSessionIds: ReadonlySet<string>;
+  stoppingSessionIds: ReadonlySet<string>;
 }>;
 
 export type ChatSessionControllerAction =
@@ -42,7 +42,8 @@ export type ChatSessionControllerAction =
   | Readonly<{ type: "run_finished" }>
   | Readonly<{ type: "run_interrupted" }>
   | Readonly<{ type: "stop_requested"; sessionId: string }>
-  | Readonly<{ type: "stop_completed" }>
+  | Readonly<{ type: "stop_completed"; sessionId: string }>
+  | Readonly<{ type: "stop_failed"; sessionId: string }>
   | Readonly<{ type: "stopped_session_cleared"; sessionId: string }>
   | Readonly<{ type: "conversation_cleared"; sessionId: string }>
   | Readonly<{ type: "server_session_accepted"; sessionId: string }>
@@ -56,17 +57,17 @@ const mergeInvalidationVersion = (
     ? nextVersion
     : Math.max(previousVersion, nextVersion);
 
-const removeStoppedSession = (
-  stoppedSessionIds: ReadonlySet<string>,
+const removeSessionId = (
+  sessionIds: ReadonlySet<string>,
   sessionId: string,
 ): ReadonlySet<string> => {
-  if (!stoppedSessionIds.has(sessionId)) {
-    return stoppedSessionIds;
+  if (!sessionIds.has(sessionId)) {
+    return sessionIds;
   }
 
-  const nextStoppedSessionIds = new Set(stoppedSessionIds);
-  nextStoppedSessionIds.delete(sessionId);
-  return nextStoppedSessionIds;
+  const nextSessionIds = new Set(sessionIds);
+  nextSessionIds.delete(sessionId);
+  return nextSessionIds;
 };
 
 export const createInitialChatSessionControllerState = (): ChatSessionControllerState => ({
@@ -74,10 +75,10 @@ export const createInitialChatSessionControllerState = (): ChatSessionController
   currentSessionId: null,
   runState: "idle",
   isLiveStreamConnected: false,
-  isStopping: false,
   lastSnapshotUpdatedAt: null,
   lastMainContentInvalidationVersion: null,
   stoppedSessionIds: new Set<string>(),
+  stoppingSessionIds: new Set<string>(),
 });
 
 export const reduceChatSessionControllerState = (
@@ -93,20 +94,25 @@ export const reduceChatSessionControllerState = (
         ...state,
         isHistoryLoaded: true,
       };
-    case "snapshot_applied":
+    case "snapshot_applied": {
+      const stoppedSessionIds = action.runState === "idle"
+        ? removeSessionId(state.stoppedSessionIds, action.sessionId)
+        : state.stoppedSessionIds;
       return {
         ...state,
         currentSessionId: action.sessionId,
         runState: getEffectiveSnapshotRunState(
           action.runState,
-          state.stoppedSessionIds.has(action.sessionId),
+          stoppedSessionIds.has(action.sessionId),
         ),
+        stoppedSessionIds,
         lastSnapshotUpdatedAt: action.updatedAt,
         lastMainContentInvalidationVersion: mergeInvalidationVersion(
           state.lastMainContentInvalidationVersion,
           action.mainContentInvalidationVersion,
         ),
       };
+    }
     case "main_content_invalidation_observed":
       return {
         ...state,
@@ -130,7 +136,12 @@ export const reduceChatSessionControllerState = (
         ...state,
         runState: "running",
         isLiveStreamConnected: false,
-        stoppedSessionIds: new Set<string>(),
+        stoppedSessionIds: state.currentSessionId === null
+          ? state.stoppedSessionIds
+          : removeSessionId(
+            state.stoppedSessionIds,
+            state.currentSessionId,
+          ),
       };
     case "run_finished":
       return {
@@ -147,18 +158,37 @@ export const reduceChatSessionControllerState = (
     case "stop_requested":
       return {
         ...state,
-        isStopping: true,
         stoppedSessionIds: new Set([...state.stoppedSessionIds, action.sessionId]),
+        stoppingSessionIds: new Set([...state.stoppingSessionIds, action.sessionId]),
       };
     case "stop_completed":
       return {
         ...state,
-        isStopping: false,
+        stoppedSessionIds: removeSessionId(
+          state.stoppedSessionIds,
+          action.sessionId,
+        ),
+        stoppingSessionIds: removeSessionId(
+          state.stoppingSessionIds,
+          action.sessionId,
+        ),
+      };
+    case "stop_failed":
+      return {
+        ...state,
+        stoppedSessionIds: removeSessionId(
+          state.stoppedSessionIds,
+          action.sessionId,
+        ),
+        stoppingSessionIds: removeSessionId(
+          state.stoppingSessionIds,
+          action.sessionId,
+        ),
       };
     case "stopped_session_cleared":
       return {
         ...state,
-        stoppedSessionIds: removeStoppedSession(state.stoppedSessionIds, action.sessionId),
+        stoppedSessionIds: removeSessionId(state.stoppedSessionIds, action.sessionId),
       };
     case "conversation_cleared":
       return {
@@ -166,11 +196,13 @@ export const reduceChatSessionControllerState = (
         currentSessionId: action.sessionId,
         runState: "idle",
         isLiveStreamConnected: false,
-        isStopping: false,
         lastMainContentInvalidationVersion: 0,
         stoppedSessionIds: state.currentSessionId === null
           ? state.stoppedSessionIds
-          : removeStoppedSession(state.stoppedSessionIds, state.currentSessionId),
+          : removeSessionId(state.stoppedSessionIds, state.currentSessionId),
+        stoppingSessionIds: state.currentSessionId === null
+          ? state.stoppingSessionIds
+          : removeSessionId(state.stoppingSessionIds, state.currentSessionId),
       };
     case "server_session_accepted":
       return {
@@ -223,6 +255,12 @@ export const selectIsAssistantRunActive = (
   state: ChatSessionControllerState,
 ): boolean =>
   isChatRunActive(state.runState);
+
+export const selectIsSelectedSessionStopping = (
+  state: ChatSessionControllerState,
+): boolean =>
+  state.currentSessionId !== null
+  && state.stoppingSessionIds.has(state.currentSessionId);
 
 export const selectComposerAction = (
   state: ChatSessionControllerState,
