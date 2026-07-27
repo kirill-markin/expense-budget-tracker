@@ -26,13 +26,16 @@ import {
   startPersistedChatRun,
 } from "@/server/chat/runtime/runtime";
 import {
+  admitChatRunStart,
   ChatSessionConflictError,
   ChatSessionNotFoundError,
+  ChatTurnCancelledError,
   type ChatSessionSnapshot,
   createFreshChatSession,
   getChatSessionSnapshot,
   getLatestChatSessionId,
   prepareChatRun,
+  requireAcceptedChatTurn,
 } from "@/server/chat/store";
 import { log } from "@/server/logger";
 import {
@@ -50,6 +53,8 @@ type PostChatRouteDependencies = Readonly<{
   reserveChatRunStart: typeof reserveChatRunStart;
   releaseChatRunStartReservation: typeof releaseChatRunStartReservation;
   prepareChatRun: typeof prepareChatRun;
+  admitChatRunStart: typeof admitChatRunStart;
+  requireAcceptedChatTurn: typeof requireAcceptedChatTurn;
   startPersistedChatRun: typeof startPersistedChatRun;
   isServerDraining: typeof isServerDraining;
   log: typeof log;
@@ -71,6 +76,8 @@ const DEFAULT_POST_CHAT_ROUTE_DEPENDENCIES: PostChatRouteDependencies = {
   reserveChatRunStart,
   releaseChatRunStartReservation,
   prepareChatRun,
+  admitChatRunStart,
+  requireAcceptedChatTurn,
   startPersistedChatRun,
   isServerDraining,
   log,
@@ -83,6 +90,26 @@ const DEFAULT_CHAT_DELETE_ROUTE_DEPENDENCIES: ChatDeleteRouteDependencies = {
 };
 
 export const CHAT_STREAM_DRAINING_ERROR = CHAT_SERVER_DRAINING_MESSAGE;
+export const CHAT_REQUEST_ACCEPTANCE_HEADER = "X-Chat-Request-Acceptance";
+
+const createAcceptedChatTurnResponse = (
+  sessionId: string,
+): Response =>
+  new Response(null, {
+    status: 202,
+    headers: {
+      [CHAT_REQUEST_ACCEPTANCE_HEADER]: "accepted",
+      "X-Chat-Session-Id": sessionId,
+    },
+  });
+
+const createPendingChatTurnResponse = (): Response =>
+  new Response("Chat turn acceptance is still pending", {
+    status: 503,
+    headers: {
+      [CHAT_REQUEST_ACCEPTANCE_HEADER]: "unknown",
+    },
+  });
 
 export const getChatRouteWithDeps = async (
   request: Request,
@@ -139,7 +166,9 @@ export const postChatRouteWithDeps = async (
   if (apiKey === undefined || apiKey === "") {
     const diagnostics = buildChatRequestDiagnostics(requestId, body.model, body.content);
     dependencies.log(createChatErrorLogEvent(diagnostics, "config", `${envKey} environment variable is not set`));
-    return new Response(`${envKey} environment variable is not set`, { status: 500 });
+    return new Response(`${envKey} environment variable is not set`, {
+      status: 500,
+    });
   }
 
   let context: ChatRequestContext;
@@ -167,19 +196,47 @@ export const postChatRouteWithDeps = async (
       context.workspaceId,
       snapshot.sessionId,
     );
+    const turnId = body.turnId ?? crypto.randomUUID();
 
-    const reservation = dependencies.reserveChatRunStart(snapshot.sessionId);
-    if (reservation === null) {
+    const reservationResult = dependencies.reserveChatRunStart(
+      snapshot.sessionId,
+      turnId,
+    );
+    if (reservationResult.kind === "same_turn_pending") {
+      return createPendingChatTurnResponse();
+    }
+    if (reservationResult.kind === "same_turn_accepted") {
+      await dependencies.requireAcceptedChatTurn(
+        context.userId,
+        context.workspaceId,
+        snapshot.sessionId,
+        turnId,
+      );
+      return createAcceptedChatTurnResponse(snapshot.sessionId);
+    }
+    if (reservationResult.kind === "conflict") {
       throw new ChatSessionConflictError(snapshot.sessionId);
     }
+    const reservation = reservationResult.reservation;
 
     let runtimeStarted = false;
     try {
-      const preparedRun = await dependencies.prepareChatRun(
+      const prepareResult = await dependencies.prepareChatRun(
         context.userId,
         context.workspaceId,
         snapshot.sessionId,
         body.content,
+        turnId,
+      );
+      if (prepareResult.kind === "already_accepted") {
+        return createAcceptedChatTurnResponse(prepareResult.sessionId);
+      }
+      const preparedRun = prepareResult.preparedRun;
+      await dependencies.admitChatRunStart(
+        context.userId,
+        context.workspaceId,
+        preparedRun.sessionId,
+        preparedRun.activeRunId,
       );
       const locale = dependencies.getLocaleFromRequest(request);
       const runtimeParams = {
@@ -232,15 +289,16 @@ export const postChatRouteWithDeps = async (
     if (
       error instanceof ChatSessionNotFoundError
       || error instanceof ChatSessionConflictError
+      || error instanceof ChatTurnCancelledError
     ) {
       return new Response(
         error instanceof ChatSessionConflictError
           ? "Chat session already has an active response"
           : error.message,
         {
-          status: error instanceof ChatSessionConflictError
-            ? 409
-            : 404,
+          status: error instanceof ChatSessionNotFoundError
+            ? 404
+            : 409,
         },
       );
     }

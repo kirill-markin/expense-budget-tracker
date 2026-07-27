@@ -7,6 +7,7 @@ import type {
 } from "@/server/chat/types";
 
 export type StoredMessage = Readonly<{
+  messageId?: string;
   role: "user" | "assistant";
   content: ReadonlyArray<ContentPart>;
   timestamp: number;

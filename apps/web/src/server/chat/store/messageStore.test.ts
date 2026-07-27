@@ -38,25 +38,27 @@ test("insertChatItemWithQuery records user activity but not an empty assistant p
   }>> = [];
   const queryFn: QueryFn = async (text, params): Promise<QueryResult> => {
     recordedQueries.push({ text, params });
-    const payload = JSON.parse(String(params[2])) as Readonly<{
+    const payload = JSON.parse(String(params[3])) as Readonly<{
       role: "user" | "assistant";
       content: ReadonlyArray<Readonly<{ type: "text"; text: string }>>;
     }>;
     return createQueryResult(
       payload.role,
-      String(params[1]) as "in_progress" | "completed",
+      String(params[2]) as "in_progress" | "completed",
       payload.content,
       undefined,
     );
   };
 
   await insertChatItemWithQuery(queryFn, {
+    itemId: "turn-1",
     sessionId: "session-1",
     role: "user",
     state: "completed",
     content: [{ type: "text", text: "Hello" }],
   });
   await insertChatItemWithQuery(queryFn, {
+    itemId: null,
     sessionId: "session-1",
     role: "assistant",
     state: "in_progress",
@@ -64,8 +66,10 @@ test("insertChatItemWithQuery records user activity but not an empty assistant p
   });
 
   assert.match(recordedQueries[0].text, /last_message_at = CASE/);
-  assert.equal(recordedQueries[0].params[3], true);
-  assert.equal(recordedQueries[1].params[3], false);
+  assert.equal(recordedQueries[0].params[0], "turn-1");
+  assert.equal(recordedQueries[0].params[4], true);
+  assert.equal(recordedQueries[1].params[0], null);
+  assert.equal(recordedQueries[1].params[4], false);
   assert.equal(recordedQueries.some((query) => query.text.includes("title =")), false);
 });
 

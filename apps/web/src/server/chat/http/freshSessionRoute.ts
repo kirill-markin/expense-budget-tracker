@@ -20,6 +20,7 @@ import {
   releaseChatRunStartReservation,
   reserveChatRunStart,
   startPersistedChatRun,
+  type ChatRunStartReservation,
 } from "@/server/chat/runtime/runtime";
 import {
   persistAssistantTerminalError,
@@ -211,15 +212,19 @@ export const postFreshChatSessionRouteWithDeps = async (
         preparedRun.sessionId,
       );
       const events = await (async (): Promise<AsyncGenerator<ChatStreamEvent>> => {
-        let reservation: ReturnType<typeof reserveChatRunStart> = null;
+        let reservation: ChatRunStartReservation | null = null;
         let runtimeStarted = false;
         try {
-          reservation = dependencies.reserveChatRunStart(preparedRun.sessionId);
-          if (reservation === null) {
+          const reservationResult = dependencies.reserveChatRunStart(
+            preparedRun.sessionId,
+            preparedRun.activeRunId,
+          );
+          if (reservationResult.kind !== "reserved") {
             throw new Error(
-              `Fresh chat runtime reservation failed after persistence: sessionId=${preparedRun.sessionId}`,
+              `Fresh chat runtime reservation failed after persistence: sessionId=${preparedRun.sessionId}, result=${reservationResult.kind}`,
             );
           }
+          reservation = reservationResult.reservation;
 
           const startedEvents = dependencies.startPersistedChatRun({
             requestId,

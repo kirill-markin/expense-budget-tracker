@@ -50,20 +50,21 @@ const LIST_CHAT_ITEMS_SQL = `
 const INSERT_CHAT_ITEM_SQL = `
   WITH inserted_item AS (
     INSERT INTO public.chat_items (
+      item_id,
       session_id,
       item_kind,
       state,
       payload,
       updated_at
     )
-    VALUES ($1, 'message', $2, $3::jsonb, now())
+    VALUES (COALESCE($1, gen_random_uuid()::text), $2, 'message', $3, $4::jsonb, now())
     RETURNING item_id, session_id, state, payload, created_at, updated_at
   ),
   touched_session AS (
     UPDATE public.chat_sessions AS session
     SET updated_at = inserted_item.updated_at,
         last_message_at = CASE
-          WHEN $4 THEN inserted_item.updated_at
+          WHEN $5 THEN inserted_item.updated_at
           ELSE session.last_message_at
         END
     FROM inserted_item
@@ -71,6 +72,15 @@ const INSERT_CHAT_ITEM_SQL = `
   )
   SELECT item_id, session_id, state, payload, created_at, updated_at
   FROM inserted_item
+`;
+
+const HAS_CHAT_USER_TURN_SQL = `
+  SELECT item_id
+  FROM public.chat_items
+  WHERE item_id = $1
+    AND session_id = $2
+    AND item_kind = 'message'
+    AND payload->>'role' = 'user'
 `;
 
 const UPDATE_CHAT_ITEM_SQL = `
@@ -190,6 +200,7 @@ export const insertChatItemWithQuery = async (
   params: InsertChatItemParams,
 ): Promise<PersistedChatMessageItem> => {
   const result = await queryFn(INSERT_CHAT_ITEM_SQL, [
+    params.itemId,
     params.sessionId,
     params.state,
     JSON.stringify(toChatItemPayload(params.role, params.content, params.assistantOpenAIItems)),
@@ -199,6 +210,15 @@ export const insertChatItemWithQuery = async (
   return mapChatItemRow(
     requireChatItemRow(result.rows[0] as ChatItemRow | undefined, "insert"),
   );
+};
+
+export const hasChatUserTurnWithQuery = async (
+  queryFn: QueryFn,
+  sessionId: string,
+  turnId: string,
+): Promise<boolean> => {
+  const result = await queryFn(HAS_CHAT_USER_TURN_SQL, [turnId, sessionId]);
+  return result.rows.length > 0;
 };
 
 export const updateChatItemWithQuery = async (

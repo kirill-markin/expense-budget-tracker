@@ -88,8 +88,18 @@ export type StopActiveChatRunResult =
 
 export type ChatRunStartReservation = Readonly<{
   sessionId: string;
+  activeRunId: string;
   reservationId: symbol;
 }>;
+
+export type ChatRunStartReservationResult =
+  | Readonly<{
+    kind: "reserved";
+    reservation: ChatRunStartReservation;
+  }>
+  | Readonly<{ kind: "same_turn_pending" }>
+  | Readonly<{ kind: "same_turn_accepted" }>
+  | Readonly<{ kind: "conflict" }>;
 
 export type ChatRuntimeDependencies = Readonly<{
   runOpenAILoop: typeof runOpenAILoop;
@@ -105,7 +115,13 @@ export type ChatRuntimeDependencies = Readonly<{
 }>;
 
 const activeChatRuns = new Map<string, ActiveChatRun>();
-const chatRunStartReservations = new Map<string, symbol>();
+const chatRunStartReservations = new Map<
+  string,
+  Readonly<{
+    activeRunId: string;
+    reservationId: symbol;
+  }>
+>();
 
 const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
   runOpenAILoop,
@@ -264,8 +280,11 @@ const getCurrentActiveChatRun = (
 const consumeChatRunStartReservation = (
   reservation: ChatRunStartReservation,
 ): void => {
-  const currentReservationId = chatRunStartReservations.get(reservation.sessionId);
-  if (currentReservationId !== reservation.reservationId) {
+  const currentReservation = chatRunStartReservations.get(reservation.sessionId);
+  if (
+    currentReservation?.reservationId !== reservation.reservationId
+    || currentReservation.activeRunId !== reservation.activeRunId
+  ) {
     throw new Error(`Chat run start reservation is not active: sessionId=${reservation.sessionId}`);
   }
 
@@ -567,12 +586,25 @@ export const runPersistedChatSessionWithDeps = async (
 
   try {
     await dependencies.beginTaskProtection();
-    await dependencies.touchChatSessionHeartbeat(
-      params.userId,
-      params.workspaceId,
-      params.sessionId,
-      params.activeRunId,
-    );
+    let heartbeatTouched: boolean;
+    try {
+      heartbeatTouched = await dependencies.touchChatSessionHeartbeat(
+        params.userId,
+        params.workspaceId,
+        params.sessionId,
+        params.activeRunId,
+      );
+    } catch (error) {
+      logChatRunError(params.diagnostics, "stream", error);
+      return;
+    }
+    if (!heartbeatTouched) {
+      throw new ChatSessionRunTransitionError({
+        sessionId: params.sessionId,
+        activeRunId: params.activeRunId,
+        operation: "admit runtime start",
+      });
+    }
 
     await dependencies.startChatTurnObservation(
       {
@@ -656,6 +688,7 @@ export const runPersistedChatSessionWithDeps = async (
           userId: params.userId,
           workspaceId: params.workspaceId,
           sessionId: params.sessionId,
+          turnId: params.activeRunId,
           locale: params.locale,
           timezone: params.timezone,
           localMessages: params.localMessages,
@@ -768,15 +801,24 @@ export const hasActiveChatSessionRun = (sessionId: string): boolean =>
 
 export const reserveChatRunStart = (
   sessionId: string,
-): ChatRunStartReservation | null => {
-  if (chatRunStartReservations.has(sessionId)) {
-    return null;
+  activeRunId: string,
+): ChatRunStartReservationResult => {
+  const existingReservation = chatRunStartReservations.get(sessionId);
+  if (existingReservation !== undefined) {
+    return {
+      kind: existingReservation.activeRunId === activeRunId
+        ? "same_turn_pending"
+        : "conflict",
+    };
   }
 
   const existingRun = activeChatRuns.get(sessionId);
   if (existingRun !== undefined) {
+    if (existingRun.activeRunId === activeRunId) {
+      return { kind: "same_turn_accepted" };
+    }
     if (existingRun.cancellationState !== "persisted") {
-      return null;
+      return { kind: "conflict" };
     }
 
     closeRunSubscribers(existingRun);
@@ -784,14 +826,29 @@ export const reserveChatRunStart = (
   }
 
   const reservationId = Symbol(sessionId);
-  chatRunStartReservations.set(sessionId, reservationId);
-  return { sessionId, reservationId };
+  const reservation: ChatRunStartReservation = {
+    sessionId,
+    activeRunId,
+    reservationId,
+  };
+  chatRunStartReservations.set(sessionId, {
+    activeRunId,
+    reservationId,
+  });
+  return {
+    kind: "reserved",
+    reservation,
+  };
 };
 
 export const releaseChatRunStartReservation = (
   reservation: ChatRunStartReservation,
 ): void => {
-  if (chatRunStartReservations.get(reservation.sessionId) !== reservation.reservationId) {
+  const currentReservation = chatRunStartReservations.get(reservation.sessionId);
+  if (
+    currentReservation?.reservationId !== reservation.reservationId
+    || currentReservation.activeRunId !== reservation.activeRunId
+  ) {
     return;
   }
 
@@ -803,6 +860,11 @@ export const startPersistedChatRunWithDeps = (
   reservation: ChatRunStartReservation,
   dependencies: ChatRuntimeDependencies,
 ): AsyncGenerator<ChatStreamEvent> => {
+  if (params.activeRunId !== reservation.activeRunId) {
+    throw new Error(
+      `Chat run start reservation belongs to another run: sessionId=${params.sessionId}, activeRunId=${params.activeRunId}`,
+    );
+  }
   consumeChatRunStartReservation(reservation);
 
   const existingRun = activeChatRuns.get(params.sessionId);

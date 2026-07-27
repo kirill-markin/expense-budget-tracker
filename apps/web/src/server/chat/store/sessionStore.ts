@@ -34,6 +34,13 @@ const SELECT_SESSION_FOR_UPDATE_SQL = `
   FOR UPDATE
 `;
 
+const SELECT_SESSION_FOR_SHARE_SQL = `
+  SELECT session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
+  FROM public.chat_sessions
+  WHERE session_id = $1
+  FOR SHARE
+`;
+
 const SELECT_REQUESTED_SESSION_FOR_UPDATE_SQL = `
   SELECT session_id, status, active_run_id, active_run_heartbeat_at, main_content_invalidation_version, updated_at
   FROM public.chat_sessions
@@ -280,6 +287,17 @@ export const lockChatSessionWithQuery = async (
   return requireSessionRow(result.rows[0] as ChatSessionRow | undefined, "lock");
 };
 
+export const lockChatSessionForSnapshotWithQuery = async (
+  queryFn: QueryFn,
+  sessionId: string,
+): Promise<ChatSessionRow> => {
+  const result = await queryFn(SELECT_SESSION_FOR_SHARE_SQL, [sessionId]);
+  return requireSessionRow(
+    result.rows[0] as ChatSessionRow | undefined,
+    "snapshot lock",
+  );
+};
+
 export const lockRequestedChatSessionWithQuery = async (
   queryFn: QueryFn,
   userId: string,
@@ -394,10 +412,11 @@ export const touchChatSessionHeartbeat = async (
   workspaceId: string,
   sessionId: string,
   activeRunId: string,
-): Promise<void> => {
-  await queryAs(userId, workspaceId, TOUCH_CHAT_SESSION_HEARTBEAT_SQL, [
+): Promise<boolean> => {
+  const result = await queryAs(userId, workspaceId, TOUCH_CHAT_SESSION_HEARTBEAT_SQL, [
     sessionId,
     activeRunId,
     new Date().toISOString(),
   ]);
+  return result.rows.length > 0;
 };

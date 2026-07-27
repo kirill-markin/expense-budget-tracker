@@ -4,8 +4,10 @@ export type {
   ChatSessionTerminalState,
   ChatSessionSnapshot,
   PersistedChatMessageItem,
+  PrepareChatRunResult,
   PreparedChatRun,
   UserCancelChatRunResult,
+  UserCancelChatTurnResult,
 } from "./store/shared";
 
 export type {
@@ -21,6 +23,7 @@ export {
   ChatSessionConflictError,
   ChatSessionNotFoundError,
   ChatSessionRunTransitionError,
+  ChatTurnCancelledError,
   FAILED_TOOL_CALL_OUTPUT,
   INTERRUPTED_TOOL_CALL_OUTPUT,
   STOPPED_BY_USER_TOOL_OUTPUT,
@@ -53,10 +56,14 @@ export {
 export { getChatSessionSnapshot } from "./store/snapshotStore";
 
 export {
+  admitChatRunStart,
+  admitChatRunStartWithQuery,
   buildUserStoppedAssistantContent,
   buildUserStoppedChatRunUpdatePlan,
   cancelActiveChatRunByUser,
   cancelActiveChatRunByUserWithQuery,
+  cancelChatTurnByUser,
+  cancelChatTurnByUserWithQuery,
   completeChatRun,
   completeChatRunWithQuery,
   markChatSessionInterrupted,
@@ -66,4 +73,6 @@ export {
   prepareFreshChatRun,
   recoverStaleChatSession,
   recoverStaleChatSessionWithQuery,
+  requireAcceptedChatTurn,
+  requireAcceptedChatTurnWithQuery,
 } from "./store/lifecycleStore";
