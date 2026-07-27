@@ -38,6 +38,7 @@ import {
   createSingleFlightChatSnapshotPoller,
   deleteChatConversation,
   fetchChatSessionSnapshot,
+  isChatStopSettlementOwned,
   postStopChatSession,
   prepareChatSendRequest,
   resolveChatSnapshotRequest,
@@ -49,6 +50,7 @@ import {
   selectComposerAction,
   selectEffectiveSnapshotRunState,
   selectIsAssistantRunActive,
+  selectIsSelectedSessionStopping,
   shouldRefreshMainContentForVersion,
   shouldReplaceHistoryForSnapshot,
   type ChatMainContentInvalidationSource,
@@ -102,6 +104,8 @@ type ChatSnapshotLoadResult =
     kind: "superseded";
     snapshot: NormalizedChatSessionSnapshot | null;
   }>;
+
+const shouldAlwaysAdoptChatSnapshot = (): boolean => true;
 
 const assertValidChatSessionSnapshot = (
   snapshot: ChatSessionSnapshot,
@@ -207,6 +211,7 @@ export const useChatSessionController = (
     sessionId: string | undefined,
     signal: AbortSignal | undefined,
     replaceHistory: boolean,
+    shouldAdoptSnapshot: () => boolean,
   ): Promise<ChatSnapshotLoadResult> => {
     const snapshotPromise = fetchChatSessionSnapshot(sessionId, signal, t);
     const snapshotRequest = beginChatSnapshotRequest(
@@ -244,6 +249,12 @@ export const useChatSessionController = (
             payload.runState,
           ),
         },
+      };
+    }
+    if (!shouldAdoptSnapshot()) {
+      return {
+        kind: "superseded",
+        snapshot: null,
       };
     }
 
@@ -336,7 +347,12 @@ export const useChatSessionController = (
           return;
         }
 
-        await loadChatSnapshot(undefined, abortController.signal, true);
+        await loadChatSnapshot(
+          undefined,
+          abortController.signal,
+          true,
+          shouldAlwaysAdoptChatSnapshot,
+        );
       } catch (error) {
         if (abortController.signal.aborted) {
           return;
@@ -374,7 +390,7 @@ export const useChatSessionController = (
         !currentState.isHistoryLoaded
         || selectIsAssistantRunActive(currentState)
         || currentState.isLiveStreamConnected
-        || currentState.isStopping
+        || selectIsSelectedSessionStopping(currentState)
       ) {
         return;
       }
@@ -420,7 +436,12 @@ export const useChatSessionController = (
         return;
       }
 
-      void loadChatSnapshot(nextLocalState.sessionId, undefined, true).catch(() => undefined);
+      void loadChatSnapshot(
+        nextLocalState.sessionId,
+        undefined,
+        true,
+        shouldAlwaysAdoptChatSnapshot,
+      ).catch(() => undefined);
     };
 
     window.addEventListener("storage", handleStorage);
@@ -439,6 +460,7 @@ export const useChatSessionController = (
             state.currentSessionId ?? undefined,
             undefined,
             true,
+            shouldAlwaysAdoptChatSnapshot,
           );
         } catch (error) {
           if (stateRef.current.isLiveStreamConnected) {
@@ -500,7 +522,7 @@ export const useChatSessionController = (
     sendParams: SendChatMessageParams,
   ): Promise<void> => {
     const currentState = stateRef.current;
-    if (selectIsAssistantRunActive(currentState) || currentState.isLiveStreamConnected || currentState.isStopping) {
+    if (selectIsAssistantRunActive(currentState) || currentState.isLiveStreamConnected || selectIsSelectedSessionStopping(currentState)) {
       return;
     }
 
@@ -597,6 +619,7 @@ export const useChatSessionController = (
           sessionIdToReload,
           undefined,
           true,
+          shouldAlwaysAdoptChatSnapshot,
         );
         if (snapshotResult.snapshot === null) {
           return;
@@ -634,35 +657,55 @@ export const useChatSessionController = (
 
   const stopMessage = useCallback(async (): Promise<void> => {
     const currentState = stateRef.current;
-    if (currentState.currentSessionId === null || !selectIsAssistantRunActive(currentState) || currentState.isStopping) {
+    if (currentState.currentSessionId === null || !selectIsAssistantRunActive(currentState) || selectIsSelectedSessionStopping(currentState)) {
       return;
     }
+    const stoppedSessionId = currentState.currentSessionId;
+    const stopStreamController = abortRef.current;
 
     dispatchAction({
       type: "stop_requested",
-      sessionId: currentState.currentSessionId,
+      sessionId: stoppedSessionId,
     });
 
     try {
-      await postStopChatSession(currentState.currentSessionId);
+      await postStopChatSession(stoppedSessionId, t);
     } catch {
       // The stop request is best-effort, but we still abort the local stream below.
     } finally {
-      if (abortRef.current !== null) {
-        abortRef.current.abort();
+      stopStreamController?.abort();
+      if (isChatStopSettlementOwned(
+        stoppedSessionId,
+        stateRef.current.currentSessionId,
+        stopStreamController,
+        abortRef.current,
+      )) {
         abortRef.current = null;
-      }
-      dispatchAction({ type: "live_stream_disconnected" });
+        dispatchAction({ type: "live_stream_disconnected" });
+        const shouldAdoptStopSnapshot = (): boolean =>
+          isChatStopSettlementOwned(
+            stoppedSessionId,
+            stateRef.current.currentSessionId,
+            null,
+            abortRef.current,
+          );
 
-      try {
-        await loadChatSnapshot(currentState.currentSessionId, undefined, true);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        markAssistantError(t("chat.errorFailed", { message }));
-        dispatchAction({ type: "run_interrupted" });
-      } finally {
-        dispatchAction({ type: "stop_completed" });
+        try {
+          await loadChatSnapshot(
+            stoppedSessionId,
+            undefined,
+            true,
+            shouldAdoptStopSnapshot,
+          );
+        } catch (error) {
+          if (shouldAdoptStopSnapshot()) {
+            const message = error instanceof Error ? error.message : String(error);
+            markAssistantError(t("chat.errorFailed", { message }));
+            dispatchAction({ type: "run_interrupted" });
+          }
+        }
       }
+      dispatchAction({ type: "stop_completed", sessionId: stoppedSessionId });
     }
   }, [dispatchAction, loadChatSnapshot, markAssistantError, t]);
 
@@ -670,7 +713,7 @@ export const useChatSessionController = (
     const currentState = stateRef.current;
     if (currentState.currentSessionId !== null && selectIsAssistantRunActive(currentState)) {
       try {
-        await postStopChatSession(currentState.currentSessionId);
+        await postStopChatSession(currentState.currentSessionId, t);
       } catch {
         // Continue clearing the UI even if stop fails.
       }
@@ -682,8 +725,11 @@ export const useChatSessionController = (
     }
 
     dispatchAction({ type: "live_stream_disconnected" });
-    dispatchAction({ type: "stop_completed" });
     if (currentState.currentSessionId !== null) {
+      dispatchAction({
+        type: "stop_completed",
+        sessionId: currentState.currentSessionId,
+      });
       dispatchAction({
         type: "stopped_session_cleared",
         sessionId: currentState.currentSessionId,
@@ -716,7 +762,7 @@ export const useChatSessionController = (
     isHistoryLoaded: state.isHistoryLoaded,
     isAssistantRunActive,
     isLiveStreamConnected: state.isLiveStreamConnected,
-    isStopping: state.isStopping,
+    isStopping: selectIsSelectedSessionStopping(state),
     currentSessionId: state.currentSessionId,
     composerAction,
     acceptServerSessionId,

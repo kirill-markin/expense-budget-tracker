@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createInitialChatSessionControllerState,
   reduceChatSessionControllerState,
+  selectIsSelectedSessionStopping,
   shouldRefreshMainContentForVersion,
 } from "./chatSessionControllerState";
 
@@ -30,4 +31,101 @@ test("initial historical snapshot does not refresh without an invalidation basel
   const state = createInitialChatSessionControllerState();
 
   assert.equal(shouldRefreshMainContentForVersion(state, "snapshot", 1), false);
+});
+
+test("stop suppression is scoped to the explicitly stopped session", (): void => {
+  const selectedA = reduceChatSessionControllerState(
+    createInitialChatSessionControllerState(),
+    { type: "server_session_created", sessionId: "session-a" },
+  );
+  const stoppingA = reduceChatSessionControllerState(selectedA, {
+    type: "stop_requested",
+    sessionId: "session-a",
+  });
+
+  assert.equal(stoppingA.stoppedSessionIds.has("session-a"), true);
+  assert.equal(stoppingA.stoppedSessionIds.has("session-b"), false);
+});
+
+test("a delayed failed Stop for A does not mutate B stop state", (): void => {
+  const selectedA = reduceChatSessionControllerState(
+    createInitialChatSessionControllerState(),
+    { type: "server_session_created", sessionId: "session-a" },
+  );
+  const stoppingA = reduceChatSessionControllerState(selectedA, {
+    type: "stop_requested",
+    sessionId: "session-a",
+  });
+  const selectedB = reduceChatSessionControllerState(stoppingA, {
+    type: "server_session_created",
+    sessionId: "session-b",
+  });
+  const stoppingB = reduceChatSessionControllerState(selectedB, {
+    type: "stop_requested",
+    sessionId: "session-b",
+  });
+  const failedA = reduceChatSessionControllerState(stoppingB, {
+    type: "stop_failed",
+    sessionId: "session-a",
+  });
+
+  assert.equal(failedA.currentSessionId, "session-b");
+  assert.equal(failedA.stoppedSessionIds.has("session-a"), false);
+  assert.equal(failedA.stoppingSessionIds.has("session-a"), false);
+  assert.equal(failedA.stoppedSessionIds.has("session-b"), true);
+  assert.equal(failedA.stoppingSessionIds.has("session-b"), true);
+  assert.equal(selectIsSelectedSessionStopping(failedA), true);
+});
+
+test("idle snapshot retains a pending Stop marker until explicit completion", (): void => {
+  const selectedA = reduceChatSessionControllerState(
+    createInitialChatSessionControllerState(),
+    { type: "server_session_created", sessionId: "session-a" },
+  );
+  const stoppingA = reduceChatSessionControllerState(selectedA, {
+    type: "stop_requested",
+    sessionId: "session-a",
+  });
+  const idleA = reduceChatSessionControllerState(stoppingA, {
+    type: "snapshot_applied",
+    sessionId: "session-a",
+    runState: "idle",
+    updatedAt: 10,
+    mainContentInvalidationVersion: 0,
+  });
+  const completedA = reduceChatSessionControllerState(idleA, {
+    type: "stop_completed",
+    sessionId: "session-a",
+  });
+  const runningA = reduceChatSessionControllerState(completedA, {
+    type: "snapshot_applied",
+    sessionId: "session-a",
+    runState: "running",
+    updatedAt: 11,
+    mainContentInvalidationVersion: 0,
+  });
+
+  assert.equal(idleA.stoppedSessionIds.has("session-a"), false);
+  assert.equal(idleA.stoppingSessionIds.has("session-a"), true);
+  assert.equal(selectIsSelectedSessionStopping(idleA), true);
+  assert.equal(completedA.stoppingSessionIds.has("session-a"), false);
+  assert.equal(runningA.runState, "running");
+});
+
+test("completed Stop clears suppression for later cross-tab runs", (): void => {
+  const selectedA = reduceChatSessionControllerState(
+    createInitialChatSessionControllerState(),
+    { type: "server_session_created", sessionId: "session-a" },
+  );
+  const stoppingA = reduceChatSessionControllerState(selectedA, {
+    type: "stop_requested",
+    sessionId: "session-a",
+  });
+  const stoppedA = reduceChatSessionControllerState(stoppingA, {
+    type: "stop_completed",
+    sessionId: "session-a",
+  });
+
+  assert.equal(stoppedA.stoppedSessionIds.has("session-a"), false);
+  assert.equal(stoppedA.stoppingSessionIds.has("session-a"), false);
 });
