@@ -7,6 +7,7 @@ import { fetchWithCsrf } from "@/lib/csrf";
 import { cn } from "@/lib/cn";
 import { resolveBrowserTimezone } from "@/lib/timezone";
 import { clearChatDrafts } from "@/ui/chat/shell/layout/chatDraftStorage";
+import { clearChatSelectionState } from "@/ui/chat/workspace/chatSelectionStorage";
 
 import styles from "./AccountMenu.module.css";
 
@@ -91,6 +92,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
 
   const handleLogout = useCallback((): void => {
     clearChatDrafts(window.sessionStorage);
+    clearChatSelectionState(window.sessionStorage);
     fetchWithCsrf("/api/auth/logout", { method: "POST" }).finally(() => {
       window.location.href = "/";
     });

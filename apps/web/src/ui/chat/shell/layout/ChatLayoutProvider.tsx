@@ -15,7 +15,7 @@ import {
 
 import {
   getChatDraftStorageKey,
-  readChatDraft,
+  readAndMigrateChatDraft,
   writeChatDraft,
   type ChatDraftScope,
 } from "./chatDraftStorage";
@@ -32,6 +32,11 @@ type ChatLayoutContextValue = Readonly<{
 const ChatLayoutContext = createContext<ChatLayoutContextValue | null>(null);
 
 const COOKIE_MAX_AGE = "max-age=31536000";
+
+const COMPATIBILITY_DRAFT_TARGET = {
+  kind: "draft",
+  draftId: "pre-workspace-controller",
+} as const;
 
 const writeCookie = (name: string, value: string): void => {
   document.cookie = `${name}=${value}; path=/; ${COOKIE_MAX_AGE}`;
@@ -58,7 +63,10 @@ export const ChatLayoutProvider = (props: Props): ReactElement => {
   } = props;
   const [isOpen, setIsOpenState] = useState<boolean>(initialChatOpen);
   const [chatWidth, setChatWidthState] = useState<number>(initialChatWidth);
-  const draftStorageKey = getChatDraftStorageKey(draftScope);
+  const draftStorageKey = getChatDraftStorageKey(
+    draftScope,
+    COMPATIBILITY_DRAFT_TARGET,
+  );
   const initialChatDraftState: ChatDraftState = {
     storageKey: draftStorageKey,
     text: "",
@@ -69,7 +77,11 @@ export const ChatLayoutProvider = (props: Props): ReactElement => {
   useEffect(() => {
     const nextState: ChatDraftState = {
       storageKey: draftStorageKey,
-      text: readChatDraft(window.sessionStorage, draftScope),
+      text: readAndMigrateChatDraft(
+        window.sessionStorage,
+        draftScope,
+        COMPATIBILITY_DRAFT_TARGET,
+      ),
     };
     chatDraftStateRef.current = nextState;
     setChatDraftState(nextState);
@@ -88,14 +100,23 @@ export const ChatLayoutProvider = (props: Props): ReactElement => {
   const setChatDraftText = useCallback((update: SetStateAction<string>): void => {
     const currentText = chatDraftStateRef.current.storageKey === draftStorageKey
       ? chatDraftStateRef.current.text
-      : readChatDraft(window.sessionStorage, draftScope);
+      : readAndMigrateChatDraft(
+        window.sessionStorage,
+        draftScope,
+        COMPATIBILITY_DRAFT_TARGET,
+      );
     const nextText = typeof update === "function" ? update(currentText) : update;
     const nextState: ChatDraftState = {
       storageKey: draftStorageKey,
       text: nextText,
     };
 
-    writeChatDraft(window.sessionStorage, draftScope, nextText);
+    writeChatDraft(
+      window.sessionStorage,
+      draftScope,
+      COMPATIBILITY_DRAFT_TARGET,
+      nextText,
+    );
     chatDraftStateRef.current = nextState;
     setChatDraftState(nextState);
   }, [draftScope, draftStorageKey]);

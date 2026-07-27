@@ -2,6 +2,12 @@ import { parseChatIdentifier } from "./chatSessionSummaryTransport";
 import type { ChatTarget } from "./chatWorkspaceState";
 
 const CHAT_SELECTION_STORAGE_PREFIX = "expense-tracker-chat-selection:v1:";
+const CHAT_ACTIVE_DRAFT_STORAGE_PREFIX =
+  "expense-tracker-chat-active-draft:v1:";
+const CHAT_SELECTION_STORAGE_PREFIXES = [
+  CHAT_SELECTION_STORAGE_PREFIX,
+  CHAT_ACTIVE_DRAFT_STORAGE_PREFIX,
+] as const;
 
 export type ChatSelectionScope =
   | Readonly<{
@@ -43,9 +49,27 @@ export const getChatSelectionStorageKey = (
   return `${CHAT_SELECTION_STORAGE_PREFIX}workspace:${userId}:${workspaceId}`;
 };
 
+export const getChatActiveDraftStorageKey = (
+  scope: ChatSelectionScope,
+): string => {
+  const userId = requireStorageKeyPart(
+    scope.userId,
+    "Chat active draft scope userId",
+  );
+  if (scope.mode === "demo") {
+    return `${CHAT_ACTIVE_DRAFT_STORAGE_PREFIX}demo:${userId}`;
+  }
+
+  const workspaceId = requireStorageKeyPart(
+    scope.workspaceId,
+    "Chat active draft scope workspaceId",
+  );
+  return `${CHAT_ACTIVE_DRAFT_STORAGE_PREFIX}workspace:${userId}:${workspaceId}`;
+};
+
 export const parseStoredChatTarget = (
   rawValue: string,
-): ChatTarget => {
+): ChatTarget | null => {
   let value: unknown;
   try {
     value = JSON.parse(rawValue) as unknown;
@@ -58,26 +82,35 @@ export const parseStoredChatTarget = (
     throw new Error("Stored chat selection must be an object");
   }
 
+  let target: ChatTarget;
   if (value.kind === "draft") {
-    return {
+    target = {
       kind: "draft",
       draftId: parseChatIdentifier(
         value.draftId,
         "Stored chat selection draftId",
       ),
     };
-  }
-  if (value.kind === "session") {
-    return {
+  } else if (value.kind === "session") {
+    target = {
       kind: "session",
       sessionId: parseChatIdentifier(
         value.sessionId,
         "Stored chat selection sessionId",
       ),
     };
+  } else {
+    throw new Error("Stored chat selection kind must be draft or session");
   }
 
-  throw new Error("Stored chat selection kind must be draft or session");
+  if (value.selectionReason === "explicit") {
+    return target;
+  }
+  if (value.selectionReason === undefined) {
+    return target.kind === "session" ? target : null;
+  }
+
+  throw new Error("Stored chat selection reason must be explicit");
 };
 
 export const readChatSelection = (
@@ -86,6 +119,55 @@ export const readChatSelection = (
 ): ChatTarget | null => {
   const rawValue = storage.getItem(getChatSelectionStorageKey(scope));
   return rawValue === null ? null : parseStoredChatTarget(rawValue);
+};
+
+export const clearChatSelection = (
+  storage: Storage,
+  scope: ChatSelectionScope,
+): void => {
+  storage.removeItem(getChatSelectionStorageKey(scope));
+};
+
+export const readChatActiveDraftId = (
+  storage: Storage,
+  scope: ChatSelectionScope,
+): string | null => {
+  const draftId = storage.getItem(getChatActiveDraftStorageKey(scope));
+  return draftId === null
+    ? null
+    : parseChatIdentifier(draftId, "Stored active chat draftId");
+};
+
+export const writeChatActiveDraftId = (
+  storage: Storage,
+  scope: ChatSelectionScope,
+  draftId: string | null,
+): void => {
+  const storageKey = getChatActiveDraftStorageKey(scope);
+  if (draftId === null) {
+    storage.removeItem(storageKey);
+    return;
+  }
+
+  storage.setItem(
+    storageKey,
+    parseChatIdentifier(draftId, "Chat active draftId"),
+  );
+};
+
+export const clearChatSelectionState = (storage: Storage): void => {
+  const storageKeys = Array.from(
+    { length: storage.length },
+    (_value: undefined, index: number): string | null => storage.key(index),
+  ).filter((storageKey: string | null): storageKey is string =>
+    storageKey !== null
+    && CHAT_SELECTION_STORAGE_PREFIXES.some(
+      (prefix: string): boolean => storageKey.startsWith(prefix),
+    ));
+
+  for (const storageKey of storageKeys) {
+    storage.removeItem(storageKey);
+  }
 };
 
 export const writeChatSelection = (
@@ -111,7 +193,10 @@ export const writeChatSelection = (
 
   storage.setItem(
     getChatSelectionStorageKey(scope),
-    JSON.stringify(validTarget),
+    JSON.stringify({
+      ...validTarget,
+      selectionReason: "explicit",
+    }),
   );
 };
 

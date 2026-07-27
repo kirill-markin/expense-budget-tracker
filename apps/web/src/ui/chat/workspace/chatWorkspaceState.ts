@@ -4,6 +4,10 @@ import {
   type ChatSessionSummary,
   type ChatSessionSummaryPage,
 } from "./chatSessionSummaryTransport";
+import {
+  CHAT_INACTIVITY_THRESHOLD_MS,
+  resolveChatActivityPolicy,
+} from "./chatActivityPolicy";
 
 export type ChatTarget =
   | Readonly<{ kind: "draft"; draftId: string }>
@@ -51,6 +55,78 @@ const requireChatTarget = (
         "Chat session target sessionId",
       ),
     };
+
+export const getChatTargetKey = (
+  target: ChatTarget,
+): string => {
+  const validTarget = requireChatTarget(target);
+  return validTarget.kind === "draft"
+    ? `draft:${validTarget.draftId}`
+    : `session:${validTarget.sessionId}`;
+};
+
+export const areChatTargetsEqual = (
+  firstTarget: ChatTarget,
+  secondTarget: ChatTarget,
+): boolean =>
+  getChatTargetKey(firstTarget) === getChatTargetKey(secondTarget);
+
+export const resolveNewChatDraftTarget = (
+  currentTarget: ChatTarget,
+  activeDraftId: string | null,
+  isCurrentDraftUntouched: boolean,
+  nextDraftId: string,
+): ChatTarget => {
+  if (currentTarget.kind === "draft" && isCurrentDraftUntouched) {
+    return requireChatTarget(currentTarget);
+  }
+  if (currentTarget.kind === "session" && activeDraftId !== null) {
+    return requireChatTarget({ kind: "draft", draftId: activeDraftId });
+  }
+
+  return requireChatTarget({ kind: "draft", draftId: nextDraftId });
+};
+
+export const resolveAutomaticChatTarget = (
+  summaries: ReadonlyArray<ChatSessionSummary>,
+  currentTimeMs: number,
+  draftId: string,
+): ChatTarget => {
+  const selectedSession = summaries[0] ?? null;
+  const decision = resolveChatActivityPolicy({
+    currentTimeMs,
+    selectedSession,
+    selectionReason: "automatic",
+    inactivityThresholdMs: CHAT_INACTIVITY_THRESHOLD_MS,
+  });
+
+  return decision.kind === "select_draft"
+    ? requireChatTarget({ kind: "draft", draftId })
+    : requireChatTarget({ kind: "session", sessionId: decision.sessionId });
+};
+
+export const resolveFailedSessionRecoveryTarget = (
+  summaries: ReadonlyArray<ChatSessionSummary>,
+  failedSessionIds: ReadonlySet<string>,
+  currentTimeMs: number,
+  draftId: string,
+): ChatTarget => {
+  const validFailedSessionIds = new Set(
+    [...failedSessionIds].map(
+      (sessionId: string): string => parseChatIdentifier(
+        sessionId,
+        "Failed chat session recovery sessionId",
+      ),
+    ),
+  );
+  return resolveAutomaticChatTarget(
+    summaries.filter(
+      (summary): boolean => !validFailedSessionIds.has(summary.sessionId),
+    ),
+    currentTimeMs,
+    draftId,
+  );
+};
 
 const requireErrorMessage = (errorMessage: string): string => {
   if (errorMessage.trim().length === 0) {
@@ -117,6 +193,32 @@ export const updateChatSessionInvalidationVersions = (
   }
 
   return nextVersions;
+};
+
+export const observeChatSessionInvalidationVersion = (
+  state: ChatWorkspaceState,
+  sessionId: string,
+  version: number,
+): ChatWorkspaceState => {
+  const validSessionId = parseChatIdentifier(
+    sessionId,
+    "Chat invalidation sessionId",
+  );
+  if (!Number.isSafeInteger(version) || version < 0) {
+    throw new Error("Chat invalidation version must be a non-negative safe integer");
+  }
+
+  const previousVersion = state.mainContentInvalidationVersions.get(validSessionId);
+  if (previousVersion !== undefined && previousVersion >= version) {
+    return state;
+  }
+
+  const nextVersions = new Map(state.mainContentInvalidationVersions);
+  nextVersions.set(validSessionId, version);
+  return {
+    ...state,
+    mainContentInvalidationVersions: nextVersions,
+  };
 };
 
 export const findChatSessionInvalidationIncrements = (
