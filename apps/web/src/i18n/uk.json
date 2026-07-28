@@ -255,6 +255,8 @@
   "chat.historyRunningStatus": "Виконується",
   "chat.historyRecent": "Нещодавні",
   "chat.historyEmpty": "Чатів поки немає.",
+  "chat.historyLoadMore": "Завантажити ще",
+  "chat.sessionUnavailable": "Цей чат недоступний. Вибрано безпечний чат.",
   "chat.send": "Надіслати",
   "chat.stop": "Зупинити",
   "chat.attach": "Прикріпити",

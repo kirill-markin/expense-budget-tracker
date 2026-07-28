@@ -255,6 +255,8 @@
   "chat.historyRunningStatus": "Running",
   "chat.historyRecent": "Recent",
   "chat.historyEmpty": "No chats yet.",
+  "chat.historyLoadMore": "Load more",
+  "chat.sessionUnavailable": "This chat is unavailable. A safe chat was selected.",
   "chat.send": "Send",
   "chat.stop": "Stop",
   "chat.attach": "Attach",

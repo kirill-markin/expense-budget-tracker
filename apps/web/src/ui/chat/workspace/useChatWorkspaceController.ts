@@ -1,0 +1,1440 @@
+"use client";
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SetStateAction,
+} from "react";
+import {
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
+import { useTranslation } from "react-i18next";
+
+import {
+  getMainContentInvalidationSourceId,
+  publishMainContentInvalidation,
+} from "../session/invalidation/mainContentInvalidationChannel";
+import {
+  buildChatTargetUrl,
+  clearChatSelection,
+  getChatSelectionStorageKey,
+  parseStoredChatTarget,
+  readChatActiveDraftId,
+  readChatSelection,
+  readChatSessionTargetFromSearchParams,
+  writeChatActiveDraftId,
+  writeChatSelection,
+  type ChatSelectionScope,
+} from "./chatSelectionStorage";
+import {
+  fetchChatSessionSummaryPage,
+  type ChatSessionSummary,
+  type ChatSessionSummaryPage,
+} from "./chatSessionSummaryTransport";
+import {
+  areChatTargetsEqual,
+  appendChatSessionCatalogPage,
+  createChatWorkspaceState,
+  failChatSessionCatalogLoad,
+  findChatSessionInvalidationIncrements,
+  getRunningChatSessionCount,
+  observeChatSessionInvalidationVersion,
+  replaceChatSessionCatalog,
+  resolveAutomaticChatTarget,
+  resolveFailedSessionRecoveryTarget,
+  resolveNewChatDraftTarget,
+  selectChatWorkspaceTarget,
+  startChatSessionCatalogLoad,
+  type ChatSelectionReason,
+  type ChatTarget,
+  type ChatWorkspaceState,
+} from "./chatWorkspaceState";
+
+const CHAT_SESSION_CATALOG_LIMIT = 100;
+
+type NavigationMode = "none" | "push" | "replace";
+
+export type ChatWorkspaceInvalidationSource = "live" | "snapshot";
+
+export type ChatDraftSessionAdoption =
+  | Readonly<{
+    kind: "selected";
+    target: Extract<ChatTarget, { kind: "session" }>;
+    selectionEpoch: number;
+  }>
+  | Readonly<{
+    kind: "background";
+    target: Extract<ChatTarget, { kind: "session" }>;
+  }>;
+
+type UseChatWorkspaceControllerParams = Readonly<{
+  scope: ChatSelectionScope;
+}>;
+
+export type ChatWorkspaceController = Readonly<{
+  state: ChatWorkspaceState;
+  selectionEpoch: number;
+  isReady: boolean;
+  historyOpen: boolean;
+  historyErrorMessage: string | null;
+  runningCount: number;
+  setHistoryOpen: (open: boolean) => void;
+  selectSession: (sessionId: string) => void;
+  createDraft: (isSelectedDraftUntouched: boolean) => void;
+  adoptDraftSession: (
+    draftId: string,
+    sessionId: string,
+  ) => ChatDraftSessionAdoption;
+  isSelectionCurrent: (
+    target: ChatTarget,
+    selectionEpoch: number,
+  ) => boolean;
+  refreshCatalog: () => Promise<void>;
+  loadNextCatalogPage: () => Promise<void>;
+  observeSessionInvalidation: (
+    sessionId: string,
+    version: number,
+    source: ChatWorkspaceInvalidationSource,
+  ) => void;
+  recoverInvalidSessionSelection: (
+    sessionId: string,
+    errorMessage: string,
+  ) => boolean;
+}>;
+
+const createDraftId = (): string => {
+  if (typeof crypto === "undefined" || typeof crypto.randomUUID !== "function") {
+    throw new Error("Browser crypto.randomUUID is unavailable for local chat drafts");
+  }
+
+  return `draft-${crypto.randomUUID()}`;
+};
+
+type ChatBootstrapSelectionInput = Readonly<{
+  bootstrapSelectionEpoch: number;
+  currentSelectionEpoch: number;
+  currentTarget: ChatTarget;
+  currentSelectionReason: ChatSelectionReason;
+  urlTarget: ChatTarget | null;
+  storedTarget: ChatTarget | null;
+  automaticTarget: ChatTarget;
+}>;
+
+export type ChatBootstrapSelection = Readonly<{
+  target: ChatTarget;
+  selectionReason: ChatSelectionReason;
+  selectionChangedDuringBootstrap: boolean;
+}>;
+
+export const resolveChatBootstrapSelection = (
+  input: ChatBootstrapSelectionInput,
+): ChatBootstrapSelection => {
+  if (input.currentSelectionEpoch !== input.bootstrapSelectionEpoch) {
+    return {
+      target: input.currentTarget,
+      selectionReason: input.currentSelectionReason,
+      selectionChangedDuringBootstrap: true,
+    };
+  }
+
+  const target = input.urlTarget
+    ?? input.storedTarget
+    ?? input.automaticTarget;
+  return {
+    target,
+    selectionReason:
+      input.urlTarget !== null || input.storedTarget !== null
+        ? "explicit"
+        : "automatic",
+    selectionChangedDuringBootstrap: false,
+  };
+};
+
+type ChatBootstrapRecoveryInput = Readonly<{
+  selection: ChatBootstrapSelection;
+  hasUrlSessionParameter: boolean;
+  urlSelectionFailed: boolean;
+  storedTarget: ChatTarget | null;
+  storedSelectionFailed: boolean;
+  activeDraftFailed: boolean;
+}>;
+
+export type ChatBootstrapRecoveryDecision = Readonly<{
+  showRecoveryNotice: boolean;
+  shouldReplaceUrl: boolean;
+}>;
+
+export const resolveChatBootstrapRecovery = (
+  input: ChatBootstrapRecoveryInput,
+): ChatBootstrapRecoveryDecision => {
+  if (input.selection.selectionChangedDuringBootstrap) {
+    return {
+      showRecoveryNotice: false,
+      shouldReplaceUrl: false,
+    };
+  }
+  if (input.hasUrlSessionParameter) {
+    return input.urlSelectionFailed
+      ? {
+          showRecoveryNotice: true,
+          shouldReplaceUrl: true,
+        }
+      : {
+          showRecoveryNotice: false,
+          shouldReplaceUrl: false,
+        };
+  }
+  if (input.storedSelectionFailed) {
+    return {
+      showRecoveryNotice: true,
+      shouldReplaceUrl: false,
+    };
+  }
+  if (input.storedTarget !== null) {
+    return {
+      showRecoveryNotice: false,
+      shouldReplaceUrl: false,
+    };
+  }
+
+  return {
+    showRecoveryNotice:
+      input.activeDraftFailed && input.selection.target.kind === "draft",
+    shouldReplaceUrl: false,
+  };
+};
+
+type ChatUrlSynchronizationInput = Readonly<{
+  previousPathname: string;
+  pathname: string;
+  controllerNavigationMatches: boolean;
+  urlTarget: ChatTarget | null;
+  currentTarget: ChatTarget;
+  currentSelectionReason: ChatSelectionReason;
+  activeDraftTarget: Extract<ChatTarget, { kind: "draft" }>;
+}>;
+
+export type ChatUrlSynchronizationDecision =
+  | Readonly<{ kind: "none" }>
+  | Readonly<{ kind: "navigate"; target: ChatTarget }>
+  | Readonly<{ kind: "select"; target: ChatTarget }>;
+
+export const resolveChatUrlSynchronization = (
+  input: ChatUrlSynchronizationInput,
+): ChatUrlSynchronizationDecision => {
+  if (
+    input.pathname !== "/chat"
+    || input.controllerNavigationMatches
+  ) {
+    return { kind: "none" };
+  }
+  if (input.urlTarget !== null) {
+    return (
+      areChatTargetsEqual(input.currentTarget, input.urlTarget)
+      && input.currentSelectionReason === "explicit"
+    )
+      ? { kind: "none" }
+      : { kind: "select", target: input.urlTarget };
+  }
+  if (input.previousPathname === "/chat") {
+    return (
+      input.currentTarget.kind === "draft"
+      && input.currentSelectionReason === "explicit"
+      && areChatTargetsEqual(
+        input.currentTarget,
+        input.activeDraftTarget,
+      )
+    )
+      ? { kind: "none" }
+      : { kind: "select", target: input.activeDraftTarget };
+  }
+  if (
+    input.currentTarget.kind === "session"
+    && input.currentSelectionReason === "explicit"
+  ) {
+    return { kind: "navigate", target: input.currentTarget };
+  }
+
+  return { kind: "none" };
+};
+
+export const resolveChatHistoryErrorMessage = (
+  catalogErrorMessage: string | null,
+  recoveryNotice: string | null,
+): string | null =>
+  catalogErrorMessage ?? recoveryNotice;
+
+export type ChatHistoryStatusVisibility = Readonly<{
+  showEmpty: boolean;
+  showLoading: boolean;
+}>;
+
+export const resolveChatHistoryStatusVisibility = (
+  sessionCount: number,
+  isLoading: boolean,
+  hasLoadedFirstPage: boolean,
+  errorMessage: string | null,
+): ChatHistoryStatusVisibility => {
+  if (!Number.isSafeInteger(sessionCount) || sessionCount < 0) {
+    throw new Error(
+      "Chat history session count must be a non-negative safe integer",
+    );
+  }
+
+  return {
+    showLoading: isLoading && sessionCount === 0,
+    showEmpty:
+      hasLoadedFirstPage
+      && !isLoading
+      && sessionCount === 0
+      && errorMessage === null,
+  };
+};
+
+export type ChatHistoryPaginationFocusTarget =
+  | "none"
+  | "load_more"
+  | "create_draft";
+
+export const resolveChatHistoryPaginationFocus = (
+  loadMoreOwnsFocus: boolean,
+  hasMore: boolean,
+): ChatHistoryPaginationFocusTarget => {
+  if (!loadMoreOwnsFocus) {
+    return "none";
+  }
+  return hasMore ? "load_more" : "create_draft";
+};
+
+export const shouldReuseSelectedChatDraft = (
+  isReady: boolean,
+  currentTarget: ChatTarget,
+  isSelectedDraftUntouched: boolean,
+): boolean =>
+  isReady
+  && currentTarget.kind === "draft"
+  && isSelectedDraftUntouched;
+
+type PostReadyAutomaticCatalogSelectionInput = Readonly<{
+  requestStartedReady: boolean;
+  requestSelectionEpoch: number;
+  requestSelectionReason: ChatSelectionReason;
+  currentSelectionEpoch: number;
+  currentSelectionReason: ChatSelectionReason;
+  currentTarget: ChatTarget;
+  summaries: ReadonlyArray<ChatSessionSummary>;
+  unavailableSessionIds: ReadonlySet<string>;
+  currentTimeMs: number;
+  draftId: string;
+}>;
+
+export const resolvePostReadyAutomaticCatalogSelection = (
+  input: PostReadyAutomaticCatalogSelectionInput,
+): ChatTarget | null => {
+  if (
+    !input.requestStartedReady
+    || input.requestSelectionReason !== "automatic"
+    || input.currentSelectionEpoch !== input.requestSelectionEpoch
+    || input.currentSelectionReason !== "automatic"
+  ) {
+    return null;
+  }
+
+  const target = resolveAutomaticChatTarget(
+    input.summaries.filter(
+      (summary): boolean =>
+        !input.unavailableSessionIds.has(summary.sessionId),
+    ),
+    input.currentTimeMs,
+    input.draftId,
+  );
+  return areChatTargetsEqual(input.currentTarget, target) ? null : target;
+};
+
+export type InvalidChatUrlRecoveryDecision = Readonly<{
+  target: ChatTarget;
+  selectionReason: ChatSelectionReason;
+  shouldClearStoredSelection: boolean;
+}>;
+
+export const resolveInvalidChatUrlRecovery = (
+  storage: Storage,
+  scope: ChatSelectionScope,
+  summaries: ReadonlyArray<ChatSessionSummary>,
+  currentTimeMs: number,
+  draftId: string,
+): InvalidChatUrlRecoveryDecision => {
+  const storedValue = storage.getItem(getChatSelectionStorageKey(scope));
+  if (storedValue === null) {
+    return {
+      target: resolveAutomaticChatTarget(
+        summaries,
+        currentTimeMs,
+        draftId,
+      ),
+      selectionReason: "automatic",
+      shouldClearStoredSelection: false,
+    };
+  }
+
+  let storedTarget: ChatTarget | null;
+  try {
+    storedTarget = parseStoredChatTarget(storedValue);
+  } catch {
+    return {
+      target: resolveAutomaticChatTarget(
+        summaries,
+        currentTimeMs,
+        draftId,
+      ),
+      selectionReason: "automatic",
+      shouldClearStoredSelection: true,
+    };
+  }
+  return storedTarget === null
+    ? {
+      target: resolveAutomaticChatTarget(
+        summaries,
+        currentTimeMs,
+        draftId,
+      ),
+      selectionReason: "automatic",
+      shouldClearStoredSelection: false,
+    }
+    : {
+      target: storedTarget,
+      selectionReason: "explicit",
+      shouldClearStoredSelection: false,
+    };
+};
+
+export type ChatControllerNavigationOrigin = Readonly<{
+  generation: number;
+  url: string;
+}>;
+
+export type ChatControllerNavigation = Readonly<{
+  generation: number;
+  url: string;
+  outstandingOrigins: ReadonlyArray<ChatControllerNavigationOrigin>;
+}>;
+
+export type ChatControllerNavigationWriteDecision =
+  | Readonly<{
+    kind: "none";
+    controllerNavigation: ChatControllerNavigation | null;
+  }>
+  | Readonly<{
+    kind: "navigate";
+    navigationMode: Exclude<NavigationMode, "none">;
+    generation: number;
+    controllerNavigation: ChatControllerNavigation | null;
+  }>;
+
+export const resolveChatControllerNavigationWrite = (
+  currentUrl: string,
+  targetUrl: string,
+  requestedNavigationMode: Exclude<NavigationMode, "none">,
+  currentGeneration: number,
+  controllerNavigation: ChatControllerNavigation | null,
+): ChatControllerNavigationWriteDecision => {
+  const activeControllerNavigation =
+    controllerNavigation?.generation === currentGeneration
+      ? controllerNavigation
+      : null;
+  if (
+    activeControllerNavigation?.url === targetUrl
+    || (
+      activeControllerNavigation === null
+      && currentUrl === targetUrl
+    )
+  ) {
+    return {
+      kind: "none",
+      controllerNavigation: activeControllerNavigation,
+    };
+  }
+
+  const nextGeneration = currentGeneration + 1;
+  if (currentUrl === targetUrl) {
+    return {
+      kind: "navigate",
+      navigationMode: "replace",
+      generation: nextGeneration,
+      controllerNavigation: null,
+    };
+  }
+
+  const outstandingOrigins = activeControllerNavigation === null
+    ? []
+    : [
+      ...activeControllerNavigation.outstandingOrigins,
+      {
+        generation: activeControllerNavigation.generation,
+        url: activeControllerNavigation.url,
+      },
+    ].filter(
+      (origin): boolean => origin.url !== targetUrl,
+    );
+  return {
+    kind: "navigate",
+    navigationMode: requestedNavigationMode,
+    generation: nextGeneration,
+    controllerNavigation: {
+      generation: nextGeneration,
+      url: targetUrl,
+      outstandingOrigins,
+    },
+  };
+};
+
+export type ChatControllerNavigationObservation =
+  | Readonly<{ kind: "external" }>
+  | Readonly<{
+    kind: "settle";
+  }>
+  | Readonly<{
+    kind: "restore";
+    url: string;
+    controllerNavigation: ChatControllerNavigation;
+  }>;
+
+export const resolveChatControllerNavigationObservation = (
+  controllerNavigation: ChatControllerNavigation | null,
+  currentGeneration: number,
+  currentUrl: string,
+): ChatControllerNavigationObservation => {
+  if (
+    controllerNavigation === null
+    || controllerNavigation.generation !== currentGeneration
+  ) {
+    return { kind: "external" };
+  }
+  if (controllerNavigation.url === currentUrl) {
+    return { kind: "settle" };
+  }
+  const completedOrigin = controllerNavigation.outstandingOrigins.find(
+    (origin): boolean => origin.url === currentUrl,
+  );
+  if (completedOrigin !== undefined) {
+    return {
+      kind: "restore",
+      url: controllerNavigation.url,
+      controllerNavigation: {
+        ...controllerNavigation,
+        outstandingOrigins:
+          controllerNavigation.outstandingOrigins.filter(
+            (origin): boolean =>
+              origin.generation !== completedOrigin.generation,
+          ),
+      },
+    };
+  }
+  return { kind: "external" };
+};
+
+export type ChatControllerNavigationRetirement = Readonly<{
+  generation: number;
+  controllerNavigation: null;
+}>;
+
+export const retireChatControllerNavigation = (
+  currentGeneration: number,
+): ChatControllerNavigationRetirement => ({
+  generation: currentGeneration + 1,
+  controllerNavigation: null,
+});
+
+export type ChatPopStateNavigation = ChatControllerNavigationRetirement &
+  Readonly<{
+    targetNavigationMode: "none" | null;
+  }>;
+
+export const resolveChatPopStateNavigation = (
+  pathname: string,
+  currentGeneration: number,
+): ChatPopStateNavigation => ({
+  ...retireChatControllerNavigation(currentGeneration),
+  targetNavigationMode: pathname === "/chat" ? "none" : null,
+});
+
+export const useChatWorkspaceController = (
+  params: UseChatWorkspaceControllerParams,
+): ChatWorkspaceController => {
+  const { scope } = params;
+  const { t } = useTranslation();
+  const workspaceId = scope.mode === "workspace" ? scope.workspaceId : "";
+  const stableScope = useMemo<ChatSelectionScope>(
+    () => scope.mode === "demo"
+      ? { mode: "demo", userId: scope.userId }
+      : {
+        mode: "workspace",
+        userId: scope.userId,
+        workspaceId,
+      },
+    [scope.mode, scope.userId, workspaceId],
+  );
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const searchParamsString = searchParams.toString();
+  const translationRef = useRef(t);
+  translationRef.current = t;
+  const scopeKey = getChatSelectionStorageKey(stableScope);
+  const initialTarget = { kind: "draft", draftId: "initializing" } as const;
+  const [state, setState] = useState<ChatWorkspaceState>(
+    createChatWorkspaceState(initialTarget, "automatic"),
+  );
+  const [selectionEpoch, setSelectionEpoch] = useState<number>(0);
+  const [isReady, setIsReady] = useState<boolean>(false);
+  const [historyOpen, setHistoryOpenState] = useState<boolean>(false);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
+  const stateRef = useRef<ChatWorkspaceState>(state);
+  const selectionEpochRef = useRef<number>(selectionEpoch);
+  const isReadyRef = useRef<boolean>(isReady);
+  const activeDraftIdRef = useRef<string | null>(null);
+  const unavailableSessionIdsRef = useRef<Set<string>>(new Set<string>());
+  const hasRefreshedUnavailableSessionsRef = useRef<boolean>(false);
+  const catalogRequestIdRef = useRef<number>(0);
+  const catalogAbortRef = useRef<AbortController | null>(null);
+  const navigationGenerationRef = useRef<number>(0);
+  const controllerNavigationRef =
+    useRef<ChatControllerNavigation | null>(null);
+  const invalidationSourceIdRef = useRef<string | null>(null);
+  const lastInvalidationEmittedAtRef = useRef<number>(0);
+  const observedUrlRef = useRef<string | null>(null);
+
+  const commitState = useCallback((
+    update: SetStateAction<ChatWorkspaceState>,
+  ): ChatWorkspaceState => {
+    const nextState = typeof update === "function"
+      ? update(stateRef.current)
+      : update;
+    stateRef.current = nextState;
+    setState(nextState);
+    return nextState;
+  }, []);
+
+  const commitSelectionEpoch = useCallback((nextEpoch: number): void => {
+    selectionEpochRef.current = nextEpoch;
+    setSelectionEpoch(nextEpoch);
+  }, []);
+
+  const commitReady = useCallback((nextReady: boolean): void => {
+    isReadyRef.current = nextReady;
+    setIsReady(nextReady);
+  }, []);
+
+  const commitRecoveryNotice = useCallback((
+    nextRecoveryNotice: string | null,
+  ): void => {
+    setRecoveryNotice(nextRecoveryNotice);
+  }, []);
+
+  const commitActiveDraftId = useCallback((
+    draftId: string | null,
+  ): void => {
+    activeDraftIdRef.current = draftId;
+    writeChatActiveDraftId(window.sessionStorage, stableScope, draftId);
+  }, [stableScope]);
+
+  const navigateToTarget = useCallback((
+    target: ChatTarget,
+    navigationMode: NavigationMode,
+  ): void => {
+    if (navigationMode === "none" || window.location.pathname !== "/chat") {
+      return;
+    }
+
+    const url = buildChatTargetUrl(target);
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    const decision = resolveChatControllerNavigationWrite(
+      currentUrl,
+      url,
+      navigationMode,
+      navigationGenerationRef.current,
+      controllerNavigationRef.current,
+    );
+    controllerNavigationRef.current = decision.controllerNavigation;
+    if (decision.kind === "none") {
+      return;
+    }
+
+    navigationGenerationRef.current = decision.generation;
+    if (decision.navigationMode === "push") {
+      router.push(url, { scroll: false });
+      return;
+    }
+
+    router.replace(url, { scroll: false });
+  }, [router]);
+
+  const persistSelectedTarget = useCallback((
+    target: ChatTarget,
+    selectionReason: ChatSelectionReason,
+  ): void => {
+    if (selectionReason !== "explicit") {
+      return;
+    }
+
+    writeChatSelection(window.sessionStorage, stableScope, target);
+  }, [stableScope]);
+
+  const selectTarget = useCallback((
+    target: ChatTarget,
+    selectionReason: ChatSelectionReason,
+    navigationMode: NavigationMode,
+  ): void => {
+    const currentState = stateRef.current;
+    if (
+      areChatTargetsEqual(currentState.target, target)
+      && currentState.selectionReason === selectionReason
+    ) {
+      if (navigationMode === "replace") {
+        navigateToTarget(target, navigationMode);
+      }
+      return;
+    }
+
+    const nextEpoch = selectionEpochRef.current + 1;
+    commitSelectionEpoch(nextEpoch);
+    commitState(selectChatWorkspaceTarget(
+      currentState,
+      target,
+      selectionReason,
+    ));
+    persistSelectedTarget(target, selectionReason);
+    navigateToTarget(target, navigationMode);
+  }, [
+    commitSelectionEpoch,
+    commitState,
+    navigateToTarget,
+    persistSelectedTarget,
+  ]);
+
+  const publishInvalidation = useCallback((
+    version: number,
+  ): void => {
+    if (invalidationSourceIdRef.current === null) {
+      invalidationSourceIdRef.current = getMainContentInvalidationSourceId();
+    }
+    const emittedAt = Math.max(
+      Date.now(),
+      lastInvalidationEmittedAtRef.current + 1,
+    );
+    lastInvalidationEmittedAtRef.current = emittedAt;
+
+    publishMainContentInvalidation({
+      workspaceId,
+      version,
+      sourceId: invalidationSourceIdRef.current,
+      emittedAt,
+    });
+    if (window.location.pathname !== "/chat") {
+      router.refresh();
+    }
+  }, [router, workspaceId]);
+
+  const publishCatalogPageInvalidations = useCallback((
+    currentState: ChatWorkspaceState,
+    nextState: ChatWorkspaceState,
+    page: ChatSessionSummaryPage,
+  ): void => {
+    const increments = findChatSessionInvalidationIncrements(
+      currentState.mainContentInvalidationVersions,
+      page.sessions,
+    );
+    commitState(nextState);
+    for (const increment of increments) {
+      publishInvalidation(increment.nextVersion);
+    }
+  }, [commitState, publishInvalidation]);
+
+  const applyFirstCatalogPage = useCallback((
+    page: ChatSessionSummaryPage,
+  ): void => {
+    const currentState = stateRef.current;
+    publishCatalogPageInvalidations(
+      currentState,
+      replaceChatSessionCatalog(currentState, page),
+      page,
+    );
+    commitRecoveryNotice(null);
+    if (unavailableSessionIdsRef.current.size > 0) {
+      const catalogSessionIds = new Set(
+        page.sessions.map((summary): string => summary.sessionId),
+      );
+      const remainingUnavailableSessionIds = new Set(
+        [...unavailableSessionIdsRef.current].filter(
+          (sessionId: string): boolean => catalogSessionIds.has(sessionId),
+        ),
+      );
+      unavailableSessionIdsRef.current = remainingUnavailableSessionIds;
+      if (remainingUnavailableSessionIds.size === 0) {
+        hasRefreshedUnavailableSessionsRef.current = false;
+      }
+    }
+  }, [commitRecoveryNotice, publishCatalogPageInvalidations]);
+
+  const applyNextCatalogPage = useCallback((
+    page: ChatSessionSummaryPage,
+  ): void => {
+    const currentState = stateRef.current;
+    publishCatalogPageInvalidations(
+      currentState,
+      appendChatSessionCatalogPage(currentState, page),
+      page,
+    );
+    commitRecoveryNotice(null);
+  }, [commitRecoveryNotice, publishCatalogPageInvalidations]);
+
+  const loadCatalogPage = useCallback(async (): Promise<ChatSessionSummaryPage | null> => {
+    const requestStartedReady = isReadyRef.current;
+    const requestSelectionEpoch = selectionEpochRef.current;
+    const requestSelectionReason = stateRef.current.selectionReason;
+    const reconcilePostReadyAutomaticSelection = (
+      page: ChatSessionSummaryPage,
+    ): void => {
+      const draftId = activeDraftIdRef.current ?? createDraftId();
+      const target = resolvePostReadyAutomaticCatalogSelection({
+        requestStartedReady,
+        requestSelectionEpoch,
+        requestSelectionReason,
+        currentSelectionEpoch: selectionEpochRef.current,
+        currentSelectionReason: stateRef.current.selectionReason,
+        currentTarget: stateRef.current.target,
+        summaries: page.sessions,
+        unavailableSessionIds: unavailableSessionIdsRef.current,
+        currentTimeMs: Date.now(),
+        draftId,
+      });
+      if (target === null) {
+        return;
+      }
+      if (
+        activeDraftIdRef.current === null
+        || target.kind === "draft"
+      ) {
+        commitActiveDraftId(draftId);
+      }
+      selectTarget(target, "automatic", "replace");
+    };
+
+    if (stableScope.mode === "demo") {
+      const page: ChatSessionSummaryPage = {
+        sessions: [],
+        nextCursor: null,
+      };
+      applyFirstCatalogPage(page);
+      reconcilePostReadyAutomaticSelection(page);
+      return page;
+    }
+
+    const requestId = catalogRequestIdRef.current + 1;
+    catalogRequestIdRef.current = requestId;
+    catalogAbortRef.current?.abort();
+    const abortController = new AbortController();
+    catalogAbortRef.current = abortController;
+    commitState(startChatSessionCatalogLoad(stateRef.current));
+
+    try {
+      const page = await fetchChatSessionSummaryPage(
+        CHAT_SESSION_CATALOG_LIMIT,
+        null,
+        abortController.signal,
+      );
+      if (
+        abortController.signal.aborted
+        || requestId !== catalogRequestIdRef.current
+      ) {
+        return null;
+      }
+
+      applyFirstCatalogPage(page);
+      reconcilePostReadyAutomaticSelection(page);
+      return page;
+    } catch (error) {
+      if (
+        abortController.signal.aborted
+        || requestId !== catalogRequestIdRef.current
+      ) {
+        return null;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      commitRecoveryNotice(null);
+      commitState(failChatSessionCatalogLoad(stateRef.current, message));
+      return null;
+    } finally {
+      if (catalogAbortRef.current === abortController) {
+        catalogAbortRef.current = null;
+      }
+    }
+  }, [
+    applyFirstCatalogPage,
+    commitActiveDraftId,
+    commitRecoveryNotice,
+    commitState,
+    selectTarget,
+    stableScope.mode,
+  ]);
+
+  const refreshCatalog = useCallback(async (): Promise<void> => {
+    await loadCatalogPage();
+  }, [loadCatalogPage]);
+
+  const loadNextCatalogPage = useCallback(async (): Promise<void> => {
+    if (stableScope.mode === "demo" || catalogAbortRef.current !== null) {
+      return;
+    }
+
+    const nextCursor = stateRef.current.pagination.nextCursor;
+    if (nextCursor === null) {
+      return;
+    }
+
+    const requestId = catalogRequestIdRef.current + 1;
+    catalogRequestIdRef.current = requestId;
+    const abortController = new AbortController();
+    catalogAbortRef.current = abortController;
+    commitState(startChatSessionCatalogLoad(stateRef.current));
+
+    try {
+      const page = await fetchChatSessionSummaryPage(
+        CHAT_SESSION_CATALOG_LIMIT,
+        nextCursor,
+        abortController.signal,
+      );
+      if (
+        abortController.signal.aborted
+        || requestId !== catalogRequestIdRef.current
+      ) {
+        return;
+      }
+
+      applyNextCatalogPage(page);
+    } catch (error) {
+      if (
+        abortController.signal.aborted
+        || requestId !== catalogRequestIdRef.current
+      ) {
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      commitRecoveryNotice(null);
+      commitState(failChatSessionCatalogLoad(stateRef.current, message));
+    } finally {
+      if (catalogAbortRef.current === abortController) {
+        catalogAbortRef.current = null;
+      }
+    }
+  }, [
+    applyNextCatalogPage,
+    commitRecoveryNotice,
+    commitState,
+    stableScope.mode,
+  ]);
+
+  const recoverToSafeTarget = useCallback((
+    errorMessage: string,
+    excludedSessionIds: ReadonlySet<string> | null,
+  ): void => {
+    const draftId = activeDraftIdRef.current ?? createDraftId();
+    if (activeDraftIdRef.current === null) {
+      commitActiveDraftId(draftId);
+    }
+    const safeTarget = excludedSessionIds === null
+      ? resolveAutomaticChatTarget(
+        stateRef.current.summaries,
+        Date.now(),
+        draftId,
+      )
+      : resolveFailedSessionRecoveryTarget(
+        stateRef.current.summaries,
+        excludedSessionIds,
+        Date.now(),
+        draftId,
+      );
+    if (safeTarget.kind === "draft") {
+      commitActiveDraftId(safeTarget.draftId);
+    }
+
+    clearChatSelection(window.sessionStorage, stableScope);
+    commitRecoveryNotice(errorMessage);
+    selectTarget(safeTarget, "automatic", "replace");
+  }, [
+    commitActiveDraftId,
+    commitRecoveryNotice,
+    selectTarget,
+    stableScope,
+  ]);
+
+  const recoverInvalidUrlSelection = useCallback((
+    errorMessage: string,
+  ): void => {
+    const draftId = activeDraftIdRef.current ?? createDraftId();
+    const decision = resolveInvalidChatUrlRecovery(
+      window.sessionStorage,
+      stableScope,
+      stateRef.current.summaries,
+      Date.now(),
+      draftId,
+    );
+    if (decision.shouldClearStoredSelection) {
+      clearChatSelection(window.sessionStorage, stableScope);
+    }
+    if (
+      activeDraftIdRef.current === null
+      || decision.target.kind === "draft"
+    ) {
+      commitActiveDraftId(
+        decision.target.kind === "draft"
+          ? decision.target.draftId
+          : draftId,
+      );
+    }
+
+    commitRecoveryNotice(errorMessage);
+    selectTarget(
+      decision.target,
+      decision.selectionReason,
+      "replace",
+    );
+  }, [
+    commitActiveDraftId,
+    commitRecoveryNotice,
+    selectTarget,
+    stableScope,
+  ]);
+
+  useEffect(() => {
+    let isCurrentScope = true;
+    catalogAbortRef.current?.abort();
+    catalogRequestIdRef.current += 1;
+    activeDraftIdRef.current = null;
+    unavailableSessionIdsRef.current = new Set<string>();
+    hasRefreshedUnavailableSessionsRef.current = false;
+    controllerNavigationRef.current = null;
+    commitReady(false);
+    commitRecoveryNotice(null);
+    commitSelectionEpoch(0);
+    commitState(createChatWorkspaceState(initialTarget, "automatic"));
+
+    void (async (): Promise<void> => {
+      let storedTarget: ChatTarget | null = null;
+      let storedActiveDraftId: string | null = null;
+      let storedSelectionFailed = false;
+      let activeDraftFailed = false;
+      const bootstrapSelectionEpoch = selectionEpochRef.current;
+
+      try {
+        storedTarget = readChatSelection(window.sessionStorage, stableScope);
+      } catch {
+        storedSelectionFailed = true;
+        clearChatSelection(window.sessionStorage, stableScope);
+      }
+
+      try {
+        storedActiveDraftId = readChatActiveDraftId(
+          window.sessionStorage,
+          stableScope,
+        );
+      } catch {
+        activeDraftFailed = true;
+        writeChatActiveDraftId(window.sessionStorage, stableScope, null);
+      }
+      const draftId = storedActiveDraftId ?? createDraftId();
+      commitActiveDraftId(draftId);
+
+      const page = await loadCatalogPage();
+      if (!isCurrentScope) {
+        return;
+      }
+
+      const currentPathname = window.location.pathname;
+      const currentSearchParams = new URLSearchParams(window.location.search);
+      const hasUrlSessionParameter = currentPathname === "/chat"
+        && currentSearchParams.has("session");
+      let urlTarget: ChatTarget | null = null;
+      let urlSelectionFailed = false;
+      try {
+        urlTarget = currentPathname === "/chat"
+          ? readChatSessionTargetFromSearchParams(currentSearchParams)
+          : null;
+      } catch {
+        urlSelectionFailed = true;
+      }
+      const bootstrapSelection = resolveChatBootstrapSelection({
+        bootstrapSelectionEpoch,
+        currentSelectionEpoch: selectionEpochRef.current,
+        currentTarget: stateRef.current.target,
+        currentSelectionReason: stateRef.current.selectionReason,
+        urlTarget,
+        storedTarget,
+        automaticTarget: resolveAutomaticChatTarget(
+          page?.sessions ?? [],
+          Date.now(),
+          draftId,
+        ),
+      });
+      const bootstrapRecovery = resolveChatBootstrapRecovery({
+        selection: bootstrapSelection,
+        hasUrlSessionParameter,
+        urlSelectionFailed,
+        storedTarget,
+        storedSelectionFailed,
+        activeDraftFailed,
+      });
+      const { target, selectionReason: reason } = bootstrapSelection;
+      if (target.kind === "draft") {
+        commitActiveDraftId(target.draftId);
+      }
+      selectTarget(
+        target,
+        reason,
+        bootstrapSelection.selectionChangedDuringBootstrap
+          ? "none"
+          : bootstrapRecovery.shouldReplaceUrl
+          ? "replace"
+          : urlTarget === null && reason === "explicit" ? "replace" : "none",
+      );
+      if (bootstrapRecovery.showRecoveryNotice) {
+        commitRecoveryNotice(
+          translationRef.current("chat.sessionUnavailable"),
+        );
+      }
+      commitReady(true);
+    })();
+
+    return () => {
+      isCurrentScope = false;
+      catalogAbortRef.current?.abort();
+      catalogAbortRef.current = null;
+    };
+  }, [
+    commitReady,
+    commitActiveDraftId,
+    commitRecoveryNotice,
+    commitSelectionEpoch,
+    commitState,
+    loadCatalogPage,
+    scopeKey,
+    stableScope,
+    selectTarget,
+  ]);
+
+  const runningCount = getRunningChatSessionCount(state.summaries);
+
+  useEffect(() => {
+    const handlePopState = (): void => {
+      const popStateNavigation = resolveChatPopStateNavigation(
+        window.location.pathname,
+        navigationGenerationRef.current,
+      );
+      navigationGenerationRef.current = popStateNavigation.generation;
+      controllerNavigationRef.current =
+        popStateNavigation.controllerNavigation;
+      if (popStateNavigation.targetNavigationMode === null) {
+        return;
+      }
+
+      try {
+        const urlTarget = readChatSessionTargetFromSearchParams(
+          new URLSearchParams(window.location.search),
+        );
+        if (urlTarget !== null) {
+          selectTarget(
+            urlTarget,
+            "explicit",
+            popStateNavigation.targetNavigationMode,
+          );
+          return;
+        }
+
+        const draftId = activeDraftIdRef.current ?? createDraftId();
+        commitActiveDraftId(draftId);
+        selectTarget(
+          { kind: "draft", draftId },
+          "explicit",
+          popStateNavigation.targetNavigationMode,
+        );
+      } catch {
+        recoverInvalidUrlSelection(
+          translationRef.current("chat.sessionUnavailable"),
+        );
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [commitActiveDraftId, recoverInvalidUrlSelection, selectTarget]);
+
+  useEffect(() => {
+    const currentUrl = searchParamsString === ""
+      ? pathname
+      : `${pathname}?${searchParamsString}`;
+    const previousUrl = observedUrlRef.current;
+    observedUrlRef.current = currentUrl;
+    const controllerNavigation = controllerNavigationRef.current;
+    const controllerNavigationObservation =
+      resolveChatControllerNavigationObservation(
+        controllerNavigation,
+        navigationGenerationRef.current,
+        currentUrl,
+      );
+    if (controllerNavigationObservation.kind === "settle") {
+      controllerNavigationRef.current = null;
+      return;
+    }
+    if (controllerNavigationObservation.kind === "restore") {
+      controllerNavigationRef.current =
+        controllerNavigationObservation.controllerNavigation;
+      router.replace(
+        controllerNavigationObservation.url,
+        { scroll: false },
+      );
+      return;
+    }
+    if (
+      pathname !== "/chat"
+      || previousUrl === null
+      || previousUrl === currentUrl
+    ) {
+      if (pathname !== "/chat") {
+        controllerNavigationRef.current = null;
+      }
+      return;
+    }
+
+    try {
+      const urlTarget = readChatSessionTargetFromSearchParams(
+        new URLSearchParams(searchParamsString),
+      );
+      const draftId = activeDraftIdRef.current ?? createDraftId();
+      const activeDraftTarget = { kind: "draft", draftId } as const;
+      const queryStart = previousUrl.indexOf("?");
+      const previousPathname = queryStart === -1
+        ? previousUrl
+        : previousUrl.slice(0, queryStart);
+      const currentState = stateRef.current;
+      const decision = resolveChatUrlSynchronization({
+        previousPathname,
+        pathname,
+        controllerNavigationMatches:
+          controllerNavigationObservation.kind !== "external",
+        urlTarget,
+        currentTarget: currentState.target,
+        currentSelectionReason: currentState.selectionReason,
+        activeDraftTarget,
+      });
+      if (decision.kind === "navigate") {
+        navigateToTarget(decision.target, "replace");
+        return;
+      }
+      if (decision.kind === "select") {
+        if (decision.target.kind === "draft") {
+          commitActiveDraftId(decision.target.draftId);
+        }
+        selectTarget(decision.target, "explicit", "replace");
+        return;
+      }
+      navigateToTarget(currentState.target, "replace");
+    } catch {
+      recoverInvalidUrlSelection(
+        translationRef.current("chat.sessionUnavailable"),
+      );
+    }
+  }, [
+    commitActiveDraftId,
+    navigateToTarget,
+    pathname,
+    recoverInvalidUrlSelection,
+    router,
+    searchParamsString,
+    selectTarget,
+  ]);
+
+  const setHistoryOpen = useCallback((open: boolean): void => {
+    setHistoryOpenState(open);
+    if (open && isReadyRef.current) {
+      void loadCatalogPage();
+    }
+  }, [loadCatalogPage]);
+
+  const selectSession = useCallback((sessionId: string): void => {
+    if (unavailableSessionIdsRef.current.has(sessionId)) {
+      const nextUnavailableSessionIds = new Set(
+        unavailableSessionIdsRef.current,
+      );
+      nextUnavailableSessionIds.delete(sessionId);
+      unavailableSessionIdsRef.current = nextUnavailableSessionIds;
+      if (nextUnavailableSessionIds.size === 0) {
+        hasRefreshedUnavailableSessionsRef.current = false;
+      }
+    }
+    selectTarget(
+      { kind: "session", sessionId },
+      "explicit",
+      "push",
+    );
+  }, [selectTarget]);
+
+  const createDraft = useCallback((
+    isSelectedDraftUntouched: boolean,
+  ): void => {
+    const currentTarget = stateRef.current.target;
+    const shouldReuseCurrentDraft = shouldReuseSelectedChatDraft(
+      isReadyRef.current,
+      currentTarget,
+      isSelectedDraftUntouched,
+    );
+    if (shouldReuseCurrentDraft) {
+      selectTarget(currentTarget, "explicit", "replace");
+      return;
+    }
+    if (
+      currentTarget.kind === "draft"
+      && activeDraftIdRef.current === currentTarget.draftId
+    ) {
+      commitActiveDraftId(null);
+    }
+    const draftTarget = resolveNewChatDraftTarget(
+      currentTarget,
+      activeDraftIdRef.current,
+      shouldReuseCurrentDraft,
+      createDraftId(),
+    );
+    if (draftTarget.kind !== "draft") {
+      throw new Error("New chat draft resolution returned a server session");
+    }
+    commitActiveDraftId(draftTarget.draftId);
+    selectTarget(
+      draftTarget,
+      "explicit",
+      "push",
+    );
+  }, [commitActiveDraftId, selectTarget]);
+
+  const isSelectionCurrent = useCallback((
+    target: ChatTarget,
+    expectedSelectionEpoch: number,
+  ): boolean =>
+    selectionEpochRef.current === expectedSelectionEpoch
+    && areChatTargetsEqual(stateRef.current.target, target), []);
+
+  const adoptDraftSession = useCallback((
+    draftId: string,
+    sessionId: string,
+  ): ChatDraftSessionAdoption => {
+    const draftTarget = { kind: "draft", draftId } as const;
+    const sessionTarget = { kind: "session", sessionId } as const;
+    const isSelected = areChatTargetsEqual(
+      stateRef.current.target,
+      draftTarget,
+    );
+    if (isSelected) {
+      commitState(selectChatWorkspaceTarget(
+        stateRef.current,
+        sessionTarget,
+        "explicit",
+      ));
+    }
+    if (activeDraftIdRef.current === draftId) {
+      commitActiveDraftId(null);
+    }
+    if (isSelected) {
+      persistSelectedTarget(sessionTarget, "explicit");
+      navigateToTarget(sessionTarget, "replace");
+    }
+    void loadCatalogPage();
+    return isSelected
+      ? {
+        kind: "selected",
+        target: sessionTarget,
+        selectionEpoch: selectionEpochRef.current,
+      }
+      : {
+        kind: "background",
+        target: sessionTarget,
+      };
+  }, [
+    commitState,
+    commitActiveDraftId,
+    loadCatalogPage,
+    navigateToTarget,
+    persistSelectedTarget,
+  ]);
+
+  const observeSessionInvalidation = useCallback((
+    sessionId: string,
+    version: number,
+    source: ChatWorkspaceInvalidationSource,
+  ): void => {
+    const currentState = stateRef.current;
+    const previousVersion = currentState.mainContentInvalidationVersions.get(sessionId);
+    const shouldPublish = version > (previousVersion ?? -1)
+      && (previousVersion !== undefined || source === "live");
+    commitState(observeChatSessionInvalidationVersion(
+      currentState,
+      sessionId,
+      version,
+    ));
+    if (shouldPublish) {
+      publishInvalidation(version);
+    }
+  }, [commitState, publishInvalidation]);
+
+  const recoverInvalidSessionSelection = useCallback((
+    sessionId: string,
+    errorMessage: string,
+  ): boolean => {
+    const currentTarget = stateRef.current.target;
+    if (
+      currentTarget.kind !== "session"
+      || currentTarget.sessionId !== sessionId
+    ) {
+      return false;
+    }
+
+    const unavailableSessionIds = new Set(
+      unavailableSessionIdsRef.current,
+    );
+    unavailableSessionIds.add(sessionId);
+    unavailableSessionIdsRef.current = unavailableSessionIds;
+    recoverToSafeTarget(errorMessage, unavailableSessionIds);
+    if (!hasRefreshedUnavailableSessionsRef.current) {
+      hasRefreshedUnavailableSessionsRef.current = true;
+      void loadCatalogPage();
+    }
+    return true;
+  }, [loadCatalogPage, recoverToSafeTarget]);
+
+  const historyErrorMessage = resolveChatHistoryErrorMessage(
+    state.catalogRequest.errorMessage,
+    recoveryNotice,
+  );
+
+  return {
+    state,
+    selectionEpoch,
+    isReady,
+    historyOpen,
+    historyErrorMessage,
+    runningCount,
+    setHistoryOpen,
+    selectSession,
+    createDraft,
+    adoptDraftSession,
+    isSelectionCurrent,
+    refreshCatalog,
+    loadNextCatalogPage,
+    observeSessionInvalidation,
+    recoverInvalidSessionSelection,
+  };
+};

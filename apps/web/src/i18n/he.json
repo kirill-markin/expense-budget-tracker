@@ -255,6 +255,8 @@
   "chat.historyRunningStatus": "פעיל",
   "chat.historyRecent": "אחרונים",
   "chat.historyEmpty": "אין עדיין צ׳אטים.",
+  "chat.historyLoadMore": "טעינת עוד",
+  "chat.sessionUnavailable": "הצ׳אט הזה אינו זמין. נבחר צ׳אט בטוח.",
   "chat.send": "שלח",
   "chat.stop": "עצור",
   "chat.attach": "צרף",

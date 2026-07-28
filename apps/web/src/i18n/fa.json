@@ -255,6 +255,8 @@
   "chat.historyRunningStatus": "در حال اجرا",
   "chat.historyRecent": "اخیر",
   "chat.historyEmpty": "هنوز گفت‌وگویی وجود ندارد.",
+  "chat.historyLoadMore": "نمایش بیشتر",
+  "chat.sessionUnavailable": "این گفت‌وگو در دسترس نیست. یک گفت‌وگوی امن انتخاب شد.",
   "chat.send": "ارسال",
   "chat.stop": "توقف",
   "chat.attach": "پیوست",

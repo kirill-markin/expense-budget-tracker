@@ -255,6 +255,8 @@
   "chat.historyRunningStatus": "قيد التشغيل",
   "chat.historyRecent": "الأخيرة",
   "chat.historyEmpty": "لا توجد دردشات بعد.",
+  "chat.historyLoadMore": "عرض المزيد",
+  "chat.sessionUnavailable": "هذه الدردشة غير متاحة. تم اختيار دردشة آمنة.",
   "chat.send": "إرسال",
   "chat.stop": "إيقاف",
   "chat.attach": "إرفاق",
