@@ -29,11 +29,6 @@ export type ChatTranslation = (
   params?: TranslationParams,
 ) => string;
 
-type ChatClearConversationResponse = Readonly<{
-  ok: boolean;
-  sessionId: string;
-}>;
-
 type StopChatSessionResponseBase = Readonly<{
   ok: true;
   sessionId: string;
@@ -85,7 +80,7 @@ export type PreparedChatSendRequest =
   }>;
 
 export type StreamChatResponseParams = Readonly<{
-  url?: "/api/chat" | "/api/chat/new";
+  url: "/api/chat" | "/api/chat/new";
   requestBody: string;
   signal: AbortSignal;
   abortStream: () => void;
@@ -102,10 +97,6 @@ export type ChatRequestAcceptance =
   | "rejected"
   | "accepted";
 
-type ChatCreateSessionResponse = Readonly<{
-  sessionId: string;
-}>;
-
 export type StreamChatResponseResult = Readonly<{
   responseSessionId: string | null;
   streamFailure: Error | null;
@@ -121,21 +112,10 @@ export type ChatSendReconciliationOwner = Readonly<{
   turnId: string;
 }>;
 
-export type ChatClearOperationOwner = Readonly<{
-  ownerId: symbol;
-  targetSessionId: string | null;
-}>;
-
 export type ChatStopOperationOwner = Readonly<{
   ownerId: symbol;
   sessionId: string;
   abortController: AbortController;
-}>;
-
-export type ChatPreSessionSendOwner = Readonly<{
-  ownerId: symbol;
-  initialSessionId: string | null;
-  turnId: string;
 }>;
 
 export type ChatSendTransport = Readonly<{
@@ -358,47 +338,6 @@ const startChatRequest = (
   }
 };
 
-export const isChatPreSessionSendOwnerCurrent = (
-  owner: ChatPreSessionSendOwner,
-  currentOwner: ChatPreSessionSendOwner | null,
-  currentSessionId: string | null,
-): boolean =>
-  currentOwner?.ownerId === owner.ownerId
-  && currentSessionId === owner.initialSessionId;
-
-export const resolveChatPreSessionSendAdoption = (
-  owner: ChatPreSessionSendOwner,
-  currentOwner: ChatPreSessionSendOwner | null,
-  currentSessionId: string | null,
-  writableSessionId: string,
-  signal: AbortSignal,
-): ChatSendReconciliationOwner | null => {
-  if (
-    signal.aborted
-    || !isChatPreSessionSendOwnerCurrent(
-      owner,
-      currentOwner,
-      currentSessionId,
-    )
-  ) {
-    return null;
-  }
-  if (
-    owner.initialSessionId !== null
-    && owner.initialSessionId !== writableSessionId
-  ) {
-    throw new Error(
-      `Chat session changed while preparing a send: expectedSessionId=${owner.initialSessionId}, writableSessionId=${writableSessionId}`,
-    );
-  }
-
-  return {
-    ownerId: owner.ownerId,
-    sessionId: writableSessionId,
-    turnId: owner.turnId,
-  };
-};
-
 type ChatOperationOwner = Readonly<{
   ownerId: symbol;
 }>;
@@ -429,17 +368,6 @@ export type ChatTurnCancellationRunner<
   Owner extends ChatSendReconciliationOwner,
 > = ChatSingleFlightRunner<Owner, ChatTurnCancellationResolution>;
 
-export type ChatClearOperationRunner =
-  ChatSingleFlightRunner<ChatClearOperationOwner, void>;
-
-export const isChatClearOperationOwnerCurrent = (
-  owner: ChatClearOperationOwner,
-  currentOwner: ChatClearOperationOwner | null,
-  currentSessionId: string | null,
-): boolean =>
-  currentOwner?.ownerId === owner.ownerId
-  && currentSessionId === owner.targetSessionId;
-
 export const isChatSendReconciliationOwnerCurrent = (
   owner: ChatSendReconciliationOwner,
   currentOwner: ChatSendReconciliationOwner | null,
@@ -463,14 +391,6 @@ export const isChatStopOperationOwnerCurrent = (
   !owner.abortController.signal.aborted
   && currentOwner?.ownerId === owner.ownerId
   && currentSessionId === owner.sessionId;
-
-export const isChatSnapshotPollingOwnerCurrent = (
-  requestedSessionId: string,
-  currentSessionId: string | null,
-  signal: AbortSignal,
-): boolean =>
-  !signal.aborted
-  && currentSessionId === requestedSessionId;
 
 export const isChatTurnCancellationSettlementOwned = (
   cancellation: ChatSendReconciliationOwner,
@@ -557,14 +477,6 @@ export const createSingleFlightChatTurnCancellationRunner = <
   ) => Promise<ChatTurnCancellationResolution>,
 ): ChatTurnCancellationRunner<Owner> =>
   createSingleFlightChatRunner(reconcile);
-
-export const createSingleFlightChatClearOperationRunner = (
-  clear: (
-    owner: ChatClearOperationOwner,
-    abortController: AbortController,
-  ) => Promise<void>,
-): ChatClearOperationRunner =>
-  createSingleFlightChatRunner(clear);
 
 export type ChatTurnCancellationRequestErrorKind =
   | "acceptance_unknown"
@@ -1192,6 +1104,26 @@ export type ChatSnapshotFailureDisposition =
   | "block_workspace_reload"
   | "fail";
 
+export const CHAT_SESSION_SYNC_TRANSIENT_RETRY_LIMIT = 1;
+
+export type ChatSessionSyncRefreshCoordinator = Readonly<{
+  isRefreshInFlight: boolean;
+  hasPendingRefresh: boolean;
+}>;
+
+type CleanupChatSessionSyncEffectParams = Readonly<{
+  unsubscribe: () => void;
+  clearRetryTimeout: () => void;
+  abortActiveRequest: () => void;
+  reportError: (error: Error) => void;
+}>;
+
+export type ChatSessionSyncFailureDisposition =
+  | Exclude<ChatSnapshotFailureDisposition, "fail">
+  | "retry_transient"
+  | "surface_transient"
+  | "surface_failure";
+
 export type ChatSnapshotRequestToken = Readonly<{
   sessionId: string;
   selectionEpoch: number;
@@ -1277,6 +1209,93 @@ export const isChatSnapshotRequestCurrent = (
   coordinator.latestRequest?.sessionId === request.sessionId
   && coordinator.latestRequest.selectionEpoch === request.selectionEpoch
   && coordinator.latestRequest.generation === request.generation;
+
+export const createChatSessionSyncRefreshCoordinator =
+  (): ChatSessionSyncRefreshCoordinator => ({
+    isRefreshInFlight: false,
+    hasPendingRefresh: false,
+  });
+
+export const cleanupChatSessionSyncEffect = (
+  params: CleanupChatSessionSyncEffectParams,
+): void => {
+  const cleanupErrors: Array<Error> = [];
+  try {
+    try {
+      params.unsubscribe();
+    } catch (error) {
+      cleanupErrors.push(toError(error));
+    }
+  } finally {
+    try {
+      params.clearRetryTimeout();
+    } catch (error) {
+      cleanupErrors.push(toError(error));
+    } finally {
+      try {
+        params.abortActiveRequest();
+      } catch (error) {
+        cleanupErrors.push(toError(error));
+      }
+    }
+  }
+  for (const error of cleanupErrors) {
+    params.reportError(error);
+  }
+};
+
+export const requestChatSessionSyncRefresh = (
+  coordinator: ChatSessionSyncRefreshCoordinator,
+): Readonly<{
+  coordinator: ChatSessionSyncRefreshCoordinator;
+  shouldAbortActiveRefresh: boolean;
+  shouldStartRefresh: boolean;
+}> => {
+  if (!coordinator.isRefreshInFlight) {
+    return {
+      coordinator: {
+        isRefreshInFlight: true,
+        hasPendingRefresh: false,
+      },
+      shouldAbortActiveRefresh: false,
+      shouldStartRefresh: true,
+    };
+  }
+  if (coordinator.hasPendingRefresh) {
+    return {
+      coordinator,
+      shouldAbortActiveRefresh: false,
+      shouldStartRefresh: false,
+    };
+  }
+  return {
+    coordinator: {
+      isRefreshInFlight: true,
+      hasPendingRefresh: true,
+    },
+    shouldAbortActiveRefresh: true,
+    shouldStartRefresh: false,
+  };
+};
+
+export const settleChatSessionSyncRefresh = (
+  coordinator: ChatSessionSyncRefreshCoordinator,
+): Readonly<{
+  coordinator: ChatSessionSyncRefreshCoordinator;
+  shouldStartPendingRefresh: boolean;
+}> =>
+  coordinator.hasPendingRefresh
+    ? {
+      coordinator: {
+        isRefreshInFlight: true,
+        hasPendingRefresh: false,
+      },
+      shouldStartPendingRefresh: true,
+    }
+    : {
+      coordinator: createChatSessionSyncRefreshCoordinator(),
+      shouldStartPendingRefresh: false,
+    };
 
 export const selectSupersedingChatSnapshotRequestResult = (
   coordinator: ChatSnapshotRequestCoordinator,
@@ -1490,21 +1509,54 @@ export const resolveChatSnapshotFailureDisposition = (
   }
 };
 
+const isTransientChatSessionSyncFailure = (error: unknown): boolean =>
+  (
+    error instanceof ChatSessionSnapshotTransportError
+    && error.kind === "network"
+  )
+  || (
+    error instanceof ChatSessionSnapshotRequestError
+    && error.status >= 500
+  );
+
+export const resolveChatSessionSyncFailureDisposition = (
+  error: unknown,
+  transientRetryAttempt: number,
+): ChatSessionSyncFailureDisposition => {
+  if (
+    !Number.isSafeInteger(transientRetryAttempt)
+    || transientRetryAttempt < 0
+  ) {
+    throw new Error(
+      "Chat session sync retry attempt must be a non-negative safe integer: "
+      + `attempt=${String(transientRetryAttempt)}`,
+    );
+  }
+  const disposition = resolveChatSnapshotFailureDisposition(error);
+  if (disposition !== "fail") {
+    return disposition;
+  }
+  if (!isTransientChatSessionSyncFailure(error)) {
+    return "surface_failure";
+  }
+  return transientRetryAttempt < CHAT_SESSION_SYNC_TRANSIENT_RETRY_LIMIT
+    ? "retry_transient"
+    : "surface_transient";
+};
+
 export const fetchChatSessionSnapshot = async (
-  sessionId: string | undefined,
+  sessionId: string,
   signal: AbortSignal | undefined,
   t: ChatTranslation,
 ): Promise<ChatSessionSnapshot> => {
-  const url = sessionId === undefined
-    ? "/api/chat"
-    : `/api/chat?sessionId=${encodeURIComponent(sessionId)}`;
+  const url = `/api/chat?sessionId=${encodeURIComponent(sessionId)}`;
   const request = startChatRequest(url, {
     method: "GET",
     signal,
   });
   if (request.kind === "preflight_rejected") {
     throw new ChatSessionSnapshotTransportError(
-      `Chat snapshot request was rejected before sending: sessionId=${sessionId ?? "current"}, error=${request.error.message}`,
+      `Chat snapshot request was rejected before sending: sessionId=${sessionId}, error=${request.error.message}`,
       "preflight_rejected",
     );
   }
@@ -1515,7 +1567,7 @@ export const fetchChatSessionSnapshot = async (
   } catch (error) {
     const requestError = toError(error);
     throw new ChatSessionSnapshotTransportError(
-      `Chat snapshot request failed before receiving a response: sessionId=${sessionId ?? "current"}, error=${requestError.message}`,
+      `Chat snapshot request failed before receiving a response: sessionId=${sessionId}, error=${requestError.message}`,
       "network",
     );
   }
@@ -1549,16 +1601,16 @@ export const fetchChatSessionSnapshot = async (
     const readFailure = toError(error);
     if (error instanceof SyntaxError) {
       throw new ChatSessionSnapshotSchemaError(
-        `Chat snapshot response contained malformed JSON: sessionId=${sessionId ?? "current"}, error=${readFailure.message}`,
+        `Chat snapshot response contained malformed JSON: sessionId=${sessionId}, error=${readFailure.message}`,
       );
     }
     throw new ChatSessionSnapshotTransportError(
-      `Chat snapshot response body could not be read: sessionId=${sessionId ?? "current"}, error=${readFailure.message}`,
+      `Chat snapshot response body could not be read: sessionId=${sessionId}, error=${readFailure.message}`,
       "network",
     );
   }
   assertValidChatSessionSnapshot(payload);
-  if (sessionId !== undefined && payload.sessionId !== sessionId) {
+  if (payload.sessionId !== sessionId) {
     throw new ChatSessionSnapshotSchemaError(
       `Chat snapshot response session did not match the requested session: requestedSessionId=${sessionId}, returnedSessionId=${payload.sessionId}`,
     );
@@ -1681,58 +1733,6 @@ export async function postStopChatSession(
   return payload;
 }
 
-export const createChatSession = async (
-  t: ChatTranslation,
-): Promise<string> => {
-  const response = await fetchWithCsrf("/api/chat/session", {
-    method: "POST",
-  });
-
-  if (!response.ok) {
-    const rawError = await response.text();
-    throw new Error(`Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`);
-  }
-
-  const payload = await response.json() as ChatCreateSessionResponse;
-  if (typeof payload.sessionId !== "string" || payload.sessionId.trim() === "") {
-    throw new Error("Chat session creation failed");
-  }
-
-  return payload.sessionId;
-};
-
-export const ensureWritableChatSession = async (
-  sessionId: string | null,
-  createSession: () => Promise<string>,
-): Promise<string> => {
-  if (sessionId !== null) {
-    return sessionId;
-  }
-
-  return createSession();
-};
-
-export const deleteChatConversation = async (
-  sessionId: string | null,
-  signal: AbortSignal,
-  t: ChatTranslation,
-): Promise<ChatClearConversationResponse> => {
-  const clearUrl = sessionId === null
-    ? "/api/chat"
-    : `/api/chat?sessionId=${encodeURIComponent(sessionId)}`;
-  const response = await fetchWithCsrf(clearUrl, {
-    method: "DELETE",
-    signal,
-  });
-
-  if (!response.ok) {
-    const rawError = await response.text();
-    throw new Error(`Error ${response.status}: ${sanitizeChatRouteErrorText(response.status, rawError, t)}`);
-  }
-
-  return response.json() as Promise<ChatClearConversationResponse>;
-};
-
 export const isChatSelectionGuardCurrent = (
   guard: ChatSelectionGuard,
   target: ChatTarget,
@@ -1836,7 +1836,7 @@ export const streamChatResponse = async (
   let receivedContent = false;
   let requestAcceptance: ChatRequestAcceptance = "unknown";
 
-  const request = startChatRequest(params.url ?? "/api/chat", {
+  const request = startChatRequest(params.url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: params.requestBody,

@@ -9,27 +9,23 @@ import {
   buildFailedChatSendHistory,
   buildPendingChatSendHistory,
   buildStoppedChatSendHistory,
-  type ChatClearOperationOwner,
   type ChatTurnCancellationResolution,
   ChatSessionSnapshotSchemaError,
   ChatSessionSnapshotRequestError,
   ChatSessionSnapshotTransportError,
   ChatTurnCancellationRequestError,
   classifyConfirmedChatStopSnapshotFailure,
+  cleanupChatSessionSyncEffect,
   completeChatTurnCancellation,
+  createChatSessionSyncRefreshCoordinator,
   createChatSendTransport,
   createChatSnapshotRequestCoordinator,
-  createSingleFlightChatClearOperationRunner,
   createSingleFlightChatSendReconciliationRunner,
   createSingleFlightChatSnapshotPoller,
   createSingleFlightChatTurnCancellationRunner,
-  ensureWritableChatSession,
   fetchChatSessionSnapshot,
-  isChatClearOperationOwnerCurrent,
-  isChatPreSessionSendOwnerCurrent,
   isChatSelectionGuardCurrent,
   isCanonicalChatUuid,
-  isChatSnapshotPollingOwnerCurrent,
   isChatSnapshotRequestCurrent,
   isChatSendReconciliationOwnerCurrent,
   isChatStopSettlementOwned,
@@ -43,17 +39,19 @@ import {
   prepareChatSendRequest,
   reconcileChatTurnCancellation,
   reconcileConfirmedChatStopSnapshot,
+  requestChatSessionSyncRefresh,
   resolveChatExactTurnOwnership,
-  resolveChatPreSessionSendAdoption,
   resolveChatSendReconciliationDisposition,
   resolveDefinitiveChatSendSnapshotFailureHistory,
   resolveConfirmedChatStopSnapshotDisposition,
   resolveConfirmedChatTurnStopHistory,
+  resolveChatSessionSyncFailureDisposition,
   resolveSelectedChatSessionGuard,
   resolveChatSnapshotFailureDisposition,
   resolveChatSnapshotRequest,
   restorePendingChatTurnAfterCancellationRejection,
   selectSupersedingChatSnapshotRequestResult,
+  settleChatSessionSyncRefresh,
   shouldAbortChatStreamForControllerCleanup,
   shouldAbortChatStreamForSelectionChange,
   shouldAbortChatStreamForSelectionEpoch,
@@ -84,36 +82,6 @@ const createUnreadableResponse = (
     }),
     { status, statusText },
   );
-
-test("ensureWritableChatSession creates a session for a fresh local chat", async (): Promise<void> => {
-  let createCallCount = 0;
-
-  const sessionId = await ensureWritableChatSession(
-    null,
-    async (): Promise<string> => {
-      createCallCount += 1;
-      return "session-1";
-    },
-  );
-
-  assert.equal(sessionId, "session-1");
-  assert.equal(createCallCount, 1);
-});
-
-test("ensureWritableChatSession reuses an existing session id", async (): Promise<void> => {
-  let createCallCount = 0;
-
-  const sessionId = await ensureWritableChatSession(
-    "session-2",
-    async (): Promise<string> => {
-      createCallCount += 1;
-      return "session-3";
-    },
-  );
-
-  assert.equal(sessionId, "session-2");
-  assert.equal(createCallCount, 0);
-});
 
 test("buildChatSendRequestBody serializes explicit session ids", (): void => {
   const requestBody = buildChatSendRequestBody(
@@ -346,108 +314,6 @@ test("client, active-turn, and persisted-message identities match canonical Zod 
       });
     }, ChatSessionSnapshotSchemaError);
   }
-});
-
-test("fresh-session send ownership blocks every invalidated continuation", (): void => {
-  const activeSignal = new AbortController().signal;
-  const owner = {
-    ownerId: Symbol("pre-session-owner"),
-    initialSessionId: null,
-    turnId: TURN_ID,
-  };
-  const supersedingOwner = {
-    ownerId: Symbol("superseding-owner"),
-    initialSessionId: null,
-    turnId: "00000000-0000-4000-8000-000000000002",
-  };
-
-  assert.equal(isChatPreSessionSendOwnerCurrent(owner, owner, null), true);
-  for (const invalidatedOwner of [
-    null,
-    supersedingOwner,
-  ]) {
-    assert.equal(
-      isChatPreSessionSendOwnerCurrent(owner, invalidatedOwner, null),
-      false,
-    );
-  }
-  assert.equal(
-    isChatPreSessionSendOwnerCurrent(owner, owner, "session-switched"),
-    false,
-  );
-  assert.equal(
-    resolveChatPreSessionSendAdoption(
-      owner,
-      owner,
-      null,
-      "session-created",
-      activeSignal,
-    )?.sessionId,
-    "session-created",
-  );
-  assert.equal(
-    resolveChatPreSessionSendAdoption(
-      owner,
-      null,
-      null,
-      "session-created",
-      activeSignal,
-    ),
-    null,
-  );
-  assert.equal(
-    resolveChatPreSessionSendAdoption(
-      owner,
-      supersedingOwner,
-      null,
-      "session-created",
-      activeSignal,
-    ),
-    null,
-  );
-  assert.equal(
-    resolveChatPreSessionSendAdoption(
-      owner,
-      owner,
-      "session-switched",
-      "session-created",
-      activeSignal,
-    ),
-    null,
-  );
-
-  let currentOwner: typeof owner | null = owner;
-  let postCount = 0;
-  const adoptAndPost = (): void => {
-    const adoptedOwner = resolveChatPreSessionSendAdoption(
-      owner,
-      currentOwner,
-      null,
-      "session-created",
-      activeSignal,
-    );
-    if (adoptedOwner === null) {
-      return;
-    }
-    currentOwner = null;
-    postCount += 1;
-  };
-  adoptAndPost();
-  adoptAndPost();
-  assert.equal(postCount, 1);
-
-  const stoppedController = new AbortController();
-  stoppedController.abort();
-  assert.equal(
-    resolveChatPreSessionSendAdoption(
-      owner,
-      owner,
-      null,
-      "session-created",
-      stoppedController.signal,
-    ),
-    null,
-  );
 });
 
 test("accepted and restored snapshots preserve exact active turn ownership until terminal", (): void => {
@@ -852,72 +718,6 @@ test("slow snapshot polling stays single-flight until the active poll settles", 
   await nextPoll;
 });
 
-test("poll ownership rejects late snapshots after session switch, Clear, and unmount", async (): Promise<void> => {
-  const runLateSnapshotScenario = async (
-    invalidate: (
-      abortController: AbortController,
-      selectSession: (sessionId: string | null) => void,
-    ) => void,
-  ): Promise<void> => {
-    const requestedSessionId = "session-polling";
-    const abortController = new AbortController();
-    const snapshot = Promise.withResolvers<ChatSessionSnapshot>();
-    let currentSessionId: string | null = requestedSessionId;
-    let appliedSessionId: string | null = null;
-    const adoption = (async (): Promise<void> => {
-      const payload = await snapshot.promise;
-      if (
-        payload.sessionId === requestedSessionId
-        && isChatSnapshotPollingOwnerCurrent(
-          requestedSessionId,
-          currentSessionId,
-          abortController.signal,
-        )
-      ) {
-        appliedSessionId = payload.sessionId;
-      }
-    })();
-
-    invalidate(
-      abortController,
-      (sessionId): void => {
-        currentSessionId = sessionId;
-      },
-    );
-    snapshot.resolve({
-      sessionId: requestedSessionId,
-      runState: "idle",
-      activeTurnId: null,
-      updatedAt: 10,
-      mainContentInvalidationVersion: 0,
-      messages: [],
-    });
-    await adoption;
-
-    assert.equal(appliedSessionId, null);
-  };
-
-  await runLateSnapshotScenario((
-    _abortController,
-    selectSession,
-  ): void => {
-    selectSession("session-selected");
-  });
-  await runLateSnapshotScenario((
-    abortController,
-    selectSession,
-  ): void => {
-    selectSession("session-after-clear");
-    abortController.abort();
-  });
-  await runLateSnapshotScenario((
-    abortController,
-    _selectSession,
-  ): void => {
-    abortController.abort();
-  });
-});
-
 test("ambiguous send retries remain single-flight and reuse the exact request identity", async (): Promise<void> => {
   type RetryOwner = Readonly<{
     ownerId: symbol;
@@ -1021,159 +821,6 @@ test("superseding send ownership aborts stale work and blocks stale session resu
   await Promise.all([staleAttempt, currentAttempt]);
 });
 
-test("Clear is single-flight and only the current owner applies success or failure", async (): Promise<void> => {
-  type ClearOutcome =
-    | Readonly<{ kind: "success"; nextSessionId: string }>
-    | Readonly<{ kind: "failure"; error: Error }>;
-  const owner = {
-    ownerId: Symbol("clear-owner"),
-    targetSessionId: "session-a",
-  };
-  const settlement = Promise.withResolvers<ClearOutcome>();
-  let currentOwner = owner;
-  let currentSessionId: string | null = owner.targetSessionId;
-  let clearCallCount = 0;
-  let visibleSessionId = currentSessionId;
-  let visibleError: string | null = null;
-  const runner = createSingleFlightChatClearOperationRunner(
-    async (attemptOwner): Promise<void> => {
-      clearCallCount += 1;
-      const outcome = await settlement.promise;
-      if (!isChatClearOperationOwnerCurrent(
-        attemptOwner,
-        currentOwner,
-        currentSessionId,
-      )) {
-        return;
-      }
-      if (outcome.kind === "success") {
-        visibleSessionId = outcome.nextSessionId;
-        return;
-      }
-      visibleError = outcome.error.message;
-    },
-  );
-
-  const firstClear = runner.run(owner);
-  const overlappingClear = runner.run(owner);
-  assert.equal(overlappingClear, firstClear);
-  assert.equal(clearCallCount, 1);
-
-  settlement.resolve({
-    kind: "success",
-    nextSessionId: "session-after-clear",
-  });
-  await firstClear;
-
-  assert.equal(visibleSessionId, "session-after-clear");
-  assert.equal(visibleError, null);
-
-  const failedOwner = {
-    ownerId: Symbol("failed-clear-owner"),
-    targetSessionId: "session-after-clear",
-  };
-  const failedSettlement = Promise.withResolvers<ClearOutcome>();
-  currentOwner = failedOwner;
-  currentSessionId = failedOwner.targetSessionId;
-  const failedRunner = createSingleFlightChatClearOperationRunner(
-    async (attemptOwner): Promise<void> => {
-      const outcome = await failedSettlement.promise;
-      if (!isChatClearOperationOwnerCurrent(
-        attemptOwner,
-        currentOwner,
-        currentSessionId,
-      )) {
-        return;
-      }
-      if (outcome.kind === "failure") {
-        visibleError = outcome.error.message;
-      }
-    },
-  );
-
-  const failedClear = failedRunner.run(failedOwner);
-  failedSettlement.resolve({
-    kind: "failure",
-    error: new Error("Clear failed"),
-  });
-  await failedClear;
-
-  assert.equal(visibleSessionId, "session-after-clear");
-  assert.equal(visibleError, "Clear failed");
-});
-
-test("superseding Clear and session switches block stale success and failure", async (): Promise<void> => {
-  type ClearOutcome =
-    | Readonly<{ kind: "success"; nextSessionId: string }>
-    | Readonly<{ kind: "failure"; error: Error }>;
-  const firstOwner = {
-    ownerId: Symbol("first-clear-owner"),
-    targetSessionId: "session-a",
-  };
-  const secondOwner = {
-    ownerId: Symbol("second-clear-owner"),
-    targetSessionId: "session-b",
-  };
-  const firstSettlement = Promise.withResolvers<ClearOutcome>();
-  const secondSettlement = Promise.withResolvers<ClearOutcome>();
-  const settlements = new Map<symbol, Promise<ClearOutcome>>([
-    [firstOwner.ownerId, firstSettlement.promise],
-    [secondOwner.ownerId, secondSettlement.promise],
-  ]);
-  let currentOwner: ChatClearOperationOwner | null = firstOwner;
-  let currentSessionId: string | null = firstOwner.targetSessionId;
-  let visibleSessionId = currentSessionId;
-  let visibleError: string | null = null;
-  const runner = createSingleFlightChatClearOperationRunner(
-    async (attemptOwner): Promise<void> => {
-      const settlementPromise = settlements.get(attemptOwner.ownerId);
-      if (settlementPromise === undefined) {
-        throw new Error("Clear settlement was not configured");
-      }
-      const outcome = await settlementPromise;
-      if (!isChatClearOperationOwnerCurrent(
-        attemptOwner,
-        currentOwner,
-        currentSessionId,
-      )) {
-        return;
-      }
-      if (outcome.kind === "success") {
-        visibleSessionId = outcome.nextSessionId;
-        return;
-      }
-      visibleError = outcome.error.message;
-    },
-  );
-
-  const staleClear = runner.run(firstOwner);
-  currentOwner = secondOwner;
-  currentSessionId = secondOwner.targetSessionId;
-  visibleSessionId = secondOwner.targetSessionId;
-  const currentClear = runner.run(secondOwner);
-
-  firstSettlement.resolve({
-    kind: "success",
-    nextSessionId: "stale-session",
-  });
-  await staleClear;
-  assert.equal(visibleSessionId, "session-b");
-  assert.equal(visibleError, null);
-
-  currentOwner = null;
-  currentSessionId = "session-c";
-  visibleSessionId = currentSessionId;
-  runner.cancel(secondOwner);
-  secondSettlement.resolve({
-    kind: "failure",
-    error: new Error("Stale clear failed"),
-  });
-  await currentClear;
-
-  assert.equal(visibleSessionId, "session-c");
-  assert.equal(visibleError, null);
-});
-
 test("network ambiguity converges through a same-body accepted retry", async (): Promise<void> => {
   type RetryOwner = Readonly<{
     ownerId: symbol;
@@ -1222,6 +869,7 @@ test("network ambiguity converges through a same-body accepted retry", async ():
   const runner = createSingleFlightChatSendReconciliationRunner<RetryOwner>(
     async (attemptOwner, abortController): Promise<void> => {
       const result = await streamChatResponse({
+        url: "/api/chat",
         requestBody: attemptOwner.requestBody,
         signal: abortController.signal,
         abortStream: (): void => {
@@ -1289,6 +937,7 @@ test("missing CSRF definitively rejects Send before issuing a request", async ()
 
   try {
     const result = await streamChatResponse({
+      url: "/api/chat",
       requestBody: "{}",
       signal: new AbortController().signal,
       abortStream: (): void => {},
@@ -2552,6 +2201,103 @@ test("a superseded idle snapshot cannot overwrite a newer running snapshot", asy
   assert.equal(selectIsAssistantRunActive(controllerState), true);
   assert.equal(selectComposerAction(controllerState), "stop");
   assert.equal(appliedMessage, "newer running transcript");
+});
+
+test("cross-tab refresh coalesces a delayed request into one latest follow-up", async (): Promise<void> => {
+  let refreshCoordinator = createChatSessionSyncRefreshCoordinator();
+  let snapshotCoordinator = createChatSnapshotRequestCoordinator();
+  const delayedSnapshot = Promise.withResolvers<ChatSessionSnapshot>();
+
+  const firstRefresh = requestChatSessionSyncRefresh(refreshCoordinator);
+  refreshCoordinator = firstRefresh.coordinator;
+  assert.equal(firstRefresh.shouldStartRefresh, true);
+  assert.equal(firstRefresh.shouldAbortActiveRefresh, false);
+
+  const firstRequest = beginChatSnapshotRequest(
+    snapshotCoordinator,
+    "session-a",
+    6,
+    delayedSnapshot.promise,
+  );
+  snapshotCoordinator = firstRequest.coordinator;
+
+  const secondRefresh = requestChatSessionSyncRefresh(refreshCoordinator);
+  refreshCoordinator = secondRefresh.coordinator;
+  assert.equal(secondRefresh.shouldStartRefresh, false);
+  assert.equal(secondRefresh.shouldAbortActiveRefresh, true);
+
+  const repeatedDirtyRefresh =
+    requestChatSessionSyncRefresh(refreshCoordinator);
+  refreshCoordinator = repeatedDirtyRefresh.coordinator;
+  assert.equal(repeatedDirtyRefresh.shouldStartRefresh, false);
+  assert.equal(repeatedDirtyRefresh.shouldAbortActiveRefresh, false);
+
+  delayedSnapshot.resolve({
+    sessionId: "session-a",
+    runState: "idle",
+    activeTurnId: null,
+    updatedAt: 10,
+    mainContentInvalidationVersion: 0,
+    messages: [],
+  });
+  await delayedSnapshot.promise;
+  assert.equal(
+    isChatSnapshotRequestCurrent(
+      snapshotCoordinator,
+      firstRequest.request,
+    ),
+    true,
+  );
+
+  const firstSettlement =
+    settleChatSessionSyncRefresh(refreshCoordinator);
+  refreshCoordinator = firstSettlement.coordinator;
+  assert.equal(firstSettlement.shouldStartPendingRefresh, true);
+  assert.deepEqual(refreshCoordinator, {
+    isRefreshInFlight: true,
+    hasPendingRefresh: false,
+  });
+
+  const secondSettlement =
+    settleChatSessionSyncRefresh(refreshCoordinator);
+  assert.equal(secondSettlement.shouldStartPendingRefresh, false);
+  assert.deepEqual(
+    secondSettlement.coordinator,
+    createChatSessionSyncRefreshCoordinator(),
+  );
+});
+
+test("cross-tab cleanup clears retry and aborts active work before reporting unsubscribe failure", (): void => {
+  const cleanupOrder: Array<string> = [];
+  const unsubscribeError = new Error(
+    "Synthetic chat session sync unsubscribe failure",
+  );
+  let reportedError: Error | null = null;
+
+  cleanupChatSessionSyncEffect({
+    unsubscribe: (): void => {
+      cleanupOrder.push("unsubscribe");
+      throw unsubscribeError;
+    },
+    clearRetryTimeout: (): void => {
+      cleanupOrder.push("clear_retry");
+    },
+    abortActiveRequest: (): void => {
+      cleanupOrder.push("abort_request");
+    },
+    reportError: (error): void => {
+      cleanupOrder.push("report_error");
+      reportedError = error;
+    },
+  });
+
+  assert.deepEqual(cleanupOrder, [
+    "unsubscribe",
+    "clear_retry",
+    "abort_request",
+    "report_error",
+  ]);
+  assert.equal(reportedError, unsubscribeError);
 });
 
 test("a superseded rejected snapshot follows a newer successful owner", async (): Promise<void> => {
@@ -4333,7 +4079,7 @@ test("interrupted successful snapshot bodies retry while malformed JSON and sche
   }
 });
 
-test("explicit snapshot requests reject a different returned session while latest-session requests accept it", async (): Promise<void> => {
+test("snapshot requests reject a different returned session", async (): Promise<void> => {
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   Object.defineProperty(globalThis, "document", {
@@ -4365,14 +4111,6 @@ test("explicit snapshot requests reject a different returned session while lates
         && error.message.includes("requestedSessionId=session-a")
         && error.message.includes("returnedSessionId=session-b")
         && classifyConfirmedChatStopSnapshotFailure(error) === "fail",
-    );
-    assert.deepEqual(
-      await fetchChatSessionSnapshot(
-        undefined,
-        undefined,
-        (key: string): string => key,
-      ),
-      returnedSnapshot,
     );
   } finally {
     if (originalDocument === undefined) {
@@ -4525,6 +4263,82 @@ test("snapshot recovery distinguishes missing sessions from valid 409 contracts"
   );
   assert.match(activeRunConflict.message, /active response/u);
   assert.match(workspaceReload.message, /Reload/u);
+});
+
+test("session sync retries only classified transient failures and preserves 404/409 semantics", (): void => {
+  const networkFailure = new ChatSessionSnapshotTransportError(
+    "Network connection lost",
+    "network",
+  );
+  const preflightFailure = new ChatSessionSnapshotTransportError(
+    "CSRF token unavailable",
+    "preflight_rejected",
+  );
+  const serverFailure = new ChatSessionSnapshotRequestError(
+    503,
+    "Error 503: Service unavailable",
+    "other",
+  );
+  const clientFailure = new ChatSessionSnapshotRequestError(
+    400,
+    "Error 400: Invalid request",
+    "other",
+  );
+  const missingSession = new ChatSessionSnapshotRequestError(
+    404,
+    "Error 404: Chat session not found",
+    "not_found",
+  );
+  const activeRunConflict = new ChatSessionSnapshotRequestError(
+    409,
+    "Error 409: Chat session already has an active response",
+    "active_response_conflict",
+  );
+  const workspaceReload = new ChatSessionSnapshotRequestError(
+    409,
+    "Error 409: Active workspace is unavailable. Reload to re-establish workspace context.",
+    "workspace_reload_required",
+  );
+
+  for (const transientFailure of [networkFailure, serverFailure]) {
+    assert.equal(
+      resolveChatSessionSyncFailureDisposition(transientFailure, 0),
+      "retry_transient",
+    );
+    assert.equal(
+      resolveChatSessionSyncFailureDisposition(transientFailure, 1),
+      "surface_transient",
+    );
+  }
+  for (const definitiveFailure of [
+    preflightFailure,
+    clientFailure,
+    new ChatSessionSnapshotSchemaError("Malformed snapshot"),
+    new Error("Unclassified failure"),
+  ]) {
+    assert.equal(
+      resolveChatSessionSyncFailureDisposition(definitiveFailure, 0),
+      "surface_failure",
+    );
+  }
+  assert.equal(
+    resolveChatSessionSyncFailureDisposition(missingSession, 0),
+    "recover_unavailable",
+  );
+  assert.equal(
+    resolveChatSessionSyncFailureDisposition(activeRunConflict, 0),
+    "retry_active_response",
+  );
+  assert.equal(
+    resolveChatSessionSyncFailureDisposition(workspaceReload, 0),
+    "block_workspace_reload",
+  );
+  assert.throws(
+    (): void => {
+      resolveChatSessionSyncFailureDisposition(networkFailure, -1);
+    },
+    /non-negative safe integer/u,
+  );
 });
 
 test("snapshot transport classifies each server 409 without treating it as unavailable", async (): Promise<void> => {
