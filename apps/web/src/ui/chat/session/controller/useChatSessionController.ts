@@ -29,12 +29,21 @@ import type {
   ChatDraftSessionAdoption,
 } from "../../workspace/useChatWorkspaceController";
 import {
+  createChatSessionSyncScope,
+  getChatSessionSyncSourceId,
+  publishChatSessionSync,
+  subscribeToChatSessionSync,
+  type ChatSessionSyncScope,
+} from "../invalidation/chatSessionSyncChannel";
+import {
   assertCanonicalChatTurnId,
   beginChatSnapshotRequest,
   buildFailedChatSendHistory,
   buildPendingChatSendHistory,
   classifyConfirmedChatStopSnapshotFailure,
+  cleanupChatSessionSyncEffect,
   completeChatTurnCancellation,
+  createChatSessionSyncRefreshCoordinator,
   createSingleFlightChatSendReconciliationRunner,
   createSingleFlightChatSnapshotPoller,
   createSingleFlightChatTurnCancellationRunner,
@@ -50,16 +59,19 @@ import {
   postStopChatSession,
   prepareChatSendRequest,
   reconcileConfirmedChatStopSnapshot,
+  requestChatSessionSyncRefresh,
   resolveChatExactTurnOwnership,
   resolveChatSendReconciliationDisposition,
   resolveDefinitiveChatSendSnapshotFailureHistory,
   resolveConfirmedChatStopSnapshotDisposition,
   resolveConfirmedChatTurnStopHistory,
+  resolveChatSessionSyncFailureDisposition,
   resolveChatSnapshotFailureDisposition,
   resolveChatSnapshotRequest,
   restorePendingChatTurnAfterCancellationRejection,
   shouldRestoreChatRunAfterSnapshotFailure,
   shouldRestoreChatTurnAfterCancellationRejection,
+  settleChatSessionSyncRefresh,
   shouldAbortChatStreamForControllerCleanup,
   shouldAbortChatStreamForSelectionChange,
   streamChatResponse,
@@ -215,6 +227,16 @@ const waitForChatReconciliationRetry = (
   });
 };
 
+const reportChatSessionSyncError = (error: Error): void => {
+  queueMicrotask((): void => {
+    if (typeof globalThis.reportError === "function") {
+      globalThis.reportError(error);
+      return;
+    }
+    throw error;
+  });
+};
+
 export const useChatSessionController = (
   params: UseChatSessionControllerParams,
 ): ChatSessionController => {
@@ -260,6 +282,12 @@ export const useChatSessionController = (
   const snapshotRequestCoordinatorRef = useRef(
     createChatSnapshotRequestCoordinator(),
   );
+  const sessionSyncScopeRef = useRef<ChatSessionSyncScope | null>(null);
+  const sessionSyncSourceIdRef = useRef<string | null>(null);
+  const lastSessionSyncEmittedAtRef = useRef<number>(0);
+  const seenSessionSyncMessageKeysRef = useRef<Set<string>>(
+    new Set<string>(),
+  );
 
   const dispatchAction = useCallback((
     action: ChatSessionControllerAction,
@@ -272,6 +300,16 @@ export const useChatSessionController = (
     stateRef.current = state;
   }, [state]);
 
+  useEffect(() => {
+    if (sessionSyncScopeRef.current !== null) {
+      return;
+    }
+    sessionSyncScopeRef.current = createChatSessionSyncScope(
+      params.workspaceId,
+      document.cookie,
+    );
+  }, [params.workspaceId]);
+
   const createSnapshotAbortController = useCallback((): AbortController => {
     const abortController = new AbortController();
     snapshotAbortControllersRef.current.add(abortController);
@@ -282,6 +320,32 @@ export const useChatSessionController = (
     abortController: AbortController,
   ): void => {
     snapshotAbortControllersRef.current.delete(abortController);
+  }, []);
+
+  const publishSessionChange = useCallback((sessionId: string): void => {
+    const scope = sessionSyncScopeRef.current;
+    if (scope === null) {
+      throw new Error(
+        `Chat session sync scope is unavailable for sessionId=${sessionId}`,
+      );
+    }
+    if (sessionSyncSourceIdRef.current === null) {
+      sessionSyncSourceIdRef.current = getChatSessionSyncSourceId();
+    }
+    const emittedAt = Math.max(
+      Date.now(),
+      lastSessionSyncEmittedAtRef.current + 1,
+    );
+    lastSessionSyncEmittedAtRef.current = emittedAt;
+    const publishResult = publishChatSessionSync({
+      scope,
+      sessionId,
+      sourceId: sessionSyncSourceIdRef.current,
+      emittedAt,
+    });
+    if (publishResult.error !== null) {
+      reportChatSessionSyncError(publishResult.error);
+    }
   }, []);
 
   const abortSelectedSessionPoll = useCallback((): void => {
@@ -513,6 +577,238 @@ export const useChatSessionController = (
     t,
   ]);
 
+  useEffect(() => {
+    if (
+      !params.isWorkspaceReady
+      || params.target.kind !== "session"
+    ) {
+      return;
+    }
+
+    const scope = sessionSyncScopeRef.current;
+    if (scope === null) {
+      throw new Error(
+        "Chat session sync subscription cannot start without a scope",
+      );
+    }
+    if (sessionSyncSourceIdRef.current === null) {
+      sessionSyncSourceIdRef.current = getChatSessionSyncSourceId();
+    }
+    const sourceId = sessionSyncSourceIdRef.current;
+    const sessionId = params.target.sessionId;
+    const guard: ChatSelectionGuard = {
+      target: params.target,
+      selectionEpoch: params.selectionEpoch,
+    };
+    let isDisposed = false;
+    let activeAbortController: AbortController | null = null;
+    let refreshCoordinator = createChatSessionSyncRefreshCoordinator();
+    let pendingRetryAttempt: number | null = null;
+    let retryTimeoutId: number | null = null;
+
+    const surfaceRefreshFailure = (
+      errorMessage: string,
+      shouldBlockWorkspace: boolean,
+    ): void => {
+      startAssistantMessage();
+      markAssistantError(t("chat.errorFailed", { message: errorMessage }));
+      dispatchAction({
+        type: shouldBlockWorkspace
+          ? "bootstrap_blocked"
+          : "bootstrap_failed",
+      });
+    };
+
+    function startSessionSyncRefresh(
+      transientRetryAttempt: number,
+    ): void {
+      if (isDisposed || !isGuardCurrent(guard)) {
+        return;
+      }
+      const wasHistoryLoaded = stateRef.current.isHistoryLoaded;
+      const matchingStreamController =
+        activeStreamSelectionEpochRef.current === guard.selectionEpoch
+        && activeStreamAdoptedSessionIdRef.current === sessionId
+          ? activeStreamAbortRef.current
+          : null;
+      dispatchAction({
+        type: "external_session_change_observed",
+        sessionId,
+      });
+      abortSelectedSessionPoll();
+      const abortController = createSnapshotAbortController();
+      activeAbortController = abortController;
+      void loadChatSnapshot(
+        sessionId,
+        guard,
+        abortController.signal,
+        true,
+      ).then((snapshotResult) => {
+        if (
+          snapshotResult.kind !== "applied"
+          || !isGuardCurrent(guard)
+        ) {
+          if (
+            wasHistoryLoaded
+            && !abortController.signal.aborted
+            && isGuardCurrent(guard)
+          ) {
+            dispatchAction({ type: "bootstrap_succeeded" });
+          }
+          return;
+        }
+
+        if (
+          snapshotResult.snapshot.authoritativeRunState !== "running"
+          && matchingStreamController !== null
+          && activeStreamAbortRef.current === matchingStreamController
+          && activeStreamSelectionEpochRef.current === guard.selectionEpoch
+          && activeStreamAdoptedSessionIdRef.current === sessionId
+        ) {
+          matchingStreamController.abort();
+          activeStreamAbortRef.current = null;
+          activeStreamSelectionEpochRef.current = null;
+          activeStreamUnadoptedDraftIdRef.current = null;
+          activeStreamAdoptedSessionIdRef.current = null;
+          dispatchAction({ type: "live_stream_disconnected" });
+        }
+        dispatchAction({ type: "bootstrap_succeeded" });
+      }).catch((error: unknown) => {
+        if (
+          abortController.signal.aborted
+          || !isGuardCurrent(guard)
+        ) {
+          return;
+        }
+
+        const disposition = resolveChatSessionSyncFailureDisposition(
+          error,
+          transientRetryAttempt,
+        );
+        if (disposition === "retry_active_response") {
+          retryTimeoutId = window.setTimeout(
+            (): void => {
+              retryTimeoutId = null;
+              queueSessionSyncRefresh(0);
+            },
+            ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+          );
+          return;
+        }
+        if (disposition === "retry_transient") {
+          retryTimeoutId = window.setTimeout(
+            (): void => {
+              retryTimeoutId = null;
+              queueSessionSyncRefresh(transientRetryAttempt + 1);
+            },
+            ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+          );
+          return;
+        }
+        if (disposition === "recover_unavailable") {
+          surfaceRefreshFailure(t("chat.sessionUnavailable"), false);
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+        surfaceRefreshFailure(
+          message,
+          disposition === "block_workspace_reload",
+        );
+      }).finally(() => {
+        releaseSnapshotAbortController(abortController);
+        if (activeAbortController === abortController) {
+          activeAbortController = null;
+        }
+        const settledRefresh = settleChatSessionSyncRefresh(
+          refreshCoordinator,
+        );
+        refreshCoordinator = settledRefresh.coordinator;
+        if (
+          settledRefresh.shouldStartPendingRefresh
+          && !isDisposed
+          && isGuardCurrent(guard)
+        ) {
+          const nextRetryAttempt = pendingRetryAttempt ?? 0;
+          pendingRetryAttempt = null;
+          startSessionSyncRefresh(nextRetryAttempt);
+        }
+      });
+    }
+
+    function queueSessionSyncRefresh(
+      transientRetryAttempt: number,
+    ): void {
+      if (isDisposed || !isGuardCurrent(guard)) {
+        return;
+      }
+      if (retryTimeoutId !== null) {
+        window.clearTimeout(retryTimeoutId);
+        retryTimeoutId = null;
+      }
+
+      const requestedRefresh = requestChatSessionSyncRefresh(
+        refreshCoordinator,
+      );
+      refreshCoordinator = requestedRefresh.coordinator;
+      if (!requestedRefresh.shouldStartRefresh) {
+        pendingRetryAttempt = pendingRetryAttempt === null
+          ? transientRetryAttempt
+          : Math.min(pendingRetryAttempt, transientRetryAttempt);
+        if (requestedRefresh.shouldAbortActiveRefresh) {
+          activeAbortController?.abort();
+        }
+        return;
+      }
+
+      pendingRetryAttempt = null;
+      startSessionSyncRefresh(transientRetryAttempt);
+    }
+
+    const subscription = subscribeToChatSessionSync({
+      scope,
+      sessionId,
+      sourceId,
+      seenMessageKeys: seenSessionSyncMessageKeysRef.current,
+      onMessage: (): void => {
+        queueSessionSyncRefresh(0);
+      },
+    });
+    if (subscription.error !== null) {
+      reportChatSessionSyncError(subscription.error);
+    }
+
+    return () => {
+      isDisposed = true;
+      cleanupChatSessionSyncEffect({
+        unsubscribe: subscription.unsubscribe,
+        clearRetryTimeout: (): void => {
+          if (retryTimeoutId !== null) {
+            window.clearTimeout(retryTimeoutId);
+            retryTimeoutId = null;
+          }
+        },
+        abortActiveRequest: (): void => {
+          activeAbortController?.abort();
+        },
+        reportError: reportChatSessionSyncError,
+      });
+    };
+  }, [
+    abortSelectedSessionPoll,
+    createSnapshotAbortController,
+    dispatchAction,
+    isGuardCurrent,
+    loadChatSnapshot,
+    markAssistantError,
+    params.isWorkspaceReady,
+    params.selectionEpoch,
+    params.target,
+    releaseSnapshotAbortController,
+    startAssistantMessage,
+    t,
+  ]);
+
   const reconcileConfirmedStopSnapshotForOwner = useCallback(async (
     sessionId: string,
     turnId: string | null,
@@ -685,6 +981,7 @@ export const useChatSessionController = (
           if (!isOwnerCurrent()) {
             return;
           }
+          publishSessionChange(pendingChatTurn.sessionId);
           abortSelectedSessionPoll();
           dispatchAction({ type: "live_stream_connected" });
           void params.refreshCatalog();
@@ -693,6 +990,9 @@ export const useChatSessionController = (
 
       if (!isOwnerCurrent()) {
         return;
+      }
+      if (streamResult.requestAcceptance === "accepted") {
+        publishSessionChange(pendingChatTurn.sessionId);
       }
       if (streamResult.receivedContent) {
         finalizeAssistant();
@@ -853,6 +1153,7 @@ export const useChatSessionController = (
     params.observeSessionInvalidation,
     params.recoverInvalidSessionSelection,
     params.refreshCatalog,
+    publishSessionChange,
     replaceMessages,
     t,
     upsertReasoningSummary,
@@ -1675,6 +1976,9 @@ export const useChatSessionController = (
       onSessionIdReceived: acceptResponseSessionId,
       onLiveStreamConnected: (): void => {
         if (isControllerMountedRef.current && isGuardCurrent(runGuard)) {
+          if (runGuard.target.kind === "session") {
+            publishSessionChange(runGuard.target.sessionId);
+          }
           abortSelectedSessionPoll();
           dispatchAction({ type: "live_stream_connected" });
           if (freshDraftId === null) {
@@ -1717,6 +2021,12 @@ export const useChatSessionController = (
       || !isGuardCurrent(runGuard)
     ) {
       return;
+    }
+    if (
+      streamResult.requestAcceptance === "accepted"
+      && runGuard.target.kind === "session"
+    ) {
+      publishSessionChange(runGuard.target.sessionId);
     }
 
     if (streamResult.receivedContent) {
@@ -1837,6 +2147,7 @@ export const useChatSessionController = (
     params.selectionEpoch,
     params.target,
     pendingChatTurnRunner,
+    publishSessionChange,
     releaseSnapshotAbortController,
     replaceMessages,
     startAssistantMessage,
@@ -1988,6 +2299,9 @@ export const useChatSessionController = (
     const stopConfirmed =
       exactCancellationResolution?.kind === "confirmed"
       || sessionStopConfirmed;
+    if (stopConfirmed) {
+      publishSessionChange(sessionId);
+    }
     const isStopSettlementOwnerCurrent = (): boolean =>
       isStopOwnerCurrent()
       && !stopOwner.abortController.signal.aborted
@@ -2080,6 +2394,7 @@ export const useChatSessionController = (
         type: "stop_completed",
         sessionId,
       });
+      publishSessionChange(sessionId);
     }
     if (stopOperationRef.current?.ownerId === stopOwner.ownerId) {
       stopOperationRef.current = null;
@@ -2095,6 +2410,7 @@ export const useChatSessionController = (
     params.selectionEpoch,
     params.target,
     pendingChatTurnRunner,
+    publishSessionChange,
     reconcileConfirmedStopSnapshotForOwner,
     releaseSupersededExactTurnStop,
     replaceMessages,
