@@ -15,6 +15,10 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 
+import {
+  resolveChatHistoryPaginationFocus,
+  resolveChatHistoryStatusVisibility,
+} from "../../workspace/useChatWorkspaceController";
 import { ChatHistoryButton } from "./ChatHistoryButton";
 import styles from "./ChatHistoryDialog.module.css";
 
@@ -32,9 +36,14 @@ type Props = Readonly<{
   sessions: ReadonlyArray<ChatHistorySession>;
   selectedSessionId: string | null;
   runningCount: number;
+  isLoading: boolean;
+  hasLoadedFirstPage: boolean;
+  hasMore: boolean;
+  errorMessage: string | null;
   onOpenChange: (open: boolean) => void;
   onSelectSession: (sessionId: string) => void;
   onCreateDraft: () => void;
+  onLoadMore: () => void;
 }>;
 
 type SessionListProps = Readonly<{
@@ -123,9 +132,14 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
     sessions,
     selectedSessionId,
     runningCount,
+    isLoading,
+    hasLoadedFirstPage,
+    hasMore,
+    errorMessage,
     onOpenChange,
     onSelectSession,
     onCreateDraft,
+    onLoadMore,
   } = props;
   const { i18n, t } = useTranslation();
   const reactId = useId();
@@ -136,10 +150,18 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const historyButtonRef = useRef<HTMLButtonElement | null>(null);
   const createDraftButtonRef = useRef<HTMLButtonElement | null>(null);
+  const loadMoreButtonRef = useRef<HTMLButtonElement | null>(null);
   const previousOpenRef = useRef<boolean>(false);
   const focusedSessionIdRef = useRef<string | null>(null);
+  const loadMoreOwnsFocusRef = useRef<boolean>(false);
   const runningSessions = sessions.filter((session) => session.status === "running");
   const recentSessions = sessions.filter((session) => session.status !== "running");
+  const statusVisibility = resolveChatHistoryStatusVisibility(
+    sessions.length,
+    isLoading,
+    hasLoadedFirstPage,
+    errorMessage,
+  );
   const activityFormatter = useMemo(
     (): Intl.DateTimeFormat => new Intl.DateTimeFormat(
       i18n.resolvedLanguage ?? i18n.language,
@@ -156,17 +178,45 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
   useLayoutEffect(() => {
     if (!open) {
       focusedSessionIdRef.current = null;
+      loadMoreOwnsFocusRef.current = false;
+      return;
+    }
+
+    const dialog = dialogRef.current;
+    if (dialog === null) {
+      throw new Error("Cannot restore chat history focus: dialog is not mounted");
+    }
+    const paginationFocusTarget = resolveChatHistoryPaginationFocus(
+      loadMoreOwnsFocusRef.current,
+      hasMore,
+    );
+    if (paginationFocusTarget === "create_draft") {
+      const createDraftButton = createDraftButtonRef.current;
+      if (createDraftButton === null) {
+        throw new Error(
+          "Cannot restore chat history focus after Load more was removed: New chat button is not mounted",
+        );
+      }
+      loadMoreOwnsFocusRef.current = false;
+      createDraftButton.focus();
+      return;
+    }
+    if (document.activeElement !== null && dialog.contains(document.activeElement)) {
+      return;
+    }
+    if (paginationFocusTarget === "load_more") {
+      const loadMoreButton = loadMoreButtonRef.current;
+      if (loadMoreButton === null) {
+        throw new Error(
+          "Cannot restore chat history focus: Load more button is not mounted",
+        );
+      }
+      loadMoreButton.focus();
       return;
     }
 
     const focusedSessionId = focusedSessionIdRef.current;
     if (focusedSessionId === null) return;
-
-    const dialog = dialogRef.current;
-    if (dialog === null) {
-      throw new Error("Cannot restore chat history row focus: dialog is not mounted");
-    }
-    if (document.activeElement !== null && dialog.contains(document.activeElement)) return;
 
     const focusedSessionStillExists = sessions.some(
       (session) => session.sessionId === focusedSessionId,
@@ -194,7 +244,7 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
       );
     }
     sessionButton.focus();
-  }, [open, sessions]);
+  }, [hasMore, isLoading, open, sessions]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -248,6 +298,8 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
       throw new TypeError("Cannot track chat history focus: focused target is not an element");
     }
     focusedSessionIdRef.current = target.dataset.chatHistorySessionId ?? null;
+    loadMoreOwnsFocusRef.current =
+      target.dataset.chatHistoryFocusOwner === "load-more";
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDialogElement>): void => {
@@ -296,6 +348,7 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
         className={styles.dialog}
         data-testid="chat-history-dialog"
         aria-labelledby={titleId}
+        aria-busy={isLoading}
         tabIndex={-1}
         onCancel={handleCancel}
         onFocusCapture={handleFocusCapture}
@@ -337,6 +390,25 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
           </div>
         </header>
         <div className={styles.dialogBody}>
+          {errorMessage !== null && (
+            <p
+              className={styles.errorState}
+              data-testid="chat-history-error"
+              role="alert"
+            >
+              {errorMessage}
+            </p>
+          )}
+          {statusVisibility.showLoading && (
+            <p
+              className={styles.loadingState}
+              data-testid="chat-history-loading"
+              role="status"
+              aria-live="polite"
+            >
+              {t("common.loading")}
+            </p>
+          )}
           {runningSessions.length > 0 && (
             <SessionList
               headingId={runningHeadingId}
@@ -361,10 +433,27 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
               onSelectSession={handleSelectSession}
             />
           )}
-          {sessions.length === 0 && (
+          {statusVisibility.showEmpty && (
             <p className={styles.emptyState} data-testid="chat-history-empty">
               {t("chat.historyEmpty")}
             </p>
+          )}
+          {hasMore && (
+            <div className={styles.loadMoreRow}>
+              <button
+                ref={loadMoreButtonRef}
+                type="button"
+                className={styles.loadMoreButton}
+                data-testid="chat-history-load-more"
+                data-chat-history-focus-owner="load-more"
+                aria-disabled={isLoading}
+                onClick={() => {
+                  if (!isLoading) onLoadMore();
+                }}
+              >
+                {isLoading ? t("common.loading") : t("chat.historyLoadMore")}
+              </button>
+            </div>
           )}
         </div>
       </dialog>

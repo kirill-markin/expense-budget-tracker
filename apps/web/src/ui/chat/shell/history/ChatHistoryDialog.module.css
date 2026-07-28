@@ -20,6 +20,7 @@
 
 .historyButton:focus-visible,
 .dialogAction:focus-visible,
+.loadMoreButton:focus-visible,
 .sessionButton:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 1px;
@@ -234,7 +235,8 @@
   color: inherit;
 }
 
-.emptyState {
+.emptyState,
+.loadingState {
   margin: 0;
   padding-block: 20px;
   padding-inline: 12px;
@@ -242,6 +244,50 @@
   color: var(--text);
   font-size: 12px;
   text-align: start;
+}
+
+.loadingState {
+  color: var(--muted);
+}
+
+.errorState {
+  margin: 0;
+  padding-block: 12px;
+  padding-inline: 12px;
+  border-block-end: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: #c0392b;
+  font-size: 12px;
+  text-align: start;
+  white-space: pre-wrap;
+}
+
+.loadMoreRow {
+  display: flex;
+  justify-content: center;
+  padding-block: 10px;
+  padding-inline: 12px;
+  border-block-start: 1px solid var(--panel-border);
+}
+
+.loadMoreButton {
+  min-block-size: 28px;
+  padding-block: 4px;
+  padding-inline: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.loadMoreButton:hover:not([aria-disabled="true"]) {
+  border-color: var(--text);
+}
+
+.loadMoreButton[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: wait;
 }
 
 @keyframes runningPulse {

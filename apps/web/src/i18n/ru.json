@@ -255,6 +255,8 @@
   "chat.historyRunningStatus": "Выполняется",
   "chat.historyRecent": "Недавние",
   "chat.historyEmpty": "Чатов пока нет.",
+  "chat.historyLoadMore": "Загрузить ещё",
+  "chat.sessionUnavailable": "Этот чат недоступен. Выбран безопасный чат.",
   "chat.send": "Отправить",
   "chat.stop": "Остановить",
   "chat.attach": "Прикрепить",
