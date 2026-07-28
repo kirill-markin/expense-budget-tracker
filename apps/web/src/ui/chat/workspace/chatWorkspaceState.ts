@@ -105,6 +105,34 @@ export const resolveAutomaticChatTarget = (
     : requireChatTarget({ kind: "session", sessionId: decision.sessionId });
 };
 
+export const resolveAutomaticChatTargetAfterRefresh = (
+  summaries: ReadonlyArray<ChatSessionSummary>,
+  currentTarget: ChatTarget,
+  currentTimeMs: number,
+  draftId: string,
+): ChatTarget => {
+  const validCurrentTarget = requireChatTarget(currentTarget);
+  if (validCurrentTarget.kind === "session") {
+    const selectedSession = summaries.find(
+      (summary): boolean =>
+        summary.sessionId === validCurrentTarget.sessionId,
+    );
+    if (selectedSession !== undefined) {
+      const decision = resolveChatActivityPolicy({
+        currentTimeMs,
+        selectedSession,
+        selectionReason: "automatic",
+        inactivityThresholdMs: CHAT_INACTIVITY_THRESHOLD_MS,
+      });
+      return decision.kind === "select_draft"
+        ? requireChatTarget({ kind: "draft", draftId })
+        : validCurrentTarget;
+    }
+  }
+
+  return resolveAutomaticChatTarget(summaries, currentTimeMs, draftId);
+};
+
 export const resolveFailedSessionRecoveryTarget = (
   summaries: ReadonlyArray<ChatSessionSummary>,
   failedSessionIds: ReadonlySet<string>,

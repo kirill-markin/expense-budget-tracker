@@ -38,6 +38,11 @@ import {
   type ChatSessionSummaryPage,
 } from "./chatSessionSummaryTransport";
 import {
+  shouldPollChatSessionCatalog,
+  shouldReevaluateChatActivityAfterVisibilityChange,
+  type ChatPageVisibility,
+} from "./chatActivityPolicy";
+import {
   areChatTargetsEqual,
   appendChatSessionCatalogPage,
   createChatWorkspaceState,
@@ -48,6 +53,7 @@ import {
   observeChatSessionInvalidationVersion,
   replaceChatSessionCatalog,
   resolveAutomaticChatTarget,
+  resolveAutomaticChatTargetAfterRefresh,
   resolveFailedSessionRecoveryTarget,
   resolveNewChatDraftTarget,
   selectChatWorkspaceTarget,
@@ -58,6 +64,12 @@ import {
 } from "./chatWorkspaceState";
 
 const CHAT_SESSION_CATALOG_LIMIT = 100;
+const CHAT_SESSION_CATALOG_POLL_INTERVAL_MS = 10_000;
+
+const getInitialChatPageVisibility = (): ChatPageVisibility =>
+  typeof document === "undefined"
+    ? "visible"
+    : document.visibilityState;
 
 type NavigationMode = "none" | "push" | "replace";
 
@@ -516,11 +528,12 @@ export const resolvePostReadyAutomaticCatalogSelection = (
     return null;
   }
 
-  const target = resolveAutomaticChatTarget(
+  const target = resolveAutomaticChatTargetAfterRefresh(
     input.summaries.filter(
       (summary): boolean =>
         !input.unavailableSessionIds.has(summary.sessionId),
     ),
+    input.currentTarget,
     input.currentTimeMs,
     input.draftId,
   );
@@ -765,12 +778,16 @@ export const useChatWorkspaceController = (
   const [isReady, setIsReady] = useState<boolean>(false);
   const [historyOpen, setHistoryOpenState] = useState<boolean>(false);
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
+  const [pageVisibility, setPageVisibility] = useState<ChatPageVisibility>(
+    getInitialChatPageVisibility,
+  );
   const stateRef = useRef<ChatWorkspaceState>(state);
   const selectionEpochRef = useRef<number>(selectionEpoch);
   const isReadyRef = useRef<boolean>(isReady);
   const activeDraftIdRef = useRef<string | null>(null);
   const unavailableSessionIdsRef = useRef<Set<string>>(new Set<string>());
   const hasRefreshedUnavailableSessionsRef = useRef<boolean>(false);
+  const automaticCatalogRecoveryPendingRef = useRef<boolean>(false);
   const catalogRequestIdRef = useRef<number>(0);
   const catalogAbortRef = useRef<AbortController | null>(null);
   const navigationGenerationRef = useRef<number>(0);
@@ -805,6 +822,13 @@ export const useChatWorkspaceController = (
     nextRecoveryNotice: string | null,
   ): void => {
     setRecoveryNotice(nextRecoveryNotice);
+  }, []);
+
+  const surfaceRecoveryNotice = useCallback((
+    nextRecoveryNotice: string,
+  ): void => {
+    setRecoveryNotice(nextRecoveryNotice);
+    setHistoryOpenState(true);
   }, []);
 
   const commitActiveDraftId = useCallback((
@@ -936,7 +960,6 @@ export const useChatWorkspaceController = (
       replaceChatSessionCatalog(currentState, page),
       page,
     );
-    commitRecoveryNotice(null);
     if (unavailableSessionIdsRef.current.size > 0) {
       const catalogSessionIds = new Set(
         page.sessions.map((summary): string => summary.sessionId),
@@ -951,7 +974,7 @@ export const useChatWorkspaceController = (
         hasRefreshedUnavailableSessionsRef.current = false;
       }
     }
-  }, [commitRecoveryNotice, publishCatalogPageInvalidations]);
+  }, [publishCatalogPageInvalidations]);
 
   const applyNextCatalogPage = useCallback((
     page: ChatSessionSummaryPage,
@@ -962,48 +985,15 @@ export const useChatWorkspaceController = (
       appendChatSessionCatalogPage(currentState, page),
       page,
     );
-    commitRecoveryNotice(null);
-  }, [commitRecoveryNotice, publishCatalogPageInvalidations]);
+  }, [publishCatalogPageInvalidations]);
 
   const loadCatalogPage = useCallback(async (): Promise<ChatSessionSummaryPage | null> => {
-    const requestStartedReady = isReadyRef.current;
-    const requestSelectionEpoch = selectionEpochRef.current;
-    const requestSelectionReason = stateRef.current.selectionReason;
-    const reconcilePostReadyAutomaticSelection = (
-      page: ChatSessionSummaryPage,
-    ): void => {
-      const draftId = activeDraftIdRef.current ?? createDraftId();
-      const target = resolvePostReadyAutomaticCatalogSelection({
-        requestStartedReady,
-        requestSelectionEpoch,
-        requestSelectionReason,
-        currentSelectionEpoch: selectionEpochRef.current,
-        currentSelectionReason: stateRef.current.selectionReason,
-        currentTarget: stateRef.current.target,
-        summaries: page.sessions,
-        unavailableSessionIds: unavailableSessionIdsRef.current,
-        currentTimeMs: Date.now(),
-        draftId,
-      });
-      if (target === null) {
-        return;
-      }
-      if (
-        activeDraftIdRef.current === null
-        || target.kind === "draft"
-      ) {
-        commitActiveDraftId(draftId);
-      }
-      selectTarget(target, "automatic", "replace");
-    };
-
     if (stableScope.mode === "demo") {
       const page: ChatSessionSummaryPage = {
         sessions: [],
         nextCursor: null,
       };
       applyFirstCatalogPage(page);
-      reconcilePostReadyAutomaticSelection(page);
       return page;
     }
 
@@ -1028,7 +1018,6 @@ export const useChatWorkspaceController = (
       }
 
       applyFirstCatalogPage(page);
-      reconcilePostReadyAutomaticSelection(page);
       return page;
     } catch (error) {
       if (
@@ -1039,7 +1028,6 @@ export const useChatWorkspaceController = (
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      commitRecoveryNotice(null);
       commitState(failChatSessionCatalogLoad(stateRef.current, message));
       return null;
     } finally {
@@ -1049,16 +1037,63 @@ export const useChatWorkspaceController = (
     }
   }, [
     applyFirstCatalogPage,
-    commitActiveDraftId,
-    commitRecoveryNotice,
     commitState,
-    selectTarget,
     stableScope.mode,
   ]);
 
+  const refreshCatalogAndReconcileAutomaticSelection = useCallback(
+    async (): Promise<void> => {
+      const requestStartedReady = isReadyRef.current;
+      const requestSelectionEpoch = selectionEpochRef.current;
+      const requestSelectionReason = stateRef.current.selectionReason;
+      const page = await loadCatalogPage();
+      if (page === null) {
+        return;
+      }
+
+      const draftId = activeDraftIdRef.current ?? createDraftId();
+      const target = resolvePostReadyAutomaticCatalogSelection({
+        requestStartedReady,
+        requestSelectionEpoch,
+        requestSelectionReason,
+        currentSelectionEpoch: selectionEpochRef.current,
+        currentSelectionReason: stateRef.current.selectionReason,
+        currentTarget: stateRef.current.target,
+        summaries: page.sessions,
+        unavailableSessionIds: unavailableSessionIdsRef.current,
+        currentTimeMs: Date.now(),
+        draftId,
+      });
+      automaticCatalogRecoveryPendingRef.current = false;
+      if (target === null) {
+        return;
+      }
+      if (
+        activeDraftIdRef.current === null
+        || target.kind === "draft"
+      ) {
+        commitActiveDraftId(draftId);
+      }
+      selectTarget(target, "automatic", "replace");
+    },
+    [
+      commitActiveDraftId,
+      loadCatalogPage,
+      selectTarget,
+    ],
+  );
+
   const refreshCatalog = useCallback(async (): Promise<void> => {
+    if (automaticCatalogRecoveryPendingRef.current) {
+      await refreshCatalogAndReconcileAutomaticSelection();
+      return;
+    }
+
     await loadCatalogPage();
-  }, [loadCatalogPage]);
+  }, [
+    loadCatalogPage,
+    refreshCatalogAndReconcileAutomaticSelection,
+  ]);
 
   const loadNextCatalogPage = useCallback(async (): Promise<void> => {
     if (stableScope.mode === "demo" || catalogAbortRef.current !== null) {
@@ -1099,7 +1134,6 @@ export const useChatWorkspaceController = (
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      commitRecoveryNotice(null);
       commitState(failChatSessionCatalogLoad(stateRef.current, message));
     } finally {
       if (catalogAbortRef.current === abortController) {
@@ -1108,7 +1142,6 @@ export const useChatWorkspaceController = (
     }
   }, [
     applyNextCatalogPage,
-    commitRecoveryNotice,
     commitState,
     stableScope.mode,
   ]);
@@ -1138,13 +1171,13 @@ export const useChatWorkspaceController = (
     }
 
     clearChatSelection(window.sessionStorage, stableScope);
-    commitRecoveryNotice(errorMessage);
+    surfaceRecoveryNotice(errorMessage);
     selectTarget(safeTarget, "automatic", "replace");
   }, [
     commitActiveDraftId,
-    commitRecoveryNotice,
     selectTarget,
     stableScope,
+    surfaceRecoveryNotice,
   ]);
 
   const recoverInvalidUrlSelection = useCallback((
@@ -1172,7 +1205,7 @@ export const useChatWorkspaceController = (
       );
     }
 
-    commitRecoveryNotice(errorMessage);
+    surfaceRecoveryNotice(errorMessage);
     selectTarget(
       decision.target,
       decision.selectionReason,
@@ -1180,9 +1213,9 @@ export const useChatWorkspaceController = (
     );
   }, [
     commitActiveDraftId,
-    commitRecoveryNotice,
     selectTarget,
     stableScope,
+    surfaceRecoveryNotice,
   ]);
 
   useEffect(() => {
@@ -1192,6 +1225,7 @@ export const useChatWorkspaceController = (
     activeDraftIdRef.current = null;
     unavailableSessionIdsRef.current = new Set<string>();
     hasRefreshedUnavailableSessionsRef.current = false;
+    automaticCatalogRecoveryPendingRef.current = false;
     controllerNavigationRef.current = null;
     commitReady(false);
     commitRecoveryNotice(null);
@@ -1277,10 +1311,14 @@ export const useChatWorkspaceController = (
           : urlTarget === null && reason === "explicit" ? "replace" : "none",
       );
       if (bootstrapRecovery.showRecoveryNotice) {
-        commitRecoveryNotice(
+        surfaceRecoveryNotice(
           translationRef.current("chat.sessionUnavailable"),
         );
       }
+      automaticCatalogRecoveryPendingRef.current =
+        page === null
+        && !bootstrapSelection.selectionChangedDuringBootstrap
+        && reason === "automatic";
       commitReady(true);
     })();
 
@@ -1292,16 +1330,75 @@ export const useChatWorkspaceController = (
   }, [
     commitReady,
     commitActiveDraftId,
-    commitRecoveryNotice,
     commitSelectionEpoch,
     commitState,
     loadCatalogPage,
     scopeKey,
     stableScope,
+    surfaceRecoveryNotice,
     selectTarget,
   ]);
 
   const runningCount = getRunningChatSessionCount(state.summaries);
+
+  useEffect(() => {
+    if (
+      !isReady
+      || !shouldPollChatSessionCatalog(
+        runningCount,
+        pageVisibility,
+      )
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval((): void => {
+      if (
+        catalogAbortRef.current !== null
+        || !shouldPollChatSessionCatalog(
+          runningCount,
+          document.visibilityState,
+        )
+      ) {
+        return;
+      }
+      void loadCatalogPage();
+    }, CHAT_SESSION_CATALOG_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [
+    isReady,
+    loadCatalogPage,
+    pageVisibility,
+    runningCount,
+  ]);
+
+  useEffect(() => {
+    let previousVisibility: ChatPageVisibility = document.visibilityState;
+    setPageVisibility(previousVisibility);
+    const handleVisibilityChange = (): void => {
+      const nextVisibility: ChatPageVisibility = document.visibilityState;
+      const shouldRefresh =
+        shouldReevaluateChatActivityAfterVisibilityChange(
+          previousVisibility,
+          nextVisibility,
+        );
+      previousVisibility = nextVisibility;
+      setPageVisibility(nextVisibility);
+      if (!shouldRefresh || !isReadyRef.current) {
+        return;
+      }
+
+      void refreshCatalogAndReconcileAutomaticSelection();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () =>
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
+  }, [refreshCatalogAndReconcileAutomaticSelection]);
 
   useEffect(() => {
     const handlePopState = (): void => {
@@ -1434,10 +1531,13 @@ export const useChatWorkspaceController = (
 
   const setHistoryOpen = useCallback((open: boolean): void => {
     setHistoryOpenState(open);
-    if (open && isReadyRef.current) {
-      void loadCatalogPage();
+    if (!open) {
+      commitRecoveryNotice(null);
     }
-  }, [loadCatalogPage]);
+    if (open && isReadyRef.current) {
+      void refreshCatalog();
+    }
+  }, [commitRecoveryNotice, refreshCatalog]);
 
   const selectSession = useCallback((sessionId: string): void => {
     selectTarget(
@@ -1655,13 +1755,14 @@ export const useChatWorkspaceController = (
     );
     unavailableSessionIds.add(sessionId);
     unavailableSessionIdsRef.current = unavailableSessionIds;
+    automaticCatalogRecoveryPendingRef.current = true;
     recoverToSafeTarget(errorMessage, unavailableSessionIds);
     if (!hasRefreshedUnavailableSessionsRef.current) {
       hasRefreshedUnavailableSessionsRef.current = true;
-      void loadCatalogPage();
+      void refreshCatalog();
     }
     return true;
-  }, [loadCatalogPage, recoverToSafeTarget]);
+  }, [recoverToSafeTarget, refreshCatalog]);
 
   const historyErrorMessage = resolveChatHistoryErrorMessage(
     state.catalogRequest.errorMessage,

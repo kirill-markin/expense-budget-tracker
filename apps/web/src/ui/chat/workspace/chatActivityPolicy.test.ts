@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   CHAT_INACTIVITY_THRESHOLD_MS,
   resolveChatActivityPolicy,
+  shouldPollChatSessionCatalog,
   shouldReevaluateChatActivityAfterVisibilityChange,
   type SelectedChatSessionActivity,
 } from "./chatActivityPolicy";
@@ -114,6 +115,16 @@ test("visibility return requests re-evaluation without an inactivity timer", ():
   assert.equal(
     shouldReevaluateChatActivityAfterVisibilityChange("visible", "visible"),
     false,
+  );
+});
+
+test("catalog polling runs only while visible sessions are running", (): void => {
+  assert.equal(shouldPollChatSessionCatalog(2, "visible"), true);
+  assert.equal(shouldPollChatSessionCatalog(2, "hidden"), false);
+  assert.equal(shouldPollChatSessionCatalog(0, "visible"), false);
+  assert.throws(
+    () => shouldPollChatSessionCatalog(-1, "visible"),
+    /running session count must be a non-negative safe integer/u,
   );
 });
 

@@ -1207,13 +1207,17 @@ test("bootstrap recovery follows the highest-precedence source", (): void => {
   }
 });
 
-test("post-ready first-page refresh reconciles only the request's current automatic selection", (): void => {
+test("recovery and visibility refreshes reconcile only their current automatic selection", (): void => {
   const automaticDraft = {
     kind: "draft",
     draftId: "draft-automatic",
   } as const;
   const recentSession = createSummary("session-recent", "idle", 0);
   const runningSession = createSummary("session-running", "running", 0);
+  const newerSession = {
+    ...createSummary("session-newer", "idle", 0),
+    lastMessageAt: "2026-07-26T12:30:00.000Z",
+  };
   const cases = [
     {
       name: "successful refresh after an initial failure selects a recent session",
@@ -1248,7 +1252,45 @@ test("post-ready first-page refresh reconciles only the request's current automa
       expected: { kind: "session", sessionId: "session-running" },
     },
     {
-      name: "New during the request fences the automatic response",
+      name: "visibility refresh keeps the selected running session when another row is newer",
+      input: {
+        requestStartedReady: true,
+        requestSelectionEpoch: 2,
+        requestSelectionReason: "automatic",
+        currentSelectionEpoch: 2,
+        currentSelectionReason: "automatic",
+        currentTarget: {
+          kind: "session",
+          sessionId: runningSession.sessionId,
+        },
+        summaries: [newerSession, runningSession],
+        unavailableSessionIds: new Set<string>(),
+        currentTimeMs: Date.parse("2026-07-27T13:00:00.000Z"),
+        draftId: automaticDraft.draftId,
+      },
+      expected: null,
+    },
+    {
+      name: "visibility refresh keeps the selected recent session when another row is newer",
+      input: {
+        requestStartedReady: true,
+        requestSelectionEpoch: 2,
+        requestSelectionReason: "automatic",
+        currentSelectionEpoch: 2,
+        currentSelectionReason: "automatic",
+        currentTarget: {
+          kind: "session",
+          sessionId: recentSession.sessionId,
+        },
+        summaries: [newerSession, recentSession],
+        unavailableSessionIds: new Set<string>(),
+        currentTimeMs: Date.parse("2026-07-26T13:00:00.000Z"),
+        draftId: automaticDraft.draftId,
+      },
+      expected: null,
+    },
+    {
+      name: "an explicit draft selected during recovery fences the automatic response",
       input: {
         requestStartedReady: true,
         requestSelectionEpoch: 3,

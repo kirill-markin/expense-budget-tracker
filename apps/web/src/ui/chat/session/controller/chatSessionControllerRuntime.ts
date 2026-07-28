@@ -1094,6 +1094,7 @@ export const createChatSendTransport = (
 
 export type ChatSessionSnapshotRequestErrorKind =
   | "not_found"
+  | "forbidden"
   | "active_response_conflict"
   | "workspace_reload_required"
   | "other";
@@ -1394,6 +1395,9 @@ const classifyChatSessionSnapshotRequestError = (
   if (status === 404) {
     return "not_found";
   }
+  if (status === 403) {
+    return "forbidden";
+  }
   if (status !== 409) {
     return "other";
   }
@@ -1488,7 +1492,10 @@ export const isUnavailableChatSessionSnapshotError = (
   error: unknown,
 ): error is ChatSessionSnapshotRequestError =>
   error instanceof ChatSessionSnapshotRequestError
-  && error.kind === "not_found";
+  && (
+    error.kind === "not_found"
+    || error.kind === "forbidden"
+  );
 
 export const resolveChatSnapshotFailureDisposition = (
   error: unknown,
@@ -1499,6 +1506,7 @@ export const resolveChatSnapshotFailureDisposition = (
 
   switch (error.kind) {
     case "not_found":
+    case "forbidden":
       return "recover_unavailable";
     case "active_response_conflict":
       return "retry_active_response";
