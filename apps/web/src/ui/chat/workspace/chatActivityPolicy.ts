@@ -80,3 +80,19 @@ export const shouldReevaluateChatActivityAfterVisibilityChange = (
   nextVisibility: ChatPageVisibility,
 ): boolean =>
   previousVisibility === "hidden" && nextVisibility === "visible";
+
+export const shouldPollChatSessionCatalog = (
+  runningSessionCount: number,
+  visibility: ChatPageVisibility,
+): boolean => {
+  if (
+    !Number.isSafeInteger(runningSessionCount)
+    || runningSessionCount < 0
+  ) {
+    throw new Error(
+      "Chat catalog running session count must be a non-negative safe integer",
+    );
+  }
+
+  return runningSessionCount > 0 && visibility === "visible";
+};

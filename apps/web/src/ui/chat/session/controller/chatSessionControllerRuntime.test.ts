@@ -4226,6 +4226,11 @@ test("snapshot recovery distinguishes missing sessions from valid 409 contracts"
     "Error 404: Chat session not found: session-missing",
     "not_found",
   );
+  const forbiddenSessionError = new ChatSessionSnapshotRequestError(
+    403,
+    "Error 403: Forbidden",
+    "forbidden",
+  );
   const activeRunConflict = new ChatSessionSnapshotRequestError(
     409,
     "Error 409: Chat session already has an active response",
@@ -4246,11 +4251,19 @@ test("snapshot recovery distinguishes missing sessions from valid 409 contracts"
     false,
   );
   assert.equal(
+    isUnavailableChatSessionSnapshotError(forbiddenSessionError),
+    true,
+  );
+  assert.equal(
     isUnavailableChatSessionSnapshotError(workspaceReload),
     false,
   );
   assert.equal(
     resolveChatSnapshotFailureDisposition(missingSessionError),
+    "recover_unavailable",
+  );
+  assert.equal(
+    resolveChatSnapshotFailureDisposition(forbiddenSessionError),
     "recover_unavailable",
   );
   assert.equal(

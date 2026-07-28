@@ -3479,7 +3479,10 @@ test("repairs an unavailable sidebar history selection outside fullscreen chat",
     selectionStorageKey,
   )).toBeNull();
 
-  await page.getByTestId("chat-history-open").click();
+  await expect(page.getByTestId("chat-history-dialog")).toBeVisible();
+  await expect(page.getByTestId("chat-history-error")).toHaveText(
+    "This chat is unavailable. A safe chat was selected.",
+  );
   await expect(
     page.getByTestId(`chat-history-session-${safeSessionId}`),
   ).toHaveAttribute("aria-current", "true");
