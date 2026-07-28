@@ -22,6 +22,7 @@ import {
 import {
   buildChatTargetUrl,
   clearChatSelection,
+  getChatActiveDraftStorageKey,
   getChatSelectionStorageKey,
   parseStoredChatTarget,
   readChatActiveDraftId,
@@ -42,6 +43,7 @@ import {
   createChatWorkspaceState,
   failChatSessionCatalogLoad,
   findChatSessionInvalidationIncrements,
+  getChatTargetKey,
   getRunningChatSessionCount,
   observeChatSessionInvalidationVersion,
   replaceChatSessionCatalog,
@@ -70,11 +72,128 @@ export type ChatDraftSessionAdoption =
   | Readonly<{
     kind: "background";
     target: Extract<ChatTarget, { kind: "session" }>;
+    draftStateDisposition: "transfer" | "preserve";
+  }>;
+
+export type ChatDraftSessionAdoptionPlan = Readonly<{
+  draftId: string;
+  sessionId: string;
+  expectedSelectionEpoch: number;
+  controllerTarget: ChatTarget;
+  controllerSelectionEpoch: number;
+  controllerActiveDraftId: string | null;
+  shouldClearActiveDraft: boolean;
+  shouldPersistSelection: boolean;
+  adoption: ChatDraftSessionAdoption;
+}>;
+
+export type ChatDraftCreationPlan = Readonly<{
+  kind: "reuse" | "transition";
+  sourceTarget: ChatTarget;
+  sourceSelectionReason: ChatSelectionReason;
+  sourceSelectionEpoch: number;
+  sourceActiveDraftId: string | null;
+  target: Extract<ChatTarget, { kind: "draft" }>;
+  selectionEpoch: number;
+  shouldPersistActiveDraft: boolean;
+  shouldPersistSelection: boolean;
+  navigationMode: Extract<NavigationMode, "push" | "replace">;
+}>;
+
+type ChatDraftCreationInput =
+  | Readonly<{
+    kind: "reuse_selected_draft";
+    currentState: ChatWorkspaceState;
+    currentSelectionEpoch: number;
+    currentActiveDraftId: string | null;
+  }>
+  | Readonly<{
+    kind: "replace_selected_target";
+    currentState: ChatWorkspaceState;
+    currentSelectionEpoch: number;
+    currentActiveDraftId: string | null;
+    nextDraftId: string;
   }>;
 
 type UseChatWorkspaceControllerParams = Readonly<{
   scope: ChatSelectionScope;
 }>;
+
+export const promoteSelectedChatWorkspaceTargetToExplicit = (
+  state: ChatWorkspaceState,
+  target: ChatTarget,
+): ChatWorkspaceState => {
+  if (!areChatTargetsEqual(state.target, target)) {
+    throw new Error(
+      `Cannot promote unselected chat target `
+      + `"${getChatTargetKey(target)}" to explicit`,
+    );
+  }
+  if (state.selectionReason === "explicit") {
+    return state;
+  }
+
+  return {
+    ...state,
+    selectionReason: "explicit",
+  };
+};
+
+export const resolveChatDraftCreationPlan = (
+  input: ChatDraftCreationInput,
+): ChatDraftCreationPlan => {
+  const sourceTarget = input.currentState.target;
+  if (input.kind === "reuse_selected_draft") {
+    if (sourceTarget.kind !== "draft") {
+      throw new Error(
+        `Cannot reuse non-draft chat target "${getChatTargetKey(sourceTarget)}"`,
+      );
+    }
+    const isAlreadyExplicit =
+      input.currentState.selectionReason === "explicit";
+    return {
+      kind: isAlreadyExplicit ? "reuse" : "transition",
+      sourceTarget,
+      sourceSelectionReason: input.currentState.selectionReason,
+      sourceSelectionEpoch: input.currentSelectionEpoch,
+      sourceActiveDraftId: input.currentActiveDraftId,
+      target: sourceTarget,
+      selectionEpoch: isAlreadyExplicit
+        ? input.currentSelectionEpoch
+        : input.currentSelectionEpoch + 1,
+      shouldPersistActiveDraft: !isAlreadyExplicit,
+      shouldPersistSelection: !isAlreadyExplicit,
+      navigationMode: "replace",
+    };
+  }
+
+  const activeDraftIdForResolution =
+    sourceTarget.kind === "draft"
+    && input.currentActiveDraftId === sourceTarget.draftId
+      ? null
+      : input.currentActiveDraftId;
+  const target = resolveNewChatDraftTarget(
+    sourceTarget,
+    activeDraftIdForResolution,
+    false,
+    input.nextDraftId,
+  );
+  if (target.kind !== "draft") {
+    throw new Error("New chat draft resolution returned a server session");
+  }
+  return {
+    kind: "transition",
+    sourceTarget,
+    sourceSelectionReason: input.currentState.selectionReason,
+    sourceSelectionEpoch: input.currentSelectionEpoch,
+    sourceActiveDraftId: input.currentActiveDraftId,
+    target,
+    selectionEpoch: input.currentSelectionEpoch + 1,
+    shouldPersistActiveDraft: true,
+    shouldPersistSelection: true,
+    navigationMode: "push",
+  };
+};
 
 export type ChatWorkspaceController = Readonly<{
   state: ChatWorkspaceState;
@@ -85,11 +204,22 @@ export type ChatWorkspaceController = Readonly<{
   runningCount: number;
   setHistoryOpen: (open: boolean) => void;
   selectSession: (sessionId: string) => void;
-  createDraft: (isSelectedDraftUntouched: boolean) => void;
-  adoptDraftSession: (
+  planSelectedDraftReuse: () => ChatDraftCreationPlan;
+  planDraftReplacement: () => ChatDraftCreationPlan;
+  commitDraftCreation: (plan: ChatDraftCreationPlan) => void;
+  finalizeDraftCreation: (plan: ChatDraftCreationPlan) => void;
+  promoteSelectedTargetToExplicit: (target: ChatTarget) => number;
+  planDraftSessionAdoption: (
     draftId: string,
     sessionId: string,
+    expectedSelectionEpoch: number,
+  ) => ChatDraftSessionAdoptionPlan;
+  commitDraftSessionAdoption: (
+    plan: ChatDraftSessionAdoptionPlan,
   ) => ChatDraftSessionAdoption;
+  finalizeDraftSessionAdoption: (
+    plan: ChatDraftSessionAdoptionPlan,
+  ) => void;
   isSelectionCurrent: (
     target: ChatTarget,
     selectionEpoch: number,
@@ -124,6 +254,47 @@ type ChatBootstrapSelectionInput = Readonly<{
   storedTarget: ChatTarget | null;
   automaticTarget: ChatTarget;
 }>;
+
+type ChatDraftSessionAdoptionInput = Readonly<{
+  currentTarget: ChatTarget;
+  currentSelectionEpoch: number;
+  draftId: string;
+  sessionId: string;
+  expectedSelectionEpoch: number;
+}>;
+
+export const resolveChatDraftSessionAdoption = (
+  input: ChatDraftSessionAdoptionInput,
+): ChatDraftSessionAdoption => {
+  const draftTarget = {
+    kind: "draft",
+    draftId: input.draftId,
+  } as const;
+  const sessionTarget = {
+    kind: "session",
+    sessionId: input.sessionId,
+  } as const;
+  const isSourceTargetSelected = areChatTargetsEqual(
+    input.currentTarget,
+    draftTarget,
+  );
+  if (
+    isSourceTargetSelected
+    && input.currentSelectionEpoch === input.expectedSelectionEpoch
+  ) {
+    return {
+      kind: "selected",
+      target: sessionTarget,
+      selectionEpoch: input.currentSelectionEpoch,
+    };
+  }
+
+  return {
+    kind: "background",
+    target: sessionTarget,
+    draftStateDisposition: isSourceTargetSelected ? "preserve" : "transfer",
+  };
+};
 
 export type ChatBootstrapSelection = Readonly<{
   target: ChatTarget;
@@ -702,13 +873,14 @@ export const useChatWorkspaceController = (
     }
 
     const nextEpoch = selectionEpochRef.current + 1;
-    commitSelectionEpoch(nextEpoch);
-    commitState(selectChatWorkspaceTarget(
+    const nextState = selectChatWorkspaceTarget(
       currentState,
       target,
       selectionReason,
-    ));
+    );
     persistSelectedTarget(target, selectionReason);
+    commitSelectionEpoch(nextEpoch);
+    commitState(nextState);
     navigateToTarget(target, navigationMode);
   }, [
     commitSelectionEpoch,
@@ -1268,6 +1440,11 @@ export const useChatWorkspaceController = (
   }, [loadCatalogPage]);
 
   const selectSession = useCallback((sessionId: string): void => {
+    selectTarget(
+      { kind: "session", sessionId },
+      "explicit",
+      "push",
+    );
     if (unavailableSessionIdsRef.current.has(sessionId)) {
       const nextUnavailableSessionIds = new Set(
         unavailableSessionIdsRef.current,
@@ -1278,48 +1455,85 @@ export const useChatWorkspaceController = (
         hasRefreshedUnavailableSessionsRef.current = false;
       }
     }
-    selectTarget(
-      { kind: "session", sessionId },
-      "explicit",
-      "push",
-    );
   }, [selectTarget]);
 
-  const createDraft = useCallback((
-    isSelectedDraftUntouched: boolean,
-  ): void => {
-    const currentTarget = stateRef.current.target;
-    const shouldReuseCurrentDraft = shouldReuseSelectedChatDraft(
-      isReadyRef.current,
-      currentTarget,
-      isSelectedDraftUntouched,
+  const promoteSelectedTargetToExplicit = useCallback((
+    target: ChatTarget,
+  ): number => {
+    const currentState = stateRef.current;
+    const currentSelectionEpoch = selectionEpochRef.current;
+    const nextState = promoteSelectedChatWorkspaceTargetToExplicit(
+      currentState,
+      target,
     );
-    if (shouldReuseCurrentDraft) {
-      selectTarget(currentTarget, "explicit", "replace");
+    if (nextState === currentState) {
+      return currentSelectionEpoch;
+    }
+
+    persistSelectedTarget(target, "explicit");
+    commitState(nextState);
+    return currentSelectionEpoch;
+  }, [commitState, persistSelectedTarget]);
+
+  const planSelectedDraftReuse = useCallback((): ChatDraftCreationPlan => {
+    if (!isReadyRef.current) {
+      throw new Error("Cannot reuse a chat draft before workspace readiness");
+    }
+    const currentState = stateRef.current;
+    return resolveChatDraftCreationPlan({
+      kind: "reuse_selected_draft",
+      currentState,
+      currentSelectionEpoch: selectionEpochRef.current,
+      currentActiveDraftId: activeDraftIdRef.current,
+    });
+  }, []);
+
+  const planDraftReplacement = useCallback((): ChatDraftCreationPlan =>
+    resolveChatDraftCreationPlan({
+      kind: "replace_selected_target",
+      currentState: stateRef.current,
+      currentSelectionEpoch: selectionEpochRef.current,
+      currentActiveDraftId: activeDraftIdRef.current,
+      nextDraftId: createDraftId(),
+    }), []);
+
+  const commitDraftCreation = useCallback((
+    plan: ChatDraftCreationPlan,
+  ): void => {
+    const currentState = stateRef.current;
+    if (
+      selectionEpochRef.current !== plan.sourceSelectionEpoch
+      || activeDraftIdRef.current !== plan.sourceActiveDraftId
+      || currentState.selectionReason !== plan.sourceSelectionReason
+      || !areChatTargetsEqual(currentState.target, plan.sourceTarget)
+    ) {
+      throw new Error(
+        `Cannot commit stale chat draft creation plan from `
+        + `"${getChatTargetKey(plan.sourceTarget)}" at selection epoch `
+        + `${plan.sourceSelectionEpoch}`,
+      );
+    }
+    if (plan.kind === "reuse") {
       return;
     }
-    if (
-      currentTarget.kind === "draft"
-      && activeDraftIdRef.current === currentTarget.draftId
-    ) {
-      commitActiveDraftId(null);
-    }
-    const draftTarget = resolveNewChatDraftTarget(
-      currentTarget,
-      activeDraftIdRef.current,
-      shouldReuseCurrentDraft,
-      createDraftId(),
-    );
-    if (draftTarget.kind !== "draft") {
-      throw new Error("New chat draft resolution returned a server session");
-    }
-    commitActiveDraftId(draftTarget.draftId);
-    selectTarget(
-      draftTarget,
+
+    activeDraftIdRef.current = plan.target.draftId;
+    commitSelectionEpoch(plan.selectionEpoch);
+    commitState(selectChatWorkspaceTarget(
+      currentState,
+      plan.target,
       "explicit",
-      "push",
-    );
-  }, [commitActiveDraftId, selectTarget]);
+    ));
+  }, [
+    commitSelectionEpoch,
+    commitState,
+  ]);
+
+  const finalizeDraftCreation = useCallback((
+    plan: ChatDraftCreationPlan,
+  ): void => {
+    navigateToTarget(plan.target, plan.navigationMode);
+  }, [navigateToTarget]);
 
   const isSelectionCurrent = useCallback((
     target: ChatTarget,
@@ -1328,47 +1542,81 @@ export const useChatWorkspaceController = (
     selectionEpochRef.current === expectedSelectionEpoch
     && areChatTargetsEqual(stateRef.current.target, target), []);
 
-  const adoptDraftSession = useCallback((
+  const planDraftSessionAdoption = useCallback((
     draftId: string,
     sessionId: string,
+    expectedSelectionEpoch: number,
+  ): ChatDraftSessionAdoptionPlan => {
+    const controllerTarget = stateRef.current.target;
+    const controllerSelectionEpoch = selectionEpochRef.current;
+    const controllerActiveDraftId = activeDraftIdRef.current;
+    const adoption = resolveChatDraftSessionAdoption({
+      currentTarget: controllerTarget,
+      currentSelectionEpoch: controllerSelectionEpoch,
+      draftId,
+      sessionId,
+      expectedSelectionEpoch,
+    });
+    const shouldTransferDraftState =
+      adoption.kind === "selected"
+      || adoption.draftStateDisposition === "transfer";
+    return {
+      draftId,
+      sessionId,
+      expectedSelectionEpoch,
+      controllerTarget,
+      controllerSelectionEpoch,
+      controllerActiveDraftId,
+      shouldClearActiveDraft:
+        shouldTransferDraftState && controllerActiveDraftId === draftId,
+      shouldPersistSelection: adoption.kind === "selected",
+      adoption,
+    };
+  }, []);
+
+  const commitDraftSessionAdoption = useCallback((
+    plan: ChatDraftSessionAdoptionPlan,
   ): ChatDraftSessionAdoption => {
-    const draftTarget = { kind: "draft", draftId } as const;
-    const sessionTarget = { kind: "session", sessionId } as const;
-    const isSelected = areChatTargetsEqual(
-      stateRef.current.target,
-      draftTarget,
-    );
-    if (isSelected) {
+    if (
+      selectionEpochRef.current !== plan.controllerSelectionEpoch
+      || !areChatTargetsEqual(
+        stateRef.current.target,
+        plan.controllerTarget,
+      )
+      || activeDraftIdRef.current !== plan.controllerActiveDraftId
+    ) {
+      throw new Error(
+        `Cannot commit stale chat draft adoption plan for `
+        + `"${plan.draftId}" at selection epoch `
+        + `${plan.expectedSelectionEpoch}`,
+      );
+    }
+
+    if (plan.adoption.kind === "selected") {
       commitState(selectChatWorkspaceTarget(
         stateRef.current,
-        sessionTarget,
+        plan.adoption.target,
         "explicit",
       ));
     }
-    if (activeDraftIdRef.current === draftId) {
-      commitActiveDraftId(null);
+    if (plan.shouldClearActiveDraft) {
+      activeDraftIdRef.current = null;
     }
-    if (isSelected) {
-      persistSelectedTarget(sessionTarget, "explicit");
-      navigateToTarget(sessionTarget, "replace");
-    }
-    void loadCatalogPage();
-    return isSelected
-      ? {
-        kind: "selected",
-        target: sessionTarget,
-        selectionEpoch: selectionEpochRef.current,
-      }
-      : {
-        kind: "background",
-        target: sessionTarget,
-      };
+    return plan.adoption;
   }, [
     commitState,
-    commitActiveDraftId,
+  ]);
+
+  const finalizeDraftSessionAdoption = useCallback((
+    plan: ChatDraftSessionAdoptionPlan,
+  ): void => {
+    if (plan.adoption.kind === "selected") {
+      navigateToTarget(plan.adoption.target, "replace");
+    }
+    void loadCatalogPage();
+  }, [
     loadCatalogPage,
     navigateToTarget,
-    persistSelectedTarget,
   ]);
 
   const observeSessionInvalidation = useCallback((
@@ -1429,8 +1677,14 @@ export const useChatWorkspaceController = (
     runningCount,
     setHistoryOpen,
     selectSession,
-    createDraft,
-    adoptDraftSession,
+    planSelectedDraftReuse,
+    planDraftReplacement,
+    commitDraftCreation,
+    finalizeDraftCreation,
+    promoteSelectedTargetToExplicit,
+    planDraftSessionAdoption,
+    commitDraftSessionAdoption,
+    finalizeDraftSessionAdoption,
     isSelectionCurrent,
     refreshCatalog,
     loadNextCatalogPage,

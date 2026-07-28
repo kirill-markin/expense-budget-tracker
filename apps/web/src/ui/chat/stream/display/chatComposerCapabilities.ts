@@ -4,9 +4,11 @@ import type { ChatComposerAction } from "../streamRecovery";
 export type ChatComposerCapabilitiesParams = Readonly<{
   composerAction: ChatComposerAction;
   isHistoryLoaded: boolean;
+  isTextareaReady: boolean;
   isStopping: boolean;
   isLiveStreamConnected: boolean;
   isAttachmentProcessing: boolean;
+  isSubmissionPending: boolean;
   dictationState: ChatDictationState;
   hasPendingMessage: boolean;
   shouldSubmitOnEnter: boolean;
@@ -31,9 +33,11 @@ export const getChatComposerCapabilities = (
   const {
     composerAction,
     isHistoryLoaded,
+    isTextareaReady,
     isStopping,
     isLiveStreamConnected,
     isAttachmentProcessing,
+    isSubmissionPending,
     dictationState,
     hasPendingMessage,
     shouldSubmitOnEnter,
@@ -49,6 +53,7 @@ export const getChatComposerCapabilities = (
       || isStopping
       || isDictationActive
       || isAttachmentProcessing
+      || isSubmissionPending
       || isLiveStreamConnected
       || !hasPendingMessage;
   const isEnterSubmissionEnabled = shouldSubmitOnEnter
@@ -56,7 +61,7 @@ export const getChatComposerCapabilities = (
     && !isSubmitButtonDisabled;
 
   return {
-    isTextareaDisabled: isDictationActive,
+    isTextareaDisabled: !isTextareaReady || isDictationActive,
     isSubmitButtonDisabled,
     isEnterSubmissionEnabled,
     isAttachButtonDisabled: !canAttachFiles,

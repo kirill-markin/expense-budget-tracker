@@ -16,20 +16,32 @@ import {
 } from "./chatWorkspaceState";
 import type { ChatSessionSummary } from "./chatSessionSummaryTransport";
 import {
+  createChatDraftCreationStorageMutations,
+  createChatPendingSubmissionSettlementStorageMutation,
   getMountedChatComposerTarget,
+  planRejectedChatPendingSubmissionSettlement,
+  planUnresolvedChatPendingSubmissionSettlement,
   readMountedChatDraftText,
+  rollbackChatStorageTransaction,
   resolveSelectedChatDraftUntouched,
   restoreChatDraftTextForTarget,
   restoreMountedChatDraftText,
+  stageChatDraftStorageDisposal,
+  stageChatStorageTransaction,
   updateChatDraftTextForTarget,
+  type ChatStorageMutation,
 } from "../shell/layout/ChatLayoutProvider";
 import {
   getChatDraftStorageKey,
   writeChatDraft,
 } from "../shell/layout/chatDraftStorage";
-import { isChatDraftUntouched } from "../shell/panel/chatPanelRuntime";
+import {
+  isChatDraftUntouched,
+  type ChatComposerMemoryState,
+} from "../shell/panel/chatPanelRuntime";
 import {
   clearChatSelection,
+  getChatActiveDraftStorageKey,
   getChatSelectionStorageKey,
   writeChatSelection,
 } from "./chatSelectionStorage";
@@ -38,6 +50,8 @@ import {
   resolveChatBootstrapSelection,
   resolveChatControllerNavigationObservation,
   resolveChatControllerNavigationWrite,
+  resolveChatDraftSessionAdoption,
+  resolveChatDraftCreationPlan,
   resolveChatHistoryErrorMessage,
   resolveChatHistoryPaginationFocus,
   resolveChatHistoryStatusVisibility,
@@ -45,6 +59,7 @@ import {
   resolveChatPopStateNavigation,
   resolvePostReadyAutomaticCatalogSelection,
   resolveChatUrlSynchronization,
+  promoteSelectedChatWorkspaceTargetToExplicit,
   shouldReuseSelectedChatDraft,
 } from "./useChatWorkspaceController";
 
@@ -79,6 +94,397 @@ const createStorage = (): Storage => {
   };
 };
 
+const createFailingMutationStorage = (
+  baseStorage: Storage,
+  failureMutationIndex: number,
+): Storage => {
+  let mutationIndex = 0;
+  const runMutation = (mutation: () => void): void => {
+    const currentMutationIndex = mutationIndex;
+    mutationIndex += 1;
+    if (currentMutationIndex === failureMutationIndex) {
+      throw new Error(
+        `Synthetic chat storage failure at mutation ${failureMutationIndex}`,
+      );
+    }
+    mutation();
+  };
+
+  return {
+    get length(): number {
+      return baseStorage.length;
+    },
+    clear: (): void => runMutation(() => baseStorage.clear()),
+    getItem: (key: string): string | null => baseStorage.getItem(key),
+    key: (index: number): string | null => baseStorage.key(index),
+    removeItem: (key: string): void =>
+      runMutation(() => baseStorage.removeItem(key)),
+    setItem: (key: string, value: string): void =>
+      runMutation(() => baseStorage.setItem(key, value)),
+  };
+};
+
+const createAdoptionStorageMutations = (
+  storage: Storage,
+  storageKeys: readonly [string, string, string, string],
+): ReadonlyArray<ChatStorageMutation> => [
+  {
+    storageKey: storageKeys[0],
+    apply: (): void => storage.setItem(storageKeys[0], "destination"),
+  },
+  {
+    storageKey: storageKeys[1],
+    apply: (): void => storage.removeItem(storageKeys[1]),
+  },
+  {
+    storageKey: storageKeys[2],
+    apply: (): void => storage.removeItem(storageKeys[2]),
+  },
+  {
+    storageKey: storageKeys[3],
+    apply: (): void => storage.setItem(storageKeys[3], "selection"),
+  },
+];
+
+test("chat adoption storage staging restores every key after each commit-phase failure", (): void => {
+  const storageKeys = [
+    "destination-draft",
+    "source-draft",
+    "active-draft",
+    "selection",
+  ] as const;
+  const initialValues = [
+    "previous destination",
+    "source follow-up",
+    "draft-source",
+    "previous selection",
+  ] as const;
+
+  for (
+    let failureMutationIndex = 0;
+    failureMutationIndex < storageKeys.length;
+    failureMutationIndex += 1
+  ) {
+    const baseStorage = createStorage();
+    storageKeys.forEach((storageKey, index): void => {
+      const initialValue = initialValues[index];
+      if (initialValue === undefined) {
+        throw new Error(`Missing initial storage value at index ${index}`);
+      }
+      baseStorage.setItem(storageKey, initialValue);
+    });
+    const failingStorage = createFailingMutationStorage(
+      baseStorage,
+      failureMutationIndex,
+    );
+
+    assert.throws(
+      () => stageChatStorageTransaction(
+        failingStorage,
+        createAdoptionStorageMutations(failingStorage, storageKeys),
+      ),
+      new RegExp(`mutation ${failureMutationIndex}`, "u"),
+    );
+    assert.deepEqual(
+      storageKeys.map((storageKey): string | null =>
+        baseStorage.getItem(storageKey)),
+      initialValues,
+    );
+  }
+});
+
+test("chat adoption storage staging can be rolled back after a successful stage", (): void => {
+  const storage = createStorage();
+  const storageKeys = [
+    "destination-draft",
+    "source-draft",
+    "active-draft",
+    "selection",
+  ] as const;
+  const initialValues = [
+    "previous destination",
+    "source follow-up",
+    "draft-source",
+    "previous selection",
+  ] as const;
+  storageKeys.forEach((storageKey, index): void => {
+    const initialValue = initialValues[index];
+    if (initialValue === undefined) {
+      throw new Error(`Missing initial storage value at index ${index}`);
+    }
+    storage.setItem(storageKey, initialValue);
+  });
+
+  const transaction = stageChatStorageTransaction(
+    storage,
+    createAdoptionStorageMutations(storage, storageKeys),
+  );
+  assert.deepEqual(
+    storageKeys.map((storageKey): string | null => storage.getItem(storageKey)),
+    ["destination", null, null, "selection"],
+  );
+
+  rollbackChatStorageTransaction(transaction);
+  assert.deepEqual(
+    storageKeys.map((storageKey): string | null => storage.getItem(storageKey)),
+    initialValues,
+  );
+});
+
+test("chat draft disposal retains storage on failure and succeeds on retry", (): void => {
+  const storage = createStorage();
+  const scope = {
+    mode: "demo",
+    userId: "local",
+  } as const;
+  const target = {
+    kind: "draft",
+    draftId: "draft-disposal-retry",
+  } as const;
+  const storageKey = getChatDraftStorageKey(scope, target);
+  writeChatDraft(storage, scope, target, "retained draft");
+
+  assert.throws(
+    () => stageChatDraftStorageDisposal(
+      createFailingMutationStorage(storage, 0),
+      scope,
+      target,
+    ),
+    /Synthetic chat storage failure at mutation 0/u,
+  );
+  assert.equal(storage.getItem(storageKey), "retained draft");
+
+  stageChatDraftStorageDisposal(storage, scope, target);
+  assert.equal(storage.getItem(storageKey), null);
+});
+
+test("rejected submission settlement stages restored text before memory can commit", (): void => {
+  const scope = { mode: "demo", userId: "local" } as const;
+  const target = {
+    kind: "draft",
+    draftId: "draft-rejected-settlement",
+  } as const;
+  const pendingSubmission = {
+    text: "retry rejected submission",
+    attachments: [],
+  } as const;
+  const currentMemory: ChatComposerMemoryState = {
+    pendingAttachments: [],
+    attachmentErrors: [],
+    isAttachmentProcessing: false,
+    pendingSubmission,
+    composerContentOwner: "pending_submission",
+  };
+  const settlement = planRejectedChatPendingSubmissionSettlement(
+    "",
+    currentMemory,
+    pendingSubmission,
+  );
+  assert.notEqual(settlement, null);
+  if (settlement === null) {
+    throw new Error("Rejected submission settlement plan is missing");
+  }
+  const storage = createStorage();
+  const storageKey = getChatDraftStorageKey(scope, target);
+  const failingStorage = createFailingMutationStorage(storage, 0);
+
+  assert.throws(
+    () => stageChatStorageTransaction(failingStorage, [
+      createChatPendingSubmissionSettlementStorageMutation(
+        failingStorage,
+        scope,
+        target,
+        settlement.nextText,
+      ),
+    ]),
+    /Synthetic chat storage failure at mutation 0/u,
+  );
+  assert.equal(storage.getItem(storageKey), null);
+  assert.equal(currentMemory.pendingSubmission, pendingSubmission);
+
+  stageChatStorageTransaction(storage, [
+    createChatPendingSubmissionSettlementStorageMutation(
+      storage,
+      scope,
+      target,
+      settlement.nextText,
+    ),
+  ]);
+  assert.equal(storage.getItem(storageKey), pendingSubmission.text);
+  assert.equal(settlement.nextMemory.pendingSubmission, null);
+});
+
+test("unresolved submission settlement stages restored text before ownership release", (): void => {
+  const scope = { mode: "demo", userId: "local" } as const;
+  const target = {
+    kind: "draft",
+    draftId: "draft-unresolved-settlement",
+  } as const;
+  const pendingSubmission = {
+    text: "recover unresolved submission",
+    attachments: [],
+  } as const;
+  const currentMemory: ChatComposerMemoryState = {
+    pendingAttachments: [],
+    attachmentErrors: [],
+    isAttachmentProcessing: false,
+    pendingSubmission,
+    composerContentOwner: "pending_submission",
+  };
+  const settlement = planUnresolvedChatPendingSubmissionSettlement(
+    "",
+    currentMemory,
+    pendingSubmission,
+  );
+  assert.notEqual(settlement, null);
+  if (settlement === null) {
+    throw new Error("Unresolved submission settlement plan is missing");
+  }
+  const storage = createStorage();
+  const storageKey = getChatDraftStorageKey(scope, target);
+  const failingStorage = createFailingMutationStorage(storage, 0);
+
+  assert.throws(
+    () => stageChatStorageTransaction(failingStorage, [
+      createChatPendingSubmissionSettlementStorageMutation(
+        failingStorage,
+        scope,
+        target,
+        settlement.nextText,
+      ),
+    ]),
+    /Synthetic chat storage failure at mutation 0/u,
+  );
+  assert.equal(storage.getItem(storageKey), null);
+  assert.equal(currentMemory.pendingSubmission, pendingSubmission);
+
+  stageChatStorageTransaction(storage, [
+    createChatPendingSubmissionSettlementStorageMutation(
+      storage,
+      scope,
+      target,
+      settlement.nextText,
+    ),
+  ]);
+  assert.equal(storage.getItem(storageKey), pendingSubmission.text);
+  assert.equal(
+    settlement.nextMemory.pendingSubmission,
+    pendingSubmission,
+  );
+});
+
+test("explicit history selection storage staging retains the prior selection on failure", (): void => {
+  const storage = createStorage();
+  const scope = {
+    mode: "workspace",
+    userId: "user-history-failure",
+    workspaceId: "workspace-history-failure",
+  } as const;
+  const previousTarget = {
+    kind: "session",
+    sessionId: "session-history-previous",
+  } as const;
+  const nextTarget = {
+    kind: "session",
+    sessionId: "session-history-next",
+  } as const;
+  const selectionStorageKey = getChatSelectionStorageKey(scope);
+  writeChatSelection(storage, scope, previousTarget);
+  const previousSelection = storage.getItem(selectionStorageKey);
+
+  const failingStorage = createFailingMutationStorage(storage, 0);
+  assert.throws(
+    () => writeChatSelection(failingStorage, scope, nextTarget),
+    /Synthetic chat storage failure at mutation 0/u,
+  );
+  assert.equal(storage.getItem(selectionStorageKey), previousSelection);
+});
+
+test("New stages active draft, selection, and abandoned text as one transaction", (): void => {
+  const scope = {
+    mode: "demo",
+    userId: "local",
+  } as const;
+  const sourceTarget = {
+    kind: "draft",
+    draftId: "draft-new-transaction-source",
+  } as const;
+  const nextTarget = {
+    kind: "draft",
+    draftId: "draft-new-transaction-next",
+  } as const;
+  const workspacePlan = resolveChatDraftCreationPlan({
+    kind: "replace_selected_target",
+    currentState: createChatWorkspaceState(sourceTarget, "explicit"),
+    currentSelectionEpoch: 14,
+    currentActiveDraftId: sourceTarget.draftId,
+    nextDraftId: nextTarget.draftId,
+  });
+  const activeDraftStorageKey = getChatActiveDraftStorageKey(scope);
+  const selectionStorageKey = getChatSelectionStorageKey(scope);
+  const sourceDraftStorageKey = getChatDraftStorageKey(scope, sourceTarget);
+  const initialValues = [
+    sourceTarget.draftId,
+    JSON.stringify({
+      ...sourceTarget,
+      selectionReason: "explicit",
+    }),
+    "unsent source text",
+  ] as const;
+
+  for (let failureIndex = 0; failureIndex < 3; failureIndex += 1) {
+    const storage = createStorage();
+    storage.setItem(activeDraftStorageKey, initialValues[0]);
+    storage.setItem(selectionStorageKey, initialValues[1]);
+    storage.setItem(sourceDraftStorageKey, initialValues[2]);
+    const failingStorage = createFailingMutationStorage(storage, failureIndex);
+
+    assert.throws(
+      () => stageChatStorageTransaction(
+        failingStorage,
+        createChatDraftCreationStorageMutations(
+          failingStorage,
+          scope,
+          workspacePlan,
+          sourceTarget,
+        ),
+      ),
+      new RegExp(`mutation ${failureIndex}`, "u"),
+    );
+    assert.deepEqual(
+      [
+        storage.getItem(activeDraftStorageKey),
+        storage.getItem(selectionStorageKey),
+        storage.getItem(sourceDraftStorageKey),
+      ],
+      initialValues,
+    );
+  }
+
+  const storage = createStorage();
+  storage.setItem(activeDraftStorageKey, initialValues[0]);
+  storage.setItem(selectionStorageKey, initialValues[1]);
+  storage.setItem(sourceDraftStorageKey, initialValues[2]);
+  stageChatStorageTransaction(
+    storage,
+    createChatDraftCreationStorageMutations(
+      storage,
+      scope,
+      workspacePlan,
+      sourceTarget,
+    ),
+  );
+  assert.equal(storage.getItem(activeDraftStorageKey), nextTarget.draftId);
+  assert.equal(
+    storage.getItem(selectionStorageKey),
+    JSON.stringify({
+      ...nextTarget,
+      selectionReason: "explicit",
+    }),
+  );
+  assert.equal(storage.getItem(sourceDraftStorageKey), null);
+});
+
 test("chat workspace state keeps an explicit target and selection reason", (): void => {
   const draftState = createChatWorkspaceState(
     { kind: "draft", draftId: "draft-1" },
@@ -96,6 +502,89 @@ test("chat workspace state keeps an explicit target and selection reason", (): v
     sessionId: "session-1",
   });
   assert.equal(sessionState.selectionReason, "explicit");
+});
+
+test("meaningful activity promotes only the selection reason at the exact epoch", (): void => {
+  const selectionEpoch = 12;
+  const automaticState = createChatWorkspaceState(
+    { kind: "session", sessionId: "session-automatic" },
+    "automatic",
+  );
+  const explicitState = promoteSelectedChatWorkspaceTargetToExplicit(
+    automaticState,
+    automaticState.target,
+  );
+
+  assert.equal(explicitState.selectionReason, "explicit");
+  assert.equal(explicitState.target, automaticState.target);
+  assert.equal(selectionEpoch, 12);
+  assert.equal(
+    resolvePostReadyAutomaticCatalogSelection({
+      requestStartedReady: true,
+      requestSelectionEpoch: selectionEpoch,
+      requestSelectionReason: "automatic",
+      currentSelectionEpoch: selectionEpoch,
+      currentSelectionReason: explicitState.selectionReason,
+      currentTarget: explicitState.target,
+      summaries: [createSummary("session-new", "running", 0)],
+      unavailableSessionIds: new Set<string>(),
+      currentTimeMs: Date.parse("2026-07-26T13:00:00.000Z"),
+      draftId: "draft-active",
+    }),
+    null,
+  );
+  assert.throws(
+    () => promoteSelectedChatWorkspaceTargetToExplicit(
+      explicitState,
+      { kind: "session", sessionId: "session-other" },
+    ),
+    /Cannot promote unselected chat target/u,
+  );
+});
+
+test("draft adoption uses one authoritative target and epoch snapshot", (): void => {
+  assert.deepEqual(
+    resolveChatDraftSessionAdoption({
+      currentTarget: { kind: "draft", draftId: "draft-a" },
+      currentSelectionEpoch: 4,
+      draftId: "draft-a",
+      sessionId: "session-a",
+      expectedSelectionEpoch: 4,
+    }),
+    {
+      kind: "selected",
+      target: { kind: "session", sessionId: "session-a" },
+      selectionEpoch: 4,
+    },
+  );
+  assert.deepEqual(
+    resolveChatDraftSessionAdoption({
+      currentTarget: { kind: "session", sessionId: "session-b" },
+      currentSelectionEpoch: 5,
+      draftId: "draft-a",
+      sessionId: "session-a",
+      expectedSelectionEpoch: 4,
+    }),
+    {
+      kind: "background",
+      target: { kind: "session", sessionId: "session-a" },
+      draftStateDisposition: "transfer",
+    },
+  );
+  assert.deepEqual(
+    resolveChatDraftSessionAdoption({
+      currentTarget: { kind: "draft", draftId: "draft-a" },
+      currentSelectionEpoch: 6,
+      draftId: "draft-a",
+      sessionId: "session-a",
+      expectedSelectionEpoch: 4,
+    }),
+    {
+      kind: "background",
+      target: { kind: "session", sessionId: "session-a" },
+      draftStateDisposition: "preserve",
+    },
+  );
 });
 
 test("catalog page state preserves ordering, pagination, and known summaries on failure", (): void => {
@@ -879,27 +1368,27 @@ test("New reuses an untouched automatic draft as an explicit selection and fence
     { kind: "draft", draftId: "draft-reused" },
     "automatic",
   );
-  const reusedTarget = resolveNewChatDraftTarget(
-    automaticState.target,
-    "draft-reused",
-    shouldReuseSelectedChatDraft(
-      true,
-      automaticState.target,
-      true,
-    ),
-    "draft-unused",
-  );
+  const reusePlan = resolveChatDraftCreationPlan({
+    kind: "reuse_selected_draft",
+    currentState: automaticState,
+    currentSelectionEpoch: requestSelectionEpoch,
+    currentActiveDraftId: "draft-reused",
+  });
+  const reusedTarget = reusePlan.target;
   const explicitState = selectChatWorkspaceTarget(
     automaticState,
     reusedTarget,
     "explicit",
   );
-  const explicitSelectionEpoch = requestSelectionEpoch + 1;
+  const explicitSelectionEpoch = reusePlan.selectionEpoch;
 
+  assert.equal(reusePlan.kind, "transition");
   assert.deepEqual(reusedTarget, {
     kind: "draft",
     draftId: "draft-reused",
   });
+  assert.equal(reusePlan.shouldPersistActiveDraft, true);
+  assert.equal(reusePlan.shouldPersistSelection, true);
   assert.deepEqual(explicitState.target, reusedTarget);
   assert.equal(explicitState.selectionReason, "explicit");
   assert.equal(explicitSelectionEpoch, 9);
@@ -1004,8 +1493,18 @@ test("New reuses only a completely untouched mounted draft", (): void => {
     messageCount: 0,
   } as const;
   const currentDraft = { kind: "draft", draftId: "draft-current" } as const;
+  const explicitReusePlan = resolveChatDraftCreationPlan({
+    kind: "reuse_selected_draft",
+    currentState: createChatWorkspaceState(currentDraft, "explicit"),
+    currentSelectionEpoch: 21,
+    currentActiveDraftId: currentDraft.draftId,
+  });
 
   assert.equal(isChatDraftUntouched(untouchedInput), true);
+  assert.equal(explicitReusePlan.kind, "reuse");
+  assert.equal(explicitReusePlan.selectionEpoch, 21);
+  assert.equal(explicitReusePlan.shouldPersistActiveDraft, false);
+  assert.equal(explicitReusePlan.shouldPersistSelection, false);
   assert.equal(
     shouldReuseSelectedChatDraft(true, currentDraft, true),
     true,
