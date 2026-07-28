@@ -3,14 +3,29 @@
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  ChatHistoryDialog,
+  type ChatHistorySession,
+} from "../history/ChatHistoryDialog";
 import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
   mode: "sidebar" | "fullscreen";
   transcriptActionsDisabled: boolean;
   copyButtonLabel: string;
+  historyOpen: boolean;
+  historySessions: ReadonlyArray<ChatHistorySession>;
+  selectedSessionId: string | null;
+  runningCount: number;
+  historyLoading: boolean;
+  historyHasLoadedFirstPage: boolean;
+  historyHasMore: boolean;
+  historyErrorMessage: string | null;
   onCopyTranscript: () => void;
-  onClearConversation: () => void;
+  onCreateDraft: () => void;
+  onHistoryOpenChange: (open: boolean) => void;
+  onSelectSession: (sessionId: string) => void;
+  onLoadMoreHistory: () => void;
   onCloseSidebar: () => void;
 }>;
 
@@ -19,8 +34,19 @@ export const ChatPanelHeader = (props: Props): ReactElement => {
     mode,
     transcriptActionsDisabled,
     copyButtonLabel,
+    historyOpen,
+    historySessions,
+    selectedSessionId,
+    runningCount,
+    historyLoading,
+    historyHasLoadedFirstPage,
+    historyHasMore,
+    historyErrorMessage,
     onCopyTranscript,
-    onClearConversation,
+    onCreateDraft,
+    onHistoryOpenChange,
+    onSelectSession,
+    onLoadMoreHistory,
     onCloseSidebar,
   } = props;
   const { t } = useTranslation();
@@ -29,6 +55,20 @@ export const ChatPanelHeader = (props: Props): ReactElement => {
     <div className={styles.header}>
       <span className={styles.headerTitle}>{t("chat.title")}</span>
       <div className={styles.headerActions}>
+        <ChatHistoryDialog
+          open={historyOpen}
+          sessions={historySessions}
+          selectedSessionId={selectedSessionId}
+          runningCount={runningCount}
+          isLoading={historyLoading}
+          hasLoadedFirstPage={historyHasLoadedFirstPage}
+          hasMore={historyHasMore}
+          errorMessage={historyErrorMessage}
+          onOpenChange={onHistoryOpenChange}
+          onSelectSession={onSelectSession}
+          onCreateDraft={onCreateDraft}
+          onLoadMore={onLoadMoreHistory}
+        />
         <button
           type="button"
           className={`${styles.closeButton} ${styles.copyButton}`}
@@ -53,9 +93,9 @@ export const ChatPanelHeader = (props: Props): ReactElement => {
         </button>
         <button
           type="button"
+          data-testid="chat-new"
           className={styles.closeButton}
-          onClick={onClearConversation}
-          disabled={transcriptActionsDisabled}
+          onClick={onCreateDraft}
         >
           {t("chat.new")}
         </button>

@@ -16,6 +16,25 @@ export type ChatDraftInsertionResult = Readonly<{
   selection: ChatDraftSelection;
 }>;
 
+export const getNextChatDictationOperationEpoch = (
+  currentEpoch: number,
+): number => {
+  if (!Number.isSafeInteger(currentEpoch) || currentEpoch < 0) {
+    throw new Error("Chat dictation operation epoch must be a non-negative safe integer");
+  }
+  if (currentEpoch === Number.MAX_SAFE_INTEGER) {
+    throw new Error("Chat dictation operation epoch is exhausted");
+  }
+
+  return currentEpoch + 1;
+};
+
+export const isChatDictationOperationCurrent = (
+  operationEpoch: number,
+  currentEpoch: number,
+): boolean =>
+  operationEpoch === currentEpoch;
+
 const isWhitespaceCharacter = (value: string | undefined): boolean =>
   value !== undefined && /\s/.test(value);
 
@@ -98,7 +117,6 @@ const normalizeAudioMediaType = (mediaType: string): string => {
 
 type ChatTranscriptionResponse = Readonly<{
   text: string;
-  sessionId: string;
 }>;
 
 const isHtmlContentType = (contentType: string | null): boolean => {
@@ -135,7 +153,6 @@ export const sanitizeChatTranscriptionErrorText = (
 
 export const transcribeChatAudio = async (
   blob: Blob,
-  sessionId: string,
   t: ChatTranslation,
 ): Promise<ChatTranscriptionResponse> => {
   const mediaType = normalizeAudioMediaType(blob.type === "" ? "audio/webm" : blob.type);
@@ -145,7 +162,6 @@ export const transcribeChatAudio = async (
   const formData = new FormData();
   formData.append("file", file);
   formData.append("source", "web");
-  formData.append("sessionId", sessionId);
 
   const response = await fetchWithCsrf("/api/chat/transcriptions", {
     method: "POST",
@@ -164,9 +180,5 @@ export const transcribeChatAudio = async (
   if (typeof payload.text !== "string" || payload.text.trim() === "") {
     throw new Error(t("chat.dictationFailed"));
   }
-  if (typeof payload.sessionId !== "string" || payload.sessionId.trim() === "") {
-    throw new Error(t("chat.dictationFailed"));
-  }
-
   return payload;
 };

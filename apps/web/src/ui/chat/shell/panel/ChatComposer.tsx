@@ -41,6 +41,8 @@ export type AttachmentPreparationError = Readonly<{
   message: string;
 }>;
 
+export type DeferredAttachmentIngestion = () => Promise<void>;
+
 const getBase64DecodedByteLength = (base64Data: string): number => {
   const paddingBytes = base64Data.endsWith("==")
     ? 2
@@ -61,6 +63,9 @@ type Props = Readonly<{
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onInputChange: (value: string) => void;
   onIngestFiles: (files: ReadonlyArray<File>) => Promise<number>;
+  onPrepareDeferredIngestion: (
+    files: ReadonlyArray<File>,
+  ) => DeferredAttachmentIngestion | null;
   onRemoveAttachment: (index: number) => void;
   onToggleDictation: () => Promise<void>;
   onSend: () => Promise<void>;
@@ -81,6 +86,7 @@ export const ChatComposer = (props: Props): ReactElement => {
     textareaRef,
     onInputChange,
     onIngestFiles,
+    onPrepareDeferredIngestion,
     onRemoveAttachment,
     onToggleDictation,
     onSend,
@@ -269,8 +275,16 @@ export const ChatComposer = (props: Props): ReactElement => {
       return;
     }
 
+    const deferredIngestion = onPrepareDeferredIngestion(imageFiles);
+    if (deferredIngestion === null) {
+      return;
+    }
     window.setTimeout((): void => {
-      void onIngestFiles(imageFiles);
+      void deferredIngestion().catch((error: unknown): void => {
+        window.setTimeout((): void => {
+          throw error;
+        }, 0);
+      });
     }, 0);
   };
 
@@ -375,6 +389,7 @@ export const ChatComposer = (props: Props): ReactElement => {
         <div className={styles.controlsRight}>
           <button
             type="button"
+            data-testid="chat-dictation"
             className={styles.microphoneButton}
             disabled={capabilities.isMicrophoneButtonDisabled}
             aria-label={microphoneAriaLabel}
