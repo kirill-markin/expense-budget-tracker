@@ -1,14 +1,12 @@
 "use client";
 
 import {
-  startTransition,
   useCallback,
   useEffect,
   useReducer,
   useRef,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useRouter } from "next/navigation";
 
 import {
   useChatHistory,
@@ -16,14 +14,6 @@ import {
 } from "@/ui/hooks/useChatHistory";
 import type { ContentPart } from "@/server/chat/types";
 import type { PendingAttachment } from "../../shell/panel/FileAttachment";
-import {
-  createChatBootstrapLocalState,
-  deriveLastUserMessageAt,
-  readChatBootstrapLocalState,
-  readChatBootstrapLocalStateFromStorageEvent,
-  resolveChatBootstrapMode,
-  writeChatBootstrapLocalState,
-} from "../bootstrap/chatBootstrapLocalState";
 import type { ChatSessionSnapshot } from "../bootstrap/chatSessionSnapshot";
 import {
   ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
@@ -31,52 +21,52 @@ import {
   type ChatComposerAction,
   type ChatRunState,
 } from "../../stream/streamRecovery";
+import type {
+  ChatTarget,
+} from "../../workspace/chatWorkspaceState";
+import type {
+  ChatWorkspaceInvalidationSource,
+  ChatDraftSessionAdoption,
+} from "../../workspace/useChatWorkspaceController";
 import {
   assertCanonicalChatTurnId,
   beginChatSnapshotRequest,
-  buildChatSendRequestBody,
   buildFailedChatSendHistory,
   buildPendingChatSendHistory,
-  buildStoppedChatSendHistory,
   classifyConfirmedChatStopSnapshotFailure,
   completeChatTurnCancellation,
-  createChatSession,
-  createSingleFlightChatClearOperationRunner,
   createSingleFlightChatSendReconciliationRunner,
+  createSingleFlightChatSnapshotPoller,
   createSingleFlightChatTurnCancellationRunner,
   createChatSnapshotRequestCoordinator,
-  createSingleFlightChatSnapshotPoller,
-  deleteChatConversation,
+  createChatSendTransport,
   fetchChatSessionSnapshot,
   isDefinitiveChatRequestRejection,
-  isChatClearOperationOwnerCurrent,
-  isChatPreSessionSendOwnerCurrent,
-  isChatSnapshotPollingOwnerCurrent,
   isChatSendReconciliationOwnerCurrent,
   isChatStopOperationOwnerCurrent,
   isChatStopSettlementOwned,
-  isChatTurnOwnerForSession,
   isChatTurnCancellationSettlementOwned,
+  isChatTurnOwnerForSession,
   postStopChatSession,
   prepareChatSendRequest,
   reconcileConfirmedChatStopSnapshot,
   resolveChatExactTurnOwnership,
-  resolveChatPreSessionSendAdoption,
   resolveChatSendReconciliationDisposition,
   resolveDefinitiveChatSendSnapshotFailureHistory,
   resolveConfirmedChatStopSnapshotDisposition,
   resolveConfirmedChatTurnStopHistory,
+  resolveChatSnapshotFailureDisposition,
   resolveChatSnapshotRequest,
   restorePendingChatTurnAfterCancellationRejection,
   shouldRestoreChatRunAfterSnapshotFailure,
   shouldRestoreChatTurnAfterCancellationRejection,
+  shouldAbortChatStreamForControllerCleanup,
+  shouldAbortChatStreamForSelectionChange,
   streamChatResponse,
+  type ChatConfirmedStopSnapshotResolution,
+  type ChatSelectionGuard,
   type ChatSendReconciliationOwner,
   type ChatSendReconciliationRunner,
-  type ChatClearOperationOwner,
-  type ChatClearOperationRunner,
-  type ChatConfirmedStopSnapshotResolution,
-  type ChatPreSessionSendOwner,
   type ChatStopOperationOwner,
   type ChatTurnCancellationResolution,
   type ChatTurnCancellationRunner,
@@ -89,24 +79,41 @@ import {
   selectEffectiveSnapshotRunState,
   selectIsAssistantRunActive,
   selectIsSelectedSessionStopping,
-  shouldRefreshMainContentForVersion,
   shouldReplaceHistoryForSnapshot,
-  type ChatMainContentInvalidationSource,
   type ChatSessionControllerAction,
 } from "./chatSessionControllerState";
-import {
-  getMainContentInvalidationSourceId,
-  publishMainContentInvalidation,
-} from "../invalidation/mainContentInvalidationChannel";
 
 type UseChatSessionControllerParams = Readonly<{
-  mode: "sidebar" | "fullscreen";
   workspaceId: string;
+  target: ChatTarget;
+  selectionEpoch: number;
+  isWorkspaceReady: boolean;
+  isSelectionCurrent: (
+    target: ChatTarget,
+    selectionEpoch: number,
+  ) => boolean;
+  adoptDraftSession: (
+    draftId: string,
+    sessionId: string,
+    expectedSelectionEpoch: number,
+  ) => ChatDraftSessionAdoption;
+  refreshCatalog: () => Promise<void>;
+  observeSessionInvalidation: (
+    sessionId: string,
+    version: number,
+    source: ChatWorkspaceInvalidationSource,
+  ) => void;
+  recoverInvalidSessionSelection: (
+    sessionId: string,
+    errorMessage: string,
+  ) => boolean;
 }>;
 
 export type SendChatMessageParams = Readonly<{
   text: string;
   attachments: ReadonlyArray<PendingAttachment>;
+  onSubmissionRejected: () => void;
+  onSubmissionUnresolved: () => void;
 }>;
 
 export type ChatSessionController = Readonly<{
@@ -118,11 +125,8 @@ export type ChatSessionController = Readonly<{
   isStopping: boolean;
   currentSessionId: string | null;
   composerAction: ChatComposerAction;
-  acceptServerSessionId: (sessionId: string) => void;
-  ensureWritableSessionId: () => Promise<string>;
   sendMessage: (params: SendChatMessageParams) => Promise<void>;
   stopMessage: () => Promise<void>;
-  clearConversation: () => Promise<void>;
 }>;
 
 type NormalizedChatSessionSnapshot = Readonly<{
@@ -145,50 +149,43 @@ type ChatSnapshotLoadResult =
     snapshot: NormalizedChatSessionSnapshot | null;
   }>;
 
-type PendingChatTurn = ChatSendReconciliationOwner & Readonly<{
+type OwnedChatTurn = ChatSendReconciliationOwner & Readonly<{
+  guard: ChatSelectionGuard;
+}>;
+
+type PendingChatTurn = OwnedChatTurn & Readonly<{
   requestBody: string;
   submittedContent: ReadonlyArray<ContentPart>;
   authoritativeMessages: ReadonlyArray<StoredMessage>;
   retryAbortController: AbortController;
+  onSubmissionRejected: () => void;
 }>;
 
-type PendingChatTurnCancellation = ChatSendReconciliationOwner;
+type PendingChatTurnCancellation = OwnedChatTurn;
 
 type ConfirmedChatTurnCancellation =
-  ChatSendReconciliationOwner & Readonly<{
+  OwnedChatTurn & Readonly<{
     response: ExactTurnStopChatSessionResponse;
   }>;
 
-type PreSessionChatTurn = ChatPreSessionSendOwner & Readonly<{
-  authoritativeMessages: ReadonlyArray<StoredMessage>;
-  retryAbortController: AbortController;
-  submittedContent: ReadonlyArray<ContentPart>;
+type FreshDraftChatTurn = Readonly<{
+  ownerId: symbol;
+  guard: ChatSelectionGuard;
+  abortController: AbortController;
+}>;
+
+type OwnedChatStopOperation = ChatStopOperationOwner & Readonly<{
+  guard: ChatSelectionGuard;
 }>;
 
 type ChatStopSnapshotReconciliationOwner = Readonly<{
   ownerId: symbol;
   sessionId: string;
+  guard: ChatSelectionGuard;
   abortController: AbortController;
 }>;
 
 type IsChatOperationOwnerCurrent = () => boolean;
-
-const toExactChatTurnOwner = (
-  preSessionChatTurn: PreSessionChatTurn | null,
-): ChatSendReconciliationOwner | null => {
-  if (
-    preSessionChatTurn === null
-    || preSessionChatTurn.initialSessionId === null
-  ) {
-    return null;
-  }
-
-  return {
-    ownerId: preSessionChatTurn.ownerId,
-    sessionId: preSessionChatTurn.initialSessionId,
-    turnId: preSessionChatTurn.turnId,
-  };
-};
 
 const isPendingChatTurnForSession = (
   pendingChatTurn: PendingChatTurn | null,
@@ -196,18 +193,6 @@ const isPendingChatTurnForSession = (
 ): boolean =>
   pendingChatTurn !== null
   && pendingChatTurn.sessionId === sessionId;
-
-const isPendingChatTurnOwnerCurrent = (
-  pendingChatTurn: PendingChatTurn,
-  currentPendingChatTurn: PendingChatTurn | null,
-  currentSessionId: string | null,
-): boolean =>
-  !pendingChatTurn.retryAbortController.signal.aborted
-  && isChatSendReconciliationOwnerCurrent(
-    pendingChatTurn,
-    currentPendingChatTurn,
-    currentSessionId,
-  );
 
 const waitForChatReconciliationRetry = (
   signal: AbortSignal,
@@ -218,11 +203,11 @@ const waitForChatReconciliationRetry = (
 
   return new Promise<void>((resolve) => {
     const finish = (): void => {
-      window.clearTimeout(intervalId);
+      window.clearTimeout(timeoutId);
       signal.removeEventListener("abort", finish);
       resolve();
     };
-    const intervalId = window.setTimeout(
+    const timeoutId = window.setTimeout(
       finish,
       ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
     );
@@ -230,16 +215,10 @@ const waitForChatReconciliationRetry = (
   });
 };
 
-const shouldAlwaysAdoptChatSnapshot = (
-  _snapshot: ChatSessionSnapshot,
-): boolean => true;
-
 export const useChatSessionController = (
   params: UseChatSessionControllerParams,
 ): ChatSessionController => {
-  const { mode, workspaceId } = params;
   const { t } = useTranslation();
-  const router = useRouter();
   const {
     messages,
     replaceMessages,
@@ -250,7 +229,6 @@ export const useChatSessionController = (
     upsertToolCall,
     finalizeAssistant,
     markAssistantError,
-    clearHistory,
   } = useChatHistory();
 
   const [state, dispatch] = useReducer(
@@ -259,20 +237,26 @@ export const useChatSessionController = (
     createInitialChatSessionControllerState,
   );
   const stateRef = useRef(state);
-  const abortRef = useRef<AbortController | null>(null);
-  const pendingSessionIdRef = useRef<Promise<string> | null>(null);
-  const preSessionChatTurnRef = useRef<PreSessionChatTurn | null>(null);
+  const activeStreamAbortRef = useRef<AbortController | null>(null);
+  const activeStreamSelectionEpochRef = useRef<number | null>(null);
+  const activeStreamUnadoptedDraftIdRef = useRef<string | null>(null);
+  const activeStreamAdoptedSessionIdRef = useRef<string | null>(null);
+  const isControllerMountedRef = useRef<boolean>(true);
+  const freshDraftChatTurnRef = useRef<FreshDraftChatTurn | null>(null);
   const pendingChatTurnRef = useRef<PendingChatTurn | null>(null);
-  const activeChatTurnRef = useRef<ChatSendReconciliationOwner | null>(null);
+  const activeChatTurnRef = useRef<OwnedChatTurn | null>(null);
   const pendingChatTurnCancellationRef =
     useRef<PendingChatTurnCancellation | null>(null);
   const confirmedChatTurnCancellationRef =
     useRef<ConfirmedChatTurnCancellation | null>(null);
-  const clearOperationRef = useRef<ChatClearOperationOwner | null>(null);
-  const stopOperationRef = useRef<ChatStopOperationOwner | null>(null);
+  const stopOperationRef = useRef<OwnedChatStopOperation | null>(null);
+  const selectedSessionPollAbortControllerRef =
+    useRef<AbortController | null>(null);
   const stopSnapshotReconciliationRef =
     useRef<ChatStopSnapshotReconciliationOwner | null>(null);
-  const invalidationSourceIdRef = useRef<string | null>(null);
+  const snapshotAbortControllersRef = useRef<Set<AbortController>>(
+    new Set<AbortController>(),
+  );
   const snapshotRequestCoordinatorRef = useRef(
     createChatSnapshotRequestCoordinator(),
   );
@@ -288,74 +272,75 @@ export const useChatSessionController = (
     stateRef.current = state;
   }, [state]);
 
-  const isAssistantRunActive = selectIsAssistantRunActive(state);
-  const composerAction = selectComposerAction(state);
-
-  const getInvalidationSourceId = useCallback((): string => {
-    if (invalidationSourceIdRef.current === null) {
-      invalidationSourceIdRef.current = getMainContentInvalidationSourceId();
-    }
-
-    return invalidationSourceIdRef.current;
+  const createSnapshotAbortController = useCallback((): AbortController => {
+    const abortController = new AbortController();
+    snapshotAbortControllersRef.current.add(abortController);
+    return abortController;
   }, []);
 
-  const refreshMainContent = useCallback((nextVersion: number): void => {
-    publishMainContentInvalidation({
-      workspaceId,
-      version: nextVersion,
-      sourceId: getInvalidationSourceId(),
-      emittedAt: Date.now(),
-    });
-
-    if (mode === "sidebar") {
-      startTransition(() => {
-        router.refresh();
-      });
-    }
-  }, [getInvalidationSourceId, mode, router, workspaceId]);
-
-  const applyMainContentInvalidationVersion = useCallback((
-    nextVersion: number,
-    source: ChatMainContentInvalidationSource,
+  const releaseSnapshotAbortController = useCallback((
+    abortController: AbortController,
   ): void => {
-    const currentState = stateRef.current;
-    const shouldRefresh = shouldRefreshMainContentForVersion(
-      currentState,
-      source,
-      nextVersion,
-    );
+    snapshotAbortControllersRef.current.delete(abortController);
+  }, []);
 
-    dispatchAction({
-      type: "main_content_invalidation_observed",
-      version: nextVersion,
-    });
-
-    if (!shouldRefresh) {
+  const abortSelectedSessionPoll = useCallback((): void => {
+    const abortController =
+      selectedSessionPollAbortControllerRef.current;
+    if (abortController === null) {
       return;
     }
+    selectedSessionPollAbortControllerRef.current = null;
+    abortController.abort();
+  }, []);
 
-    refreshMainContent(nextVersion);
-  }, [dispatchAction, refreshMainContent]);
+  const isAssistantRunActive = selectIsAssistantRunActive(state);
+  const isStopping = selectIsSelectedSessionStopping(state);
+  const composerAction: ChatComposerAction = state.currentSessionId === null
+    ? "send"
+    : selectComposerAction(state);
+
+  const isGuardCurrent = useCallback((
+    guard: ChatSelectionGuard,
+  ): boolean =>
+    params.isSelectionCurrent(
+      guard.target,
+      guard.selectionEpoch,
+    ), [params.isSelectionCurrent]);
+
+  const isSelectedStreamRetainedByStop = useCallback((
+    streamController: AbortController,
+    sessionId: string,
+    selectionEpoch: number,
+  ): boolean => {
+    const stopOperation = stopOperationRef.current;
+    return stopOperation !== null
+      && stopOperation.sessionId === sessionId
+      && stopOperation.guard.selectionEpoch === selectionEpoch
+      && isGuardCurrent(stopOperation.guard)
+      && activeStreamAbortRef.current === streamController
+      && activeStreamSelectionEpochRef.current === selectionEpoch
+      && activeStreamAdoptedSessionIdRef.current === sessionId;
+  }, [isGuardCurrent]);
 
   const loadChatSnapshot = useCallback(async (
-    sessionId: string | undefined,
+    sessionId: string,
+    guard: ChatSelectionGuard,
     signal: AbortSignal | undefined,
     replaceHistory: boolean,
-    shouldAdoptSnapshot: (snapshot: ChatSessionSnapshot) => boolean,
   ): Promise<ChatSnapshotLoadResult> => {
     const snapshotPromise = fetchChatSessionSnapshot(sessionId, signal, t);
-    const snapshotRequest = beginChatSnapshotRequest(
+    const startedRequest = beginChatSnapshotRequest(
       snapshotRequestCoordinatorRef.current,
-      sessionId ?? stateRef.current.currentSessionId ?? workspaceId,
-      0,
+      sessionId,
+      guard.selectionEpoch,
       snapshotPromise,
     );
-    snapshotRequestCoordinatorRef.current = snapshotRequest.coordinator;
-
+    snapshotRequestCoordinatorRef.current = startedRequest.coordinator;
     const resolution = await resolveChatSnapshotRequest(
       () => snapshotRequestCoordinatorRef.current,
       {
-        request: snapshotRequest.request,
+        request: startedRequest.request,
         snapshot: snapshotPromise,
       },
     );
@@ -367,27 +352,68 @@ export const useChatSessionController = (
     }
 
     const payload = resolution.snapshot;
-    if (resolution.kind === "superseded") {
+    const normalizedSnapshot: NormalizedChatSessionSnapshot = {
+      ...payload,
+      authoritativeRunState: payload.runState,
+      runState: selectEffectiveSnapshotRunState(
+        stateRef.current,
+        payload.sessionId,
+        payload.runState,
+      ),
+    };
+    if (
+      resolution.kind === "superseded"
+      || signal?.aborted === true
+      || !isGuardCurrent(guard)
+    ) {
       return {
         kind: "superseded",
-        snapshot: {
-          ...payload,
-          authoritativeRunState: payload.runState,
-          runState: selectEffectiveSnapshotRunState(
-            stateRef.current,
-            payload.sessionId,
-            payload.runState,
-          ),
-        },
+        snapshot: resolution.kind === "superseded"
+          && signal?.aborted !== true
+          && isGuardCurrent(guard)
+          ? normalizedSnapshot
+          : null,
       };
     }
-    if (!shouldAdoptSnapshot(payload)) {
-      return {
-        kind: "superseded",
-        snapshot: null,
-      };
+
+    const pendingChatTurnCandidate = pendingChatTurnRef.current;
+    const pendingChatTurn =
+      pendingChatTurnCandidate !== null
+      && isGuardCurrent(pendingChatTurnCandidate.guard)
+        ? pendingChatTurnCandidate
+        : null;
+    if (
+      pendingChatTurnCandidate !== null
+      && pendingChatTurn === null
+    ) {
+      pendingChatTurnCandidate.retryAbortController.abort();
+      pendingChatTurnRef.current = null;
     }
-    const pendingChatTurn = pendingChatTurnRef.current;
+    const activeChatTurnCandidate = activeChatTurnRef.current;
+    const currentActiveChatTurn =
+      activeChatTurnCandidate !== null
+      && isGuardCurrent(activeChatTurnCandidate.guard)
+        ? activeChatTurnCandidate
+        : null;
+    if (
+      activeChatTurnCandidate !== null
+      && currentActiveChatTurn === null
+    ) {
+      activeChatTurnRef.current = null;
+    }
+    const cancellationCandidate =
+      pendingChatTurnCancellationRef.current;
+    const currentCancellation =
+      cancellationCandidate !== null
+      && isGuardCurrent(cancellationCandidate.guard)
+        ? cancellationCandidate
+        : null;
+    if (
+      cancellationCandidate !== null
+      && currentCancellation === null
+    ) {
+      pendingChatTurnCancellationRef.current = null;
+    }
     if (
       pendingChatTurn !== null
       && pendingChatTurn.sessionId === payload.sessionId
@@ -398,27 +424,36 @@ export const useChatSessionController = (
     ) {
       return {
         kind: "superseded",
-        snapshot: {
-          ...payload,
-          authoritativeRunState: payload.runState,
-          runState: selectEffectiveSnapshotRunState(
-            stateRef.current,
-            payload.sessionId,
-            payload.runState,
-          ),
-        },
+        snapshot: normalizedSnapshot,
       };
     }
+
     const exactTurnOwnership = resolveChatExactTurnOwnership(
       payload,
-      pendingChatTurnRef.current,
-      activeChatTurnRef.current,
-      pendingChatTurnCancellationRef.current,
+      pendingChatTurn,
+      currentActiveChatTurn,
+      currentCancellation,
     );
     if (exactTurnOwnership.pendingTurn === null) {
       pendingChatTurnRef.current = null;
     }
-    activeChatTurnRef.current = exactTurnOwnership.activeTurn;
+    if (exactTurnOwnership.activeTurn === null) {
+      activeChatTurnRef.current = null;
+    } else if (
+      pendingChatTurn?.ownerId === exactTurnOwnership.activeTurn.ownerId
+    ) {
+      activeChatTurnRef.current = pendingChatTurn;
+    } else if (
+      currentActiveChatTurn?.ownerId
+        === exactTurnOwnership.activeTurn.ownerId
+    ) {
+      activeChatTurnRef.current = currentActiveChatTurn;
+    } else {
+      activeChatTurnRef.current = {
+        ...exactTurnOwnership.activeTurn,
+        guard,
+      };
+    }
     const currentExactTurn = pendingChatTurnRef.current
       ?? activeChatTurnRef.current;
     if (
@@ -430,28 +465,24 @@ export const useChatSessionController = (
     }
     const confirmedCancellation = confirmedChatTurnCancellationRef.current;
     if (
-      confirmedCancellation?.sessionId === payload.sessionId
+      confirmedCancellation !== null
       && (
-        payload.runState !== "running"
-        || payload.activeTurnId !== confirmedCancellation.turnId
+        !isGuardCurrent(confirmedCancellation.guard)
+        || (
+          confirmedCancellation.sessionId === payload.sessionId
+          && (
+            payload.runState !== "running"
+            || payload.activeTurnId !== confirmedCancellation.turnId
+          )
+        )
       )
     ) {
       confirmedChatTurnCancellationRef.current = null;
     }
 
     const currentState = stateRef.current;
-    const shouldRefresh = shouldRefreshMainContentForVersion(
-      currentState,
-      "snapshot",
-      payload.mainContentInvalidationVersion,
-    );
     const shouldReplaceHistory = replaceHistory
       && shouldReplaceHistoryForSnapshot(currentState, payload.updatedAt);
-    const effectiveRunState = selectEffectiveSnapshotRunState(
-      currentState,
-      payload.sessionId,
-      payload.runState,
-    );
 
     dispatchAction({
       type: "snapshot_applied",
@@ -460,28 +491,32 @@ export const useChatSessionController = (
       updatedAt: payload.updatedAt,
       mainContentInvalidationVersion: payload.mainContentInvalidationVersion,
     });
+    params.observeSessionInvalidation(
+      payload.sessionId,
+      payload.mainContentInvalidationVersion,
+      "snapshot",
+    );
 
     if (shouldReplaceHistory) {
       replaceMessages(payload.messages);
     }
 
-    if (shouldRefresh) {
-      refreshMainContent(payload.mainContentInvalidationVersion);
-    }
-
     return {
       kind: "applied",
-      snapshot: {
-        ...payload,
-        authoritativeRunState: payload.runState,
-        runState: effectiveRunState,
-      },
+      snapshot: normalizedSnapshot,
     };
-  }, [dispatchAction, refreshMainContent, replaceMessages, t, workspaceId]);
+  }, [
+    dispatchAction,
+    isGuardCurrent,
+    params.observeSessionInvalidation,
+    replaceMessages,
+    t,
+  ]);
 
   const reconcileConfirmedStopSnapshotForOwner = useCallback(async (
     sessionId: string,
     turnId: string | null,
+    guard: ChatSelectionGuard,
     operationSignal: AbortSignal,
     isOperationOwnerCurrent: IsChatOperationOwnerCurrent,
   ): Promise<
@@ -491,6 +526,7 @@ export const useChatSessionController = (
     const reconciliationOwner: ChatStopSnapshotReconciliationOwner = {
       ownerId: Symbol(sessionId),
       sessionId,
+      guard,
       abortController: new AbortController(),
     };
     stopSnapshotReconciliationRef.current = reconciliationOwner;
@@ -512,11 +548,8 @@ export const useChatSessionController = (
       && stopSnapshotReconciliationRef.current?.ownerId
         === reconciliationOwner.ownerId
       && stateRef.current.currentSessionId === sessionId
+      && isGuardCurrent(guard)
       && isOperationOwnerCurrent();
-    const shouldAdoptSnapshot = (
-      _snapshot: ChatSessionSnapshot,
-    ): boolean =>
-      isReconciliationOwnerCurrent();
 
     try {
       return await reconcileConfirmedChatStopSnapshot({
@@ -527,9 +560,9 @@ export const useChatSessionController = (
         ): Promise<NormalizedChatSessionSnapshot | null> => {
           const snapshotResult = await loadChatSnapshot(
             sessionId,
+            guard,
             signal,
             true,
-            shouldAdoptSnapshot,
           );
           return snapshotResult.snapshot;
         },
@@ -553,7 +586,7 @@ export const useChatSessionController = (
         stopSnapshotReconciliationRef.current = null;
       }
     }
-  }, [loadChatSnapshot]);
+  }, [isGuardCurrent, loadChatSnapshot]);
 
   const performPendingChatTurnCycle = useCallback(async (
     pendingChatTurn: PendingChatTurn,
@@ -572,7 +605,10 @@ export const useChatSessionController = (
     );
 
     const isOwnerCurrent = (): boolean =>
-      isPendingChatTurnOwnerCurrent(
+      isControllerMountedRef.current
+      && isGuardCurrent(pendingChatTurn.guard)
+      && !pendingChatTurn.retryAbortController.signal.aborted
+      && isChatSendReconciliationOwnerCurrent(
         pendingChatTurn,
         pendingChatTurnRef.current,
         stateRef.current.currentSessionId,
@@ -588,7 +624,11 @@ export const useChatSessionController = (
         pendingChatTurn.submittedContent,
         Date.now(),
       ));
-      abortRef.current = attemptAbortController;
+      activeStreamAbortRef.current = attemptAbortController;
+      activeStreamSelectionEpochRef.current =
+        pendingChatTurn.guard.selectionEpoch;
+      activeStreamUnadoptedDraftIdRef.current = null;
+      activeStreamAdoptedSessionIdRef.current = pendingChatTurn.sessionId;
       const streamResult = await streamChatResponse({
         url: "/api/chat",
         requestBody: pendingChatTurn.requestBody,
@@ -619,9 +659,18 @@ export const useChatSessionController = (
             }
           },
           applyMainContentInvalidationVersion: (nextVersion): void => {
-            if (isOwnerCurrent()) {
-              applyMainContentInvalidationVersion(nextVersion, "live");
+            if (!isOwnerCurrent()) {
+              return;
             }
+            dispatchAction({
+              type: "main_content_invalidation_observed",
+              version: nextVersion,
+            });
+            params.observeSessionInvalidation(
+              pendingChatTurn.sessionId,
+              nextVersion,
+              "live",
+            );
           },
         },
         onSessionIdReceived: (sessionId): void => {
@@ -636,7 +685,9 @@ export const useChatSessionController = (
           if (!isOwnerCurrent()) {
             return;
           }
+          abortSelectedSessionPoll();
           dispatchAction({ type: "live_stream_connected" });
+          void params.refreshCatalog();
         },
       });
 
@@ -656,6 +707,7 @@ export const useChatSessionController = (
           ? t("chat.errorNoResponse")
           : streamResult.streamFailure.message;
         pendingChatTurnRef.current = null;
+        pendingChatTurn.onSubmissionRejected();
         replaceMessages(buildFailedChatSendHistory(
           pendingChatTurn.authoritativeMessages,
           pendingChatTurn.submittedContent,
@@ -663,6 +715,7 @@ export const useChatSessionController = (
           Date.now(),
         ));
         dispatchAction({ type: "run_finished" });
+        await params.refreshCatalog();
         return;
       }
 
@@ -673,9 +726,9 @@ export const useChatSessionController = (
       try {
         const snapshotResult = await loadChatSnapshot(
           pendingChatTurn.sessionId,
+          pendingChatTurn.guard,
           attemptAbortController.signal,
           true,
-          (): boolean => isOwnerCurrent(),
         );
         if (!isOwnerCurrent()) {
           return;
@@ -701,15 +754,41 @@ export const useChatSessionController = (
           return;
         }
         if (shouldSuppressStreamFailure(snapshotResult.snapshot)) {
+          await params.refreshCatalog();
           return;
         }
       } catch (error) {
         if (!isOwnerCurrent()) {
           return;
         }
+        const disposition = resolveChatSnapshotFailureDisposition(error);
+        if (
+          disposition === "recover_unavailable"
+          && params.recoverInvalidSessionSelection(
+            pendingChatTurn.sessionId,
+            t("chat.sessionUnavailable"),
+          )
+        ) {
+          return;
+        }
         const snapshotFailureMessage = error instanceof Error
           ? error.message
           : String(error);
+        if (disposition === "block_workspace_reload") {
+          markAssistantError(t("chat.errorFailed", {
+            message: snapshotFailureMessage,
+          }));
+          dispatchAction({ type: "bootstrap_blocked" });
+          return;
+        }
+        if (disposition === "retry_active_response") {
+          if (streamResult.streamFailure !== null) {
+            markAssistantError(t("chat.errorFailed", {
+              message: streamResult.streamFailure.message,
+            }));
+          }
+          return;
+        }
         const failedHistory =
           resolveDefinitiveChatSendSnapshotFailureHistory(
             error,
@@ -721,6 +800,7 @@ export const useChatSessionController = (
           );
         if (failedHistory !== null) {
           pendingChatTurnRef.current = null;
+          pendingChatTurn.onSubmissionRejected();
           replaceMessages(failedHistory);
           dispatchAction({ type: "run_finished" });
           return;
@@ -741,25 +821,38 @@ export const useChatSessionController = (
           message: streamResult.streamFailure.message,
         }));
       }
+      await params.refreshCatalog();
     } finally {
       pendingChatTurn.retryAbortController.signal.removeEventListener(
         "abort",
         abortAttempt,
       );
       if (
-        abortRef.current === attemptAbortController
-        && !pendingChatTurn.retryAbortController.signal.aborted
+        activeStreamAbortRef.current === attemptAbortController
+        && !isSelectedStreamRetainedByStop(
+          attemptAbortController,
+          pendingChatTurn.sessionId,
+          pendingChatTurn.guard.selectionEpoch,
+        )
       ) {
-        abortRef.current = null;
+        activeStreamAbortRef.current = null;
+        activeStreamSelectionEpochRef.current = null;
+        activeStreamUnadoptedDraftIdRef.current = null;
+        activeStreamAdoptedSessionIdRef.current = null;
       }
     }
   }, [
+    abortSelectedSessionPoll,
     appendAssistantChunk,
-    applyMainContentInvalidationVersion,
     dispatchAction,
     finalizeAssistant,
+    isGuardCurrent,
+    isSelectedStreamRetainedByStop,
     loadChatSnapshot,
     markAssistantError,
+    params.observeSessionInvalidation,
+    params.recoverInvalidSessionSelection,
+    params.refreshCatalog,
     replaceMessages,
     t,
     upsertReasoningSummary,
@@ -790,12 +883,11 @@ export const useChatSessionController = (
     completeChatTurnCancellation({
       signal: attemptAbortController.signal,
       isOwnerCurrent: (): boolean =>
-        isChatTurnCancellationSettlementOwned(
+        isGuardCurrent(cancellation.guard)
+        && isChatTurnCancellationSettlementOwned(
           cancellation,
           pendingChatTurnCancellationRef.current,
-          pendingChatTurnRef.current
-            ?? toExactChatTurnOwner(preSessionChatTurnRef.current)
-            ?? activeChatTurnRef.current,
+          pendingChatTurnRef.current ?? activeChatTurnRef.current,
           stateRef.current.currentSessionId,
         ),
       requestCancellation: (signal) =>
@@ -821,11 +913,8 @@ export const useChatSessionController = (
         if (activeChatTurnRef.current?.ownerId === cancellation.ownerId) {
           activeChatTurnRef.current = null;
         }
-        if (preSessionChatTurnRef.current?.ownerId === cancellation.ownerId) {
-          preSessionChatTurnRef.current = null;
-        }
       },
-    }), [t]);
+    }), [isGuardCurrent, t]);
   const performPendingChatTurnCancellationRef =
     useRef(performPendingChatTurnCancellation);
   performPendingChatTurnCancellationRef.current =
@@ -847,13 +936,14 @@ export const useChatSessionController = (
     pendingChatTurnCancellationRunnerRef.current;
 
   const cancelExactChatTurn = useCallback(async (
-    exactChatTurn: ChatSendReconciliationOwner,
+    exactChatTurn: OwnedChatTurn,
   ): Promise<ChatTurnCancellationResolution> => {
     const confirmedCancellation =
       confirmedChatTurnCancellationRef.current;
     if (
       confirmedCancellation?.sessionId === exactChatTurn.sessionId
       && confirmedCancellation.turnId === exactChatTurn.turnId
+      && isGuardCurrent(confirmedCancellation.guard)
     ) {
       return {
         kind: "confirmed",
@@ -871,9 +961,7 @@ export const useChatSessionController = (
     const cancellation = existingCancellation?.ownerId === exactChatTurn.ownerId
       ? existingCancellation
       : {
-        ownerId: exactChatTurn.ownerId,
-        sessionId: exactChatTurn.sessionId,
-        turnId: exactChatTurn.turnId,
+        ...exactChatTurn,
       };
     pendingChatTurnCancellationRef.current = cancellation;
 
@@ -882,9 +970,9 @@ export const useChatSessionController = (
     if (
       resolution.kind === "confirmed"
       && stateRef.current.currentSessionId === exactChatTurn.sessionId
+      && isGuardCurrent(exactChatTurn.guard)
     ) {
       const currentExactTurn = pendingChatTurnRef.current
-        ?? toExactChatTurnOwner(preSessionChatTurnRef.current)
         ?? activeChatTurnRef.current;
       if (
         currentExactTurn?.sessionId === exactChatTurn.sessionId
@@ -898,27 +986,28 @@ export const useChatSessionController = (
       };
     }
     return resolution;
-  }, [pendingChatTurnCancellationRunner, pendingChatTurnRunner]);
+  }, [
+    isGuardCurrent,
+    pendingChatTurnCancellationRunner,
+    pendingChatTurnRunner,
+  ]);
 
   const restoreChatTurnAfterCancellationRejection = useCallback((
     error: unknown,
-    rejectedTurn: ChatSendReconciliationOwner,
+    rejectedTurn: OwnedChatTurn,
   ): void => {
     const currentPendingTurn = pendingChatTurnRef.current;
-    const currentPreSessionTurn = preSessionChatTurnRef.current;
-    const currentPreSessionExactTurn = toExactChatTurnOwner(
-      currentPreSessionTurn,
-    );
-    const currentTurn = currentPendingTurn
-      ?? currentPreSessionExactTurn
-      ?? activeChatTurnRef.current;
+    const currentTurn = currentPendingTurn ?? activeChatTurnRef.current;
     const currentSessionId = stateRef.current.currentSessionId;
-    if (!shouldRestoreChatTurnAfterCancellationRejection(
-      error,
-      rejectedTurn,
-      currentTurn,
-      currentSessionId,
-    )) {
+    if (
+      !isGuardCurrent(rejectedTurn.guard)
+      || !shouldRestoreChatTurnAfterCancellationRejection(
+        error,
+        rejectedTurn,
+        currentTurn,
+        currentSessionId,
+      )
+    ) {
       return;
     }
 
@@ -931,42 +1020,12 @@ export const useChatSessionController = (
       );
     if (restoredPendingTurn !== null) {
       pendingChatTurnRef.current = restoredPendingTurn;
-    } else if (
-      currentPreSessionTurn !== null
-      && currentPreSessionExactTurn?.ownerId === rejectedTurn.ownerId
-      && currentPreSessionTurn.initialSessionId !== null
-    ) {
-      const resumablePendingTurn: PendingChatTurn = {
-        ownerId: currentPreSessionTurn.ownerId,
-        sessionId: currentPreSessionTurn.initialSessionId,
-        turnId: currentPreSessionTurn.turnId,
-        requestBody: buildChatSendRequestBody(
-          currentPreSessionTurn.submittedContent,
-          currentPreSessionTurn.initialSessionId,
-          currentPreSessionTurn.turnId,
-        ),
-        submittedContent: currentPreSessionTurn.submittedContent,
-        authoritativeMessages: currentPreSessionTurn.authoritativeMessages,
-        retryAbortController: currentPreSessionTurn.retryAbortController,
-      };
-      const restoredPreSessionTurn =
-        restorePendingChatTurnAfterCancellationRejection(
-          error,
-          rejectedTurn,
-          resumablePendingTurn,
-          currentSessionId,
-        );
-      if (restoredPreSessionTurn !== null) {
-        preSessionChatTurnRef.current = null;
-        pendingChatTurnRef.current = restoredPreSessionTurn;
-      }
     }
-
     dispatchAction({ type: "run_started" });
-  }, [dispatchAction]);
+  }, [dispatchAction, isGuardCurrent]);
 
   const releaseSupersededExactTurnStop = useCallback((
-    exactChatTurn: ChatSendReconciliationOwner,
+    exactChatTurn: OwnedChatTurn,
   ): void => {
     dispatchAction({
       type: "stop_completed",
@@ -976,324 +1035,47 @@ export const useChatSessionController = (
     if (
       activeChatTurn?.sessionId === exactChatTurn.sessionId
       && activeChatTurn.ownerId !== exactChatTurn.ownerId
+      && isGuardCurrent(activeChatTurn.guard)
     ) {
       dispatchAction({ type: "run_started" });
     }
-  }, [dispatchAction]);
-
-  const performClearOperation = useCallback(async (
-    owner: ChatClearOperationOwner,
-    attemptAbortController: AbortController,
-  ): Promise<void> => {
-    const isOwnerCurrent = (): boolean =>
-      !attemptAbortController.signal.aborted
-      && isChatClearOperationOwnerCurrent(
-        owner,
-        clearOperationRef.current,
-        stateRef.current.currentSessionId,
-      );
-
-    if (!isOwnerCurrent()) {
-      return;
-    }
-    if (owner.targetSessionId !== null) {
-      dispatchAction({
-        type: "stop_requested",
-        sessionId: owner.targetSessionId,
-      });
-    }
-
-    const preSessionChatTurn = preSessionChatTurnRef.current;
-    if (
-      preSessionChatTurn !== null
-      && preSessionChatTurn.initialSessionId === null
-    ) {
-      preSessionChatTurn.retryAbortController.abort();
-      preSessionChatTurnRef.current = null;
-      abortRef.current?.abort();
-      abortRef.current = null;
-      if (!isOwnerCurrent()) {
-        return;
-      }
-      dispatchAction({ type: "live_stream_disconnected" });
-      dispatchAction({ type: "run_finished" });
-      clearHistory();
-      return;
-    }
-
-    const pendingChatTurn = pendingChatTurnRef.current;
-    const preSessionExactChatTurn = toExactChatTurnOwner(
-      preSessionChatTurnRef.current,
-    );
-    const exactChatTurn =
-      preSessionExactChatTurn?.sessionId === owner.targetSessionId
-        ? preSessionExactChatTurn
-        : pendingChatTurn?.sessionId === owner.targetSessionId
-          ? pendingChatTurn
-          : activeChatTurnRef.current?.sessionId === owner.targetSessionId
-            ? activeChatTurnRef.current
-            : confirmedChatTurnCancellationRef.current?.sessionId
-                === owner.targetSessionId
-              ? confirmedChatTurnCancellationRef.current
-              : null;
-
-    if (exactChatTurn !== null) {
-      let cancellationResolution: ChatTurnCancellationResolution;
-      try {
-        if (preSessionExactChatTurn?.ownerId === exactChatTurn.ownerId) {
-          preSessionChatTurnRef.current?.retryAbortController.abort();
-        }
-        cancellationResolution = await cancelExactChatTurn(
-          exactChatTurn,
-        );
-      } catch (error) {
-        if (!isOwnerCurrent()) {
-          return;
-        }
-        restoreChatTurnAfterCancellationRejection(error, exactChatTurn);
-        const message = error instanceof Error ? error.message : String(error);
-        markAssistantError(t("chat.errorFailed", { message }));
-        if (owner.targetSessionId !== null) {
-          dispatchAction({
-            type: "stop_failed",
-            sessionId: owner.targetSessionId,
-          });
-        }
-        return;
-      }
-      if (!isOwnerCurrent()) {
-        return;
-      }
-      if (cancellationResolution.kind === "superseded") {
-        releaseSupersededExactTurnStop(exactChatTurn);
-        return;
-      }
-      if (cancellationResolution.response.stillRunning) {
-        let snapshotResolution: ChatConfirmedStopSnapshotResolution<
-          NormalizedChatSessionSnapshot
-        >;
-        try {
-          snapshotResolution =
-            await reconcileConfirmedStopSnapshotForOwner(
-              exactChatTurn.sessionId,
-              exactChatTurn.turnId,
-              attemptAbortController.signal,
-              isOwnerCurrent,
-            );
-        } catch (error) {
-          if (!isOwnerCurrent()) {
-            return;
-          }
-          const message = error instanceof Error
-            ? error.message
-            : String(error);
-          markAssistantError(t("chat.errorFailed", { message }));
-          dispatchAction({
-            type: "stop_failed",
-            sessionId: exactChatTurn.sessionId,
-          });
-          if (shouldRestoreChatRunAfterSnapshotFailure(
-            exactChatTurn,
-            activeChatTurnRef.current,
-            stateRef.current.currentSessionId,
-          )) {
-            dispatchAction({ type: "run_started" });
-          }
-          return;
-        }
-        if (!isOwnerCurrent()) {
-          return;
-        }
-        if (snapshotResolution.kind === "superseded") {
-          if (snapshotResolution.snapshot !== null) {
-            releaseSupersededExactTurnStop(exactChatTurn);
-          }
-          return;
-        }
-      } else if (
-        confirmedChatTurnCancellationRef.current?.sessionId
-          === exactChatTurn.sessionId
-        && confirmedChatTurnCancellationRef.current?.turnId
-          === exactChatTurn.turnId
-      ) {
-        confirmedChatTurnCancellationRef.current = null;
-      }
-    } else if (
-      owner.targetSessionId !== null
-      && selectIsAssistantRunActive(stateRef.current)
-    ) {
-      try {
-        await postStopChatSession(
-          owner.targetSessionId,
-          null,
-          attemptAbortController.signal,
-          t,
-        );
-      } catch {
-        if (!isOwnerCurrent()) {
-          return;
-        }
-        // Preserve the existing best-effort session stop before reset.
-      }
-    }
-
-    if (!isOwnerCurrent()) {
-      return;
-    }
-    abortRef.current?.abort();
-    abortRef.current = null;
-    dispatchAction({ type: "live_stream_disconnected" });
-
-    try {
-      const payload = await deleteChatConversation(
-        owner.targetSessionId,
-        attemptAbortController.signal,
-        t,
-      );
-      if (!isOwnerCurrent()) {
-        return;
-      }
-
-      clearHistory();
-      if (
-        confirmedChatTurnCancellationRef.current?.sessionId
-        === owner.targetSessionId
-      ) {
-        confirmedChatTurnCancellationRef.current = null;
-      }
-      if (owner.targetSessionId !== null) {
-        dispatchAction({
-          type: "stop_completed",
-          sessionId: owner.targetSessionId,
-        });
-        dispatchAction({
-          type: "stopped_session_cleared",
-          sessionId: owner.targetSessionId,
-        });
-      }
-      dispatchAction({
-        type: "conversation_cleared",
-        sessionId: payload.sessionId,
-      });
-    } catch (error) {
-      if (!isOwnerCurrent()) {
-        return;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      markAssistantError(t("chat.errorFailed", { message }));
-      if (owner.targetSessionId !== null) {
-        dispatchAction({
-          type: "stop_failed",
-          sessionId: owner.targetSessionId,
-        });
-      }
-    }
-  }, [
-    cancelExactChatTurn,
-    clearHistory,
-    dispatchAction,
-    markAssistantError,
-    reconcileConfirmedStopSnapshotForOwner,
-    releaseSupersededExactTurnStop,
-    restoreChatTurnAfterCancellationRejection,
-    t,
-  ]);
-  const performClearOperationRef = useRef(performClearOperation);
-  performClearOperationRef.current = performClearOperation;
-  const clearOperationRunnerRef = useRef<ChatClearOperationRunner | null>(null);
-  if (clearOperationRunnerRef.current === null) {
-    clearOperationRunnerRef.current =
-      createSingleFlightChatClearOperationRunner(
-        async (owner, abortController): Promise<void> => {
-          try {
-            await performClearOperationRef.current(owner, abortController);
-          } finally {
-            if (clearOperationRef.current?.ownerId === owner.ownerId) {
-              clearOperationRef.current = null;
-            }
-          }
-        },
-      );
-  }
-  const clearOperationRunner = clearOperationRunnerRef.current;
-
-  useEffect(() => (): void => {
-    stopOperationRef.current?.abortController.abort();
-    stopOperationRef.current = null;
-    stopSnapshotReconciliationRef.current?.abortController.abort();
-    stopSnapshotReconciliationRef.current = null;
-    confirmedChatTurnCancellationRef.current = null;
-    clearOperationRef.current = null;
-    clearOperationRunner.cancelActive();
-    preSessionChatTurnRef.current?.retryAbortController.abort();
-    pendingChatTurnRef.current?.retryAbortController.abort();
-    pendingChatTurnRunner.cancelActive();
-    pendingChatTurnCancellationRunner.cancelActive();
-  }, [
-    clearOperationRunner,
-    pendingChatTurnCancellationRunner,
-    pendingChatTurnRunner,
-  ]);
+  }, [dispatchAction, isGuardCurrent]);
 
   useEffect(() => {
     const stopOperation = stopOperationRef.current;
     if (
       stopOperation !== null
-      && stopOperation.sessionId !== state.currentSessionId
+      && !isGuardCurrent(stopOperation.guard)
     ) {
       stopOperation.abortController.abort();
       stopOperationRef.current = null;
+      dispatchAction({
+        type: "stop_completed",
+        sessionId: stopOperation.sessionId,
+      });
     }
     const stopSnapshotReconciliation =
       stopSnapshotReconciliationRef.current;
     if (
       stopSnapshotReconciliation !== null
-      && stopSnapshotReconciliation.sessionId !== state.currentSessionId
+      && !isGuardCurrent(stopSnapshotReconciliation.guard)
     ) {
       stopSnapshotReconciliation.abortController.abort();
       stopSnapshotReconciliationRef.current = null;
     }
     if (
       confirmedChatTurnCancellationRef.current !== null
-      && confirmedChatTurnCancellationRef.current.sessionId
-        !== state.currentSessionId
+      && !isGuardCurrent(
+        confirmedChatTurnCancellationRef.current.guard,
+      )
     ) {
       confirmedChatTurnCancellationRef.current = null;
-    }
-
-    const clearOperation = clearOperationRef.current;
-    if (
-      clearOperation !== null
-      && clearOperation.targetSessionId !== state.currentSessionId
-    ) {
-      clearOperationRunner.cancel(clearOperation);
-      clearOperationRef.current = null;
-      if (clearOperation.targetSessionId !== null) {
-        dispatchAction({
-          type: "stop_completed",
-          sessionId: clearOperation.targetSessionId,
-        });
-      }
-    }
-
-    const preSessionChatTurn = preSessionChatTurnRef.current;
-    if (
-      preSessionChatTurn !== null
-      && preSessionChatTurn.initialSessionId !== state.currentSessionId
-    ) {
-      preSessionChatTurn.retryAbortController.abort();
-      const preSessionCancellation = pendingChatTurnCancellationRef.current;
-      if (preSessionCancellation?.ownerId === preSessionChatTurn.ownerId) {
-        pendingChatTurnCancellationRunner.cancel(preSessionCancellation);
-        pendingChatTurnCancellationRef.current = null;
-      }
-      preSessionChatTurnRef.current = null;
     }
 
     const pendingChatTurn = pendingChatTurnRef.current;
     if (
       pendingChatTurn !== null
-      && pendingChatTurn.sessionId !== state.currentSessionId
+      && !isGuardCurrent(pendingChatTurn.guard)
     ) {
       pendingChatTurn.retryAbortController.abort();
       pendingChatTurnRunner.cancel(pendingChatTurn);
@@ -1308,7 +1090,7 @@ export const useChatSessionController = (
     const activeChatTurn = activeChatTurnRef.current;
     if (
       activeChatTurn !== null
-      && activeChatTurn.sessionId !== state.currentSessionId
+      && !isGuardCurrent(activeChatTurn.guard)
     ) {
       const activeCancellation = pendingChatTurnCancellationRef.current;
       if (activeCancellation?.ownerId === activeChatTurn.ownerId) {
@@ -1317,91 +1099,120 @@ export const useChatSessionController = (
       }
       activeChatTurnRef.current = null;
     }
-
-    if (
-      (
-        pendingChatTurn !== null
-        && pendingChatTurn.sessionId !== state.currentSessionId
-      )
-      || (
-        activeChatTurn !== null
-        && activeChatTurn.sessionId !== state.currentSessionId
-      )
-    ) {
-      abortRef.current?.abort();
-      abortRef.current = null;
-    }
   }, [
-    clearOperationRunner,
     dispatchAction,
+    isGuardCurrent,
+    params.selectionEpoch,
+    params.target,
     pendingChatTurnCancellationRunner,
     pendingChatTurnRunner,
-    state.currentSessionId,
   ]);
 
+  // The selection epoch is the lifecycle key. Same-epoch draft adoption is
+  // an in-place target rekey and must not restart or detach this stream.
   useEffect(() => {
-    if (!state.isHistoryLoaded) {
+    const selectedTarget = params.target;
+    const selectedSelectionEpoch = params.selectionEpoch;
+    const activeStreamSelectionEpoch =
+      activeStreamSelectionEpochRef.current;
+    const ownsSameEpochAdoptedStream =
+      selectedTarget.kind === "session"
+      && activeStreamAbortRef.current !== null
+      && activeStreamSelectionEpoch === selectedSelectionEpoch
+      && activeStreamAdoptedSessionIdRef.current === selectedTarget.sessionId;
+    if (ownsSameEpochAdoptedStream) {
       return;
     }
-
-    if (state.currentSessionId === null && state.runState !== "idle") {
-      return;
+    if (
+      activeStreamAbortRef.current !== null
+      && (
+        !params.isWorkspaceReady
+        || activeStreamSelectionEpoch === null
+        || shouldAbortChatStreamForSelectionChange(
+          activeStreamSelectionEpoch,
+          selectedSelectionEpoch,
+          activeStreamUnadoptedDraftIdRef.current,
+        )
+      )
+    ) {
+      activeStreamAbortRef.current.abort();
+      activeStreamAbortRef.current = null;
+      activeStreamSelectionEpochRef.current = null;
+      activeStreamUnadoptedDraftIdRef.current = null;
+      activeStreamAdoptedSessionIdRef.current = null;
     }
-
-    writeChatBootstrapLocalState(
-      workspaceId,
-      createChatBootstrapLocalState(
-        state.currentSessionId,
-        deriveLastUserMessageAt(messages),
-        state.runState,
-        state.lastSnapshotUpdatedAt,
-      ),
-    );
-  }, [
-    messages,
-    state.currentSessionId,
-    state.isHistoryLoaded,
-    state.lastSnapshotUpdatedAt,
-    state.runState,
-    workspaceId,
-  ]);
-
-  useEffect(() => {
-    const abortController = new AbortController();
-    dispatchAction({ type: "workspace_reset" });
     replaceMessages([]);
 
-    void (async (): Promise<void> => {
-      let didFail = false;
+    const selectedSessionId = selectedTarget.kind === "session"
+      ? selectedTarget.sessionId
+      : null;
+    dispatchAction({
+      type: "selection_changed",
+      sessionId: selectedSessionId,
+    });
+    if (!params.isWorkspaceReady) {
+      return;
+    }
 
-      try {
-        const bootstrapMode = resolveChatBootstrapMode(
-          readChatBootstrapLocalState(workspaceId),
-          Date.now(),
-        );
-        if (bootstrapMode.kind === "local_empty") {
-          if (bootstrapMode.sessionId !== null) {
-            dispatchAction({
-              type: "server_session_accepted",
-              sessionId: bootstrapMode.sessionId,
-            });
-          }
+    const guard: ChatSelectionGuard = {
+      target: selectedTarget,
+      selectionEpoch: selectedSelectionEpoch,
+    };
+    if (selectedTarget.kind === "draft") {
+      dispatchAction({ type: "bootstrap_succeeded" });
+      return;
+    }
+
+    let isDisposed = false;
+    let activeAbortController: AbortController | null = null;
+    let retryTimeoutId: number | null = null;
+    const loadSelectedSnapshot = (): void => {
+      if (isDisposed || !isGuardCurrent(guard)) {
+        return;
+      }
+
+      const abortController = createSnapshotAbortController();
+      activeAbortController = abortController;
+      void loadChatSnapshot(
+        selectedTarget.kind === "session"
+          ? selectedTarget.sessionId
+          : "",
+        guard,
+        abortController.signal,
+        true,
+      ).then((snapshotResult) => {
+        if (
+          snapshotResult.kind === "applied"
+          && isGuardCurrent(guard)
+        ) {
+          dispatchAction({ type: "bootstrap_succeeded" });
+        }
+      }).catch((error: unknown) => {
+        if (abortController.signal.aborted || !isGuardCurrent(guard)) {
           return;
         }
 
-        await loadChatSnapshot(
-          undefined,
-          abortController.signal,
-          true,
-          shouldAlwaysAdoptChatSnapshot,
-        );
-      } catch (error) {
-        if (abortController.signal.aborted) {
-          return;
-        }
-
-        didFail = true;
         const message = error instanceof Error ? error.message : String(error);
+        const disposition = resolveChatSnapshotFailureDisposition(error);
+        if (
+          disposition === "recover_unavailable"
+          && params.recoverInvalidSessionSelection(
+            selectedTarget.kind === "session"
+              ? selectedTarget.sessionId
+              : "",
+            t("chat.sessionUnavailable"),
+          )
+        ) {
+          return;
+        }
+        if (disposition === "retry_active_response") {
+          retryTimeoutId = window.setTimeout(
+            loadSelectedSnapshot,
+            ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+          );
+          return;
+        }
+
         replaceMessages([{
           role: "assistant",
           content: [{ type: "text", text: t("chat.errorFailed", { message }) }],
@@ -1409,181 +1220,204 @@ export const useChatSessionController = (
           isError: true,
           isStopped: false,
         }]);
-      } finally {
-        if (!abortController.signal.aborted) {
-          dispatchAction({
-            type: didFail ? "bootstrap_failed" : "bootstrap_succeeded",
-          });
+        dispatchAction({
+          type: disposition === "block_workspace_reload"
+            ? "bootstrap_blocked"
+            : "bootstrap_failed",
+        });
+      }).finally(() => {
+        releaseSnapshotAbortController(abortController);
+        if (activeAbortController === abortController) {
+          activeAbortController = null;
         }
-      }
-    })();
-
-    return () => abortController.abort();
-  }, [dispatchAction, loadChatSnapshot, replaceMessages, t, workspaceId]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const handleStorage = (event: StorageEvent): void => {
-      const currentState = stateRef.current;
-      if (
-        !currentState.isHistoryLoaded
-        || selectIsAssistantRunActive(currentState)
-        || currentState.isLiveStreamConnected
-        || selectIsSelectedSessionStopping(currentState)
-      ) {
-        return;
-      }
-
-      const nextLocalState = readChatBootstrapLocalStateFromStorageEvent(
-        workspaceId,
-        event.key,
-        event.newValue,
-      );
-      if (nextLocalState === undefined) {
-        return;
-      }
-
-      const bootstrapMode = resolveChatBootstrapMode(nextLocalState, Date.now());
-      if (bootstrapMode.kind === "local_empty") {
-        replaceMessages([]);
-        dispatchAction({ type: "workspace_reset" });
-        if (bootstrapMode.sessionId !== null) {
-          dispatchAction({
-            type: "server_session_accepted",
-            sessionId: bootstrapMode.sessionId,
-          });
-        }
-        dispatchAction({ type: "bootstrap_succeeded" });
-        return;
-      }
-
-      if (nextLocalState === null || nextLocalState.sessionId === null) {
-        return;
-      }
-
-      const shouldReloadSnapshot = nextLocalState.sessionId !== currentState.currentSessionId
-        || (
-          nextLocalState.lastSnapshotUpdatedAt !== null
-          && (
-            currentState.lastSnapshotUpdatedAt === null
-            || nextLocalState.lastSnapshotUpdatedAt > currentState.lastSnapshotUpdatedAt
-          )
-        )
-        || nextLocalState.lastKnownRunState !== currentState.runState;
-
-      if (!shouldReloadSnapshot) {
-        return;
-      }
-
-      void loadChatSnapshot(
-        nextLocalState.sessionId,
-        undefined,
-        true,
-        shouldAlwaysAdoptChatSnapshot,
-      ).catch(() => undefined);
+      });
     };
+    loadSelectedSnapshot();
 
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, [dispatchAction, loadChatSnapshot, replaceMessages, workspaceId]);
+    return () => {
+      isDisposed = true;
+      if (retryTimeoutId !== null) {
+        window.clearTimeout(retryTimeoutId);
+      }
+      activeAbortController?.abort();
+    };
+  }, [
+    params.isWorkspaceReady,
+    params.selectionEpoch,
+    params.target,
+  ]);
 
   useEffect(() => {
-    if (!state.isHistoryLoaded || state.currentSessionId === null || state.runState !== "running") {
+    isControllerMountedRef.current = true;
+    return () => {
+      isControllerMountedRef.current = false;
+      stopOperationRef.current?.abortController.abort();
+      stopOperationRef.current = null;
+      abortSelectedSessionPoll();
+      stopSnapshotReconciliationRef.current?.abortController.abort();
+      stopSnapshotReconciliationRef.current = null;
+      confirmedChatTurnCancellationRef.current = null;
+      pendingChatTurnRef.current?.retryAbortController.abort();
+      pendingChatTurnRunner.cancelActive();
+      pendingChatTurnCancellationRunner.cancelActive();
+      if (
+        activeStreamAbortRef.current !== null
+        && shouldAbortChatStreamForControllerCleanup(
+          activeStreamUnadoptedDraftIdRef.current,
+        )
+      ) {
+        activeStreamAbortRef.current.abort();
+        activeStreamAbortRef.current = null;
+        activeStreamSelectionEpochRef.current = null;
+        activeStreamUnadoptedDraftIdRef.current = null;
+        activeStreamAdoptedSessionIdRef.current = null;
+      }
+      for (const abortController of snapshotAbortControllersRef.current) {
+        abortController.abort();
+      }
+      snapshotAbortControllersRef.current.clear();
+    };
+  }, [
+    abortSelectedSessionPoll,
+    pendingChatTurnCancellationRunner,
+    pendingChatTurnRunner,
+  ]);
+
+  useEffect(() => {
+    if (
+      !state.isHistoryLoaded
+      || state.currentSessionId === null
+      || state.runState !== "running"
+      || state.isLiveStreamConnected
+      || params.target.kind !== "session"
+      || state.currentSessionId !== params.target.sessionId
+    ) {
       return;
     }
 
-    const requestedSessionId = state.currentSessionId;
-    const pollAbortController = new AbortController();
-    const isPollingOwnerCurrent = (): boolean =>
-      isChatSnapshotPollingOwnerCurrent(
-        requestedSessionId,
-        stateRef.current.currentSessionId,
-        pollAbortController.signal,
-      )
-      && clearOperationRef.current === null;
+    const guard: ChatSelectionGuard = {
+      target: params.target,
+      selectionEpoch: params.selectionEpoch,
+    };
+    let activePollAbortController: AbortController | null = null;
+    const selectedSessionId = params.target.sessionId;
     const pollSnapshot = createSingleFlightChatSnapshotPoller(
       async (): Promise<void> => {
-        try {
-          const pendingChatTurn = pendingChatTurnRef.current;
-          if (
-            pendingChatTurn !== null
-            && pendingChatTurn.sessionId === requestedSessionId
-            && !pendingChatTurn.retryAbortController.signal.aborted
-          ) {
-            await pendingChatTurnRunner.run(pendingChatTurn);
-            return;
-          }
+        if (
+          !isGuardCurrent(guard)
+          || stateRef.current.isLiveStreamConnected
+        ) {
+          return;
+        }
+        const pendingChatTurn = pendingChatTurnRef.current;
+        if (
+          pendingChatTurn !== null
+          && pendingChatTurn.sessionId === selectedSessionId
+          && isGuardCurrent(pendingChatTurn.guard)
+          && !pendingChatTurn.retryAbortController.signal.aborted
+        ) {
+          await pendingChatTurnRunner.run(pendingChatTurn);
+          return;
+        }
 
+        const abortController = createSnapshotAbortController();
+        activePollAbortController = abortController;
+        selectedSessionPollAbortControllerRef.current = abortController;
+        try {
           await loadChatSnapshot(
-            requestedSessionId,
-            pollAbortController.signal,
+            selectedSessionId,
+            guard,
+            abortController.signal,
             true,
-            (snapshot): boolean =>
-              snapshot.sessionId === requestedSessionId
-              && isPollingOwnerCurrent(),
           );
         } catch (error) {
-          if (!isPollingOwnerCurrent()) {
-            return;
-          }
-          if (stateRef.current.isLiveStreamConnected) {
+          if (
+            abortController.signal.aborted
+            || !isGuardCurrent(guard)
+            || stateRef.current.isLiveStreamConnected
+          ) {
             return;
           }
 
-          const message = error instanceof Error ? error.message : String(error);
+          const message = error instanceof Error
+            ? error.message
+            : String(error);
+          const disposition = resolveChatSnapshotFailureDisposition(error);
+          if (
+            disposition === "recover_unavailable"
+            && params.recoverInvalidSessionSelection(
+              selectedSessionId,
+              t("chat.sessionUnavailable"),
+            )
+          ) {
+            return;
+          }
+          if (disposition === "retry_active_response") {
+            return;
+          }
+          if (disposition === "block_workspace_reload") {
+            startAssistantMessage();
+            markAssistantError(t("chat.errorFailed", { message }));
+            dispatchAction({ type: "bootstrap_blocked" });
+            return;
+          }
+
           markAssistantError(t("chat.errorFailed", { message }));
-          if (isPendingChatTurnForSession(
+          if (!isPendingChatTurnForSession(
             pendingChatTurnRef.current,
             stateRef.current.currentSessionId,
           )) {
-            return;
+            dispatchAction({ type: "run_interrupted" });
           }
-          dispatchAction({ type: "run_interrupted" });
+        } finally {
+          releaseSnapshotAbortController(abortController);
+          if (activePollAbortController === abortController) {
+            activePollAbortController = null;
+          }
+          if (
+            selectedSessionPollAbortControllerRef.current
+              === abortController
+          ) {
+            selectedSessionPollAbortControllerRef.current = null;
+          }
         }
       },
     );
-    const intervalId = setInterval(() => {
-      void pollSnapshot();
-    }, ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS);
 
+    const intervalId = window.setInterval(
+      () => {
+        void pollSnapshot();
+      },
+      ACTIVE_RUN_SNAPSHOT_POLL_INTERVAL_MS,
+    );
     return () => {
-      clearInterval(intervalId);
-      pollAbortController.abort();
+      window.clearInterval(intervalId);
+      activePollAbortController?.abort();
+      if (
+        selectedSessionPollAbortControllerRef.current
+          === activePollAbortController
+      ) {
+        selectedSessionPollAbortControllerRef.current = null;
+      }
     };
   }, [
+    createSnapshotAbortController,
     dispatchAction,
+    isGuardCurrent,
     loadChatSnapshot,
     markAssistantError,
     pendingChatTurnRunner,
+    params.selectionEpoch,
+    params.target,
+    params.recoverInvalidSessionSelection,
+    releaseSnapshotAbortController,
+    startAssistantMessage,
     state.currentSessionId,
     state.isHistoryLoaded,
+    state.isLiveStreamConnected,
     state.runState,
     t,
   ]);
-
-  const ensureWritableSessionId = useCallback(async (): Promise<string> => {
-    const currentSessionId = stateRef.current.currentSessionId;
-    if (currentSessionId !== null) {
-      return currentSessionId;
-    }
-
-    if (pendingSessionIdRef.current !== null) {
-      return pendingSessionIdRef.current;
-    }
-
-    const pendingSessionId = createChatSession(t)
-      .finally(() => {
-        pendingSessionIdRef.current = null;
-      });
-
-    pendingSessionIdRef.current = pendingSessionId;
-    const writableSessionId = await pendingSessionId;
-
-    return writableSessionId;
-  }, [t]);
 
   const sendMessage = useCallback(async (
     sendParams: SendChatMessageParams,
@@ -1593,25 +1427,59 @@ export const useChatSessionController = (
       selectIsAssistantRunActive(currentState)
       || currentState.isLiveStreamConnected
       || selectIsSelectedSessionStopping(currentState)
-      || clearOperationRef.current !== null
-      || pendingChatTurnCancellationRef.current !== null
-      || isChatTurnOwnerForSession(
-        activeChatTurnRef.current,
-        currentState.currentSessionId,
+      || !currentState.isHistoryLoaded
+      || currentState.currentSessionId !== (
+        params.target.kind === "session"
+          ? params.target.sessionId
+          : null
       )
-      || isChatTurnOwnerForSession(
-        confirmedChatTurnCancellationRef.current,
-        currentState.currentSessionId,
+      || (
+        pendingChatTurnCancellationRef.current !== null
+        && isGuardCurrent(
+          pendingChatTurnCancellationRef.current.guard,
+        )
       )
-      || isPendingChatTurnForSession(
-        pendingChatTurnRef.current,
-        currentState.currentSessionId,
+      || (
+        activeChatTurnRef.current !== null
+        && isGuardCurrent(activeChatTurnRef.current.guard)
+        && isChatTurnOwnerForSession(
+          activeChatTurnRef.current,
+          currentState.currentSessionId,
+        )
+      )
+      || (
+        confirmedChatTurnCancellationRef.current !== null
+        && isGuardCurrent(
+          confirmedChatTurnCancellationRef.current.guard,
+        )
+        && isChatTurnOwnerForSession(
+          confirmedChatTurnCancellationRef.current,
+          currentState.currentSessionId,
+        )
+      )
+      || (
+        pendingChatTurnRef.current !== null
+        && isGuardCurrent(pendingChatTurnRef.current.guard)
+        && isPendingChatTurnForSession(
+          pendingChatTurnRef.current,
+          currentState.currentSessionId,
+        )
+      )
+      || (
+        freshDraftChatTurnRef.current !== null
+        && isGuardCurrent(freshDraftChatTurnRef.current.guard)
       )
     ) {
+      sendParams.onSubmissionRejected();
       return;
     }
 
-    if (!currentState.isHistoryLoaded) {
+    const initialGuard: ChatSelectionGuard = {
+      target: params.target,
+      selectionEpoch: params.selectionEpoch,
+    };
+    if (!isGuardCurrent(initialGuard)) {
+      sendParams.onSubmissionRejected();
       return;
     }
 
@@ -1622,18 +1490,22 @@ export const useChatSessionController = (
       t,
     );
     if (preparedRequest.kind === "empty") {
+      sendParams.onSubmissionRejected();
       return;
     }
     if (preparedRequest.kind === "invalid_attachment") {
+      sendParams.onSubmissionRejected();
       startAssistantMessage();
       markAssistantError(preparedRequest.errorMessage);
       return;
     }
 
+    appendUserMessage(preparedRequest.contentParts);
+    dispatchAction({ type: "run_started" });
+    startAssistantMessage();
+
     if (preparedRequest.kind === "too_large") {
-      appendUserMessage(preparedRequest.contentParts);
-      dispatchAction({ type: "run_started" });
-      startAssistantMessage();
+      sendParams.onSubmissionRejected();
       markAssistantError(preparedRequest.errorMessage);
       dispatchAction({ type: "run_finished" });
       return;
@@ -1641,146 +1513,400 @@ export const useChatSessionController = (
 
     const turnId = crypto.randomUUID();
     assertCanonicalChatTurnId(turnId);
-    const preSessionChatTurn: PreSessionChatTurn = {
+    if (initialGuard.target.kind === "session") {
+      const transport = createChatSendTransport(
+        initialGuard.target,
+        preparedRequest.contentParts,
+        turnId,
+      );
+      const pendingChatTurn: PendingChatTurn = {
+        ownerId: Symbol(turnId),
+        sessionId: initialGuard.target.sessionId,
+        turnId,
+        guard: initialGuard,
+        requestBody: transport.requestBody,
+        submittedContent: preparedRequest.contentParts,
+        authoritativeMessages: authoritativeMessagesBeforeSend,
+        retryAbortController: new AbortController(),
+        onSubmissionRejected: sendParams.onSubmissionRejected,
+      };
+      pendingChatTurnRef.current = pendingChatTurn;
+      pendingChatTurnCancellationRef.current = null;
+      await pendingChatTurnRunner.run(pendingChatTurn);
+      return;
+    }
+
+    const abortController = new AbortController();
+    const freshDraftChatTurn: FreshDraftChatTurn = {
       ownerId: Symbol(turnId),
-      initialSessionId: currentState.currentSessionId,
-      turnId,
-      authoritativeMessages: authoritativeMessagesBeforeSend,
-      retryAbortController: new AbortController(),
-      submittedContent: preparedRequest.contentParts,
+      guard: initialGuard,
+      abortController,
     };
-    preSessionChatTurnRef.current = preSessionChatTurn;
+    freshDraftChatTurnRef.current = freshDraftChatTurn;
+    activeStreamAbortRef.current = abortController;
+    activeStreamSelectionEpochRef.current = initialGuard.selectionEpoch;
+    activeStreamAdoptedSessionIdRef.current = null;
+    let runGuard = initialGuard;
+    const freshDraftId = params.target.kind === "draft"
+      ? params.target.draftId
+      : null;
+    activeStreamUnadoptedDraftIdRef.current = freshDraftId;
+    const transport = createChatSendTransport(
+      params.target,
+      preparedRequest.contentParts,
+      turnId,
+    );
 
-    appendUserMessage(preparedRequest.contentParts);
-    dispatchAction({ type: "run_started" });
-    startAssistantMessage();
-
-    let writableSessionId: string;
-    try {
-      writableSessionId = await ensureWritableSessionId();
-    } catch (error) {
-      if (!isChatPreSessionSendOwnerCurrent(
-        preSessionChatTurn,
-        preSessionChatTurnRef.current,
-        stateRef.current.currentSessionId,
-      ) || preSessionChatTurn.retryAbortController.signal.aborted) {
+    const acceptResponseSessionId = (sessionId: string): void => {
+      if (freshDraftId === null) {
+        if (
+          runGuard.target.kind !== "session"
+          || runGuard.target.sessionId !== sessionId
+          || !isGuardCurrent(runGuard)
+        ) {
+          return;
+        }
+        dispatchAction({
+          type: "server_session_accepted",
+          sessionId,
+        });
         return;
       }
-      preSessionChatTurnRef.current = null;
-      const message = error instanceof Error ? error.message : String(error);
-      markAssistantError(t("chat.errorFailed", { message }));
-      dispatchAction({ type: "run_finished" });
-      return;
-    }
 
-    const adoptedTurnOwner = resolveChatPreSessionSendAdoption(
-      preSessionChatTurn,
-      preSessionChatTurnRef.current,
-      stateRef.current.currentSessionId,
-      writableSessionId,
-      preSessionChatTurn.retryAbortController.signal,
-    );
-    if (adoptedTurnOwner === null) {
-      return;
-    }
+      const ownsFreshDraftStream =
+        freshDraftChatTurnRef.current?.ownerId === freshDraftChatTurn.ownerId
+        && activeStreamAbortRef.current === abortController
+        && activeStreamSelectionEpochRef.current
+          === initialGuard.selectionEpoch
+        && activeStreamUnadoptedDraftIdRef.current === freshDraftId
+        && activeStreamAdoptedSessionIdRef.current === null;
+      const adoption = params.adoptDraftSession(
+        freshDraftId,
+        sessionId,
+        initialGuard.selectionEpoch,
+      );
+      const ownsSelectedAdoption =
+        adoption.kind === "selected" && ownsFreshDraftStream;
+      if (freshDraftChatTurnRef.current?.ownerId === freshDraftChatTurn.ownerId) {
+        freshDraftChatTurnRef.current = null;
+      }
+      if (ownsFreshDraftStream) {
+        activeStreamUnadoptedDraftIdRef.current = null;
+        activeStreamAdoptedSessionIdRef.current = sessionId;
+        if (ownsSelectedAdoption) {
+          activeStreamSelectionEpochRef.current = adoption.selectionEpoch;
+        }
+      }
 
-    const pendingChatTurn: PendingChatTurn = {
-      ...adoptedTurnOwner,
-      requestBody: buildChatSendRequestBody(
-        preparedRequest.contentParts,
-        writableSessionId,
-        turnId,
-      ),
-      submittedContent: preparedRequest.contentParts,
-      authoritativeMessages: authoritativeMessagesBeforeSend,
-      retryAbortController: preSessionChatTurn.retryAbortController,
+      runGuard = {
+        target: adoption.target,
+        selectionEpoch: ownsSelectedAdoption
+          ? adoption.selectionEpoch
+          : runGuard.selectionEpoch,
+      };
+      if (
+        ownsSelectedAdoption
+        && isControllerMountedRef.current
+        && isGuardCurrent(runGuard)
+      ) {
+        replaceMessages(buildPendingChatSendHistory(
+          authoritativeMessagesBeforeSend,
+          preparedRequest.contentParts,
+          Date.now(),
+        ));
+        dispatchAction({
+          type: "server_session_created",
+          sessionId,
+        });
+        dispatchAction({ type: "run_started" });
+      } else {
+        abortController.abort();
+      }
+      params.observeSessionInvalidation(sessionId, 0, "snapshot");
     };
-    preSessionChatTurnRef.current = null;
-    pendingChatTurnRef.current = pendingChatTurn;
-    pendingChatTurnCancellationRef.current = null;
-    if (stateRef.current.currentSessionId !== writableSessionId) {
-      dispatchAction({
-        type: "server_session_created",
-        sessionId: writableSessionId,
-      });
+
+    const streamResult = await streamChatResponse({
+      url: transport.url,
+      requestBody: transport.requestBody,
+      signal: abortController.signal,
+      abortStream: (): void => {
+        abortController.abort();
+      },
+      t,
+      handlers: {
+        appendAssistantChunk: (text, streamPosition): void => {
+          if (isControllerMountedRef.current && isGuardCurrent(runGuard)) {
+            appendAssistantChunk(text, streamPosition);
+          }
+        },
+        upsertReasoningSummary: (reasoningSummary): void => {
+          if (isControllerMountedRef.current && isGuardCurrent(runGuard)) {
+            upsertReasoningSummary(reasoningSummary);
+          }
+        },
+        upsertToolCall: (toolCall): void => {
+          if (isControllerMountedRef.current && isGuardCurrent(runGuard)) {
+            upsertToolCall(toolCall);
+          }
+        },
+        markAssistantError: (errorMessage): void => {
+          if (isControllerMountedRef.current && isGuardCurrent(runGuard)) {
+            markAssistantError(errorMessage);
+          }
+        },
+        applyMainContentInvalidationVersion: (nextVersion): void => {
+          if (
+            isControllerMountedRef.current
+            && runGuard.target.kind === "session"
+            && isGuardCurrent(runGuard)
+          ) {
+            dispatchAction({
+              type: "main_content_invalidation_observed",
+              version: nextVersion,
+            });
+            params.observeSessionInvalidation(
+              runGuard.target.sessionId,
+              nextVersion,
+              "live",
+            );
+          }
+        },
+      },
+      onSessionIdReceived: acceptResponseSessionId,
+      onLiveStreamConnected: (): void => {
+        if (isControllerMountedRef.current && isGuardCurrent(runGuard)) {
+          abortSelectedSessionPoll();
+          dispatchAction({ type: "live_stream_connected" });
+          if (freshDraftId === null) {
+            void params.refreshCatalog();
+          }
+        }
+      },
+    });
+
+    if (
+      activeStreamAbortRef.current === abortController
+      && (
+        runGuard.target.kind !== "session"
+        || !isSelectedStreamRetainedByStop(
+          abortController,
+          runGuard.target.sessionId,
+          runGuard.selectionEpoch,
+        )
+      )
+    ) {
+      activeStreamAbortRef.current = null;
+      activeStreamSelectionEpochRef.current = null;
+      activeStreamUnadoptedDraftIdRef.current = null;
+      activeStreamAdoptedSessionIdRef.current = null;
     }
-    await pendingChatTurnRunner.run(pendingChatTurn);
+    if (freshDraftChatTurnRef.current?.ownerId === freshDraftChatTurn.ownerId) {
+      freshDraftChatTurnRef.current = null;
+    }
+    const isUnadoptedFreshDraft = freshDraftId !== null
+      && runGuard.target.kind === "draft";
+    if (isUnadoptedFreshDraft) {
+      if (streamResult.requestAcceptance === "rejected") {
+        sendParams.onSubmissionRejected();
+      } else {
+        sendParams.onSubmissionUnresolved();
+      }
+    }
+    if (
+      !isControllerMountedRef.current
+      || !isGuardCurrent(runGuard)
+    ) {
+      return;
+    }
+
+    if (streamResult.receivedContent) {
+      finalizeAssistant();
+    }
+    dispatchAction({ type: "live_stream_disconnected" });
+
+    if (isUnadoptedFreshDraft) {
+      const requestFailureMessage = streamResult.streamFailure === null
+        ? t("chat.errorNoResponse")
+        : streamResult.streamFailure.message;
+      markAssistantError(requestFailureMessage);
+      dispatchAction({ type: "run_finished" });
+      await params.refreshCatalog();
+      return;
+    }
+
+    if (
+      isDefinitiveChatRequestRejection(streamResult)
+      && !streamResult.wasAborted
+    ) {
+      const requestFailureMessage = streamResult.streamFailure === null
+        ? t("chat.errorNoResponse")
+        : streamResult.streamFailure.message;
+      sendParams.onSubmissionRejected();
+      markAssistantError(requestFailureMessage);
+      dispatchAction({ type: "run_finished" });
+      await params.refreshCatalog();
+      return;
+    }
+
+    if (
+      !streamResult.wasAborted
+      && runGuard.target.kind === "session"
+    ) {
+      const snapshotAbortController = createSnapshotAbortController();
+      try {
+        const snapshotResult = await loadChatSnapshot(
+          runGuard.target.sessionId,
+          runGuard,
+          snapshotAbortController.signal,
+          true,
+        );
+        if (
+          snapshotResult.snapshot !== null
+          && shouldSuppressStreamFailure(snapshotResult.snapshot)
+        ) {
+          await params.refreshCatalog();
+          return;
+        }
+      } catch (error) {
+        if (
+          !snapshotAbortController.signal.aborted
+          && isGuardCurrent(runGuard)
+        ) {
+          const disposition = resolveChatSnapshotFailureDisposition(error);
+          if (
+            disposition === "recover_unavailable"
+            && params.recoverInvalidSessionSelection(
+              runGuard.target.kind === "session"
+                ? runGuard.target.sessionId
+                : "",
+              t("chat.sessionUnavailable"),
+            )
+          ) {
+            await params.refreshCatalog();
+            return;
+          }
+          if (disposition === "retry_active_response") {
+            await params.refreshCatalog();
+            return;
+          }
+
+          const message = error instanceof Error ? error.message : String(error);
+          if (disposition === "block_workspace_reload") {
+            markAssistantError(t("chat.errorFailed", { message }));
+            dispatchAction({ type: "bootstrap_blocked" });
+            await params.refreshCatalog();
+            return;
+          }
+          if (streamResult.streamFailure === null) {
+            markAssistantError(t("chat.errorFailed", { message }));
+            dispatchAction({ type: "run_interrupted" });
+          }
+        }
+      } finally {
+        releaseSnapshotAbortController(snapshotAbortController);
+      }
+    }
+
+    if (
+      streamResult.streamFailure !== null
+      && !streamResult.wasAborted
+      && isGuardCurrent(runGuard)
+    ) {
+      markAssistantError(t("chat.errorFailed", {
+        message: streamResult.streamFailure.message,
+      }));
+      dispatchAction({ type: "run_interrupted" });
+    }
+    await params.refreshCatalog();
   }, [
+    abortSelectedSessionPoll,
+    appendAssistantChunk,
     appendUserMessage,
+    createSnapshotAbortController,
     dispatchAction,
-    ensureWritableSessionId,
+    finalizeAssistant,
+    isGuardCurrent,
+    isSelectedStreamRetainedByStop,
+    loadChatSnapshot,
     markAssistantError,
     messages,
+    params.adoptDraftSession,
+    params.observeSessionInvalidation,
+    params.recoverInvalidSessionSelection,
+    params.refreshCatalog,
+    params.selectionEpoch,
+    params.target,
     pendingChatTurnRunner,
+    releaseSnapshotAbortController,
+    replaceMessages,
     startAssistantMessage,
     t,
+    upsertReasoningSummary,
+    upsertToolCall,
   ]);
 
   const stopMessage = useCallback(async (): Promise<void> => {
     const currentState = stateRef.current;
-    if (!selectIsAssistantRunActive(currentState) || selectIsSelectedSessionStopping(currentState)) {
+    if (
+      params.target.kind !== "session"
+      || currentState.currentSessionId !== params.target.sessionId
+      || !selectIsAssistantRunActive(currentState)
+      || selectIsSelectedSessionStopping(currentState)
+    ) {
       return;
     }
-    const preSessionChatTurn = preSessionChatTurnRef.current;
-    if (currentState.currentSessionId === null) {
-      if (preSessionChatTurn === null) {
-        return;
-      }
-      preSessionChatTurn.retryAbortController.abort();
-      preSessionChatTurnRef.current = null;
-      abortRef.current?.abort();
-      abortRef.current = null;
-      replaceMessages(buildStoppedChatSendHistory(
-        preSessionChatTurn.authoritativeMessages,
-        preSessionChatTurn.submittedContent,
-        Date.now(),
-      ));
-      dispatchAction({ type: "live_stream_disconnected" });
-      dispatchAction({ type: "run_finished" });
+
+    const sessionId = params.target.sessionId;
+    const guard: ChatSelectionGuard = {
+      target: params.target,
+      selectionEpoch: params.selectionEpoch,
+    };
+    if (!isGuardCurrent(guard)) {
       return;
     }
-    const stoppedSessionId = currentState.currentSessionId;
+
     stopOperationRef.current?.abortController.abort();
-    const stopOwner: ChatStopOperationOwner = {
-      ownerId: Symbol(stoppedSessionId),
-      sessionId: stoppedSessionId,
+    const stopOwner: OwnedChatStopOperation = {
+      ownerId: Symbol(sessionId),
+      sessionId,
+      guard,
       abortController: new AbortController(),
     };
     stopOperationRef.current = stopOwner;
     const isStopOwnerCurrent = (): boolean =>
-      isChatStopOperationOwnerCurrent(
+      isGuardCurrent(stopOwner.guard)
+      && isChatStopOperationOwnerCurrent(
         stopOwner,
         stopOperationRef.current,
         stateRef.current.currentSessionId,
       );
-    const stopStreamController = abortRef.current;
-    const preSessionExactChatTurn = toExactChatTurnOwner(
-      preSessionChatTurnRef.current,
-    );
+    const getSelectedStreamController = (): AbortController | null =>
+      activeStreamSelectionEpochRef.current === guard.selectionEpoch
+        && activeStreamAdoptedSessionIdRef.current === sessionId
+        ? activeStreamAbortRef.current
+        : null;
+    const stopStreamController = getSelectedStreamController();
     const pendingChatTurn = pendingChatTurnRef.current;
-    const exactChatTurn = preSessionExactChatTurn?.sessionId === stoppedSessionId
-      ? preSessionExactChatTurn
-      : pendingChatTurn?.sessionId === stoppedSessionId
+    const exactChatTurn =
+      pendingChatTurn?.sessionId === sessionId
+        && isGuardCurrent(pendingChatTurn.guard)
         ? pendingChatTurn
-        : activeChatTurnRef.current?.sessionId === stoppedSessionId
+        : activeChatTurnRef.current?.sessionId === sessionId
+            && isGuardCurrent(activeChatTurnRef.current.guard)
           ? activeChatTurnRef.current
-          : confirmedChatTurnCancellationRef.current?.sessionId
-              === stoppedSessionId
+          : confirmedChatTurnCancellationRef.current?.sessionId === sessionId
+              && isGuardCurrent(
+                confirmedChatTurnCancellationRef.current.guard,
+              )
             ? confirmedChatTurnCancellationRef.current
             : null;
     const retainedStoppedChatTurn =
-      preSessionExactChatTurn?.ownerId === exactChatTurn?.ownerId
-        && preSessionChatTurn !== null
-        ? preSessionChatTurn
-        : pendingChatTurn?.ownerId === exactChatTurn?.ownerId
-          ? pendingChatTurn
-          : null;
-    if (preSessionExactChatTurn?.ownerId === exactChatTurn?.ownerId) {
-      preSessionChatTurnRef.current?.retryAbortController.abort();
-    }
+      pendingChatTurn?.ownerId === exactChatTurn?.ownerId
+        ? pendingChatTurn
+        : null;
     if (
       pendingChatTurn !== null
-      && pendingChatTurn.sessionId === stoppedSessionId
+      && pendingChatTurn.sessionId === sessionId
     ) {
       pendingChatTurn.retryAbortController.abort();
       pendingChatTurnRunner.cancel(pendingChatTurn);
@@ -1788,22 +1914,19 @@ export const useChatSessionController = (
 
     dispatchAction({
       type: "stop_requested",
-      sessionId: stoppedSessionId,
+      sessionId,
     });
 
     let exactCancellationResolution: ChatTurnCancellationResolution | null =
       null;
     let sessionStopConfirmed = false;
-    let stopSnapshotSettled = false;
-    let stopWasSupersededBySnapshot = false;
+    let stopRequestFailed = false;
     try {
-      if (
-        exactChatTurn !== null
-      ) {
+      if (exactChatTurn !== null) {
         exactCancellationResolution = await cancelExactChatTurn(exactChatTurn);
       } else {
         await postStopChatSession(
-          stoppedSessionId,
+          sessionId,
           null,
           stopOwner.abortController.signal,
           t,
@@ -1811,6 +1934,7 @@ export const useChatSessionController = (
         sessionStopConfirmed = true;
       }
     } catch (error) {
+      stopRequestFailed = true;
       if (isStopOwnerCurrent()) {
         if (exactChatTurn !== null) {
           restoreChatTurnAfterCancellationRejection(error, exactChatTurn);
@@ -1819,123 +1943,157 @@ export const useChatSessionController = (
         markAssistantError(t("chat.errorFailed", { message }));
         dispatchAction({
           type: "stop_failed",
-          sessionId: stoppedSessionId,
+          sessionId,
         });
       }
-    } finally {
-      if (!isStopOwnerCurrent()) {
-        return;
+    }
+
+    if (!isStopOwnerCurrent()) {
+      return;
+    }
+    stopStreamController?.abort();
+    const isStopStreamSettlementOwned = isChatStopSettlementOwned(
+      sessionId,
+      stateRef.current.currentSessionId,
+      stopStreamController,
+      getSelectedStreamController(),
+    );
+    if (isStopStreamSettlementOwned) {
+      activeStreamAbortRef.current = null;
+      activeStreamSelectionEpochRef.current = null;
+      activeStreamUnadoptedDraftIdRef.current = null;
+      activeStreamAdoptedSessionIdRef.current = null;
+      dispatchAction({ type: "live_stream_disconnected" });
+    }
+
+    if (stopRequestFailed) {
+      if (stopOperationRef.current?.ownerId === stopOwner.ownerId) {
+        stopOperationRef.current = null;
       }
-      stopStreamController?.abort();
-      const isStopStreamSettlementOwned = isChatStopSettlementOwned(
-        stoppedSessionId,
-        stateRef.current.currentSessionId,
-        stopStreamController,
-        abortRef.current,
-      );
-      if (isStopStreamSettlementOwned) {
-        abortRef.current = null;
-        dispatchAction({ type: "live_stream_disconnected" });
-      }
+      await params.refreshCatalog();
+      return;
+    }
 
-      if (exactCancellationResolution?.kind === "superseded") {
-        if (clearOperationRef.current === null && exactChatTurn !== null) {
-          releaseSupersededExactTurnStop(exactChatTurn);
-        }
-      } else {
-        const stopConfirmed =
-          exactCancellationResolution?.kind === "confirmed"
-          || sessionStopConfirmed;
-        const isStopSettlementOwnerCurrent = (): boolean =>
-          isStopOwnerCurrent()
-          && !stopOwner.abortController.signal.aborted
-          && clearOperationRef.current === null
-          && isChatStopSettlementOwned(
-            stoppedSessionId,
-            stateRef.current.currentSessionId,
-            null,
-            abortRef.current,
-          );
-
-        if (stopConfirmed && isStopStreamSettlementOwned) {
-          try {
-            const snapshotResolution =
-              await reconcileConfirmedStopSnapshotForOwner(
-                stoppedSessionId,
-                exactChatTurn?.turnId ?? null,
-                stopOwner.abortController.signal,
-                isStopSettlementOwnerCurrent,
-              );
-
-            if (
-              snapshotResolution.kind === "settled"
-              && isStopSettlementOwnerCurrent()
-            ) {
-              if (
-                retainedStoppedChatTurn !== null
-              ) {
-                const stoppedHistory = resolveConfirmedChatTurnStopHistory(
-                  snapshotResolution.snapshot,
-                  retainedStoppedChatTurn,
-                  Date.now(),
-                );
-                if (stoppedHistory !== null) {
-                  replaceMessages(stoppedHistory);
-                }
-              }
-              stopSnapshotSettled = true;
-            } else if (
-              snapshotResolution.kind === "superseded"
-              && snapshotResolution.snapshot !== null
-              && exactChatTurn !== null
-              && isStopSettlementOwnerCurrent()
-            ) {
-              releaseSupersededExactTurnStop(exactChatTurn);
-              stopWasSupersededBySnapshot = true;
-            }
-          } catch (error) {
-            if (isStopSettlementOwnerCurrent()) {
-              const message = error instanceof Error
-                ? error.message
-                : String(error);
-              markAssistantError(t("chat.errorFailed", { message }));
-              dispatchAction({
-                type: "stop_failed",
-                sessionId: stoppedSessionId,
-              });
-              if (
-                exactChatTurn !== null
-                && shouldRestoreChatRunAfterSnapshotFailure(
-                  exactChatTurn,
-                  activeChatTurnRef.current,
-                  stateRef.current.currentSessionId,
-                )
-              ) {
-                dispatchAction({ type: "run_started" });
-              }
-            }
-          }
-        }
-        if (
-          isStopOwnerCurrent()
-          && !stopWasSupersededBySnapshot
-          && stopConfirmed
-          && stopSnapshotSettled
-        ) {
-          dispatchAction({
-            type: "stop_completed",
-            sessionId: stoppedSessionId,
-          });
-        }
+    if (exactCancellationResolution?.kind === "superseded") {
+      if (exactChatTurn !== null) {
+        releaseSupersededExactTurnStop(exactChatTurn);
       }
       if (stopOperationRef.current?.ownerId === stopOwner.ownerId) {
         stopOperationRef.current = null;
       }
+      await params.refreshCatalog();
+      return;
     }
+
+    const stopConfirmed =
+      exactCancellationResolution?.kind === "confirmed"
+      || sessionStopConfirmed;
+    const isStopSettlementOwnerCurrent = (): boolean =>
+      isStopOwnerCurrent()
+      && !stopOwner.abortController.signal.aborted
+      && isChatStopSettlementOwned(
+        sessionId,
+        stateRef.current.currentSessionId,
+        null,
+        getSelectedStreamController(),
+      );
+    let stopSnapshotSettled = false;
+    let stopWasSupersededBySnapshot = false;
+    if (stopConfirmed && isStopStreamSettlementOwned) {
+      try {
+        const snapshotResolution =
+          await reconcileConfirmedStopSnapshotForOwner(
+            sessionId,
+            exactChatTurn?.turnId ?? null,
+            guard,
+            stopOwner.abortController.signal,
+            isStopSettlementOwnerCurrent,
+          );
+        if (
+          snapshotResolution.kind === "settled"
+          && isStopSettlementOwnerCurrent()
+        ) {
+          if (retainedStoppedChatTurn !== null) {
+            const stoppedHistory = resolveConfirmedChatTurnStopHistory(
+              snapshotResolution.snapshot,
+              retainedStoppedChatTurn,
+              Date.now(),
+            );
+            if (stoppedHistory !== null) {
+              replaceMessages(stoppedHistory);
+            }
+          }
+          stopSnapshotSettled = true;
+        } else if (
+          snapshotResolution.kind === "superseded"
+          && snapshotResolution.snapshot !== null
+          && exactChatTurn !== null
+          && isStopSettlementOwnerCurrent()
+        ) {
+          releaseSupersededExactTurnStop(exactChatTurn);
+          stopWasSupersededBySnapshot = true;
+        }
+      } catch (error) {
+        if (isStopSettlementOwnerCurrent()) {
+          const disposition = resolveChatSnapshotFailureDisposition(error);
+          dispatchAction({
+            type: "stop_failed",
+            sessionId,
+          });
+          if (
+            disposition === "recover_unavailable"
+            && params.recoverInvalidSessionSelection(
+              sessionId,
+              t("chat.sessionUnavailable"),
+            )
+          ) {
+            stopWasSupersededBySnapshot = true;
+          } else {
+            const message = error instanceof Error
+              ? error.message
+              : String(error);
+            markAssistantError(t("chat.errorFailed", { message }));
+            if (disposition === "block_workspace_reload") {
+              dispatchAction({ type: "bootstrap_blocked" });
+            }
+            if (
+              exactChatTurn !== null
+              && shouldRestoreChatRunAfterSnapshotFailure(
+                exactChatTurn,
+                activeChatTurnRef.current,
+                stateRef.current.currentSessionId,
+              )
+            ) {
+              dispatchAction({ type: "run_started" });
+            }
+          }
+        }
+      }
+    }
+    if (
+      isStopOwnerCurrent()
+      && !stopWasSupersededBySnapshot
+      && stopConfirmed
+      && stopSnapshotSettled
+    ) {
+      dispatchAction({
+        type: "stop_completed",
+        sessionId,
+      });
+    }
+    if (stopOperationRef.current?.ownerId === stopOwner.ownerId) {
+      stopOperationRef.current = null;
+    }
+    await params.refreshCatalog();
   }, [
-    dispatchAction,
-    markAssistantError,
     cancelExactChatTurn,
+    dispatchAction,
+    isGuardCurrent,
+    markAssistantError,
+    params.refreshCatalog,
+    params.recoverInvalidSessionSelection,
+    params.selectionEpoch,
+    params.target,
     pendingChatTurnRunner,
     reconcileConfirmedStopSnapshotForOwner,
     releaseSupersededExactTurnStop,
@@ -1944,61 +2102,16 @@ export const useChatSessionController = (
     t,
   ]);
 
-  const clearConversation = useCallback((): Promise<void> => {
-    stopOperationRef.current?.abortController.abort();
-    stopOperationRef.current = null;
-    stopSnapshotReconciliationRef.current?.abortController.abort();
-    stopSnapshotReconciliationRef.current = null;
-    const targetSessionId = stateRef.current.currentSessionId;
-    const existingOperation = clearOperationRef.current;
-    if (
-      existingOperation !== null
-      && existingOperation.targetSessionId === targetSessionId
-    ) {
-      return clearOperationRunner.run(existingOperation);
-    }
-
-    if (existingOperation !== null) {
-      clearOperationRunner.cancel(existingOperation);
-      if (existingOperation.targetSessionId !== null) {
-        dispatchAction({
-          type: "stop_completed",
-          sessionId: existingOperation.targetSessionId,
-        });
-      }
-    }
-
-    const owner: ChatClearOperationOwner = {
-      ownerId: Symbol(targetSessionId ?? "local-clear"),
-      targetSessionId,
-    };
-    clearOperationRef.current = owner;
-    return clearOperationRunner.run(owner);
-  }, [
-    clearOperationRunner,
-    dispatchAction,
-  ]);
-
-  const acceptServerSessionId = useCallback((sessionId: string): void => {
-    dispatchAction({
-      type: "server_session_accepted",
-      sessionId,
-    });
-  }, [dispatchAction]);
-
   return {
     messages,
     runState: state.runState,
     isHistoryLoaded: state.isHistoryLoaded,
     isAssistantRunActive,
     isLiveStreamConnected: state.isLiveStreamConnected,
-    isStopping: selectIsSelectedSessionStopping(state),
+    isStopping,
     currentSessionId: state.currentSessionId,
     composerAction,
-    acceptServerSessionId,
-    ensureWritableSessionId,
     sendMessage,
     stopMessage,
-    clearConversation,
   };
 };

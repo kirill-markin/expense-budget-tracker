@@ -34,7 +34,7 @@ import {
   type ChatDictationState,
 } from "../../stream/hooks/chatDictation";
 import { useDesktopEnterToSend } from "../../stream/hooks/useDesktopEnterToSend";
-import { useChatSessionController } from "../../session/controller/useChatSessionController";
+import { useChatSessionController } from "../../session/controller/legacyChatSessionController";
 import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
