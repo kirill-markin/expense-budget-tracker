@@ -49,7 +49,7 @@ jobs:
     outputs:
       domain_name: ${{ vars.CDK_DOMAIN_NAME }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - name: Detect changed paths
         id: changes
@@ -76,7 +76,7 @@ jobs:
         run: npm install --global "$(node -p "require('./package.json').packageManager")"
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6.2.2
+        uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -169,7 +169,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: actions/setup-node@v7.0.0
         with:
@@ -233,7 +233,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: actions/setup-node@v7.0.0
         with:
