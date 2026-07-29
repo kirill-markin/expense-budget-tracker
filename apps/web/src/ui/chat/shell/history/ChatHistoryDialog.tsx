@@ -1,16 +1,18 @@
 "use client";
 
 import {
+  type CSSProperties,
   type FocusEvent,
-  type KeyboardEvent,
   type ReactElement,
-  type SyntheticEvent,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
@@ -56,6 +58,147 @@ type SessionListProps = Readonly<{
   testId: string;
   onSelectSession: (sessionId: string) => void;
 }>;
+
+type VisibleViewport = Readonly<{
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}>;
+
+type DialogPosition = Readonly<{
+  insetBlockStart: number;
+  insetInlineStart: number;
+  width: number;
+  maxHeight: number;
+  viewportInsetBlockStart: number;
+  viewportInsetInlineStart: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}>;
+
+type AnchorRect = Readonly<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}>;
+
+type DialogStyle = CSSProperties & {
+  "--chat-history-inset-block-start": string;
+  "--chat-history-inset-inline-start": string;
+  "--chat-history-width": string;
+  "--chat-history-max-height": string;
+  "--chat-history-viewport-inset-block-start": string;
+  "--chat-history-viewport-inset-inline-start": string;
+  "--chat-history-viewport-width": string;
+  "--chat-history-viewport-height": string;
+};
+
+const VIEWPORT_MARGIN_PX = 8;
+const ANCHOR_GAP_PX = 6;
+const MAX_DIALOG_WIDTH_PX = 400;
+const MAX_DIALOG_HEIGHT_PX = 560;
+
+const getAnchorRect = (anchor: HTMLButtonElement): AnchorRect => {
+  const rect = anchor.getBoundingClientRect();
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+  };
+};
+
+const anchorRectsMatch = (
+  first: AnchorRect,
+  second: AnchorRect,
+): boolean =>
+  first.x === second.x
+  && first.y === second.y
+  && first.width === second.width
+  && first.height === second.height;
+
+const dialogPositionsMatch = (
+  first: DialogPosition,
+  second: DialogPosition,
+): boolean =>
+  first.insetBlockStart === second.insetBlockStart
+  && first.insetInlineStart === second.insetInlineStart
+  && first.width === second.width
+  && first.maxHeight === second.maxHeight
+  && first.viewportInsetBlockStart === second.viewportInsetBlockStart
+  && first.viewportInsetInlineStart === second.viewportInsetInlineStart
+  && first.viewportWidth === second.viewportWidth
+  && first.viewportHeight === second.viewportHeight;
+
+const getVisibleViewport = (): VisibleViewport => {
+  const visualViewport = window.visualViewport;
+  if (visualViewport === null) {
+    return {
+      top: 0,
+      left: 0,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+  }
+
+  return {
+    top: visualViewport.offsetTop,
+    left: visualViewport.offsetLeft,
+    width: visualViewport.width,
+    height: visualViewport.height,
+  };
+};
+
+const getDialogPosition = (anchor: HTMLButtonElement): DialogPosition => {
+  const anchorRect = anchor.getBoundingClientRect();
+  const viewport = getVisibleViewport();
+  const viewportInlineEnd = viewport.left + viewport.width;
+  const viewportBlockEnd = viewport.top + viewport.height;
+  const availableWidth = Math.max(
+    0,
+    viewport.width - (VIEWPORT_MARGIN_PX * 2),
+  );
+  const width = Math.min(MAX_DIALOG_WIDTH_PX, availableWidth);
+  const minimumLeft = viewport.left + VIEWPORT_MARGIN_PX;
+  const maximumLeft = viewportInlineEnd - VIEWPORT_MARGIN_PX - width;
+  const isRtl = getComputedStyle(anchor).direction === "rtl";
+  const preferredLeft = isRtl
+    ? anchorRect.left
+    : anchorRect.right - width;
+  const left = Math.min(Math.max(preferredLeft, minimumLeft), maximumLeft);
+  const minimumTop = viewport.top + VIEWPORT_MARGIN_PX;
+  const maximumTop = Math.max(
+    minimumTop,
+    viewportBlockEnd - VIEWPORT_MARGIN_PX,
+  );
+  const top = Math.min(
+    Math.max(anchorRect.bottom + ANCHOR_GAP_PX, minimumTop),
+    maximumTop,
+  );
+  const maxHeight = Math.min(
+    MAX_DIALOG_HEIGHT_PX,
+    Math.max(0, viewportBlockEnd - VIEWPORT_MARGIN_PX - top),
+  );
+  const insetInlineStart = isRtl
+    ? window.innerWidth - left - width
+    : left;
+  const viewportInsetInlineStart = isRtl
+    ? window.innerWidth - viewport.left - viewport.width
+    : viewport.left;
+
+  return {
+    insetBlockStart: top,
+    insetInlineStart,
+    width,
+    maxHeight,
+    viewportInsetBlockStart: viewport.top,
+    viewportInsetInlineStart,
+    viewportWidth: viewport.width,
+    viewportHeight: viewport.height,
+  };
+};
 
 const formatLastActivity = (
   session: ChatHistorySession,
@@ -151,9 +294,13 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
   const historyButtonRef = useRef<HTMLButtonElement | null>(null);
   const createDraftButtonRef = useRef<HTMLButtonElement | null>(null);
   const loadMoreButtonRef = useRef<HTMLButtonElement | null>(null);
-  const previousOpenRef = useRef<boolean>(false);
+  const renderedOpenRef = useRef<boolean>(false);
+  const restoreTriggerFocusRef = useRef<boolean>(false);
   const focusedSessionIdRef = useRef<string | null>(null);
   const loadMoreOwnsFocusRef = useRef<boolean>(false);
+  const focusedDialogElementRef = useRef<HTMLElement | null>(null);
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  const [position, setPosition] = useState<DialogPosition | null>(null);
   const runningSessions = sessions.filter((session) => session.status === "running");
   const recentSessions = sessions.filter((session) => session.status !== "running");
   const statusVisibility = resolveChatHistoryStatusVisibility(
@@ -175,16 +322,159 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
     [i18n.language, i18n.resolvedLanguage],
   );
 
+  const updatePosition = useCallback((): void => {
+    const historyButton = historyButtonRef.current;
+    if (historyButton === null) {
+      throw new Error("Cannot position chat history dialog: history button is not mounted");
+    }
+    const nextPosition = getDialogPosition(historyButton);
+    setPosition((currentPosition) => (
+      currentPosition !== null
+      && dialogPositionsMatch(currentPosition, nextPosition)
+        ? currentPosition
+        : nextPosition
+    ));
+  }, []);
+
+  useEffect(() => {
+    setPortalTarget(document.body);
+  }, []);
+
   useLayoutEffect(() => {
     if (!open) {
-      focusedSessionIdRef.current = null;
-      loadMoreOwnsFocusRef.current = false;
+      setPosition(null);
       return;
     }
+    updatePosition();
+  }, [open, updatePosition]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleViewportChange = (): void => updatePosition();
+    const historyButton = historyButtonRef.current;
+    if (historyButton === null) {
+      throw new Error(
+        "Cannot observe chat history dialog anchor: history button is not mounted",
+      );
+    }
+    let previousAnchorRect = getAnchorRect(historyButton);
+    let animationFrameId = 0;
+    const trackAnchorRect = (): void => {
+      const currentHistoryButton = historyButtonRef.current;
+      if (currentHistoryButton === null) {
+        throw new Error(
+          "Cannot track chat history dialog anchor: history button is not mounted",
+        );
+      }
+      const currentAnchorRect = getAnchorRect(currentHistoryButton);
+      if (!anchorRectsMatch(previousAnchorRect, currentAnchorRect)) {
+        previousAnchorRect = currentAnchorRect;
+        updatePosition();
+      }
+      animationFrameId = window.requestAnimationFrame(trackAnchorRect);
+    };
+    animationFrameId = window.requestAnimationFrame(trackAnchorRect);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    window.visualViewport?.addEventListener("resize", handleViewportChange);
+    window.visualViewport?.addEventListener("scroll", handleViewportChange);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+      window.visualViewport?.removeEventListener("resize", handleViewportChange);
+      window.visualViewport?.removeEventListener("scroll", handleViewportChange);
+    };
+  }, [open, updatePosition]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: globalThis.PointerEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        throw new TypeError(
+          "Cannot dismiss chat history dialog: pointer target is not a DOM node",
+        );
+      }
+      const dialog = dialogRef.current;
+      const historyButton = historyButtonRef.current;
+      if (dialog === null || historyButton === null) {
+        throw new Error(
+          "Cannot dismiss chat history dialog: dialog or history button is not mounted",
+        );
+      }
+      if (dialog.contains(target) || historyButton.contains(target)) return;
+
+      restoreTriggerFocusRef.current = false;
+      onOpenChange(false);
+    };
+    const handleEscape = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      restoreTriggerFocusRef.current = true;
+      onOpenChange(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [onOpenChange, open]);
+
+  const dialogOpen = open && position !== null && portalTarget !== null;
+
+  const clearDialogFocusOwner = useCallback((): void => {
+    focusedDialogElementRef.current = null;
+    focusedSessionIdRef.current = null;
+    loadMoreOwnsFocusRef.current = false;
+  }, []);
+
+  useLayoutEffect(() => {
+    const wasOpen = renderedOpenRef.current;
+    if (dialogOpen && !wasOpen) {
+      const createDraftButton = createDraftButtonRef.current;
+      if (createDraftButton === null) {
+        throw new Error("Cannot focus chat history dialog: New chat button is not mounted");
+      }
+      createDraftButton.focus();
+    }
+    if (!dialogOpen && wasOpen && restoreTriggerFocusRef.current) {
+      const historyButton = historyButtonRef.current;
+      if (historyButton === null) {
+        throw new Error("Cannot restore chat history focus: history button is not mounted");
+      }
+      historyButton.focus();
+    }
+    if (!dialogOpen) {
+      restoreTriggerFocusRef.current = false;
+    }
+    renderedOpenRef.current = dialogOpen;
+  }, [dialogOpen]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      clearDialogFocusOwner();
+      return;
+    }
+    if (!dialogOpen) return;
 
     const dialog = dialogRef.current;
     if (dialog === null) {
       throw new Error("Cannot restore chat history focus: dialog is not mounted");
+    }
+    if (document.activeElement !== null && dialog.contains(document.activeElement)) {
+      return;
+    }
+    const focusedDialogElement = focusedDialogElementRef.current;
+    if (focusedDialogElement === null) return;
+    if (focusedDialogElement.isConnected) {
+      clearDialogFocusOwner();
+      return;
     }
     const paginationFocusTarget = resolveChatHistoryPaginationFocus(
       loadMoreOwnsFocusRef.current,
@@ -199,9 +489,6 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
       }
       loadMoreOwnsFocusRef.current = false;
       createDraftButton.focus();
-      return;
-    }
-    if (document.activeElement !== null && dialog.contains(document.activeElement)) {
       return;
     }
     if (paginationFocusTarget === "load_more") {
@@ -244,52 +531,30 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
       );
     }
     sessionButton.focus();
-  }, [hasMore, isLoading, open, sessions]);
+  }, [
+    clearDialogFocusOwner,
+    dialogOpen,
+    hasMore,
+    isLoading,
+    open,
+    sessions,
+  ]);
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog === null) {
-      throw new Error("Cannot synchronize chat history dialog: dialog is not mounted");
-    }
-
-    if (open) {
-      if (!dialog.open) dialog.showModal();
-      const createDraftButton = createDraftButtonRef.current;
-      if (createDraftButton === null) {
-        throw new Error("Cannot focus chat history dialog: New chat button is not mounted");
-      }
-      createDraftButton.focus();
-    } else {
-      if (dialog.open) dialog.close();
-      if (previousOpenRef.current) {
-        const historyButton = historyButtonRef.current;
-        if (historyButton === null) {
-          throw new Error("Cannot restore chat history focus: history button is not mounted");
-        }
-        historyButton.focus();
-      }
-    }
-
-    previousOpenRef.current = open;
-  }, [open]);
-
-  const closeDialog = (): void => {
+  const closeAndRestoreTriggerFocus = (): void => {
+    restoreTriggerFocusRef.current = true;
     onOpenChange(false);
   };
 
   const handleCreateDraft = (): void => {
+    restoreTriggerFocusRef.current = false;
     onCreateDraft();
-    closeDialog();
+    onOpenChange(false);
   };
 
   const handleSelectSession = (sessionId: string): void => {
+    restoreTriggerFocusRef.current = false;
     onSelectSession(sessionId);
-    closeDialog();
-  };
-
-  const handleCancel = (event: SyntheticEvent<HTMLDialogElement>): void => {
-    event.preventDefault();
-    closeDialog();
+    onOpenChange(false);
   };
 
   const handleFocusCapture = (event: FocusEvent<HTMLDialogElement>): void => {
@@ -297,41 +562,41 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
     if (!(target instanceof HTMLElement)) {
       throw new TypeError("Cannot track chat history focus: focused target is not an element");
     }
+    focusedDialogElementRef.current = target;
     focusedSessionIdRef.current = target.dataset.chatHistorySessionId ?? null;
     loadMoreOwnsFocusRef.current =
       target.dataset.chatHistoryFocusOwner === "load-more";
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDialogElement>): void => {
-    if (event.key !== "Tab") return;
-
-    const dialog = dialogRef.current;
-    if (dialog === null) {
-      throw new Error("Cannot contain chat history focus: dialog is not mounted");
+  const handleBlurCapture = (event: FocusEvent<HTMLDialogElement>): void => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      throw new TypeError("Cannot release chat history focus: blurred target is not an element");
     }
-    const focusableElements = [...dialog.querySelectorAll<HTMLButtonElement>(
-      "button:not(:disabled)",
-    )];
-    if (focusableElements.length === 0) {
-      event.preventDefault();
-      dialog.focus();
-      return;
-    }
-
-    const firstElement = focusableElements[0];
-    const lastElement = focusableElements[focusableElements.length - 1];
-    const activeElement = document.activeElement;
-    const focusIsOutside = activeElement === null || !dialog.contains(activeElement);
-    if (event.shiftKey && (activeElement === firstElement || focusIsOutside)) {
-      event.preventDefault();
-      lastElement.focus();
-      return;
-    }
-    if (!event.shiftKey && (activeElement === lastElement || focusIsOutside)) {
-      event.preventDefault();
-      firstElement.focus();
+    const nextTarget = event.relatedTarget;
+    if (
+      nextTarget instanceof Node
+      && !event.currentTarget.contains(nextTarget)
+      && target.isConnected
+    ) {
+      clearDialogFocusOwner();
     }
   };
+
+  const dialogStyle: DialogStyle | undefined = position === null
+    ? undefined
+    : {
+        "--chat-history-inset-block-start": `${position.insetBlockStart}px`,
+        "--chat-history-inset-inline-start": `${position.insetInlineStart}px`,
+        "--chat-history-width": `${position.width}px`,
+        "--chat-history-max-height": `${position.maxHeight}px`,
+        "--chat-history-viewport-inset-block-start":
+          `${position.viewportInsetBlockStart}px`,
+        "--chat-history-viewport-inset-inline-start":
+          `${position.viewportInsetInlineStart}px`,
+        "--chat-history-viewport-width": `${position.viewportWidth}px`,
+        "--chat-history-viewport-height": `${position.viewportHeight}px`,
+      };
 
   return (
     <>
@@ -342,121 +607,125 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
         buttonRef={historyButtonRef}
         onOpenChange={onOpenChange}
       />
-      <dialog
-        ref={dialogRef}
-        id={dialogId}
-        className={styles.dialog}
-        data-testid="chat-history-dialog"
-        aria-labelledby={titleId}
-        aria-busy={isLoading}
-        tabIndex={-1}
-        onCancel={handleCancel}
-        onFocusCapture={handleFocusCapture}
-        onKeyDown={handleKeyDown}
-      >
-        <header className={styles.dialogHeader}>
-          <h2 id={titleId} className={styles.dialogTitle}>{t("chat.historyTitle")}</h2>
-          <div className={styles.dialogActions}>
-            <button
-              ref={createDraftButtonRef}
-              type="button"
-              className={styles.dialogAction}
-              data-testid="chat-history-new"
-              onClick={handleCreateDraft}
-            >
-              {t("chat.new")}
-            </button>
-            <button
-              type="button"
-              className={cn(styles.dialogAction, styles.closeAction)}
-              data-testid="chat-history-close"
-              aria-label={t("chat.historyClose")}
-              title={t("chat.historyClose")}
-              onClick={closeDialog}
-            >
-              <svg
-                className={styles.closeIcon}
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                aria-hidden="true"
-              >
-                <path d="m4 4 8 8" />
-                <path d="m12 4-8 8" />
-              </svg>
-            </button>
-          </div>
-        </header>
-        <div className={styles.dialogBody}>
-          {errorMessage !== null && (
-            <p
-              className={styles.errorState}
-              data-testid="chat-history-error"
-              role="alert"
-            >
-              {errorMessage}
-            </p>
-          )}
-          {statusVisibility.showLoading && (
-            <p
-              className={styles.loadingState}
-              data-testid="chat-history-loading"
-              role="status"
-              aria-live="polite"
-            >
-              {t("common.loading")}
-            </p>
-          )}
-          {runningSessions.length > 0 && (
-            <SessionList
-              headingId={runningHeadingId}
-              heading={t("chat.historyRunningGroup")}
-              sessions={runningSessions}
-              selectedSessionId={selectedSessionId}
-              activityFormatter={activityFormatter}
-              runningStatus={t("chat.historyRunningStatus")}
-              testId="chat-history-running"
-              onSelectSession={handleSelectSession}
-            />
-          )}
-          {recentSessions.length > 0 && (
-            <SessionList
-              headingId={recentHeadingId}
-              heading={t("chat.historyRecent")}
-              sessions={recentSessions}
-              selectedSessionId={selectedSessionId}
-              activityFormatter={activityFormatter}
-              runningStatus={t("chat.historyRunningStatus")}
-              testId="chat-history-recent"
-              onSelectSession={handleSelectSession}
-            />
-          )}
-          {statusVisibility.showEmpty && (
-            <p className={styles.emptyState} data-testid="chat-history-empty">
-              {t("chat.historyEmpty")}
-            </p>
-          )}
-          {hasMore && (
-            <div className={styles.loadMoreRow}>
+      {portalTarget !== null && createPortal(
+        <dialog
+          ref={dialogRef}
+          id={dialogId}
+          className={styles.dialog}
+          data-testid="chat-history-dialog"
+          aria-labelledby={titleId}
+          aria-busy={isLoading}
+          tabIndex={-1}
+          open={dialogOpen}
+          style={dialogStyle}
+          onBlurCapture={handleBlurCapture}
+          onFocusCapture={handleFocusCapture}
+        >
+          <header className={styles.dialogHeader}>
+            <h2 id={titleId} className={styles.dialogTitle}>{t("chat.historyTitle")}</h2>
+            <div className={styles.dialogActions}>
               <button
-                ref={loadMoreButtonRef}
+                ref={createDraftButtonRef}
                 type="button"
-                className={styles.loadMoreButton}
-                data-testid="chat-history-load-more"
-                data-chat-history-focus-owner="load-more"
-                aria-disabled={isLoading}
-                onClick={() => {
-                  if (!isLoading) onLoadMore();
-                }}
+                className={styles.dialogAction}
+                data-testid="chat-history-new"
+                onClick={handleCreateDraft}
               >
-                {isLoading ? t("common.loading") : t("chat.historyLoadMore")}
+                {t("chat.new")}
+              </button>
+              <button
+                type="button"
+                className={cn(styles.dialogAction, styles.closeAction)}
+                data-testid="chat-history-close"
+                aria-label={t("chat.historyClose")}
+                title={t("chat.historyClose")}
+                onClick={closeAndRestoreTriggerFocus}
+              >
+                <svg
+                  className={styles.closeIcon}
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="m4 4 8 8" />
+                  <path d="m12 4-8 8" />
+                </svg>
               </button>
             </div>
-          )}
-        </div>
-      </dialog>
+          </header>
+          <div className={styles.dialogBody}>
+            {errorMessage !== null && (
+              <p
+                className={styles.errorState}
+                data-testid="chat-history-error"
+                role="alert"
+              >
+                {errorMessage}
+              </p>
+            )}
+            {statusVisibility.showLoading && (
+              <p
+                className={styles.loadingState}
+                data-testid="chat-history-loading"
+                role="status"
+                aria-live="polite"
+              >
+                {t("common.loading")}
+              </p>
+            )}
+            {runningSessions.length > 0 && (
+              <SessionList
+                headingId={runningHeadingId}
+                heading={t("chat.historyRunningGroup")}
+                sessions={runningSessions}
+                selectedSessionId={selectedSessionId}
+                activityFormatter={activityFormatter}
+                runningStatus={t("chat.historyRunningStatus")}
+                testId="chat-history-running"
+                onSelectSession={handleSelectSession}
+              />
+            )}
+            {recentSessions.length > 0 && (
+              <SessionList
+                headingId={recentHeadingId}
+                heading={t("chat.historyRecent")}
+                sessions={recentSessions}
+                selectedSessionId={selectedSessionId}
+                activityFormatter={activityFormatter}
+                runningStatus={t("chat.historyRunningStatus")}
+                testId="chat-history-recent"
+                onSelectSession={handleSelectSession}
+              />
+            )}
+            {statusVisibility.showEmpty && (
+              <p className={styles.emptyState} data-testid="chat-history-empty">
+                {t("chat.historyEmpty")}
+              </p>
+            )}
+            {hasMore && (
+              <div className={styles.loadMoreRow}>
+                <button
+                  ref={loadMoreButtonRef}
+                  type="button"
+                  className={styles.loadMoreButton}
+                  data-testid="chat-history-load-more"
+                  data-chat-history-focus-owner="load-more"
+                  aria-disabled={isLoading}
+                  onClick={() => {
+                    if (!isLoading) onLoadMore();
+                  }}
+                >
+                  {isLoading ? t("common.loading") : t("chat.historyLoadMore")}
+                </button>
+              </div>
+            )}
+          </div>
+        </dialog>,
+        portalTarget,
+      )}
     </>
   );
 };
