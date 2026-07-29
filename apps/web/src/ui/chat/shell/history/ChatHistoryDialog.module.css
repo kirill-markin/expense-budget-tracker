@@ -4,7 +4,8 @@
   align-items: center;
   justify-content: center;
   inline-size: 28px;
-  block-size: 24px;
+  block-size: var(--chat-header-control-block-size, 24px);
+  box-sizing: border-box;
   padding: 0;
   border: 1px solid var(--panel-border);
   background: var(--bg);
@@ -53,11 +54,14 @@
 
 .dialog {
   position: fixed;
-  inset: 0;
+  inset-block-start: var(--chat-history-inset-block-start);
+  inset-inline-start: var(--chat-history-inset-inline-start);
+  z-index: 210;
   box-sizing: border-box;
-  inline-size: min(400px, calc(100vw - 24px));
-  max-block-size: min(560px, calc(100dvh - 24px));
-  margin: auto;
+  inline-size: var(--chat-history-width);
+  max-inline-size: none;
+  max-block-size: var(--chat-history-max-height);
+  margin: 0;
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--panel-border);
@@ -71,10 +75,6 @@
 .dialog[open] {
   display: flex;
   flex-direction: column;
-}
-
-.dialog::backdrop {
-  background: rgba(0, 0, 0, 0.4);
 }
 
 .dialogHeader {
@@ -311,8 +311,12 @@
 
 @media (max-width: 480px) {
   .dialog {
-    inline-size: calc(100vw - 16px);
-    max-block-size: calc(100dvh - 16px);
+    inset-block-start: var(--chat-history-viewport-inset-block-start);
+    inset-inline-start: var(--chat-history-viewport-inset-inline-start);
+    inline-size: var(--chat-history-viewport-width, 100vw);
+    block-size: var(--chat-history-viewport-height, 100dvh);
+    max-block-size: none;
+    border: 0;
   }
 
   .dialogHeader,

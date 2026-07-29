@@ -2,6 +2,7 @@ import {
   expect,
   test,
   type BrowserContext,
+  type Locator,
   type Page,
   type Route,
 } from "@playwright/test";
@@ -37,6 +38,13 @@ type Deferred = Readonly<{
   resolve: () => void;
 }>;
 
+type ElementBounds = Readonly<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}>;
+
 const RUNNING_TURN_ID = "00000000-0000-4000-8000-000000000001";
 const INVALIDATION_STORAGE_KEY =
   "expense-tracker-main-content-invalidation";
@@ -54,6 +62,14 @@ const createDeferred = (): Deferred => {
     promise,
     resolve: resolvePromise,
   };
+};
+
+const getElementBounds = async (locator: Locator): Promise<ElementBounds> => {
+  const bounds = await locator.boundingBox();
+  if (bounds === null) {
+    throw new Error("Cannot inspect chat history geometry: element is not visible");
+  }
+  return bounds;
 };
 
 const setWorkspaceCookies = async (
@@ -126,18 +142,26 @@ const setTestVisibility = async (
   }, visibility);
 };
 
-const fulfillCatalog = async (
+const fulfillCatalogPage = async (
   route: Route,
   sessions: ReadonlyArray<CatalogSession>,
+  nextCursor: string | null,
 ): Promise<void> => {
   await route.fulfill({
     status: 200,
     contentType: "application/json",
     body: JSON.stringify({
       sessions,
-      nextCursor: null,
+      nextCursor,
     }),
   });
+};
+
+const fulfillCatalog = async (
+  route: Route,
+  sessions: ReadonlyArray<CatalogSession>,
+): Promise<void> => {
+  await fulfillCatalogPage(route, sessions, null);
 };
 
 const fulfillSnapshot = async (
@@ -294,6 +318,280 @@ test("activates accessible history, local New, and fullscreen navigation without
     (url) => url.searchParams.get("session") === recentSessionId,
   );
   expect(stopRequestCount).toBe(0);
+});
+
+test("uses an anchored non-modal desktop popover and a fullscreen mobile surface", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  if (baseURL === undefined) {
+    throw new Error("Local Demo Playwright baseURL is required");
+  }
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockWorkspaceDependencies(page);
+  await page.route(/\/api\/chat\/sessions\?/u, async (route): Promise<void> => {
+    await fulfillCatalog(route, []);
+  });
+  const pageErrors: Array<string> = [];
+  page.on("pageerror", (error): void => {
+    pageErrors.push(error.message);
+  });
+  await setWorkspaceCookies(context, baseURL, "en");
+  const origin = new URL(baseURL);
+  await context.addCookies([
+    {
+      name: "demo",
+      value: "true",
+      domain: origin.hostname,
+      path: "/",
+      sameSite: "Lax",
+    },
+    {
+      name: "chat-open",
+      value: "true",
+      domain: origin.hostname,
+      path: "/",
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const historyButton = page.getByTestId("chat-history-open");
+  const copyButton = page.getByRole("button", { name: "Copy chat" });
+  const newButton = page.getByTestId("chat-new");
+  const sidebarCloseButton = page.getByTestId("chat-sidebar-close");
+  const dialog = page.getByTestId("chat-history-dialog");
+  const controlHeights = await Promise.all([
+    historyButton,
+    copyButton,
+    newButton,
+    sidebarCloseButton,
+  ].map(async (control): Promise<number> =>
+    (await getElementBounds(control)).height));
+  expect(new Set(controlHeights).size).toBe(1);
+
+  const chatPanel = page.getByTestId("chat-panel");
+  const initialPanelBounds = await getElementBounds(chatPanel);
+  const resizeHandleX =
+    initialPanelBounds.x + initialPanelBounds.width - 2;
+  const resizeHandleY = initialPanelBounds.y + (initialPanelBounds.height / 2);
+  await page.mouse.move(resizeHandleX, resizeHandleY);
+  await page.mouse.down();
+  await historyButton.press("Enter");
+  await expect(dialog).toBeVisible();
+  await page.mouse.move(resizeHandleX + 260, resizeHandleY, { steps: 5 });
+  await expect.poll(async (): Promise<number> =>
+    (await getElementBounds(chatPanel)).width,
+  ).toBeGreaterThan(initialPanelBounds.width + 200);
+  await expect.poll(async (): Promise<number> => {
+    const buttonBounds = await getElementBounds(historyButton);
+    const dialogBounds = await getElementBounds(dialog);
+    return Math.abs(
+      (dialogBounds.x + dialogBounds.width)
+      - (buttonBounds.x + buttonBounds.width),
+    );
+  }).toBeLessThanOrEqual(1);
+  await page.mouse.up();
+  await page.getByTestId("chat-history-close").click();
+
+  await page.getByRole("navigation").locator('a[href="/chat"]').click();
+  await expect(page).toHaveURL((url) => url.pathname === "/chat");
+  await expect(page.getByTestId("chat-composer-input")).toBeEditable();
+  await historyButton.click();
+  await expect(dialog).toBeVisible();
+  await expect(historyButton).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("chat-history-new")).toBeFocused();
+
+  await page.goBack();
+  await expect(page).toHaveURL((url) => url.pathname === "/");
+  await expect(dialog).toBeVisible();
+  await expect(historyButton).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("chat-history-new")).toBeFocused();
+
+  await page.goForward();
+  await expect(page).toHaveURL((url) => url.pathname === "/chat");
+  await expect(dialog).toBeVisible();
+  await expect(historyButton).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("chat-history-new")).toBeFocused();
+  expect(pageErrors).toEqual([]);
+
+  const desktopButtonBounds = await getElementBounds(historyButton);
+  const desktopDialogBounds = await getElementBounds(dialog);
+  expect(desktopDialogBounds.y).toBeCloseTo(
+    desktopButtonBounds.y + desktopButtonBounds.height + 6,
+    0,
+  );
+  expect(desktopDialogBounds.x + desktopDialogBounds.width).toBeCloseTo(
+    desktopButtonBounds.x + desktopButtonBounds.width,
+    0,
+  );
+  expect(await dialog.evaluate(
+    (element): boolean => element.matches(":modal"),
+  )).toBe(false);
+  expect(await dialog.evaluate(
+    (element): string => getComputedStyle(element).backgroundColor,
+  )).toBe("rgb(255, 255, 255)");
+  expect(await page.locator("[inert]").count()).toBe(0);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(historyButton).toBeFocused();
+  await historyButton.click();
+  await page.getByTestId("chat-history-close").click();
+  await expect(dialog).not.toBeVisible();
+  await expect(historyButton).toBeFocused();
+
+  const composer = page.getByTestId("chat-composer-input");
+  await composer.fill("outside pointer action must still run");
+  await historyButton.click();
+  await newButton.click();
+  await expect(dialog).not.toBeVisible();
+  await expect(composer).toHaveValue("");
+  await expect(composer).toBeFocused();
+
+  await page.setViewportSize({ width: 500, height: 700 });
+  await historyButton.click();
+  const clampedDialogBounds = await getElementBounds(dialog);
+  expect(clampedDialogBounds.x).toBeGreaterThanOrEqual(8);
+  expect(
+    clampedDialogBounds.x + clampedDialogBounds.width,
+  ).toBeLessThanOrEqual(492);
+
+  await page.setViewportSize({ width: 390, height: 720 });
+  await expect.poll(async (): Promise<Readonly<{
+    width: number;
+    height: number;
+  }>> => {
+    const bounds = await getElementBounds(dialog);
+    return { width: bounds.width, height: bounds.height };
+  }).toEqual({ width: 390, height: 720 });
+  const mobileDialogBounds = await getElementBounds(dialog);
+  expect(mobileDialogBounds.x).toBeCloseTo(0, 0);
+  expect(mobileDialogBounds.y).toBeCloseTo(0, 0);
+  expect(mobileDialogBounds.width).toBeCloseTo(390, 0);
+  expect(mobileDialogBounds.height).toBeCloseTo(720, 0);
+  await page.getByTestId("chat-history-close").click();
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await setWorkspaceCookies(context, baseURL, "ar");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+  await historyButton.click();
+  const rtlButtonBounds = await getElementBounds(historyButton);
+  const rtlDialogBounds = await getElementBounds(dialog);
+  expect(rtlDialogBounds.x).toBeCloseTo(rtlButtonBounds.x, 0);
+  expect(rtlDialogBounds.x).toBeGreaterThanOrEqual(8);
+  expect(rtlDialogBounds.x + rtlDialogBounds.width).toBeLessThanOrEqual(1272);
+});
+
+test("keeps intentional outside focus and repairs focus when an owned control is removed", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  if (baseURL === undefined) {
+    throw new Error("Local Demo Playwright baseURL is required");
+  }
+
+  const firstCursor = "focus-page-1";
+  const secondCursor = "focus-page-2";
+  const firstPageRequestReceived = createDeferred();
+  const releaseFirstPage = createDeferred();
+  const secondPageRequestReceived = createDeferred();
+  const releaseSecondPage = createDeferred();
+  const oldActivity = new Date(
+    Date.now() - (8 * 60 * 60 * 1000),
+  ).toISOString();
+  const createSession = (
+    sessionId: string,
+    title: string,
+  ): CatalogSession => ({
+    sessionId,
+    title,
+    lastMessageAt: oldActivity,
+    status: "idle",
+    mainContentInvalidationVersion: 0,
+  });
+
+  await mockWorkspaceDependencies(page);
+  await page.route(/\/api\/chat\/sessions\?/u, async (route): Promise<void> => {
+    const cursor = new URL(route.request().url()).searchParams.get("cursor");
+    if (cursor === null) {
+      await fulfillCatalogPage(
+        route,
+        [createSession("session-focus-page-1", "Focus page one")],
+        firstCursor,
+      );
+      return;
+    }
+    if (cursor === firstCursor) {
+      firstPageRequestReceived.resolve();
+      await releaseFirstPage.promise;
+      await fulfillCatalogPage(
+        route,
+        [createSession("session-focus-page-2", "Focus page two")],
+        secondCursor,
+      );
+      return;
+    }
+    if (cursor === secondCursor) {
+      secondPageRequestReceived.resolve();
+      await releaseSecondPage.promise;
+      await fulfillCatalogPage(
+        route,
+        [createSession("session-focus-page-3", "Focus page three")],
+        null,
+      );
+      return;
+    }
+    throw new Error(`Unexpected focus pagination cursor: ${cursor}`);
+  });
+
+  await setWorkspaceCookies(context, baseURL, "en");
+  await page.goto("/chat", { waitUntil: "domcontentloaded" });
+  const composer = page.getByTestId("chat-composer-input");
+  await expect(composer).toBeEditable();
+  await composer.fill("keep focus outside history");
+  await page.getByTestId("chat-history-open").click();
+
+  const dialog = page.getByTestId("chat-history-dialog");
+  const loadMore = page.getByTestId("chat-history-load-more");
+  await expect(loadMore).toBeVisible();
+  await loadMore.click();
+  await firstPageRequestReceived.promise;
+  await expect(loadMore).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect.poll(async (): Promise<boolean> => page.evaluate((): boolean => {
+    const historyDialog = document.querySelector(
+      '[data-testid="chat-history-dialog"]',
+    );
+    return historyDialog !== null
+      && document.activeElement !== null
+      && !historyDialog.contains(document.activeElement);
+  })).toBe(true);
+
+  const submitButton = page.getByTestId("chat-submit");
+  await submitButton.focus();
+  await expect(submitButton).toBeFocused();
+  releaseFirstPage.resolve();
+  await expect(
+    page.getByTestId("chat-history-session-session-focus-page-2"),
+  ).toBeVisible();
+  await expect(loadMore).toBeVisible();
+  await expect(submitButton).toBeFocused();
+
+  await loadMore.click();
+  await secondPageRequestReceived.promise;
+  await expect(loadMore).toBeFocused();
+  releaseSecondPage.resolve();
+  await expect(
+    page.getByTestId("chat-history-session-session-focus-page-3"),
+  ).toBeVisible();
+  await expect(loadMore).toHaveCount(0);
+  await expect(page.getByTestId("chat-history-new")).toBeFocused();
+  await expect(dialog).toBeVisible();
 });
 
 test("a successful catalog retry restores an eligible automatic session after bootstrap failure", async ({
