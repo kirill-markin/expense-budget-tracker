@@ -236,6 +236,11 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   // WAF is kept for managed rule sets (SQLi, XSS, known bad inputs) which inspect
   // request content and work correctly regardless of source IP.
   const chatJsonRequest = postRequestToApp(props.appDomain, "/api/chat", "application/json");
+  const newChatJsonRequest = postRequestToApp(
+    props.appDomain,
+    "/api/chat/new",
+    "application/json",
+  );
   const chatTranscriptionUploadRequest = postRequestToApp(
     props.appDomain,
     "/api/chat/transcriptions",
@@ -290,7 +295,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
         "BlockUnexpectedBodySizeMatches",
         2,
         "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body",
-        orStatement([chatJsonRequest, chatTranscriptionUploadRequest]),
+        orStatement([chatJsonRequest, newChatJsonRequest, chatTranscriptionUploadRequest]),
         "expense-tracker-size-body-reblock",
       ),
       {
