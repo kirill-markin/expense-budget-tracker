@@ -21,6 +21,8 @@ export interface IngressProps {
 export interface IngressResult {
   alb: elbv2.ApplicationLoadBalancer;
   accessLogsBucket: s3.Bucket;
+  webTargetGroup: elbv2.ApplicationTargetGroup;
+  webAclName: string;
 }
 
 type ByteMatchPositionalConstraint = "EXACTLY" | "STARTS_WITH";
@@ -164,7 +166,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   });
   alb.logAccessLogs(accessLogsBucket);
 
-  const targetGroup = new elbv2.ApplicationTargetGroup(scope, "WebTg", {
+  const webTargetGroup = new elbv2.ApplicationTargetGroup(scope, "WebTg", {
     vpc: props.vpc,
     port: 8080,
     protocol: elbv2.ApplicationProtocol.HTTP,
@@ -174,13 +176,13 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
       interval: cdk.Duration.seconds(30),
     },
   });
-  props.webService.attachToApplicationTargetGroup(targetGroup);
+  props.webService.attachToApplicationTargetGroup(webTargetGroup);
 
   // ALB listeners: HTTPS forwards to app, HTTP → HTTPS redirect
   const httpsListener = alb.addListener("HttpsListener", {
     port: 443,
     certificates: [props.certificate],
-    defaultAction: elbv2.ListenerAction.forward([targetGroup]),
+    defaultAction: elbv2.ListenerAction.forward([webTargetGroup]),
   });
 
   // Auth service target group (port 8081)
@@ -316,11 +318,12 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
       },
     ],
   });
+  const webAclName = cdk.Fn.select(0, cdk.Fn.split("|", waf.ref));
 
   new wafv2.CfnWebACLAssociation(scope, "WafAlbAssociation", {
     resourceArn: alb.loadBalancerArn,
     webAclArn: waf.attrArn,
   });
 
-  return { alb, accessLogsBucket };
+  return { alb, accessLogsBucket, webTargetGroup, webAclName };
 }
