@@ -6,13 +6,16 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatch_actions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as logs from "aws-cdk-lib/aws-logs";
 import * as sns from "aws-cdk-lib/aws-sns";
-import * as sns_subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import { Construct } from "constructs";
 
 export interface MonitoringProps {
   alertEmail: string;
   alb: elbv2.ApplicationLoadBalancer;
+  webTargetGroup: elbv2.ApplicationTargetGroup;
+  webLogGroup: logs.LogGroup;
+  webAclName: string;
   webService: ecs.FargateService;
   cluster: ecs.Cluster;
   db: rds.DatabaseInstance;
@@ -32,9 +35,11 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
   const alertTopic = new sns.Topic(scope, "AlertTopic", {
     topicName: "expense-tracker-alerts",
   });
-  alertTopic.addSubscription(
-    new sns_subscriptions.EmailSubscription(props.alertEmail),
-  );
+  new sns.Subscription(scope, "AlertEmailSubscriptionV2", {
+    topic: alertTopic,
+    protocol: sns.SubscriptionProtocol.EMAIL,
+    endpoint: props.alertEmail,
+  });
 
   // --- CloudWatch Alarms ---
   // ALB 5xx errors
@@ -46,6 +51,77 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 5,
     evaluationPeriods: 1,
     alarmDescription: "ALB returned 5+ server errors in 5 minutes",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // Web target 5xx errors
+  new cloudwatch.Alarm(scope, "WebTarget5xxAlarm", {
+    metric: props.webTargetGroup.metrics.httpCodeTarget(
+      elbv2.HttpCodeTarget.TARGET_5XX_COUNT,
+      {
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      },
+    ),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "Web target returned server errors",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // Web target health
+  new cloudwatch.Alarm(scope, "WebTargetHealthAlarm", {
+    metric: props.webTargetGroup.metrics.healthyHostCount({
+      period: cdk.Duration.minutes(1),
+      statistic: "Minimum",
+    }),
+    threshold: 1,
+    comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+    evaluationPeriods: 2,
+    alarmDescription: "Web target group had no healthy hosts for 2 minutes",
+    treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // WAF blocks by the request body size re-block rule
+  new cloudwatch.Alarm(scope, "WafSizeBodyBlockedAlarm", {
+    metric: new cloudwatch.Metric({
+      namespace: "AWS/WAFV2",
+      metricName: "BlockedRequests",
+      dimensionsMap: {
+        WebACL: props.webAclName,
+        Region: cdk.Aws.REGION,
+        Rule: "expense-tracker-size-body-reblock",
+      },
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "WAF blocked a request because of an unexpected large body",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  const webErrorMetricFilter = new logs.MetricFilter(scope, "WebErrorMetricFilter", {
+    logGroup: props.webLogGroup,
+    filterPattern: logs.FilterPattern.any(
+      logs.FilterPattern.stringValue("$.action", "=", "error"),
+      logs.FilterPattern.stringValue("$.action", "=", "transcription_failed"),
+      logs.FilterPattern.stringValue("$.action", "=", "task_protection_enable_failed"),
+      logs.FilterPattern.stringValue("$.action", "=", "task_protection_disable_failed"),
+    ),
+    metricNamespace: "ExpenseBudgetTracker/Web",
+    metricName: "ErrorEvents",
+    metricValue: "1",
+  });
+
+  new cloudwatch.Alarm(scope, "WebErrorEventsAlarm", {
+    metric: webErrorMetricFilter.metric({
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "Web application logged an error event",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
