@@ -105,6 +105,9 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,
+      webTargetGroup: ing.webTargetGroup,
+      webLogGroup: comp.webLogGroup,
+      webAclName: ing.webAclName,
       webService: comp.webService,
       cluster: comp.cluster,
       db: dbResult.db,
