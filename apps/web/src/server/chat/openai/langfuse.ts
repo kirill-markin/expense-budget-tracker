@@ -29,6 +29,18 @@ export type ChatTranscriptionTraceMetadata = Readonly<{
 
 type TelemetryMetadata = Readonly<Record<string, string>>;
 
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<JsonValue>
+  | Readonly<{ [key: string]: JsonValue }>;
+
+type JsonContainer =
+  | ReadonlyArray<JsonValue>
+  | Readonly<{ [key: string]: JsonValue }>;
+
 type StartObservationDependencies = Readonly<{
   createTraceId: typeof createTraceId;
   propagateAttributes: typeof propagateAttributes;
@@ -56,6 +68,8 @@ const MASK_PATTERNS: ReadonlyArray<Readonly<{
     replacement: "<masked-number>",
   },
 ];
+
+const MEDIA_DATA_URI_PATTERN = /^data:[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+;base64,([A-Za-z0-9+/]*={0,2})$/;
 
 const metadataValue = (value: string | number | boolean): string =>
   String(value).slice(0, 200);
@@ -85,15 +99,54 @@ const buildChatTranscriptionTraceMetadata = (
   fileSize: metadataValue(params.fileSize),
 });
 
-const sanitizeString = (value: string): string =>
-  MASK_PATTERNS.reduce(
+const isValidBase64Payload = (payload: string): boolean => {
+  const paddingLength = payload.endsWith("==")
+    ? 2
+    : payload.endsWith("=")
+      ? 1
+      : 0;
+  const contentLength = payload.length - paddingLength;
+
+  if (contentLength === 0) {
+    return false;
+  }
+
+  return paddingLength === 0
+    ? contentLength % 4 !== 1
+    : payload.length % 4 === 0;
+};
+
+const isBase64DataUri = (value: string): boolean => {
+  const payload = MEDIA_DATA_URI_PATTERN.exec(value)?.[1];
+
+  return payload !== undefined && isValidBase64Payload(payload);
+};
+
+const sanitizeString = (value: string): string => {
+  if (isBase64DataUri(value)) {
+    return value;
+  }
+
+  return MASK_PATTERNS.reduce(
     (currentValue, rule) => currentValue.replace(rule.pattern, rule.replacement),
     value,
   );
+};
 
-export const sanitizeLangfuseTelemetryValue = (value: unknown): unknown => {
+const sanitizeNumber = (value: number): number | string => {
+  const stringValue = String(value);
+  const sanitizedValue = sanitizeString(stringValue);
+
+  return sanitizedValue === stringValue ? value : sanitizedValue;
+};
+
+const sanitizeLangfuseTelemetryValue = (value: JsonValue): JsonValue => {
   if (typeof value === "string") {
     return sanitizeString(value);
+  }
+
+  if (typeof value === "number") {
+    return sanitizeNumber(value);
   }
 
   if (Array.isArray(value)) {
@@ -102,11 +155,48 @@ export const sanitizeLangfuseTelemetryValue = (value: unknown): unknown => {
 
   if (typeof value === "object" && value !== null) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, childValue]) => [key, sanitizeLangfuseTelemetryValue(childValue)]),
+      Object.entries(value).map(
+        ([key, childValue]): readonly [string, JsonValue] => [
+          sanitizeString(key),
+          sanitizeLangfuseTelemetryValue(childValue),
+        ],
+      ),
     );
   }
 
   return value;
+};
+
+const parseLangfuseSerializedContainer = (data: string): JsonContainer | null => {
+  try {
+    const parsedValue = JSON.parse(data) as JsonValue;
+
+    return typeof parsedValue === "object" && parsedValue !== null
+      ? parsedValue
+      : null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+
+    return null;
+  }
+};
+
+export const sanitizeLangfuseSerializedTelemetry = (data: unknown): string => {
+  if (typeof data !== "string") {
+    throw new TypeError(
+      `Langfuse mask expected a string attribute, but received ${data === null ? "null" : typeof data}`,
+    );
+  }
+
+  const serializedContainer = parseLangfuseSerializedContainer(data);
+
+  return serializedContainer === null
+    ? sanitizeString(data)
+    : JSON.stringify(
+      sanitizeLangfuseTelemetryValue(serializedContainer),
+    );
 };
 
 export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
@@ -134,8 +224,8 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
     release: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA,
     shouldExportSpan: ({ otelSpan }: Readonly<{ otelSpan: ReadableSpan }>): boolean =>
       isDefaultExportSpan(otelSpan),
-    mask: ({ data }: Readonly<{ data: unknown }>): unknown =>
-      sanitizeLangfuseTelemetryValue(data),
+    mask: ({ data }: Readonly<{ data: unknown }>): string =>
+      sanitizeLangfuseSerializedTelemetry(data),
   });
 };
 
