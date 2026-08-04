@@ -16,6 +16,7 @@ import {
   AttachmentReadError,
   ChatComposerMemoryTransitionError,
   createEmptyChatComposerMemory,
+  createTargetChatPendingSubmission,
   deleteTargetChatComposerMemory,
   getAttachmentFailureReasonKey,
   hasSupportedImageAttachmentSignature,
@@ -43,6 +44,49 @@ const PNG_PREFIX: ReadonlyArray<number> = [
   0x89, 0x50, 0x4e, 0x47,
   0x0d, 0x0a, 0x1a, 0x0a,
 ];
+
+test("submission snapshots read every attachment from current target memory", (): void => {
+  const renderedMemory = createEmptyChatComposerMemory();
+  const draftTargetKey = "draft:draft-1";
+  const sessionTargetKey = "session:session-1";
+  const preparedAttachments = [{
+    fileName: "receipt.png",
+    mediaType: "image/png",
+    base64Data: "png-bytes",
+  }, {
+    fileName: "statement.csv",
+    mediaType: "text/csv",
+    base64Data: "csv-bytes",
+  }] as const;
+  let memoryByTarget: ReadonlyMap<string, ChatComposerMemoryState> =
+    new Map<string, ChatComposerMemoryState>();
+
+  for (const targetKey of [draftTargetKey, sessionTargetKey]) {
+    memoryByTarget = updateTargetChatComposerMemory(
+      memoryByTarget,
+      targetKey,
+      {
+        ...renderedMemory,
+        pendingAttachments: preparedAttachments,
+      },
+    );
+  }
+
+  assert.deepEqual(renderedMemory.pendingAttachments, []);
+  for (const targetKey of [draftTargetKey, sessionTargetKey]) {
+    assert.deepEqual(
+      createTargetChatPendingSubmission(
+        memoryByTarget,
+        targetKey,
+        "summarize the attachments",
+      ),
+      {
+        text: "summarize the attachments",
+        attachments: preparedAttachments,
+      },
+    );
+  }
+});
 
 test("restores mounted state after a Strict Mode setup-cleanup-setup cycle", (): void => {
   const mountedRef = { current: false };

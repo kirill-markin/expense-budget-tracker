@@ -26,7 +26,6 @@ import { ChatPanelHeader } from "./ChatPanelHeader";
 import { ChatTranscript } from "./ChatTranscript";
 import { prepareAttachment, type PendingAttachment } from "./FileAttachment";
 import {
-  createChatPendingSubmission,
   getAttachmentFailureReasonKey,
   markChatComposerContentEdited,
   startMountedLifecycle,
@@ -216,6 +215,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     setChatDraftText: setInputText,
     setChatDraftTextForTarget,
     chatComposerMemory,
+    createChatPendingSubmissionForTarget,
     setChatComposerMemoryForTarget,
     reuseSelectedChatDraft,
     replaceSelectedChatTargetWithDraft,
@@ -1496,9 +1496,13 @@ export const ChatPanel = (props: Props): ReactElement => {
     const target = chatWorkspace.state.target;
     const submissionSelectionEpoch = chatWorkspace.selectionEpoch;
     const nextText = inputText;
-    const nextAttachments = pendingAttachments;
+    const submissionSnapshot = createChatPendingSubmissionForTarget(
+      target,
+      nextText,
+    );
+    const nextAttachments = submissionSnapshot.attachments;
     const pendingSubmission = target.kind === "draft"
-      ? createChatPendingSubmission(nextText, nextAttachments)
+      ? submissionSnapshot
       : null;
     const pendingSubmissionOwnership =
       target.kind === "draft" && pendingSubmission !== null
@@ -1695,7 +1699,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     chatWorkspace.state.target,
     inputText,
     isChatLayoutScopeCurrent,
-    pendingAttachments,
+    createChatPendingSubmissionForTarget,
     registerChatPendingSubmissionOwnership,
     releaseChatPendingSubmissionOwnership,
     settleRejectedChatPendingSubmissionOwnership,

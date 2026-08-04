@@ -33,6 +33,7 @@ import {
   writeChatSelection,
 } from "../../workspace/chatSelectionStorage";
 import {
+  createTargetChatPendingSubmission,
   deleteTargetChatComposerMemory,
   isChatDraftUntouched,
   readTargetChatComposerMemory,
@@ -69,6 +70,10 @@ type ChatLayoutContextValue = Readonly<{
     update: SetStateAction<string>,
   ) => void;
   chatComposerMemory: ChatComposerMemoryState;
+  createChatPendingSubmissionForTarget: (
+    target: ChatTarget,
+    text: string,
+  ) => ChatPendingSubmission;
   setChatComposerMemoryForTarget: (
     target: ChatTarget,
     update: SetStateAction<ChatComposerMemoryState>,
@@ -694,6 +699,16 @@ const ScopedChatLayoutProvider = (
     composerMemoryByTargetRef.current = nextMemoryByTarget;
     setComposerMemoryByTarget(nextMemoryByTarget);
   }, []);
+
+  const createChatPendingSubmissionForTarget = useCallback((
+    targetToRead: ChatTarget,
+    text: string,
+  ): ChatPendingSubmission =>
+    createTargetChatPendingSubmission(
+      composerMemoryByTargetRef.current,
+      getChatTargetKey(targetToRead),
+      text,
+    ), []);
 
   const registerChatTargetOperationOwnership = useCallback((
     kind: ChatTargetOperationKind,
@@ -1531,6 +1546,7 @@ const ScopedChatLayoutProvider = (
       setChatDraftText,
       setChatDraftTextForTarget,
       chatComposerMemory,
+      createChatPendingSubmissionForTarget,
       setChatComposerMemoryForTarget,
       reuseSelectedChatDraft,
       replaceSelectedChatTargetWithDraft,
