@@ -124,8 +124,8 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   const cluster = new ecs.Cluster(scope, "Cluster", { vpc: props.vpc });
 
   const webTaskDef = new ecs.FargateTaskDefinition(scope, "WebTask", {
-    cpu: 512,
-    memoryLimitMiB: 1024,
+    cpu: 1024,
+    memoryLimitMiB: 2048,
     runtimePlatform: {
       cpuArchitecture: ecs.CpuArchitecture.ARM64,
       operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
