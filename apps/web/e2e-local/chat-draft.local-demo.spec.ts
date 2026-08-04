@@ -171,6 +171,60 @@ const mockWorkspaceClientDependencies = async (page: Page): Promise<void> => {
   );
 };
 
+test("sends a prepared attachment when text is filled afterwards", async ({
+  page,
+  baseURL,
+  context,
+}) => {
+  if (baseURL === undefined) {
+    throw new Error("Local Demo Playwright baseURL is required");
+  }
+
+  let requestContentTypes: ReadonlyArray<string> | null = null;
+  await mockWorkspaceClientDependencies(page);
+  await page.route("**/api/chat/new", async (route): Promise<void> => {
+    const body = route.request().postDataJSON() as Readonly<{
+      content: ReadonlyArray<Readonly<{ type: string }>>;
+    }>;
+    requestContentTypes = body.content.map((part) => part.type);
+    await route.fulfill({
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "X-Chat-Session-Id": "session-attachment-after-fill",
+      },
+      body: [
+        "data: {\"type\":\"session\",\"sessionId\":\"session-attachment-after-fill\"}",
+        "data: {\"type\":\"done\"}",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  const origin = new URL(baseURL);
+  await context.addCookies([
+    { name: "demo", value: "true", domain: origin.hostname, path: "/", sameSite: "Lax" },
+    { name: "locale", value: "en", domain: origin.hostname, path: "/", sameSite: "Lax" },
+  ]);
+  await page.goto("/chat", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("chat-composer-input")).toBeEditable();
+  await expect(page.getByTestId("chat-file-input")).toBeEnabled();
+
+  await page.getByTestId("chat-file-input").setInputFiles({
+    name: "prepared.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAADAAAABQCAYAAABf9vbdAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAuElEQVRoge2TwQ0AMBCC2H9pOga51Id/IYrg5VAXcAD0Ft2E6E26E3Mz1AUcAL1FNyF6k+7E3Ax1AQdAb9FNiN6kOzE3Q13AAdBbdBOiN+lOzM1QF3AA9BbdhOhNuhNzM9QFHAC9RTchepPuxNwMdQEHQG/RTYjepDsxN0NdwAHQW3QTojfpTszNUBdwAPQW3YToTboTczPUBRwAvUU3IXqT7sTcDHUBB0Bv0U2I3qQ7MTdDXcDfAR5ctOO0Ki9gXgAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  });
+  await expect(page.getByTestId("chat-prepared-attachment")).toHaveCount(1);
+  await page.getByTestId("chat-composer-input").fill("describe this image");
+  await page.getByTestId("chat-submit").click();
+
+  await expect.poll(() => requestContentTypes).toEqual(["image", "text"]);
+});
+
 type DelayedChatBootstrap = Readonly<{
   catalogRequestReceived: Promise<void>;
   releaseCatalog: () => void;

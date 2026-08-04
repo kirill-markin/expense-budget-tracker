@@ -67,6 +67,19 @@ export const createChatPendingSubmission = (
   attachments: [...attachments],
 });
 
+export const createTargetChatPendingSubmission = (
+  memoryByTarget: ReadonlyMap<string, ChatComposerMemoryState>,
+  targetKey: string,
+  text: string,
+): ChatPendingSubmission =>
+  createChatPendingSubmission(
+    text,
+    readTargetChatComposerMemory(
+      memoryByTarget,
+      targetKey,
+    ).pendingAttachments,
+  );
+
 export const restoreFailedChatSubmissionText = (
   currentText: string,
   pendingSubmission: ChatPendingSubmission,
