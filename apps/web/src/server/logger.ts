@@ -190,7 +190,23 @@ type AuthEvent =
   | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "error"; error: string }>;
 
-type LogEvent = ChatEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent;
+type TelemetryEvent =
+  | Readonly<{ domain: "telemetry"; action: "shutdown_completed"; durationMs: number }>
+  | Readonly<{ domain: "telemetry"; action: "shutdown_failed"; durationMs: number; error: string }>
+  | Readonly<{
+    domain: "telemetry";
+    action: "shutdown_sequence_error";
+    signal: string;
+    error: string;
+  }>;
+
+type LogEvent =
+  | ChatEvent
+  | ChatTranscriptionEvent
+  | ApiEvent
+  | SqlApiEvent
+  | AuthEvent
+  | TelemetryEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

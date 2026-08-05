@@ -215,11 +215,19 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
     return null;
   }
 
+  // exportMode is intentionally omitted: @langfuse/otel wraps the OTLP exporter
+  // in a BatchSpanProcessor unless exportMode is "immediate", which wrapped it
+  // in a SimpleSpanProcessor and serialized plus POSTed each span to Langfuse
+  // the moment it ended. Batching moves only that OTLP serialization and HTTP
+  // export off the request path, into queued batches.
+  // Masking and media processing are deliberately unaffected: LangfuseSpanProcessor
+  // runs both in onEnd for every span regardless of export mode, so the CPU cost
+  // of sanitizing multi-megabyte payloads is unchanged by this option and is out
+  // of scope here.
   return new LangfuseSpanProcessor({
     publicKey,
     secretKey,
     baseUrl,
-    exportMode: "immediate",
     environment: process.env.NODE_ENV,
     release: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA,
     shouldExportSpan: ({ otelSpan }: Readonly<{ otelSpan: ReadableSpan }>): boolean =>

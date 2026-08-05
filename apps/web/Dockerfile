@@ -49,6 +49,17 @@ EXPOSE 8080
 ENV PORT=8080
 ENV HOSTNAME="0.0.0.0"
 
+# Stop the Next standalone server from registering its own SIGTERM/SIGINT
+# handlers: its cleanup ends in an unconditional process.exit(), which killed
+# the process before the batched Langfuse span queue could be flushed. The
+# application owns the sequence instead (src/server/shutdownCoordinator.ts),
+# which registers its handlers only when this flag is set, so the image that
+# disables Next's handler is the image that provides the replacement. The
+# replacement flushes telemetry and then exits with the signal exit code; the
+# in-flight HTTP request wait that Next's cleanup performed via server.close()
+# is intentionally not reproduced, since adding it would change deploy timing.
+ENV NEXT_MANUAL_SIG_HANDLE=1
+
 # Shell form: HOSTNAME= overrides the ECS Fargate-injected HOSTNAME
 # (ECS sets HOSTNAME to the task ID, breaking Next.js localhost binding).
 # See https://github.com/vercel/next.js/issues/58657

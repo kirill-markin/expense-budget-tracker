@@ -15,8 +15,9 @@
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { getAuthModeValidationErrors } from "@/server/authMode";
 import { createLangfuseSpanProcessor } from "@/server/chat/openai/langfuse";
+import { ensureShutdownCoordinatorRegistered } from "@/server/shutdownCoordinator";
+import { registerTelemetrySdk } from "@/server/telemetry";
 
-let telemetrySdk: NodeSDK | null = null;
 let telemetryStarted = false;
 
 const validateLangfuseConfig = (): ReadonlyArray<string> => {
@@ -46,15 +47,22 @@ const startTelemetryIfConfigured = (): void => {
     return;
   }
 
-  telemetrySdk = new NodeSDK({
+  const sdk = new NodeSDK({
     spanProcessors: [spanProcessor],
   });
-  void telemetrySdk.start();
+  void sdk.start();
+  registerTelemetrySdk(sdk);
   telemetryStarted = true;
 };
 
 export const register = (): void => {
   if (process.env.NODE_ENV !== "production") return;
+
+  // The runner image sets NEXT_MANUAL_SIG_HANDLE=1, so Next no longer owns
+  // SIGTERM/SIGINT. Register the application handler at boot: relying on a
+  // route to import the coordinator lazily would leave a container that never
+  // served a chat request with no handler at all.
+  ensureShutdownCoordinatorRegistered();
 
   const errors = Array.from(getAuthModeValidationErrors(process.env));
   const authMode = process.env.AUTH_MODE;
