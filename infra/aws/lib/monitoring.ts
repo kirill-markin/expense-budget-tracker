@@ -41,46 +41,58 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     endpoint: props.alertEmail,
   });
 
+  // Availability-critical alarms also report recovery, so an incident is never left looking unresolved
+  const notifyOnAlarmAndRecovery = (alarm: cloudwatch.Alarm): void => {
+    alarm.addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+    alarm.addOkAction(new cloudwatch_actions.SnsAction(alertTopic));
+  };
+
   // --- CloudWatch Alarms ---
   // ALB 5xx errors
-  new cloudwatch.Alarm(scope, "Alb5xxAlarm", {
-    metric: props.alb.metrics.httpCodeElb(elbv2.HttpCodeElb.ELB_5XX_COUNT, {
-      period: cdk.Duration.minutes(5),
-      statistic: "Sum",
-    }),
-    threshold: 5,
-    evaluationPeriods: 1,
-    alarmDescription: "ALB returned 5+ server errors in 5 minutes",
-    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
-
-  // Web target 5xx errors
-  new cloudwatch.Alarm(scope, "WebTarget5xxAlarm", {
-    metric: props.webTargetGroup.metrics.httpCodeTarget(
-      elbv2.HttpCodeTarget.TARGET_5XX_COUNT,
-      {
+  notifyOnAlarmAndRecovery(
+    new cloudwatch.Alarm(scope, "Alb5xxAlarm", {
+      metric: props.alb.metrics.httpCodeElb(elbv2.HttpCodeElb.ELB_5XX_COUNT, {
         period: cdk.Duration.minutes(5),
         statistic: "Sum",
-      },
-    ),
-    threshold: 1,
-    evaluationPeriods: 1,
-    alarmDescription: "Web target returned server errors",
-    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+      }),
+      threshold: 5,
+      evaluationPeriods: 1,
+      alarmDescription: "ALB returned 5+ server errors in 5 minutes",
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }),
+  );
+
+  // Web target 5xx errors
+  notifyOnAlarmAndRecovery(
+    new cloudwatch.Alarm(scope, "WebTarget5xxAlarm", {
+      metric: props.webTargetGroup.metrics.httpCodeTarget(
+        elbv2.HttpCodeTarget.TARGET_5XX_COUNT,
+        {
+          period: cdk.Duration.minutes(5),
+          statistic: "Sum",
+        },
+      ),
+      threshold: 1,
+      evaluationPeriods: 1,
+      alarmDescription: "Web target returned server errors",
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }),
+  );
 
   // Web target health
-  new cloudwatch.Alarm(scope, "WebTargetHealthAlarm", {
-    metric: props.webTargetGroup.metrics.healthyHostCount({
-      period: cdk.Duration.minutes(1),
-      statistic: "Minimum",
+  notifyOnAlarmAndRecovery(
+    new cloudwatch.Alarm(scope, "WebTargetHealthAlarm", {
+      metric: props.webTargetGroup.metrics.healthyHostCount({
+        period: cdk.Duration.minutes(1),
+        statistic: "Minimum",
+      }),
+      threshold: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+      evaluationPeriods: 2,
+      alarmDescription: "Web target group had no healthy hosts for 2 minutes",
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
     }),
-    threshold: 1,
-    comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
-    evaluationPeriods: 2,
-    alarmDescription: "Web target group had no healthy hosts for 2 minutes",
-    treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+  );
 
   // WAF blocks by the request body size re-block rule
   new cloudwatch.Alarm(scope, "WafSizeBodyBlockedAlarm", {
@@ -126,16 +138,34 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
   // ECS CPU > 80% for 15 minutes
-  new cloudwatch.Alarm(scope, "EcsCpuAlarm", {
-    metric: props.webService.metricCpuUtilization({
-      period: cdk.Duration.minutes(5),
-      statistic: "Average",
+  notifyOnAlarmAndRecovery(
+    new cloudwatch.Alarm(scope, "EcsCpuAlarm", {
+      metric: props.webService.metricCpuUtilization({
+        period: cdk.Duration.minutes(5),
+        statistic: "Average",
+      }),
+      threshold: 80,
+      evaluationPeriods: 3,
+      alarmDescription: "ECS CPU above 80% for 15 minutes",
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
     }),
-    threshold: 80,
-    evaluationPeriods: 3,
-    alarmDescription: "ECS CPU above 80% for 15 minutes",
-    treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+  );
+
+  // ECS CPU spike: catches a multi-minute saturation that the 15-minute average alarm misses.
+  // Missing data is NOT_BREACHING here because a 1-minute window sees ordinary metric gaps.
+  notifyOnAlarmAndRecovery(
+    new cloudwatch.Alarm(scope, "EcsCpuSpikeAlarm", {
+      metric: props.webService.metricCpuUtilization({
+        period: cdk.Duration.minutes(1),
+        statistic: "Maximum",
+      }),
+      threshold: 90,
+      evaluationPeriods: 3,
+      datapointsToAlarm: 2,
+      alarmDescription: "ECS CPU spike: above 90% for 2 of the last 3 minutes (short window)",
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }),
+  );
 
   // ECS Memory > 80% for 15 minutes
   new cloudwatch.Alarm(scope, "EcsMemoryAlarm", {
