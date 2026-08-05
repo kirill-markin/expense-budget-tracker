@@ -25,6 +25,17 @@ The web container needs all of these values together:
 
 If only part of the Langfuse config is present, production startup validation fails.
 
+## Export mode
+
+Spans are exported in batches, not one by one:
+
+- the span processor uses the `@langfuse/otel` default `batched` export mode
+- the OpenTelemetry batch processor schedules a flush every 5 seconds by default, so a finished turn can take a few seconds to appear in Langfuse
+- batching keeps OTLP serialization and the export request off the chat request path, so telemetry competes less with request handling for the event loop
+- spans still queued when a web task stops are lost, because nothing flushes the SDK on exit; this is an accepted trade-off, not a misconfiguration
+
+Treat a trace that is missing for only a few seconds after a turn as normal batching latency.
+
 ## What a healthy trace looks like
 
 For every user turn in the web chat, Langfuse should show:
@@ -70,14 +81,16 @@ After deploying or rotating secrets:
 
 1. Open the web chat as a normal user.
 2. Send a plain question that should not use tools.
-3. Confirm a `chat_turn` trace appears in Langfuse with the expected tags and metadata.
+3. Wait a few seconds for the batch export, then confirm a `chat_turn` trace appears in Langfuse with the expected tags and metadata.
 4. Send a question that should trigger `query_database`.
-5. Confirm the same shape appears, now with a nested tool observation.
+5. Confirm the same shape appears after the same batch delay, now with a nested tool observation.
 
 ## What to check when telemetry is missing
 
 If no traces appear at all:
 
+- wait out the batch delay described in `## Export mode` before treating a missing trace as a configuration problem
+- if the web task was replaced or restarted right after the turn, expect the queued spans for that turn to be gone for good
 - confirm the ECS web task has all `LANGFUSE_*` environment values
 - confirm the web service was restarted after writing Secrets Manager values
 - check web container logs for startup validation failures about partial Langfuse configuration

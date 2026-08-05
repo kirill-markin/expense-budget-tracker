@@ -215,11 +215,20 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
     return null;
   }
 
+  // Batched export (the @langfuse/otel default) moves OTLP serialization and the
+  // export HTTP POST off the chat request path: ended spans wait for the
+  // OpenTelemetry batch processor schedule (5s by default) instead of being
+  // serialized and sent the moment each span ends.
+  // Masking and media processing still run in the processor's `onEnd` for every
+  // span in both export modes, so this option does not reduce the cost of
+  // sanitizing large payloads.
+  // Spans still queued when the task stops are dropped, because nothing flushes
+  // this SDK on exit. That is an accepted trade-off for leaving the Next server's
+  // own shutdown and in-flight request draining untouched, not an oversight.
   return new LangfuseSpanProcessor({
     publicKey,
     secretKey,
     baseUrl,
-    exportMode: "immediate",
     environment: process.env.NODE_ENV,
     release: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA,
     shouldExportSpan: ({ otelSpan }: Readonly<{ otelSpan: ReadableSpan }>): boolean =>
