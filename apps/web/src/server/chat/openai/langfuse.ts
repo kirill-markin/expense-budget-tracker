@@ -313,6 +313,8 @@ export const startChatTurnObservationWithDeps = async (
         } catch (error) {
           callbackError = error;
           rootObservation.updateOtelSpanAttributes({
+            level: "ERROR",
+            statusMessage: error instanceof Error ? error.message : String(error),
             output: {
               result: "error",
               message: error instanceof Error ? error.message : String(error),
@@ -411,6 +413,8 @@ export const startChatTranscriptionObservationWithDeps = async <TResult>(
         } catch (error) {
           callbackError = error;
           rootObservation.updateOtelSpanAttributes({
+            level: "ERROR",
+            statusMessage: error instanceof Error ? error.message : String(error),
             output: {
               result: "error",
               message: error instanceof Error ? error.message : String(error),
