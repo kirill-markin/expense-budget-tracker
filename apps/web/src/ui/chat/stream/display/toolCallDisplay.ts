@@ -121,6 +121,24 @@ export const formatToolOutput = (
   return formattedOutput;
 };
 
+const isFailedDatabaseQueryOutput = (
+  name: string,
+  output: string | null,
+): boolean => {
+  if (name !== "query_database" || output === null) return false;
+  try {
+    const parsed = JSON.parse(output) as unknown;
+    return (
+      typeof parsed === "object"
+      && parsed !== null
+      && !Array.isArray(parsed)
+      && (parsed as Record<string, unknown>).ok === false
+    );
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Builds the fully formatted tool-call content shown inside a transcript item.
  *
@@ -134,10 +152,16 @@ export const getToolCallDisplayState = (
   t: Translate,
 ): ToolCallDisplayState => {
   const isTerminal = toolCall.status === "completed";
+  const isCompleted = (toolCall.providerStatus ?? toolCall.status) === "completed";
+  const isFailedDatabaseQuery = isTerminal
+    && isCompleted
+    && isFailedDatabaseQueryOutput(toolCall.name, toolCall.output);
 
   return {
     label: formatToolLabel(toolCall.name, t),
-    statusLabel: formatToolStatusLabel(toolCall.status, toolCall.providerStatus, t),
+    statusLabel: isFailedDatabaseQuery
+      ? t("chat.toolStatusFailed")
+      : formatToolStatusLabel(toolCall.status, toolCall.providerStatus, t),
     input: formatToolInput(toolCall.name, toolCall.input),
     output: isTerminal
       ? formatToolOutput(toolCall.name, toolCall.output)
