@@ -41,7 +41,6 @@
   overflow-x: auto;
   margin-top: 12px;
   overscroll-behavior-inline: contain;
-  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
 }
 
