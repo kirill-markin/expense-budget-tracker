@@ -24,13 +24,12 @@ import {
   TOTALS_SORT_DEFAULTS,
   buildSortedAccountGroupTotals,
   buildSortedLiquidityTotals,
+  calculateReportingCurrencyTotals,
   filterAndSortAccounts,
   sortCurrencyTotals,
-  sumConvertedBalance,
-  sumNegativeConvertedBalance,
-  sumPositiveConvertedBalance,
   type AccountGroupTotal,
   type LiquidityTotal,
+  type ReportingCurrencyTotals,
 } from "./balancesTableModel";
 
 type Props = Readonly<{
@@ -126,9 +125,10 @@ export const BalancesTable = (props: Props): ReactElement => {
     [localAccounts, accountsSort.sort, showInactive],
   );
 
-  const totalUsd = useMemo<number | null>(() => sumConvertedBalance(localTotals), [localTotals]);
-  const totalPositiveUsd = useMemo<number>(() => sumPositiveConvertedBalance(localTotals), [localTotals]);
-  const totalNegativeUsd = useMemo<number>(() => sumNegativeConvertedBalance(localTotals), [localTotals]);
+  const reportingCurrencyTotals = useMemo<ReportingCurrencyTotals>(
+    () => calculateReportingCurrencyTotals(localAccounts),
+    [localAccounts],
+  );
 
   if (localAccounts.length === 0) {
     return (
@@ -185,9 +185,7 @@ export const BalancesTable = (props: Props): ReactElement => {
         reportingCurrency={reportingCurrency}
         numberFormat={numberFormat}
         maskClass={maskClass}
-        totalUsd={totalUsd}
-        totalPositiveUsd={totalPositiveUsd}
-        totalNegativeUsd={totalNegativeUsd}
+        reportingCurrencyTotals={reportingCurrencyTotals}
       />
 
       <BalanceAccountsTable

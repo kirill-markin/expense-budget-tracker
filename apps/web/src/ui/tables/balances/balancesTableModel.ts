@@ -41,6 +41,12 @@ type AccountTotalAccumulator = Readonly<{
   accountCount: number;
 }>;
 
+export type ReportingCurrencyTotals = Readonly<{
+  balance: number | null;
+  balancePositive: number | null;
+  balanceNegative: number | null;
+}>;
+
 export const LIQUIDITY_ORDER: Readonly<Record<AccountMetadataLiquidity, number>> = { high: 0, medium: 1, low: 2 };
 export const ACCOUNT_TYPE_ORDER: Readonly<Record<AccountMetadataAccountType, number>> = { personal: 0, business: 1 };
 export const ACCOUNT_GROUP_ORDER: Readonly<Record<AccountMetadataGroup, number>> = { regular: 0, investment: 1 };
@@ -304,34 +310,30 @@ export const filterAndSortAccounts = (
   });
 };
 
-export const sumConvertedBalance = (totals: ReadonlyArray<CurrencyTotal>): number | null => {
-  let sum = 0;
-  let hasNull = false;
-  for (const total of totals) {
-    if (total.balanceReport === null) {
-      hasNull = true;
-    } else {
-      sum += total.balanceReport;
+export const calculateReportingCurrencyTotals = (
+  accounts: ReadonlyArray<AccountRow>,
+): ReportingCurrencyTotals => {
+  let balance = 0;
+  let balancePositive = 0;
+  let balanceNegative = 0;
+  let hasMissingPositiveConversion = false;
+  let hasMissingNegativeConversion = false;
+
+  for (const account of accounts) {
+    if (account.balanceReport === null) {
+      if (account.balance > 0) hasMissingPositiveConversion = true;
+      if (account.balance < 0) hasMissingNegativeConversion = true;
+      continue;
     }
-  }
-  if (hasNull) return null;
-  return sum;
-};
 
-export const sumPositiveConvertedBalance = (totals: ReadonlyArray<CurrencyTotal>): number => {
-  let sum = 0;
-  for (const total of totals) {
-    if (total.balanceReport !== null && total.balanceReport > 0) sum += total.balanceReport;
-    else if (total.balanceReport === null && total.balance > 0) sum += total.balancePositive;
+    balance += account.balanceReport;
+    if (account.balanceReport > 0) balancePositive += account.balanceReport;
+    if (account.balanceReport < 0) balanceNegative += account.balanceReport;
   }
-  return sum;
-};
 
-export const sumNegativeConvertedBalance = (totals: ReadonlyArray<CurrencyTotal>): number => {
-  let sum = 0;
-  for (const total of totals) {
-    if (total.balanceReport !== null && total.balanceReport < 0) sum += total.balanceReport;
-    else if (total.balanceReport === null && total.balance < 0) sum += total.balanceNegative;
-  }
-  return sum;
+  return {
+    balance: hasMissingPositiveConversion || hasMissingNegativeConversion ? null : balance,
+    balancePositive: hasMissingPositiveConversion ? null : balancePositive,
+    balanceNegative: hasMissingNegativeConversion ? null : balanceNegative,
+  };
 };
