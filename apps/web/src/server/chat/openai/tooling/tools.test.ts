@@ -29,6 +29,39 @@ test("query_database forwards the exact session and turn scope to SQL execution"
   );
 
   assert.equal(result.succeeded, true);
+  assert.equal(result.error, null);
   assert.equal(result.isMutating, false);
   assert.deepEqual(receivedContext, context);
+});
+
+test("query_database exposes the same structured error returned to OpenAI", async (): Promise<void> => {
+  const sql = "SELECT account_id FROM missing_accounts";
+  const result = await executeChatToolCallWithDependencies(
+    "query_database",
+    JSON.stringify({ sql }),
+    {
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    },
+    {
+      execQuery: async (): Promise<never> => {
+        throw new RangeError("relation missing_accounts does not exist");
+      },
+    },
+  );
+
+  assert.equal(result.succeeded, false);
+  assert.equal(result.isMutating, false);
+  assert.deepEqual(result.error, {
+    name: "RangeError",
+    message: "relation missing_accounts does not exist",
+  });
+  assert.deepEqual(JSON.parse(result.output), {
+    ok: false,
+    tool: "query_database",
+    sql,
+    error: result.error,
+  });
 });

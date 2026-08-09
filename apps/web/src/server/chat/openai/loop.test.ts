@@ -225,6 +225,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
   let modelCallCount = 0;
   const openAIRequests: Array<OpenAIResponsesRequest> = [];
   let executedToolScope: Readonly<{
+    requestId: string;
     sessionId: string;
     turnId: string;
   }> | null = null;
@@ -264,9 +265,11 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
       runOneToolCall: async (toolParams): Promise<Readonly<{
         output: string;
         isMutating: boolean;
-        succeeded: boolean;
+        succeeded: true;
+        error: null;
       }>> => {
         executedToolScope = {
+          requestId: toolParams.requestId,
           sessionId: toolParams.sessionId,
           turnId: toolParams.turnId,
         };
@@ -274,6 +277,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
           output: toolOutput,
           isMutating: false,
           succeeded: true,
+          error: null,
         };
       },
     }),
@@ -281,6 +285,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
 
   assert.equal(modelCallCount, 2);
   assert.deepEqual(executedToolScope, {
+    requestId: params.requestId,
     sessionId: params.sessionId,
     turnId: params.turnId,
   });
@@ -362,11 +367,13 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
       runOneToolCall: async ({ item }): Promise<Readonly<{
         output: string;
         isMutating: boolean;
-        succeeded: boolean;
+        succeeded: true;
+        error: null;
       }>> => ({
         output: `{\"tool\":\"${item.call_id}\"}`,
         isMutating: false,
         succeeded: true,
+        error: null,
       }),
     }),
   );
