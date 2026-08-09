@@ -132,6 +132,7 @@ export type ChatSessionController = Readonly<{
   messages: ReadonlyArray<StoredMessage>;
   runState: ChatRunState;
   isHistoryLoaded: boolean;
+  isTranscriptDisplayReady: boolean;
   isAssistantRunActive: boolean;
   isLiveStreamConnected: boolean;
   isStopping: boolean;
@@ -259,6 +260,7 @@ export const useChatSessionController = (
     createInitialChatSessionControllerState,
   );
   const stateRef = useRef(state);
+  const transcriptSelectionEpochRef = useRef<number | null>(null);
   const activeStreamAbortRef = useRef<AbortController | null>(null);
   const activeStreamSelectionEpochRef = useRef<number | null>(null);
   const activeStreamUnadoptedDraftIdRef = useRef<string | null>(null);
@@ -1422,6 +1424,7 @@ export const useChatSessionController = (
       && activeStreamSelectionEpoch === selectedSelectionEpoch
       && activeStreamAdoptedSessionIdRef.current === selectedTarget.sessionId;
     if (ownsSameEpochAdoptedStream) {
+      transcriptSelectionEpochRef.current = selectedSelectionEpoch;
       return;
     }
     if (
@@ -1442,6 +1445,7 @@ export const useChatSessionController = (
       activeStreamUnadoptedDraftIdRef.current = null;
       activeStreamAdoptedSessionIdRef.current = null;
     }
+    transcriptSelectionEpochRef.current = selectedSelectionEpoch;
     replaceMessages([]);
 
     const selectedSessionId = selectedTarget.kind === "session"
@@ -2422,6 +2426,9 @@ export const useChatSessionController = (
     messages,
     runState: state.runState,
     isHistoryLoaded: state.isHistoryLoaded,
+    isTranscriptDisplayReady:
+      transcriptSelectionEpochRef.current === params.selectionEpoch
+      && state.bootstrapStatus !== "loading",
     isAssistantRunActive,
     isLiveStreamConnected: state.isLiveStreamConnected,
     isStopping,

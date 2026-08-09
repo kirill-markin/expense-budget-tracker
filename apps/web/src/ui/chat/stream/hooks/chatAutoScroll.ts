@@ -9,7 +9,7 @@ export type AutoScrollPinnedStateInput = Readonly<{
 export const AUTO_SCROLL_RELEASE_DISTANCE_PX = 16;
 export const AUTO_SCROLL_REANCHOR_DISTANCE_PX = 24;
 
-const getDistanceToBottom = (
+export const getChatScrollDistanceToBottom = (
   scrollHeight: number,
   scrollTop: number,
   clientHeight: number,
@@ -18,7 +18,7 @@ const getDistanceToBottom = (
 export const getNextAutoScrollPinnedState = (
   input: AutoScrollPinnedStateInput,
 ): boolean => {
-  const distanceToBottom = getDistanceToBottom(
+  const distanceToBottom = getChatScrollDistanceToBottom(
     input.scrollHeight,
     input.currentScrollTop,
     input.clientHeight,

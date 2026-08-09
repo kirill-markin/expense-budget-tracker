@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactElement,
@@ -12,7 +13,11 @@ import { useTranslation } from "react-i18next";
 import { getAttachmentLabel } from "@/lib/chatAttachments";
 import { cn } from "@/lib/cn";
 import type { StoredMessage } from "@/ui/hooks/useChatHistory";
-import { getNextAutoScrollPinnedState } from "../../stream/hooks/chatAutoScroll";
+import {
+  AUTO_SCROLL_REANCHOR_DISTANCE_PX,
+  getChatScrollDistanceToBottom,
+  getNextAutoScrollPinnedState,
+} from "../../stream/hooks/chatAutoScroll";
 import { getOrderedMessageBlocks } from "../../stream/display/messageContentOrder";
 import { getAssistantStreamingIndicator } from "../../stream/display/thinkingSummary";
 import { getToolCallDisplayState } from "../../stream/display/toolCallDisplay";
@@ -22,7 +27,56 @@ type Props = Readonly<{
   messages: ReadonlyArray<StoredMessage>;
   isAssistantRunActive: boolean;
   isLiveStreamConnected: boolean;
+  targetKey: string;
+  selectionEpoch: number;
+  isDisplayReady: boolean;
 }>;
+
+type TranscriptSelection = Readonly<{
+  targetKey: string;
+  selectionEpoch: number;
+}>;
+
+type CachedScrollPosition = Readonly<{
+  scrollTop: number;
+  savedAt: number;
+}>;
+
+const MAX_CACHED_SCROLL_POSITIONS = 5;
+const CACHED_SCROLL_POSITION_TTL_MS = 60 * 60 * 1000;
+
+const getUnexpiredScrollPositions = (
+  cache: ReadonlyMap<string, CachedScrollPosition>,
+  now: number,
+): Map<string, CachedScrollPosition> => {
+  const unexpiredPositions = new Map<string, CachedScrollPosition>();
+  for (const [targetKey, position] of cache) {
+    if (now - position.savedAt < CACHED_SCROLL_POSITION_TTL_MS) {
+      unexpiredPositions.set(targetKey, position);
+    }
+  }
+  return unexpiredPositions;
+};
+
+const cacheScrollPosition = (
+  cache: ReadonlyMap<string, CachedScrollPosition>,
+  targetKey: string,
+  scrollTop: number,
+  now: number,
+): Map<string, CachedScrollPosition> => {
+  const nextCache = getUnexpiredScrollPositions(cache, now);
+  nextCache.delete(targetKey);
+  nextCache.set(targetKey, { scrollTop, savedAt: now });
+
+  while (nextCache.size > MAX_CACHED_SCROLL_POSITIONS) {
+    const oldestTarget = nextCache.keys().next();
+    if (oldestTarget.done) {
+      return nextCache;
+    }
+    nextCache.delete(oldestTarget.value);
+  }
+  return nextCache;
+};
 
 const renderMessageContent = (
   message: StoredMessage,
@@ -87,15 +141,27 @@ export const ChatTranscript = (props: Props): ReactElement => {
     messages,
     isAssistantRunActive,
     isLiveStreamConnected,
+    targetKey,
+    selectionEpoch,
+    isDisplayReady,
   } = props;
   const { t } = useTranslation();
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const scrollFrameRef = useRef<number | null>(null);
-  const initialScrollDoneRef = useRef<boolean>(false);
+  const selectionRef = useRef<TranscriptSelection>({
+    targetKey,
+    selectionEpoch,
+  });
+  const scrollPositionsRef = useRef<Map<string, CachedScrollPosition>>(
+    new Map<string, CachedScrollPosition>(),
+  );
+  const hasPositionedHistoryRef = useRef<boolean>(false);
+  const positionedMessagesRef = useRef<ReadonlyArray<StoredMessage> | null>(null);
   const previousScrollTopRef = useRef<number | null>(null);
   const autoScrollPinnedRef = useRef<boolean>(true);
   const [isAutoScrollPinned, setIsAutoScrollPinned] = useState<boolean>(true);
+  const [isHistoryPositioned, setIsHistoryPositioned] = useState<boolean>(false);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior): void => {
     const element = messagesRef.current;
@@ -119,6 +185,75 @@ export const ChatTranscript = (props: Props): ReactElement => {
       scrollToBottom(behavior);
     });
   }, [scrollToBottom]);
+
+  useLayoutEffect(() => {
+    const previousSelection = selectionRef.current;
+    if (previousSelection.selectionEpoch === selectionEpoch) {
+      selectionRef.current = { targetKey, selectionEpoch };
+      return;
+    }
+
+    const element = messagesRef.current;
+    if (element !== null && hasPositionedHistoryRef.current) {
+      if (autoScrollPinnedRef.current) {
+        const nextScrollPositions = new Map(scrollPositionsRef.current);
+        nextScrollPositions.delete(previousSelection.targetKey);
+        scrollPositionsRef.current = nextScrollPositions;
+      } else {
+        scrollPositionsRef.current = cacheScrollPosition(
+          scrollPositionsRef.current,
+          previousSelection.targetKey,
+          element.scrollTop,
+          Date.now(),
+        );
+      }
+    }
+    if (scrollFrameRef.current !== null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+
+    selectionRef.current = { targetKey, selectionEpoch };
+    hasPositionedHistoryRef.current = false;
+    positionedMessagesRef.current = null;
+    previousScrollTopRef.current = null;
+    autoScrollPinnedRef.current = true;
+    setIsAutoScrollPinned(true);
+    setIsHistoryPositioned(false);
+  }, [selectionEpoch, targetKey]);
+
+  useLayoutEffect(() => {
+    const element = messagesRef.current;
+    if (
+      element === null
+      || !isDisplayReady
+      || hasPositionedHistoryRef.current
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    scrollPositionsRef.current = getUnexpiredScrollPositions(
+      scrollPositionsRef.current,
+      now,
+    );
+    const cachedPosition = scrollPositionsRef.current.get(targetKey);
+    const nextScrollTop = cachedPosition?.scrollTop ?? element.scrollHeight;
+    element.scrollTop = nextScrollTop;
+    previousScrollTopRef.current = element.scrollTop;
+    hasPositionedHistoryRef.current = true;
+    positionedMessagesRef.current = messages;
+
+    const nextPinnedState = cachedPosition === undefined
+      || getChatScrollDistanceToBottom(
+        element.scrollHeight,
+        element.scrollTop,
+        element.clientHeight,
+      ) <= AUTO_SCROLL_REANCHOR_DISTANCE_PX;
+    autoScrollPinnedRef.current = nextPinnedState;
+    setIsAutoScrollPinned(nextPinnedState);
+    setIsHistoryPositioned(true);
+  }, [isDisplayReady, messages, selectionEpoch, targetKey]);
 
   useEffect(() => {
     const element = messagesRef.current;
@@ -151,21 +286,24 @@ export const ChatTranscript = (props: Props): ReactElement => {
   }, []);
 
   useEffect(() => {
-    if (!isAutoScrollPinned) {
+    if (
+      !isDisplayReady
+      || !hasPositionedHistoryRef.current
+      || !autoScrollPinnedRef.current
+      || positionedMessagesRef.current === messages
+    ) {
       return;
     }
 
-    const behavior: ScrollBehavior = isAssistantRunActive || isLiveStreamConnected || !initialScrollDoneRef.current
+    positionedMessagesRef.current = messages;
+    const behavior: ScrollBehavior = isAssistantRunActive || isLiveStreamConnected
       ? "instant"
       : "smooth";
     scheduleScrollToBottom(behavior);
-
-    if (!initialScrollDoneRef.current && messages.length > 0) {
-      initialScrollDoneRef.current = true;
-    }
   }, [
     isAssistantRunActive,
     isAutoScrollPinned,
+    isDisplayReady,
     isLiveStreamConnected,
     messages,
     scheduleScrollToBottom,
@@ -178,7 +316,11 @@ export const ChatTranscript = (props: Props): ReactElement => {
   }, []);
 
   return (
-    <div className={styles.messages} ref={messagesRef}>
+    <div
+      className={styles.messages}
+      ref={messagesRef}
+      style={isHistoryPositioned ? undefined : { visibility: "hidden" }}
+    >
       {messages.length === 0 && (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>{t("chat.emptyTitle")}</p>
