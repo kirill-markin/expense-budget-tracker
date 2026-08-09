@@ -3,7 +3,7 @@
 import { Fragment, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getCellVisibility } from "@/lib/dataMask";
+import { getCellVisibility, MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import type { BusinessPersonalTransferCell } from "@/server/budget/getBudgetGrid";
 import {
@@ -88,6 +88,12 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
   const derivedVisibility = getCellVisibility(effectiveAllowlist, null);
   const derivedMaskClass = derivedVisibility.maskClass;
   const canOpenDerivedDrillDown = derivedVisibility.showData;
+  const renderDerivedValue = (formattedValue: string): string => (
+    derivedVisibility.showData ? formattedValue : MASKED_CELL_PLACEHOLDER
+  );
+  const renderDerivedStateClass = (stateClass: string): string => (
+    derivedVisibility.showData ? stateClass : ""
+  );
 
   return (
     <>
@@ -98,26 +104,32 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         currentYear={currentYear}
         yearComputed={yearComputed}
         loadingKind="derived"
+        showData={derivedVisibility.showData}
+        maskClass={derivedMaskClass}
         rowClassName={styles.categoryRow}
         renderPastYear={(year, yearData) => (
           <td key={`total-${year}`} className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
-            {formatFxAmount(yearData.yearFxAdjust, numberFormat)}
+            {renderDerivedValue(formatFxAmount(yearData.yearFxAdjust, numberFormat))}
           </td>
         )}
         renderFutureYear={(year) => (
-          <td key={`total-${year}`} className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`} />
+          <td key={`total-${year}`} className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
+            {derivedVisibility.showData ? null : MASKED_CELL_PLACEHOLDER}
+          </td>
         )}
         renderCurrentYear={(year, yearData) => (
           <Fragment key={`total-${year}`}>
-            <td className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`} />
             <td className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
-              {formatFxAmount(yearData.yearFxAdjust, numberFormat)}
+              {derivedVisibility.showData ? null : MASKED_CELL_PLACEHOLDER}
+            </td>
+            <td className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
+              {renderDerivedValue(formatFxAmount(yearData.yearFxAdjust, numberFormat))}
             </td>
           </Fragment>
         )}
         renderPastMonth={(month) => {
           const fx = fxAdjustments.get(month);
-          const fxClickable = fx !== undefined;
+          const fxClickable = canOpenDerivedDrillDown && fx !== undefined;
           return renderValueCells({
             key: month,
             month,
@@ -155,7 +167,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         })}
         renderCurrentMonth={(month) => {
           const fx = fxAdjustments.get(month);
-          const fxClickable = fx !== undefined;
+          const fxClickable = canOpenDerivedDrillDown && fx !== undefined;
           return renderValueCells({
             key: month,
             month,
@@ -183,20 +195,22 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         currentYear={currentYear}
         yearComputed={yearComputed}
         loadingKind="subtotal"
+        showData={derivedVisibility.showData}
+        maskClass={derivedMaskClass}
         rowClassName={styles.directionRow}
         renderPastYear={(year, yearData) => {
           const yearTotalStateClass = buildYearTotalStateClass(yearData.anyTainted, isNegativeValueOver(yearData.remainder.actual));
           return (
-            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${yearTotalStateClass} ${getRemainderValueClass(yearData.remainder.actual, yearData.anyTainted)}`}>
-              {formatSignedAmount(yearData.remainder.actual, numberFormat)}
+            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalStateClass)} ${renderDerivedStateClass(getRemainderValueClass(yearData.remainder.actual, yearData.anyTainted))}`}>
+              {renderDerivedValue(formatSignedAmount(yearData.remainder.actual, numberFormat))}
             </td>
           );
         }}
         renderFutureYear={(year, yearData) => {
           const yearTotalStateClass = buildYearTotalStateClass(yearData.anyTainted, isNegativeValueOver(yearData.remainder.planned));
           return (
-            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${yearTotalStateClass} ${getRemainderValueClass(yearData.remainder.planned, yearData.anyTainted)}`}>
-              {formatSignedAmount(yearData.remainder.planned, numberFormat)}
+            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalStateClass)} ${renderDerivedStateClass(getRemainderValueClass(yearData.remainder.planned, yearData.anyTainted))}`}>
+              {renderDerivedValue(formatSignedAmount(yearData.remainder.planned, numberFormat))}
             </td>
           );
         }}
@@ -205,11 +219,11 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           const yearTotalActualStateClass = buildYearTotalStateClass(yearData.anyTainted, isNegativeValueOver(yearData.remainder.actual));
           return (
             <Fragment key={`total-${year}`}>
-              <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${yearTotalPlanStateClass} ${getRemainderValueClass(yearData.remainder.planned, yearData.anyTainted)}`}>
-                {formatSignedAmount(yearData.remainder.planned, numberFormat)}
+              <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalPlanStateClass)} ${renderDerivedStateClass(getRemainderValueClass(yearData.remainder.planned, yearData.anyTainted))}`}>
+                {renderDerivedValue(formatSignedAmount(yearData.remainder.planned, numberFormat))}
               </td>
-              <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${yearTotalActualStateClass} ${getRemainderValueClass(yearData.remainder.actual, yearData.anyTainted)}`}>
-                {formatSignedAmount(yearData.remainder.actual, numberFormat)}
+              <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalActualStateClass)} ${renderDerivedStateClass(getRemainderValueClass(yearData.remainder.actual, yearData.anyTainted))}`}>
+                {renderDerivedValue(formatSignedAmount(yearData.remainder.actual, numberFormat))}
               </td>
             </Fragment>
           );
@@ -298,20 +312,22 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         currentYear={currentYear}
         yearComputed={yearComputed}
         loadingKind="subtotal"
+        showData={derivedVisibility.showData}
+        maskClass={derivedMaskClass}
         rowClassName={styles.directionRow}
         renderPastYear={(year, yearData) => {
           const yearTotalStateClass = buildYearTotalStateClass(yearData.decemberBalance.isTainted, isNegativeValueOver(yearData.decemberBalance.actual));
           return (
-            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${yearTotalStateClass}`}>
-              {formatAmount(yearData.decemberBalance.actual, numberFormat)}
+            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalStateClass)}`}>
+              {renderDerivedValue(formatAmount(yearData.decemberBalance.actual, numberFormat))}
             </td>
           );
         }}
         renderFutureYear={(year, yearData) => {
           const yearTotalStateClass = buildYearTotalStateClass(yearData.decemberBalance.isTainted, isNegativeValueOver(yearData.decemberBalance.plan));
           return (
-            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${yearTotalStateClass}`}>
-              {formatAmount(yearData.decemberBalance.plan, numberFormat)}
+            <td key={`total-${year}`} className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalStateClass)}`}>
+              {renderDerivedValue(formatAmount(yearData.decemberBalance.plan, numberFormat))}
             </td>
           );
         }}
@@ -320,11 +336,11 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           const yearTotalActualStateClass = buildYearTotalStateClass(yearData.decemberBalance.isTainted, isNegativeValueOver(yearData.decemberBalance.actual));
           return (
             <Fragment key={`total-${year}`}>
-              <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${yearTotalPlanStateClass}`}>
-                {formatAmount(yearData.decemberBalance.plan, numberFormat)}
+              <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalPlanStateClass)}`}>
+                {renderDerivedValue(formatAmount(yearData.decemberBalance.plan, numberFormat))}
               </td>
-              <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${yearTotalActualStateClass}`}>
-                {formatAmount(yearData.decemberBalance.actual, numberFormat)}
+              <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalActualStateClass)}`}>
+                {renderDerivedValue(formatAmount(yearData.decemberBalance.actual, numberFormat))}
               </td>
             </Fragment>
           );
@@ -400,6 +416,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           currentYear={currentYear}
           yearComputed={yearComputed}
           numberFormat={numberFormat}
+          showData={derivedVisibility.showData}
           derivedMaskClass={derivedMaskClass}
           mebByLiq={mebByLiq}
           projectedLiqBalances={projectedLiqBalances}
@@ -414,6 +431,8 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           currentYear={currentYear}
           yearComputed={yearComputed}
           loadingKind="derived"
+          showData={derivedVisibility.showData}
+          maskClass={derivedMaskClass}
           rowClassName={`${styles.categoryRow} ${styles.businessPersonalDivider}`}
           renderPastYear={(year, yearData) => {
             const cell = yearData.businessPersonalTransfer;
@@ -421,27 +440,31 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             return (
               <td
                 key={`total-${year}`}
-                className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${stateClass}${canOpenDerivedDrillDown ? ` ${styles.cellClickable}` : ""}`}
+                className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(stateClass)}${canOpenDerivedDrillDown ? ` ${styles.cellClickable}` : ""}`}
                 onClick={canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferYearDrillDownFilter(year)) : undefined}
               >
-                {formatAmount(cell.actual, numberFormat)}
+                {renderDerivedValue(formatAmount(cell.actual, numberFormat))}
               </td>
             );
           }}
           renderFutureYear={(year) => (
-            <td key={`total-${year}`} className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`} />
+            <td key={`total-${year}`} className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
+              {derivedVisibility.showData ? null : MASKED_CELL_PLACEHOLDER}
+            </td>
           )}
           renderCurrentYear={(year, yearData) => {
             const cell = yearData.businessPersonalTransfer;
             const stateClass = buildYearTotalStateClass(cell.hasUnconvertible, false);
             return (
               <Fragment key={`total-${year}`}>
-                <td className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`} />
+                <td className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
+                  {derivedVisibility.showData ? null : MASKED_CELL_PLACEHOLDER}
+                </td>
                 <td
-                  className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${stateClass}${canOpenDerivedDrillDown ? ` ${styles.cellClickable}` : ""}`}
+                  className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(stateClass)}${canOpenDerivedDrillDown ? ` ${styles.cellClickable}` : ""}`}
                   onClick={canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferYearDrillDownFilter(year)) : undefined}
                 >
-                  {formatAmount(cell.actual, numberFormat)}
+                  {renderDerivedValue(formatAmount(cell.actual, numberFormat))}
                 </td>
               </Fragment>
             );

@@ -1,5 +1,6 @@
 import { Fragment, type ReactElement } from "react";
 
+import { MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import {
   isFutureMonth,
@@ -87,18 +88,22 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     formatter,
     onActualClick,
   } = params;
+  const isMasked = maskClass.includes("data-masked");
   const subtotalClass = isSubtotal ? ` ${styles.cellSubtotal}` : "";
-  const taintedClass = isTainted ? ` ${tableStateStyles.error}` : "";
+  const taintedClass = !isMasked && isTainted ? ` ${tableStateStyles.error}` : "";
+  const visiblePlannedValueClass = isMasked ? "" : plannedValueClass;
+  const visibleActualValueClass = isMasked ? "" : actualValueClass;
+  const visibleActualClick = isMasked ? null : onActualClick;
 
   if (isPastMonth(month, currentMonth)) {
-    const clickableClass = onActualClick !== null ? ` ${styles.cellClickable}` : "";
+    const clickableClass = visibleActualClick !== null ? ` ${styles.cellClickable}` : "";
     return (
       <td
         key={key}
-        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${clickableClass} ${actualValueClass}`}
-        onClick={onActualClick ?? undefined}
+        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${clickableClass} ${visibleActualValueClass}`}
+        onClick={visibleActualClick ?? undefined}
       >
-        {formatter(actual, numberFormat)}
+        {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
       </td>
     );
   }
@@ -107,26 +112,26 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     return (
       <td
         key={key}
-        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${isPlanOver ? ` ${tableStateStyles.over}` : ""} ${plannedValueClass}`}
+        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
       >
-        {formatter(planned, numberFormat)}
+        {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
       </td>
     );
   }
 
-  const clickableClass = onActualClick !== null ? ` ${styles.cellClickable}` : "";
+  const clickableClass = visibleActualClick !== null ? ` ${styles.cellClickable}` : "";
   return (
     <Fragment key={key}>
       <td
-        className={`${styles.cell} ${styles.currentMonthPlan}${subtotalClass}${maskClass}${taintedClass}${isPlanOver ? ` ${tableStateStyles.over}` : ""} ${plannedValueClass}`}
+        className={`${styles.cell} ${styles.currentMonthPlan}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
       >
-        {formatter(planned, numberFormat)}
+        {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
       </td>
       <td
-        className={`${styles.cell} ${styles.currentMonthActual}${subtotalClass}${maskClass}${taintedClass}${isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass} ${actualValueClass}`}
-        onClick={onActualClick ?? undefined}
+        className={`${styles.cell} ${styles.currentMonthActual}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass} ${visibleActualValueClass}`}
+        onClick={visibleActualClick ?? undefined}
       >
-        {formatter(actual, numberFormat)}
+        {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
       </td>
     </Fragment>
   );
@@ -162,6 +167,27 @@ export const renderDerivedYearLoadingCells = (year: string, isCurrentYear: boole
   return (
     <td key={`total-${year}`} className={`${styles.cell} ${styles.yearTotal} ${styles.yearLoading}`}>
       &hellip;
+    </td>
+  );
+};
+
+export const renderMaskedYearCells = (
+  year: string,
+  isCurrentYear: boolean,
+  maskClass: string,
+): ReactElement => {
+  if (isCurrentYear) {
+    return (
+      <Fragment key={`total-${year}`}>
+        <td className={`${styles.cell} ${styles.yearTotal}${maskClass}`}>{MASKED_CELL_PLACEHOLDER}</td>
+        <td className={`${styles.cell} ${styles.yearTotal}${maskClass}`}>{MASKED_CELL_PLACEHOLDER}</td>
+      </Fragment>
+    );
+  }
+
+  return (
+    <td key={`total-${year}`} className={`${styles.cell} ${styles.yearTotal}${maskClass}`}>
+      {MASKED_CELL_PLACEHOLDER}
     </td>
   );
 };

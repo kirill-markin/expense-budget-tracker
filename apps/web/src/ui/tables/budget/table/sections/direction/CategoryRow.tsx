@@ -2,7 +2,7 @@
 
 import { Fragment, type ReactElement } from "react";
 
-import { getCellVisibility } from "@/lib/dataMask";
+import { getCellVisibility, MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import { BudgetPlanCell } from "@/ui/tables/budget/BudgetPlanCell";
 import {
@@ -28,6 +28,7 @@ import {
   isDirectionActualOverPlanned,
   renderColumnCells,
   renderDerivedYearLoadingCells,
+  renderMaskedYearCells,
 } from "../shared";
 
 type CategoryRowProps = Readonly<{
@@ -103,14 +104,19 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     onSyncEnd,
   } = props;
   const categoryVisibility = getCellVisibility(effectiveAllowlist, category);
+  const renderYearLoading = (year: string, isCurrentYearValue: boolean): ReactElement => (
+    categoryVisibility.showData
+      ? renderDerivedYearLoadingCells(year, isCurrentYearValue)
+      : renderMaskedYearCells(year, isCurrentYearValue, categoryVisibility.maskClass)
+  );
 
   return (
     <tr key={category} className={styles.categoryRow}>
       <td
-        className={`${styles.categoryLabel} ${styles.stickyCol} copyable-cell${categoryVisibility.maskClass}`}
+        className={`${styles.categoryLabel} ${styles.stickyCol}${categoryVisibility.showData ? " copyable-cell" : ""}${categoryVisibility.maskClass}`}
         onClick={categoryVisibility.showData ? () => copyToClipboard(category) : undefined}
       >
-        {categoryVisibility.showData ? category : ""}
+        {categoryVisibility.showData ? category : MASKED_CELL_PLACEHOLDER}
       </td>
       <td className={styles.leftSpacer} />
       {columnSequence.map((column) => {
@@ -121,14 +127,16 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
           currentYear,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
           renderYearLoading: (isCurrentYearValue) =>
-            renderDerivedYearLoadingCells(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+            renderYearLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
-              return renderDerivedYearLoadingCells(column.kind === "year-total" ? column.year : "", false);
+              return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
             }
             const yearCell =
               yearData.directionCategoryTotals.get(block.direction)?.get(category) ?? zeroCellValue;
-            const yearTotalStateClass = buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false);
+            const yearTotalStateClass = categoryVisibility.showData
+              ? buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false)
+              : "";
             return (
               <td
                 key={`total-${column.year}`}
@@ -140,17 +148,19 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   ? () => openDrillDown(buildCategoryYearDrillDownFilter(column.year, block.direction, category))
                   : undefined}
               >
-                {categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : ""}
+                {categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}
               </td>
             );
           },
           renderFutureYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
-              return renderDerivedYearLoadingCells(column.kind === "year-total" ? column.year : "", false);
+              return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
             }
             const yearCell =
               yearData.directionCategoryTotals.get(block.direction)?.get(category) ?? zeroCellValue;
-            const yearTotalStateClass = buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false);
+            const yearTotalStateClass = categoryVisibility.showData
+              ? buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false)
+              : "";
             return (
               <td
                 key={`total-${column.year}`}
@@ -159,19 +169,23 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   ? `budget-year-plan-${column.year}:${block.direction}:${category}`
                   : undefined}
               >
-                {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : ""}
+                {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : MASKED_CELL_PLACEHOLDER}
               </td>
             );
           },
           renderCurrentYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
-              return renderDerivedYearLoadingCells(column.kind === "year-total" ? column.year : "", true);
+              return renderYearLoading(column.kind === "year-total" ? column.year : "", true);
             }
             const yearCell =
               yearData.directionCategoryTotals.get(block.direction)?.get(category) ?? zeroCellValue;
             const isActualOver = isDirectionActualOverPlanned(block.direction, yearCell.planned, yearCell.actual);
-            const yearTotalPlanStateClass = buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false);
-            const yearTotalActualStateClass = buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), isActualOver);
+            const yearTotalPlanStateClass = categoryVisibility.showData
+              ? buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false)
+              : "";
+            const yearTotalActualStateClass = categoryVisibility.showData
+              ? buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), isActualOver)
+              : "";
             return (
               <Fragment key={`total-${column.year}`}>
                 <td
@@ -180,7 +194,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                     ? `budget-year-plan-${column.year}:${block.direction}:${category}`
                     : undefined}
                 >
-                  {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : ""}
+                  {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : MASKED_CELL_PLACEHOLDER}
                 </td>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalActualStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
@@ -191,17 +205,17 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                     ? () => openDrillDown(buildCategoryYearDrillDownFilter(column.year, block.direction, category))
                     : undefined}
                 >
-                  {categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : ""}
+                  {categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}
                 </td>
               </Fragment>
             );
           },
           renderPastMonth: () => {
             if (column.kind !== "month") {
-              return renderDerivedYearLoadingCells("invalid", false);
+              return renderYearLoading("invalid", false);
             }
             const cell = lookupCell(block.cells, column.month, category);
-            const taintedClass = taintedCells.has(`${block.direction}::${column.month}::${category}`)
+            const taintedClass = categoryVisibility.showData && taintedCells.has(`${block.direction}::${column.month}::${category}`)
               ? ` ${tableStateStyles.error}`
               : "";
             return (
@@ -212,13 +226,13 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                   : undefined}
               >
-                {categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : ""}
+                {categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}
               </td>
             );
           },
           renderFutureMonth: () => {
             if (column.kind !== "month") {
-              return renderDerivedYearLoadingCells("invalid", false);
+              return renderYearLoading("invalid", false);
             }
             const cell = lookupCell(block.cells, column.month, category);
             const taintedClass = taintedCells.has(`${block.direction}::${column.month}::${category}`)
@@ -261,7 +275,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
           },
           renderCurrentMonth: () => {
             if (column.kind !== "month") {
-              return renderDerivedYearLoadingCells("invalid", false);
+              return renderYearLoading("invalid", false);
             }
             const cell = lookupCell(block.cells, column.month, category);
             const taintedClass = taintedCells.has(`${block.direction}::${column.month}::${category}`)
@@ -302,7 +316,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   onSyncEnd={onSyncEnd}
                 />
                 <td
-                  className={`${styles.cell} ${styles.currentMonthActual}${categoryVisibility.maskClass}${taintedClass}${isActualOver ? ` ${tableStateStyles.over}` : ""}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                  className={`${styles.cell} ${styles.currentMonthActual}${categoryVisibility.maskClass}${categoryVisibility.showData ? taintedClass : ""}${categoryVisibility.showData && isActualOver ? ` ${tableStateStyles.over}` : ""}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
                   data-testid={categoryVisibility.showData
                     ? `budget-actual-${column.month}:${block.direction}:${category}`
                     : undefined}
@@ -310,7 +324,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                     ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                     : undefined}
                 >
-                  {categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : ""}
+                  {categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}
                 </td>
               </Fragment>
             );
