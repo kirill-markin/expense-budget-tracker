@@ -59,13 +59,18 @@ type ControllerHarness = Readonly<{
     handler: (adjustmentId: string) => Promise<DeleteBudgetAdjustmentOutcome>,
   ) => void;
   setRangeHandler: (
-    handler: (monthFrom: string, monthTo: string) => Promise<BudgetGridResult>,
+    handler: (
+      monthFrom: string,
+      monthTo: string,
+      signal: AbortSignal,
+    ) => Promise<BudgetGridResult>,
   ) => void;
 }>;
 
 const FIRST_ID = "00000000-0000-4000-8000-000000000001";
 const SECOND_ID = "00000000-0000-4000-8000-000000000002";
 const CREATED_ID = "00000000-0000-4000-8000-000000000003";
+const ACTIVE_ABORT_SIGNAL = new AbortController().signal;
 
 const createDeferred = <T,>(): Deferred<T> => {
   let resolvePromise: (value: T) => void = (): void => {
@@ -200,6 +205,7 @@ const createHarness = (
   let rangeHandler = async (
     _monthFrom: string,
     _monthTo: string,
+    _signal: AbortSignal,
   ): Promise<BudgetGridResult> => createGrid(initialAdjustments, []);
 
   const runtime = createBudgetAdjustmentRowsController({
@@ -218,9 +224,9 @@ const createHarness = (
       deleteCalls.push(adjustmentId);
       return deleteHandler(adjustmentId);
     },
-    fetchRange: async (monthFrom, monthTo): Promise<BudgetGridResult> => {
+    fetchRange: async (monthFrom, monthTo, signal): Promise<BudgetGridResult> => {
       rangeCalls.push({ monthFrom, monthTo });
-      return rangeHandler(monthFrom, monthTo);
+      return rangeHandler(monthFrom, monthTo, signal);
     },
     generateAdjustmentId: (): string => CREATED_ID,
     schedule: clock.schedule,
@@ -639,7 +645,11 @@ test("classifies definitive patch failures and reconciles ambiguous failures by 
   const rangeResult = createGrid([canonical], []);
   harness.setRangeHandler(async (): Promise<BudgetGridResult> => rangeResult);
   assert.deepEqual(
-    await harness.runtime.commands.loadRange("2026-12", "2027-01"),
+    await harness.runtime.commands.loadRange(
+      "2026-12",
+      "2027-01",
+      ACTIVE_ABORT_SIGNAL,
+    ),
     { status: "accepted", result: rangeResult },
   );
   assert.deepEqual(harness.rangeCalls, [{ monthFrom: "2026-12", monthTo: "2027-01" }]);
@@ -1346,7 +1356,11 @@ test("keeps a protected source cell projected through authoritative range absenc
   };
   const release = harness.runtime.commands.retainCell("source-editor", location);
 
-  const outcome = await harness.runtime.commands.loadRange("2026-07", "2026-07");
+  const outcome = await harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-07",
+    ACTIVE_ABORT_SIGNAL,
+  );
   assert.equal(outcome.status, "accepted");
   assert.equal(harness.runtime.commands.getRow(FIRST_ID, null), null);
   assert.equal(
@@ -1374,8 +1388,16 @@ test("accepts exact-overlap ranges in response order and supersedes stale result
     createDraft("9", "2026-07", "Food", "local"),
   );
 
-  const olderLoad = harness.runtime.commands.loadRange("2026-07", "2026-07");
-  const newerLoad = harness.runtime.commands.loadRange("2026-07", "2026-07");
+  const olderLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-07",
+    ACTIVE_ABORT_SIGNAL,
+  );
+  const newerLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-07",
+    ACTIVE_ABORT_SIGNAL,
+  );
   assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 2);
   const newerGrid = createGrid([{ ...initial, amount: 3 }], []);
   newer.resolve(newerGrid);
@@ -1399,8 +1421,16 @@ test("accepts exact-overlap ranges when the older response settles first", async
   harness.setRangeHandler((_monthFrom, _monthTo) =>
     harness.rangeCalls.length === 1 ? older.promise : newer.promise);
 
-  const olderLoad = harness.runtime.commands.loadRange("2026-07", "2026-07");
-  const newerLoad = harness.runtime.commands.loadRange("2026-07", "2026-07");
+  const olderLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-07",
+    ACTIVE_ABORT_SIGNAL,
+  );
+  const newerLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-07",
+    ACTIVE_ABORT_SIGNAL,
+  );
   const olderGrid = createGrid([{ ...initial, amount: 2 }], []);
   older.resolve(olderGrid);
   assert.deepEqual(await olderLoad, { status: "accepted", result: olderGrid });
@@ -1418,7 +1448,11 @@ test("loads the maximum supported month without advancing beyond the range", asy
   harness.setRangeHandler(async (): Promise<BudgetGridResult> => grid);
 
   assert.deepEqual(
-    await harness.runtime.commands.loadRange("9999-12", "9999-12"),
+    await harness.runtime.commands.loadRange(
+      "9999-12",
+      "9999-12",
+      ACTIVE_ABORT_SIGNAL,
+    ),
     { status: "accepted", result: grid },
   );
   assert.deepEqual(harness.rangeCalls, [{ monthFrom: "9999-12", monthTo: "9999-12" }]);
@@ -1434,8 +1468,16 @@ test("reconciles safe months but withholds a partially superseded range result",
   harness.setRangeHandler((_monthFrom, _monthTo) =>
     harness.rangeCalls.length === 1 ? older.promise : newer.promise);
 
-  const olderLoad = harness.runtime.commands.loadRange("2026-07", "2026-08");
-  const newerLoad = harness.runtime.commands.loadRange("2026-08", "2026-09");
+  const olderLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-08",
+    ACTIVE_ABORT_SIGNAL,
+  );
+  const newerLoad = harness.runtime.commands.loadRange(
+    "2026-08",
+    "2026-09",
+    ACTIVE_ABORT_SIGNAL,
+  );
   const newerGrid = createGrid([{ ...august, amount: 30 }], []);
   newer.resolve(newerGrid);
   assert.deepEqual(await newerLoad, { status: "accepted", result: newerGrid });
@@ -1450,11 +1492,40 @@ test("reconciles safe months but withholds a partially superseded range result",
   assert.equal(rows.find((row) => row.adjustmentId === SECOND_ID)?.confirmed.amount, 30);
 });
 
+test("cancels a range load without publishing a range failure", async (): Promise<void> => {
+  const harness = createHarness([]);
+  const abortController = new AbortController();
+  harness.setRangeHandler((
+    _monthFrom,
+    _monthTo,
+    signal,
+  ): Promise<BudgetGridResult> => new Promise((_resolve, reject): void => {
+    signal.addEventListener("abort", (): void => reject(signal.reason), {
+      once: true,
+    });
+  }));
+
+  const rangeLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-08",
+    abortController.signal,
+  );
+  abortController.abort();
+
+  await assert.rejects(rangeLoad, { name: "AbortError" });
+  assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 0);
+  assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 0);
+});
+
 test("rejects range failures and clears them after a broader accepted recovery", async (): Promise<void> => {
   const harness = createHarness([]);
   const network = createDeferred<BudgetGridResult>();
   harness.setRangeHandler((_monthFrom, _monthTo) => network.promise);
-  const networkLoad = harness.runtime.commands.loadRange("2026-07", "2026-08");
+  const networkLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-08",
+    ACTIVE_ABORT_SIGNAL,
+  );
   assert.equal(harness.runtime.getSnapshot().pendingRangeCount, 1);
   network.reject(new BudgetAdjustmentApiError(
     "Budget grid load",
@@ -1471,7 +1542,11 @@ test("rejects range failures and clears them after a broader accepted recovery",
 
   const broader = createDeferred<BudgetGridResult>();
   harness.setRangeHandler((_monthFrom, _monthTo) => broader.promise);
-  const recovery = harness.runtime.commands.loadRange("2026-06", "2026-09");
+  const recovery = harness.runtime.commands.loadRange(
+    "2026-06",
+    "2026-09",
+    ACTIVE_ABORT_SIGNAL,
+  );
   assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 1);
   const recoveredGrid = createGrid([], []);
   broader.resolve(recoveredGrid);
@@ -1482,7 +1557,11 @@ test("rejects range failures and clears them after a broader accepted recovery",
     createAdjustment(FIRST_ID, 1, "invalid-month", "Food", null),
   ], []));
   await assert.rejects(
-    harness.runtime.commands.loadRange("2026-09", "2026-09"),
+    harness.runtime.commands.loadRange(
+      "2026-09",
+      "2026-09",
+      ACTIVE_ABORT_SIGNAL,
+    ),
     /Budget adjustment range response row 0 is invalid/,
   );
   assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 1);
@@ -1495,8 +1574,16 @@ test("keeps the newest identical-range failure when responses settle in reverse"
   const harness = createHarness([]);
   harness.setRangeHandler((_monthFrom, _monthTo) =>
     harness.rangeCalls.length === 1 ? older.promise : newer.promise);
-  const olderLoad = harness.runtime.commands.loadRange("2026-07", "2026-08");
-  const newerLoad = harness.runtime.commands.loadRange("2026-07", "2026-08");
+  const olderLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-08",
+    ACTIVE_ABORT_SIGNAL,
+  );
+  const newerLoad = harness.runtime.commands.loadRange(
+    "2026-07",
+    "2026-08",
+    ACTIVE_ABORT_SIGNAL,
+  );
 
   newer.reject(new Error("newer range failure"));
   await assert.rejects(newerLoad, /newer range failure/);
@@ -1518,7 +1605,11 @@ test("keeps a failed range error until accepted partitions cover every month", a
     throw new Error("range offline");
   });
   await assert.rejects(
-    harness.runtime.commands.loadRange("2026-07", "2026-09"),
+    harness.runtime.commands.loadRange(
+      "2026-07",
+      "2026-09",
+      ACTIVE_ABORT_SIGNAL,
+    ),
     /range offline/,
   );
   assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 1);
@@ -1526,12 +1617,20 @@ test("keeps a failed range error until accepted partitions cover every month", a
   const partitionGrid = createGrid([], []);
   harness.setRangeHandler(async (): Promise<BudgetGridResult> => partitionGrid);
   assert.equal(
-    (await harness.runtime.commands.loadRange("2026-07", "2026-07")).status,
+    (await harness.runtime.commands.loadRange(
+      "2026-07",
+      "2026-07",
+      ACTIVE_ABORT_SIGNAL,
+    )).status,
     "accepted",
   );
   assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 1);
   assert.equal(
-    (await harness.runtime.commands.loadRange("2026-08", "2026-09")).status,
+    (await harness.runtime.commands.loadRange(
+      "2026-08",
+      "2026-09",
+      ACTIVE_ABORT_SIGNAL,
+    )).status,
     "accepted",
   );
   assert.equal(harness.runtime.getSnapshot().rangeErrorByKey.size, 0);

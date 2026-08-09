@@ -1,5 +1,12 @@
-import { expect, test, type Page, type Response } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Page,
+  type Request,
+  type Response,
+} from "@playwright/test";
 
+import { getCurrentMonth } from "@/lib/monthUtils";
 import type { BudgetGridResult, BudgetRow } from "@/server/budget/getBudgetGrid";
 
 type CreatedAdjustment = Readonly<{
@@ -20,6 +27,20 @@ type ModeReloadCapture = Readonly<{
   started: Promise<void>;
   getRequestCount: () => number;
 }>;
+
+type BudgetTableGeometry = Readonly<{
+  monthHeaderCount: number;
+  yearHeaderCount: number;
+  scrollWidth: number;
+  tableWidth: number;
+}>;
+
+type BudgetYearTotalRequestCapture = Readonly<{
+  getRequests: () => ReadonlyArray<Request>;
+  stop: () => void;
+}>;
+
+const BUDGET_OBSERVER_HORIZONTAL_MARGIN_PX = 600;
 
 const createDeferred = (): Deferred => {
   let resolvePromise = (): void => {
@@ -112,6 +133,42 @@ const isBudgetGridResponse = (response: Response): boolean =>
   new URL(response.url()).pathname === "/api/budget-grid"
   && response.request().method() === "GET";
 
+const isBudgetYearRangeRequest = (
+  request: Request,
+  year: string,
+): boolean => {
+  const url = new URL(request.url());
+  return url.pathname === "/api/budget-grid"
+    && request.method() === "GET"
+    && url.searchParams.get("monthFrom") === `${year}-01`
+    && url.searchParams.get("monthTo") === `${year}-12`;
+};
+
+const isBudgetYearRangeResponse = (
+  response: Response,
+  year: string,
+): boolean => isBudgetYearRangeRequest(
+  response.request(),
+  year,
+);
+
+const captureBudgetYearTotalRequests = (
+  page: Page,
+  year: string,
+): BudgetYearTotalRequestCapture => {
+  const requests: Array<Request> = [];
+  const captureRequest = (request: Request): void => {
+    if (isBudgetYearRangeRequest(request, year)) {
+      requests.push(request);
+    }
+  };
+  page.on("request", captureRequest);
+  return {
+    getRequests: (): ReadonlyArray<Request> => [...requests],
+    stop: (): void => page.off("request", captureRequest),
+  };
+};
+
 const gotoBudgetAndWaitForGrid = async (page: Page): Promise<void> => {
   const initialBudgetGridResponse = page.waitForResponse(isBudgetGridResponse);
   await page.goto("/budget", { waitUntil: "domcontentloaded" });
@@ -124,32 +181,98 @@ const reloadBudgetAndWaitForGrid = async (page: Page): Promise<void> => {
   expect((await initialBudgetGridResponse).ok()).toBe(true);
 };
 
-const extendBudgetThroughMonth = async (
+const readBudgetTableGeometry = async (
+  page: Page,
+): Promise<BudgetTableGeometry> => page.getByTestId("budget-table-scroll")
+  .evaluate((element): BudgetTableGeometry => {
+    const table = element.querySelector("table");
+    if (!(table instanceof HTMLTableElement)) {
+      throw new Error("Budget table scroll container has no table");
+    }
+    return {
+      monthHeaderCount: table.querySelectorAll("[data-budget-month]").length,
+      yearHeaderCount: table.querySelectorAll("[data-budget-year-total]").length,
+      scrollWidth: element.scrollWidth,
+      tableWidth: table.offsetWidth,
+    };
+  });
+
+const loadBudgetMonthAndYearTotal = async (
   page: Page,
   targetMonth: string,
+  currentMonth: string,
+  direction: "income" | "spend",
+  category: string,
+  yearTotalRequestCapture: BudgetYearTotalRequestCapture,
 ): Promise<void> => {
-  const targetHeader = page.locator(`[data-month="${targetMonth}"]`);
-  while (await targetHeader.count() === 0) {
-    const loadedMonthHeaders = page.locator("[data-month]");
-    const loadedMonthCount = await loadedMonthHeaders.count();
-    if (loadedMonthCount === 0) {
-      throw new Error("Budget table has no rendered month headers");
-    }
-    const loadedTo = await loadedMonthHeaders.nth(loadedMonthCount - 1)
-      .getAttribute("data-month");
-    if (loadedTo === null) {
-      throw new Error("Last budget month header has no data-month");
-    }
-    const monthTo = offsetMonth(loadedTo, 6);
-    await page.getByTestId("budget-table-scroll").evaluate((element): void => {
-      element.scrollLeft = element.scrollWidth;
-      element.dispatchEvent(new Event("scroll"));
-    });
-    await expect(page.locator(`[data-month="${monthTo}"]`)).toHaveCount(
-      1,
-      { timeout: 15_000 },
-    );
-  }
+  const targetYear = targetMonth.slice(0, 4);
+  const targetHeader = page.locator(
+    `[data-budget-month="${targetMonth}"]`,
+  );
+  const targetYearHeader = page.locator(
+    `[data-budget-year-total="${targetYear}"]`,
+  );
+  const targetCell = page.getByTestId(
+    `budget-plan-open-budget-plan:${targetMonth}:${direction}:${category}`,
+  );
+  const targetYearTotal = page.getByTestId(
+    `budget-year-plan-${targetYear}:${direction}:${category}`,
+  );
+  await expect(targetHeader).toHaveCount(1);
+  await expect(targetYearHeader).toHaveCount(1);
+  await expect(targetCell).toHaveCount(0);
+  await expect(targetYearTotal).toHaveCount(0);
+  const geometryBeforeLoad = await readBudgetTableGeometry(page);
+  await targetHeader.evaluate((element): void => {
+    element.scrollIntoView({ block: "nearest", inline: "end" });
+  });
+
+  await expect(targetCell).toBeVisible({ timeout: 15_000 });
+  const isYearTotalOutsideObserverMargin = await targetYearHeader.evaluate(
+    (element, horizontalMarginPx): boolean => {
+      const scrollContainer = element.closest(
+        '[data-testid="budget-table-scroll"]',
+      );
+      if (!(scrollContainer instanceof HTMLElement)) {
+        throw new Error(
+          "Budget year total header has no scroll container",
+        );
+      }
+      const scrollRect = scrollContainer.getBoundingClientRect();
+      const headerRect = element.getBoundingClientRect();
+      return headerRect.right <= scrollRect.left - horizontalMarginPx
+        || headerRect.left >= scrollRect.right + horizontalMarginPx;
+    },
+    BUDGET_OBSERVER_HORIZONTAL_MARGIN_PX,
+  );
+  expect(isYearTotalOutsideObserverMargin).toBe(true);
+  await page.waitForTimeout(100);
+  expect(yearTotalRequestCapture.getRequests()).toHaveLength(0);
+  await expect(targetYearTotal).toHaveCount(0);
+
+  const yearTotalRequest = page.waitForRequest((request): boolean =>
+    isBudgetYearRangeRequest(request, targetYear));
+  const yearTotalResponse = page.waitForResponse((response): boolean =>
+    isBudgetYearRangeResponse(response, targetYear));
+  await targetYearHeader.evaluate((element): void => {
+    element.scrollIntoView({ block: "nearest", inline: "center" });
+  });
+  const [request, response] = await Promise.all([
+    yearTotalRequest,
+    yearTotalResponse,
+  ]);
+  const requestUrl = new URL(request.url());
+  expect(requestUrl.searchParams.get("planFrom")).toBe(`${targetYear}-01`);
+  expect(requestUrl.searchParams.get("actualTo")).toBe(currentMonth);
+  await expect(targetYearTotal).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => readBudgetTableGeometry(page)).toEqual(
+    geometryBeforeLoad,
+  );
+  const capturedRequests = yearTotalRequestCapture.getRequests();
+  expect(capturedRequests).toHaveLength(1);
+  expect(capturedRequests[0]).toBe(request);
+  expect(response.request()).toBe(request);
+  expect(response.ok()).toBe(true);
 };
 
 const readFormattedAmount = async (
@@ -547,20 +670,34 @@ test("keeps cross-year totals and Demo adjustment state coherent across reloads 
   test.slow();
   if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
   await setDemoCookies(page, baseURL, "en");
-  await gotoBudgetAndWaitForGrid(page);
-
   const seasonalId = "demo-adjustment-groceries-seasonal";
   const deletedSeedId = "demo-adjustment-groceries-discount";
-  const currentEditorId = await getEditorId(page, "spend", "Groceries", 0);
-  const currentMonth = currentEditorId.split(":")[1];
-  if (currentMonth === undefined) {
-    throw new Error(`Cannot read month from editor ID "${currentEditorId}"`);
-  }
+  const currentMonth = getCurrentMonth();
   const currentYear = currentMonth.slice(0, 4);
-  const destinationYear = String(Number(currentYear) + 1);
+  const destinationYear = String(Number(currentYear) + 3);
   const destinationMonth = `${destinationYear}-01`;
-  const destinationYearEnd = `${destinationYear}-12`;
-  await extendBudgetThroughMonth(page, destinationYearEnd);
+  const currentEditorId =
+    `budget-plan:${currentMonth}:spend:Groceries`;
+  const initialYearTotalRequestCapture = captureBudgetYearTotalRequests(
+    page,
+    destinationYear,
+  );
+  try {
+    await gotoBudgetAndWaitForGrid(page);
+    await expect(
+      page.getByTestId(`budget-plan-open-${currentEditorId}`),
+    ).toBeVisible({ timeout: 15_000 });
+    await loadBudgetMonthAndYearTotal(
+      page,
+      destinationMonth,
+      currentMonth,
+      "spend",
+      "Groceries",
+      initialYearTotalRequestCapture,
+    );
+  } finally {
+    initialYearTotalRequestCapture.stop();
+  }
 
   const currentYearTestId =
     `budget-year-plan-${currentYear}:spend:Groceries`;
@@ -706,8 +843,23 @@ test("keeps cross-year totals and Demo adjustment state coherent across reloads 
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("budget-sync-status")).toHaveCount(0);
 
-  await reloadBudgetAndWaitForGrid(page);
-  await extendBudgetThroughMonth(page, destinationYearEnd);
+  const reloadYearTotalRequestCapture = captureBudgetYearTotalRequests(
+    page,
+    destinationYear,
+  );
+  try {
+    await reloadBudgetAndWaitForGrid(page);
+    await loadBudgetMonthAndYearTotal(
+      page,
+      destinationMonth,
+      currentMonth,
+      "spend",
+      "Groceries",
+      reloadYearTotalRequestCapture,
+    );
+  } finally {
+    reloadYearTotalRequestCapture.stop();
+  }
   await expectFormattedAmount(
     page,
     currentYearTestId,
@@ -764,7 +916,23 @@ test("keeps cross-year totals and Demo adjustment state coherent across reloads 
 
   await page.unroute("**/budget");
   await setDemoCookies(page, baseURL, "en");
-  await gotoBudgetAndWaitForGrid(page);
+  const modeReturnYearTotalRequestCapture = captureBudgetYearTotalRequests(
+    page,
+    destinationYear,
+  );
+  try {
+    await gotoBudgetAndWaitForGrid(page);
+    await loadBudgetMonthAndYearTotal(
+      page,
+      destinationMonth,
+      currentMonth,
+      "spend",
+      "Groceries",
+      modeReturnYearTotalRequestCapture,
+    );
+  } finally {
+    modeReturnYearTotalRequestCapture.stop();
+  }
   await page.getByTestId(`budget-plan-open-${destinationEditorId}`).click();
   await expect(
     page.getByTestId(`budget-adjustment-note-${seasonalId}`),

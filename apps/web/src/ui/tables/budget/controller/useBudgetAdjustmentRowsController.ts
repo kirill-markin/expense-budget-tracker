@@ -54,7 +54,7 @@ export const useBudgetAdjustmentRowsController = ({
       patchAdjustment: (adjustmentId, params) =>
         patchBudgetAdjustment(adjustmentId, params),
       deleteAdjustment: (adjustmentId) => deleteBudgetAdjustment(adjustmentId),
-      fetchRange: (monthFrom, monthTo) => {
+      fetchRange: (monthFrom, monthTo, signal) => {
         const current = currentRequestRef.current;
         return fetchBudgetRange(
           monthFrom,
@@ -62,6 +62,7 @@ export const useBudgetAdjustmentRowsController = ({
           current.planFrom,
           current.actualTo,
           current.refreshToken,
+          signal,
         );
       },
       generateAdjustmentId: (): string => crypto.randomUUID(),
