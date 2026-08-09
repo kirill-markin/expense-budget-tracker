@@ -1,9 +1,11 @@
 import {
-  executeExpenseSql,
+  executeValidatedExpenseSql,
   MAX_SQL_ROWS,
   SQL_STATEMENT_TIMEOUT_MS,
   SqlPolicyError,
+  validateExpenseSql,
   type AllowedRelationName,
+  type ValidatedExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { AuthenticatedContext, EntityHints, MachineApiDependencies, PgError, WorkspaceSummary } from "./types.js";
 import { getWorkspace } from "./workspaceService.js";
@@ -109,6 +111,14 @@ export const getSqlPolicyInstructions = (
     return `Relation is not exposed by policy. Use ${apiBaseUrl}/schema to see allowed relations, columns, and any agent hints, then retry. Workspace context must be set via /workspaces/{workspaceId}/select or X-Workspace-Id.`;
   }
 
+  if (error.code === "read_only_relation_mutation_not_allowed") {
+    return `${error.message}. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata.`;
+  }
+
+  if (error.code === "recursive_cte_search_cycle_not_allowed") {
+    return "Recursive CTE SEARCH and CYCLE clauses are not supported in restricted SQL. Rewrite the CTE without those clauses.";
+  }
+
   if (error.code === "unsupported_statement") {
     return "Use one or more SQL statements of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
   }
@@ -137,14 +147,18 @@ export const getSqlPolicyInstructions = (
     return "Dollar-quoted strings are not allowed. Use regular single-quoted literals.";
   }
 
+  if (error.code === "escape_string_literals_not_allowed") {
+    return "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.";
+  }
+
   return "Fix the SQL statement and retry. Use only supported relations.";
 };
 
-export const runSqlWithWorkspaceGetter = async (
+const executeSqlWithWorkspaceGetter = async (
   dependencies: MachineApiDependencies,
   authenticated: AuthenticatedContext,
   workspaceId: string,
-  sql: string,
+  validated: ValidatedExpenseSql,
   workspaceGetter: WorkspaceGetter,
 ): Promise<Readonly<Record<string, unknown>> | null> => {
   const workspace = await workspaceGetter(dependencies, authenticated.identity, workspaceId);
@@ -152,8 +166,8 @@ export const runSqlWithWorkspaceGetter = async (
     return null;
   }
 
-  const result = await executeExpenseSql(
-    sql,
+  const result = await executeValidatedExpenseSql(
+    validated,
     async (validatedSql) => dependencies.withRestrictedTrustedIdentityContext(
       authenticated.identity,
       workspaceId,
@@ -192,16 +206,31 @@ export const runSqlWithWorkspaceGetter = async (
   };
 };
 
-export const runSql = async (
+export const runSqlWithWorkspaceGetter = async (
   dependencies: MachineApiDependencies,
   authenticated: AuthenticatedContext,
   workspaceId: string,
   sql: string,
+  workspaceGetter: WorkspaceGetter,
 ): Promise<Readonly<Record<string, unknown>> | null> =>
-  runSqlWithWorkspaceGetter(
+  executeSqlWithWorkspaceGetter(
     dependencies,
     authenticated,
     workspaceId,
-    sql,
+    validateExpenseSql(sql),
+    workspaceGetter,
+  );
+
+export const runSql = async (
+  dependencies: MachineApiDependencies,
+  authenticated: AuthenticatedContext,
+  workspaceId: string,
+  validated: ValidatedExpenseSql,
+): Promise<Readonly<Record<string, unknown>> | null> =>
+  executeSqlWithWorkspaceGetter(
+    dependencies,
+    authenticated,
+    workspaceId,
+    validated,
     getWorkspace,
   );

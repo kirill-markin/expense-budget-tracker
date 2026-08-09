@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleMeRouteWithResolver } from "./routeHandlers.js";
+import { handleMeRouteWithResolver, handleSqlRouteWithWorkspaceResolver } from "./routeHandlers.js";
 import { createAuthenticatedEvent } from "../handlerTestUtils.js";
 import type { MachineApiDependencies, MachineRouteContext } from "./types.js";
 
@@ -44,4 +44,90 @@ test("handleMeRoute omits defaultWorkspaceId", async (): Promise<void> => {
   assert.equal(response.statusCode, 200);
   const payload = JSON.parse(response.body) as { data: Record<string, unknown> };
   assert.equal("defaultWorkspaceId" in payload.data, false);
+});
+
+test("handleSqlRoute rejects SELECT-only mutations before workspace resolution", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  let trustedQueryCount = 0;
+  let restrictedContextCount = 0;
+  const context: MachineRouteContext = {
+    ...createContext(),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({ sql: "DELETE FROM fx_rates_daily WHERE base_currency = 'EUR'" }),
+      headers: { Host: "api.example.com" },
+      httpMethod: "POST",
+      path: "/v1/sql",
+      resource: "/sql",
+    }),
+    dependencies: {
+      ...createDependencies(),
+      queryAsTrustedIdentity: async () => {
+        trustedQueryCount += 1;
+        throw new Error("queryAsTrustedIdentity should not be called");
+      },
+      withRestrictedTrustedIdentityContext: async () => {
+        restrictedContextCount += 1;
+        throw new Error("withRestrictedTrustedIdentityContext should not be called");
+      },
+    },
+  };
+
+  const response = await handleSqlRouteWithWorkspaceResolver(
+    context,
+    async (): Promise<string> => {
+      workspaceResolutionCount += 1;
+      return "workspace-1";
+    },
+  );
+  const payload = JSON.parse(response.body) as {
+    instructions: string;
+    error: Readonly<{ code: string }>;
+  };
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(payload.error.code, "read_only_relation_mutation_not_allowed");
+  assert.equal(
+    payload.instructions,
+    "Relation fx_rates_daily is SELECT-only and cannot be targeted by DELETE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata.",
+  );
+  assert.equal(workspaceResolutionCount, 0);
+  assert.equal(trustedQueryCount, 0);
+  assert.equal(restrictedContextCount, 0);
+});
+
+test("handleSqlRoute explains how to replace PostgreSQL escape strings", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  const context: MachineRouteContext = {
+    ...createContext(),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({ sql: "SELECT E'value' FROM ledger_entries" }),
+      headers: { Host: "api.example.com" },
+      httpMethod: "POST",
+      path: "/v1/sql",
+      resource: "/sql",
+    }),
+  };
+
+  const response = await handleSqlRouteWithWorkspaceResolver(
+    context,
+    async (): Promise<string> => {
+      workspaceResolutionCount += 1;
+      return "workspace-1";
+    },
+  );
+  const payload = JSON.parse(response.body) as {
+    instructions: string;
+    error: Readonly<{ code: string; message: string }>;
+  };
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(payload.error, {
+    code: "escape_string_literals_not_allowed",
+    message: "PostgreSQL escape string literals are not allowed",
+  });
+  assert.equal(
+    payload.instructions,
+    "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.",
+  );
+  assert.equal(workspaceResolutionCount, 0);
 });

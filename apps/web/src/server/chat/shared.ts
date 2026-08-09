@@ -38,6 +38,7 @@ The active workspace for this browser chat session is already selected by the ap
 Always use that current workspace. Do not try to discover, list, or switch workspaces via SQL.
 You can read data (SELECT) and write data (INSERT, UPDATE, DELETE).
 Before any write operation (INSERT, UPDATE, DELETE), you MUST first describe the exact changes you plan to make and wait for the user's explicit confirmation. Only execute the write after the user approves. Read queries (SELECT) do not require confirmation.
+Relation operations: ledger_entries, budget_lines, workspace_settings, and account_metadata support SELECT and, under existing write-approval rules, INSERT, UPDATE, and DELETE; the derived accounts view and global worker-owned fx_rates_raw and fx_rates_daily relations are SELECT-only.
 That single approval covers the full approved change set, including the tiny probe and all remaining sequential batches needed to finish it. After approval, run the probe automatically as part of execution, not as a second checkpoint.
 Restricted agent SQL does not support ON CONFLICT. Read first, then use explicit INSERT or UPDATE as separate steps.
 Restricted agent SQL supports only these function calls: SUM, COUNT, MIN, MAX, AVG, and COALESCE. All other functions are blocked, including NOW, LOWER, DATE_TRUNC, gen_random_uuid, set_config, and workspace/auth helper functions.
@@ -287,6 +288,7 @@ Tables:
 Views:
 - accounts (account_id TEXT, currency TEXT, inserted_at TIMESTAMPTZ) — derived from ledger_entries
 
+Relation operations: ledger_entries, budget_lines, workspace_settings, and account_metadata support SELECT and, under existing write-approval rules, INSERT, UPDATE, and DELETE; the derived accounts view and global worker-owned fx_rates_raw and fx_rates_daily relations are SELECT-only.
 kind: 'income' | 'spend' | 'transfer'. category: NULL for transfers.
 Budget_lines contains only Base plan rows. Budget adjustments displayed by the app are not exposed to this SQL tool.
 All data is workspace-scoped via RLS. INSERTs must include workspace_id.
@@ -311,7 +313,7 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
     return new Error("set_config() calls are not allowed");
   }
   if (error.code === "function_calls_not_allowed") {
-    return new Error("Only allowlisted functions are supported in chat queries: SUM, COUNT, MIN, MAX, AVG, and COALESCE");
+    return new Error(error.message);
   }
   if (error.code === "sql_comments_not_allowed") {
     return new Error("SQL comments are not allowed in chat queries");
@@ -322,6 +324,9 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
   if (error.code === "dollar_quoted_strings_not_allowed") {
     return new Error("Dollar-quoted strings are not allowed in chat queries");
   }
+  if (error.code === "escape_string_literals_not_allowed") {
+    return new Error("PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.");
+  }
   if (error.code === "unterminated_string_literal") {
     return new Error("Unterminated SQL string literal");
   }
@@ -330,6 +335,12 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
   }
   if (error.code === "relation_not_allowed") {
     return new Error(`${error.message} in chat queries`);
+  }
+  if (error.code === "recursive_cte_search_cycle_not_allowed") {
+    return new Error("Recursive CTE SEARCH and CYCLE clauses are not supported in chat queries. Rewrite the CTE without those clauses");
+  }
+  if (error.code === "read_only_relation_mutation_not_allowed") {
+    return new Error(`${error.message}. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata`);
   }
   return new Error(error.message);
 };

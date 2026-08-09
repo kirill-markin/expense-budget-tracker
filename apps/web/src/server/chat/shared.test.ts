@@ -40,8 +40,60 @@ test("execQuery rejects function calls before reaching the database", async (): 
     }),
     (error: unknown) =>
       error instanceof Error
-      && error.message === "Only allowlisted functions are supported in chat queries: SUM, COUNT, MIN, MAX, AVG, and COALESCE",
+      && error.message === "Function now() is not allowed in restricted SQL. Allowed functions: SUM, COUNT, MIN, MAX, AVG, COALESCE",
   );
+});
+
+test("execQuery explains how to replace PostgreSQL escape strings", async (): Promise<void> => {
+  await assert.rejects(
+    () => execQuery("SELECT E'value' FROM ledger_entries", {
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    }),
+    (error: unknown) =>
+      error instanceof Error
+      && error.message === "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.",
+  );
+});
+
+test("execQuery rejects SELECT-only mutation targets before database or mutation lock entry", async (): Promise<void> => {
+  let userContextCount = 0;
+  let restrictedContextCount = 0;
+  let mutationLockCount = 0;
+
+  await assert.rejects(
+    () => execQueryWithDependencies(
+      "WITH changed AS (UPDATE accounts SET account_id = 'a-renamed-usd' RETURNING *) SELECT * FROM changed",
+      {
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+      },
+      {
+        withUserContext: async (): Promise<never> => {
+          userContextCount += 1;
+          throw new Error("User context should not run");
+        },
+        withRestrictedUserContext: async (): Promise<never> => {
+          restrictedContextCount += 1;
+          throw new Error("Restricted context should not run");
+        },
+        lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {
+          mutationLockCount += 1;
+        },
+      },
+    ),
+    (error: unknown) =>
+      error instanceof Error
+      && error.message === "Relation accounts is SELECT-only and cannot be targeted by UPDATE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata",
+  );
+
+  assert.equal(userContextCount, 0);
+  assert.equal(restrictedContextCount, 0);
+  assert.equal(mutationLockCount, 0);
 });
 
 test("cancel-first exact turn fencing rejects before mutating chat SQL", async (): Promise<void> => {

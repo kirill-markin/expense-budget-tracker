@@ -4,7 +4,7 @@
  * Uses the same restricted SQL policy as the API Gateway SQL API, but returns
  * the stable agent envelope plus lightweight entity hints for known relations.
  */
-import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import { SqlPolicyError, validateExpenseSql } from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
   authenticateAgentRequest,
   getAgentAuthError,
@@ -36,6 +36,14 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
     return "Relation is not exposed by policy. Use GET /api/agent/schema to see allowed relations, columns, and any agent hints, then retry.";
   }
 
+  if (error.code === "read_only_relation_mutation_not_allowed") {
+    return `${error.message}. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata.`;
+  }
+
+  if (error.code === "recursive_cte_search_cycle_not_allowed") {
+    return "Recursive CTE SEARCH and CYCLE clauses are not supported in restricted SQL. Rewrite the CTE without those clauses.";
+  }
+
   if (error.code === "unsupported_statement") {
     return "Use one or more SQL statements of type SELECT, WITH, INSERT, UPDATE, or DELETE. BEGIN/COMMIT/ROLLBACK and DDL are not allowed.";
   }
@@ -62,6 +70,10 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
 
   if (error.code === "dollar_quoted_strings_not_allowed") {
     return "Dollar-quoted strings are not allowed. Use regular single-quoted literals.";
+  }
+
+  if (error.code === "escape_string_literals_not_allowed") {
+    return "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.";
   }
 
   return "Fix the SQL statement and retry. Use only supported relations.";
@@ -111,6 +123,7 @@ export const postAgentSqlRouteWithDeps = async (
 
   try {
     const authenticated = await dependencies.authenticateAgentRequest(request);
+    const validated = validateExpenseSql(sql);
     const headerWorkspaceId = getWorkspaceId(request);
     const workspaceId = await dependencies.resolveWorkspaceIdForSql(authenticated, headerWorkspaceId);
     if (workspaceId === null || workspaceId === "") {
@@ -124,7 +137,7 @@ export const postAgentSqlRouteWithDeps = async (
       );
     }
 
-    const result = await dependencies.executeAgentSql(authenticated, workspaceId, sql);
+    const result = await dependencies.executeAgentSql(authenticated, workspaceId, validated);
 
     if (result === null) {
       return jsonAgentError(

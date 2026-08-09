@@ -45,6 +45,15 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
   assert.equal(queryWorkspaceId, contextWorkspaceId);
   assert.notEqual(queryWorkspaceId, identity.userId);
   assert.deepEqual(
+    schema.find((relation) => relation.name === "accounts")?.hints,
+    {
+      optional: false,
+      notes: [
+        "SELECT-only derived view. Do not INSERT, UPDATE, or DELETE.",
+      ],
+    },
+  );
+  assert.deepEqual(
     schema.find((relation) => relation.name === "budget_lines")?.hints,
     {
       optional: false,
@@ -56,6 +65,24 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
         allowedValues: ["base"],
         notes: ["Only base is accepted."],
       }],
+    },
+  );
+  assert.deepEqual(
+    schema.find((relation) => relation.name === "fx_rates_raw")?.hints,
+    {
+      optional: false,
+      notes: [
+        "SELECT-only global relation maintained by the FX worker. Do not INSERT, UPDATE, or DELETE.",
+      ],
+    },
+  );
+  assert.deepEqual(
+    schema.find((relation) => relation.name === "fx_rates_daily")?.hints,
+    {
+      optional: false,
+      notes: [
+        "SELECT-only global relation maintained by the FX worker. Do not INSERT, UPDATE, or DELETE.",
+      ],
     },
   );
 });

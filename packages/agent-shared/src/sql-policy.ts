@@ -40,6 +40,26 @@ const SOURCE_CLAUSE_END: ReadonlySet<string> = new Set([
   "window",
 ]);
 
+const SQL_GRAMMAR_PAREN_KEYWORDS: ReadonlySet<string> = new Set([
+  "and",
+  "or",
+  "where",
+  "in",
+  "exists",
+  "values",
+]);
+
+const SQL_DERIVED_QUERY_PAREN_KEYWORDS: ReadonlySet<string> = new Set([
+  "from",
+  "join",
+]);
+
+const DERIVED_QUERY_FIRST_KEYWORDS: ReadonlySet<string> = new Set([
+  "select",
+  "with",
+  "values",
+]);
+
 const ALLOWED_RELATION_NAMES = [
   "ledger_entries",
   "accounts",
@@ -53,6 +73,16 @@ const ALLOWED_RELATION_NAMES = [
 export type AllowedRelationName = typeof ALLOWED_RELATION_NAMES[number];
 
 const ALLOWED_RELATIONS: ReadonlySet<string> = new Set(ALLOWED_RELATION_NAMES);
+
+const READ_ONLY_RELATION_NAMES: ReadonlyArray<AllowedRelationName> = [
+  "accounts",
+  "fx_rates_raw",
+  "fx_rates_daily",
+] as const;
+
+const READ_ONLY_RELATIONS: ReadonlySet<AllowedRelationName> = new Set<AllowedRelationName>(
+  READ_ONLY_RELATION_NAMES,
+);
 
 type SqlToken = Readonly<{
   kind: "word" | "punct";
@@ -72,6 +102,13 @@ type CteDefinition = Readonly<{
   bodyEndIndex: number;
 }>;
 
+type MutationOperation = "INSERT" | "UPDATE" | "DELETE";
+
+type MutationTarget = Readonly<{
+  operation: MutationOperation;
+  relationName: AllowedRelationName;
+}>;
+
 type SqlPolicyErrorCode =
   | "unsupported_statement"
   | "on_conflict_not_allowed"
@@ -80,9 +117,12 @@ type SqlPolicyErrorCode =
   | "sql_comments_not_allowed"
   | "quoted_identifiers_not_allowed"
   | "dollar_quoted_strings_not_allowed"
+  | "escape_string_literals_not_allowed"
   | "unterminated_string_literal"
   | "invalid_relation_reference"
-  | "relation_not_allowed";
+  | "relation_not_allowed"
+  | "recursive_cte_search_cycle_not_allowed"
+  | "read_only_relation_mutation_not_allowed";
 
 export class SqlPolicyError extends Error {
   readonly code: SqlPolicyErrorCode;
@@ -313,31 +353,42 @@ const containsSetConfig = (sql: string): boolean => /\bset_config\b/iu.test(sql)
 
 const containsOnConflict = (sql: string): boolean => /\bon\s+conflict\b/iu.test(sql);
 
-const assertSupportedSqlSyntax = (sql: string): void => {
-  if (sql.includes("--") || sql.includes("/*")) {
-    fail("sql_comments_not_allowed", "SQL comments are not allowed");
-  }
-  if (sql.includes("\"")) {
-    fail("quoted_identifiers_not_allowed", "Quoted identifiers are not allowed");
-  }
-  if (/\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$/u.test(sql)) {
-    fail("dollar_quoted_strings_not_allowed", "Dollar-quoted strings are not allowed");
-  }
-};
-
-const stripSingleQuotedStrings = (sql: string): string => {
+const sanitizeSqlForTokenization = (sql: string): string => {
   let result = "";
   let inString = false;
 
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i];
     if (!inString) {
+      const previousCh = sql[i - 1];
+      if (
+        (ch === "E" || ch === "e")
+        && sql[i + 1] === "'"
+        && (previousCh === undefined || !isWordPart(previousCh))
+      ) {
+        fail(
+          "escape_string_literals_not_allowed",
+          "PostgreSQL escape string literals are not allowed",
+        );
+      }
       if (ch === "'") {
         inString = true;
         result += " ";
-      } else {
-        result += ch;
+        continue;
       }
+      if ((ch === "-" && sql[i + 1] === "-") || (ch === "/" && sql[i + 1] === "*")) {
+        fail("sql_comments_not_allowed", "SQL comments are not allowed");
+      }
+      if (ch === "\"") {
+        fail("quoted_identifiers_not_allowed", "Quoted identifiers are not allowed");
+      }
+      if (ch === "$") {
+        fail(
+          "dollar_quoted_strings_not_allowed",
+          "Dollar signs outside regular string literals are not allowed",
+        );
+      }
+      result += ch;
       continue;
     }
 
@@ -634,6 +685,15 @@ const parseCteDefinitions = (
     });
 
     index = bodyCloseIndex + 1;
+    if (
+      isRecursive
+      && (tokens[index]?.lower === "search" || tokens[index]?.lower === "cycle")
+    ) {
+      fail(
+        "recursive_cte_search_cycle_not_allowed",
+        "Recursive CTE SEARCH and CYCLE clauses are not supported in restricted SQL",
+      );
+    }
     if (tokens[index]?.value === ",") {
       index++;
       continue;
@@ -700,13 +760,6 @@ const assertOnlyAllowedFunctionCallsInSegment = (
       continue;
     }
 
-    if (token.lower === "in" || token.lower === "exists" || token.lower === "values") {
-      const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
-      assertOnlyAllowedFunctionCallsInSegment(tokens, index + 2, closeIndex);
-      index = closeIndex;
-      continue;
-    }
-
     const previousIndex = findPreviousSignificantIndex(tokens, index - 1);
     const previousToken = previousIndex === null ? undefined : tokens[previousIndex];
     if (
@@ -721,6 +774,19 @@ const assertOnlyAllowedFunctionCallsInSegment = (
 
     if (previousToken?.value === ".") {
       failFunctionCallNotAllowed(token.value);
+    }
+
+    const derivedQueryFirstToken = tokens[index + 2];
+    const startsDerivedQuery = derivedQueryFirstToken !== undefined
+      && DERIVED_QUERY_FIRST_KEYWORDS.has(derivedQueryFirstToken.lower);
+    if (
+      SQL_GRAMMAR_PAREN_KEYWORDS.has(token.lower)
+      || (SQL_DERIVED_QUERY_PAREN_KEYWORDS.has(token.lower) && startsDerivedQuery)
+    ) {
+      const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
+      assertOnlyAllowedFunctionCallsInSegment(tokens, index + 2, closeIndex);
+      index = closeIndex;
+      continue;
     }
 
     if (!ALLOWED_SQL_FUNCTIONS.has(token.lower)) {
@@ -770,9 +836,79 @@ const collectReferencedRelationsFromWithClause = (
   return Array.from(relations);
 };
 
+const collectMutationTarget = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  operation: MutationOperation,
+): MutationTarget => {
+  const targetStartIndex = tokens[startIndex]?.lower === "only" ? startIndex + 1 : startIndex;
+  const reference = parseRelationName(tokens, targetStartIndex);
+  if (!ALLOWED_RELATIONS.has(reference.relationName)) {
+    fail("relation_not_allowed", `Relation ${reference.relationName} is not allowed`);
+  }
+
+  return {
+    operation,
+    relationName: asAllowedRelationName(reference.relationName),
+  };
+};
+
+const collectMutationTargetsFromSegment = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): ReadonlyArray<MutationTarget> => {
+  if (startIndex >= endIndex) {
+    return [];
+  }
+
+  const firstToken = tokens[startIndex];
+  if (firstToken === undefined || firstToken.kind !== "word") {
+    return [];
+  }
+
+  if (firstToken.lower === "insert" && tokens[startIndex + 1]?.lower === "into") {
+    return [collectMutationTarget(tokens, startIndex + 2, "INSERT")];
+  }
+
+  if (firstToken.lower === "update") {
+    return [collectMutationTarget(tokens, startIndex + 1, "UPDATE")];
+  }
+
+  if (firstToken.lower === "delete" && tokens[startIndex + 1]?.lower === "from") {
+    return [collectMutationTarget(tokens, startIndex + 2, "DELETE")];
+  }
+
+  if (firstToken.lower !== "with") {
+    return [];
+  }
+
+  const { ctes, mainQueryStartIndex } = parseCteDefinitions(tokens, startIndex, endIndex);
+  const targets: Array<MutationTarget> = [];
+  for (const cte of ctes) {
+    targets.push(...collectMutationTargetsFromSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex));
+  }
+  targets.push(...collectMutationTargetsFromSegment(tokens, mainQueryStartIndex, endIndex));
+  return targets;
+};
+
+const assertMutationTargetsAreWritable = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): void => {
+  for (const target of collectMutationTargetsFromSegment(tokens, startIndex, endIndex)) {
+    if (READ_ONLY_RELATIONS.has(target.relationName)) {
+      fail(
+        "read_only_relation_mutation_not_allowed",
+        `Relation ${target.relationName} is SELECT-only and cannot be targeted by ${target.operation} in restricted SQL`,
+      );
+    }
+  }
+};
+
 const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationName> => {
-  assertSupportedSqlSyntax(sql);
-  const sanitizedSql = stripSingleQuotedStrings(sql);
+  const sanitizedSql = sanitizeSqlForTokenization(sql);
   if (containsOnConflict(sanitizedSql)) {
     fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
   }
@@ -845,12 +981,12 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
     fail("set_config_not_allowed", "set_config() calls are not allowed");
   }
 
-  assertSupportedSqlSyntax(sql);
-  const sanitizedSql = stripSingleQuotedStrings(sql);
+  const sanitizedSql = sanitizeSqlForTokenization(sql);
   if (containsOnConflict(sanitizedSql)) {
     fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
   }
   const tokens = tokenizeSql(sanitizedSql);
+  assertMutationTargetsAreWritable(tokens, 0, tokens.length);
   assertOnlyAllowedFunctionCallsInSegment(tokens, 0, tokens.length);
 
   return {
@@ -873,11 +1009,10 @@ export const validateExpenseSql = (sql: string): ValidatedExpenseSql => {
   };
 };
 
-export const executeExpenseSql = async (
-  sql: string,
+export const executeValidatedExpenseSql = async (
+  validated: ValidatedExpenseSql,
   execute: (validatedSql: string) => Promise<RestrictedSqlQueryResult>,
 ): Promise<ExecutedExpenseSql> => {
-  const validated = validateExpenseSql(sql);
   const statements: Array<ExecutedExpenseSqlStatement> = [];
 
   for (const statement of validated.statements) {
@@ -903,3 +1038,8 @@ export const executeExpenseSql = async (
     statements,
   };
 };
+
+export const executeExpenseSql = async (
+  sql: string,
+  execute: (validatedSql: string) => Promise<RestrictedSqlQueryResult>,
+): Promise<ExecutedExpenseSql> => executeValidatedExpenseSql(validateExpenseSql(sql), execute);

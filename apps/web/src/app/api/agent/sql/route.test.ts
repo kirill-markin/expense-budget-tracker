@@ -62,3 +62,88 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
     },
   });
 });
+
+test("postAgentSqlRouteWithDeps explains how to replace PostgreSQL escape strings", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  let executionCount = 0;
+  const response = await postAgentSqlRouteWithDeps(
+    new Request("http://localhost/api/agent/sql", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ sql: "SELECT E'value' FROM ledger_entries" }),
+    }),
+    {
+      authenticateAgentRequest: async () => createAuthenticatedRequest(),
+      resolveWorkspaceIdForSql: async () => {
+        workspaceResolutionCount += 1;
+        return "workspace-1";
+      },
+      executeAgentSql: async () => {
+        executionCount += 1;
+        throw new Error("executeAgentSql should not be called");
+      },
+    },
+  );
+
+  const payload = await response.json() as {
+    instructions: string;
+    error: Readonly<{ code: string; message: string }>;
+  };
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(payload.error, {
+    code: "escape_string_literals_not_allowed",
+    message: "PostgreSQL escape string literals are not allowed",
+  });
+  assert.equal(
+    payload.instructions,
+    "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.",
+  );
+  assert.equal(workspaceResolutionCount, 0);
+  assert.equal(executionCount, 0);
+});
+
+test("postAgentSqlRouteWithDeps rejects SELECT-only mutations before workspace or database access", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  let executionCount = 0;
+
+  const response = await postAgentSqlRouteWithDeps(
+    new Request("http://localhost/api/agent/sql", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ sql: "UPDATE accounts SET account_id = 'a-renamed-usd'" }),
+    }),
+    {
+      authenticateAgentRequest: async () => createAuthenticatedRequest(),
+      resolveWorkspaceIdForSql: async () => {
+        workspaceResolutionCount += 1;
+        return "workspace-1";
+      },
+      executeAgentSql: async () => {
+        executionCount += 1;
+        throw new Error("executeAgentSql should not be called");
+      },
+    },
+  );
+
+  const payload = await response.json() as {
+    instructions: string;
+    error: Readonly<{ code: string; message: string }>;
+  };
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(payload.error, {
+    code: "read_only_relation_mutation_not_allowed",
+    message: "Relation accounts is SELECT-only and cannot be targeted by UPDATE in restricted SQL",
+  });
+  assert.equal(
+    payload.instructions,
+    "Relation accounts is SELECT-only and cannot be targeted by UPDATE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata.",
+  );
+  assert.equal(workspaceResolutionCount, 0);
+  assert.equal(executionCount, 0);
+});
