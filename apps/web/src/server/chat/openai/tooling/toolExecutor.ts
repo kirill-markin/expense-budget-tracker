@@ -145,10 +145,12 @@ export const runOneToolCallWithDependencies = async (
       runToolTelemetryOperation(
         params,
         "update",
-        (): void => toolObservation?.update({
-          level: "ERROR",
-          statusMessage: formatToolErrorStatusMessage(serializedError),
-        }),
+        (): void => {
+          toolObservation?.update({
+            level: "ERROR",
+            statusMessage: formatToolErrorStatusMessage(serializedError),
+          });
+        },
         dependencies.log,
       );
       throw error;
@@ -173,10 +175,12 @@ export const runOneToolCallWithDependencies = async (
       runToolTelemetryOperation(
         params,
         "update",
-        (): void => toolObservation?.update({
-          level: "ERROR",
-          statusMessage: formatToolErrorStatusMessage(output.error),
-        }),
+        (): void => {
+          toolObservation?.update({
+            level: "ERROR",
+            statusMessage: formatToolErrorStatusMessage(output.error),
+          });
+        },
         dependencies.log,
       );
     }
