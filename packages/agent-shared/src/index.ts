@@ -92,6 +92,12 @@ export const isAccountMetadataGroup = (value: string): value is AccountMetadataG
   (ACCOUNT_METADATA_GROUP_VALUES as ReadonlyArray<string>).includes(value);
 
 const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>> = {
+  accounts: {
+    optional: false,
+    notes: [
+      "SELECT-only derived view. Do not INSERT, UPDATE, or DELETE.",
+    ],
+  },
   budget_lines: {
     optional: false,
     notes: [
@@ -142,6 +148,18 @@ const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSche
       column: "first_day_of_week",
       notes: ["Allowed values are integers 1 through 7."],
     }],
+  },
+  fx_rates_raw: {
+    optional: false,
+    notes: [
+      "SELECT-only global relation maintained by the FX worker. Do not INSERT, UPDATE, or DELETE.",
+    ],
+  },
+  fx_rates_daily: {
+    optional: false,
+    notes: [
+      "SELECT-only global relation maintained by the FX worker. Do not INSERT, UPDATE, or DELETE.",
+    ],
   },
 };
 
@@ -236,6 +254,7 @@ export const buildSelectWorkspaceAction = (target: AgentUrlTarget): AgentAction 
 export const buildSchemaAction = (target: AgentUrlTarget): AgentAction => ({
   name: "schema",
   method: "GET",
+  description: "Inspect allowed relations, columns, and hints. Relation operations: ledger_entries, budget_lines, workspace_settings, and account_metadata support SELECT and, under existing write-approval rules, INSERT, UPDATE, and DELETE; the derived accounts view and global worker-owned fx_rates_raw and fx_rates_daily relations are SELECT-only.",
   url: resolveActionUrl(target),
   auth: "ApiKey",
 });
