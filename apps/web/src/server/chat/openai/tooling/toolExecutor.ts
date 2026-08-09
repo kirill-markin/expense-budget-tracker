@@ -2,8 +2,17 @@ import type OpenAI from "openai";
 import type { LangfuseObservation } from "@langfuse/tracing";
 import {
   executeChatToolCall,
+  type ChatToolExecutionError,
   type ExecutedChatToolCall,
 } from "@/server/chat/openai/tooling/tools";
+
+type ToolExecutorDependencies = Readonly<{
+  executeChatToolCall: typeof executeChatToolCall;
+}>;
+
+const DEFAULT_TOOL_EXECUTOR_DEPENDENCIES: ToolExecutorDependencies = {
+  executeChatToolCall,
+};
 
 const sanitizeToolOutputForTelemetry = (
   output: string,
@@ -12,6 +21,22 @@ const sanitizeToolOutputForTelemetry = (
     ? output
     : `${output.slice(0, 4_000)}...`;
 
+const formatToolErrorStatusMessage = (
+  error: ChatToolExecutionError,
+): string => `${error.name}: ${error.message}`;
+
+const serializeThrownToolError = (
+  error: unknown,
+): ChatToolExecutionError => error instanceof Error
+  ? {
+    name: error.name,
+    message: error.message,
+  }
+  : {
+    name: "Error",
+    message: String(error),
+  };
+
 /**
  * Executes a single local tool call and returns both the serialized tool
  * output and the canonical metadata later used for route invalidation.
@@ -19,7 +44,7 @@ const sanitizeToolOutputForTelemetry = (
  * This keeps the refresh contract grounded in the executed SQL/result pair
  * instead of in earlier streamed tool-call snapshots.
  */
-export const runOneToolCall = async (
+export const runOneToolCallWithDependencies = async (
   params: Readonly<{
     item: OpenAI.Responses.ResponseFunctionToolCall;
     userId: string;
@@ -28,6 +53,7 @@ export const runOneToolCall = async (
     turnId: string;
     rootObservation: LangfuseObservation | null;
   }>,
+  dependencies: ToolExecutorDependencies,
 ): Promise<ExecutedChatToolCall> => {
   const toolObservation = params.rootObservation?.startObservation(
     params.item.name,
@@ -47,16 +73,37 @@ export const runOneToolCall = async (
 
   const startedAt = Date.now();
   try {
-    const output = await executeChatToolCall(
-      params.item.name,
-      params.item.arguments,
-      {
-        userId: params.userId,
-        workspaceId: params.workspaceId,
-        sessionId: params.sessionId,
-        turnId: params.turnId,
-      },
-    );
+    let output: ExecutedChatToolCall;
+    try {
+      output = await dependencies.executeChatToolCall(
+        params.item.name,
+        params.item.arguments,
+        {
+          userId: params.userId,
+          workspaceId: params.workspaceId,
+          sessionId: params.sessionId,
+          turnId: params.turnId,
+        },
+      );
+    } catch (error) {
+      const serializedError = serializeThrownToolError(error);
+      toolObservation?.updateOtelSpanAttributes({
+        output: {
+          error: serializedError.message,
+        },
+        metadata: {
+          toolName: params.item.name,
+          toolCallId: params.item.call_id,
+          durationMs: String(Date.now() - startedAt),
+        },
+      });
+      toolObservation?.update({
+        level: "ERROR",
+        statusMessage: formatToolErrorStatusMessage(serializedError),
+      });
+      throw error;
+    }
+
     toolObservation?.updateOtelSpanAttributes({
       output: {
         output: sanitizeToolOutputForTelemetry(output.output),
@@ -67,20 +114,22 @@ export const runOneToolCall = async (
         durationMs: String(Date.now() - startedAt),
       },
     });
-    toolObservation?.end();
+    if (!output.succeeded) {
+      toolObservation?.update({
+        level: "ERROR",
+        statusMessage: formatToolErrorStatusMessage(output.error),
+      });
+    }
     return output;
-  } catch (error) {
-    toolObservation?.updateOtelSpanAttributes({
-      output: {
-        error: error instanceof Error ? error.message : String(error),
-      },
-      metadata: {
-        toolName: params.item.name,
-        toolCallId: params.item.call_id,
-        durationMs: String(Date.now() - startedAt),
-      },
-    });
+  } finally {
     toolObservation?.end();
-    throw error;
   }
 };
+
+export const runOneToolCall = async (
+  params: Parameters<typeof runOneToolCallWithDependencies>[0],
+): Promise<ExecutedChatToolCall> =>
+  runOneToolCallWithDependencies(
+    params,
+    DEFAULT_TOOL_EXECUTOR_DEPENDENCIES,
+  );

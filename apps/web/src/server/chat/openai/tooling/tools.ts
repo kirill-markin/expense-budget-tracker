@@ -20,13 +20,30 @@ const DEFAULT_CHAT_TOOL_DEPENDENCIES: ChatToolDependencies = {
 
 type ToolSuccessPayload = Readonly<Record<string, unknown>>;
 
+export type ChatToolExecutionError = Readonly<{
+  name: string;
+  message: string;
+}>;
+
 type ToolErrorPayload = Readonly<{
   sql: string | null;
-  error: Readonly<{
-    name: string;
-    message: string;
-  }>;
+  error: ChatToolExecutionError;
 }>;
+
+/**
+ * A completed transcript item refreshes route-backed content only when the
+ * execution succeeded and mutated data. Failed executions retain their
+ * structured error separately from the serialized model-facing output.
+ */
+type ExecutedChatToolCallResult =
+  | Readonly<{
+    succeeded: true;
+    error: null;
+  }>
+  | Readonly<{
+    succeeded: false;
+    error: ChatToolExecutionError;
+  }>;
 
 export type ExecutedChatToolCall = Readonly<{
   /**
@@ -40,13 +57,7 @@ export type ExecutedChatToolCall = Readonly<{
    * inferring mutability from earlier streamed tool snapshots.
    */
   isMutating: boolean;
-  /**
-   * Whether the tool execution itself succeeded. A completed transcript item is
-   * not enough to refresh route-backed content; the runtime only invalidates
-   * main content when a completed tool call both succeeded and mutated data.
-   */
-  succeeded: boolean;
-}>;
+}> & ExecutedChatToolCallResult;
 
 type QueryDatabaseToolInput = Readonly<{
   sql?: unknown;
@@ -78,10 +89,7 @@ const createToolErrorResult = (
 
 const serializeToolError = (
   error: unknown,
-): Readonly<{
-  name: string;
-  message: string;
-}> => {
+): ChatToolExecutionError => {
   if (error instanceof Error) {
     return {
       name: error.name,
@@ -177,16 +185,19 @@ export const executeChatToolCallWithDependencies = async (
       }),
       isMutating,
       succeeded: true,
+      error: null,
     };
   } catch (error) {
+    const serializedError = serializeToolError(error);
     const payload: ToolErrorPayload = {
       sql,
-      error: serializeToolError(error),
+      error: serializedError,
     };
     return {
       output: createToolErrorResult("query_database", payload),
       isMutating,
       succeeded: false,
+      error: serializedError,
     };
   }
 };
