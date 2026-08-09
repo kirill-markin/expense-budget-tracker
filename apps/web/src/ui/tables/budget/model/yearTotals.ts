@@ -1,4 +1,4 @@
-import { getYearMonths } from "@/lib/monthUtils";
+import { getYear, getYearMonths } from "@/lib/monthUtils";
 import type { BudgetRow, BusinessPersonalTransferCell, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 import { computeCumulativeBalances, computeCumulativeBalancesByLiquidity, computeFxAdjustments } from "@/ui/tables/budget/model/balances";
 import type { CumulativeBalance } from "@/ui/tables/budget/model/balances";
@@ -40,6 +40,25 @@ export type YearTotalComputed = Readonly<{
   anyTainted: boolean;
 }>;
 
+const sumCellValuesForYear = (
+  months: ReadonlyArray<string>,
+  getValue: (month: string) => CellValue,
+  year: string,
+  currentMonth: string,
+): CellValue => {
+  const total = sumCellValuesOverMonths(months, getValue);
+  if (year !== getYear(currentMonth)) {
+    return total;
+  }
+
+  let planned = 0;
+  for (const month of months) {
+    const cell = getValue(month);
+    planned += month < currentMonth ? cell.actual : cell.planned;
+  }
+  return { ...total, planned };
+};
+
 /**
  * Computes all yearly totals from a full year of BudgetRows fetched from the server.
  * Returns pre-aggregated data for every year-total cell in the table:
@@ -65,11 +84,11 @@ export const computeYearTotal = (
   for (const block of blocks) {
     directionSubtotals.set(
       block.direction,
-      sumCellValuesOverMonths(yearMonths, (m) => block.subtotals.get(m) ?? zeroCellValue),
+      sumCellValuesForYear(yearMonths, (m) => block.subtotals.get(m) ?? zeroCellValue, year, currentMonth),
     );
     const catTotals = new Map<string, CellValue>();
     for (const cat of block.categories) {
-      catTotals.set(cat, sumCellValuesOverMonths(yearMonths, (m) => lookupCell(block.cells, m, cat)));
+      catTotals.set(cat, sumCellValuesForYear(yearMonths, (m) => lookupCell(block.cells, m, cat), year, currentMonth));
     }
     directionCategoryTotals.set(block.direction, catTotals);
   }
@@ -80,7 +99,7 @@ export const computeYearTotal = (
       const filtered = computeAllowedSubtotals(block, yearMonths, allowlist);
       filteredSubtotals.set(
         block.direction,
-        sumCellValuesOverMonths(yearMonths, (m) => filtered.get(m) ?? zeroCellValue),
+        sumCellValuesForYear(yearMonths, (m) => filtered.get(m) ?? zeroCellValue, year, currentMonth),
       );
     }
   }
