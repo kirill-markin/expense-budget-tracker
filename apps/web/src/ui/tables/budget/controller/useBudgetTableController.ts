@@ -68,8 +68,6 @@ export type BudgetTableController = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   pendingSaves: number;
   budgetAdjustments: BudgetAdjustmentRowsController;
-  isLoadingLeft: boolean;
-  isLoadingRight: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
   drillDownFilter: DrillDownFilter | null;
   fxBreakdownMonth: string | null;
@@ -271,8 +269,6 @@ export const useBudgetTableController = (
     yearComputed,
     pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
     budgetAdjustments,
-    isLoadingLeft: rangeState.isLoadingLeft,
-    isLoadingRight: rangeState.isLoadingRight,
     scrollRef: viewportState.scrollRef,
     drillDownFilter,
     fxBreakdownMonth,

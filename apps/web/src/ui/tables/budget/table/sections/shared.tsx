@@ -4,6 +4,7 @@ import { MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import {
   isFutureMonth,
+  isBudgetMonthLoaded,
   isPastMonth,
   type ColumnEntry,
 } from "@/ui/tables/budget/budgetTableLogic";
@@ -42,8 +43,11 @@ export type RenderColumnCellsParams = Readonly<{
   column: ColumnEntry;
   currentMonth: string;
   currentYear: string;
+  loadedFrom: string;
+  loadedTo: string;
   isYearLoading: boolean;
   renderYearLoading: (isCurrentYear: boolean) => ReactElement;
+  renderMonthLoading: (month: string) => ReactElement;
   renderPastYear: () => ReactElement;
   renderFutureYear: () => ReactElement;
   renderCurrentYear: () => ReactElement;
@@ -192,13 +196,41 @@ export const renderMaskedYearCells = (
   );
 };
 
+export const renderUnloadedMonthCells = (
+  month: string,
+  currentMonth: string,
+  cellClassName: string,
+): ReactElement => {
+  if (month !== currentMonth) {
+    return (
+      <td key={month} className={`${cellClassName} ${styles.monthLoading}`}>
+        &hellip;
+      </td>
+    );
+  }
+
+  return (
+    <Fragment key={month}>
+      <td className={`${cellClassName} ${styles.currentMonthPlan} ${styles.monthLoading}`}>
+        &hellip;
+      </td>
+      <td className={`${cellClassName} ${styles.currentMonthActual} ${styles.monthLoading}`}>
+        &hellip;
+      </td>
+    </Fragment>
+  );
+};
+
 export const renderColumnCells = (params: RenderColumnCellsParams): ReactElement => {
   const {
     column,
     currentMonth,
     currentYear,
+    loadedFrom,
+    loadedTo,
     isYearLoading,
     renderYearLoading,
+    renderMonthLoading,
     renderPastYear,
     renderFutureYear,
     renderCurrentYear,
@@ -218,6 +250,10 @@ export const renderColumnCells = (params: RenderColumnCellsParams): ReactElement
       return renderFutureYear();
     }
     return renderCurrentYear();
+  }
+
+  if (!isBudgetMonthLoaded(column.month, loadedFrom, loadedTo)) {
+    return renderMonthLoading(column.month);
   }
 
   if (isPastMonth(column.month, currentMonth)) {

@@ -12,6 +12,7 @@ import {
   renderDerivedYearLoadingCells,
   renderMaskedYearCells,
   renderSubtotalYearLoadingCells,
+  renderUnloadedMonthCells,
 } from "../shared";
 
 type MetricRowProps = Readonly<{
@@ -19,6 +20,8 @@ type MetricRowProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  loadedFrom: string;
+  loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   renderPastYear: (year: string, yearData: YearTotalComputed) => ReactElement;
   renderFutureYear: (year: string, yearData: YearTotalComputed) => ReactElement;
@@ -38,6 +41,8 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
     columnSequence,
     currentMonth,
     currentYear,
+    loadedFrom,
+    loadedTo,
     yearComputed,
     rowClassName,
     renderPastYear,
@@ -62,16 +67,24 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
   return (
     <tr className={rowClassName}>
       <td className={`${rowClassName === styles.directionRow ? styles.directionLabel : styles.categoryLabel} ${styles.stickyCol}`}>{label}</td>
-      <td className={styles.leftSpacer} />
       {columnSequence.map((column) => {
         const yearData = column.kind === "year-total" ? yearComputed.get(column.year) : undefined;
         return renderColumnCells({
           column,
           currentMonth,
           currentYear,
+          loadedFrom,
+          loadedTo,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
           renderYearLoading: (isCurrentYearValue) =>
             renderLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+          renderMonthLoading: (month) => renderUnloadedMonthCells(
+            month,
+            currentMonth,
+            loadingKind === "subtotal"
+              ? `${styles.cell} ${styles.cellSubtotal}`
+              : styles.cell,
+          ),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderLoading(column.kind === "year-total" ? column.year : "", false);
