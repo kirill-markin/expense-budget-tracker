@@ -23,6 +23,7 @@ import {
   renderColumnCells,
   renderDerivedYearLoadingCells,
   renderSubtotalYearLoadingCells,
+  renderUnloadedMonthCells,
   renderValueCells,
 } from "../shared";
 
@@ -31,6 +32,8 @@ type DirectionSubtotalRowProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  loadedFrom: string;
+  loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   filteredSubtotalsMap: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
   taintedDirectionMonths: ReadonlySet<string>;
@@ -46,6 +49,8 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
     columnSequence,
     currentMonth,
     currentYear,
+    loadedFrom,
+    loadedTo,
     yearComputed,
     filteredSubtotalsMap,
     taintedDirectionMonths,
@@ -66,16 +71,22 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
       <td className={`${labelClass} ${styles.stickyCol}`}>
         {t(`budget.direction${block.direction.charAt(0).toUpperCase()}${block.direction.slice(1)}`)}
       </td>
-      <td className={styles.leftSpacer} />
       {columnSequence.map((column) => {
         const yearData = column.kind === "year-total" ? yearComputed.get(column.year) : undefined;
         return renderColumnCells({
           column,
           currentMonth,
           currentYear,
+          loadedFrom,
+          loadedTo,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
           renderYearLoading: (isCurrentYearValue) =>
             renderYearLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+          renderMonthLoading: (month) => renderUnloadedMonthCells(
+            month,
+            currentMonth,
+            `${styles.cell}${subtotalClass}`,
+          ),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", false);

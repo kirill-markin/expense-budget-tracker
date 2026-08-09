@@ -11,18 +11,16 @@ export type BudgetTableHeaderProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
-  isLoadingLeft: boolean;
 }>;
 
 export const BudgetTableHeader = (props: BudgetTableHeaderProps): ReactElement => {
-  const { columnSequence, currentMonth, currentYear, isLoadingLeft } = props;
+  const { columnSequence, currentMonth, currentYear } = props;
   const { t } = useTranslation();
 
   return (
     <thead>
       <tr>
         <th className={`${styles.headCell} ${styles.stickyCol}`}>{t("budget.category")}</th>
-        <th className={styles.leftSpacer} rowSpan={2}>{isLoadingLeft ? t("common.loading") : ""}</th>
         {columnSequence.map((column) => {
           if (column.kind === "year-total") {
             return (

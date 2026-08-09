@@ -16,6 +16,10 @@ export type BudgetRangeExtension = Readonly<{
   monthTo: string;
 }>;
 
+export type BudgetValueColumn = Readonly<{
+  key: string;
+}>;
+
 const DISPLAY_YEAR_RADIUS = 10;
 
 export const getBudgetDisplayRange = (currentMonth: string): BudgetDisplayRange => {
@@ -97,6 +101,45 @@ export const buildColumnSequence = (months: ReadonlyArray<string>): ReadonlyArra
   }
   return result;
 };
+
+export const buildBudgetValueColumns = (
+  columnSequence: ReadonlyArray<ColumnEntry>,
+  currentMonth: string,
+): ReadonlyArray<BudgetValueColumn> => {
+  const currentYear = getYear(currentMonth);
+  const result: Array<BudgetValueColumn> = [];
+
+  for (const column of columnSequence) {
+    if (column.kind === "month") {
+      if (column.month === currentMonth) {
+        result.push(
+          { key: `${column.month}-plan` },
+          { key: `${column.month}-actual` },
+        );
+      } else {
+        result.push({ key: column.month });
+      }
+      continue;
+    }
+
+    if (column.year === currentYear) {
+      result.push(
+        { key: `total-${column.year}-plan` },
+        { key: `total-${column.year}-actual` },
+      );
+    } else {
+      result.push({ key: `total-${column.year}` });
+    }
+  }
+
+  return result;
+};
+
+export const isBudgetMonthLoaded = (
+  month: string,
+  loadedFrom: string,
+  loadedTo: string,
+): boolean => month >= loadedFrom && month <= loadedTo;
 
 export const isPastMonth = (month: string, currentMonth: string): boolean => month < currentMonth;
 export const isFutureMonth = (month: string, currentMonth: string): boolean => month > currentMonth;

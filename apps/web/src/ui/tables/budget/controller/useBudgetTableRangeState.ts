@@ -57,8 +57,6 @@ export type BudgetTableRangeState = Readonly<{
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
   hasBusinessAccount: boolean;
   pendingSaves: number;
-  isLoadingLeft: boolean;
-  isLoadingRight: boolean;
   onSyncStart: () => void;
   onSyncEnd: () => void;
   handlePlanSave: (
@@ -240,8 +238,6 @@ export const useBudgetTableRangeState = ({
   const [mebByLiq, setMebByLiq] = useState<Readonly<Record<string, Readonly<Record<string, number>>>>>(monthEndBalancesByLiquidity);
   const [businessPersonalTransfers, setBusinessPersonalTransfers] = useState<Readonly<Record<string, BusinessPersonalTransferCell>>>(initialBusinessPersonalTransfers);
   const [hasBusinessAccount, setHasBusinessAccount] = useState<boolean>(initialHasBusinessAccount);
-  const [isLoadingLeft, setIsLoadingLeft] = useState<boolean>(false);
-  const [isLoadingRight, setIsLoadingRight] = useState<boolean>(false);
   const [pendingSaves, setPendingSaves] = useState<number>(0);
 
   const isLoadingViewportRangeRef = useRef<boolean>(false);
@@ -496,8 +492,6 @@ export const useBudgetTableRangeState = ({
       }
 
       const isLeft = extension.direction === "left";
-      setIsLoadingLeft(isLeft);
-      setIsLoadingRight(!isLeft);
 
       try {
         const outcome = await loadGeneratedBudgetRange(
@@ -563,8 +557,6 @@ export const useBudgetTableRangeState = ({
           await loadRequestedViewportRange();
         } finally {
           isLoadingViewportRangeRef.current = false;
-          setIsLoadingLeft(false);
-          setIsLoadingRight(false);
         }
       },
       "viewport month range coordination",
@@ -582,8 +574,6 @@ export const useBudgetTableRangeState = ({
     businessPersonalTransfers,
     hasBusinessAccount,
     pendingSaves,
-    isLoadingLeft,
-    isLoadingRight,
     onSyncStart,
     onSyncEnd,
     handlePlanSave,

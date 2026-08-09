@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactElement } from "react";
+import { Fragment, type CSSProperties, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import alertStyles from "@/ui/Alert.module.css";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
@@ -16,8 +16,15 @@ import {
   type BudgetTableProps,
   useBudgetTableController,
 } from "@/ui/tables/budget/controller/useBudgetTableController";
-import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
+import { buildBudgetValueColumns } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
+
+const BUDGET_VALUE_COLUMN_WIDTH_PX = 90;
+
+type BudgetTableGeometryStyle = CSSProperties & Readonly<{
+  "--budget-value-column-width": string;
+  "--budget-values-inline-size": string;
+}>;
 
 export const BudgetTable = (props: BudgetTableProps): ReactElement => {
   const { conversionWarnings, reportingCurrency, hints, refreshToken } = props;
@@ -25,6 +32,14 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
   const { numberFormat } = useFormat();
   const { toastMessage, copyToClipboard } = useCopyToast();
   const controller = useBudgetTableController(props);
+  const valueColumns = buildBudgetValueColumns(
+    controller.columnSequence,
+    controller.currentMonth,
+  );
+  const tableGeometryStyle: BudgetTableGeometryStyle = {
+    "--budget-value-column-width": `${BUDGET_VALUE_COLUMN_WIDTH_PX}px`,
+    "--budget-values-inline-size": `${valueColumns.length * BUDGET_VALUE_COLUMN_WIDTH_PX}px`,
+  };
 
   if (controller.months.length === 0) {
     return <p className={styles.empty}>{t("budget.noData")}</p>;
@@ -61,12 +76,17 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
         data-testid="budget-table-scroll"
         ref={controller.scrollRef}
       >
-        <table className={styles.table}>
+        <table className={styles.table} style={tableGeometryStyle}>
+          <colgroup>
+            <col className={styles.categoryColumn} />
+            {valueColumns.map((column) => (
+              <col key={column.key} className={styles.valueColumn} />
+            ))}
+          </colgroup>
           <BudgetTableHeader
             columnSequence={controller.columnSequence}
             currentMonth={controller.currentMonth}
             currentYear={controller.currentYear}
-            isLoadingLeft={controller.isLoadingLeft}
           />
           <tbody>
             {controller.blocks.map((block) => (
@@ -80,6 +100,8 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
                   columnSequence={controller.columnSequence}
                   currentMonth={controller.currentMonth}
                   currentYear={controller.currentYear}
+                  loadedFrom={controller.loadedFrom}
+                  loadedTo={controller.loadedTo}
                   yearComputed={controller.yearComputed}
                   filteredSubtotalsMap={controller.filteredSubtotalsMap}
                   taintedDirectionMonths={controller.taintedDirectionMonths}
@@ -107,6 +129,8 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
               columnSequence={controller.columnSequence}
               currentMonth={controller.currentMonth}
               currentYear={controller.currentYear}
+              loadedFrom={controller.loadedFrom}
+              loadedTo={controller.loadedTo}
               yearComputed={controller.yearComputed}
               incomeSubtotals={controller.incomeSubtotals}
               spendSubtotals={controller.spendSubtotals}
@@ -126,7 +150,6 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
             />
           </tbody>
         </table>
-        <div className={tableStateStyles.loadingEdge}>{controller.isLoadingRight ? t("common.loading") : ""}</div>
       </div>
       {toastMessage !== null && <div className="copy-toast">{toastMessage}</div>}
       {controller.drillDownFilter !== null && (

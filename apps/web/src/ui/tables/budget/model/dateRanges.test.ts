@@ -3,9 +3,11 @@ import test from "node:test";
 
 import { generateMonthRange } from "@/lib/monthUtils";
 import {
+  buildBudgetValueColumns,
   buildColumnSequence,
   getBudgetDisplayRange,
   getBudgetRangeExtension,
+  isBudgetMonthLoaded,
 } from "@/ui/tables/budget/model/dateRanges";
 
 test("builds the fixed budget calendar from January ten years ago through December ten years ahead", (): void => {
@@ -57,4 +59,30 @@ test("caps viewport overscan at the fixed display boundary", (): void => {
     monthFrom: "2016-01",
     monthTo: "2026-01",
   });
+});
+
+test("flattens the fixed calendar into stable physical value columns", (): void => {
+  const displayRange = getBudgetDisplayRange("2026-08");
+  const months = generateMonthRange(displayRange.monthFrom, displayRange.monthTo);
+  const valueColumns = buildBudgetValueColumns(
+    buildColumnSequence(months),
+    "2026-08",
+  );
+
+  assert.equal(valueColumns.length, 21 * 13 + 2);
+  assert.deepEqual(
+    valueColumns.filter((column) => column.key.startsWith("2026-08")),
+    [{ key: "2026-08-plan" }, { key: "2026-08-actual" }],
+  );
+  assert.deepEqual(
+    valueColumns.filter((column) => column.key.startsWith("total-2026")),
+    [{ key: "total-2026-plan" }, { key: "total-2026-actual" }],
+  );
+});
+
+test("recognizes only months inside the contiguous loaded interval", (): void => {
+  assert.equal(isBudgetMonthLoaded("2026-01", "2026-02", "2027-08"), false);
+  assert.equal(isBudgetMonthLoaded("2026-02", "2026-02", "2027-08"), true);
+  assert.equal(isBudgetMonthLoaded("2027-08", "2026-02", "2027-08"), true);
+  assert.equal(isBudgetMonthLoaded("2027-09", "2026-02", "2027-08"), false);
 });

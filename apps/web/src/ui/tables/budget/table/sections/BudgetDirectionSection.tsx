@@ -22,6 +22,8 @@ export type BudgetDirectionSectionProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  loadedFrom: string;
+  loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   filteredSubtotalsMap: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
   taintedDirectionMonths: ReadonlySet<string>;
@@ -73,6 +75,8 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
     columnSequence,
     currentMonth,
     currentYear,
+    loadedFrom,
+    loadedTo,
     yearComputed,
     filteredSubtotalsMap,
     taintedDirectionMonths,
@@ -100,6 +104,8 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
         columnSequence={columnSequence}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        loadedFrom={loadedFrom}
+        loadedTo={loadedTo}
         yearComputed={yearComputed}
         filteredSubtotalsMap={filteredSubtotalsMap}
         taintedDirectionMonths={taintedDirectionMonths}
@@ -122,6 +128,8 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
             columnSequence={columnSequence}
             currentMonth={currentMonth}
             currentYear={currentYear}
+            loadedFrom={loadedFrom}
+            loadedTo={loadedTo}
             yearComputed={yearComputed}
             taintedCells={taintedCells}
             numberFormat={numberFormat}

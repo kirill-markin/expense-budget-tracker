@@ -29,6 +29,7 @@ import {
   renderColumnCells,
   renderDerivedYearLoadingCells,
   renderMaskedYearCells,
+  renderUnloadedMonthCells,
 } from "../shared";
 
 type CategoryRowProps = Readonly<{
@@ -39,6 +40,8 @@ type CategoryRowProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  loadedFrom: string;
+  loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   taintedCells: ReadonlySet<string>;
   numberFormat: NumberFormat;
@@ -89,6 +92,8 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     columnSequence,
     currentMonth,
     currentYear,
+    loadedFrom,
+    loadedTo,
     yearComputed,
     taintedCells,
     numberFormat,
@@ -118,16 +123,19 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
       >
         {categoryVisibility.showData ? category : MASKED_CELL_PLACEHOLDER}
       </td>
-      <td className={styles.leftSpacer} />
       {columnSequence.map((column) => {
         const yearData = column.kind === "year-total" ? yearComputed.get(column.year) : undefined;
         return renderColumnCells({
           column,
           currentMonth,
           currentYear,
+          loadedFrom,
+          loadedTo,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
           renderYearLoading: (isCurrentYearValue) =>
             renderYearLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+          renderMonthLoading: (month) =>
+            renderUnloadedMonthCells(month, currentMonth, styles.cell),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
