@@ -5,6 +5,7 @@ import type { BudgetGridResult, BudgetRow, BusinessPersonalTransferCell, Cumulat
 import { offsetMonth } from "@/lib/monthUtils";
 import {
   adjustCumulativeBeforeForPrependedRows,
+  getBudgetRangeExtension,
   getTargetFillMonths,
 } from "@/ui/tables/budget/budgetTableLogic";
 import {
@@ -28,6 +29,8 @@ const BATCH_SIZE = 6;
 
 type UseBudgetTableRangeStateParams = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
+  displayMonthFrom: string;
+  displayMonthTo: string;
   initialMonthFrom: string;
   initialMonthTo: string;
   cumulativeBefore: CumulativeBefore;
@@ -35,6 +38,7 @@ type UseBudgetTableRangeStateParams = Readonly<{
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
   hasBusinessAccount: boolean;
+  refreshToken: string;
   onVisibleRangeRefreshStart: () => void;
   loadBudgetRange: (
     monthFrom: string,
@@ -89,8 +93,7 @@ export type BudgetTableRangeState = Readonly<{
     mutationGeneration: number,
   ) => void;
   refreshLoadedRange: () => void;
-  loadLeft: () => Promise<void>;
-  loadRight: () => Promise<void>;
+  requestVisibleMonths: (monthFrom: string, monthTo: string) => void;
 }>;
 
 const applyFetchedBudgetResult = (
@@ -212,6 +215,8 @@ const applyFillMonthsToRows = (
 
 export const useBudgetTableRangeState = ({
   rows,
+  displayMonthFrom,
+  displayMonthTo,
   initialMonthFrom,
   initialMonthTo,
   cumulativeBefore,
@@ -219,6 +224,7 @@ export const useBudgetTableRangeState = ({
   monthEndBalancesByLiquidity,
   businessPersonalTransfers: initialBusinessPersonalTransfers,
   hasBusinessAccount: initialHasBusinessAccount,
+  refreshToken,
   onVisibleRangeRefreshStart,
   loadBudgetRange,
 }: UseBudgetTableRangeStateParams): BudgetTableRangeState => {
@@ -238,8 +244,12 @@ export const useBudgetTableRangeState = ({
   const [isLoadingRight, setIsLoadingRight] = useState<boolean>(false);
   const [pendingSaves, setPendingSaves] = useState<number>(0);
 
-  const isLoadingLeftRef = useRef<boolean>(false);
-  const isLoadingRightRef = useRef<boolean>(false);
+  const isLoadingViewportRangeRef = useRef<boolean>(false);
+  const rangeRequestQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const loadedFromRef = useRef<string>(initialMonthFrom);
+  const loadedToRef = useRef<string>(initialMonthTo);
+  const requestedVisibleFromRef = useRef<string>(initialMonthFrom);
+  const requestedVisibleToRef = useRef<string>(initialMonthTo);
   const initialRefreshHandledRef = useRef<boolean>(false);
   const latestRangeRequestGenerationRef = useRef<number>(0);
   const latestRangeRequestGenerationByMonthRef = useRef<Map<string, number>>(
@@ -303,11 +313,25 @@ export const useBudgetTableRangeState = ({
     setPendingSaves((count) => Math.max(0, count - 1));
   }, []);
 
+  const enqueueRangeRequest = useCallback((
+    request: () => Promise<void>,
+    operation: string,
+  ): void => {
+    rangeRequestQueueRef.current = rangeRequestQueueRef.current
+      .then(request)
+      .catch((error: unknown): void => {
+        logBudgetTableError(operation, error);
+      });
+  }, []);
+
   const runVisibleRangeRefresh = useCallback(async (): Promise<void> => {
     onVisibleRangeRefreshStart();
 
     try {
-      const outcome = await loadGeneratedBudgetRange(loadedFrom, loadedTo);
+      const outcome = await loadGeneratedBudgetRange(
+        loadedFromRef.current,
+        loadedToRef.current,
+      );
       if (outcome.status === "superseded") return;
       const result = outcome.result;
       const reconciledRows = reconcileAcceptedBaseRange(result, outcome.request);
@@ -315,7 +339,7 @@ export const useBudgetTableRangeState = ({
     } catch (error) {
       logBudgetTableError("visible range refresh", error);
     }
-  }, [loadGeneratedBudgetRange, loadedFrom, loadedTo, onVisibleRangeRefreshStart, reconcileAcceptedBaseRange]);
+  }, [loadGeneratedBudgetRange, onVisibleRangeRefreshStart, reconcileAcceptedBaseRange]);
 
   useEffect(() => {
     if (!initialRefreshHandledRef.current) {
@@ -323,8 +347,8 @@ export const useBudgetTableRangeState = ({
       return;
     }
 
-    void runVisibleRangeRefresh();
-  }, [runVisibleRangeRefresh]);
+    enqueueRangeRequest(runVisibleRangeRefresh, "visible range refresh coordination");
+  }, [enqueueRangeRequest, refreshToken, runVisibleRangeRefresh]);
 
   const handlePlanSave = useCallback((
     month: string,
@@ -453,69 +477,99 @@ export const useBudgetTableRangeState = ({
   }, [publishBaseAcknowledgements]);
 
   const refreshLoadedRange = useCallback((): void => {
-    void runVisibleRangeRefresh();
-  }, [runVisibleRangeRefresh]);
+    enqueueRangeRequest(runVisibleRangeRefresh, "visible range refresh coordination");
+  }, [enqueueRangeRequest, runVisibleRangeRefresh]);
 
-  const loadLeft = useCallback(async (): Promise<void> => {
-    if (isLoadingLeftRef.current) {
+  const loadRequestedViewportRange = useCallback(async (): Promise<void> => {
+    while (true) {
+      const extension = getBudgetRangeExtension(
+        displayMonthFrom,
+        displayMonthTo,
+        loadedFromRef.current,
+        loadedToRef.current,
+        requestedVisibleFromRef.current,
+        requestedVisibleToRef.current,
+        BATCH_SIZE,
+      );
+      if (extension === null) {
+        return;
+      }
+
+      const isLeft = extension.direction === "left";
+      setIsLoadingLeft(isLeft);
+      setIsLoadingRight(!isLeft);
+
+      try {
+        const outcome = await loadGeneratedBudgetRange(
+          extension.monthFrom,
+          extension.monthTo,
+        );
+        if (outcome.status === "superseded") {
+          return;
+        }
+
+        const result = outcome.result;
+        const reconciledRows = reconcileAcceptedBaseRange(result, outcome.request);
+        if (isLeft) {
+          setAllRows((previous) => [...reconciledRows, ...previous]);
+          setCumBefore((previous) => (
+            adjustCumulativeBeforeForPrependedRows(previous, reconciledRows)
+          ));
+          loadedFromRef.current = extension.monthFrom;
+          setLoadedFrom(extension.monthFrom);
+        } else {
+          setAllRows((previous) => [...previous, ...reconciledRows]);
+          loadedToRef.current = extension.monthTo;
+          setLoadedTo(extension.monthTo);
+        }
+        setMeb((previous) => ({ ...previous, ...result.monthEndBalances }));
+        setMebByLiq((previous) => ({
+          ...previous,
+          ...result.monthEndBalancesByLiquidity,
+        }));
+        setBusinessPersonalTransfers((previous) => ({
+          ...previous,
+          ...result.businessPersonalTransfers,
+        }));
+        setHasBusinessAccount(result.hasBusinessAccount);
+      } catch (error) {
+        logBudgetTableError(
+          `load ${extension.direction} viewport month range ${extension.monthFrom}..${extension.monthTo}`,
+          error,
+        );
+        return;
+      }
+    }
+  }, [displayMonthFrom, displayMonthTo, loadGeneratedBudgetRange, reconcileAcceptedBaseRange]);
+
+  const requestVisibleMonths = useCallback((
+    monthFrom: string,
+    monthTo: string,
+  ): void => {
+    if (monthFrom < requestedVisibleFromRef.current) {
+      requestedVisibleFromRef.current = monthFrom;
+    }
+    if (monthTo > requestedVisibleToRef.current) {
+      requestedVisibleToRef.current = monthTo;
+    }
+    if (isLoadingViewportRangeRef.current) {
       return;
     }
 
-    isLoadingLeftRef.current = true;
-    setIsLoadingLeft(true);
-
-    const newTo = offsetMonth(loadedFrom, -1);
-    const newFrom = offsetMonth(loadedFrom, -BATCH_SIZE);
-
-    try {
-      const outcome = await loadGeneratedBudgetRange(newFrom, newTo);
-      if (outcome.status === "superseded") return;
-      const result = outcome.result;
-      const prependedRows = reconcileAcceptedBaseRange(result, outcome.request);
-      setAllRows((previous) => [...prependedRows, ...previous]);
-      setCumBefore((previous) => adjustCumulativeBeforeForPrependedRows(previous, prependedRows));
-      setLoadedFrom(newFrom);
-      setMeb((previous) => ({ ...previous, ...result.monthEndBalances }));
-      setMebByLiq((previous) => ({ ...previous, ...result.monthEndBalancesByLiquidity }));
-      setBusinessPersonalTransfers((previous) => ({ ...previous, ...result.businessPersonalTransfers }));
-      setHasBusinessAccount(result.hasBusinessAccount);
-    } catch (error) {
-      logBudgetTableError("load previous month range", error);
-    } finally {
-      isLoadingLeftRef.current = false;
-      setIsLoadingLeft(false);
-    }
-  }, [loadGeneratedBudgetRange, loadedFrom, reconcileAcceptedBaseRange]);
-
-  const loadRight = useCallback(async (): Promise<void> => {
-    if (isLoadingRightRef.current) {
-      return;
-    }
-
-    isLoadingRightRef.current = true;
-    setIsLoadingRight(true);
-
-    const newFrom = offsetMonth(loadedTo, 1);
-    const newTo = offsetMonth(loadedTo, BATCH_SIZE);
-
-    try {
-      const outcome = await loadGeneratedBudgetRange(newFrom, newTo);
-      if (outcome.status === "superseded") return;
-      const result = outcome.result;
-      const appendedRows = reconcileAcceptedBaseRange(result, outcome.request);
-      setAllRows((previous) => [...previous, ...appendedRows]);
-      setLoadedTo(newTo);
-      setMeb((previous) => ({ ...previous, ...result.monthEndBalances }));
-      setMebByLiq((previous) => ({ ...previous, ...result.monthEndBalancesByLiquidity }));
-      setBusinessPersonalTransfers((previous) => ({ ...previous, ...result.businessPersonalTransfers }));
-      setHasBusinessAccount(result.hasBusinessAccount);
-    } catch (error) {
-      logBudgetTableError("load next month range", error);
-    } finally {
-      isLoadingRightRef.current = false;
-      setIsLoadingRight(false);
-    }
-  }, [loadGeneratedBudgetRange, loadedTo, reconcileAcceptedBaseRange]);
+    isLoadingViewportRangeRef.current = true;
+    enqueueRangeRequest(
+      async (): Promise<void> => {
+        try {
+          await loadRequestedViewportRange();
+        } finally {
+          isLoadingViewportRangeRef.current = false;
+          setIsLoadingLeft(false);
+          setIsLoadingRight(false);
+        }
+      },
+      "viewport month range coordination",
+    );
+  }, [enqueueRangeRequest, loadRequestedViewportRange]);
 
   return {
     allRows,
@@ -538,7 +592,6 @@ export const useBudgetTableRangeState = ({
     handleBaseAcknowledged,
     handleFillMonthsAcknowledged,
     refreshLoadedRange,
-    loadLeft,
-    loadRight,
+    requestVisibleMonths,
   };
 };

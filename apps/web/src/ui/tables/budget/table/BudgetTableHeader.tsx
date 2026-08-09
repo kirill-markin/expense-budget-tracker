@@ -30,6 +30,7 @@ export const BudgetTableHeader = (props: BudgetTableHeaderProps): ReactElement =
                 key={`total-${column.year}`}
                 className={`${styles.headCell} ${styles.yearTotal}`}
                 colSpan={column.year === currentYear ? 2 : 1}
+                data-budget-year-total={column.year}
               >
                 {t("budget.total")} {column.year}
               </th>
@@ -42,6 +43,7 @@ export const BudgetTableHeader = (props: BudgetTableHeaderProps): ReactElement =
               className={`${styles.headCell}${column.month === currentMonth ? ` ${styles.currentMonth}` : ""}`}
               colSpan={column.month === currentMonth ? 2 : 1}
               data-month={column.month}
+              data-budget-month={column.month}
             >
               {column.month}
             </th>
