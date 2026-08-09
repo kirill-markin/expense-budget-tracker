@@ -370,7 +370,11 @@ export const useBudgetTableRangeState = ({
     const activeRetryProgress = activeRetryKey === null
       ? undefined
       : viewportRetryProgressByKeyRef.current.get(activeRetryKey);
-    if (isLifecycleReplay && activeRetryProgress?.status === "cycle-wait") {
+    if (
+      isLifecycleReplay
+      && activeRetryKey !== null
+      && activeRetryProgress?.status === "cycle-wait"
+    ) {
       viewportRetryProgressByKeyRef.current.set(
         activeRetryKey,
         resumeBudgetBackgroundRetryCycle(activeRetryProgress),
