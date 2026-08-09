@@ -9,7 +9,13 @@ import {
   buildSelectWorkspaceAction,
   buildSuccessEnvelope,
 } from "@expense-budget-tracker/agent-shared";
-import { MAX_SQL_ROWS, SQL_STATEMENT_TIMEOUT_MS, SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  MAX_SQL_ROWS,
+  SQL_STATEMENT_TIMEOUT_MS,
+  SqlPolicyError,
+  validateExpenseSql,
+  type ValidatedExpenseSql,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
 import { resolveOrCreateWorkspaceForTrustedIdentity } from "../db.js";
 import { buildDiscoveryEnvelope, readJsonBody } from "./request.js";
 import { buildRetryableErrorResponse, json } from "./responses.js";
@@ -247,8 +253,24 @@ export const handleSelectWorkspaceRoute = async (
   }
 };
 
-export const handleSqlRoute = async (
+const buildSqlPolicyErrorResponse = (
+  error: SqlPolicyError,
+  apiBaseUrl: string,
+): APIGatewayProxyResult =>
+  json(
+    400,
+    buildErrorEnvelope(
+      { allowedRelations: ALLOWED_RELATION_NAMES },
+      [],
+      getSqlPolicyInstructions(error, apiBaseUrl),
+      error.code,
+      error.message,
+    ),
+  );
+
+export const handleSqlRouteWithWorkspaceResolver = async (
   context: MachineRouteContext,
+  resolveWorkspaceId: typeof resolveSqlWorkspaceId,
 ): Promise<APIGatewayProxyResult> => {
   const body = readJsonBody(context.event);
   if (body === null) {
@@ -269,11 +291,27 @@ export const handleSqlRoute = async (
     );
   }
 
+  let validated: ValidatedExpenseSql;
+  try {
+    validated = validateExpenseSql(rawSql.trim());
+  } catch (error) {
+    if (error instanceof SqlPolicyError) {
+      return buildSqlPolicyErrorResponse(error, context.apiBaseUrl);
+    }
+
+    return buildRetryableErrorResponse(
+      "agent_sql_failed",
+      "Retry SQL in a moment.",
+      error,
+      { retryable: true },
+    );
+  }
+
   const headerWorkspaceId = (context.event.headers["X-Workspace-Id"] ?? context.event.headers["x-workspace-id"] ?? "").trim();
 
   let workspaceId: string | null;
   try {
-    workspaceId = await resolveSqlWorkspaceId(context.dependencies, context.authenticated, headerWorkspaceId);
+    workspaceId = await resolveWorkspaceId(context.dependencies, context.authenticated, headerWorkspaceId);
   } catch (error) {
     return buildRetryableErrorResponse(
       "agent_sql_failed",
@@ -297,7 +335,7 @@ export const handleSqlRoute = async (
   }
 
   try {
-    const response = await runSql(context.dependencies, context.authenticated, workspaceId, rawSql.trim());
+    const response = await runSql(context.dependencies, context.authenticated, workspaceId, validated);
     if (response === null) {
       return json(
         404,
@@ -314,19 +352,6 @@ export const handleSqlRoute = async (
       ),
     );
   } catch (error) {
-    if (error instanceof SqlPolicyError) {
-      return json(
-        400,
-        buildErrorEnvelope(
-          { allowedRelations: ALLOWED_RELATION_NAMES },
-          [],
-          getSqlPolicyInstructions(error, context.apiBaseUrl),
-          error.code,
-          error.message,
-        ),
-      );
-    }
-
     if (isUserSqlExecutionError(error)) {
       return json(
         400,
@@ -348,3 +373,8 @@ export const handleSqlRoute = async (
     );
   }
 };
+
+export const handleSqlRoute = async (
+  context: MachineRouteContext,
+): Promise<APIGatewayProxyResult> =>
+  handleSqlRouteWithWorkspaceResolver(context, resolveSqlWorkspaceId);

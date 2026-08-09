@@ -68,6 +68,105 @@ test("validateExpenseSql still allows direct relation queries without function c
   assert.deepEqual(validated.statements[0]?.referencedRelations, ["ledger_entries"]);
 });
 
+test("validateExpenseSql allows reads from SELECT-only relations", (): void => {
+  const acceptedSql: ReadonlyArray<string> = [
+    "SELECT account_id FROM accounts",
+    "SELECT rate FROM fx_rates_raw",
+    "SELECT rate FROM fx_rates_daily",
+  ];
+
+  for (const sql of acceptedSql) {
+    assert.equal(validateExpenseSql(sql).statements.length, 1);
+  }
+});
+
+test("validateExpenseSql rejects INSERT, UPDATE, and DELETE targets that are SELECT-only", (): void => {
+  const rejectedSql: ReadonlyArray<string> = [
+    "INSERT INTO accounts (account_id) VALUES ('a-main-usd')",
+    "UPDATE accounts SET account_id = 'a-renamed-usd'",
+    "DELETE FROM accounts WHERE account_id = 'a-main-usd'",
+    "INSERT INTO fx_rates_raw (base_currency) VALUES ('EUR')",
+    "UPDATE fx_rates_raw SET rate = 1",
+    "DELETE FROM fx_rates_raw WHERE base_currency = 'EUR'",
+    "INSERT INTO fx_rates_daily (base_currency) VALUES ('EUR')",
+    "UPDATE fx_rates_daily SET rate = 1",
+    "DELETE FROM fx_rates_daily WHERE base_currency = 'EUR'",
+  ];
+
+  for (const sql of rejectedSql) {
+    assert.throws(
+      () => validateExpenseSql(sql),
+      (error: unknown) =>
+        error instanceof SqlPolicyError
+        && error.code === "read_only_relation_mutation_not_allowed"
+        && error.message.includes("is SELECT-only"),
+    );
+  }
+});
+
+test("validateExpenseSql rejects SELECT-only mutation targets in data-modifying CTEs", (): void => {
+  assert.throws(
+    () => validateExpenseSql(
+      "WITH deleted_rates AS (DELETE FROM public.fx_rates_daily WHERE base_currency = 'EUR' RETURNING *) SELECT * FROM deleted_rates",
+    ),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "read_only_relation_mutation_not_allowed"
+      && error.message === "Relation fx_rates_daily is SELECT-only and cannot be targeted by DELETE in restricted SQL",
+  );
+});
+
+test("validateExpenseSql rejects recursive CTE SEARCH and CYCLE clauses before hidden mutations", (): void => {
+  const rejectedSql: ReadonlyArray<string> = [
+    "WITH RECURSIVE rows(n) AS (SELECT 1) SEARCH DEPTH FIRST BY n SET ordercol UPDATE accounts SET account_id = 'a-renamed-usd'",
+    "WITH RECURSIVE rows(n) AS (SELECT 1) SEARCH BREADTH FIRST BY n SET ordercol DELETE FROM fx_rates_raw WHERE base_currency = 'EUR'",
+    "WITH RECURSIVE rows(n) AS (SELECT 1) SEARCH DEPTH FIRST BY n SET ordercol INSERT INTO fx_rates_daily (base_currency) VALUES ('EUR')",
+    "WITH RECURSIVE rows(n) AS (SELECT 1) SEARCH DEPTH FIRST BY n SET ordercol, changed AS (UPDATE accounts SET account_id = 'a-renamed-usd' RETURNING *) SELECT * FROM changed",
+    "WITH RECURSIVE rows(n) AS (SELECT 1) CYCLE n SET is_cycle USING cycle_path, changed AS (DELETE FROM fx_rates_raw WHERE base_currency = 'EUR' RETURNING *) SELECT * FROM changed",
+  ];
+
+  for (const sql of rejectedSql) {
+    assert.throws(
+      () => validateExpenseSql(sql),
+      (error: unknown) =>
+        error instanceof SqlPolicyError
+        && error.code === "recursive_cte_search_cycle_not_allowed"
+        && error.message === "Recursive CTE SEARCH and CYCLE clauses are not supported in restricted SQL",
+    );
+  }
+});
+
+test("validateExpenseSql allows SEARCH and CYCLE text in regular string literals", (): void => {
+  const validated = validateExpenseSql(
+    "SELECT 'SEARCH DEPTH FIRST' AS search_text, 'CYCLE path' AS cycle_text FROM accounts",
+  );
+
+  assert.equal(validated.statements.length, 1);
+  assert.deepEqual(validated.statements[0]?.referencedRelations, ["accounts"]);
+});
+
+test("validateExpenseSql allows mutations of workspace-owned relations", (): void => {
+  const acceptedSql: ReadonlyArray<string> = [
+    "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id) VALUES ('event-1', '2026-08-09', 'a-main-usd', 1, 'USD', 'income', 'workspace-1')",
+    "UPDATE budget_lines SET planned_value = 100 WHERE workspace_id = 'workspace-1'",
+    "DELETE FROM workspace_settings WHERE workspace_id = 'workspace-1'",
+    "WITH changed AS (UPDATE account_metadata SET liquidity = 'low' WHERE workspace_id = 'workspace-1' RETURNING *) SELECT * FROM changed",
+  ];
+
+  for (const sql of acceptedSql) {
+    assert.equal(validateExpenseSql(sql).statements.length, 1);
+  }
+});
+
+test("validateExpenseSql allows a mutable target to read from a SELECT-only source", (): void => {
+  const validated = validateExpenseSql(
+    "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id) SELECT 'event-1', '2026-08-09', 'a-main-usd', rate, quote_currency, 'income', 'workspace-1' FROM fx_rates_daily WHERE base_currency = 'EUR'",
+  );
+
+  assert.equal(validated.statements[0]?.isMutating, true);
+  assert.deepEqual(validated.statements[0]?.referencedRelations, ["ledger_entries", "fx_rates_daily"]);
+});
+
 test("validateExpenseSql allows grouping and derived subqueries after SQL keywords", (): void => {
   const acceptedSql: ReadonlyArray<string> = [
     "SELECT account_id FROM ledger_entries WHERE account_id = 'a-main-usd' AND (kind = 'expense')",

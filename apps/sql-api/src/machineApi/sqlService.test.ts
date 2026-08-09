@@ -3,7 +3,7 @@ import test from "node:test";
 import type { QueryResult } from "pg";
 import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { createQueryResult } from "../handlerTestUtils.js";
-import { runSqlWithWorkspaceGetter } from "./sqlService.js";
+import { getSqlPolicyInstructions, runSqlWithWorkspaceGetter } from "./sqlService.js";
 import type {
   AuthenticatedContext,
   MachineApiDependencies,
@@ -72,6 +72,38 @@ test("runSql rejects function-only SQL before executing restricted queries", asy
     (error: unknown) => error instanceof SqlPolicyError && error.code === "function_calls_not_allowed",
   );
 
+  assert.equal(restrictedContextCalled, false);
+});
+
+test("runSql rejects SELECT-only mutation targets before workspace or restricted database access", async (): Promise<void> => {
+  let workspaceGetterCalled = false;
+  let restrictedContextCalled = false;
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: async () => {
+      restrictedContextCalled = true;
+      throw new Error("restricted context should not run");
+    },
+  });
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "WITH deleted_rates AS (DELETE FROM fx_rates_raw WHERE base_currency = 'EUR' RETURNING *) SELECT * FROM deleted_rates",
+      async (): Promise<WorkspaceSummary> => {
+        workspaceGetterCalled = true;
+        return workspaceGetter();
+      },
+    ),
+    (error: unknown) =>
+      error instanceof SqlPolicyError
+      && error.code === "read_only_relation_mutation_not_allowed"
+      && getSqlPolicyInstructions(error, "https://api.example.com/v1")
+        === "Relation fx_rates_raw is SELECT-only and cannot be targeted by DELETE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata.",
+  );
+
+  assert.equal(workspaceGetterCalled, false);
   assert.equal(restrictedContextCalled, false);
 });
 
