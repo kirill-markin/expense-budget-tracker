@@ -264,7 +264,8 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
       runOneToolCall: async (toolParams): Promise<Readonly<{
         output: string;
         isMutating: boolean;
-        succeeded: boolean;
+        succeeded: true;
+        error: null;
       }>> => {
         executedToolScope = {
           sessionId: toolParams.sessionId,
@@ -274,6 +275,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
           output: toolOutput,
           isMutating: false,
           succeeded: true,
+          error: null,
         };
       },
     }),
@@ -362,11 +364,13 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
       runOneToolCall: async ({ item }): Promise<Readonly<{
         output: string;
         isMutating: boolean;
-        succeeded: boolean;
+        succeeded: true;
+        error: null;
       }>> => ({
         output: `{\"tool\":\"${item.call_id}\"}`,
         isMutating: false,
         succeeded: true,
+        error: null,
       }),
     }),
   );
