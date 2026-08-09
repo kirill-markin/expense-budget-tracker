@@ -40,7 +40,7 @@ test("execQuery rejects function calls before reaching the database", async (): 
     }),
     (error: unknown) =>
       error instanceof Error
-      && error.message === "Only allowlisted functions are supported in chat queries: SUM, COUNT, MIN, MAX, AVG, and COALESCE",
+      && error.message === "Function now() is not allowed in restricted SQL. Allowed functions: SUM, COUNT, MIN, MAX, AVG, COALESCE",
   );
 });
 
