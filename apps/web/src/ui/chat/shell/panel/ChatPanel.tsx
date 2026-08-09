@@ -642,6 +642,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     messages,
     runState,
     isHistoryLoaded,
+    isTranscriptDisplayReady,
     isAssistantRunActive,
     isLiveStreamConnected,
     isStopping,
@@ -660,6 +661,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     recoverInvalidSessionSelection:
       recoverCurrentScopeInvalidSessionSelection,
   });
+  const transcriptTargetKey = getChatTargetKey(chatWorkspace.state.target);
 
   useLayoutEffect(() => {
     const handoff = textareaAdoptionHandoffRef.current;
@@ -1854,6 +1856,9 @@ export const ChatPanel = (props: Props): ReactElement => {
         messages={messages}
         isAssistantRunActive={isAssistantRunActive}
         isLiveStreamConnected={isLiveStreamConnected}
+        targetKey={transcriptTargetKey}
+        selectionEpoch={chatWorkspace.selectionEpoch}
+        isDisplayReady={isTranscriptDisplayReady}
       />
       <ChatComposer
         key={composerLifecycleKey}
