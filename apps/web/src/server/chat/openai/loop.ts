@@ -412,6 +412,7 @@ const runLoopWithDeps = async (
     for (const functionCall of modelCall.functionCalls) {
       const output = await dependencies.runOneToolCall({
         item: functionCall,
+        requestId: params.requestId,
         userId: params.userId,
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
