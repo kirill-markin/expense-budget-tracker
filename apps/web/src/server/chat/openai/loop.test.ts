@@ -225,6 +225,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
   let modelCallCount = 0;
   const openAIRequests: Array<OpenAIResponsesRequest> = [];
   let executedToolScope: Readonly<{
+    requestId: string;
     sessionId: string;
     turnId: string;
   }> | null = null;
@@ -268,6 +269,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
         error: null;
       }>> => {
         executedToolScope = {
+          requestId: toolParams.requestId,
           sessionId: toolParams.sessionId,
           turnId: toolParams.turnId,
         };
@@ -283,6 +285,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
 
   assert.equal(modelCallCount, 2);
   assert.deepEqual(executedToolScope, {
+    requestId: params.requestId,
     sessionId: params.sessionId,
     turnId: params.turnId,
   });

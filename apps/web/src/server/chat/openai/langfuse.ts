@@ -45,7 +45,25 @@ type StartObservationDependencies = Readonly<{
   createTraceId: typeof createTraceId;
   propagateAttributes: typeof propagateAttributes;
   startObservation: typeof startObservation;
+  log: typeof log;
 }>;
+
+type RootObservationTelemetryOperation = "success update" | "error update" | "end";
+
+type RootObservationTelemetryContext =
+  | Readonly<{
+    observationName: "chat turn";
+    requestId: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+  }>
+  | Readonly<{
+    observationName: "chat transcription";
+    requestId: string;
+    userId: string;
+    workspaceId: string;
+  }>;
 
 const MASK_PATTERNS: ReadonlyArray<Readonly<{
   pattern: RegExp;
@@ -242,6 +260,30 @@ const DEFAULT_START_OBSERVATION_DEPENDENCIES: StartObservationDependencies = {
   createTraceId,
   propagateAttributes,
   startObservation,
+  log,
+};
+
+const runRootObservationTelemetryOperation = (
+  context: RootObservationTelemetryContext,
+  operation: RootObservationTelemetryOperation,
+  telemetryOperation: () => void,
+  logger: typeof log,
+): void => {
+  try {
+    telemetryOperation();
+  } catch (error) {
+    logger({
+      domain: "chat",
+      action: "error",
+      vendor: "openai",
+      stage: "agent",
+      error: `Langfuse ${context.observationName} ${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
+      requestId: context.requestId,
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      ...("sessionId" in context ? { sessionId: context.sessionId } : {}),
+    });
+  }
 };
 
 export const sanitizeChatTranscriptionForTelemetry = (
@@ -275,6 +317,13 @@ export const startChatTurnObservationWithDeps = async (
     spanId: traceId.slice(0, 16),
     traceFlags: 1,
   };
+  const telemetryContext: RootObservationTelemetryContext = {
+    observationName: "chat turn",
+    requestId: params.requestId,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+  };
   let callbackStarted = false;
   let callbackError: unknown | null = null;
 
@@ -304,25 +353,42 @@ export const startChatTurnObservationWithDeps = async (
         );
 
         try {
-          await fn(rootObservation);
-          rootObservation.updateOtelSpanAttributes({
-            output: {
-              result: "success",
-            },
-          });
-        } catch (error) {
-          callbackError = error;
-          rootObservation.updateOtelSpanAttributes({
-            level: "ERROR",
-            statusMessage: error instanceof Error ? error.message : String(error),
-            output: {
-              result: "error",
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
-          throw error;
+          try {
+            await fn(rootObservation);
+          } catch (error) {
+            callbackError = error;
+            runRootObservationTelemetryOperation(
+              telemetryContext,
+              "error update",
+              (): void => rootObservation.updateOtelSpanAttributes({
+                level: "ERROR",
+                statusMessage: error instanceof Error ? error.message : String(error),
+                output: {
+                  result: "error",
+                  message: error instanceof Error ? error.message : String(error),
+                },
+              }),
+              dependencies.log,
+            );
+            throw error;
+          }
+          runRootObservationTelemetryOperation(
+            telemetryContext,
+            "success update",
+            (): void => rootObservation.updateOtelSpanAttributes({
+              output: {
+                result: "success",
+              },
+            }),
+            dependencies.log,
+          );
         } finally {
-          rootObservation.end();
+          runRootObservationTelemetryOperation(
+            telemetryContext,
+            "end",
+            (): void => rootObservation.end(),
+            dependencies.log,
+          );
         }
       },
     );
@@ -332,22 +398,30 @@ export const startChatTurnObservationWithDeps = async (
     }
 
     if (callbackStarted) {
-      log({
+      dependencies.log({
         domain: "chat",
         action: "error",
         vendor: "openai",
         stage: "agent",
         error: `Langfuse telemetry failed after the chat turn finished: ${error instanceof Error ? error.message : String(error)}`,
+        requestId: params.requestId,
+        userId: params.userId,
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
       });
       return;
     }
 
-    log({
+    dependencies.log({
       domain: "chat",
       action: "error",
       vendor: "openai",
       stage: "agent",
       error: `Langfuse telemetry failed: ${error instanceof Error ? error.message : String(error)}`,
+      requestId: params.requestId,
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
     });
     await fn(null);
   }
@@ -373,6 +447,12 @@ export const startChatTranscriptionObservationWithDeps = async <TResult>(
     traceId,
     spanId: traceId.slice(0, 16),
     traceFlags: 1,
+  };
+  const telemetryContext: RootObservationTelemetryContext = {
+    observationName: "chat transcription",
+    requestId: params.requestId,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
   };
   let callbackStarted = false;
   let callbackCompleted = false;
@@ -402,27 +482,44 @@ export const startChatTranscriptionObservationWithDeps = async <TResult>(
         );
 
         try {
-          callbackResult = await fn(rootObservation);
-          callbackCompleted = true;
-          rootObservation.updateOtelSpanAttributes({
-            output: {
-              result: "success",
-            },
-          });
+          try {
+            callbackResult = await fn(rootObservation);
+            callbackCompleted = true;
+          } catch (error) {
+            callbackError = error;
+            runRootObservationTelemetryOperation(
+              telemetryContext,
+              "error update",
+              (): void => rootObservation.updateOtelSpanAttributes({
+                level: "ERROR",
+                statusMessage: error instanceof Error ? error.message : String(error),
+                output: {
+                  result: "error",
+                  message: error instanceof Error ? error.message : String(error),
+                },
+              }),
+              dependencies.log,
+            );
+            throw error;
+          }
+          runRootObservationTelemetryOperation(
+            telemetryContext,
+            "success update",
+            (): void => rootObservation.updateOtelSpanAttributes({
+              output: {
+                result: "success",
+              },
+            }),
+            dependencies.log,
+          );
           return callbackResult;
-        } catch (error) {
-          callbackError = error;
-          rootObservation.updateOtelSpanAttributes({
-            level: "ERROR",
-            statusMessage: error instanceof Error ? error.message : String(error),
-            output: {
-              result: "error",
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
-          throw error;
         } finally {
-          rootObservation.end();
+          runRootObservationTelemetryOperation(
+            telemetryContext,
+            "end",
+            (): void => rootObservation.end(),
+            dependencies.log,
+          );
         }
       },
     );
@@ -436,12 +533,14 @@ export const startChatTranscriptionObservationWithDeps = async <TResult>(
     }
 
     if (callbackStarted && callbackCompleted) {
-      log({
+      dependencies.log({
         domain: "chat",
         action: "error",
         vendor: "openai",
         stage: "agent",
         requestId: params.requestId,
+        userId: params.userId,
+        workspaceId: params.workspaceId,
         error: `Langfuse telemetry failed after the chat transcription finished: ${error instanceof Error ? error.message : String(error)}`,
       });
       if (!callbackCompleted) {
@@ -450,12 +549,14 @@ export const startChatTranscriptionObservationWithDeps = async <TResult>(
       return callbackResult as TResult;
     }
 
-    log({
+    dependencies.log({
       domain: "chat",
       action: "error",
       vendor: "openai",
       stage: "agent",
       requestId: params.requestId,
+      userId: params.userId,
+      workspaceId: params.workspaceId,
       error: `Langfuse telemetry failed: ${error instanceof Error ? error.message : String(error)}`,
     });
     return await fn(null);

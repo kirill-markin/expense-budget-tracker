@@ -5,13 +5,28 @@ import {
   type ChatToolExecutionError,
   type ExecutedChatToolCall,
 } from "@/server/chat/openai/tooling/tools";
+import { log } from "@/server/logger";
+
+type ToolExecutorParams = Readonly<{
+  item: OpenAI.Responses.ResponseFunctionToolCall;
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  turnId: string;
+  rootObservation: LangfuseObservation | null;
+}>;
+
+type ToolTelemetryOperation = "update_attributes" | "update" | "end";
 
 type ToolExecutorDependencies = Readonly<{
   executeChatToolCall: typeof executeChatToolCall;
+  log: typeof log;
 }>;
 
 const DEFAULT_TOOL_EXECUTOR_DEPENDENCIES: ToolExecutorDependencies = {
   executeChatToolCall,
+  log,
 };
 
 const sanitizeToolOutputForTelemetry = (
@@ -37,6 +52,38 @@ const serializeThrownToolError = (
     message: String(error),
   };
 
+const logToolTelemetryError = (
+  params: ToolExecutorParams,
+  operation: ToolTelemetryOperation,
+  error: unknown,
+  logger: typeof log,
+): void => {
+  logger({
+    domain: "chat",
+    action: "error",
+    vendor: "openai",
+    stage: "agent",
+    error: `Langfuse tool observation ${operation} failed for ${params.item.name} (${params.item.call_id}): ${error instanceof Error ? error.message : String(error)}`,
+    requestId: params.requestId,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+  });
+};
+
+const runToolTelemetryOperation = (
+  params: ToolExecutorParams,
+  operation: ToolTelemetryOperation,
+  telemetryOperation: () => void,
+  logger: typeof log,
+): void => {
+  try {
+    telemetryOperation();
+  } catch (error) {
+    logToolTelemetryError(params, operation, error, logger);
+  }
+};
+
 /**
  * Executes a single local tool call and returns both the serialized tool
  * output and the canonical metadata later used for route invalidation.
@@ -45,14 +92,7 @@ const serializeThrownToolError = (
  * instead of in earlier streamed tool-call snapshots.
  */
 export const runOneToolCallWithDependencies = async (
-  params: Readonly<{
-    item: OpenAI.Responses.ResponseFunctionToolCall;
-    userId: string;
-    workspaceId: string;
-    sessionId: string;
-    turnId: string;
-    rootObservation: LangfuseObservation | null;
-  }>,
+  params: ToolExecutorParams,
   dependencies: ToolExecutorDependencies,
 ): Promise<ExecutedChatToolCall> => {
   const toolObservation = params.rootObservation?.startObservation(
@@ -87,42 +127,67 @@ export const runOneToolCallWithDependencies = async (
       );
     } catch (error) {
       const serializedError = serializeThrownToolError(error);
-      toolObservation?.updateOtelSpanAttributes({
+      runToolTelemetryOperation(
+        params,
+        "update_attributes",
+        (): void => toolObservation?.updateOtelSpanAttributes({
+          output: {
+            error: serializedError.message,
+          },
+          metadata: {
+            toolName: params.item.name,
+            toolCallId: params.item.call_id,
+            durationMs: String(Date.now() - startedAt),
+          },
+        }),
+        dependencies.log,
+      );
+      runToolTelemetryOperation(
+        params,
+        "update",
+        (): void => toolObservation?.update({
+          level: "ERROR",
+          statusMessage: formatToolErrorStatusMessage(serializedError),
+        }),
+        dependencies.log,
+      );
+      throw error;
+    }
+
+    runToolTelemetryOperation(
+      params,
+      "update_attributes",
+      (): void => toolObservation?.updateOtelSpanAttributes({
         output: {
-          error: serializedError.message,
+          output: sanitizeToolOutputForTelemetry(output.output),
         },
         metadata: {
           toolName: params.item.name,
           toolCallId: params.item.call_id,
           durationMs: String(Date.now() - startedAt),
         },
-      });
-      toolObservation?.update({
-        level: "ERROR",
-        statusMessage: formatToolErrorStatusMessage(serializedError),
-      });
-      throw error;
-    }
-
-    toolObservation?.updateOtelSpanAttributes({
-      output: {
-        output: sanitizeToolOutputForTelemetry(output.output),
-      },
-      metadata: {
-        toolName: params.item.name,
-        toolCallId: params.item.call_id,
-        durationMs: String(Date.now() - startedAt),
-      },
-    });
+      }),
+      dependencies.log,
+    );
     if (!output.succeeded) {
-      toolObservation?.update({
-        level: "ERROR",
-        statusMessage: formatToolErrorStatusMessage(output.error),
-      });
+      runToolTelemetryOperation(
+        params,
+        "update",
+        (): void => toolObservation?.update({
+          level: "ERROR",
+          statusMessage: formatToolErrorStatusMessage(output.error),
+        }),
+        dependencies.log,
+      );
     }
     return output;
   } finally {
-    toolObservation?.end();
+    runToolTelemetryOperation(
+      params,
+      "end",
+      (): void => toolObservation?.end(),
+      dependencies.log,
+    );
   }
 };
 
