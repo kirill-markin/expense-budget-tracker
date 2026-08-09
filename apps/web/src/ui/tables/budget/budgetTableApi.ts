@@ -167,6 +167,7 @@ export const fetchBudgetRange = async (
   planFrom: string,
   actualTo: string,
   refreshToken: string,
+  signal: AbortSignal,
 ): Promise<BudgetGridResult> => {
   const params = new URLSearchParams({
     monthFrom,
@@ -175,7 +176,7 @@ export const fetchBudgetRange = async (
     actualTo,
   });
   const url = buildLiveDataUrl("/api/budget-grid", params, refreshToken);
-  const response = await fetchLiveData(url);
+  const response = await fetchLiveData(url, { signal });
   if (!response.ok) {
     throw new Error(`Budget API error: ${response.status} ${await response.text()}`);
   }

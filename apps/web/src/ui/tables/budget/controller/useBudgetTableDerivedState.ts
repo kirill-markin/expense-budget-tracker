@@ -41,6 +41,8 @@ export type BudgetTableDerivedState = Readonly<{
 
 type UseBudgetTableDerivedStateParams = Readonly<{
   allRows: ReadonlyArray<BudgetRow>;
+  displayFrom: string;
+  displayTo: string;
   loadedFrom: string;
   loadedTo: string;
   cumBefore: CumulativeBefore;
@@ -52,6 +54,8 @@ type UseBudgetTableDerivedStateParams = Readonly<{
 
 export const useBudgetTableDerivedState = ({
   allRows,
+  displayFrom,
+  displayTo,
   loadedFrom,
   loadedTo,
   cumBefore,
@@ -61,6 +65,11 @@ export const useBudgetTableDerivedState = ({
   effectiveAllowlist,
 }: UseBudgetTableDerivedStateParams): BudgetTableDerivedState => {
   const months = useMemo<ReadonlyArray<string>>(
+    () => generateMonthRange(displayFrom, displayTo),
+    [displayFrom, displayTo],
+  );
+
+  const loadedMonths = useMemo<ReadonlyArray<string>>(
     () => generateMonthRange(loadedFrom, loadedTo),
     [loadedFrom, loadedTo],
   );
@@ -107,7 +116,7 @@ export const useBudgetTableDerivedState = ({
   const cumulativeBalances = useMemo<ReadonlyMap<string, CumulativeBalance>>(
     () =>
       computeCumulativeBalances(
-        months,
+        loadedMonths,
         incomeSubtotals,
         spendSubtotals,
         transferSubtotals,
@@ -116,12 +125,12 @@ export const useBudgetTableDerivedState = ({
         currentMonth,
         meb,
       ),
-    [months, incomeSubtotals, spendSubtotals, transferSubtotals, cumBefore, taintedMonths, currentMonth, meb],
+    [loadedMonths, incomeSubtotals, spendSubtotals, transferSubtotals, cumBefore, taintedMonths, currentMonth, meb],
   );
 
   const fxAdjustments = useMemo<ReadonlyMap<string, number>>(
-    () => computeFxAdjustments(months, incomeSubtotals, spendSubtotals, transferSubtotals, meb, currentMonth),
-    [months, incomeSubtotals, spendSubtotals, transferSubtotals, meb, currentMonth],
+    () => computeFxAdjustments(loadedMonths, incomeSubtotals, spendSubtotals, transferSubtotals, meb, currentMonth),
+    [loadedMonths, incomeSubtotals, spendSubtotals, transferSubtotals, meb, currentMonth],
   );
 
   const liquidityTiers = useMemo<ReadonlyArray<string>>(() => {
@@ -144,14 +153,14 @@ export const useBudgetTableDerivedState = ({
   const projectedLiqBalances = useMemo<ReadonlyMap<string, Readonly<Record<string, number>>>>(
     () =>
       computeCumulativeBalancesByLiquidity(
-        months,
+        loadedMonths,
         incomeSubtotals,
         spendSubtotals,
         transferSubtotals,
         currentMonth,
         mebByLiq,
       ),
-    [months, incomeSubtotals, spendSubtotals, transferSubtotals, currentMonth, mebByLiq],
+    [loadedMonths, incomeSubtotals, spendSubtotals, transferSubtotals, currentMonth, mebByLiq],
   );
 
   return {

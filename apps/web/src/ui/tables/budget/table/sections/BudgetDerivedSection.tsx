@@ -38,11 +38,24 @@ const getRemainderValueClass = (value: number, isTainted: boolean): string => {
   return Math.round(value) < 0 ? styles.remainderNegative : styles.remainderPositive;
 };
 
+const getLoadedCumulativeBalance = (
+  cumulativeBalances: ReadonlyMap<string, CumulativeBalance>,
+  month: string,
+): CumulativeBalance => {
+  const balance = cumulativeBalances.get(month);
+  if (balance === undefined) {
+    throw new RangeError(`Loaded budget month "${month}" is missing its cumulative balance`);
+  }
+  return balance;
+};
+
 export type BudgetDerivedSectionProps = Readonly<{
   effectiveAllowlist: ReadonlySet<string> | null;
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  loadedFrom: string;
+  loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   incomeSubtotals: ReadonlyMap<string, CellValue> | undefined;
   spendSubtotals: ReadonlyMap<string, CellValue> | undefined;
@@ -67,6 +80,8 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
     columnSequence,
     currentMonth,
     currentYear,
+    loadedFrom,
+    loadedTo,
     yearComputed,
     incomeSubtotals,
     spendSubtotals,
@@ -102,6 +117,8 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         columnSequence={columnSequence}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        loadedFrom={loadedFrom}
+        loadedTo={loadedTo}
         yearComputed={yearComputed}
         loadingKind="derived"
         showData={derivedVisibility.showData}
@@ -193,6 +210,8 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         columnSequence={columnSequence}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        loadedFrom={loadedFrom}
+        loadedTo={loadedTo}
         yearComputed={yearComputed}
         loadingKind="subtotal"
         showData={derivedVisibility.showData}
@@ -310,6 +329,8 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         columnSequence={columnSequence}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        loadedFrom={loadedFrom}
+        loadedTo={loadedTo}
         yearComputed={yearComputed}
         loadingKind="subtotal"
         showData={derivedVisibility.showData}
@@ -346,7 +367,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           );
         }}
         renderPastMonth={(month) => {
-          const balance = cumulativeBalances.get(month) as CumulativeBalance;
+          const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
             month,
@@ -366,7 +387,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           });
         }}
         renderFutureMonth={(month) => {
-          const balance = cumulativeBalances.get(month) as CumulativeBalance;
+          const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
             month,
@@ -386,7 +407,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           });
         }}
         renderCurrentMonth={(month) => {
-          const balance = cumulativeBalances.get(month) as CumulativeBalance;
+          const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
             month,
@@ -414,6 +435,8 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           columnSequence={columnSequence}
           currentMonth={currentMonth}
           currentYear={currentYear}
+          loadedFrom={loadedFrom}
+          loadedTo={loadedTo}
           yearComputed={yearComputed}
           numberFormat={numberFormat}
           showData={derivedVisibility.showData}
@@ -429,6 +452,8 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           columnSequence={columnSequence}
           currentMonth={currentMonth}
           currentYear={currentYear}
+          loadedFrom={loadedFrom}
+          loadedTo={loadedTo}
           yearComputed={yearComputed}
           loadingKind="derived"
           showData={derivedVisibility.showData}

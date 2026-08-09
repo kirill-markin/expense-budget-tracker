@@ -33,10 +33,15 @@
 }
 
 .scroll {
+  --budget-category-column-width: 180px;
+
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: 100%;
   overflow-x: auto;
   margin-top: 12px;
-  display: flex;
-  align-items: flex-start;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .scroll thead {
@@ -57,10 +62,22 @@
   font-size: 13px;
   line-height: 20px;
   white-space: nowrap;
-  min-width: 100%;
+  table-layout: fixed;
+  inline-size: calc(var(--budget-category-column-width) + var(--budget-values-inline-size));
+  min-inline-size: calc(var(--budget-category-column-width) + var(--budget-values-inline-size));
+}
+
+.categoryColumn {
+  inline-size: var(--budget-category-column-width);
+}
+
+.valueColumn {
+  inline-size: var(--budget-value-column-width);
 }
 
 .headCell {
+  box-sizing: border-box;
+  overflow: hidden;
   padding: 6px 10px;
   text-align: center;
   font-weight: 650;
@@ -68,6 +85,8 @@
 }
 
 .subHeadCell {
+  box-sizing: border-box;
+  overflow: hidden;
   padding: 2px 10px 6px;
   text-align: end;
   font-size: 11px;
@@ -79,6 +98,11 @@
 .stickyCol {
   position: sticky;
   inset-inline-start: 0;
+  box-sizing: border-box;
+  inline-size: var(--budget-category-column-width);
+  max-inline-size: var(--budget-category-column-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: var(--panel);
   z-index: 10;
 }
@@ -94,18 +118,10 @@
   content: "";
   position: absolute;
   top: 0;
-  inset-inline-end: -1px;
+  inset-inline-end: 0;
   bottom: 0;
   width: 1px;
   background: var(--panel-border);
-}
-
-.leftSpacer {
-  min-width: 150px;
-  font-size: 12px;
-  color: var(--muted);
-  text-align: center;
-  vertical-align: middle;
 }
 
 .directionRow {
@@ -131,10 +147,14 @@
 }
 
 .cell {
+  box-sizing: border-box;
+  inline-size: var(--budget-value-column-width);
+  max-inline-size: var(--budget-value-column-width);
+  overflow: hidden;
   padding: 4px 10px;
   text-align: end;
   font-variant-numeric: tabular-nums;
-  min-width: 90px;
+  text-overflow: clip;
 }
 
 .cellSubtotal {
@@ -223,6 +243,11 @@ tbody tr:last-child .currentMonthActual {
 .yearLoading {
   text-align: center;
   color: var(--muted);
+}
+
+.monthLoading {
+  color: var(--muted);
+  text-align: center;
 }
 
 .cellEditable:not(.data-masked),
@@ -663,7 +688,13 @@ tbody tr:last-child .currentMonthActual {
 
 @media (max-width: 768px) {
   .scroll {
-    padding-inline-start: 0;
+    --budget-category-column-width: 120px;
+  }
+
+  .directionLabel,
+  .categoryLabel,
+  .headCell {
+    padding-inline: 8px;
   }
 
   .popover {

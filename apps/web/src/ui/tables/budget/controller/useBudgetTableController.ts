@@ -22,6 +22,7 @@ import { useBudgetTableYearTotals } from "@/ui/tables/budget/controller/useBudge
 import { useBudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/useBudgetAdjustmentRowsController";
 import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import type { BudgetBaseLocalAcknowledgementByCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
+import { getBudgetDisplayRange } from "@/ui/tables/budget/budgetTableLogic";
 
 export type BudgetTableProps = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -44,6 +45,8 @@ export type BudgetTableController = Readonly<{
   localBaseAcknowledgementByCell: BudgetBaseLocalAcknowledgementByCell;
   currentMonth: string;
   currentYear: string;
+  loadedFrom: string;
+  loadedTo: string;
   months: ReadonlyArray<string>;
   blocks: ReadonlyArray<DirectionBlock>;
   columnSequence: ReadonlyArray<ColumnEntry>;
@@ -65,8 +68,6 @@ export type BudgetTableController = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   pendingSaves: number;
   budgetAdjustments: BudgetAdjustmentRowsController;
-  isLoadingLeft: boolean;
-  isLoadingRight: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
   drillDownFilter: DrillDownFilter | null;
   fxBreakdownMonth: string | null;
@@ -122,6 +123,8 @@ export const useBudgetTableController = (
 
   const currentMonth = useMemo(() => getCurrentMonth(), []);
   const currentYear = useMemo(() => getYear(currentMonth), [currentMonth]);
+  const displayRange = useMemo(() => getBudgetDisplayRange(currentMonth), [currentMonth]);
+  const [observedYearTotals, setObservedYearTotals] = useState<ReadonlySet<string>>(new Set());
   const resetYearTotalsRef = useRef<() => void>(() => undefined);
   const invalidateYearTotalsRef = useRef<(years: ReadonlySet<string>) => void>(
     () => undefined,
@@ -144,6 +147,8 @@ export const useBudgetTableController = (
 
   const rangeState = useBudgetTableRangeState({
     rows: props.rows,
+    displayMonthFrom: displayRange.monthFrom,
+    displayMonthTo: displayRange.monthTo,
     initialMonthFrom: props.initialMonthFrom,
     initialMonthTo: props.initialMonthTo,
     cumulativeBefore: props.cumulativeBefore,
@@ -151,13 +156,13 @@ export const useBudgetTableController = (
     monthEndBalancesByLiquidity: props.monthEndBalancesByLiquidity,
     businessPersonalTransfers: props.businessPersonalTransfers,
     hasBusinessAccount: props.hasBusinessAccount,
+    refreshToken: props.refreshToken,
     onVisibleRangeRefreshStart: handleVisibleRangeRefreshStart,
     loadBudgetRange: budgetAdjustments.loadRange,
   });
 
   const { yearComputed, invalidateYearTotals, resetYearTotals } = useBudgetTableYearTotals({
-    loadedFrom: rangeState.loadedFrom,
-    loadedTo: rangeState.loadedTo,
+    observedYears: observedYearTotals,
     currentMonth,
     effectiveAllowlist,
     refreshToken: props.refreshToken,
@@ -181,15 +186,27 @@ export const useBudgetTableController = (
     ],
   );
 
+  const handleYearTotalsObserved = useCallback((years: ReadonlySet<string>): void => {
+    setObservedYearTotals((previous) => {
+      const next = new Set(previous);
+      for (const year of years) {
+        next.add(year);
+      }
+      return next.size === previous.size ? previous : next;
+    });
+  }, []);
+
   const viewportState = useBudgetTableViewport({
     currentMonth,
     pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
-    onReachLeft: rangeState.loadLeft,
-    onReachRight: rangeState.loadRight,
+    onMonthsObserved: rangeState.requestVisibleMonths,
+    onYearTotalsObserved: handleYearTotalsObserved,
   });
 
   const derivedState = useBudgetTableDerivedState({
     allRows: rowsWithAdjustments,
+    displayFrom: displayRange.monthFrom,
+    displayTo: displayRange.monthTo,
     loadedFrom: rangeState.loadedFrom,
     loadedTo: rangeState.loadedTo,
     cumBefore: rangeState.cumBefore,
@@ -229,6 +246,8 @@ export const useBudgetTableController = (
       rangeState.localBaseAcknowledgementByCell,
     currentMonth,
     currentYear,
+    loadedFrom: rangeState.loadedFrom,
+    loadedTo: rangeState.loadedTo,
     months: derivedState.months,
     blocks: derivedState.blocks,
     columnSequence: derivedState.columnSequence,
@@ -250,8 +269,6 @@ export const useBudgetTableController = (
     yearComputed,
     pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
     budgetAdjustments,
-    isLoadingLeft: rangeState.isLoadingLeft,
-    isLoadingRight: rangeState.isLoadingRight,
     scrollRef: viewportState.scrollRef,
     drillDownFilter,
     fxBreakdownMonth,
