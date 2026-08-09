@@ -106,7 +106,11 @@ export type BudgetAdjustmentRowsControllerCommands = Readonly<{
   flushRow: (adjustmentId: string) => Promise<BudgetAdjustmentFlushOutcome>;
   recoverRow: (adjustmentId: string) => Promise<BudgetAdjustmentRecoveryOutcome>;
   requestDelete: (adjustmentId: string) => Promise<BudgetAdjustmentFlushOutcome>;
-  loadRange: (monthFrom: string, monthTo: string) => Promise<BudgetAdjustmentRangeLoadOutcome>;
+  loadRange: (
+    monthFrom: string,
+    monthTo: string,
+    signal: AbortSignal,
+  ) => Promise<BudgetAdjustmentRangeLoadOutcome>;
   refreshRow: (adjustmentId: string) => Promise<BudgetAdjustmentRangeLoadOutcome>;
   getRow: (
     adjustmentId: string,
@@ -151,7 +155,11 @@ export type BudgetAdjustmentRowsControllerDependencies = Readonly<{
     params: PatchBudgetAdjustmentParams,
   ) => Promise<BudgetAdjustment>;
   deleteAdjustment: (adjustmentId: string) => Promise<DeleteBudgetAdjustmentOutcome>;
-  fetchRange: (monthFrom: string, monthTo: string) => Promise<BudgetGridResult>;
+  fetchRange: (
+    monthFrom: string,
+    monthTo: string,
+    signal: AbortSignal,
+  ) => Promise<BudgetGridResult>;
   generateAdjustmentId: () => string;
   schedule: (callback: () => void, delayMs: number) => TimerHandle;
   cancelScheduled: (handle: TimerHandle) => void;
@@ -234,6 +242,7 @@ export const createBudgetAdjustmentRowsController = (
     dependencies.planFrom,
   );
   let disposed = false;
+  let lifecycleAbortController = new AbortController();
   let snapshot: BudgetAdjustmentRowsControllerState;
   const listeners = new Set<() => void>();
   const timers = new Map<string, TimerHandle>();
@@ -639,18 +648,21 @@ export const createBudgetAdjustmentRowsController = (
   const loadRange = async (
     monthFrom: string,
     monthTo: string,
+    signal: AbortSignal,
   ): Promise<BudgetAdjustmentRangeLoadOutcome> => {
     const disposedError = getDisposedError(
       `load budget adjustment range ${monthFrom}..${monthTo}`,
     );
     if (disposedError !== null) throw disposedError;
+    signal.throwIfAborted();
     const issued = issueBudgetAdjustmentRangeRequest(reconciliation, monthFrom, monthTo);
     reconciliation = issued.state;
     const rangeKey = getRangeKey(monthFrom, monthTo);
     pendingRangeCount += 1;
     publish();
     try {
-      const result = await dependencies.fetchRange(monthFrom, monthTo);
+      const result = await dependencies.fetchRange(monthFrom, monthTo, signal);
+      signal.throwIfAborted();
       const ambiguityRequirementsBeforeResponse =
         reconciliation.ambiguousRangeRequirementByAdjustmentId;
       const previousRows = reconciliation.rows;
@@ -705,6 +717,9 @@ export const createBudgetAdjustmentRowsController = (
       return accepted ? { status: "accepted", result } : { status: "superseded" };
     } catch (error: unknown) {
       reconciliation = reconcileBudgetAdjustmentRangeFailure(reconciliation, issued.request);
+      if (signal.aborted) {
+        throw error;
+      }
       if (!isRangeFailureSuperseded(
         reconciliation,
         issued.request.requestId,
@@ -747,6 +762,7 @@ export const createBudgetAdjustmentRowsController = (
         requirement.sourceMonth > requirement.targetMonth
           ? requirement.sourceMonth
           : requirement.targetMonth,
+        lifecycleAbortController.signal,
       );
     }
     const row = reconciliation.rows.find((candidate): boolean =>
@@ -764,7 +780,11 @@ export const createBudgetAdjustmentRowsController = (
     const monthTo = row.confirmed.month > draftMonth
       ? row.confirmed.month
       : draftMonth;
-    return loadRange(monthFrom, monthTo);
+    return loadRange(
+      monthFrom,
+      monthTo,
+      lifecycleAbortController.signal,
+    );
   };
 
   const recoverRow = (
@@ -960,6 +980,7 @@ export const createBudgetAdjustmentRowsController = (
     commands,
     activate: (): void => {
       if (!disposed) return;
+      lifecycleAbortController = new AbortController();
       if (suspendedInvalidationYears.size > 0) {
         dependencies.invalidateYears(new Set(suspendedInvalidationYears));
         suspendedInvalidationYears.clear();
@@ -976,6 +997,7 @@ export const createBudgetAdjustmentRowsController = (
     dispose: (): void => {
       if (disposed) return;
       disposed = true;
+      lifecycleAbortController.abort();
       for (const [adjustmentId, handle] of timers) {
         suspendedAutosaveIds.add(adjustmentId);
         dependencies.cancelScheduled(handle);
