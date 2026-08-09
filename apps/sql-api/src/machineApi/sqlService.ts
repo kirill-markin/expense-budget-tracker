@@ -147,6 +147,10 @@ export const getSqlPolicyInstructions = (
     return "Dollar-quoted strings are not allowed. Use regular single-quoted literals.";
   }
 
+  if (error.code === "escape_string_literals_not_allowed") {
+    return "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.";
+  }
+
   return "Fix the SQL statement and retry. Use only supported relations.";
 };
 
