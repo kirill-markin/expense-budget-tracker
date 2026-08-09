@@ -39,9 +39,9 @@ export const computeEffectiveValue = (
 
 /**
  * Sorts categories by effective value for the current year, descending.
- * When maskedCategories is non-empty, visible categories come first,
- * then masked ones - each group sorted by effective value independently.
- * Stable sort preserves relative order for equal values.
+ * Visible categories come first and masked categories retain their source order.
+ * Effective values are not computed for masked categories.
+ * Stable sort preserves relative order for equal visible values.
  */
 export const sortCategoriesByEffectiveValue = (
   categories: ReadonlyArray<string>,
@@ -50,16 +50,16 @@ export const sortCategoriesByEffectiveValue = (
   currentMonth: string,
   maskedCategories: ReadonlySet<string>,
 ): ReadonlyArray<string> => {
-  const withValues = [...categories].map((category) => ({
-    category,
-    value: computeEffectiveValue(cells, category, currentYearMonths, currentMonth),
-    isMasked: maskedCategories.has(category),
-  }));
-  withValues.sort((a, b) => {
-    if (a.isMasked !== b.isMasked) return a.isMasked ? 1 : -1;
-    return b.value - a.value;
-  });
-  return withValues.map((entry) => entry.category);
+  const visibleWithValues = categories
+    .filter((category) => !maskedCategories.has(category))
+    .map((category) => ({
+      category,
+      value: computeEffectiveValue(cells, category, currentYearMonths, currentMonth),
+    }));
+  visibleWithValues.sort((a, b) => b.value - a.value);
+
+  const masked = categories.filter((category) => maskedCategories.has(category));
+  return [...visibleWithValues.map((entry) => entry.category), ...masked];
 };
 
 /**
@@ -67,7 +67,7 @@ export const sortCategoriesByEffectiveValue = (
  * Categories are sorted by effective value for the current year (descending):
  * past months use actual, current and future months use planned.
  * When an allowlist is active, visible (allowed) categories
- * are sorted first, then masked ones - each group by effective value.
+ * are sorted first, then masked ones in their original encounter order.
  */
 export const buildBlocks = (
   rows: ReadonlyArray<BudgetRow>,
