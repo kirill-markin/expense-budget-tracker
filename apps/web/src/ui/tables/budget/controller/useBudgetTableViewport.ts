@@ -4,13 +4,15 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { RefObject } from "react";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 
-const SCROLL_THRESHOLD = 200;
+const HORIZONTAL_PREFETCH_MARGIN = "0px 600px 0px 600px";
+const MONTH_OBSERVATION_ATTRIBUTE = "data-budget-month";
+const YEAR_OBSERVATION_ATTRIBUTE = "data-budget-year-total";
 
 type UseBudgetTableViewportParams = Readonly<{
   currentMonth: string;
   pendingSaves: number;
-  onReachLeft: () => Promise<void>;
-  onReachRight: () => Promise<void>;
+  onMonthsObserved: (monthFrom: string, monthTo: string) => void;
+  onYearTotalsObserved: (years: ReadonlySet<string>) => void;
 }>;
 
 export type BudgetTableViewportState = Readonly<{
@@ -21,43 +23,11 @@ export type BudgetTableViewportState = Readonly<{
 export const useBudgetTableViewport = ({
   currentMonth,
   pendingSaves,
-  onReachLeft,
-  onReachRight,
+  onMonthsObserved,
+  onYearTotalsObserved,
 }: UseBudgetTableViewportParams): BudgetTableViewportState => {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const prevScrollWidthRef = useRef<number>(0);
-  const isPrependingRef = useRef<boolean>(false);
   const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
-
-  const markPrependPending = useCallback((): void => {
-    if (isPrependingRef.current) {
-      return;
-    }
-
-    const scrollElement = scrollRef.current;
-    if (scrollElement === null) {
-      return;
-    }
-
-    prevScrollWidthRef.current = scrollElement.scrollWidth;
-    isPrependingRef.current = true;
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!isPrependingRef.current) {
-      return;
-    }
-
-    isPrependingRef.current = false;
-
-    const scrollElement = scrollRef.current;
-    if (scrollElement === null) {
-      return;
-    }
-
-    const scrollDelta = scrollElement.scrollWidth - prevScrollWidthRef.current;
-    scrollElement.scrollLeft += isRtl ? -scrollDelta : scrollDelta;
-  });
 
   const scrollToCurrentMonth = useCallback((): void => {
     const scrollElement = scrollRef.current;
@@ -107,36 +77,53 @@ export const useBudgetTableViewport = ({
       return;
     }
 
-    let rafId = 0;
-    const handleScroll = (): void => {
-      if (rafId !== 0) {
-        return;
-      }
+    const intersectingMonths = new Set<string>();
+    const intersectingYears = new Set<string>();
+    const observer = new IntersectionObserver(
+      (entries): void => {
+        for (const entry of entries) {
+          const target = entry.target as HTMLElement;
+          const month = target.getAttribute(MONTH_OBSERVATION_ATTRIBUTE);
+          const year = target.getAttribute(YEAR_OBSERVATION_ATTRIBUTE);
 
-      rafId = requestAnimationFrame(() => {
-        rafId = 0;
-        const scrollStart = isRtl ? -scrollElement.scrollLeft : scrollElement.scrollLeft;
-        const scrollEnd =
-          scrollElement.scrollWidth - Math.abs(scrollElement.scrollLeft) - scrollElement.clientWidth;
-
-        if (scrollStart < SCROLL_THRESHOLD) {
-          markPrependPending();
-          void onReachLeft();
+          if (month !== null) {
+            if (entry.isIntersecting) {
+              intersectingMonths.add(month);
+            } else {
+              intersectingMonths.delete(month);
+            }
+          }
+          if (year !== null) {
+            if (entry.isIntersecting) {
+              intersectingYears.add(year);
+            } else {
+              intersectingYears.delete(year);
+            }
+          }
         }
-        if (scrollEnd < SCROLL_THRESHOLD) {
-          void onReachRight();
-        }
-      });
-    };
 
-    scrollElement.addEventListener("scroll", handleScroll, { passive: true });
-    return () => {
-      scrollElement.removeEventListener("scroll", handleScroll);
-      if (rafId !== 0) {
-        cancelAnimationFrame(rafId);
-      }
-    };
-  }, [isRtl, markPrependPending, onReachLeft, onReachRight]);
+        if (intersectingMonths.size > 0) {
+          const visibleMonths = [...intersectingMonths].sort();
+          onMonthsObserved(visibleMonths[0], visibleMonths[visibleMonths.length - 1]);
+        }
+        if (intersectingYears.size > 0) {
+          onYearTotalsObserved(new Set(intersectingYears));
+        }
+      },
+      {
+        root: scrollElement,
+        rootMargin: HORIZONTAL_PREFETCH_MARGIN,
+      },
+    );
+
+    for (const target of scrollElement.querySelectorAll<HTMLElement>(
+      `[${MONTH_OBSERVATION_ATTRIBUTE}], [${YEAR_OBSERVATION_ATTRIBUTE}]`,
+    )) {
+      observer.observe(target);
+    }
+
+    return () => observer.disconnect();
+  }, [onMonthsObserved, onYearTotalsObserved]);
 
   useEffect(() => {
     const scrollElement = scrollRef.current;

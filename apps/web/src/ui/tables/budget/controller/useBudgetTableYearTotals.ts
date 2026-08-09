@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ColumnEntry, YearFetchResult, YearTotalComputed } from "@/ui/tables/budget/budgetTableLogic";
-import { buildColumnSequence, computeYearTotal } from "@/ui/tables/budget/budgetTableLogic";
-import { generateMonthRange } from "@/lib/monthUtils";
+import type { YearFetchResult, YearTotalComputed } from "@/ui/tables/budget/budgetTableLogic";
+import { computeYearTotal } from "@/ui/tables/budget/budgetTableLogic";
 import { fetchBudgetRange } from "@/ui/tables/budget/budgetTableApi";
 import { logBudgetTableError } from "@/ui/tables/budget/table/logBudgetTableError";
 
@@ -14,18 +13,48 @@ export type BudgetTableYearTotalsState = Readonly<{
 }>;
 
 type UseBudgetTableYearTotalsParams = Readonly<{
-  loadedFrom: string;
-  loadedTo: string;
+  observedYears: ReadonlySet<string>;
   currentMonth: string;
   effectiveAllowlist: ReadonlySet<string> | null;
   refreshToken: string;
 }>;
 
-const getVisibleYearColumns = (
-  loadedFrom: string,
-  loadedTo: string,
-): ReadonlyArray<ColumnEntry> =>
-  buildColumnSequence(generateMonthRange(loadedFrom, loadedTo)).filter((column) => column.kind === "year-total");
+export type YearTotalRequest = Readonly<{
+  monthFrom: string;
+  monthTo: string;
+  planFrom: string;
+  actualTo: string;
+}>;
+
+export const buildYearTotalRequest = (
+  year: string,
+  currentMonth: string,
+): YearTotalRequest => ({
+  monthFrom: `${year}-01`,
+  monthTo: `${year}-12`,
+  planFrom: `${year}-01`,
+  actualTo: currentMonth,
+});
+
+export const getObservedYearsToFetch = (
+  observedYears: ReadonlySet<string>,
+  fetchedYears: ReadonlySet<string>,
+  fetchingRevisionByYear: ReadonlyMap<string, number>,
+  revisionByYear: ReadonlyMap<string, number>,
+): ReadonlyArray<Readonly<{ year: string; revision: number }>> => (
+  [...observedYears]
+    .sort()
+    .flatMap((year): ReadonlyArray<Readonly<{ year: string; revision: number }>> => {
+      const revision = revisionByYear.get(year) ?? 0;
+      if (
+        fetchedYears.has(year)
+        || fetchingRevisionByYear.get(year) === revision
+      ) {
+        return [];
+      }
+      return [{ year, revision }];
+    })
+);
 
 export const removeInvalidatedYearFetchResults = (
   previous: ReadonlyMap<string, YearFetchResult>,
@@ -43,8 +72,7 @@ export const snapshotYearTotalInvalidation = (
 ): ReadonlySet<string> => new Set(years);
 
 export const useBudgetTableYearTotals = ({
-  loadedFrom,
-  loadedTo,
+  observedYears,
   currentMonth,
   effectiveAllowlist,
   refreshToken,
@@ -52,25 +80,24 @@ export const useBudgetTableYearTotals = ({
   const [yearFetchResults, setYearFetchResults] = useState<ReadonlyMap<string, YearFetchResult>>(new Map());
   const yearFetchingRef = useRef<Map<string, number>>(new Map());
   const yearRevisionRef = useRef<Map<string, number>>(new Map());
-  const visibleYearColumns = useMemo<ReadonlyArray<ColumnEntry>>(
-    () => getVisibleYearColumns(loadedFrom, loadedTo),
-    [loadedFrom, loadedTo],
-  );
 
   useEffect(() => {
-    for (const column of visibleYearColumns) {
-      if (column.kind !== "year-total") {
-        continue;
-      }
-
-      const { year } = column;
-      const revision = yearRevisionRef.current.get(year) ?? 0;
-      if (yearFetchResults.has(year) || yearFetchingRef.current.get(year) === revision) {
-        continue;
-      }
-
+    const yearsToFetch = getObservedYearsToFetch(
+      observedYears,
+      new Set(yearFetchResults.keys()),
+      yearFetchingRef.current,
+      yearRevisionRef.current,
+    );
+    for (const { year, revision } of yearsToFetch) {
       yearFetchingRef.current.set(year, revision);
-      fetchBudgetRange(`${year}-01`, `${year}-12`, `${year}-01`, currentMonth, refreshToken)
+      const request = buildYearTotalRequest(year, currentMonth);
+      fetchBudgetRange(
+        request.monthFrom,
+        request.monthTo,
+        request.planFrom,
+        request.actualTo,
+        refreshToken,
+      )
         .then((result) => {
           if ((yearRevisionRef.current.get(year) ?? 0) !== revision) {
             return;
@@ -98,7 +125,7 @@ export const useBudgetTableYearTotals = ({
           }
         });
     }
-  }, [currentMonth, refreshToken, visibleYearColumns, yearFetchResults]);
+  }, [currentMonth, observedYears, refreshToken, yearFetchResults]);
 
   const yearComputed = useMemo<ReadonlyMap<string, YearTotalComputed>>(() => {
     const result = new Map<string, YearTotalComputed>();
@@ -133,12 +160,10 @@ export const useBudgetTableYearTotals = ({
     const years = new Set<string>([
       ...yearFetchResults.keys(),
       ...yearFetchingRef.current.keys(),
-      ...visibleYearColumns
-        .filter((column) => column.kind === "year-total")
-        .map((column) => column.kind === "year-total" ? column.year : ""),
+      ...observedYears,
     ]);
     invalidateYearTotals(years);
-  }, [invalidateYearTotals, visibleYearColumns, yearFetchResults]);
+  }, [invalidateYearTotals, observedYears, yearFetchResults]);
 
   return {
     yearComputed,
