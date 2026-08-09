@@ -44,6 +44,20 @@ test("execQuery rejects function calls before reaching the database", async (): 
   );
 });
 
+test("execQuery explains how to replace PostgreSQL escape strings", async (): Promise<void> => {
+  await assert.rejects(
+    () => execQuery("SELECT E'value' FROM ledger_entries", {
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    }),
+    (error: unknown) =>
+      error instanceof Error
+      && error.message === "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.",
+  );
+});
+
 test("execQuery rejects SELECT-only mutation targets before database or mutation lock entry", async (): Promise<void> => {
   let userContextCount = 0;
   let restrictedContextCount = 0;

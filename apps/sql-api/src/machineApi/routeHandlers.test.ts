@@ -94,3 +94,40 @@ test("handleSqlRoute rejects SELECT-only mutations before workspace resolution",
   assert.equal(trustedQueryCount, 0);
   assert.equal(restrictedContextCount, 0);
 });
+
+test("handleSqlRoute explains how to replace PostgreSQL escape strings", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  const context: MachineRouteContext = {
+    ...createContext(),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({ sql: "SELECT E'value' FROM ledger_entries" }),
+      headers: { Host: "api.example.com" },
+      httpMethod: "POST",
+      path: "/v1/sql",
+      resource: "/sql",
+    }),
+  };
+
+  const response = await handleSqlRouteWithWorkspaceResolver(
+    context,
+    async (): Promise<string> => {
+      workspaceResolutionCount += 1;
+      return "workspace-1";
+    },
+  );
+  const payload = JSON.parse(response.body) as {
+    instructions: string;
+    error: Readonly<{ code: string; message: string }>;
+  };
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(payload.error, {
+    code: "escape_string_literals_not_allowed",
+    message: "PostgreSQL escape string literals are not allowed",
+  });
+  assert.equal(
+    payload.instructions,
+    "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.",
+  );
+  assert.equal(workspaceResolutionCount, 0);
+});
