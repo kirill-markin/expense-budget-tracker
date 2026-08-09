@@ -2,11 +2,12 @@
  * Agent-facing SQL execution on app.* using the shared SQL policy.
  */
 import {
-  executeExpenseSql,
+  executeValidatedExpenseSql,
   getAllowedRelationNames,
   MAX_SQL_ROWS,
   SQL_STATEMENT_TIMEOUT_MS,
   type AllowedRelationName,
+  type ValidatedExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { withRestrictedTrustedIdentityContext } from "@/server/db";
 import { type AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
@@ -140,15 +141,15 @@ export const getUserSqlExecutionMessage = (error: unknown): string => {
 export const executeAgentSql = async (
   authenticated: AgentAuthenticatedRequest,
   workspaceId: string,
-  sql: string,
+  validated: ValidatedExpenseSql,
 ): Promise<AgentSqlResult | null> => {
   const workspace = await getWorkspaceForTrustedIdentity(authenticated.identity, workspaceId);
   if (workspace === null) {
     return null;
   }
 
-  const result = await executeExpenseSql(
-    sql,
+  const result = await executeValidatedExpenseSql(
+    validated,
     async (validatedSql) => withRestrictedTrustedIdentityContext(
       authenticated.identity,
       workspaceId,

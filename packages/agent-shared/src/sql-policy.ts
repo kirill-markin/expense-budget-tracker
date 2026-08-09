@@ -74,6 +74,16 @@ export type AllowedRelationName = typeof ALLOWED_RELATION_NAMES[number];
 
 const ALLOWED_RELATIONS: ReadonlySet<string> = new Set(ALLOWED_RELATION_NAMES);
 
+const READ_ONLY_RELATION_NAMES: ReadonlyArray<AllowedRelationName> = [
+  "accounts",
+  "fx_rates_raw",
+  "fx_rates_daily",
+] as const;
+
+const READ_ONLY_RELATIONS: ReadonlySet<AllowedRelationName> = new Set<AllowedRelationName>(
+  READ_ONLY_RELATION_NAMES,
+);
+
 type SqlToken = Readonly<{
   kind: "word" | "punct";
   value: string;
@@ -92,6 +102,13 @@ type CteDefinition = Readonly<{
   bodyEndIndex: number;
 }>;
 
+type MutationOperation = "INSERT" | "UPDATE" | "DELETE";
+
+type MutationTarget = Readonly<{
+  operation: MutationOperation;
+  relationName: AllowedRelationName;
+}>;
+
 type SqlPolicyErrorCode =
   | "unsupported_statement"
   | "on_conflict_not_allowed"
@@ -103,7 +120,9 @@ type SqlPolicyErrorCode =
   | "escape_string_literals_not_allowed"
   | "unterminated_string_literal"
   | "invalid_relation_reference"
-  | "relation_not_allowed";
+  | "relation_not_allowed"
+  | "recursive_cte_search_cycle_not_allowed"
+  | "read_only_relation_mutation_not_allowed";
 
 export class SqlPolicyError extends Error {
   readonly code: SqlPolicyErrorCode;
@@ -666,6 +685,15 @@ const parseCteDefinitions = (
     });
 
     index = bodyCloseIndex + 1;
+    if (
+      isRecursive
+      && (tokens[index]?.lower === "search" || tokens[index]?.lower === "cycle")
+    ) {
+      fail(
+        "recursive_cte_search_cycle_not_allowed",
+        "Recursive CTE SEARCH and CYCLE clauses are not supported in restricted SQL",
+      );
+    }
     if (tokens[index]?.value === ",") {
       index++;
       continue;
@@ -808,6 +836,77 @@ const collectReferencedRelationsFromWithClause = (
   return Array.from(relations);
 };
 
+const collectMutationTarget = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  operation: MutationOperation,
+): MutationTarget => {
+  const targetStartIndex = tokens[startIndex]?.lower === "only" ? startIndex + 1 : startIndex;
+  const reference = parseRelationName(tokens, targetStartIndex);
+  if (!ALLOWED_RELATIONS.has(reference.relationName)) {
+    fail("relation_not_allowed", `Relation ${reference.relationName} is not allowed`);
+  }
+
+  return {
+    operation,
+    relationName: asAllowedRelationName(reference.relationName),
+  };
+};
+
+const collectMutationTargetsFromSegment = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): ReadonlyArray<MutationTarget> => {
+  if (startIndex >= endIndex) {
+    return [];
+  }
+
+  const firstToken = tokens[startIndex];
+  if (firstToken === undefined || firstToken.kind !== "word") {
+    return [];
+  }
+
+  if (firstToken.lower === "insert" && tokens[startIndex + 1]?.lower === "into") {
+    return [collectMutationTarget(tokens, startIndex + 2, "INSERT")];
+  }
+
+  if (firstToken.lower === "update") {
+    return [collectMutationTarget(tokens, startIndex + 1, "UPDATE")];
+  }
+
+  if (firstToken.lower === "delete" && tokens[startIndex + 1]?.lower === "from") {
+    return [collectMutationTarget(tokens, startIndex + 2, "DELETE")];
+  }
+
+  if (firstToken.lower !== "with") {
+    return [];
+  }
+
+  const { ctes, mainQueryStartIndex } = parseCteDefinitions(tokens, startIndex, endIndex);
+  const targets: Array<MutationTarget> = [];
+  for (const cte of ctes) {
+    targets.push(...collectMutationTargetsFromSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex));
+  }
+  targets.push(...collectMutationTargetsFromSegment(tokens, mainQueryStartIndex, endIndex));
+  return targets;
+};
+
+const assertMutationTargetsAreWritable = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): void => {
+  for (const target of collectMutationTargetsFromSegment(tokens, startIndex, endIndex)) {
+    if (READ_ONLY_RELATIONS.has(target.relationName)) {
+      fail(
+        "read_only_relation_mutation_not_allowed",
+        `Relation ${target.relationName} is SELECT-only and cannot be targeted by ${target.operation} in restricted SQL`,
+      );
+    }
+  }
+};
+
 const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationName> => {
   const sanitizedSql = sanitizeSqlForTokenization(sql);
   if (containsOnConflict(sanitizedSql)) {
@@ -887,6 +986,7 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
     fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
   }
   const tokens = tokenizeSql(sanitizedSql);
+  assertMutationTargetsAreWritable(tokens, 0, tokens.length);
   assertOnlyAllowedFunctionCallsInSegment(tokens, 0, tokens.length);
 
   return {
@@ -909,11 +1009,10 @@ export const validateExpenseSql = (sql: string): ValidatedExpenseSql => {
   };
 };
 
-export const executeExpenseSql = async (
-  sql: string,
+export const executeValidatedExpenseSql = async (
+  validated: ValidatedExpenseSql,
   execute: (validatedSql: string) => Promise<RestrictedSqlQueryResult>,
 ): Promise<ExecutedExpenseSql> => {
-  const validated = validateExpenseSql(sql);
   const statements: Array<ExecutedExpenseSqlStatement> = [];
 
   for (const statement of validated.statements) {
@@ -939,3 +1038,8 @@ export const executeExpenseSql = async (
     statements,
   };
 };
+
+export const executeExpenseSql = async (
+  sql: string,
+  execute: (validatedSql: string) => Promise<RestrictedSqlQueryResult>,
+): Promise<ExecutedExpenseSql> => executeValidatedExpenseSql(validateExpenseSql(sql), execute);

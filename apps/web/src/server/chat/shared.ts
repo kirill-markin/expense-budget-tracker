@@ -333,6 +333,12 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
   if (error.code === "relation_not_allowed") {
     return new Error(`${error.message} in chat queries`);
   }
+  if (error.code === "recursive_cte_search_cycle_not_allowed") {
+    return new Error("Recursive CTE SEARCH and CYCLE clauses are not supported in chat queries. Rewrite the CTE without those clauses");
+  }
+  if (error.code === "read_only_relation_mutation_not_allowed") {
+    return new Error(`${error.message}. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata`);
+  }
   return new Error(error.message);
 };
 
