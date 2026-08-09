@@ -1,5 +1,7 @@
 export type CellVisibility = Readonly<{ showData: boolean; maskClass: string }>;
 
+export const MASKED_CELL_PLACEHOLDER = "0";
+
 /**
  * Returns visibility for a cell given the current allowlist.
  * allowlist=null means "show all" (All mode).

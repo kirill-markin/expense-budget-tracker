@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
+import { MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import type { BudgetAdjustmentDirection } from "@/server/budget/budgetAdjustments";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
@@ -1122,14 +1123,15 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       ref={cellRef}
       className={cn(
         styles.cell,
-        styles.cellEditable,
+        showData ? styles.cellEditable : "",
         cmClass,
         maskClass,
-        taintedClass,
-        isPlanOver ? tableStateStyles.over : "",
+        showData ? taintedClass : "",
+        showData && isPlanOver ? tableStateStyles.over : "",
       )}
       data-testid={showData ? `budget-plan-cell-${editorId}` : undefined}
     >
+      {!showData && MASKED_CELL_PLACEHOLDER}
       {showData && (
         <button
           ref={triggerButtonRef}

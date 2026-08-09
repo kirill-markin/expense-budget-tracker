@@ -10,6 +10,7 @@ import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import {
   renderColumnCells,
   renderDerivedYearLoadingCells,
+  renderMaskedYearCells,
   renderSubtotalYearLoadingCells,
 } from "../shared";
 
@@ -26,6 +27,8 @@ type MetricRowProps = Readonly<{
   renderFutureMonth: (month: string) => ReactElement;
   renderCurrentMonth: (month: string) => ReactElement;
   loadingKind: "subtotal" | "derived";
+  showData: boolean;
+  maskClass: string;
   rowClassName: string;
 }>;
 
@@ -44,8 +47,17 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
     renderFutureMonth,
     renderCurrentMonth,
     loadingKind,
+    showData,
+    maskClass,
   } = props;
-  const renderLoading = loadingKind === "subtotal" ? renderSubtotalYearLoadingCells : renderDerivedYearLoadingCells;
+  const renderVisibleLoading = loadingKind === "subtotal"
+    ? renderSubtotalYearLoadingCells
+    : renderDerivedYearLoadingCells;
+  const renderLoading = (year: string, isCurrentYear: boolean): ReactElement => (
+    showData
+      ? renderVisibleLoading(year, isCurrentYear)
+      : renderMaskedYearCells(year, isCurrentYear, maskClass)
+  );
 
   return (
     <tr className={rowClassName}>
