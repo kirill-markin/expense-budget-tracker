@@ -1,0 +1,138 @@
+name: Pull Request
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pull-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  quality_gate:
+    name: PR Quality Gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    outputs:
+      auth_tests: ${{ steps.changes.outputs.auth_tests }}
+      shared_tests: ${{ steps.changes.outputs.shared_tests }}
+      sql_api_tests: ${{ steps.changes.outputs.sql_api_tests }}
+      web_tests: ${{ steps.changes.outputs.web_tests }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Detect relevant changes
+        id: changes
+        uses: dorny/paths-filter@v4.0.2
+        with:
+          filters: |
+            code:
+              - 'apps/**'
+              - 'packages/**'
+              - 'infra/**'
+              - '.github/workflows/pull-request.yml'
+              - '.npmrc'
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+            auth_tests:
+              - 'apps/auth/**'
+              - 'packages/agent-shared/**'
+              - '.github/workflows/pull-request.yml'
+              - '.npmrc'
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+            sql_api_tests:
+              - 'apps/sql-api/**'
+              - 'packages/agent-shared/**'
+              - '.github/workflows/pull-request.yml'
+              - '.npmrc'
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+            web_tests:
+              - 'apps/web/**'
+              - 'packages/agent-shared/**'
+              - '.github/workflows/pull-request.yml'
+              - '.npmrc'
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+            shared_tests:
+              - 'packages/agent-shared/**'
+              - '.github/workflows/pull-request.yml'
+              - '.npmrc'
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+
+      - uses: actions/setup-node@v7.0.0
+        if: steps.changes.outputs.code == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Set up npm
+        if: steps.changes.outputs.code == 'true'
+        run: npm install --global "$(node -p "require('./package.json').packageManager")"
+
+      - name: Install dependencies
+        if: steps.changes.outputs.code == 'true'
+        run: npm ci
+
+      - name: Lint
+        if: steps.changes.outputs.code == 'true'
+        run: npm run lint --workspaces --if-present
+
+  extended_unit_tests:
+    name: Extended Unit Tests
+    needs: quality_gate
+    if: >-
+      ${{
+        !cancelled()
+        && (
+          needs.quality_gate.outputs.auth_tests == 'true'
+          || needs.quality_gate.outputs.shared_tests == 'true'
+          || needs.quality_gate.outputs.sql_api_tests == 'true'
+          || needs.quality_gate.outputs.web_tests == 'true'
+        )
+      }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Set up npm
+        run: npm install --global "$(node -p "require('./package.json').packageManager")"
+
+      - name: Install dependencies
+        id: install
+        run: npm ci
+
+      - name: Run auth unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
+        run: npm --workspace expense-tracker-auth run test
+
+      - name: Run SQL API unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.sql_api_tests == 'true' }}
+        run: npm --workspace expense-budget-tracker-sql-api run test
+
+      - name: Run web unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.web_tests == 'true' }}
+        run: npm --workspace expense-budget-tracker-web run test
+
+      - name: Run shared unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.shared_tests == 'true' }}
+        run: npm --workspace @expense-budget-tracker/agent-shared run test

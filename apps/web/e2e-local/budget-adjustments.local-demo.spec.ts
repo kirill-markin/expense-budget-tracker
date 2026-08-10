@@ -165,7 +165,9 @@ const captureBudgetYearTotalRequests = (
   page.on("request", captureRequest);
   return {
     getRequests: (): ReadonlyArray<Request> => [...requests],
-    stop: (): void => page.off("request", captureRequest),
+    stop: (): void => {
+      page.off("request", captureRequest);
+    },
   };
 };
 

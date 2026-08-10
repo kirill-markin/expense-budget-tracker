@@ -7,7 +7,9 @@
     "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "prelint": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "build": "rm -rf dist && tsc",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1097.0",

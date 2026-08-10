@@ -4,10 +4,12 @@
   "private": true,
   "scripts": {
     "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "prelint": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "presynth": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "predeploy": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "prediff": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "build": "tsc",
+    "lint": "tsc --noEmit",
     "cdk": "cdk",
     "deploy": "cdk deploy --all",
     "destroy": "cdk destroy --all",
