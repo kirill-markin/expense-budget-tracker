@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { LangfuseObservation } from "@langfuse/tracing";
+import { propagateAttributes, type LangfuseObservation } from "@langfuse/tracing";
 import {
   sanitizeLangfuseSerializedTelemetry,
   startChatTranscriptionObservationWithDeps,
@@ -98,9 +98,8 @@ const createObservationDependencies = (
   observation: LangfuseObservation,
   logger: StartObservationDependencies["log"],
 ): StartObservationDependencies => ({
-  createTraceId: (() => TRACE_ID) as StartObservationDependencies["createTraceId"],
-  propagateAttributes: (async (_attributes, callback): Promise<unknown> =>
-    await callback()) as StartObservationDependencies["propagateAttributes"],
+  createTraceId: async (): Promise<string> => TRACE_ID,
+  propagateAttributes,
   startObservation: (() => observation) as StartObservationDependencies["startObservation"],
   log: logger,
 });

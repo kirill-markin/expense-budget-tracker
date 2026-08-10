@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { LangfuseObservation } from "@langfuse/tracing";
+import type { LangfuseObservation, LangfuseTool } from "@langfuse/tracing";
 import { runOneToolCallWithDependencies } from "./toolExecutor";
 import type { ExecutedChatToolCall } from "./tools";
 
 type ToolExecutorParams = Parameters<typeof runOneToolCallWithDependencies>[0];
 type ToolExecutorDependencies = Parameters<typeof runOneToolCallWithDependencies>[1];
-type ObservationUpdate = Parameters<LangfuseObservation["update"]>[0];
+type ObservationUpdate = Parameters<LangfuseTool["update"]>[0];
 type ObservationOtelUpdate = Parameters<LangfuseObservation["updateOtelSpanAttributes"]>[0];
 type ObservationLifecycleEvent = "attributes" | "update" | "end";
 type ToolExecutorLogEvent = Parameters<ToolExecutorDependencies["log"]>[0];
@@ -298,7 +298,7 @@ test("thrown tool failures survive all observation update and end failures", asy
     ["request-1", "request-1", "request-1"],
   );
   assert.deepEqual(
-    logEvents.map((event): string | null => "error" in event ? event.error : null),
+    logEvents.map((event): string | null => "error" in event ? event.error ?? null : null),
     [
       `Langfuse tool observation update_attributes failed for query_database (tool-call-1): ${attributesError.message}`,
       `Langfuse tool observation update failed for query_database (tool-call-1): ${updateError.message}`,
