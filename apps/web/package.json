@@ -6,10 +6,12 @@
     "predev": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "prelint": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "pretest": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000} -H ${HOST:-127.0.0.1}",
     "lint": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "test:e2e": "npx playwright test",
     "test:e2e:local-demo": "npx playwright test --config=playwright.local-demo.config.ts"
   },
