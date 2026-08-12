@@ -12,14 +12,14 @@
     "test": "node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1097.0",
+    "@aws-sdk/client-secrets-manager": "^3.1108.0",
     "@expense-budget-tracker/agent-shared": "1.2.0",
-    "pg": "^8.22.0"
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.162",
     "@types/node": "^24.13.3",
-    "@types/pg": "^8.20.0",
+    "@types/pg": "^8.21.0",
     "typescript": "^6.0.3"
   },
   "engines": {
