@@ -11,7 +11,7 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3000} -H ${HOST:-127.0.0.1}",
     "lint": "tsc --noEmit",
-    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "test": "node --experimental-test-module-mocks --import tsx --test \"src/**/*.test.ts\"",
     "test:e2e": "npx playwright test",
     "test:e2e:local-demo": "npx playwright test --config=playwright.local-demo.config.ts"
   },
