@@ -42,98 +42,111 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
   };
 
   return new ReadableStream({
-    async start(controller) {
-      const closeStream = (): void => {
-        clearHeartbeat();
-        if (isClosed) {
-          return;
-        }
-        isClosed = true;
-        try {
-          controller.close();
-        } catch (error) {
-          if (!isExpectedStreamClosureError(error)) {
-            throw error;
-          }
-        }
-      };
-
-      const enqueueChunk = (chunk: string): boolean => {
-        if (isClosed) {
-          return false;
-        }
-
-        try {
-          controller.enqueue(encoder.encode(chunk));
-          return true;
-        } catch (error) {
+    start(controller) {
+      const consumeEvents = async (): Promise<void> => {
+        const closeStream = (): void => {
           clearHeartbeat();
-          isClosed = true;
-          if (isExpectedStreamClosureError(error)) {
-            return false;
-          }
-          throw error;
-        }
-      };
-
-      const scheduleHeartbeat = (): void => {
-        clearHeartbeat();
-        if (isClosed) {
-          return;
-        }
-
-        heartbeatTimer = setTimeout(() => {
-          try {
-            const written = enqueueChunk(createSseHeartbeatLine());
-            if (!written) {
-              return;
-            }
-            scheduleHeartbeat();
-          } catch (error) {
-            if (isClosed || isExpectedStreamClosureError(error)) {
-              return;
-            }
-            const message = error instanceof Error ? error.message : String(error);
-            params.onStreamError(message);
-            closeStream();
-          }
-        }, params.heartbeatIntervalMs);
-      };
-
-      scheduleHeartbeat();
-
-      try {
-        for await (const event of params.events) {
           if (isClosed) {
             return;
           }
+          isClosed = true;
+          try {
+            controller.close();
+          } catch (error) {
+            if (!isExpectedStreamClosureError(error)) {
+              throw error;
+            }
+          }
+        };
+
+        const enqueueChunk = (chunk: string): boolean => {
+          if (isClosed) {
+            return false;
+          }
+
+          try {
+            controller.enqueue(encoder.encode(chunk));
+            return true;
+          } catch (error) {
+            clearHeartbeat();
+            isClosed = true;
+            if (isExpectedStreamClosureError(error)) {
+              return false;
+            }
+            throw error;
+          }
+        };
+
+        const scheduleHeartbeat = (): void => {
           clearHeartbeat();
-          const written = enqueueChunk(createSseDataLine(event));
-          if (!written) {
+          if (isClosed) {
             return;
           }
-          if (event.type === "done") {
-            closeStream();
+
+          heartbeatTimer = setTimeout(() => {
+            try {
+              const written = enqueueChunk(createSseHeartbeatLine());
+              if (!written) {
+                return;
+              }
+              scheduleHeartbeat();
+            } catch (error) {
+              if (isClosed || isExpectedStreamClosureError(error)) {
+                return;
+              }
+              const message = error instanceof Error ? error.message : String(error);
+              params.onStreamError(message);
+              closeStream();
+            }
+          }, params.heartbeatIntervalMs);
+        };
+
+        scheduleHeartbeat();
+
+        try {
+          for await (const event of params.events) {
+            if (isClosed) {
+              return;
+            }
+            clearHeartbeat();
+            const written = enqueueChunk(createSseDataLine(event));
+            if (!written) {
+              return;
+            }
+            if (event.type === "done") {
+              closeStream();
+              return;
+            }
+            scheduleHeartbeat();
+          }
+        } catch (error) {
+          clearHeartbeat();
+          if (isClosed || isExpectedStreamClosureError(error)) {
             return;
           }
-          scheduleHeartbeat();
+          const message = error instanceof Error ? error.message : String(error);
+          params.onStreamError(message);
+          if (!isClosed) {
+            const written = enqueueChunk(createSseDataLine({ type: "error", message }));
+            if (!written) {
+              return;
+            }
+          }
         }
-      } catch (error) {
+
+        closeStream();
+      };
+
+      void consumeEvents().catch((error: unknown): void => {
         clearHeartbeat();
         if (isClosed || isExpectedStreamClosureError(error)) {
           return;
         }
+        isClosed = true;
+        controller.error(error);
         const message = error instanceof Error ? error.message : String(error);
         params.onStreamError(message);
-        if (!isClosed) {
-          const written = enqueueChunk(createSseDataLine({ type: "error", message }));
-          if (!written) {
-            return;
-          }
-        }
-      }
-
-      closeStream();
+      });
     },
     cancel() {
       clearHeartbeat();
@@ -142,10 +155,13 @@ export const createChatEventStream = (params: ChatEventStreamParams): ReadableSt
       if (returnFn === undefined) {
         return;
       }
-      return returnFn(undefined).then(
-        (): void => undefined,
-        (): void => undefined,
-      );
+      void returnFn(undefined).catch((error: unknown): void => {
+        if (isExpectedStreamClosureError(error)) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        params.onStreamError(message);
+      });
     },
   });
 };
