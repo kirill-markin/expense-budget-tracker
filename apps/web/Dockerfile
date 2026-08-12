@@ -1,6 +1,6 @@
 # --- Stage 1: Install dependencies ---
-FROM node:24.18.0-alpine AS npm
-RUN npm install --global npm@12.0.1
+FROM node:24.19.0-alpine AS npm
+RUN npm install --global npm@12.0.2
 
 FROM npm AS deps
 WORKDIR /workspace
@@ -14,14 +14,14 @@ COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci
 
 # --- Stage 2: Build ---
-FROM node:24.18.0-alpine AS builder
+FROM node:24.19.0-alpine AS builder
 WORKDIR /workspace
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
 RUN cd apps/web && ../../node_modules/.bin/next build
 
 # --- Stage 3: Production runner ---
-FROM node:24.18.0-alpine AS runner
+FROM node:24.19.0-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
