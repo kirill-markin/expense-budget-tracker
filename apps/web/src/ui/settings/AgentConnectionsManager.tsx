@@ -11,10 +11,9 @@ import settingsStyles from "./SettingsForm.module.css";
 
 const MACHINE_API_BASE_URL = "https://api.expense-budget-tracker.com/v1";
 const MACHINE_API_DISCOVERY_URL = `${MACHINE_API_BASE_URL}/`;
-const MACHINE_API_OPENAPI_URL = `${MACHINE_API_BASE_URL}/openapi.json`;
 const COPY_FEEDBACK_MS = 1500;
 
-type AccessCardId = "agent" | "program";
+type AccessCardId = "agent";
 
 type AccessCard = Readonly<{
   id: AccessCardId;
@@ -34,15 +33,6 @@ const ACCESS_CARDS: ReadonlyArray<AccessCard> = [
     href: MACHINE_API_DISCOVERY_URL,
     snippet: `Start with GET ${MACHINE_API_DISCOVERY_URL}
 Follow the response instructions for signup, login, and workspace setup.`,
-  },
-  {
-    id: "program",
-    titleKey: "agentAccess.programTitle",
-    descriptionKey: "agentAccess.programDescription",
-    linkKey: "agentAccess.openapiLink",
-    href: MACHINE_API_OPENAPI_URL,
-    snippet: `GET ${MACHINE_API_OPENAPI_URL}
-Authenticated requests use Authorization: ApiKey <key>.`,
   },
 ];
 

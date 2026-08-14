@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createMachineApiHandler } from "../machineApi.js";
 import { handleMeRouteWithResolver, handleSqlRouteWithWorkspaceResolver } from "./routeHandlers.js";
-import { createAuthenticatedEvent } from "../handlerTestUtils.js";
+import { createAuthenticatedEvent, createEvent } from "../handlerTestUtils.js";
 import type { MachineApiDependencies, MachineRouteContext } from "./types.js";
 
 const createDependencies = (): MachineApiDependencies => ({
   ensureTrustedIdentityProvisioned: async () => undefined,
-  loadOpenApiDocument: () => ({}),
   queryAsTrustedIdentity: async () => {
     throw new Error("queryAsTrustedIdentity should not be called");
   },
@@ -33,6 +33,30 @@ const createContext = (): MachineRouteContext => ({
   },
   apiBaseUrl: "https://api.example.com/v1",
   authBaseUrl: "https://auth.example.com",
+});
+
+test("conventional OpenAPI paths remain public source-discovery probes", async (): Promise<void> => {
+  const handler = createMachineApiHandler({});
+  const responses = await Promise.all(
+    ["/openapi.json", "/swagger.json"].map((path) =>
+      handler(createEvent({ path: `/v1${path}`, resource: path }))),
+  );
+  const payloads = responses.map((response) => JSON.parse(response.body) as Readonly<Record<string, unknown>>);
+  const expectedPayload = {
+    ok: true,
+    openapiAvailable: false,
+    message: "Use runtime discovery and the open-source implementation instead.",
+    discoveryUrl: "https://api.example.com/v1/",
+    docsUrl: "https://github.com/kirill-markin/expense-budget-tracker/blob/main/README.md",
+    source: {
+      repositoryUrl: "https://github.com/kirill-markin/expense-budget-tracker",
+      sqlApiUrl: "https://github.com/kirill-markin/expense-budget-tracker/tree/main/apps/sql-api/src",
+      authRoutesUrl: "https://github.com/kirill-markin/expense-budget-tracker/tree/main/apps/auth/src/routes",
+    },
+  };
+
+  assert.deepEqual(responses.map((response) => response.statusCode), [200, 200]);
+  assert.deepEqual(payloads, [expectedPayload, expectedPayload]);
 });
 
 test("handleMeRoute omits defaultWorkspaceId", async (): Promise<void> => {

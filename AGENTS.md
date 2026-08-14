@@ -10,7 +10,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Use strict typing across functions, variables, and collections.
 - Avoid fallback logic unless explicitly requested.
 - Raise explicit, actionable errors with context.
-- Machine API documentation is intentionally duplicated across the discovery envelope (`actions` and `instructions`) and the published specs (`/v1/openapi.json`, `/v1/swagger.json`, `api/openapi.yaml`). When changing the machine API, keep all of these in sync in the same change.
+- Runtime discovery is the canonical machine API documentation. Keep its actions, instructions, and source links in sync with runtime behavior; `/v1/openapi.json` and `/v1/swagger.json` are public source-discovery compatibility probes, not specification endpoints.
 - Keep changes minimal and scoped to the current request.
 - Before considering a large block of work complete, run the relevant type checks and builds, and for web changes a production build (`cd apps/web && npm run lint && npm run build`).
 - Prefer non-interactive terminal commands.
