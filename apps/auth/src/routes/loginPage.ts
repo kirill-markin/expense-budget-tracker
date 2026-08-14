@@ -7,15 +7,23 @@
  * Only the origin is validated against ALLOWED_REDIRECT_URIS.
  */
 import { Hono } from "hono";
-import { getCookie } from "hono/cookie";
+import { setCookie } from "hono/cookie";
 import { renderLoginPage } from "../templates/login.js";
+import { resolveBrowserSession } from "../server/oauth/session.js";
 
-const app = new Hono();
+export type LoginPageDependencies = Readonly<{
+  resolveBrowserSession: typeof resolveBrowserSession;
+}>;
+
+const defaultDependencies: LoginPageDependencies = {
+  resolveBrowserSession,
+};
 
 const getAllowedOrigins = (): ReadonlyArray<string> => {
   const raw = process.env.ALLOWED_REDIRECT_URIS ?? "";
-  if (raw === "") return [];
-  return raw.split(",").map((u) => {
+  const configured = raw === "" ? [] : raw.split(",");
+  const oauthIssuer = process.env.OAUTH_ISSUER ?? "";
+  return [...configured, ...(oauthIssuer === "" ? [] : [oauthIssuer])].map((u) => {
     try {
       return new URL(u.trim()).origin;
     } catch {
@@ -50,38 +58,45 @@ const parseLocale = (acceptLanguage: string | null): Locale => {
   return "en";
 };
 
-app.get("/login", (c) => {
-  const redirectUri = c.req.query("redirect_uri") ?? "";
+export const createLoginPageApp = (dependencies: LoginPageDependencies): Hono => {
+  const app = new Hono();
 
-  if (redirectUri === "") {
-    return c.text("Missing redirect_uri parameter", 400);
-  }
+  app.get("/login", async (c) => {
+    const redirectUri = c.req.query("redirect_uri") ?? "";
 
-  if (!isAllowedRedirectUri(redirectUri)) {
-    return c.text("Invalid redirect_uri", 400);
-  }
+    if (redirectUri === "") {
+      return c.text("Missing redirect_uri parameter", 400);
+    }
 
-  // If the user already has a session, skip the login form and redirect.
-  // Real JWT verification happens on app.* — if the session is expired,
-  // the proxy refreshes it or clears cookies and sends the user back here.
-  const sessionCookie = getCookie(c, "session") ?? "";
-  if (sessionCookie !== "") {
-    return c.redirect(redirectUri, 302);
-  }
+    if (!isAllowedRedirectUri(redirectUri)) {
+      return c.text("Invalid redirect_uri", 400);
+    }
 
-  const langParam = c.req.query("lang") ?? "";
-  const locale: Locale = (SUPPORTED_LOCALES as ReadonlyArray<string>).includes(langParam)
-    ? (langParam as Locale)
-    : parseLocale(c.req.header("accept-language") ?? null);
+    const identity = await dependencies.resolveBrowserSession(c);
+    if (identity !== null) return c.redirect(redirectUri, 302);
 
-  const domain = process.env.COOKIE_DOMAIN ?? "";
-  const websiteUrl = domain.startsWith(".")
-    ? `https://${domain.slice(1)}`
-    : `https://${domain}`;
-  const html = renderLoginPage(locale, redirectUri, websiteUrl, domain);
+    const langParam = c.req.query("lang") ?? "";
+    const locale: Locale = (SUPPORTED_LOCALES as ReadonlyArray<string>).includes(langParam)
+      ? (langParam as Locale)
+      : parseLocale(c.req.header("accept-language") ?? null);
 
-  c.header("Set-Cookie", `locale=${locale}; Domain=${domain}; Path=/; Max-Age=31536000; Secure; SameSite=Lax`);
-  return c.html(html);
-});
+    const domain = process.env.COOKIE_DOMAIN ?? "";
+    const websiteUrl = domain.startsWith(".")
+      ? `https://${domain.slice(1)}`
+      : `https://${domain}`;
+    const html = renderLoginPage(locale, redirectUri, websiteUrl, domain);
 
-export default app;
+    setCookie(c, "locale", locale, {
+      domain: domain === "" ? undefined : domain,
+      path: "/",
+      maxAge: 31536000,
+      secure: true,
+      sameSite: "Lax",
+    });
+    return c.html(html);
+  });
+
+  return app;
+};
+
+export default createLoginPageApp(defaultDependencies);
