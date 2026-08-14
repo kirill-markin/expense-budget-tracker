@@ -238,3 +238,34 @@ export const withRestrictedTrustedIdentityContext = async <T>(
     client.release();
   }
 };
+
+/**
+ * Execute read-only user SQL in one stable-snapshot transaction under the
+ * least-privilege reader role.
+ */
+export const withReadOnlyRestrictedTrustedIdentityContext = async <T>(
+  identity: UserIdentity,
+  workspaceId: string,
+  statementTimeoutMs: number,
+  callback: (queryFn: QueryFn) => Promise<T>,
+): Promise<T> => {
+  await ensureTrustedIdentityProvisioned(identity, workspaceId);
+  const client = await (await getPool()).connect();
+
+  try {
+    await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [identity.userId]);
+    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+    await client.query("SELECT set_config('statement_timeout', $1, true)", [String(statementTimeoutMs)]);
+    await client.query("SET LOCAL ROLE api_sql_reader");
+    const boundQuery: QueryFn = (text, params) => client.query(text, params as Array<unknown>);
+    const result = await callback(boundQuery);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};

@@ -58,14 +58,14 @@ test("execQuery explains how to replace PostgreSQL escape strings", async (): Pr
   );
 });
 
-test("execQuery rejects SELECT-only mutation targets before database or mutation lock entry", async (): Promise<void> => {
+test("execQuery rejects data-modifying CTEs before database or mutation lock entry", async (): Promise<void> => {
   let userContextCount = 0;
   let restrictedContextCount = 0;
   let mutationLockCount = 0;
 
   await assert.rejects(
     () => execQueryWithDependencies(
-      "WITH changed AS (UPDATE accounts SET account_id = 'a-renamed-usd' RETURNING *) SELECT * FROM changed",
+      "WITH changed AS (UPDATE account_metadata SET liquidity = 'low' RETURNING *) SELECT * FROM changed",
       {
         userId: "user-1",
         workspaceId: "workspace-1",
@@ -88,7 +88,7 @@ test("execQuery rejects SELECT-only mutation targets before database or mutation
     ),
     (error: unknown) =>
       error instanceof Error
-      && error.message === "Relation accounts is SELECT-only and cannot be targeted by UPDATE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata",
+      && error.message === "Data-modifying CTE bodies are not supported; use SELECT, WITH, or VALUES in CTE bodies and move INSERT, UPDATE, or DELETE to the top-level statement. MERGE is not supported",
   );
 
   assert.equal(userContextCount, 0);
