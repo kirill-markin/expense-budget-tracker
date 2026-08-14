@@ -6,22 +6,20 @@ import {
   handleDiscoveryRoute,
   handleListWorkspacesRoute,
   handleMeRoute,
-  handleOpenApiRoute,
   handleSchemaRoute,
   handleSelectWorkspaceRoute,
+  handleSourceDiscoveryRoute,
   handleSqlRoute,
 } from "./machineApi/routeHandlers.js";
 import { createMachineRouteContext, getAuthenticatedContext, normalizePath } from "./machineApi/request.js";
 import { json } from "./machineApi/responses.js";
 import type { MachineApiDependencies } from "./machineApi/types.js";
-import { loadOpenApiDocument } from "./openapi.js";
 
 export const createMachineApiHandler = (
   overrides: Partial<MachineApiDependencies>,
 ): ((event: APIGatewayProxyEvent) => Promise<APIGatewayProxyResult>) => {
   const dependencies: MachineApiDependencies = {
     ensureTrustedIdentityProvisioned,
-    loadOpenApiDocument,
     queryAsTrustedIdentity,
     withRestrictedTrustedIdentityContext,
     ...overrides,
@@ -35,7 +33,7 @@ export const createMachineApiHandler = (
     }
 
     if (event.httpMethod === "GET" && (path === "/openapi.json" || path === "/swagger.json")) {
-      return handleOpenApiRoute(dependencies);
+      return handleSourceDiscoveryRoute(event);
     }
 
     const authenticated = getAuthenticatedContext(event);

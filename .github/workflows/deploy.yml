@@ -16,7 +16,6 @@ on:
     paths:
       - 'apps/**'
       - 'packages/**'
-      - 'api/openapi.yaml'
       - 'db/migrations/**'
       - 'db/views/**'
       - 'infra/**'

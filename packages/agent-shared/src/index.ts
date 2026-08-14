@@ -215,13 +215,6 @@ export const buildVerifyCodeAction = (target: AgentUrlTarget): AgentAction => ({
   auth: "none",
 });
 
-export const buildOpenApiAction = (target: AgentUrlTarget): AgentAction => ({
-  name: "openapi",
-  method: "GET",
-  url: resolveActionUrl(target),
-  auth: "none",
-});
-
 export const buildLoadAccountAction = (target: AgentUrlTarget): AgentAction => ({
   name: "load_account",
   method: "GET",

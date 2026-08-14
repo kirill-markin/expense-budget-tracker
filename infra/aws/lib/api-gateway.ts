@@ -41,8 +41,6 @@ const lambdaBundling: lambda_nodejs.BundlingOptions = {
     beforeInstall: () => [],
     afterBundling: (_inputDir: string, outputDir: string) => [
       `curl -sfo ${outputDir}/rds-global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem`,
-      `mkdir -p ${outputDir}/api`,
-      `cp ${path.resolve(__dirname, "../../../api/openapi.yaml")} ${outputDir}/api/openapi.yaml`,
     ],
   },
 };

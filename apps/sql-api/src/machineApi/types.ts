@@ -2,7 +2,6 @@ import type { AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { ensureTrustedIdentityProvisioned, queryAsTrustedIdentity, type UserIdentity, withRestrictedTrustedIdentityContext } from "../db.js";
-import { loadOpenApiDocument } from "../openapi.js";
 
 export type AuthenticatedContext = Readonly<{
   identity: UserIdentity;
@@ -14,7 +13,6 @@ export type AuthenticatedContext = Readonly<{
 
 export type MachineApiDependencies = Readonly<{
   ensureTrustedIdentityProvisioned: typeof ensureTrustedIdentityProvisioned;
-  loadOpenApiDocument: typeof loadOpenApiDocument;
   queryAsTrustedIdentity: typeof queryAsTrustedIdentity;
   withRestrictedTrustedIdentityContext: typeof withRestrictedTrustedIdentityContext;
 }>;
