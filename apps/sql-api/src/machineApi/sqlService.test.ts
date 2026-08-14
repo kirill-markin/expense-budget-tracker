@@ -4,6 +4,8 @@ import type { QueryResult } from "pg";
 import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { createQueryResult } from "../handlerTestUtils.js";
 import {
+  getUserSqlExecutionMessage,
+  isUserSqlExecutionError,
   runReadOnlySqlWithWorkspaceGetter,
   runSqlWithWorkspaceGetter,
 } from "./sqlService.js";
@@ -362,4 +364,73 @@ test("runSql raises mutation batch overflow from inside the single transaction c
 
   assert.equal(restrictedContextCount, 1);
   assert.equal(statementCount, 2);
+});
+
+test("runSql tags safe PostgreSQL errors only when validated user SQL is executing", async (): Promise<void> => {
+  const databaseError = Object.assign(
+    new Error("column amountt does not exist"),
+    { code: "42703" },
+  );
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: async <T>(
+      _identity: AuthenticatedContext["identity"],
+      _workspaceId: string,
+      _statementTimeoutMs: number,
+      callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>) => Promise<T>,
+    ): Promise<T> => callback(async (): Promise<QueryResult> => {
+      throw databaseError;
+    }),
+  });
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "SELECT amount FROM ledger_entries",
+      workspaceGetter,
+    ),
+    (error: unknown) =>
+      isUserSqlExecutionError(error)
+      && getUserSqlExecutionMessage(error) === "column amountt does not exist",
+  );
+});
+
+test("runSql does not tag PostgreSQL errors from workspace lookup or transaction setup", async (): Promise<void> => {
+  const workspaceError = Object.assign(
+    new Error("workspace lookup exposed internal relation"),
+    { code: "42703" },
+  );
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      createDependencies(),
+      createAuthenticatedContext(),
+      "user-1",
+      "SELECT amount FROM ledger_entries",
+      async (): Promise<WorkspaceSummary> => {
+        throw workspaceError;
+      },
+    ),
+    (error: unknown) => error === workspaceError && !isUserSqlExecutionError(error),
+  );
+
+  const setupError = Object.assign(
+    new Error("SET LOCAL ROLE failed for internal role"),
+    { code: "42501" },
+  );
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: async () => {
+      throw setupError;
+    },
+  });
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "SELECT amount FROM ledger_entries",
+      workspaceGetter,
+    ),
+    (error: unknown) => error === setupError && !isUserSqlExecutionError(error),
+  );
 });

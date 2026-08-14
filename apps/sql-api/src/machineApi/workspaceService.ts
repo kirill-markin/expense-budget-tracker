@@ -1,4 +1,4 @@
-import { resolveOrCreateWorkspaceForTrustedIdentity, type UserIdentity } from "../db.js";
+import { resolveOrCreateWorkspaceForTrustedIdentity, type QueryFn, type UserIdentity } from "../db.js";
 import type { AuthenticatedContext, MachineApiDependencies, WorkspaceSummary } from "./types.js";
 
 const WORKSPACES_SQL = `SELECT w.workspace_id, w.name
@@ -27,13 +27,53 @@ const mapWorkspaceRows = (rows: ReadonlyArray<unknown>): ReadonlyArray<Workspace
     };
   });
 
+export const listWorkspacesWithQuery = async (
+  queryFn: QueryFn,
+  identity: UserIdentity,
+): Promise<ReadonlyArray<WorkspaceSummary>> => {
+  const result = await queryFn(WORKSPACES_SQL, [identity.userId]);
+  return mapWorkspaceRows(result.rows);
+};
+
+export const getWorkspaceWithQuery = async (
+  queryFn: QueryFn,
+  identity: UserIdentity,
+  workspaceId: string,
+): Promise<WorkspaceSummary | null> => {
+  const result = await queryFn(
+    `SELECT w.workspace_id, w.name
+     FROM workspaces w
+     JOIN workspace_members wm ON wm.workspace_id = w.workspace_id
+     WHERE w.workspace_id = $1
+       AND wm.user_id = $2`,
+    [workspaceId, identity.userId],
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const row = result.rows[0] as { workspace_id: string; name: string };
+  return {
+    workspaceId: row.workspace_id,
+    name: row.name,
+  };
+};
+
 export const listWorkspaces = async (
   dependencies: MachineApiDependencies,
   identity: UserIdentity,
 ): Promise<ReadonlyArray<WorkspaceSummary>> => {
   const contextWorkspace = await resolveOrCreateWorkspaceForTrustedIdentity(identity);
-  const result = await dependencies.queryAsTrustedIdentity(identity, contextWorkspace.workspaceId, WORKSPACES_SQL, [identity.userId]);
-  return mapWorkspaceRows(result.rows);
+  return listWorkspacesWithQuery(
+    (text, params) => dependencies.queryAsTrustedIdentity(
+      identity,
+      contextWorkspace.workspaceId,
+      text,
+      params,
+    ),
+    identity,
+  );
 };
 
 export const createWorkspace = async (
@@ -66,26 +106,16 @@ export const getWorkspace = async (
   workspaceId: string,
 ): Promise<WorkspaceSummary | null> => {
   const contextWorkspace = await resolveOrCreateWorkspaceForTrustedIdentity(identity);
-  const result = await dependencies.queryAsTrustedIdentity(
+  return getWorkspaceWithQuery(
+    (text, params) => dependencies.queryAsTrustedIdentity(
+      identity,
+      contextWorkspace.workspaceId,
+      text,
+      params,
+    ),
     identity,
-    contextWorkspace.workspaceId,
-    `SELECT w.workspace_id, w.name
-     FROM workspaces w
-     JOIN workspace_members wm ON wm.workspace_id = w.workspace_id
-     WHERE w.workspace_id = $1
-       AND wm.user_id = $2`,
-    [workspaceId, identity.userId],
+    workspaceId,
   );
-
-  if (result.rows.length === 0) {
-    return null;
-  }
-
-  const row = result.rows[0] as { workspace_id: string; name: string };
-  return {
-    workspaceId: row.workspace_id,
-    name: row.name,
-  };
 };
 
 export const persistSelectedWorkspace = async (

@@ -9,8 +9,11 @@ import {
   withRestrictedTrustedIdentityContext,
 } from "../db.js";
 
-export type AuthenticatedContext = Readonly<{
+export type TrustedIdentityContext = Readonly<{
   identity: UserIdentity;
+}>;
+
+export type AuthenticatedContext = TrustedIdentityContext & Readonly<{
   connectionId: string;
   label: string;
   createdAt: string;
