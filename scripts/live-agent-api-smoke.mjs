@@ -1,7 +1,7 @@
 /**
  * Post-deploy smoke for the public agent API contract.
  *
- * Validates every endpoint published in api/openapi.yaml using the shared
+ * Validates runtime discovery and every supported endpoint using the shared
  * review email path, then cleans up the disposable workspace via the web app.
  */
 import { randomBytes } from "node:crypto";
@@ -21,6 +21,8 @@ const workspaceName = `E2E agent api ${runId}`;
 const connectionLabel = `agent-api-smoke-${runId}`;
 const retryDelayMs = 2_000;
 const maxAttempts = 5;
+const sourceRepositoryUrl = "https://github.com/kirill-markin/expense-budget-tracker";
+const sourceDocsUrl = `${sourceRepositoryUrl}/blob/main/README.md`;
 
 async function main() {
   /** @type {string | null} */
@@ -32,7 +34,7 @@ async function main() {
 
   try {
     await verifyDiscoveryEndpoints();
-    await verifyDocsEndpoints();
+    await verifySourceDiscoveryEndpoints();
     const otpSessionToken = await sendAgentCode();
     issuedApiKey = await verifyAgentCode(otpSessionToken);
     await verifyUnauthorizedMe();
@@ -158,6 +160,13 @@ function expectActionNamed(payload, actionName, label) {
   return action;
 }
 
+function expectSourceLinks(source, label) {
+  assertCondition(source !== null && typeof source === "object", `${label}: missing source links`);
+  assertCondition(source.repositoryUrl === sourceRepositoryUrl, `${label}: repositoryUrl mismatch`);
+  assertCondition(source.sqlApiUrl === `${sourceRepositoryUrl}/tree/main/apps/sql-api/src`, `${label}: sqlApiUrl mismatch`);
+  assertCondition(source.authRoutesUrl === `${sourceRepositoryUrl}/tree/main/apps/auth/src/routes`, `${label}: authRoutesUrl mismatch`);
+}
+
 function generateCsrfToken() {
   return randomBytes(32).toString("hex");
 }
@@ -214,42 +223,48 @@ async function verifyDiscoveryEndpoints() {
   assertCondition(discovery.data.auth.bootstrapUrl === `${authBaseUrl}/api/agent/send-code`, "discovery_root: bootstrapUrl mismatch");
   assertCondition(discovery.data.authBaseUrl === authBaseUrl, "discovery_root: authBaseUrl mismatch");
   assertCondition(discovery.data.apiBaseUrl === apiBaseUrl, "discovery_root: apiBaseUrl mismatch");
+  assertCondition(discovery.data.docs?.discoveryUrl === `${apiBaseUrl}/`, "discovery_root: discoveryUrl mismatch");
+  assertCondition(discovery.data.docs?.docsUrl === sourceDocsUrl, "discovery_root: docsUrl mismatch");
+  expectSourceLinks(discovery.data.docs?.source, "discovery_root");
   expectActionNamed(discovery, "send_code", "discovery_root");
+  expectActionNamed(discovery, "schema", "discovery_root");
+  assertCondition(
+    discovery.actions.every((action) => action?.name !== "openapi"),
+    "discovery_root: OpenAPI action must not be advertised",
+  );
 
   const agentDiscovery = await requestJson("GET", `${apiBaseUrl}/agent`, {}, null, 200, "discovery_agent", true);
   expectEnvelope(agentDiscovery, "discovery_agent");
   assertCondition(agentDiscovery.data.auth.bootstrapUrl === discovery.data.auth.bootstrapUrl, "discovery_agent: bootstrapUrl mismatch");
   assertCondition(agentDiscovery.data.authBaseUrl === discovery.data.authBaseUrl, "discovery_agent: authBaseUrl mismatch");
   assertCondition(agentDiscovery.data.apiBaseUrl === discovery.data.apiBaseUrl, "discovery_agent: apiBaseUrl mismatch");
+  assertCondition(JSON.stringify(agentDiscovery.data.docs) === JSON.stringify(discovery.data.docs), "discovery_agent: docs mismatch");
 }
 
-async function verifyDocsEndpoints() {
+async function verifySourceDiscoveryEndpoints() {
   const openapi = await requestJson("GET", `${apiBaseUrl}/openapi.json`, {}, null, 200, "openapi_json", true);
   const swagger = await requestJson("GET", `${apiBaseUrl}/swagger.json`, {}, null, 200, "swagger_json", true);
 
-  assertCondition(openapi !== null && typeof openapi === "object", "openapi_json: payload is not an object");
-  assertCondition(swagger !== null && typeof swagger === "object", "swagger_json: payload is not an object");
-  assertCondition(openapi.openapi === "3.1.0", "openapi_json: unexpected version");
-  assertCondition(swagger.openapi === "3.1.0", "swagger_json: unexpected version");
-
-  const requiredPaths = [
-    "/",
-    "/agent",
-    "/openapi.json",
-    "/swagger.json",
-    "/me",
-    "/workspaces",
-    "/workspaces/{workspaceId}/select",
-    "/schema",
-    "/sql",
-    "/api/agent/send-code",
-    "/api/agent/verify-code",
-  ];
-
-  for (const path of requiredPaths) {
-    assertCondition(openapi.paths?.[path] !== undefined, `openapi_json: missing path ${path}`);
-    assertCondition(swagger.paths?.[path] !== undefined, `swagger_json: missing path ${path}`);
+  for (const [label, payload] of [["openapi_json", openapi], ["swagger_json", swagger]]) {
+    assertCondition(payload !== null && typeof payload === "object", `${label}: payload is not an object`);
+    assertCondition(JSON.stringify(Object.keys(payload)) === JSON.stringify([
+      "ok",
+      "openapiAvailable",
+      "message",
+      "discoveryUrl",
+      "docsUrl",
+      "source",
+    ]), `${label}: unexpected response keys`);
+    assertCondition(payload.ok === true, `${label}: expected ok=true`);
+    assertCondition(payload.openapiAvailable === false, `${label}: expected openapiAvailable=false`);
+    assertCondition(typeof payload.message === "string" && /^[\x20-\x7e]{1,100}$/u.test(payload.message), `${label}: invalid message`);
+    assertCondition(payload.discoveryUrl === `${apiBaseUrl}/`, `${label}: discoveryUrl mismatch`);
+    assertCondition(payload.docsUrl === sourceDocsUrl, `${label}: docsUrl mismatch`);
+    expectSourceLinks(payload.source, label);
+    assertCondition(!("openapi" in payload), `${label}: unexpected OpenAPI document`);
   }
+
+  assertCondition(JSON.stringify(swagger) === JSON.stringify(openapi), "swagger_json: response differs from openapi_json");
 }
 
 async function sendAgentCode() {

@@ -1,4 +1,5 @@
 import type { APIGatewayProxyResult } from "aws-lambda";
+import { buildSourceDiscoveryResponse } from "@expense-budget-tracker/agent-shared/discovery";
 import {
   RUN_SQL_WITH_WORKSPACE_INPUT,
   buildCreateWorkspaceAction,
@@ -17,7 +18,7 @@ import {
   type ValidatedExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { resolveOrCreateWorkspaceForTrustedIdentity } from "../db.js";
-import { buildDiscoveryEnvelope, readJsonBody } from "./request.js";
+import { buildDiscoveryEnvelope, getApiBaseUrl, readJsonBody } from "./request.js";
 import { buildRetryableErrorResponse, json } from "./responses.js";
 import { ALLOWED_RELATION_NAMES, loadAllowedSchema } from "./schemaService.js";
 import { getSqlPolicyInstructions, getUserSqlExecutionMessage, isUserSqlExecutionError, runSql } from "./sqlService.js";
@@ -29,10 +30,10 @@ export const handleDiscoveryRoute = (
 ): APIGatewayProxyResult =>
   json(200, buildDiscoveryEnvelope(event));
 
-export const handleOpenApiRoute = (
-  dependencies: MachineApiDependencies,
+export const handleSourceDiscoveryRoute = (
+  event: Parameters<typeof buildDiscoveryEnvelope>[0],
 ): APIGatewayProxyResult =>
-  json(200, dependencies.loadOpenApiDocument());
+  json(200, buildSourceDiscoveryResponse(getApiBaseUrl(event)));
 
 export const handleMeRoute = async (
   context: MachineRouteContext,

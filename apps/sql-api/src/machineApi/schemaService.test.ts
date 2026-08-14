@@ -26,7 +26,6 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
 
   const dependencies: MachineApiDependencies = {
     ensureTrustedIdentityProvisioned: async () => undefined,
-    loadOpenApiDocument: () => ({}),
     queryAsTrustedIdentity: async (_identity, workspaceId) => {
       queryWorkspaceId = workspaceId;
       return createQueryResult([]);
