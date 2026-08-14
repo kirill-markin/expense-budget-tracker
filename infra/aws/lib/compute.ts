@@ -246,9 +246,12 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     environment: {
       PORT: "8081",
       COGNITO_CLIENT_ID: props.userPoolClientId,
+      COGNITO_USER_POOL_ID: props.userPoolId,
       COGNITO_REGION: cdk.Aws.REGION,
       ALLOWED_REDIRECT_URIS: `https://${props.appDomain}`,
       COOKIE_DOMAIN: `.${props.appDomain.split(".").slice(1).join(".")}`,
+      OAUTH_ISSUER: `https://${props.authDomain}`,
+      OAUTH_RESOURCE: `https://mcp.${props.appDomain.split(".").slice(1).join(".")}/mcp`,
       DB_HOST: props.db.dbInstanceEndpointAddress,
       DB_NAME: "tracker",
       DB_USER: "auth_service",

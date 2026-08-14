@@ -39,9 +39,15 @@ const getPool = (): pg.Pool => {
   return pool;
 };
 
-type QueryFn = (text: string, params: ReadonlyArray<unknown>) => Promise<pg.QueryResult>;
+export type QueryFn = (
+  text: string,
+  params: ReadonlyArray<unknown>,
+) => Promise<pg.QueryResult<pg.QueryResultRow>>;
 
-export const query = (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>
+export const query = (
+  text: string,
+  params: ReadonlyArray<unknown>,
+): Promise<pg.QueryResult<pg.QueryResultRow>> =>
   getPool().query(text, params as Array<unknown>);
 
 export const withTransaction = async <T>(
