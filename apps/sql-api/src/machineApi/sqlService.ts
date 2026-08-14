@@ -10,7 +10,7 @@ import {
   type ValidatedExpenseSql,
   type ValidatedReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
-import type { AuthenticatedContext, EntityHints, MachineApiDependencies, PgError, WorkspaceSummary } from "./types.js";
+import type { EntityHints, MachineApiDependencies, PgError, TrustedIdentityContext, WorkspaceSummary } from "./types.js";
 import { getWorkspace } from "./workspaceService.js";
 
 const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
@@ -48,6 +48,13 @@ const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
 };
 
 const USER_SQL_ERROR_CLASSES: ReadonlySet<string> = new Set(["22", "23", "42"]);
+const DEFAULT_USER_SQL_EXECUTION_MESSAGE = "The SQL statement could not be executed";
+
+export class UserSqlExecutionError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
 
 const buildEntityHints = (relations: ReadonlyArray<AllowedRelationName>): EntityHints | undefined => {
   if (relations.length === 0) {
@@ -76,7 +83,10 @@ const buildEntityHints = (relations: ReadonlyArray<AllowedRelationName>): Entity
   };
 };
 
-export const isUserSqlExecutionError = (error: unknown): boolean => {
+const isSafeUserSqlDatabaseError = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
   const pgError = error as PgError;
   if (typeof pgError.code !== "string" || pgError.code.length < 2) {
     return false;
@@ -85,22 +95,45 @@ export const isUserSqlExecutionError = (error: unknown): boolean => {
   return USER_SQL_ERROR_CLASSES.has(pgError.code.slice(0, 2));
 };
 
-export const getUserSqlExecutionMessage = (error: unknown): string => {
+const getDatabaseErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message !== "") {
     return error.message;
   }
+  return DEFAULT_USER_SQL_EXECUTION_MESSAGE;
+};
 
-  return "The SQL statement could not be executed";
+const throwUserSqlExecutionError = (error: unknown): never => {
+  if (!isSafeUserSqlDatabaseError(error)) {
+    throw error;
+  }
+  throw new UserSqlExecutionError(getDatabaseErrorMessage(error));
+};
+
+export const isUserSqlExecutionError = (error: unknown): error is UserSqlExecutionError =>
+  error instanceof UserSqlExecutionError;
+
+export const getUserSqlExecutionMessage = (error: unknown): string => {
+  if (error instanceof UserSqlExecutionError && error.message !== "") {
+    return error.message;
+  }
+  return DEFAULT_USER_SQL_EXECUTION_MESSAGE;
 };
 
 const isSchemaExplorationAttempt = (message: string): boolean =>
   /information_schema|pg_catalog|pg_/iu.test(message);
 
-type WorkspaceGetter = (
+type MachineApiWorkspaceGetter = (
   dependencies: MachineApiDependencies,
-  identity: AuthenticatedContext["identity"],
+  identity: TrustedIdentityContext["identity"],
   workspaceId: string,
 ) => Promise<WorkspaceSummary | null>;
+
+export type ExistingWorkspaceGetter = (
+  identity: TrustedIdentityContext["identity"],
+  workspaceId: string,
+) => Promise<WorkspaceSummary | null>;
+
+type RestrictedContextRunner = MachineApiDependencies["withRestrictedTrustedIdentityContext"];
 
 export const getSqlPolicyInstructions = (
   error: SqlPolicyError,
@@ -177,14 +210,13 @@ export const getSqlPolicyInstructions = (
 };
 
 const executeSqlWithWorkspaceGetter = async (
-  dependencies: MachineApiDependencies,
-  authenticated: AuthenticatedContext,
+  authenticated: TrustedIdentityContext,
   workspaceId: string,
   validated: ValidatedExpenseSql,
-  workspaceGetter: WorkspaceGetter,
-  runInRestrictedContext: MachineApiDependencies["withRestrictedTrustedIdentityContext"],
+  workspaceGetter: ExistingWorkspaceGetter,
+  runInRestrictedContext: RestrictedContextRunner,
 ): Promise<Readonly<Record<string, unknown>> | null> => {
-  const workspace = await workspaceGetter(dependencies, authenticated.identity, workspaceId);
+  const workspace = await workspaceGetter(authenticated.identity, workspaceId);
   if (workspace === null) {
     return null;
   }
@@ -196,12 +228,16 @@ const executeSqlWithWorkspaceGetter = async (
     async (queryFn) => executeValidatedExpenseSql(
       validated,
       async (request) => {
-        const queryResult = await queryFn(request.sql, request.params);
-        return {
-          command: queryResult.command,
-          rows: queryResult.rows as ReadonlyArray<Readonly<Record<string, unknown>>>,
-          rowCount: queryResult.rowCount,
-        };
+        try {
+          const queryResult = await queryFn(request.sql, request.params);
+          return {
+            command: queryResult.command,
+            rows: queryResult.rows as ReadonlyArray<Readonly<Record<string, unknown>>>,
+            rowCount: queryResult.rowCount,
+          };
+        } catch (error) {
+          throwUserSqlExecutionError(error);
+        }
       },
     ),
   );
@@ -231,62 +267,104 @@ const executeSqlWithWorkspaceGetter = async (
 
 export const runSqlWithWorkspaceGetter = async (
   dependencies: MachineApiDependencies,
-  authenticated: AuthenticatedContext,
+  authenticated: TrustedIdentityContext,
   workspaceId: string,
   sql: string,
-  workspaceGetter: WorkspaceGetter,
+  workspaceGetter: MachineApiWorkspaceGetter,
 ): Promise<Readonly<Record<string, unknown>> | null> =>
   executeSqlWithWorkspaceGetter(
-    dependencies,
     authenticated,
     workspaceId,
     validateExpenseSql(sql),
-    workspaceGetter,
+    (identity, resolvedWorkspaceId) => workspaceGetter(
+      dependencies,
+      identity,
+      resolvedWorkspaceId,
+    ),
     dependencies.withRestrictedTrustedIdentityContext,
   );
 
 export const runReadOnlySqlWithWorkspaceGetter = async (
   dependencies: MachineApiDependencies,
-  authenticated: AuthenticatedContext,
+  authenticated: TrustedIdentityContext,
   workspaceId: string,
   sql: string,
-  workspaceGetter: WorkspaceGetter,
+  workspaceGetter: MachineApiWorkspaceGetter,
 ): Promise<Readonly<Record<string, unknown>> | null> =>
   executeSqlWithWorkspaceGetter(
-    dependencies,
     authenticated,
     workspaceId,
     validateReadOnlyExpenseSql(sql),
-    workspaceGetter,
+    (identity, resolvedWorkspaceId) => workspaceGetter(
+      dependencies,
+      identity,
+      resolvedWorkspaceId,
+    ),
     dependencies.withReadOnlyRestrictedTrustedIdentityContext,
+  );
+
+export const runSqlWithServices = async (
+  authenticated: TrustedIdentityContext,
+  workspaceId: string,
+  validated: ValidatedExpenseSql,
+  workspaceGetter: ExistingWorkspaceGetter,
+  runInRestrictedContext: RestrictedContextRunner,
+): Promise<Readonly<Record<string, unknown>> | null> =>
+  executeSqlWithWorkspaceGetter(
+    authenticated,
+    workspaceId,
+    validated,
+    workspaceGetter,
+    runInRestrictedContext,
+  );
+
+export const runReadOnlySqlWithServices = async (
+  authenticated: TrustedIdentityContext,
+  workspaceId: string,
+  validated: ValidatedReadOnlyExpenseSql,
+  workspaceGetter: ExistingWorkspaceGetter,
+  runInReadOnlyRestrictedContext: RestrictedContextRunner,
+): Promise<Readonly<Record<string, unknown>> | null> =>
+  executeSqlWithWorkspaceGetter(
+    authenticated,
+    workspaceId,
+    validated,
+    workspaceGetter,
+    runInReadOnlyRestrictedContext,
   );
 
 export const runSql = async (
   dependencies: MachineApiDependencies,
-  authenticated: AuthenticatedContext,
+  authenticated: TrustedIdentityContext,
   workspaceId: string,
   validated: ValidatedExpenseSql,
 ): Promise<Readonly<Record<string, unknown>> | null> =>
   executeSqlWithWorkspaceGetter(
-    dependencies,
     authenticated,
     workspaceId,
     validated,
-    getWorkspace,
+    (identity, resolvedWorkspaceId) => getWorkspace(
+      dependencies,
+      identity,
+      resolvedWorkspaceId,
+    ),
     dependencies.withRestrictedTrustedIdentityContext,
   );
 
 export const runReadOnlySql = async (
   dependencies: MachineApiDependencies,
-  authenticated: AuthenticatedContext,
+  authenticated: TrustedIdentityContext,
   workspaceId: string,
   validated: ValidatedReadOnlyExpenseSql,
 ): Promise<Readonly<Record<string, unknown>> | null> =>
   executeSqlWithWorkspaceGetter(
-    dependencies,
     authenticated,
     workspaceId,
     validated,
-    getWorkspace,
+    (identity, resolvedWorkspaceId) => getWorkspace(
+      dependencies,
+      identity,
+      resolvedWorkspaceId,
+    ),
     dependencies.withReadOnlyRestrictedTrustedIdentityContext,
   );

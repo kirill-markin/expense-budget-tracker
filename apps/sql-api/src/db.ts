@@ -33,7 +33,7 @@ async function getPool(): Promise<pg.Pool> {
 export const query = async (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>
   (await getPool()).query(text, params as Array<unknown>);
 
-type QueryFn = (text: string, params: ReadonlyArray<unknown>) => Promise<pg.QueryResult>;
+export type QueryFn = (text: string, params: ReadonlyArray<unknown>) => Promise<pg.QueryResult>;
 type ResolvedWorkspaceRow = Readonly<{
   workspace_id: string;
   name: string;
@@ -212,6 +212,122 @@ export const queryAsTrustedIdentity = async (
   }
 };
 
+/**
+ * Query existing user-scoped data without provisioning or updating state.
+ */
+export const queryAsExistingTrustedIdentity = async (
+  identity: UserIdentity,
+  text: string,
+  params: ReadonlyArray<unknown>,
+): Promise<pg.QueryResult> => {
+  const client = await (await getPool()).connect();
+
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [identity.userId]);
+    const result = await client.query(text, params as Array<unknown>);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Query existing workspace-scoped data without provisioning or updating state.
+ */
+export const queryAsExistingTrustedWorkspace = async (
+  identity: UserIdentity,
+  workspaceId: string,
+  text: string,
+  params: ReadonlyArray<unknown>,
+): Promise<pg.QueryResult> => {
+  const client = await (await getPool()).connect();
+
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [identity.userId]);
+    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+    const result = await client.query(text, params as Array<unknown>);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+const readTrustedUserIdentity = (row: unknown): UserIdentity => {
+  if (typeof row !== "object" || row === null || Array.isArray(row)) {
+    throw new Error("loadTrustedUserIdentity: database returned an invalid user row");
+  }
+
+  const record = row as Readonly<Record<string, unknown>>;
+  const userId = record["user_id"];
+  const email = record["email"];
+  const emailVerified = record["email_verified"];
+  const cognitoStatus = record["cognito_status"];
+  const cognitoEnabled = record["cognito_enabled"];
+  if (
+    typeof userId !== "string"
+    || userId === ""
+    || typeof email !== "string"
+    || email === ""
+    || typeof emailVerified !== "boolean"
+    || typeof cognitoStatus !== "string"
+    || cognitoStatus === ""
+    || typeof cognitoEnabled !== "boolean"
+  ) {
+    throw new Error("loadTrustedUserIdentity: database returned invalid user identity fields");
+  }
+
+  return {
+    userId,
+    email,
+    emailVerified,
+    cognitoStatus,
+    cognitoEnabled,
+  };
+};
+
+/**
+ * Load an existing user under that user's RLS context without provisioning or
+ * updating identity state.
+ */
+export const loadTrustedUserIdentity = async (
+  userId: string,
+): Promise<UserIdentity | null> => {
+  const client = await (await getPool()).connect();
+
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    const result = await client.query(
+      `SELECT user_id, email, email_verified, cognito_status, cognito_enabled
+       FROM users
+       WHERE user_id = $1`,
+      [userId],
+    );
+    if (result.rows.length > 1) {
+      throw new Error(`loadTrustedUserIdentity: expected at most 1 row, got ${result.rows.length}`);
+    }
+    const row = result.rows[0];
+    const identity = row === undefined ? null : readTrustedUserIdentity(row);
+    await client.query("COMMIT");
+    return identity;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 export const withRestrictedTrustedIdentityContext = async <T>(
   identity: UserIdentity,
   workspaceId: string,
@@ -250,6 +366,36 @@ export const withReadOnlyRestrictedTrustedIdentityContext = async <T>(
   callback: (queryFn: QueryFn) => Promise<T>,
 ): Promise<T> => {
   await ensureTrustedIdentityProvisioned(identity, workspaceId);
+  const client = await (await getPool()).connect();
+
+  try {
+    await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [identity.userId]);
+    await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+    await client.query("SELECT set_config('statement_timeout', $1, true)", [String(statementTimeoutMs)]);
+    await client.query("SET LOCAL ROLE api_sql_reader");
+    const boundQuery: QueryFn = (text, params) => client.query(text, params as Array<unknown>);
+    const result = await callback(boundQuery);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Execute read-only user SQL for an existing workspace without provisioning or
+ * updating identity, membership, workspace, or settings state.
+ */
+export const withNonProvisioningReadOnlyRestrictedTrustedIdentityContext = async <T>(
+  identity: UserIdentity,
+  workspaceId: string,
+  statementTimeoutMs: number,
+  callback: (queryFn: QueryFn) => Promise<T>,
+): Promise<T> => {
   const client = await (await getPool()).connect();
 
   try {
