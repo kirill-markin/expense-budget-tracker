@@ -156,6 +156,14 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
     authorizer,
     authorizationType: apigw.AuthorizationType.CUSTOM,
   });
+  sqlResource.addResource("query").addMethod("POST", new apigw.LambdaIntegration(sqlApiFn), {
+    authorizer,
+    authorizationType: apigw.AuthorizationType.CUSTOM,
+  });
+  sqlResource.addResource("execute").addMethod("POST", new apigw.LambdaIntegration(sqlApiFn), {
+    authorizer,
+    authorizationType: apigw.AuthorizationType.CUSTOM,
+  });
 
   // --- Usage Plan (per-key throttling via usageIdentifierKey) ---
   restApi.addUsagePlan("SqlApiUsagePlan", {

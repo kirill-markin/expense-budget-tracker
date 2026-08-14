@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMachineApiHandler } from "../machineApi.js";
-import { handleMeRouteWithResolver, handleSqlRouteWithWorkspaceResolver } from "./routeHandlers.js";
+import {
+  handleMeRouteWithResolver,
+  handleSqlExecuteRouteWithWorkspaceResolver,
+  handleSqlQueryRouteWithWorkspaceResolver,
+  handleSqlRouteWithWorkspaceResolver,
+} from "./routeHandlers.js";
 import { createAuthenticatedEvent, createEvent } from "../handlerTestUtils.js";
 import type { MachineApiDependencies, MachineRouteContext } from "./types.js";
 
@@ -9,6 +14,9 @@ const createDependencies = (): MachineApiDependencies => ({
   ensureTrustedIdentityProvisioned: async () => undefined,
   queryAsTrustedIdentity: async () => {
     throw new Error("queryAsTrustedIdentity should not be called");
+  },
+  withReadOnlyRestrictedTrustedIdentityContext: async () => {
+    throw new Error("withReadOnlyRestrictedTrustedIdentityContext should not be called");
   },
   withRestrictedTrustedIdentityContext: async () => {
     throw new Error("withRestrictedTrustedIdentityContext should not be called");
@@ -153,5 +161,165 @@ test("handleSqlRoute explains how to replace PostgreSQL escape strings", async (
     payload.instructions,
     "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.",
   );
+  assert.equal(workspaceResolutionCount, 0);
+});
+
+test("SQL query, execute, and legacy routes reject data-modifying CTEs before workspace resolution", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  const context: MachineRouteContext = {
+    ...createContext(),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({
+        sql: "WITH changed AS (UPDATE account_metadata SET liquidity = 'low' RETURNING *) SELECT * FROM changed",
+      }),
+      httpMethod: "POST",
+      path: "/v1/sql/query",
+      resource: "/sql/query",
+    }),
+  };
+
+  const resolveWorkspaceId = async (): Promise<string> => {
+    workspaceResolutionCount += 1;
+    return "workspace-1";
+  };
+  const handlers = [
+    handleSqlQueryRouteWithWorkspaceResolver,
+    handleSqlExecuteRouteWithWorkspaceResolver,
+    handleSqlRouteWithWorkspaceResolver,
+  ] as const;
+
+  for (const handleRoute of handlers) {
+    const response = await handleRoute(context, resolveWorkspaceId);
+    const payload = JSON.parse(response.body) as {
+      error: Readonly<{ code: string; message: string }>;
+    };
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(payload.error, {
+      code: "unsupported_statement",
+      message: "Data-modifying CTE bodies are not supported; use SELECT, WITH, or VALUES in CTE bodies and move INSERT, UPDATE, or DELETE to the top-level statement. MERGE is not supported",
+    });
+  }
+  assert.equal(workspaceResolutionCount, 0);
+});
+
+test("handleSqlExecuteRoute and legacy route accept writes before workspace resolution", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  const context: MachineRouteContext = {
+    ...createContext(),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({
+        sql: "UPDATE account_metadata SET liquidity = 'low' WHERE workspace_id = 'workspace-1'",
+      }),
+      httpMethod: "POST",
+      path: "/v1/sql/execute",
+      resource: "/sql/execute",
+    }),
+  };
+
+  const resolveWorkspaceId = async (): Promise<null> => {
+    workspaceResolutionCount += 1;
+    return null;
+  };
+  const executeResponse = await handleSqlExecuteRouteWithWorkspaceResolver(
+    context,
+    resolveWorkspaceId,
+  );
+  const legacyResponse = await handleSqlRouteWithWorkspaceResolver(
+    context,
+    resolveWorkspaceId,
+  );
+  const executePayload = JSON.parse(executeResponse.body) as { error: Readonly<{ code: string }> };
+  const legacyPayload = JSON.parse(legacyResponse.body) as { error: Readonly<{ code: string }> };
+
+  assert.equal(executeResponse.statusCode, 400);
+  assert.equal(executePayload.error.code, "missing_workspace_id");
+  assert.equal(legacyResponse.statusCode, 400);
+  assert.equal(legacyPayload.error.code, "missing_workspace_id");
+  assert.equal(workspaceResolutionCount, 2);
+});
+
+test("new SQL routes reject batches while legacy SQL retains atomic script validation", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  const resolveWorkspaceId = async (): Promise<null> => {
+    workspaceResolutionCount += 1;
+    return null;
+  };
+  const queryContext: MachineRouteContext = {
+    ...createContext(),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({
+        sql: "SELECT account_id FROM accounts; SELECT rate FROM fx_rates_daily",
+      }),
+      httpMethod: "POST",
+      path: "/v1/sql/query",
+      resource: "/sql/query",
+    }),
+  };
+  const executeContext: MachineRouteContext = {
+    ...createContext(),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({
+        sql: "UPDATE account_metadata SET liquidity = 'low'; DELETE FROM budget_lines",
+      }),
+      httpMethod: "POST",
+      path: "/v1/sql/execute",
+      resource: "/sql/execute",
+    }),
+  };
+
+  const queryResponse = await handleSqlQueryRouteWithWorkspaceResolver(
+    queryContext,
+    resolveWorkspaceId,
+  );
+  const executeResponse = await handleSqlExecuteRouteWithWorkspaceResolver(
+    executeContext,
+    resolveWorkspaceId,
+  );
+  const legacyResponse = await handleSqlRouteWithWorkspaceResolver(
+    executeContext,
+    resolveWorkspaceId,
+  );
+  const queryPayload = JSON.parse(queryResponse.body) as { error: Readonly<{ code: string }> };
+  const executePayload = JSON.parse(executeResponse.body) as { error: Readonly<{ code: string }> };
+  const legacyPayload = JSON.parse(legacyResponse.body) as { error: Readonly<{ code: string }> };
+
+  assert.equal(queryResponse.statusCode, 400);
+  assert.equal(queryPayload.error.code, "single_statement_required");
+  assert.equal(executeResponse.statusCode, 400);
+  assert.equal(executePayload.error.code, "single_statement_required");
+  assert.equal(legacyResponse.statusCode, 400);
+  assert.equal(legacyPayload.error.code, "missing_workspace_id");
+  assert.equal(workspaceResolutionCount, 1);
+});
+
+test("SQL query, execute, and legacy routes reject nested WITH MERGE before workspace resolution", async (): Promise<void> => {
+  let workspaceResolutionCount = 0;
+  const context: MachineRouteContext = {
+    ...createContext(),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({
+        sql: "WITH outer_rows AS (WITH source AS (SELECT account_id FROM accounts) MERGE INTO account_metadata AS target USING source ON target.account_id = source.account_id WHEN MATCHED THEN UPDATE SET liquidity = 'low') SELECT * FROM outer_rows",
+      }),
+      httpMethod: "POST",
+      path: "/v1/sql/query",
+      resource: "/sql/query",
+    }),
+  };
+  const resolveWorkspaceId = async (): Promise<string> => {
+    workspaceResolutionCount += 1;
+    return "workspace-1";
+  };
+  const handlers = [
+    handleSqlQueryRouteWithWorkspaceResolver,
+    handleSqlExecuteRouteWithWorkspaceResolver,
+    handleSqlRouteWithWorkspaceResolver,
+  ] as const;
+
+  for (const handleRoute of handlers) {
+    const response = await handleRoute(context, resolveWorkspaceId);
+    const payload = JSON.parse(response.body) as { error: Readonly<{ code: string }> };
+    assert.equal(response.statusCode, 400);
+    assert.equal(payload.error.code, "unsupported_statement");
+  }
   assert.equal(workspaceResolutionCount, 0);
 });

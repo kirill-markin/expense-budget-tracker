@@ -30,6 +30,9 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
       queryWorkspaceId = workspaceId;
       return createQueryResult([]);
     },
+    withReadOnlyRestrictedTrustedIdentityContext: async () => {
+      throw new Error("withReadOnlyRestrictedTrustedIdentityContext should not be called");
+    },
     withRestrictedTrustedIdentityContext: async () => {
       throw new Error("withRestrictedTrustedIdentityContext should not be called");
     },

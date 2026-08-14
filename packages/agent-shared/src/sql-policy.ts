@@ -2,6 +2,10 @@
  * Shared SQL policy for machine-facing database access.
  */
 export const MAX_SQL_ROWS = 100;
+export const MAX_SQL_RETURNED_ROWS = 100;
+export const MAX_SQL_MUTATION_ROWS = 100;
+export const MAX_SQL_SCRIPT_LENGTH = 100_000;
+export const MAX_SQL_STATEMENTS = 100;
 export const SQL_STATEMENT_TIMEOUT_MS = 30_000;
 
 export const ALLOWED_SQL_FUNCTION_NAMES = [
@@ -23,6 +27,14 @@ const ALLOWED_SQL_FUNCTIONS_DESCRIPTION = ALLOWED_SQL_FUNCTION_NAMES
 
 const ALLOWED_FIRST_KEYWORDS = new Set([
   "SELECT", "WITH", "INSERT", "UPDATE", "DELETE",
+]);
+
+const ALLOWED_EFFECTIVE_STATEMENT_KEYWORDS: ReadonlySet<string> = new Set([
+  "select", "insert", "update", "delete",
+]);
+
+const ALLOWED_CTE_BODY_KEYWORDS: ReadonlySet<string> = new Set([
+  "select", "values",
 ]);
 
 const SOURCE_CLAUSE_END: ReadonlySet<string> = new Set([
@@ -111,6 +123,12 @@ type MutationTarget = Readonly<{
 
 type SqlPolicyErrorCode =
   | "unsupported_statement"
+  | "single_statement_required"
+  | "sql_script_too_long"
+  | "too_many_sql_statements"
+  | "mutation_statement_row_limit_exceeded"
+  | "mutation_request_row_limit_exceeded"
+  | "read_only_sql_required"
   | "on_conflict_not_allowed"
   | "set_config_not_allowed"
   | "function_calls_not_allowed"
@@ -138,12 +156,21 @@ export type ValidatedExpenseSql = Readonly<{
   statements: ReadonlyArray<ValidatedExpenseSqlStatement>;
 }>;
 
+export type ValidatedReadOnlyExpenseSql = ValidatedExpenseSql & Readonly<{
+  isReadOnly: true;
+}>;
+
 export type RestrictedSqlResultRow = Readonly<Record<string, unknown>>;
 
 export type RestrictedSqlQueryResult = Readonly<{
   command: string;
   rows: ReadonlyArray<RestrictedSqlResultRow>;
   rowCount: number | null;
+}>;
+
+export type RestrictedSqlExecutionRequest = Readonly<{
+  sql: string;
+  params: ReadonlyArray<unknown>;
 }>;
 
 export type ValidatedExpenseSqlStatement = Readonly<{
@@ -708,6 +735,118 @@ const parseCteDefinitions = (
   };
 };
 
+const unwrapParenthesizedSegment = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): Readonly<{ startIndex: number; endIndex: number }> => {
+  let normalizedStartIndex = startIndex;
+  let normalizedEndIndex = endIndex;
+
+  while (
+    tokens[normalizedStartIndex]?.value === "("
+    && findMatchingParen(tokens, normalizedStartIndex, normalizedEndIndex) === normalizedEndIndex - 1
+  ) {
+    normalizedStartIndex += 1;
+    normalizedEndIndex -= 1;
+  }
+
+  return { startIndex: normalizedStartIndex, endIndex: normalizedEndIndex };
+};
+
+const assertSupportedNestedWithClauses = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): void => {
+  for (let index = startIndex; index < endIndex; index += 1) {
+    if (tokens[index]?.value !== "(") {
+      continue;
+    }
+
+    const closeIndex = findMatchingParen(tokens, index, endIndex);
+    const nested = unwrapParenthesizedSegment(tokens, index + 1, closeIndex);
+    if (tokens[nested.startIndex]?.lower === "with") {
+      assertSupportedCteBodySegment(tokens, nested.startIndex, nested.endIndex);
+    } else {
+      assertSupportedNestedWithClauses(tokens, nested.startIndex, nested.endIndex);
+    }
+    index = closeIndex;
+  }
+};
+
+const assertSupportedCteBodySegment = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): void => {
+  const normalized = unwrapParenthesizedSegment(tokens, startIndex, endIndex);
+  const effectiveStatement = tokens[normalized.startIndex];
+  if (effectiveStatement?.lower === "with") {
+    const { ctes, mainQueryStartIndex } = parseCteDefinitions(
+      tokens,
+      normalized.startIndex,
+      normalized.endIndex,
+    );
+    for (const cte of ctes) {
+      assertSupportedCteBodySegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex);
+    }
+    assertSupportedCteBodySegment(tokens, mainQueryStartIndex, normalized.endIndex);
+    return;
+  }
+
+  if (
+    effectiveStatement === undefined
+    || effectiveStatement.kind !== "word"
+    || !ALLOWED_CTE_BODY_KEYWORDS.has(effectiveStatement.lower)
+  ) {
+    fail(
+      "unsupported_statement",
+      "Data-modifying CTE bodies are not supported; use SELECT, WITH, or VALUES in CTE bodies and move INSERT, UPDATE, or DELETE to the top-level statement. MERGE is not supported",
+    );
+  }
+
+  assertSupportedNestedWithClauses(tokens, normalized.startIndex, normalized.endIndex);
+};
+
+const assertSupportedEffectiveStatementsInSegment = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): void => {
+  const normalized = unwrapParenthesizedSegment(tokens, startIndex, endIndex);
+  const effectiveStatement = tokens[normalized.startIndex];
+  if (effectiveStatement?.lower === "with") {
+    const { ctes, mainQueryStartIndex } = parseCteDefinitions(
+      tokens,
+      normalized.startIndex,
+      normalized.endIndex,
+    );
+    for (const cte of ctes) {
+      assertSupportedCteBodySegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex);
+    }
+    assertSupportedEffectiveStatementsInSegment(
+      tokens,
+      mainQueryStartIndex,
+      normalized.endIndex,
+    );
+    return;
+  }
+
+  if (
+    effectiveStatement === undefined
+    || effectiveStatement.kind !== "word"
+    || !ALLOWED_EFFECTIVE_STATEMENT_KEYWORDS.has(effectiveStatement.lower)
+  ) {
+    fail(
+      "unsupported_statement",
+      "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed",
+    );
+  }
+
+  assertSupportedNestedWithClauses(tokens, normalized.startIndex, normalized.endIndex);
+};
+
 const failFunctionCallNotAllowed = (functionName: string): never =>
   fail(
     "function_calls_not_allowed",
@@ -858,37 +997,42 @@ const collectMutationTargetsFromSegment = (
   startIndex: number,
   endIndex: number,
 ): ReadonlyArray<MutationTarget> => {
-  if (startIndex >= endIndex) {
+  const normalized = unwrapParenthesizedSegment(tokens, startIndex, endIndex);
+  if (normalized.startIndex >= normalized.endIndex) {
     return [];
   }
 
-  const firstToken = tokens[startIndex];
+  const firstToken = tokens[normalized.startIndex];
   if (firstToken === undefined || firstToken.kind !== "word") {
     return [];
   }
 
-  if (firstToken.lower === "insert" && tokens[startIndex + 1]?.lower === "into") {
-    return [collectMutationTarget(tokens, startIndex + 2, "INSERT")];
+  if (firstToken.lower === "insert" && tokens[normalized.startIndex + 1]?.lower === "into") {
+    return [collectMutationTarget(tokens, normalized.startIndex + 2, "INSERT")];
   }
 
   if (firstToken.lower === "update") {
-    return [collectMutationTarget(tokens, startIndex + 1, "UPDATE")];
+    return [collectMutationTarget(tokens, normalized.startIndex + 1, "UPDATE")];
   }
 
-  if (firstToken.lower === "delete" && tokens[startIndex + 1]?.lower === "from") {
-    return [collectMutationTarget(tokens, startIndex + 2, "DELETE")];
+  if (firstToken.lower === "delete" && tokens[normalized.startIndex + 1]?.lower === "from") {
+    return [collectMutationTarget(tokens, normalized.startIndex + 2, "DELETE")];
   }
 
   if (firstToken.lower !== "with") {
     return [];
   }
 
-  const { ctes, mainQueryStartIndex } = parseCteDefinitions(tokens, startIndex, endIndex);
+  const { ctes, mainQueryStartIndex } = parseCteDefinitions(
+    tokens,
+    normalized.startIndex,
+    normalized.endIndex,
+  );
   const targets: Array<MutationTarget> = [];
   for (const cte of ctes) {
     targets.push(...collectMutationTargetsFromSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex));
   }
-  targets.push(...collectMutationTargetsFromSegment(tokens, mainQueryStartIndex, endIndex));
+  targets.push(...collectMutationTargetsFromSegment(tokens, mainQueryStartIndex, normalized.endIndex));
   return targets;
 };
 
@@ -919,22 +1063,21 @@ const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationN
 /**
  * Classifies whether a validated SQL statement mutates persisted data.
  *
- * PostgreSQL command tags are not sufficient for this because a statement such
- * as `WITH changed AS (UPDATE ... RETURNING ...) SELECT ...` mutates data while
- * still reporting `SELECT` as the outer command. We therefore classify writes
- * from the validated SQL structure itself and carry that explicit flag through
- * downstream chat/runtime code.
+ * Write classification comes from the validated SQL structure rather than the
+ * eventual PostgreSQL command tag. Read-only CTE bodies may feed a top-level
+ * INSERT, UPDATE, or DELETE, so downstream code carries this explicit flag.
  */
 const statementMutatesDataFromSegment = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
   endIndex: number,
 ): boolean => {
-  if (startIndex >= endIndex) {
+  const normalized = unwrapParenthesizedSegment(tokens, startIndex, endIndex);
+  if (normalized.startIndex >= normalized.endIndex) {
     return false;
   }
 
-  const firstToken = tokens[startIndex];
+  const firstToken = tokens[normalized.startIndex];
   if (firstToken === undefined || firstToken.kind !== "word") {
     return false;
   }
@@ -951,14 +1094,18 @@ const statementMutatesDataFromSegment = (
     return false;
   }
 
-  const { ctes, mainQueryStartIndex } = parseCteDefinitions(tokens, startIndex, endIndex);
+  const { ctes, mainQueryStartIndex } = parseCteDefinitions(
+    tokens,
+    normalized.startIndex,
+    normalized.endIndex,
+  );
   for (const cte of ctes) {
     if (statementMutatesDataFromSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex)) {
       return true;
     }
   }
 
-  return statementMutatesDataFromSegment(tokens, mainQueryStartIndex, endIndex);
+  return statementMutatesDataFromSegment(tokens, mainQueryStartIndex, normalized.endIndex);
 };
 
 export const getAllowedRelationNames = (): ReadonlyArray<AllowedRelationName> => ALLOWED_RELATION_NAMES;
@@ -986,6 +1133,7 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
     fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
   }
   const tokens = tokenizeSql(sanitizedSql);
+  assertSupportedEffectiveStatementsInSegment(tokens, 0, tokens.length);
   assertMutationTargetsAreWritable(tokens, 0, tokens.length);
   assertOnlyAllowedFunctionCallsInSegment(tokens, 0, tokens.length);
 
@@ -996,9 +1144,28 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
   };
 };
 
+const assertSqlScriptLength = (sql: string): void => {
+  if (sql.length > MAX_SQL_SCRIPT_LENGTH) {
+    fail(
+      "sql_script_too_long",
+      `SQL scripts must be ${MAX_SQL_SCRIPT_LENGTH} characters or fewer`,
+    );
+  }
+};
+
 export const validateExpenseSql = (sql: string): ValidatedExpenseSql => {
+  assertSqlScriptLength(sql);
+
   const trimmedSql = sql.trim();
-  const statements = splitSqlStatements(trimmedSql).map(validateExpenseSqlStatement);
+  const rawStatements = splitSqlStatements(trimmedSql);
+  if (rawStatements.length > MAX_SQL_STATEMENTS) {
+    fail(
+      "too_many_sql_statements",
+      `SQL scripts must contain ${MAX_SQL_STATEMENTS} statements or fewer`,
+    );
+  }
+
+  const statements = rawStatements.map(validateExpenseSqlStatement);
   if (statements.length === 0) {
     fail("unsupported_statement", "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
   }
@@ -1009,23 +1176,161 @@ export const validateExpenseSql = (sql: string): ValidatedExpenseSql => {
   };
 };
 
+export const validateReadOnlyExpenseSql = (sql: string): ValidatedReadOnlyExpenseSql => {
+  const validated = validateExpenseSql(sql);
+  if (validated.statements.some((statement) => statement.isMutating)) {
+    fail(
+      "read_only_sql_required",
+      "Read-only SQL cannot contain INSERT, UPDATE, DELETE, or data-modifying CTEs",
+    );
+  }
+
+  return {
+    ...validated,
+    isReadOnly: true,
+  };
+};
+
+const assertSingleStatement = (validated: ValidatedExpenseSql): void => {
+  if (validated.statements.length !== 1) {
+    fail("single_statement_required", "This SQL endpoint accepts exactly one statement");
+  }
+};
+
+export const validateSingleExpenseSql = (sql: string): ValidatedExpenseSql => {
+  assertSqlScriptLength(sql);
+  if (splitSqlStatements(sql.trim()).length > 1) {
+    fail("single_statement_required", "This SQL endpoint accepts exactly one statement");
+  }
+  const validated = validateExpenseSql(sql);
+  assertSingleStatement(validated);
+  return validated;
+};
+
+export const validateSingleReadOnlyExpenseSql = (sql: string): ValidatedReadOnlyExpenseSql => {
+  const validated = validateSingleExpenseSql(sql);
+  if (validated.statements.some((statement) => statement.isMutating)) {
+    fail(
+      "read_only_sql_required",
+      "Read-only SQL cannot contain INSERT, UPDATE, DELETE, or data-modifying CTEs",
+    );
+  }
+
+  return {
+    ...validated,
+    isReadOnly: true,
+  };
+};
+
+const getAffectedRowCount = (result: RestrictedSqlQueryResult): number => {
+  const rowCount = result.rowCount;
+  if (rowCount === null || !Number.isSafeInteger(rowCount) || rowCount < 0) {
+    throw new TypeError("Restricted SQL execution returned an invalid affected row count");
+  }
+  return rowCount;
+};
+
+const executeBoundedRead = async (
+  statement: ValidatedExpenseSqlStatement,
+  statementIndex: number,
+  maxRows: number,
+  execute: (request: RestrictedSqlExecutionRequest) => Promise<RestrictedSqlQueryResult>,
+): Promise<Readonly<{
+  rows: ReadonlyArray<RestrictedSqlResultRow>;
+  totalRowCount: number;
+}>> => {
+  const cursorName = `api_sql_read_cursor_${String(statementIndex + 1)}`;
+  await execute({
+    sql: `DECLARE ${cursorName} NO SCROLL CURSOR FOR ${statement.sql}`,
+    params: [],
+  });
+  const fetched = await execute({
+    sql: `FETCH FORWARD ${String(maxRows + 1)} FROM ${cursorName}`,
+    params: [],
+  });
+  if (fetched.rowCount !== null && fetched.rowCount !== fetched.rows.length) {
+    throw new TypeError("Restricted SQL cursor FETCH returned inconsistent row metadata");
+  }
+
+  const moved = await execute({
+    sql: `MOVE FORWARD ALL FROM ${cursorName}`,
+    params: [],
+  });
+  const remainingRowCount = getAffectedRowCount(moved);
+  await execute({ sql: `CLOSE ${cursorName}`, params: [] });
+
+  return {
+    rows: fetched.rows.slice(0, maxRows),
+    totalRowCount: fetched.rows.length + remainingRowCount,
+  };
+};
+
 export const executeValidatedExpenseSql = async (
   validated: ValidatedExpenseSql,
-  execute: (validatedSql: string) => Promise<RestrictedSqlQueryResult>,
+  execute: (request: RestrictedSqlExecutionRequest) => Promise<RestrictedSqlQueryResult>,
 ): Promise<ExecutedExpenseSql> => {
   const statements: Array<ExecutedExpenseSqlStatement> = [];
+  let returnedRowCount = 0;
+  let mutationRowCount = 0;
 
-  for (const statement of validated.statements) {
-    const result = await execute(statement.sql);
-    const rows = result.rows.slice(0, MAX_SQL_ROWS);
-    const rowCount = rows.length > 0 ? rows.length : (result.rowCount ?? 0);
-    const totalRowCount = result.rows.length > 0 ? result.rows.length : (result.rowCount ?? 0);
+  for (let statementIndex = 0; statementIndex < validated.statements.length; statementIndex += 1) {
+    const statement = validated.statements[statementIndex];
+    if (statement === undefined) {
+      throw new TypeError(`Validated SQL statement ${String(statementIndex + 1)} is missing`);
+    }
+    const statementRowLimit = Math.min(
+      MAX_SQL_ROWS,
+      Math.max(MAX_SQL_RETURNED_ROWS - returnedRowCount, 0),
+    );
+
+    if (!statement.isMutating) {
+      const boundedRead = await executeBoundedRead(
+        statement,
+        statementIndex,
+        statementRowLimit,
+        execute,
+      );
+      returnedRowCount += boundedRead.rows.length;
+      statements.push({
+        sql: statement.sql,
+        command: "SELECT",
+        isMutating: false,
+        rows: boundedRead.rows,
+        rowCount: boundedRead.rows.length,
+        returnedRowCount: boundedRead.rows.length,
+        totalRowCount: boundedRead.totalRowCount,
+        truncated: boundedRead.totalRowCount > boundedRead.rows.length,
+        referencedRelations: statement.referencedRelations,
+      });
+      continue;
+    }
+
+    const result = await execute({ sql: statement.sql, params: [] });
+    const affectedRowCount = getAffectedRowCount(result);
+
+    if (affectedRowCount > MAX_SQL_MUTATION_ROWS) {
+      fail(
+        "mutation_statement_row_limit_exceeded",
+        `A SQL mutation may affect at most ${MAX_SQL_MUTATION_ROWS} rows per statement; this statement affected ${affectedRowCount}`,
+      );
+    }
+    mutationRowCount += affectedRowCount;
+    if (mutationRowCount > MAX_SQL_MUTATION_ROWS) {
+      fail(
+        "mutation_request_row_limit_exceeded",
+        `A SQL request may affect at most ${MAX_SQL_MUTATION_ROWS} rows; this request affected ${mutationRowCount}`,
+      );
+    }
+
+    const totalRowCount = result.rows.length > 0 ? result.rows.length : affectedRowCount;
+    const rows = result.rows.slice(0, statementRowLimit);
+    returnedRowCount += rows.length;
     statements.push({
       sql: statement.sql,
       command: result.command,
       isMutating: statement.isMutating,
       rows,
-      rowCount,
+      rowCount: rows.length === 0 ? affectedRowCount : rows.length,
       returnedRowCount: rows.length,
       totalRowCount,
       truncated: result.rows.length > rows.length,
@@ -1041,5 +1346,5 @@ export const executeValidatedExpenseSql = async (
 
 export const executeExpenseSql = async (
   sql: string,
-  execute: (validatedSql: string) => Promise<RestrictedSqlQueryResult>,
+  execute: (request: RestrictedSqlExecutionRequest) => Promise<RestrictedSqlQueryResult>,
 ): Promise<ExecutedExpenseSql> => executeValidatedExpenseSql(validateExpenseSql(sql), execute);

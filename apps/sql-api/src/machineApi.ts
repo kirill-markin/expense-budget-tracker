@@ -1,6 +1,11 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { AGENT_API_KEY_ENV_VAR_NAME, buildErrorEnvelope } from "@expense-budget-tracker/agent-shared";
-import { ensureTrustedIdentityProvisioned, queryAsTrustedIdentity, withRestrictedTrustedIdentityContext } from "./db.js";
+import {
+  ensureTrustedIdentityProvisioned,
+  queryAsTrustedIdentity,
+  withReadOnlyRestrictedTrustedIdentityContext,
+  withRestrictedTrustedIdentityContext,
+} from "./db.js";
 import {
   handleCreateWorkspaceRoute,
   handleDiscoveryRoute,
@@ -9,6 +14,8 @@ import {
   handleSchemaRoute,
   handleSelectWorkspaceRoute,
   handleSourceDiscoveryRoute,
+  handleSqlExecuteRoute,
+  handleSqlQueryRoute,
   handleSqlRoute,
 } from "./machineApi/routeHandlers.js";
 import { createMachineRouteContext, getAuthenticatedContext, normalizePath } from "./machineApi/request.js";
@@ -21,6 +28,7 @@ export const createMachineApiHandler = (
   const dependencies: MachineApiDependencies = {
     ensureTrustedIdentityProvisioned,
     queryAsTrustedIdentity,
+    withReadOnlyRestrictedTrustedIdentityContext,
     withRestrictedTrustedIdentityContext,
     ...overrides,
   };
@@ -74,6 +82,14 @@ export const createMachineApiHandler = (
 
     if (event.httpMethod === "POST" && path === "/sql") {
       return handleSqlRoute(context);
+    }
+
+    if (event.httpMethod === "POST" && path === "/sql/query") {
+      return handleSqlQueryRoute(context);
+    }
+
+    if (event.httpMethod === "POST" && path === "/sql/execute") {
+      return handleSqlExecuteRoute(context);
     }
 
     return json(404, { error: "Not found" });
