@@ -296,16 +296,17 @@ const registrationBody = (padding: string): string => JSON.stringify({
 
 const utf8Length = (value: string): number => new TextEncoder().encode(value).byteLength;
 
-const consentParametersWithEncodedSize = (targetBytes: number): URLSearchParams => {
-  const params = authorizationParams();
-  const prefix = "é/?&=+";
-  params.set("state", prefix);
+const consentParametersWithEncodedSize = (
+  oauthClient: OAuthClient,
+  targetBytes: number,
+): URLSearchParams => {
+  const params = authorizationParamsForClient(oauthClient, "");
   params.set("decision", "allow");
   const remainingBytes = targetBytes - utf8Length(params.toString());
   if (remainingBytes < 0) throw new RangeError("Target consent size is smaller than the fixed form fields");
-  const multibyteCharacters = Math.floor(remainingBytes / 6);
-  const asciiCharacters = remainingBytes % 6;
-  params.set("state", `${prefix}${"é".repeat(multibyteCharacters)}${"x".repeat(asciiCharacters)}`);
+  const encodedCharacters = Math.floor(remainingBytes / 3);
+  const asciiCharacters = remainingBytes % 3;
+  params.set("state", `${"~".repeat(encodedCharacters)}${"x".repeat(asciiCharacters)}`);
   const state = params.get("state");
   if (state === null || state.length > 2048 || utf8Length(params.toString()) !== targetBytes) {
     throw new RangeError("Target consent size cannot be represented within the state parameter limit");
@@ -447,14 +448,25 @@ test("authorization GET enforces its raw query ceiling and keeps nested login be
 
 test("consent renders only when both encoded decisions fit the POST byte limit", async (): Promise<void> => {
   let sessionResolutionCount = 0;
+  const boundaryClient: OAuthClient = {
+    clientId: "ebt_cl_boundary-client",
+    clientName: "Boundary client",
+    redirectUris: [`https://client.example/${"~".repeat(600)}`],
+  };
   const app = createOAuthApp(createDependencies({
+    getOAuthClient: async (clientId) => clientId === boundaryClient.clientId ? boundaryClient : null,
     resolveBrowserSession: async () => {
       sessionResolutionCount += 1;
       return { userId: "user-1", email: "user@example.com" };
     },
   }));
-  const exactBoundary = consentParametersWithEncodedSize(MAX_CONSENT_REQUEST_BYTES);
-  const page = await app.request(`${issuer}/oauth/authorize?${exactBoundary.toString()}`);
+  const exactBoundary = consentParametersWithEncodedSize(
+    boundaryClient,
+    MAX_CONSENT_REQUEST_BYTES,
+  );
+  const exactQuery = exactBoundary.toString().replaceAll("%7E", "~");
+  assert.ok(utf8Length(exactQuery) <= MAX_OAUTH_AUTHORIZE_QUERY_BYTES);
+  const page = await app.request(`${issuer}/oauth/authorize?${exactQuery}`);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /<form method="post" action="\/oauth\/authorize">/u);
 
@@ -467,8 +479,13 @@ test("consent renders only when both encoded decisions fit the POST byte limit",
   const submission = await app.fetch(consentRequest(allowed, issuer));
   assert.equal(submission.status, 302);
 
-  const oversized = consentParametersWithEncodedSize(MAX_CONSENT_REQUEST_BYTES + 1);
-  const rejected = await app.request(`${issuer}/oauth/authorize?${oversized.toString()}`);
+  const oversized = consentParametersWithEncodedSize(
+    boundaryClient,
+    MAX_CONSENT_REQUEST_BYTES + 1,
+  );
+  const oversizedQuery = oversized.toString().replaceAll("%7E", "~");
+  assert.ok(utf8Length(oversizedQuery) <= MAX_OAUTH_AUTHORIZE_QUERY_BYTES);
+  const rejected = await app.request(`${issuer}/oauth/authorize?${oversizedQuery}`);
   assert.equal(rejected.status, 302);
   const location = rejected.headers.get("location") ?? "";
   assert.match(location, /[?&]error=invalid_request(?:&|$)/u);

@@ -64,24 +64,92 @@ const requireRateBasedStatement = (
   return statement;
 };
 
+const requireAndStatement = (
+  statement: IResolvable | wafv2.CfnWebACL.AndStatementProperty | undefined,
+): wafv2.CfnWebACL.AndStatementProperty => {
+  if (statement === undefined || "resolve" in statement) {
+    throw new Error("Expected an inline WAF and statement");
+  }
+  return statement;
+};
+
+const requireOrStatement = (
+  statement: IResolvable | wafv2.CfnWebACL.OrStatementProperty | undefined,
+): wafv2.CfnWebACL.OrStatementProperty => {
+  if (statement === undefined || "resolve" in statement) {
+    throw new Error("Expected an inline WAF or statement");
+  }
+  return statement;
+};
+
+const requireNotStatement = (
+  statement: IResolvable | wafv2.CfnWebACL.NotStatementProperty | undefined,
+): wafv2.CfnWebACL.NotStatementProperty => {
+  if (statement === undefined || "resolve" in statement) {
+    throw new Error("Expected an inline WAF not statement");
+  }
+  return statement;
+};
+
+const requireByteMatchStatement = (
+  statement: IResolvable | wafv2.CfnWebACL.ByteMatchStatementProperty | undefined,
+): wafv2.CfnWebACL.ByteMatchStatementProperty => {
+  if (statement === undefined || "resolve" in statement) {
+    throw new Error("Expected an inline WAF byte-match statement");
+  }
+  return statement;
+};
+
+const requireSizeConstraintStatement = (
+  statement: IResolvable | wafv2.CfnWebACL.SizeConstraintStatementProperty | undefined,
+): wafv2.CfnWebACL.SizeConstraintStatementProperty => {
+  if (statement === undefined || "resolve" in statement) {
+    throw new Error("Expected an inline WAF size-constraint statement");
+  }
+  return statement;
+};
+
+const requireManagedRuleGroupStatement = (
+  statement: IResolvable | wafv2.CfnWebACL.ManagedRuleGroupStatementProperty | undefined,
+): wafv2.CfnWebACL.ManagedRuleGroupStatementProperty => {
+  if (statement === undefined || "resolve" in statement) {
+    throw new Error("Expected an inline WAF managed-rule-group statement");
+  }
+  return statement;
+};
+
+const requireLabelMatchStatement = (
+  statement: IResolvable | wafv2.CfnWebACL.LabelMatchStatementProperty | undefined,
+): wafv2.CfnWebACL.LabelMatchStatementProperty => {
+  if (statement === undefined || "resolve" in statement) {
+    throw new Error("Expected an inline WAF label-match statement");
+  }
+  return statement;
+};
+
 const assertBoundedGetRoute = (
   statement: wafv2.CfnWebACL.StatementProperty,
   host: string,
   path: string,
   maxBytes: number,
 ): void => {
-  const statements = requireStatements(statement.andStatement?.statements);
+  const and = requireAndStatement(statement.andStatement);
+  const statements = requireStatements(and.statements);
   assert.deepEqual(
-    statements.slice(0, 3).map((part) => part.byteMatchStatement?.searchString),
+    statements.slice(0, 3).map((part) =>
+      requireByteMatchStatement(part.byteMatchStatement).searchString),
     ["GET", host, path],
   );
+  const sizeConstraint = requireSizeConstraintStatement(
+    statements[3]?.sizeConstraintStatement,
+  );
   assert.equal(
-    statements[3]?.sizeConstraintStatement?.comparisonOperator,
+    sizeConstraint.comparisonOperator,
     "LE",
   );
-  assert.equal(statements[3]?.sizeConstraintStatement?.size, maxBytes);
+  assert.equal(sizeConstraint.size, maxBytes);
   assert.deepEqual(
-    statements[3]?.sizeConstraintStatement?.fieldToMatch,
+    sizeConstraint.fieldToMatch,
     { queryString: {} },
   );
 };
@@ -90,8 +158,11 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
   const rules = buildIngressWafRules("app.example.com", "auth.example.com");
   const managedRule = getRule(rules, "AWSManagedCommonRules");
   const managedStatement = requireStatement(managedRule.statement);
+  const managedRuleGroup = requireManagedRuleGroupStatement(
+    managedStatement.managedRuleGroupStatement,
+  );
   const overrides = requireRuleActionOverrides(
-    managedStatement.managedRuleGroupStatement?.ruleActionOverrides,
+    managedRuleGroup.ruleActionOverrides,
   );
   assert.deepEqual(
     overrides.map((override) => override.name),
@@ -100,13 +171,16 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
 
   const queryRule = getRule(rules, "BlockUnexpectedQuerySizeMatches");
   const queryStatement = requireStatement(queryRule.statement);
-  const reblockStatements = requireStatements(queryStatement.andStatement?.statements);
+  const reblock = requireAndStatement(queryStatement.andStatement);
+  const reblockStatements = requireStatements(reblock.statements);
   assert.equal(
-    reblockStatements[0]?.labelMatchStatement?.key,
+    requireLabelMatchStatement(reblockStatements[0]?.labelMatchStatement).key,
     "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString",
   );
-  const exception = requireStatement(reblockStatements[1]?.notStatement?.statement);
-  const allowedRoutes = requireStatements(exception.orStatement?.statements);
+  const exception = requireNotStatement(reblockStatements[1]?.notStatement);
+  const allowed = requireStatement(exception.statement);
+  const allowedRouteGroup = requireOrStatement(allowed.orStatement);
+  const allowedRoutes = requireStatements(allowedRouteGroup.statements);
   assert.equal(allowedRoutes.length, 2);
   assertBoundedGetRoute(
     allowedRoutes[0] ?? {},
@@ -139,13 +213,16 @@ test("WAF rate limits exact dynamic client registration requests by trusted Clou
   });
 
   const scopeDownStatement = requireStatement(rateBasedStatement.scopeDownStatement);
-  const conditions = requireStatements(scopeDownStatement.andStatement?.statements);
+  const scopeDown = requireAndStatement(scopeDownStatement.andStatement);
+  const conditions = requireStatements(scopeDown.statements);
   assert.deepEqual(
-    conditions.map((condition) => condition.byteMatchStatement?.searchString),
+    conditions.map((condition) =>
+      requireByteMatchStatement(condition.byteMatchStatement).searchString),
     ["auth.example.com", "POST", "/oauth/register"],
   );
   assert.deepEqual(
-    conditions.map((condition) => condition.byteMatchStatement?.fieldToMatch),
+    conditions.map((condition) =>
+      requireByteMatchStatement(condition.byteMatchStatement).fieldToMatch),
     [
       { singleHeader: { Name: "host" } },
       { method: {} },
