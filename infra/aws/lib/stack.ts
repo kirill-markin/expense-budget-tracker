@@ -72,6 +72,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       langfusePublicKeySecret: sec.langfusePublicKeySecret,
       langfuseSecretKeySecret: sec.langfuseSecretKeySecret,
       userPoolId: authResult.userPool.userPoolId,
+      userPoolArn: authResult.userPool.userPoolArn,
       userPoolClientId: authResult.userPoolClient.userPoolClientId,
       appDomain,
       authDomain,
