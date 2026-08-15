@@ -149,6 +149,12 @@ jobs:
         id: install
         run: npm ci
 
+      - name: Install PostgreSQL client
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
       - name: Apply auth test database migrations
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
         run: bash scripts/migrate.sh
