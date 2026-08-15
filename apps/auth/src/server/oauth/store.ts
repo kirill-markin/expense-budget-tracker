@@ -85,6 +85,36 @@ type RefreshTokenRecord = Readonly<{
   revoked: boolean;
 }>;
 
+type AuthorizationCodeRecord = Readonly<{
+  connectionId: string;
+  userId: string;
+  redirectUri: string;
+  codeChallenge: string;
+  scopes: ReadonlyArray<string>;
+  used: boolean;
+  unexpired: boolean;
+  clientId: string;
+  resource: string;
+  revoked: boolean;
+}>;
+
+const readAuthorizationCodeRecord = (value: unknown): AuthorizationCodeRecord => {
+  const operation = "exchangeAuthorizationCode";
+  const row = readRow(value, operation);
+  return {
+    connectionId: readString(row, "connection_id", operation),
+    userId: readString(row, "user_id", operation),
+    redirectUri: readString(row, "redirect_uri", operation),
+    codeChallenge: readString(row, "code_challenge", operation),
+    scopes: readScopes(row, operation),
+    used: readBoolean(row, "used", operation),
+    unexpired: readBoolean(row, "unexpired", operation),
+    clientId: readString(row, "client_id", operation),
+    resource: readString(row, "resource", operation),
+    revoked: readBoolean(row, "revoked", operation),
+  };
+};
+
 const readRefreshTokenRecord = (value: unknown): RefreshTokenRecord => {
   const operation = "exchangeRefreshToken";
   const row = readRow(value, operation);
@@ -146,6 +176,18 @@ export const getOAuthClientWithDependencies = async (
 export const getOAuthClient = (clientId: string): Promise<OAuthClient | null> =>
   getOAuthClientWithDependencies(clientId, defaultDependencies);
 
+const revokeActiveConnectionsForUser = async (
+  userId: string,
+  dependencies: OAuthStoreDependencies,
+): Promise<void> => {
+  await dependencies.query(
+    `UPDATE auth.oauth_connections
+     SET revoked_at = now()
+     WHERE user_id = $1 AND revoked_at IS NULL`,
+    [userId],
+  );
+};
+
 export const issueAuthorizationCodeWithDependencies = async (
   request: AuthorizationRequest,
   userId: string,
@@ -153,6 +195,11 @@ export const issueAuthorizationCodeWithDependencies = async (
   dependencies: OAuthStoreDependencies,
 ): Promise<string> => {
   await cleanupExpiredOAuthState(dependencies.query);
+  const ownerStatus = await dependencies.getCognitoOAuthOwnerStatus(userId);
+  if (ownerStatus === "inactive") {
+    await revokeActiveConnectionsForUser(userId, dependencies);
+    throw oauthError("access_denied", "User is not eligible for OAuth authorization", 400);
+  }
   const code = dependencies.createOpaqueToken("ac");
   const codeHash = hashOpaqueToken(code);
   return dependencies.withTransaction(async (queryFn: QueryFn) => {
@@ -224,6 +271,72 @@ const revokeActiveConnection = async (
   }
 };
 
+const invalidAuthorizationCodeGrant = (): ReturnType<typeof oauthError> =>
+  oauthError("invalid_grant", "Authorization code is invalid, expired, or already used", 400);
+
+const AUTHORIZATION_CODE_SELECT = `SELECT oac.connection_id, oc.user_id,
+       oac.redirect_uri, oac.code_challenge, oac.scopes,
+       oac.used_at IS NOT NULL AS used,
+       oac.expires_at > now() AS unexpired,
+       oc.client_id, oc.resource,
+       oc.revoked_at IS NOT NULL AS revoked
+FROM auth.oauth_authorization_codes oac
+JOIN auth.oauth_connections oc ON oc.connection_id = oac.connection_id
+WHERE oac.code_hash = $1`;
+
+const readAuthorizationCodeBeforeOwnerCheck = async (
+  codeHash: string,
+  dependencies: OAuthStoreDependencies,
+): Promise<AuthorizationCodeRecord> => {
+  const result = await dependencies.query(AUTHORIZATION_CODE_SELECT, [codeHash]);
+  if (result.rows.length !== 1) throw invalidAuthorizationCodeGrant();
+  return readAuthorizationCodeRecord(result.rows[0]);
+};
+
+const lockAuthorizationCodeForExchange = async (
+  queryFn: QueryFn,
+  codeHash: string,
+): Promise<AuthorizationCodeRecord> => {
+  const result = await queryFn(
+    `${AUTHORIZATION_CODE_SELECT}
+FOR UPDATE OF oac, oc`,
+    [codeHash],
+  );
+  if (result.rows.length !== 1) throw invalidAuthorizationCodeGrant();
+  return readAuthorizationCodeRecord(result.rows[0]);
+};
+
+const validateAuthorizationCodeBinding = (
+  record: AuthorizationCodeRecord,
+  clientId: string,
+  redirectUri: string,
+  resource: string,
+  codeVerifier: string,
+): void => {
+  if (
+    record.clientId !== clientId
+    || record.redirectUri !== redirectUri
+    || record.resource !== resource
+    || !verifyCodeVerifier(codeVerifier, record.codeChallenge)
+  ) {
+    throw oauthError("invalid_grant", "Authorization code binding validation failed", 400);
+  }
+};
+
+const rejectAuthorizationCodeReplay = async (
+  codeHash: string,
+  dependencies: OAuthStoreDependencies,
+): Promise<never> => {
+  await dependencies.withTransaction(async (queryFn: QueryFn): Promise<void> => {
+    const record = await lockAuthorizationCodeForExchange(queryFn, codeHash);
+    if (!record.used) throw invalidAuthorizationCodeGrant();
+    if (!record.revoked) {
+      await revokeActiveConnection(queryFn, record.connectionId, "exchangeAuthorizationCode");
+    }
+  });
+  throw invalidAuthorizationCodeGrant();
+};
+
 export const exchangeAuthorizationCodeWithDependencies = async (
   code: string,
   clientId: string,
@@ -232,44 +345,37 @@ export const exchangeAuthorizationCodeWithDependencies = async (
   codeVerifier: string,
   dependencies: OAuthStoreDependencies,
 ): Promise<OAuthTokenResult> => {
-  const invalidGrant = (): ReturnType<typeof oauthError> =>
-    oauthError("invalid_grant", "Authorization code is invalid, expired, or already used", 400);
   await cleanupExpiredOAuthState(dependencies.query);
   const codeHash = hashOpaqueToken(code);
+  const record = await readAuthorizationCodeBeforeOwnerCheck(codeHash, dependencies);
+  if (record.used) return rejectAuthorizationCodeReplay(codeHash, dependencies);
+  if (record.revoked || !record.unexpired) throw invalidAuthorizationCodeGrant();
+  validateAuthorizationCodeBinding(record, clientId, redirectUri, resource, codeVerifier);
+
+  const ownerStatus = await dependencies.getCognitoOAuthOwnerStatus(record.userId);
+  if (ownerStatus === "inactive") {
+    await revokeActiveConnectionsForUser(record.userId, dependencies);
+    throw invalidAuthorizationCodeGrant();
+  }
+
+  // Cognito eligibility is a point-in-time snapshot. The locked read below
+  // revalidates all authorization-code state without holding a row lock over AWS retries.
   const exchangeResult = await dependencies.withTransaction(async (queryFn: QueryFn): Promise<OAuthTokenResult | null> => {
-    const result = await queryFn(
-      `SELECT oac.connection_id, oac.redirect_uri, oac.code_challenge,
-              oac.scopes, oac.used_at IS NOT NULL AS used,
-              oac.expires_at > now() AS unexpired,
-              oc.client_id, oc.resource, oc.revoked_at IS NOT NULL AS revoked
-       FROM auth.oauth_authorization_codes oac
-       JOIN auth.oauth_connections oc ON oc.connection_id = oac.connection_id
-       WHERE oac.code_hash = $1
-       FOR UPDATE OF oac, oc`,
-      [codeHash],
-    );
-    if (result.rows.length !== 1) throw invalidGrant();
-    const row = readRow(result.rows[0], "exchangeAuthorizationCode");
-    const connectionId = readString(row, "connection_id", "exchangeAuthorizationCode");
-    const revoked = readBoolean(row, "revoked", "exchangeAuthorizationCode");
-    if (readBoolean(row, "used", "exchangeAuthorizationCode")) {
-      if (!revoked) await revokeActiveConnection(queryFn, connectionId, "exchangeAuthorizationCode");
+    const lockedRecord = await lockAuthorizationCodeForExchange(queryFn, codeHash);
+    if (lockedRecord.used) {
+      if (!lockedRecord.revoked) {
+        await revokeActiveConnection(queryFn, lockedRecord.connectionId, "exchangeAuthorizationCode");
+      }
       return null;
     }
-    if (revoked || !readBoolean(row, "unexpired", "exchangeAuthorizationCode")) throw invalidGrant();
-    if (
-      readString(row, "client_id", "exchangeAuthorizationCode") !== clientId
-      || readString(row, "redirect_uri", "exchangeAuthorizationCode") !== redirectUri
-      || readString(row, "resource", "exchangeAuthorizationCode") !== resource
-      || !verifyCodeVerifier(codeVerifier, readString(row, "code_challenge", "exchangeAuthorizationCode"))
-    ) {
-      throw oauthError("invalid_grant", "Authorization code binding validation failed", 400);
+    if (lockedRecord.revoked || lockedRecord.userId !== record.userId || !lockedRecord.unexpired) {
+      throw invalidAuthorizationCodeGrant();
     }
-    const scopes = readScopes(row, "exchangeAuthorizationCode");
+    validateAuthorizationCodeBinding(lockedRecord, clientId, redirectUri, resource, codeVerifier);
     await queryFn("UPDATE auth.oauth_authorization_codes SET used_at = now() WHERE code_hash = $1", [codeHash]);
-    return insertTokenPair(queryFn, connectionId, scopes, dependencies);
+    return insertTokenPair(queryFn, lockedRecord.connectionId, lockedRecord.scopes, dependencies);
   });
-  if (exchangeResult === null) throw invalidGrant();
+  if (exchangeResult === null) throw invalidAuthorizationCodeGrant();
   return exchangeResult;
 };
 
@@ -339,18 +445,6 @@ const rejectRefreshTokenReplay = async (
     }
   });
   throw invalidRefreshGrant();
-};
-
-const revokeActiveConnectionsForUser = async (
-  userId: string,
-  dependencies: OAuthStoreDependencies,
-): Promise<void> => {
-  await dependencies.query(
-    `UPDATE auth.oauth_connections
-     SET revoked_at = now()
-     WHERE user_id = $1 AND revoked_at IS NULL`,
-    [userId],
-  );
 };
 
 const rotateRefreshToken = async (

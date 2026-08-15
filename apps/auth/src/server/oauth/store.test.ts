@@ -167,6 +167,12 @@ test("authorization-code issuance cleans expired state before opening its transa
         transactionOpen = false;
       }
     },
+    getCognitoOAuthOwnerStatus: async (userId) => {
+      assert.equal(userId, "user-1");
+      assert.equal(transactionOpen, false);
+      sequence.push("validate_owner");
+      return "active";
+    },
   };
 
   await issueAuthorizationCodeWithDependencies(
@@ -176,7 +182,7 @@ test("authorization-code issuance cleans expired state before opening its transa
     dependencies,
   );
 
-  assert.deepEqual(sequence, ["cleanup", "sync_user", "upsert_connection", "insert_code"]);
+  assert.deepEqual(sequence, ["cleanup", "validate_owner", "sync_user", "upsert_connection", "insert_code"]);
 });
 
 test("cleanup failures abort issuance before a transaction opens", async (): Promise<void> => {
@@ -204,6 +210,48 @@ test("cleanup failures abort issuance before a transaction opens", async (): Pro
     ),
     (error: unknown) => error === cleanupFailure,
   );
+  assert.equal(transactionOpened, false);
+});
+
+test("inactive owners are revoked before browser identity can sync or issue an authorization code", async (): Promise<void> => {
+  let transactionOpened = false;
+  let revokedUserId: string | undefined;
+  const baseDependencies = createDependencies(async (text, params) => {
+    if (text.startsWith("UPDATE auth.oauth_connections")) {
+      assert.match(text, /WHERE user_id = \$1 AND revoked_at IS NULL/u);
+      const userId = params[0];
+      if (typeof userId !== "string") throw new Error("Inactive owner revocation expected a user ID");
+      revokedUserId = userId;
+    }
+    if (text.startsWith("SELECT auth.sync_authenticated_user")) {
+      throw new Error("Inactive browser identity must not sync the local Cognito mirror");
+    }
+    return result([]);
+  }, emptyTokens());
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    withTransaction: async <T>(callback: (queryFn: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpened = true;
+      return callback(async () => result([]));
+    },
+    getCognitoOAuthOwnerStatus: async (userId) => {
+      assert.equal(userId, "user-1");
+      return "inactive";
+    },
+  };
+
+  await assert.rejects(
+    issueAuthorizationCodeWithDependencies(
+      authorizationRequest,
+      "user-1",
+      "user@example.com",
+      dependencies,
+    ),
+    (error: unknown) => isOAuthProtocolError(error)
+      && error.oauthCode === "access_denied"
+      && error.status === 400,
+  );
+  assert.equal(revokedUserId, "user-1");
   assert.equal(transactionOpened, false);
 });
 
@@ -257,6 +305,72 @@ test("authorization-code exchange cleanup failure precedes every exchange side e
   assert.equal(cognitoCalled, false);
   assert.equal(tokenIssued, false);
   assert.equal(connectionRevoked, false);
+  assert.equal(activityRecorded, false);
+});
+
+test("inactive owners cannot exchange authorization codes and lose every active connection", async (): Promise<void> => {
+  let transactionOpened = false;
+  let credentialConsumed = false;
+  let tokenIssued = false;
+  let activityRecorded = false;
+  let revokedUserId: string | undefined;
+  const queryFn: QueryFn = async (text, params) => {
+    if (text.includes("FROM auth.oauth_authorization_codes")) {
+      assert.doesNotMatch(text, /FOR UPDATE/u);
+      return result([{
+        connection_id: "connection-1",
+        user_id: "user-1",
+        redirect_uri: authorizationRequest.redirectUri,
+        code_challenge: challenge,
+        scopes: authorizationRequest.scopes,
+        used: false,
+        unexpired: true,
+        client_id: authorizationRequest.clientId,
+        resource: authorizationRequest.resource,
+        revoked: false,
+      }]);
+    }
+    if (text.startsWith("UPDATE auth.oauth_connections")) {
+      assert.match(text, /WHERE user_id = \$1 AND revoked_at IS NULL/u);
+      const userId = params[0];
+      if (typeof userId !== "string") throw new Error("Inactive owner revocation expected a user ID");
+      revokedUserId = userId;
+    }
+    if (text.startsWith("UPDATE auth.oauth_authorization_codes")) credentialConsumed = true;
+    if (text.startsWith("INSERT INTO auth.oauth_")) tokenIssued = true;
+    if (isOAuthActivityQuery(text)) activityRecorded = true;
+    return result([]);
+  };
+  const baseDependencies = createDependencies(queryFn, emptyTokens());
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    withTransaction: async <T>(callback: (queryFn: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpened = true;
+      return callback(queryFn);
+    },
+    getCognitoOAuthOwnerStatus: async (userId) => {
+      assert.equal(userId, "user-1");
+      return "inactive";
+    },
+  };
+
+  await assert.rejects(
+    exchangeAuthorizationCodeWithDependencies(
+      "ebt_ac_inactive-owner",
+      authorizationRequest.clientId,
+      authorizationRequest.redirectUri,
+      authorizationRequest.resource,
+      verifier,
+      dependencies,
+    ),
+    (error: unknown) => isOAuthProtocolError(error)
+      && error.oauthCode === "invalid_grant"
+      && error.status === 400,
+  );
+  assert.equal(revokedUserId, "user-1");
+  assert.equal(transactionOpened, false);
+  assert.equal(credentialConsumed, false);
+  assert.equal(tokenIssued, false);
   assert.equal(activityRecorded, false);
 });
 
@@ -337,15 +451,19 @@ test("DCR and authorization-code issuance persist identifiers but only code hash
 test("authorization-code replay revokes the family and its previously minted credentials", async (): Promise<void> => {
   let used = false;
   let connectionRevoked = false;
+  let preflightReadCount = 0;
+  let lockedReadCount = 0;
   let activityCount = 0;
   let storedRefreshTokenHash: string | null = null;
   const accessTokenHashes = new Set<string>();
   const tokenInserts: Array<QueryCall> = [];
   const queryFn: QueryFn = async (text, params) => {
     if (text.includes("FROM auth.oauth_authorization_codes")) {
-      assert.match(text, /FOR UPDATE OF oac, oc/u);
+      if (text.includes("FOR UPDATE OF oac, oc")) lockedReadCount += 1;
+      else preflightReadCount += 1;
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         redirect_uri: authorizationRequest.redirectUri,
         code_challenge: challenge,
         scopes: authorizationRequest.scopes,
@@ -399,6 +517,8 @@ test("authorization-code replay revokes the family and its previously minted cre
 
   assert.equal(issued.scope, authorizationRequest.scope);
   assert.equal(activityCount, 1);
+  assert.equal(preflightReadCount, 1);
+  assert.equal(lockedReadCount, 1);
   assert.deepEqual(tokenInserts.map((call) => call.params[2]), [authorizationRequest.scopes, authorizationRequest.scopes]);
   assert.deepEqual(tokenInserts.map((call) => call.params[0]), [hash(accessToken), hash(refreshToken)]);
   assert.equal(tokenInserts.some((call) => call.params.includes(accessToken) || call.params.includes(refreshToken)), false);
@@ -410,6 +530,8 @@ test("authorization-code replay revokes the family and its previously minted cre
     /already used/u,
   );
   assert.equal(activityCount, 1);
+  assert.equal(preflightReadCount, 2);
+  assert.equal(lockedReadCount, 2);
   assert.equal(accessTokenHashes.has(hash(issued.accessToken)) && !connectionRevoked, false);
   await assert.rejects(
     exchangeRefreshTokenWithDependencies(
@@ -430,6 +552,7 @@ test("unknown and unused misbound credentials do not revoke a connection", async
       if (params[0] !== hash(knownCode)) return result([]);
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         redirect_uri: authorizationRequest.redirectUri,
         code_challenge: challenge,
         scopes: authorizationRequest.scopes,
@@ -1149,6 +1272,7 @@ test("revoked connections cannot exchange authorization codes or refresh tokens"
       codeLoaded = true;
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         redirect_uri: authorizationRequest.redirectUri,
         code_challenge: challenge,
         scopes: authorizationRequest.scopes,
