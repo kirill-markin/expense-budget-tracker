@@ -21,7 +21,7 @@ managed version.
 
 | Milestone | Status | Evidence or remaining gate |
 | --- | --- | --- |
-| Runtime ready | Complete on BASE | Runtime, version, and canonical guide metadata work is present on `integration-mcp-publication` at item-06 merge commit `396a09b3b88cd0a31965a39ac69fe1b6cc4691f9`. Protected-resource metadata and tests use `/docs/mcp-connector/`. After cumulative promotion, verify the deployed metadata and `tools/list` response. |
+| Runtime ready | Complete in promotion candidate | The current item-11 promotion-candidate source defines exact descriptor snapshot `tools-list-v1.2.0-promotion-candidate-v1`, including the complete write scope grant. Commit `396a09b3b88cd0a31965a39ac69fe1b6cc4691f9` remains historical evidence for the runtime documentation URL reconciliation only. After cumulative promotion, verify the deployed metadata and `tools/list` response. |
 | Site ready | Complete | Website commit `07c296fa2613ff310d05b693e28366664048a3bf` is deployed. The connector guide, API docs, support, privacy, terms, SVG icon, preview PNG, and 512px PNG were checked after the guide move; `/docs/mcp-connector/` returns HTTP 200 HTML and the superseded guide route returns 404. |
 | Registry implementation | Complete on BASE | Item 04 is merged into `integration-mcp-publication` at `8f0b330098fb8829f9f340a27501d73eb4b1860b`. The domain-owned manifest identity, PR validation, manual publication workflow, DNS credential setup script, and operator runbook are present. |
 | Registry published | Pending | The owner has not yet provisioned the DNS ownership proof and `MCP_PRIVATE_KEY`, dispatched `mcp-registry-publish.yml` from promoted `main`, or verified the immutable Registry record. Registry publication is separate from OpenAI review and is not evidence of OpenAI approval. |
@@ -30,8 +30,9 @@ managed version.
 | Submitted | No | The owner has not accepted attestations or selected **Submit for Review**. |
 | Approved | No | OpenAI has not reviewed or approved the plugin. Approval would still require a separate owner decision to publish. |
 
-The interim repository state is green: this file changes documentation only and
-does not alter production behavior.
+The interim integration candidate changes MCP descriptor metadata and its exact
+tests and dossier. Deployed production behavior remains unchanged until
+cumulative promotion.
 
 ## Official OpenAI requirements used
 
@@ -165,7 +166,7 @@ assertion, with secrets redacted.
 | L09 | Runtime SVG icon, `GET` | `https://expense-budget-tracker.com/icon.svg` | `200`, `image/svg+xml`; no redirect | Deployed at `07c296f`; post-promotion capture pending |
 | L10 | Listing universal MCP URL, valid unauthenticated JSON-RPC `POST` | `https://mcp.expense-budget-tracker.com/mcp` | `401`, `application/json`; no redirect; exact `invalid_token` body and `WWW-Authenticate: Bearer resource_metadata="https://mcp.expense-budget-tracker.com/.well-known/oauth-protected-resource/mcp"` | Pending promoted-runtime capture |
 | L11 | Listing source repository, `GET` | `https://github.com/kirill-markin/expense-budget-tracker` | Final `200`, `text/html`; record any GitHub-controlled HTTPS redirect hops rather than requiring none | External GitHub availability; timestamped recheck pending |
-| R01 | Protected-resource metadata, `GET` | `https://mcp.expense-budget-tracker.com/.well-known/oauth-protected-resource/mcp` | `200`, `application/json`; no redirect; body exactly matches the OAuth discovery contract below | Complete in BASE source/tests at `396a09b`; deployed capture pending |
+| R01 | Protected-resource metadata, `GET` | `https://mcp.expense-budget-tracker.com/.well-known/oauth-protected-resource/mcp` | `200`, `application/json`; no redirect; body exactly matches the OAuth discovery contract below | Complete in current promotion-candidate source/tests; documentation URL reconciliation is historical at `396a09b`; deployed capture pending |
 | R02 | Authorization-server metadata, `GET` | `https://auth.expense-budget-tracker.com/.well-known/oauth-authorization-server` | `200`, `application/json`; no redirect; body exactly matches the contract below | Runtime source/test evidence present; deployed capture pending |
 | R03 | Canonical machine discovery, `GET` | `https://api.expense-budget-tracker.com/v1/` | `200`, `application/json`; no redirect; response supplies current signup/login and API onboarding links | Runtime source/test evidence present; deployed capture pending |
 | R04 | OpenAPI compatibility probe, `GET` | `https://api.expense-budget-tracker.com/v1/openapi.json` | `200`, `application/json`; no redirect; source-discovery response, not an OpenAPI document | Runtime source/test evidence present; deployed capture pending |
@@ -249,8 +250,10 @@ The protected resource metadata is served at:
 
 `https://mcp.expense-budget-tracker.com/.well-known/oauth-protected-resource/mcp`
 
-The actualized base at `396a09b3b88cd0a31965a39ac69fe1b6cc4691f9`
-emits and tests these values:
+The current promotion-candidate source emits, and its tests validate, this
+complete contract. Commit `396a09b3b88cd0a31965a39ac69fe1b6cc4691f9`
+is historical evidence only for reconciling `resource_documentation` to
+`https://expense-budget-tracker.com/docs/mcp-connector/`:
 
 ```json
 {
@@ -303,15 +306,17 @@ mandatory for this plugin, stop and create a separate prerequisite plan.
 ## Tool descriptors
 
 Scan Tools is the final evidence source for deployed descriptor bytes. Snapshot
-`tools-list-v1.2.0-base-396a09b` below is a lossless representation of the four
-descriptors emitted from `apps/sql-api/src/mcp/server.ts`, the locked
-`@modelcontextprotocol/sdk` `1.30.0`, and Zod `4.4.3`. Compare the deployed
-snapshot after recursively sorting object keys only; array order and every
-string, keyword, boolean, number, and field presence must remain exact. No
-descriptor has a top-level `securitySchemes` or `icons` field. Together, the
-tool name in the first column, the other five outer fields in the table, and
-the two schemas below enumerate every field in each emitted tool descriptor;
-no unlisted outer field is permitted.
+`tools-list-v1.2.0-promotion-candidate-v1` is the stable semantic revision
+defined by the current item-11 promotion-candidate source. The snapshot below
+is a lossless representation of the four descriptors emitted from
+`apps/sql-api/src/mcp/server.ts`, the locked `@modelcontextprotocol/sdk`
+`1.30.0`, and Zod `4.4.3`. Compare the deployed snapshot after recursively
+sorting object keys only; array order and every string, keyword, boolean,
+number, and field presence must remain exact. No descriptor has a top-level
+`securitySchemes` or `icons` field. Together, the tool name in the first column,
+the other five outer fields in the table, and the two schemas below enumerate
+every field in each emitted tool descriptor; no unlisted outer field is
+permitted.
 
 ### Exact descriptor fields outside JSON Schema
 
@@ -320,7 +325,7 @@ no unlisted outer field is permitted.
 | `list_workspaces` | `List accessible workspaces` | `Use this read-only discovery tool to list every workspace accessible to the authenticated user. It does not create or modify workspaces; pass a returned workspaceId to other tools when more than one is available.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
 | `get_schema` | `Inspect expense SQL schema` | `Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and agent hints for an accessible workspace. It does not expose or query system catalogs.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
 | `sql_query` | `Query expense data` | `Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
-| `sql_execute` | `Execute expense data mutation` | `Use this write-capable tool only for an approved expense-data mutation. It runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.` | `{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:write"]}]}` | `{"taskSupport":"forbidden"}` |
+| `sql_execute` | `Execute expense data mutation` | `Use this write-capable tool only for an approved expense-data mutation. It runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.` | `{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read","expenses:write"]}]}` | `{"taskSupport":"forbidden"}` |
 
 The read tools are side-effect free, private, and safe to retry. `sql_execute`
 can destructively change private first-party records, is not safe to retry, and
@@ -982,14 +987,15 @@ Use this connection-state sequence exactly:
    ```
 
    If Developer Mode instead blocks the tool locally or starts a scope-upgrade
-   consent flow from `_meta.securitySchemes`, decline the upgrade and record
-   the exact client-visible behavior. That is Developer Mode evidence, but not
-   evidence that the server returned `insufficient_scope`. In that case create
-   a separate owner-controlled MCP Inspector **Scope Connection S** through DCR
-   and PKCE with exactly `expenses:read`, send the same write envelope, retain
-   its `insufficient_scope` result as server-only evidence, and revoke S. Never
-   label the controlled-client result as OpenAI compatibility evidence or let a
-   refresh attempt stand in for expanded consent.
+   consent flow from `_meta.securitySchemes`, verify the tool's advertised scope
+   list is exactly `expenses:read` followed by `expenses:write`, decline the
+   upgrade, and record the exact client-visible behavior. That is Developer Mode
+   evidence, but not evidence that the server returned `insufficient_scope`. In
+   that case create **Scope Connection S**, a separate owner-controlled MCP
+   Inspector connection through DCR and PKCE with exactly `expenses:read`, send
+   the same write envelope, retain its `insufficient_scope` result as server-only
+   evidence, and revoke S. Never label the controlled-client result as OpenAI
+   compatibility evidence or let a refresh attempt stand in for expanded consent.
 4. Before revocation, record Connection A's sanitized client/connection IDs and
    access-token expiry, and prove a read succeeds. Revoke A in Expense Budget
    Tracker **Settings > Agent Access** while its access credential is still
@@ -1474,8 +1480,9 @@ operator record.
   domain-owned manifest, PR validation, manual workflow, owner setup script,
   and runbook use `com.expense-budget-tracker/expense-budget-tracker`.
 - [ ] Runtime changes are promoted and the production `tools/list` snapshot
-  exactly matches `tools-list-v1.2.0-base-396a09b`, including every input and
-  output JSON-Schema keyword, description, annotation, `_meta`, and `execution`.
+  exactly matches `tools-list-v1.2.0-promotion-candidate-v1`, including every
+  input and output JSON-Schema keyword, description, annotation, `_meta`, and
+  `execution`.
 - [ ] Registry implementation is promoted to `main`; the owner provisions and
   verifies the DNS proof plus `MCP_PRIVATE_KEY`, confirms the immutable G01
   version record is absent, manually dispatches `mcp-registry-publish.yml`, and

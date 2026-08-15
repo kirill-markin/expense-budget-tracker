@@ -43,7 +43,7 @@ type ExpectedToolDescriptor = Readonly<{
   requiredInputProperties: ReadonlyArray<string>;
   outputDataProperties: ReadonlyArray<string>;
   requiredOutputDataProperties: ReadonlyArray<string>;
-  scope: "expenses:read" | "expenses:write";
+  scopes: ReadonlyArray<"expenses:read" | "expenses:write">;
 }>;
 
 const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
@@ -55,7 +55,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     requiredInputProperties: [],
     outputDataProperties: ["workspaces"],
     requiredOutputDataProperties: ["workspaces"],
-    scope: "expenses:read",
+    scopes: ["expenses:read"],
   },
   {
     name: "get_schema",
@@ -65,7 +65,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     requiredInputProperties: [],
     outputDataProperties: ["limits", "relations", "workspace"],
     requiredOutputDataProperties: ["workspace", "relations", "limits"],
-    scope: "expenses:read",
+    scopes: ["expenses:read"],
   },
   {
     name: "sql_query",
@@ -75,7 +75,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     requiredInputProperties: ["sql"],
     outputDataProperties: ["limits", "statements", "workspace"],
     requiredOutputDataProperties: ["statements", "workspace", "limits"],
-    scope: "expenses:read",
+    scopes: ["expenses:read"],
   },
   {
     name: "sql_execute",
@@ -85,7 +85,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     requiredInputProperties: ["sql"],
     outputDataProperties: ["limits", "statements", "workspace"],
     requiredOutputDataProperties: ["statements", "workspace", "limits"],
-    scope: "expenses:write",
+    scopes: ["expenses:read", "expenses:write"],
   },
 ];
 
@@ -394,7 +394,7 @@ test("MCP server emits the public runtime contract and routes successful tool ca
         assert.equal(tool.description, expected.description);
         outputDataSchemas.set(tool.name, assertToolSchemas(tool, expected));
         assert.deepEqual(tool._meta, {
-          securitySchemes: [{ type: "oauth2", scopes: [expected.scope] }],
+          securitySchemes: [{ type: "oauth2", scopes: expected.scopes }],
         });
         assert.equal(Object.prototype.hasOwnProperty.call(tool, "securitySchemes"), false);
       }
