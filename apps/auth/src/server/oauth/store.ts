@@ -37,6 +37,12 @@ export type OAuthTokenResult = Readonly<{
   scope: string;
 }>;
 
+const cleanupExpiredOAuthState = async (
+  queryFn: QueryFn,
+): Promise<void> => {
+  await queryFn("SELECT auth.cleanup_expired_oauth_transient_state()", []);
+};
+
 const readRow = (value: unknown, operation: string): Row => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${operation}: database returned an invalid row`);
@@ -146,6 +152,7 @@ export const issueAuthorizationCodeWithDependencies = async (
   email: string,
   dependencies: OAuthStoreDependencies,
 ): Promise<string> => {
+  await cleanupExpiredOAuthState(dependencies.query);
   const code = dependencies.createOpaqueToken("ac");
   const codeHash = hashOpaqueToken(code);
   return dependencies.withTransaction(async (queryFn: QueryFn) => {
@@ -186,6 +193,7 @@ const insertTokenPair = async (
 ): Promise<OAuthTokenResult> => {
   const accessToken = dependencies.createOpaqueToken("at");
   const refreshToken = dependencies.createOpaqueToken("rt");
+  await queryFn("SELECT auth.record_oauth_connection_activity($1)", [connectionId]);
   await queryFn(
     `INSERT INTO auth.oauth_access_tokens (token_hash, connection_id, scopes, expires_at)
      VALUES ($1, $2, $3, now() + INTERVAL '1 hour')`,
@@ -226,6 +234,7 @@ export const exchangeAuthorizationCodeWithDependencies = async (
 ): Promise<OAuthTokenResult> => {
   const invalidGrant = (): ReturnType<typeof oauthError> =>
     oauthError("invalid_grant", "Authorization code is invalid, expired, or already used", 400);
+  await cleanupExpiredOAuthState(dependencies.query);
   const codeHash = hashOpaqueToken(code);
   const exchangeResult = await dependencies.withTransaction(async (queryFn: QueryFn): Promise<OAuthTokenResult | null> => {
     const result = await queryFn(
@@ -376,6 +385,7 @@ export const exchangeRefreshTokenWithDependencies = async (
   requestedScopes: ReadonlyArray<string> | null,
   dependencies: OAuthStoreDependencies,
 ): Promise<OAuthTokenResult> => {
+  await cleanupExpiredOAuthState(dependencies.query);
   const tokenHash = hashOpaqueToken(refreshToken);
   const record = await readRefreshTokenBeforeOwnerCheck(tokenHash, dependencies);
   if (record.used) return rejectRefreshTokenReplay(tokenHash, dependencies);
