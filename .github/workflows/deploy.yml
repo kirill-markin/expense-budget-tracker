@@ -50,6 +50,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - name: Require MCP certificate secret
+        env:
+          CDK_MCP_CERTIFICATE_ARN: ${{ secrets.CDK_MCP_CERTIFICATE_ARN }}
+        run: |
+          if [[ -z "${CDK_MCP_CERTIFICATE_ARN//[[:space:]]/}" ]]; then
+            echo "::error::Required secret CDK_MCP_CERTIFICATE_ARN is not configured. MCP deployment is stopped to preserve the existing custom domain."
+            exit 1
+          fi
+
       - name: Detect changed paths
         id: changes
         if: github.event_name == 'push'
@@ -110,6 +119,7 @@ jobs:
             "domainName": "${{ vars.CDK_DOMAIN_NAME }}",
             "certificateArn": "${{ secrets.CDK_CERTIFICATE_ARN }}",
             "apiCertificateArn": "${{ secrets.CDK_API_CERTIFICATE_ARN }}",
+            "mcpCertificateArn": "${{ secrets.CDK_MCP_CERTIFICATE_ARN }}",
             "resendApiKeySecretArn": "${{ vars.CDK_RESEND_API_KEY_SECRET_ARN }}",
             "resendSenderEmail": "${{ vars.CDK_RESEND_SENDER_EMAIL }}",
             "langfuseBaseUrl": "${{ vars.CDK_LANGFUSE_BASE_URL }}",

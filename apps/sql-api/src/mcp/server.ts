@@ -2,11 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   MAX_SQL_ROWS,
-  SQL_STATEMENT_TIMEOUT_MS,
-  validateSingleExpenseSql,
+  MCP_SQL_STATEMENT_TIMEOUT_MS,
+  validateSingleMutationExpenseSql,
   validateSingleReadOnlyExpenseSql,
+  type SqlExecutionDeadline,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { z } from "zod";
+import { getReadOnlyTransactionDeadlineError } from "../dbDeadline.js";
 import type { WorkspaceSummary } from "../machineApi/types.js";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
 import type { McpScope } from "./config.js";
@@ -18,11 +20,15 @@ import {
 } from "./results.js";
 
 const SERVER_NAME = "expense-budget-tracker";
-const SERVER_VERSION = "v1";
+const SERVER_VERSION = "1.2.0";
 const LIST_WORKSPACES_TOOL_NAME = "list_workspaces";
 const GET_SCHEMA_TOOL_NAME = "get_schema";
 const SQL_QUERY_TOOL_NAME = "sql_query";
 const SQL_EXECUTE_TOOL_NAME = "sql_execute";
+type ReadOnlyMcpToolName =
+  | typeof LIST_WORKSPACES_TOOL_NAME
+  | typeof GET_SCHEMA_TOOL_NAME
+  | typeof SQL_QUERY_TOOL_NAME;
 
 const workspaceIdSchema = z.string().trim().min(1).optional().describe(
   "Optional workspaceId returned by list_workspaces. Omit only when exactly one workspace is available.",
@@ -30,13 +36,13 @@ const workspaceIdSchema = z.string().trim().min(1).optional().describe(
 
 export type McpServerDependencies = McpDataServices & Readonly<{
   validateSingleReadOnlyExpenseSql: typeof validateSingleReadOnlyExpenseSql;
-  validateSingleExpenseSql: typeof validateSingleExpenseSql;
+  validateSingleMutationExpenseSql: typeof validateSingleMutationExpenseSql;
 }>;
 
 const defaultDependencies: McpServerDependencies = {
   ...mcpDataServices,
   validateSingleReadOnlyExpenseSql,
-  validateSingleExpenseSql,
+  validateSingleMutationExpenseSql,
 };
 
 const requireScope = (
@@ -53,12 +59,10 @@ const requireScope = (
   }
 };
 
-const resolveWorkspace = async (
-  connection: AuthenticatedMcpAccessToken,
+const selectWorkspace = (
+  workspaces: ReadonlyArray<WorkspaceSummary>,
   requestedWorkspaceId: string | undefined,
-  dependencies: McpServerDependencies,
-): Promise<WorkspaceSummary> => {
-  const workspaces = await dependencies.listWorkspaces(connection.identity);
+): WorkspaceSummary => {
   if (requestedWorkspaceId !== undefined) {
     const requestedWorkspace = workspaces.find(
       (workspace) => workspace.workspaceId === requestedWorkspaceId,
@@ -99,6 +103,16 @@ const resolveWorkspace = async (
   return onlyWorkspace;
 };
 
+const resolveWorkspace = async (
+  connection: AuthenticatedMcpAccessToken,
+  requestedWorkspaceId: string | undefined,
+  dependencies: McpServerDependencies,
+  deadline: SqlExecutionDeadline,
+): Promise<WorkspaceSummary> => selectWorkspace(
+  await dependencies.listWorkspaces(connection.identity, deadline),
+  requestedWorkspaceId,
+);
+
 const requireSqlResult = (
   result: Readonly<Record<string, unknown>> | null,
   workspaceId: string,
@@ -114,6 +128,14 @@ const requireSqlResult = (
   return result;
 };
 
+const buildReadOnlyMcpToolErrorResult = (
+  error: unknown,
+  toolName: ReadOnlyMcpToolName,
+): CallToolResult => buildMcpToolErrorResult(
+  getReadOnlyTransactionDeadlineError(error) ?? error,
+  toolName,
+);
+
 const getWorkspaceListInstructions = (workspaceCount: number): string => {
   if (workspaceCount === 0) {
     return "No workspaces are available. Create one in Expense Budget Tracker or ask a workspace owner to add you, then call list_workspaces again.";
@@ -126,6 +148,7 @@ const getWorkspaceListInstructions = (workspaceCount: number): string => {
 
 export const createMcpServerWithDependencies = (
   connection: AuthenticatedMcpAccessToken,
+  deadline: SqlExecutionDeadline,
   dependencies: McpServerDependencies,
 ): McpServer => {
   const server = new McpServer(
@@ -155,13 +178,13 @@ export const createMcpServerWithDependencies = (
     async (): Promise<CallToolResult> => {
       try {
         requireScope(connection, "expenses:read");
-        const workspaces = await dependencies.listWorkspaces(connection.identity);
+        const workspaces = await dependencies.listWorkspaces(connection.identity, deadline);
         return buildMcpSuccessResult(
           { workspaces },
           getWorkspaceListInstructions(workspaces.length),
         );
       } catch (error) {
-        return buildMcpToolErrorResult(error, LIST_WORKSPACES_TOOL_NAME);
+        return buildReadOnlyMcpToolErrorResult(error, LIST_WORKSPACES_TOOL_NAME);
       }
     },
   );
@@ -182,10 +205,16 @@ export const createMcpServerWithDependencies = (
     async ({ workspaceId }): Promise<CallToolResult> => {
       try {
         requireScope(connection, "expenses:read");
-        const workspace = await resolveWorkspace(connection, workspaceId, dependencies);
+        const workspace = await resolveWorkspace(
+          connection,
+          workspaceId,
+          dependencies,
+          deadline,
+        );
         const relations = await dependencies.loadAllowedSchemaForWorkspace(
           connection.identity,
           workspace.workspaceId,
+          deadline,
         );
         return buildMcpSuccessResult(
           {
@@ -193,13 +222,13 @@ export const createMcpServerWithDependencies = (
             relations,
             limits: {
               maxRows: MAX_SQL_ROWS,
-              statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,
+              statementTimeoutMs: MCP_SQL_STATEMENT_TIMEOUT_MS,
             },
           },
           "Use only the returned relations and columns. Send reads to sql_query and approved mutations to sql_execute.",
         );
       } catch (error) {
-        return buildMcpToolErrorResult(error, GET_SCHEMA_TOOL_NAME);
+        return buildReadOnlyMcpToolErrorResult(error, GET_SCHEMA_TOOL_NAME);
       }
     },
   );
@@ -223,19 +252,25 @@ export const createMcpServerWithDependencies = (
     async ({ sql, workspaceId }): Promise<CallToolResult> => {
       try {
         requireScope(connection, "expenses:read");
-        const workspace = await resolveWorkspace(connection, workspaceId, dependencies);
         const validated = dependencies.validateSingleReadOnlyExpenseSql(sql);
+        const workspace = await resolveWorkspace(
+          connection,
+          workspaceId,
+          dependencies,
+          deadline,
+        );
         const result = await dependencies.runReadOnlySql(
           { identity: connection.identity },
           workspace.workspaceId,
           validated,
+          deadline,
         );
         return buildMcpSuccessResult(
           requireSqlResult(result, workspace.workspaceId),
           "Use the returned rows and truncation metadata to answer the request. Narrow and retry if truncated data is insufficient.",
         );
       } catch (error) {
-        return buildMcpToolErrorResult(error, SQL_QUERY_TOOL_NAME);
+        return buildReadOnlyMcpToolErrorResult(error, SQL_QUERY_TOOL_NAME);
       }
     },
   );
@@ -259,12 +294,18 @@ export const createMcpServerWithDependencies = (
     async ({ sql, workspaceId }): Promise<CallToolResult> => {
       try {
         requireScope(connection, "expenses:write");
-        const workspace = await resolveWorkspace(connection, workspaceId, dependencies);
-        const validated = dependencies.validateSingleExpenseSql(sql);
+        const validated = dependencies.validateSingleMutationExpenseSql(sql);
+        const workspace = await resolveWorkspace(
+          connection,
+          workspaceId,
+          dependencies,
+          deadline,
+        );
         const result = await dependencies.runSql(
           { identity: connection.identity },
           workspace.workspaceId,
           validated,
+          deadline,
         );
         return buildMcpSuccessResult(
           requireSqlResult(result, workspace.workspaceId),
@@ -281,4 +322,5 @@ export const createMcpServerWithDependencies = (
 
 export const createMcpServer = (
   connection: AuthenticatedMcpAccessToken,
-): McpServer => createMcpServerWithDependencies(connection, defaultDependencies);
+  deadline: SqlExecutionDeadline,
+): McpServer => createMcpServerWithDependencies(connection, deadline, defaultDependencies);

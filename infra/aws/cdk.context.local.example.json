@@ -3,6 +3,7 @@
   "domainName": "example.com",
   "certificateArn": "arn:aws:acm:eu-central-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "apiCertificateArn": "arn:aws:acm:eu-central-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "mcpCertificateArn": "",
   "resendApiKeySecretArn": "arn:aws:secretsmanager:eu-central-1:123456789012:secret:expense-tracker/resend-api-key-xxxxxx",
   "resendSenderEmail": "no-reply@mail.example.com",
   "langfuseBaseUrl": "https://cloud.langfuse.com",

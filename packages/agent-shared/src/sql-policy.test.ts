@@ -1,22 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createSqlExecutionDeadline,
   executeExpenseSql,
+  executeValidatedExpenseSqlWithinDeadline,
   getAllowedRelationNames,
   MAX_SQL_MUTATION_ROWS,
   MAX_SQL_RETURNED_ROWS,
   MAX_SQL_ROWS,
   MAX_SQL_SCRIPT_LENGTH,
   MAX_SQL_STATEMENTS,
+  MCP_SQL_STATEMENT_TIMEOUT_MS,
+  SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
   SqlPolicyError,
   validateExpenseSql,
   validateReadOnlyExpenseSql,
   validateSingleExpenseSql,
+  validateSingleMutationExpenseSql,
   validateSingleReadOnlyExpenseSql,
   type RestrictedSqlExecutionRequest,
   type RestrictedSqlQueryResult,
   type RestrictedSqlResultRow,
 } from "./sql-policy.js";
+
+test("machine and MCP SQL deadlines leave response headroom below their gateways", (): void => {
+  assert.equal(SQL_STATEMENT_TIMEOUT_MS, 25_000);
+  assert.equal(MCP_SQL_STATEMENT_TIMEOUT_MS, 20_000);
+  assert.ok(SQL_STATEMENT_TIMEOUT_MS < 29_000);
+  assert.ok(MCP_SQL_STATEMENT_TIMEOUT_MS < SQL_STATEMENT_TIMEOUT_MS);
+});
 
 const assertFunctionCallRejected = (sql: string): void => {
   assert.throws(
@@ -202,6 +215,35 @@ test("single-statement validators reject scripts without changing shared multi-s
     () => validateSingleExpenseSql(writeScript),
     (error: unknown) => error instanceof SqlPolicyError && error.code === "single_statement_required",
   );
+});
+
+test("validateSingleMutationExpenseSql accepts only a single mutation", (): void => {
+  const acceptedSql: ReadonlyArray<string> = [
+    "INSERT INTO budget_lines (workspace_id) VALUES ('workspace-1')",
+    "UPDATE account_metadata SET liquidity = 'low' WHERE workspace_id = 'workspace-1'",
+    "DELETE FROM ledger_entries WHERE workspace_id = 'workspace-1'",
+    "WITH target AS (SELECT account_id FROM accounts) UPDATE account_metadata SET liquidity = 'low' FROM target WHERE account_metadata.account_id = target.account_id",
+  ];
+  for (const sql of acceptedSql) {
+    const validated = validateSingleMutationExpenseSql(sql);
+    assert.equal(validated.isMutation, true);
+    assert.equal(validated.statements.length, 1);
+    assert.equal(validated.statements[0]?.isMutating, true);
+  }
+
+  const rejectedSql: ReadonlyArray<string> = [
+    "SELECT account_id FROM accounts",
+    "WITH target AS (SELECT account_id FROM accounts) SELECT account_id FROM target",
+  ];
+  for (const sql of rejectedSql) {
+    assert.throws(
+      () => validateSingleMutationExpenseSql(sql),
+      (error: unknown) =>
+        error instanceof SqlPolicyError
+        && error.code === "mutation_sql_required"
+        && error.message.includes("send SELECT and WITH...SELECT to the query endpoint"),
+    );
+  }
 });
 
 test("restricted SQL rejects MERGE as the effective statement after WITH", (): void => {
@@ -532,6 +574,64 @@ test("executeExpenseSql reports truncation metadata without removing rowCount", 
     "CLOSE api_sql_read_cursor_1",
   ]);
   assert.equal(requests[0]?.sql.endsWith("ORDER BY account_id"), true);
+});
+
+test("deadline execution propagates one cumulatively decreasing budget to every cursor command", async (): Promise<void> => {
+  let currentTimeMs = 1_000;
+  const receivedTimeouts: Array<number> = [];
+  const requests: Array<RestrictedSqlExecutionRequest> = [];
+  const cursorExecutor = createCursorExecutor({
+    api_sql_read_cursor_1: [{ account_id: "account-1" }],
+  }, requests);
+  const commandDurations = [2_000, 5_000, 3_000, 0] as const;
+
+  await executeValidatedExpenseSqlWithinDeadline(
+    validateExpenseSql("SELECT account_id FROM accounts ORDER BY account_id"),
+    createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, () => currentTimeMs),
+    async (request, statementTimeoutMs) => {
+      const commandIndex = receivedTimeouts.length;
+      receivedTimeouts.push(statementTimeoutMs);
+      const result = await cursorExecutor(request);
+      currentTimeMs += commandDurations[commandIndex] ?? 0;
+      return result;
+    },
+  );
+
+  assert.deepEqual(receivedTimeouts, [20_000, 18_000, 13_000, 10_000]);
+  assert.deepEqual(requests.map((request) => request.sql), [
+    "DECLARE api_sql_read_cursor_1 NO SCROLL CURSOR FOR SELECT account_id FROM accounts ORDER BY account_id",
+    `FETCH FORWARD ${String(MAX_SQL_ROWS + 1)} FROM api_sql_read_cursor_1`,
+    "MOVE FORWARD ALL FROM api_sql_read_cursor_1",
+    "CLOSE api_sql_read_cursor_1",
+  ]);
+});
+
+test("deadline execution stops before dispatching a cursor command with no remaining budget", async (): Promise<void> => {
+  let currentTimeMs = 1_000;
+  const requests: Array<RestrictedSqlExecutionRequest> = [];
+  const cursorExecutor = createCursorExecutor({
+    api_sql_read_cursor_1: [{ account_id: "account-1" }],
+  }, requests);
+
+  await assert.rejects(
+    () => executeValidatedExpenseSqlWithinDeadline(
+      validateExpenseSql("SELECT account_id FROM accounts"),
+      createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, () => currentTimeMs),
+      async (request) => {
+        const result = await cursorExecutor(request);
+        currentTimeMs += MCP_SQL_STATEMENT_TIMEOUT_MS;
+        return result;
+      },
+    ),
+    (error: unknown) =>
+      error instanceof SqlExecutionDeadlineError
+      && error.timeoutMs === MCP_SQL_STATEMENT_TIMEOUT_MS
+      && error.message.includes("total deadline"),
+  );
+
+  assert.deepEqual(requests.map((request) => request.sql), [
+    "DECLARE api_sql_read_cursor_1 NO SCROLL CURSOR FOR SELECT account_id FROM accounts",
+  ]);
 });
 
 test("executeExpenseSql bounds reads before execution and across the whole request", async (): Promise<void> => {

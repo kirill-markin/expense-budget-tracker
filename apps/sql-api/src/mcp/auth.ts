@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
+import type { SqlExecutionDeadline } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { z } from "zod";
 import {
-  loadTrustedUserIdentity,
-  query,
-  type QueryFn,
+  loadTrustedUserIdentityBeforeDeadline,
+  queryBeforeDeadline,
   type UserIdentity,
 } from "../db.js";
 import type { McpScope } from "./config.js";
@@ -34,14 +34,14 @@ export class McpAuthenticationError extends Error {
 }
 
 export type McpAuthDependencies = Readonly<{
-  query: QueryFn;
-  loadTrustedUserIdentity: (userId: string) => Promise<UserIdentity | null>;
+  queryBeforeDeadline: typeof queryBeforeDeadline;
+  loadTrustedUserIdentityBeforeDeadline: typeof loadTrustedUserIdentityBeforeDeadline;
   now: () => Date;
 }>;
 
 const defaultDependencies: McpAuthDependencies = {
-  query,
-  loadTrustedUserIdentity,
+  queryBeforeDeadline,
+  loadTrustedUserIdentityBeforeDeadline,
   now: () => new Date(),
 };
 
@@ -75,16 +75,18 @@ const readCanonicalScopeSnapshot = (
 export const authenticateMcpAccessTokenWithDependencies = async (
   token: string,
   expectedResource: string,
+  deadline: SqlExecutionDeadline,
   dependencies: McpAuthDependencies,
 ): Promise<AuthenticatedMcpAccessToken> => {
   if (!ACCESS_TOKEN_PATTERN.test(token)) {
     throw new McpAuthenticationError();
   }
 
-  const result = await dependencies.query(
+  const result = await dependencies.queryBeforeDeadline(
     `SELECT connection_id, user_id, client_id, resource, scopes, expires_at
      FROM auth.validate_oauth_access_token($1)`,
     [hashAccessToken(token)],
+    deadline,
   );
   if (result.rows.length !== 1) {
     throw new McpAuthenticationError();
@@ -103,7 +105,10 @@ export const authenticateMcpAccessTokenWithDependencies = async (
     throw new McpAuthenticationError();
   }
 
-  const identity = await dependencies.loadTrustedUserIdentity(row.user_id);
+  const identity = await dependencies.loadTrustedUserIdentityBeforeDeadline(
+    row.user_id,
+    deadline,
+  );
   if (
     identity === null
     || identity.userId !== row.user_id
@@ -126,5 +131,11 @@ export const authenticateMcpAccessTokenWithDependencies = async (
 export const authenticateMcpAccessToken = (
   token: string,
   expectedResource: string,
+  deadline: SqlExecutionDeadline,
 ): Promise<AuthenticatedMcpAccessToken> =>
-  authenticateMcpAccessTokenWithDependencies(token, expectedResource, defaultDependencies);
+  authenticateMcpAccessTokenWithDependencies(
+    token,
+    expectedResource,
+    deadline,
+    defaultDependencies,
+  );

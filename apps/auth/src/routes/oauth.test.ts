@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
+  MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
+  MAX_OAUTH_LOGIN_QUERY_BYTES,
+} from "@expense-budget-tracker/agent-shared";
+import {
   createOAuthApp,
   MAX_CONSENT_REQUEST_BYTES,
   MAX_DCR_REQUEST_BYTES,
@@ -310,6 +314,22 @@ const consentParametersWithEncodedSize = (targetBytes: number): URLSearchParams 
   return params;
 };
 
+const authorizationParametersWithEncodedSize = (targetBytes: number): URLSearchParams => {
+  const params = authorizationParams();
+  const prefix = "é/?&=+";
+  params.set("state", prefix);
+  const remainingBytes = targetBytes - utf8Length(params.toString());
+  if (remainingBytes < 0) throw new RangeError("Target authorization query is too small");
+  const multibyteCharacters = Math.floor(remainingBytes / 6);
+  const asciiCharacters = remainingBytes % 6;
+  params.set("state", `${prefix}${"é".repeat(multibyteCharacters)}${"x".repeat(asciiCharacters)}`);
+  const state = params.get("state");
+  if (state === null || state.length > 2048 || utf8Length(params.toString()) !== targetBytes) {
+    throw new RangeError("Target authorization query cannot fit within the state parameter limit");
+  }
+  return params;
+};
+
 test("DCR enforces its request ceiling in UTF-8 bytes before JSON parsing", async (): Promise<void> => {
   let registrationCount = 0;
   const app = createOAuthApp(createDependencies({
@@ -389,6 +409,40 @@ test("consent is no-store, anti-clickjacking, and same-origin protected", async 
   assert.equal(allowed.status, 302);
   assert.match(allowed.headers.get("location") ?? "", /code=ebt_ac_issued-code/u);
   assert.equal(issueCount, 1);
+});
+
+test("authorization GET enforces its raw query ceiling and keeps nested login below its ceiling", async (): Promise<void> => {
+  const exactBoundary = authorizationParametersWithEncodedSize(
+    MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
+  );
+  const authenticatedApp = createOAuthApp(createDependencies({}));
+  const accepted = await authenticatedApp.request(
+    `${issuer}/oauth/authorize?${exactBoundary.toString()}`,
+  );
+  assert.equal(accepted.status, 200);
+
+  const oversized = authorizationParametersWithEncodedSize(
+    MAX_OAUTH_AUTHORIZE_QUERY_BYTES + 1,
+  );
+  const rejected = await authenticatedApp.request(
+    `${issuer}/oauth/authorize?${oversized.toString()}`,
+  );
+  assert.equal(rejected.status, 400);
+  assert.deepEqual(await rejected.json(), {
+    error: "invalid_request",
+    error_description: `Authorization query must not exceed ${MAX_OAUTH_AUTHORIZE_QUERY_BYTES} UTF-8 bytes`,
+  });
+
+  const anonymousApp = createOAuthApp(createDependencies({
+    resolveBrowserSession: async () => null,
+  }));
+  const redirected = await anonymousApp.request(
+    `${issuer}/oauth/authorize?${exactBoundary.toString()}`,
+  );
+  assert.equal(redirected.status, 302);
+  const loginLocation = redirected.headers.get("location") ?? "";
+  assert.match(loginLocation, /^https:\/\/auth\.example\.com\/login\?/u);
+  assert.ok(utf8Length(new URL(loginLocation).search.slice(1)) <= MAX_OAUTH_LOGIN_QUERY_BYTES);
 });
 
 test("consent renders only when both encoded decisions fit the POST byte limit", async (): Promise<void> => {

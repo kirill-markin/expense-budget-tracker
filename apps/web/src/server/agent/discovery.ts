@@ -31,10 +31,14 @@ const getAuthBaseUrl = (request: Request): string => {
 export const buildAgentDiscoveryEnvelope = (request: Request): AgentEnvelope => {
   const apiBaseUrl = getApiBaseUrl(request);
   const authBaseUrl = getAuthBaseUrl(request);
+  const mcpUrl = new URL(apiBaseUrl);
+  mcpUrl.hostname = mcpUrl.hostname.replace(/^api\./u, "mcp.");
+  mcpUrl.pathname = "/mcp";
 
   return buildSharedAgentDiscoveryEnvelope({
     apiBaseUrl,
     authBaseUrl,
     bootstrapUrl: `${authBaseUrl}/api/agent/send-code`,
+    mcpUrl: mcpUrl.toString(),
   });
 };

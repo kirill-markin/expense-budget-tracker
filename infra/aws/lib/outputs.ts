@@ -6,6 +6,7 @@ import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
@@ -26,6 +27,10 @@ export interface OutputsProps {
   restApi: apigw.RestApi;
   authorizerFn: lambda.IFunction;
   sqlApiFn: lambda.IFunction;
+  mcpHttpApi: apigwv2.HttpApi;
+  mcpFn: lambda.IFunction;
+  mcpCustomDomainTarget: string | undefined;
+  mcpUrl: string;
 }
 
 export function outputs(scope: Construct, props: OutputsProps): void {
@@ -98,4 +103,22 @@ export function outputs(scope: Construct, props: OutputsProps): void {
     value: props.authorizerFn.functionName,
     description: "Lambda function name for SQL API authorizer",
   });
+  new cdk.CfnOutput(scope, "McpGatewayId", {
+    value: props.mcpHttpApi.httpApiId,
+    description: "MCP HTTP API v2 ID",
+  });
+  new cdk.CfnOutput(scope, "McpFunctionName", {
+    value: props.mcpFn.functionName,
+    description: "Lambda function name for the MCP handler",
+  });
+  if (props.mcpCustomDomainTarget !== undefined) {
+    new cdk.CfnOutput(scope, "McpCustomDomain", {
+      value: props.mcpCustomDomainTarget,
+      description: "MCP HTTP API regional custom domain target for the Cloudflare CNAME",
+    });
+    new cdk.CfnOutput(scope, "McpUrl", {
+      value: props.mcpUrl,
+      description: "Canonical MCP Streamable HTTP URL",
+    });
+  }
 }

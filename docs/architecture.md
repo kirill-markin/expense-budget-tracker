@@ -17,7 +17,7 @@
 Four components, one database:
 
 1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool` with per-request RLS context.
-2. **sql-api** (`apps/sql-api/`) — Two AWS Lambdas behind API Gateway (REST API) for machine clients. Lambda Authorizer validates `ApiKey` agent tokens; the handler serves discovery, workspace setup, and SQL with the same v1 machine surface. Separate from the web stack — no ALB involved.
+2. **sql-api** (`apps/sql-api/`) — Three AWS Lambdas: the `ApiKey` authorizer and v1 machine handler use the existing API Gateway REST API, while the dedicated OAuth-authenticated MCP handler uses a separate API Gateway HTTP API v2 at `mcp.*`. Separate from the web stack — no ALB involved.
 3. **worker** (`apps/worker/`) — TypeScript process that fetches daily raw exchange rates from ECB, CBR, NBS, NBU, and USDT, stores them in `fx_rates_raw`, and rebuilds query-ready all-pairs daily rates in `fx_rates_daily`. Runs on a schedule (local Docker) or as a Lambda (AWS).
 4. **Postgres** — single source of truth with workspace-scoped RLS and derived reporting views.
 
@@ -99,10 +99,13 @@ Machine clients (LLM agents, scripts, dashboards) use a separate path from the b
 
 ```
 Machine: Cloudflare → API Gateway (REST API) → Lambda Authorizer → SQL Lambda → RDS
+MCP: Cloudflare → dedicated API Gateway (HTTP API v2) → MCP Lambda → RDS
 Browser: Cloudflare → ALB → ECS (Next.js, Cognito Email OTP) → RDS
 ```
 
-The SQL API runs on API Gateway (REST API) with its own domain (`api.example.com`), fully separate from the ALB. This provides per-key rate limiting via Usage Plans (10 req/s, 10k req/day per key), auth at the gateway (Lambda Authorizer with 5-min cache), CloudWatch metrics per endpoint, and a clean boundary for future machine-facing services.
+The SQL API runs on API Gateway (REST API) with its own domain (`api.example.com`), fully separate from the ALB. This provides per-key rate limiting via Usage Plans (10 req/s, 10k req/day per key), auth at the gateway (the Lambda Authorizer runs on every request), CloudWatch metrics per endpoint, and a clean boundary for future machine-facing services. Revoked API keys take effect immediately.
+
+The stateless MCP transport runs independently at `https://mcp.example.com/mcp` on an HTTP API v2 exposing only `GET /mcp`, `POST /mcp`, and the pathful protected-resource metadata route `GET /.well-known/oauth-protected-resource/mcp`. Its default `execute-api` endpoint is disabled, so Cloudflare and the root-mapped regional custom domain are the only public ingress. The stage permits a burst of three and then 0.08 requests/second; over the 20-second application deadline plus five seconds of response/cleanup headroom, at most five accepted requests occupy the five reserved Lambda executions. OAuth remains on the existing `auth.*` ECS service behind the ALB.
 
 ### SQL Query API
 
@@ -113,7 +116,7 @@ curl / LLM agent
 GET https://api.example.com/v1/
 Authorization: none
 ...
-POST https://api.example.com/v1/sql
+POST https://api.example.com/v1/sql/query
 Authorization: ApiKey ebta_...
 X-Workspace-Id: workspace-id
       │
@@ -127,7 +130,7 @@ SQL Lambda (sets RLS context, executes query)
 Postgres (same app role + RLS as web app)
 ```
 
-Agents start from `GET /v1/`, complete email OTP on `auth.*`, store the returned ApiKey, load `/v1/me`, list or create `/v1/workspaces`, optionally inspect `/v1/schema`, select a workspace via `/v1/workspaces/{workspaceId}/select`, and send SQL to `/v1/sql`. `X-Workspace-Id` remains supported for explicit overrides, but is optional after a workspace is selected for that API key. The SQL execution path uses the same `app` role and RLS enforcement as the web application — `SET LOCAL app.user_id` and `app.workspace_id` per transaction.
+Agents start from `GET /v1/`, complete email OTP on `auth.*`, store the returned ApiKey, load `/v1/me`, list or create `/v1/workspaces`, optionally inspect `/v1/schema`, select a workspace via `/v1/workspaces/{workspaceId}/select`, and use `/v1/sql/query` for readonly statements or `/v1/sql/execute` for one approved mutation. `/v1/sql` remains compatibility-only for atomic multi-statement scripts. `X-Workspace-Id` works on all three endpoints for explicit overrides, but is optional after a workspace is selected for that API key. The SQL execution path uses the same `app` role and RLS enforcement as the web application — `SET LOCAL app.user_id` and `app.workspace_id` per transaction.
 
 ### Security
 
@@ -136,19 +139,25 @@ Agents start from `GET /v1/`, complete email OTP on `auth.*`, store the returned
 | Key storage | SHA-256 hash only, plaintext never stored |
 | Workspace isolation | Same RLS via `SET LOCAL` as all other routes |
 | SQL injection / DDL | Keyword whitelist: only SELECT/WITH/INSERT/UPDATE/DELETE |
-| Resource exhaustion | `statement_timeout = 30s`, 100-row limit, per-key throttling (10 req/s, 10k/day via Usage Plans) |
-| Auth caching | 5-min TTL by Authorization header — repeated requests skip Lambda + DB |
+| Resource exhaustion | one 25-second total SQL request deadline, 100-row limit, per-key throttling (10 req/s, 10k/day via Usage Plans) |
+| Auth caching | Disabled (0-second TTL) — every request invokes the authorizer and revoked keys take effect immediately |
 | Stale keys | `last_used_at` tracking, manual revocation |
 | Member removal | Auto-revoke trigger deletes all keys for removed user |
 
 ### Usage
 
 ```bash
-curl -X POST https://api.example.com/v1/sql \
+curl -X POST https://api.example.com/v1/sql/query \
   -H "Authorization: ApiKey ebta_ABCD1234_0123456789ABCDEFGHJKMNPQRS" \
   -H "X-Workspace-Id: workspace-id" \
   -H "Content-Type: application/json" \
   -d '{"sql": "SELECT * FROM ledger_entries ORDER BY ts DESC LIMIT 10"}'
+
+curl -X POST https://api.example.com/v1/sql/execute \
+  -H "Authorization: ApiKey ebta_ABCD1234_0123456789ABCDEFGHJKMNPQRS" \
+  -H "X-Workspace-Id: workspace-id" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "DELETE FROM budget_lines WHERE planned_value = 0"}'
 ```
 
 `X-Workspace-Id` is optional if the same API key has already called `POST /v1/workspaces/{workspaceId}/select`. If no workspace is saved and exactly one workspace exists for the user, the API auto-saves and uses that workspace for the key.

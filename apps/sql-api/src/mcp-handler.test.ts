@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { APIGatewayProxyEventV2 } from "aws-lambda";
+import {
+  MCP_SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
+  type SqlExecutionDeadline,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
+import { SqlTransactionOutcomeUnknownError } from "./dbDeadline.js";
 import type { UserIdentity } from "./db.js";
 import { createQueryResult } from "./handlerTestUtils.js";
 import {
@@ -12,6 +19,10 @@ import { createMcpServer } from "./mcp/server.js";
 import type { SqlApiLogEvent } from "./logger.js";
 import {
   createMcpApp,
+  createMcpHandler,
+  createMcpRequestFromHttpApiV2Event,
+  createHttpApiV2ResultFromMcpResponse,
+  McpHttpApiV2EventError,
   type McpHandlerDependencies,
 } from "./mcp-handler.js";
 
@@ -51,6 +62,7 @@ const createDependencies = (
   log: (event) => {
     logEvents.push(event);
   },
+  now: Date.now,
 });
 
 const authenticatedHeaders = (): Readonly<Record<string, string>> => ({
@@ -78,31 +90,194 @@ const initializeRequest = (): Request => new Request(RESOURCE, {
   }),
 });
 
-test("MCP handler serves health and both protected-resource metadata locations", async (): Promise<void> => {
+const createHttpApiV2Event = (
+  method: "GET" | "POST" | "DELETE",
+  path: string,
+  headers: Readonly<Record<string, string>>,
+  rawQueryString: string,
+  body: string | undefined,
+  isBase64Encoded: boolean,
+  cookies: Array<string> | undefined,
+): APIGatewayProxyEventV2 => ({
+  version: "2.0",
+  routeKey: `${method} ${path}`,
+  rawPath: path,
+  rawQueryString,
+  ...(cookies === undefined ? {} : { cookies }),
+  headers: { ...headers },
+  requestContext: {
+    accountId: "123456789012",
+    apiId: "mcp-http-api",
+    domainName: CONFIG.canonicalHost,
+    domainPrefix: "mcp",
+    http: {
+      method,
+      path,
+      protocol: "HTTP/1.1",
+      sourceIp: "203.0.113.10",
+      userAgent: "mcp-handler-test",
+    },
+    requestId: "request-1",
+    routeKey: `${method} ${path}`,
+    stage: "$default",
+    time: "14/Aug/2026:12:00:00 +0000",
+    timeEpoch: 1_776_165_600_000,
+  },
+  ...(body === undefined ? {} : { body }),
+  isBase64Encoded,
+});
+
+test("MCP HTTP API v2 adapter preserves raw path, query, cookies, and base64 request bodies", async (): Promise<void> => {
+  const event = createHttpApiV2Event(
+    "POST",
+    "/mcp",
+    {
+      host: CONFIG.canonicalHost,
+      "content-type": "application/json",
+      "x-forwarded-for": "203.0.113.10",
+    },
+    "workspace=one%20two&workspace=three",
+    Buffer.from('{"jsonrpc":"2.0"}', "utf8").toString("base64"),
+    true,
+    ["first=one", "second=two"],
+  );
+
+  const request = createMcpRequestFromHttpApiV2Event(event);
+
+  assert.equal(request.method, "POST");
+  assert.equal(
+    request.url,
+    "https://mcp.example.com/mcp?workspace=one%20two&workspace=three",
+  );
+  assert.equal(request.headers.get("cookie"), "first=one; second=two");
+  assert.equal(request.headers.get("x-forwarded-for"), "203.0.113.10");
+  assert.equal(await request.text(), '{"jsonrpc":"2.0"}');
+});
+
+test("MCP HTTP API v2 adapter rejects non-v2 and inconsistent route events", (): void => {
+  const event = createHttpApiV2Event(
+    "GET",
+    "/mcp",
+    { host: CONFIG.canonicalHost },
+    "",
+    undefined,
+    false,
+    undefined,
+  );
+
+  assert.throws(
+    () => createMcpRequestFromHttpApiV2Event({ ...event, version: "1.0" }),
+    McpHttpApiV2EventError,
+  );
+  assert.throws(
+    () => createMcpRequestFromHttpApiV2Event({ ...event, routeKey: "GET /other" }),
+    McpHttpApiV2EventError,
+  );
+});
+
+test("MCP HTTP API v2 adapter emits structured status, headers, cookies, and buffered body", async (): Promise<void> => {
+  const headers = new Headers({ "content-type": "application/json", "x-request-id": "request-1" });
+  headers.append("set-cookie", "first=one; Secure");
+  headers.append("set-cookie", "second=two; Secure");
+  const response = new Response('{"error":"invalid_token"}', { status: 401, headers });
+
+  const result = await createHttpApiV2ResultFromMcpResponse(response);
+
+  assert.equal(result.statusCode, 401);
+  assert.deepEqual(result.headers, {
+    "content-type": "application/json",
+    "x-request-id": "request-1",
+  });
+  assert.deepEqual(result.cookies, ["first=one; Secure", "second=two; Secure"]);
+  assert.equal(result.body, '{"error":"invalid_token"}');
+  assert.equal(result.isBase64Encoded, false);
+});
+
+test("MCP Lambda handler consumes HTTP API v2 metadata events without REST aliases", async (): Promise<void> => {
+  const handler = createMcpHandler(createDependencies(async () => CONNECTION, []));
+  const metadata = await handler(createHttpApiV2Event(
+    "GET",
+    "/.well-known/oauth-protected-resource/mcp",
+    { host: CONFIG.canonicalHost },
+    "",
+    undefined,
+    false,
+    undefined,
+  ));
+
+  assert.equal(metadata.statusCode, 200);
+  assert.deepEqual(JSON.parse(metadata.body ?? ""), {
+    resource: RESOURCE,
+    authorization_servers: [CONFIG.issuer],
+    bearer_methods_supported: ["header"],
+    scopes_supported: ["expenses:read", "expenses:write"],
+  });
+});
+
+test("MCP Lambda preserves OAuth challenge headers in an HTTP API v2 response", async (): Promise<void> => {
+  const handler = createMcpHandler(createDependencies(async () => CONNECTION, []));
+  const response = await handler(createHttpApiV2Event(
+    "POST",
+    "/mcp",
+    { host: CONFIG.canonicalHost },
+    "",
+    undefined,
+    false,
+    undefined,
+  ));
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.headers?.["www-authenticate"], `Bearer resource_metadata="${METADATA_URL}"`);
+  assert.equal(response.isBase64Encoded, false);
+});
+
+test("MCP Lambda starts one absolute deadline at HTTP API request entry before OAuth", async (): Promise<void> => {
+  const steps: Array<string> = [];
+  let authenticationDeadline: SqlExecutionDeadline | undefined;
+  const dependencies = createDependencies(async (_token, _resource, deadline) => {
+    steps.push("authenticate");
+    authenticationDeadline = deadline;
+    throw new McpAuthenticationError();
+  }, []);
+  const handler = createMcpHandler({
+    ...dependencies,
+    now: () => {
+      steps.push("deadline");
+      return 10_000;
+    },
+  });
+
+  const response = await handler(createHttpApiV2Event(
+    "POST",
+    "/mcp",
+    authenticatedHeaders(),
+    "",
+    undefined,
+    false,
+    undefined,
+  ));
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(steps, ["deadline", "authenticate"]);
+  assert.equal(authenticationDeadline?.expiresAtMs, 10_000 + MCP_SQL_STATEMENT_TIMEOUT_MS);
+});
+
+test("MCP handler serves only the pathful protected-resource metadata location", async (): Promise<void> => {
   const logEvents: Array<SqlApiLogEvent> = [];
   const app = createMcpApp(createDependencies(async () => CONNECTION, logEvents));
 
-  const health = await app.request("https://mcp.example.com/health");
-  assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), { status: "ok" });
-
-  for (const path of [
-    "/.well-known/oauth-protected-resource/mcp",
-    "/.well-known/oauth-protected-resource",
-  ]) {
-    const response = await app.request(`https://mcp.example.com${path}`);
-    assert.equal(response.status, 200, path);
-    assert.deepEqual(await response.json(), {
-      resource: RESOURCE,
-      authorization_servers: [CONFIG.issuer],
-      bearer_methods_supported: ["header"],
-      scopes_supported: ["expenses:read", "expenses:write"],
-    });
-  }
+  const response = await app.request(METADATA_URL);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    resource: RESOURCE,
+    authorization_servers: [CONFIG.issuer],
+    bearer_methods_supported: ["header"],
+    scopes_supported: ["expenses:read", "expenses:write"],
+  });
   assert.deepEqual(logEvents, []);
 });
 
-test("MCP handler does not serve any /v1 route aliases", async (): Promise<void> => {
+test("MCP handler does not serve removed, unknown, or /v1 routes", async (): Promise<void> => {
   let authenticationCalls = 0;
   const app = createMcpApp(createDependencies(async () => {
     authenticationCalls += 1;
@@ -110,6 +285,9 @@ test("MCP handler does not serve any /v1 route aliases", async (): Promise<void>
   }, []));
 
   for (const path of [
+    "/health",
+    "/.well-known/oauth-protected-resource",
+    "/unknown",
     "/v1/health",
     "/v1/.well-known/oauth-protected-resource/mcp",
     "/v1/.well-known/oauth-protected-resource",
@@ -170,11 +348,12 @@ test("MCP handler maps current identity trust failures to the generic Bearer cha
     cognitoEnabled: false,
   };
   const app = createMcpApp(createDependencies(
-    (token, resource) => authenticateMcpAccessTokenWithDependencies(
+    (token, resource, deadline) => authenticateMcpAccessTokenWithDependencies(
       token,
       resource,
+      deadline,
       {
-        query: async () => createQueryResult([{
+        queryBeforeDeadline: async () => createQueryResult([{
           connection_id: CONNECTION.connectionId,
           user_id: CONNECTION.identity.userId,
           client_id: CONNECTION.clientId,
@@ -182,7 +361,7 @@ test("MCP handler maps current identity trust failures to the generic Bearer cha
           scopes: CONNECTION.scopes,
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
-        loadTrustedUserIdentity: async () => disabledIdentity,
+        loadTrustedUserIdentityBeforeDeadline: async () => disabledIdentity,
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),
@@ -204,14 +383,39 @@ test("MCP handler maps current identity trust failures to the generic Bearer cha
   assert.deepEqual(logEvents, []);
 });
 
+test("MCP handler maps a readonly authentication transaction deadline to retryable 504", async (): Promise<void> => {
+  const logEvents: Array<SqlApiLogEvent> = [];
+  const app = createMcpApp(createDependencies(async () => {
+    throw new SqlTransactionOutcomeUnknownError(
+      "commit",
+      new SqlExecutionDeadlineError(MCP_SQL_STATEMENT_TIMEOUT_MS),
+      "unknown",
+      undefined,
+    );
+  }, logEvents));
+
+  const response = await app.request(RESOURCE, {
+    method: "POST",
+    headers: authenticatedHeaders(),
+  });
+
+  assert.equal(response.status, 504);
+  assert.deepEqual(await response.json(), {
+    error: "request_deadline_exceeded",
+    error_description: "The MCP request exceeded its 20-second total execution deadline. Retry the request.",
+  });
+  assert.deepEqual(logEvents, []);
+});
+
 test("MCP handler maps invalid scope snapshots to the generic Bearer challenge", async (): Promise<void> => {
   const logEvents: Array<SqlApiLogEvent> = [];
   const app = createMcpApp(createDependencies(
-    (token, resource) => authenticateMcpAccessTokenWithDependencies(
+    (token, resource, deadline) => authenticateMcpAccessTokenWithDependencies(
       token,
       resource,
+      deadline,
       {
-        query: async () => createQueryResult([{
+        queryBeforeDeadline: async () => createQueryResult([{
           connection_id: CONNECTION.connectionId,
           user_id: CONNECTION.identity.userId,
           client_id: CONNECTION.clientId,
@@ -219,7 +423,7 @@ test("MCP handler maps invalid scope snapshots to the generic Bearer challenge",
           scopes: ["expenses:write", "expenses:read"],
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
-        loadTrustedUserIdentity: async () => CONNECTION.identity,
+        loadTrustedUserIdentityBeforeDeadline: async () => CONNECTION.identity,
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),
@@ -245,11 +449,12 @@ test("MCP handler maps invalid scope snapshots to the generic Bearer challenge",
 test("MCP handler keeps unrelated access-token row corruption as an internal error", async (): Promise<void> => {
   const logEvents: Array<SqlApiLogEvent> = [];
   const app = createMcpApp(createDependencies(
-    (token, resource) => authenticateMcpAccessTokenWithDependencies(
+    (token, resource, deadline) => authenticateMcpAccessTokenWithDependencies(
       token,
       resource,
+      deadline,
       {
-        query: async () => createQueryResult([{
+        queryBeforeDeadline: async () => createQueryResult([{
           connection_id: CONNECTION.connectionId,
           user_id: CONNECTION.identity.userId,
           client_id: 42,
@@ -257,7 +462,7 @@ test("MCP handler keeps unrelated access-token row corruption as an internal err
           scopes: CONNECTION.scopes,
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
-        loadTrustedUserIdentity: async () => CONNECTION.identity,
+        loadTrustedUserIdentityBeforeDeadline: async () => CONNECTION.identity,
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),
@@ -304,31 +509,44 @@ test("MCP handler rejects non-canonical Host and Origin before authentication", 
   assert.equal(authenticationCalls, 0);
 });
 
-test("MCP handler returns 405 for authenticated GET and DELETE requests", async (): Promise<void> => {
-  const app = createMcpApp(createDependencies(async () => CONNECTION, []));
+test("MCP handler preserves authenticated GET protocol behavior without exposing other methods", async (): Promise<void> => {
+  let authenticationCalls = 0;
+  const app = createMcpApp(createDependencies(async () => {
+    authenticationCalls += 1;
+    return CONNECTION;
+  }, []));
 
-  for (const method of ["GET", "DELETE"]) {
-    const response = await app.request(RESOURCE, {
-      method,
-      headers: authenticatedHeaders(),
-    });
-    assert.equal(response.status, 405, method);
-    assert.equal(response.headers.get("allow"), "POST", method);
-  }
+  const get = await app.request(RESOURCE, {
+    method: "GET",
+    headers: authenticatedHeaders(),
+  });
+  assert.equal(get.status, 405);
+  assert.equal(get.headers.get("allow"), "POST");
+
+  const deleted = await app.request(RESOURCE, {
+    method: "DELETE",
+    headers: authenticatedHeaders(),
+  });
+  assert.equal(deleted.status, 404);
+  assert.equal(authenticationCalls, 1);
 });
 
 test("MCP handler uses stateless JSON transport with no session identifier", async (): Promise<void> => {
   let serverCreations = 0;
-  const dependencies = createDependencies(async (token, resource) => {
+  const authenticationDeadlines: Array<SqlExecutionDeadline> = [];
+  const serverDeadlines: Array<SqlExecutionDeadline> = [];
+  const dependencies = createDependencies(async (token, resource, deadline) => {
     assert.equal(token, ACCESS_TOKEN);
     assert.equal(resource, RESOURCE);
+    authenticationDeadlines.push(deadline);
     return CONNECTION;
   }, []);
   const app = createMcpApp({
     ...dependencies,
-    createMcpServer: (connection) => {
+    createMcpServer: (connection, deadline) => {
       serverCreations += 1;
-      return createMcpServer(connection);
+      serverDeadlines.push(deadline);
+      return createMcpServer(connection, deadline);
     },
   });
 
@@ -342,6 +560,12 @@ test("MCP handler uses stateless JSON transport with no session identifier", asy
     assert.equal(body["id"], 1);
   }
   assert.equal(serverCreations, 2);
+  assert.equal(serverDeadlines[0], authenticationDeadlines[0]);
+  assert.equal(serverDeadlines[1], authenticationDeadlines[1]);
+  assert.deepEqual(
+    authenticationDeadlines.map((deadline) => deadline.timeoutMs),
+    [MCP_SQL_STATEMENT_TIMEOUT_MS, MCP_SQL_STATEMENT_TIMEOUT_MS],
+  );
 });
 
 test("MCP handler sanitizes and structurally logs unexpected authentication failures", async (): Promise<void> => {

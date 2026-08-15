@@ -7,6 +7,10 @@
  * Only the origin is validated against ALLOWED_REDIRECT_URIS.
  */
 import { Hono } from "hono";
+import {
+  getRawQueryByteLength,
+  MAX_OAUTH_LOGIN_QUERY_BYTES,
+} from "@expense-budget-tracker/agent-shared";
 import { setCookie } from "hono/cookie";
 import { renderLoginPage } from "../templates/login.js";
 import { resolveBrowserSession } from "../server/oauth/session.js";
@@ -62,6 +66,9 @@ export const createLoginPageApp = (dependencies: LoginPageDependencies): Hono =>
   const app = new Hono();
 
   app.get("/login", async (c) => {
+    if (getRawQueryByteLength(c.req.url) > MAX_OAUTH_LOGIN_QUERY_BYTES) {
+      return c.text(`Login query must not exceed ${MAX_OAUTH_LOGIN_QUERY_BYTES} UTF-8 bytes`, 400);
+    }
     const redirectUri = c.req.query("redirect_uri") ?? "";
 
     if (redirectUri === "") {

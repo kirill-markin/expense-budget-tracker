@@ -4,6 +4,8 @@ import type { AllowedRelationName } from "@expense-budget-tracker/agent-shared/s
 import {
   ensureTrustedIdentityProvisioned,
   queryAsTrustedIdentity,
+  queryAsTrustedIdentityBeforeDeadline,
+  resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline,
   type UserIdentity,
   withReadOnlyRestrictedTrustedIdentityContext,
   withRestrictedTrustedIdentityContext,
@@ -23,6 +25,8 @@ export type AuthenticatedContext = TrustedIdentityContext & Readonly<{
 export type MachineApiDependencies = Readonly<{
   ensureTrustedIdentityProvisioned: typeof ensureTrustedIdentityProvisioned;
   queryAsTrustedIdentity: typeof queryAsTrustedIdentity;
+  queryAsTrustedIdentityBeforeDeadline: typeof queryAsTrustedIdentityBeforeDeadline;
+  resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: typeof resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline;
   withReadOnlyRestrictedTrustedIdentityContext: typeof withReadOnlyRestrictedTrustedIdentityContext;
   withRestrictedTrustedIdentityContext: typeof withRestrictedTrustedIdentityContext;
 }>;

@@ -1,10 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { QueryResult } from "pg";
-import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import type { PoolClient, QueryResult } from "pg";
+import {
+  createSqlExecutionDeadline,
+  SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
+  SqlPolicyError,
+  type SqlExecutionDeadline,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
+import type { RestrictedQueryFn } from "../db.js";
+import {
+  SqlTransactionOutcomeUnknownError,
+  systemDeadlineRuntime,
+  type DeadlinePool,
+  withDeadlineTransactionUsingPool,
+} from "../dbDeadline.js";
 import { createQueryResult } from "../handlerTestUtils.js";
 import {
   getUserSqlExecutionMessage,
+  isAmbiguousSqlMutationOutcomeError,
   isUserSqlExecutionError,
   runReadOnlySqlWithWorkspaceGetter,
   runSqlWithWorkspaceGetter,
@@ -35,12 +49,19 @@ const createDependencies = (
   ensureTrustedIdentityProvisioned: overrides.ensureTrustedIdentityProvisioned ?? (async () => undefined),
   queryAsTrustedIdentity: overrides.queryAsTrustedIdentity ?? (async () =>
     createQueryResult([{ workspace_id: "user-1", name: "Personal" }])),
+  queryAsTrustedIdentityBeforeDeadline: overrides.queryAsTrustedIdentityBeforeDeadline ?? (async () =>
+    createQueryResult([{ workspace_id: "user-1", name: "Personal" }])),
+  resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline:
+    overrides.resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline ?? (async () => ({
+      workspaceId: "user-1",
+      created: false,
+    })),
   withReadOnlyRestrictedTrustedIdentityContext:
     overrides.withReadOnlyRestrictedTrustedIdentityContext ?? (async <T>(
       _identity: AuthenticatedContext["identity"],
       _workspaceId: string,
-      _statementTimeoutMs: number,
-      callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>) => Promise<T>,
+      _deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
     ): Promise<T> =>
       callback(async () =>
         ({
@@ -53,8 +74,8 @@ const createDependencies = (
   withRestrictedTrustedIdentityContext: overrides.withRestrictedTrustedIdentityContext ?? (async <T>(
     _identity: AuthenticatedContext["identity"],
     _workspaceId: string,
-    _statementTimeoutMs: number,
-    callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>) => Promise<T>,
+    _deadline: SqlExecutionDeadline,
+    callback: (queryFn: RestrictedQueryFn) => Promise<T>,
   ): Promise<T> =>
     callback(async () =>
       ({
@@ -66,10 +87,43 @@ const createDependencies = (
       }) as QueryResult)),
 });
 
+const createTransactionalDependencies = (
+  client: PoolClient,
+): MachineApiDependencies => {
+  const pool: DeadlinePool = {
+    connect: (callback): void => callback(undefined, client),
+  };
+  return createDependencies({
+    withRestrictedTrustedIdentityContext: async <T>(
+      _identity: AuthenticatedContext["identity"],
+      _workspaceId: string,
+      deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
+    ): Promise<T> => withDeadlineTransactionUsingPool(
+      pool,
+      deadline,
+      "BEGIN",
+      (transaction): Promise<T> => callback(
+        (text, params, statementTimeoutMs, onDispatch) =>
+          transaction.queryWithDispatchMarker(
+            text,
+            params,
+            statementTimeoutMs,
+            onDispatch,
+          ),
+      ),
+      systemDeadlineRuntime,
+    ),
+  });
+};
+
 const workspaceGetter = async (): Promise<WorkspaceSummary> => ({
   workspaceId: "user-1",
   name: "Personal",
 });
+
+const createExecutionDeadline = (): SqlExecutionDeadline =>
+  createSqlExecutionDeadline(SQL_STATEMENT_TIMEOUT_MS, Date.now);
 
 test("runSql rejects function-only SQL before executing restricted queries", async (): Promise<void> => {
   let restrictedContextCalled = false;
@@ -86,6 +140,7 @@ test("runSql rejects function-only SQL before executing restricted queries", asy
       createAuthenticatedContext(),
       "user-1",
       "SELECT delete_workspace_for_current_user('user-1')",
+      createExecutionDeadline(),
       workspaceGetter,
     ),
     (error: unknown) => error instanceof SqlPolicyError && error.code === "function_calls_not_allowed",
@@ -110,6 +165,7 @@ test("runSql rejects data-modifying CTEs before workspace or restricted database
       createAuthenticatedContext(),
       "user-1",
       "WITH deleted_rates AS (DELETE FROM fx_rates_raw WHERE base_currency = 'EUR' RETURNING *) SELECT * FROM deleted_rates",
+      createExecutionDeadline(),
       async (): Promise<WorkspaceSummary> => {
         workspaceGetterCalled = true;
         return workspaceGetter();
@@ -140,6 +196,7 @@ test("runSql rejects community public share relations before executing restricte
       createAuthenticatedContext(),
       "user-1",
       "SELECT * FROM community.monthly_category_shares",
+      createExecutionDeadline(),
       workspaceGetter,
     ),
     (error: unknown) => error instanceof SqlPolicyError && error.code === "relation_not_allowed",
@@ -151,6 +208,7 @@ test("runSql rejects community public share relations before executing restricte
       createAuthenticatedContext(),
       "user-1",
       "SELECT * FROM community.read_public_monthly_category_share('token', '2025-01-01', '2025-12-01')",
+      createExecutionDeadline(),
       workspaceGetter,
     ),
     (error: unknown) => error instanceof SqlPolicyError && error.code === "function_calls_not_allowed",
@@ -161,19 +219,26 @@ test("runSql rejects community public share relations before executing restricte
 
 test("runSql executes every statement in one restricted transaction", async (): Promise<void> => {
   let restrictedContextCount = 0;
+  let receivedStatementTimeoutMs: number | undefined;
+  let workspaceDeadline: SqlExecutionDeadline | undefined;
+  let restrictedDeadline: SqlExecutionDeadline | undefined;
   const executedSql: Array<string> = [];
   const executedParams: Array<ReadonlyArray<unknown>> = [];
+  const executedStatementTimeouts: Array<number> = [];
   const dependencies = createDependencies({
     withRestrictedTrustedIdentityContext: async <T>(
       _identity: AuthenticatedContext["identity"],
       _workspaceId: string,
-      _statementTimeoutMs: number,
-      callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>) => Promise<T>,
+      deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
     ): Promise<T> => {
       restrictedContextCount += 1;
-      return callback(async (sql, params) => {
+      restrictedDeadline = deadline;
+      receivedStatementTimeoutMs = deadline.timeoutMs;
+      return callback(async (sql, params, statementTimeoutMs) => {
         executedSql.push(sql);
         executedParams.push(params);
+        executedStatementTimeouts.push(statementTimeoutMs);
         if (sql.startsWith("DECLARE ") || sql.startsWith("CLOSE ")) {
           return ({
             command: sql.startsWith("DECLARE ") ? "DECLARE" : "CLOSE",
@@ -202,19 +267,27 @@ test("runSql executes every statement in one restricted transaction", async (): 
       });
     },
   });
+  const executionDeadline = createExecutionDeadline();
 
   const result = await runSqlWithWorkspaceGetter(
     dependencies,
     createAuthenticatedContext(),
     "user-1",
     "SELECT SUM(amount) AS balance FROM ledger_entries WHERE account_id = 'a-main-usd'; SELECT COUNT(*) FROM accounts",
-    workspaceGetter,
+    executionDeadline,
+    async (_dependencies, _identity, _workspaceId, deadline): Promise<WorkspaceSummary> => {
+      workspaceDeadline = deadline;
+      return workspaceGetter();
+    },
   );
   const workspace = (result?.workspace ?? null) as WorkspaceSummary | null;
   const statements = (result?.statements ?? []) as ReadonlyArray<Readonly<Record<string, unknown>>>;
   const statement = statements[0];
 
   assert.equal(restrictedContextCount, 1);
+  assert.equal(workspaceDeadline, executionDeadline);
+  assert.equal(restrictedDeadline, executionDeadline);
+  assert.equal(receivedStatementTimeoutMs, SQL_STATEMENT_TIMEOUT_MS);
   assert.deepEqual(executedSql, [
     "DECLARE api_sql_read_cursor_1 NO SCROLL CURSOR FOR SELECT SUM(amount) AS balance FROM ledger_entries WHERE account_id = 'a-main-usd'",
     "FETCH FORWARD 101 FROM api_sql_read_cursor_1",
@@ -226,6 +299,11 @@ test("runSql executes every statement in one restricted transaction", async (): 
     "CLOSE api_sql_read_cursor_2",
   ]);
   assert.deepEqual(executedParams, [[], [], [], [], [], [], [], []]);
+  assert.equal(executedStatementTimeouts.length, executedSql.length);
+  assert.equal(executedStatementTimeouts.every(
+    (statementTimeoutMs) => statementTimeoutMs > 0
+      && statementTimeoutMs <= SQL_STATEMENT_TIMEOUT_MS,
+  ), true);
   assert.equal(workspace?.workspaceId, "user-1");
   assert.equal(statements.length, 2);
   assert.equal(statement?.rowCount, 1);
@@ -241,8 +319,8 @@ test("runReadOnlySql bounds composed reads in PostgreSQL and preserves accurate 
     withReadOnlyRestrictedTrustedIdentityContext: async <T>(
       _identity: AuthenticatedContext["identity"],
       _workspaceId: string,
-      _statementTimeoutMs: number,
-      callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>) => Promise<T>,
+      _deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
     ): Promise<T> => callback(async (querySql, params) => {
       executedSql.push(querySql);
       executedParams.push(params);
@@ -267,6 +345,7 @@ test("runReadOnlySql bounds composed reads in PostgreSQL and preserves accurate 
       }) as QueryResult;
     }),
   });
+
   const sql = "WITH account_rows AS (SELECT account_id FROM accounts) SELECT account_id FROM account_rows UNION SELECT account_id FROM accounts ORDER BY account_id OFFSET 1;";
 
   const result = await runReadOnlySqlWithWorkspaceGetter(
@@ -274,6 +353,7 @@ test("runReadOnlySql bounds composed reads in PostgreSQL and preserves accurate 
     createAuthenticatedContext(),
     "user-1",
     sql,
+    createExecutionDeadline(),
     workspaceGetter,
   );
   const statements = (result?.statements ?? []) as ReadonlyArray<Readonly<Record<string, unknown>>>;
@@ -301,8 +381,8 @@ test("runReadOnlySql uses only the read-only restricted transaction", async (): 
     withReadOnlyRestrictedTrustedIdentityContext: async <T>(
       _identity: AuthenticatedContext["identity"],
       _workspaceId: string,
-      _statementTimeoutMs: number,
-      callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>) => Promise<T>,
+      _deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
     ): Promise<T> => {
       readOnlyContextCount += 1;
       return callback(async () => createQueryResult([{ account_id: "a-main-usd" }]));
@@ -318,6 +398,7 @@ test("runReadOnlySql uses only the read-only restricted transaction", async (): 
     createAuthenticatedContext(),
     "user-1",
     "SELECT account_id FROM accounts",
+    createExecutionDeadline(),
     workspaceGetter,
   );
 
@@ -325,18 +406,12 @@ test("runReadOnlySql uses only the read-only restricted transaction", async (): 
   assert.equal(writeContextCount, 0);
 });
 
-test("runSql raises mutation batch overflow from inside the single transaction callback", async (): Promise<void> => {
-  let restrictedContextCount = 0;
+test("runSql keeps a row-limit policy error definitive after successful rollback", async (): Promise<void> => {
   let statementCount = 0;
-  const dependencies = createDependencies({
-    withRestrictedTrustedIdentityContext: async <T>(
-      _identity: AuthenticatedContext["identity"],
-      _workspaceId: string,
-      _statementTimeoutMs: number,
-      callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>) => Promise<T>,
-    ): Promise<T> => {
-      restrictedContextCount += 1;
-      return callback(async () => {
+  const releases: Array<Error | undefined> = [];
+  const client = {
+    query: async (text: string): Promise<QueryResult> => {
+      if (text.startsWith("UPDATE account_metadata") || text.startsWith("DELETE FROM budget_lines")) {
         statementCount += 1;
         return ({
           command: "UPDATE",
@@ -345,9 +420,14 @@ test("runSql raises mutation batch overflow from inside the single transaction c
           fields: [],
           rows: [],
         }) as QueryResult;
-      });
+      }
+      return createQueryResult([]);
     },
-  });
+    release: (error?: Error | boolean): void => {
+      releases.push(error instanceof Error ? error : undefined);
+    },
+  } as PoolClient;
+  const dependencies = createTransactionalDependencies(client);
 
   await assert.rejects(
     () => runSqlWithWorkspaceGetter(
@@ -355,15 +435,17 @@ test("runSql raises mutation batch overflow from inside the single transaction c
       createAuthenticatedContext(),
       "user-1",
       "UPDATE account_metadata SET liquidity = 'low'; DELETE FROM budget_lines",
+      createExecutionDeadline(),
       workspaceGetter,
     ),
     (error: unknown) =>
       error instanceof SqlPolicyError
-      && error.code === "mutation_request_row_limit_exceeded",
+      && error.code === "mutation_request_row_limit_exceeded"
+      && !isAmbiguousSqlMutationOutcomeError(error),
   );
 
-  assert.equal(restrictedContextCount, 1);
   assert.equal(statementCount, 2);
+  assert.deepEqual(releases, [undefined]);
 });
 
 test("runSql tags safe PostgreSQL errors only when validated user SQL is executing", async (): Promise<void> => {
@@ -375,8 +457,8 @@ test("runSql tags safe PostgreSQL errors only when validated user SQL is executi
     withRestrictedTrustedIdentityContext: async <T>(
       _identity: AuthenticatedContext["identity"],
       _workspaceId: string,
-      _statementTimeoutMs: number,
-      callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>) => Promise<T>,
+      _deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
     ): Promise<T> => callback(async (): Promise<QueryResult> => {
       throw databaseError;
     }),
@@ -388,6 +470,7 @@ test("runSql tags safe PostgreSQL errors only when validated user SQL is executi
       createAuthenticatedContext(),
       "user-1",
       "SELECT amount FROM ledger_entries",
+      createExecutionDeadline(),
       workspaceGetter,
     ),
     (error: unknown) =>
@@ -407,6 +490,7 @@ test("runSql does not tag PostgreSQL errors from workspace lookup or transaction
       createAuthenticatedContext(),
       "user-1",
       "SELECT amount FROM ledger_entries",
+      createExecutionDeadline(),
       async (): Promise<WorkspaceSummary> => {
         throw workspaceError;
       },
@@ -429,8 +513,238 @@ test("runSql does not tag PostgreSQL errors from workspace lookup or transaction
       createAuthenticatedContext(),
       "user-1",
       "SELECT amount FROM ledger_entries",
+      createExecutionDeadline(),
       workspaceGetter,
     ),
     (error: unknown) => error === setupError && !isUserSqlExecutionError(error),
   );
+});
+
+test("runSql marks a deadline after mutating SQL dispatch as an ambiguous outcome", async (): Promise<void> => {
+  const deadlineError = new SqlExecutionDeadlineError(SQL_STATEMENT_TIMEOUT_MS);
+  const outcomeError = new SqlTransactionOutcomeUnknownError(
+    "transaction",
+    deadlineError,
+    "unknown",
+    undefined,
+  );
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: async <T>(
+      _identity: AuthenticatedContext["identity"],
+      _workspaceId: string,
+      _deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
+    ): Promise<T> => callback(async (_sql, _params, _statementTimeoutMs, onDispatch) => {
+      onDispatch();
+      throw outcomeError;
+    }),
+  });
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "UPDATE account_metadata SET liquidity = 'low' WHERE account_id = 'a-main-usd'",
+      createExecutionDeadline(),
+      workspaceGetter,
+    ),
+    (error: unknown) =>
+      isAmbiguousSqlMutationOutcomeError(error)
+      && error.cause === outcomeError,
+  );
+});
+
+test("runSql keeps an operational statement failure definitive after successful rollback", async (): Promise<void> => {
+  const tlsError = Object.assign(
+    new Error("TLS socket closed without a PostgreSQL error response"),
+    { code: "UNRECOGNIZED_TLS_FAILURE" },
+  );
+  const releases: Array<Error | undefined> = [];
+  const client = {
+    query: async (text: string): Promise<QueryResult> => {
+      if (text.startsWith("UPDATE account_metadata")) throw tlsError;
+      return createQueryResult([]);
+    },
+    release: (error?: Error | boolean): void => {
+      releases.push(error instanceof Error ? error : undefined);
+    },
+  } as PoolClient;
+  const dependencies = createTransactionalDependencies(client);
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "UPDATE account_metadata SET liquidity = 'low' WHERE account_id = 'a-main-usd'",
+      createExecutionDeadline(),
+      workspaceGetter,
+    ),
+    (error: unknown) =>
+      error === tlsError
+      && !isAmbiguousSqlMutationOutcomeError(error),
+  );
+  assert.deepEqual(releases, [undefined]);
+});
+
+test("runSql keeps definitive user SQL rejection after mutation dispatch non-ambiguous", async (): Promise<void> => {
+  const constraintError = Object.assign(
+    new Error("duplicate key value violates unique constraint"),
+    { code: "23505" },
+  );
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: async <T>(
+      _identity: AuthenticatedContext["identity"],
+      _workspaceId: string,
+      _deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
+    ): Promise<T> => callback(async (_sql, _params, _statementTimeoutMs, onDispatch) => {
+      onDispatch();
+      throw constraintError;
+    }),
+  });
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "INSERT INTO budget_lines (workspace_id) VALUES ('workspace-1')",
+      createExecutionDeadline(),
+      workspaceGetter,
+    ),
+    (error: unknown) =>
+      isUserSqlExecutionError(error)
+      && !isAmbiguousSqlMutationOutcomeError(error)
+      && getUserSqlExecutionMessage(error) === constraintError.message,
+  );
+});
+
+test("runSql treats a row-limit policy error with rollback failure as ambiguous", async (): Promise<void> => {
+  const rollbackError = new Error("PostgreSQL connection closed during rollback");
+  const releases: Array<Error | undefined> = [];
+  const client = {
+    query: async (text: string): Promise<QueryResult> => {
+      if (text === "ROLLBACK") throw rollbackError;
+      if (text.startsWith("UPDATE account_metadata") || text.startsWith("DELETE FROM budget_lines")) {
+        return ({
+          command: "UPDATE",
+          rowCount: 60,
+          oid: 0,
+          fields: [],
+          rows: [],
+        }) as QueryResult;
+      }
+      return createQueryResult([]);
+    },
+    release: (error?: Error | boolean): void => {
+      releases.push(error instanceof Error ? error : undefined);
+    },
+  } as PoolClient;
+  const dependencies = createTransactionalDependencies(client);
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "UPDATE account_metadata SET liquidity = 'low'; DELETE FROM budget_lines",
+      createExecutionDeadline(),
+      workspaceGetter,
+    ),
+    (error: unknown) => {
+      if (
+        !isAmbiguousSqlMutationOutcomeError(error)
+        || !(error.cause instanceof SqlTransactionOutcomeUnknownError)
+      ) {
+        return false;
+      }
+      return error.cause.failurePhase === "transaction"
+        && error.cause.originalError instanceof SqlPolicyError
+        && error.cause.originalError.code === "mutation_request_row_limit_exceeded"
+        && error.cause.rollbackOutcome === "unknown"
+        && error.cause.cleanupError === rollbackError;
+    },
+  );
+  assert.deepEqual(releases, [rollbackError]);
+});
+
+test("runSql leaves a pre-dispatch mutation deadline safely retryable", async (): Promise<void> => {
+  const deadlineError = new SqlExecutionDeadlineError(SQL_STATEMENT_TIMEOUT_MS);
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: async <T>(
+      _identity: AuthenticatedContext["identity"],
+      _workspaceId: string,
+      _deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
+    ): Promise<T> => callback(async () => {
+      throw deadlineError;
+    }),
+  });
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "UPDATE account_metadata SET liquidity = 'low' WHERE account_id = 'a-main-usd'",
+      createExecutionDeadline(),
+      workspaceGetter,
+    ),
+    (error: unknown) =>
+      error === deadlineError
+      && !isAmbiguousSqlMutationOutcomeError(error),
+  );
+});
+
+test("runSql marks a commit failure after a mutating statement as ambiguous", async (): Promise<void> => {
+  const commitError = Object.assign(
+    new Error("Connection terminated unexpectedly"),
+    { code: "08006" },
+  );
+  const releases: Array<Error | undefined> = [];
+  const client = {
+    query: async (text: string): Promise<QueryResult> => {
+      if (text === "COMMIT") throw commitError;
+      if (text.startsWith("UPDATE account_metadata")) {
+        return ({
+          command: "UPDATE",
+          rowCount: 1,
+          oid: 0,
+          fields: [],
+          rows: [],
+        }) as QueryResult;
+      }
+      return createQueryResult([]);
+    },
+    release: (error?: Error | boolean): void => {
+      releases.push(error instanceof Error ? error : undefined);
+    },
+  } as PoolClient;
+  const dependencies = createTransactionalDependencies(client);
+
+  await assert.rejects(
+    () => runSqlWithWorkspaceGetter(
+      dependencies,
+      createAuthenticatedContext(),
+      "user-1",
+      "UPDATE account_metadata SET liquidity = 'low' WHERE account_id = 'a-main-usd'",
+      createExecutionDeadline(),
+      workspaceGetter,
+    ),
+    (error: unknown) => {
+      if (
+        !isAmbiguousSqlMutationOutcomeError(error)
+        || !(error.cause instanceof SqlTransactionOutcomeUnknownError)
+      ) {
+        return false;
+      }
+      return error.cause.failurePhase === "commit"
+        && error.cause.originalError === commitError
+        && error.cause.rollbackOutcome === "rolled_back"
+        && error.cause.cleanupError === undefined;
+    },
+  );
+  assert.deepEqual(releases, [undefined]);
 });
