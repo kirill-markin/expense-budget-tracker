@@ -53,6 +53,8 @@ jobs:
           set -euo pipefail
           server_name="$(jq -r '.name // empty' server.json)"
           server_version="$(jq -r '.version // empty' server.json)"
+          server_remote_count="$(jq '[.remotes[]? | select(.type == "streamable-http")] | length' server.json)"
+          server_remote_url="$(jq -r '.remotes[]? | select(.type == "streamable-http") | .url // empty' server.json)"
 
           if [ -z "${server_name}" ]; then
             echo "::error::server.json must include a non-empty .name before publication."
@@ -62,11 +64,17 @@ jobs:
             echo "::error::server.json must include a non-empty .version before publication."
             exit 1
           fi
+          if [ "${server_remote_count}" -ne 1 ] || [ -z "${server_remote_url}" ]; then
+            echo "::error::server.json must include exactly one streamable-http remote with a non-empty URL before publication."
+            exit 1
+          fi
 
           encoded_name="$(printf '%s' "${server_name}" | jq -sRr @uri)"
           encoded_version="$(printf '%s' "${server_version}" | jq -sRr @uri)"
           version_endpoint="https://registry.modelcontextprotocol.io/v0.1/servers/${encoded_name}/versions/${encoded_version}"
           response_body="${RUNNER_TEMP}/mcp-registry-version-before.json"
+          connect_timeout_seconds=5
+          request_timeout_seconds=20
           max_attempts=3
           retry_delay_seconds=5
 
@@ -74,6 +82,8 @@ jobs:
             : > "${response_body}"
             set +e
             status="$(curl --show-error --silent \
+              --connect-timeout "${connect_timeout_seconds}" \
+              --max-time "${request_timeout_seconds}" \
               --output "${response_body}" \
               --write-out '%{http_code}' \
               "${version_endpoint}")"
@@ -84,6 +94,7 @@ jobs:
               {
                 echo "name=${server_name}"
                 echo "version=${server_version}"
+                echo "remote_url=${server_remote_url}"
                 echo "version_endpoint=${version_endpoint}"
               } >> "${GITHUB_OUTPUT}"
               echo "MCP Registry version is unpublished: ${server_name} ${server_version}"
@@ -114,31 +125,34 @@ jobs:
             exit 1
           done
 
-      - name: Require Registry credential
-        env:
-          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${MCP_PRIVATE_KEY}" ]; then
-            echo "::error::MCP_PRIVATE_KEY is not configured. Run scripts/cloudflare/setup-mcp-registry-credential.sh as documented in docs/mcp-registry-publishing.md before dispatching this workflow."
-            exit 1
-          fi
-
-      - name: Install mcp-publisher CLI
+      - name: Install verified mcp-publisher CLI
         id: publisher
         run: |
           set -euo pipefail
-          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
-          archive_path="${RUNNER_TEMP}/mcp-publisher.tar.gz"
+          runner_os="$(uname -s)"
+          runner_arch="$(uname -m)"
+          if [ "${runner_os}" != "Linux" ] || [ "${runner_arch}" != "aarch64" ]; then
+            echo "::error::The pinned mcp-publisher artifact requires Linux ARM64, but the runner reported ${runner_os} ${runner_arch}."
+            exit 1
+          fi
+
+          publisher_version="v1.8.1"
+          publisher_archive="mcp-publisher_linux_arm64.tar.gz"
+          publisher_sha256="8dd75a6cf6845688b5d4e46df58d3ca26d5c8d233bb0626606e1db82c5e883e4"
+          archive_path="${RUNNER_TEMP}/${publisher_archive}"
           publisher_path="${RUNNER_TEMP}/mcp-publisher"
           curl --fail --location --show-error --silent \
             --retry 2 --retry-delay 2 --retry-all-errors \
-            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${os}_${arch}.tar.gz" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${publisher_version}/${publisher_archive}" \
             --output "${archive_path}"
+          printf '%s  %s\n' "${publisher_sha256}" "${archive_path}" | sha256sum --check --strict
           tar --extract --gzip --file "${archive_path}" --directory "${RUNNER_TEMP}" mcp-publisher
           chmod 700 "${publisher_path}"
-          echo "path=${publisher_path}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "path=${publisher_path}"
+            echo "version=${publisher_version}"
+            echo "sha256=${publisher_sha256}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Authenticate to MCP Registry with DNS
         env:
@@ -146,25 +160,45 @@ jobs:
           MCP_PUBLISHER: ${{ steps.publisher.outputs.path }}
         run: |
           set -euo pipefail
+          if [ -z "${MCP_PRIVATE_KEY}" ]; then
+            echo "::error::MCP_PRIVATE_KEY is not configured. Run scripts/cloudflare/setup-mcp-registry-credential.sh as documented in docs/mcp-registry-publishing.md before dispatching this workflow."
+            exit 1
+          fi
           "${MCP_PUBLISHER}" login dns \
             --domain expense-budget-tracker.com \
             --private-key "${MCP_PRIVATE_KEY}"
 
       - name: Publish server to MCP Registry
+        id: publish
         env:
           MCP_PUBLISHER: ${{ steps.publisher.outputs.path }}
         run: |
           set -euo pipefail
+          set +e
           "${MCP_PUBLISHER}" publish
+          publish_exit=$?
+          set -e
+          echo "exit_status=${publish_exit}" >> "${GITHUB_OUTPUT}"
+          if [ "${publish_exit}" -ne 0 ]; then
+            echo "::warning::mcp-publisher exited with status ${publish_exit}. The workflow will reconcile the exact Registry record before determining whether publication failed."
+          else
+            echo "mcp-publisher exited with status 0. The workflow will now reconcile the exact Registry record."
+          fi
 
-      - name: Verify published Registry version
+      - name: Reconcile published Registry version
         env:
+          MCP_PUBLISHER_SHA256: ${{ steps.publisher.outputs.sha256 }}
+          MCP_PUBLISHER_VERSION: ${{ steps.publisher.outputs.version }}
+          PUBLISH_EXIT_STATUS: ${{ steps.publish.outputs.exit_status }}
+          SERVER_REMOTE_URL: ${{ steps.manifest.outputs.remote_url }}
           SERVER_NAME: ${{ steps.manifest.outputs.name }}
           SERVER_VERSION: ${{ steps.manifest.outputs.version }}
           VERSION_ENDPOINT: ${{ steps.manifest.outputs.version_endpoint }}
         run: |
           set -euo pipefail
           response_body="${RUNNER_TEMP}/mcp-registry-version-after.json"
+          connect_timeout_seconds=5
+          request_timeout_seconds=20
           max_attempts=6
           retry_delay_seconds=10
 
@@ -172,6 +206,8 @@ jobs:
             : > "${response_body}"
             set +e
             status="$(curl --show-error --silent \
+              --connect-timeout "${connect_timeout_seconds}" \
+              --max-time "${request_timeout_seconds}" \
               --output "${response_body}" \
               --write-out '%{http_code}' \
               "${VERSION_ENDPOINT}")"
@@ -179,33 +215,58 @@ jobs:
             set -e
 
             if [ "${curl_exit}" -eq 0 ] && [ "${status}" = "200" ]; then
-              {
-                echo "## MCP Registry publication"
-                echo ""
-                echo "- Published SHA: \`${GITHUB_SHA}\`"
-                echo "- Manifest: \`server.json\`"
-                echo "- Registry name: \`${SERVER_NAME}\`"
-                echo "- Registry version: \`${SERVER_VERSION}\`"
-                echo "- Verified endpoint: \`${VERSION_ENDPOINT}\`"
-                echo "- Remote endpoint: \`https://mcp.expense-budget-tracker.com/mcp\`"
-              } >> "${GITHUB_STEP_SUMMARY}"
-              exit 0
+              if jq --exit-status \
+                --arg server_name "${SERVER_NAME}" \
+                --arg server_version "${SERVER_VERSION}" \
+                --arg server_remote_url "${SERVER_REMOTE_URL}" \
+                '.server.name == $server_name and
+                 .server.version == $server_version and
+                 any(.server.remotes[]?; .type == "streamable-http" and .url == $server_remote_url)' \
+                "${response_body}" > /dev/null; then
+                if [ "${PUBLISH_EXIT_STATUS}" -ne 0 ]; then
+                  echo "::warning::Reconciled successful publication after mcp-publisher exited with status ${PUBLISH_EXIT_STATUS}; the exact Registry record matches server.json."
+                  publication_outcome="Reconciled exact Registry record after non-zero publisher exit"
+                else
+                  echo "Exact Registry record matches server.json after mcp-publisher exited with status 0."
+                  publication_outcome="Publisher exited successfully and exact Registry record reconciled"
+                fi
+                {
+                  echo "## MCP Registry publication"
+                  echo ""
+                  echo "- Published SHA: \`${GITHUB_SHA}\`"
+                  echo "- Manifest: \`server.json\`"
+                  echo "- Publisher: \`mcp-publisher ${MCP_PUBLISHER_VERSION}\`"
+                  echo "- Publisher archive SHA-256: \`${MCP_PUBLISHER_SHA256}\`"
+                  echo "- Publisher exit status: \`${PUBLISH_EXIT_STATUS}\`"
+                  echo "- Outcome: ${publication_outcome}"
+                  echo "- Registry name: \`${SERVER_NAME}\`"
+                  echo "- Registry version: \`${SERVER_VERSION}\`"
+                  echo "- Verified endpoint: \`${VERSION_ENDPOINT}\`"
+                  echo "- Remote endpoint: \`${SERVER_REMOTE_URL}\`"
+                } >> "${GITHUB_STEP_SUMMARY}"
+                exit 0
+              fi
             fi
 
             if [ "${attempt}" -lt "${max_attempts}" ]; then
               if [ "${curl_exit}" -ne 0 ]; then
-                echo "::warning::Published version verification failed with curl exit code ${curl_exit}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
+                echo "::warning::Registry reconciliation failed with curl exit code ${curl_exit}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
+              elif [ "${status}" != "200" ]; then
+                echo "::warning::Registry reconciliation returned HTTP ${status}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
               else
-                echo "::warning::Published version verification returned HTTP ${status}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
+                echo "::warning::Registry reconciliation returned HTTP 200, but the nested server record did not match server.json name ${SERVER_NAME}, version ${SERVER_VERSION}, and streamable-http remote ${SERVER_REMOTE_URL}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
               fi
               sleep "${retry_delay_seconds}"
               continue
             fi
 
             if [ "${curl_exit}" -ne 0 ]; then
-              echo "::error::Published version verification failed after ${max_attempts} attempts for ${VERSION_ENDPOINT}; last curl exit code: ${curl_exit}."
+              echo "::error::Registry reconciliation failed after ${max_attempts} attempts for ${VERSION_ENDPOINT}; mcp-publisher exit status: ${PUBLISH_EXIT_STATUS}; last curl exit code: ${curl_exit}."
+            elif [ "${status}" != "200" ]; then
+              echo "::error::Registry reconciliation failed after ${max_attempts} attempts for ${VERSION_ENDPOINT}; mcp-publisher exit status: ${PUBLISH_EXIT_STATUS}; last HTTP status: ${status}. Response body follows."
+              cat "${response_body}"
             else
-              echo "::error::Published version verification failed after ${max_attempts} attempts for ${VERSION_ENDPOINT}; last HTTP status: ${status}. Response body follows."
+              echo "::error::Registry reconciliation returned HTTP 200 after ${max_attempts} attempts, but the nested server record did not match server.json name ${SERVER_NAME}, version ${SERVER_VERSION}, and streamable-http remote ${SERVER_REMOTE_URL}; mcp-publisher exit status: ${PUBLISH_EXIT_STATUS}. Response body follows."
               cat "${response_body}"
             fi
             exit 1

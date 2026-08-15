@@ -140,9 +140,24 @@ gh workflow run mcp-registry-publish.yml \
 
 The workflow rejects every non-`main` ref. Before reading the private key, it
 validates `server.json`, runs the shared version checker, and confirms that the
-exact name/version returns 404. It then downloads the current official
-`mcp-publisher`, authenticates the DNS namespace, publishes, retries exact
-version verification, and writes a secret-free GitHub job summary.
+exact name/version returns 404. It then downloads the official Linux ARM64
+archive from the audited
+[`mcp-publisher` v1.8.1 release](https://github.com/modelcontextprotocol/registry/releases/tag/v1.8.1)
+and verifies its pinned SHA-256 digest
+`8dd75a6cf6845688b5d4e46df58d3ca26d5c8d233bb0626606e1db82c5e883e4`
+before extraction or execution. Do not replace this pin with `latest` or trust a
+checksum downloaded alongside the archive; a publisher upgrade requires a
+reviewed tag and independently pinned digest. The workflow exposes
+`MCP_PRIVATE_KEY` only to the verified publisher's DNS login step.
+
+The publish command's exit status is not treated as the final outcome because a
+network failure can happen after the Registry accepts the immutable record. The
+workflow records that status and always retries the exact-version endpoint. It
+succeeds only when an HTTP 200 response contains a nested server record whose
+name, version, and Streamable HTTP remote URL match `server.json`. A matching
+record reconciles a non-zero publisher exit; a missing or mismatched record
+fails with the publisher status and Registry response context. The resulting
+GitHub job summary is secret-free.
 
 ## Successful verification
 
@@ -163,15 +178,21 @@ curl -fsS \
 
 Confirm the returned name, version, remote URL, repository identity, website,
 documentation, support, privacy, terms, and icon URLs. A successful workflow
-summary records the published commit and exact verification endpoint without
-including credentials.
+summary records the published commit, verified publisher version and digest,
+publisher exit status, exact verification endpoint, and reconciliation outcome
+without including credentials. HTTP 200 alone is insufficient: the response's
+nested server record must match the reviewed `server.json` identity, version,
+and Streamable HTTP remote URL.
 
 ## Immutable-version behavior
 
 Registry name/version pairs are immutable. The manual workflow treats:
 
 - HTTP 404 from the exact version endpoint as permission to continue; and
-- HTTP 200 as a hard duplicate error requiring a later shared product version.
+- HTTP 200 during preflight as a hard duplicate error requiring a later shared
+  product version; and
+- the post-publish CLI exit as provisional until the exact matching Registry
+  record is present or reconciliation retries are exhausted.
 
 Do not edit and retry an already published version. Do not switch back to the
 abandoned `io.github.kirill-markin/expense-budget-tracker` identity.
