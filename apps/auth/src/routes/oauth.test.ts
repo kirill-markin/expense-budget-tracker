@@ -451,7 +451,7 @@ test("consent renders only when both encoded decisions fit the POST byte limit",
   const boundaryClient: OAuthClient = {
     clientId: "ebt_cl_boundary-client",
     clientName: "Boundary client",
-    redirectUris: [`https://client.example/${"~".repeat(600)}`],
+    redirectUris: [`https://client.example/${"x".repeat(1_500)}`],
   };
   const app = createOAuthApp(createDependencies({
     getOAuthClient: async (clientId) => clientId === boundaryClient.clientId ? boundaryClient : null,
