@@ -379,7 +379,7 @@ export const withDeadlineTransactionUsingPool = async <T>(
       result = await callback(transaction);
       await transaction.query("RESET ROLE", [], deadline.timeoutMs);
     } catch (error) {
-      await rethrowAfterTransactionFailure(lease, runtime, error);
+      return await rethrowAfterTransactionFailure(lease, runtime, error);
     }
 
     try {

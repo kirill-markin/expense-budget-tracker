@@ -31,7 +31,7 @@ const createDependencies = (
   ...overrides,
 });
 
-const requestSession = (
+const requestSession = async (
   cookie: string,
   dependencies: BrowserSessionDependencies,
 ): Promise<Response> => {

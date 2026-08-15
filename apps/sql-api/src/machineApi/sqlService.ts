@@ -279,7 +279,7 @@ const executeSqlWithWorkspaceGetter = async (
                 rowCount: queryResult.rowCount,
               };
             } catch (error) {
-              throwUserSqlExecutionError(error);
+              return throwUserSqlExecutionError(error);
             }
           },
         );
