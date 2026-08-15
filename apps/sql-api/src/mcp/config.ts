@@ -1,4 +1,7 @@
 export const MCP_SCOPES = ["expenses:read", "expenses:write"] as const;
+export const MCP_WEBSITE_URL = "https://expense-budget-tracker.com/";
+export const MCP_ICON_URL = "https://expense-budget-tracker.com/icon.svg";
+export const MCP_DOCUMENTATION_URL = "https://expense-budget-tracker.com/docs/mcp/";
 
 export type McpScope = typeof MCP_SCOPES[number];
 

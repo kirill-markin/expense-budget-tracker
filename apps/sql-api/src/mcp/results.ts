@@ -3,6 +3,7 @@ import {
   SqlExecutionDeadlineError,
   SqlPolicyError,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
+import { z } from "zod";
 import { getSafeErrorType, log } from "../logger.js";
 import {
   isAmbiguousSqlMutationOutcomeError,
@@ -34,20 +35,95 @@ export type McpResultDependencies = Readonly<{
 
 const defaultDependencies: McpResultDependencies = { log };
 
-const buildTextContent = (payload: Readonly<Record<string, unknown>>): CallToolResult["content"] => {
+export type McpJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<McpJsonValue>
+  | McpJsonObject;
+
+export type McpJsonObject = Readonly<{ [key: string]: McpJsonValue }>;
+
+export type McpSuccessPayload<TData extends McpJsonObject> = Readonly<{
+  ok: true;
+  data: TData;
+  instructions: string;
+}>;
+
+export const mcpJsonValueSchema: z.ZodType<McpJsonValue> = z.lazy(() => z.union([
+  z.string(),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+  z.array(mcpJsonValueSchema),
+  z.record(z.string(), mcpJsonValueSchema),
+]));
+
+const successOkSchema = z.literal(true).describe(
+  "Whether the tool call completed successfully.",
+);
+const successInstructionsSchema = z.string().min(1).describe(
+  "Actionable guidance for using the returned data.",
+);
+
+export const buildMcpSuccessOutputSchema = <TDataSchema extends z.ZodObject>(
+  dataSchema: TDataSchema,
+) => z.object({
+  ok: successOkSchema,
+  data: dataSchema,
+  instructions: successInstructionsSchema,
+});
+
+const isMcpJsonObject = (value: unknown): value is McpJsonObject =>
+  typeof value === "object"
+  && value !== null
+  && !Array.isArray(value)
+  && Object.values(value).every(isMcpJsonValue);
+
+const isMcpJsonValue = (value: unknown): value is McpJsonValue => {
+  if (
+    typeof value === "string"
+    || typeof value === "boolean"
+    || value === null
+  ) {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every(isMcpJsonValue);
+  }
+  return isMcpJsonObject(value);
+};
+
+const serializePayload = (payload: Readonly<Record<string, unknown>>): string => {
   const text = JSON.stringify(payload, null, 2);
   if (text === undefined) {
     throw new Error("MCP result payload could not be serialized");
   }
-  return [{ type: "text", text }];
+  return text;
 };
 
-export const buildMcpSuccessResult = (
-  data: Readonly<Record<string, unknown>>,
+const buildTextContent = (payload: Readonly<Record<string, unknown>>): CallToolResult["content"] => {
+  return [{ type: "text", text: serializePayload(payload) }];
+};
+
+export const buildMcpSuccessResult = <TData extends Readonly<Record<string, unknown>>>(
+  data: TData,
   instructions: string,
-): CallToolResult => ({
-  content: buildTextContent({ ok: true, data, instructions }),
-});
+): CallToolResult => {
+  const text = serializePayload({ ok: true, data, instructions });
+  const payload: unknown = JSON.parse(text);
+  if (!isMcpJsonObject(payload)) {
+    throw new Error("MCP success result payload did not serialize to a JSON object");
+  }
+  return {
+    structuredContent: payload,
+    content: [{ type: "text", text }],
+  };
+};
 
 const getSqlPolicyInstructions = (error: SqlPolicyError, toolName: string): string => {
   if (error.code === "relation_not_allowed" || error.code === "invalid_relation_reference") {

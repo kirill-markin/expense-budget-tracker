@@ -11,11 +11,17 @@ import { z } from "zod";
 import { getReadOnlyTransactionDeadlineError } from "../dbDeadline.js";
 import type { WorkspaceSummary } from "../machineApi/types.js";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
-import type { McpScope } from "./config.js";
+import {
+  MCP_ICON_URL,
+  MCP_WEBSITE_URL,
+  type McpScope,
+} from "./config.js";
 import { mcpDataServices, type McpDataServices } from "./dataService.js";
 import {
+  buildMcpSuccessOutputSchema,
   buildMcpSuccessResult,
   buildMcpToolErrorResult,
+  mcpJsonValueSchema,
   McpToolError,
 } from "./results.js";
 
@@ -25,6 +31,8 @@ const LIST_WORKSPACES_TOOL_NAME = "list_workspaces";
 const GET_SCHEMA_TOOL_NAME = "get_schema";
 const SQL_QUERY_TOOL_NAME = "sql_query";
 const SQL_EXECUTE_TOOL_NAME = "sql_execute";
+const READ_SCOPE: McpScope = "expenses:read";
+const WRITE_SCOPE: McpScope = "expenses:write";
 type ReadOnlyMcpToolName =
   | typeof LIST_WORKSPACES_TOOL_NAME
   | typeof GET_SCHEMA_TOOL_NAME
@@ -33,6 +41,100 @@ type ReadOnlyMcpToolName =
 const workspaceIdSchema = z.string().trim().min(1).optional().describe(
   "Optional workspaceId returned by list_workspaces. Omit only when exactly one workspace is available.",
 );
+
+const allowedRelationNameSchema = z.enum([
+  "ledger_entries",
+  "accounts",
+  "budget_lines",
+  "workspace_settings",
+  "account_metadata",
+  "fx_rates_raw",
+  "fx_rates_daily",
+]);
+
+const workspaceSummarySchema = z.object({
+  workspaceId: z.string().min(1),
+  name: z.string(),
+});
+
+const limitsSchema = z.object({
+  maxRows: z.number().int().nonnegative(),
+  statementTimeoutMs: z.number().int().positive(),
+});
+
+const agentSchemaColumnConstraintSchema = z.object({
+  column: z.string(),
+  allowedValues: z.array(z.string()).optional(),
+  notes: z.array(z.string()).optional(),
+});
+
+const agentSchemaHintsSchema = z.object({
+  optional: z.boolean(),
+  primaryKey: z.array(z.string()).optional(),
+  notes: z.array(z.string()),
+  columnConstraints: z.array(agentSchemaColumnConstraintSchema).optional(),
+});
+
+const schemaRelationSchema = z.object({
+  name: allowedRelationNameSchema,
+  columns: z.array(z.object({
+    name: z.string(),
+    type: z.string(),
+    nullable: z.boolean(),
+    defaultValue: z.string().nullable(),
+  })),
+  hints: agentSchemaHintsSchema.optional(),
+});
+
+const entityHintSchema = z.object({
+  name: allowedRelationNameSchema,
+  summary: z.string(),
+});
+
+const entityHintsSchema = z.object({
+  primary: entityHintSchema,
+  related: z.array(entityHintSchema),
+});
+
+const buildSqlStatementSchema = <TCommandSchema extends z.ZodType<string>>(
+  commandSchema: TCommandSchema,
+) => z.object({
+  sql: z.string(),
+  command: commandSchema,
+  rows: z.array(z.record(z.string(), mcpJsonValueSchema)),
+  rowCount: z.number().int().nonnegative(),
+  returnedRowCount: z.number().int().nonnegative(),
+  totalRowCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  referencedRelations: z.array(allowedRelationNameSchema),
+  entityHints: entityHintsSchema.optional(),
+});
+
+const buildSqlResultDataSchema = <TStatementSchema extends z.ZodObject>(
+  statementSchema: TStatementSchema,
+) => z.object({
+  statements: z.array(statementSchema),
+  workspace: workspaceSummarySchema,
+  limits: limitsSchema,
+});
+
+const listWorkspacesOutputSchema = buildMcpSuccessOutputSchema(z.object({
+  workspaces: z.array(workspaceSummarySchema),
+}));
+
+const getSchemaOutputSchema = buildMcpSuccessOutputSchema(z.object({
+  workspace: workspaceSummarySchema,
+  relations: z.array(schemaRelationSchema),
+  limits: limitsSchema,
+}));
+
+const sqlQueryOutputSchema = buildMcpSuccessOutputSchema(buildSqlResultDataSchema(
+  buildSqlStatementSchema(z.literal("SELECT")),
+));
+
+const sqlExecuteOutputSchema = buildMcpSuccessOutputSchema(buildSqlResultDataSchema(
+  buildSqlStatementSchema(z.enum(["INSERT", "UPDATE", "DELETE"])),
+));
 
 export type McpServerDependencies = McpDataServices & Readonly<{
   validateSingleReadOnlyExpenseSql: typeof validateSingleReadOnlyExpenseSql;
@@ -44,6 +146,19 @@ const defaultDependencies: McpServerDependencies = {
   validateSingleReadOnlyExpenseSql,
   validateSingleMutationExpenseSql,
 };
+
+type OAuthSecurityScheme = Readonly<{
+  type: "oauth2";
+  scopes: ReadonlyArray<McpScope>;
+}>;
+
+type OpenAiToolSecurityMetadata = Readonly<{
+  securitySchemes: ReadonlyArray<OAuthSecurityScheme>;
+}>;
+
+const buildToolSecurityMetadata = (scope: McpScope): OpenAiToolSecurityMetadata => ({
+  securitySchemes: [{ type: "oauth2", scopes: [scope] }],
+});
 
 const requireScope = (
   connection: AuthenticatedMcpAccessToken,
@@ -156,28 +271,32 @@ export const createMcpServerWithDependencies = (
       name: SERVER_NAME,
       version: SERVER_VERSION,
       title: "Expense Budget Tracker",
+      websiteUrl: MCP_WEBSITE_URL,
+      icons: [{ src: MCP_ICON_URL, mimeType: "image/svg+xml", sizes: ["any"] }],
     },
     {
-      instructions: "Call list_workspaces first. Use get_schema before writing SQL, sql_query for reads, and sql_execute for approved mutations. Always pass workspaceId when more than one workspace is available.",
+      instructions: "Start with list_workspaces. If it returns multiple workspaces, pass one returned workspaceId to get_schema, sql_query, or sql_execute; workspaceId may be omitted only when exactly one workspace is available. Use get_schema before writing SQL. Use sql_query for read-only SELECT or WITH...SELECT statements requiring expenses:read. Use sql_execute only for approved INSERT, UPDATE, or DELETE mutations requiring expenses:write. Discover the canonical machine API and authentication onboarding with GET https://api.expense-budget-tracker.com/v1/. The public https://api.expense-budget-tracker.com/v1/openapi.json and https://api.expense-budget-tracker.com/v1/swagger.json routes are source-discovery compatibility probes, not OpenAPI specifications.",
     },
   );
 
   server.registerTool(
     LIST_WORKSPACES_TOOL_NAME,
     {
-      title: "List workspaces",
-      description: "Lists every workspace accessible to the authenticated user. Use returned workspaceId values with the other tools.",
+      title: "List accessible workspaces",
+      description: "Use this read-only discovery tool to list every workspace accessible to the authenticated user. It does not create or modify workspaces; pass a returned workspaceId to other tools when more than one is available.",
       inputSchema: {},
+      outputSchema: listWorkspacesOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
       },
+      _meta: buildToolSecurityMetadata(READ_SCOPE),
     },
     async (): Promise<CallToolResult> => {
       try {
-        requireScope(connection, "expenses:read");
+        requireScope(connection, READ_SCOPE);
         const workspaces = await dependencies.listWorkspaces(connection.identity, deadline);
         return buildMcpSuccessResult(
           { workspaces },
@@ -192,19 +311,21 @@ export const createMcpServerWithDependencies = (
   server.registerTool(
     GET_SCHEMA_TOOL_NAME,
     {
-      title: "Get expense schema",
-      description: "Returns the allowed SQL relations, columns, constraints, and agent hints for an accessible workspace.",
+      title: "Inspect expense SQL schema",
+      description: "Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and agent hints for an accessible workspace. It does not expose or query system catalogs.",
       inputSchema: { workspaceId: workspaceIdSchema },
+      outputSchema: getSchemaOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
       },
+      _meta: buildToolSecurityMetadata(READ_SCOPE),
     },
     async ({ workspaceId }): Promise<CallToolResult> => {
       try {
-        requireScope(connection, "expenses:read");
+        requireScope(connection, READ_SCOPE);
         const workspace = await resolveWorkspace(
           connection,
           workspaceId,
@@ -237,21 +358,23 @@ export const createMcpServerWithDependencies = (
     SQL_QUERY_TOOL_NAME,
     {
       title: "Query expense data",
-      description: "Runs exactly one policy-approved read-only SQL statement in a repeatable-read, read-only transaction under the restricted SQL reader role.",
+      description: "Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.",
       inputSchema: {
         sql: z.string().trim().min(1).describe("Exactly one policy-approved SELECT or WITH...SELECT statement."),
         workspaceId: workspaceIdSchema,
       },
+      outputSchema: sqlQueryOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
       },
+      _meta: buildToolSecurityMetadata(READ_SCOPE),
     },
     async ({ sql, workspaceId }): Promise<CallToolResult> => {
       try {
-        requireScope(connection, "expenses:read");
+        requireScope(connection, READ_SCOPE);
         const validated = dependencies.validateSingleReadOnlyExpenseSql(sql);
         const workspace = await resolveWorkspace(
           connection,
@@ -278,22 +401,24 @@ export const createMcpServerWithDependencies = (
   server.registerTool(
     SQL_EXECUTE_TOOL_NAME,
     {
-      title: "Execute expense mutations",
-      description: "Runs exactly one policy-approved SQL mutation under the restricted SQL executor role.",
+      title: "Execute expense data mutation",
+      description: "Use this write-capable tool only for an approved expense-data mutation. It runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.",
       inputSchema: {
         sql: z.string().trim().min(1).describe("Exactly one policy-approved INSERT, UPDATE, or DELETE statement."),
         workspaceId: workspaceIdSchema,
       },
+      outputSchema: sqlExecuteOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: false,
       },
+      _meta: buildToolSecurityMetadata(WRITE_SCOPE),
     },
     async ({ sql, workspaceId }): Promise<CallToolResult> => {
       try {
-        requireScope(connection, "expenses:write");
+        requireScope(connection, WRITE_SCOPE);
         const validated = dependencies.validateSingleMutationExpenseSql(sql);
         const workspace = await resolveWorkspace(
           connection,
