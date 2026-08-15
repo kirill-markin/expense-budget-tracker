@@ -13,9 +13,9 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, health checks |
 | S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs, alarms, SQLi/XSS protection, and scheduled FX rates |
 | API Gateway + Lambda | ~$0/month | REST API for machine SQL and a separate HTTP API v2 for MCP; negligible at low volume |
-| **AWS total** | **~$10/year + ~$50/month** | Cloudflare subscription is separate |
+| **AWS total** | **~$10/year + ~$50/month** | Uses the Cloudflare Free plan |
 
-Cloudflare provides free DNS, CDN, DDoS protection, and edge SSL. The exact host + method + path predicate used for anonymous OAuth registration rate limiting requires Cloudflare Business or higher and is not included in this AWS estimate. All prices are approximate for `eu-central-1` and may vary.
+Cloudflare Free provides DNS, CDN, DDoS protection, and edge SSL. AWS WAF on the auth ALB owns anonymous OAuth registration throttling, so no paid Cloudflare plan is required. All prices are approximate for `eu-central-1` and may vary.
 
 ## Prerequisites
 
@@ -66,7 +66,7 @@ MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
 - **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth with a CustomEmailSender Lambda through Resend, managed by the app directly (no Hosted UI)
-- **AWS WAF** on ALB — SQLi/XSS protection, common threat rules (rate limiting handled by Cloudflare)
+- **AWS WAF** on ALB — SQLi/XSS protection, common threat rules, and approximate anonymous `POST auth.*/oauth/register` throttling with a 10-request threshold over AWS's native 60-second evaluation window per real client IP from `CF-Connecting-IP`; malformed values match the block action, while AWS WAF omits missing headers, which is accepted because the ALB only accepts Cloudflare edges that supply the header
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC, and Cognito custom email delivery through Resend
 - **API Gateway** — one REST API with authorizer + executor Lambdas for ApiKey machine SQL, plus an independent HTTP API v2 and Lambda for stateless Streamable HTTP MCP at `/mcp`; the MCP default `execute-api` endpoint is disabled
 - **MCP capacity budget** — the HTTP API accepts a burst of 3 and then 0.08 requests/second; across the 20-second application deadline plus 5 seconds of response/cleanup headroom, that is at most 5 concurrent accepted requests. Five reserved Lambda executions × the explicit 10-connection SQL API pool ceiling reserve at most 50 of the t4g.micro's roughly 85 connections, leaving about 35 for web, auth, worker, and the machine SQL API
@@ -87,7 +87,6 @@ MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
 - Public ACM certificates for the regional `api.*` and `mcp.*` API Gateway domains
 - Proxied DNS CNAMEs for `api.*` and `mcp.*`
 - Cache bypass for root, `app.*`, `auth.*`, and `mcp.*`
-- Per-real-client-IP rate limiting for anonymous `POST auth.*/oauth/register`
 - Edge SSL, DDoS protection (automatic with proxied DNS)
 
 ## Step-by-step setup
@@ -146,7 +145,7 @@ aws sts get-caller-identity --profile expense-tracker
 
 ### 3. Register domain and set up Cloudflare
 
-Domain and DNS are managed by Cloudflare. Cloudflare provides free CDN, DDoS protection, and edge SSL on top of DNS; the exact anonymous-registration rate-limit predicate requires Business or higher. No Cloudflare CLI is needed — only the dashboard (for domain registration and plan management) and API calls via `curl` (for everything else).
+Domain and DNS are managed on the Cloudflare Free plan. Cloudflare provides CDN, DDoS protection, and edge SSL on top of DNS, while AWS WAF handles anonymous-registration throttling at the Cloudflare-only origin. No Cloudflare CLI is needed — only the dashboard (for domain registration) and API calls via `curl` (for everything else).
 
 #### 3a. Register domain (dashboard — one time)
 
@@ -162,13 +161,12 @@ Go to https://dash.cloudflare.com/profile/api-tokens → **Create Token**:
 
 - Template: **"Edit zone DNS"**
 - Zone Resources: Include → Specific zone → your domain
-- **Important:** click "+ Add more" and add four more permissions:
+- **Important:** click "+ Add more" and add three more permissions:
   - **Zone → SSL and Certificates → Edit** (for Origin Certificate creation)
   - **Zone → Zone Settings → Edit** (for setting SSL mode to Full Strict)
   - **Zone → Cache Rules → Edit** (for disabling edge cache on dynamic hosts)
-  - **Zone → WAF → Edit** (for the anonymous OAuth registration rate limit)
 
-The token needs all five permissions (DNS + SSL + Zone Settings + Cache Rules + WAF). Missing any will cause script failures.
+The token needs all four permissions (DNS + SSL + Zone Settings + Cache Rules). Missing any will cause script failures.
 
 Copy the token and save it in your password manager along with the Zone ID from step 3c.
 
@@ -405,7 +403,7 @@ After deploy completes, **create the DNS record** pointing to the ALB and config
 )
 ```
 
-The script creates proxied CNAMEs for the ALB, `api.*`, and `mcp.*`; sets SSL/TLS to Full (Strict); bypasses cache for dynamic hosts; and rate-limits the exact anonymous `POST auth.*/oauth/register` endpoint by the real client IP visible at Cloudflare edge. The rate-limit rule requires Cloudflare Business or higher because it matches hostname and method in addition to path.
+The script creates proxied CNAMEs for the ALB, `api.*`, and `mcp.*`; sets SSL/TLS to Full (Strict); and bypasses cache for dynamic hosts. The AWS WAF attached to the auth ALB separately rate-limits the exact anonymous `POST auth.*/oauth/register` endpoint by the real client IP supplied in `CF-Connecting-IP`.
 
 Verify Cloudflare resources and their CloudFormation targets after DNS propagation:
 

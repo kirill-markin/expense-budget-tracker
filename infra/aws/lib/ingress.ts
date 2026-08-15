@@ -31,6 +31,10 @@ export interface IngressResult {
 
 type ByteMatchPositionalConstraint = "EXACTLY" | "STARTS_WITH";
 
+// AWS WAF's smallest native rate envelope is 10 requests over 60 seconds.
+const DYNAMIC_CLIENT_REGISTRATION_RATE_LIMIT = 10;
+const DYNAMIC_CLIENT_REGISTRATION_EVALUATION_WINDOW_SECONDS = 60;
+
 const noneTextTransformation = (): wafv2.CfnWebACL.TextTransformationProperty => ({
   priority: 0,
   type: "NONE",
@@ -263,6 +267,32 @@ export const buildIngressWafRules = (
         metricName: "expense-tracker-bad-inputs",
       },
     },
+    {
+      name: "RateLimitDynamicClientRegistration",
+      priority: 5,
+      action: { block: {} },
+      statement: {
+        rateBasedStatement: {
+          aggregateKeyType: "FORWARDED_IP",
+          evaluationWindowSec: DYNAMIC_CLIENT_REGISTRATION_EVALUATION_WINDOW_SECONDS,
+          forwardedIpConfig: {
+            headerName: "CF-Connecting-IP",
+            fallbackBehavior: "MATCH",
+          },
+          limit: DYNAMIC_CLIENT_REGISTRATION_RATE_LIMIT,
+          scopeDownStatement: andStatement([
+            headerIs("host", authDomain),
+            methodIs("POST"),
+            uriPathIs("/oauth/register"),
+          ]),
+        },
+      },
+      visibilityConfig: {
+        sampledRequestsEnabled: true,
+        cloudWatchMetricsEnabled: true,
+        metricName: "expense-tracker-dcr-rate-limit",
+      },
+    },
   ];
 };
 
@@ -345,16 +375,10 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   });
 
   // --- AWS WAF ---
-  // Rate limiting is intentionally NOT done here. Default aggregateKeyType "IP" sees
-  // Cloudflare edge IPs, not real clients — useless behind a reverse proxy.
-  // FORWARDED_IP with CF-Connecting-IP header would work (ALB SG guarantees only
-  // Cloudflare can set it), but rate limiting is already handled by other layers:
-  //   - Cloudflare: DDoS protection + rate limiting rules, sees real IPs natively.
-  //   - Cognito: built-in throttling on auth endpoints (/oauth2/*).
-  //   - ALB security group: only accepts Cloudflare edge IPs (networking.ts).
-  //
-  // WAF is kept for managed rule sets (SQLi, XSS, known bad inputs) which inspect
-  // request content and work correctly regardless of source IP.
+  // The ALB security group accepts only Cloudflare edges, so CF-Connecting-IP is
+  // the trusted real-client boundary for the DCR rate rule. AWS WAF ignores this
+  // rule if that header is absent; Cloudflare supplies it on every origin request.
+  // A present malformed value uses MATCH and is blocked instead of bypassing the rule.
   const waf = new wafv2.CfnWebACL(scope, "Waf", {
     scope: "REGIONAL",
     defaultAction: { allow: {} },

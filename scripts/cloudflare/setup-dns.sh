@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Configure Cloudflare DNS, cache bypass, and edge rate limiting for the deployed stack.
+# Configure Cloudflare DNS and cache bypass for the deployed stack.
 # Run after the first CDK deploy and rerun to reconcile drift.
 #
 # Required env vars:
-#   CLOUDFLARE_API_TOKEN  — API token with DNS, SSL, Zone Settings, Cache Rules, and WAF edit permissions
+#   CLOUDFLARE_API_TOKEN  — API token with DNS, SSL, Zone Settings, and Cache Rules edit permissions
 #   CLOUDFLARE_ZONE_ID    — Zone ID from Cloudflare dashboard
 #   AWS_PROFILE           — AWS CLI profile for the target account
 #   AWS_REGION            — AWS region for the deployed stack, or pass --region
@@ -235,59 +235,6 @@ for existing_rule in existing_rules:
 if not rule_replaced:
     merged_rules.append(cache_rule)
 
-print(json.dumps({"rules": merged_rules}))
-' "$rule_description" "$rule_expression"
-}
-
-build_rate_limit_ruleset_payload() {
-  local rule_description="$1"
-  local rule_expression="$2"
-
-  python3 -c '
-import json
-import sys
-
-description = sys.argv[1]
-expression = sys.argv[2]
-response = json.load(sys.stdin)
-if response.get("success") is True:
-    result = response.get("result")
-    existing_rules = result.get("rules", []) if isinstance(result, dict) else []
-else:
-    errors = response.get("errors", [])
-    not_found = any("not found" in str(error.get("message", "")).lower() for error in errors)
-    if not not_found:
-        print("ERROR: Could not fetch the Cloudflare rate limiting ruleset.", file=sys.stderr)
-        print(json.dumps(errors if errors else response, indent=2), file=sys.stderr)
-        raise SystemExit(1)
-    existing_rules = []
-
-rate_rule = {
-    "action": "block",
-    "expression": expression,
-    "description": description,
-    "enabled": True,
-    "ratelimit": {
-        "characteristics": ["cf.colo.id", "ip.src"],
-        "period": 10,
-        "requests_per_period": 5,
-        "mitigation_timeout": 10,
-    },
-}
-read_only_fields = {"id", "version", "last_updated"}
-merged_rules = []
-replaced = False
-for existing_rule in existing_rules:
-    if existing_rule.get("description") == description or existing_rule.get("expression") == expression:
-        if not replaced:
-            merged_rules.append(rate_rule)
-            replaced = True
-        continue
-    merged_rules.append({
-        key: value for key, value in existing_rule.items() if key not in read_only_fields
-    })
-if not replaced:
-    merged_rules.append(rate_rule)
 print(json.dumps({"rules": merged_rules}))
 ' "$rule_description" "$rule_expression"
 }
@@ -571,26 +518,6 @@ echo "$CACHE_RESULT" | assert_required_cloudflare_success \
   "Check token permission Zone:Cache Rules:Edit, or manually add a Cache Rules bypass for expression: ${CACHE_EXPRESSION}"
 
 echo "Cache bypass rule set for ${APP_FQDN}, ${AUTH_FQDN}, ${MCP_FQDN}, and ${ZONE_NAME}."
-
-# --- Rate-limit anonymous dynamic client registration by the client IP at Cloudflare edge ---
-echo ""
-echo "Setting up anonymous OAuth registration rate limit..."
-# Exact host + method + path matching requires Cloudflare Business or higher.
-REGISTER_RATE_EXPRESSION="(http.host eq \"${AUTH_FQDN}\" and http.request.method eq \"POST\" and http.request.uri.path eq \"/oauth/register\")"
-REGISTER_RATE_DESCRIPTION="Rate limit anonymous OAuth client registration by real client IP"
-RATE_RULESET=$(cloudflare_optional_get_request \
-  "read rate limiting ruleset" \
-  "/zones/${CLOUDFLARE_ZONE_ID}/rulesets/phases/http_ratelimit/entrypoint")
-RATE_PAYLOAD=$(echo "$RATE_RULESET" | build_rate_limit_ruleset_payload "$REGISTER_RATE_DESCRIPTION" "$REGISTER_RATE_EXPRESSION")
-RATE_RESULT=$(cloudflare_api_request \
-  "replace rate limiting ruleset" \
-  "PUT" \
-  "/zones/${CLOUDFLARE_ZONE_ID}/rulesets/phases/http_ratelimit/entrypoint" \
-  "$RATE_PAYLOAD")
-echo "$RATE_RESULT" | assert_required_cloudflare_success \
-  "Could not set the Cloudflare rate limit for anonymous POST /oauth/register." \
-  "Check Cloudflare Business-or-higher plan access and Zone:WAF:Edit permission, or add the rate limit manually with expression: ${REGISTER_RATE_EXPRESSION}"
-echo "Anonymous POST /oauth/register is limited to 5 requests per 10 seconds per real client IP."
 
 # --- API Gateway custom domain CNAME (optional) ---
 # Created only when apiCertificateArn is set in CDK context (custom domain for machine clients).

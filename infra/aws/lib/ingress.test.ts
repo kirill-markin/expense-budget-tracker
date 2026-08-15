@@ -55,6 +55,15 @@ const requireRuleActionOverrides = (
   });
 };
 
+const requireRateBasedStatement = (
+  statement: IResolvable | wafv2.CfnWebACL.RateBasedStatementProperty | undefined,
+): wafv2.CfnWebACL.RateBasedStatementProperty => {
+  if (statement === undefined || "resolve" in statement) {
+    throw new Error("Expected an inline WAF rate-based statement");
+  }
+  return statement;
+};
+
 const assertBoundedGetRoute = (
   statement: wafv2.CfnWebACL.StatementProperty,
   host: string,
@@ -111,4 +120,41 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
     "/login",
     MAX_OAUTH_LOGIN_QUERY_BYTES,
   );
+});
+
+test("WAF rate limits exact dynamic client registration requests by trusted Cloudflare client IP", (): void => {
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com");
+  const rule = getRule(rules, "RateLimitDynamicClientRegistration");
+  assert.equal(rule.priority, 5);
+  assert.deepEqual(rule.action, { block: {} });
+
+  const statement = requireStatement(rule.statement);
+  const rateBasedStatement = requireRateBasedStatement(statement.rateBasedStatement);
+  assert.equal(rateBasedStatement.aggregateKeyType, "FORWARDED_IP");
+  assert.equal(rateBasedStatement.evaluationWindowSec, 60);
+  assert.equal(rateBasedStatement.limit, 10);
+  assert.deepEqual(rateBasedStatement.forwardedIpConfig, {
+    headerName: "CF-Connecting-IP",
+    fallbackBehavior: "MATCH",
+  });
+
+  const scopeDownStatement = requireStatement(rateBasedStatement.scopeDownStatement);
+  const conditions = requireStatements(scopeDownStatement.andStatement?.statements);
+  assert.deepEqual(
+    conditions.map((condition) => condition.byteMatchStatement?.searchString),
+    ["auth.example.com", "POST", "/oauth/register"],
+  );
+  assert.deepEqual(
+    conditions.map((condition) => condition.byteMatchStatement?.fieldToMatch),
+    [
+      { singleHeader: { Name: "host" } },
+      { method: {} },
+      { uriPath: {} },
+    ],
+  );
+  assert.deepEqual(rule.visibilityConfig, {
+    sampledRequestsEnabled: true,
+    cloudWatchMetricsEnabled: true,
+    metricName: "expense-tracker-dcr-rate-limit",
+  });
 });
