@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 /** @typedef {null | boolean | number | string | ReadonlyArray<JsonValue> | JsonObject} JsonValue */
 /** @typedef {Readonly<Record<string, JsonValue | undefined>>} JsonObject */
 /** @typedef {{ readonly file: string, readonly fields: ReadonlyArray<string> }} JsonSurfaceSpec */
+/** @typedef {{ readonly file: string, readonly label: string, readonly prefix: string, readonly suffix: string }} SourceSurfaceSpec */
 /** @typedef {{ readonly path: string, readonly value: string }} VersionSurface */
 
 const VERSIONED_PACKAGE_PATHS = [
@@ -22,7 +23,8 @@ const SHARED_DEPENDENCY_PACKAGE_PATHS = [
 const SHARED_DEPENDENCY_NAME = "@expense-budget-tracker/agent-shared";
 const PACKAGE_LOCK_PATH = "package-lock.json";
 const MCP_SERVER_PATH = "apps/sql-api/src/mcp/server.ts";
-const SERVER_VERSION_PATTERN = /^const SERVER_VERSION = "([^"\r\n]+)";$/gm;
+const MCP_SERVER_TEST_PATH = "apps/sql-api/src/mcp/server.test.ts";
+const OPENAI_DOSSIER_PATH = "docs/openai-mcp-submission.md";
 const SEMVER_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 /** @type {ReadonlyArray<JsonSurfaceSpec>} */
@@ -42,6 +44,58 @@ const JSON_SURFACE_SPECS = [
     },
   ]),
   { file: "server.json", fields: ["version"] },
+];
+
+/** @type {ReadonlyArray<SourceSurfaceSpec>} */
+const OPERATIONAL_SOURCE_SURFACE_SPECS = [
+  {
+    file: MCP_SERVER_PATH,
+    label: "SERVER_VERSION",
+    prefix: "const SERVER_VERSION = \"",
+    suffix: "\";",
+  },
+  {
+    file: MCP_SERVER_TEST_PATH,
+    label: "getServerVersion assertion",
+    prefix: "        version: \"",
+    suffix: "\",",
+  },
+  {
+    file: OPENAI_DOSSIER_PATH,
+    label: "Version under evaluation",
+    prefix: "| Version under evaluation | ",
+    suffix: " |",
+  },
+  {
+    file: OPENAI_DOSSIER_PATH,
+    label: "G01 Registry lookup version",
+    prefix: "| G01 | Exact MCP Registry version, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers/com.expense-budget-tracker%2Fexpense-budget-tracker/versions/",
+    suffix: "` |",
+  },
+  {
+    file: OPENAI_DOSSIER_PATH,
+    label: "G02 expected Registry record version",
+    prefix: "| G02 | MCP Registry latest search, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers?search=com.expense-budget-tracker%2Fexpense-budget-tracker&version=latest` | Final `200`, `application/json`, no redirect. Before publication it must not contain this name/version; after publication it must contain the exact `",
+    suffix: "` record",
+  },
+  {
+    file: OPENAI_DOSSIER_PATH,
+    label: "MCP server identity version",
+    prefix: "| `version` | `",
+    suffix: "` |",
+  },
+  {
+    file: OPENAI_DOSSIER_PATH,
+    label: "Evidence record runtime version",
+    prefix: "| Runtime version | ",
+    suffix: " unless a later aligned version is promoted |",
+  },
+  {
+    file: OPENAI_DOSSIER_PATH,
+    label: "Evidence record Registry manifest version",
+    prefix: "| Registry manifest identity/version | `com.expense-budget-tracker/expense-budget-tracker` / `",
+    suffix: "` |",
+  },
 ];
 
 /**
@@ -109,22 +163,31 @@ const readJsonVersionSurface = (document, spec) => {
 };
 
 /**
- * @param {string} path
+ * @param {SourceSurfaceSpec} spec
  * @returns {VersionSurface}
  */
-const readRuntimeVersionSurface = (path) => {
-  const matches = [...readFileSync(path, "utf8").matchAll(SERVER_VERSION_PATTERN)];
-  if (matches.length !== 1) {
+const readOperationalSourceVersionSurface = (spec) => {
+  const matchingLines = readFileSync(spec.file, "utf8")
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(spec.prefix));
+  if (matchingLines.length !== 1) {
     throw new Error(
-      `${path} must contain exactly one literal matching 'const SERVER_VERSION = "<version>";', found ${matches.length}`,
+      `${spec.file} must contain exactly one ${spec.label} literal matching ${JSON.stringify(`${spec.prefix}<version>${spec.suffix}`)}, found ${matchingLines.length}`,
     );
   }
 
-  const value = matches[0]?.[1];
-  if (value === undefined || value === "") {
-    throw new Error(`${path} SERVER_VERSION must be a non-empty string`);
+  const line = matchingLines[0];
+  const suffixIndex = line?.indexOf(spec.suffix, spec.prefix.length) ?? -1;
+  if (suffixIndex === -1) {
+    throw new Error(
+      `${spec.file} ${spec.label} literal must contain ${JSON.stringify(spec.suffix)} after the version`,
+    );
   }
-  return { path: `${path}#SERVER_VERSION`, value };
+  const value = line?.slice(spec.prefix.length, suffixIndex);
+  if (value === undefined || value === "") {
+    throw new Error(`${spec.file} ${spec.label} must be a non-empty string`);
+  }
+  return { path: `${spec.file}#${spec.label}`, value };
 };
 
 const jsonDocuments = new Map(
@@ -140,7 +203,7 @@ const jsonVersionSurfaces = JSON_SURFACE_SPECS.map((spec) => {
 });
 const versionSurfaces = [
   ...jsonVersionSurfaces,
-  readRuntimeVersionSurface(MCP_SERVER_PATH),
+  ...OPERATIONAL_SOURCE_SURFACE_SPECS.map(readOperationalSourceVersionSurface),
 ];
 
 const invalidSurfaces = versionSurfaces.filter(

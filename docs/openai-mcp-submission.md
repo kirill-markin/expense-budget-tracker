@@ -9,6 +9,14 @@ The current official OpenAI documentation calls this product a **plugin** and
 the public catalog the **Plugins Directory**. Older Apps SDK URLs redirect to
 the current plugin documentation.
 
+Version literals in the live listing package, Registry lookup inventory,
+current runtime identity, and pending evidence record follow the aligned
+repository version as described in `docs/version-bump.md`. Versions attached to
+a named commit, named descriptor snapshot, or completed base checklist item are
+historical evidence and must not be rewritten during a later version bump. Live
+immutable-version safety instructions refer to G01 instead of repeating its
+managed version.
+
 ## Current status
 
 | Milestone | Status | Evidence or remaining gate |
@@ -231,9 +239,9 @@ There is still no published Registry record. After cumulative promotion to
 root DNS ownership proof and store `MCP_PRIVATE_KEY`, confirm G01 returns 404,
 dispatch `mcp-registry-publish.yml` from `main`, and then require G01 and G02 to
 return the exact published record. Registry name/version pairs are immutable;
-if G01 already returns 200 before publication, do not republish or alter
-`1.2.0`. Do not use the README statement that the server “is listed in MCP
-registries” as publication evidence.
+if G01 already returns 200 before publication, do not republish or alter the
+version identified by G01. Do not use the README statement that the server “is
+listed in MCP registries” as publication evidence.
 
 ### OAuth discovery contract
 
@@ -1469,9 +1477,9 @@ operator record.
   exactly matches `tools-list-v1.2.0-base-396a09b`, including every input and
   output JSON-Schema keyword, description, annotation, `_meta`, and `execution`.
 - [ ] Registry implementation is promoted to `main`; the owner provisions and
-  verifies the DNS proof plus `MCP_PRIVATE_KEY`, confirms the immutable `1.2.0`
-  record is absent, manually dispatches `mcp-registry-publish.yml`, and verifies
-  the exact G01 version record and G02 latest-search result.
+  verifies the DNS proof plus `MCP_PRIVATE_KEY`, confirms the immutable G01
+  version record is absent, manually dispatches `mcp-registry-publish.yml`, and
+  verifies the exact G01 version record and G02 latest-search result.
 - [ ] A reviewer login works without signup, MFA, SMS, email confirmation, or
   private-network access.
 - [ ] All eight localized public Privacy copies state truthful data-retention

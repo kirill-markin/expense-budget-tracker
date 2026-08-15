@@ -96,11 +96,35 @@ intended content or authentication response. In particular, verify the MCP
 guide, API guide, support, privacy, terms, three icon URLs, and the hosted MCP
 endpoint.
 
-Confirm that the exact manifest version is still absent. For version `1.2.0`:
+Confirm that the exact manifest version is still absent. Read the version from
+`server.json`, require a valid SemVer string, and URL-encode it so the preflight
+always targets the manifest being published. The `&&` prevents `curl` from
+running when extraction or validation fails:
 
 ```sh
-curl -i \
-  'https://registry.modelcontextprotocol.io/v0.1/servers/com.expense-budget-tracker%2Fexpense-budget-tracker/versions/1.2.0'
+encoded_server_version="$(
+python3 <<'PY'
+import json
+import re
+from pathlib import Path
+from urllib.parse import quote
+
+semver_pattern = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
+manifest = json.loads(Path("server.json").read_text(encoding="utf-8"))
+if not isinstance(manifest, dict):
+    raise TypeError("server.json must contain a JSON object")
+version = manifest.get("version")
+if not isinstance(version, str) or semver_pattern.fullmatch(version) is None:
+    raise ValueError("server.json version must be a valid SemVer string")
+print(quote(version, safe=""))
+PY
+)" && curl -i \
+  "https://registry.modelcontextprotocol.io/v0.1/servers/com.expense-budget-tracker%2Fexpense-budget-tracker/versions/${encoded_server_version}"
 ```
 
 HTTP 404 is the publishable state. HTTP 200 means the immutable version already
