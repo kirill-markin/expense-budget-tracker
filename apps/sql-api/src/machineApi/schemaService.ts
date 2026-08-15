@@ -1,19 +1,14 @@
 import { getAgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import { getAllowedRelationNames, type AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
-import { resolveOrCreateWorkspaceForTrustedIdentity, type UserIdentity } from "../db.js";
+import { resolveOrCreateWorkspaceForTrustedIdentity, type QueryFn, type UserIdentity } from "../db.js";
 import type { MachineApiDependencies, SchemaColumn, SchemaColumnRow, SchemaRelation } from "./types.js";
 
 export const ALLOWED_RELATION_NAMES = getAllowedRelationNames();
 
-export const loadAllowedSchemaWithResolver = async (
-  dependencies: MachineApiDependencies,
-  identity: UserIdentity,
-  resolveWorkspace: typeof resolveOrCreateWorkspaceForTrustedIdentity,
+export const loadAllowedSchemaWithQuery = async (
+  queryFn: QueryFn,
 ): Promise<ReadonlyArray<SchemaRelation>> => {
-  const contextWorkspace = await resolveWorkspace(identity);
-  const result = await dependencies.queryAsTrustedIdentity(
-    identity,
-    contextWorkspace.workspaceId,
+  const result = await queryFn(
     `SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default
      FROM information_schema.columns
      WHERE table_schema = 'public'
@@ -64,6 +59,29 @@ export const loadAllowedSchemaWithResolver = async (
       ...(hints === undefined ? {} : { hints }),
     };
   });
+};
+
+export const loadAllowedSchemaForWorkspace = async (
+  dependencies: MachineApiDependencies,
+  identity: UserIdentity,
+  workspaceId: string,
+): Promise<ReadonlyArray<SchemaRelation>> =>
+  loadAllowedSchemaWithQuery(
+    (text, params) => dependencies.queryAsTrustedIdentity(
+      identity,
+      workspaceId,
+      text,
+      params,
+    ),
+  );
+
+export const loadAllowedSchemaWithResolver = async (
+  dependencies: MachineApiDependencies,
+  identity: UserIdentity,
+  resolveWorkspace: typeof resolveOrCreateWorkspaceForTrustedIdentity,
+): Promise<ReadonlyArray<SchemaRelation>> => {
+  const contextWorkspace = await resolveWorkspace(identity);
+  return loadAllowedSchemaForWorkspace(dependencies, identity, contextWorkspace.workspaceId);
 };
 
 export const loadAllowedSchema = async (

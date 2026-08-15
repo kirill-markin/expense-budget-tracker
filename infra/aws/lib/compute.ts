@@ -20,6 +20,7 @@ export interface ComputeProps {
   langfusePublicKeySecret: cdk.aws_secretsmanager.Secret;
   langfuseSecretKeySecret: cdk.aws_secretsmanager.Secret;
   userPoolId: string;
+  userPoolArn: string;
   userPoolClientId: string;
   appDomain: string;
   authDomain: string;
@@ -246,9 +247,12 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     environment: {
       PORT: "8081",
       COGNITO_CLIENT_ID: props.userPoolClientId,
+      COGNITO_USER_POOL_ID: props.userPoolId,
       COGNITO_REGION: cdk.Aws.REGION,
       ALLOWED_REDIRECT_URIS: `https://${props.appDomain}`,
       COOKIE_DOMAIN: `.${props.appDomain.split(".").slice(1).join(".")}`,
+      OAUTH_ISSUER: `https://${props.authDomain}`,
+      OAUTH_RESOURCE: `https://mcp.${props.appDomain.split(".").slice(1).join(".")}/mcp`,
       DB_HOST: props.db.dbInstanceEndpointAddress,
       DB_NAME: "tracker",
       DB_USER: "auth_service",
@@ -272,6 +276,11 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       startPeriod: cdk.Duration.seconds(60),
     },
   });
+
+  authTaskDef.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: ["cognito-idp:AdminGetUser"],
+    resources: [props.userPoolArn],
+  }));
 
   const authService = new ecs.FargateService(scope, "AuthService", {
     cluster,

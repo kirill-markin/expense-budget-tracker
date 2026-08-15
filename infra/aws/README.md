@@ -11,11 +11,11 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
 | NAT instance t4g.micro | ~$6/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, health checks |
-| S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs (S3), container and alarm monitoring (CloudWatch), rate limiting and SQLi/XSS protection (WAF), daily FX rate fetching (Lambda) |
-| API Gateway (REST API) + Lambda | ~$0/month | SQL API for machine clients with per-key rate limiting; REST API pricing ($3.50/M requests) is negligible at low volume |
-| **Total** | **~$10/year + ~$50/month** | |
+| S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs, alarms, SQLi/XSS protection, and scheduled FX rates |
+| API Gateway + Lambda | ~$0/month | REST API for machine SQL and a separate HTTP API v2 for MCP; negligible at low volume |
+| **AWS total** | **~$10/year + ~$50/month** | Uses the Cloudflare Free plan |
 
-Cloudflare (DNS, CDN, DDoS, edge SSL) is free. All prices are approximate for `eu-central-1` and may vary.
+Cloudflare Free provides DNS, CDN, DDoS protection, and edge SSL. AWS WAF on the auth ALB owns anonymous OAuth registration throttling, so no paid Cloudflare plan is required. All prices are approximate for `eu-central-1` and may vary.
 
 ## Prerequisites
 
@@ -46,6 +46,10 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
 Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → Machine API Lambda → RDS
                          │
                          └─ api.* ──────────▶ GET /v1/ + authenticated /v1/* (ApiKey auth)
+
+MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
+                          │
+                          └─ mcp.* ──────────▶ POST /mcp (OAuth Bearer auth)
 ```
 
 **Cloudflare** handles domain registration, DNS, CDN caching, DDoS protection, and edge TLS.
@@ -62,10 +66,13 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → Mach
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
 - **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth with a CustomEmailSender Lambda through Resend, managed by the app directly (no Hosted UI)
-- **AWS WAF** on ALB — SQLi/XSS protection, common threat rules (rate limiting handled by Cloudflare)
+- **AWS WAF** on ALB — SQLi/XSS protection, common threat rules, and approximate anonymous `POST auth.*/oauth/register` throttling with a 10-request threshold over AWS's native 60-second evaluation window per real client IP from `CF-Connecting-IP`; malformed values match the block action, while AWS WAF omits missing headers, which is accepted because the ALB only accepts Cloudflare edges that supply the header
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC, and Cognito custom email delivery through Resend
-- **API Gateway** (REST API) + two Lambdas (authorizer + SQL executor) for machine client SQL API; per-key rate limiting via Usage Plans, no auth cache (revoked keys stop working on the next request)
-- **CloudWatch Alarms + SNS** — alerts on ALB 5xx, API Gateway 5xx, ECS CPU/memory, ECS scale-out, DB connections, DB storage, Lambda errors
+- **API Gateway** — one REST API with authorizer + executor Lambdas for ApiKey machine SQL, plus an independent HTTP API v2 and Lambda for stateless Streamable HTTP MCP at `/mcp`; the MCP default `execute-api` endpoint is disabled
+- **MCP capacity budget** — the HTTP API accepts a burst of 20 and then 10 requests/second, enough for five concurrent clients to each send the normal four-request `initialize`, `notifications/initialized`, `tools/list`, first `tools/call` sequence without exhausting the stage token bucket. Database safety is enforced independently: five reserved Lambda executions × the explicit 10-connection SQL API pool ceiling reserve at most 50 of the t4g.micro's roughly 85 connections, leaving about 35 for web, auth, worker, and the machine SQL API; excess Lambda load may be throttled without expanding that database budget
+- **Machine SQL timeout budget** — one 25-second total deadline for `/sql/query`, `/sql/execute`, and compatibility `/sql`, including transaction commit, with bounded cleanup and response headroom below the Regional REST API's 29-second integration timeout and the Lambda's 35-second timeout
+- **MCP timeout budget** — one 20-second total MCP SQL execution deadline across transaction setup and every cursor command, a 29-second HTTP API integration timeout, and a 35-second Lambda timeout
+- **CloudWatch Alarms + SNS** — alerts on ALB 5xx, API Gateway 5xx, ECS CPU/memory, ECS scale-out, DB connections, DB storage, Lambda errors, and unexpected MCP Lambda throttling outside its five-execution capacity envelope
 - **S3** — ALB access logs (90-day retention)
 - **CloudWatch Logs** — ECS web container logs `/expense-tracker/web` (30-day retention), migration logs `/expense-tracker/migrate`, Lambda logs (automatic)
 - **AWS Backup** — daily backup plan with 35-day retention for RDS
@@ -77,7 +84,9 @@ Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → Mach
 - DNS CNAME `@` root domain (proxied) pointing to ALB — redirects to `app.*`
 - DNS CNAME `app.*` (proxied) pointing to ALB — authenticated app
 - Origin Certificate for ALB HTTPS (imported into ACM)
-- Cache bypass rule for `app.*` and root domain (fully dynamic app, no edge caching benefit)
+- Public ACM certificates for the regional `api.*` and `mcp.*` API Gateway domains
+- Proxied DNS CNAMEs for `api.*` and `mcp.*`
+- Cache bypass for root, `app.*`, `auth.*`, and `mcp.*`
 - Edge SSL, DDoS protection (automatic with proxied DNS)
 
 ## Step-by-step setup
@@ -136,7 +145,7 @@ aws sts get-caller-identity --profile expense-tracker
 
 ### 3. Register domain and set up Cloudflare
 
-Domain and DNS are managed by Cloudflare. Cloudflare provides free CDN, DDoS protection, and edge SSL on top of DNS. No Cloudflare CLI is needed — only the dashboard (for domain registration) and API calls via `curl` (for everything else).
+Domain and DNS are managed on the Cloudflare Free plan. Cloudflare provides CDN, DDoS protection, and edge SSL on top of DNS, while AWS WAF handles anonymous-registration throttling at the Cloudflare-only origin. No Cloudflare CLI is needed — only the dashboard (for domain registration) and API calls via `curl` (for everything else).
 
 #### 3a. Register domain (dashboard — one time)
 
@@ -155,7 +164,7 @@ Go to https://dash.cloudflare.com/profile/api-tokens → **Create Token**:
 - **Important:** click "+ Add more" and add three more permissions:
   - **Zone → SSL and Certificates → Edit** (for Origin Certificate creation)
   - **Zone → Zone Settings → Edit** (for setting SSL mode to Full Strict)
-  - **Zone → Cache Rules → Edit** (for disabling edge cache on the app subdomain)
+  - **Zone → Cache Rules → Edit** (for disabling edge cache on dynamic hosts)
 
 The token needs all four permissions (DNS + SSL + Zone Settings + Cache Rules). Missing any will cause script failures.
 
@@ -163,38 +172,33 @@ Copy the token and save it in your password manager along with the Zone ID from 
 
 #### 3c. Verify token and find Zone ID (terminal)
 
-Set the API token:
+Verify the token and find the zone in one credential-isolated subshell. The production token and the helper's temporary curl config disappear when the block exits:
 
 ```bash
-export CLOUDFLARE_API_TOKEN="<paste-your-api-token-here>"
-```
+(
+  set -euo pipefail
+  export CLOUDFLARE_API_TOKEN="<paste-your-api-token-here>"
+  source scripts/cloudflare/cloudflare-api.sh
 
-Verify the token works:
+  cloudflare_api_request \
+    "verify Cloudflare API token" \
+    "GET" \
+    "/user/tokens/verify" \
+    "" | python3 -m json.tool
 
-```bash
-curl -s "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | python3 -m json.tool
-```
-
-Expected: `"status": "active"`.
-
-Find your Zone ID (replace `yourdomain.com` with your domain):
-
-```bash
-curl -s "https://api.cloudflare.com/client/v4/zones?name=yourdomain.com" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-  | python3 -c '
+  cloudflare_api_request \
+    "find Cloudflare zone yourdomain.com" \
+    "GET" \
+    "/zones?name=yourdomain.com" \
+    "" | python3 -c '
 import sys, json
 for z in json.load(sys.stdin)["result"]:
-    print(f"Zone: {z["name"]}  ID: {z["id"]}  Status: {z["status"]}")
+    print("Zone: {}  ID: {}  Status: {}".format(z["name"], z["id"], z["status"]))
 '
+)
 ```
 
-Copy the **Zone ID** from the output and set it:
-
-```bash
-export CLOUDFLARE_ZONE_ID="<zone-id-from-output>"
-```
+Expected: `"status": "active"`. Copy the **Zone ID** from the output for the next step. The helper also removes the token from the subshell's exported environment immediately, keeps it in a permission-restricted temporary curl config, retries bounded failures, and redacts diagnostics.
 
 #### 3c′. Save Cloudflare credentials for future use
 
@@ -211,24 +215,27 @@ CLOUDFLARE_API_TOKEN=<paste-your-api-token-here>
 CLOUDFLARE_ZONE_ID=<paste-your-zone-id-here>
 ```
 
-This file is gitignored. All subsequent steps can load it instead of re-exporting:
-
-```bash
-set -a; source scripts/cloudflare/.env; set +a
-```
+This file is gitignored. Every command below loads it only inside its own explicit subshell. Do not source it in the long-lived parent shell.
 
 #### 3d. Create Origin Certificate and import into ACM (terminal)
 
 ```bash
-set -a; source scripts/cloudflare/.env; set +a
-export AWS_PROFILE=expense-tracker
+(
+  set -euo pipefail
+  set -a
+  source scripts/cloudflare/.env
+  set +a
+  export AWS_PROFILE=expense-tracker
 
-bash scripts/cloudflare/setup-certificate.sh \
-  --domain yourdomain.com \
-  --region eu-central-1
+  bash scripts/cloudflare/setup-certificate.sh \
+    --domain yourdomain.com \
+    --region eu-central-1
+)
 ```
 
 The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the API and imports it into AWS ACM. It prints the **certificate ARN** — you need this for step 5.
+
+If Cloudflare accepts the create request but does not return a conclusive response, the script stops without issuing another certificate and retains a mode-0600 private key and CSR. Follow its printed `--resume-dir` command after propagation; resume performs list-only public-key reconciliation and never sends another create request.
 
 > **Why Origin Certificate?** Cloudflare Origin Certificates are free, long-lived (15 years), and trusted by Cloudflare's edge servers. Since all traffic flows through Cloudflare proxy, browsers see Cloudflare's edge certificate (Universal SSL, free). The Origin Certificate secures the connection between Cloudflare and your ALB.
 
@@ -237,12 +244,17 @@ The script creates a Cloudflare Origin Certificate (15-year, wildcard) via the A
 The SQL API for machine clients (LLM agents, scripts) uses a custom domain (`api.yourdomain.com`). This requires a public ACM certificate in your deployment region. API Gateway custom domains do not accept Cloudflare Origin Certificates — only publicly trusted certificates.
 
 ```bash
-set -a; source scripts/cloudflare/.env; set +a
-export AWS_PROFILE=expense-tracker
+(
+  set -euo pipefail
+  set -a
+  source scripts/cloudflare/.env
+  set +a
+  export AWS_PROFILE=expense-tracker
 
-bash scripts/cloudflare/setup-api-domain.sh \
-  --domain yourdomain.com \
-  --region eu-central-1
+  bash scripts/cloudflare/setup-api-domain.sh \
+    --domain yourdomain.com \
+    --region eu-central-1
+)
 ```
 
 The script requests the certificate, validates it via Cloudflare DNS, and waits for it to be issued. It prints the **API certificate ARN** — you need this for step 5.
@@ -262,10 +274,16 @@ RESEND_ADMIN_API_KEY=re_...
 2. Configure and verify the Resend sending domain:
 
 ```bash
-set -a; source scripts/cloudflare/.env; set +a
-bash scripts/resend/setup-resend-domain.sh \
-  --domain yourdomain.com \
-  --subdomain mail
+(
+  set -euo pipefail
+  set -a
+  source scripts/cloudflare/.env
+  set +a
+
+  bash scripts/resend/setup-resend-domain.sh \
+    --domain yourdomain.com \
+    --subdomain mail
+)
 ```
 
 The script creates or reuses `mail.yourdomain.com`, writes the required DNS records to Cloudflare, skips the Resend verification call when the domain is already verified, and otherwise requests verification before polling briefly. If DNS is still propagating, it exits non-zero; wait and rerun this step before continuing.
@@ -309,11 +327,34 @@ Edit `cdk.context.local.json` with your values:
 | `domainName` | Your domain, e.g. `yourdomain.com` |
 | `certificateArn` | ACM certificate ARN from step 3d (Cloudflare Origin Cert) |
 | `apiCertificateArn` | ACM certificate ARN from step 3e (public cert for `api.yourdomain.com`) |
+| `mcpCertificateArn` | Leave empty until step 5a, then add the public ACM certificate ARN for `mcp.yourdomain.com` |
 | `resendApiKeySecretArn` | Secrets Manager ARN for `expense-tracker/resend-api-key` from step 4 |
 | `resendSenderEmail` | Cognito sender address from step 4, e.g. `no-reply@mail.yourdomain.com` |
 | `langfuseBaseUrl` | Langfuse base URL, defaults to `https://cloud.langfuse.com` |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
+
+#### 5a. Create the MCP domain certificate and complete the context (~5-30 min wait)
+
+The canonical MCP endpoint is `https://mcp.yourdomain.com/mcp`. After every existing context value above is complete, leave only `mcpCertificateArn` empty and run:
+
+```bash
+(
+  set -euo pipefail
+  set -a
+  source scripts/cloudflare/.env
+  set +a
+  export AWS_PROFILE=expense-tracker
+  export AWS_REGION=eu-central-1
+
+  bash scripts/cloudflare/setup-mcp-domain.sh \
+    --domain yourdomain.com
+)
+```
+
+The script requires `infra/aws/cdk.context.local.json`, verifies its account, region, and domain against the explicit AWS profile, caller identity, and Cloudflare zone, then requests or reuses the single suitable exact-name certificate. Add the printed ARN as `mcpCertificateArn` in the local context and store the same value as the GitHub Actions secret `CDK_MCP_CERTIFICATE_ARN` before promotion. Keep its DNS-only validation CNAME for ACM renewal.
+
+Rerunning the script reuses the single exact-domain certificate when it is `ISSUED` or `PENDING_VALIDATION`; it stops before DNS changes if multiple reusable exact-domain certificates make selection ambiguous.
 
 #### Custom public site (optional)
 
@@ -348,14 +389,39 @@ Because the default pipeline still updates the ECS service before optional migra
 After deploy completes, **create the DNS record** pointing to the ALB and configure SSL:
 
 ```bash
-set -a; source scripts/cloudflare/.env; set +a
+(
+  set -euo pipefail
+  set -a
+  source scripts/cloudflare/.env
+  set +a
+  export AWS_PROFILE=expense-tracker
+  export AWS_REGION=eu-central-1
 
-bash scripts/cloudflare/setup-dns.sh \
-  --stack-name ExpenseBudgetTracker \
-  --region eu-central-1
+  bash scripts/cloudflare/setup-dns.sh \
+    --stack-name ExpenseBudgetTracker \
+    --region eu-central-1
+)
 ```
 
-The script creates DNS CNAMEs for `app.*` and root domain (both proxied via Cloudflare), sets SSL/TLS to Full (Strict), and configures cache bypass.
+The script creates proxied CNAMEs for the ALB, `api.*`, and `mcp.*`; sets SSL/TLS to Full (Strict); and bypasses cache for dynamic hosts. The AWS WAF attached to the auth ALB separately rate-limits the exact anonymous `POST auth.*/oauth/register` endpoint by the real client IP supplied in `CF-Connecting-IP`.
+
+Verify Cloudflare resources and their CloudFormation targets after DNS propagation:
+
+```bash
+(
+  set -euo pipefail
+  set -a
+  source scripts/cloudflare/.env
+  set +a
+  export AWS_PROFILE=expense-tracker
+  export AWS_REGION=eu-central-1
+
+  bash scripts/cloudflare/verify.sh \
+    --stack-name ExpenseBudgetTracker
+)
+```
+
+The canonical MCP transport is `https://mcp.yourdomain.com/mcp`, and its protected-resource metadata is available only at `https://mcp.yourdomain.com/.well-known/oauth-protected-resource/mcp`. The HTTP API's default `execute-api` endpoint is disabled; clients must use the root-mapped custom domain without a stage prefix.
 
 ### 7. Post-deploy
 
@@ -411,6 +477,7 @@ After first deploy:
    - `AWS_DEPLOY_ROLE_ARN` — the role ARN from step 1
    - `CDK_CERTIFICATE_ARN` — ACM certificate ARN (Cloudflare Origin Cert, from step 3d)
    - `CDK_API_CERTIFICATE_ARN` — ACM certificate ARN (public cert for API domain, from step 3e)
+   - `CDK_MCP_CERTIFICATE_ARN` — ACM certificate ARN (public cert for MCP domain, from step 5a)
 
    **Variables** (Settings → Secrets and variables → Actions → Variables):
    - `AWS_REGION` — target region (e.g. `eu-central-1`)
@@ -433,6 +500,9 @@ No AWS keys stored in GitHub — uses OIDC federation.
 
 - `domain.com` → ALB → 302 redirect to `app.domain.com` (no container, just an ALB rule)
 - `app.domain.com` → ALB → ECS Fargate web container (port 8080)
+- `auth.domain.com` → ALB → ECS Fargate auth container (port 8081)
+- `api.domain.com/v1/*` → SQL REST API → Lambda authorizer + machine API Lambda
+- `mcp.domain.com/mcp` → dedicated MCP HTTP API v2 → MCP Lambda
 To serve your own site on `domain.com`, point its DNS to your site's hosting (Vercel, etc.). The ALB redirect becomes irrelevant since traffic no longer reaches it.
 
 ## Auth flow
@@ -447,7 +517,7 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 
 ## Monitoring
 
-- **Alarms**: ALB 5xx (>5 in 5min), API Gateway 5xx (>5 in 5min), ECS CPU (>80% for 15min), ECS memory (>80% for 15min), ECS scale-out (>1 task), DB connections (>80%), DB storage (<2GB), Lambda errors (FX fetcher, SQL API authorizer, SQL API executor, Cognito custom email sender)
+- **Alarms**: ALB 5xx, SQL and MCP API Gateway 5xx, WAF body/query re-blocks, ECS CPU/memory and scale-out, DB connections/storage, Lambda errors, and unexpected MCP Lambda throttling outside its five-execution capacity envelope
 - **Access logs**: S3 bucket with all HTTP requests, 90-day retention
 - **Container logs**: CloudWatch Logs `/expense-tracker/web` and `/expense-tracker/migrate`, 30-day retention
 - **Lambda logs**: CloudWatch Logs (automatic), searchable in console

@@ -19,6 +19,50 @@ const createAuthenticatedRequest = (): AgentAuthenticatedRequest => ({
   lastUsedAt: null,
 });
 
+test("postAgentSqlRouteWithDeps describes per-statement and request-wide row limits from the result", async (): Promise<void> => {
+  const response = await postAgentSqlRouteWithDeps(
+    new Request("http://localhost/api/agent/sql", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ sql: "SELECT account_id FROM accounts" }),
+    }),
+    {
+      authenticateAgentRequest: async () => createAuthenticatedRequest(),
+      resolveWorkspaceIdForSql: async () => "workspace-1",
+      executeAgentSql: async () => ({
+        statements: [],
+        workspace: {
+          workspaceId: "workspace-1",
+          name: "Personal",
+        },
+        limits: {
+          maxRows: 37,
+          statementTimeoutMs: 30_000,
+        },
+      }),
+    },
+  );
+
+  const payload = await response.json() as {
+    data: Readonly<{
+      limits: Readonly<{ maxRows: number; statementTimeoutMs: number }>;
+    }>;
+    instructions: string;
+  };
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(payload.data.limits, {
+    maxRows: 37,
+    statementTimeoutMs: 30_000,
+  });
+  assert.equal(
+    payload.instructions,
+    "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and returned rows are capped at 37 per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata.",
+  );
+});
+
 test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", async (): Promise<void> => {
   const response = await postAgentSqlRouteWithDeps(
     new Request("http://localhost/api/agent/sql", {

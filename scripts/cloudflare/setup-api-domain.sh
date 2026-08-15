@@ -10,11 +10,20 @@
 #   CLOUDFLARE_ZONE_ID    — Zone ID from Cloudflare
 #   AWS_PROFILE           — AWS CLI profile for the target account
 #
-# Usage:
-#   export CLOUDFLARE_API_TOKEN="..." CLOUDFLARE_ZONE_ID="..." AWS_PROFILE=expense-tracker
-#   bash scripts/cloudflare/setup-api-domain.sh --domain expense-budget-tracker.com --region eu-central-1
+# Usage from the repository root; the parent shell never receives the token:
+#   (
+#     set -euo pipefail
+#     set -a
+#     source scripts/cloudflare/.env
+#     set +a
+#     export AWS_PROFILE=expense-tracker
+#     bash scripts/cloudflare/setup-api-domain.sh --domain expense-budget-tracker.com --region eu-central-1
+#   )
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/cloudflare-api.sh"
 
 # --- Parse arguments ---
 DOMAIN=""
@@ -34,7 +43,7 @@ if [[ -z "$DOMAIN" || -z "$REGION" ]]; then
   exit 1
 fi
 
-: "${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN env var}"
+cloudflare_require_api_token
 : "${CLOUDFLARE_ZONE_ID:?Set CLOUDFLARE_ZONE_ID env var}"
 
 API_DOMAIN="${API_SUBDOMAIN}.${DOMAIN}"
@@ -83,36 +92,50 @@ echo "Validation CNAME: ${VALIDATION_NAME} -> ${VALIDATION_VALUE}"
 # --- Step 3: Create validation CNAME in Cloudflare (DNS-only, not proxied) ---
 echo "Creating ACM validation CNAME in Cloudflare (DNS-only)..."
 
-EXISTING=$(curl -s "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${VALIDATION_NAME}&type=CNAME" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-  -H "Content-Type: application/json")
+EXISTING=$(cloudflare_read_all_dns_records \
+  "read all DNS records for API certificate validation hostname ${VALIDATION_NAME}" \
+  "/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${VALIDATION_NAME}&per_page=100")
+EXISTING_RECORD=$(echo "$EXISTING" | cloudflare_classify_exact_cname \
+  "$VALIDATION_NAME" \
+  "$VALIDATION_VALUE" \
+  "false" \
+  "setup-api-domain.sh")
+EXISTING_STATE=$(echo "$EXISTING_RECORD" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+EXISTING_ID=$(echo "$EXISTING_RECORD" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 
-EXISTING_COUNT=$(echo "$EXISTING" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("result", [])))')
+VALIDATION_PAYLOAD=$(python3 -c '
+import json
+import sys
 
-if [[ "$EXISTING_COUNT" -gt 0 ]]; then
-  RECORD_ID=$(echo "$EXISTING" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0]["id"])')
-  curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
-    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-    -H "Content-Type: application/json" \
-    --data "{
-      \"type\": \"CNAME\",
-      \"name\": \"${VALIDATION_NAME}\",
-      \"content\": \"${VALIDATION_VALUE}\",
-      \"ttl\": 120,
-      \"proxied\": false
-    }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+print(json.dumps({
+    "type": "CNAME",
+    "name": sys.argv[1],
+    "content": sys.argv[2],
+    "ttl": 120,
+    "proxied": False,
+}))
+' "$VALIDATION_NAME" "$VALIDATION_VALUE")
+
+if [[ "$EXISTING_STATE" == "exact" ]]; then
+  echo "API certificate validation CNAME already matches and is DNS-only; reusing it."
+elif [[ "$EXISTING_STATE" == "drift" ]]; then
+  cloudflare_api_request \
+    "update API certificate validation CNAME ${VALIDATION_NAME}" \
+    "PUT" \
+    "/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${EXISTING_ID}" \
+    "$VALIDATION_PAYLOAD" >/dev/null
+elif [[ "$EXISTING_STATE" == "absent" ]]; then
+  cloudflare_api_request \
+    "create API certificate validation CNAME ${VALIDATION_NAME}" \
+    "POST" \
+    "/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+    "$VALIDATION_PAYLOAD" \
+    "/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${VALIDATION_NAME}&per_page=100" >/dev/null
 else
-  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
-    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-    -H "Content-Type: application/json" \
-    --data "{
-      \"type\": \"CNAME\",
-      \"name\": \"${VALIDATION_NAME}\",
-      \"content\": \"${VALIDATION_VALUE}\",
-      \"ttl\": 120,
-      \"proxied\": false
-    }" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("OK" if r["success"] else json.dumps(r["errors"], indent=2))'
+  echo "ERROR: Unexpected DNS reconciliation state '${EXISTING_STATE}' for API certificate validation hostname ${VALIDATION_NAME}." >&2
+  exit 1
 fi
+echo "ACM validation CNAME is configured as DNS-only."
 
 # --- Step 4: Wait for certificate to be ISSUED ---
 echo "Waiting for ACM certificate validation (this may take 5-30 minutes)..."
@@ -133,5 +156,5 @@ echo ""
 echo "Next steps:"
 echo "  1. Add apiCertificateArn to cdk.context.local.json"
 echo "  2. Run: npx cdk deploy"
-echo "  3. Run: bash scripts/cloudflare/setup-dns.sh --stack-name ExpenseBudgetTracker"
+echo "  3. Run setup-dns.sh using the credential-isolated subshell in infra/aws/README.md step 6"
 echo "     (setup-dns.sh will automatically create the api.* CNAME from the ApiCustomDomain stack output)"

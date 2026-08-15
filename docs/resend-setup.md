@@ -14,17 +14,22 @@ Use a dedicated `mail` subdomain for transactional auth traffic.
 
 ## Prerequisites
 
-Keep these values in root `.env` or export them in the current shell:
+Keep these values in the root `.env`:
 
 - `AWS_REGION`
 - `AWS_PROFILE`
 - `RESEND_ADMIN_API_KEY`
+
+Keep the Cloudflare values only in the gitignored `scripts/cloudflare/.env`:
+
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ZONE_ID`
 
 `RESEND_ADMIN_API_KEY` is local-only. It creates the Resend domain and the separate domain-scoped send-only runtime key. The runtime key is written directly to AWS Secrets Manager and is not printed.
 
 `CLOUDFLARE_ZONE_ID` must belong to the exact domain passed through `--domain` or `DOMAIN_NAME`. The setup script verifies the zone before creating the Resend domain or writing DNS records.
+
+Do not source either env file into the long-lived parent shell. The setup scripts load them inside their own subprocesses, so production credentials disappear when each command exits.
 
 ## One-time setup
 

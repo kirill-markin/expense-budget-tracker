@@ -158,7 +158,7 @@ export const postAgentSqlRouteWithDeps = async (
           limits: result.limits,
         },
         [],
-        "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and results are capped per statement with returnedRowCount, totalRowCount, and truncated metadata.",
+        `Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and returned rows are capped at ${String(result.limits.maxRows)} per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata.`,
       ),
     );
   } catch (error) {

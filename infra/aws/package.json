@@ -5,11 +5,13 @@
   "scripts": {
     "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "prelint": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "pretest": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "presynth": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "predeploy": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "prediff": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "build": "tsc",
     "lint": "tsc --noEmit",
+    "test": "node --import tsx --test \"lib/**/*.test.ts\"",
     "cdk": "cdk",
     "deploy": "cdk deploy --all",
     "destroy": "cdk destroy --all",
@@ -19,6 +21,7 @@
   "dependencies": {
     "@aws-crypto/client-node": "^5.0.2",
     "@aws-sdk/client-secrets-manager": "^3.1108.0",
+    "@expense-budget-tracker/agent-shared": "1.2.0",
     "aws-cdk-lib": "^2.264.0",
     "constructs": "^10.8.1"
   },
@@ -26,6 +29,7 @@
     "@types/node": "^24.13.3",
     "aws-cdk": "^2.1135.1",
     "esbuild": "^0.28.2",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3"
   },
   "engines": {

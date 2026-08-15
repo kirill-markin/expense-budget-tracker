@@ -80,7 +80,10 @@ services:
       ALLOWED_REDIRECT_URIS: ${ALLOWED_REDIRECT_URIS:-http://localhost:3000}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_REGION: ${COGNITO_REGION:-}
+      OAUTH_ISSUER: ${OAUTH_ISSUER:-http://localhost:8081}
+      OAUTH_RESOURCE: ${OAUTH_RESOURCE:-http://localhost:8082/mcp}
       AUTH_DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql://auth_service:${AUTH_DB_PASSWORD:-auth_service}@postgres:5432/tracker}
       SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY:-}
     healthcheck:

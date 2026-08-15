@@ -1,7 +1,7 @@
 /**
  * Human settings API for revoking one agent connection.
  */
-import { revokeAgentConnection } from "@/server/agent/connections";
+import { revokeApiKeyConnection } from "@/server/agent/connections";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 type RouteContext = Readonly<{
@@ -19,7 +19,7 @@ export const POST = async (request: Request, context: RouteContext): Promise<Res
     return new Response("Missing connectionId", { status: 400 });
   }
 
-  const revoked = await revokeAgentConnection(userId, workspaceId, connectionId);
+  const revoked = await revokeApiKeyConnection(userId, workspaceId, connectionId);
   return Response.json({
     revoked,
     instructions: revoked

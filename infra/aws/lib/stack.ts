@@ -10,6 +10,7 @@ import { compute } from "./compute";
 import { ingress } from "./ingress";
 import { fxFetcher } from "./fx-fetcher";
 import { apiGateway } from "./api-gateway";
+import { mcpGateway } from "./mcp-gateway";
 import { monitoring } from "./monitoring";
 import { ciCd } from "./ci-cd";
 import { backupPlan } from "./backup";
@@ -35,6 +36,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
     const githubRepo = this.node.tryGetContext("githubRepo") as string;
     const apiCertificateArn = this.node.tryGetContext("apiCertificateArn") as string | undefined;
+    const mcpCertificateArn = getOptionalContextValue(this, "mcpCertificateArn");
     const langfuseBaseUrl = this.node.tryGetContext("langfuseBaseUrl") as string | undefined
       ?? "https://cloud.langfuse.com";
     const demoEmailDostip = this.node.tryGetContext("demoEmailDostip") as string | undefined ?? "";
@@ -70,6 +72,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       langfusePublicKeySecret: sec.langfusePublicKeySecret,
       langfuseSecretKeySecret: sec.langfuseSecretKeySecret,
       userPoolId: authResult.userPool.userPoolId,
+      userPoolArn: authResult.userPool.userPoolArn,
       userPoolClientId: authResult.userPoolClient.userPoolClientId,
       appDomain,
       authDomain,
@@ -102,6 +105,14 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       baseDomain,
       apiCertificateArn,
     });
+    const mcp = mcpGateway(this, {
+      vpc: net.vpc,
+      lambdaSg: net.lambdaSg,
+      db: dbResult.db,
+      appDbSecret: dbResult.appDbSecret,
+      baseDomain,
+      mcpCertificateArn,
+    });
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,
@@ -115,6 +126,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       restApi: api.restApi,
       authorizerFn: api.authorizerFn,
       sqlApiFn: api.sqlApiFn,
+      mcpHttpApi: mcp.httpApi,
+      mcpFn: mcp.mcpFn,
       customEmailSenderFn: authResult.customEmailSenderFn,
     });
     ciCd(this, {
@@ -143,6 +156,10 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       restApi: api.restApi,
       authorizerFn: api.authorizerFn,
       sqlApiFn: api.sqlApiFn,
+      mcpHttpApi: mcp.httpApi,
+      mcpFn: mcp.mcpFn,
+      mcpCustomDomainTarget: mcp.customDomainTarget,
+      mcpUrl: `https://mcp.${baseDomain}/mcp`,
     });
   }
 }

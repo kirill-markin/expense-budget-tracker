@@ -4,15 +4,21 @@
  * Calls the Cognito IDP endpoint directly via fetch — no AWS SDK needed.
  * Uses USER_AUTH flow with EMAIL_OTP challenge (Essentials tier).
  *
- * Auth-service scope: only initiateEmailOtp and verifyEmailOtp.
- * JWT verification and token refresh stay in the web app.
+ * Auth-service scope: OTP sign-in plus browser-session refresh.
+ * JWT verification stays in the OAuth session module.
  */
 import { randomBytes } from "node:crypto";
-import { log, maskEmail } from "./logger.js";
+import { log, maskEmail, type CognitoRefreshRetryEvent } from "./logger.js";
 
 type CognitoErrorResponse = Readonly<{
-  __type?: string;
-  message?: string;
+  type: string;
+  message: string;
+}>;
+
+type CognitoRequestError = Error & Readonly<{
+  cognitoType: string;
+  cognitoStatus: number;
+  cognitoTarget: string;
 }>;
 
 type InitiateAuthResult = Readonly<{
@@ -24,6 +30,11 @@ export type TokenResult = Readonly<{
   accessToken: string;
   refreshToken: string;
   expiresIn: number;
+}>;
+
+export type SessionRefreshResult = Readonly<{
+  idToken: string;
+  refreshToken: string | undefined;
 }>;
 
 type AgentIdentity = Readonly<{
@@ -43,6 +54,17 @@ const getClientId = (): string => {
   return clientId;
 };
 
+const parseCognitoErrorResponse = (payload: unknown): CognitoErrorResponse => {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return { type: "", message: "No Cognito error message" };
+  }
+  const record = payload as Readonly<Record<string, unknown>>;
+  return {
+    type: typeof record["__type"] === "string" ? record["__type"] : "",
+    message: typeof record["message"] === "string" ? record["message"] : "No Cognito error message",
+  };
+};
+
 const cognitoFetch = async (
   target: string,
   body: Record<string, unknown>,
@@ -59,12 +81,20 @@ const cognitoFetch = async (
   });
 
   if (!response.ok) {
-    const error = await response.json() as CognitoErrorResponse;
-    const errorType = error.__type ?? "";
-    const errorMessage = error.message ?? `Cognito ${target} failed: ${response.status}`;
-    const err = new Error(errorMessage);
-    (err as Error & { cognitoType: string }).cognitoType = errorType;
-    throw err;
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (cause) {
+      throw Object.assign(
+        new Error(`Cognito ${target} failed with HTTP ${response.status} and an invalid JSON error response`, { cause }),
+        { cognitoType: "", cognitoStatus: response.status, cognitoTarget: target },
+      ) as CognitoRequestError;
+    }
+    const error = parseCognitoErrorResponse(payload);
+    throw Object.assign(
+      new Error(`Cognito ${target} failed with ${error.type || "an unknown error"} (HTTP ${response.status}): ${error.message}`),
+      { cognitoType: error.type, cognitoStatus: response.status, cognitoTarget: target },
+    ) as CognitoRequestError;
   }
 
   return response.json() as Promise<Record<string, unknown>>;
@@ -148,6 +178,123 @@ export const verifyEmailOtp = async (
     expiresIn: authResult.ExpiresIn as number,
   };
 };
+
+export type RefreshCognitoSessionDependencies = Readonly<{
+  request: (target: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  delay: (milliseconds: number) => Promise<void>;
+  logRetry: (event: CognitoRefreshRetryEvent) => void;
+}>;
+
+const REFRESH_MAX_ATTEMPTS = 3;
+const REFRESH_RETRY_BASE_DELAY_MS = 100;
+const TRANSIENT_COGNITO_TYPES = new Set([
+  "InternalErrorException",
+  "InternalFailure",
+  "LimitExceededException",
+  "ServiceUnavailableException",
+  "ThrottlingException",
+  "TooManyRequestsException",
+]);
+const DEFINITIVE_REFRESH_REJECTION_TYPES = new Set([
+  "InvalidRefreshTokenException",
+  "NotAuthorizedException",
+  "PasswordResetRequiredException",
+  "RefreshTokenExpiredException",
+  "UserNotConfirmedException",
+  "UserNotFoundException",
+]);
+
+const getCognitoErrorContext = (
+  error: unknown,
+): Readonly<{ cognitoType: string | null; status: number | null }> => {
+  if (!(error instanceof Error)) return { cognitoType: null, status: null };
+  const context = error as Partial<CognitoRequestError>;
+  return {
+    cognitoType: typeof context.cognitoType === "string" && context.cognitoType !== ""
+      ? context.cognitoType
+      : null,
+    status: typeof context.cognitoStatus === "number" ? context.cognitoStatus : null,
+  };
+};
+
+const getUnqualifiedCognitoType = (cognitoType: string): string =>
+  cognitoType.split("#").at(-1)?.split(":").at(-1) ?? cognitoType;
+
+export const isDefinitiveCognitoRefreshRejection = (error: unknown): boolean => {
+  const { cognitoType } = getCognitoErrorContext(error);
+  return cognitoType !== null
+    && DEFINITIVE_REFRESH_REJECTION_TYPES.has(getUnqualifiedCognitoType(cognitoType));
+};
+
+const isTransientRefreshError = (error: unknown): boolean => {
+  if (error instanceof TypeError) return true;
+  const { cognitoType, status } = getCognitoErrorContext(error);
+  return status === 429
+    || (status !== null && status >= 500 && status <= 599)
+    || (cognitoType !== null && TRANSIENT_COGNITO_TYPES.has(getUnqualifiedCognitoType(cognitoType)));
+};
+
+const extractSessionRefreshResult = (result: Record<string, unknown>): SessionRefreshResult => {
+  const authResult = result.AuthenticationResult;
+  if (typeof authResult !== "object" || authResult === null || Array.isArray(authResult)) {
+    throw new Error("Cognito REFRESH_TOKEN_AUTH did not return AuthenticationResult");
+  }
+  const idToken = (authResult as Readonly<Record<string, unknown>>)["IdToken"];
+  const rotatedRefreshToken = (authResult as Readonly<Record<string, unknown>>)["RefreshToken"];
+  if (typeof idToken !== "string" || idToken === "") {
+    throw new Error("Cognito REFRESH_TOKEN_AUTH did not return an ID token");
+  }
+  if (rotatedRefreshToken !== undefined && typeof rotatedRefreshToken !== "string") {
+    throw new Error("Cognito REFRESH_TOKEN_AUTH returned an invalid refresh token");
+  }
+  return {
+    idToken,
+    refreshToken: rotatedRefreshToken === "" ? undefined : rotatedRefreshToken,
+  };
+};
+
+export const refreshCognitoSessionWithDependencies = async (
+  refreshToken: string,
+  dependencies: RefreshCognitoSessionDependencies,
+): Promise<SessionRefreshResult> => {
+  for (let attempt = 1; attempt <= REFRESH_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await dependencies.request("InitiateAuth", {
+        AuthFlow: "REFRESH_TOKEN_AUTH",
+        ClientId: getClientId(),
+        AuthParameters: { REFRESH_TOKEN: refreshToken },
+      });
+      return extractSessionRefreshResult(result);
+    } catch (error) {
+      if (!isTransientRefreshError(error) || attempt === REFRESH_MAX_ATTEMPTS) throw error;
+      const retryInMs = REFRESH_RETRY_BASE_DELAY_MS * (2 ** (attempt - 1));
+      const context = getCognitoErrorContext(error);
+      dependencies.logRetry({
+        domain: "auth",
+        action: "cognito_refresh_retry",
+        level: "warn",
+        attempt,
+        retryInMs,
+        cognitoType: context.cognitoType,
+        status: context.status,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await dependencies.delay(retryInMs);
+    }
+  }
+  throw new Error("Cognito refresh retry loop ended without a result");
+};
+
+const refreshDependencies: RefreshCognitoSessionDependencies = {
+  request: cognitoFetch,
+  delay: async (milliseconds) => new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  }),
+  logRetry: log,
+};
+
+export const refreshCognitoSession = (refreshToken: string): Promise<SessionRefreshResult> =>
+  refreshCognitoSessionWithDependencies(refreshToken, refreshDependencies);
 
 /**
  * Read user identity from a Cognito IdToken received directly from Cognito.

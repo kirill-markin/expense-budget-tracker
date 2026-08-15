@@ -40,6 +40,30 @@ type Props = Readonly<{
   initialConnections: ReadonlyArray<AgentConnectionRow>;
 }>;
 
+type ConnectionIdentity = Readonly<{
+  type: AgentConnectionRow["type"];
+  connectionId: string;
+}>;
+
+type RevokeConnectionResponse = Readonly<{
+  revoked: boolean;
+  instructions: string;
+}>;
+
+const parseRevokeConnectionResponse = (value: unknown): RevokeConnectionResponse => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Agent connection revocation returned an invalid response object.");
+  }
+  const response = value as Readonly<Record<string, unknown>>;
+  if (typeof response["revoked"] !== "boolean" || typeof response["instructions"] !== "string") {
+    throw new Error("Agent connection revocation response must include revoked and instructions.");
+  }
+  return {
+    revoked: response["revoked"],
+    instructions: response["instructions"],
+  };
+};
+
 const formatDate = (iso: string): string => {
   const date = new Date(iso);
   return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
@@ -48,7 +72,7 @@ const formatDate = (iso: string): string => {
 export const AgentConnectionsManager = (props: Props): ReactElement => {
   const { t } = useTranslation();
   const [connections, setConnections] = useState<ReadonlyArray<AgentConnectionRow>>(props.initialConnections);
-  const [loadingConnectionId, setLoadingConnectionId] = useState<string | null>(null);
+  const [loadingConnection, setLoadingConnection] = useState<ConnectionIdentity | null>(null);
   const [copiedCardId, setCopiedCardId] = useState<AccessCardId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -77,12 +101,13 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
     }
   };
 
-  const handleRevoke = async (connectionId: string): Promise<void> => {
-    setLoadingConnectionId(connectionId);
+  const handleRevoke = async (selectedConnection: AgentConnectionRow): Promise<void> => {
+    const connectionId = selectedConnection.connectionId;
+    setLoadingConnection({ type: selectedConnection.type, connectionId });
     setError(null);
 
     try {
-      const response = await fetchWithCsrf(`/api/agent-connections/${connectionId}/revoke`, {
+      const response = await fetchWithCsrf(`/api/agent-connections/types/${selectedConnection.type}/${connectionId}/revoke`, {
         method: "POST",
       });
       if (!response.ok) {
@@ -90,16 +115,22 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
         setError(text);
         return;
       }
+      const rawResponse: unknown = await response.json();
+      const result = parseRevokeConnectionResponse(rawResponse);
+      if (!result.revoked) {
+        setError(result.instructions);
+        return;
+      }
 
       setConnections((prev) => prev.map((connection) => (
-        connection.connectionId === connectionId
+        connection.type === selectedConnection.type && connection.connectionId === connectionId
           ? { ...connection, revokedAt: connection.revokedAt ?? new Date().toISOString() }
           : connection
       )));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingConnectionId(null);
+      setLoadingConnection(null);
     }
   };
 
@@ -139,8 +170,9 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
               <thead>
                 <tr>
                   <th>{t("apiKeys.label")}</th>
+                  <th>{t("agentAccess.type")}</th>
                   <th>{t("apiKeys.created")}</th>
-                  <th>{t("apiKeys.lastUsed")}</th>
+                  <th>{t("agentAccess.lastActivity")}</th>
                   <th>{t("agentAccess.status")}</th>
                   <th></th>
                 </tr>
@@ -148,19 +180,26 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
               <tbody>
                 {connections.map((connection) => {
                   const isRevoked = connection.revokedAt !== null;
+                  const lastActivityAt = connection.type === "api_key"
+                    ? connection.lastUsedAt
+                    : connection.lastActivityAt;
                   return (
-                    <tr key={connection.connectionId}>
+                    <tr key={`${connection.type}:${connection.connectionId}`}>
                       <td>{connection.label}</td>
+                      <td>{connection.type === "api_key" ? t("agentAccess.typeApiKey") : t("agentAccess.typeOauth")}</td>
                       <td>{formatDate(connection.createdAt)}</td>
-                      <td>{connection.lastUsedAt !== null ? formatDate(connection.lastUsedAt) : t("apiKeys.never")}</td>
+                      <td>{lastActivityAt !== null ? formatDate(lastActivityAt) : t("apiKeys.never")}</td>
                       <td>{isRevoked ? t("agentAccess.statusRevoked") : t("agentAccess.statusActive")}</td>
                       <td>
                         {!isRevoked && (
                           <button
                             className={cn(settingsStyles.save, settingsStyles.saveDanger)}
                             type="button"
-                            onClick={() => { void handleRevoke(connection.connectionId); }}
-                            disabled={loadingConnectionId === connection.connectionId}
+                            onClick={() => { void handleRevoke(connection); }}
+                            disabled={
+                              loadingConnection?.type === connection.type
+                              && loadingConnection.connectionId === connection.connectionId
+                            }
                           >
                             {t("apiKeys.revoke")}
                           </button>

@@ -148,13 +148,13 @@ export const executeAgentSql = async (
     return null;
   }
 
-  const result = await executeValidatedExpenseSql(
-    validated,
-    async (validatedSql) => withRestrictedTrustedIdentityContext(
-      authenticated.identity,
-      workspaceId,
-      SQL_STATEMENT_TIMEOUT_MS,
-      async (queryFn) => queryFn(validatedSql, []),
+  const result = await withRestrictedTrustedIdentityContext(
+    authenticated.identity,
+    workspaceId,
+    SQL_STATEMENT_TIMEOUT_MS,
+    async (queryFn) => executeValidatedExpenseSql(
+      validated,
+      async (request) => queryFn(request.sql, request.params),
     ),
   );
 

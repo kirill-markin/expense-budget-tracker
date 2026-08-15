@@ -29,6 +29,18 @@ export const getAuthBaseUrl = (event: APIGatewayProxyEvent): string => {
   return trimTrailingSlash(getApiBaseUrl(event).replace("//api.", "//auth.").replace(/\/v1$/, ""));
 };
 
+export const getMcpUrl = (event: APIGatewayProxyEvent): string => {
+  const authUrl = new URL(getAuthBaseUrl(event));
+  if (!authUrl.hostname.startsWith("auth.")) {
+    throw new Error(`Cannot derive MCP URL from auth host ${authUrl.hostname}`);
+  }
+  authUrl.hostname = `mcp.${authUrl.hostname.slice("auth.".length)}`;
+  authUrl.pathname = "/mcp";
+  authUrl.search = "";
+  authUrl.hash = "";
+  return authUrl.toString();
+};
+
 export const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Record<string, unknown>> => {
   const authBaseUrl = getAuthBaseUrl(event);
 
@@ -36,6 +48,7 @@ export const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Re
     apiBaseUrl: getApiBaseUrl(event),
     authBaseUrl,
     bootstrapUrl: `${authBaseUrl}/api/agent/send-code`,
+    mcpUrl: getMcpUrl(event),
   });
 };
 

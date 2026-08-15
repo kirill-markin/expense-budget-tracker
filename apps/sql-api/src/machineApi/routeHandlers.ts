@@ -1,28 +1,41 @@
 import type { APIGatewayProxyResult } from "aws-lambda";
 import { buildSourceDiscoveryResponse } from "@expense-budget-tracker/agent-shared/discovery";
 import {
-  RUN_SQL_WITH_WORKSPACE_INPUT,
   buildCreateWorkspaceAction,
   buildErrorEnvelope,
   buildListWorkspacesAction,
-  buildRunSqlAction,
+  buildRunSqlExecuteAction,
+  buildRunSqlQueryAction,
   buildSchemaAction,
   buildSelectWorkspaceAction,
   buildSuccessEnvelope,
 } from "@expense-budget-tracker/agent-shared";
 import {
+  createSqlExecutionDeadline,
+  MAX_SQL_MUTATION_ROWS,
   MAX_SQL_ROWS,
   SQL_STATEMENT_TIMEOUT_MS,
   SqlPolicyError,
   validateExpenseSql,
+  validateSingleMutationExpenseSql,
+  validateSingleReadOnlyExpenseSql,
+  type SqlExecutionDeadline,
   type ValidatedExpenseSql,
+  type ValidatedReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { resolveOrCreateWorkspaceForTrustedIdentity } from "../db.js";
 import { buildDiscoveryEnvelope, getApiBaseUrl, readJsonBody } from "./request.js";
 import { buildRetryableErrorResponse, json } from "./responses.js";
 import { ALLOWED_RELATION_NAMES, loadAllowedSchema } from "./schemaService.js";
-import { getSqlPolicyInstructions, getUserSqlExecutionMessage, isUserSqlExecutionError, runSql } from "./sqlService.js";
-import type { MachineApiDependencies, MachineRouteContext } from "./types.js";
+import {
+  getSqlPolicyInstructions,
+  getUserSqlExecutionMessage,
+  isAmbiguousSqlMutationOutcomeError,
+  isUserSqlExecutionError,
+  runReadOnlySql,
+  runSql,
+} from "./sqlService.js";
+import type { AuthenticatedContext, MachineApiDependencies, MachineRouteContext } from "./types.js";
 import { createWorkspace, getWorkspace, listWorkspaces, persistSelectedWorkspace, resolveSqlWorkspaceId } from "./workspaceService.js";
 
 export const handleDiscoveryRoute = (
@@ -96,9 +109,10 @@ export const handleSchemaRoute = async (
           },
         },
         [
-          buildRunSqlAction({ baseUrl: context.apiBaseUrl, path: "/sql" }, RUN_SQL_WITH_WORKSPACE_INPUT),
+          buildRunSqlQueryAction({ baseUrl: context.apiBaseUrl, path: "/sql/query" }),
+          buildRunSqlExecuteAction({ baseUrl: context.apiBaseUrl, path: "/sql/execute" }),
         ],
-        "Schema includes only relations supported by /sql and may include optional hints about constraints or write semantics. SQL supports only SUM, COUNT, MIN, MAX, AVG, and COALESCE function calls. Select a workspace once, then run SQL.",
+        "Schema includes only relations supported by restricted SQL and may include optional hints about constraints or write semantics. Prefer /sql/query for reads and /sql/execute for one explicitly approved write. Legacy /sql remains available only for compatibility and atomic multi-statement scripts. SQL supports only SUM, COUNT, MIN, MAX, AVG, and COALESCE function calls. Select a workspace once, then run SQL.",
       ),
     );
   } catch (error) {
@@ -239,9 +253,10 @@ export const handleSelectWorkspaceRoute = async (
           },
         },
         [
-          buildRunSqlAction({ baseUrl: context.apiBaseUrl, path: "/sql" }, RUN_SQL_WITH_WORKSPACE_INPUT),
+          buildRunSqlQueryAction({ baseUrl: context.apiBaseUrl, path: "/sql/query" }),
+          buildRunSqlExecuteAction({ baseUrl: context.apiBaseUrl, path: "/sql/execute" }),
         ],
-        "Workspace saved for this API key. /sql can now omit X-Workspace-Id; send the header only to override.",
+        "Workspace saved for this API key. /sql/query and /sql/execute can now omit X-Workspace-Id; send the header only to override. Legacy /sql remains available only for compatibility and atomic multi-statement scripts.",
       ),
     );
   } catch (error) {
@@ -269,9 +284,25 @@ const buildSqlPolicyErrorResponse = (
     ),
   );
 
-export const handleSqlRouteWithWorkspaceResolver = async (
+type SqlValidator<TValidated extends ValidatedExpenseSql> = (sql: string) => TValidated;
+type SqlRunner<TValidated extends ValidatedExpenseSql> = (
+  dependencies: MachineApiDependencies,
+  authenticated: AuthenticatedContext,
+  workspaceId: string,
+  validated: TValidated,
+  executionDeadline: SqlExecutionDeadline,
+) => ReturnType<typeof runSql>;
+type SqlRouteText = Readonly<{
+  missingSql: string;
+  success: string;
+}>;
+
+const handleValidatedSqlRouteWithWorkspaceResolver = async <TValidated extends ValidatedExpenseSql>(
   context: MachineRouteContext,
   resolveWorkspaceId: typeof resolveSqlWorkspaceId,
+  validateSql: SqlValidator<TValidated>,
+  runValidatedSql: SqlRunner<TValidated>,
+  routeText: SqlRouteText,
 ): Promise<APIGatewayProxyResult> => {
   const body = readJsonBody(context.event);
   if (body === null) {
@@ -285,16 +316,16 @@ export const handleSqlRouteWithWorkspaceResolver = async (
       buildErrorEnvelope(
         { field: "sql", expected: "non-empty string" },
         [],
-        "Send a non-empty sql string. Semicolon-separated statements are allowed.",
+        routeText.missingSql,
         "missing_sql",
         "SQL is required",
       ),
     );
   }
 
-  let validated: ValidatedExpenseSql;
+  let validated: TValidated;
   try {
-    validated = validateExpenseSql(rawSql.trim());
+    validated = validateSql(rawSql);
   } catch (error) {
     if (error instanceof SqlPolicyError) {
       return buildSqlPolicyErrorResponse(error, context.apiBaseUrl);
@@ -309,10 +340,16 @@ export const handleSqlRouteWithWorkspaceResolver = async (
   }
 
   const headerWorkspaceId = (context.event.headers["X-Workspace-Id"] ?? context.event.headers["x-workspace-id"] ?? "").trim();
+  const executionDeadline = createSqlExecutionDeadline(SQL_STATEMENT_TIMEOUT_MS, Date.now);
 
   let workspaceId: string | null;
   try {
-    workspaceId = await resolveWorkspaceId(context.dependencies, context.authenticated, headerWorkspaceId);
+    workspaceId = await resolveWorkspaceId(
+      context.dependencies,
+      context.authenticated,
+      headerWorkspaceId,
+      executionDeadline,
+    );
   } catch (error) {
     return buildRetryableErrorResponse(
       "agent_sql_failed",
@@ -325,7 +362,7 @@ export const handleSqlRouteWithWorkspaceResolver = async (
   if (workspaceId === null || workspaceId === "") {
     return json(
       400,
-        buildErrorEnvelope(
+      buildErrorEnvelope(
         { field: "X-Workspace-Id", expected: "workspaceId string" },
         [],
         "Send X-Workspace-Id, or call /workspaces/{workspaceId}/select once to save the active workspace for this API key.",
@@ -336,7 +373,13 @@ export const handleSqlRouteWithWorkspaceResolver = async (
   }
 
   try {
-    const response = await runSql(context.dependencies, context.authenticated, workspaceId, validated);
+    const response = await runValidatedSql(
+      context.dependencies,
+      context.authenticated,
+      workspaceId,
+      validated,
+      executionDeadline,
+    );
     if (response === null) {
       return json(
         404,
@@ -349,10 +392,14 @@ export const handleSqlRouteWithWorkspaceResolver = async (
       buildSuccessEnvelope(
         response,
         [],
-        "Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first, semicolon-separated statements are allowed, only supported relations may be queried, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and results are capped per statement with returnedRowCount, totalRowCount, and truncated metadata.",
+        routeText.success,
       ),
     );
   } catch (error) {
+    if (error instanceof SqlPolicyError) {
+      return buildSqlPolicyErrorResponse(error, context.apiBaseUrl);
+    }
+
     if (isUserSqlExecutionError(error)) {
       return json(
         400,
@@ -366,6 +413,19 @@ export const handleSqlRouteWithWorkspaceResolver = async (
       );
     }
 
+    if (isAmbiguousSqlMutationOutcomeError(error)) {
+      return json(
+        500,
+        buildErrorEnvelope(
+          { outcome: "unknown", retryable: false },
+          [],
+          `Do not blindly retry this mutation. Verify current state through ${context.apiBaseUrl}/sql/query before deciding whether to retry.`,
+          "sql_mutation_outcome_unknown",
+          error.message,
+        ),
+      );
+    }
+
     return buildRetryableErrorResponse(
       "agent_sql_failed",
       "Retry SQL in a moment.",
@@ -374,6 +434,61 @@ export const handleSqlRouteWithWorkspaceResolver = async (
     );
   }
 };
+
+export const handleSqlQueryRouteWithWorkspaceResolver = async (
+  context: MachineRouteContext,
+  resolveWorkspaceId: typeof resolveSqlWorkspaceId,
+): Promise<APIGatewayProxyResult> =>
+  handleValidatedSqlRouteWithWorkspaceResolver<ValidatedReadOnlyExpenseSql>(
+    context,
+    resolveWorkspaceId,
+    validateSingleReadOnlyExpenseSql,
+    runReadOnlySql,
+    {
+      missingSql: "Send exactly one non-empty SELECT or WITH...SELECT sql statement.",
+      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. This endpoint accepts exactly one read-only SELECT or WITH...SELECT statement. Only supported relations may be queried, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and returned rows are capped at ${MAX_SQL_ROWS} per request with returnedRowCount, totalRowCount, and truncated metadata.`,
+    },
+  );
+
+export const handleSqlExecuteRouteWithWorkspaceResolver = async (
+  context: MachineRouteContext,
+  resolveWorkspaceId: typeof resolveSqlWorkspaceId,
+): Promise<APIGatewayProxyResult> =>
+  handleValidatedSqlRouteWithWorkspaceResolver(
+    context,
+    resolveWorkspaceId,
+    validateSingleMutationExpenseSql,
+    runSql,
+    {
+      missingSql: "Send exactly one non-empty INSERT, UPDATE, or DELETE mutation.",
+      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. This endpoint accepts exactly one approved INSERT, UPDATE, or DELETE mutation. Returned rows are capped at ${MAX_SQL_ROWS} per request with returnedRowCount, totalRowCount, and truncated metadata; mutations are limited to ${MAX_SQL_MUTATION_ROWS} affected rows.`,
+    },
+  );
+
+export const handleSqlRouteWithWorkspaceResolver = async (
+  context: MachineRouteContext,
+  resolveWorkspaceId: typeof resolveSqlWorkspaceId,
+): Promise<APIGatewayProxyResult> =>
+  handleValidatedSqlRouteWithWorkspaceResolver(
+    context,
+    resolveWorkspaceId,
+    validateExpenseSql,
+    runSql,
+    {
+      missingSql: "Send a non-empty sql string. Semicolon-separated statements are allowed.",
+      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first, semicolon-separated statements are allowed, only supported relations may be queried, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, returned rows are capped at ${MAX_SQL_ROWS} per statement and request with returnedRowCount, totalRowCount, and truncated metadata, and mutations are limited to ${MAX_SQL_MUTATION_ROWS} affected rows per request.`,
+    },
+  );
+
+export const handleSqlQueryRoute = async (
+  context: MachineRouteContext,
+): Promise<APIGatewayProxyResult> =>
+  handleSqlQueryRouteWithWorkspaceResolver(context, resolveSqlWorkspaceId);
+
+export const handleSqlExecuteRoute = async (
+  context: MachineRouteContext,
+): Promise<APIGatewayProxyResult> =>
+  handleSqlExecuteRouteWithWorkspaceResolver(context, resolveSqlWorkspaceId);
 
 export const handleSqlRoute = async (
   context: MachineRouteContext,

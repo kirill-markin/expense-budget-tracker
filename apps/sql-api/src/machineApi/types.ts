@@ -1,10 +1,21 @@
 import type { AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
-import { ensureTrustedIdentityProvisioned, queryAsTrustedIdentity, type UserIdentity, withRestrictedTrustedIdentityContext } from "../db.js";
+import {
+  ensureTrustedIdentityProvisioned,
+  queryAsTrustedIdentity,
+  queryAsTrustedIdentityBeforeDeadline,
+  resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline,
+  type UserIdentity,
+  withReadOnlyRestrictedTrustedIdentityContext,
+  withRestrictedTrustedIdentityContext,
+} from "../db.js";
 
-export type AuthenticatedContext = Readonly<{
+export type TrustedIdentityContext = Readonly<{
   identity: UserIdentity;
+}>;
+
+export type AuthenticatedContext = TrustedIdentityContext & Readonly<{
   connectionId: string;
   label: string;
   createdAt: string;
@@ -14,6 +25,9 @@ export type AuthenticatedContext = Readonly<{
 export type MachineApiDependencies = Readonly<{
   ensureTrustedIdentityProvisioned: typeof ensureTrustedIdentityProvisioned;
   queryAsTrustedIdentity: typeof queryAsTrustedIdentity;
+  queryAsTrustedIdentityBeforeDeadline: typeof queryAsTrustedIdentityBeforeDeadline;
+  resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: typeof resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline;
+  withReadOnlyRestrictedTrustedIdentityContext: typeof withReadOnlyRestrictedTrustedIdentityContext;
   withRestrictedTrustedIdentityContext: typeof withRestrictedTrustedIdentityContext;
 }>;
 

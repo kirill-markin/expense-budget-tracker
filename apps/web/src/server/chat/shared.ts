@@ -305,7 +305,7 @@ The result is returned as JSON in the shape { "ok": boolean, "tool": "query_data
 
 const toChatSqlError = (error: SqlPolicyError): Error => {
   if (error.code === "unsupported_statement") {
-    return new Error("Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
+    return new Error(error.message);
   }
   if (error.code === "on_conflict_not_allowed") {
     return new Error("ON CONFLICT is not supported in chat queries");
