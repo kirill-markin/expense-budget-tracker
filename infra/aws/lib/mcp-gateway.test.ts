@@ -83,22 +83,25 @@ const synthesizeMcpHttpApiDomainTemplate = (): Template => {
   return Template.fromStack(resources.stack);
 };
 
-test("MCP token bucket fits reserved concurrency and the RDS connection budget", (): void => {
+test("MCP HTTP API admits five concurrent four-request protocol bursts", (): void => {
+  const requiredProtocolBurst = MCP_CAPACITY_BUDGET.protocolBurstRequestsPerSession
+    * MCP_CAPACITY_BUDGET.concurrentSessionBurst;
+
+  assert.equal(MCP_CAPACITY_BUDGET.protocolBurstRequestsPerSession, 4);
+  assert.equal(MCP_CAPACITY_BUDGET.concurrentSessionBurst, 5);
+  assert.equal(MCP_CAPACITY_BUDGET.throttlingBurstLimit, 20);
+  assert.ok(MCP_CAPACITY_BUDGET.throttlingBurstLimit >= requiredProtocolBurst);
+  assert.equal(MCP_CAPACITY_BUDGET.throttlingRateLimit, 10);
+});
+
+test("MCP Lambda concurrency and pool ceiling preserve the RDS connection budget", (): void => {
   const reservedConnections = MCP_CAPACITY_BUDGET.reservedConcurrentExecutions
     * MCP_CAPACITY_BUDGET.maxConnectionsPerExecutionEnvironment;
   const remainingConnections = MCP_CAPACITY_BUDGET.approximateRdsMaxConnections
     - reservedConnections;
 
-  assert.equal(MCP_CAPACITY_BUDGET.responseAndCleanupHeadroomSeconds, 5);
-  assert.equal(MCP_CAPACITY_BUDGET.maxAcceptedOccupancySeconds, 25);
-  assert.equal(MCP_CAPACITY_BUDGET.throttlingBurstLimit, 3);
-  assert.equal(MCP_CAPACITY_BUDGET.throttlingRateLimit, 0.08);
-  assert.equal(MCP_CAPACITY_BUDGET.maxAcceptedConcurrency, 5);
   assert.equal(MCP_CAPACITY_BUDGET.reservedConcurrentExecutions, 5);
-  assert.equal(
-    MCP_CAPACITY_BUDGET.maxAcceptedConcurrency,
-    MCP_CAPACITY_BUDGET.reservedConcurrentExecutions,
-  );
+  assert.equal(MCP_CAPACITY_BUDGET.maxConnectionsPerExecutionEnvironment, 10);
   assert.equal(reservedConnections, 50);
   assert.equal(remainingConnections, 35);
 });
@@ -133,7 +136,7 @@ test("MCP HTTP API exposes only the canonical transport and pathful metadata rou
   assert.equal(routeKeys.some((routeKey) => routeKey.includes("/v1")), false);
 });
 
-test("MCP HTTP API stage applies conservative throttling, metrics, and safe access logs", (): void => {
+test("MCP HTTP API stage applies protocol-capable throttling, metrics, and safe access logs", (): void => {
   const template = synthesizeMcpHttpApiTemplate();
 
   template.hasResourceProperties("AWS::ApiGatewayV2::Stage", {
@@ -141,8 +144,8 @@ test("MCP HTTP API stage applies conservative throttling, metrics, and safe acce
     AutoDeploy: true,
     DefaultRouteSettings: {
       DetailedMetricsEnabled: true,
-      ThrottlingBurstLimit: 3,
-      ThrottlingRateLimit: 0.08,
+      ThrottlingBurstLimit: 20,
+      ThrottlingRateLimit: 10,
     },
     AccessLogSettings: {
       DestinationArn: Match.anyValue(),

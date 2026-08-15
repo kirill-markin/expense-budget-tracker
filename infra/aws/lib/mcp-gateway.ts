@@ -36,27 +36,21 @@ export const MCP_TIMEOUT_BUDGET = {
   lambdaSeconds: 35,
 } as const;
 
-const MCP_RESPONSE_AND_CLEANUP_HEADROOM_SECONDS = 5;
-const MCP_MAX_ACCEPTED_OCCUPANCY_SECONDS =
-  MCP_TIMEOUT_BUDGET.requestExecutionMs / 1_000
-  + MCP_RESPONSE_AND_CLEANUP_HEADROOM_SECONDS;
 const MCP_DB_SAFE_RESERVED_CONCURRENCY = 5;
-const MCP_USEFUL_BURST_CONCURRENCY = 3;
-const MCP_SUSTAINABLE_RATE_LIMIT =
-  (MCP_DB_SAFE_RESERVED_CONCURRENCY - MCP_USEFUL_BURST_CONCURRENCY)
-  / MCP_MAX_ACCEPTED_OCCUPANCY_SECONDS;
-const MCP_MAX_ACCEPTED_CONCURRENCY = MCP_USEFUL_BURST_CONCURRENCY
-  + Math.ceil(MCP_SUSTAINABLE_RATE_LIMIT * MCP_MAX_ACCEPTED_OCCUPANCY_SECONDS);
+const MCP_PROTOCOL_BURST_REQUESTS_PER_SESSION = 4;
+const MCP_CONCURRENT_SESSION_BURST = 5;
+const MCP_HTTP_API_BURST_LIMIT =
+  MCP_PROTOCOL_BURST_REQUESTS_PER_SESSION * MCP_CONCURRENT_SESSION_BURST;
+const MCP_HTTP_API_RATE_LIMIT = 10;
 
 export const MCP_CAPACITY_BUDGET = {
   approximateRdsMaxConnections: 85,
   maxConnectionsPerExecutionEnvironment: SQL_API_DB_POOL_MAX_CONNECTIONS,
-  responseAndCleanupHeadroomSeconds: MCP_RESPONSE_AND_CLEANUP_HEADROOM_SECONDS,
-  maxAcceptedOccupancySeconds: MCP_MAX_ACCEPTED_OCCUPANCY_SECONDS,
-  maxAcceptedConcurrency: MCP_MAX_ACCEPTED_CONCURRENCY,
+  protocolBurstRequestsPerSession: MCP_PROTOCOL_BURST_REQUESTS_PER_SESSION,
+  concurrentSessionBurst: MCP_CONCURRENT_SESSION_BURST,
   reservedConcurrentExecutions: MCP_DB_SAFE_RESERVED_CONCURRENCY,
-  throttlingBurstLimit: MCP_USEFUL_BURST_CONCURRENCY,
-  throttlingRateLimit: MCP_SUSTAINABLE_RATE_LIMIT,
+  throttlingBurstLimit: MCP_HTTP_API_BURST_LIMIT,
+  throttlingRateLimit: MCP_HTTP_API_RATE_LIMIT,
 } as const;
 
 export const createMcpHttpAccessLogFormat = (): apigw.AccessLogFormat =>
@@ -195,10 +189,9 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
     runtime: lambda.Runtime.NODEJS_24_X,
     timeout: cdk.Duration.seconds(MCP_TIMEOUT_BUDGET.lambdaSeconds),
     memorySize: 256,
-    // A burst of three plus two refill arrivals during the 25-second maximum
-    // accepted occupancy fits five reserved executions. Their explicit
-    // 10-connection pools reserve at most 50 of roughly 85 RDS connections,
-    // leaving 35 for web, auth, worker, and machine-API workloads.
+    // Reserved concurrency, independently of the HTTP API token bucket, caps
+    // five execution environments. Their explicit 10-connection pools reserve
+    // at most 50 of roughly 85 RDS connections, leaving 35 for other workloads.
     reservedConcurrentExecutions: MCP_CAPACITY_BUDGET.reservedConcurrentExecutions,
     vpc: props.vpc,
     vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
