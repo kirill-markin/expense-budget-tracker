@@ -24,6 +24,9 @@ export type UserIdentity = Readonly<{
 /**
  * Upsert the local identity mirror from trusted auth claims.
  *
+ * Callers must already be in a transaction. The transaction-scoped advisory
+ * lock serializes identity writes for this user across runtime instances.
+ *
  * `last_seen_at` and `updated_at` move forward on every authenticated request
  * so the row reflects recent activity without changing `first_seen_at`.
  */
@@ -31,6 +34,10 @@ export const upsertUserIdentity = async (
   client: PoolClient,
   identity: UserIdentity,
 ): Promise<void> => {
+  await client.query(
+    "SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64))::bigint)",
+    [identity.userId],
+  );
   await client.query(
     `INSERT INTO users (
        user_id,

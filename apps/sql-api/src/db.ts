@@ -82,10 +82,20 @@ export const withTransaction = async <T>(
   }
 };
 
+/**
+ * Upsert the local identity mirror from trusted auth claims.
+ *
+ * Callers must already be in a transaction. The transaction-scoped advisory
+ * lock serializes identity writes for this user across runtime instances.
+ */
 const upsertUserIdentity = async (
   client: pg.PoolClient,
   identity: UserIdentity,
 ): Promise<void> => {
+  await client.query(
+    "SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64))::bigint)",
+    [identity.userId],
+  );
   await client.query(
     `INSERT INTO users (
        user_id,
