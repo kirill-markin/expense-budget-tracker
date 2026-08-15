@@ -4,6 +4,7 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatch_actions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -23,6 +24,8 @@ export interface MonitoringProps {
   restApi: apigw.RestApi;
   authorizerFn: lambda.IFunction;
   sqlApiFn: lambda.IFunction;
+  mcpHttpApi: apigwv2.HttpApi;
+  mcpFn: lambda.IFunction;
   customEmailSenderFn: lambda.IFunction;
 }
 
@@ -110,6 +113,24 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 1,
     evaluationPeriods: 1,
     alarmDescription: "WAF blocked a request because of an unexpected large body",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  new cloudwatch.Alarm(scope, "WafSizeQueryBlockedAlarm", {
+    metric: new cloudwatch.Metric({
+      namespace: "AWS/WAFV2",
+      metricName: "BlockedRequests",
+      dimensionsMap: {
+        WebACL: props.webAclName,
+        Region: cdk.Aws.REGION,
+        Rule: "expense-tracker-size-query-reblock",
+      },
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "WAF blocked a request because of an unexpected large query string",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
@@ -283,6 +304,39 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 1,
     evaluationPeriods: 1,
     alarmDescription: "SQL API executor Lambda had errors",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  new cloudwatch.Alarm(scope, "McpApiGateway5xxAlarm", {
+    metric: props.mcpHttpApi.metricServerError({
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 5,
+    evaluationPeriods: 1,
+    alarmDescription: "MCP HTTP API returned 5+ server errors in 5 minutes",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  new cloudwatch.Alarm(scope, "McpLambdaErrorAlarm", {
+    metric: props.mcpFn.metricErrors({
+      period: cdk.Duration.minutes(15),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "MCP Lambda had errors",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  new cloudwatch.Alarm(scope, "McpLambdaThrottleAlarm", {
+    metric: props.mcpFn.metricThrottles({
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "MCP Lambda throttled despite the five-execution HTTP API capacity envelope",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 

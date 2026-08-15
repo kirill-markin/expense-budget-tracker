@@ -1,5 +1,10 @@
 import { Hono, type Context } from "hono";
 import {
+  getRawQueryByteLength,
+  MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
+  MAX_OAUTH_LOGIN_QUERY_BYTES,
+} from "@expense-budget-tracker/agent-shared";
+import {
   getOAuthConfig,
   isOAuthProtocolError,
   isValidClientRedirectUri,
@@ -78,6 +83,12 @@ const requestBodyTooLargeError = (
 const isRequestBodyTooLargeError = (error: unknown): error is RequestBodyTooLargeError =>
   error instanceof Error
   && (error as Partial<RequestBodyTooLargeError>).requestBodyTooLarge === true;
+
+const assertQueryWithinLimit = (url: string, maxBytes: number, name: string): void => {
+  if (getRawQueryByteLength(url) > maxBytes) {
+    throw oauthError("invalid_request", `${name} query must not exceed ${maxBytes} UTF-8 bytes`, 400);
+  }
+};
 
 const hasOversizedContentLength = (request: Request, maxBytes: number): boolean => {
   const rawContentLength = request.headers.get("content-length");
@@ -304,7 +315,9 @@ const buildLoginRedirect = (issuer: string, request: AuthorizationRequest): stri
   })) authorizationUrl.searchParams.set(name, value);
   const loginUrl = new URL("/login", issuer);
   loginUrl.searchParams.set("redirect_uri", authorizationUrl.toString());
-  return loginUrl.toString();
+  const redirect = loginUrl.toString();
+  assertQueryWithinLimit(redirect, MAX_OAUTH_LOGIN_QUERY_BYTES, "Login");
+  return redirect;
 };
 
 const requireBrowserIdentity = async (
@@ -392,9 +405,15 @@ app.post("/oauth/register", async (c) => {
 app.get("/oauth/authorize", async (c) => {
   noStore(c);
   const config = dependencies.getOAuthConfig();
-  const params = new URL(c.req.url).searchParams;
+  let params = new URLSearchParams();
   let authorizationRequest: AuthorizationRequest | null = null;
   try {
+    assertQueryWithinLimit(
+      c.req.url,
+      MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
+      "Authorization",
+    );
+    params = new URL(c.req.url).searchParams;
     const { client, request } = await loadAuthorizationRequest(params, config.resource, dependencies.getOAuthClient);
     authorizationRequest = request;
     validateConsentSubmissionSize(request);

@@ -6,6 +6,10 @@ import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
+import {
+  MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
+  MAX_OAUTH_LOGIN_QUERY_BYTES,
+} from "@expense-budget-tracker/agent-shared";
 
 export interface IngressProps {
   vpc: ec2.Vpc;
@@ -90,6 +94,15 @@ const hasLabel = (label: string): wafv2.CfnWebACL.StatementProperty => ({
   },
 });
 
+const querySizeAtMost = (maxBytes: number): wafv2.CfnWebACL.StatementProperty => ({
+  sizeConstraintStatement: {
+    comparisonOperator: "LE",
+    fieldToMatch: { queryString: {} },
+    size: maxBytes,
+    textTransformations: [noneTextTransformation()],
+  },
+});
+
 const andStatement = (
   statements: ReadonlyArray<wafv2.CfnWebACL.StatementProperty>,
 ): wafv2.CfnWebACL.StatementProperty => ({
@@ -147,6 +160,111 @@ const postRequestToApp = (
     headerIs("origin", `https://${appDomain}`),
     headerStartsWith("content-type", contentTypePrefix),
   ]);
+
+export const buildIngressWafRules = (
+  appDomain: string,
+  authDomain: string,
+): ReadonlyArray<wafv2.CfnWebACL.RuleProperty> => {
+  const chatJsonRequest = postRequestToApp(appDomain, "/api/chat", "application/json");
+  const newChatJsonRequest = postRequestToApp(
+    appDomain,
+    "/api/chat/new",
+    "application/json",
+  );
+  const chatTranscriptionUploadRequest = postRequestToApp(
+    appDomain,
+    "/api/chat/transcriptions",
+    "multipart/form-data",
+  );
+  const boundedOAuthQueryRequest = orStatement([
+    andStatement([
+      methodIs("GET"),
+      headerIs("host", authDomain),
+      uriPathIs("/oauth/authorize"),
+      querySizeAtMost(MAX_OAUTH_AUTHORIZE_QUERY_BYTES),
+    ]),
+    andStatement([
+      methodIs("GET"),
+      headerIs("host", authDomain),
+      uriPathIs("/login"),
+      querySizeAtMost(MAX_OAUTH_LOGIN_QUERY_BYTES),
+    ]),
+  ]);
+
+  return [
+    {
+      name: "AWSManagedCommonRules",
+      priority: 0,
+      overrideAction: { none: {} },
+      statement: {
+        managedRuleGroupStatement: {
+          vendorName: "AWS",
+          name: "AWSManagedRulesCommonRuleSet",
+          ruleActionOverrides: [
+            {
+              name: "CrossSiteScripting_BODY",
+              actionToUse: { count: {} },
+            },
+            // SizeRestrictions_BODY blocks requests with body > 8 KB.
+            // Large app payloads are re-blocked below except for explicit upload routes.
+            {
+              name: "SizeRestrictions_BODY",
+              actionToUse: { count: {} },
+            },
+            // OAuth authorization queries can exceed the managed 2 KiB threshold.
+            // Exact bounded auth routes are allowed and all other matches are re-blocked.
+            {
+              name: "SizeRestrictions_QUERYSTRING",
+              actionToUse: { count: {} },
+            },
+          ],
+        },
+      },
+      visibilityConfig: {
+        sampledRequestsEnabled: true,
+        cloudWatchMetricsEnabled: true,
+        metricName: "expense-tracker-common-rules",
+      },
+    },
+    blockLabeledRequestUnless(
+      "BlockUnexpectedXssBodyMatches",
+      1,
+      "awswaf:managed:aws:core-rule-set:CrossSiteScripting_Body",
+      chatTranscriptionUploadRequest,
+      "expense-tracker-xss-body-reblock",
+    ),
+    blockLabeledRequestUnless(
+      "BlockUnexpectedBodySizeMatches",
+      2,
+      "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body",
+      orStatement([chatJsonRequest, newChatJsonRequest, chatTranscriptionUploadRequest]),
+      "expense-tracker-size-body-reblock",
+    ),
+    blockLabeledRequestUnless(
+      "BlockUnexpectedQuerySizeMatches",
+      3,
+      "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString",
+      boundedOAuthQueryRequest,
+      "expense-tracker-size-query-reblock",
+    ),
+    {
+      name: "AWSManagedKnownBadInputs",
+      priority: 4,
+      overrideAction: { none: {} },
+      statement: {
+        managedRuleGroupStatement: {
+          vendorName: "AWS",
+          name: "AWSManagedRulesKnownBadInputsRuleSet",
+        },
+      },
+      visibilityConfig: {
+        sampledRequestsEnabled: true,
+        cloudWatchMetricsEnabled: true,
+        metricName: "expense-tracker-bad-inputs",
+      },
+    },
+  ];
+};
 
 export function ingress(scope: Construct, props: IngressProps): IngressResult {
   // --- ALB ---
@@ -237,18 +355,6 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   //
   // WAF is kept for managed rule sets (SQLi, XSS, known bad inputs) which inspect
   // request content and work correctly regardless of source IP.
-  const chatJsonRequest = postRequestToApp(props.appDomain, "/api/chat", "application/json");
-  const newChatJsonRequest = postRequestToApp(
-    props.appDomain,
-    "/api/chat/new",
-    "application/json",
-  );
-  const chatTranscriptionUploadRequest = postRequestToApp(
-    props.appDomain,
-    "/api/chat/transcriptions",
-    "multipart/form-data",
-  );
-
   const waf = new wafv2.CfnWebACL(scope, "Waf", {
     scope: "REGIONAL",
     defaultAction: { allow: {} },
@@ -257,66 +363,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
       cloudWatchMetricsEnabled: true,
       metricName: "expense-tracker-waf",
     },
-    rules: [
-      {
-        name: "AWSManagedCommonRules",
-        priority: 0,
-        overrideAction: { none: {} },
-        statement: {
-          managedRuleGroupStatement: {
-            vendorName: "AWS",
-            name: "AWSManagedRulesCommonRuleSet",
-            ruleActionOverrides: [
-              {
-                name: "CrossSiteScripting_BODY",
-                actionToUse: { count: {} },
-              },
-              // SizeRestrictions_BODY blocks requests with body > 8 KB.
-              // Large app payloads are re-blocked below except for explicit upload routes.
-              {
-                name: "SizeRestrictions_BODY",
-                actionToUse: { count: {} },
-              },
-            ],
-          },
-        },
-        visibilityConfig: {
-          sampledRequestsEnabled: true,
-          cloudWatchMetricsEnabled: true,
-          metricName: "expense-tracker-common-rules",
-        },
-      },
-      blockLabeledRequestUnless(
-        "BlockUnexpectedXssBodyMatches",
-        1,
-        "awswaf:managed:aws:core-rule-set:CrossSiteScripting_Body",
-        chatTranscriptionUploadRequest,
-        "expense-tracker-xss-body-reblock",
-      ),
-      blockLabeledRequestUnless(
-        "BlockUnexpectedBodySizeMatches",
-        2,
-        "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body",
-        orStatement([chatJsonRequest, newChatJsonRequest, chatTranscriptionUploadRequest]),
-        "expense-tracker-size-body-reblock",
-      ),
-      {
-        name: "AWSManagedKnownBadInputs",
-        priority: 3,
-        overrideAction: { none: {} },
-        statement: {
-          managedRuleGroupStatement: {
-            vendorName: "AWS",
-            name: "AWSManagedRulesKnownBadInputsRuleSet",
-          },
-        },
-        visibilityConfig: {
-          sampledRequestsEnabled: true,
-          cloudWatchMetricsEnabled: true,
-          metricName: "expense-tracker-bad-inputs",
-        },
-      },
-    ],
+    rules: [...buildIngressWafRules(props.appDomain, props.authDomain)],
   });
   const webAclName = cdk.Fn.select(0, cdk.Fn.split("|", waf.ref));
 

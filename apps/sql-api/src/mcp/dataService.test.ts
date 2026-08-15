@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult } from "pg";
 import {
+  createSqlExecutionDeadline,
+  MCP_SQL_STATEMENT_TIMEOUT_MS,
+  type SqlExecutionDeadline,
   validateSingleExpenseSql,
   validateSingleReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
-import type { QueryFn, UserIdentity } from "../db.js";
+import type { RestrictedQueryFn, UserIdentity } from "../db.js";
 import { createQueryResult } from "../handlerTestUtils.js";
 import {
   createMcpDataServices,
@@ -35,6 +38,14 @@ type DataCalls = {
   }>>;
   readContextWorkspaceIds: Array<string>;
   writeContextWorkspaceIds: Array<string>;
+  readStatementTimeouts: Array<number>;
+  writeStatementTimeouts: Array<number>;
+  readCommandTimeouts: Array<number>;
+  writeCommandTimeouts: Array<number>;
+  sqlLookupDeadlines: Array<SqlExecutionDeadline>;
+  workspaceQueryDeadlines: Array<SqlExecutionDeadline>;
+  readContextDeadlines: Array<SqlExecutionDeadline>;
+  writeContextDeadlines: Array<SqlExecutionDeadline>;
 };
 
 const createCalls = (): DataCalls => ({
@@ -42,6 +53,14 @@ const createCalls = (): DataCalls => ({
   workspaceQueries: [],
   readContextWorkspaceIds: [],
   writeContextWorkspaceIds: [],
+  readStatementTimeouts: [],
+  writeStatementTimeouts: [],
+  readCommandTimeouts: [],
+  writeCommandTimeouts: [],
+  sqlLookupDeadlines: [],
+  workspaceQueryDeadlines: [],
+  readContextDeadlines: [],
+  writeContextDeadlines: [],
 });
 
 const createRestrictedQueryResult = (sql: string): QueryResult => {
@@ -80,36 +99,59 @@ const createDependencies = (
   workspaceRows: ReadonlyArray<unknown>,
   calls: DataCalls,
 ): McpDataDependencies => ({
-  queryAsExistingTrustedIdentity: async (identity, text, params) => {
+  queryAsExistingTrustedIdentityBeforeDeadline: async (
+    identity,
+    text,
+    params,
+    deadline,
+  ) => {
     calls.userQueries.push({ userId: identity.userId, text, params });
+    calls.sqlLookupDeadlines.push(deadline);
     return createQueryResult(userRows);
   },
-  queryAsExistingTrustedWorkspace: async (identity, workspaceId, text, params) => {
+  queryAsExistingTrustedWorkspaceBeforeDeadline: async (
+    identity,
+    workspaceId,
+    text,
+    params,
+    deadline,
+  ) => {
     calls.workspaceQueries.push({
       userId: identity.userId,
       workspaceId,
       text,
       params,
     });
+    calls.workspaceQueryDeadlines.push(deadline);
     return createQueryResult(workspaceRows);
   },
   withNonProvisioningReadOnlyRestrictedTrustedIdentityContext: async <T>(
     _identity: UserIdentity,
     workspaceId: string,
-    _statementTimeoutMs: number,
-    callback: (queryFn: QueryFn) => Promise<T>,
+    deadline: SqlExecutionDeadline,
+    callback: (queryFn: RestrictedQueryFn) => Promise<T>,
   ): Promise<T> => {
     calls.readContextWorkspaceIds.push(workspaceId);
-    return callback(async (text): Promise<QueryResult> => createRestrictedQueryResult(text));
+    calls.readContextDeadlines.push(deadline);
+    calls.readStatementTimeouts.push(deadline.timeoutMs);
+    return callback(async (text, _params, statementTimeoutMs): Promise<QueryResult> => {
+      calls.readCommandTimeouts.push(statementTimeoutMs);
+      return createRestrictedQueryResult(text);
+    });
   },
   withRestrictedTrustedIdentityContext: async <T>(
     _identity: UserIdentity,
     workspaceId: string,
-    _statementTimeoutMs: number,
-    callback: (queryFn: QueryFn) => Promise<T>,
+    deadline: SqlExecutionDeadline,
+    callback: (queryFn: RestrictedQueryFn) => Promise<T>,
   ): Promise<T> => {
     calls.writeContextWorkspaceIds.push(workspaceId);
-    return callback(async (text): Promise<QueryResult> => createRestrictedQueryResult(text));
+    calls.writeContextDeadlines.push(deadline);
+    calls.writeStatementTimeouts.push(deadline.timeoutMs);
+    return callback(async (text, _params, statementTimeoutMs): Promise<QueryResult> => {
+      calls.writeCommandTimeouts.push(statementTimeoutMs);
+      return createRestrictedQueryResult(text);
+    });
   },
 });
 
@@ -117,11 +159,16 @@ test("MCP data services preserve zero workspaces without provisioning or write c
   const calls = createCalls();
   const services = createMcpDataServices(createDependencies([], [], calls));
 
-  const workspaces = await services.listWorkspaces(IDENTITY);
+  const executionDeadline = createSqlExecutionDeadline(
+    MCP_SQL_STATEMENT_TIMEOUT_MS,
+    Date.now,
+  );
+  const workspaces = await services.listWorkspaces(IDENTITY, executionDeadline);
   const queryResult = await services.runReadOnlySql(
     { identity: IDENTITY },
     WORKSPACE_ID,
     validateSingleReadOnlyExpenseSql("SELECT account_id FROM accounts"),
+    executionDeadline,
   );
 
   assert.deepEqual(workspaces, []);
@@ -132,6 +179,7 @@ test("MCP data services preserve zero workspaces without provisioning or write c
     assert.doesNotMatch(query.text, /\b(?:INSERT|UPDATE|DELETE)\b|ensure_/iu);
   }
   assert.deepEqual(calls.workspaceQueries, []);
+  assert.deepEqual(calls.sqlLookupDeadlines, [executionDeadline, executionDeadline]);
   assert.deepEqual(calls.readContextWorkspaceIds, []);
   assert.deepEqual(calls.writeContextWorkspaceIds, []);
 });
@@ -139,8 +187,9 @@ test("MCP data services preserve zero workspaces without provisioning or write c
 test("MCP workspace lookup requires exact existing user membership", async (): Promise<void> => {
   const calls = createCalls();
   const services = createMcpDataServices(createDependencies([], [], calls));
+  const deadline = createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, Date.now);
 
-  const workspace = await services.getWorkspace(IDENTITY, WORKSPACE_ID);
+  const workspace = await services.getWorkspace(IDENTITY, WORKSPACE_ID, deadline);
 
   assert.equal(workspace, null);
   assert.equal(calls.userQueries.length, 1);
@@ -148,19 +197,22 @@ test("MCP workspace lookup requires exact existing user membership", async (): P
   assert.match(calls.userQueries[0]?.text ?? "", /JOIN workspace_members/u);
   assert.deepEqual(calls.readContextWorkspaceIds, []);
   assert.deepEqual(calls.writeContextWorkspaceIds, []);
+  assert.deepEqual(calls.sqlLookupDeadlines, [deadline]);
 });
 
 test("MCP schema reads use only the existing workspace read context", async (): Promise<void> => {
   const calls = createCalls();
   const services = createMcpDataServices(createDependencies([], [], calls));
+  const deadline = createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, Date.now);
 
-  await services.loadAllowedSchemaForWorkspace(IDENTITY, WORKSPACE_ID);
+  await services.loadAllowedSchemaForWorkspace(IDENTITY, WORKSPACE_ID, deadline);
 
   assert.deepEqual(calls.userQueries, []);
   assert.equal(calls.workspaceQueries.length, 1);
   assert.equal(calls.workspaceQueries[0]?.userId, IDENTITY.userId);
   assert.equal(calls.workspaceQueries[0]?.workspaceId, WORKSPACE_ID);
   assert.match(calls.workspaceQueries[0]?.text ?? "", /FROM information_schema[.]columns/u);
+  assert.deepEqual(calls.workspaceQueryDeadlines, [deadline]);
   assert.deepEqual(calls.readContextWorkspaceIds, []);
   assert.deepEqual(calls.writeContextWorkspaceIds, []);
 });
@@ -172,20 +224,38 @@ test("MCP SQL routes reads through the non-provisioning reader and writes throug
     [],
     calls,
   ));
+  const readDeadline = createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, Date.now);
+  const writeDeadline = createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, Date.now);
 
   await services.runReadOnlySql(
     { identity: IDENTITY },
     WORKSPACE_ID,
     validateSingleReadOnlyExpenseSql("SELECT account_id FROM accounts"),
+    readDeadline,
   );
   await services.runSql(
     { identity: IDENTITY },
     WORKSPACE_ID,
     validateSingleExpenseSql("DELETE FROM budget_lines WHERE category = 'Food'"),
+    writeDeadline,
   );
 
   assert.deepEqual(calls.readContextWorkspaceIds, [WORKSPACE_ID]);
   assert.deepEqual(calls.writeContextWorkspaceIds, [WORKSPACE_ID]);
+  assert.deepEqual(calls.readStatementTimeouts, [MCP_SQL_STATEMENT_TIMEOUT_MS]);
+  assert.deepEqual(calls.writeStatementTimeouts, [MCP_SQL_STATEMENT_TIMEOUT_MS]);
+  assert.deepEqual(calls.sqlLookupDeadlines, [readDeadline, writeDeadline]);
+  assert.deepEqual(calls.readContextDeadlines, [readDeadline]);
+  assert.deepEqual(calls.writeContextDeadlines, [writeDeadline]);
+  assert.equal(calls.readCommandTimeouts.length, 4);
+  assert.equal(calls.writeCommandTimeouts.length, 1);
+  assert.equal([
+    ...calls.readCommandTimeouts,
+    ...calls.writeCommandTimeouts,
+  ].every(
+    (statementTimeoutMs) => statementTimeoutMs > 0
+      && statementTimeoutMs <= MCP_SQL_STATEMENT_TIMEOUT_MS,
+  ), true);
   assert.equal(calls.userQueries.length, 2);
   assert.deepEqual(calls.userQueries.map((query) => query.params), [
     [WORKSPACE_ID, IDENTITY.userId],

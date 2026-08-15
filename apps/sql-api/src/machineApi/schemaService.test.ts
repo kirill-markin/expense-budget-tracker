@@ -30,6 +30,12 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
       queryWorkspaceId = workspaceId;
       return createQueryResult([]);
     },
+    queryAsTrustedIdentityBeforeDeadline: async () => {
+      throw new Error("queryAsTrustedIdentityBeforeDeadline should not be called");
+    },
+    resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: async () => {
+      throw new Error("resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline should not be called");
+    },
     withReadOnlyRestrictedTrustedIdentityContext: async () => {
       throw new Error("withReadOnlyRestrictedTrustedIdentityContext should not be called");
     },

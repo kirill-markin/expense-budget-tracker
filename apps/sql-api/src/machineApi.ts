@@ -3,6 +3,8 @@ import { AGENT_API_KEY_ENV_VAR_NAME, buildErrorEnvelope } from "@expense-budget-
 import {
   ensureTrustedIdentityProvisioned,
   queryAsTrustedIdentity,
+  queryAsTrustedIdentityBeforeDeadline,
+  resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline,
   withReadOnlyRestrictedTrustedIdentityContext,
   withRestrictedTrustedIdentityContext,
 } from "./db.js";
@@ -28,6 +30,8 @@ export const createMachineApiHandler = (
   const dependencies: MachineApiDependencies = {
     ensureTrustedIdentityProvisioned,
     queryAsTrustedIdentity,
+    queryAsTrustedIdentityBeforeDeadline,
+    resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline,
     withReadOnlyRestrictedTrustedIdentityContext,
     withRestrictedTrustedIdentityContext,
     ...overrides,

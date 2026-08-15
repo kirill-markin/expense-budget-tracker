@@ -1,4 +1,9 @@
-import { resolveOrCreateWorkspaceForTrustedIdentity, type QueryFn, type UserIdentity } from "../db.js";
+import type { SqlExecutionDeadline } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  resolveOrCreateWorkspaceForTrustedIdentity,
+  type QueryFn,
+  type UserIdentity,
+} from "../db.js";
 import type { AuthenticatedContext, MachineApiDependencies, WorkspaceSummary } from "./types.js";
 
 const WORKSPACES_SQL = `SELECT w.workspace_id, w.name
@@ -118,6 +123,29 @@ export const getWorkspace = async (
   );
 };
 
+export const getWorkspaceBeforeDeadline = async (
+  dependencies: MachineApiDependencies,
+  identity: UserIdentity,
+  workspaceId: string,
+  deadline: SqlExecutionDeadline,
+): Promise<WorkspaceSummary | null> => {
+  const contextWorkspace = await dependencies.resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline(
+    identity,
+    deadline,
+  );
+  return getWorkspaceWithQuery(
+    (text, params) => dependencies.queryAsTrustedIdentityBeforeDeadline(
+      identity,
+      contextWorkspace.workspaceId,
+      text,
+      params,
+      deadline,
+    ),
+    identity,
+    workspaceId,
+  );
+};
+
 export const persistSelectedWorkspace = async (
   dependencies: MachineApiDependencies,
   authenticated: AuthenticatedContext,
@@ -136,22 +164,68 @@ export const persistSelectedWorkspace = async (
   }
 };
 
-const getSelectedWorkspace = async (
+const listWorkspacesBeforeDeadline = async (
+  dependencies: MachineApiDependencies,
+  identity: UserIdentity,
+  deadline: SqlExecutionDeadline,
+): Promise<ReadonlyArray<WorkspaceSummary>> => {
+  const contextWorkspace = await dependencies.resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline(
+    identity,
+    deadline,
+  );
+  return listWorkspacesWithQuery(
+    (text, params) => dependencies.queryAsTrustedIdentityBeforeDeadline(
+      identity,
+      contextWorkspace.workspaceId,
+      text,
+      params,
+      deadline,
+    ),
+    identity,
+  );
+};
+
+const persistSelectedWorkspaceBeforeDeadline = async (
   dependencies: MachineApiDependencies,
   authenticated: AuthenticatedContext,
+  workspaceId: string,
+  deadline: SqlExecutionDeadline,
+): Promise<void> => {
+  const contextWorkspace = await dependencies.resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline(
+    authenticated.identity,
+    deadline,
+  );
+  const result = await dependencies.queryAsTrustedIdentityBeforeDeadline(
+    authenticated.identity,
+    contextWorkspace.workspaceId,
+    AGENT_CONNECTION_UPDATE_SQL,
+    [workspaceId, authenticated.connectionId, authenticated.identity.userId],
+    deadline,
+  );
+  if (result.rows.length !== 1) {
+    throw new Error(`Failed to persist selected workspace for connection ${authenticated.connectionId}`);
+  }
+};
+
+const getSelectedWorkspaceBeforeDeadline = async (
+  dependencies: MachineApiDependencies,
+  authenticated: AuthenticatedContext,
+  deadline: SqlExecutionDeadline,
 ): Promise<string | null> => {
-  const contextWorkspace = await resolveOrCreateWorkspaceForTrustedIdentity(authenticated.identity);
-  const result = await dependencies.queryAsTrustedIdentity(
+  const contextWorkspace = await dependencies.resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline(
+    authenticated.identity,
+    deadline,
+  );
+  const result = await dependencies.queryAsTrustedIdentityBeforeDeadline(
     authenticated.identity,
     contextWorkspace.workspaceId,
     AGENT_CONNECTION_SELECT_SQL,
     [authenticated.connectionId, authenticated.identity.userId],
+    deadline,
   );
-
   if (result.rows.length === 0) {
     return null;
   }
-
   const row = result.rows[0] as { selected_workspace_id: string | null };
   return row.selected_workspace_id;
 };
@@ -160,17 +234,26 @@ export const resolveSqlWorkspaceId = async (
   dependencies: MachineApiDependencies,
   authenticated: AuthenticatedContext,
   headerWorkspaceId: string,
+  deadline: SqlExecutionDeadline,
 ): Promise<string | null> => {
   if (headerWorkspaceId !== "") {
     return headerWorkspaceId;
   }
 
-  const savedWorkspaceId = await getSelectedWorkspace(dependencies, authenticated);
+  const savedWorkspaceId = await getSelectedWorkspaceBeforeDeadline(
+    dependencies,
+    authenticated,
+    deadline,
+  );
   if (savedWorkspaceId !== null && savedWorkspaceId !== "") {
     return savedWorkspaceId;
   }
 
-  const workspaces = await listWorkspaces(dependencies, authenticated.identity);
+  const workspaces = await listWorkspacesBeforeDeadline(
+    dependencies,
+    authenticated.identity,
+    deadline,
+  );
   if (workspaces.length !== 1) {
     return null;
   }
@@ -180,6 +263,11 @@ export const resolveSqlWorkspaceId = async (
     throw new Error("Expected exactly one workspace, but none were found");
   }
 
-  await persistSelectedWorkspace(dependencies, authenticated, onlyWorkspace.workspaceId);
+  await persistSelectedWorkspaceBeforeDeadline(
+    dependencies,
+    authenticated,
+    onlyWorkspace.workspaceId,
+    deadline,
+  );
   return onlyWorkspace.workspaceId;
 };

@@ -1,10 +1,11 @@
 import type {
+  SqlExecutionDeadline,
   ValidatedExpenseSql,
   ValidatedReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
-  queryAsExistingTrustedIdentity,
-  queryAsExistingTrustedWorkspace,
+  queryAsExistingTrustedIdentityBeforeDeadline,
+  queryAsExistingTrustedWorkspaceBeforeDeadline,
   type UserIdentity,
   withNonProvisioningReadOnlyRestrictedTrustedIdentityContext,
   withRestrictedTrustedIdentityContext,
@@ -25,43 +26,70 @@ import {
 } from "../machineApi/workspaceService.js";
 
 export type McpDataDependencies = Readonly<{
-  queryAsExistingTrustedIdentity: typeof queryAsExistingTrustedIdentity;
-  queryAsExistingTrustedWorkspace: typeof queryAsExistingTrustedWorkspace;
+  queryAsExistingTrustedIdentityBeforeDeadline: typeof queryAsExistingTrustedIdentityBeforeDeadline;
+  queryAsExistingTrustedWorkspaceBeforeDeadline: typeof queryAsExistingTrustedWorkspaceBeforeDeadline;
   withNonProvisioningReadOnlyRestrictedTrustedIdentityContext: typeof withNonProvisioningReadOnlyRestrictedTrustedIdentityContext;
   withRestrictedTrustedIdentityContext: typeof withRestrictedTrustedIdentityContext;
 }>;
 
 export type McpDataServices = Readonly<{
-  listWorkspaces: (identity: UserIdentity) => Promise<ReadonlyArray<WorkspaceSummary>>;
-  getWorkspace: (identity: UserIdentity, workspaceId: string) => Promise<WorkspaceSummary | null>;
-  loadAllowedSchemaForWorkspace: (identity: UserIdentity, workspaceId: string) => Promise<ReadonlyArray<SchemaRelation>>;
+  listWorkspaces: (
+    identity: UserIdentity,
+    deadline: SqlExecutionDeadline,
+  ) => Promise<ReadonlyArray<WorkspaceSummary>>;
+  getWorkspace: (
+    identity: UserIdentity,
+    workspaceId: string,
+    deadline: SqlExecutionDeadline,
+  ) => Promise<WorkspaceSummary | null>;
+  loadAllowedSchemaForWorkspace: (
+    identity: UserIdentity,
+    workspaceId: string,
+    deadline: SqlExecutionDeadline,
+  ) => Promise<ReadonlyArray<SchemaRelation>>;
   runReadOnlySql: (
     authenticated: TrustedIdentityContext,
     workspaceId: string,
     validated: ValidatedReadOnlyExpenseSql,
+    deadline: SqlExecutionDeadline,
   ) => Promise<Readonly<Record<string, unknown>> | null>;
   runSql: (
     authenticated: TrustedIdentityContext,
     workspaceId: string,
     validated: ValidatedExpenseSql,
+    deadline: SqlExecutionDeadline,
   ) => Promise<Readonly<Record<string, unknown>> | null>;
 }>;
 
 export const createMcpDataServices = (
   dependencies: McpDataDependencies,
 ): McpDataServices => {
-  const listWorkspaces = (identity: UserIdentity): Promise<ReadonlyArray<WorkspaceSummary>> =>
+  const listWorkspaces = (
+    identity: UserIdentity,
+    deadline: SqlExecutionDeadline,
+  ): Promise<ReadonlyArray<WorkspaceSummary>> =>
     listWorkspacesWithQuery(
-      (text, params) => dependencies.queryAsExistingTrustedIdentity(identity, text, params),
+      (text, params) => dependencies.queryAsExistingTrustedIdentityBeforeDeadline(
+        identity,
+        text,
+        params,
+        deadline,
+      ),
       identity,
     );
 
   const getWorkspace = (
     identity: UserIdentity,
     workspaceId: string,
+    deadline: SqlExecutionDeadline,
   ): Promise<WorkspaceSummary | null> =>
     getWorkspaceWithQuery(
-      (text, params) => dependencies.queryAsExistingTrustedIdentity(identity, text, params),
+      (text, params) => dependencies.queryAsExistingTrustedIdentityBeforeDeadline(
+        identity,
+        text,
+        params,
+        deadline,
+      ),
       identity,
       workspaceId,
     );
@@ -69,13 +97,15 @@ export const createMcpDataServices = (
   const loadAllowedSchemaForWorkspace = (
     identity: UserIdentity,
     workspaceId: string,
+    deadline: SqlExecutionDeadline,
   ): Promise<ReadonlyArray<SchemaRelation>> =>
     loadAllowedSchemaWithQuery(
-      (text, params) => dependencies.queryAsExistingTrustedWorkspace(
+      (text, params) => dependencies.queryAsExistingTrustedWorkspaceBeforeDeadline(
         identity,
         workspaceId,
         text,
         params,
+        deadline,
       ),
     );
 
@@ -83,11 +113,13 @@ export const createMcpDataServices = (
     authenticated: TrustedIdentityContext,
     workspaceId: string,
     validated: ValidatedReadOnlyExpenseSql,
+    deadline: SqlExecutionDeadline,
   ): Promise<Readonly<Record<string, unknown>> | null> =>
     runReadOnlySqlWithServices(
       authenticated,
       workspaceId,
       validated,
+      deadline,
       getWorkspace,
       dependencies.withNonProvisioningReadOnlyRestrictedTrustedIdentityContext,
     );
@@ -96,11 +128,13 @@ export const createMcpDataServices = (
     authenticated: TrustedIdentityContext,
     workspaceId: string,
     validated: ValidatedExpenseSql,
+    deadline: SqlExecutionDeadline,
   ): Promise<Readonly<Record<string, unknown>> | null> =>
     runSqlWithServices(
       authenticated,
       workspaceId,
       validated,
+      deadline,
       getWorkspace,
       dependencies.withRestrictedTrustedIdentityContext,
     );
@@ -115,8 +149,8 @@ export const createMcpDataServices = (
 };
 
 export const mcpDataServices = createMcpDataServices({
-  queryAsExistingTrustedIdentity,
-  queryAsExistingTrustedWorkspace,
+  queryAsExistingTrustedIdentityBeforeDeadline,
+  queryAsExistingTrustedWorkspaceBeforeDeadline,
   withNonProvisioningReadOnlyRestrictedTrustedIdentityContext,
   withRestrictedTrustedIdentityContext,
 });

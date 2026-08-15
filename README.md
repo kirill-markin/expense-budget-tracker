@@ -30,20 +30,30 @@ Start at `GET https://api.expense-budget-tracker.com/v1/`. The discovery respons
 1. **Open `GET https://api.expense-budget-tracker.com/v1/` in your agent** — it will discover the OTP onboarding flow automatically
 2. **Complete email OTP login** — the auth service returns a long-lived `ApiKey`
 3. **Give the key to your AI agent** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://openai.com/index/codex/), or any agent that can call HTTP APIs
-4. **Send the agent screenshots, CSV files, or PDF bank statements** — it parses them and inserts transactions via the SQL API
+4. **Send the agent screenshots, CSV files, or PDF bank statements** — it parses them and inserts transactions through the single-statement SQL execute endpoint
 5. **Open the web UI** — view actual spending by category and plan the budget for the next month
 
-Example request the agent sends:
+For readonly work, agents send one `SELECT` or `WITH...SELECT` statement to the primary query endpoint:
 
 ```bash
-curl -X POST https://api.expense-budget-tracker.com/v1/sql \
+curl -X POST https://api.expense-budget-tracker.com/v1/sql/query \
+  -H "Authorization: ApiKey ebta_..." \
+  -H "X-Workspace-Id: workspace-id" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT ts, amount, currency, category FROM ledger_entries ORDER BY ts DESC LIMIT 20"}'
+```
+
+For an explicitly approved write, agents send one `INSERT`, `UPDATE`, or `DELETE` statement to the primary execute endpoint:
+
+```bash
+curl -X POST https://api.expense-budget-tracker.com/v1/sql/execute \
   -H "Authorization: ApiKey ebta_..." \
   -H "X-Workspace-Id: workspace-id" \
   -H "Content-Type: application/json" \
   -d '{"sql": "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, category, counterparty, note) VALUES ('"'"'evt-001'"'"', '"'"'2025-03-15 12:30:00+00'"'"', '"'"'chase-checking'"'"', -42.50, '"'"'USD'"'"', '"'"'spend'"'"', '"'"'groceries'"'"', '"'"'Whole Foods'"'"', '"'"'Weekly groceries'"'"')"}'
 ```
 
-After `POST /v1/workspaces/{workspaceId}/select`, the API key remembers that workspace, so `X-Workspace-Id` becomes optional on later `/v1/sql` calls. If the user has exactly one workspace and no saved selection yet, the API auto-saves and uses that single workspace.
+After `POST /v1/workspaces/{workspaceId}/select`, the API key remembers that workspace, so `X-Workspace-Id` becomes optional on later `/v1/sql/query`, `/v1/sql/execute`, and compatibility `/v1/sql` calls; send the header to override the saved selection. If the user has exactly one workspace and no saved selection yet, the API auto-saves and uses that single workspace. `POST /v1/sql` remains available only for compatibility when an atomic multi-statement script is required.
 
 ## Documentation
 

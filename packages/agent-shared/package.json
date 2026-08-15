@@ -4,37 +4,63 @@
   "private": true,
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "dist-cjs"
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/index.d.cts",
+        "default": "./dist-cjs/index.cjs"
+      },
       "default": "./dist/index.js"
     },
     "./discovery": {
-      "types": "./dist/discovery.d.ts",
-      "import": "./dist/discovery.js",
+      "import": {
+        "types": "./dist/discovery.d.ts",
+        "default": "./dist/discovery.js"
+      },
+      "require": {
+        "types": "./dist-cjs/discovery.d.cts",
+        "default": "./dist-cjs/discovery.cjs"
+      },
       "default": "./dist/discovery.js"
     },
     "./sql-policy": {
-      "types": "./dist/sql-policy.d.ts",
-      "import": "./dist/sql-policy.js",
+      "import": {
+        "types": "./dist/sql-policy.d.ts",
+        "default": "./dist/sql-policy.js"
+      },
+      "require": {
+        "types": "./dist-cjs/sql-policy.d.cts",
+        "default": "./dist-cjs/sql-policy.cjs"
+      },
       "default": "./dist/sql-policy.js"
     },
     "./crockford": {
-      "types": "./dist/crockford.d.ts",
-      "import": "./dist/crockford.js",
+      "import": {
+        "types": "./dist/crockford.d.ts",
+        "default": "./dist/crockford.js"
+      },
+      "require": {
+        "types": "./dist-cjs/crockford.d.cts",
+        "default": "./dist-cjs/crockford.cjs"
+      },
       "default": "./dist/crockford.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/build-cjs.mjs",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3"
   },

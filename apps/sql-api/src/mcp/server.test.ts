@@ -3,9 +3,14 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
-  validateSingleExpenseSql,
+  createSqlExecutionDeadline,
+  MCP_SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
+  type SqlExecutionDeadline,
+  validateSingleMutationExpenseSql,
   validateSingleReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
+import { SqlTransactionOutcomeUnknownError } from "../dbDeadline.js";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
 import {
   createMcpServerWithDependencies,
@@ -21,6 +26,10 @@ type ToolCalls = {
   schemaWorkspaceIds: Array<string>;
   queriedWorkspaceIds: Array<string>;
   executedWorkspaceIds: Array<string>;
+  workspaceDeadlines: Array<SqlExecutionDeadline>;
+  schemaDeadlines: Array<SqlExecutionDeadline>;
+  queryDeadlines: Array<SqlExecutionDeadline>;
+  executeDeadlines: Array<SqlExecutionDeadline>;
 };
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -69,8 +78,9 @@ const createDependencies = (
   workspaceIds: ReadonlyArray<string>,
   calls: ToolCalls,
 ): McpServerDependencies => ({
-  listWorkspaces: async (identity) => {
+  listWorkspaces: async (identity, deadline) => {
     calls.listedUserIds.push(identity.userId);
+    calls.workspaceDeadlines.push(deadline);
     return workspaceIds.map((workspaceId) => ({
       workspaceId,
       name: workspaceId === PERSONAL_WORKSPACE_ID ? "Personal" : "Business",
@@ -86,21 +96,24 @@ const createDependencies = (
       name: workspaceId === PERSONAL_WORKSPACE_ID ? "Personal" : "Business",
     };
   },
-  loadAllowedSchemaForWorkspace: async (_identity, workspaceId) => {
+  loadAllowedSchemaForWorkspace: async (_identity, workspaceId, deadline) => {
     calls.schemaWorkspaceIds.push(workspaceId);
+    calls.schemaDeadlines.push(deadline);
     return [];
   },
   validateSingleReadOnlyExpenseSql,
-  validateSingleExpenseSql,
-  runReadOnlySql: async (_authenticated, workspaceId, validated) => {
+  validateSingleMutationExpenseSql,
+  runReadOnlySql: async (_authenticated, workspaceId, validated, deadline) => {
     calls.queriedWorkspaceIds.push(workspaceId);
+    calls.queryDeadlines.push(deadline);
     return {
       statements: [{ sql: validated.sql, rows: [{ amount: "10.00" }] }],
       workspace: { workspaceId, name: "Personal" },
     };
   },
-  runSql: async (_authenticated, workspaceId, validated) => {
+  runSql: async (_authenticated, workspaceId, validated, deadline) => {
     calls.executedWorkspaceIds.push(workspaceId);
+    calls.executeDeadlines.push(deadline);
     return {
       statements: [{ sql: validated.sql, command: "INSERT", rowCount: 1 }],
       workspace: { workspaceId, name: "Personal" },
@@ -114,6 +127,10 @@ const createCalls = (): ToolCalls => ({
   schemaWorkspaceIds: [],
   queriedWorkspaceIds: [],
   executedWorkspaceIds: [],
+  workspaceDeadlines: [],
+  schemaDeadlines: [],
+  queryDeadlines: [],
+  executeDeadlines: [],
 });
 
 const withClient = async (
@@ -121,7 +138,8 @@ const withClient = async (
   dependencies: McpServerDependencies,
   callback: (client: Client) => Promise<void>,
 ): Promise<void> => {
-  const server = createMcpServerWithDependencies(connection, dependencies);
+  const deadline = createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, () => 10_000);
+  const server = createMcpServerWithDependencies(connection, deadline, dependencies);
   const client = new Client({ name: "mcp-server-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -196,6 +214,18 @@ test("MCP server registers four annotated tools and routes explicit workspaces",
   assert.deepEqual(calls.schemaWorkspaceIds, [BUSINESS_WORKSPACE_ID]);
   assert.deepEqual(calls.queriedWorkspaceIds, [PERSONAL_WORKSPACE_ID]);
   assert.deepEqual(calls.executedWorkspaceIds, [BUSINESS_WORKSPACE_ID]);
+  assert.equal(calls.workspaceDeadlines.length, 4);
+  assert.equal(calls.schemaDeadlines[0], calls.workspaceDeadlines[1]);
+  assert.equal(calls.queryDeadlines[0], calls.workspaceDeadlines[2]);
+  assert.equal(calls.executeDeadlines[0], calls.workspaceDeadlines[3]);
+  assert.deepEqual(
+    calls.workspaceDeadlines.map((deadline) => deadline.timeoutMs),
+    Array.from({ length: 4 }, () => MCP_SQL_STATEMENT_TIMEOUT_MS),
+  );
+  assert.equal(
+    calls.workspaceDeadlines.every((deadline) => deadline === calls.workspaceDeadlines[0]),
+    true,
+  );
 });
 
 test("MCP tools require explicit workspace membership when selection is ambiguous", async (): Promise<void> => {
@@ -221,6 +251,10 @@ test("MCP tools require explicit workspace membership when selection is ambiguou
   );
   assert.deepEqual(calls.schemaWorkspaceIds, []);
   assert.deepEqual(calls.queriedWorkspaceIds, []);
+  assert.deepEqual(
+    calls.workspaceDeadlines.map((deadline) => deadline.timeoutMs),
+    [MCP_SQL_STATEMENT_TIMEOUT_MS, MCP_SQL_STATEMENT_TIMEOUT_MS],
+  );
 });
 
 test("MCP read tools preserve an empty workspace list without provisioning state", async (): Promise<void> => {
@@ -252,6 +286,14 @@ test("MCP read tools preserve an empty workspace list without provisioning state
   assert.deepEqual(calls.schemaWorkspaceIds, []);
   assert.deepEqual(calls.queriedWorkspaceIds, []);
   assert.deepEqual(calls.executedWorkspaceIds, []);
+  assert.deepEqual(
+    calls.workspaceDeadlines.map((deadline) => deadline.timeoutMs),
+    [
+      MCP_SQL_STATEMENT_TIMEOUT_MS,
+      MCP_SQL_STATEMENT_TIMEOUT_MS,
+      MCP_SQL_STATEMENT_TIMEOUT_MS,
+    ],
+  );
 });
 
 test("MCP tools enforce read and write scopes before service execution", async (): Promise<void> => {
@@ -300,6 +342,62 @@ test("sql_query preserves read-only policy errors without calling the SQL runner
     },
   );
   assert.deepEqual(calls.queriedWorkspaceIds, []);
+  assert.deepEqual(calls.workspaceDeadlines, []);
+});
+
+test("readonly MCP tools unwrap transaction deadline uncertainty as request deadlines", async (): Promise<void> => {
+  const calls = createCalls();
+  const dependencies: McpServerDependencies = {
+    ...createDependencies([PERSONAL_WORKSPACE_ID], calls),
+    listWorkspaces: async () => {
+      throw new SqlTransactionOutcomeUnknownError(
+        "commit",
+        new SqlExecutionDeadlineError(MCP_SQL_STATEMENT_TIMEOUT_MS),
+        "unknown",
+        undefined,
+      );
+    },
+  };
+
+  await withClient(
+    createConnection(["expenses:read"]),
+    dependencies,
+    async (client): Promise<void> => {
+      const result = await client.callTool({ name: "list_workspaces", arguments: {} });
+      const payload = parseToolPayload(result);
+      const error = payload["error"];
+      assert.ok(isJsonObject(error));
+      assert.equal(result.isError, true);
+      assert.equal(error["code"], "request_deadline_exceeded");
+      assert.deepEqual(error["details"], { timeoutMs: 20_000, retryable: true });
+    },
+  );
+});
+
+test("sql_execute rejects readonly SQL before workspace resolution or execution", async (): Promise<void> => {
+  const calls = createCalls();
+  await withClient(
+    createConnection(["expenses:write"]),
+    createDependencies([PERSONAL_WORKSPACE_ID], calls),
+    async (client): Promise<void> => {
+      for (const sql of [
+        "SELECT account_id FROM accounts",
+        "WITH target AS (SELECT account_id FROM accounts) SELECT account_id FROM target",
+      ]) {
+        const result = await client.callTool({
+          name: "sql_execute",
+          arguments: { sql },
+        });
+        const payload = parseToolPayload(result);
+        assert.equal(result.isError, true);
+        assert.equal(readErrorCode(payload), "mutation_sql_required");
+        assert.match(payload["instructions"] as string, /sql_query/u);
+      }
+    },
+  );
+
+  assert.deepEqual(calls.executedWorkspaceIds, []);
+  assert.deepEqual(calls.workspaceDeadlines, []);
 });
 
 test("MCP SQL tools reject multi-statement input before either runner is called", async (): Promise<void> => {
@@ -330,4 +428,5 @@ test("MCP SQL tools reject multi-statement input before either runner is called"
 
   assert.deepEqual(calls.queriedWorkspaceIds, []);
   assert.deepEqual(calls.executedWorkspaceIds, []);
+  assert.deepEqual(calls.workspaceDeadlines, []);
 });

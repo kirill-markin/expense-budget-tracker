@@ -6,7 +6,8 @@ export const MAX_SQL_RETURNED_ROWS = 100;
 export const MAX_SQL_MUTATION_ROWS = 100;
 export const MAX_SQL_SCRIPT_LENGTH = 100_000;
 export const MAX_SQL_STATEMENTS = 100;
-export const SQL_STATEMENT_TIMEOUT_MS = 30_000;
+export const SQL_STATEMENT_TIMEOUT_MS = 25_000;
+export const MCP_SQL_STATEMENT_TIMEOUT_MS = 20_000;
 
 export const ALLOWED_SQL_FUNCTION_NAMES = [
   "sum",
@@ -129,6 +130,7 @@ type SqlPolicyErrorCode =
   | "mutation_statement_row_limit_exceeded"
   | "mutation_request_row_limit_exceeded"
   | "read_only_sql_required"
+  | "mutation_sql_required"
   | "on_conflict_not_allowed"
   | "set_config_not_allowed"
   | "function_calls_not_allowed"
@@ -151,6 +153,15 @@ export class SqlPolicyError extends Error {
   }
 }
 
+export class SqlExecutionDeadlineError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`SQL execution exceeded its ${String(timeoutMs)} ms total deadline before the next database command could start`);
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export type ValidatedExpenseSql = Readonly<{
   sql: string;
   statements: ReadonlyArray<ValidatedExpenseSqlStatement>;
@@ -158,6 +169,10 @@ export type ValidatedExpenseSql = Readonly<{
 
 export type ValidatedReadOnlyExpenseSql = ValidatedExpenseSql & Readonly<{
   isReadOnly: true;
+}>;
+
+export type ValidatedMutationExpenseSql = ValidatedExpenseSql & Readonly<{
+  isMutation: true;
 }>;
 
 export type RestrictedSqlResultRow = Readonly<Record<string, unknown>>;
@@ -172,6 +187,17 @@ export type RestrictedSqlExecutionRequest = Readonly<{
   sql: string;
   params: ReadonlyArray<unknown>;
 }>;
+
+export type SqlExecutionDeadline = Readonly<{
+  timeoutMs: number;
+  expiresAtMs: number;
+  now: () => number;
+}>;
+
+export type DeadlineRestrictedSqlExecutor = (
+  request: RestrictedSqlExecutionRequest,
+  statementTimeoutMs: number,
+) => Promise<RestrictedSqlQueryResult>;
 
 export type ValidatedExpenseSqlStatement = Readonly<{
   sql: string;
@@ -198,6 +224,42 @@ export type ExecutedExpenseSql = Readonly<{
 
 const fail = (code: SqlPolicyErrorCode, message: string): never => {
   throw new SqlPolicyError(code, message);
+};
+
+export const createSqlExecutionDeadline = (
+  timeoutMs: number,
+  now: () => number,
+): SqlExecutionDeadline => {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new TypeError("SQL execution timeout must be a positive safe integer number of milliseconds");
+  }
+  const startedAtMs = now();
+  if (!Number.isSafeInteger(startedAtMs)) {
+    throw new TypeError("SQL execution clock must return a safe integer number of milliseconds");
+  }
+
+  return {
+    timeoutMs,
+    expiresAtMs: startedAtMs + timeoutMs,
+    now,
+  };
+};
+
+export const getRemainingSqlExecutionMs = (
+  deadline: SqlExecutionDeadline,
+): number => {
+  const currentTimeMs = deadline.now();
+  if (!Number.isSafeInteger(currentTimeMs)) {
+    throw new TypeError("SQL execution clock must return a safe integer number of milliseconds");
+  }
+  const remainingMs = Math.min(
+    deadline.timeoutMs,
+    deadline.expiresAtMs - currentTimeMs,
+  );
+  if (remainingMs <= 0) {
+    throw new SqlExecutionDeadlineError(deadline.timeoutMs);
+  }
+  return remainingMs;
 };
 
 const getFirstKeyword = (sql: string): string | undefined =>
@@ -1222,6 +1284,21 @@ export const validateSingleReadOnlyExpenseSql = (sql: string): ValidatedReadOnly
   };
 };
 
+export const validateSingleMutationExpenseSql = (sql: string): ValidatedMutationExpenseSql => {
+  const validated = validateSingleExpenseSql(sql);
+  if (validated.statements.every((statement) => !statement.isMutating)) {
+    fail(
+      "mutation_sql_required",
+      "Exactly one INSERT, UPDATE, or DELETE mutation is required; send SELECT and WITH...SELECT to the query endpoint",
+    );
+  }
+
+  return {
+    ...validated,
+    isMutation: true,
+  };
+};
+
 const getAffectedRowCount = (result: RestrictedSqlQueryResult): number => {
   const rowCount = result.rowCount;
   if (rowCount === null || !Number.isSafeInteger(rowCount) || rowCount < 0) {
@@ -1343,6 +1420,15 @@ export const executeValidatedExpenseSql = async (
     statements,
   };
 };
+
+export const executeValidatedExpenseSqlWithinDeadline = async (
+  validated: ValidatedExpenseSql,
+  deadline: SqlExecutionDeadline,
+  execute: DeadlineRestrictedSqlExecutor,
+): Promise<ExecutedExpenseSql> => executeValidatedExpenseSql(
+  validated,
+  (request) => execute(request, getRemainingSqlExecutionMs(deadline)),
+);
 
 export const executeExpenseSql = async (
   sql: string,

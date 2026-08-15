@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { MAX_OAUTH_LOGIN_QUERY_BYTES } from "@expense-budget-tracker/agent-shared";
 import { createLoginPageApp } from "./loginPage.js";
 import { clearBrowserSessionCookies } from "../server/oauth/session.js";
 
@@ -28,6 +29,18 @@ test("login clears an invalid non-empty session instead of redirecting in a loop
     assert.match(cookies, /refresh=;/u);
     assert.match(cookies, /logged_in=;/u);
     assert.match(cookies, /locale=en/u);
+
+    const fixedQuery = `redirect_uri=${encodeURIComponent(redirectUri)}&padding=`;
+    const exactQuery = `${fixedQuery}${"x".repeat(MAX_OAUTH_LOGIN_QUERY_BYTES - fixedQuery.length)}`;
+    const exactBoundary = await app.request(`/login?${exactQuery}`);
+    assert.equal(exactBoundary.status, 200);
+
+    const oversized = await app.request(`/login?${exactQuery}x`);
+    assert.equal(oversized.status, 400);
+    assert.equal(
+      await oversized.text(),
+      `Login query must not exceed ${MAX_OAUTH_LOGIN_QUERY_BYTES} UTF-8 bytes`,
+    );
   } finally {
     if (previousAllowedRedirects === undefined) delete process.env.ALLOWED_REDIRECT_URIS;
     else process.env.ALLOWED_REDIRECT_URIS = previousAllowedRedirects;

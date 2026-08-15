@@ -1,7 +1,11 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  SqlExecutionDeadlineError,
+  SqlPolicyError,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
 import { getSafeErrorType, log } from "../logger.js";
 import {
+  isAmbiguousSqlMutationOutcomeError,
   getUserSqlExecutionMessage,
   isUserSqlExecutionError,
 } from "../machineApi/sqlService.js";
@@ -52,6 +56,9 @@ const getSqlPolicyInstructions = (error: SqlPolicyError, toolName: string): stri
   if (error.code === "read_only_sql_required") {
     return "Send reads to sql_query and approved INSERT, UPDATE, or DELETE statements to sql_execute.";
   }
+  if (error.code === "mutation_sql_required") {
+    return "Send SELECT and WITH...SELECT statements to sql_query. Call sql_execute only with an approved INSERT, UPDATE, or DELETE mutation.";
+  }
   if (
     error.code === "mutation_statement_row_limit_exceeded"
     || error.code === "mutation_request_row_limit_exceeded"
@@ -83,9 +90,15 @@ const buildMcpErrorContent = (
 });
 
 const getUnexpectedErrorInstructions = (toolName: string): string =>
+  `Retry ${toolName} once. If it fails again, stop and report the server error.`;
+
+const getDeadlineInstructions = (toolName: string): string =>
   toolName === "sql_execute"
-    ? "Do not blindly retry the mutation. Use sql_query to verify whether it applied, and retry sql_execute only if the change is confirmed absent."
-    : `Retry ${toolName} once. If it fails again, stop and report the server error.`;
+    ? "Retry sql_execute. The deadline expired before the mutation was dispatched, so no mutation was applied."
+    : `Retry ${toolName}. This deadline failure is safe to retry because it cannot have applied a mutation.`;
+
+const getAmbiguousMutationInstructions = (): string =>
+  "Do not blindly retry the mutation. Use sql_query to verify whether it applied, and retry sql_execute only if the change is confirmed absent.";
 
 export const buildMcpToolErrorResultWithDependencies = (
   error: unknown,
@@ -102,6 +115,24 @@ export const buildMcpToolErrorResultWithDependencies = (
       error.message,
       getSqlPolicyInstructions(error, toolName),
       {},
+    );
+  }
+
+  if (error instanceof SqlExecutionDeadlineError) {
+    return buildMcpErrorContent(
+      "request_deadline_exceeded",
+      `The MCP request exceeded its ${String(error.timeoutMs)} ms total execution deadline`,
+      getDeadlineInstructions(toolName),
+      { timeoutMs: error.timeoutMs, retryable: true },
+    );
+  }
+
+  if (isAmbiguousSqlMutationOutcomeError(error)) {
+    return buildMcpErrorContent(
+      "sql_mutation_outcome_unknown",
+      error.message,
+      getAmbiguousMutationInstructions(),
+      { outcome: "unknown", retryable: false },
     );
   }
 

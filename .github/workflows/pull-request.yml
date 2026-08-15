@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       auth_tests: ${{ steps.changes.outputs.auth_tests }}
+      infra_tests: ${{ steps.changes.outputs.infra_tests }}
       shared_tests: ${{ steps.changes.outputs.shared_tests }}
       sql_api_tests: ${{ steps.changes.outputs.sql_api_tests }}
       web_tests: ${{ steps.changes.outputs.web_tests }}
@@ -41,6 +42,14 @@ jobs:
               - 'package-lock.json'
             auth_tests:
               - 'apps/auth/**'
+              - 'packages/agent-shared/**'
+              - '.github/workflows/pull-request.yml'
+              - '.npmrc'
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+            infra_tests:
+              - 'infra/aws/**'
               - 'packages/agent-shared/**'
               - '.github/workflows/pull-request.yml'
               - '.npmrc'
@@ -98,6 +107,7 @@ jobs:
         !cancelled()
         && (
           needs.quality_gate.outputs.auth_tests == 'true'
+          || needs.quality_gate.outputs.infra_tests == 'true'
           || needs.quality_gate.outputs.shared_tests == 'true'
           || needs.quality_gate.outputs.sql_api_tests == 'true'
           || needs.quality_gate.outputs.web_tests == 'true'
@@ -124,6 +134,10 @@ jobs:
       - name: Run auth unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
         run: npm --workspace expense-tracker-auth run test
+
+      - name: Run AWS infrastructure unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.infra_tests == 'true' }}
+        run: npm --workspace expense-budget-tracker-aws run test
 
       - name: Run SQL API unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.sql_api_tests == 'true' }}

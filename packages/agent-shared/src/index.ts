@@ -5,6 +5,22 @@ import type { AllowedRelationName } from "./sql-policy.js";
  */
 export const AGENT_API_KEY_ENV_VAR_NAME = "EXPENSE_BUDGET_TRACKER_API_KEY";
 export const API_KEY_AUTHORIZATION_SCHEME = "Authorization: ApiKey <key>";
+export const AGENT_OAUTH_SCOPES = ["expenses:read", "expenses:write"] as const;
+export const SQL_API_DB_POOL_MAX_CONNECTIONS = 10;
+// Keep raw OAuth query strings below the ALB 16 KiB request-line ceiling,
+// including the authorization URL after it is nested inside /login.
+export const MAX_OAUTH_AUTHORIZE_QUERY_BYTES = 4_000;
+export const MAX_OAUTH_LOGIN_QUERY_BYTES = 12_000;
+
+export const getRawQueryByteLength = (url: string): number => {
+  const queryStart = url.indexOf("?");
+  if (queryStart < 0) return 0;
+  const fragmentStart = url.indexOf("#", queryStart + 1);
+  const rawQuery = fragmentStart < 0
+    ? url.slice(queryStart + 1)
+    : url.slice(queryStart + 1, fragmentStart);
+  return new TextEncoder().encode(rawQuery).byteLength;
+};
 
 export const SEND_CODE_INPUT: Readonly<Record<string, string>> = {
   email: "string",
@@ -260,5 +276,23 @@ export const buildRunSqlAction = (
   method: "POST",
   url: resolveActionUrl(target),
   input,
+  auth: "ApiKey",
+});
+
+export const buildRunSqlQueryAction = (target: AgentUrlTarget): AgentAction => ({
+  name: "run_sql_query",
+  method: "POST",
+  description: "Run exactly one read-only SELECT or WITH...SELECT statement.",
+  url: resolveActionUrl(target),
+  input: RUN_SQL_WITH_WORKSPACE_INPUT,
+  auth: "ApiKey",
+});
+
+export const buildRunSqlExecuteAction = (target: AgentUrlTarget): AgentAction => ({
+  name: "run_sql_execute",
+  method: "POST",
+  description: "Run exactly one explicitly approved INSERT, UPDATE, or DELETE mutation.",
+  url: resolveActionUrl(target),
+  input: RUN_SQL_WITH_WORKSPACE_INPUT,
   auth: "ApiKey",
 });
