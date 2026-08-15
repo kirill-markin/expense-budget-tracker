@@ -1,0 +1,212 @@
+name: MCP Registry Publish
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: mcp-registry-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish server.json to MCP Registry
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Require main branch dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::MCP Registry publication must be dispatched from main after the shared version lands there. Current ref: ${GITHUB_REF}. Re-run this workflow with branch 'main' selected."
+            exit 1
+          fi
+
+      - name: Validate MCP Registry manifest
+        run: |
+          set -euo pipefail
+          schema_path="${RUNNER_TEMP}/mcp-server-schema-2025-12-11.json"
+          curl --fail --location --show-error --silent \
+            --retry 2 --retry-delay 2 --retry-all-errors \
+            'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json' \
+            --output "${schema_path}"
+          npx --yes ajv-cli@5 validate \
+            --schema "${schema_path}" \
+            --data server.json \
+            --strict=false
+
+      - name: Check version alignment
+        run: node scripts/checks/pr/check-version-alignment.mjs
+
+      - name: Check unpublished Registry version
+        id: manifest
+        run: |
+          set -euo pipefail
+          server_name="$(jq -r '.name // empty' server.json)"
+          server_version="$(jq -r '.version // empty' server.json)"
+
+          if [ -z "${server_name}" ]; then
+            echo "::error::server.json must include a non-empty .name before publication."
+            exit 1
+          fi
+          if [ -z "${server_version}" ]; then
+            echo "::error::server.json must include a non-empty .version before publication."
+            exit 1
+          fi
+
+          encoded_name="$(printf '%s' "${server_name}" | jq -sRr @uri)"
+          encoded_version="$(printf '%s' "${server_version}" | jq -sRr @uri)"
+          version_endpoint="https://registry.modelcontextprotocol.io/v0.1/servers/${encoded_name}/versions/${encoded_version}"
+          response_body="${RUNNER_TEMP}/mcp-registry-version-before.json"
+          max_attempts=3
+          retry_delay_seconds=5
+
+          for attempt in $(seq 1 "${max_attempts}"); do
+            : > "${response_body}"
+            set +e
+            status="$(curl --show-error --silent \
+              --output "${response_body}" \
+              --write-out '%{http_code}' \
+              "${version_endpoint}")"
+            curl_exit=$?
+            set -e
+
+            if [ "${curl_exit}" -eq 0 ] && [ "${status}" = "404" ]; then
+              {
+                echo "name=${server_name}"
+                echo "version=${server_version}"
+                echo "version_endpoint=${version_endpoint}"
+              } >> "${GITHUB_OUTPUT}"
+              echo "MCP Registry version is unpublished: ${server_name} ${server_version}"
+              exit 0
+            fi
+
+            if [ "${curl_exit}" -eq 0 ] && [ "${status}" = "200" ]; then
+              echo "::error::MCP Registry version ${server_name} ${server_version} already exists at ${version_endpoint}. Registry versions are immutable; use the next shared product version before publishing changed metadata."
+              exit 1
+            fi
+
+            if [ "${attempt}" -lt "${max_attempts}" ]; then
+              if [ "${curl_exit}" -ne 0 ]; then
+                echo "::warning::Registry lookup failed with curl exit code ${curl_exit}; retrying ${version_endpoint} in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
+              else
+                echo "::warning::Registry lookup returned HTTP ${status}; retrying ${version_endpoint} in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
+              fi
+              sleep "${retry_delay_seconds}"
+              continue
+            fi
+
+            if [ "${curl_exit}" -ne 0 ]; then
+              echo "::error::Registry lookup failed after ${max_attempts} attempts for ${version_endpoint}; last curl exit code: ${curl_exit}."
+            else
+              echo "::error::Registry lookup failed after ${max_attempts} attempts for ${version_endpoint}; last HTTP status: ${status}. Response body follows."
+              cat "${response_body}"
+            fi
+            exit 1
+          done
+
+      - name: Require Registry credential
+        env:
+          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MCP_PRIVATE_KEY}" ]; then
+            echo "::error::MCP_PRIVATE_KEY is not configured. Run scripts/cloudflare/setup-mcp-registry-credential.sh as documented in docs/mcp-registry-publishing.md before dispatching this workflow."
+            exit 1
+          fi
+
+      - name: Install mcp-publisher CLI
+        id: publisher
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          archive_path="${RUNNER_TEMP}/mcp-publisher.tar.gz"
+          publisher_path="${RUNNER_TEMP}/mcp-publisher"
+          curl --fail --location --show-error --silent \
+            --retry 2 --retry-delay 2 --retry-all-errors \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${os}_${arch}.tar.gz" \
+            --output "${archive_path}"
+          tar --extract --gzip --file "${archive_path}" --directory "${RUNNER_TEMP}" mcp-publisher
+          chmod 700 "${publisher_path}"
+          echo "path=${publisher_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Authenticate to MCP Registry with DNS
+        env:
+          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
+          MCP_PUBLISHER: ${{ steps.publisher.outputs.path }}
+        run: |
+          set -euo pipefail
+          "${MCP_PUBLISHER}" login dns \
+            --domain expense-budget-tracker.com \
+            --private-key "${MCP_PRIVATE_KEY}"
+
+      - name: Publish server to MCP Registry
+        env:
+          MCP_PUBLISHER: ${{ steps.publisher.outputs.path }}
+        run: |
+          set -euo pipefail
+          "${MCP_PUBLISHER}" publish
+
+      - name: Verify published Registry version
+        env:
+          SERVER_NAME: ${{ steps.manifest.outputs.name }}
+          SERVER_VERSION: ${{ steps.manifest.outputs.version }}
+          VERSION_ENDPOINT: ${{ steps.manifest.outputs.version_endpoint }}
+        run: |
+          set -euo pipefail
+          response_body="${RUNNER_TEMP}/mcp-registry-version-after.json"
+          max_attempts=6
+          retry_delay_seconds=10
+
+          for attempt in $(seq 1 "${max_attempts}"); do
+            : > "${response_body}"
+            set +e
+            status="$(curl --show-error --silent \
+              --output "${response_body}" \
+              --write-out '%{http_code}' \
+              "${VERSION_ENDPOINT}")"
+            curl_exit=$?
+            set -e
+
+            if [ "${curl_exit}" -eq 0 ] && [ "${status}" = "200" ]; then
+              {
+                echo "## MCP Registry publication"
+                echo ""
+                echo "- Published SHA: \`${GITHUB_SHA}\`"
+                echo "- Manifest: \`server.json\`"
+                echo "- Registry name: \`${SERVER_NAME}\`"
+                echo "- Registry version: \`${SERVER_VERSION}\`"
+                echo "- Verified endpoint: \`${VERSION_ENDPOINT}\`"
+                echo "- Remote endpoint: \`https://mcp.expense-budget-tracker.com/mcp\`"
+              } >> "${GITHUB_STEP_SUMMARY}"
+              exit 0
+            fi
+
+            if [ "${attempt}" -lt "${max_attempts}" ]; then
+              if [ "${curl_exit}" -ne 0 ]; then
+                echo "::warning::Published version verification failed with curl exit code ${curl_exit}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
+              else
+                echo "::warning::Published version verification returned HTTP ${status}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
+              fi
+              sleep "${retry_delay_seconds}"
+              continue
+            fi
+
+            if [ "${curl_exit}" -ne 0 ]; then
+              echo "::error::Published version verification failed after ${max_attempts} attempts for ${VERSION_ENDPOINT}; last curl exit code: ${curl_exit}."
+            else
+              echo "::error::Published version verification failed after ${max_attempts} attempts for ${VERSION_ENDPOINT}; last HTTP status: ${status}. Response body follows."
+              cat "${response_body}"
+            fi
+            exit 1
+          done

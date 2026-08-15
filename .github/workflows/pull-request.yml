@@ -69,6 +69,10 @@ jobs:
               - '.nvmrc'
               - 'package.json'
               - 'package-lock.json'
+            mcp_registry:
+              - 'server.json'
+              - '.github/workflows/mcp-registry-publish.yml'
+              - '.github/workflows/pull-request.yml'
             sql_api_tests:
               - 'apps/sql-api/**'
               - 'packages/agent-shared/**'
@@ -92,6 +96,20 @@ jobs:
               - '.nvmrc'
               - 'package.json'
               - 'package-lock.json'
+
+      - name: Validate MCP Registry manifest
+        if: steps.changes.outputs.mcp_registry == 'true'
+        run: |
+          set -euo pipefail
+          schema_path="${RUNNER_TEMP}/mcp-server-schema-2025-12-11.json"
+          curl --fail --location --show-error --silent \
+            --retry 2 --retry-delay 2 --retry-all-errors \
+            'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json' \
+            --output "${schema_path}"
+          npx --yes ajv-cli@5 validate \
+            --schema "${schema_path}" \
+            --data server.json \
+            --strict=false
 
       - name: Set up npm
         if: steps.changes.outputs.code == 'true'
