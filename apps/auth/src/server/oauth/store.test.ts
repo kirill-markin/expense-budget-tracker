@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import type { QueryResult, QueryResultRow } from "pg";
 import type { QueryFn } from "../db.js";
 import {
@@ -22,13 +24,47 @@ const result = (rows: Array<QueryResultRow>): QueryResult<QueryResultRow> => ({
   fields: [],
 });
 
+const isOAuthCleanupQuery = (text: string): boolean =>
+  text === "SELECT auth.cleanup_expired_oauth_transient_state()";
+
+const isOAuthActivityQuery = (text: string): boolean =>
+  text === "SELECT auth.record_oauth_connection_activity($1)";
+
+const cleanupMigration = readFileSync(
+  fileURLToPath(new URL("../../../../../db/migrations/0069_oauth_transient_state_cleanup.sql", import.meta.url)),
+  "utf8",
+);
+
+const readMigrationSection = (marker: string): string => {
+  const markerIndex = cleanupMigration.indexOf(marker);
+  if (markerIndex === -1) throw new Error(`OAuth cleanup migration is missing ${marker}`);
+  return cleanupMigration.slice(markerIndex);
+};
+
+const readMigrationRange = (startMarker: string, endMarker: string): string => {
+  const startIndex = cleanupMigration.indexOf(startMarker);
+  const endIndex = cleanupMigration.indexOf(endMarker);
+  if (startIndex === -1) throw new Error(`OAuth cleanup migration is missing ${startMarker}`);
+  if (endIndex <= startIndex) throw new Error(`OAuth cleanup migration is missing ${endMarker} after ${startMarker}`);
+  return cleanupMigration.slice(startIndex, endIndex);
+};
+
+const cleanupFunctionSql = readMigrationSection(
+  "CREATE FUNCTION auth.cleanup_expired_oauth_transient_state()",
+);
+
+const ownerListingFunctionSql = readMigrationRange(
+  "CREATE OR REPLACE FUNCTION auth.list_current_user_oauth_connections()",
+  "CREATE FUNCTION auth.record_oauth_connection_activity(p_connection_id TEXT)",
+);
+
 const createDependencies = (
   queryFn: QueryFn,
   tokens: Readonly<Record<"cl" | "ac" | "at" | "rt", ReadonlyArray<string>>>,
 ): OAuthStoreDependencies => {
   const offsets: Record<"cl" | "ac" | "at" | "rt", number> = { cl: 0, ac: 0, at: 0, rt: 0 };
   return {
-    query: queryFn,
+    query: async (text, params) => isOAuthCleanupQuery(text) ? result([]) : queryFn(text, params),
     withTransaction: async <T>(callback: (transactionQuery: QueryFn) => Promise<T>): Promise<T> => callback(queryFn),
     createOpaqueToken: (prefix) => {
       const token = tokens[prefix][offsets[prefix]];
@@ -59,6 +95,223 @@ const authorizationRequest: AuthorizationRequest = {
   codeChallengeMethod: "S256",
 };
 
+test("OAuth cleanup bounds expiry-only deletes, retains unexpired used rows, and skips locks", (): void => {
+  assert.equal(cleanupFunctionSql.match(/WHERE expires_at <= now\(\)/gu)?.length, 3);
+  assert.equal(cleanupFunctionSql.match(/ORDER BY expires_at/gu)?.length, 3);
+  assert.equal(cleanupFunctionSql.match(/LIMIT 100/gu)?.length, 3);
+  assert.equal(cleanupFunctionSql.match(/FOR UPDATE SKIP LOCKED/gu)?.length, 3);
+  assert.equal(cleanupFunctionSql.includes("used_at"), false);
+  assert.match(cleanupFunctionSql, /DELETE FROM auth\.oauth_authorization_codes/u);
+  assert.match(cleanupFunctionSql, /DELETE FROM auth\.oauth_access_tokens/u);
+  assert.match(cleanupFunctionSql, /DELETE FROM auth\.oauth_refresh_tokens/u);
+  assert.match(cleanupFunctionSql, /SECURITY DEFINER/u);
+  assert.match(cleanupMigration, /GRANT EXECUTE ON FUNCTION auth\.cleanup_expired_oauth_transient_state\(\) TO auth_service/u);
+  assert.doesNotMatch(cleanupMigration, /GRANT DELETE/u);
+});
+
+test("OAuth activity is backfilled durably and read without transient credential rows", (): void => {
+  assert.match(cleanupMigration, /ADD COLUMN last_activity_at TIMESTAMPTZ/u);
+  assert.match(cleanupMigration, /max\(event\.used_at\) AS last_activity_at/u);
+  assert.match(cleanupMigration, /FROM auth\.oauth_authorization_codes AS code/u);
+  assert.match(cleanupMigration, /FROM auth\.oauth_refresh_tokens AS refresh_token/u);
+  assert.match(cleanupMigration, /CREATE OR REPLACE FUNCTION auth\.list_current_user_oauth_connections\(\)/u);
+  assert.match(ownerListingFunctionSql, /connection\.last_activity_at/u);
+  assert.match(ownerListingFunctionSql, /WHERE connection\.user_id = v_user_id/u);
+  assert.doesNotMatch(ownerListingFunctionSql, /oauth_authorization_codes|oauth_refresh_tokens|LATERAL/u);
+  assert.match(cleanupMigration, /REVOKE ALL ON FUNCTION auth\.list_current_user_oauth_connections\(\) FROM PUBLIC/u);
+  assert.match(cleanupMigration, /GRANT EXECUTE ON FUNCTION auth\.list_current_user_oauth_connections\(\) TO app/u);
+  assert.match(cleanupMigration, /CREATE FUNCTION auth\.record_oauth_connection_activity\(p_connection_id TEXT\)/u);
+  assert.match(
+    cleanupMigration,
+    /SET last_activity_at = GREATEST\(\s*COALESCE\(connection\.last_activity_at, '-infinity'::TIMESTAMPTZ\),\s*clock_timestamp\(\)\s*\)/u,
+  );
+  assert.match(cleanupMigration, /REVOKE ALL ON FUNCTION auth\.record_oauth_connection_activity\(TEXT\) FROM PUBLIC/u);
+  assert.match(cleanupMigration, /GRANT EXECUTE ON FUNCTION auth\.record_oauth_connection_activity\(TEXT\) TO auth_service/u);
+  assert.equal(
+    cleanupMigration.indexOf("SET last_activity_at = activity.last_activity_at")
+      < cleanupMigration.indexOf("CREATE FUNCTION auth.cleanup_expired_oauth_transient_state()"),
+    true,
+  );
+});
+
+test("authorization-code issuance cleans expired state before opening its transaction", async (): Promise<void> => {
+  const sequence: Array<string> = [];
+  let transactionOpen = false;
+  const transactionQuery: QueryFn = async (text) => {
+    assert.equal(transactionOpen, true);
+    if (text.startsWith("SELECT auth.sync_authenticated_user")) sequence.push("sync_user");
+    if (text.startsWith("INSERT INTO auth.oauth_connections")) {
+      sequence.push("upsert_connection");
+      return result([{ connection_id: "connection-1" }]);
+    }
+    if (text.startsWith("INSERT INTO auth.oauth_authorization_codes")) sequence.push("insert_code");
+    return result([]);
+  };
+  const baseDependencies = createDependencies(
+    transactionQuery,
+    { ...emptyTokens(), ac: ["ebt_ac_cleanup-order"] },
+  );
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    query: async (text) => {
+      assert.equal(isOAuthCleanupQuery(text), true);
+      assert.equal(transactionOpen, false);
+      sequence.push("cleanup");
+      return result([]);
+    },
+    withTransaction: async <T>(callback: (queryFn: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpen = true;
+      try {
+        return await callback(transactionQuery);
+      } finally {
+        transactionOpen = false;
+      }
+    },
+  };
+
+  await issueAuthorizationCodeWithDependencies(
+    authorizationRequest,
+    "user-1",
+    "user@example.com",
+    dependencies,
+  );
+
+  assert.deepEqual(sequence, ["cleanup", "sync_user", "upsert_connection", "insert_code"]);
+});
+
+test("cleanup failures abort issuance before a transaction opens", async (): Promise<void> => {
+  const cleanupFailure = new Error("OAuth cleanup failed");
+  let transactionOpened = false;
+  const baseDependencies = createDependencies(async () => result([]), emptyTokens());
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    query: async (text) => {
+      assert.equal(isOAuthCleanupQuery(text), true);
+      throw cleanupFailure;
+    },
+    withTransaction: async <T>(callback: (queryFn: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpened = true;
+      return callback(async () => result([]));
+    },
+  };
+
+  await assert.rejects(
+    issueAuthorizationCodeWithDependencies(
+      authorizationRequest,
+      "user-1",
+      "user@example.com",
+      dependencies,
+    ),
+    (error: unknown) => error === cleanupFailure,
+  );
+  assert.equal(transactionOpened, false);
+});
+
+test("authorization-code exchange cleanup failure precedes every exchange side effect", async (): Promise<void> => {
+  const cleanupFailure = new Error("OAuth cleanup failed before code exchange");
+  let transactionOpened = false;
+  let credentialConsumed = false;
+  let cognitoCalled = false;
+  let tokenIssued = false;
+  let connectionRevoked = false;
+  let activityRecorded = false;
+  const transactionQuery: QueryFn = async (text) => {
+    if (text.startsWith("UPDATE auth.oauth_authorization_codes")) credentialConsumed = true;
+    if (text.startsWith("INSERT INTO auth.oauth_access_tokens") || text.startsWith("INSERT INTO auth.oauth_refresh_tokens")) {
+      tokenIssued = true;
+    }
+    if (text.startsWith("UPDATE auth.oauth_connections")) connectionRevoked = true;
+    if (isOAuthActivityQuery(text)) activityRecorded = true;
+    return result([]);
+  };
+  const baseDependencies = createDependencies(transactionQuery, emptyTokens());
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    query: async (text) => {
+      assert.equal(isOAuthCleanupQuery(text), true);
+      throw cleanupFailure;
+    },
+    withTransaction: async <T>(callback: (queryFn: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpened = true;
+      return callback(transactionQuery);
+    },
+    getCognitoOAuthOwnerStatus: async () => {
+      cognitoCalled = true;
+      return "active";
+    },
+  };
+
+  await assert.rejects(
+    exchangeAuthorizationCodeWithDependencies(
+      "ebt_ac_cleanup-failure",
+      authorizationRequest.clientId,
+      authorizationRequest.redirectUri,
+      authorizationRequest.resource,
+      verifier,
+      dependencies,
+    ),
+    (error: unknown) => error === cleanupFailure,
+  );
+  assert.equal(transactionOpened, false);
+  assert.equal(credentialConsumed, false);
+  assert.equal(cognitoCalled, false);
+  assert.equal(tokenIssued, false);
+  assert.equal(connectionRevoked, false);
+  assert.equal(activityRecorded, false);
+});
+
+test("refresh exchange cleanup failure precedes every rotation side effect", async (): Promise<void> => {
+  const cleanupFailure = new Error("OAuth cleanup failed before refresh exchange");
+  let transactionOpened = false;
+  let credentialConsumed = false;
+  let cognitoCalled = false;
+  let tokenIssued = false;
+  let connectionRevoked = false;
+  let activityRecorded = false;
+  const transactionQuery: QueryFn = async (text) => {
+    if (text.startsWith("UPDATE auth.oauth_refresh_tokens")) credentialConsumed = true;
+    if (text.startsWith("INSERT INTO auth.oauth_access_tokens") || text.startsWith("INSERT INTO auth.oauth_refresh_tokens")) {
+      tokenIssued = true;
+    }
+    if (text.startsWith("UPDATE auth.oauth_connections")) connectionRevoked = true;
+    if (isOAuthActivityQuery(text)) activityRecorded = true;
+    return result([]);
+  };
+  const baseDependencies = createDependencies(transactionQuery, emptyTokens());
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    query: async (text) => {
+      assert.equal(isOAuthCleanupQuery(text), true);
+      throw cleanupFailure;
+    },
+    withTransaction: async <T>(callback: (queryFn: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpened = true;
+      return callback(transactionQuery);
+    },
+    getCognitoOAuthOwnerStatus: async () => {
+      cognitoCalled = true;
+      return "active";
+    },
+  };
+
+  await assert.rejects(
+    exchangeRefreshTokenWithDependencies(
+      "ebt_rt_cleanup-failure",
+      authorizationRequest.clientId,
+      authorizationRequest.resource,
+      null,
+      dependencies,
+    ),
+    (error: unknown) => error === cleanupFailure,
+  );
+  assert.equal(transactionOpened, false);
+  assert.equal(credentialConsumed, false);
+  assert.equal(cognitoCalled, false);
+  assert.equal(tokenIssued, false);
+  assert.equal(connectionRevoked, false);
+  assert.equal(activityRecorded, false);
+});
+
 test("DCR and authorization-code issuance persist identifiers but only code hashes", async (): Promise<void> => {
   const calls: Array<QueryCall> = [];
   const queryFn: QueryFn = async (text, params) => {
@@ -84,6 +337,7 @@ test("DCR and authorization-code issuance persist identifiers but only code hash
 test("authorization-code replay revokes the family and its previously minted credentials", async (): Promise<void> => {
   let used = false;
   let connectionRevoked = false;
+  let activityCount = 0;
   let storedRefreshTokenHash: string | null = null;
   const accessTokenHashes = new Set<string>();
   const tokenInserts: Array<QueryCall> = [];
@@ -115,6 +369,11 @@ test("authorization-code replay revokes the family and its previously minted cre
       }]) : result([]);
     }
     if (text.startsWith("UPDATE auth.oauth_authorization_codes")) used = true;
+    if (isOAuthActivityQuery(text)) {
+      assert.equal(used, true);
+      assert.equal(params[0], "connection-1");
+      activityCount += 1;
+    }
     if (text.startsWith("UPDATE auth.oauth_connections")) {
       connectionRevoked = true;
       return result([{ connection_id: "connection-1" }]);
@@ -139,6 +398,7 @@ test("authorization-code replay revokes the family and its previously minted cre
   );
 
   assert.equal(issued.scope, authorizationRequest.scope);
+  assert.equal(activityCount, 1);
   assert.deepEqual(tokenInserts.map((call) => call.params[2]), [authorizationRequest.scopes, authorizationRequest.scopes]);
   assert.deepEqual(tokenInserts.map((call) => call.params[0]), [hash(accessToken), hash(refreshToken)]);
   assert.equal(tokenInserts.some((call) => call.params.includes(accessToken) || call.params.includes(refreshToken)), false);
@@ -149,6 +409,7 @@ test("authorization-code replay revokes the family and its previously minted cre
     ),
     /already used/u,
   );
+  assert.equal(activityCount, 1);
   assert.equal(accessTokenHashes.has(hash(issued.accessToken)) && !connectionRevoked, false);
   await assert.rejects(
     exchangeRefreshTokenWithDependencies(
@@ -163,6 +424,7 @@ test("unknown and unused misbound credentials do not revoke a connection", async
   const knownCode = "ebt_ac_known-unused";
   const knownRefreshToken = "ebt_rt_known-unused";
   let revocationAttempted = false;
+  let activityAttempted = false;
   const queryFn: QueryFn = async (text, params) => {
     if (text.includes("FROM auth.oauth_authorization_codes")) {
       if (params[0] !== hash(knownCode)) return result([]);
@@ -192,6 +454,7 @@ test("unknown and unused misbound credentials do not revoke a connection", async
       }]);
     }
     if (text.startsWith("UPDATE auth.oauth_connections")) revocationAttempted = true;
+    if (isOAuthActivityQuery(text)) activityAttempted = true;
     return result([]);
   };
   const dependencies = createDependencies(queryFn, emptyTokens());
@@ -225,6 +488,7 @@ test("unknown and unused misbound credentials do not revoke a connection", async
     /invalid, expired, or already used/u,
   );
   assert.equal(revocationAttempted, false);
+  assert.equal(activityAttempted, false);
 });
 
 const createRefreshDependencies = (
@@ -322,6 +586,7 @@ test("active owner validation runs outside the transaction before locked refresh
       used = true;
       sequence.push("consume");
     }
+    if (isOAuthActivityQuery(text)) sequence.push("record_activity");
     if (text.startsWith("INSERT INTO auth.oauth_access_tokens")) sequence.push("insert_access");
     if (text.startsWith("INSERT INTO auth.oauth_refresh_tokens")) sequence.push("insert_refresh");
     return result([]);
@@ -333,6 +598,14 @@ test("active owner validation runs outside the transaction before locked refresh
   });
   const activeDependencies: OAuthStoreDependencies = {
     ...dependencies,
+    query: async (text, params) => {
+      if (isOAuthCleanupQuery(text)) {
+        assert.equal(transactionOpen, false);
+        sequence.push("cleanup");
+        return result([]);
+      }
+      return queryFn(text, params);
+    },
     withTransaction: async <T>(callback: (transactionQuery: QueryFn) => Promise<T>): Promise<T> => {
       transactionOpen = true;
       try {
@@ -358,10 +631,12 @@ test("active owner validation runs outside the transaction before locked refresh
   );
 
   assert.deepEqual(sequence, [
+    "cleanup",
     "preflight_read",
     "cognito_check",
     "locked_read",
     "consume",
+    "record_activity",
     "insert_access",
     "insert_refresh",
   ]);
@@ -371,6 +646,7 @@ test("inactive owners revoke every active OAuth connection and receive generic i
   let consumed = false;
   let tokenInserted = false;
   let transactionOpened = false;
+  let activityRecorded = false;
   let revokedUserId: string | undefined;
   const queryFn: QueryFn = async (text, params) => {
     if (text.includes("FROM auth.oauth_refresh_tokens")) {
@@ -393,6 +669,7 @@ test("inactive owners revoke every active OAuth connection and receive generic i
       return result([]);
     }
     if (text.startsWith("UPDATE auth.oauth_refresh_tokens")) consumed = true;
+    if (isOAuthActivityQuery(text)) activityRecorded = true;
     if (text.startsWith("INSERT INTO auth.oauth_")) tokenInserted = true;
     return result([]);
   };
@@ -422,6 +699,7 @@ test("inactive owners revoke every active OAuth connection and receive generic i
   assert.equal(transactionOpened, false);
   assert.equal(consumed, false);
   assert.equal(tokenInserted, false);
+  assert.equal(activityRecorded, false);
 });
 
 test("transient owner validation failure neither consumes the refresh token nor revokes connections", async (): Promise<void> => {
@@ -441,7 +719,7 @@ test("transient owner validation failure neither consumes the refresh token nor 
         revoked: false,
       }]);
     }
-    if (text.startsWith("UPDATE") || text.startsWith("INSERT")) mutationAttempted = true;
+    if (text.startsWith("UPDATE") || text.startsWith("INSERT") || isOAuthActivityQuery(text)) mutationAttempted = true;
     return result([]);
   };
   const baseDependencies = createDependencies(queryFn, emptyTokens());
@@ -713,6 +991,7 @@ const createConcurrentRefreshStore = (): Readonly<{
         });
         return result([]);
       }
+      if (isOAuthActivityQuery(text)) return result([]);
       if (text.startsWith("UPDATE auth.oauth_connections")) {
         assert.equal(params[0], connectionId);
         revokeConnection = true;
