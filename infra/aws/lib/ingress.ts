@@ -34,6 +34,8 @@ type ByteMatchPositionalConstraint = "EXACTLY" | "STARTS_WITH";
 // AWS WAF's smallest native rate envelope is 10 requests over 60 seconds.
 const DYNAMIC_CLIENT_REGISTRATION_RATE_LIMIT = 10;
 const DYNAMIC_CLIENT_REGISTRATION_EVALUATION_WINDOW_SECONDS = 60;
+const OAUTH_TOKEN_EXCHANGE_RATE_LIMIT = 60;
+const OAUTH_TOKEN_EXCHANGE_EVALUATION_WINDOW_SECONDS = 60;
 
 const noneTextTransformation = (): wafv2.CfnWebACL.TextTransformationProperty => ({
   priority: 0,
@@ -293,6 +295,32 @@ export const buildIngressWafRules = (
         metricName: "expense-tracker-dcr-rate-limit",
       },
     },
+    {
+      name: "RateLimitOAuthTokenExchanges",
+      priority: 6,
+      action: { block: {} },
+      statement: {
+        rateBasedStatement: {
+          aggregateKeyType: "FORWARDED_IP",
+          evaluationWindowSec: OAUTH_TOKEN_EXCHANGE_EVALUATION_WINDOW_SECONDS,
+          forwardedIpConfig: {
+            headerName: "CF-Connecting-IP",
+            fallbackBehavior: "MATCH",
+          },
+          limit: OAUTH_TOKEN_EXCHANGE_RATE_LIMIT,
+          scopeDownStatement: andStatement([
+            headerIs("host", authDomain),
+            methodIs("POST"),
+            uriPathIs("/oauth/token"),
+          ]),
+        },
+      },
+      visibilityConfig: {
+        sampledRequestsEnabled: true,
+        cloudWatchMetricsEnabled: true,
+        metricName: "expense-tracker-oauth-token-rate-limit",
+      },
+    },
   ];
 };
 
@@ -376,9 +404,9 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
 
   // --- AWS WAF ---
   // The ALB security group accepts only Cloudflare edges, so CF-Connecting-IP is
-  // the trusted real-client boundary for the DCR rate rule. AWS WAF ignores this
-  // rule if that header is absent; Cloudflare supplies it on every origin request.
-  // A present malformed value uses MATCH and is blocked instead of bypassing the rule.
+  // the trusted real-client boundary for the OAuth rate rules. AWS WAF ignores these
+  // rules if that header is absent; Cloudflare supplies it on every origin request.
+  // A present malformed value uses MATCH and is blocked instead of bypassing a rule.
   const waf = new wafv2.CfnWebACL(scope, "Waf", {
     scope: "REGIONAL",
     defaultAction: { allow: {} },
