@@ -117,6 +117,8 @@ type CteDefinition = Readonly<{
 
 type MutationOperation = "INSERT" | "UPDATE" | "DELETE";
 
+type SqlGrammarContext = "statement" | "delete_using" | "delete_using_source";
+
 type MutationTarget = Readonly<{
   operation: MutationOperation;
   relationName: AllowedRelationName;
@@ -570,6 +572,19 @@ const findPreviousSignificantIndex = (
   return null;
 };
 
+const isSourceClauseBoundary = (
+  tokens: ReadonlyArray<SqlToken>,
+  index: number,
+): boolean => {
+  const token = tokens[index];
+  if (token === undefined || !SOURCE_CLAUSE_END.has(token.lower)) {
+    return false;
+  }
+
+  const previousIndex = findPreviousSignificantIndex(tokens, index - 1);
+  return previousIndex === null || tokens[previousIndex]?.value !== ".";
+};
+
 const parseRelationName = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
@@ -635,23 +650,82 @@ const mergeRelations = (
   }
 };
 
+const startsWithDerivedQuery = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): boolean => {
+  const normalized = unwrapParenthesizedSegment(tokens, startIndex, endIndex);
+  const firstToken = tokens[normalized.startIndex];
+  return firstToken !== undefined && DERIVED_QUERY_FIRST_KEYWORDS.has(firstToken.lower);
+};
+
+const findDeleteUsingClauseIndex = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): number | null => {
+  if (
+    tokens[startIndex]?.lower !== "delete"
+    || tokens[startIndex + 1]?.lower !== "from"
+  ) {
+    return null;
+  }
+
+  const targetStartIndex = tokens[startIndex + 2]?.lower === "only"
+    ? startIndex + 3
+    : startIndex + 2;
+  const target = parseRelationName(tokens, targetStartIndex);
+  let index = target.nextIndex;
+
+  if (tokens[index]?.value === "*") {
+    index += 1;
+  }
+
+  if (tokens[index]?.lower === "as") {
+    if (tokens[index + 1]?.kind !== "word") {
+      return null;
+    }
+    index += 2;
+  } else if (
+    tokens[index]?.kind === "word"
+    && tokens[index]?.lower !== "using"
+    && !isSourceClauseBoundary(tokens, index)
+  ) {
+    index += 1;
+  }
+
+  return index < endIndex && tokens[index]?.lower === "using" ? index : null;
+};
+
 const collectReferencedRelationsFromSegment = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
   endIndex: number,
   visibleCteNames: ReadonlySet<string>,
+  grammarContext: SqlGrammarContext,
 ): ReadonlyArray<AllowedRelationName> => {
   if (startIndex >= endIndex) {
     return [];
   }
 
   if (tokens[startIndex]?.lower === "with") {
-    return collectReferencedRelationsFromWithClause(tokens, startIndex, endIndex, visibleCteNames);
+    return collectReferencedRelationsFromWithClause(
+      tokens,
+      startIndex,
+      endIndex,
+      visibleCteNames,
+      grammarContext,
+    );
   }
 
   const relations = new Set<AllowedRelationName>();
-  let inSourceClause = false;
-  let expectRelation = false;
+  const deleteUsingClauseIndex = findDeleteUsingClauseIndex(tokens, startIndex, endIndex);
+  let understandsDeleteUsingGrammar = grammarContext !== "statement";
+  let inSourceClause = grammarContext === "delete_using_source";
+  let inDeleteUsingSource = grammarContext === "delete_using_source";
+  let expectRelation = grammarContext === "delete_using_source";
+  let joinExpectsCondition = false;
 
   for (let i = startIndex; i < endIndex; i++) {
     const token = tokens[i];
@@ -661,13 +735,27 @@ const collectReferencedRelationsFromSegment = (
 
     if (token.kind === "punct") {
       if (token.value === "(") {
+        const closeIndex = findMatchingParen(tokens, i, endIndex);
+        const startsNestedDeleteUsingSource = inDeleteUsingSource
+          && expectRelation
+          && !startsWithDerivedQuery(tokens, i + 1, closeIndex);
         if (inSourceClause && expectRelation) {
           expectRelation = false;
         }
-        const closeIndex = findMatchingParen(tokens, i, endIndex);
+        const nestedGrammarContext: SqlGrammarContext = understandsDeleteUsingGrammar
+          ? startsNestedDeleteUsingSource
+            ? "delete_using_source"
+            : "delete_using"
+          : "statement";
         mergeRelations(
           relations,
-          collectReferencedRelationsFromSegment(tokens, i + 1, closeIndex, visibleCteNames),
+          collectReferencedRelationsFromSegment(
+            tokens,
+            i + 1,
+            closeIndex,
+            visibleCteNames,
+            nestedGrammarContext,
+          ),
         );
         i = closeIndex;
         continue;
@@ -675,6 +763,7 @@ const collectReferencedRelationsFromSegment = (
 
       if (inSourceClause && token.value === ",") {
         expectRelation = true;
+        joinExpectsCondition = false;
         continue;
       }
       continue;
@@ -702,20 +791,50 @@ const collectReferencedRelationsFromSegment = (
       fail("unsupported_statement", "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
     }
 
-    if (token.lower === "from") {
+    if (i === deleteUsingClauseIndex) {
+      understandsDeleteUsingGrammar = true;
       inSourceClause = true;
+      inDeleteUsingSource = true;
       expectRelation = true;
+      joinExpectsCondition = false;
       continue;
     }
 
-    if (inSourceClause && SOURCE_CLAUSE_END.has(token.lower)) {
+    if (
+      inSourceClause
+      && joinExpectsCondition
+      && token.lower === "using"
+      && tokens[i + 1]?.value === "("
+    ) {
+      i = findMatchingParen(tokens, i + 1, endIndex);
+      joinExpectsCondition = false;
+      continue;
+    }
+
+    if (token.lower === "from") {
+      inSourceClause = true;
+      inDeleteUsingSource = understandsDeleteUsingGrammar;
+      expectRelation = true;
+      joinExpectsCondition = false;
+      continue;
+    }
+
+    if (inSourceClause && isSourceClauseBoundary(tokens, i)) {
       inSourceClause = false;
+      inDeleteUsingSource = false;
       expectRelation = false;
+      joinExpectsCondition = false;
       continue;
     }
 
     if (inSourceClause && token.lower === "join") {
       expectRelation = true;
+      joinExpectsCondition = true;
+      continue;
+    }
+
+    if (inSourceClause && token.lower === "on") {
+      joinExpectsCondition = false;
       continue;
     }
 
@@ -919,6 +1038,7 @@ const assertOnlyAllowedFunctionCallsInSegment = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
   endIndex: number,
+  grammarContext: SqlGrammarContext,
 ): void => {
   if (startIndex >= endIndex) {
     return;
@@ -927,11 +1047,27 @@ const assertOnlyAllowedFunctionCallsInSegment = (
   if (tokens[startIndex]?.lower === "with") {
     const { ctes, mainQueryStartIndex } = parseCteDefinitions(tokens, startIndex, endIndex);
     for (const cte of ctes) {
-      assertOnlyAllowedFunctionCallsInSegment(tokens, cte.bodyStartIndex, cte.bodyEndIndex);
+      assertOnlyAllowedFunctionCallsInSegment(
+        tokens,
+        cte.bodyStartIndex,
+        cte.bodyEndIndex,
+        grammarContext,
+      );
     }
-    assertOnlyAllowedFunctionCallsInSegment(tokens, mainQueryStartIndex, endIndex);
+    assertOnlyAllowedFunctionCallsInSegment(
+      tokens,
+      mainQueryStartIndex,
+      endIndex,
+      grammarContext,
+    );
     return;
   }
+
+  const deleteUsingClauseIndex = findDeleteUsingClauseIndex(tokens, startIndex, endIndex);
+  let understandsDeleteUsingGrammar = grammarContext !== "statement";
+  let inDeleteUsingSource = grammarContext === "delete_using_source";
+  let expectDeleteUsingRelation = inDeleteUsingSource;
+  let joinExpectsCondition = false;
 
   for (let index = startIndex; index < endIndex; index += 1) {
     const token = tokens[index];
@@ -949,32 +1085,95 @@ const assertOnlyAllowedFunctionCallsInSegment = (
     }
 
     if (token.kind === "punct") {
+      if (inDeleteUsingSource && token.value === ",") {
+        expectDeleteUsingRelation = true;
+        joinExpectsCondition = false;
+      }
       if (token.value === "(") {
         const closeIndex = findMatchingParen(tokens, index, endIndex);
-        assertOnlyAllowedFunctionCallsInSegment(tokens, index + 1, closeIndex);
+        const startsNestedDeleteUsingSource = inDeleteUsingSource
+          && expectDeleteUsingRelation
+          && !startsWithDerivedQuery(tokens, index + 1, closeIndex);
+        const nestedGrammarContext: SqlGrammarContext = understandsDeleteUsingGrammar
+          ? startsNestedDeleteUsingSource
+            ? "delete_using_source"
+            : "delete_using"
+          : "statement";
+        assertOnlyAllowedFunctionCallsInSegment(
+          tokens,
+          index + 1,
+          closeIndex,
+          nestedGrammarContext,
+        );
+        expectDeleteUsingRelation = false;
         index = closeIndex;
       }
       continue;
     }
 
-    if (tokens[index + 1]?.value !== "(") {
-      continue;
-    }
-
     const previousIndex = findPreviousSignificantIndex(tokens, index - 1);
     const previousToken = previousIndex === null ? undefined : tokens[previousIndex];
-    if (
-      previousIndex !== null
-      && previousToken?.value === "."
-      && previousIndex >= 2
-      && tokens[previousIndex - 1]?.lower === "public"
-      && tokens[previousIndex - 2]?.lower === "into"
-    ) {
+    if (tokens[index + 1]?.value === "(" && previousToken?.value === ".") {
+      if (
+        previousIndex !== null
+        && previousIndex >= 2
+        && tokens[previousIndex - 1]?.lower === "public"
+        && tokens[previousIndex - 2]?.lower === "into"
+      ) {
+        continue;
+      }
+      failFunctionCallNotAllowed(token.value);
+    }
+
+    if (index === deleteUsingClauseIndex) {
+      understandsDeleteUsingGrammar = true;
+      inDeleteUsingSource = true;
+      expectDeleteUsingRelation = true;
+      joinExpectsCondition = false;
       continue;
     }
 
-    if (previousToken?.value === ".") {
-      failFunctionCallNotAllowed(token.value);
+    if (
+      inDeleteUsingSource
+      && joinExpectsCondition
+      && token.lower === "using"
+      && tokens[index + 1]?.value === "("
+    ) {
+      index = findMatchingParen(tokens, index + 1, endIndex);
+      joinExpectsCondition = false;
+      continue;
+    }
+
+    if (inDeleteUsingSource && isSourceClauseBoundary(tokens, index)) {
+      inDeleteUsingSource = false;
+      expectDeleteUsingRelation = false;
+      joinExpectsCondition = false;
+    }
+
+    if (inDeleteUsingSource && token.lower === "join") {
+      expectDeleteUsingRelation = true;
+      joinExpectsCondition = true;
+      continue;
+    }
+
+    if (inDeleteUsingSource && token.lower === "on") {
+      joinExpectsCondition = false;
+      continue;
+    }
+
+    if (understandsDeleteUsingGrammar && token.lower === "from") {
+      inDeleteUsingSource = true;
+      expectDeleteUsingRelation = true;
+      joinExpectsCondition = false;
+      continue;
+    }
+
+    if (inDeleteUsingSource && expectDeleteUsingRelation) {
+      expectDeleteUsingRelation = false;
+    }
+
+    if (tokens[index + 1]?.value !== "(") {
+      continue;
     }
 
     const derivedQueryFirstToken = tokens[index + 2];
@@ -985,7 +1184,15 @@ const assertOnlyAllowedFunctionCallsInSegment = (
       || (SQL_DERIVED_QUERY_PAREN_KEYWORDS.has(token.lower) && startsDerivedQuery)
     ) {
       const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
-      assertOnlyAllowedFunctionCallsInSegment(tokens, index + 2, closeIndex);
+      const nestedGrammarContext = understandsDeleteUsingGrammar
+        ? "delete_using"
+        : "statement";
+      assertOnlyAllowedFunctionCallsInSegment(
+        tokens,
+        index + 2,
+        closeIndex,
+        nestedGrammarContext,
+      );
       index = closeIndex;
       continue;
     }
@@ -995,7 +1202,12 @@ const assertOnlyAllowedFunctionCallsInSegment = (
     }
 
     const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
-    assertOnlyAllowedFunctionCallsInSegment(tokens, index + 2, closeIndex);
+    assertOnlyAllowedFunctionCallsInSegment(
+      tokens,
+      index + 2,
+      closeIndex,
+      understandsDeleteUsingGrammar ? "delete_using" : "statement",
+    );
     index = closeIndex;
   }
 };
@@ -1005,6 +1217,7 @@ const collectReferencedRelationsFromWithClause = (
   startIndex: number,
   endIndex: number,
   outerVisibleCteNames: ReadonlySet<string>,
+  grammarContext: SqlGrammarContext,
 ): ReadonlyArray<AllowedRelationName> => {
   const { ctes, mainQueryStartIndex, isRecursive } = parseCteDefinitions(tokens, startIndex, endIndex);
   const relations = new Set<AllowedRelationName>();
@@ -1023,6 +1236,7 @@ const collectReferencedRelationsFromWithClause = (
         cte.bodyStartIndex,
         cte.bodyEndIndex,
         visibleNamesForBody,
+        grammarContext,
       ),
     );
 
@@ -1031,7 +1245,13 @@ const collectReferencedRelationsFromWithClause = (
 
   mergeRelations(
     relations,
-    collectReferencedRelationsFromSegment(tokens, mainQueryStartIndex, endIndex, visibleCteNames),
+    collectReferencedRelationsFromSegment(
+      tokens,
+      mainQueryStartIndex,
+      endIndex,
+      visibleCteNames,
+      grammarContext,
+    ),
   );
 
   return Array.from(relations);
@@ -1119,7 +1339,13 @@ const collectReferencedRelations = (sql: string): ReadonlyArray<AllowedRelationN
     fail("on_conflict_not_allowed", "ON CONFLICT is not supported in restricted SQL");
   }
   const tokens = tokenizeSql(sanitizedSql);
-  return collectReferencedRelationsFromSegment(tokens, 0, tokens.length, new Set<string>());
+  return collectReferencedRelationsFromSegment(
+    tokens,
+    0,
+    tokens.length,
+    new Set<string>(),
+    "statement",
+  );
 };
 
 /**
@@ -1197,12 +1423,18 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
   const tokens = tokenizeSql(sanitizedSql);
   assertSupportedEffectiveStatementsInSegment(tokens, 0, tokens.length);
   assertMutationTargetsAreWritable(tokens, 0, tokens.length);
-  assertOnlyAllowedFunctionCallsInSegment(tokens, 0, tokens.length);
+  assertOnlyAllowedFunctionCallsInSegment(tokens, 0, tokens.length, "statement");
 
   return {
     sql,
     isMutating: statementMutatesDataFromSegment(tokens, 0, tokens.length),
-    referencedRelations: collectReferencedRelationsFromSegment(tokens, 0, tokens.length, new Set<string>()),
+    referencedRelations: collectReferencedRelationsFromSegment(
+      tokens,
+      0,
+      tokens.length,
+      new Set<string>(),
+      "statement",
+    ),
   };
 };
 
