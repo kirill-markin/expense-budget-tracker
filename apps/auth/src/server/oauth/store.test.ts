@@ -35,25 +35,32 @@ const cleanupMigration = readFileSync(
   "utf8",
 );
 
-const readMigrationSection = (marker: string): string => {
-  const markerIndex = cleanupMigration.indexOf(marker);
+const tombstoneRetentionMigration = readFileSync(
+  fileURLToPath(new URL("../../../../../db/migrations/0070_oauth_used_credential_tombstone_retention.sql", import.meta.url)),
+  "utf8",
+);
+
+const readMigrationSection = (migration: string, marker: string): string => {
+  const markerIndex = migration.indexOf(marker);
   if (markerIndex === -1) throw new Error(`OAuth cleanup migration is missing ${marker}`);
-  return cleanupMigration.slice(markerIndex);
+  return migration.slice(markerIndex);
 };
 
-const readMigrationRange = (startMarker: string, endMarker: string): string => {
-  const startIndex = cleanupMigration.indexOf(startMarker);
-  const endIndex = cleanupMigration.indexOf(endMarker);
+const readMigrationRange = (migration: string, startMarker: string, endMarker: string): string => {
+  const startIndex = migration.indexOf(startMarker);
+  const endIndex = migration.indexOf(endMarker);
   if (startIndex === -1) throw new Error(`OAuth cleanup migration is missing ${startMarker}`);
   if (endIndex <= startIndex) throw new Error(`OAuth cleanup migration is missing ${endMarker} after ${startMarker}`);
-  return cleanupMigration.slice(startIndex, endIndex);
+  return migration.slice(startIndex, endIndex);
 };
 
 const cleanupFunctionSql = readMigrationSection(
-  "CREATE FUNCTION auth.cleanup_expired_oauth_transient_state()",
+  tombstoneRetentionMigration,
+  "CREATE OR REPLACE FUNCTION auth.cleanup_expired_oauth_transient_state()",
 );
 
 const ownerListingFunctionSql = readMigrationRange(
+  cleanupMigration,
   "CREATE OR REPLACE FUNCTION auth.list_current_user_oauth_connections()",
   "CREATE FUNCTION auth.record_oauth_connection_activity(p_connection_id TEXT)",
 );
@@ -95,18 +102,32 @@ const authorizationRequest: AuthorizationRequest = {
   codeChallengeMethod: "S256",
 };
 
-test("OAuth cleanup bounds expiry-only deletes, retains unexpired used rows, and skips locks", (): void => {
-  assert.equal(cleanupFunctionSql.match(/WHERE expires_at <= now\(\)/gu)?.length, 3);
-  assert.equal(cleanupFunctionSql.match(/ORDER BY expires_at/gu)?.length, 3);
+test("OAuth cleanup retains active-family tombstones and uses bounded indexed eligibility paths", (): void => {
+  assert.match(
+    tombstoneRetentionMigration,
+    /CREATE INDEX idx_oauth_connections_revoked_connection_id\s+ON auth\.oauth_connections \(connection_id\)\s+WHERE revoked_at IS NOT NULL/u,
+  );
+  assert.match(
+    tombstoneRetentionMigration,
+    /CREATE INDEX idx_oauth_authorization_codes_unused_expires_at\s+ON auth\.oauth_authorization_codes \(expires_at, code_hash\)\s+WHERE used_at IS NULL/u,
+  );
+  assert.match(
+    tombstoneRetentionMigration,
+    /CREATE INDEX idx_oauth_refresh_tokens_unused_expires_at\s+ON auth\.oauth_refresh_tokens \(expires_at, token_hash\)\s+WHERE used_at IS NULL/u,
+  );
+  assert.equal(cleanupFunctionSql.match(/used_at IS NULL/gu)?.length, 2);
+  assert.equal(cleanupFunctionSql.match(/revoked_at IS NOT NULL/gu)?.length, 2);
+  assert.equal(cleanupFunctionSql.match(/GET DIAGNOSTICS v_deleted_count = ROW_COUNT/gu)?.length, 2);
   assert.equal(cleanupFunctionSql.match(/LIMIT 100/gu)?.length, 3);
-  assert.equal(cleanupFunctionSql.match(/FOR UPDATE SKIP LOCKED/gu)?.length, 3);
-  assert.equal(cleanupFunctionSql.includes("used_at"), false);
-  assert.match(cleanupFunctionSql, /DELETE FROM auth\.oauth_authorization_codes/u);
+  assert.equal(cleanupFunctionSql.match(/LIMIT \(100 - v_deleted_count\)/gu)?.length, 4);
+  assert.equal(cleanupFunctionSql.match(/FOR UPDATE SKIP LOCKED/gu)?.length, 5);
+  assert.equal(cleanupFunctionSql.match(/DELETE FROM auth\.oauth_authorization_codes/gu)?.length, 2);
   assert.match(cleanupFunctionSql, /DELETE FROM auth\.oauth_access_tokens/u);
-  assert.match(cleanupFunctionSql, /DELETE FROM auth\.oauth_refresh_tokens/u);
+  assert.equal(cleanupFunctionSql.match(/DELETE FROM auth\.oauth_refresh_tokens/gu)?.length, 2);
+  assert.doesNotMatch(cleanupFunctionSql, /INTERVAL '30 days'/u);
   assert.match(cleanupFunctionSql, /SECURITY DEFINER/u);
-  assert.match(cleanupMigration, /GRANT EXECUTE ON FUNCTION auth\.cleanup_expired_oauth_transient_state\(\) TO auth_service/u);
-  assert.doesNotMatch(cleanupMigration, /GRANT DELETE/u);
+  assert.match(tombstoneRetentionMigration, /GRANT EXECUTE ON FUNCTION auth\.cleanup_expired_oauth_transient_state\(\) TO auth_service/u);
+  assert.doesNotMatch(tombstoneRetentionMigration, /GRANT DELETE/u);
 });
 
 test("OAuth activity is backfilled durably and read without transient credential rows", (): void => {
