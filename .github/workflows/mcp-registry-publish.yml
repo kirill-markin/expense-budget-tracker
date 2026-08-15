@@ -40,8 +40,8 @@ jobs:
             'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json' \
             --output "${schema_path}"
           npx --yes ajv-cli@5 validate \
-            --schema "${schema_path}" \
-            --data server.json \
+            -s "${schema_path}" \
+            -d server.json \
             --strict=false
 
       - name: Check version alignment
