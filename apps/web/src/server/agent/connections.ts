@@ -1,21 +1,109 @@
 /**
  * Agent connection management for human settings and agent key metadata.
  */
+import { z } from "zod";
+import type { QueryResult } from "pg";
+
 import { queryAs } from "@/server/db";
 
-export type AgentConnectionRow = Readonly<{
+export type AgentConnectionType = "api_key" | "oauth";
+
+type AgentConnectionBase = Readonly<{
   connectionId: string;
   label: string;
   createdAt: string;
-  lastUsedAt: string | null;
   revokedAt: string | null;
 }>;
 
-export const listAgentConnections = async (
+export type ApiKeyAgentConnectionRow = AgentConnectionBase & Readonly<{
+  type: "api_key";
+  lastUsedAt: string | null;
+}>;
+
+export type OAuthAgentConnectionRow = AgentConnectionBase & Readonly<{
+  type: "oauth";
+  lastActivityAt: string | null;
+}>;
+
+export type AgentConnectionRow = ApiKeyAgentConnectionRow | OAuthAgentConnectionRow;
+
+type QueryAsFn = (
   userId: string,
   workspaceId: string,
-): Promise<ReadonlyArray<AgentConnectionRow>> => {
-  const result = await queryAs(
+  text: string,
+  params: ReadonlyArray<unknown>,
+) => Promise<QueryResult>;
+
+export type AgentConnectionDependencies = Readonly<{
+  queryAs: QueryAsFn;
+}>;
+
+export type AgentConnectionRevocationDependencies = Readonly<{
+  revokeApiKeyConnection: (
+    userId: string,
+    workspaceId: string,
+    connectionId: string,
+  ) => Promise<boolean>;
+  revokeOAuthConnection: (
+    userId: string,
+    workspaceId: string,
+    connectionId: string,
+  ) => Promise<boolean>;
+}>;
+
+const timestampSchema = z.union([z.string().datetime({ offset: true }), z.date()])
+  .transform((value): string => value instanceof Date ? value.toISOString() : value);
+
+const nullableTimestampSchema = z.union([timestampSchema, z.null()]);
+
+const apiKeyConnectionSchema = z.object({
+  connection_id: z.string().min(1),
+  label: z.string().min(1),
+  created_at: timestampSchema,
+  last_used_at: nullableTimestampSchema,
+  revoked_at: nullableTimestampSchema,
+});
+
+const oauthConnectionSchema = z.object({
+  connection_id: z.string().min(1),
+  client_name: z.string().min(1),
+  created_at: timestampSchema,
+  last_activity_at: nullableTimestampSchema,
+  revoked_at: nullableTimestampSchema,
+});
+
+const DEFAULT_DEPENDENCIES: AgentConnectionDependencies = { queryAs };
+
+const mapApiKeyConnection = (row: unknown): ApiKeyAgentConnectionRow => {
+  const parsed = apiKeyConnectionSchema.parse(row);
+  return {
+    type: "api_key",
+    connectionId: parsed.connection_id,
+    label: parsed.label,
+    createdAt: parsed.created_at,
+    lastUsedAt: parsed.last_used_at,
+    revokedAt: parsed.revoked_at,
+  };
+};
+
+const mapOAuthConnection = (row: unknown): OAuthAgentConnectionRow => {
+  const parsed = oauthConnectionSchema.parse(row);
+  return {
+    type: "oauth",
+    connectionId: parsed.connection_id,
+    label: parsed.client_name,
+    createdAt: parsed.created_at,
+    lastActivityAt: parsed.last_activity_at,
+    revokedAt: parsed.revoked_at,
+  };
+};
+
+const listApiKeyConnections = async (
+  userId: string,
+  workspaceId: string,
+  dependencies: AgentConnectionDependencies,
+): Promise<ReadonlyArray<ApiKeyAgentConnectionRow>> => {
+  const result = await dependencies.queryAs(
     userId,
     workspaceId,
     `SELECT connection_id, label, created_at, last_used_at, revoked_at
@@ -25,25 +113,47 @@ export const listAgentConnections = async (
     [userId],
   );
 
-  return result.rows.map((row) => {
-    const typedRow = row as {
-      connection_id: string;
-      label: string;
-      created_at: string;
-      last_used_at: string | null;
-      revoked_at: string | null;
-    };
-    return {
-      connectionId: typedRow.connection_id,
-      label: typedRow.label,
-      createdAt: typedRow.created_at,
-      lastUsedAt: typedRow.last_used_at,
-      revokedAt: typedRow.revoked_at,
-    };
-  });
+  return result.rows.map(mapApiKeyConnection);
 };
 
-export const revokeAgentConnection = async (
+const listOAuthConnections = async (
+  userId: string,
+  workspaceId: string,
+  dependencies: AgentConnectionDependencies,
+): Promise<ReadonlyArray<OAuthAgentConnectionRow>> => {
+  const result = await dependencies.queryAs(
+    userId,
+    workspaceId,
+    `SELECT connection_id, client_name, created_at, last_activity_at, revoked_at
+     FROM auth.list_current_user_oauth_connections()`,
+    [],
+  );
+
+  return result.rows.map(mapOAuthConnection);
+};
+
+export const listAgentConnectionsWithDependencies = async (
+  userId: string,
+  workspaceId: string,
+  dependencies: AgentConnectionDependencies,
+): Promise<ReadonlyArray<AgentConnectionRow>> => {
+  const [apiKeyConnections, oauthConnections] = await Promise.all([
+    listApiKeyConnections(userId, workspaceId, dependencies),
+    listOAuthConnections(userId, workspaceId, dependencies),
+  ]);
+
+  return [...apiKeyConnections, ...oauthConnections].toSorted(
+    (first, second): number => Date.parse(second.createdAt) - Date.parse(first.createdAt),
+  );
+};
+
+export const listAgentConnections = async (
+  userId: string,
+  workspaceId: string,
+): Promise<ReadonlyArray<AgentConnectionRow>> =>
+  listAgentConnectionsWithDependencies(userId, workspaceId, DEFAULT_DEPENDENCIES);
+
+export const revokeApiKeyConnection = async (
   userId: string,
   workspaceId: string,
   connectionId: string,
@@ -60,4 +170,39 @@ export const revokeAgentConnection = async (
   );
 
   return result.rows.length === 1;
+};
+
+export const revokeOAuthConnection = async (
+  userId: string,
+  workspaceId: string,
+  connectionId: string,
+): Promise<boolean> => {
+  const result = await queryAs(
+    userId,
+    workspaceId,
+    "SELECT auth.revoke_current_user_oauth_connection($1) AS revoked",
+    [connectionId],
+  );
+
+  if (result.rows.length !== 1) {
+    throw new Error(`revokeOAuthConnection: expected 1 row, got ${result.rows.length}`);
+  }
+  const parsed = z.object({ revoked: z.boolean() }).parse(result.rows[0]);
+  return parsed.revoked;
+};
+
+export const revokeAgentConnectionByType = (
+  type: AgentConnectionType,
+  userId: string,
+  workspaceId: string,
+  connectionId: string,
+  dependencies: AgentConnectionRevocationDependencies,
+): Promise<boolean> => {
+  if (type === "api_key") {
+    return dependencies.revokeApiKeyConnection(userId, workspaceId, connectionId);
+  }
+  if (type === "oauth") {
+    return dependencies.revokeOAuthConnection(userId, workspaceId, connectionId);
+  }
+  throw new Error(`Unsupported agent connection type: ${String(type)}`);
 };
