@@ -42,7 +42,7 @@ Other live publication instructions derive or reference a managed field instead 
 - `docs/openai-mcp-submission.md`: immutable-version safety and the pending publication checklist refer to G01
 - `docs/mcp-registry-publishing.md`: the exact-version preflight validates and URL-encodes the SemVer read from `server.json` before calling `curl`
 
-Do not replace those references with a version literal. Do not bulk-replace version literals in the dossier. Its only unmanaged product-version literals are historical evidence: the Item 04 `server.json` summary attached to commit `8f0b330098fb8829f9f340a27501d73eb4b1860b`, the named `tools-list-v1.2.0-base-396a09b` snapshot wherever referenced, and the completed base-alignment checklist item. Keep those labels unchanged and add new evidence for a later version when needed.
+Do not replace those references with a version literal. Do not bulk-replace version literals in the dossier. Its only unmanaged product-version literals are fixed evidence labels: the historical Item 04 `server.json` summary attached to commit `8f0b330098fb8829f9f340a27501d73eb4b1860b`, the named `tools-list-v1.2.0-promotion-candidate-v1` snapshot wherever referenced, and the completed base-alignment checklist item. Keep those labels unchanged and add new evidence for a later version when needed.
 
 ## Procedure
 

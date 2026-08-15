@@ -156,8 +156,12 @@ type OpenAiToolSecurityMetadata = Readonly<{
   securitySchemes: ReadonlyArray<OAuthSecurityScheme>;
 }>;
 
-const buildToolSecurityMetadata = (scope: McpScope): OpenAiToolSecurityMetadata => ({
-  securitySchemes: [{ type: "oauth2", scopes: [scope] }],
+type ToolScopeList = readonly [McpScope, ...McpScope[]];
+
+const buildToolSecurityMetadata = (
+  scopes: ToolScopeList,
+): OpenAiToolSecurityMetadata => ({
+  securitySchemes: [{ type: "oauth2", scopes }],
 });
 
 const requireScope = (
@@ -292,7 +296,7 @@ export const createMcpServerWithDependencies = (
         idempotentHint: true,
         openWorldHint: false,
       },
-      _meta: buildToolSecurityMetadata(READ_SCOPE),
+      _meta: buildToolSecurityMetadata([READ_SCOPE]),
     },
     async (): Promise<CallToolResult> => {
       try {
@@ -321,7 +325,7 @@ export const createMcpServerWithDependencies = (
         idempotentHint: true,
         openWorldHint: false,
       },
-      _meta: buildToolSecurityMetadata(READ_SCOPE),
+      _meta: buildToolSecurityMetadata([READ_SCOPE]),
     },
     async ({ workspaceId }): Promise<CallToolResult> => {
       try {
@@ -370,7 +374,7 @@ export const createMcpServerWithDependencies = (
         idempotentHint: true,
         openWorldHint: false,
       },
-      _meta: buildToolSecurityMetadata(READ_SCOPE),
+      _meta: buildToolSecurityMetadata([READ_SCOPE]),
     },
     async ({ sql, workspaceId }): Promise<CallToolResult> => {
       try {
@@ -414,7 +418,7 @@ export const createMcpServerWithDependencies = (
         idempotentHint: false,
         openWorldHint: false,
       },
-      _meta: buildToolSecurityMetadata(WRITE_SCOPE),
+      _meta: buildToolSecurityMetadata([READ_SCOPE, WRITE_SCOPE]),
     },
     async ({ sql, workspaceId }): Promise<CallToolResult> => {
       try {
