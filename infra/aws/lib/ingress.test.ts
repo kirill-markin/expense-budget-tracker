@@ -235,3 +235,48 @@ test("WAF rate limits exact dynamic client registration requests by trusted Clou
     metricName: "expense-tracker-dcr-rate-limit",
   });
 });
+
+test("WAF separately rate limits exact OAuth token exchanges by trusted Cloudflare client IP", (): void => {
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com");
+  const rule = getRule(rules, "RateLimitOAuthTokenExchanges");
+  assert.equal(rule.priority, 6);
+  assert.deepEqual(rule.action, { block: {} });
+
+  const statement = requireStatement(rule.statement);
+  const rateBasedStatement = requireRateBasedStatement(statement.rateBasedStatement);
+  assert.equal(rateBasedStatement.aggregateKeyType, "FORWARDED_IP");
+  assert.equal(rateBasedStatement.evaluationWindowSec, 60);
+  assert.equal(rateBasedStatement.limit, 60);
+  assert.deepEqual(rateBasedStatement.forwardedIpConfig, {
+    headerName: "CF-Connecting-IP",
+    fallbackBehavior: "MATCH",
+  });
+
+  const scopeDownStatement = requireStatement(rateBasedStatement.scopeDownStatement);
+  const scopeDown = requireAndStatement(scopeDownStatement.andStatement);
+  const conditions = requireStatements(scopeDown.statements);
+  assert.deepEqual(
+    conditions.map((condition) =>
+      requireByteMatchStatement(condition.byteMatchStatement).searchString),
+    ["auth.example.com", "POST", "/oauth/token"],
+  );
+  assert.deepEqual(
+    conditions.map((condition) =>
+      requireByteMatchStatement(condition.byteMatchStatement).fieldToMatch),
+    [
+      { singleHeader: { Name: "host" } },
+      { method: {} },
+      { uriPath: {} },
+    ],
+  );
+  assert.deepEqual(
+    conditions.map((condition) =>
+      requireByteMatchStatement(condition.byteMatchStatement).positionalConstraint),
+    ["EXACTLY", "EXACTLY", "EXACTLY"],
+  );
+  assert.deepEqual(rule.visibilityConfig, {
+    sampledRequestsEnabled: true,
+    cloudWatchMetricsEnabled: true,
+    metricName: "expense-tracker-oauth-token-rate-limit",
+  });
+});
