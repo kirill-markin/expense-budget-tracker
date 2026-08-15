@@ -1,13 +1,31 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.kirill-markin/expense-budget-tracker",
+  "name": "com.expense-budget-tracker/expense-budget-tracker",
   "title": "Expense Budget Tracker",
-  "description": "Workspace-scoped expense and budget tools with OAuth read and write access.",
+  "description": "Track expenses, budgets, balances, transfers, and multi-currency reports with OAuth-secured tools.",
   "version": "1.2.0",
   "websiteUrl": "https://expense-budget-tracker.com",
+  "icons": [
+    {
+      "src": "https://expense-budget-tracker.com/icon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    },
+    {
+      "src": "https://expense-budget-tracker.com/icon-preview.png",
+      "mimeType": "image/png",
+      "sizes": ["512x512"]
+    },
+    {
+      "src": "https://expense-budget-tracker.com/logo-512.png",
+      "mimeType": "image/png",
+      "sizes": ["512x512"]
+    }
+  ],
   "repository": {
     "url": "https://github.com/kirill-markin/expense-budget-tracker",
     "source": "github",
+    "id": "1162889929",
     "subfolder": "apps/sql-api"
   },
   "remotes": [
@@ -15,5 +33,47 @@
       "type": "streamable-http",
       "url": "https://mcp.expense-budget-tracker.com/mcp"
     }
-  ]
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "categories": ["Finance", "Productivity"],
+      "tags": ["expenses", "budgeting", "personal-finance", "multi-currency"],
+      "mcpServerUrl": "https://mcp.expense-budget-tracker.com/mcp",
+      "documentationUrl": "https://expense-budget-tracker.com/docs/mcp-connector/",
+      "apiDocumentationUrl": "https://expense-budget-tracker.com/docs/api/",
+      "privacyPolicyUrl": "https://expense-budget-tracker.com/privacy/",
+      "termsOfServiceUrl": "https://expense-budget-tracker.com/terms/",
+      "supportUrl": "https://expense-budget-tracker.com/support/",
+      "iconUrls": {
+        "svg": "https://expense-budget-tracker.com/icon.svg",
+        "previewPng": "https://expense-budget-tracker.com/icon-preview.png",
+        "logo512Png": "https://expense-budget-tracker.com/logo-512.png"
+      },
+      "authentication": [
+        "OAuth 2.1 authorization code with PKCE and Dynamic Client Registration"
+      ],
+      "tools": [
+        {
+          "name": "list_workspaces",
+          "description": "Lists workspaces available to the authenticated user.",
+          "readOnly": true
+        },
+        {
+          "name": "get_schema",
+          "description": "Describes allowed financial relations, columns, constraints, limits, and guidance for one workspace.",
+          "readOnly": true
+        },
+        {
+          "name": "sql_query",
+          "description": "Runs one policy-approved read-only SELECT or WITH...SELECT statement.",
+          "readOnly": true
+        },
+        {
+          "name": "sql_execute",
+          "description": "Runs one approved INSERT, UPDATE, or DELETE statement within the selected workspace.",
+          "readOnly": false
+        }
+      ]
+    }
+  }
 }
