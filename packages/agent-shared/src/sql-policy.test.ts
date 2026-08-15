@@ -395,6 +395,112 @@ test("validateExpenseSql allows mutations of workspace-owned relations", (): voi
   }
 });
 
+test("validateExpenseSql validates every DELETE USING source relation", (): void => {
+  const rejectedSql: ReadonlyArray<string> = [
+    "DELETE FROM ledger_entries USING pg_catalog.pg_class AS catalog WHERE ledger_entries.account_id = catalog.relname",
+    "DELETE FROM ledger_entries USING pg_catalog.pg_class AS catalog, accounts AS allowed_accounts WHERE ledger_entries.account_id = allowed_accounts.account_id",
+    "DELETE FROM ledger_entries USING accounts AS allowed_accounts, pg_catalog.pg_class AS catalog WHERE ledger_entries.account_id = allowed_accounts.account_id",
+    "DELETE FROM ledger_entries AS entries USING accounts AS allowed_accounts JOIN pg_catalog.pg_class AS catalog ON allowed_accounts.account_id = catalog.relname WHERE entries.account_id = allowed_accounts.account_id",
+    "DELETE FROM ledger_entries AS entries USING (accounts AS allowed_accounts JOIN pg_catalog.pg_class AS catalog ON allowed_accounts.account_id = catalog.relname) WHERE entries.account_id = allowed_accounts.account_id",
+    "DELETE FROM ledger_entries AS entries USING (accounts AS allowed_accounts JOIN (workspace_settings AS settings JOIN pg_catalog.pg_class AS catalog ON settings.workspace_id = catalog.relname) ON allowed_accounts.account_id = catalog.relname) WHERE entries.account_id = allowed_accounts.account_id",
+    "DELETE FROM ledger_entries AS entries USING ((SELECT relname FROM pg_catalog.pg_class)) AS catalog WHERE entries.account_id = catalog.relname",
+    "WITH source AS (SELECT relname FROM pg_catalog.pg_class) DELETE FROM ledger_entries AS entries USING source AS catalog WHERE entries.account_id = catalog.relname",
+    "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings WHERE (EXISTS (SELECT 1 FROM (pg_catalog.pg_class AS catalog JOIN accounts AS allowed_accounts ON catalog.relname = allowed_accounts.account_id)))",
+    "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings WHERE entries.account_id IN (SELECT allowed_accounts.account_id FROM (pg_catalog.pg_class AS catalog JOIN accounts AS allowed_accounts ON catalog.relname = allowed_accounts.account_id))",
+    "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings WHERE entries.account_id = (SELECT allowed_accounts.account_id FROM (pg_catalog.pg_class AS catalog JOIN accounts AS allowed_accounts ON catalog.relname = allowed_accounts.account_id))",
+    "DELETE FROM ledger_entries AS entries USING (SELECT workspace_id FROM workspace_settings UNION SELECT allowed_accounts.workspace_id FROM (pg_catalog.pg_class AS catalog JOIN accounts AS allowed_accounts ON catalog.relname = allowed_accounts.account_id)) AS source WHERE entries.workspace_id = source.workspace_id",
+    "DELETE FROM ledger_entries AS entries USING (SELECT workspace_id AS where, workspace_id AS returning FROM workspace_settings) AS source JOIN account_metadata AS metadata ON source.where = metadata.workspace_id AND source.returning = metadata.workspace_id JOIN pg_catalog.pg_class AS catalog ON catalog.relname = metadata.account_id WHERE entries.workspace_id = source.where",
+  ];
+
+  for (const sql of rejectedSql) {
+    assertPolicyError(sql, "relation_not_allowed");
+  }
+
+  assertFunctionCallRejected(
+    "DELETE FROM ledger_entries AS entries USING generate_series(1, 2) AS generated WHERE entries.amount = generated",
+  );
+  assertFunctionCallRejected(
+    "DELETE FROM ledger_entries AS entries USING (SELECT lower(account_id) AS account_id FROM accounts) AS lowered WHERE entries.account_id = lowered.account_id",
+  );
+  assertFunctionCallRejected(
+    "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings JOIN account_metadata AS metadata ON lower(settings.workspace_id) = metadata.workspace_id WHERE entries.workspace_id = settings.workspace_id",
+  );
+});
+
+test("validateExpenseSql allows valid DELETE USING source variants", (): void => {
+  const acceptedSql: ReadonlyArray<Readonly<{
+    sql: string;
+    referencedRelations: ReadonlyArray<string>;
+  }>> = [
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING public.workspace_settings AS settings, account_metadata AS metadata WHERE entries.workspace_id = settings.workspace_id AND entries.account_id = metadata.account_id",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata"],
+    },
+    {
+      sql: "WITH source AS (SELECT workspace_id FROM workspace_settings) DELETE FROM ledger_entries AS entries USING source AS settings WHERE entries.workspace_id = settings.workspace_id",
+      referencedRelations: ["workspace_settings", "ledger_entries"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING (SELECT workspace_id FROM workspace_settings) AS settings WHERE entries.workspace_id = settings.workspace_id",
+      referencedRelations: ["ledger_entries", "workspace_settings"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING public.workspace_settings AS settings JOIN account_metadata AS metadata ON COALESCE(settings.workspace_id, '') = metadata.workspace_id WHERE entries.workspace_id = settings.workspace_id",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings JOIN account_metadata AS metadata USING (workspace_id) WHERE entries.workspace_id = settings.workspace_id",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING (workspace_settings AS settings JOIN account_metadata AS metadata USING (workspace_id)) WHERE entries.workspace_id = settings.workspace_id",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING ((SELECT workspace_id FROM public.workspace_settings)) AS settings WHERE entries.workspace_id = settings.workspace_id",
+      referencedRelations: ["ledger_entries", "workspace_settings"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING ((SELECT workspace_id FROM workspace_settings JOIN account_metadata USING (workspace_id))) AS settings WHERE entries.workspace_id = settings.workspace_id",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING ((WITH source AS (SELECT workspace_id FROM workspace_settings JOIN account_metadata USING (workspace_id)) SELECT workspace_id FROM source)) AS settings WHERE entries.workspace_id = settings.workspace_id",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings WHERE entries.workspace_id = settings.workspace_id RETURNING entries.account_id, entries.currency",
+      referencedRelations: ["ledger_entries", "workspace_settings"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings WHERE (EXISTS (SELECT 1 FROM (account_metadata AS metadata JOIN accounts AS allowed_accounts USING (account_id))))",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata", "accounts"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings WHERE entries.account_id IN (SELECT allowed_accounts.account_id FROM (account_metadata AS metadata JOIN accounts AS allowed_accounts USING (account_id)))",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata", "accounts"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings WHERE entries.account_id = (SELECT allowed_accounts.account_id FROM (account_metadata AS metadata JOIN accounts AS allowed_accounts USING (account_id)))",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata", "accounts"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING (SELECT workspace_id FROM workspace_settings UNION SELECT allowed_accounts.workspace_id FROM (account_metadata AS metadata JOIN accounts AS allowed_accounts USING (account_id))) AS source WHERE entries.workspace_id = source.workspace_id",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata", "accounts"],
+    },
+    {
+      sql: "DELETE FROM ledger_entries AS entries USING (SELECT workspace_id AS where, workspace_id AS returning FROM workspace_settings) AS source JOIN account_metadata AS metadata ON source.where = metadata.workspace_id AND source.returning = metadata.workspace_id WHERE entries.workspace_id = source.where",
+      referencedRelations: ["ledger_entries", "workspace_settings", "account_metadata"],
+    },
+  ];
+
+  for (const { sql, referencedRelations } of acceptedSql) {
+    const validated = validateSingleMutationExpenseSql(sql);
+    assert.equal(validated.statements[0]?.isMutating, true);
+    assert.deepEqual(validated.statements[0]?.referencedRelations, referencedRelations);
+  }
+});
+
 test("validateExpenseSql allows a mutable target to read from a SELECT-only source", (): void => {
   const validated = validateExpenseSql(
     "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id) SELECT 'event-1', '2026-08-09', 'a-main-usd', rate, quote_currency, 'income', 'workspace-1' FROM fx_rates_daily WHERE base_currency = 'EUR'",
@@ -439,6 +545,7 @@ test("validateExpenseSql rejects schema-qualified grammar keywords as function c
     "SELECT custom.where(1)",
     "SELECT custom.from(1)",
     "SELECT custom.join(1)",
+    "DELETE FROM ledger_entries WHERE custom.using(1) = 1",
   ];
 
   for (const sql of rejectedSql) {
