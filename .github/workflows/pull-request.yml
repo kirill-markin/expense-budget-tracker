@@ -35,6 +35,8 @@ jobs:
               - 'apps/**'
               - 'packages/**'
               - 'infra/**'
+              - 'db/migrations/**'
+              - 'scripts/migrate.sh'
               - '.github/workflows/pull-request.yml'
               - '.npmrc'
               - '.nvmrc'
@@ -43,6 +45,8 @@ jobs:
             auth_tests:
               - 'apps/auth/**'
               - 'packages/agent-shared/**'
+              - 'db/migrations/**'
+              - 'scripts/migrate.sh'
               - '.github/workflows/pull-request.yml'
               - '.npmrc'
               - '.nvmrc'
@@ -115,6 +119,20 @@ jobs:
       }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_USER: tracker
+          POSTGRES_PASSWORD: tracker
+          POSTGRES_DB: tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tracker -d tracker"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -131,9 +149,27 @@ jobs:
         id: install
         run: npm ci
 
-      - name: Run auth unit tests
+      - name: Install PostgreSQL client
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Apply auth test database migrations
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
+        run: bash scripts/migrate.sh
+        env:
+          MIGRATION_DATABASE_URL: postgresql://tracker:tracker@localhost:5432/tracker
+          APP_DB_PASSWORD: app
+          AUTH_DB_PASSWORD: auth_service
+          WORKER_DB_PASSWORD: worker
+
+      - name: Run auth tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
         run: npm --workspace expense-tracker-auth run test
+        env:
+          MIGRATION_DATABASE_URL: postgresql://tracker:tracker@localhost:5432/tracker
+          AUTH_DATABASE_URL: postgresql://auth_service:auth_service@localhost:5432/tracker
 
       - name: Run AWS infrastructure unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.infra_tests == 'true' }}
