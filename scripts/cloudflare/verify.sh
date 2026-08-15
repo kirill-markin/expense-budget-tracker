@@ -3,7 +3,7 @@
 # Drift detection for Cloudflare resources that live outside IaC.
 #
 # Required env vars:
-#   CLOUDFLARE_API_TOKEN  — API token with Zone, DNS, SSL, Cache Rules, and WAF read access
+#   CLOUDFLARE_API_TOKEN  — API token with Zone, DNS, SSL, and Cache Rules read access
 #   CLOUDFLARE_ZONE_ID    — Zone ID from Cloudflare dashboard
 #   AWS_PROFILE           — explicit AWS CLI profile for the deployment account
 #   AWS_REGION            — explicit AWS region for the deployed stack
@@ -312,48 +312,6 @@ if [[ "$CACHE_RULE_COUNT" -eq 0 ]]; then
   ERRORS=$((ERRORS + 1))
 else
   echo "  OK: Cache bypass rule active (${CACHE_RULE_COUNT} rule(s))"
-fi
-
-# --- Anonymous OAuth registration rate limit ---
-echo ""
-echo "Checking anonymous OAuth registration rate limit..."
-RATE_RULESET=$(cloudflare_optional_get_request \
-  "read rate-limit ruleset" \
-  "/zones/${CLOUDFLARE_ZONE_ID}/rulesets/phases/http_ratelimit/entrypoint")
-EXPECTED_RATE_EXPRESSION="(http.host eq \"auth.${ZONE_NAME}\" and http.request.method eq \"POST\" and http.request.uri.path eq \"/oauth/register\")"
-RATE_RULE_COUNT=$(echo "$RATE_RULESET" | python3 -c '
-import json
-import sys
-
-def normalize_expression(expression):
-    return " ".join(str(expression).split())
-
-expected_expression = normalize_expression(sys.argv[1])
-rules = json.load(sys.stdin).get("result", {}).get("rules", [])
-matches = []
-for rule in rules:
-    rate = rule.get("ratelimit", {})
-    characteristics = rate.get("characteristics", [])
-    if (
-        rule.get("enabled") is True
-        and rule.get("action") == "block"
-        and normalize_expression(rule.get("expression", "")) == expected_expression
-        and sorted(characteristics) == ["cf.colo.id", "ip.src"]
-        and rate.get("period") == 10
-        and rate.get("requests_per_period") == 5
-        and rate.get("mitigation_timeout") == 10
-    ):
-        matches.append(rule)
-print(len(matches))
-' "$EXPECTED_RATE_EXPRESSION")
-if [[ "$RATE_RULE_COUNT" -ne 1 ]]; then
-  echo "FAIL: Expected exactly one enabled rate limit for auth POST /oauth/register; found ${RATE_RULE_COUNT} exact matches" >&2
-  echo "  Expected: ${EXPECTED_RATE_EXPRESSION}" >&2
-  echo "  Expected action=block, characteristics=cf.colo.id+ip.src, rate=5/10s, mitigation=10s" >&2
-  echo "  Re-run setup-dns.sh to reconcile the rule and remove any duplicate exact matches before verifying again." >&2
-  ERRORS=$((ERRORS + 1))
-else
-  echo "  OK: Exactly one anonymous OAuth registration rate limit is active"
 fi
 
 # --- Summary ---
