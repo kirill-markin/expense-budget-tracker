@@ -393,7 +393,65 @@ KEY_FILE="${KEY_DIR}/mcp-registry-ed25519.pem"
 openssl genpkey -algorithm Ed25519 -out "$KEY_FILE" >/dev/null 2>&1
 
 PUBLIC_KEY="$(openssl pkey -in "$KEY_FILE" -pubout -outform DER 2>/dev/null | tail -c 32 | base64)"
-PRIVATE_KEY="$(openssl pkey -in "$KEY_FILE" -noout -text 2>/dev/null | grep -A3 'priv:' | tail -n +2 | tr -d ' :\n')"
+if ! PRIVATE_KEY="$(openssl pkey -in "$KEY_FILE" -outform DER 2>/dev/null | python3 -c '
+import sys
+
+
+def read_der_element(encoded: bytes, offset: int) -> tuple[int, bytes, int]:
+    if offset + 2 > len(encoded):
+        raise ValueError("truncated DER element")
+
+    tag = encoded[offset]
+    length = encoded[offset + 1]
+    content_offset = offset + 2
+    if length & 0x80:
+        length_octets = length & 0x7f
+        if length_octets == 0 or content_offset + length_octets > len(encoded):
+            raise ValueError("invalid DER length")
+        length = int.from_bytes(
+            encoded[content_offset:content_offset + length_octets],
+            byteorder="big",
+        )
+        content_offset += length_octets
+
+    content_end = content_offset + length
+    if content_end > len(encoded):
+        raise ValueError("truncated DER content")
+    return tag, encoded[content_offset:content_end], content_end
+
+
+try:
+    der = sys.stdin.buffer.read()
+    outer_tag, private_key_info, outer_end = read_der_element(der, 0)
+    version_tag, version, field_offset = read_der_element(private_key_info, 0)
+    algorithm_tag, algorithm, field_offset = read_der_element(private_key_info, field_offset)
+    private_key_tag, wrapped_seed, field_offset = read_der_element(private_key_info, field_offset)
+    oid_tag, oid, algorithm_end = read_der_element(algorithm, 0)
+    seed_tag, seed, seed_end = read_der_element(wrapped_seed, 0)
+except ValueError:
+    raise SystemExit(1)
+
+is_ed25519_private_key = (
+    outer_tag == 0x30
+    and outer_end == len(der)
+    and version_tag == 0x02
+    and version in (b"\\x00", b"\\x01")
+    and algorithm_tag == 0x30
+    and oid_tag == 0x06
+    and oid == bytes.fromhex("2b6570")
+    and algorithm_end == len(algorithm)
+    and private_key_tag == 0x04
+    and seed_tag == 0x04
+    and seed_end == len(wrapped_seed)
+    and len(seed) == 32
+)
+if not is_ed25519_private_key:
+    raise SystemExit(1)
+sys.stdout.write(seed.hex())
+')"; then
+  echo "ERROR: Failed to extract the Ed25519 private seed from its DER encoding." >&2
+  exit 1
+fi
 
 if ! printf '%s' "$PUBLIC_KEY" | python3 -c '
 import base64
