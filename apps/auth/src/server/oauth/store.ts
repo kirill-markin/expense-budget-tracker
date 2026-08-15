@@ -1,5 +1,9 @@
 import { query, withTransaction, type QueryFn } from "../db.js";
 import {
+  getCognitoOAuthOwnerStatus,
+  type CognitoOAuthOwnerStatus,
+} from "../cognitoUserStatus.js";
+import {
   createOpaqueToken,
   hashOpaqueToken,
   narrowScopes,
@@ -16,9 +20,15 @@ export type OAuthStoreDependencies = Readonly<{
   query: QueryFn;
   withTransaction: TransactionRunner;
   createOpaqueToken: (prefix: "cl" | "ac" | "at" | "rt") => string;
+  getCognitoOAuthOwnerStatus: (userId: string) => Promise<CognitoOAuthOwnerStatus>;
 }>;
 
-const defaultDependencies: OAuthStoreDependencies = { query, withTransaction, createOpaqueToken };
+const defaultDependencies: OAuthStoreDependencies = {
+  query,
+  withTransaction,
+  createOpaqueToken,
+  getCognitoOAuthOwnerStatus,
+};
 
 export type OAuthTokenResult = Readonly<{
   accessToken: string;
@@ -56,6 +66,32 @@ const readBoolean = (row: Row, key: string, operation: string): boolean => {
     throw new Error(`${operation}: database column ${key} must be a boolean`);
   }
   return value;
+};
+
+type RefreshTokenRecord = Readonly<{
+  connectionId: string;
+  userId: string;
+  scopes: ReadonlyArray<string>;
+  used: boolean;
+  unexpired: boolean;
+  clientId: string;
+  resource: string;
+  revoked: boolean;
+}>;
+
+const readRefreshTokenRecord = (value: unknown): RefreshTokenRecord => {
+  const operation = "exchangeRefreshToken";
+  const row = readRow(value, operation);
+  return {
+    connectionId: readString(row, "connection_id", operation),
+    userId: readString(row, "user_id", operation),
+    scopes: readScopes(row, operation),
+    used: readBoolean(row, "used", operation),
+    unexpired: readBoolean(row, "unexpired", operation),
+    clientId: readString(row, "client_id", operation),
+    resource: readString(row, "resource", operation),
+    revoked: readBoolean(row, "revoked", operation),
+  };
 };
 
 export const registerOAuthClientWithDependencies = async (
@@ -238,6 +274,101 @@ export const exchangeAuthorizationCode = (
   code, clientId, redirectUri, resource, codeVerifier, defaultDependencies,
 );
 
+const invalidRefreshGrant = (): ReturnType<typeof oauthError> =>
+  oauthError("invalid_grant", "Refresh token is invalid, expired, or already used", 400);
+
+const REFRESH_TOKEN_SELECT = `SELECT ort.connection_id, oc.user_id, ort.scopes,
+       ort.used_at IS NOT NULL AS used,
+       ort.expires_at > now() AS unexpired,
+       oc.client_id, oc.resource,
+       oc.revoked_at IS NOT NULL AS revoked
+FROM auth.oauth_refresh_tokens ort
+JOIN auth.oauth_connections oc ON oc.connection_id = ort.connection_id
+WHERE ort.token_hash = $1`;
+
+const readRefreshTokenBeforeOwnerCheck = async (
+  tokenHash: string,
+  dependencies: OAuthStoreDependencies,
+): Promise<RefreshTokenRecord> => {
+  const result = await dependencies.query(REFRESH_TOKEN_SELECT, [tokenHash]);
+  if (result.rows.length !== 1) throw invalidRefreshGrant();
+  return readRefreshTokenRecord(result.rows[0]);
+};
+
+const lockRefreshTokenForRotation = async (
+  queryFn: QueryFn,
+  tokenHash: string,
+): Promise<RefreshTokenRecord> => {
+  const result = await queryFn(
+    `${REFRESH_TOKEN_SELECT}
+FOR UPDATE OF ort, oc`,
+    [tokenHash],
+  );
+  if (result.rows.length !== 1) throw invalidRefreshGrant();
+  return readRefreshTokenRecord(result.rows[0]);
+};
+
+const validateRefreshTokenBinding = (
+  record: RefreshTokenRecord,
+  clientId: string,
+  resource: string,
+): void => {
+  if (record.clientId !== clientId || record.resource !== resource) {
+    throw oauthError("invalid_grant", "Refresh token binding validation failed", 400);
+  }
+};
+
+const rejectRefreshTokenReplay = async (
+  tokenHash: string,
+  dependencies: OAuthStoreDependencies,
+): Promise<never> => {
+  await dependencies.withTransaction(async (queryFn: QueryFn): Promise<void> => {
+    const record = await lockRefreshTokenForRotation(queryFn, tokenHash);
+    if (!record.used) throw invalidRefreshGrant();
+    if (!record.revoked) {
+      await revokeActiveConnection(queryFn, record.connectionId, "exchangeRefreshToken");
+    }
+  });
+  throw invalidRefreshGrant();
+};
+
+const revokeActiveConnectionsForUser = async (
+  userId: string,
+  dependencies: OAuthStoreDependencies,
+): Promise<void> => {
+  await dependencies.query(
+    `UPDATE auth.oauth_connections
+     SET revoked_at = now()
+     WHERE user_id = $1 AND revoked_at IS NULL`,
+    [userId],
+  );
+};
+
+const rotateRefreshToken = async (
+  tokenHash: string,
+  expectedUserId: string,
+  clientId: string,
+  resource: string,
+  requestedScopes: ReadonlyArray<string> | null,
+  dependencies: OAuthStoreDependencies,
+): Promise<OAuthTokenResult | null> => dependencies.withTransaction(
+  async (queryFn: QueryFn): Promise<OAuthTokenResult | null> => {
+    const record = await lockRefreshTokenForRotation(queryFn, tokenHash);
+    if (record.used) {
+      if (!record.revoked) {
+        await revokeActiveConnection(queryFn, record.connectionId, "exchangeRefreshToken");
+      }
+      return null;
+    }
+    if (record.revoked || record.userId !== expectedUserId) throw invalidRefreshGrant();
+    validateRefreshTokenBinding(record, clientId, resource);
+    if (!record.unexpired) throw invalidRefreshGrant();
+    const effectiveScopes = narrowScopes(record.scopes, requestedScopes);
+    await queryFn("UPDATE auth.oauth_refresh_tokens SET used_at = now() WHERE token_hash = $1", [tokenHash]);
+    return insertTokenPair(queryFn, record.connectionId, effectiveScopes, dependencies);
+  },
+);
+
 export const exchangeRefreshTokenWithDependencies = async (
   refreshToken: string,
   clientId: string,
@@ -245,43 +376,31 @@ export const exchangeRefreshTokenWithDependencies = async (
   requestedScopes: ReadonlyArray<string> | null,
   dependencies: OAuthStoreDependencies,
 ): Promise<OAuthTokenResult> => {
-  const invalidGrant = (): ReturnType<typeof oauthError> =>
-    oauthError("invalid_grant", "Refresh token is invalid, expired, or already used", 400);
   const tokenHash = hashOpaqueToken(refreshToken);
-  const exchangeResult = await dependencies.withTransaction(async (queryFn: QueryFn): Promise<OAuthTokenResult | null> => {
-    const result = await queryFn(
-      `SELECT ort.connection_id, ort.scopes,
-              ort.used_at IS NOT NULL AS used,
-              ort.expires_at > now() AS unexpired,
-              oc.client_id, oc.resource,
-              oc.revoked_at IS NOT NULL AS revoked
-       FROM auth.oauth_refresh_tokens ort
-       JOIN auth.oauth_connections oc ON oc.connection_id = ort.connection_id
-       WHERE ort.token_hash = $1
-       FOR UPDATE OF ort, oc`,
-      [tokenHash],
-    );
-    if (result.rows.length !== 1) throw invalidGrant();
-    const row = readRow(result.rows[0], "exchangeRefreshToken");
-    const connectionId = readString(row, "connection_id", "exchangeRefreshToken");
-    const revoked = readBoolean(row, "revoked", "exchangeRefreshToken");
-    if (readBoolean(row, "used", "exchangeRefreshToken")) {
-      if (!revoked) await revokeActiveConnection(queryFn, connectionId, "exchangeRefreshToken");
-      return null;
-    }
-    if (revoked) throw invalidGrant();
-    if (
-      readString(row, "client_id", "exchangeRefreshToken") !== clientId
-      || readString(row, "resource", "exchangeRefreshToken") !== resource
-    ) {
-      throw oauthError("invalid_grant", "Refresh token binding validation failed", 400);
-    }
-    if (!readBoolean(row, "unexpired", "exchangeRefreshToken")) throw invalidGrant();
-    const effectiveScopes = narrowScopes(readScopes(row, "exchangeRefreshToken"), requestedScopes);
-    await queryFn("UPDATE auth.oauth_refresh_tokens SET used_at = now() WHERE token_hash = $1", [tokenHash]);
-    return insertTokenPair(queryFn, connectionId, effectiveScopes, dependencies);
-  });
-  if (exchangeResult === null) throw invalidGrant();
+  const record = await readRefreshTokenBeforeOwnerCheck(tokenHash, dependencies);
+  if (record.used) return rejectRefreshTokenReplay(tokenHash, dependencies);
+  if (record.revoked) throw invalidRefreshGrant();
+  validateRefreshTokenBinding(record, clientId, resource);
+  if (!record.unexpired) throw invalidRefreshGrant();
+  narrowScopes(record.scopes, requestedScopes);
+
+  const ownerStatus = await dependencies.getCognitoOAuthOwnerStatus(record.userId);
+  if (ownerStatus === "inactive") {
+    await revokeActiveConnectionsForUser(record.userId, dependencies);
+    throw invalidRefreshGrant();
+  }
+
+  // Cognito eligibility is a point-in-time snapshot. The locked read below
+  // revalidates all refresh-token state without holding a row lock over AWS retries.
+  const exchangeResult = await rotateRefreshToken(
+    tokenHash,
+    record.userId,
+    clientId,
+    resource,
+    requestedScopes,
+    dependencies,
+  );
+  if (exchangeResult === null) throw invalidRefreshGrant();
   return exchangeResult;
 };
 

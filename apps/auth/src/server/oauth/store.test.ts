@@ -10,7 +10,7 @@ import {
   registerOAuthClientWithDependencies,
   type OAuthStoreDependencies,
 } from "./store.js";
-import type { AuthorizationRequest } from "./core.js";
+import { isOAuthProtocolError, type AuthorizationRequest } from "./core.js";
 
 type QueryCall = Readonly<{ text: string; params: ReadonlyArray<unknown> }>;
 
@@ -36,6 +36,7 @@ const createDependencies = (
       offsets[prefix] += 1;
       return token;
     },
+    getCognitoOAuthOwnerStatus: async () => "active",
   };
 };
 
@@ -104,6 +105,7 @@ test("authorization-code replay revokes the family and its previously minted cre
     if (text.includes("FROM auth.oauth_refresh_tokens")) {
       return params[0] === storedRefreshTokenHash ? result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         scopes: authorizationRequest.scopes,
         used: false,
         unexpired: true,
@@ -180,6 +182,7 @@ test("unknown and unused misbound credentials do not revoke a connection", async
       if (params[0] !== hash(knownRefreshToken)) return result([]);
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         scopes: authorizationRequest.scopes,
         used: false,
         unexpired: true,
@@ -232,9 +235,9 @@ const createRefreshDependencies = (
   let connectionRevoked = false;
   const queryFn: QueryFn = async (text, params) => {
     if (text.includes("FROM auth.oauth_refresh_tokens")) {
-      assert.match(text, /FOR UPDATE OF ort, oc/u);
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         scopes: grantedScopes,
         used: updateCount.value > 0,
         unexpired: true,
@@ -297,6 +300,259 @@ test("refresh rotation supports down-scope, rejects replay and expansion, and pr
   assert.deepEqual(unchangedScopes, [authorizationRequest.scopes, authorizationRequest.scopes]);
 });
 
+test("active owner validation runs outside the transaction before locked refresh revalidation", async (): Promise<void> => {
+  const sequence: Array<string> = [];
+  let transactionOpen = false;
+  let used = false;
+  const queryFn: QueryFn = async (text) => {
+    if (text.includes("FROM auth.oauth_refresh_tokens")) {
+      sequence.push(text.includes("FOR UPDATE") ? "locked_read" : "preflight_read");
+      return result([{
+        connection_id: "connection-1",
+        user_id: "user-1",
+        scopes: authorizationRequest.scopes,
+        used,
+        unexpired: true,
+        client_id: authorizationRequest.clientId,
+        resource: authorizationRequest.resource,
+        revoked: false,
+      }]);
+    }
+    if (text.startsWith("UPDATE auth.oauth_refresh_tokens")) {
+      used = true;
+      sequence.push("consume");
+    }
+    if (text.startsWith("INSERT INTO auth.oauth_access_tokens")) sequence.push("insert_access");
+    if (text.startsWith("INSERT INTO auth.oauth_refresh_tokens")) sequence.push("insert_refresh");
+    return result([]);
+  };
+  const dependencies = createDependencies(queryFn, {
+    ...emptyTokens(),
+    at: ["ebt_at_active-owner"],
+    rt: ["ebt_rt_active-owner"],
+  });
+  const activeDependencies: OAuthStoreDependencies = {
+    ...dependencies,
+    withTransaction: async <T>(callback: (transactionQuery: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpen = true;
+      try {
+        return await callback(queryFn);
+      } finally {
+        transactionOpen = false;
+      }
+    },
+    getCognitoOAuthOwnerStatus: async (requestedUserId) => {
+      assert.equal(requestedUserId, "user-1");
+      assert.equal(transactionOpen, false);
+      sequence.push("cognito_check");
+      return "active";
+    },
+  };
+
+  await exchangeRefreshTokenWithDependencies(
+    "ebt_rt_active-owner-presented",
+    authorizationRequest.clientId,
+    authorizationRequest.resource,
+    null,
+    activeDependencies,
+  );
+
+  assert.deepEqual(sequence, [
+    "preflight_read",
+    "cognito_check",
+    "locked_read",
+    "consume",
+    "insert_access",
+    "insert_refresh",
+  ]);
+});
+
+test("inactive owners revoke every active OAuth connection and receive generic invalid_grant", async (): Promise<void> => {
+  let consumed = false;
+  let tokenInserted = false;
+  let transactionOpened = false;
+  let revokedUserId: string | undefined;
+  const queryFn: QueryFn = async (text, params) => {
+    if (text.includes("FROM auth.oauth_refresh_tokens")) {
+      return result([{
+        connection_id: "connection-1",
+        user_id: "user-1",
+        scopes: authorizationRequest.scopes,
+        used: false,
+        unexpired: true,
+        client_id: authorizationRequest.clientId,
+        resource: authorizationRequest.resource,
+        revoked: false,
+      }]);
+    }
+    if (text.startsWith("UPDATE auth.oauth_connections")) {
+      assert.match(text, /WHERE user_id = \$1 AND revoked_at IS NULL/u);
+      const value = params[0];
+      if (typeof value !== "string") throw new Error("Inactive-owner test expected a user ID");
+      revokedUserId = value;
+      return result([]);
+    }
+    if (text.startsWith("UPDATE auth.oauth_refresh_tokens")) consumed = true;
+    if (text.startsWith("INSERT INTO auth.oauth_")) tokenInserted = true;
+    return result([]);
+  };
+  const baseDependencies = createDependencies(queryFn, emptyTokens());
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    withTransaction: async <T>(callback: (transactionQuery: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpened = true;
+      return callback(queryFn);
+    },
+    getCognitoOAuthOwnerStatus: async () => "inactive",
+  };
+
+  await assert.rejects(
+    exchangeRefreshTokenWithDependencies(
+      "ebt_rt_inactive-owner",
+      authorizationRequest.clientId,
+      authorizationRequest.resource,
+      null,
+      dependencies,
+    ),
+    (error: unknown) => isOAuthProtocolError(error)
+      && error.oauthCode === "invalid_grant"
+      && !error.message.includes("inactive"),
+  );
+  assert.equal(revokedUserId, "user-1");
+  assert.equal(transactionOpened, false);
+  assert.equal(consumed, false);
+  assert.equal(tokenInserted, false);
+});
+
+test("transient owner validation failure neither consumes the refresh token nor revokes connections", async (): Promise<void> => {
+  const transientFailure = new Error("Cognito unavailable after retries");
+  let mutationAttempted = false;
+  let transactionOpened = false;
+  const queryFn: QueryFn = async (text) => {
+    if (text.includes("FROM auth.oauth_refresh_tokens")) {
+      return result([{
+        connection_id: "connection-1",
+        user_id: "user-1",
+        scopes: authorizationRequest.scopes,
+        used: false,
+        unexpired: true,
+        client_id: authorizationRequest.clientId,
+        resource: authorizationRequest.resource,
+        revoked: false,
+      }]);
+    }
+    if (text.startsWith("UPDATE") || text.startsWith("INSERT")) mutationAttempted = true;
+    return result([]);
+  };
+  const baseDependencies = createDependencies(queryFn, emptyTokens());
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    withTransaction: async <T>(callback: (transactionQuery: QueryFn) => Promise<T>): Promise<T> => {
+      transactionOpened = true;
+      return callback(queryFn);
+    },
+    getCognitoOAuthOwnerStatus: async () => { throw transientFailure; },
+  };
+
+  await assert.rejects(
+    exchangeRefreshTokenWithDependencies(
+      "ebt_rt_transient-owner",
+      authorizationRequest.clientId,
+      authorizationRequest.resource,
+      null,
+      dependencies,
+    ),
+    (error: unknown) => error === transientFailure,
+  );
+  assert.equal(transactionOpened, false);
+  assert.equal(mutationAttempted, false);
+});
+
+test("disablement immediately after an active snapshot is enforced at the next renewal", async (): Promise<void> => {
+  const originalToken = "ebt_rt_race-original";
+  const storedRefreshTokens = new Map<string, boolean>([[hash(originalToken), false]]);
+  const storedAccessTokens = new Set<string>();
+  let connectionRevoked = false;
+  let ownerActive = true;
+  let ownerChecks = 0;
+  const queryFn: QueryFn = async (text, params) => {
+    if (text.includes("FROM auth.oauth_refresh_tokens")) {
+      const tokenHash = params[0];
+      if (typeof tokenHash !== "string") throw new Error("Race test expected a refresh-token hash");
+      const used = storedRefreshTokens.get(tokenHash);
+      if (used === undefined) return result([]);
+      return result([{
+        connection_id: "connection-1",
+        user_id: "user-1",
+        scopes: authorizationRequest.scopes,
+        used,
+        unexpired: true,
+        client_id: authorizationRequest.clientId,
+        resource: authorizationRequest.resource,
+        revoked: connectionRevoked,
+      }]);
+    }
+    if (text.startsWith("UPDATE auth.oauth_refresh_tokens")) {
+      const tokenHash = params[0];
+      if (typeof tokenHash !== "string") throw new Error("Race test expected a consumed refresh-token hash");
+      storedRefreshTokens.set(tokenHash, true);
+    }
+    if (text.startsWith("INSERT INTO auth.oauth_access_tokens")) {
+      const tokenHash = params[0];
+      if (typeof tokenHash !== "string") throw new Error("Race test expected an access-token hash");
+      storedAccessTokens.add(tokenHash);
+    }
+    if (text.startsWith("INSERT INTO auth.oauth_refresh_tokens")) {
+      const tokenHash = params[0];
+      if (typeof tokenHash !== "string") throw new Error("Race test expected a rotated refresh-token hash");
+      storedRefreshTokens.set(tokenHash, false);
+    }
+    if (text.startsWith("UPDATE auth.oauth_connections")) connectionRevoked = true;
+    return result([]);
+  };
+  const baseDependencies = createDependencies(queryFn, {
+    ...emptyTokens(),
+    at: ["ebt_at_race-window"],
+    rt: ["ebt_rt_race-rotated"],
+  });
+  const dependencies: OAuthStoreDependencies = {
+    ...baseDependencies,
+    getCognitoOAuthOwnerStatus: async () => {
+      ownerChecks += 1;
+      if (ownerChecks === 1) {
+        ownerActive = false;
+        return "active";
+      }
+      return ownerActive ? "active" : "inactive";
+    },
+  };
+
+  const issuedDuringRace = await exchangeRefreshTokenWithDependencies(
+    originalToken,
+    authorizationRequest.clientId,
+    authorizationRequest.resource,
+    null,
+    dependencies,
+  );
+  assert.equal(issuedDuringRace.expiresIn, 3600);
+  assert.equal(storedAccessTokens.has(hash(issuedDuringRace.accessToken)), true);
+  assert.equal(connectionRevoked, false);
+
+  await assert.rejects(
+    exchangeRefreshTokenWithDependencies(
+      issuedDuringRace.refreshToken,
+      authorizationRequest.clientId,
+      authorizationRequest.resource,
+      null,
+      dependencies,
+    ),
+    /invalid, expired, or already used/u,
+  );
+  assert.equal(ownerChecks, 2);
+  assert.equal(connectionRevoked, true);
+  assert.equal(storedAccessTokens.has(hash(issuedDuringRace.accessToken)) && !connectionRevoked, false);
+});
+
 test("binding-mismatched replay of a used refresh token revokes its replacement credentials", async (): Promise<void> => {
   const originalToken = "ebt_rt_original";
   let originalUsed = false;
@@ -309,6 +565,7 @@ test("binding-mismatched replay of a used refresh token revokes its replacement 
       if (tokenHash !== hash(originalToken) && tokenHash !== rotatedTokenHash) return result([]);
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         scopes: authorizationRequest.scopes,
         used: tokenHash === hash(originalToken) ? originalUsed : false,
         unexpired: true,
@@ -417,6 +674,7 @@ const createConcurrentRefreshStore = (): Readonly<{
         if (token === undefined) return result([]);
         return result([{
           connection_id: token.connectionId,
+          user_id: "user-1",
           scopes: token.scopes,
           used: token.used,
           unexpired: true,
@@ -486,7 +744,27 @@ const createConcurrentRefreshStore = (): Readonly<{
     at: ["ebt_at_concurrent-replacement"],
     rt: ["ebt_rt_concurrent-replacement"],
   };
-  const dependencies = { ...createDependencies(async () => result([]), tokens), withTransaction };
+  const queryFn: QueryFn = async (text, params) => {
+    if (!text.includes("FROM auth.oauth_refresh_tokens")) {
+      throw new Error(`Concurrent refresh preflight received an unexpected query: ${text}`);
+    }
+    assert.doesNotMatch(text, /FOR UPDATE/u);
+    const tokenHash = params[0];
+    if (typeof tokenHash !== "string") throw new Error("Concurrent refresh preflight expected a token hash");
+    const token = refreshTokens.get(tokenHash);
+    if (token === undefined) return result([]);
+    return result([{
+      connection_id: token.connectionId,
+      user_id: "user-1",
+      scopes: token.scopes,
+      used: token.used,
+      unexpired: true,
+      client_id: authorizationRequest.clientId,
+      resource: authorizationRequest.resource,
+      revoked: connectionRevoked,
+    }]);
+  };
+  const dependencies = { ...createDependencies(queryFn, tokens), withTransaction };
   return {
     dependencies,
     validatesAccessToken: (token) => accessTokens.has(hash(token)) && !connectionRevoked,
@@ -526,6 +804,7 @@ test("an expired unused refresh token is rejected without revoking its connectio
     if (text.includes("FROM auth.oauth_refresh_tokens")) {
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         scopes: authorizationRequest.scopes,
         used: false,
         unexpired: false,
@@ -554,6 +833,7 @@ test("replaying an expired used refresh token revokes its active family", async 
     if (text.includes("FROM auth.oauth_refresh_tokens")) {
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         scopes: authorizationRequest.scopes,
         used: true,
         unexpired: false,
@@ -604,6 +884,7 @@ test("revoked connections cannot exchange authorization codes or refresh tokens"
       refreshTokenLoaded = true;
       return result([{
         connection_id: "connection-1",
+        user_id: "user-1",
         scopes: authorizationRequest.scopes,
         used: false,
         unexpired: true,

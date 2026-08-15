@@ -20,6 +20,7 @@ export interface ComputeProps {
   langfusePublicKeySecret: cdk.aws_secretsmanager.Secret;
   langfuseSecretKeySecret: cdk.aws_secretsmanager.Secret;
   userPoolId: string;
+  userPoolArn: string;
   userPoolClientId: string;
   appDomain: string;
   authDomain: string;
@@ -275,6 +276,11 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       startPeriod: cdk.Duration.seconds(60),
     },
   });
+
+  authTaskDef.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: ["cognito-idp:AdminGetUser"],
+    resources: [props.userPoolArn],
+  }));
 
   const authService = new ecs.FargateService(scope, "AuthService", {
     cluster,

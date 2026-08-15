@@ -3,6 +3,8 @@
  *
  * Auth-only event types. Chat/API/SQL events stay in the web app.
  */
+export type SafeErrorType = "error" | "type_error" | "range_error" | "non_error";
+
 export type CognitoRefreshRetryEvent = Readonly<{
   domain: "auth";
   action: "cognito_refresh_retry";
@@ -14,7 +16,16 @@ export type CognitoRefreshRetryEvent = Readonly<{
   error: string;
 }>;
 
-export type SafeErrorType = "error" | "type_error" | "range_error" | "non_error";
+export type CognitoOAuthOwnerRetryEvent = Readonly<{
+  domain: "auth";
+  action: "cognito_oauth_owner_retry";
+  level: "warn";
+  attempt: number;
+  retryInMs: number;
+  cognitoType: string | null;
+  status: number | null;
+  errorType: SafeErrorType;
+}>;
 
 export const getSafeErrorType = (error: unknown): SafeErrorType => {
   if (error instanceof TypeError) return "type_error";
@@ -61,6 +72,7 @@ type AuthEvent =
   | Readonly<{ domain: "auth"; action: "verify_code_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "otp_sweep_error"; error: string }>
   | CognitoRefreshRetryEvent
+  | CognitoOAuthOwnerRetryEvent
   | OAuthAuthorizationServerErrorEvent
   | OAuthEndpointServerErrorEvent
   | AuthUnhandledErrorEvent
