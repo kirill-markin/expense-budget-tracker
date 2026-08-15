@@ -302,3 +302,175 @@ test(
     }
   },
 );
+
+test(
+  "real revoked-family cleanup makes bounded round-robin progress across multiple calls",
+  { skip: postgresTestSkip },
+  async (): Promise<void> => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const clientId = `ebt_cl_cleanup_${suffix}`;
+    const largeConnectionId = randomUUID();
+    const emptyConnectionIds: ReadonlyArray<string> = [randomUUID(), randomUUID()];
+    const laterConnectionId = randomUUID();
+    const connectionIds: ReadonlyArray<string> = [
+      largeConnectionId,
+      ...emptyConnectionIds,
+      laterConnectionId,
+    ];
+    const largeCodeHashes: ReadonlyArray<string> = Array.from(
+      { length: 101 },
+      (_, index) => hashOpaqueToken(`ebt_ac_cleanup_large_${suffix}_${index}`),
+    );
+    const laterCodeHash = hashOpaqueToken(`ebt_ac_cleanup_later_${suffix}`);
+    const laterRefreshHash = hashOpaqueToken(`ebt_rt_cleanup_later_${suffix}`);
+    const migrationPool = new pg.Pool({ connectionString: migrationDatabaseUrl });
+    const authPool = new pg.Pool({ connectionString: authDatabaseUrl });
+
+    try {
+      const client = await migrationPool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `INSERT INTO auth.oauth_clients (client_id, client_name, redirect_uris)
+           VALUES ($1, $2, $3)`,
+          [clientId, "Postgres OAuth cleanup queue test", ["https://client.example/callback"]],
+        );
+        for (const [index, connectionId] of connectionIds.entries()) {
+          await client.query(
+            `INSERT INTO auth.oauth_connections (connection_id, client_id, user_id, resource)
+             VALUES ($1, $2, $3, $4)`,
+            [connectionId, clientId, `cleanup-user-${suffix}-${index}`, "https://mcp.example.com/mcp"],
+          );
+        }
+        await client.query(
+          `INSERT INTO auth.oauth_authorization_codes
+             (code_hash, connection_id, redirect_uri, code_challenge, scopes, created_at, expires_at, used_at)
+           SELECT generated.code_hash, $2, $3, $4, $5,
+                  now() - INTERVAL '10 minutes',
+                  now() - INTERVAL '5 minutes',
+                  now() - INTERVAL '9 minutes'
+           FROM unnest($1::TEXT[]) AS generated(code_hash)`,
+          [
+            largeCodeHashes,
+            largeConnectionId,
+            "https://client.example/callback",
+            "a".repeat(43),
+            ["expenses:read"],
+          ],
+        );
+        await client.query(
+          `INSERT INTO auth.oauth_authorization_codes
+             (code_hash, connection_id, redirect_uri, code_challenge, scopes, created_at, expires_at, used_at)
+           VALUES ($1, $2, $3, $4, $5,
+                   now() - INTERVAL '10 minutes',
+                   now() - INTERVAL '5 minutes',
+                   now() - INTERVAL '9 minutes')`,
+          [
+            laterCodeHash,
+            laterConnectionId,
+            "https://client.example/callback",
+            "a".repeat(43),
+            ["expenses:read"],
+          ],
+        );
+        await client.query(
+          `INSERT INTO auth.oauth_refresh_tokens
+             (token_hash, connection_id, scopes, created_at, expires_at, used_at)
+           VALUES ($1, $2, $3,
+                   now() - INTERVAL '31 days',
+                   now() - INTERVAL '1 day',
+                   now() - INTERVAL '30 days')`,
+          [laterRefreshHash, laterConnectionId, ["expenses:read"]],
+        );
+        for (const connectionId of connectionIds) {
+          await client.query(
+            `UPDATE auth.oauth_connections
+             SET revoked_at = now()
+             WHERE connection_id = $1`,
+            [connectionId],
+          );
+        }
+        await client.query("COMMIT");
+      } catch (error: unknown) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+
+      const authQuery = createQueryFn(authPool);
+      const privilegeResult = await authQuery(
+        `SELECT NOT has_table_privilege(
+           current_user,
+           'auth.oauth_revoked_connection_cleanup_queue',
+           'DELETE'
+         ) AS delete_denied`,
+        [],
+      );
+      assert.equal(
+        readBooleanColumn(privilegeResult.rows[0], "delete_denied", "OAuth cleanup queue privilege check"),
+        true,
+      );
+
+      await authQuery("SELECT auth.cleanup_expired_oauth_transient_state()", []);
+
+      const afterLargeBatch = await migrationPool.query(
+        `SELECT
+           (SELECT count(*) FROM auth.oauth_authorization_codes
+            WHERE connection_id = $1 AND used_at IS NOT NULL) = 1 AS large_family_has_one_code,
+           EXISTS (SELECT 1 FROM auth.oauth_authorization_codes WHERE code_hash = $2) AS later_code_retained,
+           EXISTS (SELECT 1 FROM auth.oauth_refresh_tokens WHERE token_hash = $3) AS later_refresh_retained,
+           (SELECT count(*) FROM auth.oauth_revoked_connection_cleanup_queue
+            WHERE connection_id = ANY($4::TEXT[])) = 4 AS all_families_queued`,
+        [largeConnectionId, laterCodeHash, laterRefreshHash, connectionIds],
+      );
+      const afterLargeBatchRow = afterLargeBatch.rows[0];
+      assert.equal(readBooleanColumn(afterLargeBatchRow, "large_family_has_one_code", "OAuth large-family batch check"), true);
+      assert.equal(readBooleanColumn(afterLargeBatchRow, "later_code_retained", "OAuth later code setup check"), true);
+      assert.equal(readBooleanColumn(afterLargeBatchRow, "later_refresh_retained", "OAuth later refresh setup check"), true);
+      assert.equal(readBooleanColumn(afterLargeBatchRow, "all_families_queued", "OAuth cleanup queue setup check"), true);
+
+      await authQuery("SELECT auth.cleanup_expired_oauth_transient_state()", []);
+      await authQuery("SELECT auth.cleanup_expired_oauth_transient_state()", []);
+      await authQuery("SELECT auth.cleanup_expired_oauth_transient_state()", []);
+
+      const afterLaterFamily = await migrationPool.query(
+        `SELECT
+           NOT EXISTS (SELECT 1 FROM auth.oauth_authorization_codes WHERE code_hash = $1) AS later_code_deleted,
+           NOT EXISTS (SELECT 1 FROM auth.oauth_refresh_tokens WHERE token_hash = $2) AS later_refresh_deleted,
+           EXISTS (SELECT 1 FROM auth.oauth_authorization_codes
+                   WHERE connection_id = $3 AND used_at IS NOT NULL) AS large_family_still_queued,
+           NOT EXISTS (SELECT 1 FROM auth.oauth_revoked_connection_cleanup_queue
+                       WHERE connection_id = ANY($4::TEXT[])) AS empty_and_later_families_dequeued`,
+        [laterCodeHash, laterRefreshHash, largeConnectionId, [...emptyConnectionIds, laterConnectionId]],
+      );
+      const afterLaterFamilyRow = afterLaterFamily.rows[0];
+      assert.equal(readBooleanColumn(afterLaterFamilyRow, "later_code_deleted", "OAuth later code cleanup check"), true);
+      assert.equal(readBooleanColumn(afterLaterFamilyRow, "later_refresh_deleted", "OAuth later refresh cleanup check"), true);
+      assert.equal(readBooleanColumn(afterLaterFamilyRow, "large_family_still_queued", "OAuth round-robin fairness check"), true);
+      assert.equal(
+        readBooleanColumn(afterLaterFamilyRow, "empty_and_later_families_dequeued", "OAuth empty-family progress check"),
+        true,
+      );
+
+      await authQuery("SELECT auth.cleanup_expired_oauth_transient_state()", []);
+
+      const afterDrain = await migrationPool.query(
+        `SELECT
+           NOT EXISTS (SELECT 1 FROM auth.oauth_authorization_codes
+                       WHERE connection_id = $1 AND used_at IS NOT NULL) AS large_family_drained,
+           NOT EXISTS (SELECT 1 FROM auth.oauth_revoked_connection_cleanup_queue
+                       WHERE connection_id = ANY($2::TEXT[])) AS queue_drained`,
+        [largeConnectionId, connectionIds],
+      );
+      assert.equal(readBooleanColumn(afterDrain.rows[0], "large_family_drained", "OAuth large-family drain check"), true);
+      assert.equal(readBooleanColumn(afterDrain.rows[0], "queue_drained", "OAuth cleanup queue drain check"), true);
+    } finally {
+      try {
+        await migrationPool.query("DELETE FROM auth.oauth_clients WHERE client_id = $1", [clientId]);
+      } finally {
+        await Promise.all([authPool.end(), migrationPool.end()]);
+      }
+    }
+  },
+);
