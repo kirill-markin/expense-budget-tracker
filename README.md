@@ -9,6 +9,7 @@ Self-hosted open-source expense and budget tracker with balances, transfers, and
 ## Features
 
 - **Fully open-source** — all code is available, deploy on your own servers with full control over your data
+- **Hosted MCP server** — connect a compatible remote MCP client over Streamable HTTP and OAuth to query workspace data, with optional write access controlled by scope
 - **SQL Query API** — generate an API key, give it to your LLM agent, and let it query, analyze, and manage your financial data via HTTP. Minimal, flat table structure designed to be hard to misuse — ideal for AI agents
 - **Budget and transaction UI** — built-in interface for budgeting, browsing transactions, and tracking balances across accounts and currencies
 
@@ -24,6 +25,26 @@ make up          # start Postgres, run migrations, start web + worker
 Open `http://localhost:3000`.
 
 ## Usage with AI agents
+
+Connect through either the hosted MCP server or the direct Agent API. Their credentials are separate and are not interchangeable: MCP uses OAuth Bearer access, while the Agent API uses an `ApiKey`.
+
+### MCP connector
+
+The hosted MCP server is available at `https://mcp.expense-budget-tracker.com/mcp` and is listed in MCP registries as `io.github.kirill-markin/expense-budget-tracker`. It exposes four workspace-scoped tools:
+
+- `list_workspaces` — list workspaces available to the signed-in user
+- `get_schema` — inspect the allowed relations, columns, constraints, and limits
+- `sql_query` — run one restricted `SELECT` or `WITH...SELECT`
+- `sql_execute` — run one approved `INSERT`, `UPDATE`, or `DELETE`
+
+Compatible remote MCP clients authenticate with OAuth authorization code + PKCE and Dynamic Client Registration. The required `expenses:read` scope enables the three read tools; a client may also request `expenses:write`, which is required for `sql_execute`.
+
+- [MCP connector guide](https://expense-budget-tracker.com/docs/mcp-connector/)
+- [Agent API reference](https://expense-budget-tracker.com/docs/api/)
+- [Privacy](https://expense-budget-tracker.com/privacy/)
+- [Support](https://expense-budget-tracker.com/support/)
+
+### Agent API
 
 Start at `GET https://api.expense-budget-tracker.com/v1/`. The discovery response tells agents to ask for the user's email first, and the same email OTP flow covers both signup and login.
 
