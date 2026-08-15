@@ -220,14 +220,16 @@ check_managed_cname() {
     return
   fi
 
-  local actual_type content proxied
+  local actual_type content normalized_content normalized_expected_target proxied
   actual_type=$(echo "$result" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0].get("type", ""))')
   content=$(echo "$result" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"][0].get("content", ""))')
+  normalized_content=$(printf '%s' "${content%.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+  normalized_expected_target=$(printf '%s' "${expected_target%.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
   proxied=$(echo "$result" | python3 -c 'import sys,json; print(str(json.load(sys.stdin)["result"][0].get("proxied") is True).lower())')
   if [[ "$actual_type" != "CNAME" ]]; then
     echo "FAIL: ${label} — ${name} is ${actual_type:-an unknown type}, expected CNAME" >&2
     ERRORS=$((ERRORS + 1))
-  elif [[ "$content" != "$expected_target" ]]; then
+  elif [[ "$normalized_content" != "$normalized_expected_target" ]]; then
     echo "FAIL: ${label} — ${name} points to '${content}', expected '${expected_target}' from stack ${STACK_NAME}" >&2
     ERRORS=$((ERRORS + 1))
   elif [[ "$proxied" != "true" ]]; then
