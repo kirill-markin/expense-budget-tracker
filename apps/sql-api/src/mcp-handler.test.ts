@@ -211,7 +211,7 @@ test("MCP Lambda handler consumes HTTP API v2 metadata events without REST alias
     authorization_servers: [CONFIG.issuer],
     bearer_methods_supported: ["header"],
     scopes_supported: ["expenses:read", "expenses:write"],
-    resource_documentation: "https://expense-budget-tracker.com/docs/mcp/",
+    resource_documentation: "https://expense-budget-tracker.com/docs/mcp-connector/",
   });
 });
 
@@ -274,7 +274,7 @@ test("MCP handler serves only the pathful protected-resource metadata location",
     authorization_servers: [CONFIG.issuer],
     bearer_methods_supported: ["header"],
     scopes_supported: ["expenses:read", "expenses:write"],
-    resource_documentation: "https://expense-budget-tracker.com/docs/mcp/",
+    resource_documentation: "https://expense-budget-tracker.com/docs/mcp-connector/",
   });
   assert.deepEqual(logEvents, []);
 });
