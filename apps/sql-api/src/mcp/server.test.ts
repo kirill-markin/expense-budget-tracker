@@ -500,7 +500,7 @@ test("MCP server emits the public runtime contract and routes successful tool ca
 
       assert.deepEqual(client.getServerVersion(), {
         name: "expense-budget-tracker",
-        version: "1.2.0",
+        version: "1.2.1",
         title: "Expense Budget Tracker",
         websiteUrl: "https://expense-budget-tracker.com/",
         icons: [{
