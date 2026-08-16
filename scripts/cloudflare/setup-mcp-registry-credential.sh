@@ -435,12 +435,13 @@ is_ed25519_private_key = (
     outer_tag == 0x30
     and outer_end == len(der)
     and version_tag == 0x02
-    and version in (b"\\x00", b"\\x01")
+    and version == b"\x00"
     and algorithm_tag == 0x30
     and oid_tag == 0x06
     and oid == bytes.fromhex("2b6570")
     and algorithm_end == len(algorithm)
     and private_key_tag == 0x04
+    and field_offset == len(private_key_info)
     and seed_tag == 0x04
     and seed_end == len(wrapped_seed)
     and len(seed) == 32
