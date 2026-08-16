@@ -1,3 +1,5 @@
+import type { ChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
+
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
@@ -32,6 +34,7 @@ type ChatAttemptMetadata = Readonly<{
 }>;
 
 type ChatEvent =
+  | ChatModelRoutingLogEvent
   | Readonly<{
     domain: "chat";
     action: "request";

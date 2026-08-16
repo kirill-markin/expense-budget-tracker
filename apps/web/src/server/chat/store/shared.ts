@@ -2,6 +2,7 @@ import type {
   ServerChatMessage,
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
+import type { ChatModelRoutingDecision } from "@/server/chat/modelRouting";
 import type { ContentPart } from "@/server/chat/types";
 
 export type ChatSessionRunState = "idle" | "running" | "interrupted";
@@ -89,6 +90,7 @@ export type PreparedChatRun = Readonly<{
   assistantItem: PersistedChatMessageItem;
   localMessages: ReadonlyArray<ServerChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
+  modelRouting: ChatModelRoutingDecision;
 }>;
 
 export type PrepareChatRunResult =

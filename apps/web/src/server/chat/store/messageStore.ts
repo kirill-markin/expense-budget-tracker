@@ -33,6 +33,10 @@ type ChatItemWithInvalidationRow = ChatItemRow & Readonly<{
   main_content_invalidation_version: string;
 }>;
 
+type UserMessageCountRow = Readonly<{
+  user_message_count: string;
+}>;
+
 const LIST_CHAT_ITEMS_SQL = `
   SELECT
     item_id,
@@ -81,6 +85,18 @@ const HAS_CHAT_USER_TURN_SQL = `
     AND session_id = $2
     AND item_kind = 'message'
     AND payload->>'role' = 'user'
+`;
+
+const COUNT_WORKSPACE_USER_MESSAGES_SINCE_SQL = `
+  SELECT COUNT(*)::text AS user_message_count
+  FROM public.chat_items AS item
+  INNER JOIN public.chat_sessions AS session
+    ON session.session_id = item.session_id
+  WHERE session.user_id = $1
+    AND session.workspace_id = $2
+    AND item.item_kind = 'message'
+    AND item.payload->>'role' = 'user'
+    AND item.created_at >= $3::timestamptz
 `;
 
 const UPDATE_CHAT_ITEM_SQL = `
@@ -219,6 +235,31 @@ export const hasChatUserTurnWithQuery = async (
 ): Promise<boolean> => {
   const result = await queryFn(HAS_CHAT_USER_TURN_SQL, [turnId, sessionId]);
   return result.rows.length > 0;
+};
+
+export const countWorkspaceUserMessagesSinceWithQuery = async (
+  queryFn: QueryFn,
+  userId: string,
+  workspaceId: string,
+  since: Date,
+): Promise<number> => {
+  const result = await queryFn(COUNT_WORKSPACE_USER_MESSAGES_SINCE_SQL, [
+    userId,
+    workspaceId,
+    since,
+  ]);
+  const rawCount = (result.rows[0] as UserMessageCountRow | undefined)
+    ?.user_message_count;
+  const count = typeof rawCount === "string" && /^(?:0|[1-9]\d*)$/u.test(rawCount)
+    ? Number(rawCount)
+    : Number.NaN;
+  if (!Number.isSafeInteger(count)) {
+    throw new Error(
+      `Count workspace chat user messages failed: invalid user_message_count=${String(rawCount)}, userId=${userId}, workspaceId=${workspaceId}, since=${since.toISOString()}`,
+    );
+  }
+
+  return count;
 };
 
 export const updateChatItemWithQuery = async (

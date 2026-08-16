@@ -2,8 +2,14 @@ import { randomUUID } from "node:crypto";
 import { finalizePendingToolCallContent } from "@/lib/chatHistory";
 import { withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
+import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
 import type { ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
+import {
+  getChatModelRollingWindowStart,
+  selectChatModelRouting,
+  type ChatModelRoutingDecision,
+} from "@/server/chat/modelRouting";
 import {
   ChatSessionConflictError,
   ChatSessionRunTransitionError,
@@ -23,6 +29,7 @@ import {
   type UserStoppedChatRunUpdatePlan,
 } from "./shared";
 import {
+  countWorkspaceUserMessagesSinceWithQuery,
   hasChatUserTurnWithQuery,
   insertChatItemWithQuery,
   listChatMessagesWithQuery,
@@ -47,6 +54,22 @@ import {
   hasChatTurnCancellationWithQuery,
   insertChatTurnCancellationWithQuery,
 } from "./turnCancellationStore";
+
+const resolvePreparedChatModelRouting = async (
+  queryFn: QueryFn,
+  userId: string,
+  workspaceId: string,
+  localMessages: ReadonlyArray<ServerChatMessage>,
+): Promise<ChatModelRoutingDecision> => {
+  const rollingWindowStart = getChatModelRollingWindowStart(new Date());
+  const rollingUserMessageCount = await countWorkspaceUserMessagesSinceWithQuery(
+    queryFn,
+    userId,
+    workspaceId,
+    rollingWindowStart,
+  );
+  return selectChatModelRouting(rollingUserMessageCount, localMessages);
+};
 
 export const buildUserStoppedAssistantContent = (
   content: ReadonlyArray<ContentPart>,
@@ -124,6 +147,13 @@ export const prepareChatRunWithQuery = async (
   });
 
   const persistedMessages = await listChatMessagesWithQuery(queryFn, sessionRow.session_id);
+  const localMessages = buildLocalChatMessages(persistedMessages);
+  const modelRouting = await resolvePreparedChatModelRouting(
+    queryFn,
+    userId,
+    workspaceId,
+    localMessages,
+  );
   const assistantItem = await insertChatItemWithQuery(queryFn, {
     itemId: null,
     sessionId: sessionRow.session_id,
@@ -140,8 +170,9 @@ export const prepareChatRunWithQuery = async (
       sessionId: sessionRow.session_id,
       activeRunId: turnId,
       assistantItem,
-      localMessages: buildLocalChatMessages(persistedMessages),
+      localMessages,
       turnInput: content,
+      modelRouting,
     },
   };
 };
@@ -297,6 +328,13 @@ export const prepareFreshChatRunWithQuery = async (
   });
 
   const persistedMessages = await listChatMessagesWithQuery(queryFn, sessionRow.session_id);
+  const localMessages = buildLocalChatMessages(persistedMessages);
+  const modelRouting = await resolvePreparedChatModelRouting(
+    queryFn,
+    userId,
+    workspaceId,
+    localMessages,
+  );
   const assistantItem = await insertChatItemWithQuery(queryFn, {
     itemId: null,
     sessionId: sessionRow.session_id,
@@ -309,8 +347,9 @@ export const prepareFreshChatRunWithQuery = async (
     sessionId: sessionRow.session_id,
     activeRunId,
     assistantItem,
-    localMessages: buildLocalChatMessages(persistedMessages),
+    localMessages,
     turnInput: content,
+    modelRouting,
   };
 };
 

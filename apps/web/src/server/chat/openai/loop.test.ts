@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import OpenAI from "openai";
 import {
+  CHAT_FALLBACK_MODEL_ID,
+  CHAT_FALLBACK_MODEL_REASONING_EFFORT,
+  CHAT_MODEL_ID,
+  CHAT_MODEL_REASONING_EFFORT,
+} from "@/lib/chatModels";
+import {
   CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
   runOpenAILoopWithDeps,
   type OpenAILoopEventHandler,
@@ -29,6 +35,8 @@ const createLoopParams = (): StartOpenAILoopParams => ({
   timezone: "Europe/Madrid",
   localMessages: [],
   turnInput: [{ type: "text", text: "Hello" }],
+  model: CHAT_MODEL_ID,
+  reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
   rootObservation: null,
 });
 
@@ -148,6 +156,36 @@ const createStartedToolStates = (
   Date.now(),
 ).toolStates;
 
+test("runOpenAILoop propagates the default model policy to an ordinary call", async (): Promise<void> => {
+  const params = createLoopParams();
+  const observedRequests: Array<OpenAIResponsesRequest> = [];
+
+  await runOpenAILoopWithDeps(
+    params,
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      runOneModelCall: async (
+        _client: OpenAI,
+        _callParams: StartOpenAILoopParams,
+        _emitEvent: OpenAILoopEventHandler,
+        request: OpenAIResponsesRequest,
+      ) => {
+        observedRequests.push(request);
+        return {
+          finalResponse: createFinalResponse("Done"),
+          functionCalls: [],
+          replayItems: [createAssistantReplayItem("Done")],
+          streamedText: "Done",
+          toolStates: createToolCallStateMap(),
+        };
+      },
+    }),
+  );
+
+  assert.equal(observedRequests[0]?.model, CHAT_MODEL_ID);
+  assert.equal(observedRequests[0]?.reasoning.effort, CHAT_MODEL_REASONING_EFFORT);
+});
+
 test("runOpenAILoop waits for async event handling before resolving completion", async (): Promise<void> => {
   const params = createLoopParams();
   const observedEvents: Array<ChatStreamEvent> = [];
@@ -218,7 +256,11 @@ test("runOpenAILoop waits for async event handling before resolving completion",
 });
 
 test("runOpenAILoop executes tool calls and returns replay items from the full continuation", async (): Promise<void> => {
-  const params = createLoopParams();
+  const params: StartOpenAILoopParams = {
+    ...createLoopParams(),
+    model: CHAT_FALLBACK_MODEL_ID,
+    reasoningEffort: CHAT_FALLBACK_MODEL_REASONING_EFFORT,
+  };
   const observedEvents: Array<ChatStreamEvent> = [];
   const toolCall = createFunctionCall("call-1", "query_database", "{\"sql\":\"select 1\"}");
   const toolOutput = "{\"ok\":true}";
@@ -300,6 +342,16 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
     openAIRequests.map((request) => request.prompt_cache_key),
     ["session-1", "session-1"],
   );
+  assert.equal(
+    openAIRequests.every((request) => request.model === CHAT_FALLBACK_MODEL_ID),
+    true,
+  );
+  assert.equal(
+    openAIRequests.every(
+      (request) => request.reasoning.effort === CHAT_FALLBACK_MODEL_REASONING_EFFORT,
+    ),
+    true,
+  );
   assert.deepEqual(observedEvents, [
     {
       type: "tool_call",
@@ -324,7 +376,11 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
 });
 
 test("runOpenAILoop emits a synthetic final delta and returns the summary replay item after the tool-call limit", async (): Promise<void> => {
-  const params = createLoopParams();
+  const params: StartOpenAILoopParams = {
+    ...createLoopParams(),
+    model: CHAT_FALLBACK_MODEL_ID,
+    reasoningEffort: CHAT_FALLBACK_MODEL_REASONING_EFFORT,
+  };
   const observedEvents: Array<ChatStreamEvent> = [];
   let modelCallCount = 0;
   const openAIRequests: Array<OpenAIResponsesRequest> = [];
@@ -381,6 +437,16 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
   assert.equal(modelCallCount, CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS + 1);
   assert.equal(
     openAIRequests.every((request) => request.safety_identifier === EXPECTED_USER_1_SAFETY_IDENTIFIER),
+    true,
+  );
+  assert.equal(
+    openAIRequests.every((request) => request.model === CHAT_FALLBACK_MODEL_ID),
+    true,
+  );
+  assert.equal(
+    openAIRequests.every(
+      (request) => request.reasoning.effort === CHAT_FALLBACK_MODEL_REASONING_EFFORT,
+    ),
     true,
   );
   assert.deepEqual(openAIRequests.at(-1)?.tools, []);

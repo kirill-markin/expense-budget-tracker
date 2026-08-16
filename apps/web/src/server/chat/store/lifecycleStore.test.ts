@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult } from "pg";
+import { CHAT_MODEL_ID, CHAT_MODEL_REASONING_EFFORT } from "@/lib/chatModels";
 import {
   admitChatRunStartWithQuery,
   cancelActiveChatRunByUserWithQuery,
@@ -211,6 +212,10 @@ const createFreshRunQueryFn = (
     }]);
   }
 
+  if (text.includes("COUNT(*)::text AS user_message_count")) {
+    return createQueryResult([{ user_message_count: "1" }]);
+  }
+
   if (text.includes("FROM public.chat_items")) {
     return createQueryResult([{
       item_id: "user-1",
@@ -268,12 +273,18 @@ test("prepareFreshChatRunWithQuery creates one running session and the two requi
   assert.equal(preparedRun.assistantItem.role, "assistant");
   assert.equal(preparedRun.assistantItem.state, "in_progress");
   assert.equal(preparedRun.localMessages.length, 1);
-  assert.equal(recordedQueries.length, 4);
+  assert.equal(preparedRun.modelRouting.effectiveModel, CHAT_MODEL_ID);
+  assert.equal(
+    preparedRun.modelRouting.effectiveReasoningEffort,
+    CHAT_MODEL_REASONING_EFFORT,
+  );
+  assert.equal(recordedQueries.length, 5);
   assert.equal(recordedQueries[0].text.includes("INSERT INTO public.chat_sessions"), true);
   assert.equal(recordedQueries[0].params[3], "Hello world");
   assert.equal(recordedQueries[1].text.includes("INSERT INTO public.chat_items"), true);
   assert.equal(recordedQueries[2].text.includes("FROM public.chat_items"), true);
-  assert.equal(recordedQueries[3].text.includes("INSERT INTO public.chat_items"), true);
+  assert.equal(recordedQueries[3].text.includes("COUNT(*)::text"), true);
+  assert.equal(recordedQueries[4].text.includes("INSERT INTO public.chat_items"), true);
 });
 
 test("prepareFreshChatRunWithQuery propagates item failures to the enclosing transaction", async (): Promise<void> => {

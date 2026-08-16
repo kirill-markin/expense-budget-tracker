@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { LangfuseObservation } from "@langfuse/tracing";
+import {
+  CHAT_FALLBACK_MODEL_ID,
+  CHAT_FALLBACK_MODEL_REASONING_EFFORT,
+  CHAT_MODEL_ID,
+} from "@/lib/chatModels";
 import { prependSessionEvent } from "@/server/chat/http/freshSessionRoute";
 import { createChatEventStream } from "@/server/chat/http/sse";
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
@@ -21,6 +26,7 @@ import {
   type StartPersistedChatRunParams,
 } from "./runtime";
 import { ChatSessionRunTransitionError } from "@/server/chat/store";
+import { selectChatModelRouting } from "@/server/chat/modelRouting";
 import type { PersistedChatMessageItem } from "@/server/chat/store/shared";
 import type { ChatStreamEvent } from "@/server/chat/types";
 
@@ -94,12 +100,13 @@ const createRunParams = (
   assistantItemId: "assistant-1",
   localMessages: [],
   turnInput: [{ type: "text", text: "Hello" }],
+  modelRouting: selectChatModelRouting(1, []),
   diagnostics: {
     requestId: `req-${sessionId}`,
     userId: "user-1",
     workspaceId: "workspace-1",
     sessionId,
-    model: "gpt-test",
+    model: CHAT_MODEL_ID,
     messageCount: 1,
     hasAttachments: false,
     attachmentFileNames: [],
@@ -198,6 +205,61 @@ const createRuntimeDependencies = (
     }),
   beginTaskProtection: overrides.beginTaskProtection ?? (async (): Promise<void> => undefined),
   endTaskProtection: overrides.endTaskProtection ?? (async (): Promise<void> => undefined),
+});
+
+test("runPersistedChatSessionWithDeps reports and runs the effective fallback model", async (): Promise<void> => {
+  const baseParams = createRunParams("session-fallback-model");
+  const modelRouting = selectChatModelRouting(30, []);
+  const params: StartPersistedChatRunParams = {
+    ...baseParams,
+    modelRouting,
+    diagnostics: {
+      ...baseParams.diagnostics,
+      model: modelRouting.effectiveModel,
+    },
+  };
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  let observedTraceModel: string | null = null;
+  let observedLoopModel: string | null = null;
+  let observedLoopReasoningEffort: string | null = null;
+
+  createActiveChatRunForTests(params.sessionId, params.activeRunId);
+  try {
+    await runPersistedChatSessionWithDeps(
+      params,
+      createRuntimeDependencies(
+        {
+          startChatTurnObservation: async (observationParams, fn): Promise<void> => {
+            observedTraceModel = observationParams.model;
+            await fn(null);
+          },
+          runOpenAILoop: async (loopParams): Promise<Readonly<{
+            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
+          }>> => {
+            observedLoopModel = loopParams.model;
+            observedLoopReasoningEffort = loopParams.reasoningEffort;
+            return { openaiItems: [] };
+          },
+        },
+        recorded,
+      ),
+    );
+  } finally {
+    clearActiveChatRunForTests(params.sessionId);
+  }
+
+  assert.equal(observedTraceModel, CHAT_FALLBACK_MODEL_ID);
+  assert.equal(observedLoopModel, CHAT_FALLBACK_MODEL_ID);
+  assert.equal(
+    observedLoopReasoningEffort,
+    CHAT_FALLBACK_MODEL_REASONING_EFFORT,
+  );
 });
 
 test("runPersistedChatSessionWithDeps persists stopped state for user aborts without completing the run", async (): Promise<void> => {
