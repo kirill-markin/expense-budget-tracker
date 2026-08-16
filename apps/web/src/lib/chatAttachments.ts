@@ -7,8 +7,9 @@ import type { FileContentPart, ImageContentPart } from "@/server/chat/types";
  * markdown export generation.
  *
  * Runtime / model-input behavior:
- * - Plain text-like files are decoded as UTF-8 and sent both as `input_text`
- *   and as the original `input_file`.
+ * - CSV files are decoded as UTF-8 and sent as `input_text` only.
+ * - Other plain text-like files are decoded as UTF-8 and sent both as
+ *   `input_text` and as the original `input_file`.
  * - XLS/XLSX workbooks are converted to per-sheet CSV text and sent both as
  *   `input_text` and as the original `input_file`.
  * - DOCX files are deterministically converted to raw text and sent both as
@@ -38,15 +39,24 @@ export const BINARY_DATA_PLACEHOLDER = "[binary-data]";
 export const PDF_OPENAI_NATIVE_PLACEHOLDER = "[pdf-openai-native-attached]";
 export const DOCX_OPENAI_NATIVE_PLACEHOLDER = "[docx-openai-native-attached]";
 
-const TEXT_MEDIA_TYPES = new Set([
+const CSV_MEDIA_TYPES = new Set([
   "application/csv",
+  "text/csv",
+]);
+
+const CSV_FILE_EXTENSIONS = new Set([
+  ".csv",
+]);
+
+const TEXT_MEDIA_TYPES = new Set([
+  ...CSV_MEDIA_TYPES,
   "application/json",
   "application/sql",
   "application/xml",
 ]);
 
 const TEXT_FILE_EXTENSIONS = new Set([
-  ".csv",
+  ...CSV_FILE_EXTENSIONS,
   ".html",
   ".js",
   ".json",
@@ -179,6 +189,12 @@ export const isDocxAttachment = (
 ): boolean =>
   DOCX_MEDIA_TYPES.has(part.mediaType.toLowerCase())
   || DOCX_EXTENSIONS.has(getFileExtension(part.fileName));
+
+export const isCsvAttachment = (
+  part: FileContentPart,
+): boolean =>
+  CSV_MEDIA_TYPES.has(part.mediaType.toLowerCase())
+  || CSV_FILE_EXTENSIONS.has(getFileExtension(part.fileName));
 
 export const isTextFileAttachment = (
   part: FileContentPart,
