@@ -8,6 +8,7 @@ import {
   buildDocxPromptText,
   buildTextFilePromptText,
   buildWorkbookPromptText,
+  isCsvAttachment,
   isDocxAttachment,
   isTextFileAttachment,
   isWorkbookAttachment,
@@ -83,7 +84,8 @@ const buildFileDataUrl = (
  * resend to the model on later turns.
  *
  * The policy is intentionally format-aware:
- * - text-like files -> `input_text` + original `input_file`
+ * - CSV files -> `input_text` only
+ * - other text-like files -> `input_text` + original `input_file`
  * - workbooks -> extracted CSV text + original `input_file`
  * - DOCX -> extracted raw text + original `input_file`
  * - images -> native `input_image`
@@ -100,6 +102,13 @@ const mapAttachmentPart = async (
         image_url: `data:${part.mediaType};base64,${part.base64Data}`,
       }];
     case "file":
+      if (isCsvAttachment(part)) {
+        return [{
+          type: "input_text",
+          text: buildTextFilePromptText(part),
+        }];
+      }
+
       if (isTextFileAttachment(part)) {
         return [
           {

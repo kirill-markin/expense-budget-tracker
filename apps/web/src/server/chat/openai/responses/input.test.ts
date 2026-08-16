@@ -10,6 +10,10 @@ import type { ContentPart } from "@/server/chat/types";
 
 const HEIC_BASE64_PREFIX = "AAAAGGZ0eXBoZWljAAAAAA==";
 const JPEG_BASE64_PREFIX = "/9j/4AAQSkZJRg==";
+const CSV_BASE64 = Buffer.from(
+  "date,amount\n2026-08-16,-844.82",
+  "utf8",
+).toString("base64");
 
 test("buildChatCompletionInput rejects a legacy HEIC attachment without mutating history", async (): Promise<void> => {
   const localMessages: ReadonlyArray<ServerChatMessage> = [{
@@ -65,6 +69,55 @@ test("buildChatCompletionInput replays a prepared JPEG as a native input image",
       type: "input_image",
       detail: "auto",
       image_url: `data:image/jpeg;base64,${JPEG_BASE64_PREFIX}`,
+    }],
+  });
+});
+
+test("buildChatCompletionInput replays CSV content identified by MIME without a native input file", async (): Promise<void> => {
+  const localMessages: ReadonlyArray<ServerChatMessage> = [{
+    role: "user",
+    content: [{
+      type: "file",
+      fileName: "statement.data",
+      mediaType: "text/csv",
+      base64Data: CSV_BASE64,
+    }],
+  }];
+
+  const input = await buildChatCompletionInput(
+    localMessages,
+    [{ type: "text", text: "Continue" }],
+    "Europe/Madrid",
+  );
+
+  assert.deepEqual(input[1], {
+    role: "user",
+    type: "message",
+    content: [{
+      type: "input_text",
+      text: "Attached file: statement.data\n```text\ndate,amount\n2026-08-16,-844.82\n```",
+    }],
+  });
+});
+
+test("buildChatCompletionInput sends current CSV content identified by uppercase extension without a native input file", async (): Promise<void> => {
+  const input = await buildChatCompletionInput(
+    [],
+    [{
+      type: "file",
+      fileName: "statement.CSV",
+      mediaType: "application/octet-stream",
+      base64Data: CSV_BASE64,
+    }],
+    "Europe/Madrid",
+  );
+
+  assert.deepEqual(input[1], {
+    role: "user",
+    type: "message",
+    content: [{
+      type: "input_text",
+      text: "Attached file: statement.CSV\n```csv\ndate,amount\n2026-08-16,-844.82\n```",
     }],
   });
 });
