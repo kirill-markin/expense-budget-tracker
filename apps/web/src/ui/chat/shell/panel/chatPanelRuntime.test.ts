@@ -13,12 +13,19 @@ import {
   UnsupportedImageFormatError,
 } from "../../attachments/imagePreprocessing";
 import {
+  PdfEncryptedError,
+  PdfOutputLimitError,
+  PdfPageProcessingError,
+  PdfSignatureError,
+} from "../../attachments/pdfPreprocessing";
+import {
   AttachmentReadError,
   ChatComposerMemoryTransitionError,
   createEmptyChatComposerMemory,
   createTargetChatPendingSubmission,
   deleteTargetChatComposerMemory,
   getAttachmentFailureReasonKey,
+  getAttachmentFailureReasonParams,
   hasSupportedImageAttachmentSignature,
   isChatDraftUntouched,
   markChatComposerContentEdited,
@@ -159,6 +166,22 @@ test("maps attachment failures to localized reason keys", (): void => {
       expected: "chat.attachmentFailureOutputTooLarge",
     },
     {
+      error: new PdfSignatureError("statement.pdf"),
+      expected: "chat.attachmentFailurePdfInvalidFormat",
+    },
+    {
+      error: new PdfEncryptedError("statement.pdf"),
+      expected: "chat.attachmentFailurePdfEncrypted",
+    },
+    {
+      error: new PdfOutputLimitError("statement.pdf", 4, 1000),
+      expected: "chat.attachmentFailurePdfOutputLimit",
+    },
+    {
+      error: new PdfPageProcessingError("statement.pdf", 5, "render failed"),
+      expected: "chat.attachmentFailurePdfPageProcessing",
+    },
+    {
       error: new ImageEncodeError("photo.heic", "encode failed"),
       expected: "chat.attachmentFailureConversion",
     },
@@ -179,6 +202,13 @@ test("maps attachment failures to localized reason keys", (): void => {
   for (const entry of cases) {
     assert.equal(getAttachmentFailureReasonKey(entry.error), entry.expected);
   }
+
+  assert.deepEqual(
+    getAttachmentFailureReasonParams(
+      new PdfPageProcessingError("statement.pdf", 5, "render failed"),
+    ),
+    { page: 5 },
+  );
 });
 
 test("attachment and composer memory remains isolated by selected target", (): void => {

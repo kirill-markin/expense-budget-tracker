@@ -3,8 +3,8 @@
   "version": "1.2.1",
   "private": true,
   "scripts": {
-    "predev": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
-    "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
+    "predev": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared && node scripts/copy-pdfjs-assets.mjs",
+    "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared && node scripts/copy-pdfjs-assets.mjs",
     "prelint": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "pretest": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
     "dev": "next dev",
@@ -29,6 +29,7 @@
     "mammoth": "^1.12.1",
     "next": "16.3.0",
     "openai": "^7.4.0",
+    "pdfjs-dist": "6.2.108",
     "pg": "^8.23.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

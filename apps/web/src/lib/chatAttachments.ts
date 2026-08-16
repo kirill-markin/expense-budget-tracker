@@ -1,6 +1,11 @@
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
-import type { FileContentPart, ImageContentPart } from "@/server/chat/types";
+import { isLegacyRawPdfFilePart } from "@/lib/chatPdf";
+import type {
+  FileContentPart,
+  ImageContentPart,
+  PdfContentPart,
+} from "@/server/chat/types";
 
 /**
  * Canonical attachment policy shared by runtime chat input reconstruction and
@@ -15,8 +20,8 @@ import type { FileContentPart, ImageContentPart } from "@/server/chat/types";
  * - DOCX files are deterministically converted to raw text and sent both as
  *   `input_text` and as the original `input_file`.
  * - Images remain native `input_image` items backed by base64 data URLs.
- * - PDFs stay native OpenAI `input_file` attachments because we do not claim to
- *   locally reproduce the same PDF understanding as the model.
+ * - Logical PDFs render as ordered extracted-text + JPEG `input_image` page pairs.
+ * - Legacy raw PDF file parts are rejected before model input construction.
  * - Other binary formats stay as native `input_file` attachments only.
  *
  * Markdown export behavior:
@@ -24,10 +29,11 @@ import type { FileContentPart, ImageContentPart } from "@/server/chat/types";
  * - XLS/XLSX render as per-sheet CSV blocks.
  * - DOCX renders as extracted raw text when extraction succeeds.
  * - Images render as `[binary-data]`.
- * - PDFs render as `[pdf-openai-native-attached]`.
+ * - Logical PDFs render extracted text plus a marker for each rendered page image.
+ * - Legacy raw PDFs render as `[legacy-pdf-reattach-required]`.
  * - Other opaque binaries render as `[binary-data]`.
  */
-export type AttachmentContentPart = FileContentPart | ImageContentPart;
+export type AttachmentContentPart = FileContentPart | ImageContentPart | PdfContentPart;
 
 export type MarkdownAttachment = Readonly<{
   label: string;
@@ -36,7 +42,9 @@ export type MarkdownAttachment = Readonly<{
 }>;
 
 export const BINARY_DATA_PLACEHOLDER = "[binary-data]";
-export const PDF_OPENAI_NATIVE_PLACEHOLDER = "[pdf-openai-native-attached]";
+export const LEGACY_PDF_REATTACH_PLACEHOLDER = "[legacy-pdf-reattach-required]";
+export const PDF_RENDERED_PAGE_PLACEHOLDER = "[rendered-page-image]";
+export const PDF_MISSING_TEXT_PLACEHOLDER = "[no-embedded-text]";
 export const DOCX_OPENAI_NATIVE_PLACEHOLDER = "[docx-openai-native-attached]";
 
 const CSV_MEDIA_TYPES = new Set([
@@ -79,14 +87,6 @@ const WORKBOOK_MEDIA_TYPES = new Set([
 const WORKBOOK_EXTENSIONS = new Set([
   ".xls",
   ".xlsx",
-]);
-
-const PDF_MEDIA_TYPES = new Set([
-  "application/pdf",
-]);
-
-const PDF_EXTENSIONS = new Set([
-  ".pdf",
 ]);
 
 const DOCX_MEDIA_TYPES = new Set([
@@ -170,7 +170,7 @@ const decodeUtf8File = (
 export const getAttachmentLabel = (
   part: AttachmentContentPart,
 ): string =>
-  part.type === "file" ? part.fileName : "[image]";
+  part.type === "image" ? "[image]" : part.fileName;
 
 export const isWorkbookAttachment = (
   part: FileContentPart,
@@ -180,9 +180,7 @@ export const isWorkbookAttachment = (
 
 export const isPdfAttachment = (
   part: FileContentPart,
-): boolean =>
-  PDF_MEDIA_TYPES.has(part.mediaType.toLowerCase())
-  || PDF_EXTENSIONS.has(getFileExtension(part.fileName));
+): boolean => isLegacyRawPdfFilePart(part);
 
 export const isDocxAttachment = (
   part: FileContentPart,
@@ -302,6 +300,19 @@ export const serializeAttachmentForMarkdown = async (
   part: AttachmentContentPart,
 ): Promise<MarkdownAttachment> => {
   const label = getAttachmentLabel(part);
+  if (part.type === "pdf") {
+    return {
+      label,
+      mediaType: part.mediaType,
+      lines: part.pages.flatMap((page) => [
+        `Page ${String(page.pageNumber)}`,
+        ...(page.text.length === 0
+          ? [PDF_MISSING_TEXT_PLACEHOLDER]
+          : buildCodeBlockLines("text", page.text)),
+        PDF_RENDERED_PAGE_PLACEHOLDER,
+      ]),
+    };
+  }
   if (part.type === "image") {
     return {
       label,
@@ -311,6 +322,14 @@ export const serializeAttachmentForMarkdown = async (
   }
 
   try {
+    if (isPdfAttachment(part)) {
+      return {
+        label,
+        mediaType: part.mediaType,
+        lines: [LEGACY_PDF_REATTACH_PLACEHOLDER],
+      };
+    }
+
     if (isTextFileAttachment(part)) {
       return {
         label,
@@ -324,14 +343,6 @@ export const serializeAttachmentForMarkdown = async (
         label,
         mediaType: part.mediaType,
         lines: buildWorkbookPromptText(part).split("\n").slice(1),
-      };
-    }
-
-    if (isPdfAttachment(part)) {
-      return {
-        label,
-        mediaType: part.mediaType,
-        lines: [PDF_OPENAI_NATIVE_PLACEHOLDER],
       };
     }
 

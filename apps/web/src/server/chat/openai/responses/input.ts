@@ -1,8 +1,10 @@
+import { isDeepStrictEqual } from "node:util";
 import type OpenAI from "openai";
 import type {
   ContentPart,
   FileContentPart,
   ImageContentPart,
+  PdfContentPart,
 } from "@/server/chat/types";
 import {
   buildDocxPromptText,
@@ -10,9 +12,11 @@ import {
   buildWorkbookPromptText,
   isCsvAttachment,
   isDocxAttachment,
+  isPdfAttachment,
   isTextFileAttachment,
   isWorkbookAttachment,
 } from "@/lib/chatAttachments";
+import { getPdfDerivedImageByteLength } from "@/lib/chatPdf";
 import {
   normalizeStoredOpenAIReplayItems,
   toOpenAIResponseInputItem,
@@ -21,7 +25,9 @@ import {
 import {
   HeicFileAttachmentError,
   ImageMimeSignatureMismatchError,
+  InvalidPdfAttachmentError,
   InvalidBase64ImageDataError,
+  LegacyPdfFileAttachmentError,
   UnsupportedImageMediaTypeError,
   validateChatAttachments,
 } from "@/server/chat/attachments/validation";
@@ -36,6 +42,8 @@ type AttachmentSummary = Readonly<{
   mediaType: string;
   sizeBytes: number;
   sha256?: string;
+  pageCount?: number;
+  extractedTextCharacters?: number;
 }>;
 
 const MAX_TEXT_HISTORY_LENGTH = 8_000;
@@ -45,7 +53,9 @@ const MAX_REASONING_SUMMARY_LENGTH = 2_000;
 const isChatAttachmentValidationError = (error: unknown): error is Error =>
   error instanceof HeicFileAttachmentError
   || error instanceof ImageMimeSignatureMismatchError
+  || error instanceof InvalidPdfAttachmentError
   || error instanceof InvalidBase64ImageDataError
+  || error instanceof LegacyPdfFileAttachmentError
   || error instanceof UnsupportedImageMediaTypeError;
 
 export class UnsupportedStoredChatAttachmentError extends Error {
@@ -55,10 +65,10 @@ export class UnsupportedStoredChatAttachmentError extends Error {
   public constructor(
     messageIndex: number,
     partIndex: number,
-    part: FileContentPart | ImageContentPart,
+    part: FileContentPart | ImageContentPart | PdfContentPart,
     cause: Error,
   ) {
-    const fileName = part.type === "file" ? part.fileName : null;
+    const fileName = part.type === "image" ? null : part.fileName;
     const fileNameContext = fileName === null
       ? ""
       : `, filename ${JSON.stringify(fileName)}`;
@@ -79,6 +89,35 @@ const buildFileDataUrl = (
 ): string =>
   `data:${part.mediaType};base64,${part.base64Data}`;
 
+const buildPdfPagePromptText = (
+  part: PdfContentPart,
+  pageNumber: number,
+  pageText: string,
+): string => [
+  `Attached PDF: ${part.fileName}, page ${String(pageNumber)} of ${String(part.pages.length)}.`,
+  "The extracted text below and the following image are two representations of the same PDF page.",
+  "Use the extracted text for exact values and the image for layout. Do not treat them as duplicate transactions.",
+  "Extracted text:",
+  pageText.length === 0
+    ? "[No embedded text was extracted from this page.]"
+    : pageText,
+].join("\n");
+
+const mapPdfAttachmentPart = (
+  part: PdfContentPart,
+): ReadonlyArray<OpenAIInputContent> =>
+  part.pages.flatMap((page): ReadonlyArray<OpenAIInputContent> => [
+    {
+      type: "input_text",
+      text: buildPdfPagePromptText(part, page.pageNumber, page.text),
+    },
+    {
+      type: "input_image",
+      detail: "high",
+      image_url: `data:image/jpeg;base64,${page.jpegBase64Data}`,
+    },
+  ]);
+
 /**
  * Maps a persisted attachment back into the exact content shape we want to
  * resend to the model on later turns.
@@ -89,10 +128,12 @@ const buildFileDataUrl = (
  * - workbooks -> extracted CSV text + original `input_file`
  * - DOCX -> extracted raw text + original `input_file`
  * - images -> native `input_image`
- * - PDFs and other binaries -> native `input_file` only
+ * - logical PDFs -> ordered extracted-text + JPEG page pairs
+ * - legacy raw PDFs -> rejected before model input construction
+ * - other binaries -> native `input_file` only
  */
 const mapAttachmentPart = async (
-  part: ImageContentPart | FileContentPart,
+  part: ImageContentPart | FileContentPart | PdfContentPart,
 ): Promise<ReadonlyArray<OpenAIInputContent>> => {
   switch (part.type) {
     case "image":
@@ -101,7 +142,12 @@ const mapAttachmentPart = async (
         detail: "auto",
         image_url: `data:${part.mediaType};base64,${part.base64Data}`,
       }];
+    case "pdf":
+      return mapPdfAttachmentPart(part);
     case "file":
+      if (isPdfAttachment(part)) {
+        throw new LegacyPdfFileAttachmentError(0, part.mediaType, part.fileName);
+      }
       if (isCsvAttachment(part)) {
         return [{
           type: "input_text",
@@ -167,14 +213,6 @@ const clipText = (
     ? value
     : `${value.slice(0, maxLength)}...`;
 
-const stringifyJson = (value: unknown): string => {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-};
-
 const buildToolCallHistoryText = (
   part: Extract<ContentPart, { type: "tool_call" }>,
 ): string =>
@@ -200,7 +238,7 @@ const mapMessagePart = async (
     return [{ type: "input_text", text: part.text }];
   }
 
-  if (part.type === "image" || part.type === "file") {
+  if (part.type === "image" || part.type === "file" || part.type === "pdf") {
     return await mapAttachmentPart(part);
   }
 
@@ -219,8 +257,22 @@ const bytesToHex = (
     .join("");
 
 const buildTelemetryAttachmentSummary = async (
-  part: FileContentPart | ImageContentPart,
+  part: FileContentPart | ImageContentPart | PdfContentPart,
 ): Promise<AttachmentSummary> => {
+  if (part.type === "pdf") {
+    return {
+      fileName: part.fileName,
+      mediaType: part.mediaType,
+      sizeBytes: getPdfDerivedImageByteLength(part),
+      sha256: part.sourceSha256,
+      pageCount: part.pages.length,
+      extractedTextCharacters: part.pages.reduce(
+        (total, page) => total + page.text.length,
+        0,
+      ),
+    };
+  }
+
   const fileName = part.type === "file" ? part.fileName : "image";
   const contentBytes = Buffer.from(part.base64Data, "base64");
   const digest = await crypto.subtle.digest("SHA-256", contentBytes);
@@ -242,7 +294,7 @@ const normalizeHistoryMessages = (
     return localMessages;
   }
 
-  if (stringifyJson(lastMessage.content) !== stringifyJson(turnInput)) {
+  if (!isDeepStrictEqual(lastMessage.content, turnInput)) {
     return localMessages;
   }
 
@@ -254,7 +306,7 @@ const validateStoredUserMessageAttachments = (
   messageIndex: number,
 ): void => {
   content.forEach((part, partIndex): void => {
-    if (part.type !== "image" && part.type !== "file") {
+    if (part.type !== "image" && part.type !== "file" && part.type !== "pdf") {
       return;
     }
 
@@ -327,7 +379,7 @@ export const sanitizeContentPartsForTelemetry = async (
       };
     }
 
-    if (part.type === "image" || part.type === "file") {
+    if (part.type === "image" || part.type === "file" || part.type === "pdf") {
       return {
         type: part.type,
         summary: await buildTelemetryAttachmentSummary(part),

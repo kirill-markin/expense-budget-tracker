@@ -13,6 +13,17 @@ import {
   ImageSourceTooLargeError,
   UnsupportedImageFormatError,
 } from "../../attachments/imagePreprocessing";
+import {
+  PdfDecodeError,
+  PdfEncryptedError,
+  PdfOutputLimitError,
+  PdfPageLimitError,
+  PdfPageProcessingError,
+  PdfReadError,
+  PdfSignatureError,
+  PdfTextLimitError,
+  type PdfPreparationProgress,
+} from "../../attachments/pdfPreprocessing";
 import type { AttachmentPreparationError } from "./ChatComposer";
 import type { PendingAttachment } from "./FileAttachment";
 
@@ -29,6 +40,7 @@ export type ChatComposerMemoryState = Readonly<{
   pendingAttachments: ReadonlyArray<PendingAttachment>;
   attachmentErrors: ReadonlyArray<AttachmentPreparationError>;
   isAttachmentProcessing: boolean;
+  attachmentProgress?: PdfPreparationProgress | null;
   pendingSubmission: ChatPendingSubmission | null;
   composerContentOwner: ChatComposerContentOwner;
 }>;
@@ -236,6 +248,13 @@ export type AttachmentFailureReasonKey =
   | "chat.attachmentFailureInvalidFormat"
   | "chat.attachmentFailureDecode"
   | "chat.attachmentFailureOutputTooLarge"
+  | "chat.attachmentFailurePdfInvalidFormat"
+  | "chat.attachmentFailurePdfEncrypted"
+  | "chat.attachmentFailurePdfPageLimit"
+  | "chat.attachmentFailurePdfTextLimit"
+  | "chat.attachmentFailurePdfOutputLimit"
+  | "chat.attachmentFailurePdfPageProcessing"
+  | "chat.attachmentFailurePdfProcessing"
   | "chat.attachmentFailureConversion";
 
 export const startMountedLifecycle = (
@@ -271,6 +290,30 @@ export const getAttachmentFailureReasonKey = (
   if (error instanceof AttachmentReadError || error instanceof ImageReadError) {
     return "chat.attachmentFailureRead";
   }
+  if (error instanceof PdfReadError) {
+    return "chat.attachmentFailureRead";
+  }
+  if (error instanceof PdfSignatureError) {
+    return "chat.attachmentFailurePdfInvalidFormat";
+  }
+  if (error instanceof PdfEncryptedError) {
+    return "chat.attachmentFailurePdfEncrypted";
+  }
+  if (error instanceof PdfPageLimitError) {
+    return "chat.attachmentFailurePdfPageLimit";
+  }
+  if (error instanceof PdfTextLimitError) {
+    return "chat.attachmentFailurePdfTextLimit";
+  }
+  if (error instanceof PdfOutputLimitError) {
+    return "chat.attachmentFailurePdfOutputLimit";
+  }
+  if (error instanceof PdfPageProcessingError) {
+    return "chat.attachmentFailurePdfPageProcessing";
+  }
+  if (error instanceof PdfDecodeError) {
+    return "chat.attachmentFailurePdfProcessing";
+  }
   if (
     error instanceof ImageFormatMismatchError
     || error instanceof UnsupportedImageFormatError
@@ -292,4 +335,17 @@ export const getAttachmentFailureReasonKey = (
   }
 
   return "chat.attachmentFailureConversion";
+};
+
+export const getAttachmentFailureReasonParams = (
+  error: unknown,
+): Readonly<Record<string, string | number>> | undefined => {
+  if (
+    error instanceof PdfTextLimitError
+    || error instanceof PdfOutputLimitError
+    || error instanceof PdfPageProcessingError
+  ) {
+    return { page: error.pageNumber };
+  }
+  return undefined;
 };

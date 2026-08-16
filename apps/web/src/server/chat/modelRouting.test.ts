@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   CHAT_FALLBACK_MODEL_ID,
@@ -29,6 +30,21 @@ const createPdf = (
   fileName,
   mediaType: "application/pdf",
   base64Data: Buffer.from(content).toString("base64"),
+});
+
+const createLogicalPdf = (
+  fileName: string,
+  content: string,
+): Extract<ContentPart, { type: "pdf" }> => ({
+  type: "pdf",
+  fileName,
+  mediaType: "application/pdf",
+  sourceSha256: createHash("sha256").update(content).digest("hex"),
+  pages: [{
+    pageNumber: 1,
+    text: content,
+    jpegBase64Data: "/9j/4AAQSkZJRg==",
+  }],
 });
 
 test("selectChatModelRouting keeps Sol Medium below both routing thresholds", (): void => {
@@ -90,7 +106,7 @@ test("unique PDF counting uses content and excludes images and non-PDF files", (
     createUserMessage([createPdf("other.pdf", "other-pdf-content")]),
     createUserMessage([{
       type: "file",
-      fileName: "not-really-a-pdf.pdf",
+      fileName: "not-really-a-pdf.bin",
       mediaType: "application/octet-stream",
       base64Data: Buffer.from("opaque-file").toString("base64"),
     }]),
@@ -105,6 +121,36 @@ test("unique PDF counting uses content and excludes images and non-PDF files", (
   assert.equal(countUniquePdfAttachments(messages), 2);
   assert.equal(selectChatModelRouting(5, messages).reason, "default");
   assert.deepEqual(messages, originalMessages);
+});
+
+test("unique PDF counting deduplicates logical PDFs and matching legacy stored PDFs", (): void => {
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    createUserMessage([createLogicalPdf("statement.pdf", "same-source")]),
+    createUserMessage([createLogicalPdf("renamed.pdf", "same-source")]),
+    createUserMessage([createPdf("legacy.pdf", "same-source")]),
+    createUserMessage([createLogicalPdf("other.pdf", "other-source")]),
+  ];
+
+  assert.equal(countUniquePdfAttachments(messages), 2);
+});
+
+test("unique PDF counting recognizes legacy extension-only and signature-only files", (): void => {
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    createUserMessage([{
+      type: "file",
+      fileName: "statement.PDF",
+      mediaType: "application/octet-stream",
+      base64Data: Buffer.from("extension-classified PDF").toString("base64"),
+    }]),
+    createUserMessage([{
+      type: "file",
+      fileName: "statement.bin",
+      mediaType: "application/octet-stream",
+      base64Data: Buffer.from("%PDF-1.7 signature-classified PDF").toString("base64"),
+    }]),
+  ];
+
+  assert.equal(countUniquePdfAttachments(messages), 2);
 });
 
 test("rolling model routing starts exactly 24 hours before evaluation", (): void => {

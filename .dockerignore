@@ -7,4 +7,5 @@
 !packages/agent-shared/dist/**
 **/cdk.out
 **/.DS_Store
+apps/web/public/pdfjs-assets
 infra/aws/cdk.context.local.json

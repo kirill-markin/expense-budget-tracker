@@ -228,7 +228,8 @@ export const deriveChatSessionTitle = (
   }
 
   const firstFile = content.find(
-    (part): part is Extract<ContentPart, { type: "file" }> => part.type === "file",
+    (part): part is Extract<ContentPart, { type: "file" | "pdf" }> =>
+      part.type === "file" || part.type === "pdf",
   );
   return firstFile === undefined
     ? null

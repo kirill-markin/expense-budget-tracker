@@ -195,6 +195,13 @@ const hasValidOptionalStreamPosition = (
   value.streamPosition === undefined
   || isValidStreamPosition(value.streamPosition);
 
+const isValidPdfSnapshotPage = (value: unknown): boolean =>
+  isRecord(value)
+  && typeof value.pageNumber === "number"
+  && Number.isSafeInteger(value.pageNumber)
+  && typeof value.text === "string"
+  && typeof value.jpegBase64Data === "string";
+
 const isValidChatSnapshotContentPart = (value: unknown): boolean => {
   if (!isRecord(value)) {
     return false;
@@ -211,6 +218,12 @@ const isValidChatSnapshotContentPart = (value: unknown): boolean => {
       return typeof value.mediaType === "string"
         && typeof value.base64Data === "string"
         && typeof value.fileName === "string";
+    case "pdf":
+      return value.mediaType === "application/pdf"
+        && typeof value.fileName === "string"
+        && typeof value.sourceSha256 === "string"
+        && Array.isArray(value.pages)
+        && value.pages.every(isValidPdfSnapshotPage);
     case "tool_call":
       return (value.id === undefined || typeof value.id === "string")
         && typeof value.name === "string"
@@ -946,10 +959,18 @@ const decodeBase64Prefix = (base64Data: string): Uint8Array => {
   return bytes;
 };
 
+const isPendingPdfAttachment = (
+  attachment: PendingAttachment,
+): attachment is Extract<ContentPart, { type: "pdf" }> =>
+  "type" in attachment && attachment.type === "pdf";
+
 const isRawHeicAttachment = (attachment: PendingAttachment): boolean =>
-  normalizeHeicImageMimeType(attachment.mediaType) !== null
-  || isHeicFileExtension(attachment.fileName)
-  || hasHeicFileSignature(decodeBase64Prefix(attachment.base64Data));
+  !isPendingPdfAttachment(attachment)
+  && (
+    normalizeHeicImageMimeType(attachment.mediaType) !== null
+    || isHeicFileExtension(attachment.fileName)
+    || hasHeicFileSignature(decodeBase64Prefix(attachment.base64Data))
+  );
 
 const buildContentParts = (
   text: string,
@@ -958,6 +979,11 @@ const buildContentParts = (
   const parts: Array<ContentPart> = [];
 
   for (const attachment of attachments) {
+    if (isPendingPdfAttachment(attachment)) {
+      parts.push(attachment);
+      continue;
+    }
+
     if (IMAGE_MEDIA_TYPES.has(attachment.mediaType)) {
       parts.push({
         type: "image",

@@ -67,6 +67,8 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     "!apps/sql-api/package.json",
     "!apps/web",
     "!apps/web/**",
+    "apps/web/public/pdfjs-assets",
+    "apps/web/public/pdfjs-assets/**",
     "!apps/worker",
     "apps/worker/**",
     "!apps/worker/package.json",

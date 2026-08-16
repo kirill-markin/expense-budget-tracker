@@ -73,6 +73,13 @@ const CHAT_TURN_ID_SCHEMA = z.uuid().transform(
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isPdfPageContent = (value: unknown): boolean =>
+  isRecord(value)
+  && typeof value.pageNumber === "number"
+  && Number.isSafeInteger(value.pageNumber)
+  && typeof value.text === "string"
+  && typeof value.jpegBase64Data === "string";
+
 const isContentPart = (value: unknown): value is ContentPart => {
   if (!isRecord(value) || typeof value.type !== "string") {
     return false;
@@ -87,6 +94,12 @@ const isContentPart = (value: unknown): value is ContentPart => {
       return typeof value.mediaType === "string"
         && typeof value.base64Data === "string"
         && typeof value.fileName === "string";
+    case "pdf":
+      return typeof value.fileName === "string"
+        && typeof value.mediaType === "string"
+        && typeof value.sourceSha256 === "string"
+        && Array.isArray(value.pages)
+        && value.pages.every(isPdfPageContent);
     case "tool_call":
       return typeof value.name === "string"
         && (value.status === "started" || value.status === "completed");
@@ -99,8 +112,29 @@ const collectChatAttachmentFileNames = (
   content: ReadonlyArray<ContentPart>,
 ): ReadonlyArray<string> =>
   content
-    .filter((part): part is Extract<ContentPart, { type: "file" }> => part.type === "file")
+    .filter((part): part is Extract<ContentPart, { type: "file" | "pdf" }> =>
+      part.type === "file" || part.type === "pdf")
     .map((part) => part.fileName);
+
+const normalizeParsedContentPart = (
+  part: ContentPart,
+): ContentPart => {
+  if (part.type !== "pdf") {
+    return part;
+  }
+
+  return {
+    type: "pdf",
+    fileName: part.fileName,
+    mediaType: part.mediaType,
+    sourceSha256: part.sourceSha256,
+    pages: part.pages.map((page) => ({
+      pageNumber: page.pageNumber,
+      text: page.text,
+      jpegBase64Data: page.jpegBase64Data,
+    })),
+  };
+};
 
 const toChatHistoryMessage = (
   message: ChatSessionSnapshot["messages"][number],
@@ -158,10 +192,11 @@ const parseChatMessageRequestBody = (body: unknown): FreshChatRequestBody => {
     throw new Error("timezone must be a non-empty string");
   }
 
-  validateChatAttachments(candidate.content);
+  const content = candidate.content.map(normalizeParsedContentPart);
+  validateChatAttachments(content);
 
   return {
-    content: candidate.content,
+    content,
     model: candidate.model,
     timezone: candidate.timezone,
   };

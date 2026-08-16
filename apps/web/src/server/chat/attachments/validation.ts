@@ -8,10 +8,23 @@ import {
   normalizeOpenAIImageMimeType,
 } from "@/lib/chatImageFormats";
 import type { OpenAIImageMimeType } from "@/lib/chatImageFormats";
+import {
+  PDF_MAXIMUM_FILENAME_CHARACTERS,
+  PDF_MAXIMUM_PAGE_COUNT,
+  PDF_MAXIMUM_PAGE_JPEG_BYTES,
+  PDF_MAXIMUM_PAGE_TEXT_CHARACTERS,
+  PDF_MAXIMUM_TOTAL_JPEG_BYTES,
+  PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS,
+  PDF_MEDIA_TYPE,
+  getBase64DecodedByteLength,
+  isLegacyRawPdfFilePart,
+  isSha256Hex,
+} from "@/lib/chatPdf";
 import type {
   ContentPart,
   FileContentPart,
   ImageContentPart,
+  PdfContentPart,
 } from "@/server/chat/types";
 
 const IMAGE_SIGNATURE_BYTE_COUNT = MAX_HEIC_FTYP_BOX_BYTES;
@@ -74,6 +87,25 @@ export class HeicFileAttachmentError extends Error {
       + `submitted as a generic file (${detectionMethod}). Convert it to JPEG, PNG, WebP, or GIF before upload.`,
     );
     this.name = "HeicFileAttachmentError";
+  }
+}
+
+export class LegacyPdfFileAttachmentError extends Error {
+  public constructor(partIndex: number, mediaType: string, fileName: string) {
+    super(
+      `${formatContentPartContext(partIndex, mediaType, fileName)} contains a raw PDF. `
+      + "Raw PDFs are not accepted; attach the PDF again so the browser can convert every page to extracted text and JPEG.",
+    );
+    this.name = "LegacyPdfFileAttachmentError";
+  }
+}
+
+export class InvalidPdfAttachmentError extends Error {
+  public constructor(partIndex: number, fileName: string, reason: string) {
+    super(
+      `Content part ${String(partIndex)} (PDF filename ${JSON.stringify(fileName)}) is invalid: ${reason}`,
+    );
+    this.name = "InvalidPdfAttachmentError";
   }
 }
 
@@ -153,6 +185,14 @@ const validateFilePart = (
   part: FileContentPart,
   partIndex: number,
 ): void => {
+  if (isLegacyRawPdfFilePart(part)) {
+    throw new LegacyPdfFileAttachmentError(
+      partIndex,
+      part.mediaType,
+      part.fileName,
+    );
+  }
+
   if (normalizeHeicImageMimeType(part.mediaType) !== null) {
     throw new HeicFileAttachmentError(
       partIndex,
@@ -181,6 +221,107 @@ const validateFilePart = (
   }
 };
 
+const validatePdfPart = (
+  part: PdfContentPart,
+  partIndex: number,
+): void => {
+  const fileNameLength = Array.from(part.fileName).length;
+  if (
+    part.fileName.trim().length === 0
+    || fileNameLength > PDF_MAXIMUM_FILENAME_CHARACTERS
+  ) {
+    throw new InvalidPdfAttachmentError(
+      partIndex,
+      part.fileName,
+      `filename must contain 1-${String(PDF_MAXIMUM_FILENAME_CHARACTERS)} characters.`,
+    );
+  }
+  if (part.mediaType !== PDF_MEDIA_TYPE) {
+    throw new InvalidPdfAttachmentError(
+      partIndex,
+      part.fileName,
+      `mediaType must be ${JSON.stringify(PDF_MEDIA_TYPE)}.`,
+    );
+  }
+  if (!isSha256Hex(part.sourceSha256)) {
+    throw new InvalidPdfAttachmentError(
+      partIndex,
+      part.fileName,
+      "sourceSha256 must be a lowercase 64-character SHA-256 hex digest.",
+    );
+  }
+  if (part.pages.length < 1 || part.pages.length > PDF_MAXIMUM_PAGE_COUNT) {
+    throw new InvalidPdfAttachmentError(
+      partIndex,
+      part.fileName,
+      `page count must be between 1 and ${String(PDF_MAXIMUM_PAGE_COUNT)}; received ${String(part.pages.length)}.`,
+    );
+  }
+
+  let totalJpegBytes = 0;
+  let totalTextCharacters = 0;
+  part.pages.forEach((page, pageIndex): void => {
+    const expectedPageNumber = pageIndex + 1;
+    if (page.pageNumber !== expectedPageNumber) {
+      throw new InvalidPdfAttachmentError(
+        partIndex,
+        part.fileName,
+        `page ordering must be consecutive and 1-based; expected page ${String(expectedPageNumber)}, received ${String(page.pageNumber)}.`,
+      );
+    }
+    if (page.text.length > PDF_MAXIMUM_PAGE_TEXT_CHARACTERS) {
+      throw new InvalidPdfAttachmentError(
+        partIndex,
+        part.fileName,
+        `page ${String(page.pageNumber)} extracted text exceeds ${String(PDF_MAXIMUM_PAGE_TEXT_CHARACTERS)} characters.`,
+      );
+    }
+    totalTextCharacters += page.text.length;
+    if (totalTextCharacters > PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS) {
+      throw new InvalidPdfAttachmentError(
+        partIndex,
+        part.fileName,
+        `aggregate extracted text exceeds ${String(PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS)} characters.`,
+      );
+    }
+    if (!hasValidBase64Shape(page.jpegBase64Data)) {
+      throw new InvalidPdfAttachmentError(
+        partIndex,
+        part.fileName,
+        `page ${String(page.pageNumber)} contains invalid JPEG base64 data.`,
+      );
+    }
+
+    const pageJpegBytes = getBase64DecodedByteLength(page.jpegBase64Data);
+    if (pageJpegBytes > PDF_MAXIMUM_PAGE_JPEG_BYTES) {
+      throw new InvalidPdfAttachmentError(
+        partIndex,
+        part.fileName,
+        `page ${String(page.pageNumber)} JPEG is ${String(pageJpegBytes)} bytes; maximum is ${String(PDF_MAXIMUM_PAGE_JPEG_BYTES)} bytes.`,
+      );
+    }
+    totalJpegBytes += pageJpegBytes;
+    if (totalJpegBytes > PDF_MAXIMUM_TOTAL_JPEG_BYTES) {
+      throw new InvalidPdfAttachmentError(
+        partIndex,
+        part.fileName,
+        `aggregate JPEG data exceeds ${String(PDF_MAXIMUM_TOTAL_JPEG_BYTES)} bytes.`,
+      );
+    }
+
+    const detectedMediaType = detectOpenAIImageMimeType(
+      decodeBase64Prefix(page.jpegBase64Data),
+    );
+    if (detectedMediaType !== "image/jpeg") {
+      throw new InvalidPdfAttachmentError(
+        partIndex,
+        part.fileName,
+        `page ${String(page.pageNumber)} image does not have a JPEG signature.`,
+      );
+    }
+  });
+};
+
 export const validateChatAttachments = (
   content: ReadonlyArray<ContentPart>,
 ): void => {
@@ -189,6 +330,8 @@ export const validateChatAttachments = (
       validateImagePart(part, partIndex);
     } else if (part.type === "file") {
       validateFilePart(part, partIndex);
+    } else if (part.type === "pdf") {
+      validatePdfPart(part, partIndex);
     }
   });
 };

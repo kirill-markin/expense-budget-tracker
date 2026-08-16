@@ -15,17 +15,25 @@ import {
   preprocessImageAttachment,
   UnsupportedImageFormatError,
 } from "../../attachments/imagePreprocessing";
+import { hasPdfSignature, isPdfFileCandidate } from "@/lib/chatPdf";
+import type { PdfContentPart } from "@/server/chat/types";
+import {
+  preprocessPdfAttachment,
+  type PdfPreparationProgressCallback,
+} from "../../attachments/pdfPreprocessing";
 import styles from "./ChatPanel.module.css";
 import {
   AttachmentReadError,
   hasSupportedImageAttachmentSignature,
 } from "./chatPanelRuntime";
 
-export type PendingAttachment = Readonly<{
+export type PendingBinaryAttachment = Readonly<{
   fileName: string;
   mediaType: string;
   base64Data: string;
 }>;
+
+export type PendingAttachment = PendingBinaryAttachment | PdfContentPart;
 
 type Props = Readonly<{
   onIngestFiles: (files: ReadonlyArray<File>) => Promise<number>;
@@ -107,6 +115,14 @@ const isImageAttachment = (file: File): boolean =>
   || detectOpenAIImageMimeTypeFromFileName(file.name) !== null
   || isHeicFileExtension(file.name);
 
+const hasPdfAttachmentSignature = async (file: File): Promise<boolean> => {
+  try {
+    return hasPdfSignature(new Uint8Array(await file.slice(0, 5).arrayBuffer()));
+  } catch (error) {
+    throw new AttachmentReadError(file.name, errorMessage(error));
+  }
+};
+
 export const isSupportedClipboardImage = (file: File): boolean =>
   normalizeOpenAIImageMimeType(file.type) !== null
   || normalizeHeicImageMimeType(file.type) !== null
@@ -155,10 +171,20 @@ export const normalizeClipboardImageFile = (file: File, index: number): File => 
   );
 };
 
-export const prepareAttachment = async (file: File): Promise<PendingAttachment> => {
+export const prepareAttachment = async (
+  file: File,
+  onPdfProgress: PdfPreparationProgressCallback,
+): Promise<PendingAttachment> => {
   const sizeError = checkFileSize(file);
   if (sizeError !== null) {
     throw new RangeError(sizeError);
+  }
+
+  if (
+    isPdfFileCandidate(file.name, file.type)
+    || await hasPdfAttachmentSignature(file)
+  ) {
+    return await preprocessPdfAttachment(file, onPdfProgress);
   }
 
   if (isImageAttachment(file) || await hasSupportedImageAttachmentSignature(file)) {

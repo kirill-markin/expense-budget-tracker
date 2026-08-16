@@ -3,13 +3,16 @@ import test from "node:test";
 import {
   HeicFileAttachmentError,
   ImageMimeSignatureMismatchError,
+  InvalidPdfAttachmentError,
   InvalidBase64ImageDataError,
+  LegacyPdfFileAttachmentError,
   UnsupportedImageMediaTypeError,
   validateChatAttachments,
 } from "@/server/chat/attachments/validation";
 import type {
   FileContentPart,
   ImageContentPart,
+  PdfContentPart,
 } from "@/server/chat/types";
 
 const JPEG_BASE64_PREFIX = "/9j/4AAQSkZJRg==";
@@ -40,6 +43,18 @@ const createFilePart = (
   fileName,
   mediaType,
   base64Data,
+});
+
+const createPdfPart = (): PdfContentPart => ({
+  type: "pdf",
+  fileName: "statement.pdf",
+  mediaType: "application/pdf",
+  sourceSha256: "a".repeat(64),
+  pages: [{
+    pageNumber: 1,
+    text: "date amount",
+    jpegBase64Data: JPEG_BASE64_PREFIX,
+  }],
 });
 
 test("validateChatAttachments accepts supported images with matching signatures", (): void => {
@@ -171,19 +186,72 @@ test("validateChatAttachments leaves XLSX attachments unchanged", (): void => {
   assert.doesNotThrow((): void => validateChatAttachments([workbook]));
 });
 
-test("validateChatAttachments accepts valid large image and generic file base64", (): void => {
+test("validateChatAttachments accepts bounded logical PDFs and valid large images", (): void => {
   const largeJpegBase64 = Buffer.concat([
     Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
     Buffer.alloc(4 * 1024 * 1024),
   ]).toString("base64");
-  const largePdf = createFilePart(
-    "report.pdf",
-    "application/pdf",
-    "A".repeat(5 * 1024 * 1024),
-  );
 
   assert.doesNotThrow((): void => validateChatAttachments([
     createImagePart("image/jpeg", largeJpegBase64),
-    largePdf,
+    createPdfPart(),
   ]));
+});
+
+test("validateChatAttachments rejects legacy raw PDFs without exposing their bytes", (): void => {
+  const rawPdfs = [
+    createFilePart(
+      "report.bin",
+      "application/pdf",
+      Buffer.from("%PDF-1.7 private contents").toString("base64"),
+    ),
+    createFilePart(
+      "report.pdf",
+      "application/octet-stream",
+      Buffer.from("legacy PDF bytes").toString("base64"),
+    ),
+    createFilePart(
+      "report.bin",
+      "application/octet-stream",
+      Buffer.from("%PDF-1.7 disguised contents").toString("base64"),
+    ),
+  ];
+
+  for (const rawPdf of rawPdfs) {
+    assert.throws(
+      (): void => validateChatAttachments([rawPdf]),
+      (error: unknown): boolean => {
+        assert.ok(error instanceof LegacyPdfFileAttachmentError);
+        assert.match(error.message, new RegExp(rawPdf.fileName.replace(".", "\\.")));
+        assert.equal(error.message.includes(rawPdf.base64Data), false);
+        return true;
+      },
+    );
+  }
+});
+
+test("validateChatAttachments rejects malformed nested PDF pages", (): void => {
+  const validPdf = createPdfPart();
+  assert.throws(
+    (): void => validateChatAttachments([{
+      ...validPdf,
+      pages: [{
+        pageNumber: 2,
+        text: "out of order",
+        jpegBase64Data: JPEG_BASE64_PREFIX,
+      }],
+    }]),
+    InvalidPdfAttachmentError,
+  );
+  assert.throws(
+    (): void => validateChatAttachments([{
+      ...validPdf,
+      pages: [{
+        pageNumber: 1,
+        text: "not a JPEG",
+        jpegBase64Data: PNG_BASE64_PREFIX,
+      }],
+    }]),
+    InvalidPdfAttachmentError,
+  );
 });

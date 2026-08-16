@@ -27,6 +27,20 @@ export type FileContentPart = Readonly<{
   fileName: string;
 }>;
 
+export type PdfPageContent = Readonly<{
+  pageNumber: number;
+  text: string;
+  jpegBase64Data: string;
+}>;
+
+export type PdfContentPart = Readonly<{
+  type: "pdf";
+  fileName: string;
+  mediaType: "application/pdf";
+  sourceSha256: string;
+  pages: ReadonlyArray<PdfPageContent>;
+}>;
+
 export type ToolCallContentPart = Readonly<{
   type: "tool_call";
   id?: string;
@@ -48,6 +62,7 @@ export type ContentPart =
   | TextContentPart
   | ImageContentPart
   | FileContentPart
+  | PdfContentPart
   | ToolCallContentPart
   | ReasoningSummaryContentPart;
 
