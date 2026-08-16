@@ -72,19 +72,23 @@ const authorizationParamsForClient = (oauthClient: OAuthClient, state: string): 
 
 const authorizationParams = (): URLSearchParams => authorizationParamsForClient(client, "state-1");
 
-const consentRequest = (params: URLSearchParams, origin: string): Request => new Request(
-  `${issuer}/oauth/authorize`,
-  {
+const consentRequest = (
+  params: URLSearchParams,
+  origin: string | null,
+  secFetchSite: string | null,
+): Request => {
+  const headers = new Headers({
+    "Content-Type": "application/x-www-form-urlencoded",
+    Cookie: "session=valid-session",
+  });
+  if (origin !== null) headers.set("Origin", origin);
+  if (secFetchSite !== null) headers.set("Sec-Fetch-Site", secFetchSite);
+  return new Request(`${issuer}/oauth/authorize`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: "session=valid-session",
-      Origin: origin,
-      "Sec-Fetch-Site": origin === issuer ? "same-origin" : "cross-site",
-    },
+    headers,
     body: params.toString(),
-  },
-);
+  });
+};
 
 type BodyLimitCase = Readonly<{
   name: string;
@@ -390,6 +394,7 @@ test("consent is no-store, anti-clickjacking, and same-origin protected", async 
   assert.equal(consentPage.status, 200);
   assert.equal(consentPage.headers.get("cache-control"), "no-store");
   assert.equal(consentPage.headers.get("x-frame-options"), "DENY");
+  assert.equal(consentPage.headers.get("referrer-policy"), "strict-origin");
   assert.match(consentPage.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/u);
   const consentHtml = await consentPage.text();
   assert.match(consentHtml, /Desktop &lt;MCP&gt;/u);
@@ -402,14 +407,26 @@ test("consent is no-store, anti-clickjacking, and same-origin protected", async 
 
   const form = authorizationParams();
   form.set("decision", "allow");
-  const crossOrigin = await app.fetch(consentRequest(form, "https://attacker.example"));
-  assert.equal(crossOrigin.status, 403);
+  const rejectedSecurityHeaders: ReadonlyArray<readonly [string | null, string | null]> = [
+    ["https://attacker.example", "same-origin"],
+    ["null", "same-origin"],
+    [null, "same-origin"],
+    [issuer, "cross-site"],
+  ];
+  for (const [origin, secFetchSite] of rejectedSecurityHeaders) {
+    const rejected = await app.fetch(consentRequest(form, origin, secFetchSite));
+    assert.equal(rejected.status, 403);
+  }
   assert.equal(issueCount, 0);
 
-  const allowed = await app.fetch(consentRequest(form, issuer));
+  const allowed = await app.fetch(consentRequest(form, issuer, "same-origin"));
   assert.equal(allowed.status, 302);
   assert.match(allowed.headers.get("location") ?? "", /code=ebt_ac_issued-code/u);
   assert.equal(issueCount, 1);
+
+  const allowedWithoutFetchMetadata = await app.fetch(consentRequest(form, issuer, null));
+  assert.equal(allowedWithoutFetchMetadata.status, 302);
+  assert.equal(issueCount, 2);
 });
 
 test("authorization GET enforces its raw query ceiling and keeps nested login below its ceiling", async (): Promise<void> => {
@@ -476,7 +493,7 @@ test("consent renders only when both encoded decisions fit the POST byte limit",
   const denied = new URLSearchParams(exactBoundary);
   denied.set("decision", "deny");
   assert.ok(utf8Length(denied.toString()) <= MAX_CONSENT_REQUEST_BYTES);
-  const submission = await app.fetch(consentRequest(allowed, issuer));
+  const submission = await app.fetch(consentRequest(allowed, issuer, "same-origin"));
   assert.equal(submission.status, 302);
 
   const oversized = consentParametersWithEncodedSize(
@@ -503,7 +520,7 @@ test("authorization success appends parameters without rewriting the registered 
   const form = authorizationParamsForClient(exactRedirectClient, "state value/%");
   form.set("decision", "allow");
 
-  const response = await app.fetch(consentRequest(form, issuer));
+  const response = await app.fetch(consentRequest(form, issuer, "same-origin"));
 
   assert.equal(response.status, 302);
   assert.equal(
@@ -565,7 +582,7 @@ test("authorization POST logs and redirects code-persistence failures after call
   const form = authorizationParams();
   form.set("decision", "allow");
 
-  const response = await app.fetch(consentRequest(form, issuer));
+  const response = await app.fetch(consentRequest(form, issuer, "same-origin"));
 
   assert.equal(response.status, 302);
   assert.equal(
@@ -656,7 +673,7 @@ test("consent revalidates every submitted authorization field", async (): Promis
     const form = authorizationParams();
     form.set("decision", "allow");
     form.set(name, value);
-    const response = await app.fetch(consentRequest(form, issuer));
+    const response = await app.fetch(consentRequest(form, issuer, "same-origin"));
     const location = response.headers.get("location") ?? "";
     assert.equal(location.includes("code="), false, `${name} mutation must not issue a code`);
   }

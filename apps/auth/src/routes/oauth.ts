@@ -421,7 +421,7 @@ app.get("/oauth/authorize", async (c) => {
     if (identity instanceof Response) return identity;
     c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
     c.header("X-Frame-Options", "DENY");
-    c.header("Referrer-Policy", "no-referrer");
+    c.header("Referrer-Policy", "strict-origin");
     return c.html(renderConsent(client, request));
   } catch (error) {
     if (isOAuthProtocolError(error)) {
