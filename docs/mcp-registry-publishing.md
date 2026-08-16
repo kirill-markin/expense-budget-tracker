@@ -140,16 +140,21 @@ gh workflow run mcp-registry-publish.yml \
 
 The workflow rejects every non-`main` ref. Its first executable step records a
 conservative deadline 840 seconds later: the 900-second job limit minus a
-60-second platform safety buffer. Before reading the private key, it validates
-`server.json` with exactly `ajv-cli@5.0.0`, runs the shared version checker, and
-confirms that the exact name/version returns 404. The controlled
-pre-publication processes have explicit execution deadlines: 75 seconds for
-the schema download, 90 seconds for AJV installation and validation, 30 seconds
-for version alignment, 75 seconds for the publisher download, 15 seconds for
-its checksum verification, 30 seconds for extraction, and 60 seconds for DNS
-authentication. Each deadline allows a further five seconds for forced
-termination. The workflow then uses the official Linux ARM64 archive from the
-audited
+60-second platform safety buffer. The publication job pins checkout and Node
+setup actions to reviewed commit SHAs. Before reading the private key, it
+downloads the 2025-12-11 schema and verifies SHA-256
+`3fba09590c99f61735d234822279f4223fab9e300c0a81e81c91ab62a4114de0`, installs
+the exact integrity-locked dependencies with lifecycle scripts disabled, runs
+the repository-local `ajv-cli@5.0.0`, records the validated `server.json`
+SHA-256, runs the shared version checker, and confirms that the exact
+name/version returns 404. The controlled pre-publication processes have
+explicit execution deadlines: 75 seconds for the schema download, 15 seconds
+for its checksum verification, 90 seconds for locked dependency installation
+and AJV validation, 15 seconds for the manifest digest, 30 seconds for version
+alignment, 75 seconds for the publisher download, 15 seconds for its checksum
+verification, 30 seconds for extraction, and 60 seconds for DNS authentication.
+Each deadline allows a further five seconds for forced termination. The
+workflow then uses the official Linux ARM64 archive from the audited
 [`mcp-publisher` v1.8.1 release](https://github.com/modelcontextprotocol/registry/releases/tag/v1.8.1)
 and verifies its pinned SHA-256 digest
 `8dd75a6cf6845688b5d4e46df58d3ca26d5c8d233bb0626606e1db82c5e883e4`
@@ -160,23 +165,28 @@ reviewed tag and independently pinned digest. The workflow exposes
 
 The publish command has a five-minute execution deadline. The workflow sends
 `TERM` at the deadline and `KILL` ten seconds later if the process has not
-stopped. Immediately before invoking it, the workflow requires at least 540
-seconds before the conservative deadline: 300 seconds for the publisher, 10
-seconds for forced termination, 170 seconds for reconciliation (six 20-second
-requests and five 10-second retry delays), and a 60-second transition/reporting
-buffer. Insufficient budget fails before publication starts. The separate
-60-second platform safety buffer leaves 120 seconds beyond the 480-second
-publisher-and-reconciliation maximum.
+stopped. Before publication, the workflow requires at least 540 seconds before
+the conservative deadline: 300 seconds for the publisher, 10 seconds for
+forced termination, 170 seconds for reconciliation (six 20-second requests and
+five 10-second retry delays), and a 60-second transition/reporting buffer. It
+then reverifies the validated `server.json` SHA-256 under a 15-second deadline
+immediately before marking publication attempted and invoking the publisher.
+Insufficient budget or digest drift fails before publication starts. The
+separate 60-second platform safety buffer leaves 120 seconds beyond the
+480-second publisher-and-reconciliation maximum.
 
 The publisher's exit status, including a timeout status, is not treated as the
 final outcome because a network failure or timeout can happen after the
 Registry accepts the immutable record. Once publication starts, the workflow
 records that status and runs the exact-version reconciliation step even if the
 publisher step reports failure. It succeeds only when an HTTP 200 response
-contains a nested server record whose name, version, and Streamable HTTP remote
-URL match `server.json`. A matching record reconciles a non-zero or timed-out
-publisher exit; a missing or mismatched record fails with the publisher status
-and Registry response context. The resulting GitHub job summary is secret-free.
+contains a nested `.server` record that semantically equals the complete
+reviewed `server.json`. Object key order is irrelevant; array order and
+cardinality are exact. Registry-owned top-level `_meta` is outside the
+comparison, while publisher-provided `.server._meta` must match. A matching
+record reconciles a non-zero or timed-out publisher exit; a missing or
+mismatched record fails with the publisher status and Registry response
+context. The resulting GitHub job summary is secret-free.
 
 ## Successful verification
 
@@ -200,8 +210,8 @@ documentation, support, privacy, terms, and icon URLs. A successful workflow
 summary records the published commit, verified publisher version and digest,
 publisher exit status, exact verification endpoint, and reconciliation outcome
 without including credentials. HTTP 200 alone is insufficient: the response's
-nested server record must match the reviewed `server.json` identity, version,
-and Streamable HTTP remote URL.
+nested `.server` record must semantically equal the complete reviewed
+`server.json`.
 
 ## Immutable-version behavior
 

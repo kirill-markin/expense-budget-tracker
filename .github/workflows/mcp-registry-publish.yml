@@ -37,9 +37,9 @@ jobs:
           echo "safe_deadline_epoch=${safe_job_deadline_epoch}" >> "${GITHUB_OUTPUT}"
           echo "Recorded a ${safe_job_budget_seconds}-second safe job budget from the first executable step: ${JOB_TIMEOUT_SECONDS}-second job limit minus ${JOB_DEADLINE_SAFETY_BUFFER_SECONDS}-second platform safety buffer."
 
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
 
@@ -52,9 +52,11 @@ jobs:
           fi
 
       - name: Validate MCP Registry manifest
+        id: manifest_validation
         run: |
           set -euo pipefail
           schema_path="${RUNNER_TEMP}/mcp-server-schema-2025-12-11.json"
+          schema_sha256="3fba09590c99f61735d234822279f4223fab9e300c0a81e81c91ab62a4114de0"
           schema_fetch_timeout_seconds=75
           set +e
           timeout \
@@ -77,26 +79,72 @@ jobs:
             exit 1
           fi
 
+          schema_checksum_timeout_seconds=15
+          set +e
+          printf '%s  %s\n' "${schema_sha256}" "${schema_path}" | timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${schema_checksum_timeout_seconds}s" \
+            sha256sum --check --strict
+          schema_checksum_exit=$?
+          set -e
+          if [ "${schema_checksum_exit}" -eq 124 ] || [ "${schema_checksum_exit}" -eq 137 ]; then
+            echo "::error::Pinned MCP Registry schema verification exceeded its ${schema_checksum_timeout_seconds}-second execution deadline; timeout exit status: ${schema_checksum_exit}."
+            exit 1
+          fi
+          if [ "${schema_checksum_exit}" -ne 0 ]; then
+            echo "::error::MCP Registry schema SHA-256 verification failed with exit status ${schema_checksum_exit}; expected ${schema_sha256}."
+            exit 1
+          fi
+
           ajv_timeout_seconds=90
           set +e
           timeout \
             --signal=TERM \
             --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
             "${ajv_timeout_seconds}s" \
-            npx --yes ajv-cli@5.0.0 validate \
-            -s "${schema_path}" \
-            -d server.json \
-            --strict=false
+            bash -c '
+              set -euo pipefail
+              npm ci --ignore-scripts --no-audit --no-fund
+              ./node_modules/.bin/ajv validate \
+                -s "$1" \
+                -d server.json \
+                --strict=false
+            ' bash "${schema_path}"
           ajv_exit=$?
           set -e
           if [ "${ajv_exit}" -eq 124 ] || [ "${ajv_exit}" -eq 137 ]; then
-            echo "::error::Pinned ajv-cli@5.0.0 installation or manifest validation exceeded its ${ajv_timeout_seconds}-second execution deadline; timeout exit status: ${ajv_exit}."
+            echo "::error::Integrity-locked dependency installation or manifest validation with ajv-cli@5.0.0 exceeded its ${ajv_timeout_seconds}-second execution deadline; timeout exit status: ${ajv_exit}."
             exit 1
           fi
           if [ "${ajv_exit}" -ne 0 ]; then
-            echo "::error::Pinned ajv-cli@5.0.0 manifest validation failed with exit status ${ajv_exit}."
+            echo "::error::Integrity-locked dependency installation or manifest validation with ajv-cli@5.0.0 failed with exit status ${ajv_exit}."
             exit 1
           fi
+
+          manifest_digest_timeout_seconds=15
+          set +e
+          manifest_sha256_output="$(timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${manifest_digest_timeout_seconds}s" \
+            sha256sum server.json)"
+          manifest_digest_exit=$?
+          set -e
+          if [ "${manifest_digest_exit}" -eq 124 ] || [ "${manifest_digest_exit}" -eq 137 ]; then
+            echo "::error::Validated server.json digest calculation exceeded its ${manifest_digest_timeout_seconds}-second execution deadline; timeout exit status: ${manifest_digest_exit}."
+            exit 1
+          fi
+          if [ "${manifest_digest_exit}" -ne 0 ]; then
+            echo "::error::Validated server.json digest calculation failed with exit status ${manifest_digest_exit}."
+            exit 1
+          fi
+          manifest_sha256="${manifest_sha256_output%% *}"
+          if [[ ! "${manifest_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Validated server.json digest calculation returned an invalid SHA-256 value: ${manifest_sha256}."
+            exit 1
+          fi
+          echo "sha256=${manifest_sha256}" >> "${GITHUB_OUTPUT}"
 
       - name: Check version alignment
         run: |
@@ -312,6 +360,7 @@ jobs:
         id: publish
         env:
           SAFE_JOB_DEADLINE_EPOCH: ${{ steps.job_budget.outputs.safe_deadline_epoch }}
+          VALIDATED_MANIFEST_SHA256: ${{ steps.manifest_validation.outputs.sha256 }}
           MCP_PUBLISHER: ${{ steps.publisher.outputs.path }}
         run: |
           set -euo pipefail
@@ -332,6 +381,24 @@ jobs:
             exit 1
           fi
           echo "Publication budget accepted: ${remaining_job_budget_seconds} seconds remain before the conservative job deadline; ${required_publication_budget_seconds} seconds are required."
+
+          manifest_reverification_timeout_seconds=15
+          set +e
+          printf '%s  %s\n' "${VALIDATED_MANIFEST_SHA256}" server.json | timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${manifest_reverification_timeout_seconds}s" \
+            sha256sum --check --strict
+          manifest_reverification_exit=$?
+          set -e
+          if [ "${manifest_reverification_exit}" -eq 124 ] || [ "${manifest_reverification_exit}" -eq 137 ]; then
+            echo "::error::Validated server.json digest reverification exceeded its ${manifest_reverification_timeout_seconds}-second execution deadline; timeout exit status: ${manifest_reverification_exit}. No publication was attempted."
+            exit 1
+          fi
+          if [ "${manifest_reverification_exit}" -ne 0 ]; then
+            echo "::error::server.json changed after validation; expected reviewed SHA-256 ${VALIDATED_MANIFEST_SHA256}. No publication was attempted."
+            exit 1
+          fi
           echo "attempted=true" >> "${GITHUB_OUTPUT}"
 
           set +e
@@ -383,19 +450,15 @@ jobs:
 
             if [ "${curl_exit}" -eq 0 ] && [ "${status}" = "200" ]; then
               if jq --exit-status \
-                --arg server_name "${SERVER_NAME}" \
-                --arg server_version "${SERVER_VERSION}" \
-                --arg server_remote_url "${SERVER_REMOTE_URL}" \
-                '.server.name == $server_name and
-                 .server.version == $server_version and
-                 any(.server.remotes[]?; .type == "streamable-http" and .url == $server_remote_url)' \
+                --slurpfile reviewed_manifest server.json \
+                '.server == $reviewed_manifest[0]' \
                 "${response_body}" > /dev/null; then
                 if [ "${PUBLISH_EXIT_STATUS}" -ne 0 ]; then
-                  echo "::warning::Reconciled successful publication after mcp-publisher exited with status ${PUBLISH_EXIT_STATUS}; the exact Registry record matches server.json."
-                  publication_outcome="Reconciled exact Registry record after non-zero publisher exit"
+                  echo "::warning::Reconciled successful publication after mcp-publisher exited with status ${PUBLISH_EXIT_STATUS}; the complete nested Registry server manifest matches server.json."
+                  publication_outcome="Reconciled complete Registry server manifest after non-zero publisher exit"
                 else
-                  echo "Exact Registry record matches server.json after mcp-publisher exited with status 0."
-                  publication_outcome="Publisher exited successfully and exact Registry record reconciled"
+                  echo "Complete nested Registry server manifest matches server.json after mcp-publisher exited with status 0."
+                  publication_outcome="Publisher exited successfully and complete Registry server manifest reconciled"
                 fi
                 {
                   echo "## MCP Registry publication"
@@ -421,7 +484,7 @@ jobs:
               elif [ "${status}" != "200" ]; then
                 echo "::warning::Registry reconciliation returned HTTP ${status}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
               else
-                echo "::warning::Registry reconciliation returned HTTP 200, but the nested server record did not match server.json name ${SERVER_NAME}, version ${SERVER_VERSION}, and streamable-http remote ${SERVER_REMOTE_URL}; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
+                echo "::warning::Registry reconciliation returned HTTP 200, but the complete nested server manifest did not semantically equal the reviewed server.json; retrying in ${retry_delay_seconds}s (${attempt}/${max_attempts})."
               fi
               sleep "${retry_delay_seconds}"
               continue
@@ -433,7 +496,7 @@ jobs:
               echo "::error::Registry reconciliation failed after ${max_attempts} attempts for ${VERSION_ENDPOINT}; mcp-publisher exit status: ${PUBLISH_EXIT_STATUS}; last HTTP status: ${status}. Response body follows."
               cat "${response_body}"
             else
-              echo "::error::Registry reconciliation returned HTTP 200 after ${max_attempts} attempts, but the nested server record did not match server.json name ${SERVER_NAME}, version ${SERVER_VERSION}, and streamable-http remote ${SERVER_REMOTE_URL}; mcp-publisher exit status: ${PUBLISH_EXIT_STATUS}. Response body follows."
+              echo "::error::Registry reconciliation returned HTTP 200 after ${max_attempts} attempts, but the complete nested server manifest did not semantically equal the reviewed server.json; mcp-publisher exit status: ${PUBLISH_EXIT_STATUS}. Response body follows."
               cat "${response_body}"
             fi
             exit 1
