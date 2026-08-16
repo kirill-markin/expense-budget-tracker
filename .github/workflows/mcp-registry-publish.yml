@@ -15,8 +15,28 @@ jobs:
     name: Publish server.json to MCP Registry
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
+    env:
+      JOB_TIMEOUT_SECONDS: 900
+      JOB_DEADLINE_SAFETY_BUFFER_SECONDS: 60
+      PREPUBLICATION_KILL_AFTER_SECONDS: 5
+      PUBLISHER_TIMEOUT_SECONDS: 300
+      PUBLISHER_KILL_AFTER_SECONDS: 10
+      RECONCILIATION_CONNECT_TIMEOUT_SECONDS: 5
+      RECONCILIATION_REQUEST_TIMEOUT_SECONDS: 20
+      RECONCILIATION_MAX_ATTEMPTS: 6
+      RECONCILIATION_RETRY_DELAY_SECONDS: 10
+      PUBLICATION_TRANSITION_BUFFER_SECONDS: 60
 
     steps:
+      - name: Record conservative job deadline
+        id: job_budget
+        run: |
+          set -euo pipefail
+          safe_job_budget_seconds=$((JOB_TIMEOUT_SECONDS - JOB_DEADLINE_SAFETY_BUFFER_SECONDS))
+          safe_job_deadline_epoch=$(($(date +%s) + safe_job_budget_seconds))
+          echo "safe_deadline_epoch=${safe_job_deadline_epoch}" >> "${GITHUB_OUTPUT}"
+          echo "Recorded a ${safe_job_budget_seconds}-second safe job budget from the first executable step: ${JOB_TIMEOUT_SECONDS}-second job limit minus ${JOB_DEADLINE_SAFETY_BUFFER_SECONDS}-second platform safety buffer."
+
       - uses: actions/checkout@v7.0.1
 
       - uses: actions/setup-node@v7.0.0
@@ -35,17 +55,69 @@ jobs:
         run: |
           set -euo pipefail
           schema_path="${RUNNER_TEMP}/mcp-server-schema-2025-12-11.json"
-          curl --fail --location --show-error --silent \
+          schema_fetch_timeout_seconds=75
+          set +e
+          timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${schema_fetch_timeout_seconds}s" \
+            curl --fail --location --show-error --silent \
+            --connect-timeout 5 --max-time 20 \
             --retry 2 --retry-delay 2 --retry-all-errors \
             'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json' \
             --output "${schema_path}"
-          npx --yes ajv-cli@5 validate \
+          schema_fetch_exit=$?
+          set -e
+          if [ "${schema_fetch_exit}" -eq 124 ] || [ "${schema_fetch_exit}" -eq 137 ]; then
+            echo "::error::MCP Registry schema download exceeded its ${schema_fetch_timeout_seconds}-second execution deadline; timeout exit status: ${schema_fetch_exit}."
+            exit 1
+          fi
+          if [ "${schema_fetch_exit}" -ne 0 ]; then
+            echo "::error::MCP Registry schema download failed with exit status ${schema_fetch_exit}."
+            exit 1
+          fi
+
+          ajv_timeout_seconds=90
+          set +e
+          timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${ajv_timeout_seconds}s" \
+            npx --yes ajv-cli@5.0.0 validate \
             -s "${schema_path}" \
             -d server.json \
             --strict=false
+          ajv_exit=$?
+          set -e
+          if [ "${ajv_exit}" -eq 124 ] || [ "${ajv_exit}" -eq 137 ]; then
+            echo "::error::Pinned ajv-cli@5.0.0 installation or manifest validation exceeded its ${ajv_timeout_seconds}-second execution deadline; timeout exit status: ${ajv_exit}."
+            exit 1
+          fi
+          if [ "${ajv_exit}" -ne 0 ]; then
+            echo "::error::Pinned ajv-cli@5.0.0 manifest validation failed with exit status ${ajv_exit}."
+            exit 1
+          fi
 
       - name: Check version alignment
-        run: node scripts/checks/pr/check-version-alignment.mjs
+        run: |
+          set -euo pipefail
+          version_check_timeout_seconds=30
+          set +e
+          timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${version_check_timeout_seconds}s" \
+            node scripts/checks/pr/check-version-alignment.mjs
+          version_check_exit=$?
+          set -e
+          if [ "${version_check_exit}" -eq 124 ] || [ "${version_check_exit}" -eq 137 ]; then
+            echo "::error::Version-alignment validation exceeded its ${version_check_timeout_seconds}-second execution deadline; timeout exit status: ${version_check_exit}."
+            exit 1
+          fi
+          if [ "${version_check_exit}" -ne 0 ]; then
+            echo "::error::Version-alignment validation failed with exit status ${version_check_exit}."
+            exit 1
+          fi
 
       - name: Check unpublished Registry version
         id: manifest
@@ -141,12 +213,64 @@ jobs:
           publisher_sha256="8dd75a6cf6845688b5d4e46df58d3ca26d5c8d233bb0626606e1db82c5e883e4"
           archive_path="${RUNNER_TEMP}/${publisher_archive}"
           publisher_path="${RUNNER_TEMP}/mcp-publisher"
-          curl --fail --location --show-error --silent \
+          publisher_fetch_timeout_seconds=75
+          set +e
+          timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${publisher_fetch_timeout_seconds}s" \
+            curl --fail --location --show-error --silent \
+            --connect-timeout 5 --max-time 20 \
             --retry 2 --retry-delay 2 --retry-all-errors \
             "https://github.com/modelcontextprotocol/registry/releases/download/${publisher_version}/${publisher_archive}" \
             --output "${archive_path}"
-          printf '%s  %s\n' "${publisher_sha256}" "${archive_path}" | sha256sum --check --strict
-          tar --extract --gzip --file "${archive_path}" --directory "${RUNNER_TEMP}" mcp-publisher
+          publisher_fetch_exit=$?
+          set -e
+          if [ "${publisher_fetch_exit}" -eq 124 ] || [ "${publisher_fetch_exit}" -eq 137 ]; then
+            echo "::error::Pinned mcp-publisher ${publisher_version} download exceeded its ${publisher_fetch_timeout_seconds}-second execution deadline; timeout exit status: ${publisher_fetch_exit}."
+            exit 1
+          fi
+          if [ "${publisher_fetch_exit}" -ne 0 ]; then
+            echo "::error::Pinned mcp-publisher ${publisher_version} download failed with exit status ${publisher_fetch_exit}."
+            exit 1
+          fi
+
+          checksum_timeout_seconds=15
+          set +e
+          printf '%s  %s\n' "${publisher_sha256}" "${archive_path}" | timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${checksum_timeout_seconds}s" \
+            sha256sum --check --strict
+          checksum_exit=$?
+          set -e
+          if [ "${checksum_exit}" -eq 124 ] || [ "${checksum_exit}" -eq 137 ]; then
+            echo "::error::Pinned mcp-publisher archive verification exceeded its ${checksum_timeout_seconds}-second execution deadline; timeout exit status: ${checksum_exit}."
+            exit 1
+          fi
+          if [ "${checksum_exit}" -ne 0 ]; then
+            echo "::error::Pinned mcp-publisher archive verification failed with exit status ${checksum_exit}."
+            exit 1
+          fi
+
+          extraction_timeout_seconds=30
+          set +e
+          timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${extraction_timeout_seconds}s" \
+            tar --extract --gzip --file "${archive_path}" --directory "${RUNNER_TEMP}" mcp-publisher
+          extraction_exit=$?
+          set -e
+          if [ "${extraction_exit}" -eq 124 ] || [ "${extraction_exit}" -eq 137 ]; then
+            echo "::error::Pinned mcp-publisher archive extraction exceeded its ${extraction_timeout_seconds}-second execution deadline; timeout exit status: ${extraction_exit}."
+            exit 1
+          fi
+          if [ "${extraction_exit}" -ne 0 ]; then
+            echo "::error::Pinned mcp-publisher archive extraction failed with exit status ${extraction_exit}."
+            exit 1
+          fi
+
           chmod 700 "${publisher_path}"
           {
             echo "path=${publisher_path}"
@@ -164,28 +288,71 @@ jobs:
             echo "::error::MCP_PRIVATE_KEY is not configured. Run scripts/cloudflare/setup-mcp-registry-credential.sh as documented in docs/mcp-registry-publishing.md before dispatching this workflow."
             exit 1
           fi
-          "${MCP_PUBLISHER}" login dns \
+          login_timeout_seconds=60
+          set +e
+          timeout \
+            --signal=TERM \
+            --kill-after="${PREPUBLICATION_KILL_AFTER_SECONDS}s" \
+            "${login_timeout_seconds}s" \
+            "${MCP_PUBLISHER}" login dns \
             --domain expense-budget-tracker.com \
             --private-key "${MCP_PRIVATE_KEY}"
+          login_exit=$?
+          set -e
+          if [ "${login_exit}" -eq 124 ] || [ "${login_exit}" -eq 137 ]; then
+            echo "::error::MCP Registry DNS authentication exceeded its ${login_timeout_seconds}-second execution deadline; timeout exit status: ${login_exit}."
+            exit 1
+          fi
+          if [ "${login_exit}" -ne 0 ]; then
+            echo "::error::MCP Registry DNS authentication failed with exit status ${login_exit}."
+            exit 1
+          fi
 
       - name: Publish server to MCP Registry
         id: publish
         env:
+          SAFE_JOB_DEADLINE_EPOCH: ${{ steps.job_budget.outputs.safe_deadline_epoch }}
           MCP_PUBLISHER: ${{ steps.publisher.outputs.path }}
         run: |
           set -euo pipefail
+          current_epoch=$(date +%s)
+          remaining_job_budget_seconds=$((SAFE_JOB_DEADLINE_EPOCH - current_epoch))
+          reconciliation_worst_case_seconds=$((
+            RECONCILIATION_MAX_ATTEMPTS * RECONCILIATION_REQUEST_TIMEOUT_SECONDS
+            + (RECONCILIATION_MAX_ATTEMPTS - 1) * RECONCILIATION_RETRY_DELAY_SECONDS
+          ))
+          required_publication_budget_seconds=$((
+            PUBLISHER_TIMEOUT_SECONDS
+            + PUBLISHER_KILL_AFTER_SECONDS
+            + reconciliation_worst_case_seconds
+            + PUBLICATION_TRANSITION_BUFFER_SECONDS
+          ))
+          if [ "${remaining_job_budget_seconds}" -lt "${required_publication_budget_seconds}" ]; then
+            echo "::error::Refusing to publish with only ${remaining_job_budget_seconds} seconds remaining before the conservative job deadline; at least ${required_publication_budget_seconds} seconds are required (${PUBLISHER_TIMEOUT_SECONDS}s publisher + ${PUBLISHER_KILL_AFTER_SECONDS}s forced-termination grace + ${reconciliation_worst_case_seconds}s reconciliation + ${PUBLICATION_TRANSITION_BUFFER_SECONDS}s transition/reporting buffer). No publication was attempted."
+            exit 1
+          fi
+          echo "Publication budget accepted: ${remaining_job_budget_seconds} seconds remain before the conservative job deadline; ${required_publication_budget_seconds} seconds are required."
+          echo "attempted=true" >> "${GITHUB_OUTPUT}"
+
           set +e
-          "${MCP_PUBLISHER}" publish
+          timeout \
+            --signal=TERM \
+            --kill-after="${PUBLISHER_KILL_AFTER_SECONDS}s" \
+            "${PUBLISHER_TIMEOUT_SECONDS}s" \
+            "${MCP_PUBLISHER}" publish
           publish_exit=$?
           set -e
           echo "exit_status=${publish_exit}" >> "${GITHUB_OUTPUT}"
-          if [ "${publish_exit}" -ne 0 ]; then
+          if [ "${publish_exit}" -eq 124 ] || [ "${publish_exit}" -eq 137 ]; then
+            echo "::warning::mcp-publisher reached the ${PUBLISHER_TIMEOUT_SECONDS}-second execution deadline and exited with timeout status ${publish_exit}; TERM was followed by a ${PUBLISHER_KILL_AFTER_SECONDS}-second forced-termination window. The workflow will reconcile the exact Registry record before determining whether publication failed."
+          elif [ "${publish_exit}" -ne 0 ]; then
             echo "::warning::mcp-publisher exited with status ${publish_exit}. The workflow will reconcile the exact Registry record before determining whether publication failed."
           else
             echo "mcp-publisher exited with status 0. The workflow will now reconcile the exact Registry record."
           fi
 
       - name: Reconcile published Registry version
+        if: ${{ always() && steps.publish.outputs.attempted == 'true' }}
         env:
           MCP_PUBLISHER_SHA256: ${{ steps.publisher.outputs.sha256 }}
           MCP_PUBLISHER_VERSION: ${{ steps.publisher.outputs.version }}
@@ -197,10 +364,10 @@ jobs:
         run: |
           set -euo pipefail
           response_body="${RUNNER_TEMP}/mcp-registry-version-after.json"
-          connect_timeout_seconds=5
-          request_timeout_seconds=20
-          max_attempts=6
-          retry_delay_seconds=10
+          connect_timeout_seconds="${RECONCILIATION_CONNECT_TIMEOUT_SECONDS}"
+          request_timeout_seconds="${RECONCILIATION_REQUEST_TIMEOUT_SECONDS}"
+          max_attempts="${RECONCILIATION_MAX_ATTEMPTS}"
+          retry_delay_seconds="${RECONCILIATION_RETRY_DELAY_SECONDS}"
 
           for attempt in $(seq 1 "${max_attempts}"); do
             : > "${response_body}"
