@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   createSqlExecutionDeadline,
   MCP_SQL_STATEMENT_TIMEOUT_MS,
@@ -34,6 +35,60 @@ type ToolCalls = {
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
+type ExpectedToolDescriptor = Readonly<{
+  name: string;
+  title: string;
+  description: string;
+  inputProperties: ReadonlyArray<string>;
+  requiredInputProperties: ReadonlyArray<string>;
+  outputDataProperties: ReadonlyArray<string>;
+  requiredOutputDataProperties: ReadonlyArray<string>;
+  scopes: ReadonlyArray<"expenses:read" | "expenses:write">;
+}>;
+
+const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
+  {
+    name: "list_workspaces",
+    title: "List accessible workspaces",
+    description: "Use this read-only discovery tool to list every workspace accessible to the authenticated user. It does not create or modify workspaces; pass a returned workspaceId to other tools when more than one is available.",
+    inputProperties: [],
+    requiredInputProperties: [],
+    outputDataProperties: ["workspaces"],
+    requiredOutputDataProperties: ["workspaces"],
+    scopes: ["expenses:read"],
+  },
+  {
+    name: "get_schema",
+    title: "Inspect expense SQL schema",
+    description: "Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and agent hints for an accessible workspace. It does not expose or query system catalogs.",
+    inputProperties: ["workspaceId"],
+    requiredInputProperties: [],
+    outputDataProperties: ["limits", "relations", "workspace"],
+    requiredOutputDataProperties: ["workspace", "relations", "limits"],
+    scopes: ["expenses:read"],
+  },
+  {
+    name: "sql_query",
+    title: "Query expense data",
+    description: "Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.",
+    inputProperties: ["sql", "workspaceId"],
+    requiredInputProperties: ["sql"],
+    outputDataProperties: ["limits", "statements", "workspace"],
+    requiredOutputDataProperties: ["statements", "workspace", "limits"],
+    scopes: ["expenses:read"],
+  },
+  {
+    name: "sql_execute",
+    title: "Execute expense data mutation",
+    description: "Use this write-capable tool only for an approved expense-data mutation. It runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.",
+    inputProperties: ["sql", "workspaceId"],
+    requiredInputProperties: ["sql"],
+    outputDataProperties: ["limits", "statements", "workspace"],
+    requiredOutputDataProperties: ["statements", "workspace", "limits"],
+    scopes: ["expenses:read", "expenses:write"],
+  },
+];
+
 const isJsonObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -48,6 +103,129 @@ const parseToolPayload = (result: Awaited<ReturnType<Client["callTool"]>>): Json
   const payload: unknown = JSON.parse(text as string);
   assert.ok(isJsonObject(payload));
   return payload;
+};
+
+const readSuccessPayload = (
+  result: Awaited<ReturnType<Client["callTool"]>>,
+): JsonObject => {
+  const payload = parseToolPayload(result);
+  assert.notEqual(result.isError, true);
+  assert.equal(payload["ok"], true);
+  assert.deepEqual(result.structuredContent, payload);
+  return payload;
+};
+
+const requireJsonObject = (value: unknown, message: string): JsonObject => {
+  assert.ok(isJsonObject(value), message);
+  return value;
+};
+
+const requireTool = (tools: ReadonlyArray<Tool>, name: string): Tool => {
+  const tool = tools.find((candidate) => candidate.name === name);
+  assert.ok(tool !== undefined, `Expected tools/list to include ${name}`);
+  return tool;
+};
+
+const assertToolSchemas = (
+  tool: Tool,
+  expected: ExpectedToolDescriptor,
+): JsonObject => {
+  const inputProperties = requireJsonObject(
+    tool.inputSchema.properties ?? {},
+    `Expected ${tool.name} input properties`,
+  );
+  assert.deepEqual(Object.keys(inputProperties).sort(), [...expected.inputProperties].sort());
+  assert.deepEqual(tool.inputSchema.required ?? [], expected.requiredInputProperties);
+
+  const outputSchema = requireJsonObject(
+    tool.outputSchema,
+    `Expected ${tool.name} output schema`,
+  );
+  assert.equal(outputSchema["type"], "object");
+  assert.deepEqual(outputSchema["required"], ["ok", "data", "instructions"]);
+  const outputProperties = requireJsonObject(
+    outputSchema["properties"],
+    `Expected ${tool.name} output properties`,
+  );
+  const okProperty = requireJsonObject(outputProperties["ok"], "Expected ok output property");
+  const dataProperty = requireJsonObject(outputProperties["data"], "Expected data output property");
+  const instructionsProperty = requireJsonObject(
+    outputProperties["instructions"],
+    "Expected instructions output property",
+  );
+  assert.equal(okProperty["type"], "boolean");
+  assert.equal(okProperty["const"], true);
+  assert.equal(dataProperty["type"], "object");
+  const dataProperties = requireJsonObject(
+    dataProperty["properties"],
+    `Expected ${tool.name} data properties`,
+  );
+  assert.deepEqual(Object.keys(dataProperties).sort(), [...expected.outputDataProperties].sort());
+  assert.deepEqual(dataProperty["required"], expected.requiredOutputDataProperties);
+  assert.equal(instructionsProperty["type"], "string");
+  assert.equal(instructionsProperty["minLength"], 1);
+  return dataProperty;
+};
+
+const readSchemaProperties = (schema: JsonObject, message: string): JsonObject =>
+  requireJsonObject(schema["properties"], message);
+
+const readArrayItemSchema = (schema: JsonObject, message: string): JsonObject => {
+  assert.equal(schema["type"], "array", message);
+  return requireJsonObject(schema["items"], message);
+};
+
+const assertWorkspaceSchema = (schema: JsonObject): void => {
+  assert.equal(schema["type"], "object");
+  assert.deepEqual(schema["required"], ["workspaceId", "name"]);
+  assert.deepEqual(Object.keys(readSchemaProperties(schema, "Expected workspace fields")).sort(), [
+    "name",
+    "workspaceId",
+  ]);
+};
+
+const assertLimitsSchema = (schema: JsonObject): void => {
+  assert.equal(schema["type"], "object");
+  assert.deepEqual(schema["required"], ["maxRows", "statementTimeoutMs"]);
+};
+
+const readSqlCommandSchema = (dataSchema: JsonObject): JsonObject => {
+  const dataProperties = readSchemaProperties(dataSchema, "Expected SQL data fields");
+  const statementsSchema = requireJsonObject(
+    dataProperties["statements"],
+    "Expected SQL statements schema",
+  );
+  const statementSchema = readArrayItemSchema(statementsSchema, "Expected SQL statement items");
+  assert.deepEqual(statementSchema["required"], [
+    "sql",
+    "command",
+    "rows",
+    "rowCount",
+    "returnedRowCount",
+    "totalRowCount",
+    "truncated",
+    "referencedRelations",
+  ]);
+  const statementProperties = readSchemaProperties(
+    statementSchema,
+    "Expected SQL statement fields",
+  );
+  const rowsSchema = requireJsonObject(statementProperties["rows"], "Expected SQL rows schema");
+  const rowSchema = readArrayItemSchema(rowsSchema, "Expected SQL row items");
+  const rowValueSchema = requireJsonObject(
+    rowSchema["additionalProperties"],
+    "Expected recursive JSON schema for SQL row values",
+  );
+  assert.notDeepEqual(rowValueSchema, {});
+
+  const workspaceSchema = requireJsonObject(
+    dataProperties["workspace"],
+    "Expected SQL workspace schema",
+  );
+  const limitsSchema = requireJsonObject(dataProperties["limits"], "Expected SQL limits schema");
+  assertWorkspaceSchema(workspaceSchema);
+  assertLimitsSchema(limitsSchema);
+  return requireJsonObject(statementProperties["command"], "Expected SQL command schema");
 };
 
 const readErrorCode = (payload: JsonObject): string => {
@@ -99,7 +277,19 @@ const createDependencies = (
   loadAllowedSchemaForWorkspace: async (_identity, workspaceId, deadline) => {
     calls.schemaWorkspaceIds.push(workspaceId);
     calls.schemaDeadlines.push(deadline);
-    return [];
+    return [{
+      name: "ledger_entries",
+      columns: [{
+        name: "amount",
+        type: "numeric",
+        nullable: false,
+        defaultValue: null,
+      }],
+      hints: {
+        optional: false,
+        notes: ["One row per account movement."],
+      },
+    }];
   },
   validateSingleReadOnlyExpenseSql,
   validateSingleMutationExpenseSql,
@@ -107,16 +297,45 @@ const createDependencies = (
     calls.queriedWorkspaceIds.push(workspaceId);
     calls.queryDeadlines.push(deadline);
     return {
-      statements: [{ sql: validated.sql, rows: [{ amount: "10.00" }] }],
+      statements: [{
+        sql: validated.sql,
+        command: "SELECT",
+        rows: [{
+          amount: "10.00",
+          postedAt: new Date("2026-08-14T12:00:00.000Z"),
+        }],
+        rowCount: 1,
+        returnedRowCount: 1,
+        totalRowCount: 1,
+        truncated: false,
+        referencedRelations: ["ledger_entries"],
+      }],
       workspace: { workspaceId, name: "Personal" },
+      limits: {
+        maxRows: 100,
+        statementTimeoutMs: deadline.timeoutMs,
+      },
     };
   },
   runSql: async (_authenticated, workspaceId, validated, deadline) => {
     calls.executedWorkspaceIds.push(workspaceId);
     calls.executeDeadlines.push(deadline);
     return {
-      statements: [{ sql: validated.sql, command: "INSERT", rowCount: 1 }],
+      statements: [{
+        sql: validated.sql,
+        command: "DELETE",
+        rows: [],
+        rowCount: 1,
+        returnedRowCount: 0,
+        totalRowCount: 1,
+        truncated: false,
+        referencedRelations: ["budget_lines"],
+      }],
       workspace: { workspaceId, name: "Personal" },
+      limits: {
+        maxRows: 100,
+        statementTimeoutMs: deadline.timeoutMs,
+      },
     };
   },
 });
@@ -152,7 +371,7 @@ const withClient = async (
   }
 };
 
-test("MCP server registers four annotated tools and routes explicit workspaces", async (): Promise<void> => {
+test("MCP server emits the public runtime contract and routes successful tool calls", async (): Promise<void> => {
   const calls = createCalls();
   const dependencies = createDependencies(
     [PERSONAL_WORKSPACE_ID, BUSINESS_WORKSPACE_ID],
@@ -164,34 +383,157 @@ test("MCP server registers four annotated tools and routes explicit workspaces",
     dependencies,
     async (client): Promise<void> => {
       const tools = (await client.listTools()).tools;
-      assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-        "get_schema",
-        "list_workspaces",
-        "sql_execute",
-        "sql_query",
+      assert.deepEqual(
+        tools.map((tool) => tool.name).sort(),
+        EXPECTED_TOOL_DESCRIPTORS.map((tool) => tool.name).sort(),
+      );
+      const outputDataSchemas = new Map<string, JsonObject>();
+      for (const expected of EXPECTED_TOOL_DESCRIPTORS) {
+        const tool = requireTool(tools, expected.name);
+        assert.equal(tool.title, expected.title);
+        assert.equal(tool.description, expected.description);
+        outputDataSchemas.set(tool.name, assertToolSchemas(tool, expected));
+        assert.deepEqual(tool._meta, {
+          securitySchemes: [{ type: "oauth2", scopes: expected.scopes }],
+        });
+        assert.equal(Object.prototype.hasOwnProperty.call(tool, "securitySchemes"), false);
+      }
+
+      const listDataSchema = requireJsonObject(
+        outputDataSchemas.get("list_workspaces"),
+        "Expected list_workspaces data schema",
+      );
+      const listDataProperties = readSchemaProperties(
+        listDataSchema,
+        "Expected list_workspaces data fields",
+      );
+      const workspacesSchema = requireJsonObject(
+        listDataProperties["workspaces"],
+        "Expected workspaces array schema",
+      );
+      assertWorkspaceSchema(readArrayItemSchema(
+        workspacesSchema,
+        "Expected workspace array items",
+      ));
+
+      const schemaDataSchema = requireJsonObject(
+        outputDataSchemas.get("get_schema"),
+        "Expected get_schema data schema",
+      );
+      const schemaDataProperties = readSchemaProperties(
+        schemaDataSchema,
+        "Expected get_schema data fields",
+      );
+      assertWorkspaceSchema(requireJsonObject(
+        schemaDataProperties["workspace"],
+        "Expected get_schema workspace schema",
+      ));
+      assertLimitsSchema(requireJsonObject(
+        schemaDataProperties["limits"],
+        "Expected get_schema limits schema",
+      ));
+      const relationsSchema = requireJsonObject(
+        schemaDataProperties["relations"],
+        "Expected relations array schema",
+      );
+      const relationSchema = readArrayItemSchema(relationsSchema, "Expected relation array items");
+      assert.deepEqual(relationSchema["required"], ["name", "columns"]);
+      const relationProperties = readSchemaProperties(
+        relationSchema,
+        "Expected relation fields",
+      );
+      const relationNameSchema = requireJsonObject(
+        relationProperties["name"],
+        "Expected relation name schema",
+      );
+      assert.deepEqual(relationNameSchema["enum"], [
+        "ledger_entries",
+        "accounts",
+        "budget_lines",
+        "workspace_settings",
+        "account_metadata",
+        "fx_rates_raw",
+        "fx_rates_daily",
       ]);
+      const columnsSchema = requireJsonObject(
+        relationProperties["columns"],
+        "Expected relation columns schema",
+      );
+      const columnSchema = readArrayItemSchema(columnsSchema, "Expected relation column items");
+      assert.deepEqual(columnSchema["required"], [
+        "name",
+        "type",
+        "nullable",
+        "defaultValue",
+      ]);
+      const hintsSchema = requireJsonObject(
+        relationProperties["hints"],
+        "Expected relation hints schema",
+      );
+      assert.deepEqual(hintsSchema["required"], ["optional", "notes"]);
+
+      const queryCommandSchema = readSqlCommandSchema(requireJsonObject(
+        outputDataSchemas.get("sql_query"),
+        "Expected sql_query data schema",
+      ));
+      assert.equal(queryCommandSchema["const"], "SELECT");
+      const executeCommandSchema = readSqlCommandSchema(requireJsonObject(
+        outputDataSchemas.get("sql_execute"),
+        "Expected sql_execute data schema",
+      ));
+      assert.deepEqual(executeCommandSchema["enum"], ["INSERT", "UPDATE", "DELETE"]);
+
       for (const toolName of ["get_schema", "list_workspaces", "sql_query"]) {
-        assert.deepEqual(tools.find((tool) => tool.name === toolName)?.annotations, {
+        assert.deepEqual(requireTool(tools, toolName).annotations, {
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
           openWorldHint: false,
         });
       }
-      assert.deepEqual(tools.find((tool) => tool.name === "sql_execute")?.annotations, {
+      assert.deepEqual(requireTool(tools, "sql_execute").annotations, {
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: false,
       });
 
+      assert.deepEqual(client.getServerVersion(), {
+        name: "expense-budget-tracker",
+        version: "1.2.0",
+        title: "Expense Budget Tracker",
+        websiteUrl: "https://expense-budget-tracker.com/",
+        icons: [{
+          src: "https://expense-budget-tracker.com/icon.svg",
+          mimeType: "image/svg+xml",
+          sizes: ["any"],
+        }],
+      });
+      const instructions = client.getInstructions();
+      assert.equal(typeof instructions, "string");
+      for (const requiredText of [
+        "list_workspaces",
+        "workspaceId",
+        "get_schema",
+        "sql_query",
+        "expenses:read",
+        "sql_execute",
+        "expenses:write",
+        "https://api.expense-budget-tracker.com/v1/",
+        "https://api.expense-budget-tracker.com/v1/openapi.json",
+        "https://api.expense-budget-tracker.com/v1/swagger.json",
+        "source-discovery compatibility probes",
+      ]) {
+        assert.equal(instructions?.includes(requiredText), true, requiredText);
+      }
+
       const listed = await client.callTool({ name: "list_workspaces", arguments: {} });
-      assert.equal(parseToolPayload(listed)["ok"], true);
+      readSuccessPayload(listed);
       const schema = await client.callTool({
         name: "get_schema",
         arguments: { workspaceId: BUSINESS_WORKSPACE_ID },
       });
-      assert.equal(parseToolPayload(schema)["ok"], true);
+      readSuccessPayload(schema);
       const query = await client.callTool({
         name: "sql_query",
         arguments: {
@@ -199,7 +541,15 @@ test("MCP server registers four annotated tools and routes explicit workspaces",
           sql: "SELECT amount FROM ledger_entries",
         },
       });
-      assert.equal(parseToolPayload(query)["ok"], true);
+      const queryPayload = readSuccessPayload(query);
+      const queryData = requireJsonObject(queryPayload["data"], "Expected sql_query data");
+      const queryStatements = queryData["statements"];
+      assert.ok(Array.isArray(queryStatements));
+      const queryStatement = requireJsonObject(queryStatements[0], "Expected sql_query statement");
+      const queryRows = queryStatement["rows"];
+      assert.ok(Array.isArray(queryRows));
+      const queryRow = requireJsonObject(queryRows[0], "Expected sql_query row");
+      assert.equal(queryRow["postedAt"], "2026-08-14T12:00:00.000Z");
       const execute = await client.callTool({
         name: "sql_execute",
         arguments: {
@@ -207,7 +557,7 @@ test("MCP server registers four annotated tools and routes explicit workspaces",
           sql: "DELETE FROM budget_lines WHERE category = 'Food'",
         },
       });
-      assert.equal(parseToolPayload(execute)["ok"], true);
+      readSuccessPayload(execute);
     },
   );
 
