@@ -72,19 +72,23 @@ const authorizationParamsForClient = (oauthClient: OAuthClient, state: string): 
 
 const authorizationParams = (): URLSearchParams => authorizationParamsForClient(client, "state-1");
 
-const consentRequest = (params: URLSearchParams, origin: string): Request => new Request(
-  `${issuer}/oauth/authorize`,
-  {
+const consentRequest = (
+  params: URLSearchParams,
+  origin: string | null,
+  secFetchSite: string | null,
+): Request => {
+  const headers = new Headers({
+    "Content-Type": "application/x-www-form-urlencoded",
+    Cookie: "session=valid-session",
+  });
+  if (origin !== null) headers.set("Origin", origin);
+  if (secFetchSite !== null) headers.set("Sec-Fetch-Site", secFetchSite);
+  return new Request(`${issuer}/oauth/authorize`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: "session=valid-session",
-      Origin: origin,
-      "Sec-Fetch-Site": origin === issuer ? "same-origin" : "cross-site",
-    },
+    headers,
     body: params.toString(),
-  },
-);
+  });
+};
 
 type BodyLimitCase = Readonly<{
   name: string;
@@ -390,26 +394,95 @@ test("consent is no-store, anti-clickjacking, and same-origin protected", async 
   assert.equal(consentPage.status, 200);
   assert.equal(consentPage.headers.get("cache-control"), "no-store");
   assert.equal(consentPage.headers.get("x-frame-options"), "DENY");
+  assert.equal(consentPage.headers.get("referrer-policy"), "strict-origin");
   assert.match(consentPage.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/u);
   const consentHtml = await consentPage.text();
+  assert.match(consentHtml, /<h1>Connect <bdi dir="auto">Desktop &lt;MCP&gt;<\/bdi> to Expense Budget Tracker\?<\/h1>/u);
   assert.match(consentHtml, /Desktop &lt;MCP&gt;/u);
   assert.equal(consentHtml.includes("Desktop <MCP>"), false);
-  assert.match(consentHtml, /Unverified client name/u);
+  assert.match(consentHtml, /connecting app supplied the displayed name/u);
+  assert.match(consentHtml, /Expense Budget Tracker has not verified who operates it/u);
+  assert.match(consentHtml, /Continue only if you started this connection and recognize the destination below/u);
+  assert.match(consentHtml, /After approval, you'll return to/u);
+  assert.match(consentHtml, /<p class="callback">https:\/\/client\.example<\/p>/u);
+  assert.match(consentHtml, /does not verify who operates the app/u);
+  assert.match(consentHtml, /<strong>Read access:<\/strong> View all financial data in the workspaces you can access\./u);
+  assert.match(consentHtml, /<strong>Write access:<\/strong> Create, change, and delete financial data\./u);
+  assert.match(consentHtml, /<details class="technical"><summary>Technical details<\/summary>/u);
   assert.match(consentHtml, /Client ID<\/dt><dd>ebt_cl_registered-client/u);
-  assert.match(consentHtml, /Callback origin<\/dt><dd>https:\/\/client\.example/u);
   assert.match(consentHtml, /Exact redirect URI<\/dt><dd>https:\/\/client\.example\/callback\?next=a&amp;source=b/u);
   assert.equal(consentHtml.includes("callback?next=a&source=b</dd>"), false);
 
   const form = authorizationParams();
   form.set("decision", "allow");
-  const crossOrigin = await app.fetch(consentRequest(form, "https://attacker.example"));
-  assert.equal(crossOrigin.status, 403);
+  const rejectedSecurityHeaders: ReadonlyArray<readonly [string | null, string | null]> = [
+    ["https://attacker.example", "same-origin"],
+    ["null", "same-origin"],
+    [null, "same-origin"],
+    [issuer, "cross-site"],
+  ];
+  for (const [origin, secFetchSite] of rejectedSecurityHeaders) {
+    const rejected = await app.fetch(consentRequest(form, origin, secFetchSite));
+    assert.equal(rejected.status, 403);
+  }
   assert.equal(issueCount, 0);
 
-  const allowed = await app.fetch(consentRequest(form, issuer));
+  const allowed = await app.fetch(consentRequest(form, issuer, "same-origin"));
   assert.equal(allowed.status, 302);
   assert.match(allowed.headers.get("location") ?? "", /code=ebt_ac_issued-code/u);
   assert.equal(issueCount, 1);
+
+  const allowedWithoutFetchMetadata = await app.fetch(consentRequest(form, issuer, null));
+  assert.equal(allowedWithoutFetchMetadata.status, 302);
+  assert.equal(issueCount, 2);
+});
+
+test("consent isolates a bidi client name from trusted text", async (): Promise<void> => {
+  const hostileClient: OAuthClient = {
+    clientId: "ebt_cl_hostile-name",
+    clientName: "Reports <app>\u202EExpense Budget Tracker",
+    redirectUris: ["https://reports.example/callback"],
+  };
+  const app = createOAuthApp(createDependencies({
+    getOAuthClient: async (clientId) => clientId === hostileClient.clientId ? hostileClient : null,
+  }));
+  const query = authorizationParamsForClient(hostileClient, "state-hostile-name");
+  const response = await app.request(`${issuer}/oauth/authorize?${query.toString()}`);
+
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  const escapedClientName = "Reports &lt;app&gt;\u202EExpense Budget Tracker";
+  const isolatedClientName = `<bdi dir="auto">${escapedClientName}</bdi>`;
+  assert.equal(html.split(isolatedClientName).length - 1, 2);
+  assert.equal(html.includes(`<h1>Connect ${isolatedClientName} to Expense Budget Tracker?</h1>`), true);
+  assert.equal(html.includes(`displayed name <strong>${isolatedClientName}</strong>. Expense Budget Tracker has not verified who operates it.`), true);
+});
+
+test("consent displays destinations for supported callback shapes", async (): Promise<void> => {
+  const callbackCases: ReadonlyArray<Readonly<{ redirectUri: string; destination: string }>> = [
+    { redirectUri: "https://business.example/oauth/callback", destination: "https://business.example" },
+    { redirectUri: "http://127.0.0.1:49152/callback", destination: "http://127.0.0.1:49152" },
+    { redirectUri: "com.example.client:/callback", destination: "com.example.client:" },
+    { redirectUri: "expense-tracker://callback/path", destination: "expense-tracker://callback" },
+  ];
+
+  for (const [index, callbackCase] of callbackCases.entries()) {
+    const callbackClient: OAuthClient = {
+      clientId: `ebt_cl_callback-${index}`,
+      clientName: "Callback app",
+      redirectUris: [callbackCase.redirectUri],
+    };
+    const app = createOAuthApp(createDependencies({
+      getOAuthClient: async (clientId) => clientId === callbackClient.clientId ? callbackClient : null,
+    }));
+    const query = authorizationParamsForClient(callbackClient, `state-${index}`);
+    const response = await app.request(`${issuer}/oauth/authorize?${query.toString()}`);
+
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.equal(html.includes(`<p class="callback">${callbackCase.destination}</p>`), true);
+    assert.equal(html.includes(`<dt>Exact redirect URI</dt><dd>${callbackCase.redirectUri}</dd>`), true);
+  }
 });
 
 test("authorization GET enforces its raw query ceiling and keeps nested login below its ceiling", async (): Promise<void> => {
@@ -476,7 +549,7 @@ test("consent renders only when both encoded decisions fit the POST byte limit",
   const denied = new URLSearchParams(exactBoundary);
   denied.set("decision", "deny");
   assert.ok(utf8Length(denied.toString()) <= MAX_CONSENT_REQUEST_BYTES);
-  const submission = await app.fetch(consentRequest(allowed, issuer));
+  const submission = await app.fetch(consentRequest(allowed, issuer, "same-origin"));
   assert.equal(submission.status, 302);
 
   const oversized = consentParametersWithEncodedSize(
@@ -503,7 +576,7 @@ test("authorization success appends parameters without rewriting the registered 
   const form = authorizationParamsForClient(exactRedirectClient, "state value/%");
   form.set("decision", "allow");
 
-  const response = await app.fetch(consentRequest(form, issuer));
+  const response = await app.fetch(consentRequest(form, issuer, "same-origin"));
 
   assert.equal(response.status, 302);
   assert.equal(
@@ -565,7 +638,7 @@ test("authorization POST logs and redirects code-persistence failures after call
   const form = authorizationParams();
   form.set("decision", "allow");
 
-  const response = await app.fetch(consentRequest(form, issuer));
+  const response = await app.fetch(consentRequest(form, issuer, "same-origin"));
 
   assert.equal(response.status, 302);
   assert.equal(
@@ -656,7 +729,7 @@ test("consent revalidates every submitted authorization field", async (): Promis
     const form = authorizationParams();
     form.set("decision", "allow");
     form.set(name, value);
-    const response = await app.fetch(consentRequest(form, issuer));
+    const response = await app.fetch(consentRequest(form, issuer, "same-origin"));
     const location = response.headers.get("location") ?? "";
     assert.equal(location.includes("code="), false, `${name} mutation must not issue a code`);
   }

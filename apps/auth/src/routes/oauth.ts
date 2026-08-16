@@ -168,19 +168,26 @@ const validateConsentSubmissionSize = (request: AuthorizationRequest): void => {
   }
 };
 
+const getCallbackDestination = (redirectUri: string): string => {
+  const callbackUrl = new URL(redirectUri);
+  if (callbackUrl.origin !== "null") return callbackUrl.origin;
+  if (callbackUrl.host !== "") return `${callbackUrl.protocol}//${callbackUrl.host}`;
+  return callbackUrl.protocol;
+};
+
 const renderConsent = (client: OAuthClient, request: AuthorizationRequest): string => {
   const hidden = consentHiddenFields(request)
     .map(([name, value]) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`)
     .join("");
-  const permissions = request.scopes.map((scope) => `<li>${scope === "expenses:read" ? "Read expenses and budgets" : "Create and update expenses and budgets"}</li>`).join("");
-  const callbackUrl = new URL(request.redirectUri);
-  const callbackOrigin = callbackUrl.origin === "null" ? callbackUrl.protocol : callbackUrl.origin;
+  const permissions = request.scopes.map((scope) => `<li>${scope === "expenses:read" ? "<strong>Read access:</strong> View all financial data in the workspaces you can access." : "<strong>Write access:</strong> Create, change, and delete financial data."}</li>`).join("");
+  const callbackDestination = getCallbackDestination(request.redirectUri);
+  const isolatedClientName = `<bdi dir="auto">${escapeHtml(client.clientName)}</bdi>`;
   const actions = CONSENT_DECISIONS
     .map((decision) => `<button name="decision" value="${decision}" type="submit">${decision === "allow" ? "Allow" : "Deny"}</button>`)
     .join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Authorize MCP client</title><style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#111;background:#fff}.card{width:100%;max-width:560px;border:1px solid #232323;padding:28px}h1{font-size:20px;margin:0 0 20px}p,li,dt,dd{font-size:14px;line-height:1.5}.client{font-weight:700;overflow-wrap:anywhere}.warning{padding:10px;border:1px solid #8a5a00;background:#fff8e6}.details{display:grid;grid-template-columns:max-content 1fr;gap:6px 12px}.details dt{font-weight:700}.details dd{margin:0;overflow-wrap:anywhere}.resource{color:#666;overflow-wrap:anywhere}.actions{display:flex;gap:10px;margin-top:24px}button{flex:1;padding:10px;border:1px solid #232323;background:#fff;color:#111;font:inherit;cursor:pointer}button[value=allow]{background:#232323;color:#fff}@media(max-width:540px){body{padding:0}.card{border:0;min-height:100vh;padding:24px 16px}.details{grid-template-columns:1fr}}
-</style></head><body><main class="card"><h1>Authorize MCP client</h1><p><span class="client">${escapeHtml(client.clientName)}</span> is requesting access to your Expense Budget Tracker data.</p><p class="warning"><strong>Unverified client name:</strong> this name was provided by the client and is not endorsed by Expense Budget Tracker.</p><dl class="details"><dt>Client ID</dt><dd>${escapeHtml(client.clientId)}</dd><dt>Callback origin</dt><dd>${escapeHtml(callbackOrigin)}</dd><dt>Exact redirect URI</dt><dd>${escapeHtml(request.redirectUri)}</dd></dl><ul>${permissions}</ul><p class="resource">Resource: ${escapeHtml(request.resource)}</p><form method="post" action="/oauth/authorize">${hidden}<div class="actions">${actions}</div></form></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Connect an app | Expense Budget Tracker</title><style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111;background:#fff}.card{width:100%;max-width:600px;border:1px solid #232323;padding:28px}h1{font-size:24px;line-height:1.25;margin:0 0 20px;overflow-wrap:anywhere}h2{font-size:16px;margin:24px 0 10px}p,li,dt,dd,summary{font-size:14px;line-height:1.5}.warning{padding:12px;border:1px solid #8a5a00;background:#fff8e6}.destination{padding:14px;border:2px solid #232323}.destination h2{margin:0 0 8px}.callback{font-size:18px;font-weight:700;margin:0;overflow-wrap:anywhere}.destination-note{color:#555;margin:8px 0 0}.permissions{padding-inline-start:22px}.permissions li+li{margin-top:8px}.technical{margin-top:24px}.technical summary{cursor:pointer;font-weight:700}.details{display:grid;grid-template-columns:max-content 1fr;gap:6px 12px;margin-top:10px}.details dt{font-weight:700}.details dd{margin:0;overflow-wrap:anywhere}.actions{display:flex;gap:10px;margin-top:24px}button{flex:1;padding:10px;border:1px solid #232323;background:#fff;color:#111;font:inherit;cursor:pointer}button[value=allow]{background:#232323;color:#fff}@media(max-width:540px){body{padding:0}.card{border:0;min-height:100vh;padding:24px 16px}.details{grid-template-columns:1fr}}
+</style></head><body><main class="card"><h1>Connect ${isolatedClientName} to Expense Budget Tracker?</h1><p class="warning"><strong>Before you continue:</strong> The connecting app supplied the displayed name <strong>${isolatedClientName}</strong>. Expense Budget Tracker has not verified who operates it. Continue only if you started this connection and recognize the destination below.</p><section class="destination" aria-labelledby="callback-heading"><h2 id="callback-heading">After approval, you'll return to</h2><p class="callback">${escapeHtml(callbackDestination)}</p><p class="destination-note">This destination is shown to help you recognize the connection. It does not verify who operates the app.</p></section><h2>Access in Expense Budget Tracker</h2><p>This app is asking for the following access:</p><ul class="permissions">${permissions}</ul><details class="technical"><summary>Technical details</summary><dl class="details"><dt>Client ID</dt><dd>${escapeHtml(client.clientId)}</dd><dt>Exact redirect URI</dt><dd>${escapeHtml(request.redirectUri)}</dd><dt>Requested resource</dt><dd>${escapeHtml(request.resource)}</dd></dl></details><form method="post" action="/oauth/authorize">${hidden}<div class="actions">${actions}</div></form></main></body></html>`;
 };
 
 const readSingleParameter = (params: URLSearchParams, name: string): string | undefined => {
@@ -421,7 +428,7 @@ app.get("/oauth/authorize", async (c) => {
     if (identity instanceof Response) return identity;
     c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
     c.header("X-Frame-Options", "DENY");
-    c.header("Referrer-Policy", "no-referrer");
+    c.header("Referrer-Policy", "strict-origin");
     return c.html(renderConsent(client, request));
   } catch (error) {
     if (isOAuthProtocolError(error)) {
