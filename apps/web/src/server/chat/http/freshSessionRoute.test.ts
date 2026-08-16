@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import {
+  CHAT_FALLBACK_MODEL_ID,
+  CHAT_MODEL_ID,
+  CHAT_MODEL_REASONING_EFFORT,
+} from "@/lib/chatModels";
 import type { SupportedLocale } from "@/lib/locale";
 import {
   postFreshChatSessionRouteWithDeps,
@@ -14,6 +18,10 @@ import type {
   PersistedChatMessageItem,
   PreparedChatRun,
 } from "@/server/chat/store";
+import {
+  selectChatModelRouting,
+  type ChatModelRoutingLogEvent,
+} from "@/server/chat/modelRouting";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 
 const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
@@ -52,6 +60,7 @@ const createPreparedRun = (
   assistantItem: createAssistantItem(),
   localMessages: [],
   turnInput: content,
+  modelRouting: selectChatModelRouting(1, []),
 });
 
 const createReservation = (): ChatRunStartReservation => ({
@@ -117,6 +126,7 @@ test("POST /api/chat/new starts one prepared session and identifies it in the fi
     const content: ReadonlyArray<ContentPart> = [{ type: "text", text: "Hello" }];
     let prepareCallCount = 0;
     let startedSessionId: string | null = null;
+    const routingEvents: Array<ChatModelRoutingLogEvent> = [];
 
     const response = await postFreshChatSessionRouteWithDeps(
       createRequest({
@@ -138,6 +148,11 @@ test("POST /api/chat/new starts one prepared session and identifies it in the fi
             yield { type: "done" };
           })();
         },
+        log: (event) => {
+          if (event.domain === "chat" && event.action === "model_routing") {
+            routingEvents.push(event);
+          }
+        },
       }),
     );
 
@@ -146,6 +161,25 @@ test("POST /api/chat/new starts one prepared session and identifies it in the fi
     assert.equal(response.headers.get("X-Chat-Session-Id"), "session-1");
     assert.equal(prepareCallCount, 1);
     assert.equal(startedSessionId, "session-1");
+    assert.equal(routingEvents.length, 1);
+    assert.equal(routingEvents[0]?.requestedModel, CHAT_MODEL_ID);
+    assert.equal(routingEvents[0]?.defaultModel, CHAT_MODEL_ID);
+    assert.equal(routingEvents[0]?.effectiveModel, CHAT_MODEL_ID);
+    assert.equal(
+      routingEvents[0]?.effectiveReasoningEffort,
+      CHAT_MODEL_REASONING_EFFORT,
+    );
+    assert.equal(routingEvents[0]?.routingReason, "default");
+    assert.equal(routingEvents[0]?.rollingWindowHours, 24);
+    assert.equal(routingEvents[0]?.rolling24HourUserMessageCount, 1);
+    assert.equal(routingEvents[0]?.rollingUserMessageThreshold, 30);
+    assert.equal(routingEvents[0]?.sessionUserMessageCount, 0);
+    assert.equal(routingEvents[0]?.sessionUserMessageThreshold, 5);
+    assert.equal(routingEvents[0]?.sessionUniquePdfCount, 0);
+    assert.equal(routingEvents[0]?.sessionPdfThreshold, 4);
+    assert.equal(routingEvents[0]?.userId, "user-1");
+    assert.equal(routingEvents[0]?.workspaceId, "workspace-1");
+    assert.equal(routingEvents[0]?.sessionId, "session-1");
     assert.equal(
       await response.text(),
       [
@@ -209,6 +243,32 @@ test("POST /api/chat/new validation failures do not prepare or start a session",
     assert.equal(await response.text(), "content array is empty");
     assert.equal(prepareCallCount, 0);
     assert.equal(runtimeStartCallCount, 0);
+  });
+});
+
+test("POST /api/chat/new does not allow the browser to request the fallback model", async (): Promise<void> => {
+  await withOpenAiApiKey(async (): Promise<void> => {
+    let prepareCallCount = 0;
+    const response = await postFreshChatSessionRouteWithDeps(
+      createRequest({
+        content: [{ type: "text", text: "Hello" }],
+        model: CHAT_FALLBACK_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+      createDependencies({
+        prepareFreshChatRun: async (_userId, _workspaceId, content) => {
+          prepareCallCount += 1;
+          return createPreparedRun(content);
+        },
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(
+      await response.text(),
+      `Unsupported model: ${CHAT_FALLBACK_MODEL_ID}. Expected ${CHAT_MODEL_ID}`,
+    );
+    assert.equal(prepareCallCount, 0);
   });
 });
 
@@ -349,7 +409,9 @@ test("POST /api/chat/new preserves safe session identity when runtime start and 
           throw new Error("internal database persistence details");
         },
         log: (event) => {
-          loggedEvents.push(event);
+          if (event.domain === "chat" && event.action === "error") {
+            loggedEvents.push(event);
+          }
         },
       }),
     );

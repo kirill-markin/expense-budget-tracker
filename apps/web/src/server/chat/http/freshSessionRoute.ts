@@ -16,6 +16,7 @@ import {
 import {
   CHAT_STREAM_INTERRUPTED_ERROR,
 } from "@/server/chat/http/sessionRecovery";
+import { createChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
 import {
   releaseChatRunStartReservation,
   reserveChatRunStart,
@@ -226,6 +227,15 @@ export const postFreshChatSessionRouteWithDeps = async (
           }
           reservation = reservationResult.reservation;
 
+          dependencies.log(createChatModelRoutingLogEvent({
+            requestedModel: body.model,
+            decision: preparedRun.modelRouting,
+            requestId,
+            userId: context.userId,
+            workspaceId: context.workspaceId,
+            sessionId: preparedRun.sessionId,
+          }));
+
           const startedEvents = dependencies.startPersistedChatRun({
             requestId,
             userId: context.userId,
@@ -237,12 +247,13 @@ export const postFreshChatSessionRouteWithDeps = async (
             assistantItemId: preparedRun.assistantItem.itemId,
             localMessages: preparedRun.localMessages,
             turnInput: preparedRun.turnInput,
+            modelRouting: preparedRun.modelRouting,
             diagnostics: {
               requestId,
               userId: context.userId,
               workspaceId: context.workspaceId,
               sessionId: preparedRun.sessionId,
-              model: body.model,
+              model: preparedRun.modelRouting.effectiveModel,
               messageCount: diagnostics.messageCount,
               hasAttachments: diagnostics.hasAttachments,
               attachmentFileNames: diagnostics.attachmentFileNames,

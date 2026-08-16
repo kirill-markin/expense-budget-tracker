@@ -1,5 +1,9 @@
 import type OpenAI from "openai";
 import type { LangfuseObservation } from "@langfuse/tracing";
+import type {
+  ChatEffectiveModelId,
+  ChatEffectiveReasoningEffort,
+} from "@/lib/chatModels";
 import type { SupportedLocale } from "@/lib/locale";
 import { ti } from "@/i18n/serverT";
 import {
@@ -107,6 +111,8 @@ export type StartOpenAILoopParams = Readonly<{
   timezone: string;
   localMessages: ReadonlyArray<ServerChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
+  model: ChatEffectiveModelId;
+  reasoningEffort: ChatEffectiveReasoningEffort;
   signal?: AbortSignal;
   rootObservation: LangfuseObservation | null;
 }>;
@@ -333,6 +339,8 @@ const completeToolLimitSummaryTurn = async (
       params.timezone,
       [],
       [buildToolLimitSummaryInstruction(CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS)],
+      params.model,
+      params.reasoningEffort,
     ),
     promptCacheKey,
     callIndex: summaryCallIndex,
@@ -394,6 +402,8 @@ const runLoopWithDeps = async (
         params.userId,
         params.sessionId,
         params.timezone,
+        params.model,
+        params.reasoningEffort,
       ),
       promptCacheKey,
       callIndex,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_MODEL_ID } from "@/lib/chatModels";
+import { CHAT_FALLBACK_MODEL_ID, CHAT_MODEL_ID } from "@/lib/chatModels";
 import type { SupportedLocale } from "@/lib/locale";
 import {
   deleteChatRouteWithDeps,
@@ -14,6 +14,7 @@ import {
   ChatSessionNotFoundError,
   ChatTurnCancelledError,
 } from "@/server/chat/store";
+import { selectChatModelRouting } from "@/server/chat/modelRouting";
 import {
   clearActiveChatRunForTests,
   createActiveChatRunForTests,
@@ -69,6 +70,7 @@ const createPreparedRun = (
   },
   localMessages: [],
   turnInput: [{ type: "text", text: "Hello" }],
+  modelRouting: selectChatModelRouting(1, []),
 });
 
 const createReservation = (
@@ -437,19 +439,22 @@ test("postChatRouteWithDeps rejects generic HEIC signatures before persistence",
   });
 });
 
-test("postChatRouteWithDeps returns 400 for unsupported models", async (): Promise<void> => {
+test("postChatRouteWithDeps does not allow the browser to request the fallback model", async (): Promise<void> => {
   const response = await postChatRouteWithDeps(
     createChatRequest({
       sessionId: "session-1",
       content: [{ type: "text", text: "Hello" }],
-      model: "wrong-model",
+      model: CHAT_FALLBACK_MODEL_ID,
       timezone: "Europe/Madrid",
     }),
     createPostDependencies(),
   );
 
   assert.equal(response.status, 400);
-  assert.equal(await response.text(), `Unsupported model: wrong-model. Expected ${CHAT_MODEL_ID}`);
+  assert.equal(
+    await response.text(),
+    `Unsupported model: ${CHAT_FALLBACK_MODEL_ID}. Expected ${CHAT_MODEL_ID}`,
+  );
 });
 
 test("postChatRouteWithDeps returns 500 when OPENAI_API_KEY is missing", async (): Promise<void> => {

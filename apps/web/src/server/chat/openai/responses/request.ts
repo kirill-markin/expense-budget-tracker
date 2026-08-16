@@ -1,8 +1,8 @@
 import type OpenAI from "openai";
 import {
-  CHAT_MODEL_ID,
-  CHAT_MODEL_REASONING_EFFORT,
   CHAT_MODEL_REASONING_SUMMARY,
+  type ChatEffectiveModelId,
+  type ChatEffectiveReasoningEffort,
 } from "@/lib/chatModels";
 import {
   toOpenAIResponseInputItem,
@@ -12,13 +12,13 @@ import { buildOpenAISafetyIdentifier } from "@/server/chat/openai/safetyIdentifi
 import { OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tooling/tools";
 
 export type OpenAIResponsesRequest = Readonly<{
-  model: typeof CHAT_MODEL_ID;
+  model: ChatEffectiveModelId;
   store: false;
   include: ["reasoning.encrypted_content"];
   tools: Array<OpenAI.Responses.Tool>;
   input: Array<OpenAI.Responses.ResponseInputItem>;
   reasoning: Readonly<{
-    effort: typeof CHAT_MODEL_REASONING_EFFORT;
+    effort: ChatEffectiveReasoningEffort;
     summary: typeof CHAT_MODEL_REASONING_SUMMARY;
   }>;
   prompt_cache_key: string;
@@ -64,14 +64,16 @@ export const buildOpenAIResponsesRequest = (
   userId: string,
   sessionId: string,
   timezone: string,
+  model: ChatEffectiveModelId,
+  reasoningEffort: ChatEffectiveReasoningEffort,
 ): OpenAIResponsesRequest => ({
-  model: CHAT_MODEL_ID,
+  model,
   store: false,
   include: ["reasoning.encrypted_content"],
   tools: [...OPENAI_CHAT_TOOLS],
   input: buildOpenAIInput(baseInput, continuationItems, []),
   reasoning: {
-    effort: CHAT_MODEL_REASONING_EFFORT,
+    effort: reasoningEffort,
     summary: CHAT_MODEL_REASONING_SUMMARY,
   },
   prompt_cache_key: buildPromptCacheKey(sessionId),
@@ -86,14 +88,16 @@ export const buildOpenAIResponsesRequestWithOptions = (
   timezone: string,
   tools: ReadonlyArray<OpenAI.Responses.Tool>,
   extraInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
+  model: ChatEffectiveModelId,
+  reasoningEffort: ChatEffectiveReasoningEffort,
 ): OpenAIResponsesRequest => ({
-  model: CHAT_MODEL_ID,
+  model,
   store: false,
   include: ["reasoning.encrypted_content"],
   tools: [...tools],
   input: buildOpenAIInput(baseInput, continuationItems, extraInput),
   reasoning: {
-    effort: CHAT_MODEL_REASONING_EFFORT,
+    effort: reasoningEffort,
     summary: CHAT_MODEL_REASONING_SUMMARY,
   },
   prompt_cache_key: buildPromptCacheKey(sessionId),
@@ -128,6 +132,7 @@ export const buildChatResponseLogEvent = (
     callIndex: number;
     promptCacheKey: string;
     durationMs: number;
+    model: ChatEffectiveModelId;
     response: OpenAI.Responses.Response;
   }>,
 ): ChatResponseLogEvent => {
@@ -141,7 +146,7 @@ export const buildChatResponseLogEvent = (
     vendor: "openai",
     requestId: params.requestId,
     sessionId: params.sessionId,
-    model: params.response.model,
+    model: params.model,
     callIndex: params.callIndex,
     promptCacheKey: params.promptCacheKey,
     stopReason: getResponseStopReason(params.response),

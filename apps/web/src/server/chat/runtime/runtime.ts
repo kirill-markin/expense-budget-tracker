@@ -31,6 +31,7 @@ import {
   endChatTaskProtection,
 } from "./taskProtection";
 import { createChatErrorLogEvent } from "@/server/chat/logging";
+import type { ChatModelRoutingDecision } from "@/server/chat/modelRouting";
 import type {
   ChatStreamEvent,
   ContentPart,
@@ -65,6 +66,7 @@ export type StartPersistedChatRunParams = Readonly<{
   assistantItemId: string;
   localMessages: ReadonlyArray<ServerChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
+  modelRouting: ChatModelRoutingDecision;
   diagnostics: ChatRunDiagnostics;
 }>;
 
@@ -612,7 +614,7 @@ export const runPersistedChatSessionWithDeps = async (
         userId: params.userId,
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
-        model: params.diagnostics.model,
+        model: params.modelRouting.effectiveModel,
         turnIndex: params.diagnostics.messageCount,
         runState: "running",
         turnInput: params.turnInput,
@@ -693,6 +695,8 @@ export const runPersistedChatSessionWithDeps = async (
           timezone: params.timezone,
           localMessages: params.localMessages,
           turnInput: params.turnInput,
+          model: params.modelRouting.effectiveModel,
+          reasoningEffort: params.modelRouting.effectiveReasoningEffort,
           rootObservation,
           signal: getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.signal,
         }, handleOpenAILoopEvent);

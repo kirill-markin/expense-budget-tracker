@@ -255,6 +255,7 @@ export const runOneModelCall = async (
       callIndex,
       promptCacheKey,
       durationMs: Date.now() - modelCallStartedAt,
+      model: request.model,
       response: finalResponse,
     }));
     return {

@@ -20,6 +20,7 @@ import {
   CHAT_STREAM_HEARTBEAT_INTERVAL_MS,
   createChatEventStream,
 } from "@/server/chat/http/sse";
+import { createChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
 import {
   releaseChatRunStartReservation,
   reserveChatRunStart,
@@ -239,12 +240,20 @@ export const postChatRouteWithDeps = async (
         preparedRun.activeRunId,
       );
       const locale = dependencies.getLocaleFromRequest(request);
+      dependencies.log(createChatModelRoutingLogEvent({
+        requestedModel: body.model,
+        decision: preparedRun.modelRouting,
+        requestId,
+        userId: context.userId,
+        workspaceId: context.workspaceId,
+        sessionId: preparedRun.sessionId,
+      }));
       const runtimeParams = {
         requestId,
         userId: context.userId,
         workspaceId: context.workspaceId,
         sessionId: preparedRun.sessionId,
-        model: body.model,
+        model: preparedRun.modelRouting.effectiveModel,
         messageCount: diagnostics.messageCount,
         hasAttachments: diagnostics.hasAttachments,
         attachmentFileNames: diagnostics.attachmentFileNames,
@@ -260,6 +269,7 @@ export const postChatRouteWithDeps = async (
         assistantItemId: preparedRun.assistantItem.itemId,
         localMessages: preparedRun.localMessages,
         turnInput: preparedRun.turnInput,
+        modelRouting: preparedRun.modelRouting,
         diagnostics: runtimeParams,
       }, reservation);
       runtimeStarted = true;
