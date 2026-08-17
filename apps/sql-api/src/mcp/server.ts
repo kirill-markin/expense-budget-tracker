@@ -26,7 +26,7 @@ import {
 } from "./results.js";
 
 const SERVER_NAME = "expense-budget-tracker";
-const SERVER_VERSION = "1.2.1";
+const SERVER_VERSION = "1.2.2";
 const LIST_WORKSPACES_TOOL_NAME = "list_workspaces";
 const GET_SCHEMA_TOOL_NAME = "get_schema";
 const SQL_QUERY_TOOL_NAME = "sql_query";
