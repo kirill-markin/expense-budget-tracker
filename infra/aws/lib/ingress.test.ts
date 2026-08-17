@@ -166,7 +166,12 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
   );
   assert.deepEqual(
     overrides.map((override) => override.name),
-    ["CrossSiteScripting_BODY", "SizeRestrictions_BODY", "SizeRestrictions_QUERYSTRING"],
+    [
+      "CrossSiteScripting_BODY",
+      "SizeRestrictions_BODY",
+      "SizeRestrictions_QUERYSTRING",
+      "EC2MetaDataSSRF_BODY",
+    ],
   );
 
   const queryRule = getRule(rules, "BlockUnexpectedQuerySizeMatches");
@@ -196,10 +201,94 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
   );
 });
 
+test("WAF re-blocks managed EC2 metadata SSRF body matches outside exact JSON client registration", (): void => {
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com");
+  assert.deepEqual(
+    rules.map((rule) => [rule.name, rule.priority]),
+    [
+      ["AWSManagedCommonRules", 0],
+      ["BlockUnexpectedXssBodyMatches", 1],
+      ["BlockUnexpectedBodySizeMatches", 2],
+      ["BlockUnexpectedQuerySizeMatches", 3],
+      ["BlockUnexpectedEc2MetadataSsrfBodyMatches", 4],
+      ["AWSManagedKnownBadInputs", 5],
+      ["RateLimitDynamicClientRegistration", 6],
+      ["RateLimitOAuthTokenExchanges", 7],
+    ],
+  );
+
+  const managedRule = getRule(rules, "AWSManagedCommonRules");
+  const managedStatement = requireStatement(managedRule.statement);
+  const managedRuleGroup = requireManagedRuleGroupStatement(
+    managedStatement.managedRuleGroupStatement,
+  );
+  const overrides = requireRuleActionOverrides(
+    managedRuleGroup.ruleActionOverrides,
+  );
+  assert.deepEqual(
+    overrides.find((override) => override.name === "EC2MetaDataSSRF_BODY"),
+    {
+      name: "EC2MetaDataSSRF_BODY",
+      actionToUse: { count: {} },
+    },
+  );
+
+  const reblockRule = getRule(rules, "BlockUnexpectedEc2MetadataSsrfBodyMatches");
+  assert.equal(reblockRule.priority, 4);
+  assert.deepEqual(reblockRule.action, { block: {} });
+  assert.deepEqual(reblockRule.visibilityConfig, {
+    sampledRequestsEnabled: true,
+    cloudWatchMetricsEnabled: true,
+    metricName: "expense-tracker-ec2-metadata-ssrf-body-reblock",
+  });
+
+  const reblockStatement = requireStatement(reblockRule.statement);
+  const reblock = requireAndStatement(reblockStatement.andStatement);
+  const reblockStatements = requireStatements(reblock.statements);
+  assert.equal(
+    requireLabelMatchStatement(reblockStatements[0]?.labelMatchStatement).key,
+    "awswaf:managed:aws:core-rule-set:EC2MetaDataSSRF_Body",
+  );
+  const exception = requireNotStatement(reblockStatements[1]?.notStatement);
+  const allowedRequest = requireStatement(exception.statement);
+  const allowedRequestAnd = requireAndStatement(allowedRequest.andStatement);
+  const allowedConditions = requireStatements(allowedRequestAnd.statements);
+  assert.deepEqual(
+    allowedConditions.map((condition) =>
+      requireByteMatchStatement(condition.byteMatchStatement)),
+    [
+      {
+        fieldToMatch: { singleHeader: { Name: "host" } },
+        positionalConstraint: "EXACTLY",
+        searchString: "auth.example.com",
+        textTransformations: [{ priority: 0, type: "LOWERCASE" }],
+      },
+      {
+        fieldToMatch: { method: {} },
+        positionalConstraint: "EXACTLY",
+        searchString: "POST",
+        textTransformations: [{ priority: 0, type: "NONE" }],
+      },
+      {
+        fieldToMatch: { uriPath: {} },
+        positionalConstraint: "EXACTLY",
+        searchString: "/oauth/register",
+        textTransformations: [{ priority: 0, type: "NONE" }],
+      },
+      {
+        fieldToMatch: { singleHeader: { Name: "content-type" } },
+        positionalConstraint: "STARTS_WITH",
+        searchString: "application/json",
+        textTransformations: [{ priority: 0, type: "LOWERCASE" }],
+      },
+    ],
+  );
+});
+
 test("WAF rate limits exact dynamic client registration requests by trusted Cloudflare client IP", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com");
   const rule = getRule(rules, "RateLimitDynamicClientRegistration");
-  assert.equal(rule.priority, 5);
+  assert.equal(rule.priority, 6);
   assert.deepEqual(rule.action, { block: {} });
 
   const statement = requireStatement(rule.statement);
@@ -239,7 +328,7 @@ test("WAF rate limits exact dynamic client registration requests by trusted Clou
 test("WAF separately rate limits exact OAuth token exchanges by trusted Cloudflare client IP", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com");
   const rule = getRule(rules, "RateLimitOAuthTokenExchanges");
-  assert.equal(rule.priority, 6);
+  assert.equal(rule.priority, 7);
   assert.deepEqual(rule.action, { block: {} });
 
   const statement = requireStatement(rule.statement);
