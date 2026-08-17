@@ -27,6 +27,7 @@ import { ChatTranscript } from "./ChatTranscript";
 import { prepareAttachment, type PendingAttachment } from "./FileAttachment";
 import {
   getAttachmentFailureReasonKey,
+  getAttachmentFailureReasonParams,
   markChatComposerContentEdited,
   startMountedLifecycle,
 } from "./chatPanelRuntime";
@@ -242,6 +243,7 @@ export const ChatPanel = (props: Props): ReactElement => {
     pendingAttachments,
     attachmentErrors,
     isAttachmentProcessing,
+    attachmentProgress = null,
     pendingSubmission: activePendingSubmission,
   } = chatComposerMemory;
 
@@ -442,6 +444,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         setChatComposerMemoryForTarget(ownership.target, (currentMemory) => ({
           ...currentMemory,
           isAttachmentProcessing: false,
+          attachmentProgress: null,
         }));
       }
     }
@@ -868,6 +871,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         ...currentMemory,
         attachmentErrors: [],
         isAttachmentProcessing: true,
+        attachmentProgress: null,
       }));
     } catch (error) {
       attachmentOperationsRef.current.delete(operationId);
@@ -912,6 +916,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         (currentMemory) => ({
           ...currentMemory,
           isAttachmentProcessing: false,
+          attachmentProgress: null,
         }),
       );
     }
@@ -936,7 +941,21 @@ export const ChatPanel = (props: Props): ReactElement => {
     try {
       for (const file of ingestion.files) {
         try {
-          const attachment = await prepareAttachment(file);
+          const attachment = await prepareAttachment(file, (progress): void => {
+            const currentOperation = readCurrentAttachmentOperation(
+              ingestion.operationId,
+            );
+            if (currentOperation === null) {
+              return;
+            }
+            setChatComposerMemoryForTarget(
+              currentOperation.target,
+              (currentMemory) => ({
+                ...currentMemory,
+                attachmentProgress: progress,
+              }),
+            );
+          });
           const currentOperation = readCurrentAttachmentOperation(
             ingestion.operationId,
           );
@@ -952,6 +971,7 @@ export const ChatPanel = (props: Props): ReactElement => {
                 ...currentMemory.pendingAttachments,
                 attachment,
               ],
+              attachmentProgress: null,
             }),
           );
           attachedFileCount += 1;
@@ -963,11 +983,15 @@ export const ChatPanel = (props: Props): ReactElement => {
             return null;
           }
           resultTarget = currentOperation.target;
-          const reason = t(getAttachmentFailureReasonKey(error));
+          const reason = t(
+            getAttachmentFailureReasonKey(error),
+            getAttachmentFailureReasonParams(error),
+          );
           setChatComposerMemoryForTarget(
             currentOperation.target,
             (currentMemory) => ({
               ...currentMemory,
+              attachmentProgress: null,
               attachmentErrors: [
                 ...currentMemory.attachmentErrors,
                 {
@@ -1866,6 +1890,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         pendingAttachments={pendingAttachments}
         attachmentErrors={attachmentErrors}
         isAttachmentProcessing={isAttachmentProcessing}
+        attachmentProgress={attachmentProgress}
         composerAction={composerAction}
         dictationState={dictationState}
         dictationStatusLabel={dictationStatusLabel}

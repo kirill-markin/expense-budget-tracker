@@ -72,15 +72,20 @@ test("deriveChatSessionTitle normalizes first-message text and caps it at 200 ch
 test("deriveChatSessionTitle uses the first normalized filename without attachment bytes", (): void => {
   const title = deriveChatSessionTitle([
     {
-      type: "file",
+      type: "pdf",
       fileName: "  July\n statement.pdf  ",
       mediaType: "application/pdf",
-      base64Data: "private-attachment-bytes",
+      sourceSha256: "a".repeat(64),
+      pages: [{
+        pageNumber: 1,
+        text: "private extracted text",
+        jpegBase64Data: "private-page-image",
+      }],
     },
   ]);
 
   assert.equal(title, "July statement.pdf");
-  assert.equal(title?.includes("private-attachment-bytes"), false);
+  assert.equal(title?.includes("private extracted text"), false);
 });
 
 test("createRunningChatSessionWithQuery creates a titled active session with initial activity", async (): Promise<void> => {

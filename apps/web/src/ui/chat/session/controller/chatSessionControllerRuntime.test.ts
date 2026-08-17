@@ -4438,6 +4438,41 @@ test("prepareChatSendRequest sends prepared JPEGs as image parts", (): void => {
   ]);
 });
 
+test("prepareChatSendRequest keeps a prepared PDF as one logical content part", (): void => {
+  const pdfAttachment = {
+    type: "pdf" as const,
+    fileName: "statement.pdf",
+    mediaType: "application/pdf" as const,
+    sourceSha256: "e".repeat(64),
+    pages: [
+      {
+        pageNumber: 1,
+        text: "first page",
+        jpegBase64Data: "/9j/4AAQSkZJRg==",
+      },
+      {
+        pageNumber: 2,
+        text: "second page",
+        jpegBase64Data: "/9j/4AAQSkZJRgE=",
+      },
+    ],
+  };
+
+  const result = prepareChatSendRequest(
+    "Import this statement",
+    [pdfAttachment],
+    (key: string): string => key,
+  );
+
+  assert.equal(result.kind, "ready");
+  if (result.kind !== "ready") {
+    assert.fail("Expected a ready chat request");
+  }
+  assert.equal(result.contentParts.filter((part) => part.type === "pdf").length, 1);
+  assert.deepEqual(result.contentParts[0], pdfAttachment);
+  assert.equal("base64Data" in result.contentParts[0], false);
+});
+
 test("prepareChatSendRequest rejects raw HEIC before building content parts", (): void => {
   const rawHeicBase64 = Buffer.from([
     0x00, 0x00, 0x00, 0x18,

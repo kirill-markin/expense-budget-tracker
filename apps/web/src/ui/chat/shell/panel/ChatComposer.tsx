@@ -12,6 +12,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CHAT_MODEL_BADGE_LABEL } from "@/lib/chatModels";
+import {
+  getBase64DecodedByteLength,
+  getPdfDerivedImageByteLength,
+} from "@/lib/chatPdf";
+import type { PdfPreparationProgress } from "../../attachments/pdfPreprocessing";
 import type { ChatComposerCapabilities } from "../../stream/display/chatComposerCapabilities";
 import type { ChatDictationState } from "../../stream/hooks/chatDictation";
 import type { ChatComposerAction } from "../../stream/streamRecovery";
@@ -43,18 +48,19 @@ export type AttachmentPreparationError = Readonly<{
 
 export type DeferredAttachmentIngestion = () => Promise<void>;
 
-const getBase64DecodedByteLength = (base64Data: string): number => {
-  const paddingBytes = base64Data.endsWith("==")
-    ? 2
-    : base64Data.endsWith("=") ? 1 : 0;
-  return Math.floor(base64Data.length * 3 / 4) - paddingBytes;
-};
+const getPendingAttachmentDecodedByteLength = (
+  attachment: PendingAttachment,
+): number =>
+  "base64Data" in attachment
+    ? getBase64DecodedByteLength(attachment.base64Data)
+    : getPdfDerivedImageByteLength(attachment);
 
 type Props = Readonly<{
   inputText: string;
   pendingAttachments: ReadonlyArray<PendingAttachment>;
   attachmentErrors: ReadonlyArray<AttachmentPreparationError>;
   isAttachmentProcessing: boolean;
+  attachmentProgress: PdfPreparationProgress | null;
   composerAction: ChatComposerAction;
   dictationState: ChatDictationState;
   dictationStatusLabel: string | null;
@@ -78,6 +84,7 @@ export const ChatComposer = (props: Props): ReactElement => {
     pendingAttachments,
     attachmentErrors,
     isAttachmentProcessing,
+    attachmentProgress,
     composerAction,
     dictationState,
     dictationStatusLabel,
@@ -308,7 +315,7 @@ export const ChatComposer = (props: Props): ReactElement => {
               className={styles.attachmentChip}
               data-testid="chat-prepared-attachment"
               data-media-type={attachment.mediaType}
-              data-encoded-size={getBase64DecodedByteLength(attachment.base64Data)}
+              data-encoded-size={getPendingAttachmentDecodedByteLength(attachment)}
             >
               {attachment.fileName}
               <button
@@ -329,7 +336,12 @@ export const ChatComposer = (props: Props): ReactElement => {
           role="status"
           aria-live="polite"
         >
-          {t("chat.attachmentProcessing")}
+          {attachmentProgress === null
+            ? t("chat.attachmentProcessing")
+            : t("chat.attachmentPdfProgress", {
+              page: attachmentProgress.pageNumber,
+              total: attachmentProgress.totalPages,
+            })}
         </div>
       )}
       {attachmentErrors.length > 0 && (

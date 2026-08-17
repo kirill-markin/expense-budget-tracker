@@ -39,6 +39,11 @@ export type PreparedImageAttachment = Readonly<{
   base64Data: string;
 }>;
 
+export type PreparedJpeg = Readonly<{
+  base64Data: string;
+  byteLength: number;
+}>;
+
 export type ImageDimensions = Readonly<{
   width: number;
   height: number;
@@ -358,9 +363,11 @@ const releaseCanvas = (canvas: HTMLCanvasElement): void => {
 };
 
 const encodeBoundedJpeg = async (
-  bitmap: ImageBitmap,
+  source: HTMLCanvasElement | ImageBitmap,
+  sourceDimensions: ImageDimensions,
   fileName: string,
   constraints: ImagePreprocessingConstraints,
+  backgroundColor: string | null,
 ): Promise<Blob> => {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
@@ -370,8 +377,8 @@ const encodeBoundedJpeg = async (
   }
 
   const initialDimensions = calculateBoundedImageDimensions(
-    bitmap.width,
-    bitmap.height,
+    sourceDimensions.width,
+    sourceDimensions.height,
     constraints.maximumLongEdge,
   );
   let settings: ImageEncodeSettings = {
@@ -384,9 +391,14 @@ const encodeBoundedJpeg = async (
     for (let attempt = 0; attempt < constraints.maximumEncodeAttempts; attempt += 1) {
       canvas.width = settings.width;
       canvas.height = settings.height;
-      context.clearRect(0, 0, settings.width, settings.height);
+      if (backgroundColor === null) {
+        context.clearRect(0, 0, settings.width, settings.height);
+      } else {
+        context.fillStyle = backgroundColor;
+        context.fillRect(0, 0, settings.width, settings.height);
+      }
       try {
-        context.drawImage(bitmap, 0, 0, settings.width, settings.height);
+        context.drawImage(source, 0, 0, settings.width, settings.height);
       } catch (error) {
         throw new ImageEncodeError(fileName, errorMessage(error));
       }
@@ -437,6 +449,27 @@ const blobToBase64 = (blob: Blob, fileName: string): Promise<string> =>
     }
   });
 
+export const encodeCanvasImageAsJpeg = async (
+  source: HTMLCanvasElement | ImageBitmap,
+  sourceDimensions: ImageDimensions,
+  fileName: string,
+  constraints: ImagePreprocessingConstraints,
+  backgroundColor: string | null,
+): Promise<PreparedJpeg> => {
+  validateImagePreprocessingConstraints(constraints);
+  const output = await encodeBoundedJpeg(
+    source,
+    sourceDimensions,
+    fileName,
+    constraints,
+    backgroundColor,
+  );
+  return {
+    base64Data: await blobToBase64(output, fileName),
+    byteLength: output.size,
+  };
+};
+
 const readImagePrefix = async (file: File): Promise<Uint8Array> => {
   try {
     return new Uint8Array(
@@ -460,12 +493,17 @@ export const preprocessImageAttachment = async (
 
   try {
     bitmap = await decodeImage(file, classification);
-    const output = await encodeBoundedJpeg(bitmap, file.name, constraints);
-    const base64Data = await blobToBase64(output, file.name);
+    const output = await encodeCanvasImageAsJpeg(
+      bitmap,
+      { width: bitmap.width, height: bitmap.height },
+      file.name,
+      constraints,
+      null,
+    );
     return {
       fileName: buildJpegFileName(file.name),
       mediaType: JPEG_MEDIA_TYPE,
-      base64Data,
+      base64Data: output.base64Data,
     };
   } finally {
     bitmap?.close();

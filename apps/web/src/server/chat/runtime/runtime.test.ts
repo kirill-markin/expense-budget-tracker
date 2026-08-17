@@ -377,7 +377,7 @@ test("startPersistedChatRunWithDeps persists and streams recovery for poisoned H
     terminalErrorPayload: null as unknown,
     completedPayload: null as unknown,
   };
-  const expectedMessage = "This conversation contains an older unsupported image. Click New to start a new conversation, then attach the image again.";
+  const expectedMessage = "This conversation contains an older attachment that cannot be replayed safely. Click New to start a new conversation, then attach the file again.";
   const originalLog = console.log;
   console.log = (): void => undefined;
 

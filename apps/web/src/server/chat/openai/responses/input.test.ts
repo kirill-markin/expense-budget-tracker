@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { UnsupportedImageMediaTypeError } from "@/server/chat/attachments/validation";
+import {
+  LegacyPdfFileAttachmentError,
+  UnsupportedImageMediaTypeError,
+} from "@/server/chat/attachments/validation";
 import {
   buildChatCompletionInput,
+  sanitizeContentPartsForTelemetry,
   UnsupportedStoredChatAttachmentError,
 } from "@/server/chat/openai/responses/input";
 import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
@@ -135,4 +139,205 @@ test("buildChatCompletionInput keeps current-turn attachment validation distinct
     ),
     UnsupportedImageMediaTypeError,
   );
+});
+
+test("buildChatCompletionInput expands logical PDF pages into ordered text and JPEG pairs", async (): Promise<void> => {
+  const firstJpeg = "/9j/4AAQSkZJRg==";
+  const secondJpeg = "/9j/4AAQSkZJRgE=";
+  const pdfPart: Extract<ContentPart, { type: "pdf" }> = {
+    type: "pdf",
+    fileName: "statement.pdf",
+    mediaType: "application/pdf",
+    sourceSha256: "c".repeat(64),
+    pages: [
+      { pageNumber: 1, text: "2026-08-17 -42.00", jpegBase64Data: firstJpeg },
+      { pageNumber: 2, text: "", jpegBase64Data: secondJpeg },
+    ],
+  };
+  const input = await buildChatCompletionInput(
+    [{ role: "user", content: [pdfPart] }],
+    [{ type: "text", text: "Continue with this statement" }],
+    "Europe/Madrid",
+  );
+
+  assert.equal(input.length, 3);
+  const userMessage = input[1];
+  assert.equal(userMessage.type, "message");
+  if (userMessage.type !== "message" || typeof userMessage.content === "string") {
+    assert.fail("Expected a structured user message");
+  }
+  assert.deepEqual(userMessage.content.map((part) => part.type), [
+    "input_text",
+    "input_image",
+    "input_text",
+    "input_image",
+  ]);
+  assert.match(
+    "text" in userMessage.content[0] ? userMessage.content[0].text : "",
+    /two representations of the same PDF page/u,
+  );
+  assert.match(
+    "text" in userMessage.content[0] ? userMessage.content[0].text : "",
+    /Do not treat them as duplicate transactions/u,
+  );
+  assert.match(
+    "text" in userMessage.content[2] ? userMessage.content[2].text : "",
+    /No embedded text was extracted/u,
+  );
+  assert.deepEqual(userMessage.content[1], {
+    type: "input_image",
+    detail: "high",
+    image_url: `data:image/jpeg;base64,${firstJpeg}`,
+  });
+  assert.equal(
+    userMessage.content.some((part) => part.type === "input_file"),
+    false,
+  );
+});
+
+test("buildChatCompletionInput removes a JSONB-reordered copy of the current logical PDF turn", async (): Promise<void> => {
+  const firstJpeg = "/9j/4AAQSkZJRg==";
+  const secondJpeg = "/9j/4AAQSkZJRgE=";
+  const currentTurn: ReadonlyArray<ContentPart> = [{
+    type: "pdf",
+    fileName: "statement.pdf",
+    mediaType: "application/pdf",
+    sourceSha256: "e".repeat(64),
+    pages: [
+      { pageNumber: 1, text: "First persisted page", jpegBase64Data: firstJpeg },
+      { pageNumber: 2, text: "Second persisted page", jpegBase64Data: secondJpeg },
+    ],
+  }];
+  const canonicalPdf = currentTurn[0];
+  if (canonicalPdf?.type !== "pdf") {
+    assert.fail("Expected a canonical logical PDF turn");
+  }
+  const persistedPdf: Extract<ContentPart, { type: "pdf" }> = {
+    pages: canonicalPdf.pages.map((page) => ({
+      jpegBase64Data: page.jpegBase64Data,
+      text: page.text,
+      pageNumber: page.pageNumber,
+    })),
+    sourceSha256: canonicalPdf.sourceSha256,
+    mediaType: canonicalPdf.mediaType,
+    fileName: canonicalPdf.fileName,
+    type: canonicalPdf.type,
+  };
+
+  const input = await buildChatCompletionInput(
+    [{ role: "user", content: [persistedPdf] }],
+    currentTurn,
+    "Europe/Madrid",
+  );
+
+  assert.equal(input.length, 2);
+  const userMessage = input[1];
+  assert.equal(userMessage.type, "message");
+  if (userMessage.type !== "message" || typeof userMessage.content === "string") {
+    assert.fail("Expected one structured current-turn user message");
+  }
+  assert.deepEqual(userMessage.content.map((part) => part.type), [
+    "input_text",
+    "input_image",
+    "input_text",
+    "input_image",
+  ]);
+  assert.equal(
+    userMessage.content.filter(
+      (part) => part.type === "input_image"
+        && part.image_url === `data:image/jpeg;base64,${firstJpeg}`,
+    ).length,
+    1,
+  );
+  assert.equal(
+    userMessage.content.filter(
+      (part) => part.type === "input_image"
+        && part.image_url === `data:image/jpeg;base64,${secondJpeg}`,
+    ).length,
+    1,
+  );
+  assert.equal(
+    userMessage.content.filter(
+      (part) => part.type === "input_text"
+        && part.text.includes("First persisted page"),
+    ).length,
+    1,
+  );
+  assert.equal(
+    userMessage.content.filter(
+      (part) => part.type === "input_text"
+        && part.text.includes("Second persisted page"),
+    ).length,
+    1,
+  );
+});
+
+test("buildChatCompletionInput rejects a stored legacy PDF before OpenAI mapping", async (): Promise<void> => {
+  const legacyPdfs: ReadonlyArray<Extract<ContentPart, { type: "file" }>> = [
+    {
+      type: "file",
+      fileName: "legacy.bin",
+      mediaType: "application/pdf",
+      base64Data: Buffer.from("opaque").toString("base64"),
+    },
+    {
+      type: "file",
+      fileName: "legacy.pdf",
+      mediaType: "application/octet-stream",
+      base64Data: Buffer.from("opaque").toString("base64"),
+    },
+    {
+      type: "file",
+      fileName: "legacy.bin",
+      mediaType: "application/octet-stream",
+      base64Data: Buffer.from("%PDF-1.7 private").toString("base64"),
+    },
+  ];
+
+  for (const legacyPdf of legacyPdfs) {
+    const localMessages: ReadonlyArray<ServerChatMessage> = [{
+      role: "user",
+      content: [legacyPdf],
+    }];
+    await assert.rejects(
+      buildChatCompletionInput(
+        localMessages,
+        [{ type: "text", text: "Continue" }],
+        "Europe/Madrid",
+      ),
+      (error: unknown): boolean => {
+        assert.ok(error instanceof UnsupportedStoredChatAttachmentError);
+        assert.equal(error.fileName, legacyPdf.fileName);
+        assert.ok(error.cause instanceof LegacyPdfFileAttachmentError);
+        return true;
+      },
+    );
+  }
+});
+
+test("PDF telemetry carries only the source digest and derived page summaries", async (): Promise<void> => {
+  const sanitized = await sanitizeContentPartsForTelemetry([{
+    type: "pdf",
+    fileName: "statement.pdf",
+    mediaType: "application/pdf",
+    sourceSha256: "d".repeat(64),
+    pages: [{
+      pageNumber: 1,
+      text: "amount",
+      jpegBase64Data: JPEG_BASE64_PREFIX,
+    }],
+  }]);
+
+  assert.deepEqual(sanitized, [{
+    type: "pdf",
+    summary: {
+      fileName: "statement.pdf",
+      mediaType: "application/pdf",
+      sizeBytes: Buffer.from(JPEG_BASE64_PREFIX, "base64").byteLength,
+      sha256: "d".repeat(64),
+      pageCount: 1,
+      extractedTextCharacters: 6,
+    },
+  }]);
+  assert.equal(JSON.stringify(sanitized).includes(JPEG_BASE64_PREFIX), false);
 });

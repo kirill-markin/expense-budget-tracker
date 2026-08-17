@@ -25,6 +25,7 @@ __pycache__/
 
 # Local artifacts
 tmp/
+apps/web/public/pdfjs-assets/
 
 # Playwright
 apps/web/playwright-report/

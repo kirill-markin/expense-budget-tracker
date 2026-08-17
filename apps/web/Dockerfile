@@ -18,7 +18,7 @@ FROM node:24.19.0-alpine AS builder
 WORKDIR /workspace
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
-RUN cd apps/web && ../../node_modules/.bin/next build
+RUN cd apps/web && node scripts/copy-pdfjs-assets.mjs && ../../node_modules/.bin/next build
 
 # --- Stage 3: Production runner ---
 FROM node:24.19.0-alpine AS runner

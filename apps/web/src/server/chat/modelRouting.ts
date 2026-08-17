@@ -7,8 +7,9 @@ import {
   type ChatEffectiveModelId,
   type ChatEffectiveReasoningEffort,
 } from "@/lib/chatModels";
+import { isLegacyRawPdfFilePart } from "@/lib/chatPdf";
 import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
-import type { FileContentPart } from "@/server/chat/types";
+import type { FileContentPart, PdfContentPart } from "@/server/chat/types";
 
 export const CHAT_MODEL_ROLLING_WINDOW_HOURS = 24;
 export const CHAT_MODEL_ROLLING_USER_MESSAGE_THRESHOLD = 30;
@@ -52,17 +53,16 @@ export type ChatModelRoutingLogEvent = Readonly<{
   sessionId: string;
 }>;
 
-const isValidatedPdfAttachment = (
-  part: FileContentPart,
-): boolean =>
-  part.mediaType.trim().toLowerCase() === "application/pdf";
-
 const getPdfContentFingerprint = (
   part: FileContentPart,
 ): string =>
   createHash("sha256")
     .update(Buffer.from(part.base64Data, "base64"))
     .digest("hex");
+
+const getLogicalPdfFingerprint = (
+  part: PdfContentPart,
+): string => part.sourceSha256;
 
 export const countUniquePdfAttachments = (
   messages: ReadonlyArray<ServerChatMessage>,
@@ -73,7 +73,11 @@ export const countUniquePdfAttachments = (
       continue;
     }
     for (const part of message.content) {
-      if (part.type === "file" && isValidatedPdfAttachment(part)) {
+      if (part.type === "pdf") {
+        fingerprints.add(getLogicalPdfFingerprint(part));
+        continue;
+      }
+      if (part.type === "file" && isLegacyRawPdfFilePart(part)) {
         fingerprints.add(getPdfContentFingerprint(part));
       }
     }

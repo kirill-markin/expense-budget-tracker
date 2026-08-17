@@ -32,7 +32,7 @@ const getAttachmentParts = (
   message: StoredMessage,
 ): ReadonlyArray<AttachmentContentPart> =>
   message.content.filter((part): part is AttachmentContentPart =>
-    part.type === "file" || part.type === "image");
+    part.type === "file" || part.type === "image" || part.type === "pdf");
 
 const isRenderableNonAttachmentPart = (
   part: StoredMessage["content"][number],
