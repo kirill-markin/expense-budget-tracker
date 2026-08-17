@@ -3,7 +3,7 @@
   "name": "com.expense-budget-tracker/expense-budget-tracker",
   "title": "Expense Budget Tracker",
   "description": "Track expenses, budgets, balances, transfers, and multi-currency reports with OAuth-secured tools.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "websiteUrl": "https://expense-budget-tracker.com",
   "icons": [
     {

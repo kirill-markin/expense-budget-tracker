@@ -1,6 +1,6 @@
 {
   "name": "expense-tracker-auth",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1111.0",
-    "@expense-budget-tracker/agent-shared": "1.2.1",
+    "@expense-budget-tracker/agent-shared": "1.2.2",
     "@hono/node-server": "^2.1.0",
     "aws-jwt-verify": "^5.2.1",
     "hono": "^4.13.1",
