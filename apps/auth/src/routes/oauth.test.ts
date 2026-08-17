@@ -395,7 +395,10 @@ test("consent is no-store, anti-clickjacking, and same-origin protected", async 
   assert.equal(consentPage.headers.get("cache-control"), "no-store");
   assert.equal(consentPage.headers.get("x-frame-options"), "DENY");
   assert.equal(consentPage.headers.get("referrer-policy"), "strict-origin");
-  assert.match(consentPage.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/u);
+  assert.equal(
+    consentPage.headers.get("content-security-policy"),
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+  );
   const consentHtml = await consentPage.text();
   assert.match(consentHtml, /<h1>Connect <bdi dir="auto">Desktop &lt;MCP&gt;<\/bdi> to Expense Budget Tracker\?<\/h1>/u);
   assert.match(consentHtml, /Desktop &lt;MCP&gt;/u);
