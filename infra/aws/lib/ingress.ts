@@ -182,6 +182,12 @@ export const buildIngressWafRules = (
     "/api/chat/transcriptions",
     "multipart/form-data",
   );
+  const dynamicClientRegistrationJsonRequest = andStatement([
+    headerIs("host", authDomain),
+    methodIs("POST"),
+    uriPathIs("/oauth/register"),
+    headerStartsWith("content-type", "application/json"),
+  ]);
   const boundedOAuthQueryRequest = orStatement([
     andStatement([
       methodIs("GET"),
@@ -223,6 +229,12 @@ export const buildIngressWafRules = (
               name: "SizeRestrictions_QUERYSTRING",
               actionToUse: { count: {} },
             },
+            // Native OAuth clients legitimately register loopback redirect URIs.
+            // Exact JSON registration requests are allowed and all other matches are re-blocked.
+            {
+              name: "EC2MetaDataSSRF_BODY",
+              actionToUse: { count: {} },
+            },
           ],
         },
       },
@@ -253,9 +265,16 @@ export const buildIngressWafRules = (
       boundedOAuthQueryRequest,
       "expense-tracker-size-query-reblock",
     ),
+    blockLabeledRequestUnless(
+      "BlockUnexpectedEc2MetadataSsrfBodyMatches",
+      4,
+      "awswaf:managed:aws:core-rule-set:EC2MetaDataSSRF_Body",
+      dynamicClientRegistrationJsonRequest,
+      "expense-tracker-ec2-metadata-ssrf-body-reblock",
+    ),
     {
       name: "AWSManagedKnownBadInputs",
-      priority: 4,
+      priority: 5,
       overrideAction: { none: {} },
       statement: {
         managedRuleGroupStatement: {
@@ -271,7 +290,7 @@ export const buildIngressWafRules = (
     },
     {
       name: "RateLimitDynamicClientRegistration",
-      priority: 5,
+      priority: 6,
       action: { block: {} },
       statement: {
         rateBasedStatement: {
@@ -297,7 +316,7 @@ export const buildIngressWafRules = (
     },
     {
       name: "RateLimitOAuthTokenExchanges",
-      priority: 6,
+      priority: 7,
       action: { block: {} },
       statement: {
         rateBasedStatement: {
