@@ -426,7 +426,7 @@ app.get("/oauth/authorize", async (c) => {
     validateConsentSubmissionSize(request);
     const identity = await requireBrowserIdentity(c, buildLoginRedirect(config.issuer, request), dependencies);
     if (identity instanceof Response) return identity;
-    c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "strict-origin");
     return c.html(renderConsent(client, request));
