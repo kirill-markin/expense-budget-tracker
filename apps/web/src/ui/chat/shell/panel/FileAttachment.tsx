@@ -15,7 +15,11 @@ import {
   preprocessImageAttachment,
   UnsupportedImageFormatError,
 } from "../../attachments/imagePreprocessing";
-import { hasPdfSignature, isPdfFileCandidate } from "@/lib/chatPdf";
+import {
+  PDF_SIGNATURE_SCAN_PREFIX_BYTES,
+  hasPdfSignature,
+  isPdfFileCandidate,
+} from "@/lib/chatPdf";
 import type { PdfContentPart } from "@/server/chat/types";
 import {
   preprocessPdfAttachment,
@@ -117,7 +121,11 @@ const isImageAttachment = (file: File): boolean =>
 
 const hasPdfAttachmentSignature = async (file: File): Promise<boolean> => {
   try {
-    return hasPdfSignature(new Uint8Array(await file.slice(0, 5).arrayBuffer()));
+    return hasPdfSignature(
+      new Uint8Array(
+        await file.slice(0, PDF_SIGNATURE_SCAN_PREFIX_BYTES).arrayBuffer(),
+      ),
+    );
   } catch (error) {
     throw new AttachmentReadError(file.name, errorMessage(error));
   }

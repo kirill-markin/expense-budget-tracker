@@ -106,6 +106,15 @@ export class PdfDecodeError extends Error {
   }
 }
 
+export class PdfCleanupError extends Error {
+  public constructor(fileName: string, reason: string) {
+    super(
+      `Failed to release PDF processing resources for "${fileName}": ${reason}. Remove the attachment and try again.`,
+    );
+    this.name = "PdfCleanupError";
+  }
+}
+
 export class PdfPageProcessingError extends Error {
   public readonly pageNumber: number;
 
@@ -121,6 +130,26 @@ export class PdfPageProcessingError extends Error {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+export const cleanupPdfLoadingTask = async (
+  fileName: string,
+  destroy: () => Promise<void>,
+  primaryError: Error | null,
+): Promise<void> => {
+  try {
+    await destroy();
+  } catch (error) {
+    const cleanupError = new PdfCleanupError(fileName, errorMessage(error));
+    if (primaryError === null) {
+      throw cleanupError;
+    }
+    Object.defineProperty(primaryError, "cause", {
+      configurable: true,
+      value: cleanupError,
+      writable: true,
+    });
+  }
+};
+
 const bytesToHex = (
   bytes: Uint8Array,
 ): string =>
@@ -130,7 +159,7 @@ const bytesToHex = (
 
 const readPdfBytes = async (
   file: File,
-): Promise<Uint8Array> => {
+): Promise<Uint8Array<ArrayBuffer>> => {
   try {
     return new Uint8Array(await file.arrayBuffer());
   } catch (error) {
@@ -139,7 +168,7 @@ const readPdfBytes = async (
 };
 
 const calculateSourceSha256 = async (
-  bytes: Uint8Array,
+  bytes: Uint8Array<ArrayBuffer>,
 ): Promise<string> => {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return bytesToHex(new Uint8Array(digest));
@@ -297,15 +326,20 @@ const loadPdfDocument = async (
     return {
       documentProxy,
       destroy: async (): Promise<void> => {
-        await documentProxy.destroy();
+        await loadingTask.destroy();
       },
     };
   } catch (error) {
-    await loadingTask.destroy();
-    if (error instanceof PdfEncryptedError || error instanceof pdfjs.PasswordException) {
-      throw new PdfEncryptedError(fileName);
-    }
-    throw new PdfDecodeError(fileName, errorMessage(error));
+    const primaryError =
+      error instanceof PdfEncryptedError || error instanceof pdfjs.PasswordException
+        ? new PdfEncryptedError(fileName)
+        : new PdfDecodeError(fileName, errorMessage(error));
+    await cleanupPdfLoadingTask(
+      fileName,
+      async (): Promise<void> => loadingTask.destroy(),
+      primaryError,
+    );
+    throw primaryError;
   }
 };
 
@@ -334,6 +368,7 @@ export const preprocessPdfAttachment = async (
   }
   const sourceSha256 = await calculateSourceSha256(sourceBytes);
   const loadedDocument = await loadPdfDocument(file.name, sourceBytes);
+  let primaryError: Error | null = null;
 
   try {
     const pageCount = loadedDocument.documentProxy.numPages;
@@ -382,7 +417,16 @@ export const preprocessPdfAttachment = async (
       sourceSha256,
       pages,
     };
+  } catch (error) {
+    if (error instanceof Error) {
+      primaryError = error;
+    }
+    throw error;
   } finally {
-    await loadedDocument.destroy();
+    await cleanupPdfLoadingTask(
+      file.name,
+      loadedDocument.destroy,
+      primaryError,
+    );
   }
 };

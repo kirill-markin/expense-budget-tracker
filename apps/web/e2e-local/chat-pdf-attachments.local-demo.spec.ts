@@ -68,6 +68,7 @@ const createPdfStreamObject = (
   `<< /Length ${String(Buffer.byteLength(content, "latin1"))} >>\nstream\n${content}\nendstream`;
 
 const createTwoPagePdfFixture = (): Buffer => {
+  const leadingPrefix = "non-PDF leading bytes\n";
   const firstPageContent = [
     "BT",
     "/F1 180 Tf",
@@ -117,6 +118,7 @@ const createTwoPagePdfFixture = (): Buffer => {
     .map((offset) => `${String(offset).padStart(10, "0")} 00000 n `)
     .join("\n");
   return Buffer.from([
+    leadingPrefix,
     assembled.body,
     `xref\n0 ${String(objects.length + 1)}\n`,
     "0000000000 65535 f \n",
@@ -232,8 +234,8 @@ test("converts a real PDF into one ordered logical browser attachment", async ({
       === "/pdfjs-assets/cmaps/UniJIS-UTF16-H.bcmap");
 
   await page.getByTestId("chat-file-input").setInputFiles({
-    name: "two-page-statement.pdf",
-    mimeType: "application/pdf",
+    name: "two-page-statement.txt",
+    mimeType: "text/plain",
     buffer: pdfBytes,
   });
   const preparedAttachment = page.getByTestId("chat-prepared-attachment");
@@ -242,7 +244,7 @@ test("converts a real PDF into one ordered logical browser attachment", async ({
     "data-media-type",
     "application/pdf",
   );
-  await expect(preparedAttachment).toContainText("two-page-statement.pdf");
+  await expect(preparedAttachment).toContainText("two-page-statement.txt");
   const cMapResponse = await cMapResponsePromise;
   expect(cMapResponse.status()).toBe(200);
   expect(new URL(cMapResponse.url()).origin).toBe(origin.origin);
@@ -259,7 +261,7 @@ test("converts a real PDF into one ordered logical browser attachment", async ({
     throw new Error("Logical PDF request part was not captured");
   }
 
-  expect(pdfPart.fileName).toBe("two-page-statement.pdf");
+  expect(pdfPart.fileName).toBe("two-page-statement.txt");
   expect(pdfPart.mediaType).toBe("application/pdf");
   expect(pdfPart.sourceSha256).toBe(
     createHash("sha256").update(pdfBytes).digest("hex"),

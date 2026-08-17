@@ -14,6 +14,7 @@ import {
   UnsupportedImageFormatError,
 } from "../../attachments/imagePreprocessing";
 import {
+  PdfCleanupError,
   PdfDecodeError,
   PdfEncryptedError,
   PdfOutputLimitError,
@@ -327,7 +328,8 @@ export const getAttachmentFailureReasonKey = (
     return "chat.attachmentFailureOutputTooLarge";
   }
   if (
-    error instanceof ImageEncodeError
+    error instanceof PdfCleanupError
+    || error instanceof ImageEncodeError
     || error instanceof ImageDimensionsError
     || error instanceof ImagePreprocessingConfigurationError
   ) {

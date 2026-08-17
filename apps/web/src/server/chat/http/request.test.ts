@@ -74,15 +74,22 @@ test("parseChatRequestBody rejects malformed nested PDF content", (): void => {
 });
 
 test("parseChatRequestBody rejects raw PDF file parts", (): void => {
+  const rawPdfBase64 = Buffer.from(
+    "leading bytes\n%PDF-1.7 private contents",
+  ).toString("base64");
   assert.throws(
     (): void => {
       parseChatRequestBody(createRequestBody([{
         type: "file",
-        fileName: "legacy.pdf",
-        mediaType: "application/pdf",
-        base64Data: Buffer.from("%PDF-1.7").toString("base64"),
+        fileName: "legacy.txt",
+        mediaType: "text/plain",
+        base64Data: rawPdfBase64,
       }]));
     },
-    LegacyPdfFileAttachmentError,
+    (error: unknown): boolean => {
+      assert.ok(error instanceof LegacyPdfFileAttachmentError);
+      assert.equal(error.message.includes(rawPdfBase64), false);
+      return true;
+    },
   );
 });

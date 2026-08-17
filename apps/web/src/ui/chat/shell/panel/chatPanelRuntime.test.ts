@@ -13,6 +13,8 @@ import {
   UnsupportedImageFormatError,
 } from "../../attachments/imagePreprocessing";
 import {
+  cleanupPdfLoadingTask,
+  PdfCleanupError,
   PdfEncryptedError,
   PdfOutputLimitError,
   PdfPageProcessingError,
@@ -182,6 +184,10 @@ test("maps attachment failures to localized reason keys", (): void => {
       expected: "chat.attachmentFailurePdfPageProcessing",
     },
     {
+      error: new PdfCleanupError("statement.pdf", "worker shutdown failed"),
+      expected: "chat.attachmentFailureConversion",
+    },
+    {
       error: new ImageEncodeError("photo.heic", "encode failed"),
       expected: "chat.attachmentFailureConversion",
     },
@@ -208,6 +214,45 @@ test("maps attachment failures to localized reason keys", (): void => {
       new PdfPageProcessingError("statement.pdf", 5, "render failed"),
     ),
     { page: 5 },
+  );
+});
+
+test("PDF cleanup preserves primary errors and reports cleanup-only failures", async (): Promise<void> => {
+  const primaryError = new PdfEncryptedError("statement.pdf");
+  let primaryCleanupAttempts = 0;
+  await cleanupPdfLoadingTask(
+    "statement.pdf",
+    async (): Promise<void> => {
+      primaryCleanupAttempts += 1;
+      throw new Error("worker shutdown failed");
+    },
+    primaryError,
+  );
+
+  assert.equal(primaryCleanupAttempts, 1);
+  assert.ok(primaryError.cause instanceof PdfCleanupError);
+  assert.match(primaryError.cause.message, /statement\.pdf.*worker shutdown failed/u);
+  assert.equal(
+    getAttachmentFailureReasonKey(primaryError),
+    "chat.attachmentFailurePdfEncrypted",
+  );
+
+  let cleanupOnlyAttempts = 0;
+  await assert.rejects(
+    cleanupPdfLoadingTask(
+      "statement.pdf",
+      async (): Promise<void> => {
+        cleanupOnlyAttempts += 1;
+        throw new Error("worker shutdown failed");
+      },
+      null,
+    ),
+    (error: unknown): boolean => {
+      assert.equal(cleanupOnlyAttempts, 1);
+      assert.ok(error instanceof PdfCleanupError);
+      assert.match(error.message, /statement\.pdf.*worker shutdown failed/u);
+      return true;
+    },
   );
 });
 

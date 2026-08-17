@@ -15,6 +15,7 @@ export const PDF_MAXIMUM_LONG_EDGE = 1600;
 export const PDF_INITIAL_JPEG_QUALITY = 0.82;
 export const PDF_MINIMUM_JPEG_QUALITY = 0.5;
 export const PDF_MAXIMUM_ENCODE_ATTEMPTS = 6;
+export const PDF_SIGNATURE_SCAN_PREFIX_BYTES = 1024;
 
 const PDF_SIGNATURE = [0x25, 0x50, 0x44, 0x46, 0x2d] as const;
 const PDF_EXTENSION = ".pdf";
@@ -83,20 +84,35 @@ export const isPdfFileCandidate = (
 
 export const hasPdfSignature = (
   bytes: Uint8Array,
-): boolean =>
-  PDF_SIGNATURE.every((value, index) => bytes[index] === value);
+): boolean => {
+  const scanLength = Math.min(bytes.length, PDF_SIGNATURE_SCAN_PREFIX_BYTES);
+  const maximumStartIndex = scanLength - PDF_SIGNATURE.length;
+  for (let startIndex = 0; startIndex <= maximumStartIndex; startIndex += 1) {
+    if (
+      PDF_SIGNATURE.every(
+        (value, signatureIndex) => bytes[startIndex + signatureIndex] === value,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
 
 export const isLegacyRawPdfFilePart = (
   part: FileContentPart,
 ): boolean =>
   isPdfFileCandidate(part.fileName, part.mediaType)
   || hasPdfSignature(
-    decodeTolerantBase64Prefix(part.base64Data, PDF_SIGNATURE.length),
+    decodeTolerantBase64Prefix(
+      part.base64Data,
+      PDF_SIGNATURE_SCAN_PREFIX_BYTES,
+    ),
   );
 
 export const isSha256Hex = (
   value: string,
-): boolean => SHA256_HEX_PATTERN.test(value);
+): boolean => value.length === 64 && SHA256_HEX_PATTERN.test(value);
 
 export const getBase64DecodedByteLength = (
   base64Data: string,

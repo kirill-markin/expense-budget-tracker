@@ -51,9 +51,9 @@ export type DeferredAttachmentIngestion = () => Promise<void>;
 const getPendingAttachmentDecodedByteLength = (
   attachment: PendingAttachment,
 ): number =>
-  "type" in attachment && attachment.type === "pdf"
-    ? getPdfDerivedImageByteLength(attachment)
-    : getBase64DecodedByteLength(attachment.base64Data);
+  "base64Data" in attachment
+    ? getBase64DecodedByteLength(attachment.base64Data)
+    : getPdfDerivedImageByteLength(attachment);
 
 type Props = Readonly<{
   inputText: string;

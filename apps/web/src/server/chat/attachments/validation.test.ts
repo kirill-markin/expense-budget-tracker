@@ -215,6 +215,11 @@ test("validateChatAttachments rejects legacy raw PDFs without exposing their byt
       "application/octet-stream",
       Buffer.from("%PDF-1.7 disguised contents").toString("base64"),
     ),
+    createFilePart(
+      "report.txt",
+      "text/plain",
+      Buffer.from("leading bytes\n%PDF-1.7 disguised contents").toString("base64"),
+    ),
   ];
 
   for (const rawPdf of rawPdfs) {
