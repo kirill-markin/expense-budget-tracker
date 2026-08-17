@@ -235,6 +235,10 @@ export const buildIngressWafRules = (
               name: "EC2MetaDataSSRF_BODY",
               actionToUse: { count: {} },
             },
+            {
+              name: "GenericRFI_BODY",
+              actionToUse: { count: {} },
+            },
           ],
         },
       },
@@ -272,9 +276,16 @@ export const buildIngressWafRules = (
       dynamicClientRegistrationJsonRequest,
       "expense-tracker-ec2-metadata-ssrf-body-reblock",
     ),
+    blockLabeledRequestUnless(
+      "BlockUnexpectedGenericRfiBodyMatches",
+      5,
+      "awswaf:managed:aws:core-rule-set:GenericRFI_Body",
+      dynamicClientRegistrationJsonRequest,
+      "expense-tracker-generic-rfi-body-reblock",
+    ),
     {
       name: "AWSManagedKnownBadInputs",
-      priority: 5,
+      priority: 6,
       overrideAction: { none: {} },
       statement: {
         managedRuleGroupStatement: {
@@ -290,7 +301,7 @@ export const buildIngressWafRules = (
     },
     {
       name: "RateLimitDynamicClientRegistration",
-      priority: 6,
+      priority: 7,
       action: { block: {} },
       statement: {
         rateBasedStatement: {
@@ -316,7 +327,7 @@ export const buildIngressWafRules = (
     },
     {
       name: "RateLimitOAuthTokenExchanges",
-      priority: 7,
+      priority: 8,
       action: { block: {} },
       statement: {
         rateBasedStatement: {

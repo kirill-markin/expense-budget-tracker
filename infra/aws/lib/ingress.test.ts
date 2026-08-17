@@ -171,6 +171,7 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
       "SizeRestrictions_BODY",
       "SizeRestrictions_QUERYSTRING",
       "EC2MetaDataSSRF_BODY",
+      "GenericRFI_BODY",
     ],
   );
 
@@ -201,7 +202,7 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
   );
 });
 
-test("WAF re-blocks managed EC2 metadata SSRF body matches outside exact JSON client registration", (): void => {
+test("WAF re-blocks managed loopback body matches outside exact JSON client registration", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com");
   assert.deepEqual(
     rules.map((rule) => [rule.name, rule.priority]),
@@ -211,9 +212,10 @@ test("WAF re-blocks managed EC2 metadata SSRF body matches outside exact JSON cl
       ["BlockUnexpectedBodySizeMatches", 2],
       ["BlockUnexpectedQuerySizeMatches", 3],
       ["BlockUnexpectedEc2MetadataSsrfBodyMatches", 4],
-      ["AWSManagedKnownBadInputs", 5],
-      ["RateLimitDynamicClientRegistration", 6],
-      ["RateLimitOAuthTokenExchanges", 7],
+      ["BlockUnexpectedGenericRfiBodyMatches", 5],
+      ["AWSManagedKnownBadInputs", 6],
+      ["RateLimitDynamicClientRegistration", 7],
+      ["RateLimitOAuthTokenExchanges", 8],
     ],
   );
 
@@ -229,6 +231,13 @@ test("WAF re-blocks managed EC2 metadata SSRF body matches outside exact JSON cl
     overrides.find((override) => override.name === "EC2MetaDataSSRF_BODY"),
     {
       name: "EC2MetaDataSSRF_BODY",
+      actionToUse: { count: {} },
+    },
+  );
+  assert.deepEqual(
+    overrides.find((override) => override.name === "GenericRFI_BODY"),
+    {
+      name: "GenericRFI_BODY",
       actionToUse: { count: {} },
     },
   );
@@ -283,12 +292,35 @@ test("WAF re-blocks managed EC2 metadata SSRF body matches outside exact JSON cl
       },
     ],
   );
+
+  const genericRfiRule = getRule(rules, "BlockUnexpectedGenericRfiBodyMatches");
+  assert.equal(genericRfiRule.priority, 5);
+  assert.deepEqual(genericRfiRule.action, { block: {} });
+  assert.deepEqual(genericRfiRule.visibilityConfig, {
+    sampledRequestsEnabled: true,
+    cloudWatchMetricsEnabled: true,
+    metricName: "expense-tracker-generic-rfi-body-reblock",
+  });
+  const genericRfiStatement = requireStatement(genericRfiRule.statement);
+  const genericRfiReblock = requireAndStatement(genericRfiStatement.andStatement);
+  const genericRfiStatements = requireStatements(genericRfiReblock.statements);
+  assert.equal(
+    requireLabelMatchStatement(genericRfiStatements[0]?.labelMatchStatement).key,
+    "awswaf:managed:aws:core-rule-set:GenericRFI_Body",
+  );
+  const genericRfiException = requireNotStatement(
+    genericRfiStatements[1]?.notStatement,
+  );
+  assert.strictEqual(
+    requireStatement(genericRfiException.statement),
+    allowedRequest,
+  );
 });
 
 test("WAF rate limits exact dynamic client registration requests by trusted Cloudflare client IP", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com");
   const rule = getRule(rules, "RateLimitDynamicClientRegistration");
-  assert.equal(rule.priority, 6);
+  assert.equal(rule.priority, 7);
   assert.deepEqual(rule.action, { block: {} });
 
   const statement = requireStatement(rule.statement);
@@ -328,7 +360,7 @@ test("WAF rate limits exact dynamic client registration requests by trusted Clou
 test("WAF separately rate limits exact OAuth token exchanges by trusted Cloudflare client IP", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com");
   const rule = getRule(rules, "RateLimitOAuthTokenExchanges");
-  assert.equal(rule.priority, 7);
+  assert.equal(rule.priority, 8);
   assert.deepEqual(rule.action, { block: {} });
 
   const statement = requireStatement(rule.statement);
