@@ -17,8 +17,9 @@
     "protobufjs@7.6.5": true
   },
   "overrides": {
+    "fast-json-patch": "3.1.1",
     "mammoth": {
-      "@xmldom/xmldom": "0.9.10"
+      "@xmldom/xmldom": "0.9.11"
     },
     "postcss": "8.5.26",
     "sharp": "0.35.3",

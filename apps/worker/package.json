@@ -8,15 +8,15 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1108.0",
-    "fast-xml-parser": "^5.10.1",
+    "@aws-sdk/client-secrets-manager": "^3.1113.0",
+    "fast-xml-parser": "^5.11.0",
     "node-cron": "^4.6.0",
     "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@types/node-cron": "^3.0.11",
-    "@types/pg": "^8.21.0",
+    "@types/pg": "^8.23.1",
     "typescript": "^6.0.3"
   },
   "engines": {
