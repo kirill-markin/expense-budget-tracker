@@ -14,13 +14,13 @@ export interface NetworkingResult {
 
 export function networking(scope: Construct): NetworkingResult {
   // --- VPC ---
-  // NAT instance (t4g.micro ~$6/mo) instead of managed NAT Gateway (~$35/mo).
+  // NAT instance (t4g.small ~$12/mo) instead of managed NAT Gateway (~$35/mo).
   // Trade-off: no HA, no auto-recovery, limited bandwidth (~5 Gbps burst).
   // Acceptable for a pet project where only the Lambda FX fetcher and ECS tasks use NAT
   // (a few KB/day + ECR image pulls). To switch to managed NAT Gateway, remove
   // natGatewayProvider and keep only: natGateways: 1,
   const natProvider = ec2.NatProvider.instanceV2({
-    instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO),
+    instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.SMALL),
     defaultAllowedTraffic: ec2.NatTrafficDirection.OUTBOUND_ONLY,
   });
   const vpc = new ec2.Vpc(scope, "Vpc", {
