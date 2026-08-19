@@ -9,7 +9,7 @@ Deploy expense-budget-tracker to a dedicated AWS account using AWS CDK. DNS and 
 | Domain (`.com`, Cloudflare) | ~$10/year | Custom domain for the app (`app.yourdomain.com`) |
 | ECS Fargate (0.5 vCPU / 1 GB ARM64, 24/7) | ~$13/month | Runs Next.js web app container |
 | RDS t4g.micro (24/7) | ~$12/month | Managed Postgres with automated backups, private subnet isolation |
-| NAT instance t4g.micro | ~$6/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
+| NAT instance t4g.small | ~$12/month | Outbound internet for ECS (ECR pulls) and Lambda in private subnet |
 | ALB | ~$16/month | HTTPS termination with Origin Certificate, health checks |
 | S3, CloudWatch, WAF, Lambda | ~$3/month | Access logs, alarms, SQLi/XSS protection, and scheduled FX rates |
 | API Gateway + Lambda | ~$0/month | REST API for machine SQL and a separate HTTP API v2 for MCP; negligible at low volume |
@@ -59,7 +59,7 @@ MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
 
 **On AWS (via CDK):**
 
-- **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.micro for cost savings)
+- **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.small for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
 - **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key, Langfuse public key, Langfuse secret key
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
