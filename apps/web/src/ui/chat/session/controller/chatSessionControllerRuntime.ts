@@ -9,6 +9,7 @@ import {
 } from "@/lib/chatImageFormats";
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import type { StoredMessage } from "@/lib/chatHistory";
+import { resolveBrowserTimezone } from "@/lib/timezone";
 import type { ContentPart } from "@/server/chat/types";
 import type { PendingAttachment } from "../../shell/panel/FileAttachment";
 import type { ChatSessionSnapshot } from "../bootstrap/chatSessionSnapshot";
@@ -1058,7 +1059,7 @@ export const prepareChatSendRequest = (
     turnId: "00000000-0000-4000-8000-000000000000",
     model: CHAT_MODEL_ID,
     content: contentParts,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timezone: resolveBrowserTimezone(),
   } satisfies ExistingChatSendRequestBody);
 
   if (requestBody.length > MAX_BODY_BYTES) {
@@ -1087,7 +1088,7 @@ export const buildChatSendRequestBody = (
     turnId,
     model: CHAT_MODEL_ID,
     content,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timezone: resolveBrowserTimezone(),
   } satisfies ExistingChatSendRequestBody);
 
 export const buildFreshChatSendRequestBody = (
@@ -1096,7 +1097,7 @@ export const buildFreshChatSendRequestBody = (
   JSON.stringify({
     model: CHAT_MODEL_ID,
     content,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timezone: resolveBrowserTimezone(),
   } satisfies ChatMessageRequestBody);
 
 export const createChatSendTransport = (

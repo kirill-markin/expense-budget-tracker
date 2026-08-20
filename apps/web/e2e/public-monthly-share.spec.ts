@@ -5,6 +5,7 @@ import {
   createTestWorkspace,
   createTransaction,
   deleteTestWorkspace,
+  E2E_TIMEZONE_ID,
   runIdFromClock,
   setWorkspaceCookie,
   setupBrowserSession,
@@ -236,6 +237,7 @@ const createUnauthenticatedPage = async (
   const context = await browser.newContext({
     baseURL,
     ignoreHTTPSErrors: true,
+    timezoneId: E2E_TIMEZONE_ID,
   });
   return context.newPage();
 };

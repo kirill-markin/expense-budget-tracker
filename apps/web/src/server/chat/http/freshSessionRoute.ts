@@ -4,6 +4,7 @@ import { handleRoute } from "@/server/api/handleRoute";
 import {
   buildChatRequestDiagnostics,
   extractChatRequestContext,
+  InvalidChatTimezoneError,
   parseFreshChatRequestBody,
   type ChatRequestContext,
   type FreshChatRequestBody,
@@ -151,6 +152,14 @@ export const postFreshChatSessionRouteWithDeps = async (
         body = parseFreshChatRequestBody(await request.json());
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        if (error instanceof InvalidChatTimezoneError) {
+          dependencies.log({
+            domain: "chat",
+            action: "timezone_rejected",
+            route: "/api/chat/new",
+            timezone: error.timezone,
+          });
+        }
         return new Response(message, { status: 400 });
       }
 

@@ -134,6 +134,19 @@ type ChatEvent =
     lastMessageRole?: "user" | "assistant";
     lastMessageState?: "in_progress" | "completed" | "error" | "cancelled";
   }>
+  /**
+   * A chat request was refused because its `timezone` field is not a zone the
+   * runtime can format dates in. This is invalid client input, not a server
+   * failure, so the action is deliberately kept out of the `error` family that
+   * the CloudWatch web error alarm pages on; it exists so the rejected value
+   * stays searchable in logs.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "timezone_rejected";
+    route: string;
+    timezone: string;
+  }>
   | Readonly<{
     domain: "chat";
     action: "run_transition_skipped";

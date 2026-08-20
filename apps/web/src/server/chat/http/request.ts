@@ -3,6 +3,7 @@ import type {
   ChatSessionSnapshot,
 } from "@/server/chat/store";
 import { z } from "zod";
+import { parseTimezone } from "@/lib/timezone";
 import { validateChatAttachments } from "@/server/chat/attachments/validation";
 import type { ContentPart } from "@/server/chat/types";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
@@ -60,6 +61,25 @@ export type ChatHistoryResponse = Readonly<{
     isStopped: boolean;
   }>>;
 }>;
+
+/**
+ * Raised when a chat request carries a timezone the runtime cannot format dates
+ * in, such as the `Etc/Unknown` reported by browsers that cannot name their own
+ * zone.
+ *
+ * The rejected value is kept as a field so the route can log it as a structured
+ * CloudWatch property; the request itself only ever returns a bare 400, which
+ * would otherwise leave this class of failure with no server-side signal.
+ */
+export class InvalidChatTimezoneError extends Error {
+  public readonly timezone: string;
+
+  public constructor(timezone: string) {
+    super(`timezone must be UTC or a supported IANA timezone, received: ${timezone}`);
+    this.name = "InvalidChatTimezoneError";
+    this.timezone = timezone;
+  }
+}
 
 const LEGACY_CHAT_REQUEST_FIELDS = [
   "chatSessionId",
@@ -191,6 +211,10 @@ const parseChatMessageRequestBody = (body: unknown): FreshChatRequestBody => {
   if (typeof candidate.timezone !== "string" || candidate.timezone.length === 0) {
     throw new Error("timezone must be a non-empty string");
   }
+  const timezone = parseTimezone(candidate.timezone);
+  if (timezone === null) {
+    throw new InvalidChatTimezoneError(candidate.timezone);
+  }
 
   const content = candidate.content.map(normalizeParsedContentPart);
   validateChatAttachments(content);
@@ -198,7 +222,7 @@ const parseChatMessageRequestBody = (body: unknown): FreshChatRequestBody => {
   return {
     content,
     model: candidate.model,
-    timezone: candidate.timezone,
+    timezone,
   };
 };
 

@@ -14,6 +14,15 @@ const VISIBILITY_MODE_STORAGE_KEY = "expense-tracker-visibility-mode";
 const LAST_ACTIVE_STORAGE_KEY = "expense-tracker-last-active-ts";
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
+/**
+ * Browser timezone for every E2E browser context.
+ *
+ * Contexts created manually from the `browser` fixture do not inherit
+ * `use.timezoneId` from the Playwright config, so each `browser.newContext()`
+ * call passes this constant explicitly to keep local runs identical to CI.
+ */
+export const E2E_TIMEZONE_ID = "UTC";
+
 export type LiveSmokeScenario = Readonly<{
   runId: string;
   workspaceName: string;
