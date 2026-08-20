@@ -166,6 +166,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
       // Points to the CA bundle downloaded in apps/web/Dockerfile.
       NODE_EXTRA_CA_CERTS: "/app/rds-global-bundle.pem",
+      ...(props.demoEmailDostip !== "" ? { DEMO_EMAIL_DOSTIP: props.demoEmailDostip } : {}),
     },
     secrets: {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
