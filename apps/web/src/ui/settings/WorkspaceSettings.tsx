@@ -4,7 +4,7 @@ import { type ReactElement, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchWithCsrf } from "@/lib/csrf";
-import { listSupportedTimezones } from "@/lib/timezone";
+import { listTimezoneOptions } from "@/lib/timezone";
 
 import styles from "./SettingsForm.module.css";
 
@@ -33,8 +33,8 @@ export const WorkspaceSettings = (props: Props): ReactElement => {
   const dirty = selected !== reportingCurrency || firstDayOfWeek !== props.firstDayOfWeek || timezone !== props.timezone;
 
   const timezones = useMemo<ReadonlyArray<string>>(() => {
-    return listSupportedTimezones();
-  }, []);
+    return listTimezoneOptions(props.timezone);
+  }, [props.timezone]);
 
   const handleSave = useCallback(async (): Promise<void> => {
     setSaving(true);

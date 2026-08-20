@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildChatRequestDiagnostics,
+  InvalidChatTimezoneError,
   parseChatRequestBody,
 } from "@/server/chat/http/request";
 import { LegacyPdfFileAttachmentError } from "@/server/chat/attachments/validation";
@@ -92,4 +93,42 @@ test("parseChatRequestBody rejects raw PDF file parts", (): void => {
       return true;
     },
   );
+});
+
+test("parseChatRequestBody rejects a timezone the browser could not resolve", (): void => {
+  assert.throws(
+    (): void => {
+      parseChatRequestBody({
+        ...createRequestBody([{ type: "text", text: "How much did I spend?" }]),
+        timezone: "Etc/Unknown",
+      });
+    },
+    (error: unknown): boolean => {
+      assert.ok(error instanceof InvalidChatTimezoneError);
+      assert.equal(error.timezone, "Etc/Unknown");
+      assert.match(
+        error.message,
+        /timezone must be UTC or a supported IANA timezone, received: Etc\/Unknown/u,
+      );
+      return true;
+    },
+  );
+});
+
+test("parseChatRequestBody accepts UTC sent by browsers without a resolvable timezone", (): void => {
+  const parsed = parseChatRequestBody({
+    ...createRequestBody([{ type: "text", text: "How much did I spend?" }]),
+    timezone: "UTC",
+  });
+
+  assert.equal(parsed.timezone, "UTC");
+});
+
+test("parseChatRequestBody preserves a legacy IANA alias timezone", (): void => {
+  const parsed = parseChatRequestBody({
+    ...createRequestBody([{ type: "text", text: "How much did I spend?" }]),
+    timezone: "US/Pacific",
+  });
+
+  assert.equal(parsed.timezone, "US/Pacific");
 });

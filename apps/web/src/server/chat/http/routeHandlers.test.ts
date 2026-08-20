@@ -159,6 +159,30 @@ test("postChatRouteWithDeps returns 400 for invalid request bodies", async (): P
   });
 });
 
+test("postChatRouteWithDeps logs the rejected timezone value", async (): Promise<void> => {
+  await withOpenAiApiKey("test-key", async (): Promise<void> => {
+    const rejectedTimezones: Array<string> = [];
+    const response = await postChatRouteWithDeps(
+      createChatRequest({
+        sessionId: "session-1",
+        content: [{ type: "text", text: "Hello" }],
+        model: CHAT_MODEL_ID,
+        timezone: "Etc/Unknown",
+      }),
+      createPostDependencies({
+        log: (event) => {
+          if (event.domain === "chat" && event.action === "timezone_rejected") {
+            rejectedTimezones.push(event.timezone);
+          }
+        },
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(rejectedTimezones, ["Etc/Unknown"]);
+  });
+});
+
 test("postChatRouteWithDeps rejects non-UUID turn identities before persistence", async (): Promise<void> => {
   await withOpenAiApiKey("test-key", async (): Promise<void> => {
     const response = await postChatRouteWithDeps(

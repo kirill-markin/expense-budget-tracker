@@ -5,6 +5,8 @@ import {
   type VideoMode,
 } from "@playwright/test";
 
+import { E2E_TIMEZONE_ID } from "./e2e/live-smoke.actions";
+
 const appBaseUrl = process.env.EXPENSE_E2E_APP_BASE_URL ?? "https://app.expense-budget-tracker.com";
 
 const defaultTraceMode: TraceMode = "retain-on-failure";
@@ -89,6 +91,7 @@ export default defineConfig({
     headless: true,
     ignoreHTTPSErrors: true,
     navigationTimeout: liveSmokeNavigationTimeoutMs,
+    timezoneId: E2E_TIMEZONE_ID,
     trace: readTraceMode(),
     screenshot: readScreenshotMode(),
     video: readVideoMode(),

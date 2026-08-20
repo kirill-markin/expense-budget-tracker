@@ -13,6 +13,7 @@ import {
   createTestWorkspace,
   createTransaction,
   deleteTestWorkspace,
+  E2E_TIMEZONE_ID,
   ensureAllVisibilityMode,
   getBalancesSummary,
   getBudgetGrid,
@@ -51,7 +52,10 @@ test.describe.serial("live smoke: auth, transactions, balances, budget, and AI c
 
     sharedBaseUrl = baseURL;
     sharedScenario = buildScenario(runIdFromClock());
-    sharedContext = await browser.newContext({ ignoreHTTPSErrors: true });
+    sharedContext = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      timezoneId: E2E_TIMEZONE_ID,
+    });
     sharedPage = await sharedContext.newPage();
   });
 
