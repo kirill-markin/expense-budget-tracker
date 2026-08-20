@@ -37,6 +37,7 @@ const createHeaders = (): Headers =>
     "content-type": "application/json",
     "x-user-id": "user-1",
     "x-workspace-id": "workspace-1",
+    "x-user-email": "user-1@real.example",
   });
 
 const createSnapshot = (
@@ -121,6 +122,7 @@ const createPostDependencies = (
   startPersistedChatRun: overrides.startPersistedChatRun ?? (() => (async function* (): AsyncGenerator<ChatStreamEvent> {
     yield { type: "done" };
   })()),
+  admitDemoChatTurn: overrides.admitDemoChatTurn ?? (async () => ({ kind: "allowed" })),
   isServerDraining: overrides.isServerDraining ?? (() => false),
   log: overrides.log ?? (() => undefined),
 });
@@ -1176,4 +1178,53 @@ test("deleteChatRouteWithDeps creates a fresh session when the latest session ha
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, sessionId: "session-2" });
+});
+
+test("postChatRouteWithDeps refuses a rate-limited demo turn before any run starts", async (): Promise<void> => {
+  await withOpenAiApiKey("test-key", async (): Promise<void> => {
+    const preparedRuns: Array<string> = [];
+    const startedRuns: Array<string> = [];
+    const rateLimitEvents: Array<Readonly<{ userId: string; recentTurnCount: number; limit: number }>> = [];
+
+    const response = await postChatRouteWithDeps(
+      createChatRequest({
+        sessionId: "session-1",
+        content: [{ type: "text", text: "Hello" }],
+        model: CHAT_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+      createPostDependencies({
+        admitDemoChatTurn: async () => ({
+          kind: "refused",
+          recentTurnCount: 20,
+          limit: 20,
+        }),
+        prepareChatRun: async (_userId, _workspaceId, sessionId) => {
+          preparedRuns.push(sessionId ?? "session-1");
+          return { kind: "started", preparedRun: createPreparedRun(sessionId ?? "session-1") };
+        },
+        startPersistedChatRun: () => {
+          startedRuns.push("started");
+          return (async function* (): AsyncGenerator<ChatStreamEvent> {
+            yield { type: "done" };
+          })();
+        },
+        log: (event) => {
+          if (event.domain === "chat" && event.action === "demo_turn_rate_limited") {
+            rateLimitEvents.push({
+              userId: event.userId,
+              recentTurnCount: event.recentTurnCount,
+              limit: event.limit,
+            });
+          }
+        },
+      }),
+    );
+
+    assert.equal(response.status, 429);
+    assert.match(await response.text(), /20/u);
+    assert.deepEqual(preparedRuns, []);
+    assert.deepEqual(startedRuns, []);
+    assert.deepEqual(rateLimitEvents, [{ userId: "user-1", recentTurnCount: 20, limit: 20 }]);
+  });
 });

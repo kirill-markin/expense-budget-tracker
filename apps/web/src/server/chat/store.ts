@@ -56,6 +56,13 @@ export {
 export { getChatSessionSnapshot } from "./store/snapshotStore";
 
 export {
+  countUserChatTurnsSinceWithQuery,
+  deleteUserChatTurnsBeforeWithQuery,
+  lockUserChatTurnRateWithQuery,
+  recordUserChatTurnWithQuery,
+} from "./store/turnRateStore";
+
+export {
   admitChatRunStart,
   admitChatRunStartWithQuery,
   buildUserStoppedAssistantContent,

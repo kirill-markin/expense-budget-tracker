@@ -313,6 +313,7 @@
   "chat.contentPolicyBlocked": "AI 服务以违反内容政策为由阻止了此请求。请尝试重新组织消息。",
   "chat.unsupportedStoredAttachment": "此对话包含无法安全重放的旧附件。请点击“新建”，然后重新附加该文件。",
   "chat.unexpectedError": "AI 服务出现意外错误。请重试。",
+  "chat.demoRateLimitReached": "演示账号每小时最多发送 {{limit}} 条聊天消息。请等待几分钟后重试。",
   "chat.stopped": "已停止",
   "chat.copyTranscript": "复制聊天记录",
   "chat.copied": "已复制",

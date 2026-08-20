@@ -313,6 +313,7 @@
   "chat.contentPolicyBlocked": "The AI service blocked this request as a content policy violation. Try rephrasing the message.",
   "chat.unsupportedStoredAttachment": "This conversation contains an older attachment that cannot be replayed safely. Click New to start a new conversation, then attach the file again.",
   "chat.unexpectedError": "Unexpected error from the AI service. Please try again.",
+  "chat.demoRateLimitReached": "Demo accounts are limited to {{limit}} chat messages per hour. Wait a few minutes and try again.",
   "chat.stopped": "Stopped",
   "chat.copyTranscript": "Copy chat",
   "chat.copied": "Copied",

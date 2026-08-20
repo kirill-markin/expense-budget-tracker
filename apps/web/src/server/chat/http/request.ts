@@ -6,7 +6,7 @@ import { z } from "zod";
 import { parseTimezone } from "@/lib/timezone";
 import { validateChatAttachments } from "@/server/chat/attachments/validation";
 import type { ContentPart } from "@/server/chat/types";
-import { extractUserId, extractWorkspaceId } from "@/server/userId";
+import { extractUserEmail, extractUserId, extractWorkspaceId } from "@/server/userId";
 
 export type ChatRequestBody = Readonly<{
   sessionId: string;
@@ -25,6 +25,7 @@ export type FreshChatRequestBody = Readonly<{
 export type ChatRequestContext = Readonly<{
   userId: string;
   workspaceId: string;
+  email: string;
 }>;
 
 export type ChatRequestDiagnostics = Readonly<{
@@ -185,6 +186,7 @@ const getActiveTurnId = (
 export const extractChatRequestContext = (request: Request): ChatRequestContext => ({
   userId: extractUserId(request),
   workspaceId: extractWorkspaceId(request),
+  email: extractUserEmail(request),
 });
 
 const parseChatMessageRequestBody = (body: unknown): FreshChatRequestBody => {

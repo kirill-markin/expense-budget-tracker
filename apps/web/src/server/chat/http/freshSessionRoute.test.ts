@@ -31,6 +31,7 @@ const createHeaders = (): Headers =>
     "content-type": "application/json",
     "x-user-id": "user-1",
     "x-workspace-id": "workspace-1",
+    "x-user-email": "user-1@real.example",
   });
 
 const createRequest = (body: unknown): Request =>
@@ -89,6 +90,8 @@ const createDependencies = (
     ?? (() => (async function* (): AsyncGenerator<ChatStreamEvent> {
       yield { type: "done" };
     })()),
+  admitDemoChatTurn: overrides.admitDemoChatTurn
+    ?? (async () => ({ kind: "allowed" })),
   isServerDraining: overrides.isServerDraining ?? (() => false),
   log: overrides.log ?? (() => undefined),
 });
@@ -435,5 +438,45 @@ test("POST /api/chat/new preserves safe session identity when runtime start and 
     assert.equal(loggedEvents.length, 2);
     assert.match(JSON.stringify(loggedEvents[0]), /internal runtime registry details/);
     assert.match(JSON.stringify(loggedEvents[1]), /internal database persistence details/);
+  });
+});
+
+test("POST /api/chat/new refuses a rate-limited demo turn before preparing a session", async (): Promise<void> => {
+  await withOpenAiApiKey(async (): Promise<void> => {
+    let prepareCallCount = 0;
+    const rateLimitEvents: Array<Readonly<{ route: string; userId: string; limit: number }>> = [];
+
+    const response = await postFreshChatSessionRouteWithDeps(
+      createRequest({
+        content: [{ type: "text", text: "Hello" }],
+        model: CHAT_MODEL_ID,
+        timezone: "Europe/Madrid",
+      }),
+      createDependencies({
+        admitDemoChatTurn: async () => ({
+          kind: "refused",
+          recentTurnCount: 20,
+          limit: 20,
+        }),
+        prepareFreshChatRun: async (_userId, _workspaceId, content) => {
+          prepareCallCount += 1;
+          return createPreparedRun(content);
+        },
+        log: (event) => {
+          if (event.domain === "chat" && event.action === "demo_turn_rate_limited") {
+            rateLimitEvents.push({
+              route: event.route,
+              userId: event.userId,
+              limit: event.limit,
+            });
+          }
+        },
+      }),
+    );
+
+    assert.equal(response.status, 429);
+    assert.match(await response.text(), /20/u);
+    assert.equal(prepareCallCount, 0);
+    assert.deepEqual(rateLimitEvents, [{ route: "/api/chat/new", userId: "user-1", limit: 20 }]);
   });
 });

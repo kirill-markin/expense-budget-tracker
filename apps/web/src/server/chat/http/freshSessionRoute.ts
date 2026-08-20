@@ -1,6 +1,8 @@
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import { getLocaleFromRequest } from "@/lib/localeCookie";
+import { ti } from "@/i18n/serverT";
 import { handleRoute } from "@/server/api/handleRoute";
+import { admitDemoChatTurn } from "@/server/chat/demoRateLimit";
 import {
   buildChatRequestDiagnostics,
   extractChatRequestContext,
@@ -42,6 +44,7 @@ type FreshChatSessionRouteDependencies = Readonly<{
   prepareFreshChatRun: typeof prepareFreshChatRun;
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
   startPersistedChatRun: typeof startPersistedChatRun;
+  admitDemoChatTurn: typeof admitDemoChatTurn;
   isServerDraining: typeof isServerDraining;
   log: typeof log;
 }>;
@@ -53,6 +56,7 @@ const DEFAULT_FRESH_CHAT_SESSION_ROUTE_DEPENDENCIES: FreshChatSessionRouteDepend
   prepareFreshChatRun,
   persistAssistantTerminalError,
   startPersistedChatRun,
+  admitDemoChatTurn,
   isServerDraining,
   log,
 };
@@ -194,6 +198,26 @@ export const postFreshChatSessionRouteWithDeps = async (
       }
 
       const locale = dependencies.getLocaleFromRequest(request);
+
+      const rateLimitDecision = await dependencies.admitDemoChatTurn(
+        context.userId,
+        context.email,
+      );
+      if (rateLimitDecision.kind === "refused") {
+        dependencies.log({
+          domain: "chat",
+          action: "demo_turn_rate_limited",
+          route: "/api/chat/new",
+          userId: context.userId,
+          recentTurnCount: rateLimitDecision.recentTurnCount,
+          limit: rateLimitDecision.limit,
+        });
+        return new Response(
+          ti(locale, "chat.demoRateLimitReached", { limit: rateLimitDecision.limit }),
+          { status: 429 },
+        );
+      }
+
       let preparedRun: Awaited<ReturnType<typeof prepareFreshChatRun>>;
       try {
         preparedRun = await dependencies.prepareFreshChatRun(

@@ -313,6 +313,7 @@
   "chat.contentPolicyBlocked": "El servicio de IA bloqueó esta solicitud por una infracción de la política de contenido. Intenta reformular el mensaje.",
   "chat.unsupportedStoredAttachment": "Esta conversación contiene un archivo adjunto antiguo que no puede reproducirse de forma segura. Haz clic en «Nuevo» y vuelve a adjuntar el archivo.",
   "chat.unexpectedError": "Error inesperado del servicio de IA. Por favor, inténtalo de nuevo.",
+  "chat.demoRateLimitReached": "Las cuentas de demostración están limitadas a {{limit}} mensajes de chat por hora. Espera unos minutos e inténtalo de nuevo.",
   "chat.stopped": "Detenido",
   "chat.copyTranscript": "Copiar conversación",
   "chat.copied": "Copiado",

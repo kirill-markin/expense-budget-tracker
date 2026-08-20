@@ -1,6 +1,8 @@
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import { getLocaleFromRequest } from "@/lib/localeCookie";
+import { ti } from "@/i18n/serverT";
 import { handleRoute } from "@/server/api/handleRoute";
+import { admitDemoChatTurn } from "@/server/chat/demoRateLimit";
 import {
   createChatErrorLogEvent,
 } from "@/server/chat/logging";
@@ -58,6 +60,7 @@ type PostChatRouteDependencies = Readonly<{
   admitChatRunStart: typeof admitChatRunStart;
   requireAcceptedChatTurn: typeof requireAcceptedChatTurn;
   startPersistedChatRun: typeof startPersistedChatRun;
+  admitDemoChatTurn: typeof admitDemoChatTurn;
   isServerDraining: typeof isServerDraining;
   log: typeof log;
 }>;
@@ -81,6 +84,7 @@ const DEFAULT_POST_CHAT_ROUTE_DEPENDENCIES: PostChatRouteDependencies = {
   admitChatRunStart,
   requireAcceptedChatTurn,
   startPersistedChatRun,
+  admitDemoChatTurn,
   isServerDraining,
   log,
 };
@@ -192,6 +196,29 @@ export const postChatRouteWithDeps = async (
   }
 
   try {
+    const rateLimitDecision = await dependencies.admitDemoChatTurn(
+      context.userId,
+      context.email,
+    );
+    if (rateLimitDecision.kind === "refused") {
+      dependencies.log({
+        domain: "chat",
+        action: "demo_turn_rate_limited",
+        route: "/api/chat",
+        userId: context.userId,
+        recentTurnCount: rateLimitDecision.recentTurnCount,
+        limit: rateLimitDecision.limit,
+      });
+      return new Response(
+        ti(
+          dependencies.getLocaleFromRequest(request),
+          "chat.demoRateLimitReached",
+          { limit: rateLimitDecision.limit },
+        ),
+        { status: 429 },
+      );
+    }
+
     const snapshot = await dependencies.resolveSnapshotWithRunRecovery(
       context.userId,
       context.workspaceId,
