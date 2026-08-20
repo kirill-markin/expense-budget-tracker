@@ -8,6 +8,8 @@
  * withUserContext() — multiple statements in one transaction with app.user_id
  *                     and app.workspace_id. The callback receives a bound
  *                     queryFn sharing one client.
+ * withUserOnlyContext() — same, but for strictly user-scoped tables: sets
+ *                     app.user_id without provisioning or selecting a workspace.
  * withRestrictedUserContext() — same as withUserContext(), but user SQL runs
  *                     as api_sql_executor after the RLS context is set.
  */
@@ -32,5 +34,6 @@ export const ensureTrustedIdentityProvisioned = facade.ensureTrustedIdentityProv
 export const queryAs = facade.queryAs;
 export const queryAsTrustedIdentity = facade.queryAsTrustedIdentity;
 export const withUserContext = facade.withUserContext;
+export const withUserOnlyContext = facade.withUserOnlyContext;
 export const withRestrictedUserContext = facade.withRestrictedUserContext;
 export const withRestrictedTrustedIdentityContext = facade.withRestrictedTrustedIdentityContext;

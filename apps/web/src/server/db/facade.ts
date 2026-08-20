@@ -25,6 +25,7 @@ type DbFacade = Readonly<{
   queryAs: (userId: string, workspaceId: string, text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
   queryAsTrustedIdentity: (identity: UserIdentity, workspaceId: string, text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
   withUserContext: <T>(userId: string, workspaceId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
+  withUserOnlyContext: <T>(userId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withRestrictedUserContext: <T>(userId: string, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withRestrictedTrustedIdentityContext: <T>(identity: UserIdentity, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
 }>;
@@ -106,6 +107,29 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
       {
         userId,
         workspaceId,
+        statementTimeoutMs: null,
+        useRestrictedRole: false,
+      },
+      callback,
+    ),
+  /**
+   * Run statements against strictly user-scoped tables, whose RLS policies key
+   * on app.user_id alone.
+   *
+   * Deliberately skips ensureUserProvisioned: that path creates and joins a
+   * workspace as a side effect, which user-scoped counters such as
+   * chat_turn_rate_events must never trigger. app.workspace_id is set to an
+   * empty string so no workspace-scoped policy can match inside this context.
+   */
+  withUserOnlyContext: async <T>(
+    userId: string,
+    callback: (queryFn: QueryFn) => Promise<T>,
+  ): Promise<T> =>
+    runWithContext(
+      dependencies.getPool(),
+      {
+        userId,
+        workspaceId: "",
         statementTimeoutMs: null,
         useRestrictedRole: false,
       },

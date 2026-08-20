@@ -313,6 +313,7 @@
   "chat.contentPolicyBlocked": "שירות ה-AI חסם את הבקשה בשל הפרת מדיניות התוכן. נסה לנסח את ההודעה מחדש.",
   "chat.unsupportedStoredAttachment": "השיחה הזו מכילה קובץ מצורף ישן שלא ניתן להפעיל מחדש בבטחה. יש ללחוץ על „חדש” ולצרף שוב את הקובץ.",
   "chat.unexpectedError": "שגיאה בלתי צפויה משירות ה-AI. אנא נסה שוב.",
+  "chat.demoRateLimitReached": "חשבונות הדגמה מוגבלים ל-{{limit}} הודעות צ'אט בשעה. המתן כמה דקות ונסה שוב.",
   "chat.stopped": "נעצר",
   "chat.copyTranscript": "העתק שיחה",
   "chat.copied": "הועתק",

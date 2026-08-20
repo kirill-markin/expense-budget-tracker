@@ -28,6 +28,14 @@ export const extractWorkspaceId = (request: Request): string => {
   return workspaceId;
 };
 
+export const extractUserEmail = (request: Request): string => {
+  const email = request.headers.get(USER_EMAIL_HEADER);
+  if (email === null || email === "") {
+    throw new Error(`Missing ${USER_EMAIL_HEADER} header — proxy misconfiguration`);
+  }
+  return email;
+};
+
 /** Read the authenticated user ID from trusted internal headers. */
 export const extractUserIdFromHeaders = (headersList: Headers): string => {
   const userId = headersList.get(USER_ID_HEADER);

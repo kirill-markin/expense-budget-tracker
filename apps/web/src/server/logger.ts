@@ -147,6 +147,21 @@ type ChatEvent =
     route: string;
     timezone: string;
   }>
+  /**
+   * A chat turn was refused because the demo/review account behind it reached
+   * its rolling-hour turn cap. This is a working throttle, not a server
+   * failure, so the action is deliberately kept out of the `error` family that
+   * the CloudWatch web error alarm pages on; a throttled bot must not page the
+   * on-call. It exists so the refusal stays searchable and countable in logs.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "demo_turn_rate_limited";
+    route: string;
+    userId: string;
+    recentTurnCount: number;
+    limit: number;
+  }>
   | Readonly<{
     domain: "chat";
     action: "run_transition_skipped";
