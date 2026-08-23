@@ -1034,6 +1034,49 @@ const failFunctionCallNotAllowed = (functionName: string): never =>
     `Function ${functionName}() is not allowed in restricted SQL. Allowed functions: ${ALLOWED_SQL_FUNCTIONS_DESCRIPTION}`,
   );
 
+/**
+ * Tokens that can terminate a PostgreSQL indirection chain immediately before a
+ * `.` field access: `)` closes a parenthesized expression and `]` closes a
+ * subscript. PostgreSQL resolves the field name after either terminator through
+ * the same function lookup, so both spellings must be rejected.
+ *
+ * A bare identifier is deliberately absent: `relation.column` is ordinary SQL,
+ * and the paren-less `relation.func` form is an accepted, documented exception.
+ */
+const INDIRECTION_TERMINATORS: ReadonlySet<string> = new Set([")", "]"]);
+
+/**
+ * Rejects PostgreSQL attribute notation applied to an indirection expression,
+ * such as `(amount).pg_sleep` or `(ARRAY[amount])[1].pg_sleep`. Those forms are
+ * equivalent to `pg_sleep(amount)` but have no parenthesis after the function
+ * name, so the call allowlist, which only inspects identifiers followed by `(`,
+ * would never see them.
+ *
+ * The check stays anchored on the full `<terminator> . <word>` triple so that
+ * plain subscripting such as `filtered_categories[1] = 'food'`, slice syntax,
+ * and composite expansion via `.*` keep working; none of those resolve a
+ * function name.
+ */
+const assertNoIndirectionAttributeNotation = (
+  tokens: ReadonlyArray<SqlToken>,
+): void => {
+  for (let index = 2; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const terminator = tokens[index - 2];
+    if (
+      token?.kind === "word"
+      && tokens[index - 1]?.value === "."
+      && terminator !== undefined
+      && INDIRECTION_TERMINATORS.has(terminator.value)
+    ) {
+      fail(
+        "function_calls_not_allowed",
+        `Attribute-notation function calls such as (column).${token.value} are not allowed in restricted SQL. Call an allowlisted function explicitly. Allowed functions: ${ALLOWED_SQL_FUNCTIONS_DESCRIPTION}`,
+      );
+    }
+  }
+};
+
 const assertOnlyAllowedFunctionCallsInSegment = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
@@ -1424,6 +1467,7 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
   assertSupportedEffectiveStatementsInSegment(tokens, 0, tokens.length);
   assertMutationTargetsAreWritable(tokens, 0, tokens.length);
   assertOnlyAllowedFunctionCallsInSegment(tokens, 0, tokens.length, "statement");
+  assertNoIndirectionAttributeNotation(tokens);
 
   return {
     sql,
