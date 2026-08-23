@@ -20,6 +20,7 @@ export interface IngressProps {
   baseDomain: string;
   appDomain: string;
   authDomain: string;
+  originSharedSecret: string;
 }
 
 export interface IngressResult {
@@ -36,6 +37,16 @@ const DYNAMIC_CLIENT_REGISTRATION_RATE_LIMIT = 10;
 const DYNAMIC_CLIENT_REGISTRATION_EVALUATION_WINDOW_SECONDS = 60;
 const OAUTH_TOKEN_EXCHANGE_RATE_LIMIT = 60;
 const OAUTH_TOKEN_EXCHANGE_EVALUATION_WINDOW_SECONDS = 60;
+
+// Injected by a Transform Rule in our own Cloudflare zone. AWS WAF singleHeader
+// names must be lowercase. Requests reaching the ALB through any other Cloudflare
+// zone cannot carry it, so they are rejected once the secret is configured.
+const ORIGIN_SHARED_SECRET_HEADER = "x-origin-auth";
+// Priorities 0-8 are taken and AWS WAF priorities are non-negative integers, so the
+// lowest free slot is after the rate-based rules. Evaluation order is irrelevant for
+// this rule because the rate limiters scope themselves down to requests carrying the
+// same secret, so a foreign-zone request is never aggregated before it is blocked.
+const ORIGIN_SHARED_SECRET_RULE_PRIORITY = 9;
 
 const noneTextTransformation = (): wafv2.CfnWebACL.TextTransformationProperty => ({
   priority: 0,
@@ -154,6 +165,32 @@ const blockLabeledRequestUnless = (
   },
 });
 
+const originSharedSecretMatches = (
+  originSharedSecret: string,
+): wafv2.CfnWebACL.StatementProperty =>
+  byteMatchStatement(
+    singleHeaderField(ORIGIN_SHARED_SECRET_HEADER),
+    "EXACTLY",
+    originSharedSecret,
+    noneTextTransformation(),
+  );
+
+// Blocks every request whose origin secret header is absent or different.
+// A missing header does not match the byte comparison, so the negation matches.
+const blockRequestsWithoutOriginSharedSecret = (
+  originSharedSecret: string,
+): wafv2.CfnWebACL.RuleProperty => ({
+  name: "BlockRequestsWithoutOriginSharedSecret",
+  priority: ORIGIN_SHARED_SECRET_RULE_PRIORITY,
+  action: { block: {} },
+  statement: notStatement(originSharedSecretMatches(originSharedSecret)),
+  visibilityConfig: {
+    sampledRequestsEnabled: true,
+    cloudWatchMetricsEnabled: true,
+    metricName: "expense-tracker-origin-secret-block",
+  },
+});
+
 const postRequestToApp = (
   appDomain: string,
   path: string,
@@ -170,7 +207,23 @@ const postRequestToApp = (
 export const buildIngressWafRules = (
   appDomain: string,
   authDomain: string,
+  originSharedSecret: string,
 ): ReadonlyArray<wafv2.CfnWebACL.RuleProperty> => {
+  // A blank or whitespace-only context value means "not configured": it must leave
+  // the web ACL untouched instead of producing a live rule matching a literal that
+  // Cloudflare never sends. Padding around a real secret is stripped for the same
+  // reason, so the rule always matches exactly what the Transform Rule injects.
+  const sharedSecret = originSharedSecret.trim();
+
+  // Rate-based rules aggregate every request they evaluate, and a terminating action
+  // in a later rule does not un-count it. A request that did not come through our
+  // Cloudflare zone therefore must never enter a CF-Connecting-IP rate-limit scope,
+  // or a forged CF-Connecting-IP can still exhaust a victim IP's budget before the
+  // origin-secret rule blocks it. Requiring the secret inside every scope-down keeps
+  // the rate limits keyed on IPs we actually trust, without renumbering any rule.
+  const fromTrustedZone: ReadonlyArray<wafv2.CfnWebACL.StatementProperty> =
+    sharedSecret === "" ? [] : [originSharedSecretMatches(sharedSecret)];
+
   const chatJsonRequest = postRequestToApp(appDomain, "/api/chat", "application/json");
   const newChatJsonRequest = postRequestToApp(
     appDomain,
@@ -203,7 +256,7 @@ export const buildIngressWafRules = (
     ]),
   ]);
 
-  return [
+  const rules: ReadonlyArray<wafv2.CfnWebACL.RuleProperty> = [
     {
       name: "AWSManagedCommonRules",
       priority: 0,
@@ -316,6 +369,7 @@ export const buildIngressWafRules = (
             headerIs("host", authDomain),
             methodIs("POST"),
             uriPathIs("/oauth/register"),
+            ...fromTrustedZone,
           ]),
         },
       },
@@ -342,6 +396,7 @@ export const buildIngressWafRules = (
             headerIs("host", authDomain),
             methodIs("POST"),
             uriPathIs("/oauth/token"),
+            ...fromTrustedZone,
           ]),
         },
       },
@@ -352,6 +407,12 @@ export const buildIngressWafRules = (
       },
     },
   ];
+
+  if (sharedSecret === "") {
+    return rules;
+  }
+
+  return [...rules, blockRequestsWithoutOriginSharedSecret(sharedSecret)];
 };
 
 export function ingress(scope: Construct, props: IngressProps): IngressResult {
@@ -437,6 +498,9 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   // the trusted real-client boundary for the OAuth rate rules. AWS WAF ignores these
   // rules if that header is absent; Cloudflare supplies it on every origin request.
   // A present malformed value uses MATCH and is blocked instead of bypassing a rule.
+  // "Some Cloudflare edge" is a weaker claim than "our Cloudflare zone": once
+  // originSharedSecret is configured, the rate rules additionally require the
+  // x-origin-auth header, so only requests from our own zone are ever aggregated.
   const waf = new wafv2.CfnWebACL(scope, "Waf", {
     scope: "REGIONAL",
     defaultAction: { allow: {} },
@@ -445,7 +509,13 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
       cloudWatchMetricsEnabled: true,
       metricName: "expense-tracker-waf",
     },
-    rules: [...buildIngressWafRules(props.appDomain, props.authDomain)],
+    rules: [
+      ...buildIngressWafRules(
+        props.appDomain,
+        props.authDomain,
+        props.originSharedSecret,
+      ),
+    ],
   });
   const webAclName = cdk.Fn.select(0, cdk.Fn.split("|", waf.ref));
 

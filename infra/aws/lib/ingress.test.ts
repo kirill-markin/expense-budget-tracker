@@ -155,7 +155,7 @@ const assertBoundedGetRoute = (
 };
 
 test("WAF counts the managed query-size rule and re-blocks outside exact bounded auth GETs", (): void => {
-  const rules = buildIngressWafRules("app.example.com", "auth.example.com");
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
   const managedRule = getRule(rules, "AWSManagedCommonRules");
   const managedStatement = requireStatement(managedRule.statement);
   const managedRuleGroup = requireManagedRuleGroupStatement(
@@ -203,7 +203,7 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
 });
 
 test("WAF re-blocks managed loopback body matches outside exact JSON client registration", (): void => {
-  const rules = buildIngressWafRules("app.example.com", "auth.example.com");
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
   assert.deepEqual(
     rules.map((rule) => [rule.name, rule.priority]),
     [
@@ -318,7 +318,7 @@ test("WAF re-blocks managed loopback body matches outside exact JSON client regi
 });
 
 test("WAF rate limits exact dynamic client registration requests by trusted Cloudflare client IP", (): void => {
-  const rules = buildIngressWafRules("app.example.com", "auth.example.com");
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
   const rule = getRule(rules, "RateLimitDynamicClientRegistration");
   assert.equal(rule.priority, 7);
   assert.deepEqual(rule.action, { block: {} });
@@ -358,7 +358,7 @@ test("WAF rate limits exact dynamic client registration requests by trusted Clou
 });
 
 test("WAF separately rate limits exact OAuth token exchanges by trusted Cloudflare client IP", (): void => {
-  const rules = buildIngressWafRules("app.example.com", "auth.example.com");
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
   const rule = getRule(rules, "RateLimitOAuthTokenExchanges");
   assert.equal(rule.priority, 8);
   assert.deepEqual(rule.action, { block: {} });
@@ -399,5 +399,102 @@ test("WAF separately rate limits exact OAuth token exchanges by trusted Cloudfla
     sampledRequestsEnabled: true,
     cloudWatchMetricsEnabled: true,
     metricName: "expense-tracker-oauth-token-rate-limit",
+  });
+});
+
+test("WAF omits the origin-secret rule when no shared secret is configured", (): void => {
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
+  assert.equal(
+    rules.some((rule) => rule.name === "BlockRequestsWithoutOriginSharedSecret"),
+    false,
+  );
+});
+
+test("WAF stays byte-for-byte unchanged for a blank or whitespace-only origin secret", (): void => {
+  const unset = buildIngressWafRules("app.example.com", "auth.example.com", "");
+  for (const blank of ["   ", "\n", "\t "]) {
+    assert.deepEqual(
+      buildIngressWafRules("app.example.com", "auth.example.com", blank),
+      unset,
+    );
+  }
+});
+
+test("WAF trims padding around the configured origin secret", (): void => {
+  const padded = buildIngressWafRules(
+    "app.example.com",
+    "auth.example.com",
+    "  s3cret-value\n",
+  );
+  const rule = getRule(padded, "BlockRequestsWithoutOriginSharedSecret");
+  const negation = requireNotStatement(requireStatement(rule.statement).notStatement);
+  assert.equal(
+    requireByteMatchStatement(
+      requireStatement(negation.statement).byteMatchStatement,
+    ).searchString,
+    "s3cret-value",
+  );
+  assert.deepEqual(
+    padded,
+    buildIngressWafRules("app.example.com", "auth.example.com", "s3cret-value"),
+  );
+});
+
+// Rate-based rules aggregate every request they evaluate, and a later terminating
+// rule does not un-count it. Requests that did not come through our Cloudflare zone
+// must therefore be excluded from the scope-down, not merely blocked afterwards.
+test("WAF rate limits only requests carrying the configured origin secret", (): void => {
+  const rules = buildIngressWafRules(
+    "app.example.com",
+    "auth.example.com",
+    "s3cret-value",
+  );
+  for (const name of [
+    "RateLimitDynamicClientRegistration",
+    "RateLimitOAuthTokenExchanges",
+  ]) {
+    const rule = getRule(rules, name);
+    const rateBasedStatement = requireRateBasedStatement(
+      requireStatement(rule.statement).rateBasedStatement,
+    );
+    const scopeDown = requireAndStatement(
+      requireStatement(rateBasedStatement.scopeDownStatement).andStatement,
+    );
+    const conditions = requireStatements(scopeDown.statements);
+    assert.deepEqual(
+      requireByteMatchStatement(conditions.at(-1)?.byteMatchStatement),
+      {
+        fieldToMatch: { singleHeader: { Name: "x-origin-auth" } },
+        positionalConstraint: "EXACTLY",
+        searchString: "s3cret-value",
+        textTransformations: [{ priority: 0, type: "NONE" }],
+      },
+    );
+  }
+});
+
+test("WAF blocks requests without the exact configured origin secret header", (): void => {
+  const rules = buildIngressWafRules(
+    "app.example.com",
+    "auth.example.com",
+    "s3cret-value",
+  );
+  const rule = getRule(rules, "BlockRequestsWithoutOriginSharedSecret");
+  assert.equal(rule.priority, 9);
+  assert.deepEqual(rule.action, { block: {} });
+
+  const statement = requireStatement(rule.statement);
+  const negation = requireNotStatement(statement.notStatement);
+  const byteMatch = requireByteMatchStatement(
+    requireStatement(negation.statement).byteMatchStatement,
+  );
+  assert.deepEqual(byteMatch.fieldToMatch, { singleHeader: { Name: "x-origin-auth" } });
+  assert.equal(byteMatch.positionalConstraint, "EXACTLY");
+  assert.equal(byteMatch.searchString, "s3cret-value");
+  assert.deepEqual(byteMatch.textTransformations, [{ priority: 0, type: "NONE" }]);
+  assert.deepEqual(rule.visibilityConfig, {
+    sampledRequestsEnabled: true,
+    cloudWatchMetricsEnabled: true,
+    metricName: "expense-tracker-origin-secret-block",
   });
 });

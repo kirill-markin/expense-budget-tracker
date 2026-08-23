@@ -66,7 +66,7 @@ MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
 - **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth with a CustomEmailSender Lambda through Resend, managed by the app directly (no Hosted UI)
-- **AWS WAF** on ALB — SQLi/XSS protection, common threat rules, and approximate anonymous `POST auth.*/oauth/register` throttling with a 10-request threshold over AWS's native 60-second evaluation window per real client IP from `CF-Connecting-IP`; malformed values match the block action, while AWS WAF omits missing headers, which is accepted because the ALB only accepts Cloudflare edges that supply the header
+- **AWS WAF** on ALB — SQLi/XSS protection, common threat rules, and approximate anonymous `POST auth.*/oauth/register` throttling with a 10-request threshold over AWS's native 60-second evaluation window per real client IP from `CF-Connecting-IP`; malformed values match the block action, while AWS WAF omits missing headers, which is accepted because the ALB only accepts Cloudflare edges that supply the header. Cloudflare edge ingress proves only *some* Cloudflare zone, so the rate limits trust `CF-Connecting-IP` fully only once the optional `x-origin-auth` origin shared secret is configured: it both blocks requests that did not pass through our own zone and confines the rate-limit scope to requests carrying it (see [Origin shared secret](#origin-shared-secret-cloudflare--alb))
 - **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 08:00 UTC, and Cognito custom email delivery through Resend
 - **API Gateway** — one REST API with authorizer + executor Lambdas for ApiKey machine SQL, plus an independent HTTP API v2 and Lambda for stateless Streamable HTTP MCP at `/mcp`; the MCP default `execute-api` endpoint is disabled
 - **MCP capacity budget** — the HTTP API accepts a burst of 20 and then 10 requests/second, enough for five concurrent clients to each send the normal four-request `initialize`, `notifications/initialized`, `tools/list`, first `tools/call` sequence without exhausting the stage token bucket. Database safety is enforced independently: five reserved Lambda executions × the explicit 10-connection SQL API pool ceiling reserve at most 50 of the t4g.micro's roughly 85 connections, leaving about 35 for web, auth, worker, and the machine SQL API; excess Lambda load may be throttled without expanding that database budget
@@ -333,6 +333,7 @@ Edit `cdk.context.local.json` with your values:
 | `langfuseBaseUrl` | Langfuse base URL, defaults to `https://cloud.langfuse.com` |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
+| `originSharedSecret` | Optional. Cloudflare-to-ALB shared secret — leave empty until the Transform Rule exists (see [Origin shared secret](#origin-shared-secret-cloudflare--alb)) |
 
 #### 5a. Create the MCP domain certificate and complete the context (~5-30 min wait)
 
@@ -478,6 +479,7 @@ After first deploy:
    - `CDK_CERTIFICATE_ARN` — ACM certificate ARN (Cloudflare Origin Cert, from step 3d)
    - `CDK_API_CERTIFICATE_ARN` — ACM certificate ARN (public cert for API domain, from step 3e)
    - `CDK_MCP_CERTIFICATE_ARN` — ACM certificate ARN (public cert for MCP domain, from step 5a)
+   - `CDK_ORIGIN_SHARED_SECRET` — optional Cloudflare-to-ALB shared secret; see [Origin shared secret](#origin-shared-secret-cloudflare--alb) before setting it
 
    **Variables** (Settings → Secrets and variables → Actions → Variables):
    - `AWS_REGION` — target region (e.g. `eu-central-1`)
@@ -495,6 +497,29 @@ After first deploy:
    - Restart ECS service (`force-new-deployment` picks up the new `latest` image)
 
 No AWS keys stored in GitHub — uses OIDC federation.
+
+## Origin shared secret (Cloudflare → ALB)
+
+The ALB security group only accepts Cloudflare edge ranges, which proves a request came from *some* Cloudflare zone. An attacker can point their own Cloudflare zone at the ALB, bypass this zone's rules, and send an arbitrary `CF-Connecting-IP`, which defeats the WAF rate limits keyed on that header. A shared secret injected by a Transform Rule proves the request came from *our* zone, because Transform Rules are per-zone.
+
+- Header: `x-origin-auth` (lowercase — AWS WAF `singleHeader` names must be lowercase)
+- CDK context key: `originSharedSecret`; GitHub Actions secret: `CDK_ORIGIN_SHARED_SECRET`
+- While the value is empty, absent, or whitespace-only, the web ACL is byte-for-byte unchanged and no request is blocked
+- Once the value is set (surrounding whitespace is stripped), the WAF rule `BlockRequestsWithoutOriginSharedSecret` (priority 9, metric `expense-tracker-origin-secret-block`) blocks every request whose `x-origin-auth` header is missing or not exactly equal to the secret
+- The same value is also required inside the scope-down of both `CF-Connecting-IP` rate-limit rules. A rate-based rule aggregates every request it evaluates and a later block does not un-count it, so without this a forged `CF-Connecting-IP` from a foreign zone could still exhaust a victim IP's registration or token budget before being blocked. Existing rule priorities are unchanged
+- ALB target health checks reach the targets directly without traversing the web ACL, so they are unaffected
+- The `WafOriginSecretBlockedAlarm` CloudWatch alarm notifies the alert topic when this rule blocks more than 50 requests in 5 minutes — target health checks stay green during a secret mismatch, so this alarm is the signal that the zone and the ACL diverged
+
+Generate the value with a shell-safe generator, for example `openssl rand -hex 32`.
+
+> **Warning:** activate in this order. Setting the secret before the Cloudflare Transform Rule exists blocks all public traffic to `app.*` and `auth.*` and takes the whole site down.
+
+1. **First**, create a Transform Rule (Rules → Transform Rules → Modify Request Header) in the Cloudflare zone that sets `x-origin-auth` to the secret on every request to the proxied hostnames, and confirm it is live.
+2. **Second**, store the same value as the `CDK_ORIGIN_SHARED_SECRET` GitHub Actions secret (and in `cdk.context.local.json` for local deploys) and deploy.
+
+To roll back, clear the GitHub Actions secret and deploy: the rule disappears from the web ACL. The secret is part of the synthesized CloudFormation template — that is accepted, because it only authenticates the Cloudflare-to-ALB hop and grants no access to user data.
+
+The rule accepts exactly one value, so rotation needs the same two-phase discipline as activation, in reverse: change the Cloudflare Transform Rule to the new value first, then update `CDK_ORIGIN_SHARED_SECRET` and deploy. Traffic is blocked for the window between the two steps, so rotate during a maintenance window, or turn the secret off, rotate, and turn it back on.
 
 ## Domain routing
 
