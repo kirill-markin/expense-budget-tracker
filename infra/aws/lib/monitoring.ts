@@ -367,7 +367,7 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     }),
     threshold: 1,
     evaluationPeriods: 1,
-    alarmDescription: "MCP Lambda throttled despite the five-execution HTTP API capacity envelope",
+    alarmDescription: "MCP Lambda invocation was throttled; reserved concurrency limit is 20",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 

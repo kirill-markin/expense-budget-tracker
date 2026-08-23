@@ -6,7 +6,7 @@ import type { AllowedRelationName } from "./sql-policy.js";
 export const AGENT_API_KEY_ENV_VAR_NAME = "EXPENSE_BUDGET_TRACKER_API_KEY";
 export const API_KEY_AUTHORIZATION_SCHEME = "Authorization: ApiKey <key>";
 export const AGENT_OAUTH_SCOPES = ["expenses:read", "expenses:write"] as const;
-export const SQL_API_DB_POOL_MAX_CONNECTIONS = 10;
+export const SQL_API_DB_POOL_MAX_CONNECTIONS = 1;
 // Keep raw OAuth query strings below the ALB 16 KiB request-line ceiling,
 // including the authorization URL after it is nested inside /login.
 export const MAX_OAUTH_AUTHORIZE_QUERY_BYTES = 4_000;

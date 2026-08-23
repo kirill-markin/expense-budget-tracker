@@ -36,18 +36,13 @@ export const MCP_TIMEOUT_BUDGET = {
   lambdaSeconds: 35,
 } as const;
 
-const MCP_DB_SAFE_RESERVED_CONCURRENCY = 5;
-const MCP_PROTOCOL_BURST_REQUESTS_PER_SESSION = 4;
-const MCP_CONCURRENT_SESSION_BURST = 5;
-const MCP_HTTP_API_BURST_LIMIT =
-  MCP_PROTOCOL_BURST_REQUESTS_PER_SESSION * MCP_CONCURRENT_SESSION_BURST;
-const MCP_HTTP_API_RATE_LIMIT = 10;
+const MCP_DB_SAFE_RESERVED_CONCURRENCY = 20;
+const MCP_HTTP_API_BURST_LIMIT = 10;
+const MCP_HTTP_API_RATE_LIMIT = 5;
 
 export const MCP_CAPACITY_BUDGET = {
   approximateRdsMaxConnections: 85,
   maxConnectionsPerExecutionEnvironment: SQL_API_DB_POOL_MAX_CONNECTIONS,
-  protocolBurstRequestsPerSession: MCP_PROTOCOL_BURST_REQUESTS_PER_SESSION,
-  concurrentSessionBurst: MCP_CONCURRENT_SESSION_BURST,
   reservedConcurrentExecutions: MCP_DB_SAFE_RESERVED_CONCURRENCY,
   throttlingBurstLimit: MCP_HTTP_API_BURST_LIMIT,
   throttlingRateLimit: MCP_HTTP_API_RATE_LIMIT,
@@ -190,8 +185,8 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
     timeout: cdk.Duration.seconds(MCP_TIMEOUT_BUDGET.lambdaSeconds),
     memorySize: 256,
     // Reserved concurrency, independently of the HTTP API token bucket, caps
-    // five execution environments. Their explicit 10-connection pools reserve
-    // at most 50 of roughly 85 RDS connections, leaving 35 for other workloads.
+    // 20 execution environments. Their one-connection pools can open at most 20
+    // of roughly 85 RDS connections, leaving capacity for about 65 more.
     reservedConcurrentExecutions: MCP_CAPACITY_BUDGET.reservedConcurrentExecutions,
     vpc: props.vpc,
     vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },

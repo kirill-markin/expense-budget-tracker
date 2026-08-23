@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type pg from "pg";
+import { SQL_API_DB_POOL_MAX_CONNECTIONS } from "@expense-budget-tracker/agent-shared";
 import {
   createSqlExecutionDeadline,
   SqlExecutionDeadlineError,
@@ -75,6 +76,7 @@ test("pool initialization is shared and configures bounded PostgreSQL connection
   assert.equal(await first, expectedPool);
   assert.equal(await second, expectedPool);
   assert.equal(poolConfigs.length, 1);
+  assert.equal(poolConfigs[0]?.max, SQL_API_DB_POOL_MAX_CONNECTIONS);
   assert.equal(poolConfigs[0]?.connectionTimeoutMillis, POSTGRES_CONNECTION_TIMEOUT_MS);
   assert.equal(poolConfigs[0]?.ssl, true);
 });
