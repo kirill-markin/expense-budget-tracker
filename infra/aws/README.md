@@ -87,6 +87,7 @@ MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
 - Public ACM certificates for the regional `api.*` and `mcp.*` API Gateway domains
 - Proxied DNS CNAMEs for `api.*` and `mcp.*`
 - Cache bypass for root, `app.*`, `auth.*`, and `mcp.*`
+- Per-IP MCP rate limiting at 20 requests per 10 seconds with a 10-second block
 - Edge SSL, DDoS protection (automatic with proxied DNS)
 
 ## Step-by-step setup
@@ -161,12 +162,13 @@ Go to https://dash.cloudflare.com/profile/api-tokens → **Create Token**:
 
 - Template: **"Edit zone DNS"**
 - Zone Resources: Include → Specific zone → your domain
-- **Important:** click "+ Add more" and add three more permissions:
+- **Important:** click "+ Add more" and add four more permissions:
   - **Zone → SSL and Certificates → Edit** (for Origin Certificate creation)
   - **Zone → Zone Settings → Edit** (for setting SSL mode to Full Strict)
   - **Zone → Cache Rules → Edit** (for disabling edge cache on dynamic hosts)
+  - **Zone → Zone WAF → Edit** (for the MCP rate-limit rule)
 
-The token needs all four permissions (DNS + SSL + Zone Settings + Cache Rules). Missing any will cause script failures.
+The token needs all five permissions (DNS + SSL + Zone Settings + Cache Rules + Zone WAF). Missing any will cause script failures.
 
 Copy the token and save it in your password manager along with the Zone ID from step 3c.
 
@@ -405,6 +407,22 @@ After deploy completes, **create the DNS record** pointing to the ALB and config
 ```
 
 The script creates proxied CNAMEs for the ALB, `api.*`, and `mcp.*`; sets SSL/TLS to Full (Strict); and bypasses cache for dynamic hosts. The AWS WAF attached to the auth ALB separately rate-limits the exact anonymous `POST auth.*/oauth/register` endpoint by the real client IP supplied in `CF-Connecting-IP`.
+
+Configure the Cloudflare Free rate-limit rule for the public MCP endpoint:
+
+```bash
+(
+  set -euo pipefail
+  set -a
+  source scripts/cloudflare/.env
+  set +a
+
+  bash scripts/cloudflare/setup-mcp-rate-limit.sh \
+    --domain yourdomain.com
+)
+```
+
+The script reconciles the repository contract in `scripts/cloudflare/mcp-rate-limit-rule.json`: requests to `/mcp` are counted per Cloudflare data center and source IP, with a limit of 20 requests per 10 seconds and a 10-second block. Cloudflare Free supports one rate-limit rule and path-only matching, so the script stops instead of replacing an unrelated existing rule. The local token needs `Zone WAF Edit` for the target zone.
 
 Verify Cloudflare resources and their CloudFormation targets after DNS propagation:
 

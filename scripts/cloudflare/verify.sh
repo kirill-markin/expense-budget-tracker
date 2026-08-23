@@ -3,7 +3,7 @@
 # Drift detection for Cloudflare resources that live outside IaC.
 #
 # Required env vars:
-#   CLOUDFLARE_API_TOKEN  — API token with Zone, DNS, SSL, and Cache Rules read access
+#   CLOUDFLARE_API_TOKEN  — API token with Zone, DNS, SSL, Cache Rules, and Zone WAF read access
 #   CLOUDFLARE_ZONE_ID    — Zone ID from Cloudflare dashboard
 #   AWS_PROFILE           — explicit AWS CLI profile for the deployment account
 #   AWS_REGION            — explicit AWS region for the deployed stack
@@ -314,6 +314,17 @@ if [[ "$CACHE_RULE_COUNT" -eq 0 ]]; then
   ERRORS=$((ERRORS + 1))
 else
   echo "  OK: Cache bypass rule active (${CACHE_RULE_COUNT} rule(s))"
+fi
+
+# --- MCP rate limit ---
+echo ""
+echo "Checking MCP rate-limit rule..."
+MCP_RATE_LIMIT_RULESET=$(cloudflare_optional_get_request \
+  "read MCP rate-limit ruleset" \
+  "/zones/${CLOUDFLARE_ZONE_ID}/rulesets/phases/http_ratelimit/entrypoint")
+if ! echo "$MCP_RATE_LIMIT_RULESET" \
+  | python3 "${SCRIPT_DIR}/assert-mcp-rate-limit.py" "${SCRIPT_DIR}/mcp-rate-limit-rule.json"; then
+  ERRORS=$((ERRORS + 1))
 fi
 
 # --- Summary ---
