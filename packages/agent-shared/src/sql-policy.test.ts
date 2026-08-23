@@ -285,6 +285,75 @@ test("validateExpenseSql rejects non-allowlisted function calls in restricted SQ
   assertFunctionCallRejected("INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id) VALUES (gen_random_uuid(), now(), 'a-main-usd', 1, 'USD', 'income', 'workspace-1')");
 });
 
+test("validateExpenseSql rejects attribute-notation function calls on indirection expressions", (): void => {
+  const rejectedSql: ReadonlyArray<string> = [
+    "SELECT entry_id FROM ledger_entries WHERE (amount).pg_sleep IS NULL",
+    "UPDATE ledger_entries SET note = 'x' WHERE (amount).pg_sleep IS NULL",
+    "DELETE FROM ledger_entries WHERE (amount).pg_sleep IS NULL",
+    "SELECT entry_id FROM ledger_entries WHERE (currency).pg_get_viewdef IS NULL",
+    "SELECT entry_id FROM ledger_entries WHERE (currency).to_regclass IS NULL",
+    // Subscripted indirection terminates in `]` instead of `)`, but PostgreSQL
+    // resolves the trailing field name through the same function lookup.
+    "SELECT entry_id FROM ledger_entries WHERE (ARRAY[amount])[1].pg_sleep IS NULL",
+    "SELECT workspace_id FROM workspace_settings WHERE (filtered_categories)[1].to_regclass IS NULL",
+    // The construct is legal in every expression position, not only WHERE.
+    "SELECT account_id FROM ledger_entries GROUP BY account_id HAVING sum(amount) > (amount).pg_sleep",
+    "SELECT entry_id FROM ledger_entries ORDER BY entry_id, (amount).pg_sleep",
+    "UPDATE ledger_entries SET note = 'x' WHERE entry_id = 'e1' RETURNING entry_id, (amount).pg_sleep",
+    "WITH slow AS (SELECT entry_id FROM ledger_entries WHERE (amount).pg_sleep IS NULL) SELECT entry_id FROM slow",
+    "SELECT entry_id FROM ledger_entries; SELECT entry_id FROM ledger_entries WHERE (amount).pg_sleep IS NULL",
+  ];
+
+  for (const sql of rejectedSql) {
+    assert.throws(
+      () => validateExpenseSql(sql),
+      (error: unknown) =>
+        error instanceof SqlPolicyError
+        && error.code === "function_calls_not_allowed"
+        && error.message.includes("Attribute-notation function calls"),
+      sql,
+    );
+  }
+});
+
+test("validateExpenseSql still allows ordinary SQL without attribute notation", (): void => {
+  const acceptedSql: ReadonlyArray<Readonly<{
+    sql: string;
+    relations: ReadonlyArray<string>;
+  }>> = [
+    {
+      sql: "SELECT e.amount FROM ledger_entries e WHERE e.currency = 'EUR'",
+      relations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE (amount) > 0",
+      relations: ["ledger_entries"],
+    },
+    { sql: "SELECT sum(amount) FROM ledger_entries", relations: ["ledger_entries"] },
+    // Plain subscripting and slices carry no field access, so the indirection
+    // guard must leave them alone.
+    {
+      sql: "SELECT workspace_id FROM workspace_settings WHERE filtered_categories[1] = 'food'",
+      relations: ["workspace_settings"],
+    },
+    {
+      sql: "SELECT workspace_id FROM workspace_settings WHERE filtered_categories[1:2] = ARRAY['food']",
+      relations: ["workspace_settings"],
+    },
+  ];
+
+  for (const { sql, relations } of acceptedSql) {
+    const validated = validateExpenseSql(sql);
+    assert.equal(validated.statements.length, 1, sql);
+    assert.deepEqual(validated.statements[0]?.referencedRelations, relations, sql);
+  }
+
+  const multiStatementCtes = validateReadOnlyExpenseSql(
+    "WITH totals AS (SELECT account_id, SUM(amount) AS balance FROM ledger_entries GROUP BY account_id) SELECT * FROM totals; WITH rows(value) AS (VALUES (1), (2)) SELECT value FROM rows",
+  );
+  assert.equal(multiStatementCtes.statements.length, 2);
+});
+
 test("validateExpenseSql still rejects set_config before function allowlist checks", (): void => {
   assert.throws(
     () => validateExpenseSql("SELECT set_config('app.user_id', 'user-1', true)"),
