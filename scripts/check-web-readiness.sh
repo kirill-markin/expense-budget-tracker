@@ -3,26 +3,36 @@
 #
 # Used after AWS deploys because /api/live only confirms the process is up.
 #
+# Prefer the public app URL, which reaches the origin through Cloudflare and so
+# carries the origin shared secret the WAF may require. Only the first-deploy
+# bootstrap, which runs before Cloudflare DNS exists, probes the ALB directly.
+#
 # Required env vars:
-#   ALB_DNS — ALB DNS name from CloudFormation outputs
+#   READINESS_URL — full readiness URL to poll, e.g. https://app.example.com/api/health
 #
 # Optional env vars:
+#   READINESS_INSECURE         — "true" skips TLS verification (raw ALB origin cert)
 #   READINESS_TIMEOUT_SECONDS  — total wait time (default: 300)
 #   READINESS_INTERVAL_SECONDS — delay between checks (default: 10)
 
 set -euo pipefail
 
-: "${ALB_DNS:?ALB_DNS env var is required}"
+: "${READINESS_URL:?READINESS_URL env var is required}"
 
 TIMEOUT_SECONDS="${READINESS_TIMEOUT_SECONDS:-300}"
 INTERVAL_SECONDS="${READINESS_INTERVAL_SECONDS:-10}"
-URL="https://${ALB_DNS}/api/health"
+URL="$READINESS_URL"
 ELAPSED=0
+
+CURL_ARGS=(--fail --silent --show-error)
+if [ "${READINESS_INSECURE:-false}" = "true" ]; then
+  CURL_ARGS+=(--insecure)
+fi
 
 echo "Waiting for web readiness at ${URL} ..."
 
 while true; do
-  if curl --fail --silent --show-error --insecure "$URL" > /dev/null; then
+  if curl "${CURL_ARGS[@]}" "$URL" > /dev/null; then
     echo "Web readiness check passed."
     exit 0
   fi

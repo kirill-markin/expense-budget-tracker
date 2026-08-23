@@ -94,7 +94,10 @@ CLUSTER="$CLUSTER" SERVICE="$SERVICE" MIGRATE_TASK="$MIGRATE_TASK" MIGRATE_SG="$
 # --- Step 6: Confirm web readiness ---
 echo ""
 echo "=== Confirm web readiness ==="
-ALB_DNS="$ALB_DNS" bash "${SCRIPT_DIR}/check-web-readiness.sh"
+# First deploy: Cloudflare DNS does not exist yet (README step 6), so this probes
+# the ALB directly and skips verification of its Cloudflare Origin Certificate.
+READINESS_URL="https://${ALB_DNS}/api/health" READINESS_INSECURE=true \
+  bash "${SCRIPT_DIR}/check-web-readiness.sh"
 
 # --- Step 7: Seed exchange rates ---
 # Invoke the FX fetcher Lambda so the currency dropdown is populated immediately

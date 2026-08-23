@@ -113,7 +113,10 @@ jobs:
       - name: CDK deploy
         working-directory: infra/aws
         run: |
-          cat > cdk.context.local.json <<CTXEOF
+          # Quoted delimiter: GitHub expands the expressions before the shell runs,
+          # so an unquoted heredoc would let the shell mangle secrets containing
+          # $, backticks or backslashes and deploy a secret nobody can reproduce.
+          cat > cdk.context.local.json <<'CTXEOF'
           {
             "region": "${{ vars.AWS_REGION }}",
             "domainName": "${{ vars.CDK_DOMAIN_NAME }}",
@@ -125,7 +128,8 @@ jobs:
             "langfuseBaseUrl": "${{ vars.CDK_LANGFUSE_BASE_URL }}",
             "alertEmail": "${{ vars.CDK_ALERT_EMAIL }}",
             "githubRepo": "${{ vars.CDK_GITHUB_REPO }}",
-            "demoEmailDostip": "${{ vars.CDK_DEMO_EMAIL_DOSTIP }}"
+            "demoEmailDostip": "${{ vars.CDK_DEMO_EMAIL_DOSTIP }}",
+            "originSharedSecret": "${{ secrets.CDK_ORIGIN_SHARED_SECRET }}"
           }
           CTXEOF
           npx cdk deploy --all --require-approval never
@@ -143,7 +147,6 @@ jobs:
           echo "service=$(get_output EcsServiceName)" >> "$GITHUB_OUTPUT"
           echo "migrate_task=$(get_output MigrateTaskDefArn)" >> "$GITHUB_OUTPUT"
           echo "migrate_sg=$(get_output MigrateSecurityGroupId)" >> "$GITHUB_OUTPUT"
-          echo "alb_dns=$(get_output AlbDns)" >> "$GITHUB_OUTPUT"
           echo "fx_function=$(get_output FxFetcherFunctionName)" >> "$GITHUB_OUTPUT"
 
       # Run database migrations as a one-off ECS task after every deploy.
@@ -158,10 +161,12 @@ jobs:
           MIGRATE_TASK: ${{ steps.outputs.outputs.migrate_task }}
           MIGRATE_SG: ${{ steps.outputs.outputs.migrate_sg }}
 
+      # Probe the public app origin through Cloudflare, like every other post-deploy
+      # check: a direct-to-ALB probe cannot carry the Cloudflare origin shared secret.
       - name: Confirm web readiness
         run: bash scripts/check-web-readiness.sh
         env:
-          ALB_DNS: ${{ steps.outputs.outputs.alb_dns }}
+          READINESS_URL: https://app.${{ vars.CDK_DOMAIN_NAME }}/api/health
 
       # Ensure exchange rates are up to date (idempotent — ON CONFLICT DO NOTHING)
       - name: Seed exchange rates

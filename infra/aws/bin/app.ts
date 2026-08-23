@@ -53,6 +53,10 @@ if (!resendSenderEmail) {
   throw new Error("Missing required context: 'resendSenderEmail'. Set it in cdk.context.local.json (e.g. \"no-reply@mail.yourdomain.com\")");
 }
 
+// Optional context: "originSharedSecret" is the shared secret our Cloudflare zone
+// injects as the x-origin-auth header. It is deliberately not required — an absent
+// or empty value keeps the WAF origin-secret rule out of the web ACL.
+
 new ExpenseBudgetTrackerStack(app, "ExpenseBudgetTracker", {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,

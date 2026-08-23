@@ -8,5 +8,6 @@
   "resendSenderEmail": "no-reply@mail.example.com",
   "langfuseBaseUrl": "https://cloud.langfuse.com",
   "alertEmail": "your-email@gmail.com",
-  "githubRepo": "your-github-user/expense-budget-tracker"
+  "githubRepo": "your-github-user/expense-budget-tracker",
+  "originSharedSecret": ""
 }

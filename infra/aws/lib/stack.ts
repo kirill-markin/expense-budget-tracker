@@ -40,6 +40,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const langfuseBaseUrl = this.node.tryGetContext("langfuseBaseUrl") as string | undefined
       ?? "https://cloud.langfuse.com";
     const demoEmailDostip = this.node.tryGetContext("demoEmailDostip") as string | undefined ?? "";
+    const originSharedSecret = this.node.tryGetContext("originSharedSecret") as string | undefined ?? "";
     const resendApiKeySecretArn = getOptionalContextValue(this, "resendApiKeySecretArn");
     const resendSenderEmail = getOptionalContextValue(this, "resendSenderEmail");
 
@@ -89,6 +90,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       baseDomain,
       appDomain,
       authDomain,
+      originSharedSecret,
     });
 
     const fx = fxFetcher(this, {

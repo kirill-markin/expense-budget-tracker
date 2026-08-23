@@ -134,6 +134,31 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
+  // WAF blocks by the Cloudflare origin-secret rule.
+  // The rule is absent until originSharedSecret is configured, so the metric simply
+  // never reports while the feature is inert. Once it is on, a secret that diverges
+  // from the Cloudflare Transform Rule blocks all public traffic while ALB target
+  // health checks keep passing, because they never traverse the web ACL. The
+  // threshold sits above the background noise of scanners hitting the ALB directly.
+  new cloudwatch.Alarm(scope, "WafOriginSecretBlockedAlarm", {
+    metric: new cloudwatch.Metric({
+      namespace: "AWS/WAFV2",
+      metricName: "BlockedRequests",
+      dimensionsMap: {
+        WebACL: props.webAclName,
+        Region: cdk.Aws.REGION,
+        Rule: "expense-tracker-origin-secret-block",
+      },
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 50,
+    evaluationPeriods: 1,
+    alarmDescription:
+      "WAF blocked many requests missing the Cloudflare origin shared secret — the deployed secret may not match the Cloudflare Transform Rule",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
   const webErrorMetricFilter = new logs.MetricFilter(scope, "WebErrorMetricFilter", {
     logGroup: props.webLogGroup,
     filterPattern: logs.FilterPattern.any(
