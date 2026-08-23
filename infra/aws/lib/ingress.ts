@@ -445,9 +445,15 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
   });
   props.webService.attachToApplicationTargetGroup(webTargetGroup);
 
-  // ALB listeners: HTTPS forwards to app, HTTP → HTTPS redirect
+  // ALB listeners: HTTPS forwards to app, HTTP → HTTPS redirect.
+  // open: false on every listener. The CDK default (open: true) adds an anyIpv4
+  // ingress rule for the listener port to the ALB security group, which reopens the
+  // load balancer to the whole internet next to the Cloudflare-only rules built in
+  // networking.ts. Bypassing Cloudflare that way defeats every Cloudflare-side
+  // control and the WAF rate limits keyed on CF-Connecting-IP.
   const httpsListener = alb.addListener("HttpsListener", {
     port: 443,
+    open: false,
     certificates: [props.certificate],
     defaultAction: elbv2.ListenerAction.forward([webTargetGroup]),
   });
@@ -486,6 +492,7 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
 
   alb.addListener("HttpRedirect", {
     port: 80,
+    open: false,
     defaultAction: elbv2.ListenerAction.redirect({
       protocol: "HTTPS",
       port: "443",
