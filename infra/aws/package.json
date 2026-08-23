@@ -1,6 +1,6 @@
 {
   "name": "expense-budget-tracker-aws",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "private": true,
   "scripts": {
     "prebuild": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared",
@@ -21,7 +21,7 @@
   "dependencies": {
     "@aws-crypto/client-node": "^5.0.2",
     "@aws-sdk/client-secrets-manager": "^3.1113.0",
-    "@expense-budget-tracker/agent-shared": "1.2.2",
+    "@expense-budget-tracker/agent-shared": "1.3.0",
     "aws-cdk-lib": "^2.265.0",
     "constructs": "^10.8.1"
   },

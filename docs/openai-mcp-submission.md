@@ -88,7 +88,7 @@ change.
 | Short description | Workspace-scoped expense and budget tools with OAuth read and write access. |
 | Category | Finance |
 | Intended publisher | SAMO DANNI EOOD |
-| Version under evaluation | 1.2.2 |
+| Version under evaluation | 1.3.0 |
 | Website | https://expense-budget-tracker.com/ |
 | Universal MCP URL | https://mcp.expense-budget-tracker.com/mcp |
 | MCP documentation | https://expense-budget-tracker.com/docs/mcp-connector/ |
@@ -175,8 +175,8 @@ assertion, with secrets redacted.
 | R07 | Authorization request, owner-controlled valid `GET`, then consent `POST` | `https://auth.expense-budget-tracker.com/oauth/authorize` | Without a session, same-origin `302` to login; after login, `200`, `text/html` consent with a same-origin form submission; approval returns `302` whose `Location` uses the exact registered `redirect_uri` and adds the authorization `code` plus the request's exact `state` | Pending controlled-client and Developer Mode evidence; record the complete sanitized chain |
 | R08 | Authorization-code or refresh exchange, URL-encoded `POST` | `https://auth.expense-budget-tracker.com/oauth/token` | Successful valid grant: `200`, `application/json`, no redirect, `Cache-Control: no-store`; revoked refresh probe: the exact `400 invalid_grant` result below | Pending controlled-client and Developer Mode evidence |
 | R09 | OpenAI domain challenge, owner-installed token `GET` | `https://mcp.expense-budget-tracker.com/.well-known/openai-apps-challenge` | Target after the portal supplies and the owner installs the token: `200`, `text/plain`, no redirect, body is only that exact token | **Pending and not provisioned.** Record the current pre-challenge result separately; it cannot satisfy this row |
-| G01 | Exact MCP Registry version, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers/com.expense-budget-tracker%2Fexpense-budget-tracker/versions/1.2.2` | Before publication: final `404`, record returned MIME, no redirect. After the one authorized publication: final `200`, `application/json`, no redirect, exact name/version and manifest metadata | Item-04 lookup contract complete on BASE; publication and timestamped before/after captures pending |
-| G02 | MCP Registry latest search, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers?search=com.expense-budget-tracker%2Fexpense-budget-tracker&version=latest` | Final `200`, `application/json`, no redirect. Before publication it must not contain this name/version; after publication it must contain the exact `1.2.2` record | Item-04 lookup contract complete on BASE; publication and timestamped before/after captures pending |
+| G01 | Exact MCP Registry version, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers/com.expense-budget-tracker%2Fexpense-budget-tracker/versions/1.3.0` | Before publication: final `404`, record returned MIME, no redirect. After the one authorized publication: final `200`, `application/json`, no redirect, exact name/version and manifest metadata | Item-04 lookup contract complete on BASE; publication and timestamped before/after captures pending |
+| G02 | MCP Registry latest search, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers?search=com.expense-budget-tracker%2Fexpense-budget-tracker&version=latest` | Final `200`, `application/json`, no redirect. Before publication it must not contain this name/version; after publication it must contain the exact `1.3.0` record | Item-04 lookup contract complete on BASE; publication and timestamped before/after captures pending |
 
 For L10, send a syntactically valid MCP request with `Accept: application/json,
 text/event-stream` and no `Authorization` header; retain the sanitized request
@@ -195,7 +195,7 @@ The initialized server advertises:
 | Field | Runtime value |
 | --- | --- |
 | `name` | `expense-budget-tracker` |
-| `version` | `1.2.2` |
+| `version` | `1.3.0` |
 | `title` | `Expense Budget Tracker` |
 | `websiteUrl` | `https://expense-budget-tracker.com/` |
 | Icon | `https://expense-budget-tracker.com/icon.svg`, `image/svg+xml`, size `any` |
@@ -1435,10 +1435,10 @@ operator record.
 | Evidence | Required value |
 | --- | --- |
 | Promoted application commit | Pending |
-| Runtime version | 1.2.2 unless a later aligned version is promoted |
+| Runtime version | 1.3.0 unless a later aligned version is promoted |
 | Website commit | `07c296fa2613ff310d05b693e28366664048a3bf` |
 | Registry implementation commit | Complete on BASE at `8f0b330098fb8829f9f340a27501d73eb4b1860b` |
-| Registry manifest identity/version | `com.expense-budget-tracker/expense-budget-tracker` / `1.2.2` |
+| Registry manifest identity/version | `com.expense-budget-tracker/expense-budget-tracker` / `1.3.0` |
 | Registry DNS proof and `MCP_PRIVATE_KEY` | Pending owner setup after promotion to `main` |
 | Registry exact record and latest search | Not published; G01 404 preflight and post-publication G01/G02 200 evidence pending owner action |
 | Runtime documentation URL reconciliation | Complete on BASE at `396a09b3b88cd0a31965a39ac69fe1b6cc4691f9`; deployed capture pending after cumulative promotion |
