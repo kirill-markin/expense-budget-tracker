@@ -49,10 +49,12 @@ test("transcription succeeds without a persisted chat session", async (): Promis
   }]);
   assert.equal(telemetryContexts[0]?.userId, "user-1");
   assert.equal(telemetryContexts[0]?.workspaceId, "workspace-1");
+  assert.equal(telemetryContexts[0]?.sessionId, null);
   assert.equal(typeof telemetryContexts[0]?.requestId, "string");
 });
 
-test("transcription echoes a legacy client session id without validating it", async (): Promise<void> => {
+test("transcription echoes a valid legacy client session id", async (): Promise<void> => {
+  const telemetryContexts: Array<ChatTranscriptionTelemetryContext> = [];
   const response = await transcribeChatRouteWithDeps(
     createTranscriptionRequest(),
     {
@@ -62,7 +64,10 @@ test("transcription echoes a legacy client session id without validating it", as
         source: "web",
         sessionId: "session-legacy",
       }),
-      transcribeChatAudioUpload: async () => "legacy transcription",
+      transcribeChatAudioUpload: async (_upload, context) => {
+        telemetryContexts.push(context);
+        return "legacy transcription";
+      },
     },
   );
 
@@ -71,6 +76,60 @@ test("transcription echoes a legacy client session id without validating it", as
     text: "legacy transcription",
     sessionId: "session-legacy",
   });
+  assert.equal(telemetryContexts[0]?.sessionId, "session-legacy");
+});
+
+test("transcription accepts and propagates a 200-character session id", async (): Promise<void> => {
+  const sessionId = "s".repeat(200);
+  const telemetryContexts: Array<ChatTranscriptionTelemetryContext> = [];
+  const response = await transcribeChatRouteWithDeps(
+    createTranscriptionRequest(),
+    {
+      ensureUserProvisioned: async () => undefined,
+      parseChatTranscriptionUpload: async () => ({
+        file: new File(["audio"], "audio.webm", { type: "audio/webm" }),
+        source: "web",
+        sessionId,
+      }),
+      transcribeChatAudioUpload: async (_upload, context) => {
+        telemetryContexts.push(context);
+        return "limit transcription";
+      },
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    text: "limit transcription",
+    sessionId,
+  });
+  assert.equal(telemetryContexts[0]?.sessionId, sessionId);
+});
+
+test("transcription rejects session ids longer than the Langfuse limit", async (): Promise<void> => {
+  let providerCalled = false;
+  const response = await transcribeChatRouteWithDeps(
+    createTranscriptionRequest(),
+    {
+      ensureUserProvisioned: async () => undefined,
+      parseChatTranscriptionUpload: async () => ({
+        file: new File(["audio"], "audio.webm", { type: "audio/webm" }),
+        source: "web",
+        sessionId: "s".repeat(201),
+      }),
+      transcribeChatAudioUpload: async () => {
+        providerCalled = true;
+        return "must not transcribe";
+      },
+    },
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(
+    await response.text(),
+    "sessionId must contain at most 200 characters for audio transcription",
+  );
+  assert.equal(providerCalled, false);
 });
 
 test("transcription still rejects missing workspace authentication", async (): Promise<void> => {
