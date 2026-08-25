@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getLangfuseConfigValidationErrors } from "@/instrumentation";
 
-const LANGFUSE_CONNECTION_ENVIRONMENT: NodeJS.ProcessEnv = {
+const LANGFUSE_CONNECTION_ENVIRONMENT = {
   LANGFUSE_PUBLIC_KEY: "pk-lf-test",
   LANGFUSE_SECRET_KEY: "sk-lf-test",
   LANGFUSE_BASE_URL: "https://cloud.langfuse.com",
 };
 
-const LANGFUSE_ENVIRONMENT: NodeJS.ProcessEnv = {
+const LANGFUSE_ENVIRONMENT = {
   ...LANGFUSE_CONNECTION_ENVIRONMENT,
   LANGFUSE_RELEASE: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 };

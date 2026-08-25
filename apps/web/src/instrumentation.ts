@@ -20,8 +20,15 @@ import { createLangfuseSpanProcessor } from "@/server/chat/openai/langfuse";
 let telemetrySdk: NodeSDK | null = null;
 let telemetryStarted = false;
 
+type LangfuseEnvironment = Readonly<{
+  LANGFUSE_PUBLIC_KEY?: string;
+  LANGFUSE_SECRET_KEY?: string;
+  LANGFUSE_BASE_URL?: string;
+  LANGFUSE_RELEASE?: string;
+}>;
+
 export const getLangfuseConfigValidationErrors = (
-  environment: NodeJS.ProcessEnv,
+  environment: LangfuseEnvironment,
 ): ReadonlyArray<string> => {
   const connectionValues = [
     environment.LANGFUSE_PUBLIC_KEY,
