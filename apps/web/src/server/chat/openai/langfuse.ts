@@ -1,6 +1,10 @@
 import type { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import { LangfuseSpanProcessor, isDefaultExportSpan } from "@langfuse/otel";
-import type { LangfuseObservation, StartActiveObservationOpts } from "@langfuse/tracing";
+import type {
+  LangfuseObservation,
+  PropagateAttributesParams,
+  StartActiveObservationOpts,
+} from "@langfuse/tracing";
 import { createTraceId, propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 import type { ContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
@@ -66,9 +70,14 @@ type StartActiveAgentObservation = <Result>(
   options: StartActiveObservationOpts & { asType: "agent" },
 ) => Result;
 
+type PropagateAttributesDependency = <Result>(
+  attributes: PropagateAttributesParams,
+  fn: () => Result,
+) => Result;
+
 type StartObservationDependencies = Readonly<{
   createTraceId: typeof createTraceId;
-  propagateAttributes: typeof propagateAttributes;
+  propagateAttributes: PropagateAttributesDependency;
   startActiveObservation: StartActiveAgentObservation;
   log: typeof log;
 }>;

@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  propagateAttributes,
-  type LangfuseObservation,
-  type PropagateAttributesParams,
-} from "@langfuse/tracing";
+import { propagateAttributes, type LangfuseObservation } from "@langfuse/tracing";
 import {
   sanitizeLangfuseSerializedTelemetry,
   startChatTranscriptionObservationWithDeps,
@@ -198,18 +194,12 @@ test("startChatTurnObservationWithDeps propagates attributes before starting the
   const lifecycle: Array<string> = [];
   const dependencies: StartObservationDependencies = {
     createTraceId: async (): Promise<string> => TRACE_ID,
-    propagateAttributes: <
-      Args extends unknown[],
-      Callback extends (...args: Args) => ReturnType<Callback>,
-    >(
-      attributes: PropagateAttributesParams,
-      fn: Callback,
-    ): ReturnType<Callback> => {
+    propagateAttributes: (attributes, fn) => {
       lifecycle.push("propagate");
       assert.equal(attributes.traceName, "chat_turn");
       assert.equal(attributes.userId, "user-1");
       assert.equal(attributes.sessionId, "session-1");
-      return propagateAttributes<Args, Callback>(attributes, fn);
+      return propagateAttributes(attributes, fn);
     },
     startActiveObservation: <Result>(
       name: StartActiveObservationName,
@@ -442,15 +432,9 @@ test("startChatTranscriptionObservationWithDeps leaves successful roots at the d
   const baseDependencies = createObservationDependencies(recording.observation, ignoreLog);
   const dependencies: StartObservationDependencies = {
     ...baseDependencies,
-    propagateAttributes: <
-      Args extends unknown[],
-      Callback extends (...args: Args) => ReturnType<Callback>,
-    >(
-      attributes: PropagateAttributesParams,
-      fn: Callback,
-    ): ReturnType<Callback> => {
+    propagateAttributes: (attributes, fn) => {
       assert.equal(attributes.sessionId, "session-1");
-      return propagateAttributes<Args, Callback>(attributes, fn);
+      return propagateAttributes(attributes, fn);
     },
   };
 
