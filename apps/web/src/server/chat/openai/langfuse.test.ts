@@ -5,7 +5,9 @@ import {
   sanitizeLangfuseSerializedTelemetry,
   startChatTranscriptionObservationWithDeps,
   startChatTurnObservationWithDeps,
+  type ChatTurnObservationOutcome,
 } from "@/server/chat/openai/langfuse";
+import type { ContentPart } from "@/server/chat/types";
 
 const MEDIA_DATA_URI = "data:image/png;base64,1234567890123456";
 const UNPADDED_MEDIA_DATA_URI_MOD_2 = "data:application/octet-stream;base64,12345678901234";
@@ -15,9 +17,15 @@ const PADDED_MEDIA_DATA_URI_TWO = "data:application/octet-stream;base64,12345678
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
 
 type StartObservationDependencies = Parameters<typeof startChatTurnObservationWithDeps>[2];
+type StartActiveObservationDependency = StartObservationDependencies["startActiveObservation"];
+type StartActiveObservationName = Parameters<StartActiveObservationDependency>[0];
+type StartActiveObservationRoot = Parameters<
+  Parameters<StartActiveObservationDependency>[1]
+>[0];
+type StartActiveObservationOptions = Parameters<StartActiveObservationDependency>[2];
 type ObservationUpdate = Parameters<LangfuseObservation["updateOtelSpanAttributes"]>[0];
 type LangfuseLogEvent = Parameters<StartObservationDependencies["log"]>[0];
-type RootTelemetryOperation = "success update" | "error update" | "end";
+type RootTelemetryOperation = "initial update" | "outcome update" | "error update" | "end";
 
 type ObservationErrors = Readonly<{
   update: Error | null;
@@ -92,6 +100,7 @@ const createExpectedTranscriptionTelemetryLog = (
   requestId: "request-1",
   userId: "user-1",
   workspaceId: "workspace-1",
+  sessionId: "session-1",
 });
 
 const createObservationDependencies = (
@@ -100,7 +109,10 @@ const createObservationDependencies = (
 ): StartObservationDependencies => ({
   createTraceId: async (): Promise<string> => TRACE_ID,
   propagateAttributes,
-  startObservation: (() => observation) as StartObservationDependencies["startObservation"],
+  startActiveObservation: <Result>(
+    _name: StartActiveObservationName,
+    fn: (rootObservation: StartActiveObservationRoot) => Result,
+  ): Result => fn(observation),
   log: logger,
 });
 
@@ -119,29 +131,177 @@ const CHAT_TRANSCRIPTION_PARAMS: Parameters<typeof startChatTranscriptionObserva
   requestId: "request-1",
   userId: "user-1",
   workspaceId: "workspace-1",
+  sessionId: "session-1",
   source: "web",
   fileName: "recording.webm",
   mediaType: "audio/webm",
   fileSize: 1024,
 };
 
+const CHAT_TURN_OUTPUT: ReadonlyArray<ContentPart> = [{
+  type: "text",
+  text: "Goodbye",
+}];
+
+const CHAT_TURN_COMPLETED_OUTCOME: ChatTurnObservationOutcome = {
+  kind: "completed",
+  assistantContent: CHAT_TURN_OUTPUT,
+};
+
+const CHAT_TURN_INITIAL_UPDATE: ObservationUpdate = {
+  input: {
+    turnInput: [{
+      type: "text",
+      text: "Hello",
+    }],
+  },
+  metadata: {
+    requestId: "request-1",
+    workspaceId: "workspace-1",
+    model: "gpt-5",
+    attempt: "1",
+    turnIndex: "1",
+    hasAttachments: "false",
+    attachmentCount: "0",
+    runState: "running",
+  },
+};
+
+const CHAT_TRANSCRIPTION_INITIAL_UPDATE: ObservationUpdate = {
+  input: {
+    upload: {
+      workspaceId: "workspace-1",
+      source: "web",
+      fileName: "recording.webm",
+      mediaType: "audio/webm",
+      fileSize: 1024,
+    },
+  },
+  metadata: {
+    requestId: "request-1",
+    userId: "user-1",
+    workspaceId: "workspace-1",
+    source: "web",
+    fileName: "recording.webm",
+    mediaType: "audio/webm",
+    fileSize: "1024",
+    sessionId: "session-1",
+  },
+};
+
+test("startChatTurnObservationWithDeps propagates attributes before starting the active root", async (): Promise<void> => {
+  const recording = createRecordingObservation();
+  const lifecycle: Array<string> = [];
+  const dependencies: StartObservationDependencies = {
+    createTraceId: async (): Promise<string> => TRACE_ID,
+    propagateAttributes: (attributes, fn) => {
+      lifecycle.push("propagate");
+      assert.equal(attributes.traceName, "chat_turn");
+      assert.equal(attributes.userId, "user-1");
+      assert.equal(attributes.sessionId, "session-1");
+      return propagateAttributes(attributes, fn);
+    },
+    startActiveObservation: <Result>(
+      name: StartActiveObservationName,
+      fn: (rootObservation: StartActiveObservationRoot) => Result,
+      options: StartActiveObservationOptions,
+    ): Result => {
+      lifecycle.push("active-root");
+      assert.equal(name, "chat_turn");
+      assert.deepEqual(options, {
+        asType: "agent",
+        endOnExit: false,
+        parentSpanContext: {
+          traceId: TRACE_ID,
+          spanId: TRACE_ID.slice(0, 16),
+          traceFlags: 1,
+        },
+      });
+      return fn(recording.observation);
+    },
+    log: ignoreLog,
+  };
+
+  await startChatTurnObservationWithDeps(
+    CHAT_TURN_PARAMS,
+    async (): Promise<ChatTurnObservationOutcome> => {
+      lifecycle.push("callback");
+      assert.deepEqual(recording.updates, [CHAT_TURN_INITIAL_UPDATE]);
+      return CHAT_TURN_COMPLETED_OUTCOME;
+    },
+    dependencies,
+  );
+
+  assert.deepEqual(lifecycle, ["propagate", "active-root", "callback"]);
+});
+
 test("startChatTurnObservationWithDeps leaves successful roots at the default level", async (): Promise<void> => {
   const recording = createRecordingObservation();
 
   await startChatTurnObservationWithDeps(
     CHAT_TURN_PARAMS,
-    async (rootObservation): Promise<void> => {
+    async (rootObservation): Promise<ChatTurnObservationOutcome> => {
       assert.equal(rootObservation, recording.observation);
+      return CHAT_TURN_COMPLETED_OUTCOME;
     },
     createObservationDependencies(recording.observation, ignoreLog),
   );
 
-  assert.deepEqual(recording.updates, [{
-    output: {
-      result: "success",
+  assert.deepEqual(recording.updates, [
+    CHAT_TURN_INITIAL_UPDATE,
+    {
+      output: {
+        result: "success",
+        assistantContent: CHAT_TURN_OUTPUT,
+      },
     },
-  }]);
+  ]);
   assert.equal(recording.getEndCount(), 1);
+});
+
+test("startChatTurnObservationWithDeps records every non-success outcome explicitly", async (): Promise<void> => {
+  const scenarios: ReadonlyArray<Readonly<{
+    outcome: ChatTurnObservationOutcome;
+    expectedUpdate: ObservationUpdate;
+  }>> = [
+    {
+      outcome: { kind: "cancelled", assistantContent: CHAT_TURN_OUTPUT },
+      expectedUpdate: {
+        output: { result: "cancelled", assistantContent: CHAT_TURN_OUTPUT },
+      },
+    },
+    {
+      outcome: { kind: "invalidated" },
+      expectedUpdate: { output: { result: "invalidated" } },
+    },
+    {
+      outcome: {
+        kind: "failed",
+        assistantContent: CHAT_TURN_OUTPUT,
+        message: "Provider failed",
+      },
+      expectedUpdate: {
+        level: "ERROR",
+        statusMessage: "Provider failed",
+        output: {
+          result: "error",
+          message: "Provider failed",
+          assistantContent: CHAT_TURN_OUTPUT,
+        },
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const recording = createRecordingObservation();
+    await startChatTurnObservationWithDeps(
+      CHAT_TURN_PARAMS,
+      async (): Promise<ChatTurnObservationOutcome> => scenario.outcome,
+      createObservationDependencies(recording.observation, ignoreLog),
+    );
+    assert.deepEqual(recording.updates, [CHAT_TURN_INITIAL_UPDATE, scenario.expectedUpdate]);
+    assert.equal(recording.getEndCount(), 1);
+  }
 });
 
 test("startChatTurnObservationWithDeps preserves success when the success telemetry update throws", async (): Promise<void> => {
@@ -156,9 +316,10 @@ test("startChatTurnObservationWithDeps preserves success when the success teleme
 
   await startChatTurnObservationWithDeps(
     CHAT_TURN_PARAMS,
-    async (rootObservation): Promise<void> => {
+    async (rootObservation): Promise<ChatTurnObservationOutcome> => {
       callbackCount += 1;
       assert.equal(rootObservation, recording.observation);
+      return CHAT_TURN_COMPLETED_OUTCOME;
     },
     createObservationDependencies(
       recording.observation,
@@ -169,14 +330,19 @@ test("startChatTurnObservationWithDeps preserves success when the success teleme
   );
 
   assert.equal(callbackCount, 1);
-  assert.deepEqual(recording.updates, [{
-    output: {
-      result: "success",
+  assert.deepEqual(recording.updates, [
+    CHAT_TURN_INITIAL_UPDATE,
+    {
+      output: {
+        result: "success",
+        assistantContent: CHAT_TURN_OUTPUT,
+      },
     },
-  }]);
+  ]);
   assert.equal(recording.getEndCount(), 1);
   assert.deepEqual(logEvents, [
-    createExpectedChatTurnTelemetryLog("success update", updateError),
+    createExpectedChatTurnTelemetryLog("initial update", updateError),
+    createExpectedChatTurnTelemetryLog("outcome update", updateError),
     createExpectedChatTurnTelemetryLog("end", endError),
   ]);
 });
@@ -192,7 +358,7 @@ test("startChatTurnObservationWithDeps marks failed roots as errors and rethrows
   const callbackError = new Error("Chat turn failed");
   const propagatedError = await startChatTurnObservationWithDeps(
     CHAT_TURN_PARAMS,
-    async (): Promise<void> => {
+    async (): Promise<ChatTurnObservationOutcome> => {
       throw callbackError;
     },
     createObservationDependencies(
@@ -207,23 +373,70 @@ test("startChatTurnObservationWithDeps marks failed roots as errors and rethrows
   );
 
   assert.equal(propagatedError, callbackError);
-  assert.deepEqual(recording.updates, [{
-    level: "ERROR",
-    statusMessage: "Chat turn failed",
-    output: {
-      result: "error",
-      message: "Chat turn failed",
+  assert.deepEqual(recording.updates, [
+    CHAT_TURN_INITIAL_UPDATE,
+    {
+      level: "ERROR",
+      statusMessage: "Chat turn failed",
+      output: {
+        result: "error",
+        message: "Chat turn failed",
+      },
     },
-  }]);
+  ]);
   assert.equal(recording.getEndCount(), 1);
   assert.deepEqual(logEvents, [
+    createExpectedChatTurnTelemetryLog("initial update", updateError),
     createExpectedChatTurnTelemetryLog("error update", updateError),
     createExpectedChatTurnTelemetryLog("end", endError),
   ]);
 });
 
+test("startChatTurnObservationWithDeps rethrows a null callback rejection exactly once", async (): Promise<void> => {
+  const recording = createRecordingObservation();
+  let callbackCount = 0;
+  let rejectionObserved = false;
+
+  try {
+    await startChatTurnObservationWithDeps(
+      CHAT_TURN_PARAMS,
+      async (): Promise<ChatTurnObservationOutcome> => {
+        callbackCount += 1;
+        return Promise.reject(null);
+      },
+      createObservationDependencies(recording.observation, ignoreLog),
+    );
+  } catch (error) {
+    rejectionObserved = true;
+    assert.equal(error, null);
+  }
+
+  assert.equal(rejectionObserved, true);
+  assert.equal(callbackCount, 1);
+  assert.deepEqual(recording.updates, [
+    CHAT_TURN_INITIAL_UPDATE,
+    {
+      level: "ERROR",
+      statusMessage: "null",
+      output: {
+        result: "error",
+        message: "null",
+      },
+    },
+  ]);
+  assert.equal(recording.getEndCount(), 1);
+});
+
 test("startChatTranscriptionObservationWithDeps leaves successful roots at the default level", async (): Promise<void> => {
   const recording = createRecordingObservation();
+  const baseDependencies = createObservationDependencies(recording.observation, ignoreLog);
+  const dependencies: StartObservationDependencies = {
+    ...baseDependencies,
+    propagateAttributes: (attributes, fn) => {
+      assert.equal(attributes.sessionId, "session-1");
+      return propagateAttributes(attributes, fn);
+    },
+  };
 
   const result = await startChatTranscriptionObservationWithDeps(
     CHAT_TRANSCRIPTION_PARAMS,
@@ -231,15 +444,19 @@ test("startChatTranscriptionObservationWithDeps leaves successful roots at the d
       assert.equal(rootObservation, recording.observation);
       return "transcript";
     },
-    createObservationDependencies(recording.observation, ignoreLog),
+    dependencies,
   );
 
   assert.equal(result, "transcript");
-  assert.deepEqual(recording.updates, [{
-    output: {
-      result: "success",
+  assert.deepEqual(recording.updates, [
+    CHAT_TRANSCRIPTION_INITIAL_UPDATE,
+    {
+      output: {
+        result: "success",
+        transcription: "transcript",
+      },
     },
-  }]);
+  ]);
   assert.equal(recording.getEndCount(), 1);
 });
 
@@ -270,14 +487,19 @@ test("startChatTranscriptionObservationWithDeps preserves success when the succe
 
   assert.equal(result, "transcript");
   assert.equal(callbackCount, 1);
-  assert.deepEqual(recording.updates, [{
-    output: {
-      result: "success",
+  assert.deepEqual(recording.updates, [
+    CHAT_TRANSCRIPTION_INITIAL_UPDATE,
+    {
+      output: {
+        result: "success",
+        transcription: "transcript",
+      },
     },
-  }]);
+  ]);
   assert.equal(recording.getEndCount(), 1);
   assert.deepEqual(logEvents, [
-    createExpectedTranscriptionTelemetryLog("success update", updateError),
+    createExpectedTranscriptionTelemetryLog("initial update", updateError),
+    createExpectedTranscriptionTelemetryLog("outcome update", updateError),
     createExpectedTranscriptionTelemetryLog("end", endError),
   ]);
 });
@@ -308,19 +530,58 @@ test("startChatTranscriptionObservationWithDeps marks failed roots as errors and
   );
 
   assert.equal(propagatedError, callbackError);
-  assert.deepEqual(recording.updates, [{
-    level: "ERROR",
-    statusMessage: "Transcription failed",
-    output: {
-      result: "error",
-      message: "Transcription failed",
+  assert.deepEqual(recording.updates, [
+    CHAT_TRANSCRIPTION_INITIAL_UPDATE,
+    {
+      level: "ERROR",
+      statusMessage: "Transcription failed",
+      output: {
+        result: "error",
+        message: "Transcription failed",
+      },
     },
-  }]);
+  ]);
   assert.equal(recording.getEndCount(), 1);
   assert.deepEqual(logEvents, [
+    createExpectedTranscriptionTelemetryLog("initial update", updateError),
     createExpectedTranscriptionTelemetryLog("error update", updateError),
     createExpectedTranscriptionTelemetryLog("end", endError),
   ]);
+});
+
+test("startChatTranscriptionObservationWithDeps rethrows a null callback rejection exactly once", async (): Promise<void> => {
+  const recording = createRecordingObservation();
+  let callbackCount = 0;
+  let rejectionObserved = false;
+
+  try {
+    await startChatTranscriptionObservationWithDeps(
+      CHAT_TRANSCRIPTION_PARAMS,
+      async (): Promise<string> => {
+        callbackCount += 1;
+        return Promise.reject(null);
+      },
+      createObservationDependencies(recording.observation, ignoreLog),
+    );
+  } catch (error) {
+    rejectionObserved = true;
+    assert.equal(error, null);
+  }
+
+  assert.equal(rejectionObserved, true);
+  assert.equal(callbackCount, 1);
+  assert.deepEqual(recording.updates, [
+    CHAT_TRANSCRIPTION_INITIAL_UPDATE,
+    {
+      level: "ERROR",
+      statusMessage: "null",
+      output: {
+        result: "error",
+        message: "null",
+      },
+    },
+  ]);
+  assert.equal(recording.getEndCount(), 1);
 });
 
 test("sanitizeLangfuseSerializedTelemetry masks nested text while preserving media", (): void => {

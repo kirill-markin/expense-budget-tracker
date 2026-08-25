@@ -18,6 +18,8 @@ type ChatTranscriptionsRouteDependencies = Readonly<{
   transcribeChatAudioUpload: typeof transcribeChatAudioUpload;
 }>;
 
+const LANGFUSE_SESSION_ID_MAX_LENGTH = 200;
+
 const DEFAULT_CHAT_TRANSCRIPTIONS_ROUTE_DEPENDENCIES: ChatTranscriptionsRouteDependencies = {
   ensureUserProvisioned,
   parseChatTranscriptionUpload,
@@ -31,6 +33,15 @@ const assertAuthenticatedChatRequest = (request: Request): void => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new ApiRouteError(401, message);
+  }
+};
+
+const assertSupportedTranscriptionSessionId = (sessionId: string | null): void => {
+  if (sessionId !== null && sessionId.length > LANGFUSE_SESSION_ID_MAX_LENGTH) {
+    throw new ApiRouteError(
+      400,
+      `sessionId must contain at most ${String(LANGFUSE_SESSION_ID_MAX_LENGTH)} characters for audio transcription`,
+    );
   }
 };
 
@@ -50,10 +61,12 @@ export const transcribeChatRouteWithDeps = async (
       const workspaceId = extractWorkspaceId(request);
       await dependencies.ensureUserProvisioned(userId, workspaceId);
       const upload = await dependencies.parseChatTranscriptionUpload(request);
+      assertSupportedTranscriptionSessionId(upload.sessionId);
       const text = await dependencies.transcribeChatAudioUpload(upload, {
         requestId: randomUUID(),
         userId,
         workspaceId,
+        sessionId: upload.sessionId,
         source: upload.source,
         fileName: upload.file.name,
         mediaType: upload.file.type.trim().toLowerCase(),
