@@ -153,6 +153,7 @@ export const sanitizeChatTranscriptionErrorText = (
 
 export const transcribeChatAudio = async (
   blob: Blob,
+  sessionId: string | null,
   t: ChatTranslation,
 ): Promise<ChatTranscriptionResponse> => {
   const mediaType = normalizeAudioMediaType(blob.type === "" ? "audio/webm" : blob.type);
@@ -162,6 +163,9 @@ export const transcribeChatAudio = async (
   const formData = new FormData();
   formData.append("file", file);
   formData.append("source", "web");
+  if (sessionId !== null) {
+    formData.append("sessionId", sessionId);
+  }
 
   const response = await fetchWithCsrf("/api/chat/transcriptions", {
     method: "POST",

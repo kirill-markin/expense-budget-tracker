@@ -110,7 +110,7 @@ test("a delayed transcription cannot overwrite a newer operation", async (): Pro
   assert.equal(selectedDraftText, "newer target");
 });
 
-test("transcribeChatAudio sends audio without creating or naming a chat session", async (): Promise<void> => {
+test("transcribeChatAudio sends an owned session id and keeps drafts sessionless", async (): Promise<void> => {
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   const submittedForms: Array<FormData> = [];
@@ -129,14 +129,23 @@ test("transcribeChatAudio sends audio without creating or naming a chat session"
   });
 
   try {
-    const result = await transcribeChatAudio(
+    const draftResult = await transcribeChatAudio(
       new Blob(["audio"], { type: "audio/webm" }),
+      null,
+      t,
+    );
+    const sessionResult = await transcribeChatAudio(
+      new Blob(["audio"], { type: "audio/webm" }),
+      "session-existing",
       t,
     );
 
-    assert.deepEqual(result, { text: "hello" });
+    assert.deepEqual(draftResult, { text: "hello" });
+    assert.deepEqual(sessionResult, { text: "hello" });
     assert.equal(submittedForms[0]?.get("sessionId"), null);
     assert.equal(submittedForms[0]?.get("source"), "web");
+    assert.equal(submittedForms[1]?.get("sessionId"), "session-existing");
+    assert.equal(submittedForms[1]?.get("source"), "web");
   } finally {
     if (originalDocument === undefined) {
       Reflect.deleteProperty(globalThis, "document");

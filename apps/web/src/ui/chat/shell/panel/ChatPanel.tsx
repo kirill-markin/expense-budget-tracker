@@ -1427,14 +1427,21 @@ export const ChatPanel = (props: Props): ReactElement => {
         }
         return ownership.target;
       };
-      if (readCurrentOperationTarget() === null) {
+      const transcriptionTarget = readCurrentOperationTarget();
+      if (transcriptionTarget === null) {
         return;
       }
       if (audioBlob.size <= 0) {
         return;
       }
 
-      const transcription = await transcribeChatAudio(audioBlob, t);
+      const transcription = await transcribeChatAudio(
+        audioBlob,
+        transcriptionTarget.kind === "session"
+          ? transcriptionTarget.sessionId
+          : null,
+        t,
+      );
       const currentTarget = readCurrentOperationTarget();
       if (currentTarget === null) {
         return;

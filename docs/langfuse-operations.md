@@ -11,6 +11,10 @@ The web chat now runs with fully app-managed state:
 - Langfuse receives one trace per user turn
 - trace name is `chat_turn`
 - Langfuse `sessionId` matches the chat session id
+- the active root `agent` observation stores the sanitized turn input and terminal assistant outcome
+- OpenAI generations and local tool observations run inside that root observation
+
+Audio transcription uses a separate active `chat_transcription` root. Its root stores the upload summary and transcription output. When the client supplies a chat session id of at most 200 characters, the root and observed OpenAI generation inherit that `sessionId`.
 
 OpenAI Conversations, hosted code interpreter containers, and provider-managed recovery are not part of the runtime anymore.
 
@@ -33,7 +37,9 @@ Spans are exported in batches, not one by one:
 - the span processor uses the `@langfuse/otel` default `batched` export mode
 - the OpenTelemetry batch processor schedules a flush every 5 seconds by default, so a finished turn can take a few seconds to appear in Langfuse
 - batching keeps OTLP serialization and the export request off the chat request path, so telemetry competes less with request handling for the event loop
+- exporter retry behavior uses the SDK and OpenTelemetry defaults; the app does not add another retry layer
 - spans still queued when a web task stops are lost, because nothing flushes the SDK on exit; this is an accepted trade-off, not a misconfiguration
+- observation update and end failures are logged without changing the chat result; background exporter failures are not propagated into the chat request
 
 Treat a trace that is missing for only a few seconds after a turn as normal batching latency.
 
@@ -52,6 +58,15 @@ For a plain text turn, expect:
 
 - one root `agent` observation for `chat_turn`
 - one nested OpenAI generation observation
+- sanitized `turnInput` on the root before the generation starts
+- a terminal root output written after the application outcome is known
+
+The chat root output uses these result values:
+
+- `success` only after final assistant tool normalization and `completeChatRun` persistence; the client `done` event is emitted only after that write succeeds
+- `cancelled` only after user-cancellation persistence
+- `invalidated` when the run was discarded or lost its active-run transition
+- `error` for a persisted stream terminal error or a thrown failure
 
 For a turn that uses `query_database`, expect:
 
@@ -59,6 +74,13 @@ For a turn that uses `query_database`, expect:
 - at least one nested OpenAI generation observation
 - one nested tool observation for `query_database`
 - if the tool result causes a follow-up model call, another nested generation observation under the same trace
+
+For an audio transcription with a chat session id, expect:
+
+- one root `agent` observation for `chat_transcription`
+- one nested OpenAI generation observation
+- the same `sessionId` on both observations so session cost includes the generation
+- the upload summary on the root input and transcription text on the root output
 
 ## How to filter traces
 
@@ -74,7 +96,7 @@ Useful metadata for narrowing a trace:
 
 - `requestId` for one exact server request
 - `model` for model-specific regressions
-- `runState` to separate successful turns from interrupted or failed ones
+- root output `result` to separate completed, cancelled, invalidated, and failed turns
 - `turnIndex` to understand where in the chat history the problem happened
 
 ## First production smoke check
@@ -125,4 +147,14 @@ If a chat works but no Langfuse data is exported:
 
 ## Current non-goals
 
-The cutover does not include a Langfuse dataset workflow yet. There is currently no admin or job flow in this repo that creates dataset items from `sourceTraceId` or `sourceObservationId`. Treat that as phase 2 observability work, not as a blocker for the runtime migration.
+The repository uses the GA Langfuse JS/TS SDK v5 with OpenTelemetry ingestion. It has no direct Langfuse read API, raw ingestion request, generated client, evaluator job, dataset experiment, or export integration. The only code-derived observation-evaluator candidates are the `chat_turn` and `chat_transcription` roots described above; this does not establish that any evaluator exists in the Langfuse project.
+
+`LANGFUSE_BASE_URL` can point to Langfuse Cloud or a self-hosted deployment. The application does not discover the server major; self-hosted operators must confirm the target is on Langfuse v4 before completing the project cutover.
+
+Project-dependent migration checks remain blocked until access to the confirmed target project is configured. That includes project reads or writes, representative non-production ingestion, evaluator and export cutovers, and rollback verification. Check these project surfaces separately:
+
+- [Migration status](https://cloud.langfuse.com/v4-migration)
+- [Evaluators](https://cloud.langfuse.com/project/~/evals), including active Legacy rows
+- [Integrations](https://cloud.langfuse.com/project/~/settings/integrations), including export sources and downstream cutover state
+
+Do not enable or cut over evaluators or exports until a representative non-production trace has been inspected. Keep disabled legacy evaluators for rollback. Repository behavior follows the official [v4 overview](https://langfuse.com/docs/v4), [compatibility matrix](https://langfuse.com/docs/compatibility), [JS/TS upgrade path](https://langfuse.com/docs/observability/sdk/upgrade-path/js-v4-to-v5), [OpenAI integration](https://langfuse.com/integrations/model-providers/openai-js), and [batching lifecycle](https://langfuse.com/docs/observability/features/queuing-batching).

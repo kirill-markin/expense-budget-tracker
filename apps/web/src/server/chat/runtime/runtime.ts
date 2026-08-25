@@ -14,7 +14,10 @@ import type {
 import { UnsupportedStoredChatAttachmentError } from "@/server/chat/openai/responses/input";
 import { runOpenAILoop } from "@/server/chat/openai/loop";
 import { isOpenAITransientError } from "@/server/chat/logging";
-import { startChatTurnObservation } from "@/server/chat/openai/langfuse";
+import {
+  startChatTurnObservation,
+  type ChatTurnObservationOutcome,
+} from "@/server/chat/openai/langfuse";
 import {
   buildUserStoppedAssistantContent,
   ChatSessionRunTransitionError,
@@ -43,6 +46,7 @@ import { log, type ChatErrorStage } from "@/server/logger";
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
 export const CHAT_RUN_STALE_HEARTBEAT_MS = 30_000;
 const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
+const CHAT_RUN_LOOP_STOP_SIGNAL = Symbol("chat_run_loop_stop");
 
 type ChatRunDiagnostics = Readonly<{
   requestId: string;
@@ -54,6 +58,21 @@ type ChatRunDiagnostics = Readonly<{
   hasAttachments: boolean;
   attachmentFileNames: ReadonlyArray<string>;
 }>;
+
+type ChatInvalidatedObservationOutcome = Extract<
+  ChatTurnObservationOutcome,
+  { kind: "invalidated" }
+>;
+
+type ChatCancellationObservationOutcome = Extract<
+  ChatTurnObservationOutcome,
+  { kind: "cancelled" | "invalidated" }
+>;
+
+type ChatFailureObservationOutcome = Extract<
+  ChatTurnObservationOutcome,
+  { kind: "failed" | "invalidated" }
+>;
 
 export type StartPersistedChatRunParams = Readonly<{
   requestId: string;
@@ -546,8 +565,15 @@ export const runPersistedChatSessionWithDeps = async (
 ): Promise<void> => {
   let assistantContent: ReadonlyArray<ContentPart> = [];
   let assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | undefined;
-  let isFinalized = false;
+  let pendingObservationOutcome: ChatTurnObservationOutcome | null = null;
+  let pendingCancellationOutcome: ChatCancellationObservationOutcome | null = null;
+  let activeRootPersistenceError: unknown | null = null;
+  let activeRootPersistenceFailed = false;
+  let cancellationLogged = false;
+  let doneEventPending = false;
   const seenInvalidationVersions = new Map<string, number>();
+  const getPendingObservationOutcome = (): ChatTurnObservationOutcome | null =>
+    pendingObservationOutcome;
   const heartbeatTimer = setInterval(() => {
     void dependencies.touchChatSessionHeartbeat(
       params.userId,
@@ -559,31 +585,125 @@ export const runPersistedChatSessionWithDeps = async (
     });
   }, CHAT_RUN_HEARTBEAT_INTERVAL_MS);
 
-  const persistUserCancellationIfNeeded = async (): Promise<boolean> => {
+  const classifyPersistenceFailure = (
+    error: unknown,
+  ): ChatInvalidatedObservationOutcome => {
+    if (error instanceof ChatSessionRunTransitionError) {
+      logRunTransitionSkipped(error, params);
+      return { kind: "invalidated" };
+    }
+
+    activeRootPersistenceFailed = true;
+    activeRootPersistenceError = error;
+    throw error;
+  };
+
+  const stopOpenAILoop = (outcome: ChatTurnObservationOutcome): never => {
+    pendingObservationOutcome = outcome;
+    throw CHAT_RUN_LOOP_STOP_SIGNAL;
+  };
+
+  const logUserCancellation = (): void => {
+    if (cancellationLogged) {
+      return;
+    }
+
+    cancellationLogged = true;
+    log({
+      domain: "chat",
+      action: "run_cancelled",
+      vendor: "openai",
+      requestId: params.requestId,
+      sessionId: params.sessionId,
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+    });
+  };
+
+  const persistUserCancellationIfNeeded = async (): Promise<
+    ChatCancellationObservationOutcome | null
+  > => {
     const activeRun = getActiveChatRun(params.sessionId);
     if (
       activeRun === undefined
       || activeRun.activeRunId !== params.activeRunId
       || activeRun.stopRequestedByUser !== true
     ) {
-      return false;
+      return null;
     }
-
-    if (activeRun.cancellationState === "persisted") {
-      isFinalized = true;
-      return true;
+    if (pendingCancellationOutcome?.kind === "invalidated") {
+      return pendingCancellationOutcome;
     }
 
     assistantContent = buildUserStoppedAssistantContent(assistantContent);
-    await dependencies.persistAssistantCancelled(params.userId, params.workspaceId, {
-      sessionId: params.sessionId,
-      activeRunId: params.activeRunId,
-      assistantItemId: params.assistantItemId,
-      assistantContent,
-    });
+    if (activeRun.cancellationState === "persisted") {
+      logUserCancellation();
+      pendingCancellationOutcome = {
+        kind: "cancelled",
+        assistantContent,
+      };
+      return pendingCancellationOutcome;
+    }
+
+    try {
+      await dependencies.persistAssistantCancelled(params.userId, params.workspaceId, {
+        sessionId: params.sessionId,
+        activeRunId: params.activeRunId,
+        assistantItemId: params.assistantItemId,
+        assistantContent,
+      });
+    } catch (error) {
+      pendingCancellationOutcome = classifyPersistenceFailure(error);
+      return pendingCancellationOutcome;
+    }
     activeRun.cancellationState = "persisted";
-    isFinalized = true;
-    return true;
+    logUserCancellation();
+    pendingCancellationOutcome = {
+      kind: "cancelled",
+      assistantContent,
+    };
+    return pendingCancellationOutcome;
+  };
+
+  const stopOpenAILoopIfInterrupted = (
+    cancellationOutcome: ChatCancellationObservationOutcome | null,
+  ): void => {
+    const existingObservationOutcome = getPendingObservationOutcome();
+    if (existingObservationOutcome !== null) {
+      stopOpenAILoop(existingObservationOutcome);
+    }
+
+    if (cancellationOutcome !== null) {
+      stopOpenAILoop(cancellationOutcome);
+    }
+
+    if (!isCurrentActiveChatRun(params.sessionId, params.activeRunId)) {
+      stopOpenAILoop({ kind: "invalidated" });
+    }
+  };
+
+  const persistTerminalFailure = async (
+    errorMessage: string,
+  ): Promise<ChatFailureObservationOutcome> => {
+    assistantContent = finalizeAssistantToolCalls(assistantContent);
+    try {
+      await dependencies.persistAssistantTerminalError(params.userId, params.workspaceId, {
+        sessionId: params.sessionId,
+        activeRunId: params.activeRunId,
+        assistantItemId: params.assistantItemId,
+        assistantContent,
+        errorMessage,
+        sessionState: "idle",
+      });
+    } catch (error) {
+      return classifyPersistenceFailure(error);
+    }
+
+    return {
+      kind: "failed",
+      assistantContent,
+      message: errorMessage,
+    };
   };
 
   try {
@@ -619,40 +739,58 @@ export const runPersistedChatSessionWithDeps = async (
         runState: "running",
         turnInput: params.turnInput,
       },
-      async (rootObservation): Promise<void> => {
+      async (rootObservation): Promise<ChatTurnObservationOutcome> => {
         const handleOpenAILoopEvent = async (event: ChatStreamEvent): Promise<void> => {
-          if (await persistUserCancellationIfNeeded()) {
-            return;
+          const existingObservationOutcome = getPendingObservationOutcome();
+          if (existingObservationOutcome !== null) {
+            stopOpenAILoop(existingObservationOutcome);
           }
 
-          if (!isCurrentActiveChatRun(params.sessionId, params.activeRunId)) {
+          const initialCancellationOutcome = await persistUserCancellationIfNeeded();
+          stopOpenAILoopIfInterrupted(initialCancellationOutcome);
+
+          if (event.type === "done") {
+            doneEventPending = true;
             return;
           }
 
           if (event.type === "delta") {
             assistantContent = applyAssistantDelta(assistantContent, event);
-            await updateAssistantInProgress(
-              dependencies,
-              params.userId,
-              params.workspaceId,
-              params.sessionId,
-              params.activeRunId,
-              params.assistantItemId,
-              assistantContent,
-            );
+            try {
+              await updateAssistantInProgress(
+                dependencies,
+                params.userId,
+                params.workspaceId,
+                params.sessionId,
+                params.activeRunId,
+                params.assistantItemId,
+                assistantContent,
+              );
+            } catch (error) {
+              stopOpenAILoop(classifyPersistenceFailure(error));
+            }
+            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
+            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
           } else if (event.type === "tool_call") {
             assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
-            const eventToBroadcast = await persistToolCallProgress(
-              dependencies,
-              params.userId,
-              params.workspaceId,
-              params.sessionId,
-              params.activeRunId,
-              params.assistantItemId,
-              assistantContent,
-              event,
-              seenInvalidationVersions,
-            );
+            let eventToBroadcast: Extract<ChatStreamEvent, { type: "tool_call" }>;
+            try {
+              eventToBroadcast = await persistToolCallProgress(
+                dependencies,
+                params.userId,
+                params.workspaceId,
+                params.sessionId,
+                params.activeRunId,
+                params.assistantItemId,
+                assistantContent,
+                event,
+                seenInvalidationVersions,
+              );
+            } catch (error) {
+              stopOpenAILoop(classifyPersistenceFailure(error));
+            }
+            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
+            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
             broadcastChatEvent(params.sessionId, params.activeRunId, eventToBroadcast);
             return;
           } else if (event.type === "reasoning_summary") {
@@ -660,101 +798,179 @@ export const runPersistedChatSessionWithDeps = async (
               assistantContent,
               createReasoningSummaryContentPart(event),
             );
-            await updateAssistantInProgress(
-              dependencies,
-              params.userId,
-              params.workspaceId,
-              params.sessionId,
-              params.activeRunId,
-              params.assistantItemId,
-              assistantContent,
-            );
+            try {
+              await updateAssistantInProgress(
+                dependencies,
+                params.userId,
+                params.workspaceId,
+                params.sessionId,
+                params.activeRunId,
+                params.assistantItemId,
+                assistantContent,
+              );
+            } catch (error) {
+              stopOpenAILoop(classifyPersistenceFailure(error));
+            }
+            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
+            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
           } else if (event.type === "error") {
-            assistantContent = finalizeAssistantToolCalls(assistantContent);
-            await dependencies.persistAssistantTerminalError(params.userId, params.workspaceId, {
-              sessionId: params.sessionId,
-              activeRunId: params.activeRunId,
-              assistantItemId: params.assistantItemId,
-              assistantContent,
-              errorMessage: event.message,
-              sessionState: "idle",
-            });
-            isFinalized = true;
+            const failureOutcome = await persistTerminalFailure(event.message);
+            const cancellationOutcome = await persistUserCancellationIfNeeded();
+            if (cancellationOutcome !== null) {
+              stopOpenAILoop(cancellationOutcome);
+            }
+            if (
+              failureOutcome.kind === "invalidated"
+              || !isCurrentActiveChatRun(params.sessionId, params.activeRunId)
+            ) {
+              stopOpenAILoop(failureOutcome);
+            }
+            broadcastChatEvent(params.sessionId, params.activeRunId, event);
+            stopOpenAILoop(failureOutcome);
           }
 
           broadcastChatEvent(params.sessionId, params.activeRunId, event);
         };
 
-        const completion = await dependencies.runOpenAILoop({
-          requestId: params.requestId,
-          userId: params.userId,
-          workspaceId: params.workspaceId,
-          sessionId: params.sessionId,
-          turnId: params.activeRunId,
-          locale: params.locale,
-          timezone: params.timezone,
-          localMessages: params.localMessages,
-          turnInput: params.turnInput,
-          model: params.modelRouting.effectiveModel,
-          reasoningEffort: params.modelRouting.effectiveReasoningEffort,
-          rootObservation,
-          signal: getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.signal,
-        }, handleOpenAILoopEvent);
+        let completion: Awaited<ReturnType<ChatRuntimeDependencies["runOpenAILoop"]>>;
+        try {
+          completion = await dependencies.runOpenAILoop({
+            requestId: params.requestId,
+            userId: params.userId,
+            workspaceId: params.workspaceId,
+            sessionId: params.sessionId,
+            turnId: params.activeRunId,
+            locale: params.locale,
+            timezone: params.timezone,
+            localMessages: params.localMessages,
+            turnInput: params.turnInput,
+            model: params.modelRouting.effectiveModel,
+            reasoningEffort: params.modelRouting.effectiveReasoningEffort,
+            rootObservation,
+            signal: getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.signal,
+          }, handleOpenAILoopEvent);
+        } catch (error) {
+          if (activeRootPersistenceFailed && error === activeRootPersistenceError) {
+            throw error;
+          }
 
-        if (await persistUserCancellationIfNeeded()) {
-          return;
+          const activeRun = getActiveChatRun(params.sessionId);
+          const stoppedByUser = activeRun?.activeRunId === params.activeRunId
+            && activeRun.stopRequestedByUser === true;
+
+          if (stoppedByUser) {
+            const cancellationOutcome = await persistUserCancellationIfNeeded();
+            if (error !== CHAT_RUN_LOOP_STOP_SIGNAL && !isUserAbortError(error)) {
+              logChatRunError(params.diagnostics, "agent", error);
+            }
+            if (cancellationOutcome === null) {
+              return { kind: "invalidated" };
+            }
+            return cancellationOutcome;
+          }
+
+          if (error === CHAT_RUN_LOOP_STOP_SIGNAL) {
+            const stoppedObservationOutcome = getPendingObservationOutcome();
+            if (stoppedObservationOutcome === null) {
+              throw new Error("Chat loop stopped without a pending observation outcome");
+            }
+            return stoppedObservationOutcome;
+          }
+
+          const emittedObservationOutcome = getPendingObservationOutcome();
+          if (emittedObservationOutcome !== null) {
+            return emittedObservationOutcome;
+          }
+
+          if (error instanceof ChatSessionRunTransitionError) {
+            logRunTransitionSkipped(error, params);
+            return { kind: "invalidated" };
+          }
+
+          if (!isCurrentActiveChatRun(params.sessionId, params.activeRunId)) {
+            return { kind: "invalidated" };
+          }
+
+          const userFacingMessage = buildUserFacingChatErrorMessage(params.locale, error);
+          const failureOutcome = await persistTerminalFailure(userFacingMessage);
+          const cancellationOutcome = await persistUserCancellationIfNeeded();
+          if (cancellationOutcome !== null) {
+            return cancellationOutcome;
+          }
+          if (failureOutcome.kind === "invalidated") {
+            return failureOutcome;
+          }
+          broadcastChatEvent(params.sessionId, params.activeRunId, {
+            type: "error",
+            message: userFacingMessage,
+          });
+          logChatRunError(params.diagnostics, "agent", error);
+          return failureOutcome;
+        }
+
+        const loopObservationOutcome = getPendingObservationOutcome();
+        if (loopObservationOutcome?.kind === "invalidated") {
+          return loopObservationOutcome;
+        }
+
+        const cancellationOutcome = await persistUserCancellationIfNeeded();
+        if (cancellationOutcome !== null) {
+          return cancellationOutcome;
+        }
+
+        const persistedObservationOutcome = getPendingObservationOutcome();
+        if (persistedObservationOutcome !== null) {
+          return persistedObservationOutcome;
         }
 
         if (!isCurrentActiveChatRun(params.sessionId, params.activeRunId)) {
-          isFinalized = true;
-          return;
+          return { kind: "invalidated" };
         }
 
-        if (!isFinalized) {
-          assistantOpenAIItems = completion.openaiItems;
+        assistantOpenAIItems = completion.openaiItems;
+        assistantContent = finalizeAssistantToolCalls(assistantContent);
+        let completionInvalidationOutcome: ChatInvalidatedObservationOutcome | null = null;
+        try {
+          await dependencies.completeChatRun(
+            params.userId,
+            params.workspaceId,
+            {
+              sessionId: params.sessionId,
+              activeRunId: params.activeRunId,
+              assistantItemId: params.assistantItemId,
+              assistantContent,
+              assistantOpenAIItems,
+            },
+          );
+        } catch (error) {
+          completionInvalidationOutcome = classifyPersistenceFailure(error);
         }
+        const postCompletionCancellationOutcome = await persistUserCancellationIfNeeded();
+        if (postCompletionCancellationOutcome !== null) {
+          return postCompletionCancellationOutcome;
+        }
+        if (completionInvalidationOutcome !== null) {
+          return completionInvalidationOutcome;
+        }
+        if (doneEventPending) {
+          broadcastChatEvent(params.sessionId, params.activeRunId, { type: "done" });
+        }
+        return {
+          kind: "completed",
+          assistantContent,
+        };
       },
     );
-
-    if (!isFinalized) {
-      assistantContent = finalizeAssistantToolCalls(assistantContent);
-      await dependencies.completeChatRun(
-        params.userId,
-        params.workspaceId,
-        {
-          sessionId: params.sessionId,
-          activeRunId: params.activeRunId,
-          assistantItemId: params.assistantItemId,
-          assistantContent,
-          assistantOpenAIItems,
-        },
-      );
-      isFinalized = true;
-    }
   } catch (error) {
+    if (activeRootPersistenceFailed && error === activeRootPersistenceError) {
+      throw error;
+    }
+
     const activeRun = getActiveChatRun(params.sessionId);
     const stoppedByUser = activeRun?.activeRunId === params.activeRunId && activeRun.stopRequestedByUser === true;
 
     if (stoppedByUser && isUserAbortError(error)) {
-      try {
-        await persistUserCancellationIfNeeded();
-      } catch (persistError) {
-        if (persistError instanceof ChatSessionRunTransitionError) {
-          logRunTransitionSkipped(persistError, params);
-          return;
-        }
-
-        throw persistError;
-      }
-      log({
-        domain: "chat",
-        action: "run_cancelled",
-        vendor: "openai",
-        requestId: params.requestId,
-        sessionId: params.sessionId,
-        userId: params.userId,
-        workspaceId: params.workspaceId,
-      });
+      await persistUserCancellationIfNeeded();
       return;
     }
 
@@ -891,7 +1107,9 @@ export const startPersistedChatRunWithDeps = (
     cancellationState: "active",
   });
 
-  void runPersistedChatSessionWithDeps(params, dependencies);
+  void runPersistedChatSessionWithDeps(params, dependencies).catch((error) => {
+    logChatRunError(params.diagnostics, "agent", error);
+  });
 
   return subscriber.createIterator();
 };
