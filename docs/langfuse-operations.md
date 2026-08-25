@@ -22,8 +22,9 @@ The web container needs all of these values together:
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
 - `LANGFUSE_BASE_URL`
+- `LANGFUSE_RELEASE`
 
-If only part of the Langfuse config is present, production startup validation fails.
+If only part of the Langfuse config is present, or the release is not an explicit 64-character lowercase hexadecimal fingerprint, production startup validation fails. CDK sets the production release to the deterministic asset hash of the same web Docker image asset consumed by the ECS task definition, so it covers every file included in the staged image context, including included files ignored by Git.
 
 ## Export mode
 
@@ -41,6 +42,7 @@ Treat a trace that is missing for only a few seconds after a turn as normal batc
 For every user turn in the web chat, Langfuse should show:
 
 - trace name `chat_turn`
+- release equal to the deployed web Docker asset fingerprint
 - `sessionId` equal to the chat session id
 - `userId` equal to the authenticated app user id
 - tags `surface:web-chat`, `runtime:local-loop`, and `vendor:openai`
@@ -92,6 +94,7 @@ If no traces appear at all:
 - wait out the batch delay described in `## Export mode` before treating a missing trace as a configuration problem
 - if the web task was replaced or restarted right after the turn, expect the queued spans for that turn to be gone for good
 - confirm the ECS web task has all `LANGFUSE_*` environment values
+- confirm `LANGFUSE_RELEASE` matches the deployed web Docker asset fingerprint
 - confirm the web service was restarted after writing Secrets Manager values
 - check web container logs for startup validation failures about partial Langfuse configuration
 - check web container logs for `Langfuse telemetry failed:` errors

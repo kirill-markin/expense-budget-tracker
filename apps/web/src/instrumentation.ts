@@ -9,6 +9,7 @@
  * - AUTH_MODE=none is allowed only for explicit local dev/test
  * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (cognito/ECS)
  * - LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL are either all set or all absent
+ * - LANGFUSE_RELEASE is an explicit release fingerprint when Langfuse telemetry is enabled
  *
  * Throws with all collected errors on misconfiguration. Skipped in dev.
  */
@@ -19,21 +20,34 @@ import { createLangfuseSpanProcessor } from "@/server/chat/openai/langfuse";
 let telemetrySdk: NodeSDK | null = null;
 let telemetryStarted = false;
 
-const validateLangfuseConfig = (): ReadonlyArray<string> => {
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
-  const secretKey = process.env.LANGFUSE_SECRET_KEY;
-  const baseUrl = process.env.LANGFUSE_BASE_URL;
-  const presentCount = [publicKey, secretKey, baseUrl]
-    .filter((value) => value !== undefined && value !== "")
-    .length;
-
-  if (presentCount === 0 || presentCount === 3) {
+export const getLangfuseConfigValidationErrors = (
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<string> => {
+  const connectionValues = [
+    environment.LANGFUSE_PUBLIC_KEY,
+    environment.LANGFUSE_SECRET_KEY,
+    environment.LANGFUSE_BASE_URL,
+  ];
+  const connectionSettingsAbsent = connectionValues.every(
+    (value) => value === undefined || value === "",
+  );
+  if (connectionSettingsAbsent) {
     return [];
   }
 
-  return [
-    "LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_BASE_URL must be configured together",
-  ];
+  const errors: Array<string> = [];
+  if (connectionValues.some((value) => value === undefined || value.trim() === "")) {
+    errors.push(
+      "LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_BASE_URL must be configured together with non-empty values",
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(environment.LANGFUSE_RELEASE ?? "")) {
+    errors.push(
+      "LANGFUSE_RELEASE must be an explicit 64-character lowercase hexadecimal release fingerprint when Langfuse telemetry is enabled",
+    );
+  }
+
+  return errors;
 };
 
 const startTelemetryIfConfigured = (): void => {
@@ -89,7 +103,7 @@ export const register = (): void => {
     if (!process.env.DATABASE_URL) errors.push("DATABASE_URL must be set in production");
   }
 
-  errors.push(...validateLangfuseConfig());
+  errors.push(...getLangfuseConfigValidationErrors(process.env));
 
   if (errors.length > 0) {
     throw new Error(
