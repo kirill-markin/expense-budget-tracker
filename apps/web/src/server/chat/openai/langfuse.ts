@@ -221,6 +221,7 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
   const baseUrl = process.env.LANGFUSE_BASE_URL;
+  const release = process.env.LANGFUSE_RELEASE;
 
   if (
     publicKey === undefined
@@ -229,6 +230,8 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
     || secretKey === ""
     || baseUrl === undefined
     || baseUrl === ""
+    || release === undefined
+    || release === ""
   ) {
     return null;
   }
@@ -248,7 +251,7 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
     secretKey,
     baseUrl,
     environment: process.env.NODE_ENV,
-    release: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA,
+    release,
     shouldExportSpan: ({ otelSpan }: Readonly<{ otelSpan: ReadableSpan }>): boolean =>
       isDefaultExportSpan(otelSpan),
     mask: ({ data }: Readonly<{ data: unknown }>): string =>

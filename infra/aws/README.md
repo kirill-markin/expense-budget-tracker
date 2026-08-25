@@ -380,6 +380,8 @@ The script handles the full first-time deployment:
 5. Calls `/api/health` through the ALB DNS name until DB readiness succeeds
 6. Seeds exchange rates
 
+CDK injects the deterministic hash of the exact staged web Docker image asset as `LANGFUSE_RELEASE`. The same asset object supplies the ECS container image, so the release changes with every included image-context input, including included files ignored by Git.
+
 After this one-time bootstrap, all subsequent deploys happen automatically via CI/CD on push to `main`.
 
 Infrastructure liveness and database readiness are intentionally separate:
@@ -464,7 +466,7 @@ The canonical MCP transport is `https://mcp.yourdomain.com/mcp`, and its protect
      --secret-string 'sk-lf-...' \
      --profile expense-tracker
    ```
-   `langfuseBaseUrl` is injected as a regular ECS environment variable and defaults to `https://cloud.langfuse.com`. Then restart the ECS service to pick up the new values:
+   `langfuseBaseUrl` is injected as a regular ECS environment variable and defaults to `https://cloud.langfuse.com`. CDK injects the exact web Docker asset fingerprint as `LANGFUSE_RELEASE`. Then restart the ECS service to pick up the new values:
    ```bash
    aws ecs update-service \
      --cluster <EcsClusterName from output> \
@@ -510,7 +512,7 @@ After first deploy:
 
 3. Every push to `main` will automatically:
    - `cdk deploy` — update infrastructure, Lambda, and IAM permissions
-   - Build and push Docker images to ECR (tagged with git SHA + `latest`)
+   - Build and push content-addressed Docker image assets to ECR
    - Run migration ECS task (one-off Fargate task)
    - Restart ECS service (`force-new-deployment` picks up the new `latest` image)
 

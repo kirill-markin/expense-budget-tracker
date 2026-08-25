@@ -19,7 +19,7 @@ This runs `docker compose -f infra/docker/compose.yml up -d`, which starts:
 3. **web** — Next.js app on `http://localhost:3000`.
 4. **worker** — TypeScript FX rate fetcher on a daily schedule.
 
-If you want Langfuse tracing in local Docker, set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` together in `.env`. Leave all three unset if you do not want telemetry.
+If you want Langfuse tracing in local Docker, set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, and an explicit 64-character lowercase hexadecimal `LANGFUSE_RELEASE` together in `.env`. Leave the three connection values unset if you do not want telemetry; `LANGFUSE_RELEASE` alone does not enable it.
 
 ### Stop
 
@@ -46,7 +46,7 @@ Summary: CDK stack deploys VPC, ECS Fargate (web app), RDS Postgres (private), A
 
 ### Bootstrap and CI/CD
 
-Both bootstrap and CI/CD use the same method: `cdk deploy`. CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates/updates all infrastructure in one pass. `/api/live` is used only for ECS/ALB liveness. Database migrations run as a one-off ECS task after deploy, and `/api/health` is checked after deploy to confirm DB readiness.
+Both bootstrap and CI/CD use the same method: `cdk deploy`. CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates/updates all infrastructure in one pass. The web task receives the deterministic hash of its exact CDK Docker image asset as `LANGFUSE_RELEASE`. `/api/live` is used only for ECS/ALB liveness. Database migrations run as a one-off ECS task after deploy, and `/api/health` is checked after deploy to confirm DB readiness.
 
 **Bootstrap (first deploy, one-time):** `scripts/bootstrap.sh`
 

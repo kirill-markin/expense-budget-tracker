@@ -1,7 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
-import { Platform } from "aws-cdk-lib/aws-ecr-assets";
+import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -126,6 +126,14 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   ];
   const cluster = new ecs.Cluster(scope, "Cluster", { vpc: props.vpc });
 
+  const webDockerImageAsset = new DockerImageAsset(scope, "WebDockerImageAsset", {
+    directory: path.join(__dirname, "../../.."),
+    file: "apps/web/Dockerfile",
+    exclude: webDockerAssetExclude,
+    ignoreMode: cdk.IgnoreMode.DOCKER,
+    platform: Platform.LINUX_ARM64,
+  });
+
   const webTaskDef = new ecs.FargateTaskDefinition(scope, "WebTask", {
     cpu: 1024,
     memoryLimitMiB: 2048,
@@ -142,12 +150,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   });
 
   const webContainer = webTaskDef.addContainer("web", {
-    image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../.."), {
-      file: "apps/web/Dockerfile",
-      exclude: webDockerAssetExclude,
-      ignoreMode: cdk.IgnoreMode.DOCKER,
-      platform: Platform.LINUX_ARM64,
-    }),
+    image: ecs.ContainerImage.fromDockerImageAsset(webDockerImageAsset),
     portMappings: [{ containerPort: 8080 }],
     // Full list of ECS env vars is also documented in .env.example
     environment: {
@@ -163,6 +166,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_NAME: "tracker",
       DB_USER: "app",
       LANGFUSE_BASE_URL: props.langfuseBaseUrl,
+      LANGFUSE_RELEASE: webDockerImageAsset.assetHash,
       // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
       // Points to the CA bundle downloaded in apps/web/Dockerfile.
       NODE_EXTRA_CA_CERTS: "/app/rds-global-bundle.pem",
