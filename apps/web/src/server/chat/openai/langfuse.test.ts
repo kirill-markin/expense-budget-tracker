@@ -17,6 +17,12 @@ const PADDED_MEDIA_DATA_URI_TWO = "data:application/octet-stream;base64,12345678
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
 
 type StartObservationDependencies = Parameters<typeof startChatTurnObservationWithDeps>[2];
+type StartActiveObservationDependency = StartObservationDependencies["startActiveObservation"];
+type StartActiveObservationName = Parameters<StartActiveObservationDependency>[0];
+type StartActiveObservationRoot = Parameters<
+  Parameters<StartActiveObservationDependency>[1]
+>[0];
+type StartActiveObservationOptions = Parameters<StartActiveObservationDependency>[2];
 type ObservationUpdate = Parameters<LangfuseObservation["updateOtelSpanAttributes"]>[0];
 type LangfuseLogEvent = Parameters<StartObservationDependencies["log"]>[0];
 type RootTelemetryOperation = "initial update" | "outcome update" | "error update" | "end";
@@ -103,8 +109,10 @@ const createObservationDependencies = (
 ): StartObservationDependencies => ({
   createTraceId: async (): Promise<string> => TRACE_ID,
   propagateAttributes,
-  startActiveObservation: ((_name, fn) =>
-    fn(observation)) as StartObservationDependencies["startActiveObservation"],
+  startActiveObservation: <Result>(
+    _name: StartActiveObservationName,
+    fn: (rootObservation: StartActiveObservationRoot) => Result,
+  ): Result => fn(observation),
   log: logger,
 });
 
@@ -186,14 +194,18 @@ test("startChatTurnObservationWithDeps propagates attributes before starting the
   const lifecycle: Array<string> = [];
   const dependencies: StartObservationDependencies = {
     createTraceId: async (): Promise<string> => TRACE_ID,
-    propagateAttributes: ((attributes, fn) => {
+    propagateAttributes: (attributes, fn) => {
       lifecycle.push("propagate");
       assert.equal(attributes.traceName, "chat_turn");
       assert.equal(attributes.userId, "user-1");
       assert.equal(attributes.sessionId, "session-1");
-      return fn();
-    }) as StartObservationDependencies["propagateAttributes"],
-    startActiveObservation: ((name, fn, options) => {
+      return propagateAttributes(attributes, fn);
+    },
+    startActiveObservation: <Result>(
+      name: StartActiveObservationName,
+      fn: (rootObservation: StartActiveObservationRoot) => Result,
+      options: StartActiveObservationOptions,
+    ): Result => {
       lifecycle.push("active-root");
       assert.equal(name, "chat_turn");
       assert.deepEqual(options, {
@@ -206,7 +218,7 @@ test("startChatTurnObservationWithDeps propagates attributes before starting the
         },
       });
       return fn(recording.observation);
-    }) as StartObservationDependencies["startActiveObservation"],
+    },
     log: ignoreLog,
   };
 
@@ -420,10 +432,10 @@ test("startChatTranscriptionObservationWithDeps leaves successful roots at the d
   const baseDependencies = createObservationDependencies(recording.observation, ignoreLog);
   const dependencies: StartObservationDependencies = {
     ...baseDependencies,
-    propagateAttributes: ((attributes, fn) => {
+    propagateAttributes: (attributes, fn) => {
       assert.equal(attributes.sessionId, "session-1");
-      return fn();
-    }) as StartObservationDependencies["propagateAttributes"],
+      return propagateAttributes(attributes, fn);
+    },
   };
 
   const result = await startChatTranscriptionObservationWithDeps(

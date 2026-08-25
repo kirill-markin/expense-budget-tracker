@@ -773,22 +773,19 @@ export const runPersistedChatSessionWithDeps = async (
             stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
           } else if (event.type === "tool_call") {
             assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
-            let eventToBroadcast: Extract<ChatStreamEvent, { type: "tool_call" }>;
-            try {
-              eventToBroadcast = await persistToolCallProgress(
-                dependencies,
-                params.userId,
-                params.workspaceId,
-                params.sessionId,
-                params.activeRunId,
-                params.assistantItemId,
-                assistantContent,
-                event,
-                seenInvalidationVersions,
-              );
-            } catch (error) {
-              stopOpenAILoop(classifyPersistenceFailure(error));
-            }
+            const eventToBroadcast = await persistToolCallProgress(
+              dependencies,
+              params.userId,
+              params.workspaceId,
+              params.sessionId,
+              params.activeRunId,
+              params.assistantItemId,
+              assistantContent,
+              event,
+              seenInvalidationVersions,
+            ).catch((error: unknown): never =>
+              stopOpenAILoop(classifyPersistenceFailure(error)),
+            );
             const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
             stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
             broadcastChatEvent(params.sessionId, params.activeRunId, eventToBroadcast);
