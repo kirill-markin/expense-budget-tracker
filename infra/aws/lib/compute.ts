@@ -35,6 +35,7 @@ export interface ComputeResult {
   webContainer: ecs.ContainerDefinition;
   webLogGroup: logs.LogGroup;
   authService: ecs.FargateService;
+  authLogGroup: logs.LogGroup;
   migrateTaskDef: ecs.FargateTaskDefinition;
   migrateLogGroup: logs.LogGroup;
 }
@@ -340,5 +341,5 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     }),
   });
 
-  return { cluster, webService, webContainer, webLogGroup, authService, migrateTaskDef, migrateLogGroup };
+  return { cluster, webService, webContainer, webLogGroup, authService, authLogGroup, migrateTaskDef, migrateLogGroup };
 }

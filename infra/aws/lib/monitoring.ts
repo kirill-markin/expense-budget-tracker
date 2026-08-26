@@ -16,16 +16,17 @@ export interface MonitoringProps {
   alb: elbv2.ApplicationLoadBalancer;
   webTargetGroup: elbv2.ApplicationTargetGroup;
   webLogGroup: logs.LogGroup;
+  authLogGroup: logs.LogGroup;
   webAclName: string;
   webService: ecs.FargateService;
   cluster: ecs.Cluster;
   db: rds.DatabaseInstance;
-  fxFetcher: lambda.IFunction;
+  fxFetcher: lambda.Function;
   restApi: apigw.RestApi;
-  authorizerFn: lambda.IFunction;
-  sqlApiFn: lambda.IFunction;
+  authorizerFn: lambda.Function;
+  sqlApiFn: lambda.Function;
   mcpHttpApi: apigwv2.HttpApi;
-  mcpFn: lambda.IFunction;
+  mcpFn: lambda.Function;
   customEmailSenderFn: lambda.IFunction;
 }
 
@@ -186,6 +187,96 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 1,
     evaluationPeriods: 1,
     alarmDescription: "Web application logged an error event",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // --- Postgres pool errors ---
+  // Every pool logs an error instead of crashing when the server closes a pooled
+  // connection, so these log lines are the only signal that a pool is failing.
+  // All surfaces feed one metric: the pools all talk to the same database.
+  const dbPoolErrorNamespace = "ExpenseBudgetTracker/Db";
+  const dbPoolErrorMetricName = "PoolErrors";
+
+  const countDbPoolErrors = (
+    id: string,
+    logGroup: logs.ILogGroup,
+    filterPattern: logs.IFilterPattern,
+  ): void => {
+    new logs.MetricFilter(scope, id, {
+      logGroup,
+      filterPattern,
+      metricNamespace: dbPoolErrorNamespace,
+      metricName: dbPoolErrorMetricName,
+      metricValue: "1",
+      // Publish an explicit 0 for periods with no match, so "errors in every one of the last
+      // N periods" is decided by real datapoints instead of by missing-data padding.
+      defaultValue: 0,
+    });
+  };
+
+  // ECS ships each structured log line to CloudWatch verbatim, so it matches as JSON.
+  countDbPoolErrors(
+    "WebDbPoolErrorMetricFilter",
+    props.webLogGroup,
+    logs.FilterPattern.all(
+      logs.FilterPattern.stringValue("$.domain", "=", "db"),
+      logs.FilterPattern.stringValue("$.action", "=", "pool_error"),
+    ),
+  );
+  countDbPoolErrors(
+    "AuthDbPoolErrorMetricFilter",
+    props.authLogGroup,
+    logs.FilterPattern.all(
+      logs.FilterPattern.stringValue("$.domain", "=", "auth"),
+      logs.FilterPattern.stringValue("$.action", "=", "db_pool_error"),
+    ),
+  );
+
+  // Lambda prefixes every stdout line with a timestamp and request id, so the log event
+  // is not valid JSON and only a substring match on the action name finds it. Reading
+  // `fn.logGroup` also materializes the function log group the filter needs to attach to.
+  // A frozen execution environment cannot process I/O, so a pooled connection dropped while
+  // it sleeps only surfaces when that environment is next thawed.
+  countDbPoolErrors(
+    "AuthorizerDbPoolErrorMetricFilter",
+    props.authorizerFn.logGroup,
+    logs.FilterPattern.allTerms("database_pool_error"),
+  );
+  countDbPoolErrors(
+    "SqlApiDbPoolErrorMetricFilter",
+    props.sqlApiFn.logGroup,
+    logs.FilterPattern.allTerms("database_pool_error"),
+  );
+  countDbPoolErrors(
+    "McpDbPoolErrorMetricFilter",
+    props.mcpFn.logGroup,
+    logs.FilterPattern.allTerms("database_pool_error"),
+  );
+  // The FX fetcher has no structured logger and logs the error as plain text. Its pool is
+  // opened and ended inside a single scheduled invocation, so only a connection dropped
+  // during that run reaches this filter.
+  countDbPoolErrors(
+    "FxDbPoolErrorMetricFilter",
+    props.fxFetcher.logGroup,
+    logs.FilterPattern.allTerms("Postgres pool error"),
+  );
+
+  new cloudwatch.Alarm(scope, "DbPoolErrorsAlarm", {
+    metric: new cloudwatch.Metric({
+      namespace: dbPoolErrorNamespace,
+      metricName: dbPoolErrorMetricName,
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    // Every one of the six periods has to contain a matching line. A one-off drop is
+    // self-limiting — each pool logs it once and reconnects, and each stale Lambda
+    // environment logs it once when it is next thawed — so it is very unlikely to fill
+    // all six.
+    evaluationPeriods: 6,
+    datapointsToAlarm: 6,
+    alarmDescription:
+      "Postgres pool errors in every one of the last 6 five-minute periods — a single connection loss (routine RDS maintenance, restart, failover) is logged once per pool and rarely fills every period, so this means connections keep being dropped",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
