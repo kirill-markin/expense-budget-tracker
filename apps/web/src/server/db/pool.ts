@@ -1,4 +1,5 @@
 import pg from "pg";
+import { log } from "@/server/logger";
 
 // AUTH_MODE=cognito means production behind ALB -> always RDS -> always SSL.
 // In cognito mode, construct the URL from individual env vars (ECS injects DB_PASSWORD from Secrets Manager).
@@ -20,6 +21,13 @@ const connectionString = process.env.AUTH_MODE === "cognito"
 const ssl = process.env.AUTH_MODE === "cognito" ? true : false;
 
 const pool = new pg.Pool({ connectionString, ssl });
+
+// The server can close a pooled connection while it is idle (RDS maintenance,
+// restart, failover). Without this listener the pool emits an unhandled
+// 'error' event and Node terminates the process.
+pool.on("error", (error: Error): void => {
+  log({ domain: "db", action: "pool_error", error: error.message });
+});
 
 /** Execute a query without RLS context (global tables only). */
 export const query = (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>

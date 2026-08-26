@@ -18,6 +18,12 @@ async function getPool(): Promise<pg.Pool> {
     // to the RDS CA bundle (set in CDK, bundle downloaded during Lambda bundling).
     const ssl = process.env.DB_SECRET_ARN ? true : false;
     pool = new pg.Pool({ connectionString, ssl });
+    // The server can close a pooled connection while it is idle (RDS maintenance,
+    // restart, failover). Without this listener the pool emits an unhandled
+    // 'error' event and Node terminates the process.
+    pool.on("error", (error: Error): void => {
+      console.error("Postgres pool error:", error);
+    });
   }
   return pool;
 }

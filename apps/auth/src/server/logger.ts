@@ -71,6 +71,7 @@ type AuthEvent =
   | Readonly<{ domain: "auth"; action: "verify_code_challenge_expired"; transport: "browser" | "agent"; maskedEmail: string }>
   | Readonly<{ domain: "auth"; action: "verify_code_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "otp_sweep_error"; error: string }>
+  | Readonly<{ domain: "auth"; action: "db_pool_error"; error: string }>
   | CognitoRefreshRetryEvent
   | CognitoOAuthOwnerRetryEvent
   | OAuthAuthorizationServerErrorEvent

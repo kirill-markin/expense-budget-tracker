@@ -7,13 +7,19 @@ export const getSafeErrorType = (error: unknown): SafeErrorType => {
   return "non_error";
 };
 
-export type SqlApiLogEvent = Readonly<{
-  domain: "sql_api";
-  action: "mcp_unexpected_error";
-  boundary: "authentication" | "tool" | "transport";
-  operation: string;
-  errorType: SafeErrorType;
-}>;
+export type SqlApiLogEvent =
+  | Readonly<{
+    domain: "sql_api";
+    action: "mcp_unexpected_error";
+    boundary: "authentication" | "tool" | "transport";
+    operation: string;
+    errorType: SafeErrorType;
+  }>
+  | Readonly<{
+    domain: "sql_api";
+    action: "database_pool_error";
+    errorType: SafeErrorType;
+  }>;
 
 export const log = (event: SqlApiLogEvent): void => {
   console.log(JSON.stringify(event));

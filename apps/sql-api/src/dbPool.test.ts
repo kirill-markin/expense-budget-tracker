@@ -45,7 +45,7 @@ const createManualRuntime = (
   };
 };
 
-const createPool = (): pg.Pool => ({}) as pg.Pool;
+const createPool = (): pg.Pool => ({ on: (): void => undefined }) as unknown as pg.Pool;
 
 test("pool initialization is shared and configures bounded PostgreSQL connection establishment", async (): Promise<void> => {
   let resolveDatabaseUrl: ((databaseUrl: string) => void) | undefined;
@@ -104,6 +104,25 @@ test("pool initialization clears failed shared state without creating a pool", a
   assert.equal(await provider.getPool(), expectedPool);
   assert.equal(databaseUrlRequestCount, 2);
   assert.equal(poolCreationCount, 1);
+});
+
+test("shared pool initialization listens for errors on connections the server closes", async (): Promise<void> => {
+  const poolErrorListeners: Array<(error: Error) => void> = [];
+  const expectedPool = {
+    on: (event: string, listener: (error: Error) => void): void => {
+      assert.equal(event, "error");
+      poolErrorListeners.push(listener);
+    },
+  } as unknown as pg.Pool;
+  const provider = createDatabasePoolProvider({
+    createPool: () => expectedPool,
+    getDatabaseUrl: async () => "postgresql://database.example.internal/expense_tracker",
+    useTls: () => false,
+  });
+
+  assert.equal(await provider.getPool(), expectedPool);
+  assert.equal(poolErrorListeners.length, 1);
+  poolErrorListeners[0]?.(new Error("terminating connection due to administrator command"));
 });
 
 test("a short first SQL caller does not shorten shared pool initialization for a longer caller", async (): Promise<void> => {

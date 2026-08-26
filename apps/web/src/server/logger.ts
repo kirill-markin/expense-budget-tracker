@@ -221,7 +221,15 @@ type AuthEvent =
   | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "error"; error: string }>;
 
-type LogEvent = ChatEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent;
+/**
+ * A pooled Postgres connection failed while idle, usually because the server
+ * closed it (RDS maintenance, restart, or failover). node-postgres discards the
+ * broken client on its own, so the action is deliberately kept out of the
+ * `error` family that the CloudWatch web error alarm pages on.
+ */
+type DbEvent = Readonly<{ domain: "db"; action: "pool_error"; error: string }>;
+
+type LogEvent = ChatEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

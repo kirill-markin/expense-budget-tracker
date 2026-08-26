@@ -10,6 +10,7 @@ import {
   getDatabaseUrl,
 } from "./config.js";
 import type { DeadlineRuntime } from "./dbDeadline.js";
+import { getSafeErrorType, log } from "./logger.js";
 
 export const POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
 
@@ -38,12 +39,25 @@ export const createDatabasePoolProvider = (
     }
 
     const startedInitialization = dependencies.getDatabaseUrl(DATABASE_SECRET_TIMEOUT_MS).then(
-      (connectionString): pg.Pool => dependencies.createPool({
-        connectionString,
-        ssl: dependencies.useTls(),
-        max: SQL_API_DB_POOL_MAX_CONNECTIONS,
-        connectionTimeoutMillis: POSTGRES_CONNECTION_TIMEOUT_MS,
-      }),
+      (connectionString): pg.Pool => {
+        const createdPool = dependencies.createPool({
+          connectionString,
+          ssl: dependencies.useTls(),
+          max: SQL_API_DB_POOL_MAX_CONNECTIONS,
+          connectionTimeoutMillis: POSTGRES_CONNECTION_TIMEOUT_MS,
+        });
+        // The server can close a pooled connection while it is idle (RDS
+        // maintenance, restart, failover). Without this listener the pool emits
+        // an unhandled 'error' event and the Lambda runtime exits.
+        createdPool.on("error", (error: Error): void => {
+          log({
+            domain: "sql_api",
+            action: "database_pool_error",
+            errorType: getSafeErrorType(error),
+          });
+        });
+        return createdPool;
+      },
     );
     initialization = startedInitialization;
     void startedInitialization.then(
