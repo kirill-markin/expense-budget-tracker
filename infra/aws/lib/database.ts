@@ -15,7 +15,7 @@ export interface DatabaseResult {
   workerDbSecret: cdk.aws_secretsmanager.Secret;
 }
 
-const POSTGRES_ENGINE_VERSION = rds.PostgresEngineVersion.of("18.4", "18", {
+const POSTGRES_ENGINE_VERSION = rds.PostgresEngineVersion.of("18.6", "18", {
   s3Import: true,
   s3Export: true,
 });
