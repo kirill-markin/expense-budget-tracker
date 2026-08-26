@@ -120,6 +120,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       alb: ing.alb,
       webTargetGroup: ing.webTargetGroup,
       webLogGroup: comp.webLogGroup,
+      authLogGroup: comp.authLogGroup,
       webAclName: ing.webAclName,
       webService: comp.webService,
       cluster: comp.cluster,

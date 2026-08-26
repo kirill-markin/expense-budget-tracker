@@ -22,6 +22,8 @@ async function getPool(): Promise<pg.Pool> {
     // restart, failover). Without this listener the pool emits an unhandled
     // 'error' event and Node terminates the process.
     pool.on("error", (error: Error): void => {
+      // "Postgres pool error" is a CloudWatch contract: FxDbPoolErrorMetricFilter in
+      // infra/aws/lib/monitoring.ts matches this literal text. Keep it if logging changes.
       console.error("Postgres pool error:", error);
     });
   }
