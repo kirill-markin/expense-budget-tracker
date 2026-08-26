@@ -5,6 +5,7 @@
  * schema and narrow helper functions. It must not reuse the main app role.
  */
 import pg from "pg";
+import { log } from "./logger.js";
 
 const getConnectionString = (): string => {
   const directUrl = process.env.AUTH_DATABASE_URL ?? "";
@@ -35,6 +36,12 @@ const getPool = (): pg.Pool => {
   pool = new pg.Pool({
     connectionString: getConnectionString(),
     ssl: useSsl ? true : false,
+  });
+  // The server can close a pooled connection while it is idle (RDS maintenance,
+  // restart, failover). Without this listener the pool emits an unhandled
+  // 'error' event and Node terminates the process.
+  pool.on("error", (error: Error): void => {
+    log({ domain: "auth", action: "db_pool_error", error: error.message });
   });
   return pool;
 };
