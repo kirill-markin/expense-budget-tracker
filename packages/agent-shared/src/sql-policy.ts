@@ -134,6 +134,7 @@ type SqlPolicyErrorCode =
   | "read_only_sql_required"
   | "mutation_sql_required"
   | "on_conflict_not_allowed"
+  | "session_control_not_allowed"
   | "set_config_not_allowed"
   | "function_calls_not_allowed"
   | "sql_comments_not_allowed"
@@ -1451,6 +1452,12 @@ export const isExpenseSqlMutation = (sql: string): boolean =>
 
 const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement => {
   const firstKeyword = getFirstKeyword(sql);
+  if (firstKeyword === "SET" || firstKeyword === "RESET") {
+    fail(
+      "session_control_not_allowed",
+      "SET, SET ROLE, SET SESSION AUTHORIZATION, and RESET statements are not allowed",
+    );
+  }
   if (firstKeyword === undefined || !ALLOWED_FIRST_KEYWORDS.has(firstKeyword)) {
     fail("unsupported_statement", "Only SELECT, WITH, INSERT, UPDATE, and DELETE statements are allowed");
   }

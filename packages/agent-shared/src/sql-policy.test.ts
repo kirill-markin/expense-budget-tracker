@@ -364,6 +364,47 @@ test("validateExpenseSql still rejects set_config before function allowlist chec
   );
 });
 
+test("validateExpenseSql rejects session and role control statements with a dedicated code", (): void => {
+  const sessionControlStatements: ReadonlyArray<string> = [
+    "SET ROLE app",
+    "set role app",
+    "RESET ROLE",
+    "SET SESSION AUTHORIZATION app",
+    "SET \"app.user_id\" = 'x'",
+    "SET LOCAL \"app.workspace_id\" = 'x'",
+  ];
+
+  for (const sql of sessionControlStatements) {
+    assert.throws(
+      () => validateExpenseSql(sql),
+      (error: unknown) =>
+        error instanceof SqlPolicyError && error.code === "session_control_not_allowed",
+      `Expected session_control_not_allowed for: ${sql}`,
+    );
+  }
+});
+
+test("validateExpenseSql rejects a trailing SET ROLE in a multi-statement script", (): void => {
+  assert.throws(
+    () => validateExpenseSql("SELECT 1; SET ROLE app"),
+    (error: unknown) => error instanceof SqlPolicyError,
+  );
+});
+
+test("validateExpenseSql still accepts ordinary SELECT and WITH statements unchanged", (): void => {
+  const selectValidated = validateExpenseSql(
+    "SELECT account_id FROM ledger_entries ORDER BY account_id LIMIT 1",
+  );
+  assert.equal(selectValidated.statements.length, 1);
+  assert.deepEqual(selectValidated.statements[0]?.referencedRelations, ["ledger_entries"]);
+
+  const withValidated = validateExpenseSql(
+    "WITH totals AS (SELECT account_id, SUM(amount) AS balance FROM ledger_entries GROUP BY account_id) SELECT * FROM totals",
+  );
+  assert.equal(withValidated.statements.length, 1);
+  assert.deepEqual(withValidated.statements[0]?.referencedRelations, ["ledger_entries"]);
+});
+
 test("validateExpenseSql still allows direct relation queries without function calls", (): void => {
   const validated = validateExpenseSql("SELECT account_id FROM ledger_entries ORDER BY account_id LIMIT 1");
   assert.equal(validated.statements.length, 1);
