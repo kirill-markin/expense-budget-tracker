@@ -71,6 +71,7 @@ Cloudflare credentials are stored locally in `scripts/cloudflare/.env` (gitignor
 
 Before querying AWS resources:
 1. Read `infra/aws/cdk.context.local.json` for region, domain, certificate ARNs, and account-specific settings.
+   It is gitignored, so it exists only in the main checkout; from a worktree read it from that checkout's root.
 2. Check `~/.aws/config` for the CLI profile targeting the same account and region.
 3. Always use matching `--profile` and `--region` flags.
 
@@ -109,9 +110,24 @@ Use `make dev` (Docker Compose) only when you need a real database, such as for 
 Use the structured server logger in `apps/web/src/server/logger.ts`. Log through `log()` only; never use raw `console.log` or `console.error`. Add new event types to the `LogEvent` union.
 For CloudWatch investigations, avoid complex OR filter patterns. Fetch fresh events first, then filter locally by `requestId` and chat error signals.
 
+## Data Sources
+
+AWS profile and region setup is in `## AWS Deployment`. Start from logs and traces; most investigations need no database access.
+
+| Source | How to reach it | Use for |
+| --- | --- | --- |
+| Postgres, prod | No direct connection by design: RDS is private, with no bastion. Read through `POST https://api.expense-budget-tracker.com/v1/sql/query` with `Authorization: ApiKey <key>` — a fixed relation list, scoped to the selected workspace. Anything wider needs a temporary path opened deliberately; never add standing database access while debugging. | workspace data, counts, data shape |
+| Postgres, local | `make dev`, then `psql` with `DATABASE_URL` from `.env.example` | schema, views, query development |
+| CloudWatch Logs | `/expense-tracker/web` (30-day retention), `/expense-tracker/auth`, `/expense-tracker/migrate`; Lambda groups under `/aws/lambda/` for FX, authorizer, SQL API, and MCP handlers | request-level debugging by `requestId` |
+| CloudWatch metrics | custom namespace `ExpenseBudgetTracker/Db`, metric `PoolErrors`; alarms and metric filters in `infra/aws/lib/monitoring.ts` | error rates, DB pool failures, ECS, RDS, and API Gateway health |
+| ALB access logs | S3 bucket `expense-tracker-alb-logs-<accountId>`, 90-day expiration | traffic, status codes, client IPs |
+| Langfuse Cloud | `LANGFUSE_*` keys in the repository-root `.env` (gitignored, main checkout only); read API `GET $LANGFUSE_BASE_URL/api/public/traces` with HTTP Basic auth `public:secret`; filter by `traceName = chat_turn`, `sessionId`, `userId`, metadata `workspaceId` | chat traces, model and tool behavior, cost |
+| GitHub Actions | `gh run list --workflow deploy.yml` | deploy and migration failures |
+
 ## Reference
 
 - [docs/architecture.md](docs/architecture.md) - system overview, data model, multi-currency design, auth model
 - [docs/deployment.md](docs/deployment.md) - local Docker Compose and AWS CDK setup
+- [docs/langfuse-operations.md](docs/langfuse-operations.md) - Langfuse trace shape, filters, and telemetry troubleshooting
 - [infra/aws/README.md](infra/aws/README.md) - full AWS CDK deployment guide
 - [Makefile](Makefile) - `make up`, `make down`, `make migrate`, `make build`, `make lint`
