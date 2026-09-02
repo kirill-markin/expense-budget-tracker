@@ -310,7 +310,7 @@ Scan Tools is the final evidence source for deployed descriptor bytes. Snapshot
 defined by the current item-11 promotion-candidate source. The snapshot below
 is a lossless representation of the four descriptors emitted from
 `apps/sql-api/src/mcp/server.ts`, the locked `@modelcontextprotocol/sdk`
-`1.30.0`, and Zod `4.4.3`. Compare the deployed snapshot after recursively
+`1.30.0`, and Zod `4.5.4`. Compare the deployed snapshot after recursively
 sorting object keys only; array order and every string, keyword, boolean,
 number, and field presence must remain exact. No descriptor has a top-level
 `securitySchemes` or `icons` field. Together, the tool name in the first column,

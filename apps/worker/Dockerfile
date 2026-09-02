@@ -1,4 +1,4 @@
-FROM node:24.19.0-alpine AS npm
+FROM node:24.20.0-alpine AS npm
 RUN npm install --global npm@12.0.2
 
 FROM npm AS builder
