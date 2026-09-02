@@ -65,6 +65,14 @@ export type ServerChatMessage = ChatMessage & Readonly<{
   openaiItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
+const requireReplayCallId = (callId: string | null | undefined): string => {
+  if (typeof callId !== "string" || callId.length === 0) {
+    throw new Error("OpenAI function call output is missing call_id for stateless replay");
+  }
+
+  return callId;
+};
+
 export const toStoredOpenAIReplayItem = (
   item: OpenAI.Responses.ResponseOutputItem | OpenAI.Responses.ResponseInputItem.FunctionCallOutput,
 ): StoredOpenAIReplayItem => {
@@ -104,7 +112,7 @@ export const toStoredOpenAIReplayItem = (
   if (item.type === "function_call_output") {
     return {
       type: "function_call_output",
-      call_id: item.call_id,
+      call_id: requireReplayCallId(item.call_id),
       output: item.output,
       ...(item.status !== undefined && item.status !== null ? { status: item.status } : {}),
     };
@@ -152,7 +160,7 @@ const normalizeStoredOpenAIReplayItem = (
   if (item.type === "function_call_output") {
     return {
       type: "function_call_output",
-      call_id: item.call_id,
+      call_id: requireReplayCallId(item.call_id),
       output: item.output,
       ...(item.status !== undefined && item.status !== null ? { status: item.status } : {}),
     };

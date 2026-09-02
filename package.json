@@ -14,7 +14,7 @@
     "esbuild@0.28.2": true,
     "fsevents@2.3.2": true,
     "fsevents@2.3.3": true,
-    "protobufjs@7.6.5": true
+    "protobufjs": false
   },
   "overrides": {
     "fast-json-patch": "3.1.1",
@@ -32,10 +32,5 @@
     "@aws-crypto/serialize": {
       "uuid": "11.1.1"
     }
-  },
-  "allowScripts": {
-    "esbuild@0.28.2": true,
-    "fsevents@2.3.2 || 2.3.3": true,
-    "protobufjs": false
   }
 }
