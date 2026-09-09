@@ -24,10 +24,10 @@
     "aws-jwt-verify": "^5.2.1",
     "d3": "^7.9.0",
     "heic-to": "^1.5.2",
-    "i18next": "^26.4.1",
+    "i18next": "^26.4.2",
     "mammoth": "^1.12.2",
     "next": "16.3.4",
-    "openai": "^7.9.0",
+    "openai": "^7.12.1",
     "pdfjs-dist": "6.3.289",
     "pg": "^8.23.0",
     "react": "^19.2.8",
@@ -37,12 +37,12 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.63.0",
     "@types/d3": "^7.4.3",
     "@types/node": "^24.13.3",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.5",
+    "@types/react-dom": "^19.2.7",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3"
   },
