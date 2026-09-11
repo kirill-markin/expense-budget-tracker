@@ -122,6 +122,12 @@ export type OpenAITransientClassification =
   | Readonly<{ retryable: true; reason: string }>
   | Readonly<{ retryable: false }>;
 
+const OPENAI_STREAM_TRANSIENT_ERROR_TYPES = new Set([
+  "service_unavailable_error",
+  "server_error",
+  "rate_limit_error",
+]);
+
 /**
  * Single source of truth for "is this an OpenAI failure that's worth retrying
  * or retranslating to the user as transient?". Used by the chat loop's retry
@@ -144,6 +150,15 @@ export const classifyOpenAITransientError = (error: unknown): OpenAITransientCla
   if (error instanceof OpenAI.APIError) {
     if (typeof error.status === "number" && (error.status === 429 || error.status >= 500)) {
       return { retryable: true, reason: `http_${String(error.status)}` };
+    }
+    // An SSE `error` event reaches here as an APIError without a status, so
+    // the provider `type` is the classification.
+    if (
+      typeof error.status !== "number"
+      && typeof error.type === "string"
+      && OPENAI_STREAM_TRANSIENT_ERROR_TYPES.has(error.type)
+    ) {
+      return { retryable: true, reason: error.type };
     }
     if (typeof error.message === "string" && OPENAI_GENERIC_BACKEND_ERROR_REGEX.test(error.message)) {
       return { retryable: true, reason: "openai_backend_error" };
