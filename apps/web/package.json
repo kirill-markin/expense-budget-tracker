@@ -1,6 +1,6 @@
 {
   "name": "expense-budget-tracker-web",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "scripts": {
     "predev": "npm --prefix ../.. run build --workspace @expense-budget-tracker/agent-shared && node scripts/copy-pdfjs-assets.mjs",
@@ -16,7 +16,7 @@
     "test:e2e:local-demo": "npx playwright test --config=playwright.local-demo.config.ts"
   },
   "dependencies": {
-    "@expense-budget-tracker/agent-shared": "1.4.0",
+    "@expense-budget-tracker/agent-shared": "1.5.0",
     "@langfuse/openai": "^5.11.0",
     "@langfuse/otel": "^5.11.0",
     "@langfuse/tracing": "^5.11.0",
