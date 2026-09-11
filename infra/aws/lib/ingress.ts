@@ -42,11 +42,11 @@ const OAUTH_TOKEN_EXCHANGE_EVALUATION_WINDOW_SECONDS = 60;
 // names must be lowercase. Requests reaching the ALB through any other Cloudflare
 // zone cannot carry it, so they are rejected once the secret is configured.
 const ORIGIN_SHARED_SECRET_HEADER = "x-origin-auth";
-// Priorities 0-8 are taken and AWS WAF priorities are non-negative integers, so the
+// Priorities 0-10 are taken and AWS WAF priorities are non-negative integers, so the
 // lowest free slot is after the rate-based rules. Evaluation order is irrelevant for
 // this rule because the rate limiters scope themselves down to requests carrying the
 // same secret, so a foreign-zone request is never aggregated before it is blocked.
-const ORIGIN_SHARED_SECRET_RULE_PRIORITY = 9;
+const ORIGIN_SHARED_SECRET_RULE_PRIORITY = 11;
 
 const noneTextTransformation = (): wafv2.CfnWebACL.TextTransformationProperty => ({
   priority: 0,
@@ -204,6 +204,19 @@ const postRequestToApp = (
     headerStartsWith("content-type", contentTypePrefix),
   ]);
 
+// No origin check: native OAuth clients post to the auth host without a browser.
+const postRequestToAuth = (
+  authDomain: string,
+  path: string,
+  contentTypePrefix: string,
+): wafv2.CfnWebACL.StatementProperty =>
+  andStatement([
+    headerIs("host", authDomain),
+    methodIs("POST"),
+    uriPathIs(path),
+    headerStartsWith("content-type", contentTypePrefix),
+  ]);
+
 export const buildIngressWafRules = (
   appDomain: string,
   authDomain: string,
@@ -235,11 +248,27 @@ export const buildIngressWafRules = (
     "/api/chat/transcriptions",
     "multipart/form-data",
   );
-  const dynamicClientRegistrationJsonRequest = andStatement([
-    headerIs("host", authDomain),
-    methodIs("POST"),
-    uriPathIs("/oauth/register"),
-    headerStartsWith("content-type", "application/json"),
+  const dynamicClientRegistrationJsonRequest = postRequestToAuth(
+    authDomain,
+    "/oauth/register",
+    "application/json",
+  );
+  const consentFormRequest = postRequestToAuth(
+    authDomain,
+    "/oauth/authorize",
+    "application/x-www-form-urlencoded",
+  );
+  const tokenExchangeFormRequest = postRequestToAuth(
+    authDomain,
+    "/oauth/token",
+    "application/x-www-form-urlencoded",
+  );
+  // A registered loopback redirect URI is echoed by the consent form and the
+  // authorization-code exchange, so those form posts share the registration exception.
+  const oauthRedirectUriBodyRequest = orStatement([
+    dynamicClientRegistrationJsonRequest,
+    consentFormRequest,
+    tokenExchangeFormRequest,
   ]);
   const boundedOAuthQueryRequest = orStatement([
     andStatement([
@@ -282,14 +311,23 @@ export const buildIngressWafRules = (
               name: "SizeRestrictions_QUERYSTRING",
               actionToUse: { count: {} },
             },
-            // Native OAuth clients legitimately register loopback redirect URIs.
-            // Exact JSON registration requests are allowed and all other matches are re-blocked.
+            // Native OAuth clients legitimately register loopback redirect URIs and
+            // carry them through the whole authorization-code flow.
+            // Exact auth-host OAuth requests are allowed and all other matches are re-blocked.
             {
               name: "EC2MetaDataSSRF_BODY",
               actionToUse: { count: {} },
             },
             {
               name: "GenericRFI_BODY",
+              actionToUse: { count: {} },
+            },
+            {
+              name: "EC2MetaDataSSRF_QUERYARGUMENTS",
+              actionToUse: { count: {} },
+            },
+            {
+              name: "GenericRFI_QUERYARGUMENTS",
               actionToUse: { count: {} },
             },
           ],
@@ -326,19 +364,33 @@ export const buildIngressWafRules = (
       "BlockUnexpectedEc2MetadataSsrfBodyMatches",
       4,
       "awswaf:managed:aws:core-rule-set:EC2MetaDataSSRF_Body",
-      dynamicClientRegistrationJsonRequest,
+      oauthRedirectUriBodyRequest,
       "expense-tracker-ec2-metadata-ssrf-body-reblock",
     ),
     blockLabeledRequestUnless(
       "BlockUnexpectedGenericRfiBodyMatches",
       5,
       "awswaf:managed:aws:core-rule-set:GenericRFI_Body",
-      dynamicClientRegistrationJsonRequest,
+      oauthRedirectUriBodyRequest,
       "expense-tracker-generic-rfi-body-reblock",
+    ),
+    blockLabeledRequestUnless(
+      "BlockUnexpectedEc2MetadataSsrfQueryMatches",
+      6,
+      "awswaf:managed:aws:core-rule-set:EC2MetaDataSSRF_QueryArguments",
+      boundedOAuthQueryRequest,
+      "expense-tracker-ec2-metadata-ssrf-query-reblock",
+    ),
+    blockLabeledRequestUnless(
+      "BlockUnexpectedGenericRfiQueryMatches",
+      7,
+      "awswaf:managed:aws:core-rule-set:GenericRFI_QueryArguments",
+      boundedOAuthQueryRequest,
+      "expense-tracker-generic-rfi-query-reblock",
     ),
     {
       name: "AWSManagedKnownBadInputs",
-      priority: 6,
+      priority: 8,
       overrideAction: { none: {} },
       statement: {
         managedRuleGroupStatement: {
@@ -354,7 +406,7 @@ export const buildIngressWafRules = (
     },
     {
       name: "RateLimitDynamicClientRegistration",
-      priority: 7,
+      priority: 9,
       action: { block: {} },
       statement: {
         rateBasedStatement: {
@@ -381,7 +433,7 @@ export const buildIngressWafRules = (
     },
     {
       name: "RateLimitOAuthTokenExchanges",
-      priority: 8,
+      priority: 10,
       action: { block: {} },
       statement: {
         rateBasedStatement: {
