@@ -127,6 +127,20 @@ const requireLabelMatchStatement = (
   return statement;
 };
 
+const requireLabeledReblockException = (
+  rule: wafv2.CfnWebACL.RuleProperty,
+  label: string,
+): wafv2.CfnWebACL.StatementProperty => {
+  const reblock = requireAndStatement(requireStatement(rule.statement).andStatement);
+  const reblockStatements = requireStatements(reblock.statements);
+  assert.equal(
+    requireLabelMatchStatement(reblockStatements[0]?.labelMatchStatement).key,
+    label,
+  );
+  const exception = requireNotStatement(reblockStatements[1]?.notStatement);
+  return requireStatement(exception.statement);
+};
+
 const assertBoundedGetRoute = (
   statement: wafv2.CfnWebACL.StatementProperty,
   host: string,
@@ -172,6 +186,8 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
       "SizeRestrictions_QUERYSTRING",
       "EC2MetaDataSSRF_BODY",
       "GenericRFI_BODY",
+      "EC2MetaDataSSRF_QUERYARGUMENTS",
+      "GenericRFI_QUERYARGUMENTS",
     ],
   );
 
@@ -202,7 +218,7 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
   );
 });
 
-test("WAF re-blocks managed loopback body matches outside exact JSON client registration", (): void => {
+test("WAF re-blocks managed loopback body matches outside exact auth-host OAuth posts", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
   assert.deepEqual(
     rules.map((rule) => [rule.name, rule.priority]),
@@ -213,9 +229,11 @@ test("WAF re-blocks managed loopback body matches outside exact JSON client regi
       ["BlockUnexpectedQuerySizeMatches", 3],
       ["BlockUnexpectedEc2MetadataSsrfBodyMatches", 4],
       ["BlockUnexpectedGenericRfiBodyMatches", 5],
-      ["AWSManagedKnownBadInputs", 6],
-      ["RateLimitDynamicClientRegistration", 7],
-      ["RateLimitOAuthTokenExchanges", 8],
+      ["BlockUnexpectedEc2MetadataSsrfQueryMatches", 6],
+      ["BlockUnexpectedGenericRfiQueryMatches", 7],
+      ["AWSManagedKnownBadInputs", 8],
+      ["RateLimitDynamicClientRegistration", 9],
+      ["RateLimitOAuthTokenExchanges", 10],
     ],
   );
 
@@ -260,38 +278,47 @@ test("WAF re-blocks managed loopback body matches outside exact JSON client regi
   );
   const exception = requireNotStatement(reblockStatements[1]?.notStatement);
   const allowedRequest = requireStatement(exception.statement);
-  const allowedRequestAnd = requireAndStatement(allowedRequest.andStatement);
-  const allowedConditions = requireStatements(allowedRequestAnd.statements);
-  assert.deepEqual(
-    allowedConditions.map((condition) =>
-      requireByteMatchStatement(condition.byteMatchStatement)),
-    [
-      {
-        fieldToMatch: { singleHeader: { Name: "host" } },
-        positionalConstraint: "EXACTLY",
-        searchString: "auth.example.com",
-        textTransformations: [{ priority: 0, type: "LOWERCASE" }],
-      },
-      {
-        fieldToMatch: { method: {} },
-        positionalConstraint: "EXACTLY",
-        searchString: "POST",
-        textTransformations: [{ priority: 0, type: "NONE" }],
-      },
-      {
-        fieldToMatch: { uriPath: {} },
-        positionalConstraint: "EXACTLY",
-        searchString: "/oauth/register",
-        textTransformations: [{ priority: 0, type: "NONE" }],
-      },
-      {
-        fieldToMatch: { singleHeader: { Name: "content-type" } },
-        positionalConstraint: "STARTS_WITH",
-        searchString: "application/json",
-        textTransformations: [{ priority: 0, type: "LOWERCASE" }],
-      },
-    ],
-  );
+  const allowedRouteGroup = requireOrStatement(allowedRequest.orStatement);
+  const allowedRoutes = requireStatements(allowedRouteGroup.statements);
+  assert.equal(allowedRoutes.length, 3);
+  for (const [index, path, contentTypePrefix] of [
+    [0, "/oauth/register", "application/json"],
+    [1, "/oauth/authorize", "application/x-www-form-urlencoded"],
+    [2, "/oauth/token", "application/x-www-form-urlencoded"],
+  ] as const) {
+    const allowedRouteAnd = requireAndStatement(allowedRoutes[index]?.andStatement);
+    const allowedConditions = requireStatements(allowedRouteAnd.statements);
+    assert.deepEqual(
+      allowedConditions.map((condition) =>
+        requireByteMatchStatement(condition.byteMatchStatement)),
+      [
+        {
+          fieldToMatch: { singleHeader: { Name: "host" } },
+          positionalConstraint: "EXACTLY",
+          searchString: "auth.example.com",
+          textTransformations: [{ priority: 0, type: "LOWERCASE" }],
+        },
+        {
+          fieldToMatch: { method: {} },
+          positionalConstraint: "EXACTLY",
+          searchString: "POST",
+          textTransformations: [{ priority: 0, type: "NONE" }],
+        },
+        {
+          fieldToMatch: { uriPath: {} },
+          positionalConstraint: "EXACTLY",
+          searchString: path,
+          textTransformations: [{ priority: 0, type: "NONE" }],
+        },
+        {
+          fieldToMatch: { singleHeader: { Name: "content-type" } },
+          positionalConstraint: "STARTS_WITH",
+          searchString: contentTypePrefix,
+          textTransformations: [{ priority: 0, type: "LOWERCASE" }],
+        },
+      ],
+    );
+  }
 
   const genericRfiRule = getRule(rules, "BlockUnexpectedGenericRfiBodyMatches");
   assert.equal(genericRfiRule.priority, 5);
@@ -317,10 +344,60 @@ test("WAF re-blocks managed loopback body matches outside exact JSON client regi
   );
 });
 
+test("WAF counts the managed loopback query-argument rules and re-blocks outside exact bounded auth GETs", (): void => {
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
+  const managedRule = getRule(rules, "AWSManagedCommonRules");
+  const managedStatement = requireStatement(managedRule.statement);
+  const managedRuleGroup = requireManagedRuleGroupStatement(
+    managedStatement.managedRuleGroupStatement,
+  );
+  const overrides = requireRuleActionOverrides(
+    managedRuleGroup.ruleActionOverrides,
+  );
+  for (const name of ["EC2MetaDataSSRF_QUERYARGUMENTS", "GenericRFI_QUERYARGUMENTS"]) {
+    assert.deepEqual(
+      overrides.find((override) => override.name === name),
+      {
+        name,
+        actionToUse: { count: {} },
+      },
+    );
+  }
+
+  const boundedQueryRequest = requireLabeledReblockException(
+    getRule(rules, "BlockUnexpectedQuerySizeMatches"),
+    "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString",
+  );
+  for (const [name, priority, label, metricName] of [
+    [
+      "BlockUnexpectedEc2MetadataSsrfQueryMatches",
+      6,
+      "awswaf:managed:aws:core-rule-set:EC2MetaDataSSRF_QueryArguments",
+      "expense-tracker-ec2-metadata-ssrf-query-reblock",
+    ],
+    [
+      "BlockUnexpectedGenericRfiQueryMatches",
+      7,
+      "awswaf:managed:aws:core-rule-set:GenericRFI_QueryArguments",
+      "expense-tracker-generic-rfi-query-reblock",
+    ],
+  ] as const) {
+    const rule = getRule(rules, name);
+    assert.equal(rule.priority, priority);
+    assert.deepEqual(rule.action, { block: {} });
+    assert.deepEqual(rule.visibilityConfig, {
+      sampledRequestsEnabled: true,
+      cloudWatchMetricsEnabled: true,
+      metricName,
+    });
+    assert.strictEqual(requireLabeledReblockException(rule, label), boundedQueryRequest);
+  }
+});
+
 test("WAF rate limits exact dynamic client registration requests by trusted Cloudflare client IP", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
   const rule = getRule(rules, "RateLimitDynamicClientRegistration");
-  assert.equal(rule.priority, 7);
+  assert.equal(rule.priority, 9);
   assert.deepEqual(rule.action, { block: {} });
 
   const statement = requireStatement(rule.statement);
@@ -360,7 +437,7 @@ test("WAF rate limits exact dynamic client registration requests by trusted Clou
 test("WAF separately rate limits exact OAuth token exchanges by trusted Cloudflare client IP", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
   const rule = getRule(rules, "RateLimitOAuthTokenExchanges");
-  assert.equal(rule.priority, 8);
+  assert.equal(rule.priority, 10);
   assert.deepEqual(rule.action, { block: {} });
 
   const statement = requireStatement(rule.statement);
@@ -480,7 +557,7 @@ test("WAF blocks requests without the exact configured origin secret header", ()
     "s3cret-value",
   );
   const rule = getRule(rules, "BlockRequestsWithoutOriginSharedSecret");
-  assert.equal(rule.priority, 9);
+  assert.equal(rule.priority, 11);
   assert.deepEqual(rule.action, { block: {} });
 
   const statement = requireStatement(rule.statement);
