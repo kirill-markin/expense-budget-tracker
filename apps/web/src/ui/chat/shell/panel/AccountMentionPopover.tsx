@@ -28,6 +28,10 @@ type PopoverPosition = Readonly<{
   maxHeight: number;
 }>;
 
+type PopoverStyle = CSSProperties & {
+  "--account-mention-popover-available": string;
+};
+
 type Props = Readonly<{
   isOpen: boolean;
   anchorRef: RefObject<HTMLTextAreaElement | null>;
@@ -132,15 +136,23 @@ export const AccountMentionPopover = (props: Props): ReactElement | null => {
     };
   }, [anchorRef, isOpen, updatePosition]);
 
+  useEffect(() => {
+    if (!isOpen || selectedIndex === null) return;
+
+    const selectedOption = document.getElementById(getAccountMentionOptionId(selectedIndex));
+    if (selectedOption === null) return;
+    selectedOption.scrollIntoView({ block: "nearest" });
+  }, [isOpen, selectedIndex]);
+
   if (!isOpen || position === null) {
     return null;
   }
 
-  const style: CSSProperties = {
+  const style: PopoverStyle = {
     top: position.top,
     insetInlineStart: position.insetInlineStart,
     inlineSize: position.width,
-    maxBlockSize: position.maxHeight,
+    "--account-mention-popover-available": `${position.maxHeight}px`,
   };
 
   return createPortal(

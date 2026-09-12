@@ -336,10 +336,18 @@
 }
 
 .accountMentionPopover {
+  --account-mention-row-block-size: 36px;
+  --account-mention-visible-rows: 5.5;
+
   position: fixed;
   z-index: 200;
   transform: translateY(-100%);
   overflow-y: auto;
+  /* The half row signals that the list scrolls; 2px is the popover's own border. */
+  max-block-size: min(
+    var(--account-mention-popover-available),
+    calc(var(--account-mention-visible-rows) * var(--account-mention-row-block-size) + 2px)
+  );
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--text);
@@ -350,7 +358,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-block-size: 36px;
+  min-block-size: var(--account-mention-row-block-size);
   padding-block: 7px;
   padding-inline: 8px;
   cursor: var(--cursor-pointer);
@@ -558,7 +566,8 @@
     font-size: 16px;
   }
 
-  .accountMentionOption {
-    min-block-size: 40px;
+  .accountMentionPopover {
+    --account-mention-row-block-size: 40px;
+    --account-mention-visible-rows: 4.5;
   }
 }

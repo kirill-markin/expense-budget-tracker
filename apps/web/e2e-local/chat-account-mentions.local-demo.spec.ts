@@ -152,11 +152,11 @@ test("uses preloaded account suggestions for desktop mouse and keyboard mentions
 
   await composer.fill("@");
   await expect(popover).toBeVisible();
-  await expect(options).toHaveCount(Math.min(suggestions.length, 5));
+  await expect(options).toHaveCount(suggestions.length);
   await expect(options.first()).toHaveAttribute("data-account-id", suggestions[0].accountId);
   await expectNoAutomaticSelection(composer, options);
   await expectPopoverAboveComposer(composer, popover);
-  expect(getSuggestionRequestCount()).toBe(1);
+  await expect.poll(getSuggestionRequestCount).toBe(2);
 
   await options.first().click();
   await expect(composer).toHaveValue(`@${suggestions[0].accountId} `);
@@ -181,10 +181,11 @@ test("uses preloaded account suggestions for desktop mouse and keyboard mentions
     `Transfer from @${suggestions[1].accountId} to @${suggestions[0].accountId} `,
   );
   await expectCaretAtEnd(composer);
-  expect(getSuggestionRequestCount()).toBe(1);
+  await expect.poll(getSuggestionRequestCount).toBe(4);
 
   await composer.fill("Send from @");
   await expect(popover).toBeVisible();
+  await expect.poll(getSuggestionRequestCount).toBe(5);
   await expectNoAutomaticSelection(composer, options);
   await expect(composer).toHaveAttribute("enterkeyhint", "send");
   await composer.press("Enter");
@@ -197,7 +198,7 @@ test.describe("mobile account mentions", () => {
     hasTouch: true,
   });
 
-  test("shows four local rows above the composer and inserts on tap", async ({
+  test("shows every local account above the composer and inserts on tap", async ({
     page,
     context,
     baseURL,
@@ -213,7 +214,7 @@ test.describe("mobile account mentions", () => {
 
     await composer.fill("@");
     await expect(popover).toBeVisible();
-    await expect(options).toHaveCount(Math.min(suggestions.length, 4));
+    await expect(options).toHaveCount(suggestions.length);
     await expectNoAutomaticSelection(composer, options);
     await expectPopoverAboveComposer(composer, popover);
 
@@ -221,6 +222,6 @@ test.describe("mobile account mentions", () => {
     await expect(composer).toHaveValue(`@${suggestions[0].accountId} `);
     await expect(composer).toBeFocused();
     await expectCaretAtEnd(composer);
-    expect(getSuggestionRequestCount()).toBe(1);
+    await expect.poll(getSuggestionRequestCount).toBe(2);
   });
 });

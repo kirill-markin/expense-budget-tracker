@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 import type { AccountMentionSuggestion } from "./accountMentions";
@@ -51,31 +51,49 @@ export const loadAccountSuggestions = async (): Promise<ReadonlyArray<AccountMen
   return parsed.data;
 };
 
-export const useAccountSuggestions = (): AccountSuggestionsState => {
+export const useAccountSuggestions = (): Readonly<{
+  state: AccountSuggestionsState;
+  refresh: () => void;
+}> => {
   const [state, setState] = useState<AccountSuggestionsState>(INITIAL_STATE);
   const requestRef = useRef<Promise<ReadonlyArray<AccountMentionSuggestion>> | null>(null);
+  const requestSequenceRef = useRef<number>(0);
 
-  useEffect(() => {
-    const request = requestRef.current ?? loadAccountSuggestions();
-    requestRef.current = request;
-    let isActive = true;
+  // Only the newest request writes state; a refresh keeps the current list
+  // visible until its response arrives.
+  const trackRequest = useCallback((
+    request: Promise<ReadonlyArray<AccountMentionSuggestion>>,
+  ): void => {
+    requestSequenceRef.current += 1;
+    const sequence = requestSequenceRef.current;
 
     void request.then((suggestions): void => {
-      if (!isActive) return;
+      if (sequence !== requestSequenceRef.current) return;
       setState({ status: "loaded", suggestions, errorMessage: null });
     }).catch((error: unknown): void => {
-      if (!isActive) return;
+      if (sequence !== requestSequenceRef.current) return;
       setState({
         status: "error",
         suggestions: [],
         errorMessage: getErrorMessage(error),
       });
     });
-
-    return () => {
-      isActive = false;
-    };
   }, []);
 
-  return state;
+  useEffect(() => {
+    const request = requestRef.current ?? loadAccountSuggestions();
+    requestRef.current = request;
+    trackRequest(request);
+
+    return () => {
+      // Discards every in-flight response after unmount.
+      requestSequenceRef.current += 1;
+    };
+  }, [trackRequest]);
+
+  const refresh = useCallback((): void => {
+    trackRequest(loadAccountSuggestions());
+  }, [trackRequest]);
+
+  return { state, refresh };
 };

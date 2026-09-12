@@ -48,6 +48,11 @@ export type AttachmentPreparationError = Readonly<{
 
 export type DeferredAttachmentIngestion = () => Promise<void>;
 
+type MentionHighlight = Readonly<{
+  mentionKey: string;
+  accountId: string;
+}>;
+
 const getPendingAttachmentDecodedByteLength = (
   attachment: PendingAttachment,
 ): number =>
@@ -66,6 +71,7 @@ type Props = Readonly<{
   dictationStatusLabel: string | null;
   capabilities: ChatComposerCapabilities;
   accountSuggestionsState: AccountSuggestionsState;
+  onRefreshAccountSuggestions: () => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onInputChange: (value: string) => void;
   onIngestFiles: (files: ReadonlyArray<File>) => Promise<number>;
@@ -90,6 +96,7 @@ export const ChatComposer = (props: Props): ReactElement => {
     dictationStatusLabel,
     capabilities,
     accountSuggestionsState,
+    onRefreshAccountSuggestions,
     textareaRef,
     onInputChange,
     onIngestFiles,
@@ -101,9 +108,8 @@ export const ChatComposer = (props: Props): ReactElement => {
   } = props;
   const { t } = useTranslation();
   const [caretPosition, setCaretPosition] = useState<number>(inputText.length);
-  const [selectedMentionIndex, setSelectedMentionIndex] = useState<number | null>(null);
+  const [mentionHighlight, setMentionHighlight] = useState<MentionHighlight | null>(null);
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
-  const [maximumVisibleMentions, setMaximumVisibleMentions] = useState<number>(5);
   const pendingMentionCaretRef = useRef<number | null>(null);
 
   const boundedCaretPosition = Math.min(caretPosition, inputText.length);
@@ -111,6 +117,7 @@ export const ChatComposer = (props: Props): ReactElement => {
     () => findAccountMentionTrigger(inputText, boundedCaretPosition),
     [boundedCaretPosition, inputText],
   );
+  const isMentionActive = activeMention !== null;
   const mentionKey = activeMention === null
     ? null
     : `${inputText}\u0000${boundedCaretPosition}\u0000${activeMention.start}:${activeMention.end}`;
@@ -121,11 +128,19 @@ export const ChatComposer = (props: Props): ReactElement => {
     return rankAccountSuggestions(
       accountSuggestionsState.suggestions,
       activeMention.query,
-    ).slice(0, maximumVisibleMentions);
-  }, [accountSuggestionsState, activeMention, maximumVisibleMentions]);
-  const mentionSuggestionKey = visibleMentionSuggestions
-    .map((suggestion) => `${suggestion.accountId}\u0000${suggestion.currency}`)
-    .join("\u0001");
+    );
+  }, [accountSuggestionsState, activeMention]);
+  // The highlight is pinned to its mention so text set outside the handlers
+  // never shows it against another one, and keyed by account so an in-place
+  // list refresh keeps it while a vanished account clears it.
+  const selectedMentionAccountId = mentionHighlight !== null
+    && mentionHighlight.mentionKey === mentionKey
+    ? mentionHighlight.accountId
+    : null;
+  const highlightedMentionIndex = visibleMentionSuggestions.findIndex(
+    (suggestion) => suggestion.accountId === selectedMentionAccountId,
+  );
+  const selectedMentionIndex = highlightedMentionIndex === -1 ? null : highlightedMentionIndex;
   const hasMentionPopoverContent = accountSuggestionsState.status !== "loaded"
     || visibleMentionSuggestions.length > 0;
   const isMentionPopoverOpen = activeMention !== null
@@ -136,20 +151,12 @@ export const ChatComposer = (props: Props): ReactElement => {
     ? getAccountMentionOptionId(selectedMentionIndex)
     : undefined;
 
+  // Refetches once per popover open so accounts created or renamed during
+  // the session appear without a reload.
   useEffect(() => {
-    const mediaQueryList = window.matchMedia("(max-width: 768px)");
-    const updateMaximumVisibleMentions = (): void => {
-      setMaximumVisibleMentions(mediaQueryList.matches ? 4 : 5);
-    };
-
-    updateMaximumVisibleMentions();
-    mediaQueryList.addEventListener("change", updateMaximumVisibleMentions);
-    return () => mediaQueryList.removeEventListener("change", updateMaximumVisibleMentions);
-  }, []);
-
-  useEffect(() => {
-    setSelectedMentionIndex(null);
-  }, [mentionKey, mentionSuggestionKey]);
+    if (!isMentionActive) return;
+    onRefreshAccountSuggestions();
+  }, [isMentionActive, onRefreshAccountSuggestions]);
 
   useLayoutEffect(() => {
     const pendingCaretPosition = pendingMentionCaretRef.current;
@@ -184,7 +191,7 @@ export const ChatComposer = (props: Props): ReactElement => {
       suggestion.accountId,
     );
     pendingMentionCaretRef.current = replacement.caretPosition;
-    setSelectedMentionIndex(null);
+    setMentionHighlight(null);
     setDismissedMentionKey(null);
     onInputChange(replacement.text);
   };
@@ -192,6 +199,7 @@ export const ChatComposer = (props: Props): ReactElement => {
   const handleTextareaChange = (event: ChangeEvent<HTMLTextAreaElement>): void => {
     setCaretPosition(event.currentTarget.selectionStart);
     setDismissedMentionKey(null);
+    setMentionHighlight(null);
     onInputChange(event.currentTarget.value);
   };
 
@@ -199,37 +207,42 @@ export const ChatComposer = (props: Props): ReactElement => {
     event: SyntheticEvent<HTMLTextAreaElement>,
   ): void => {
     setCaretPosition(event.currentTarget.selectionStart);
+    setMentionHighlight(null);
   };
 
   const handleTextareaKeyDown = (
     event: KeyboardEvent<HTMLTextAreaElement>,
   ): void => {
-    if (!event.nativeEvent.isComposing && isMentionPopoverOpen) {
+    if (!event.nativeEvent.isComposing && isMentionPopoverOpen && mentionKey !== null) {
       if (event.key === "Escape") {
         event.preventDefault();
         setDismissedMentionKey(mentionKey);
-        setSelectedMentionIndex(null);
+        setMentionHighlight(null);
         return;
       }
 
       if (visibleMentionSuggestions.length > 0 && event.key === "ArrowDown") {
         event.preventDefault();
-        setSelectedMentionIndex((currentIndex) => (
-          currentIndex === null
-            ? 0
-            : (currentIndex + 1) % visibleMentionSuggestions.length
-        ));
+        const nextIndex = selectedMentionIndex === null
+          ? 0
+          : (selectedMentionIndex + 1) % visibleMentionSuggestions.length;
+        setMentionHighlight({
+          mentionKey,
+          accountId: visibleMentionSuggestions[nextIndex].accountId,
+        });
         return;
       }
 
       if (visibleMentionSuggestions.length > 0 && event.key === "ArrowUp") {
         event.preventDefault();
-        setSelectedMentionIndex((currentIndex) => (
-          currentIndex === null
-            ? visibleMentionSuggestions.length - 1
-            : (currentIndex - 1 + visibleMentionSuggestions.length)
-              % visibleMentionSuggestions.length
-        ));
+        const previousIndex = selectedMentionIndex === null
+          ? visibleMentionSuggestions.length - 1
+          : (selectedMentionIndex - 1 + visibleMentionSuggestions.length)
+            % visibleMentionSuggestions.length;
+        setMentionHighlight({
+          mentionKey,
+          accountId: visibleMentionSuggestions[previousIndex].accountId,
+        });
         return;
       }
 
