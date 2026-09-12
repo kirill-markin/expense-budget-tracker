@@ -201,7 +201,10 @@ const getMicrophoneErrorMessage = (
 export const ChatPanel = (props: Props): ReactElement => {
   const { mode, workspaceId } = props;
   const { t } = useTranslation();
-  const accountSuggestionsState = useAccountSuggestions();
+  const {
+    state: accountSuggestionsState,
+    refresh: refreshAccountSuggestions,
+  } = useAccountSuggestions();
   const {
     setIsOpen,
     chatWidth,
@@ -1903,6 +1906,7 @@ export const ChatPanel = (props: Props): ReactElement => {
         dictationStatusLabel={dictationStatusLabel}
         capabilities={composerCapabilities}
         accountSuggestionsState={accountSuggestionsState}
+        onRefreshAccountSuggestions={refreshAccountSuggestions}
         textareaRef={textareaRef}
         onInputChange={handleInputChange}
         onIngestFiles={ingestFiles}
