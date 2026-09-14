@@ -42,7 +42,7 @@ type ReadOnlyMcpToolName =
   | typeof SQL_QUERY_TOOL_NAME;
 
 const guideTopicSchema = z.enum(["sql_dialect", "writing_data"]).describe(
-  "Which protocol to return. Use sql_dialect for the restricted SQL rules: allowed functions, forbidden constructs, date and text matching, result limits, and the result envelope. Use writing_data for the write protocol: duplicate detection, internal transfers, category reuse, bank statement statuses, approval, batch limits, resuming after an interruption, and final balance verification. It covers ledger_entries writes; read the get_schema budget_lines hints before writing budget rows.",
+  "Which protocol to return. Use sql_dialect for the restricted SQL rules: allowed functions, forbidden constructs, date and text matching, result limits, and the result envelope. Use writing_data for the write protocol: duplicate detection, internal transfers, category reuse, bank statement statuses, approval, batch limits, resuming after an interruption, and final balance verification. It covers ledger_entries imports and budget_lines semantics: append-only base rows where the latest insert wins per month, direction, and category.",
 );
 
 const GUIDE_BY_TOPIC: Readonly<Record<z.infer<typeof guideTopicSchema>, string>> = {

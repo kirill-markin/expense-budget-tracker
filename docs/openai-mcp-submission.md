@@ -364,7 +364,7 @@ The `inputSchema` values are, by tool name:
       "topic": {
         "type": "string",
         "enum": ["sql_dialect", "writing_data"],
-        "description": "Which protocol to return. Use sql_dialect for the restricted SQL rules: allowed functions, forbidden constructs, date and text matching, result limits, and the result envelope. Use writing_data for the write protocol: duplicate detection, internal transfers, category reuse, bank statement statuses, approval, batch limits, resuming after an interruption, and final balance verification. It covers ledger_entries writes; read the get_schema budget_lines hints before writing budget rows."
+        "description": "Which protocol to return. Use sql_dialect for the restricted SQL rules: allowed functions, forbidden constructs, date and text matching, result limits, and the result envelope. Use writing_data for the write protocol: duplicate detection, internal transfers, category reuse, bank statement statuses, approval, batch limits, resuming after an interruption, and final balance verification. It covers ledger_entries imports and budget_lines semantics: append-only base rows where the latest insert wins per month, direction, and category."
       }
     },
     "required": ["topic"]
@@ -862,9 +862,10 @@ Use this connection-state sequence exactly:
 - Prerequisites: reset fixture and Connection A with only `expenses:read`.
 - Prompt: “In Review Personal, total July 2026 expenses by category. Return the
   category and total in EUR. Do not change anything.”
-- Expected tool choice: `list_workspaces` and `get_schema` when needed, followed
-  by exactly one `sql_query` with one policy-approved `SELECT` or
-  `WITH...SELECT`.
+- Expected tool choice: `list_workspaces` and `get_schema` when needed, then
+  `get_guide` with topic `sql_dialect` because the query aggregates and filters
+  by date, followed by exactly one `sql_query` with one policy-approved `SELECT`
+  or `WITH...SELECT`.
 - Expected confirmation boundary: none.
 - Expected result shape: SQL success data with `command: "SELECT"`,
   `referencedRelations` containing the relations actually used, accurate count
@@ -888,9 +889,10 @@ Use this connection-state sequence exactly:
   of EUR 123.45 for category OpenAI Review Write. This is a test. Show me the
   exact proposed change, including direction and kind, and require confirmation
   before changing anything.”
-- Expected tool choice: read-only discovery first, then `get_guide` with topic
-  `writing_data` before the first mutation, then `sql_execute` only after the
-  host's explicit destructive-action confirmation.
+- Expected tool choice: read-only discovery first, including `get_guide` with
+  topic `sql_dialect` because that discovery filters by date, then `get_guide`
+  with topic `writing_data` before the first mutation, then `sql_execute` only
+  after the host's explicit destructive-action confirmation.
 - Expected confirmation boundary: the exact workspace, month `2026-08`,
   direction `spend`, category `OpenAI Review Write`, kind `base`, currency
   `EUR`, amount `123.45`, and `INSERT` mutation must be visible before the tool
@@ -921,7 +923,9 @@ Use this connection-state sequence exactly:
   `rowCount: 1`, `referencedRelations: ["budget_lines"]`, the selected fixture
   workspace, and non-truncated counts.
 - Pass evidence: the tool log shows `get_guide` with topic `writing_data`
-  before `sql_execute`; confirmation screenshot shows every complete-key and
+  before `sql_execute`, and the read-only `budget_lines` discovery that guide's
+  budget-row section prescribes counts as part of that path rather than a
+  deviation; confirmation screenshot shows every complete-key and
   value field before the tool call; one row is affected; P6 proves the exact
   `spend`/`base` row with EUR 123.45; reset removes that exact row.
 - Fail if: the tool runs before confirmation, retries blindly, writes another
@@ -934,8 +938,9 @@ Use this connection-state sequence exactly:
 - Prompt: “Verify the spend-direction, base-kind August 2026 OpenAI Review
   Write budget created in Review Personal in the previous step. Do not create,
   update, or delete anything.”
-- Expected tool choice: `sql_query` only after any needed schema context; never
-  `sql_execute`.
+- Expected tool choice: `get_guide` with topic `sql_dialect` because the
+  verification query filters by date, then `sql_query` only after any needed
+  schema context; never `sql_execute`.
 - Expected confirmation boundary: none.
 - Expected SQL, with the private workspace substitution:
 
