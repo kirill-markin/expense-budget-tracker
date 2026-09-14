@@ -1,7 +1,7 @@
 import type OpenAI from "openai";
 import { z } from "zod";
 import { isExpenseSqlMutation } from "@expense-budget-tracker/agent-shared/sql-policy";
-import { TOOL_DESCRIPTION, execQuery } from "@/server/chat/shared";
+import { CHAT_SQL_TOOL_NAME, TOOL_DESCRIPTION, execQuery } from "@/server/chat/shared";
 
 export type OpenAIToolContext = Readonly<{
   userId: string;
@@ -140,7 +140,7 @@ const getIsMutatingSql = (
 
 export const OPENAI_CHAT_TOOLS: ReadonlyArray<OpenAI.Responses.FunctionTool> = [{
   type: "function",
-  name: "query_database",
+  name: CHAT_SQL_TOOL_NAME,
   description: TOOL_DESCRIPTION,
   strict: true,
   parameters: {
@@ -168,7 +168,7 @@ export const executeChatToolCallWithDependencies = async (
    * `completed`, but route refresh is allowed only when this result reports
    * `succeeded === true` and `isMutating === true`.
    */
-  if (toolName !== "query_database") {
+  if (toolName !== CHAT_SQL_TOOL_NAME) {
     throw new Error(`Unsupported OpenAI tool call: ${toolName}`);
   }
 
@@ -179,7 +179,7 @@ export const executeChatToolCallWithDependencies = async (
     const parsed = queryDatabaseInputSchema.parse(JSON.parse(rawArguments));
     const result = await dependencies.execQuery(parsed.sql, context);
     return {
-      output: createToolSuccessResult("query_database", {
+      output: createToolSuccessResult(CHAT_SQL_TOOL_NAME, {
         sql: parsed.sql,
         ...JSON.parse(result.json) as Readonly<Record<string, unknown>>,
       }),
@@ -194,7 +194,7 @@ export const executeChatToolCallWithDependencies = async (
       error: serializedError,
     };
     return {
-      output: createToolErrorResult("query_database", payload),
+      output: createToolErrorResult(CHAT_SQL_TOOL_NAME, payload),
       isMutating,
       succeeded: false,
       error: serializedError,

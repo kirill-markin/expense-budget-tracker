@@ -4,12 +4,17 @@
 import {
   executeValidatedExpenseSql,
   getAllowedRelationNames,
+  MAX_SQL_RESULT_CHARS,
   MAX_SQL_ROWS,
   SQL_STATEMENT_TIMEOUT_MS,
   type AllowedRelationName,
   type ValidatedExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { withRestrictedTrustedIdentityContext } from "@/server/db";
+import {
+  applySqlResultCharBudget,
+  type BudgetedSqlStatementEntry,
+} from "@/server/sqlResultBudget";
 import { type AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
 import { getWorkspaceForTrustedIdentity } from "@/server/workspaces";
 
@@ -43,6 +48,7 @@ export type AgentSqlResult = Readonly<{
   }>;
   limits: Readonly<{
     maxRows: number;
+    maxResultChars: number;
     statementTimeoutMs: number;
   }>;
 }>;
@@ -158,10 +164,12 @@ export const executeAgentSql = async (
     ),
   );
 
-  return {
-    statements: result.statements.map((statement) => {
-      const entityHints = buildEntityHints(statement.referencedRelations);
-      return {
+  const entries = result.statements.map((
+    statement,
+  ): BudgetedSqlStatementEntry<AgentSqlStatementResult> => {
+    const entityHints = buildEntityHints(statement.referencedRelations);
+    return {
+      statement: {
         sql: statement.sql,
         command: statement.command,
         rows: statement.rows,
@@ -171,12 +179,25 @@ export const executeAgentSql = async (
         truncated: statement.truncated,
         referencedRelations: statement.referencedRelations,
         ...(entityHints === undefined ? {} : { entityHints }),
-      };
-    }),
+      },
+      isMutating: statement.isMutating,
+    };
+  });
+  const limits: AgentSqlResult["limits"] = {
+    maxRows: MAX_SQL_ROWS,
+    maxResultChars: MAX_SQL_RESULT_CHARS,
+    statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,
+  };
+
+  return {
+    // Measured against the result object this function returns. The route wraps
+    // it in the success envelope and its instruction text, so the emitted body
+    // is that much larger than the budget; rows are what this can shed.
+    statements: applySqlResultCharBudget(
+      entries,
+      (candidate) => JSON.stringify({ statements: candidate, workspace, limits }).length,
+    ),
     workspace,
-    limits: {
-      maxRows: MAX_SQL_ROWS,
-      statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,
-    },
+    limits,
   };
 };

@@ -39,6 +39,7 @@ test("postAgentSqlRouteWithDeps describes per-statement and request-wide row lim
         },
         limits: {
           maxRows: 37,
+          maxResultChars: 12_345,
           statementTimeoutMs: 30_000,
         },
       }),
@@ -47,7 +48,7 @@ test("postAgentSqlRouteWithDeps describes per-statement and request-wide row lim
 
   const payload = await response.json() as {
     data: Readonly<{
-      limits: Readonly<{ maxRows: number; statementTimeoutMs: number }>;
+      limits: Readonly<{ maxRows: number; maxResultChars: number; statementTimeoutMs: number }>;
     }>;
     instructions: string;
   };
@@ -55,11 +56,12 @@ test("postAgentSqlRouteWithDeps describes per-statement and request-wide row lim
   assert.equal(response.status, 200);
   assert.deepEqual(payload.data.limits, {
     maxRows: 37,
+    maxResultChars: 12_345,
     statementTimeoutMs: 30_000,
   });
   assert.equal(
     payload.instructions,
-    "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and returned rows are capped at 37 per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata.",
+    "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and returned rows are capped at 37 per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata. A result over limits.maxResultChars (12345) characters drops rows across the whole request and sets truncated instead of failing; when a statement's own text is over that budget the result still returns over budget with every row dropped, and only shortening that text helps. For a read cut by this character budget, the kept rows are that statement's first rows, so page the rest with OFFSET, select fewer or shorter columns, or send fewer statements per request. Any mutation in the result already committed and must not be re-sent; it keeps reporting the rows it affected in rowCount, an INSERT or UPDATE's dropped rows are readable with a narrow follow-up SELECT, and a DELETE's are gone.",
   );
 });
 
