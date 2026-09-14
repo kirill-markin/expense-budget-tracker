@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  SQL_DIALECT_GUIDE,
+  WRITE_APPROVAL_GUIDE,
+  WRITE_PROTOCOL_INTRO_GUIDE,
+} from "./agentProtocol.js";
+import {
   buildAgentDiscoveryEnvelope,
   buildSourceDiscoveryResponse,
 } from "./discovery.js";
@@ -53,6 +58,23 @@ test("agent discovery advertises runtime documentation and implementation source
     "Run exactly one explicitly approved INSERT, UPDATE, or DELETE mutation.",
   );
   assert.match(envelope.instructions, /Legacy .*\/sql remains available only for compatibility/u);
+  assert.ok(
+    envelope.instructions.includes(SQL_DIALECT_GUIDE),
+    "Discovery must inline the shared restricted SQL dialect guide instead of restating it",
+  );
+  assert.ok(
+    envelope.instructions.includes(WRITE_PROTOCOL_INTRO_GUIDE),
+    "Discovery must inline the shared write protocol intro instead of restating it",
+  );
+  assert.ok(
+    envelope.instructions.includes(WRITE_APPROVAL_GUIDE),
+    "Discovery must inline the shared write approval and execution section in full",
+  );
+  assert.match(
+    envelope.instructions,
+    /The Writing data sections above are an excerpt of the shared write guide/u,
+  );
+  assert.match(envelope.instructions, /is not available over this API\./u);
   assert.equal(envelope.actions.some((action) => action.name === "openapi"), false);
 });
 
