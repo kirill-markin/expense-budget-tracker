@@ -21,7 +21,7 @@ Only these function calls are supported: ${ALLOWED_SQL_FUNCTIONS_TEXT}. Every ot
 Use ILIKE instead of LOWER(...) for case-insensitive text matching.
 Calculate explicit date literals before running SQL instead of calling NOW() or DATE_TRUNC(), and filter with closed-open ranges: ts >= start date and ts < exclusive end date.
 Use regular single-quoted literals and double an embedded apostrophe, for example 'customer''s'. Dollar-quoted strings and E'...' escape strings are not supported.
-ON CONFLICT is not supported. Read first, then run an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists.
+ON CONFLICT is not supported. Read first, then run an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists, except append-only budget_lines, where every plan change is a new INSERT.
 INSERT statements must set workspace_id explicitly; read it from workspace_settings first.
 A SELECT returns at most ${MAX_SQL_ROWS} rows per statement, some entrypoints additionally apply one shared ${MAX_SQL_RETURNED_ROWS}-row returned-row budget across all statements of a single call that SELECT rows and mutation RETURNING rows both consume, and a mutation may affect at most ${MAX_SQL_MUTATION_ROWS} rows per call, so split larger changes into sequential calls.
 Every result is JSON with an ok flag; when ok is false, read the error message and fix the statement before retrying. Before treating a result set as complete, compare returnedRowCount with totalRowCount and check truncated, and narrow the query when the result was capped.`;
@@ -66,6 +66,18 @@ const WRITE_CHECKLIST_GUIDE = `### Checklist for every entry
 - date and time complete
 - not a duplicate`;
 
+// Exported so the guide's most policy-sensitive example is validated against the restricted SQL policy in tests.
+export const BUDGET_WINNING_ROWS_QUERY_EXAMPLE = `WITH latest AS (SELECT budget_month, direction, category, MAX(inserted_at) AS inserted_at FROM budget_lines WHERE budget_month >= '<first-affected-month-start YYYY-MM-DD>' AND budget_month < '<exclusive-end-month-start YYYY-MM-DD>' GROUP BY budget_month, direction, category) SELECT b.budget_month, b.direction, b.category, MAX(b.planned_value) AS planned_value, MAX(b.currency) AS currency FROM budget_lines b JOIN latest l ON l.budget_month = b.budget_month AND l.direction = b.direction AND l.category = b.category AND l.inserted_at = b.inserted_at GROUP BY b.budget_month, b.direction, b.category ORDER BY b.budget_month, b.direction, b.category`;
+
+const WRITE_BUDGET_ROWS_GUIDE = `### Budget rows
+
+Budget plans live in budget_lines and are append-only. Change a plan by inserting a new row; never update or delete an earlier row to change a plan. The latest inserted_at row wins for each budget_month, direction, and category.
+Read the current winning rows for the affected months before proposing a change, and reuse the exact category spelling already used in the user's history. Window functions are blocked, so resolve the winners with MAX(inserted_at) and a self-join, and collapse rows that share that timestamp with MAX:
+${BUDGET_WINNING_ROWS_QUERY_EXAMPLE}
+budget_month is the first day of the month, for example 2026-03-01. direction is income or spend. kind accepts only base. planned_value is an absolute value, not a signed ledger amount.
+currency is required and must be the workspace reporting currency read from workspace_settings.reporting_currency, because planned values are never converted on read.
+Budget rows follow the same approval, probe-then-batch, and verification rules as entry imports; verify by rerunning that read for the affected months.`;
+
 const WRITE_QUESTIONS_GUIDE = `### Questions
 
 Collect every unclear point across every entry and ask all of them in a single numbered list with continuous numbering. Never ask questions piecemeal across several messages.
@@ -102,6 +114,7 @@ export const WRITING_DATA_GUIDE = [
   WRITE_ENTRY_SHAPES_GUIDE,
   WRITE_SOURCE_ROWS_GUIDE,
   WRITE_CHECKLIST_GUIDE,
+  WRITE_BUDGET_ROWS_GUIDE,
   WRITE_QUESTIONS_GUIDE,
   WRITE_APPROVAL_GUIDE,
   WRITE_PROGRESS_GUIDE,

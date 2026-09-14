@@ -81,7 +81,7 @@ export const buildSourceDiscoveryResponse = (apiBaseUrl: string): SourceDiscover
 // Only the write-protocol sections that apply to this surface; the full guide dwarfs a discovery response.
 // HTTP agents have no second instruction channel, so the excerpt names the sections it leaves out
 // and says they cannot be fetched, instead of implying a retrievable guide endpoint.
-const WRITE_PROTOCOL_OMITTED_SECTIONS_NOTE = "The Writing data sections above are an excerpt of the shared write guide; the full guide additionally covers discovery before writing, entry shapes, source rows and dates, the per-entry checklist, batching questions, progress and resuming, and final verification, and is not available over this API.";
+const WRITE_PROTOCOL_OMITTED_SECTIONS_NOTE = "The Writing data sections above are an excerpt of the shared write guide; the full guide additionally covers discovery before writing, entry shapes, source rows and dates, the per-entry checklist, budget rows, batching questions, progress and resuming, and final verification, and is not available over this API.";
 
 const WRITE_PROTOCOL_GUIDE = [
   WRITE_PROTOCOL_INTRO_GUIDE,
