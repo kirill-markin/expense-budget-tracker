@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
-  createSqlExecutionDeadline,
   MCP_SQL_STATEMENT_TIMEOUT_MS,
   SqlExecutionDeadlineError,
   type SqlExecutionDeadline,
@@ -13,10 +11,8 @@ import {
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { SqlTransactionOutcomeUnknownError } from "../dbDeadline.js";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
-import {
-  createMcpServerWithDependencies,
-  type McpServerDependencies,
-} from "./server.js";
+import type { McpServerDependencies } from "./server.js";
+import { withMcpClient } from "./testClient.js";
 
 const PERSONAL_WORKSPACE_ID = "workspace-personal";
 const BUSINESS_WORKSPACE_ID = "workspace-business";
@@ -352,24 +348,11 @@ const createCalls = (): ToolCalls => ({
   executeDeadlines: [],
 });
 
-const withClient = async (
+const withClient = (
   connection: AuthenticatedMcpAccessToken,
   dependencies: McpServerDependencies,
   callback: (client: Client) => Promise<void>,
-): Promise<void> => {
-  const deadline = createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, () => 10_000);
-  const server = createMcpServerWithDependencies(connection, deadline, dependencies);
-  const client = new Client({ name: "mcp-server-test", version: "1.0.0" });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  try {
-    await callback(client);
-  } finally {
-    await client.close();
-    await server.close();
-  }
-};
+): Promise<void> => withMcpClient("mcp-server-test", connection, dependencies, callback);
 
 test("MCP server emits the public runtime contract and routes successful tool calls", async (): Promise<void> => {
   const calls = createCalls();
