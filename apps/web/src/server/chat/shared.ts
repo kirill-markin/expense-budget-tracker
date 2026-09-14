@@ -9,6 +9,10 @@ import {
   type ValidatedExpenseSqlStatement,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ContentPart } from "@/server/chat/types";
+import {
+  applySqlResultCharBudget,
+  type BudgetedSqlStatementEntry,
+} from "@/server/sqlResultBudget";
 import { withRestrictedUserContext, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
 import { lockUncancelledChatTurnForMutationWithQuery } from "@/server/chat/store/turnCancellationStore";
@@ -195,6 +199,10 @@ ${WRITING_DATA_GUIDE}
 
 ${WEB_CHAT_INSTRUCTIONS}`;
 
+// The tool name the OpenAI tool layer registers and echoes in every result, so
+// the character budget can measure the same envelope that layer emits.
+export const CHAT_SQL_TOOL_NAME = "query_database";
+
 export const TOOL_DESCRIPTION = `Execute a SQL script against the expense tracker database. A script may contain one or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons.
 
 Tables:
@@ -301,26 +309,69 @@ const DEFAULT_EXEC_QUERY_DEPENDENCIES: ExecQueryDependencies = {
   lockUncancelledChatTurnForMutationWithQuery,
 };
 
+type ChatSqlStatementResult = Readonly<{
+  sql: string;
+  command: string;
+  rows: ReadonlyArray<Readonly<Record<string, unknown>>>;
+  rowCount: number;
+  returnedRowCount: number;
+  totalRowCount: number;
+  truncated: boolean;
+  referencedRelations: ValidatedExpenseSqlStatement["referencedRelations"];
+}>;
+
+// The statements payload of this call, which the tool layer parses back out.
+const serializeChatSqlStatements = (
+  statements: ReadonlyArray<ChatSqlStatementResult>,
+): string => JSON.stringify({ statements });
+
+// The exact success output apps/web/src/server/chat/openai/tooling/tools.ts
+// emits for this tool call. The script is echoed once around the statements
+// array as well as once inside every statement, so the character budget is
+// measured on this envelope rather than on the statements alone: the whole
+// envelope is what every later model call of the same turn re-sends.
+const serializeChatSqlToolOutput = (
+  sql: string,
+  statements: ReadonlyArray<ChatSqlStatementResult>,
+): string => JSON.stringify({
+  ok: true,
+  tool: CHAT_SQL_TOOL_NAME,
+  sql,
+  statements,
+});
+
+// One budgeted result serves every consumer of this call: what the model reads
+// now, what later model calls of the same turn re-send, the stored replay
+// history, and the tool-output block the chat transcript renders. All of them
+// show the same kept rows and the same truncated flag.
 const executeValidatedChatSql = async (
   queryFn: QueryFn,
+  sql: string,
   statements: ReadonlyArray<ValidatedExpenseSqlStatement>,
-): Promise<ReadonlyArray<Readonly<Record<string, unknown>>>> => {
-  const results: Array<Readonly<Record<string, unknown>>> = [];
+): Promise<ReadonlyArray<ChatSqlStatementResult>> => {
+  const results: Array<BudgetedSqlStatementEntry<ChatSqlStatementResult>> = [];
   for (const statement of statements) {
     const result = await queryFn(statement.sql, []);
     const rows = result.rows.slice(0, MAX_ROWS);
     results.push({
-      sql: statement.sql,
-      command: result.command,
-      rows,
-      rowCount: rows.length > 0 ? rows.length : (result.rowCount ?? 0),
-      returnedRowCount: rows.length,
-      totalRowCount: result.rows.length > 0 ? result.rows.length : (result.rowCount ?? 0),
-      truncated: result.rows.length > rows.length,
-      referencedRelations: statement.referencedRelations,
+      statement: {
+        sql: statement.sql,
+        command: result.command,
+        rows,
+        rowCount: rows.length > 0 ? rows.length : (result.rowCount ?? 0),
+        returnedRowCount: rows.length,
+        totalRowCount: result.rows.length > 0 ? result.rows.length : (result.rowCount ?? 0),
+        truncated: result.rows.length > rows.length,
+        referencedRelations: statement.referencedRelations,
+      },
+      isMutating: statement.isMutating,
     });
   }
-  return results;
+
+  return applySqlResultCharBudget(
+    results,
+    (candidate) => serializeChatSqlToolOutput(sql, candidate).length,
+  );
 };
 
 export const execQueryWithDependencies = async (
@@ -353,17 +404,17 @@ export const execQueryWithDependencies = async (
           context.turnId,
         );
         await queryFn("SET LOCAL ROLE api_sql_executor", []);
-        return executeValidatedChatSql(queryFn, validated.statements);
+        return executeValidatedChatSql(queryFn, sql, validated.statements);
       },
     )
     : await dependencies.withRestrictedUserContext(
       context.userId,
       context.workspaceId,
       STATEMENT_TIMEOUT_MS,
-      async (queryFn) => executeValidatedChatSql(queryFn, validated.statements),
+      async (queryFn) => executeValidatedChatSql(queryFn, sql, validated.statements),
     );
 
-  return { json: JSON.stringify({ statements }) };
+  return { json: serializeChatSqlStatements(statements) };
 };
 
 export const execQuery = async (

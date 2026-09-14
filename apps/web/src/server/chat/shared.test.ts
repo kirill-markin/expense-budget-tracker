@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult as PgQueryResult } from "pg";
+import { MAX_SQL_RESULT_CHARS } from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
+  CHAT_SQL_TOOL_NAME,
   execQuery,
   execQueryWithDependencies,
   type ExecQueryDependencies,
@@ -201,4 +203,159 @@ test("SQL-first exact turn fencing holds the session lock until mutation commit"
 
   assert.equal(mutationCommitted, true);
   assert.equal(cancellationConfirmed, true);
+});
+
+// 600-char notes, the row width that makes an ordinary read oversized.
+const createNoteRows = (rowCount: number): ReadonlyArray<Readonly<Record<string, string>>> =>
+  Array.from({ length: rowCount }, (_value, index) => ({
+    entry_id: `entry-${String(index)}`,
+    note: "н".repeat(600),
+  }));
+
+// The success output apps/web/src/server/chat/openai/tooling/tools.ts emits for
+// one tool call, which is what the model reads, what the turn re-sends, and
+// what the transcript stores and renders.
+const buildChatToolOutput = (sql: string, json: string): string => JSON.stringify({
+  ok: true,
+  tool: CHAT_SQL_TOOL_NAME,
+  sql,
+  ...JSON.parse(json) as Readonly<Record<string, unknown>>,
+});
+
+type ChatSqlPayload = Readonly<{
+  statements: ReadonlyArray<Readonly<{
+    rows: ReadonlyArray<unknown>;
+    rowCount: number;
+    returnedRowCount: number;
+    totalRowCount: number;
+    truncated: boolean;
+  }>>;
+}>;
+
+// A long script, the case where the echo the tool layer adds around the
+// statements array is a large share of the emitted output.
+const LONG_SCRIPT = `SELECT entry_id, note FROM ledger_entries WHERE entry_id IN (${
+  Array.from({ length: 500 }, (_value, index) => `'entry-${String(index)}'`).join(", ")
+})`;
+
+test("execQueryWithDependencies returns a chat result within budget unchanged", async (): Promise<void> => {
+  const rows = createNoteRows(3);
+  const sql = "SELECT entry_id, note FROM ledger_entries LIMIT 3";
+  const queryFn: QueryFn = async (): Promise<PgQueryResult> => createQueryResult("SELECT", rows);
+
+  const result = await execQueryWithDependencies(
+    sql,
+    {
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    },
+    {
+      withUserContext: async (): Promise<never> => {
+        throw new Error("User context should not run");
+      },
+      withRestrictedUserContext: async <T>(
+        _userId: string,
+        _workspaceId: string,
+        _statementTimeoutMs: number,
+        callback: (restrictedQueryFn: QueryFn) => Promise<T>,
+      ): Promise<T> => callback(queryFn),
+      lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {},
+    },
+  );
+
+  const payload = JSON.parse(result.json) as ChatSqlPayload;
+  const statement = payload.statements[0];
+
+  assert.ok(statement);
+  assert.ok(buildChatToolOutput(sql, result.json).length < MAX_SQL_RESULT_CHARS);
+  // The budget leaves a result that fits exactly as the statement built it.
+  assert.deepEqual(statement.rows, rows);
+  assert.equal(statement.rowCount, rows.length);
+  assert.equal(statement.returnedRowCount, rows.length);
+  assert.equal(statement.totalRowCount, rows.length);
+  assert.equal(statement.truncated, false);
+});
+
+test("execQueryWithDependencies caps the chat tool output the model receives in characters", async (): Promise<void> => {
+  const rows = createNoteRows(100);
+  const queryFn: QueryFn = async (): Promise<PgQueryResult> => createQueryResult("SELECT", rows);
+
+  const result = await execQueryWithDependencies(
+    LONG_SCRIPT,
+    {
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    },
+    {
+      withUserContext: async (): Promise<never> => {
+        throw new Error("User context should not run");
+      },
+      withRestrictedUserContext: async <T>(
+        _userId: string,
+        _workspaceId: string,
+        _statementTimeoutMs: number,
+        callback: (restrictedQueryFn: QueryFn) => Promise<T>,
+      ): Promise<T> => callback(queryFn),
+      lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {},
+    },
+  );
+
+  const payload = JSON.parse(result.json) as ChatSqlPayload;
+  const statement = payload.statements[0];
+
+  assert.ok(statement);
+  assert.ok(LONG_SCRIPT.length > 5_000);
+  assert.ok(buildChatToolOutput(LONG_SCRIPT, result.json).length <= MAX_SQL_RESULT_CHARS);
+  assert.ok(statement.rows.length > 0);
+  assert.ok(statement.rows.length < rows.length);
+  assert.equal(statement.rowCount, statement.rows.length);
+  assert.equal(statement.returnedRowCount, statement.rows.length);
+  assert.equal(statement.totalRowCount, rows.length);
+  assert.equal(statement.truncated, true);
+});
+
+test("execQueryWithDependencies keeps the affected row count when a chat mutation is cut", async (): Promise<void> => {
+  const rows = createNoteRows(60);
+  const sql = "DELETE FROM ledger_entries WHERE workspace_id = 'workspace-1' RETURNING entry_id, note";
+  const queryFn: QueryFn = async (statementSql): Promise<PgQueryResult> => (
+    statementSql.startsWith("DELETE ")
+      ? createQueryResult("DELETE", rows)
+      : createQueryResult("SELECT", [])
+  );
+
+  const result = await execQueryWithDependencies(
+    sql,
+    {
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    },
+    {
+      withUserContext: async <T>(
+        _userId: string,
+        _workspaceId: string,
+        callback: (mutatingQueryFn: QueryFn) => Promise<T>,
+      ): Promise<T> => callback(queryFn),
+      withRestrictedUserContext: createUnusedRestrictedRunner(),
+      lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {},
+    },
+  );
+
+  const payload = JSON.parse(result.json) as ChatSqlPayload;
+  const statement = payload.statements[0];
+
+  assert.ok(statement);
+  assert.ok(buildChatToolOutput(sql, result.json).length <= MAX_SQL_RESULT_CHARS);
+  assert.ok(statement.rows.length > 0);
+  assert.ok(statement.rows.length < rows.length);
+  // The write committed, so its rowCount keeps naming the rows it affected.
+  assert.equal(statement.rowCount, rows.length);
+  assert.equal(statement.returnedRowCount, statement.rows.length);
+  assert.equal(statement.totalRowCount, rows.length);
+  assert.equal(statement.truncated, true);
 });
