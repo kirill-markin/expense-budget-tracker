@@ -230,8 +230,8 @@ abandoned `io.github.kirill-markin/expense-budget-tracker` identity.
 
 Use this order for every later release:
 
-1. Follow [`version-bump.md`](version-bump.md) so every product, runtime,
-   lockfile, and `server.json` version is identical.
+1. Confirm every product, runtime, lockfile, and `server.json` version is
+   already identical per [`version-bump.md`](version-bump.md).
 2. Merge and promote the release to `main` through the normal reviewed flow.
 3. Confirm the deployed remote and every public manifest URL are healthy.
 4. Confirm the new exact Registry name/version returns 404.
