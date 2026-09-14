@@ -30,7 +30,7 @@ Connect through either the hosted MCP server or the direct Agent API. Their cred
 
 ### MCP connector
 
-The hosted MCP server is available directly at `https://mcp.expense-budget-tracker.com/mcp`. Its canonical MCP Registry identity is `com.expense-budget-tracker/expense-budget-tracker`; it will be available through the Registry only after the manual publication workflow succeeds and exact-version verification completes. It exposes five OAuth-secured tools:
+The hosted MCP server is available directly at `https://mcp.expense-budget-tracker.com/mcp`. Its canonical MCP Registry identity is `com.expense-budget-tracker/expense-budget-tracker`; it is published there, and each later version becomes available only after its own manual publication workflow succeeds and exact-version verification completes. It exposes five OAuth-secured tools:
 
 - `list_workspaces` — list workspaces available to the signed-in user
 - `get_schema` — inspect the allowed relations, columns, constraints, and limits
