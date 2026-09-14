@@ -108,6 +108,23 @@ export const isAccountMetadataGroup = (value: string): value is AccountMetadataG
   (ACCOUNT_METADATA_GROUP_VALUES as ReadonlyArray<string>).includes(value);
 
 const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>> = {
+  ledger_entries: {
+    optional: false,
+    primaryKey: ["entry_id"],
+    notes: [
+      "One row per account movement, where a negative amount is money out and a positive amount is money in.",
+      "event_id groups related rows: a transfer is two rows sharing one event_id with opposite signs and category NULL.",
+      "category is free-form text shared with budget_lines; reuse an existing spelling from history exactly instead of inventing a variant.",
+      "external_id carries the source identifier used for deduplication.",
+      "workspace_id must be set explicitly on every INSERT; read it from workspace_settings.",
+      "account_id follows {a|v|c|i}-{name}-{currency}, where a=regular, v=virtual, c=cash, i=investment, and the same {a|v|c|i}-{name} prefix means the same financial institution.",
+    ],
+    columnConstraints: [{
+      column: "kind",
+      allowedValues: ["income", "spend", "transfer"],
+      notes: ["Only income, spend, or transfer are accepted."],
+    }],
+  },
   accounts: {
     optional: false,
     notes: [
@@ -133,7 +150,6 @@ const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSche
       "Missing row is allowed. Balances treat missing liquidity as 'high', missing account_type as 'personal', and missing account_group as 'regular'. Budget queries treat missing liquidity as 'high' and missing account_type as 'personal'.",
       "Read before write. Only insert or update this table when the user explicitly wants to set or override account liquidity, account type, or account group.",
       "Restricted agent SQL does not support ON CONFLICT for this table. Read first, then use an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists.",
-      "Before a long mutating INSERT or UPDATE, first try the same SQL shape on a tiny representative probe: 1-3 literal rows for INSERT or 1 targeted row for UPDATE. The user's explicit approval covers the full approved change set, including that probe and all remaining sequential batches. If the probe fails, fix the SQL and retry the small version. If the probe succeeds, immediately continue with the remaining approved data in sequential batches of at most 100 records per tool call. Do not pause only to ask the user to continue, proceed, or reconfirm for later batches. Only ask again if the requested change itself changes, new ambiguity appears, or execution fails.",
     ],
     columnConstraints: [
       {
