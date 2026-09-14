@@ -3,6 +3,10 @@ import test from "node:test";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
+  SQL_DIALECT_GUIDE,
+  WRITING_DATA_GUIDE,
+} from "@expense-budget-tracker/agent-shared/agent-protocol";
+import {
   MCP_SQL_STATEMENT_TIMEOUT_MS,
   SqlExecutionDeadlineError,
   type SqlExecutionDeadline,
@@ -52,15 +56,23 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
   {
     name: "get_schema",
     title: "Inspect expense SQL schema",
-    description: "Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and agent hints for an accessible workspace. It does not expose or query system catalogs.",
+    description: "Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and per-relation agent hints for an accessible workspace, including the write semantics of ledger_entries. It does not expose or query system catalogs.",
     inputProperties: ["workspaceId"],
     requiredInputProperties: [],
     scopes: ["expenses:read"],
   },
   {
+    name: "get_guide",
+    title: "Fetch expense usage protocol",
+    description: "Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, and with topic sql_dialect before writing SQL against this restricted surface.",
+    inputProperties: ["topic"],
+    requiredInputProperties: ["topic"],
+    scopes: ["expenses:read"],
+  },
+  {
     name: "sql_query",
     title: "Query expense data",
-    description: "Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.",
+    description: "Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. Use it to read existing accounts, categories, and entries before a write, and to verify row counts and balances after a write. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.",
     inputProperties: ["sql", "workspaceId"],
     requiredInputProperties: ["sql"],
     scopes: ["expenses:read"],
@@ -68,7 +80,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
   {
     name: "sql_execute",
     title: "Execute expense data mutation",
-    description: "Use this write-capable tool only for an approved expense-data mutation. It runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.",
+    description: "Use this write-capable tool only for a mutation the user explicitly approved. Call get_guide with topic writing_data before the first mutation of a task: it defines duplicate checks, transfer pairs, category reuse, probe-then-batch execution, and post-write verification. This tool runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.",
     inputProperties: ["sql", "workspaceId"],
     requiredInputProperties: ["sql"],
     scopes: ["expenses:read", "expenses:write"],
@@ -280,7 +292,7 @@ test("MCP server emits the public runtime contract and routes successful tool ca
         assert.equal(Object.prototype.hasOwnProperty.call(tool, "securitySchemes"), false);
       }
 
-      for (const toolName of ["get_schema", "list_workspaces", "sql_query"]) {
+      for (const toolName of ["get_guide", "get_schema", "list_workspaces", "sql_query"]) {
         assert.deepEqual(requireTool(tools, toolName).annotations, {
           readOnlyHint: true,
           destructiveHint: false,
@@ -312,13 +324,16 @@ test("MCP server emits the public runtime contract and routes successful tool ca
         "list_workspaces",
         "workspaceId",
         "get_schema",
+        "get_guide",
+        "writing_data",
+        "sql_dialect",
         "sql_query",
         "expenses:read",
         "sql_execute",
         "expenses:write",
         "https://api.expense-budget-tracker.com/v1/",
-        "https://api.expense-budget-tracker.com/v1/openapi.json",
-        "https://api.expense-budget-tracker.com/v1/swagger.json",
+        "/v1/openapi.json",
+        "/v1/swagger.json",
         "source-discovery compatibility probes",
       ]) {
         assert.equal(instructions?.includes(requiredText), true, requiredText);
@@ -373,6 +388,31 @@ test("MCP server emits the public runtime contract and routes successful tool ca
     calls.workspaceDeadlines.every((deadline) => deadline === calls.workspaceDeadlines[0]),
     true,
   );
+});
+
+test("get_guide serves the shared protocol text without reaching any data service", async (): Promise<void> => {
+  const calls = createCalls();
+  await withClient(
+    createConnection(["expenses:read"]),
+    createDependencies([PERSONAL_WORKSPACE_ID, BUSINESS_WORKSPACE_ID], calls),
+    async (client): Promise<void> => {
+      for (const [topic, guide] of [
+        ["sql_dialect", SQL_DIALECT_GUIDE],
+        ["writing_data", WRITING_DATA_GUIDE],
+      ] as const) {
+        const result = await client.callTool({ name: "get_guide", arguments: { topic } });
+        const data = requireJsonObject(
+          readSuccessPayload(result)["data"],
+          `Expected get_guide ${topic} data`,
+        );
+        assert.equal(data["topic"], topic);
+        assert.equal(data["guide"], guide);
+      }
+    },
+  );
+
+  assert.deepEqual(calls.listedUserIds, []);
+  assert.deepEqual(calls.workspaceDeadlines, []);
 });
 
 test("MCP tools require explicit workspace membership when selection is ambiguous", async (): Promise<void> => {

@@ -30,14 +30,15 @@ Connect through either the hosted MCP server or the direct Agent API. Their cred
 
 ### MCP connector
 
-The hosted MCP server is available directly at `https://mcp.expense-budget-tracker.com/mcp`. Its canonical MCP Registry identity is `com.expense-budget-tracker/expense-budget-tracker`; it will be available through the Registry only after the manual publication workflow succeeds and exact-version verification completes. It exposes four workspace-scoped tools:
+The hosted MCP server is available directly at `https://mcp.expense-budget-tracker.com/mcp`. Its canonical MCP Registry identity is `com.expense-budget-tracker/expense-budget-tracker`; it will be available through the Registry only after the manual publication workflow succeeds and exact-version verification completes. It exposes five OAuth-secured tools:
 
 - `list_workspaces` — list workspaces available to the signed-in user
 - `get_schema` — inspect the allowed relations, columns, constraints, and limits
+- `get_guide` — fetch the writing-data or SQL-dialect protocol before acting
 - `sql_query` — run one restricted `SELECT` or `WITH...SELECT`
 - `sql_execute` — run one approved `INSERT`, `UPDATE`, or `DELETE`
 
-Compatible remote MCP clients authenticate with OAuth authorization code + PKCE and Dynamic Client Registration. The required `expenses:read` scope enables the three read tools; a client may also request `expenses:write`, which is required for `sql_execute`.
+Compatible remote MCP clients authenticate with OAuth authorization code + PKCE and Dynamic Client Registration. The required `expenses:read` scope enables the four read tools; a client may also request `expenses:write`, which is required for `sql_execute`.
 
 - [MCP connector guide](https://expense-budget-tracker.com/docs/mcp-connector/)
 - [Agent API reference](https://expense-budget-tracker.com/docs/api/)

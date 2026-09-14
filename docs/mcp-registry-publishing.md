@@ -27,7 +27,7 @@ server and does not package or deploy application code. The manifest includes:
 - first-party website, [MCP connector guide](https://expense-budget-tracker.com/docs/mcp-connector/),
   API documentation, support, privacy, and terms links;
 - SVG and PNG icons; and
-- publisher metadata describing categories, authentication, and the four tools.
+- publisher metadata describing categories, authentication, and the five tools.
 
 The publisher-provided metadata must remain below the Registry's 4,096-byte
 limit. Keep detailed operational documentation in the linked pages instead of

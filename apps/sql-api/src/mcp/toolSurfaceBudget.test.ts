@@ -25,14 +25,19 @@ const LEAD_INSTRUCTIONS_CHARS = 512;
 const MAX_TOOLS_LIST_TOKENS = 4000;
 // MCP Registry server.schema.json maxLength for description and title.
 const MAX_REGISTRY_TEXT_CHARS = 100;
+// One get_guide result has to stay small enough to sit beside a real task in context.
+const MAX_GUIDE_RESULT_CHARS = 20_000;
 
 const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/u;
 const REQUIRED_LEAD_TOOL_NAMES = [
   "list_workspaces",
   "get_schema",
+  "get_guide",
   "sql_query",
   "sql_execute",
 ] as const;
+
+const GUIDE_TOPICS = ["sql_dialect", "writing_data"] as const;
 
 const PUBLISHER_META_KEY = "io.modelcontextprotocol.registry/publisher-provided";
 
@@ -50,6 +55,7 @@ const registryServerSchema = z.object({
 });
 
 const inputPropertySchema = z.object({ description: z.string().optional() });
+const textContentSchema = z.object({ type: z.literal("text"), text: z.string() });
 
 const toolSurfaceConnection: AuthenticatedMcpAccessToken = {
   connectionId: "connection-budget",
@@ -232,6 +238,7 @@ test("MCP results carry no structuredContent duplicate of the text block", async
       const results = [
         await client.callTool({ name: "list_workspaces", arguments: {} }),
         await client.callTool({ name: "get_schema", arguments: {} }),
+        await client.callTool({ name: "get_guide", arguments: { topic: "writing_data" } }),
         await client.callTool({
           name: "sql_query",
           arguments: { sql: "SELECT amount FROM ledger_entries" },
@@ -246,6 +253,24 @@ test("MCP results carry no structuredContent duplicate of the text block", async
         assert.equal(result.structuredContent, undefined);
         assert.ok(Array.isArray(result.content));
         assert.equal(result.content.length, 1);
+      }
+    },
+  );
+});
+
+test("each get_guide topic result stays within the guide payload budget", async (): Promise<void> => {
+  await withMcpClient(
+    "mcp-tool-surface-budget-test",
+    toolSurfaceConnection,
+    toolSurfaceDependencies,
+    async (client): Promise<void> => {
+      for (const topic of GUIDE_TOPICS) {
+        const result = await client.callTool({ name: "get_guide", arguments: { topic } });
+        assert.notEqual(result.isError, true);
+        assert.ok(Array.isArray(result.content));
+        assert.equal(result.content.length, 1);
+        const { text } = textContentSchema.parse(result.content[0]);
+        assertWithinBudget(`get_guide ${topic} result`, text.length, MAX_GUIDE_RESULT_CHARS);
       }
     },
   );
