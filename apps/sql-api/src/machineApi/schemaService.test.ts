@@ -52,6 +52,18 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
 
   assert.equal(queryWorkspaceId, contextWorkspaceId);
   assert.notEqual(queryWorkspaceId, identity.userId);
+  const ledgerHints = schema.find((relation) => relation.name === "ledger_entries")?.hints;
+  assert.equal(ledgerHints?.optional, false);
+  assert.deepEqual(ledgerHints?.primaryKey, ["entry_id"]);
+  assert.equal((ledgerHints?.notes ?? []).length > 0, true);
+  assert.deepEqual(
+    ledgerHints?.columnConstraints,
+    [{
+      column: "kind",
+      allowedValues: ["income", "spend", "transfer"],
+      notes: ["Only income, spend, or transfer are accepted."],
+    }],
+  );
   assert.deepEqual(
     schema.find((relation) => relation.name === "accounts")?.hints,
     {
