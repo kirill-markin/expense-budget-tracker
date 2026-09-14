@@ -4,13 +4,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ListToolsResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
+  MAX_SQL_RESULT_CHARS,
   validateSingleMutationExpenseSql,
   validateSingleReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { getEncoding } from "js-tiktoken";
 import { z } from "zod";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
-import type { McpServerDependencies } from "./server.js";
+import { MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS, type McpServerDependencies } from "./server.js";
 import { withMcpClient } from "./testClient.js";
 
 // Anthropic directory tool-name policy and OpenAI tool naming limit.
@@ -40,6 +41,8 @@ const REQUIRED_LEAD_TOOL_NAMES = [
 const GUIDE_TOPICS = ["sql_dialect", "writing_data"] as const;
 
 const PUBLISHER_META_KEY = "io.modelcontextprotocol.registry/publisher-provided";
+const MAX_RESULT_SIZE_META_KEY = "anthropic/maxResultSizeChars";
+const SQL_TOOL_NAMES = ["sql_query", "sql_execute"] as const;
 
 const registryServerSchema = z.object({
   title: z.string(),
@@ -56,6 +59,11 @@ const registryServerSchema = z.object({
 
 const inputPropertySchema = z.object({ description: z.string().optional() });
 const textContentSchema = z.object({ type: z.literal("text"), text: z.string() });
+const successResultSchema = z.object({
+  ok: z.literal(true),
+  data: z.record(z.string(), z.unknown()),
+  instructions: z.string(),
+});
 
 const toolSurfaceConnection: AuthenticatedMcpAccessToken = {
   connectionId: "connection-budget",
@@ -111,7 +119,7 @@ const toolResultDependencies: McpServerDependencies = {
       referencedRelations: ["ledger_entries"],
     }],
     workspace: { workspaceId, name: "Personal" },
-    limits: { maxRows: 100, statementTimeoutMs: deadline.timeoutMs },
+    limits: { maxRows: 100, maxResultChars: MAX_SQL_RESULT_CHARS, statementTimeoutMs: deadline.timeoutMs },
   }),
   runSql: async (_authenticated, workspaceId, validated, deadline) => ({
     statements: [{
@@ -125,7 +133,7 @@ const toolResultDependencies: McpServerDependencies = {
       referencedRelations: ["budget_lines"],
     }],
     workspace: { workspaceId, name: "Personal" },
-    limits: { maxRows: 100, statementTimeoutMs: deadline.timeoutMs },
+    limits: { maxRows: 100, maxResultChars: MAX_SQL_RESULT_CHARS, statementTimeoutMs: deadline.timeoutMs },
   }),
 };
 
@@ -218,6 +226,59 @@ test("MCP tools/list stays within the OpenAI tool definition token budget", asyn
 
   const tokens = getEncoding("o200k_base").encode(JSON.stringify(toolsList));
   assertWithinBudget("tools/list token count", tokens.length, MAX_TOOLS_LIST_TOKENS);
+});
+
+test("SQL tools declare a result size budget that covers the emitted envelope", async (): Promise<void> => {
+  const { toolsList } = await readToolSurface();
+
+  for (const toolName of SQL_TOOL_NAMES) {
+    const tool = toolsList.tools.find((candidate) => candidate.name === toolName);
+    assert.ok(tool !== undefined, `Expected tools/list to advertise ${toolName}`);
+    assert.equal(
+      tool._meta?.[MAX_RESULT_SIZE_META_KEY],
+      MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS,
+      `${toolName} must declare ${MAX_RESULT_SIZE_META_KEY} equal to the declared SQL result ceiling`,
+    );
+  }
+
+  // The shared SQL budget bounds the data payload alone, so the declared ceiling
+  // has to stay at or above what a maximally packed result actually emits: the
+  // full data budget plus the ok and instructions envelope around it.
+  await withMcpClient(
+    "mcp-tool-surface-budget-test",
+    toolSurfaceConnection,
+    toolResultDependencies,
+    async (client): Promise<void> => {
+      const results = [
+        {
+          toolName: "sql_query",
+          result: await client.callTool({
+            name: "sql_query",
+            arguments: { sql: "SELECT amount FROM ledger_entries" },
+          }),
+        },
+        {
+          toolName: "sql_execute",
+          result: await client.callTool({
+            name: "sql_execute",
+            arguments: { sql: "DELETE FROM budget_lines WHERE category = 'Food'" },
+          }),
+        },
+      ];
+      for (const { toolName, result } of results) {
+        assert.notEqual(result.isError, true);
+        assert.ok(Array.isArray(result.content));
+        const { text } = textContentSchema.parse(result.content[0]);
+        const parsed: unknown = JSON.parse(text);
+        const payload = successResultSchema.parse(parsed);
+        const envelopeChars = text.length - JSON.stringify(payload.data).length;
+        assert.ok(
+          MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS >= MAX_SQL_RESULT_CHARS + envelopeChars,
+          `${toolName} emits a ${String(envelopeChars)} character envelope, so ${MAX_RESULT_SIZE_META_KEY} must declare at least ${String(MAX_SQL_RESULT_CHARS + envelopeChars)} rather than ${String(MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS)}`,
+        );
+      }
+    },
+  );
 });
 
 test("no MCP tool declares an output schema", async (): Promise<void> => {

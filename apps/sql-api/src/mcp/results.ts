@@ -73,6 +73,9 @@ const getSqlPolicyInstructions = (error: SqlPolicyError, toolName: string): stri
   ) {
     return `Narrow or split the mutation as directed by the error message, then call ${toolName} again.`;
   }
+  if (error.code === "sql_result_too_large") {
+    return `Dropping rows cannot clear this: the echoed statements are over the result budget on their own, so a lower LIMIT or an OFFSET page returns the same error. Send fewer statements per request, and shorten any statement whose own text is long, then call ${toolName} again.`;
+  }
   if (error.code === "read_only_relation_mutation_not_allowed") {
     return `Use sql_query to read this relation and write only to relations allowed by get_schema, then call ${toolName} again.`;
   }

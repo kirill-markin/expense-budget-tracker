@@ -7,6 +7,7 @@ import {
   WRITING_DATA_GUIDE,
 } from "@expense-budget-tracker/agent-shared/agent-protocol";
 import {
+  MAX_SQL_RESULT_CHARS,
   MCP_SQL_STATEMENT_TIMEOUT_MS,
   SqlExecutionDeadlineError,
   type SqlExecutionDeadline,
@@ -15,7 +16,7 @@ import {
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { SqlTransactionOutcomeUnknownError } from "../dbDeadline.js";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
-import type { McpServerDependencies } from "./server.js";
+import { MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS, type McpServerDependencies } from "./server.js";
 import { withMcpClient } from "./testClient.js";
 
 const PERSONAL_WORKSPACE_ID = "workspace-personal";
@@ -42,6 +43,7 @@ type ExpectedToolDescriptor = Readonly<{
   inputProperties: ReadonlyArray<string>;
   requiredInputProperties: ReadonlyArray<string>;
   scopes: ReadonlyArray<"expenses:read" | "expenses:write">;
+  maxResultSizeChars: number | null;
 }>;
 
 const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
@@ -52,6 +54,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     inputProperties: [],
     requiredInputProperties: [],
     scopes: ["expenses:read"],
+    maxResultSizeChars: null,
   },
   {
     name: "get_schema",
@@ -60,6 +63,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     inputProperties: ["workspaceId"],
     requiredInputProperties: [],
     scopes: ["expenses:read"],
+    maxResultSizeChars: null,
   },
   {
     name: "get_guide",
@@ -68,6 +72,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     inputProperties: ["topic"],
     requiredInputProperties: ["topic"],
     scopes: ["expenses:read"],
+    maxResultSizeChars: null,
   },
   {
     name: "sql_query",
@@ -76,6 +81,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     inputProperties: ["sql", "workspaceId"],
     requiredInputProperties: ["sql"],
     scopes: ["expenses:read"],
+    maxResultSizeChars: MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS,
   },
   {
     name: "sql_execute",
@@ -84,6 +90,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     inputProperties: ["sql", "workspaceId"],
     requiredInputProperties: ["sql"],
     scopes: ["expenses:read", "expenses:write"],
+    maxResultSizeChars: MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS,
   },
 ];
 
@@ -220,6 +227,7 @@ const createDependencies = (
       workspace: { workspaceId, name: "Personal" },
       limits: {
         maxRows: 100,
+        maxResultChars: MAX_SQL_RESULT_CHARS,
         statementTimeoutMs: deadline.timeoutMs,
       },
     };
@@ -241,6 +249,7 @@ const createDependencies = (
       workspace: { workspaceId, name: "Personal" },
       limits: {
         maxRows: 100,
+        maxResultChars: MAX_SQL_RESULT_CHARS,
         statementTimeoutMs: deadline.timeoutMs,
       },
     };
@@ -288,6 +297,9 @@ test("MCP server emits the public runtime contract and routes successful tool ca
         assertToolInputSchema(tool, expected);
         assert.deepEqual(tool._meta, {
           securitySchemes: [{ type: "oauth2", scopes: expected.scopes }],
+          ...(expected.maxResultSizeChars === null
+            ? {}
+            : { "anthropic/maxResultSizeChars": expected.maxResultSizeChars }),
         });
         assert.equal(Object.prototype.hasOwnProperty.call(tool, "securitySchemes"), false);
       }

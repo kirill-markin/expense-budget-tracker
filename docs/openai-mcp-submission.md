@@ -327,8 +327,8 @@ permitted.
 | `list_workspaces` | `List accessible workspaces` | `Use this read-only discovery tool to list every workspace accessible to the authenticated user. It does not create or modify workspaces; pass a returned workspaceId to other tools when more than one is available.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
 | `get_schema` | `Inspect expense SQL schema` | `Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and per-relation agent hints for an accessible workspace, including the write semantics of ledger_entries. It does not expose or query system catalogs.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
 | `get_guide` | `Fetch expense usage protocol` | `Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, and with topic sql_dialect before writing SQL against this restricted surface.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
-| `sql_query` | `Query expense data` | `Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. Use it to read existing accounts, categories, and entries before a write, and to verify row counts and balances after a write. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
-| `sql_execute` | `Execute expense data mutation` | `Use this write-capable tool only for a mutation the user explicitly approved. Call get_guide with topic writing_data before the first mutation of a task: it defines duplicate checks, transfer pairs, category reuse, probe-then-batch execution, and post-write verification. This tool runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.` | `{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read","expenses:write"]}]}` | `{"taskSupport":"forbidden"}` |
+| `sql_query` | `Query expense data` | `Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. Use it to read existing accounts, categories, and entries before a write, and to verify row counts and balances after a write. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}],"anthropic/maxResultSizeChars":30157}` | `{"taskSupport":"forbidden"}` |
+| `sql_execute` | `Execute expense data mutation` | `Use this write-capable tool only for a mutation the user explicitly approved. Call get_guide with topic writing_data before the first mutation of a task: it defines duplicate checks, transfer pairs, category reuse, probe-then-batch execution, and post-write verification. This tool runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.` | `{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read","expenses:write"]}],"anthropic/maxResultSizeChars":30157}` | `{"taskSupport":"forbidden"}` |
 
 The read tools are side-effect free, private, and safe to retry. `sql_execute`
 can destructively change private first-party records, is not safe to retry, and
@@ -419,6 +419,48 @@ A successful call parses to `ok: true`, object `data`, and string
 `instructions`. The deployed `get_schema` relation/column result and every
 concrete tool result must be captured; this descriptor snapshot does not
 substitute invented response data for runtime evidence.
+
+SQL results are bounded in characters as well as rows. Every SQL result and
+`get_schema` result reports the budget as `limits.maxResultChars` of `30000`
+next to `limits.maxRows`, so a REST or direct-HTTP caller can read the character
+budget without tripping it. The budget is measured on the compact
+`JSON.stringify` of the `data` payload alone, so `sql_query` and `sql_execute`
+declare `_meta["anthropic/maxResultSizeChars"]` of `30157`: those same `30000`
+data characters plus the 157-character `ok` and `instructions` envelope the
+emitted text wraps around them, so the declared ceiling is never smaller than
+what a maximally packed result actually emits.
+An oversized read degrades instead of failing, shedding content in a fixed
+order: rows are dropped from the end of the result, then the per-statement
+relation hints, then the echoed `sql` is cut to a 200-character prefix wherever
+that marked-up prefix is shorter than the statement it replaces, and each stage
+keeps the largest row prefix it can still afford. The response reports
+what it carries through the truncation contract the agent guide already names,
+`returnedRowCount` against an unchanged `totalRowCount` plus `truncated: true`.
+For a non-mutating statement `rowCount` keeps equalling the number of rows
+actually shipped, in a read-only request and in a mixed script alike.
+`error.code: "sql_result_too_large"`
+remains only for the residual case where even the fully shrunk result is over
+budget. The single-statement `sql_query`, `sql_execute`, and `/v1/sql/query`
+surfaces cannot reach it; it takes a long multi-statement script on the legacy
+`/v1/sql` route, where the bare per-statement echo and counts are what stays
+over budget. Its message states the size measured after every stage, the limit,
+the echo cuts that were actually made, if any, and the remedies that can clear
+it: send fewer statements per request, and shorten any statement whose own text
+is long. An oversized write is already
+committed, so it always succeeds: a mutating statement's `rows` become empty
+with `returnedRowCount: 0`, while `totalRowCount` stays the record of the
+affected rows. On a mutation that returned rows, `rowCount` is only the rows
+this response would have carried; on one that returned none it stays the
+affected row count. `data.rowsOmitted: true` is emitted only when rows were
+actually carried, and `data.responseShrunk: true` reports that the shrink
+reached past the rows, cutting the echoed `sql` to a prefix with an explicit
+truncation marker and then, if a full 100-statement script of escape-dense SQL
+is still over budget, replacing it with `sqlOmitted: true`.
+`data.resultSizeInstructions`
+carries the matching remediation text on every shrunk result. On a non-mutating
+statement, `truncated` covers the row cap and the size cap together, and
+`data.resultSizeInstructions` is present exactly when the size cap applied; on a
+committed mutation, `truncated` still reports the 100-row cap alone.
 
 ## Reviewer account and fixture
 
@@ -851,7 +893,8 @@ Use this connection-state sequence exactly:
   then `get_schema` with the exact `Review Personal` ID; no SQL tool.
 - Expected confirmation boundary: none.
 - Expected result shape: `Success<{workspace, relations, limits}>` with only the
-  seven allowlisted relation names and their deployed columns and hints.
+  seven allowlisted relation names and their deployed columns and hints, and
+  `limits` carrying `maxRows`, `maxResultChars`, and `statementTimeoutMs`.
 - Pass evidence: result workspace matches `Review Personal`; no system catalogs
   or records are returned; no `sql_query` or `sql_execute` call occurs.
 - Fail if: the model invents columns, queries rows, exposes a system catalog, or

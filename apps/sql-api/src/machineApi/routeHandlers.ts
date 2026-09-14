@@ -13,6 +13,7 @@ import {
 import {
   createSqlExecutionDeadline,
   MAX_SQL_MUTATION_ROWS,
+  MAX_SQL_RESULT_CHARS,
   MAX_SQL_ROWS,
   SQL_STATEMENT_TIMEOUT_MS,
   SqlPolicyError,
@@ -105,6 +106,7 @@ export const handleSchemaRoute = async (
           relations,
           limits: {
             maxRows: MAX_SQL_ROWS,
+            maxResultChars: MAX_SQL_RESULT_CHARS,
             statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,
           },
         },
@@ -446,7 +448,7 @@ export const handleSqlQueryRouteWithWorkspaceResolver = async (
     runReadOnlySql,
     {
       missingSql: "Send exactly one non-empty SELECT or WITH...SELECT sql statement.",
-      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. This endpoint accepts exactly one read-only SELECT or WITH...SELECT statement. Only supported relations may be queried, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and returned rows are capped at ${MAX_SQL_ROWS} per request with returnedRowCount, totalRowCount, and truncated metadata.`,
+      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. This endpoint accepts exactly one read-only SELECT or WITH...SELECT statement. Only supported relations may be queried, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and returned rows are capped at ${MAX_SQL_ROWS} per request with returnedRowCount, totalRowCount, and truncated metadata. A result is also capped at limits.maxResultChars (${MAX_SQL_RESULT_CHARS}) characters; an oversized read drops rows and sets truncated instead of failing, so select fewer or shorter columns when returnedRowCount falls short of totalRowCount.`,
     },
   );
 
@@ -461,7 +463,7 @@ export const handleSqlExecuteRouteWithWorkspaceResolver = async (
     runSql,
     {
       missingSql: "Send exactly one non-empty INSERT, UPDATE, or DELETE mutation.",
-      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. This endpoint accepts exactly one approved INSERT, UPDATE, or DELETE mutation. Returned rows are capped at ${MAX_SQL_ROWS} per request with returnedRowCount, totalRowCount, and truncated metadata; mutations are limited to ${MAX_SQL_MUTATION_ROWS} affected rows.`,
+      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. This endpoint accepts exactly one approved INSERT, UPDATE, or DELETE mutation. Returned rows are capped at ${MAX_SQL_ROWS} per request with returnedRowCount, totalRowCount, and truncated metadata; mutations are limited to ${MAX_SQL_MUTATION_ROWS} affected rows. A result is also capped at limits.maxResultChars (${MAX_SQL_RESULT_CHARS}) characters; a committed write over that budget still succeeds, dropping its returned rows and explaining the shrink in resultSizeInstructions.`,
     },
   );
 
@@ -476,7 +478,7 @@ export const handleSqlRouteWithWorkspaceResolver = async (
     runSql,
     {
       missingSql: "Send a non-empty sql string. Semicolon-separated statements are allowed.",
-      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first, semicolon-separated statements are allowed, only supported relations may be queried, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, returned rows are capped at ${MAX_SQL_ROWS} per statement and request with returnedRowCount, totalRowCount, and truncated metadata, and mutations are limited to ${MAX_SQL_MUTATION_ROWS} affected rows per request.`,
+      success: `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. Prefer SELECT first, semicolon-separated statements are allowed, only supported relations may be queried, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, returned rows are capped at ${MAX_SQL_ROWS} per statement and request with returnedRowCount, totalRowCount, and truncated metadata, and mutations are limited to ${MAX_SQL_MUTATION_ROWS} affected rows per request. A result is also capped at limits.maxResultChars (${MAX_SQL_RESULT_CHARS}) characters across the whole script; an oversized read drops rows and then relation hints instead of failing, a committed write always succeeds, and both explain the shrink in resultSizeInstructions, so send fewer statements per request when the script is long.`,
     },
   );
 

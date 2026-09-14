@@ -5,6 +5,7 @@ import {
   WRITING_DATA_GUIDE,
 } from "@expense-budget-tracker/agent-shared/agent-protocol";
 import {
+  MAX_SQL_RESULT_CHARS,
   MAX_SQL_ROWS,
   MCP_SQL_STATEMENT_TIMEOUT_MS,
   validateSingleMutationExpenseSql,
@@ -80,6 +81,34 @@ const buildToolSecurityMetadata = (
   scopes: ToolScopeList,
 ): OpenAiToolSecurityMetadata => ({
   securitySchemes: [{ type: "oauth2", scopes }],
+});
+
+type SqlToolMetadata = OpenAiToolSecurityMetadata & Readonly<{
+  "anthropic/maxResultSizeChars": number;
+}>;
+
+const SQL_QUERY_SUCCESS_INSTRUCTIONS = "Use the returned rows and truncation metadata to answer the request. Narrow and retry if truncated data is insufficient.";
+const SQL_EXECUTE_SUCCESS_INSTRUCTIONS = "The SQL transaction completed. Use sql_query if you need to verify the resulting state.";
+
+// Characters buildMcpSuccessResult adds around the data it carries, measured on
+// the emitted {"ok":true,"data":…,"instructions":"…"} text with the data itself
+// removed.
+const measureSuccessEnvelopeChars = (instructions: string): number =>
+  JSON.stringify({ ok: true, data: null, instructions }).length - "null".length;
+
+// MAX_SQL_RESULT_CHARS bounds the data payload alone, so the declared ceiling
+// adds the success envelope around it: a client that hard-enforces a smaller
+// declared value would cut a maximally packed result mid-string and leave
+// unparseable JSON. Taken from the longer of the two SQL success instructions so
+// one declared value covers both tools.
+export const MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS = MAX_SQL_RESULT_CHARS + Math.max(
+  measureSuccessEnvelopeChars(SQL_QUERY_SUCCESS_INSTRUCTIONS),
+  measureSuccessEnvelopeChars(SQL_EXECUTE_SUCCESS_INSTRUCTIONS),
+);
+
+const buildSqlToolMetadata = (scopes: ToolScopeList): SqlToolMetadata => ({
+  ...buildToolSecurityMetadata(scopes),
+  "anthropic/maxResultSizeChars": MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS,
 });
 
 const requireScope = (
@@ -263,6 +292,7 @@ export const createMcpServerWithDependencies = (
             relations,
             limits: {
               maxRows: MAX_SQL_ROWS,
+              maxResultChars: MAX_SQL_RESULT_CHARS,
               statementTimeoutMs: MCP_SQL_STATEMENT_TIMEOUT_MS,
             },
           },
@@ -316,7 +346,7 @@ export const createMcpServerWithDependencies = (
         idempotentHint: true,
         openWorldHint: false,
       },
-      _meta: buildToolSecurityMetadata([READ_SCOPE]),
+      _meta: buildSqlToolMetadata([READ_SCOPE]),
     },
     async ({ sql, workspaceId }): Promise<CallToolResult> => {
       try {
@@ -336,7 +366,7 @@ export const createMcpServerWithDependencies = (
         );
         return buildMcpSuccessResult(
           requireSqlResult(result, workspace.workspaceId),
-          "Use the returned rows and truncation metadata to answer the request. Narrow and retry if truncated data is insufficient.",
+          SQL_QUERY_SUCCESS_INSTRUCTIONS,
         );
       } catch (error) {
         return buildReadOnlyMcpToolErrorResult(error, SQL_QUERY_TOOL_NAME);
@@ -359,7 +389,7 @@ export const createMcpServerWithDependencies = (
         idempotentHint: false,
         openWorldHint: false,
       },
-      _meta: buildToolSecurityMetadata([READ_SCOPE, WRITE_SCOPE]),
+      _meta: buildSqlToolMetadata([READ_SCOPE, WRITE_SCOPE]),
     },
     async ({ sql, workspaceId }): Promise<CallToolResult> => {
       try {
@@ -379,7 +409,7 @@ export const createMcpServerWithDependencies = (
         );
         return buildMcpSuccessResult(
           requireSqlResult(result, workspace.workspaceId),
-          "The SQL transaction completed. Use sql_query if you need to verify the resulting state.",
+          SQL_EXECUTE_SUCCESS_INSTRUCTIONS,
         );
       } catch (error) {
         return buildMcpToolErrorResult(error, SQL_EXECUTE_TOOL_NAME);
