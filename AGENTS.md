@@ -12,6 +12,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Raise explicit, actionable errors with context.
 - Runtime discovery is the canonical machine API documentation. Keep its actions, instructions, and source links in sync with runtime behavior; `/v1/openapi.json` and `/v1/swagger.json` are public source-discovery compatibility probes, not specification endpoints.
 - Version-bump requests must follow `docs/version-bump.md` and keep `scripts/checks/pr/check-version-alignment.mjs` green.
+- Never bump the version during ordinary work: a release publishes the version already in the repository, and a separate request bumps it right after each MCP Registry publication (`docs/mcp-registry-publishing.md`).
 - Keep changes minimal and scoped to the current request.
 - Before considering a large block of work complete, run the relevant type checks and builds, and for web changes a production build (`cd apps/web && npm run lint && npm run build`).
 - Prefer non-interactive terminal commands.
