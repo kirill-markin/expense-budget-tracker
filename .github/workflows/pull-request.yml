@@ -76,6 +76,7 @@ jobs:
             sql_api_tests:
               - 'apps/sql-api/**'
               - 'packages/agent-shared/**'
+              - 'server.json'
               - '.github/workflows/pull-request.yml'
               - '.npmrc'
               - '.nvmrc'

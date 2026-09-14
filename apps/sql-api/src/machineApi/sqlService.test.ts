@@ -864,6 +864,10 @@ test("runReadOnlySql drops rows until the read result fits the character budget"
   assert.equal(statement?.["truncated"], true);
   assert.ok(readInstructions(result).includes("was shrunk to fit"));
   assert.ok(readInstructions(result).includes("OFFSET"));
+  // An OFFSET page only reproduces the order under a unique sort key, so the
+  // remedy must name that condition rather than a bare ORDER BY.
+  assert.ok(readInstructions(result).includes("orders by a unique column such as ledger_entries.entry_id"));
+  assert.ok(readInstructions(result).includes("a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip"));
   // One statement spends the row budget alone, so the remedies must be the
   // single-statement ones and never the shared-budget script text.
   assert.ok(readInstructions(result).includes("the first row alone is over the budget"));
@@ -1054,6 +1058,9 @@ test("runSql degrades a multi-statement zero-row read instead of rejecting it", 
   // A script shares one row budget, so both texts must take the script form and
   // never claim a single oversized first row.
   assert.ok(readInstructions(result).includes("The statements share one row budget"));
+  // The script remedy carries the same unique-order condition on its OFFSET advice.
+  assert.ok(readInstructions(result).includes("orders by a unique column such as ledger_entries.entry_id"));
+  assert.ok(readInstructions(result).includes("a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip"));
   assert.ok(readInstructions(result).includes("send fewer statements per request to keep them"));
   assert.ok(!readInstructions(result).includes("the first row alone is over the budget"));
 });
