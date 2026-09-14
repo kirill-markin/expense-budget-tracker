@@ -41,8 +41,6 @@ type ExpectedToolDescriptor = Readonly<{
   description: string;
   inputProperties: ReadonlyArray<string>;
   requiredInputProperties: ReadonlyArray<string>;
-  outputDataProperties: ReadonlyArray<string>;
-  requiredOutputDataProperties: ReadonlyArray<string>;
   scopes: ReadonlyArray<"expenses:read" | "expenses:write">;
 }>;
 
@@ -53,8 +51,6 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     description: "Use this read-only discovery tool to list every workspace accessible to the authenticated user. It does not create or modify workspaces; pass a returned workspaceId to other tools when more than one is available.",
     inputProperties: [],
     requiredInputProperties: [],
-    outputDataProperties: ["workspaces"],
-    requiredOutputDataProperties: ["workspaces"],
     scopes: ["expenses:read"],
   },
   {
@@ -63,8 +59,6 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     description: "Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and agent hints for an accessible workspace. It does not expose or query system catalogs.",
     inputProperties: ["workspaceId"],
     requiredInputProperties: [],
-    outputDataProperties: ["limits", "relations", "workspace"],
-    requiredOutputDataProperties: ["workspace", "relations", "limits"],
     scopes: ["expenses:read"],
   },
   {
@@ -73,8 +67,6 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     description: "Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.",
     inputProperties: ["sql", "workspaceId"],
     requiredInputProperties: ["sql"],
-    outputDataProperties: ["limits", "statements", "workspace"],
-    requiredOutputDataProperties: ["statements", "workspace", "limits"],
     scopes: ["expenses:read"],
   },
   {
@@ -83,8 +75,6 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
     description: "Use this write-capable tool only for an approved expense-data mutation. It runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.",
     inputProperties: ["sql", "workspaceId"],
     requiredInputProperties: ["sql"],
-    outputDataProperties: ["limits", "statements", "workspace"],
-    requiredOutputDataProperties: ["statements", "workspace", "limits"],
     scopes: ["expenses:read", "expenses:write"],
   },
 ];
@@ -111,7 +101,6 @@ const readSuccessPayload = (
   const payload = parseToolPayload(result);
   assert.notEqual(result.isError, true);
   assert.equal(payload["ok"], true);
-  assert.deepEqual(result.structuredContent, payload);
   return payload;
 };
 
@@ -126,106 +115,16 @@ const requireTool = (tools: ReadonlyArray<Tool>, name: string): Tool => {
   return tool;
 };
 
-const assertToolSchemas = (
+const assertToolInputSchema = (
   tool: Tool,
   expected: ExpectedToolDescriptor,
-): JsonObject => {
+): void => {
   const inputProperties = requireJsonObject(
     tool.inputSchema.properties ?? {},
     `Expected ${tool.name} input properties`,
   );
   assert.deepEqual(Object.keys(inputProperties).sort(), [...expected.inputProperties].sort());
   assert.deepEqual(tool.inputSchema.required ?? [], expected.requiredInputProperties);
-
-  const outputSchema = requireJsonObject(
-    tool.outputSchema,
-    `Expected ${tool.name} output schema`,
-  );
-  assert.equal(outputSchema["type"], "object");
-  assert.deepEqual(outputSchema["required"], ["ok", "data", "instructions"]);
-  const outputProperties = requireJsonObject(
-    outputSchema["properties"],
-    `Expected ${tool.name} output properties`,
-  );
-  const okProperty = requireJsonObject(outputProperties["ok"], "Expected ok output property");
-  const dataProperty = requireJsonObject(outputProperties["data"], "Expected data output property");
-  const instructionsProperty = requireJsonObject(
-    outputProperties["instructions"],
-    "Expected instructions output property",
-  );
-  assert.equal(okProperty["type"], "boolean");
-  assert.equal(okProperty["const"], true);
-  assert.equal(dataProperty["type"], "object");
-  const dataProperties = requireJsonObject(
-    dataProperty["properties"],
-    `Expected ${tool.name} data properties`,
-  );
-  assert.deepEqual(Object.keys(dataProperties).sort(), [...expected.outputDataProperties].sort());
-  assert.deepEqual(dataProperty["required"], expected.requiredOutputDataProperties);
-  assert.equal(instructionsProperty["type"], "string");
-  assert.equal(instructionsProperty["minLength"], 1);
-  return dataProperty;
-};
-
-const readSchemaProperties = (schema: JsonObject, message: string): JsonObject =>
-  requireJsonObject(schema["properties"], message);
-
-const readArrayItemSchema = (schema: JsonObject, message: string): JsonObject => {
-  assert.equal(schema["type"], "array", message);
-  return requireJsonObject(schema["items"], message);
-};
-
-const assertWorkspaceSchema = (schema: JsonObject): void => {
-  assert.equal(schema["type"], "object");
-  assert.deepEqual(schema["required"], ["workspaceId", "name"]);
-  assert.deepEqual(Object.keys(readSchemaProperties(schema, "Expected workspace fields")).sort(), [
-    "name",
-    "workspaceId",
-  ]);
-};
-
-const assertLimitsSchema = (schema: JsonObject): void => {
-  assert.equal(schema["type"], "object");
-  assert.deepEqual(schema["required"], ["maxRows", "statementTimeoutMs"]);
-};
-
-const readSqlCommandSchema = (dataSchema: JsonObject): JsonObject => {
-  const dataProperties = readSchemaProperties(dataSchema, "Expected SQL data fields");
-  const statementsSchema = requireJsonObject(
-    dataProperties["statements"],
-    "Expected SQL statements schema",
-  );
-  const statementSchema = readArrayItemSchema(statementsSchema, "Expected SQL statement items");
-  assert.deepEqual(statementSchema["required"], [
-    "sql",
-    "command",
-    "rows",
-    "rowCount",
-    "returnedRowCount",
-    "totalRowCount",
-    "truncated",
-    "referencedRelations",
-  ]);
-  const statementProperties = readSchemaProperties(
-    statementSchema,
-    "Expected SQL statement fields",
-  );
-  const rowsSchema = requireJsonObject(statementProperties["rows"], "Expected SQL rows schema");
-  const rowSchema = readArrayItemSchema(rowsSchema, "Expected SQL row items");
-  const rowValueSchema = requireJsonObject(
-    rowSchema["additionalProperties"],
-    "Expected recursive JSON schema for SQL row values",
-  );
-  assert.notDeepEqual(rowValueSchema, {});
-
-  const workspaceSchema = requireJsonObject(
-    dataProperties["workspace"],
-    "Expected SQL workspace schema",
-  );
-  const limitsSchema = requireJsonObject(dataProperties["limits"], "Expected SQL limits schema");
-  assertWorkspaceSchema(workspaceSchema);
-  assertLimitsSchema(limitsSchema);
-  return requireJsonObject(statementProperties["command"], "Expected SQL command schema");
 };
 
 const readErrorCode = (payload: JsonObject): string => {
@@ -387,101 +286,16 @@ test("MCP server emits the public runtime contract and routes successful tool ca
         tools.map((tool) => tool.name).sort(),
         EXPECTED_TOOL_DESCRIPTORS.map((tool) => tool.name).sort(),
       );
-      const outputDataSchemas = new Map<string, JsonObject>();
       for (const expected of EXPECTED_TOOL_DESCRIPTORS) {
         const tool = requireTool(tools, expected.name);
         assert.equal(tool.title, expected.title);
         assert.equal(tool.description, expected.description);
-        outputDataSchemas.set(tool.name, assertToolSchemas(tool, expected));
+        assertToolInputSchema(tool, expected);
         assert.deepEqual(tool._meta, {
           securitySchemes: [{ type: "oauth2", scopes: expected.scopes }],
         });
         assert.equal(Object.prototype.hasOwnProperty.call(tool, "securitySchemes"), false);
       }
-
-      const listDataSchema = requireJsonObject(
-        outputDataSchemas.get("list_workspaces"),
-        "Expected list_workspaces data schema",
-      );
-      const listDataProperties = readSchemaProperties(
-        listDataSchema,
-        "Expected list_workspaces data fields",
-      );
-      const workspacesSchema = requireJsonObject(
-        listDataProperties["workspaces"],
-        "Expected workspaces array schema",
-      );
-      assertWorkspaceSchema(readArrayItemSchema(
-        workspacesSchema,
-        "Expected workspace array items",
-      ));
-
-      const schemaDataSchema = requireJsonObject(
-        outputDataSchemas.get("get_schema"),
-        "Expected get_schema data schema",
-      );
-      const schemaDataProperties = readSchemaProperties(
-        schemaDataSchema,
-        "Expected get_schema data fields",
-      );
-      assertWorkspaceSchema(requireJsonObject(
-        schemaDataProperties["workspace"],
-        "Expected get_schema workspace schema",
-      ));
-      assertLimitsSchema(requireJsonObject(
-        schemaDataProperties["limits"],
-        "Expected get_schema limits schema",
-      ));
-      const relationsSchema = requireJsonObject(
-        schemaDataProperties["relations"],
-        "Expected relations array schema",
-      );
-      const relationSchema = readArrayItemSchema(relationsSchema, "Expected relation array items");
-      assert.deepEqual(relationSchema["required"], ["name", "columns"]);
-      const relationProperties = readSchemaProperties(
-        relationSchema,
-        "Expected relation fields",
-      );
-      const relationNameSchema = requireJsonObject(
-        relationProperties["name"],
-        "Expected relation name schema",
-      );
-      assert.deepEqual(relationNameSchema["enum"], [
-        "ledger_entries",
-        "accounts",
-        "budget_lines",
-        "workspace_settings",
-        "account_metadata",
-        "fx_rates_raw",
-        "fx_rates_daily",
-      ]);
-      const columnsSchema = requireJsonObject(
-        relationProperties["columns"],
-        "Expected relation columns schema",
-      );
-      const columnSchema = readArrayItemSchema(columnsSchema, "Expected relation column items");
-      assert.deepEqual(columnSchema["required"], [
-        "name",
-        "type",
-        "nullable",
-        "defaultValue",
-      ]);
-      const hintsSchema = requireJsonObject(
-        relationProperties["hints"],
-        "Expected relation hints schema",
-      );
-      assert.deepEqual(hintsSchema["required"], ["optional", "notes"]);
-
-      const queryCommandSchema = readSqlCommandSchema(requireJsonObject(
-        outputDataSchemas.get("sql_query"),
-        "Expected sql_query data schema",
-      ));
-      assert.equal(queryCommandSchema["const"], "SELECT");
-      const executeCommandSchema = readSqlCommandSchema(requireJsonObject(
-        outputDataSchemas.get("sql_execute"),
-        "Expected sql_execute data schema",
-      ));
-      assert.deepEqual(executeCommandSchema["enum"], ["INSERT", "UPDATE", "DELETE"]);
 
       for (const toolName of ["get_schema", "list_workspaces", "sql_query"]) {
         assert.deepEqual(requireTool(tools, toolName).annotations, {

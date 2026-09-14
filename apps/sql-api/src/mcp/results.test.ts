@@ -6,7 +6,10 @@ import {
   AmbiguousSqlMutationOutcomeError,
   UserSqlExecutionError,
 } from "../machineApi/sqlService.js";
-import { buildMcpToolErrorResultWithDependencies } from "./results.js";
+import {
+  buildMcpSuccessResult,
+  buildMcpToolErrorResultWithDependencies,
+} from "./results.js";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -30,6 +33,27 @@ const readResultPayload = (
   }
   return parsePayload(content.text);
 };
+
+test("MCP success results serialize compactly without indentation", (): void => {
+  const result = buildMcpSuccessResult(
+    { workspaces: [{ workspaceId: "w-1", name: "Personal" }] },
+    "Choose one returned workspaceId.",
+  );
+
+  assert.equal(result.content.length, 1);
+  const content = result.content[0];
+  assert.equal(content?.type, "text");
+  if (content?.type !== "text") {
+    throw new Error("Expected MCP text content");
+  }
+  assert.equal(content.text.includes("\n"), false);
+  assert.equal(content.text.includes("  "), false);
+  assert.deepEqual(parsePayload(content.text), {
+    ok: true,
+    data: { workspaces: [{ workspaceId: "w-1", name: "Personal" }] },
+    instructions: "Choose one returned workspaceId.",
+  });
+});
 
 test("MCP error results preserve actionable user SQL errors", (): void => {
   const logEvents: Array<SqlApiLogEvent> = [];

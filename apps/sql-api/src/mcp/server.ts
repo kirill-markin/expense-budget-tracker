@@ -18,10 +18,8 @@ import {
 } from "./config.js";
 import { mcpDataServices, type McpDataServices } from "./dataService.js";
 import {
-  buildMcpSuccessOutputSchema,
   buildMcpSuccessResult,
   buildMcpToolErrorResult,
-  mcpJsonValueSchema,
   McpToolError,
 } from "./results.js";
 
@@ -41,100 +39,6 @@ type ReadOnlyMcpToolName =
 const workspaceIdSchema = z.string().trim().min(1).optional().describe(
   "Optional workspaceId returned by list_workspaces. Omit only when exactly one workspace is available.",
 );
-
-const allowedRelationNameSchema = z.enum([
-  "ledger_entries",
-  "accounts",
-  "budget_lines",
-  "workspace_settings",
-  "account_metadata",
-  "fx_rates_raw",
-  "fx_rates_daily",
-]);
-
-const workspaceSummarySchema = z.object({
-  workspaceId: z.string().min(1),
-  name: z.string(),
-});
-
-const limitsSchema = z.object({
-  maxRows: z.number().int().nonnegative(),
-  statementTimeoutMs: z.number().int().positive(),
-});
-
-const agentSchemaColumnConstraintSchema = z.object({
-  column: z.string(),
-  allowedValues: z.array(z.string()).optional(),
-  notes: z.array(z.string()).optional(),
-});
-
-const agentSchemaHintsSchema = z.object({
-  optional: z.boolean(),
-  primaryKey: z.array(z.string()).optional(),
-  notes: z.array(z.string()),
-  columnConstraints: z.array(agentSchemaColumnConstraintSchema).optional(),
-});
-
-const schemaRelationSchema = z.object({
-  name: allowedRelationNameSchema,
-  columns: z.array(z.object({
-    name: z.string(),
-    type: z.string(),
-    nullable: z.boolean(),
-    defaultValue: z.string().nullable(),
-  })),
-  hints: agentSchemaHintsSchema.optional(),
-});
-
-const entityHintSchema = z.object({
-  name: allowedRelationNameSchema,
-  summary: z.string(),
-});
-
-const entityHintsSchema = z.object({
-  primary: entityHintSchema,
-  related: z.array(entityHintSchema),
-});
-
-const buildSqlStatementSchema = <TCommandSchema extends z.ZodType<string>>(
-  commandSchema: TCommandSchema,
-) => z.object({
-  sql: z.string(),
-  command: commandSchema,
-  rows: z.array(z.record(z.string(), mcpJsonValueSchema)),
-  rowCount: z.number().int().nonnegative(),
-  returnedRowCount: z.number().int().nonnegative(),
-  totalRowCount: z.number().int().nonnegative(),
-  truncated: z.boolean(),
-  referencedRelations: z.array(allowedRelationNameSchema),
-  entityHints: entityHintsSchema.optional(),
-});
-
-const buildSqlResultDataSchema = <TStatementSchema extends z.ZodObject>(
-  statementSchema: TStatementSchema,
-) => z.object({
-  statements: z.array(statementSchema),
-  workspace: workspaceSummarySchema,
-  limits: limitsSchema,
-});
-
-const listWorkspacesOutputSchema = buildMcpSuccessOutputSchema(z.object({
-  workspaces: z.array(workspaceSummarySchema),
-}));
-
-const getSchemaOutputSchema = buildMcpSuccessOutputSchema(z.object({
-  workspace: workspaceSummarySchema,
-  relations: z.array(schemaRelationSchema),
-  limits: limitsSchema,
-}));
-
-const sqlQueryOutputSchema = buildMcpSuccessOutputSchema(buildSqlResultDataSchema(
-  buildSqlStatementSchema(z.literal("SELECT")),
-));
-
-const sqlExecuteOutputSchema = buildMcpSuccessOutputSchema(buildSqlResultDataSchema(
-  buildSqlStatementSchema(z.enum(["INSERT", "UPDATE", "DELETE"])),
-));
 
 export type McpServerDependencies = McpDataServices & Readonly<{
   validateSingleReadOnlyExpenseSql: typeof validateSingleReadOnlyExpenseSql;
@@ -289,7 +193,6 @@ export const createMcpServerWithDependencies = (
       title: "List accessible workspaces",
       description: "Use this read-only discovery tool to list every workspace accessible to the authenticated user. It does not create or modify workspaces; pass a returned workspaceId to other tools when more than one is available.",
       inputSchema: {},
-      outputSchema: listWorkspacesOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -318,7 +221,6 @@ export const createMcpServerWithDependencies = (
       title: "Inspect expense SQL schema",
       description: "Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and agent hints for an accessible workspace. It does not expose or query system catalogs.",
       inputSchema: { workspaceId: workspaceIdSchema },
-      outputSchema: getSchemaOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -367,7 +269,6 @@ export const createMcpServerWithDependencies = (
         sql: z.string().trim().min(1).describe("Exactly one policy-approved SELECT or WITH...SELECT statement."),
         workspaceId: workspaceIdSchema,
       },
-      outputSchema: sqlQueryOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -411,7 +312,6 @@ export const createMcpServerWithDependencies = (
         sql: z.string().trim().min(1).describe("Exactly one policy-approved INSERT, UPDATE, or DELETE statement."),
         workspaceId: workspaceIdSchema,
       },
-      outputSchema: sqlExecuteOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
