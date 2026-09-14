@@ -21,7 +21,7 @@ managed version.
 
 | Milestone | Status | Evidence or remaining gate |
 | --- | --- | --- |
-| Runtime ready | Complete in promotion candidate | The current item-11 promotion-candidate source defines exact descriptor snapshot `tools-list-v1.2.0-promotion-candidate-v1`, including the complete write scope grant. Commit `396a09b3b88cd0a31965a39ac69fe1b6cc4691f9` remains historical evidence for the runtime documentation URL reconciliation only. After cumulative promotion, verify the deployed metadata and `tools/list` response. |
+| Runtime ready | Complete in promotion candidate | The current promotion-candidate source defines exact descriptor snapshot `tools-list-v1.6.0-promotion-candidate-v1`, which supersedes `tools-list-v1.2.0-promotion-candidate-v1` and includes the complete write scope grant. Commit `396a09b3b88cd0a31965a39ac69fe1b6cc4691f9` remains historical evidence for the runtime documentation URL reconciliation only. After cumulative promotion, verify the deployed metadata and `tools/list` response. |
 | Site ready | Complete | Website commit `07c296fa2613ff310d05b693e28366664048a3bf` is deployed. The connector guide, API docs, support, privacy, terms, SVG icon, preview PNG, and 512px PNG were checked after the guide move; `/docs/mcp-connector/` returns HTTP 200 HTML and the superseded guide route returns 404. |
 | Registry implementation | Complete on BASE | Item 04 is merged into `integration-mcp-publication` at `8f0b330098fb8829f9f340a27501d73eb4b1860b`. The domain-owned manifest identity, PR validation, manual publication workflow, DNS credential setup script, and operator runbook are present. |
 | Registry published | Pending | The owner has not yet provisioned the DNS ownership proof and `MCP_PRIVATE_KEY`, dispatched `mcp-registry-publish.yml` from promoted `main`, or verified the immutable Registry record. Registry publication is separate from OpenAI review and is not evidence of OpenAI approval. |
@@ -88,7 +88,7 @@ change.
 | Short description | Workspace-scoped expense and budget tools with OAuth read and write access. |
 | Category | Finance |
 | Intended publisher | SAMO DANNI EOOD |
-| Version under evaluation | 1.5.0 |
+| Version under evaluation | 1.6.0 |
 | Website | https://expense-budget-tracker.com/ |
 | Universal MCP URL | https://mcp.expense-budget-tracker.com/mcp |
 | MCP documentation | https://expense-budget-tracker.com/docs/mcp-connector/ |
@@ -175,8 +175,8 @@ assertion, with secrets redacted.
 | R07 | Authorization request, owner-controlled valid `GET`, then consent `POST` | `https://auth.expense-budget-tracker.com/oauth/authorize` | Without a session, same-origin `302` to login; after login, `200`, `text/html` consent with a same-origin form submission; approval returns `302` whose `Location` uses the exact registered `redirect_uri` and adds the authorization `code` plus the request's exact `state` | Pending controlled-client and Developer Mode evidence; record the complete sanitized chain |
 | R08 | Authorization-code or refresh exchange, URL-encoded `POST` | `https://auth.expense-budget-tracker.com/oauth/token` | Successful valid grant: `200`, `application/json`, no redirect, `Cache-Control: no-store`; revoked refresh probe: the exact `400 invalid_grant` result below | Pending controlled-client and Developer Mode evidence |
 | R09 | OpenAI domain challenge, owner-installed token `GET` | `https://mcp.expense-budget-tracker.com/.well-known/openai-apps-challenge` | Target after the portal supplies and the owner installs the token: `200`, `text/plain`, no redirect, body is only that exact token | **Pending and not provisioned.** Record the current pre-challenge result separately; it cannot satisfy this row |
-| G01 | Exact MCP Registry version, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers/com.expense-budget-tracker%2Fexpense-budget-tracker/versions/1.5.0` | Before publication: final `404`, record returned MIME, no redirect. After the one authorized publication: final `200`, `application/json`, no redirect, exact name/version and manifest metadata | Item-04 lookup contract complete on BASE; publication and timestamped before/after captures pending |
-| G02 | MCP Registry latest search, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers?search=com.expense-budget-tracker%2Fexpense-budget-tracker&version=latest` | Final `200`, `application/json`, no redirect. Before publication it must not contain this name/version; after publication it must contain the exact `1.5.0` record | Item-04 lookup contract complete on BASE; publication and timestamped before/after captures pending |
+| G01 | Exact MCP Registry version, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers/com.expense-budget-tracker%2Fexpense-budget-tracker/versions/1.6.0` | Before publication: final `404`, record returned MIME, no redirect. After the one authorized publication: final `200`, `application/json`, no redirect, exact name/version and manifest metadata | Item-04 lookup contract complete on BASE; publication and timestamped before/after captures pending |
+| G02 | MCP Registry latest search, `GET` | `https://registry.modelcontextprotocol.io/v0.1/servers?search=com.expense-budget-tracker%2Fexpense-budget-tracker&version=latest` | Final `200`, `application/json`, no redirect. Before publication it must not contain this name/version; after publication it must contain the exact `1.6.0` record | Item-04 lookup contract complete on BASE; publication and timestamped before/after captures pending |
 
 For L10, send a syntactically valid MCP request with `Accept: application/json,
 text/event-stream` and no `Authorization` header; retain the sanitized request
@@ -195,7 +195,7 @@ The initialized server advertises:
 | Field | Runtime value |
 | --- | --- |
 | `name` | `expense-budget-tracker` |
-| `version` | `1.5.0` |
+| `version` | `1.6.0` |
 | `title` | `Expense Budget Tracker` |
 | `websiteUrl` | `https://expense-budget-tracker.com/` |
 | Icon | `https://expense-budget-tracker.com/icon.svg`, `image/svg+xml`, size `any` |
@@ -308,9 +308,13 @@ mandatory for this plugin, stop and create a separate prerequisite plan.
 ## Tool descriptors
 
 Scan Tools is the final evidence source for deployed descriptor bytes. Snapshot
-`tools-list-v1.2.0-promotion-candidate-v1` is the stable semantic revision
-defined by the current item-11 promotion-candidate source. The snapshot below
-is a lossless representation of the five descriptors emitted from
+`tools-list-v1.6.0-promotion-candidate-v1` is the stable semantic revision
+defined by the current promotion-candidate source and named by the tables and
+schemas below. It supersedes `tools-list-v1.2.0-promotion-candidate-v1`, which
+stays the historical label for the four-tool revision that had no `get_guide`,
+carried an `outputSchema` and a `structuredContent` result on every tool, and
+declared no result-size `_meta`. The snapshot below is a lossless
+representation of the five descriptors emitted from
 `apps/sql-api/src/mcp/server.ts`, the locked `@modelcontextprotocol/sdk`
 `1.30.0`, and Zod `4.5.4`. Compare the deployed snapshot after recursively
 sorting object keys only; array order and every string, keyword, boolean,
@@ -1237,10 +1241,10 @@ operator record.
 | Evidence | Required value |
 | --- | --- |
 | Promoted application commit | Pending |
-| Runtime version | 1.5.0 unless a later aligned version is promoted |
+| Runtime version | 1.6.0 unless a later aligned version is promoted |
 | Website commit | `07c296fa2613ff310d05b693e28366664048a3bf` |
 | Registry implementation commit | Complete on BASE at `8f0b330098fb8829f9f340a27501d73eb4b1860b` |
-| Registry manifest identity/version | `com.expense-budget-tracker/expense-budget-tracker` / `1.5.0` |
+| Registry manifest identity/version | `com.expense-budget-tracker/expense-budget-tracker` / `1.6.0` |
 | Registry DNS proof and `MCP_PRIVATE_KEY` | Pending owner setup after promotion to `main` |
 | Registry exact record and latest search | Not published; G01 404 preflight and post-publication G01/G02 200 evidence pending owner action |
 | Runtime documentation URL reconciliation | Complete on BASE at `396a09b3b88cd0a31965a39ac69fe1b6cc4691f9`; deployed capture pending after cumulative promotion |
@@ -1252,6 +1256,7 @@ operator record.
 | Connection A revoked access probe | Pending exact `401 invalid_token` and protected-resource challenge; sanitized |
 | Connection A revoked refresh probe | Pending exact `400 invalid_grant`, `no-store`, and `no-cache`; sanitized |
 | Connection B read/write DCR/PKCE and scope evidence | Pending; sanitized |
+| Descriptor snapshot revision | `tools-list-v1.6.0-promotion-candidate-v1`; deployed capture pending |
 | Scan Tools snapshot time | Pending |
 | Reviewer fixture revision and reset time | `openai-review-fixture-v1`; execution evidence pending |
 | P1–P6 results | Pending |
@@ -1282,8 +1287,9 @@ operator record.
   domain-owned manifest, PR validation, manual workflow, owner setup script,
   and runbook use `com.expense-budget-tracker/expense-budget-tracker`.
 - [ ] Runtime changes are promoted and the production `tools/list` snapshot
-  exactly matches `tools-list-v1.2.0-promotion-candidate-v1`, including every
-  input JSON-Schema keyword, description, annotation, `_meta`, and `execution`.
+  exactly matches `tools-list-v1.6.0-promotion-candidate-v1`, which supersedes
+  `tools-list-v1.2.0-promotion-candidate-v1`, including every input JSON-Schema
+  keyword, description, annotation, `_meta`, and `execution`.
 - [ ] Registry implementation is promoted to `main`; the owner provisions and
   verifies the DNS proof plus `MCP_PRIVATE_KEY`, confirms the immutable G01
   version record is absent, manually dispatches `mcp-registry-publish.yml`, and
