@@ -3,7 +3,6 @@ import {
   SqlExecutionDeadlineError,
   SqlPolicyError,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
-import { z } from "zod";
 import { getSafeErrorType, log } from "../logger.js";
 import {
   isAmbiguousSqlMutationOutcomeError,
@@ -35,71 +34,12 @@ export type McpResultDependencies = Readonly<{
 
 const defaultDependencies: McpResultDependencies = { log };
 
-export type McpJsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ReadonlyArray<McpJsonValue>
-  | McpJsonObject;
-
-export type McpJsonObject = Readonly<{ [key: string]: McpJsonValue }>;
-
-export type McpSuccessPayload<TData extends McpJsonObject> = Readonly<{
-  ok: true;
-  data: TData;
-  instructions: string;
-}>;
-
-export const mcpJsonValueSchema: z.ZodType<McpJsonValue> = z.lazy(() => z.union([
-  z.string(),
-  z.number().finite(),
-  z.boolean(),
-  z.null(),
-  z.array(mcpJsonValueSchema),
-  z.record(z.string(), mcpJsonValueSchema),
-]));
-
-const successOkSchema = z.literal(true).describe(
-  "Whether the tool call completed successfully.",
-);
-const successInstructionsSchema = z.string().min(1).describe(
-  "Actionable guidance for using the returned data.",
-);
-
-export const buildMcpSuccessOutputSchema = <TDataSchema extends z.ZodObject>(
-  dataSchema: TDataSchema,
-) => z.object({
-  ok: successOkSchema,
-  data: dataSchema,
-  instructions: successInstructionsSchema,
-});
-
-const isMcpJsonObject = (value: unknown): value is McpJsonObject =>
-  typeof value === "object"
-  && value !== null
-  && !Array.isArray(value)
-  && Object.values(value).every(isMcpJsonValue);
-
-const isMcpJsonValue = (value: unknown): value is McpJsonValue => {
-  if (
-    typeof value === "string"
-    || typeof value === "boolean"
-    || value === null
-  ) {
-    return true;
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value);
-  }
-  if (Array.isArray(value)) {
-    return value.every(isMcpJsonValue);
-  }
-  return isMcpJsonObject(value);
-};
-
+// Serializes compactly on purpose: a tool result is read by programs and models,
+// never rendered to a human, and indentation is not part of any MCP revision's
+// tool-result contract. Pretty-printing spent roughly a third of every result's
+// characters on whitespace.
 const serializePayload = (payload: Readonly<Record<string, unknown>>): string => {
-  const text = JSON.stringify(payload, null, 2);
+  const text = JSON.stringify(payload);
   if (text === undefined) {
     throw new Error("MCP result payload could not be serialized");
   }
@@ -113,17 +53,9 @@ const buildTextContent = (payload: Readonly<Record<string, unknown>>): CallToolR
 export const buildMcpSuccessResult = <TData extends Readonly<Record<string, unknown>>>(
   data: TData,
   instructions: string,
-): CallToolResult => {
-  const text = serializePayload({ ok: true, data, instructions });
-  const payload: unknown = JSON.parse(text);
-  if (!isMcpJsonObject(payload)) {
-    throw new Error("MCP success result payload did not serialize to a JSON object");
-  }
-  return {
-    structuredContent: payload,
-    content: [{ type: "text", text }],
-  };
-};
+): CallToolResult => ({
+  content: buildTextContent({ ok: true, data, instructions }),
+});
 
 const getSqlPolicyInstructions = (error: SqlPolicyError, toolName: string): string => {
   if (error.code === "relation_not_allowed" || error.code === "invalid_relation_reference") {

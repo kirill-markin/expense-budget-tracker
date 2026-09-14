@@ -314,7 +314,7 @@ is a lossless representation of the four descriptors emitted from
 sorting object keys only; array order and every string, keyword, boolean,
 number, and field presence must remain exact. No descriptor has a top-level
 `securitySchemes` or `icons` field. Together, the tool name in the first column,
-the other five outer fields in the table, and the two schemas below enumerate
+the other five outer fields in the table, and the input schemas below enumerate
 every field in each emitted tool descriptor; no unlisted outer field is
 permitted.
 
@@ -391,284 +391,19 @@ The `inputSchema` values are, by tool name:
 }
 ```
 
-### Exact output schemas
+### Exact result envelope
 
-Each `outputSchema` is assembled without inference from this exact wrapper by
-replacing `<DATA_SCHEMA>` with the corresponding complete data object below.
-For `sql_query` and `sql_execute` only, append the exact root `definitions`
-member shown after their data object. Operationally: parse the wrapper JSON,
-assign the selected object to `outputSchema.properties.data`, and, for either
-SQL tool, assign the shown `definitions` object to
-`outputSchema.definitions`. Delete no field and add no other field.
+No tool declares an `outputSchema`, so no result carries `structuredContent`.
+Every call returns exactly one `content` item whose `type` is `text` and whose
+text is the compact `JSON.stringify` of the result object, without indentation.
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "ok": {
-      "type": "boolean",
-      "const": true,
-      "description": "Whether the tool call completed successfully."
-    },
-    "data": "<DATA_SCHEMA>",
-    "instructions": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Actionable guidance for using the returned data."
-    }
-  },
-  "required": ["ok", "data", "instructions"],
-  "additionalProperties": false
-}
-```
-
-The quoted `<DATA_SCHEMA>` marker denotes replacement by the JSON object, not a
-wire string. The exact `list_workspaces` data schema is:
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "workspaces": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "workspaceId": {"type": "string", "minLength": 1},
-          "name": {"type": "string"}
-        },
-        "required": ["workspaceId", "name"],
-        "additionalProperties": false
-      }
-    }
-  },
-  "required": ["workspaces"],
-  "additionalProperties": false
-}
-```
-
-The exact `get_schema` data schema is:
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "workspace": {
-      "type": "object",
-      "properties": {
-        "workspaceId": {"type": "string", "minLength": 1},
-        "name": {"type": "string"}
-      },
-      "required": ["workspaceId", "name"],
-      "additionalProperties": false
-    },
-    "relations": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "enum": ["ledger_entries", "accounts", "budget_lines", "workspace_settings", "account_metadata", "fx_rates_raw", "fx_rates_daily"]
-          },
-          "columns": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {"type": "string"},
-                "type": {"type": "string"},
-                "nullable": {"type": "boolean"},
-                "defaultValue": {"anyOf": [{"type": "string"}, {"type": "null"}]}
-              },
-              "required": ["name", "type", "nullable", "defaultValue"],
-              "additionalProperties": false
-            }
-          },
-          "hints": {
-            "type": "object",
-            "properties": {
-              "optional": {"type": "boolean"},
-              "primaryKey": {"type": "array", "items": {"type": "string"}},
-              "notes": {"type": "array", "items": {"type": "string"}},
-              "columnConstraints": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "column": {"type": "string"},
-                    "allowedValues": {"type": "array", "items": {"type": "string"}},
-                    "notes": {"type": "array", "items": {"type": "string"}}
-                  },
-                  "required": ["column"],
-                  "additionalProperties": false
-                }
-              }
-            },
-            "required": ["optional", "notes"],
-            "additionalProperties": false
-          }
-        },
-        "required": ["name", "columns"],
-        "additionalProperties": false
-      }
-    },
-    "limits": {
-      "type": "object",
-      "properties": {
-        "maxRows": {"type": "integer", "minimum": 0},
-        "statementTimeoutMs": {"type": "integer", "exclusiveMinimum": 0}
-      },
-      "required": ["maxRows", "statementTimeoutMs"],
-      "additionalProperties": false
-    }
-  },
-  "required": ["workspace", "relations", "limits"],
-  "additionalProperties": false
-}
-```
-
-The exact `sql_query` data schema is:
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "statements": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "sql": {"type": "string"},
-          "command": {"type": "string", "const": "SELECT"},
-          "rows": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "propertyNames": {"type": "string"},
-              "additionalProperties": {"$ref": "#/definitions/__schema0"}
-            }
-          },
-          "rowCount": {"type": "integer", "minimum": 0},
-          "returnedRowCount": {"type": "integer", "minimum": 0},
-          "totalRowCount": {"type": "integer", "minimum": 0},
-          "truncated": {"type": "boolean"},
-          "referencedRelations": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": ["ledger_entries", "accounts", "budget_lines", "workspace_settings", "account_metadata", "fx_rates_raw", "fx_rates_daily"]
-            }
-          },
-          "entityHints": {
-            "type": "object",
-            "properties": {
-              "primary": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "enum": ["ledger_entries", "accounts", "budget_lines", "workspace_settings", "account_metadata", "fx_rates_raw", "fx_rates_daily"]
-                  },
-                  "summary": {"type": "string"}
-                },
-                "required": ["name", "summary"],
-                "additionalProperties": false
-              },
-              "related": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "name": {
-                      "type": "string",
-                      "enum": ["ledger_entries", "accounts", "budget_lines", "workspace_settings", "account_metadata", "fx_rates_raw", "fx_rates_daily"]
-                    },
-                    "summary": {"type": "string"}
-                  },
-                  "required": ["name", "summary"],
-                  "additionalProperties": false
-                }
-              }
-            },
-            "required": ["primary", "related"],
-            "additionalProperties": false
-          }
-        },
-        "required": ["sql", "command", "rows", "rowCount", "returnedRowCount", "totalRowCount", "truncated", "referencedRelations"],
-        "additionalProperties": false
-      }
-    },
-    "workspace": {
-      "type": "object",
-      "properties": {
-        "workspaceId": {"type": "string", "minLength": 1},
-        "name": {"type": "string"}
-      },
-      "required": ["workspaceId", "name"],
-      "additionalProperties": false
-    },
-    "limits": {
-      "type": "object",
-      "properties": {
-        "maxRows": {"type": "integer", "minimum": 0},
-        "statementTimeoutMs": {"type": "integer", "exclusiveMinimum": 0}
-      },
-      "required": ["maxRows", "statementTimeoutMs"],
-      "additionalProperties": false
-    }
-  },
-  "required": ["statements", "workspace", "limits"],
-  "additionalProperties": false
-}
-```
-
-The exact SQL-output root definition, present as a sibling of `properties`,
-`required`, and `additionalProperties`, is:
-
-```json
-{
-  "definitions": {
-    "__schema0": {
-      "anyOf": [
-        {"type": "string"},
-        {"type": "number"},
-        {"type": "boolean"},
-        {"type": "null"},
-        {"type": "array", "items": {"$ref": "#/definitions/__schema0"}},
-        {
-          "type": "object",
-          "propertyNames": {"type": "string"},
-          "additionalProperties": {"$ref": "#/definitions/__schema0"}
-        }
-      ]
-    }
-  }
-}
-```
-
-The exact `sql_execute` data schema is byte-for-byte the `sql_query` data
-schema after replacing only JSON Pointer
-`/properties/statements/items/properties/command` with:
-
-```json
-{"type": "string", "enum": ["INSERT", "UPDATE", "DELETE"]}
-```
-
-Its root definition is identical to the SQL-output definition above. This
-single explicit JSON-Pointer substitution is the lossless snapshot encoding;
-there are no other `sql_query`/`sql_execute` output-schema differences.
-
-Every successful call returns the same JSON-safe object in
-`structuredContent` and as the parsed value of the one `content` item, whose
-`type` is `text`. SQL dates become ISO-8601 strings. Errors are not successful
-output-schema values: they set `isError: true` and return one text item whose
-parsed object has `ok: false`, required string `error.code` and `error.message`,
-optional object `error.details`, and required string `instructions`. The
-deployed `get_schema` relation/column result and every concrete tool result must
-be captured; this descriptor snapshot does not substitute invented response
-data for runtime evidence.
+A successful call parses to `ok: true`, object `data`, and string
+`instructions`. SQL dates become ISO-8601 strings. A failed call sets
+`isError: true` and parses to `ok: false`, required string `error.code` and
+`error.message`, optional object `error.details`, and required string
+`instructions`. The deployed `get_schema` relation/column result and every
+concrete tool result must be captured; this descriptor snapshot does not
+substitute invented response data for runtime evidence.
 
 ## Reviewer account and fixture
 
@@ -1269,8 +1004,8 @@ inspection result does not replace Developer Mode response inspection.
 
 | Control | Required evidence | Current assessment |
 | --- | --- | --- |
-| Response minimization | Capture every top-level and nested field returned by each scenario; justify necessary workspace IDs, SQL, counts, relation names, and requested financial fields; remove any debug, trace, request, session, or unrelated internal identifiers before submission. | Pending production audit. The declared schemas contain no auth-secret field, but SQL rows are query-shaped and require scenario-level inspection. |
-| Secret handling | Prove no password, OTP, API key, authorization code, access token, refresh token, cookie, or auth header appears in tool content, `structuredContent`, screenshots, logs, or git. | Source contract is compatible; production evidence pending. |
+| Response minimization | Capture every top-level and nested field returned by each scenario; justify necessary workspace IDs, SQL, counts, relation names, and requested financial fields; remove any debug, trace, request, session, or unrelated internal identifiers before submission. | Pending production audit. The result envelope carries no auth-secret field, but SQL rows are query-shaped and require scenario-level inspection. |
+| Secret handling | Prove no password, OTP, API key, authorization code, access token, refresh token, cookie, or auth header appears in tool content, screenshots, logs, or git. | Source contract is compatible; production evidence pending. |
 | Workspace isolation | Attempt an inaccessible workspace ID and verify `workspace_not_found` with no query or mutation. Confirm all successful results identify only the selected accessible workspace. | Enforced by live membership resolution, restricted identity context, database roles, and Postgres row-level security; adversarial production evidence pending. |
 | Least privilege | Connect once read-only and observe the exact Developer Mode behavior for `sql_execute`: dispatched calls must fail with server `insufficient_scope`; a host-side block or scope-upgrade flow must be recorded as such. When the host does not dispatch, use read-only Scope Connection S for the server probe without treating it as OpenAI evidence. Connect write-enabled only through a fresh authorization and verify both scopes are explicit. | Runtime scopes are `expenses:read` and `expenses:write`; client and server production evidence pending. |
 | Write confirmation | Run P5, cancel once, then approve once. Prove no write precedes approval and no automatic retry follows an uncertain outcome. | Runtime annotations are accurate; host confirmation behavior pending Developer Mode. |
@@ -1328,9 +1063,10 @@ the initialized server and `tools/list` before calling tools. Record:
 
 - server name, title, version, website, icon, and instructions;
 - exactly four tools;
-- exact titles, descriptions, input and output schemas, annotations, and
+- exact titles, descriptions, input schemas, annotations, and
   `_meta.securitySchemes`;
-- `structuredContent` equality with parsed text content;
+- one compact JSON text content item per result, with no `outputSchema` and no
+  `structuredContent`;
 - authentication failures, scope failures, ambiguous workspace selection,
   inaccessible workspace selection, SQL policy errors, empty results, and
   truncation behavior.
@@ -1468,8 +1204,8 @@ operator record.
 
 ## Final go/no-go checklist
 
-- [x] Integration source contains strict tool output schemas, JSON-safe matching
-  structured and text results, accurate annotations, and per-tool OAuth scope
+- [x] Integration source contains strict tool input schemas, one compact JSON-safe
+  text result per call, accurate annotations, and per-tool OAuth scope
   metadata.
 - [x] Runtime and manifest version are aligned at `1.2.0` on this base.
 - [x] Canonical website materials use `/docs/mcp-connector/`; MCP docs, API
@@ -1481,8 +1217,7 @@ operator record.
   and runbook use `com.expense-budget-tracker/expense-budget-tracker`.
 - [ ] Runtime changes are promoted and the production `tools/list` snapshot
   exactly matches `tools-list-v1.2.0-promotion-candidate-v1`, including every
-  input and output JSON-Schema keyword, description, annotation, `_meta`, and
-  `execution`.
+  input JSON-Schema keyword, description, annotation, `_meta`, and `execution`.
 - [ ] Registry implementation is promoted to `main`; the owner provisions and
   verifies the DNS proof plus `MCP_PRIVATE_KEY`, confirms the immutable G01
   version record is absent, manually dispatches `mcp-registry-publish.yml`, and
