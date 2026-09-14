@@ -75,14 +75,14 @@ const READ_RESULT_SHRUNK_NOTE = `This SQL result was shrunk to fit the ${String(
 // Only a statement that returned rows can have an oversized first row to page past,
 // so this form is selected on the pre-shrink returned row total, not on what a
 // candidate kept.
-const SINGLE_STATEMENT_READ_SHRUNK_REMEDIES = "Select fewer or shorter columns first: when returnedRowCount is 0 the first row alone is over the budget, so a lower LIMIT cannot help, but an OFFSET page that skips past that row can still return data. Once rows come back, lower LIMIT or read the remaining rows with OFFSET.";
+const SINGLE_STATEMENT_READ_SHRUNK_REMEDIES = "Select fewer or shorter columns first: when returnedRowCount is 0 the first row alone is over the budget, so a lower LIMIT cannot help, but an OFFSET page that skips past that row can still return data when the statement orders by a unique column such as ledger_entries.entry_id. Once rows come back, lower LIMIT or read the remaining rows with OFFSET under that same unique ORDER BY; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip.";
 // The statement returned nothing, so there is no oversized row and no page to skip
 // to: its own echoed text and the fixed per-statement fields are the whole payload.
 const SINGLE_STATEMENT_ZERO_ROW_READ_SHRUNK_REMEDIES = "The statement returned no rows, so no row data is missing from this response and neither a lower LIMIT nor an OFFSET page can change it: its own echoed text and fixed per-statement fields are what exceeded the budget, so shorten the statement text and select fewer columns.";
 // A script spends one shared row budget in statement order, so a later statement can
 // report zero rows purely because an earlier one used the budget up. Re-running the
 // same script with an OFFSET would hit the same distribution and return zero again.
-const SCRIPT_READ_SHRUNK_REMEDIES = "The statements share one row budget spent in statement order, so a returnedRowCount of 0 usually means an earlier statement used that budget up rather than that a single row is over it: send fewer statements per request, and lower LIMIT on the earlier statements. Then select fewer or shorter columns, and read the remaining rows with OFFSET.";
+const SCRIPT_READ_SHRUNK_REMEDIES = "The statements share one row budget spent in statement order, so a returnedRowCount of 0 usually means an earlier statement used that budget up rather than that a single row is over it: send fewer statements per request, and lower LIMIT on the earlier statements. Then select fewer or shorter columns, and read the remaining rows with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip.";
 // One statement has nothing to send fewer of, so the two forms name the remedy that
 // exists on each: shortening the statement itself, or sending a shorter script.
 const SINGLE_STATEMENT_READ_RESPONSE_SHRUNK_NOTE = "Relation hints were dropped, and the echoed sql may be cut to a prefix, so that the rows and their counts fit the budget; shorten the statement text and select fewer columns to keep them.";

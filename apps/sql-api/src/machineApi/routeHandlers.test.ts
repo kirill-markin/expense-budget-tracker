@@ -292,6 +292,58 @@ test("handleSqlExecuteRoute rejects readonly SQL with query guidance before work
   assert.equal(workspaceResolutionCount, 0);
 });
 
+test("handleSqlQueryRoute describes the read shrink ladder and a deterministic OFFSET page", async (): Promise<void> => {
+  const context: MachineRouteContext = {
+    ...createContext(),
+    dependencies: {
+      ...createDependencies(),
+      resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: async () => ({
+        workspaceId: "workspace-1",
+        created: false,
+      }),
+      queryAsTrustedIdentityBeforeDeadline: async () =>
+        createQueryResult([{ workspace_id: "workspace-1", name: "Personal" }]),
+      // A read runs through a cursor, so DECLARE, FETCH, MOVE, and CLOSE all
+      // answer with the same empty result.
+      withReadOnlyRestrictedTrustedIdentityContext: async <T>(
+        _identity: MachineRouteContext["authenticated"]["identity"],
+        _workspaceId: string,
+        _deadline: SqlExecutionDeadline,
+        callback: (queryFn: RestrictedQueryFn) => Promise<T>,
+      ): Promise<T> => callback(async () => createQueryResult([])),
+    },
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({ sql: "SELECT account_id FROM accounts" }),
+      httpMethod: "POST",
+      path: "/v1/sql/query",
+      resource: "/sql/query",
+    }),
+  };
+
+  const response = await handleSqlQueryRouteWithWorkspaceResolver(
+    context,
+    async () => "workspace-1",
+  );
+  const payload = JSON.parse(response.body) as { instructions: string };
+
+  assert.equal(response.statusCode, 200);
+  // A single read shrinks instead of failing, and a stage that only sheds hints
+  // can keep every row, so both flags have to be named.
+  assert.match(payload.instructions, /never fails on this endpoint/u);
+  assert.match(payload.instructions, /sets responseShrunk, which can still fit with every row kept/u);
+  // sql_result_too_large needs more than one statement, so it must not appear here.
+  assert.doesNotMatch(payload.instructions, /sql_result_too_large/u);
+  // OFFSET only reproduces the order under a unique sort key.
+  assert.match(
+    payload.instructions,
+    /orders by a unique column such as ledger_entries\.entry_id/u,
+  );
+  assert.match(
+    payload.instructions,
+    /a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip/u,
+  );
+});
+
 test("machine SQL routes start the total deadline before workspace resolution", async (): Promise<void> => {
   const deadlines: Array<SqlExecutionDeadline> = [];
   const queryContext: MachineRouteContext = {

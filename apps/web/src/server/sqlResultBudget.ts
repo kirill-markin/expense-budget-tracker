@@ -88,12 +88,12 @@ const countRows = <TStatement extends BudgetedSqlStatement>(
  * Largest row prefix the halving search measures as fitting MAX_SQL_RESULT_CHARS.
  *
  * measurePayloadChars serializes the object the caller actually emits, so the
- * budget covers that envelope instead of the statements alone. Searching the
- * shared kept row count by halves needs only that payload size never falls as
- * rows are added back, not that it strictly grows: at the first cut a dropped
- * row and the flipped truncated flag can cost about the same, so sizes can tie
- * there and the result can end one row short of maximal. Every returned
- * candidate was measured under the budget.
+ * budget covers that envelope instead of the statements alone. Under the
+ * premise above payload size strictly grows with the kept row count: an added
+ * row costs at least its own JSON and a comma, and the truncated flip from true
+ * to false costs one character more. So the halving search returns the maximal
+ * fitting prefix, and every candidate it returns was measured under the budget;
+ * when no prefix fits, the fallback below ships over budget instead.
  */
 export const applySqlResultCharBudget = <TStatement extends BudgetedSqlStatement>(
   entries: ReadonlyArray<BudgetedSqlStatementEntry<TStatement>>,
