@@ -7,6 +7,15 @@ export const getSafeErrorType = (error: unknown): SafeErrorType => {
   return "non_error";
 };
 
+// A result over the character budget ends in one of four very different states,
+// so the outcome is emitted as its own alarmable field. keptRowCount is present
+// only on a degraded read, where it reports the rows the response still carries.
+export type SqlResultOverBudgetOutcome =
+  | "read_rows_dropped"
+  | "read_rejected"
+  | "write_rows_omitted"
+  | "write_response_shrunk";
+
 export type SqlApiLogEvent =
   | Readonly<{
     domain: "sql_api";
@@ -19,6 +28,14 @@ export type SqlApiLogEvent =
     domain: "sql_api";
     action: "database_pool_error";
     errorType: SafeErrorType;
+  }>
+  | Readonly<{
+    domain: "sql_api";
+    action: "sql_result_over_budget";
+    outcome: SqlResultOverBudgetOutcome;
+    resultChars: number;
+    statementCount: number;
+    keptRowCount?: number;
   }>;
 
 export const log = (event: SqlApiLogEvent): void => {

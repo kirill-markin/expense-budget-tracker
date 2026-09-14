@@ -4,6 +4,13 @@
 export const MAX_SQL_ROWS = 100;
 export const MAX_SQL_RETURNED_ROWS = 100;
 export const MAX_SQL_MUTATION_ROWS = 100;
+// Dense JSON runs near 3 characters per token only while it stays ASCII; Cyrillic
+// note and counterparty text runs closer to 1.5-2 characters per token, so the
+// budget is derived from that worse ratio: a fully packed result stays near
+// 15,000-20,000 tokens, under the 25,000-token client tool-result cap. A read
+// over this budget drops rows instead of failing, so the tighter number costs
+// rows per call rather than a rejected response.
+export const MAX_SQL_RESULT_CHARS = 30_000;
 export const MAX_SQL_SCRIPT_LENGTH = 100_000;
 export const MAX_SQL_STATEMENTS = 100;
 export const SQL_STATEMENT_TIMEOUT_MS = 25_000;
@@ -131,6 +138,7 @@ type SqlPolicyErrorCode =
   | "too_many_sql_statements"
   | "mutation_statement_row_limit_exceeded"
   | "mutation_request_row_limit_exceeded"
+  | "sql_result_too_large"
   | "read_only_sql_required"
   | "mutation_sql_required"
   | "on_conflict_not_allowed"
