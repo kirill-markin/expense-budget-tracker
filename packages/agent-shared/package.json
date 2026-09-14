@@ -41,6 +41,17 @@
       },
       "default": "./dist/sql-policy.js"
     },
+    "./agent-protocol": {
+      "import": {
+        "types": "./dist/agentProtocol.d.ts",
+        "default": "./dist/agentProtocol.js"
+      },
+      "require": {
+        "types": "./dist-cjs/agentProtocol.d.cts",
+        "default": "./dist-cjs/agentProtocol.cjs"
+      },
+      "default": "./dist/agentProtocol.js"
+    },
     "./crockford": {
       "import": {
         "types": "./dist/crockford.d.ts",
