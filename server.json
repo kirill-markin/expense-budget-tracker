@@ -64,6 +64,11 @@
           "readOnly": true
         },
         {
+          "name": "get_guide",
+          "description": "Returns the required protocol before writing data or writing restricted SQL.",
+          "readOnly": true
+        },
+        {
           "name": "sql_query",
           "description": "Runs one policy-approved read-only SELECT or WITH...SELECT statement.",
           "readOnly": true

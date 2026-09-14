@@ -132,11 +132,11 @@ Starter prompts:
 Initial release notes:
 
 > Initial public submission of the Expense Budget Tracker MCP server. It
-> provides four OAuth-secured, workspace-scoped tools for workspace discovery,
-> allowed-schema discovery, restricted read queries, and explicitly approved
-> financial-data mutations. The plugin has no skills and no custom UI. Review
-> uses the dedicated synthetic demo account and reset procedure supplied in the
-> submission portal.
+> provides five OAuth-secured tools for workspace discovery,
+> allowed-schema discovery, on-demand usage protocol, restricted read queries,
+> and explicitly approved financial-data mutations. The plugin has no skills and
+> no custom UI. Review uses the dedicated synthetic demo account and reset
+> procedure supplied in the submission portal.
 
 The public website is localized, but runtime tool metadata and this initial
 listing package are English. Do not claim localized tool metadata unless Scan
@@ -202,9 +202,11 @@ The initialized server advertises:
 
 Its instructions require the client to start with `list_workspaces`, use an
 explicit `workspaceId` when more than one workspace is available, call
-`get_schema` before SQL, route reads to `sql_query`, and route approved writes
-to `sql_execute`. They also identify `expenses:read` and `expenses:write` and
-link the canonical machine discovery endpoint.
+`get_schema` before SQL, call `get_guide` with topic `writing_data` before the
+first mutation of a task and with topic `sql_dialect` before restricted SQL,
+route reads to `sql_query`, and route approved writes to `sql_execute`. They
+also identify `expenses:read` and `expenses:write` and link the canonical
+machine discovery endpoint.
 
 ### Registry state
 
@@ -226,7 +228,7 @@ Item 04 is merged on the current integration BASE at
 - publisher-provided Finance/Productivity categories, expense/budgeting/
   personal-finance/multi-currency tags, canonical MCP/API/privacy/terms/support
   URLs, OAuth authorization-code/PKCE/DCR authentication text, and summaries
-  for the four runtime tools.
+  for the five runtime tools.
 
 The merged implementation also contains the manual
 `.github/workflows/mcp-registry-publish.yml` workflow, canonical
@@ -308,7 +310,7 @@ mandatory for this plugin, stop and create a separate prerequisite plan.
 Scan Tools is the final evidence source for deployed descriptor bytes. Snapshot
 `tools-list-v1.2.0-promotion-candidate-v1` is the stable semantic revision
 defined by the current item-11 promotion-candidate source. The snapshot below
-is a lossless representation of the four descriptors emitted from
+is a lossless representation of the five descriptors emitted from
 `apps/sql-api/src/mcp/server.ts`, the locked `@modelcontextprotocol/sdk`
 `1.30.0`, and Zod `4.5.4`. Compare the deployed snapshot after recursively
 sorting object keys only; array order and every string, keyword, boolean,
@@ -323,9 +325,10 @@ permitted.
 | Tool | Exact title | Exact description | Exact annotations | Exact `_meta` | Exact `execution` |
 | --- | --- | --- | --- | --- | --- |
 | `list_workspaces` | `List accessible workspaces` | `Use this read-only discovery tool to list every workspace accessible to the authenticated user. It does not create or modify workspaces; pass a returned workspaceId to other tools when more than one is available.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
-| `get_schema` | `Inspect expense SQL schema` | `Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and agent hints for an accessible workspace. It does not expose or query system catalogs.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
-| `sql_query` | `Query expense data` | `Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
-| `sql_execute` | `Execute expense data mutation` | `Use this write-capable tool only for an approved expense-data mutation. It runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.` | `{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read","expenses:write"]}]}` | `{"taskSupport":"forbidden"}` |
+| `get_schema` | `Inspect expense SQL schema` | `Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and per-relation agent hints for an accessible workspace, including the write semantics of ledger_entries. It does not expose or query system catalogs.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
+| `get_guide` | `Fetch expense usage protocol` | `Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, and with topic sql_dialect before writing SQL against this restricted surface.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
+| `sql_query` | `Query expense data` | `Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. Use it to read existing accounts, categories, and entries before a write, and to verify row counts and balances after a write. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
+| `sql_execute` | `Execute expense data mutation` | `Use this write-capable tool only for a mutation the user explicitly approved. Call get_guide with topic writing_data before the first mutation of a task: it defines duplicate checks, transfer pairs, category reuse, probe-then-batch execution, and post-write verification. This tool runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.` | `{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read","expenses:write"]}]}` | `{"taskSupport":"forbidden"}` |
 
 The read tools are side-effect free, private, and safe to retry. `sql_execute`
 can destructively change private first-party records, is not safe to retry, and
@@ -353,6 +356,18 @@ The `inputSchema` values are, by tool name:
         "description": "Optional workspaceId returned by list_workspaces. Omit only when exactly one workspace is available."
       }
     }
+  },
+  "get_guide": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "topic": {
+        "type": "string",
+        "enum": ["sql_dialect", "writing_data"],
+        "description": "Which protocol to return. Use sql_dialect for the restricted SQL rules: allowed functions, forbidden constructs, date and text matching, result limits, and the result envelope. Use writing_data for the write protocol: duplicate detection, internal transfers, category reuse, bank statement statuses, approval, batch limits, resuming after an interruption, and final balance verification. It covers ledger_entries writes; read the get_schema budget_lines hints before writing budget rows."
+      }
+    },
+    "required": ["topic"]
   },
   "sql_query": {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -821,7 +836,8 @@ Use this connection-state sequence exactly:
 - Expected confirmation boundary: none.
 - Expected result shape: the workspace-list success shape.
 - Pass evidence: exactly one `list_workspaces` call; no `get_schema`,
-  `sql_query`, or `sql_execute` call; answer names both fixture workspaces.
+  `get_guide`, `sql_query`, or `sql_execute` call; answer names both fixture
+  workspaces.
 - Fail if: the model guesses a workspace, reads records, or calls a write tool.
 
 ### P3 — Discover the allowed schema
@@ -872,8 +888,9 @@ Use this connection-state sequence exactly:
   of EUR 123.45 for category OpenAI Review Write. This is a test. Show me the
   exact proposed change, including direction and kind, and require confirmation
   before changing anything.”
-- Expected tool choice: read-only discovery first, then `sql_execute` only after
-  the host's explicit destructive-action confirmation.
+- Expected tool choice: read-only discovery first, then `get_guide` with topic
+  `writing_data` before the first mutation, then `sql_execute` only after the
+  host's explicit destructive-action confirmation.
 - Expected confirmation boundary: the exact workspace, month `2026-08`,
   direction `spend`, category `OpenAI Review Write`, kind `base`, currency
   `EUR`, amount `123.45`, and `INSERT` mutation must be visible before the tool
@@ -903,8 +920,9 @@ Use this connection-state sequence exactly:
 - Expected result shape: SQL success data with one `INSERT` statement,
   `rowCount: 1`, `referencedRelations: ["budget_lines"]`, the selected fixture
   workspace, and non-truncated counts.
-- Pass evidence: confirmation screenshot shows every complete-key and value
-  field before the tool call; one row is affected; P6 proves the exact
+- Pass evidence: the tool log shows `get_guide` with topic `writing_data`
+  before `sql_execute`; confirmation screenshot shows every complete-key and
+  value field before the tool call; one row is affected; P6 proves the exact
   `spend`/`base` row with EUR 123.45; reset removes that exact row.
 - Fail if: the tool runs before confirmation, retries blindly, writes another
   workspace/month/direction/category/kind/currency/amount, or claims a
@@ -981,7 +999,7 @@ Use this connection-state sequence exactly:
 - Confirmation boundary: none.
 - Expected result shape: no plugin result; the host may answer with an
   appropriate built-in capability independently.
-- Pass evidence: zero calls to all four tools.
+- Pass evidence: zero calls to all five tools.
 - Why it must not complete: the request has no relationship to hosted financial
   data or the plugin's declared purpose.
 
@@ -1062,7 +1080,7 @@ Use MCP Inspector against `https://mcp.expense-budget-tracker.com/mcp`. Inspect
 the initialized server and `tools/list` before calling tools. Record:
 
 - server name, title, version, website, icon, and instructions;
-- exactly four tools;
+- exactly five tools;
 - exact titles, descriptions, input schemas, annotations, and
   `_meta.securitySchemes`;
 - one compact JSON text content item per result, with no `outputSchema` and no

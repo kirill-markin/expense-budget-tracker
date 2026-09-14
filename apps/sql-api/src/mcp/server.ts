@@ -1,6 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
+  SQL_DIALECT_GUIDE,
+  WRITING_DATA_GUIDE,
+} from "@expense-budget-tracker/agent-shared/agent-protocol";
+import {
   MAX_SQL_ROWS,
   MCP_SQL_STATEMENT_TIMEOUT_MS,
   validateSingleMutationExpenseSql,
@@ -27,6 +31,7 @@ const SERVER_NAME = "expense-budget-tracker";
 const SERVER_VERSION = "1.5.0";
 const LIST_WORKSPACES_TOOL_NAME = "list_workspaces";
 const GET_SCHEMA_TOOL_NAME = "get_schema";
+const GET_GUIDE_TOOL_NAME = "get_guide";
 const SQL_QUERY_TOOL_NAME = "sql_query";
 const SQL_EXECUTE_TOOL_NAME = "sql_execute";
 const READ_SCOPE: McpScope = "expenses:read";
@@ -35,6 +40,15 @@ type ReadOnlyMcpToolName =
   | typeof LIST_WORKSPACES_TOOL_NAME
   | typeof GET_SCHEMA_TOOL_NAME
   | typeof SQL_QUERY_TOOL_NAME;
+
+const guideTopicSchema = z.enum(["sql_dialect", "writing_data"]).describe(
+  "Which protocol to return. Use sql_dialect for the restricted SQL rules: allowed functions, forbidden constructs, date and text matching, result limits, and the result envelope. Use writing_data for the write protocol: duplicate detection, internal transfers, category reuse, bank statement statuses, approval, batch limits, resuming after an interruption, and final balance verification. It covers ledger_entries writes; read the get_schema budget_lines hints before writing budget rows.",
+);
+
+const GUIDE_BY_TOPIC: Readonly<Record<z.infer<typeof guideTopicSchema>, string>> = {
+  sql_dialect: SQL_DIALECT_GUIDE,
+  writing_data: WRITING_DATA_GUIDE,
+};
 
 const workspaceIdSchema = z.string().trim().min(1).optional().describe(
   "Optional workspaceId returned by list_workspaces. Omit only when exactly one workspace is available.",
@@ -183,7 +197,7 @@ export const createMcpServerWithDependencies = (
       icons: [{ src: MCP_ICON_URL, mimeType: "image/svg+xml", sizes: ["any"] }],
     },
     {
-      instructions: "Start with list_workspaces. If it returns multiple workspaces, pass one returned workspaceId to get_schema, sql_query, or sql_execute; workspaceId may be omitted only when exactly one workspace is available. Use get_schema before writing SQL. Use sql_query for read-only SELECT or WITH...SELECT statements requiring expenses:read. Use sql_execute only for approved INSERT, UPDATE, or DELETE mutations requiring expenses:write. Discover the canonical machine API and authentication onboarding with GET https://api.expense-budget-tracker.com/v1/. The public https://api.expense-budget-tracker.com/v1/openapi.json and https://api.expense-budget-tracker.com/v1/swagger.json routes are source-discovery compatibility probes, not OpenAPI specifications.",
+      instructions: "Start with list_workspaces, then call get_schema before writing SQL. Use sql_query for one read-only SELECT or WITH...SELECT statement (expenses:read) and sql_execute for one approved INSERT, UPDATE, or DELETE statement (expenses:write). Before the first mutation of a task call get_guide with topic writing_data, follow the returned protocol, get explicit user approval for the exact change set, and verify row counts and balances with sql_query afterwards. Call get_guide with topic sql_dialect before writing SQL that uses functions, case-insensitive matching, or date filters: this SQL surface is restricted. If list_workspaces returns multiple workspaces, pass one returned workspaceId to every other tool; omit workspaceId only when exactly one workspace is available. Discover the canonical machine API and authentication onboarding with GET https://api.expense-budget-tracker.com/v1/. The public /v1/openapi.json and /v1/swagger.json routes are source-discovery compatibility probes, not OpenAPI specifications.",
     },
   );
 
@@ -219,7 +233,7 @@ export const createMcpServerWithDependencies = (
     GET_SCHEMA_TOOL_NAME,
     {
       title: "Inspect expense SQL schema",
-      description: "Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and agent hints for an accessible workspace. It does not expose or query system catalogs.",
+      description: "Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and per-relation agent hints for an accessible workspace, including the write semantics of ledger_entries. It does not expose or query system catalogs.",
       inputSchema: { workspaceId: workspaceIdSchema },
       annotations: {
         readOnlyHint: true,
@@ -261,10 +275,37 @@ export const createMcpServerWithDependencies = (
   );
 
   server.registerTool(
+    GET_GUIDE_TOOL_NAME,
+    {
+      title: "Fetch expense usage protocol",
+      description: "Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, and with topic sql_dialect before writing SQL against this restricted surface.",
+      inputSchema: { topic: guideTopicSchema },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      _meta: buildToolSecurityMetadata([READ_SCOPE]),
+    },
+    async ({ topic }): Promise<CallToolResult> => {
+      try {
+        requireScope(connection, READ_SCOPE);
+        return buildMcpSuccessResult(
+          { topic, guide: GUIDE_BY_TOPIC[topic] },
+          "Follow this protocol for the rest of the task. Do not request the same topic again.",
+        );
+      } catch (error) {
+        return buildMcpToolErrorResult(error, GET_GUIDE_TOOL_NAME);
+      }
+    },
+  );
+
+  server.registerTool(
     SQL_QUERY_TOOL_NAME,
     {
       title: "Query expense data",
-      description: "Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.",
+      description: "Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. Use it to read existing accounts, categories, and entries before a write, and to verify row counts and balances after a write. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.",
       inputSchema: {
         sql: z.string().trim().min(1).describe("Exactly one policy-approved SELECT or WITH...SELECT statement."),
         workspaceId: workspaceIdSchema,
@@ -307,7 +348,7 @@ export const createMcpServerWithDependencies = (
     SQL_EXECUTE_TOOL_NAME,
     {
       title: "Execute expense data mutation",
-      description: "Use this write-capable tool only for an approved expense-data mutation. It runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.",
+      description: "Use this write-capable tool only for a mutation the user explicitly approved. Call get_guide with topic writing_data before the first mutation of a task: it defines duplicate checks, transfer pairs, category reuse, probe-then-batch execution, and post-write verification. This tool runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.",
       inputSchema: {
         sql: z.string().trim().min(1).describe("Exactly one policy-approved INSERT, UPDATE, or DELETE statement."),
         workspaceId: workspaceIdSchema,
