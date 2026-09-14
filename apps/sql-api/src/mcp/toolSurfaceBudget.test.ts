@@ -80,6 +80,49 @@ const toolSurfaceDependencies: McpServerDependencies = {
   validateSingleMutationExpenseSql,
 };
 
+// Result-shape checks have to reach the tool handlers, so they need serving stubs
+// instead of the rejecting ones used by the tools/list and instructions budgets.
+const RESULT_WORKSPACE_ID = "workspace-personal";
+
+const toolResultDependencies: McpServerDependencies = {
+  listWorkspaces: async () => [{ workspaceId: RESULT_WORKSPACE_ID, name: "Personal" }],
+  getWorkspace: async () => ({ workspaceId: RESULT_WORKSPACE_ID, name: "Personal" }),
+  loadAllowedSchemaForWorkspace: async () => [{
+    name: "ledger_entries",
+    columns: [{ name: "amount", type: "numeric", nullable: false, defaultValue: null }],
+  }],
+  validateSingleReadOnlyExpenseSql,
+  validateSingleMutationExpenseSql,
+  runReadOnlySql: async (_authenticated, workspaceId, validated, deadline) => ({
+    statements: [{
+      sql: validated.sql,
+      command: "SELECT",
+      rows: [{ amount: "10.00" }],
+      rowCount: 1,
+      returnedRowCount: 1,
+      totalRowCount: 1,
+      truncated: false,
+      referencedRelations: ["ledger_entries"],
+    }],
+    workspace: { workspaceId, name: "Personal" },
+    limits: { maxRows: 100, statementTimeoutMs: deadline.timeoutMs },
+  }),
+  runSql: async (_authenticated, workspaceId, validated, deadline) => ({
+    statements: [{
+      sql: validated.sql,
+      command: "DELETE",
+      rows: [],
+      rowCount: 1,
+      returnedRowCount: 0,
+      totalRowCount: 1,
+      truncated: false,
+      referencedRelations: ["budget_lines"],
+    }],
+    workspace: { workspaceId, name: "Personal" },
+    limits: { maxRows: 100, statementTimeoutMs: deadline.timeoutMs },
+  }),
+};
+
 type ToolSurface = Readonly<{
   toolsList: ListToolsResult;
   instructions: string;
@@ -169,6 +212,43 @@ test("MCP tools/list stays within the OpenAI tool definition token budget", asyn
 
   const tokens = getEncoding("o200k_base").encode(JSON.stringify(toolsList));
   assertWithinBudget("tools/list token count", tokens.length, MAX_TOOLS_LIST_TOKENS);
+});
+
+test("no MCP tool declares an output schema", async (): Promise<void> => {
+  const { toolsList } = await readToolSurface();
+
+  assert.ok(toolsList.tools.length > 0, "Expected tools/list to advertise at least one tool");
+  for (const tool of toolsList.tools) {
+    assert.equal(tool.outputSchema, undefined, `${tool.name} must not declare outputSchema`);
+  }
+});
+
+test("MCP results carry no structuredContent duplicate of the text block", async (): Promise<void> => {
+  await withMcpClient(
+    "mcp-tool-surface-budget-test",
+    toolSurfaceConnection,
+    toolResultDependencies,
+    async (client): Promise<void> => {
+      const results = [
+        await client.callTool({ name: "list_workspaces", arguments: {} }),
+        await client.callTool({ name: "get_schema", arguments: {} }),
+        await client.callTool({
+          name: "sql_query",
+          arguments: { sql: "SELECT amount FROM ledger_entries" },
+        }),
+        await client.callTool({
+          name: "sql_execute",
+          arguments: { sql: "DELETE FROM budget_lines WHERE category = 'Food'" },
+        }),
+      ];
+      for (const result of results) {
+        assert.notEqual(result.isError, true);
+        assert.equal(result.structuredContent, undefined);
+        assert.ok(Array.isArray(result.content));
+        assert.equal(result.content.length, 1);
+      }
+    },
+  );
 });
 
 // The manifest sits four directories above this file both as src/mcp and as built dist/mcp.
