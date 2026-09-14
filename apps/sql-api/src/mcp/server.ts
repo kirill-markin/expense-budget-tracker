@@ -29,7 +29,7 @@ import {
 } from "./results.js";
 
 const SERVER_NAME = "expense-budget-tracker";
-const SERVER_VERSION = "1.6.0";
+const SERVER_VERSION = "1.7.0";
 const LIST_WORKSPACES_TOOL_NAME = "list_workspaces";
 const GET_SCHEMA_TOOL_NAME = "get_schema";
 const GET_GUIDE_TOOL_NAME = "get_guide";
