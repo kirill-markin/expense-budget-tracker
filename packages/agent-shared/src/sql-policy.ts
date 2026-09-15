@@ -131,14 +131,16 @@ const SOURCE_CLAUSE_END: ReadonlySet<string> = new Set([
  * A name PostgreSQL can resolve as a function belongs here only when real
  * grammar puts a parenthesis right after it; otherwise listing it would let a
  * call reach the server unchecked. LEFT, RIGHT, SUBSTRING, POSITION, OVERLAY,
- * TRIM, CAST, COALESCE, NULLIF, GREATEST, LEAST, CURRENT_TIMESTAMP,
- * CURRENT_DATE, CURRENT_TIME, LOCALTIME, LOCALTIMESTAMP, XMLELEMENT, XMLPARSE,
- * and TREAT have no such form, so they keep going through
- * ALLOWED_SQL_FUNCTIONS. LIKE and ILIKE do (note LIKE ('%x%')), so they are
- * listed deliberately despite being function-namable, as BY, SET, OVER, and
- * FILTER already are. IS and SIMILAR are left out for the opposite reason:
- * IS is always followed by NULL/TRUE/FALSE/DISTINCT/OF/DOCUMENT/JSON, and
- * SIMILAR only by TO, whose own entry already covers SIMILAR TO (...). FROM
+ * TRIM, CAST, COALESCE, NULLIF, GREATEST, LEAST, XMLELEMENT, XMLPARSE, and
+ * TREAT spell their parenthesis as the call itself, CURRENT_TIMESTAMP,
+ * CURRENT_TIME, LOCALTIME, and LOCALTIMESTAMP only in the optional-precision
+ * form CURRENT_TIMESTAMP(3), which is a call too, and CURRENT_DATE has no
+ * parenthesized form at all, so none of them is grammar and they keep going
+ * through ALLOWED_SQL_FUNCTIONS. LIKE and ILIKE do (note LIKE ('%x%')), so
+ * they are listed deliberately despite being function-namable, as BY, SET,
+ * OVER, and FILTER already are. IS and SIMILAR are left out for the opposite
+ * reason: IS is always followed by NULL/TRUE/FALSE/DISTINCT/OF/DOCUMENT/JSON,
+ * and SIMILAR only by TO, whose own entry already covers SIMILAR TO (...). FROM
  * and JOIN stay out too: they introduce table references, so they keep the
  * narrower SQL_DERIVED_QUERY_PAREN_KEYWORDS rule that rejects a parenthesized
  * table list.
@@ -943,10 +945,21 @@ const collectReferencedRelationsFromSegment = (
     if (token.kind === "punct") {
       if (token.value === "(") {
         const closeIndex = findMatchingParen(tokens, i, endIndex);
+        const startsDerivedQuery = startsWithDerivedQuery(tokens, i + 1, closeIndex);
         const startsNestedDeleteUsingSource = inDeleteUsingSource
           && expectRelation
-          && !startsWithDerivedQuery(tokens, i + 1, closeIndex);
+          && !startsDerivedQuery;
         if (inSourceClause && expectRelation) {
+          // A source clause expects a relation here, so a parenthesis that does
+          // not open a derived query wraps a table list. DELETE USING keeps its
+          // own parenthesized source grammar and is validated relation by
+          // relation through the delete_using_source context below.
+          if (!startsDerivedQuery && !startsNestedDeleteUsingSource) {
+            failUnsupportedSqlConstruct(
+              "A parenthesized table list such as FROM a, (b)",
+              "Reference each relation directly in the source list, or use a parenthesized subquery such as FROM (SELECT ...) alias.",
+            );
+          }
           expectRelation = false;
         }
         const nestedGrammarContext: SqlGrammarContext = understandsDeleteUsingGrammar

@@ -416,6 +416,21 @@ test("validateExpenseSql names unsupported SQL constructs instead of a function 
       construct: "WITHIN GROUP (...)",
       alternative: "Ordered-set aggregates are unavailable",
     },
+    {
+      sql: "SELECT relname FROM ledger_entries, (pg_class)",
+      construct: "A parenthesized table list such as FROM a, (b)",
+      alternative: "Reference each relation directly in the source list",
+    },
+    {
+      sql: "SELECT * FROM ledger_entries, (accounts JOIN pg_class ON true)",
+      construct: "A parenthesized table list such as FROM a, (b)",
+      alternative: "FROM (SELECT ...) alias",
+    },
+    {
+      sql: "SELECT * FROM ledger_entries, (accounts)",
+      construct: "A parenthesized table list such as FROM a, (b)",
+      alternative: "Reference each relation directly in the source list",
+    },
   ];
 
   for (const { sql, construct, alternative } of rejectedSql) {
@@ -458,6 +473,17 @@ test("validateExpenseSql keeps accepting SQL that only resembles an unsupported 
     {
       sql: "SELECT category, SUM(amount) AS total FROM ledger_entries GROUP BY category HAVING SUM(amount) < 0 ORDER BY total",
       relations: ["ledger_entries"],
+    },
+    // A parenthesis where a source clause expects a relation is a derived
+    // query here, not the rejected table list.
+    { sql: "SELECT * FROM ledger_entries, (SELECT 1 AS x) s", relations: ["ledger_entries"] },
+    {
+      sql: "SELECT * FROM ledger_entries CROSS JOIN (SELECT 1 AS x) s",
+      relations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT * FROM ledger_entries l, accounts a WHERE l.account_id = a.account_id",
+      relations: ["ledger_entries", "accounts"],
     },
   ];
 
@@ -888,6 +914,8 @@ test("validateExpenseSql allows SQL keyword grammar that puts a parenthesis afte
     "SELECT 1 FROM ledger_entries UNION (SELECT 2 FROM ledger_entries)",
     "SELECT 1 FROM ledger_entries WHERE amount = ANY (ARRAY[1,2])",
     "SELECT 1 FROM ledger_entries WHERE amount > ALL (ARRAY[1,2])",
+    "SELECT 1 FROM ledger_entries WHERE counterparty SIMILAR TO ('%a%')",
+    "SELECT 1 FROM ledger_entries WHERE counterparty LIKE ('%a%')",
   ];
 
   for (const sql of acceptedSql) {
@@ -908,6 +936,8 @@ test("validateExpenseSql still inspects keyword grammar parentheses", (): void =
     "SELECT CASE WHEN (pg_sleep(1) IS NULL) THEN 1 ELSE 0 END FROM ledger_entries",
     "SELECT 1 FROM ledger_entries ORDER BY (pg_sleep(1))",
     "SELECT CASE WHEN ((amount).pg_sleep IS NULL) THEN 1 ELSE 0 END FROM ledger_entries",
+    "SELECT is(1) FROM ledger_entries",
+    "SELECT similar(1) FROM ledger_entries",
   ];
 
   for (const sql of rejectedFunctionSql) {
