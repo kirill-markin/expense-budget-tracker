@@ -34,7 +34,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 
 ## Supported Clients
 
-- AI agent flows are split into two separate surfaces: the web app has its own built-in chat with conversations, while external client agents use the public machine API, mainly through the slash SQL endpoint; the client list below is about the external/API flow for reference.
+- AI agent flows reach the data over three transports: the web app has its own built-in chat with conversations, while external client agents use the hosted MCP server or the public machine API. The hosted MCP server and the web chat render the same five agent tools from the shared catalog in `packages/agent-shared/src/agentTools.ts`, so neither has a private SQL tool; the `/v1` machine API is a separate REST surface over the same restricted SQL. The client list below is about the external/API flow for reference.
 - Web app: supported
 - Terminal / AI agents: full functionality is supported through the canonical machine API entrypoint `GET https://api.expense-budget-tracker.com/v1/` (the discovery response includes the next-step instructions for signup/login and email OTP onboarding)
 - Direct HTTP clients and scripts: supported through the same `https://api.expense-budget-tracker.com/v1` surface with `Authorization: ApiKey <key>`
@@ -47,6 +47,8 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `apps/web/src/app/chat/page.tsx` | Web AI chat page at `/chat`; fullscreen browser entrypoint for chatting with workspace data |
 | `apps/web/src/app/api/chat/route.ts` | Server API entrypoint for the web AI chat (`POST` stream, `DELETE` reset) |
 | `apps/web/src/server/chat/openai/loop.ts` | Main app-managed OpenAI chat loop for the web app |
+| `apps/web/src/server/chat/openai/tooling/tools.ts` | Web chat rendering of the shared agent tool catalog into OpenAI function tools, and their execution |
+| `apps/web/src/server/chat/dataService.ts` | Read-only workspace and schema discovery backing the web chat's `list_workspaces` and `get_schema` |
 | `apps/web/src/server/` | Server-side data functions for budget, balances, and transactions |
 | `apps/web/src/ui/` | React components: tables, charts, hooks |
 | `apps/web/src/proxy.ts` | Auth proxy logic controlled by `AUTH_MODE` |
@@ -56,7 +58,9 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |
 | `apps/web/src/server/apiKeys.ts` | API key generation, hashing, CRUD |
 | `apps/web/src/app/api/api-keys/route.ts` | API key management endpoints (`GET`/`POST`/`DELETE`) |
-| `apps/sql-api/` | SQL API Lambda handlers (authorizer + executor) for API Gateway |
+| `apps/sql-api/` | SQL API Lambda handlers for API Gateway: `ApiKey` authorizer, v1 machine API, and the OAuth MCP server in `src/mcp/server.ts` |
+| `packages/agent-shared/src/agentTools.ts` | Shared catalog of the five agent tools (`list_workspaces`, `get_schema`, `get_guide`, `sql_query`, `sql_execute`) that both the MCP server and the web chat render |
+| `packages/agent-shared/src/agentResults.ts` | Shared agent tool result envelope and the remediation instructions both surfaces return |
 | `apps/web/src/server/demo/data.ts` | Static demo data for demo mode without a DB |
 | `apps/web/src/lib/demoMode.ts` | Demo mode check; enabled by `demo=true` browser cookie toggled in the UI, no env var needed |
 | `infra/docker/compose.yml` | Local Docker Compose for Postgres, migrate, web, and worker |
@@ -127,7 +131,7 @@ AWS profile and region setup is in `## AWS Deployment`. Start from logs and trac
 
 ## Reference
 
-- [docs/architecture.md](docs/architecture.md) - system overview, data model, multi-currency design, auth model
+- [docs/architecture.md](docs/architecture.md) - system overview, data model, agent tool surfaces, multi-currency design, auth model
 - [docs/deployment.md](docs/deployment.md) - local Docker Compose and AWS CDK setup
 - [docs/langfuse-operations.md](docs/langfuse-operations.md) - Langfuse trace shape, filters, and telemetry troubleshooting
 - [infra/aws/README.md](infra/aws/README.md) - full AWS CDK deployment guide
