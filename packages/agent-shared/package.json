@@ -52,6 +52,17 @@
       },
       "default": "./dist/agentProtocol.js"
     },
+    "./agent-tools": {
+      "import": {
+        "types": "./dist/agentTools.d.ts",
+        "default": "./dist/agentTools.js"
+      },
+      "require": {
+        "types": "./dist-cjs/agentTools.d.cts",
+        "default": "./dist-cjs/agentTools.cjs"
+      },
+      "default": "./dist/agentTools.js"
+    },
     "./agent-results": {
       "import": {
         "types": "./dist/agentResults.d.ts",

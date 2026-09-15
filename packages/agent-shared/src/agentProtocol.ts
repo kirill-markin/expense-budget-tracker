@@ -122,3 +122,71 @@ export const WRITING_DATA_GUIDE = [
   WRITE_PROGRESS_GUIDE,
   WRITE_FINAL_VERIFICATION_GUIDE,
 ].join("\n\n");
+
+// Exported so every recipe this guide teaches production agents is validated against the restricted SQL policy in tests.
+export const ACCOUNT_BALANCES_QUERY_EXAMPLE = `SELECT account_id, currency, SUM(amount) AS balance FROM ledger_entries GROUP BY account_id, currency ORDER BY account_id`;
+
+export const RECENT_TRANSACTIONS_QUERY_EXAMPLE = `SELECT ts, account_id, amount, currency, kind, category, counterparty, note FROM ledger_entries WHERE ts >= '<start-date YYYY-MM-DD>' AND ts < '<exclusive-end-date YYYY-MM-DD>' ORDER BY ts DESC LIMIT 50`;
+
+export const SPENDING_BY_CATEGORY_QUERY_EXAMPLE = `SELECT category, SUM(amount) AS total FROM ledger_entries WHERE kind = 'spend' AND ts >= '<month-start YYYY-MM-DD>' AND ts < '<next-month-start YYYY-MM-DD>' GROUP BY category ORDER BY total`;
+
+/**
+ * One self-contained statement on purpose: the FULL OUTER JOIN keeps the
+ * reconciliation semantics in the SQL the agent runs rather than in prose it may
+ * skip. planned_value is a positive absolute in both directions, while ledger
+ * amounts keep their own sign: spend actuals are negative, so their variance is
+ * planned + actual, and income actuals are positive, so their variance is
+ * planned - actual. The CASE keeps both directions correct in one statement.
+ */
+export const BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE = `WITH ranked_plan AS (
+  SELECT direction, category, planned_value,
+         ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC, planned_value DESC, currency DESC) AS rn
+  FROM budget_lines
+  WHERE budget_month = '<month-start YYYY-MM-DD>' AND kind = 'base'
+),
+plan AS (
+  SELECT direction, category, planned_value AS planned
+  FROM ranked_plan
+  WHERE rn = 1
+),
+actual AS (
+  SELECT kind AS direction, category, SUM(amount) AS spent
+  FROM ledger_entries
+  WHERE ts >= '<month-start YYYY-MM-DD>' AND ts < '<next-month-start YYYY-MM-DD>' AND kind IN ('spend', 'income')
+  GROUP BY kind, category
+)
+SELECT COALESCE(p.direction, a.direction) AS direction,
+       COALESCE(p.category, a.category) AS category,
+       COALESCE(p.planned, 0) AS planned,
+       COALESCE(a.spent, 0) AS actual,
+       CASE WHEN COALESCE(p.direction, a.direction) = 'spend' THEN COALESCE(p.planned, 0) + COALESCE(a.spent, 0) ELSE COALESCE(p.planned, 0) - COALESCE(a.spent, 0) END AS remaining
+FROM plan p FULL OUTER JOIN actual a ON p.direction = a.direction AND p.category = a.category
+ORDER BY direction, category`;
+
+export const FX_CONVERSION_QUERY_EXAMPLE = `SELECT le.*, fr.rate AS to_report, le.amount * fr.rate AS amount_report
+FROM ledger_entries le
+LEFT JOIN fx_rates_daily fr
+  ON fr.base_currency = le.currency
+ AND fr.quote_currency = '<reporting-currency>'
+ AND fr.calendar_date = le.ts::date`;
+
+export const QUERY_RECIPES_GUIDE = `## Query recipes
+
+Derive explicit YYYY-MM-DD literals in the user's timezone before running SQL, and filter with closed-open ranges: ts >= start date and ts < exclusive end date.
+
+### Account balances
+${ACCOUNT_BALANCES_QUERY_EXAMPLE}
+
+### Recent transactions
+${RECENT_TRANSACTIONS_QUERY_EXAMPLE}
+
+### Spending by category (explicit month)
+${SPENDING_BY_CATEGORY_QUERY_EXAMPLE}
+
+### Base budget plan vs actual (explicit month)
+By convention planned_value is stored in the workspace reporting currency, but the schema does not enforce that, so read budget_lines.currency first when a workspace may still hold legacy rows in another currency. Ledger amounts stay in each entry's own currency, so in a multi-currency workspace convert the actuals with the FX recipe below before comparing.
+${BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE}
+
+### FX conversion at query time
+Convert to the workspace reporting currency read from workspace_settings.reporting_currency. Coverage can be partial, and SUM skips NULLs silently, so count the rows where to_report IS NULL before aggregating: when every row is NULL no rate exists for that pair and date and the column is unconverted rather than zero, and when only some rows are NULL report the gap instead of an understated converted total.
+${FX_CONVERSION_QUERY_EXAMPLE}`;

@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
+  QUERY_RECIPES_GUIDE,
   SQL_DIALECT_GUIDE,
   WRITING_DATA_GUIDE,
 } from "@expense-budget-tracker/agent-shared/agent-protocol";
@@ -68,7 +69,7 @@ const EXPECTED_TOOL_DESCRIPTORS: ReadonlyArray<ExpectedToolDescriptor> = [
   {
     name: "get_guide",
     title: "Fetch expense usage protocol",
-    description: "Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, and with topic sql_dialect before writing SQL against this restricted surface.",
+    description: "Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, with topic sql_dialect before writing SQL against this restricted surface, and with topic query_recipes before composing reporting SQL by hand.",
     inputProperties: ["topic"],
     requiredInputProperties: ["topic"],
     scopes: ["expenses:read"],
@@ -413,6 +414,7 @@ test("get_guide serves the shared protocol text without reaching any data servic
       for (const [topic, guide] of [
         ["sql_dialect", SQL_DIALECT_GUIDE],
         ["writing_data", WRITING_DATA_GUIDE],
+        ["query_recipes", QUERY_RECIPES_GUIDE],
       ] as const) {
         const result = await client.callTool({ name: "get_guide", arguments: { topic } });
         const data = requireJsonObject(
