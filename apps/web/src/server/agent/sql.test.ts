@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult as PgQueryResult } from "pg";
+import { getAgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import {
   MAX_SQL_RESULT_CHARS,
   validateExpenseSql,
@@ -30,6 +31,10 @@ const MUTATION_ROW_COUNT = 60;
 const OVERSIZED_SQL = "SELECT entry_id, note FROM ledger_entries";
 const FITTING_SQL = `SELECT entry_id, note FROM ledger_entries LIMIT ${String(FITTING_ROW_COUNT)}`;
 const MUTATION_SQL = "DELETE FROM ledger_entries WHERE workspace_id = 'workspace-1' RETURNING entry_id, note";
+const JOIN_SQL = `SELECT entries.entry_id, entries.note FROM ledger_entries AS entries JOIN account_metadata AS metadata ON metadata.account_id = entries.account_id LIMIT ${String(FITTING_ROW_COUNT)}`;
+// A statement text this long leaves no room for the hints of the relation it
+// touches, so only shedding them brings the result inside the budget.
+const HINT_SHEDDING_SQL = `SELECT entry_id, note FROM ledger_entries WHERE note = '${"n".repeat(MAX_SQL_RESULT_CHARS - 1_000)}'`;
 
 const createQueryResult = (
   command: string,
@@ -77,7 +82,7 @@ const createCursorQueryFn = (): QueryFn => {
 // pattern the other module-mock tests in apps/web/src/server follow: the ESM
 // module cache is shared across this file, so registrations made after the
 // first import would not reach the imported module.
-test("executeAgentSql bounds the result it returns in characters and keeps a cut mutation's affected row count", async (t): Promise<void> => {
+test("executeAgentSql bounds the result in characters, sheds hints before rows are lost for good, and keeps a cut mutation's affected row count", async (t): Promise<void> => {
   const queryFn = createCursorQueryFn();
 
   t.mock.module("@/server/db", {
@@ -119,10 +124,22 @@ test("executeAgentSql bounds the result it returns in characters and keeps a cut
     "workspace-1",
     validateExpenseSql(MUTATION_SQL),
   );
+  const joined = await executeAgentSql(
+    AUTHENTICATED,
+    "workspace-1",
+    validateExpenseSql(JOIN_SQL),
+  );
+  const hintShedding = await executeAgentSql(
+    AUTHENTICATED,
+    "workspace-1",
+    validateExpenseSql(HINT_SHEDDING_SQL),
+  );
 
   assert.ok(oversized);
   assert.ok(fitting);
   assert.ok(mutation);
+  assert.ok(joined);
+  assert.ok(hintShedding);
   const cutStatement = oversized.statements[0];
   const wholeStatement = fitting.statements[0];
   const mutationStatement = mutation.statements[0];
@@ -145,6 +162,11 @@ test("executeAgentSql bounds the result it returns in characters and keeps a cut
   assert.equal(wholeStatement.returnedRowCount, FITTING_ROW_COUNT);
   assert.equal(wholeStatement.totalRowCount, FITTING_ROW_COUNT);
   assert.equal(wholeStatement.truncated, false);
+  // A statement documents the relations it touched from the one shared source.
+  assert.deepEqual(wholeStatement.hints, {
+    ledger_entries: getAgentSchemaHints("ledger_entries"),
+  });
+  assert.equal(fitting.hintsDropped, false);
 
   assert.ok(JSON.stringify(mutation).length <= MAX_SQL_RESULT_CHARS);
   assert.ok(mutationStatement.rows.length > 0);
@@ -154,4 +176,24 @@ test("executeAgentSql bounds the result it returns in characters and keeps a cut
   assert.equal(mutationStatement.returnedRowCount, mutationStatement.rows.length);
   assert.equal(mutationStatement.totalRowCount, MUTATION_ROW_COUNT);
   assert.equal(mutationStatement.truncated, true);
+
+  const joinedStatement = joined.statements[0];
+  assert.ok(joinedStatement);
+  // Every referenced relation gets its own entry, keyed by its own name, so a
+  // statement that joins two of them documents both.
+  assert.equal(joinedStatement.referencedRelations.length, 2);
+  assert.deepEqual(joinedStatement.hints, {
+    ledger_entries: getAgentSchemaHints("ledger_entries"),
+    account_metadata: getAgentSchemaHints("account_metadata"),
+  });
+
+  const shedStatement = hintShedding.statements[0];
+  assert.ok(shedStatement);
+  // The hints are re-readable from GET /api/agent/schema, so a result that
+  // cannot afford them sheds them and stays inside the budget it advertises.
+  assert.ok(JSON.stringify(hintShedding).length <= MAX_SQL_RESULT_CHARS);
+  assert.equal(hintShedding.hintsDropped, true);
+  assert.equal(shedStatement.hints, undefined);
+  assert.deepEqual(shedStatement.referencedRelations, ["ledger_entries"]);
+  assert.equal(shedStatement.totalRowCount, OVERSIZED_ROW_COUNT);
 });

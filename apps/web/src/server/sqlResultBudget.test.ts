@@ -3,6 +3,8 @@ import test from "node:test";
 import { MAX_SQL_RESULT_CHARS } from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
   applySqlResultCharBudget,
+  applyStagedSqlResultCharBudget,
+  type BudgetedSqlShrinkStage,
   type BudgetedSqlStatement,
   type BudgetedSqlStatementEntry,
 } from "@/server/sqlResultBudget";
@@ -11,6 +13,29 @@ type TestStatement = BudgetedSqlStatement & Readonly<{
   sql: string;
   totalRowCount: number;
 }>;
+
+// Stands in for the agent SQL surface's per-statement hints: a re-readable field
+// of fixed size that no row cut can pay for.
+type HintedTestStatement = TestStatement & Readonly<{
+  hints?: string;
+}>;
+
+// The discrete stage the agent SQL surface passes, which rebuilds every entry
+// without the sheddable field before the row search runs over it.
+const WITHOUT_HINTS_STAGE: BudgetedSqlShrinkStage<HintedTestStatement> = {
+  build: (entry) => ({
+    ...entry,
+    statement: {
+      sql: entry.statement.sql,
+      rows: entry.statement.rows,
+      rowCount: entry.statement.rowCount,
+      returnedRowCount: entry.statement.returnedRowCount,
+      totalRowCount: entry.statement.totalRowCount,
+      truncated: entry.statement.truncated,
+    },
+  }),
+  shrunk: true,
+};
 
 // 600-char notes, the row width that makes an ordinary 100-row read oversized.
 const createRows = (rowCount: number): ReadonlyArray<Readonly<Record<string, unknown>>> =>
@@ -39,6 +64,31 @@ const asReads = (
   statements: ReadonlyArray<TestStatement>,
 ): ReadonlyArray<BudgetedSqlStatementEntry<TestStatement>> =>
   statements.map((statement) => ({ statement, isMutating: false }));
+
+// Wide enough that the hints alone cost more than a row, as the shared hints of
+// one referenced relation do.
+const HINT_CHARS = 1_200;
+
+const createHintedStatement = (sql: string, rowCount: number): HintedTestStatement => ({
+  ...createStatement(sql, rowCount),
+  hints: "h".repeat(HINT_CHARS),
+});
+
+const measureHinted = (candidate: ReadonlyArray<HintedTestStatement>): number =>
+  JSON.stringify({ statements: candidate }).length;
+
+const asHintedReads = (
+  statements: ReadonlyArray<HintedTestStatement>,
+): ReadonlyArray<BudgetedSqlStatementEntry<HintedTestStatement>> =>
+  statements.map((statement) => ({ statement, isMutating: false }));
+
+const withoutRows = (statement: HintedTestStatement): HintedTestStatement => ({
+  ...statement,
+  rows: [],
+  rowCount: 0,
+  returnedRowCount: 0,
+  truncated: true,
+});
 
 test("applySqlResultCharBudget leaves a result that fits untouched", (): void => {
   const statements = [createStatement("SELECT entry_id, note FROM ledger_entries LIMIT 10", 10)];
@@ -150,6 +200,83 @@ test("applySqlResultCharBudget drops every row instead of failing a read whose s
 
   assert.ok(statement);
   assert.ok(measure(budgeted) > MAX_SQL_RESULT_CHARS);
+  assert.equal(statement.rows.length, 0);
+  assert.equal(statement.rowCount, 0);
+  assert.equal(statement.returnedRowCount, 0);
+  assert.equal(statement.totalRowCount, 2);
+  assert.equal(statement.truncated, true);
+});
+
+test("applyStagedSqlResultCharBudget drops rows before it sheds a stage", (): void => {
+  const statements = [createHintedStatement("SELECT entry_id, note FROM ledger_entries LIMIT 100", 100)];
+  assert.ok(measureHinted(statements) > MAX_SQL_RESULT_CHARS);
+
+  const budgeted = applyStagedSqlResultCharBudget(
+    asHintedReads(statements),
+    measureHinted,
+    [WITHOUT_HINTS_STAGE],
+  );
+  const statement = budgeted.statements[0];
+
+  assert.ok(statement);
+  assert.ok(measureHinted(budgeted.statements) <= MAX_SQL_RESULT_CHARS);
+  // Rows paid for the budget on their own, so the hints survived untouched.
+  assert.equal(budgeted.shrunk, false);
+  assert.equal(statement.hints, "h".repeat(HINT_CHARS));
+  assert.ok(statement.rows.length > 0);
+  assert.ok(statement.rows.length < 100);
+});
+
+test("applyStagedSqlResultCharBudget sheds a stage when no row prefix pays for it", (): void => {
+  const oversizedText = createHintedStatement(
+    `SELECT entry_id, note FROM ledger_entries WHERE note = '${"n".repeat(MAX_SQL_RESULT_CHARS - 1_000)}'`,
+    10,
+  );
+  // This text leaves room for rows or for hints, but not for both: the unshrunk
+  // stage is over budget with every row already dropped, while the shed stage
+  // fits, so only shedding the hints can save the statement.
+  assert.ok(measureHinted([withoutRows(oversizedText)]) > MAX_SQL_RESULT_CHARS);
+  assert.ok(measureHinted([WITHOUT_HINTS_STAGE.build({
+    statement: withoutRows(oversizedText),
+    isMutating: false,
+  }).statement]) <= MAX_SQL_RESULT_CHARS);
+
+  const budgeted = applyStagedSqlResultCharBudget(
+    asHintedReads([oversizedText]),
+    measureHinted,
+    [WITHOUT_HINTS_STAGE],
+  );
+  const statement = budgeted.statements[0];
+
+  assert.ok(statement);
+  assert.ok(measureHinted(budgeted.statements) <= MAX_SQL_RESULT_CHARS);
+  assert.equal(budgeted.shrunk, true);
+  assert.equal(statement.hints, undefined);
+  // The shed stage searched the full row set again instead of inheriting the
+  // zero rows the previous stage ended on, so the room it freed ships a row.
+  assert.ok(statement.rows.length > 0);
+  assert.equal(statement.totalRowCount, 10);
+});
+
+test("applyStagedSqlResultCharBudget ships the smallest stage when nothing fits", (): void => {
+  const statements = [createHintedStatement(
+    `SELECT entry_id, note FROM ledger_entries WHERE note = '${"n".repeat(MAX_SQL_RESULT_CHARS)}'`,
+    2,
+  )];
+
+  const budgeted = applyStagedSqlResultCharBudget(
+    asHintedReads(statements),
+    measureHinted,
+    [WITHOUT_HINTS_STAGE],
+  );
+  const statement = budgeted.statements[0];
+
+  assert.ok(statement);
+  // The response ships over budget rather than failing a read that already ran,
+  // but it ships the smallest payload: no rows and no sheddable field.
+  assert.ok(measureHinted(budgeted.statements) > MAX_SQL_RESULT_CHARS);
+  assert.equal(budgeted.shrunk, true);
+  assert.equal(statement.hints, undefined);
   assert.equal(statement.rows.length, 0);
   assert.equal(statement.rowCount, 0);
   assert.equal(statement.returnedRowCount, 0);
