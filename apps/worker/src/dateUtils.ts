@@ -18,6 +18,14 @@ export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+export function toEpochSeconds(dateStr: string): number {
+  return Date.parse(dateStr + "T00:00:00Z") / 1000;
+}
+
+export function fromEpochSeconds(seconds: number): string {
+  return new Date(seconds * 1000).toISOString().slice(0, 10);
+}
+
 export function formatDdMmYyyy(dateStr: string): string {
   const [year, month, day] = dateStr.split("-");
   return `${day}/${month}/${year}`;

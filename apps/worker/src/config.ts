@@ -39,6 +39,8 @@ export async function getDatabaseUrl(): Promise<string> {
 // USD is the target — no rate needed (implicit 1.0).
 // RUB is fetched separately via CBR (ECB suspended RUB since March 2022).
 // RSD is fetched separately via NBS (National Bank of Serbia).
+// BGN stops at 2025-12-31: Bulgaria adopted the euro and ECB no longer publishes it,
+// so the "ECB did not return rates for currencies: BGN" warning is expected, not a fetcher failure.
 export const ECB_CURRENCIES: string[] = ["BGN", "DKK", "EUR", "GBP", "TRY"];
 
 export const ECB_EARLIEST_DATE: string = "1999-01-04";
@@ -79,3 +81,21 @@ export const NBS_MAX_COUNT: number = 1000;
 export const NBU_EARLIEST_DATE: string = "1996-01-06";
 
 export const NBU_BASE_URL: string = "https://bank.gov.ua/NBU_Exchange/exchange_site";
+
+// ---------------------------------------------------------------------------
+// KuCoin (GRAM market data)
+// ---------------------------------------------------------------------------
+
+// KuCoin public spot market data — no API key required.
+// Docs: https://www.kucoin.com/docs/rest/spot-trading/market-data/get-klines
+export const KUCOIN_CANDLES_URL: string = "https://api.kucoin.com/api/v1/market/candles";
+
+// GRAM is Gram (prev. Toncoin); no central bank publishes it, so a market close is used.
+export const KUCOIN_GRAM_SYMBOL: string = "GRAM-USDT";
+
+// Earliest daily GRAM-USDT candle on KuCoin.
+export const KUCOIN_GRAM_EARLIEST_DATE: string = "2022-10-27";
+
+// A response is capped at this many candles and truncates to the newest ones,
+// so every request window must span at most this many days.
+export const KUCOIN_MAX_CANDLES: number = 1500;

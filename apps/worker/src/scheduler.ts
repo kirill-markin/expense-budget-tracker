@@ -14,6 +14,7 @@ import { run as runCbr } from "./fetchers/cbr";
 import { run as runNbs } from "./fetchers/nbs";
 import { run as runNbu } from "./fetchers/nbu";
 import { run as runUsdt } from "./fetchers/usdt";
+import { run as runKucoin } from "./fetchers/kucoin";
 import { rebuildDailyRates } from "./rebuildDailyRates";
 
 async function runFetcher(name: string, fetcherFn: () => Promise<unknown>): Promise<void> {
@@ -34,6 +35,7 @@ async function runAll(): Promise<void> {
   await runFetcher("NBS", runNbs);
   await runFetcher("NBU", runNbu);
   await runFetcher("USDT", runUsdt);
+  await runFetcher("KuCoin", runKucoin);
   await runDailyRebuild();
 }
 
