@@ -112,6 +112,17 @@ const unexpectedLog = (event: unknown): never => {
   throw new Error(`A chat tool logged an unexpected error: ${JSON.stringify(event)}`);
 };
 
+type LoggedChatErrorEvent = Readonly<{ error?: string; requestId?: string }>;
+
+/**
+ * A logged event is compared field by field rather than as its JSON text.
+ * Serialization escapes any quote inside the message, so a substring check
+ * against the serialized event misses a message that was logged verbatim, and
+ * the same escaping would hide a leaked message from the redaction checks.
+ */
+const parseLoggedEvent = (serialized: string | undefined): LoggedChatErrorEvent =>
+  JSON.parse(String(serialized)) as LoggedChatErrorEvent;
+
 type ToolResultPayload = Readonly<{
   ok: boolean;
   data?: Readonly<Record<string, unknown>>;
@@ -402,15 +413,23 @@ test("a non-statement execution failure is redacted instead of blamed on the SQL
 
   assert.equal(result.succeeded, false);
   assert.equal(result.workspaceId, null);
-  assert.equal(parseToolPayload(result.output).error?.code, "internal_error");
-  assert.ok(!result.output.includes(internalMessage));
-  assert.ok(!result.output.includes("call sql_query again"));
+  // The whole model-facing payload is pinned instead of probed for the internal
+  // text: this message carries quotes, and a leak of it into the serialized
+  // output would arrive escaped and slip past a substring check. The remedy is
+  // pinned as a literal rather than through its shared builder, so rewording it
+  // to blame the statement fails here instead of moving with the expectation.
+  assert.deepEqual(parseToolPayload(result.output), {
+    ok: false,
+    error: {
+      code: "internal_error",
+      message: "The tool request could not be completed",
+    },
+    instructions: "Retry sql_query once. If it fails again, stop and report the server error.",
+  });
   assert.equal(loggedEvents.length, 1);
-  assert.ok(loggedEvents[0]?.includes(internalMessage));
-  assert.equal(
-    (JSON.parse(String(loggedEvents[0])) as Readonly<{ requestId?: string }>).requestId,
-    CONTEXT.requestId,
-  );
+  const loggedEvent = parseLoggedEvent(loggedEvents[0]);
+  assert.ok(loggedEvent.error?.includes(internalMessage));
+  assert.equal(loggedEvent.requestId, CONTEXT.requestId);
 });
 
 /**
@@ -816,11 +835,9 @@ test("an unexpected discovery failure is redacted for the model and logged in fu
   assert.equal(parseToolPayload(result.output).error?.code, "internal_error");
   assert.ok(!result.output.includes(internalMessage));
   assert.equal(loggedEvents.length, 1);
-  assert.ok(loggedEvents[0]?.includes(internalMessage));
-  assert.equal(
-    (JSON.parse(String(loggedEvents[0])) as Readonly<{ requestId?: string }>).requestId,
-    CONTEXT.requestId,
-  );
+  const loggedEvent = parseLoggedEvent(loggedEvents[0]);
+  assert.ok(loggedEvent.error?.includes(internalMessage));
+  assert.equal(loggedEvent.requestId, CONTEXT.requestId);
 });
 
 /** An expected, model-actionable failure keeps its message and stays out of the logs. */
@@ -870,11 +887,9 @@ test("an unexpected workspace lookup failure on a SQL tool is redacted and logge
   assert.equal(parseToolPayload(result.output).error?.code, "internal_error");
   assert.ok(!result.output.includes(internalMessage));
   assert.equal(loggedEvents.length, 1);
-  assert.ok(loggedEvents[0]?.includes(internalMessage));
-  assert.equal(
-    (JSON.parse(String(loggedEvents[0])) as Readonly<{ requestId?: string }>).requestId,
-    CONTEXT.requestId,
-  );
+  const loggedEvent = parseLoggedEvent(loggedEvents[0]);
+  assert.ok(loggedEvent.error?.includes(internalMessage));
+  assert.equal(loggedEvent.requestId, CONTEXT.requestId);
 });
 
 /**
@@ -943,10 +958,18 @@ test("a turn that is no longer active is never told to retry the call", async ()
 
     assert.equal(result.succeeded, false);
     assert.equal(result.workspaceId, null);
-    const payload = parseToolPayload(result.output);
-    assert.equal(payload.error?.code, "chat_turn_not_active");
-    assert.deepEqual(payload.error?.details, { retryable: false });
-    assert.ok(!result.output.includes("call sql_execute again"));
+    // Pinned whole rather than probed for a retry phrase. The no-retry remedy
+    // negates that phrase and therefore contains it, so a substring check
+    // reports an invitation to repeat the mutation that is not in the payload.
+    assert.deepEqual(parseToolPayload(result.output), {
+      ok: false,
+      error: {
+        code: "chat_turn_not_active",
+        message: "This chat turn is no longer the session's active turn, so the call was abandoned",
+        details: { retryable: false },
+      },
+      instructions: "Stop this task and do not call sql_execute again for this turn.",
+    });
   }
 });
 
