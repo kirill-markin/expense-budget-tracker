@@ -5,6 +5,9 @@
  *                     tables (fx_rates_raw, fx_rates_daily) and readiness checks.
  * queryAs()         — single statement in a transaction with app.user_id and
  *                     app.workspace_id set.
+ * queryAsExistingWorkspace() — same context, but a read-only transaction that
+ *                     provisions nothing. For callers that must not write, such
+ *                     as a chat discovery tool call.
  * withUserContext() — multiple statements in one transaction with app.user_id
  *                     and app.workspace_id. The callback receives a bound
  *                     queryFn sharing one client.
@@ -33,6 +36,7 @@ export const ensureUserProvisioned = facade.ensureUserProvisioned;
 export const ensureTrustedIdentityProvisioned = facade.ensureTrustedIdentityProvisioned;
 export const queryAs = facade.queryAs;
 export const queryAsTrustedIdentity = facade.queryAsTrustedIdentity;
+export const queryAsExistingWorkspace = facade.queryAsExistingWorkspace;
 export const withUserContext = facade.withUserContext;
 export const withUserOnlyContext = facade.withUserOnlyContext;
 export const withRestrictedUserContext = facade.withRestrictedUserContext;

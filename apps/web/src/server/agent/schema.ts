@@ -7,6 +7,7 @@
 import { getAgentSchemaHints, type AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import { getAllowedRelationNames, type AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { queryAsTrustedIdentity } from "@/server/db";
+import { type QueryFn } from "@/server/db/contextRunner";
 import { type UserIdentity } from "@/server/users";
 import { resolveWorkspaceForIdentity } from "@/server/workspaceBootstrap";
 
@@ -34,13 +35,15 @@ export type SchemaRelation = Readonly<{
 
 const ALLOWED_RELATIONS = getAllowedRelationNames();
 
-export const getAllowedSchemaRelations = async (
-  identity: UserIdentity,
+/**
+ * Introspect the allowed relations through a caller-supplied query, which
+ * carries the workspace context the caller already resolved. Callers that must
+ * not create a workspace, such as a chat tool call, depend on this variant.
+ */
+export const getAllowedSchemaRelationsWithQuery = async (
+  queryFn: QueryFn,
 ): Promise<ReadonlyArray<SchemaRelation>> => {
-  const contextWorkspace = await resolveWorkspaceForIdentity(identity, "", "en", null);
-  const result = await queryAsTrustedIdentity(
-    identity,
-    contextWorkspace.workspaceId,
+  const result = await queryFn(
     `SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default
      FROM information_schema.columns
      WHERE table_schema = 'public'
@@ -90,4 +93,13 @@ export const getAllowedSchemaRelations = async (
       ...(hints === undefined ? {} : { hints }),
     };
   });
+};
+
+export const getAllowedSchemaRelations = async (
+  identity: UserIdentity,
+): Promise<ReadonlyArray<SchemaRelation>> => {
+  const contextWorkspace = await resolveWorkspaceForIdentity(identity, "", "en", null);
+  return getAllowedSchemaRelationsWithQuery(
+    (text, params) => queryAsTrustedIdentity(identity, contextWorkspace.workspaceId, text, params),
+  );
 };

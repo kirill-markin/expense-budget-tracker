@@ -119,6 +119,7 @@ export const runOneToolCallWithDependencies = async (
         params.item.name,
         params.item.arguments,
         {
+          requestId: params.requestId,
           userId: params.userId,
           workspaceId: params.workspaceId,
           sessionId: params.sessionId,

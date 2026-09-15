@@ -2,6 +2,7 @@
  * Shared workspace operations for human and agent transports.
  */
 import { queryAs, queryAsTrustedIdentity } from "@/server/db";
+import { type QueryFn } from "@/server/db/contextRunner";
 import { type UserIdentity } from "@/server/users";
 import { resolveWorkspaceForIdentity } from "@/server/workspaceBootstrap";
 
@@ -85,13 +86,27 @@ const executeDeleteWorkspaceQuery = async (
   }
 };
 
+/**
+ * List workspaces through a caller-supplied query, which carries the context the
+ * caller already established. Callers that must not provision, such as a chat
+ * tool call, depend on this variant.
+ */
+export const listWorkspacesWithQuery = async (
+  queryFn: QueryFn,
+  userId: string,
+): Promise<ReadonlyArray<WorkspaceSummary>> => {
+  const result = await queryFn(WORKSPACES_SQL, [userId]);
+  return mapWorkspaceRows(result.rows);
+};
+
 export const listWorkspaces = async (
   userId: string,
   workspaceId: string,
-): Promise<ReadonlyArray<WorkspaceSummary>> => {
-  const result = await queryAs(userId, workspaceId, WORKSPACES_SQL, [userId]);
-  return mapWorkspaceRows(result.rows);
-};
+): Promise<ReadonlyArray<WorkspaceSummary>> =>
+  listWorkspacesWithQuery(
+    (text, params) => queryAs(userId, workspaceId, text, params),
+    userId,
+  );
 
 export const listWorkspacesForTrustedIdentity = async (
   identity: UserIdentity,

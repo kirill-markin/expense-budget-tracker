@@ -35,14 +35,17 @@ const applyContext = async (
   }
 };
 
-export const runWithContext = async <T>(
+type TransactionStart = "BEGIN" | "BEGIN READ ONLY";
+
+const runInTransaction = async <T>(
   pool: DbPool,
+  transactionStart: TransactionStart,
   options: ContextRunnerOptions,
   callback: (queryFn: QueryFn) => Promise<T>,
 ): Promise<T> => {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query(transactionStart);
     await applyContext(client, options);
     const result = await callback(bindQuery(client));
     await client.query("COMMIT");
@@ -55,6 +58,13 @@ export const runWithContext = async <T>(
   }
 };
 
+export const runWithContext = async <T>(
+  pool: DbPool,
+  options: ContextRunnerOptions,
+  callback: (queryFn: QueryFn) => Promise<T>,
+): Promise<T> =>
+  runInTransaction(pool, "BEGIN", options, callback);
+
 export const runStatementWithContext = async (
   pool: DbPool,
   options: ContextRunnerOptions,
@@ -62,3 +72,16 @@ export const runStatementWithContext = async (
   params: ReadonlyArray<unknown>,
 ): Promise<QueryResult> =>
   runWithContext(pool, options, async (queryFn) => queryFn(text, params));
+
+/**
+ * One statement in a read-only transaction. set_config with is_local stays
+ * available, so the RLS context is applied exactly as in a writable
+ * transaction, but the statement itself cannot write.
+ */
+export const runStatementWithReadOnlyContext = async (
+  pool: DbPool,
+  options: ContextRunnerOptions,
+  text: string,
+  params: ReadonlyArray<unknown>,
+): Promise<QueryResult> =>
+  runInTransaction(pool, "BEGIN READ ONLY", options, async (queryFn) => queryFn(text, params));
