@@ -1,6 +1,11 @@
 import { type Pool, type QueryResult } from "pg";
 
-import { runStatementWithContext, runWithContext, type QueryFn } from "@/server/db/contextRunner";
+import {
+  runStatementWithContext,
+  runStatementWithReadOnlyContext,
+  runWithContext,
+  type QueryFn,
+} from "@/server/db/contextRunner";
 import { type UserIdentity } from "@/server/users";
 
 type ContextOptions = Readonly<{
@@ -24,6 +29,7 @@ type DbFacade = Readonly<{
   ensureTrustedIdentityProvisioned: (identity: UserIdentity, workspaceId: string) => Promise<void>;
   queryAs: (userId: string, workspaceId: string, text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
   queryAsTrustedIdentity: (identity: UserIdentity, workspaceId: string, text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
+  queryAsExistingWorkspace: (userId: string, workspaceId: string, text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
   withUserContext: <T>(userId: string, workspaceId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withUserOnlyContext: <T>(userId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withRestrictedUserContext: <T>(userId: string, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
@@ -95,6 +101,33 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
       params,
     );
   },
+  /**
+   * Read existing workspace-scoped data in a read-only transaction under the
+   * caller's RLS context.
+   *
+   * Deliberately skips ensureUserProvisioned: that path upserts the users row,
+   * inserts a missing workspace_settings row for the given workspace, and
+   * ensures user_settings, none of which a read-only call such as a chat
+   * discovery tool may do. The caller must have already established membership;
+   * RLS still confines every row this can return.
+   */
+  queryAsExistingWorkspace: async (
+    userId,
+    workspaceId,
+    text,
+    params,
+  ): Promise<QueryResult> =>
+    runStatementWithReadOnlyContext(
+      dependencies.getPool(),
+      {
+        userId,
+        workspaceId,
+        statementTimeoutMs: null,
+        useRestrictedRole: false,
+      },
+      text,
+      params,
+    ),
   withUserContext: async <T>(
     userId: string,
     workspaceId: string,

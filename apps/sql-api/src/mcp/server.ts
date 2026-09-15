@@ -3,6 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   AGENT_GUIDE_BY_TOPIC,
   AGENT_GUIDE_TOPICS,
+  AGENT_TOOLS_SURFACE_PROFILE,
   GET_GUIDE_TOOL,
   GET_SCHEMA_TOOL,
   getAgentToolInputFieldDescription,
@@ -228,7 +229,7 @@ export const createMcpServerWithDependencies = (
         const workspaces = await dependencies.listWorkspaces(connection.identity, deadline);
         return buildMcpSuccessResult(
           { workspaces },
-          getWorkspaceListSuccessInstructions(workspaces.length),
+          getWorkspaceListSuccessInstructions(workspaces.length, AGENT_TOOLS_SURFACE_PROFILE),
         );
       } catch (error) {
         return buildReadOnlyMcpToolErrorResult(error, LIST_WORKSPACES_TOOL.name);

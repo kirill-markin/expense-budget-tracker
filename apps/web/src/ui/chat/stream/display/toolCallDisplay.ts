@@ -127,11 +127,16 @@ export const formatToolOutput = (
   return formattedOutput;
 };
 
-const isFailedDatabaseQueryOutput = (
-  name: string,
+/**
+ * Every chat tool serializes its failures as an `ok: false` payload: the
+ * discovery tools through the shared result envelope, query_database through its
+ * own error shape. A provider reports such a call as `completed`, so the
+ * transcript has to read the payload to label it as failed.
+ */
+const isFailedToolOutput = (
   output: string | null,
 ): boolean => {
-  if (name !== "query_database" || output === null) return false;
+  if (output === null) return false;
   try {
     const parsed = JSON.parse(output) as unknown;
     return (
@@ -159,13 +164,13 @@ export const getToolCallDisplayState = (
 ): ToolCallDisplayState => {
   const isTerminal = toolCall.status === "completed";
   const isCompleted = (toolCall.providerStatus ?? toolCall.status) === "completed";
-  const isFailedDatabaseQuery = isTerminal
+  const isFailedTool = isTerminal
     && isCompleted
-    && isFailedDatabaseQueryOutput(toolCall.name, toolCall.output);
+    && isFailedToolOutput(toolCall.output);
 
   return {
     label: formatToolLabel(toolCall.name, t),
-    statusLabel: isFailedDatabaseQuery
+    statusLabel: isFailedTool
       ? t("chat.toolStatusFailed")
       : formatToolStatusLabel(toolCall.status, toolCall.providerStatus, t),
     input: formatToolInput(toolCall.name, toolCall.input),

@@ -32,7 +32,24 @@ export const AGENT_GUIDE_BY_TOPIC: Readonly<Record<AgentGuideTopic, string>> = {
 export type AgentSurfaceProfile = Readonly<{
   workspaceSelection: "server-fixed" | "client-chosen";
   statementMode: "single" | "script";
+  /** Tool name this surface registers for reads. Not an AgentToolName, because a surface may register its own SQL tool. */
+  sqlReadToolName: string;
+  /** Tool name this surface registers for approved mutations; equal to sqlReadToolName when one tool does both. */
+  sqlWriteToolName: string;
 }>;
+
+/**
+ * The profile of a surface that renders this catalog unchanged: the client picks
+ * the workspace and one call carries one statement. Every static
+ * successInstructions below is rendered for it, so a narrower surface must
+ * render its own text from its own profile instead of emitting those fields.
+ */
+export const AGENT_TOOLS_SURFACE_PROFILE: AgentSurfaceProfile = {
+  workspaceSelection: "client-chosen",
+  statementMode: "single",
+  sqlReadToolName: "sql_query",
+  sqlWriteToolName: "sql_execute",
+};
 
 export type AgentToolName =
   | "list_workspaces"
@@ -84,17 +101,46 @@ export const WORKSPACE_ID_INPUT_FIELD: AgentToolInputField = {
   required: false,
 };
 
-const WORKSPACE_SELECTION_INSTRUCTIONS = "Choose one returned workspaceId and pass it explicitly to get_schema, sql_query, or sql_execute.";
+const formatSqlToolNames = (profile: AgentSurfaceProfile): string =>
+  profile.sqlReadToolName === profile.sqlWriteToolName
+    ? profile.sqlReadToolName
+    : `${profile.sqlReadToolName} and ${profile.sqlWriteToolName}`;
+
+const buildWorkspaceSelectionInstructions = (profile: AgentSurfaceProfile): string =>
+  profile.sqlReadToolName === profile.sqlWriteToolName
+    ? `Choose one returned workspaceId and pass it explicitly to get_schema or ${profile.sqlReadToolName}.`
+    : `Choose one returned workspaceId and pass it explicitly to get_schema, ${profile.sqlReadToolName}, or ${profile.sqlWriteToolName}.`;
+
+/** get_schema points at the SQL tools that come next, so it must name the ones this surface registers. */
+export const getSchemaSuccessInstructions = (profile: AgentSurfaceProfile): string =>
+  profile.sqlReadToolName === profile.sqlWriteToolName
+    ? `Use only the returned relations and columns. Send reads and approved mutations to ${profile.sqlReadToolName}.`
+    : `Use only the returned relations and columns. Send reads to ${profile.sqlReadToolName} and approved mutations to ${profile.sqlWriteToolName}.`;
+
+/**
+ * The workspaceId field advertises how this surface selects a workspace, so a
+ * server-fixed surface must not invite a workspaceId its SQL tool would ignore.
+ */
+export const getWorkspaceIdInputFieldDescription = (profile: AgentSurfaceProfile): string =>
+  profile.workspaceSelection === "server-fixed"
+    ? `Optional workspaceId returned by list_workspaces. ${formatSqlToolNames(profile)} always acts on the current workspace, so omit this unless you are inspecting another accessible workspace.`
+    : WORKSPACE_ID_INPUT_FIELD.description;
 
 /** list_workspaces is the one tool whose next step depends on how many rows it returned. */
-export const getWorkspaceListSuccessInstructions = (workspaceCount: number): string => {
+export const getWorkspaceListSuccessInstructions = (
+  workspaceCount: number,
+  profile: AgentSurfaceProfile,
+): string => {
   if (workspaceCount === 0) {
     return "No workspaces are available. Create one in Expense Budget Tracker or ask a workspace owner to add you, then call list_workspaces again.";
+  }
+  if (profile.workspaceSelection === "server-fixed") {
+    return `SQL always runs against the current workspace through ${formatSqlToolNames(profile)}. Pass a returned workspaceId only to get_schema, and only to inspect another accessible workspace.`;
   }
   if (workspaceCount === 1) {
     return "Exactly one workspace is available, so workspaceId may be omitted from other tool calls.";
   }
-  return WORKSPACE_SELECTION_INSTRUCTIONS;
+  return buildWorkspaceSelectionInstructions(profile);
 };
 
 export const LIST_WORKSPACES_TOOL = {
@@ -105,10 +151,11 @@ export const LIST_WORKSPACES_TOOL = {
   annotations: READ_ONLY_ANNOTATIONS,
   requiredScope: "expenses:read",
   advertisedScopes: ["expenses:read"],
-  // Only the multi-workspace branch, kept so the catalog stays uniformly typed.
-  // getWorkspaceListSuccessInstructions is the authoritative source: a surface
-  // must call it with the returned row count instead of emitting this string.
-  successInstructions: WORKSPACE_SELECTION_INSTRUCTIONS,
+  // Only the multi-workspace branch of AGENT_TOOLS_SURFACE_PROFILE, kept so the
+  // catalog stays uniformly typed. getWorkspaceListSuccessInstructions is the
+  // authoritative source: a surface must call it with the returned row count and
+  // its own profile instead of emitting this string.
+  successInstructions: buildWorkspaceSelectionInstructions(AGENT_TOOLS_SURFACE_PROFILE),
 } satisfies AgentToolDefinition;
 
 export const GET_SCHEMA_TOOL = {
@@ -119,7 +166,9 @@ export const GET_SCHEMA_TOOL = {
   annotations: READ_ONLY_ANNOTATIONS,
   requiredScope: "expenses:read",
   advertisedScopes: ["expenses:read"],
-  successInstructions: "Use only the returned relations and columns. Send reads to sql_query and approved mutations to sql_execute.",
+  // Rendered for AGENT_TOOLS_SURFACE_PROFILE: a surface that registers different
+  // SQL tools must call getSchemaSuccessInstructions with its own profile.
+  successInstructions: getSchemaSuccessInstructions(AGENT_TOOLS_SURFACE_PROFILE),
 } satisfies AgentToolDefinition;
 
 export const GET_GUIDE_TOOL = {
