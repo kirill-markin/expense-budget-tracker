@@ -13,6 +13,7 @@ import {
 } from "@expense-budget-tracker/agent-shared/agent-tools";
 import type { SchemaRelation } from "@/server/agent/schema";
 import { CHAT_SCHEMA_LIMITS, type ChatWorkspaceContext } from "@/server/chat/dataService";
+import type { ChatSqlExecutionContext } from "@/server/chat/shared";
 import type { WorkspaceSummary } from "@/server/workspaces";
 import {
   executeChatToolCallWithDependencies,
@@ -103,7 +104,7 @@ test("query_database forwards the exact session and turn scope to SQL execution"
     sessionId: "session-1",
     turnId: "turn-1",
   };
-  let receivedContext: OpenAIToolContext | null = null;
+  let receivedContext: ChatSqlExecutionContext | null = null;
 
   const result = await executeChatToolCallWithDependencies(
     "query_database",
