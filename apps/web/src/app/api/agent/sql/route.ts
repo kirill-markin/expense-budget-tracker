@@ -15,6 +15,7 @@ import { buildSuccessEnvelope } from "@/server/agent/envelope";
 import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agent/responses";
 import { executeAgentSql, getAgentSqlAllowedRelations, getUserSqlExecutionMessage, isUserSqlExecutionError } from "@/server/agent/sql";
 import { resolveWorkspaceIdForSql } from "@/server/agent/workspaceSelection";
+import { log, MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "@/server/logger";
 
 type AgentSqlBody = Readonly<{
   sql?: unknown;
@@ -101,12 +102,14 @@ type AgentSqlRouteDependencies = Readonly<{
   authenticateAgentRequest: (request: Request) => Promise<AgentAuthenticatedRequest>;
   resolveWorkspaceIdForSql: typeof resolveWorkspaceIdForSql;
   executeAgentSql: typeof executeAgentSql;
+  log: typeof log;
 }>;
 
 const DEFAULT_AGENT_SQL_ROUTE_DEPENDENCIES: AgentSqlRouteDependencies = {
   authenticateAgentRequest,
   resolveWorkspaceIdForSql,
   executeAgentSql,
+  log,
 };
 
 export const postAgentSqlRouteWithDeps = async (
@@ -191,6 +194,12 @@ export const postAgentSqlRouteWithDeps = async (
     }
 
     if (error instanceof SqlPolicyError) {
+      dependencies.log({
+        domain: "sql-api",
+        action: "sql_policy_rejected",
+        code: error.code,
+        message: error.message.slice(0, MAX_SQL_POLICY_LOG_MESSAGE_CHARS),
+      });
       return jsonAgentError(
         400,
         error.code,

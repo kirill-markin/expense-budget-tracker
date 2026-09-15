@@ -112,6 +112,27 @@ const unexpectedLog = (event: unknown): never => {
   throw new Error(`A chat tool logged an unexpected error: ${JSON.stringify(event)}`);
 };
 
+/**
+ * A policy rejection is the one expected failure that logs, so the tests that
+ * cause one collect the events instead of refusing them.
+ */
+const createLogCollector = (events: Array<string>): ((event: unknown) => void) =>
+  (event: unknown): void => {
+    events.push(JSON.stringify(event));
+  };
+
+type LoggedPolicyRejection = Readonly<{
+  domain?: string;
+  action?: string;
+  code?: string;
+  message?: string;
+}>;
+
+const parsePolicyRejections = (
+  events: ReadonlyArray<string>,
+): ReadonlyArray<LoggedPolicyRejection> =>
+  events.map((event) => JSON.parse(event) as LoggedPolicyRejection);
+
 type LoggedChatErrorEvent = Readonly<{ error?: string; requestId?: string }>;
 
 /**
@@ -190,9 +211,10 @@ test("sql_query forwards the exact session and turn scope to SQL execution", asy
  */
 test("each SQL tool runs the single-statement validator that matches it", async (): Promise<void> => {
   const executions: Array<SqlExecution> = [];
+  const loggedEvents: Array<string> = [];
   const dependencies = {
     execQuery: createRecordingExecQuery(executions),
-    log: unexpectedLog,
+    log: createLogCollector(loggedEvents),
     listChatWorkspaces: listAllWorkspaces,
     loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
   };
@@ -237,16 +259,22 @@ test("each SQL tool runs the single-statement validator that matches it", async 
   assert.equal(parseToolPayload(mutationSentToRead.output).error?.code, "read_only_sql_required");
   assert.equal(readSentToWrite.succeeded, false);
   assert.equal(parseToolPayload(readSentToWrite.output).error?.code, "mutation_sql_required");
+  // The two accepted calls stay silent; each rejection is recorded exactly once.
+  assert.deepEqual(
+    parsePolicyRejections(loggedEvents).map((event) => event.code),
+    ["read_only_sql_required", "mutation_sql_required"],
+  );
 });
 
 test("a multi-statement script is rejected with single_statement_required", async (): Promise<void> => {
+  const loggedEvents: Array<string> = [];
   const result = await executeChatToolCallWithDependencies(
     "sql_query",
     JSON.stringify({ sql: `${READ_SQL}; SELECT currency FROM accounts` }),
     CONTEXT,
     {
       execQuery: unusedExecQuery,
-      log: unexpectedLog,
+      log: createLogCollector(loggedEvents),
       listChatWorkspaces: unusedListChatWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
     },
@@ -256,6 +284,14 @@ test("a multi-statement script is rejected with single_statement_required", asyn
   const payload = parseToolPayload(result.output);
   assert.equal(payload.error?.code, "single_statement_required");
   assert.match(payload.instructions, /call sql_query once for each statement/u);
+  // The whole event is pinned: the rejected statement must never join it, and
+  // the raw policy message is recorded rather than the chat-specific rewrite.
+  assert.deepEqual(parsePolicyRejections(loggedEvents), [{
+    domain: "sql-api",
+    action: "sql_policy_rejected",
+    code: "single_statement_required",
+    message: "This SQL endpoint accepts exactly one statement",
+  }]);
 });
 
 /**
@@ -266,9 +302,10 @@ test("a multi-statement script is rejected with single_statement_required", asyn
  */
 test("the deprecated query_database alias runs the policy of the tool that replaced it", async (): Promise<void> => {
   const executions: Array<SqlExecution> = [];
+  const loggedEvents: Array<string> = [];
   const dependencies = {
     execQuery: createRecordingExecQuery(executions),
-    log: unexpectedLog,
+    log: createLogCollector(loggedEvents),
     listChatWorkspaces: listAllWorkspaces,
     loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
   };
@@ -304,6 +341,10 @@ test("the deprecated query_database alias runs the policy of the tool that repla
   const payload = parseToolPayload(script.output);
   assert.equal(payload.error?.code, "single_statement_required");
   assert.match(payload.instructions, /call sql_execute once for each statement/u);
+  assert.deepEqual(
+    parsePolicyRejections(loggedEvents).map((event) => event.code),
+    ["single_statement_required"],
+  );
 });
 
 test("sql_execute runs against an explicit workspaceId the caller is a member of", async (): Promise<void> => {

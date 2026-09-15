@@ -8,6 +8,7 @@ import {
   withReadOnlyRestrictedTrustedIdentityContext,
   withRestrictedTrustedIdentityContext,
 } from "./db.js";
+import { log } from "./logger.js";
 import {
   handleCreateWorkspaceRoute,
   handleDiscoveryRoute,
@@ -29,6 +30,7 @@ export const createMachineApiHandler = (
 ): ((event: APIGatewayProxyEvent) => Promise<APIGatewayProxyResult>) => {
   const dependencies: MachineApiDependencies = {
     ensureTrustedIdentityProvisioned,
+    log,
     queryAsTrustedIdentity,
     queryAsTrustedIdentityBeforeDeadline,
     resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline,

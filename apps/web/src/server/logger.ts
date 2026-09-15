@@ -1,3 +1,4 @@
+import type { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
 
 type ChatVendor = "openai";
@@ -212,9 +213,35 @@ type ApiEvent =
   | Readonly<{ domain: "api"; action: "shutdown_draining"; signal: string }>
   | Readonly<{ domain: "api"; action: "shutdown_chat_request_rejected"; route: string; method: string }>;
 
+/**
+ * A restricted SQL policy rejection, emitted by every surface that turns one
+ * into a response: the agent SQL route and the web chat SQL tools. It is
+ * ordinary client traffic, so it stays out of the `error` action the CloudWatch
+ * web error alarm pages on. Only the policy code and the policy reason are
+ * logged: no submitted statement text, no parameter values and no result rows.
+ * What these messages interpolate is SQL identifiers and bounded counts, and an
+ * identifier is quoted verbatim, so the reason is cut to
+ * MAX_SQL_POLICY_LOG_MESSAGE_CHARS before it is logged.
+ */
+type SqlPolicyRejectedEvent = Readonly<{
+  domain: "sql-api";
+  action: "sql_policy_rejected";
+  code: SqlPolicyError["code"];
+  message: string;
+}>;
+
+/**
+ * A policy message can quote an identifier copied verbatim from the submitted
+ * statement, and the policy caps only the whole script, so a single rejection
+ * could otherwise write a ~100 KB log line. Callers cut the logged reason to
+ * this prefix; the message returned to the caller is never truncated.
+ */
+export const MAX_SQL_POLICY_LOG_MESSAGE_CHARS = 500;
+
 type SqlApiEvent =
   | Readonly<{ domain: "sql-api"; action: "query"; durationMs: number; rowCount: number }>
-  | Readonly<{ domain: "sql-api"; action: "error"; error: string }>;
+  | Readonly<{ domain: "sql-api"; action: "error"; error: string }>
+  | SqlPolicyRejectedEvent;
 
 type AuthEvent =
   | Readonly<{ domain: "auth"; action: "refresh" }>

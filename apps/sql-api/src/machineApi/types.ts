@@ -1,6 +1,7 @@
 import type { AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { AllowedRelationName } from "@expense-budget-tracker/agent-shared/sql-policy";
+import type { log } from "../logger.js";
 import {
   ensureTrustedIdentityProvisioned,
   queryAsTrustedIdentity,
@@ -24,6 +25,7 @@ export type AuthenticatedContext = TrustedIdentityContext & Readonly<{
 
 export type MachineApiDependencies = Readonly<{
   ensureTrustedIdentityProvisioned: typeof ensureTrustedIdentityProvisioned;
+  log: typeof log;
   queryAsTrustedIdentity: typeof queryAsTrustedIdentity;
   queryAsTrustedIdentityBeforeDeadline: typeof queryAsTrustedIdentityBeforeDeadline;
   resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: typeof resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline;

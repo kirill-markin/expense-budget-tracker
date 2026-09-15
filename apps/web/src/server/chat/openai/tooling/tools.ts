@@ -57,7 +57,7 @@ import {
   ChatTurnCancelledError,
 } from "@/server/chat/store";
 import { DbTransactionOutcomeUnknownError } from "@/server/db/contextRunner";
-import { log } from "@/server/logger";
+import { log, MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "@/server/logger";
 import type { WorkspaceSummary } from "@/server/workspaces";
 
 /**
@@ -481,15 +481,30 @@ const prepareSqlToolCall = async (
   };
 };
 
+/**
+ * The single point where a restricted SQL policy rejection becomes a chat tool
+ * result, so one call here is one rejection. The raw policy message is logged
+ * rather than the chat-specific rewrite, which keeps the recorded reason equal
+ * to the one the machine API and MCP surfaces record.
+ */
 const buildSqlPolicyErrorPayload = (
   error: SqlPolicyError,
   toolName: ChatSqlToolName,
-): AgentErrorPayload => buildAgentErrorPayload(
-  error.code,
-  getChatSqlPolicyMessage(error),
-  getSqlPolicyInstructions(error, toolName),
-  {},
-);
+  dependencies: ChatToolDependencies,
+): AgentErrorPayload => {
+  dependencies.log({
+    domain: "sql-api",
+    action: "sql_policy_rejected",
+    code: error.code,
+    message: error.message.slice(0, MAX_SQL_POLICY_LOG_MESSAGE_CHARS),
+  });
+  return buildAgentErrorPayload(
+    error.code,
+    getChatSqlPolicyMessage(error),
+    getSqlPolicyInstructions(error, toolName),
+    {},
+  );
+};
 
 /**
  * Preparation can fail on the arguments, on the statement, or on the workspace
@@ -508,7 +523,7 @@ const buildSqlPreparationErrorPayload = (
     return buildAgentErrorPayload(error.code, error.message, error.instructions, error.details);
   }
   if (error instanceof SqlPolicyError) {
-    return buildSqlPolicyErrorPayload(error, toolName);
+    return buildSqlPolicyErrorPayload(error, toolName, dependencies);
   }
   return buildRedactedErrorPayload(error, toolName, context, dependencies);
 };
@@ -531,7 +546,7 @@ const buildSqlExecutionErrorPayload = (
     return buildAgentErrorPayload(error.code, error.message, error.instructions, error.details);
   }
   if (error instanceof SqlPolicyError) {
-    return buildSqlPolicyErrorPayload(error, toolName);
+    return buildSqlPolicyErrorPayload(error, toolName, dependencies);
   }
   if (error instanceof SqlExecutionDeadlineError) {
     return buildAgentErrorPayload(

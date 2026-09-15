@@ -25,6 +25,7 @@ import {
   type ValidatedReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { resolveOrCreateWorkspaceForTrustedIdentity } from "../db.js";
+import { MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "../logger.js";
 import { buildDiscoveryEnvelope, getApiBaseUrl, readJsonBody } from "./request.js";
 import { buildRetryableErrorResponse, json } from "./responses.js";
 import { ALLOWED_RELATION_NAMES, loadAllowedSchema } from "./schemaService.js";
@@ -271,20 +272,32 @@ export const handleSelectWorkspaceRoute = async (
   }
 };
 
+/**
+ * The single point where a restricted SQL policy rejection becomes a machine API
+ * response, for both the validation and the execution branch, so one call here
+ * is one rejection.
+ */
 const buildSqlPolicyErrorResponse = (
   error: SqlPolicyError,
-  apiBaseUrl: string,
-): APIGatewayProxyResult =>
-  json(
+  context: MachineRouteContext,
+): APIGatewayProxyResult => {
+  context.dependencies.log({
+    domain: "sql_api",
+    action: "sql_policy_rejected",
+    code: error.code,
+    message: error.message.slice(0, MAX_SQL_POLICY_LOG_MESSAGE_CHARS),
+  });
+  return json(
     400,
     buildErrorEnvelope(
       { allowedRelations: ALLOWED_RELATION_NAMES },
       [],
-      getSqlPolicyInstructions(error, apiBaseUrl),
+      getSqlPolicyInstructions(error, context.apiBaseUrl),
       error.code,
       error.message,
     ),
   );
+};
 
 type SqlValidator<TValidated extends ValidatedExpenseSql> = (sql: string) => TValidated;
 type SqlRunner<TValidated extends ValidatedExpenseSql> = (
@@ -330,7 +343,7 @@ const handleValidatedSqlRouteWithWorkspaceResolver = async <TValidated extends V
     validated = validateSql(rawSql);
   } catch (error) {
     if (error instanceof SqlPolicyError) {
-      return buildSqlPolicyErrorResponse(error, context.apiBaseUrl);
+      return buildSqlPolicyErrorResponse(error, context);
     }
 
     return buildRetryableErrorResponse(
@@ -399,7 +412,7 @@ const handleValidatedSqlRouteWithWorkspaceResolver = async <TValidated extends V
     );
   } catch (error) {
     if (error instanceof SqlPolicyError) {
-      return buildSqlPolicyErrorResponse(error, context.apiBaseUrl);
+      return buildSqlPolicyErrorResponse(error, context);
     }
 
     if (isUserSqlExecutionError(error)) {

@@ -51,6 +51,7 @@ const createDependencies = (
   overrides: Partial<MachineApiDependencies> = {},
 ): MachineApiDependencies => ({
   ensureTrustedIdentityProvisioned: overrides.ensureTrustedIdentityProvisioned ?? (async () => undefined),
+  log: overrides.log ?? ((): void => undefined),
   queryAsTrustedIdentity: overrides.queryAsTrustedIdentity ?? (async () =>
     createQueryResult([{ workspace_id: "user-1", name: "Personal" }])),
   queryAsTrustedIdentityBeforeDeadline: overrides.queryAsTrustedIdentityBeforeDeadline ?? (async () =>
