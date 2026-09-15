@@ -200,6 +200,8 @@ const createDependencies = (
         defaultValue: null,
       }],
       hints: {
+        summary: "One row per account movement.",
+        related: ["accounts"],
         optional: false,
         notes: ["One row per account movement."],
       },
