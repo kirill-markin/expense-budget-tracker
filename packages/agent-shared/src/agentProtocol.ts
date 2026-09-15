@@ -19,7 +19,7 @@ Restricted SQL accepts SELECT, WITH, INSERT, UPDATE, and DELETE. Send one statem
 Relation operations: ledger_entries, budget_lines, workspace_settings, and account_metadata support SELECT and, under existing write-approval rules, INSERT, UPDATE, and DELETE; the derived accounts view and global worker-owned fx_rates_raw and fx_rates_daily relations are SELECT-only. Only allowlisted relations are reachable; internal and security-related relations are blocked.
 Only these function calls are supported: ${ALLOWED_SQL_FUNCTIONS_TEXT}. Every other function is blocked, including gen_random_uuid, set_config, and workspace or auth helper functions.
 Window functions over the allowlisted names work with OVER (PARTITION BY ... ORDER BY ...) and an optional frame, aggregates accept FILTER (WHERE ...), and the keyword call forms EXTRACT(field FROM value), SUBSTRING(value FROM start FOR count), TRIM(BOTH chars FROM value), and POSITION(needle IN haystack) are supported.
-DISTINCT ON, named WINDOW clauses, GROUP BY ROLLUP, CUBE and GROUPING SETS, and WITHIN GROUP ordered-set aggregates are not supported: rank rows with ROW_NUMBER() OVER (...) and keep rn = 1 instead of DISTINCT ON, repeat a named window inline in every OVER (...), run one statement per grouping level, and compute ordered-set aggregates outside SQL.
+DISTINCT ON, named WINDOW clauses, GROUP BY ROLLUP, CUBE and GROUPING SETS, WITHIN GROUP ordered-set aggregates, and parenthesized table lists such as FROM a, (b) are not supported: rank rows with ROW_NUMBER() OVER (...) and keep rn = 1 instead of DISTINCT ON, repeat a named window inline in every OVER (...), run one statement per grouping level, compute ordered-set aggregates outside SQL, and reference each relation directly in the source list or use a parenthesized subquery such as FROM (SELECT ...) alias instead of a parenthesized table list.
 Prefer ILIKE over LOWER(...) for case-insensitive text matching.
 Prefer explicit date literals calculated before running SQL, and filter with closed-open ranges: ts >= start date and ts < exclusive end date. Never write NOW() into a stored value such as ledger_entries.ts; calculate an explicit literal for every value you insert or update.
 Use regular single-quoted literals and double an embedded apostrophe, for example 'customer''s'. Dollar-quoted strings and E'...' escape strings are not supported.
@@ -69,14 +69,14 @@ const WRITE_CHECKLIST_GUIDE = `### Checklist for every entry
 - not a duplicate`;
 
 // Exported so the guide's most policy-sensitive example is validated against the restricted SQL policy in tests.
-export const BUDGET_WINNING_ROWS_QUERY_EXAMPLE = `WITH ranked AS (SELECT budget_month, direction, category, planned_value, currency, ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC, planned_value DESC, currency DESC) AS rn FROM budget_lines WHERE budget_month >= '<first-affected-month-start YYYY-MM-DD>' AND budget_month < '<exclusive-end-month-start YYYY-MM-DD>') SELECT budget_month, direction, category, planned_value, currency FROM ranked WHERE rn = 1 ORDER BY budget_month, direction, category`;
+export const BUDGET_WINNING_ROWS_QUERY_EXAMPLE = `WITH ranked AS (SELECT budget_month, direction, category, planned_value, currency, ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC, planned_value DESC, currency DESC) AS rn FROM budget_lines WHERE budget_month >= '<first-affected-month-start YYYY-MM-DD>' AND budget_month < '<exclusive-end-month-start YYYY-MM-DD>' AND direction IN ('income', 'spend')) SELECT budget_month, direction, category, planned_value, currency FROM ranked WHERE rn = 1 ORDER BY budget_month, direction, category`;
 
 const WRITE_BUDGET_ROWS_GUIDE = `### Budget rows
 
 Budget plans live in budget_lines and are append-only. Change a plan by inserting a new row; never update or delete an earlier row to change a plan. The latest inserted_at row wins for each budget_month, direction, and category.
 Read the current winning rows for the affected months before proposing a change, and reuse the exact category spelling already used in the user's history. Resolve the winners with ROW_NUMBER() over each budget_month, direction, and category, ordered by inserted_at DESC with planned_value and currency as tiebreakers for rows sharing that timestamp, and keep rn = 1:
 ${BUDGET_WINNING_ROWS_QUERY_EXAMPLE}
-budget_month is the first day of the month, for example 2026-03-01. direction is income or spend. The column carries no CHECK, so any other value is stored silently and corrupts budget reporting; never write one. kind accepts only base. planned_value is an absolute value, not a signed ledger amount.
+budget_month is the first day of the month, for example 2026-03-01. direction is income or spend. A CHECK constraint rejects writing any other value; rows stored before that constraint was added were not scanned and may still hold another value. kind accepts only base. planned_value is an absolute value, not a signed ledger amount.
 currency is required and must be the workspace reporting currency read from workspace_settings.reporting_currency, because planned values are never converted on read.
 Budget rows follow the same approval, probe-then-batch, and verification rules as entry imports; verify by rerunning that read for the affected months.`;
 
@@ -133,16 +133,23 @@ export const SPENDING_BY_CATEGORY_QUERY_EXAMPLE = `SELECT category, SUM(amount) 
 /**
  * One self-contained statement on purpose: the FULL OUTER JOIN keeps the
  * reconciliation semantics in the SQL the agent runs rather than in prose it may
- * skip. planned_value is a positive absolute in both directions, while ledger
- * amounts keep their own sign: spend actuals are negative, so their variance is
- * planned + actual, and income actuals are positive, so their variance is
- * planned - actual. The CASE keeps both directions correct in one statement.
+ * skip. It mirrors the income and spend rows of QUERY in
+ * apps/web/src/server/budget/getBudgetGrid.ts without budget adjustments:
+ * planned_value stays unconverted, each ledger amount converts through
+ * fx_rates_daily on its entry date unless it is already in the reporting
+ * currency, and spend is negated so money out counts as a positive actual.
+ * With actual positive in both directions, remaining = planned - actual holds
+ * for both: a plan-only row is P - 0 = P, still to spend or to earn; an
+ * actual-only row is 0 - A = -A, spent or earned beyond a zero plan; a row with
+ * both is P - A, negative once spend exceeds or income passes the plan.
+ * unconverted_entries counts, per row, the entries SUM skipped for lack of a
+ * rate; the grid only flags such rows.
  */
 export const BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE = `WITH ranked_plan AS (
   SELECT direction, category, planned_value,
          ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC, planned_value DESC, currency DESC) AS rn
   FROM budget_lines
-  WHERE budget_month = '<month-start YYYY-MM-DD>' AND kind = 'base'
+  WHERE budget_month = '<month-start YYYY-MM-DD>' AND kind = 'base' AND direction IN ('income', 'spend')
 ),
 plan AS (
   SELECT direction, category, planned_value AS planned
@@ -150,16 +157,23 @@ plan AS (
   WHERE rn = 1
 ),
 actual AS (
-  SELECT kind AS direction, category, SUM(amount) AS spent
-  FROM ledger_entries
-  WHERE ts >= '<month-start YYYY-MM-DD>' AND ts < '<next-month-start YYYY-MM-DD>' AND kind IN ('spend', 'income')
-  GROUP BY kind, category
+  SELECT le.kind AS direction, le.category,
+         SUM(CASE WHEN le.kind = 'spend' THEN -1 ELSE 1 END * CASE WHEN le.currency = '<reporting-currency>' THEN le.amount ELSE le.amount * fr.rate END) AS actual,
+         SUM(CASE WHEN le.currency <> '<reporting-currency>' AND fr.rate IS NULL THEN 1 ELSE 0 END) AS unconverted_entries
+  FROM ledger_entries le
+  LEFT JOIN fx_rates_daily fr
+    ON fr.base_currency = le.currency
+   AND fr.quote_currency = '<reporting-currency>'
+   AND fr.calendar_date = le.ts::date
+  WHERE le.ts >= '<month-start YYYY-MM-DD>' AND le.ts < '<next-month-start YYYY-MM-DD>' AND le.kind IN ('income', 'spend')
+  GROUP BY le.kind, le.category
 )
 SELECT COALESCE(p.direction, a.direction) AS direction,
        COALESCE(p.category, a.category) AS category,
        COALESCE(p.planned, 0) AS planned,
-       COALESCE(a.spent, 0) AS actual,
-       CASE WHEN COALESCE(p.direction, a.direction) = 'spend' THEN COALESCE(p.planned, 0) + COALESCE(a.spent, 0) ELSE COALESCE(p.planned, 0) - COALESCE(a.spent, 0) END AS remaining
+       COALESCE(a.actual, 0) AS actual,
+       COALESCE(p.planned, 0) - COALESCE(a.actual, 0) AS remaining,
+       COALESCE(a.unconverted_entries, 0) AS unconverted_entries
 FROM plan p FULL OUTER JOIN actual a ON p.direction = a.direction AND p.category = a.category
 ORDER BY direction, category`;
 
@@ -184,7 +198,7 @@ ${RECENT_TRANSACTIONS_QUERY_EXAMPLE}
 ${SPENDING_BY_CATEGORY_QUERY_EXAMPLE}
 
 ### Base budget plan vs actual (explicit month)
-By convention planned_value is stored in the workspace reporting currency, but the schema does not enforce that, so read budget_lines.currency first when a workspace may still hold legacy rows in another currency. Ledger amounts stay in each entry's own currency, so in a multi-currency workspace convert the actuals with the FX recipe below before comparing.
+By convention planned_value is stored in the workspace reporting currency, but the schema does not enforce that, so read budget_lines.currency first when a workspace may still hold legacy rows in another currency. Read <reporting-currency> from workspace_settings.reporting_currency. Like the budget dashboard, the query converts each ledger amount through fx_rates_daily on its entry date unless it is already in the reporting currency, and negates spend so spending and income both read as positive actuals; a positive remaining is still to spend or earn, and a negative one means spend over plan or income above plan. unconverted_entries counts the row's entries in another currency with no rate for their date; SUM skips them, so a non-zero count means actual and remaining are incomplete: report that gap instead of presenting the totals as complete.
 ${BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE}
 
 ### FX conversion at query time

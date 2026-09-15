@@ -8,15 +8,11 @@ import { getCurrentRequestIdentity } from "@/server/db/requestIdentity";
 import { ensureUserSettingsRow, type UserIdentity, upsertUserIdentity } from "@/server/users";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
-/** User/workspace pairs already verified to exist in this process. */
-const provisionedMemberships = new Set<string>();
+/** Workspaces whose settings row is already verified to exist in this process. */
+const provisionedWorkspaceSettings = new Set<string>();
 
 /** Users whose settings row is already verified to exist in this process. */
 const provisionedUsers = new Set<string>();
-
-/** Stable cache key for membership provisioning checks. */
-const getMembershipCacheKey = (userId: string, workspaceId: string): string =>
-  `${userId}:${workspaceId}`;
 
 // Only these unique violations are expected during concurrent first-request
 // provisioning. The users email mirror can race too: concurrent inserts for the
@@ -89,7 +85,7 @@ const verifyProvisionedState = async (
       [workspaceId, userId],
     );
     if (membershipCheck.rows.length === 0) {
-      missing.push("workspace_members");
+      throw new WorkspaceAccessError(userId, workspaceId);
     }
 
     const workspaceSettingsCheck = await client.query(
@@ -133,8 +129,7 @@ export const ensureProvisionedIdentity = async (
 ): Promise<void> => {
   const userId = identity.userId;
   const initialLocale = await dependencies.getInitialLocale();
-  const membershipKey = getMembershipCacheKey(userId, workspaceId);
-  const shouldCacheMembership = !provisionedMemberships.has(membershipKey);
+  const shouldCacheWorkspaceSettings = !provisionedWorkspaceSettings.has(workspaceId);
   const shouldCacheUser = !provisionedUsers.has(userId);
   const client = await dependencies.pool.connect();
   try {
@@ -143,16 +138,16 @@ export const ensureProvisionedIdentity = async (
     await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
     await dependencies.upsertIdentity(client, identity);
 
-    if (shouldCacheMembership) {
-      const check = await client.query(
-        "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
-        [workspaceId, userId],
-      );
+    const check = await client.query(
+      "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+      [workspaceId, userId],
+    );
 
-      if (check.rows.length === 0) {
-        throw new WorkspaceAccessError(userId, workspaceId);
-      }
+    if (check.rows.length === 0) {
+      throw new WorkspaceAccessError(userId, workspaceId);
+    }
 
+    if (shouldCacheWorkspaceSettings) {
       const settingsCheck = await client.query(
         "SELECT 1 FROM workspace_settings WHERE workspace_id = $1",
         [workspaceId],
@@ -170,8 +165,8 @@ export const ensureProvisionedIdentity = async (
     }
 
     await client.query("COMMIT");
-    if (shouldCacheMembership) {
-      provisionedMemberships.add(membershipKey);
+    if (shouldCacheWorkspaceSettings) {
+      provisionedWorkspaceSettings.add(workspaceId);
     }
     if (shouldCacheUser) {
       provisionedUsers.add(userId);
@@ -180,7 +175,7 @@ export const ensureProvisionedIdentity = async (
     await client.query("ROLLBACK");
     if (isExpectedProvisioningConflict(error)) {
       await verifyProvisionedState(dependencies.pool, userId, workspaceId);
-      provisionedMemberships.add(membershipKey);
+      provisionedWorkspaceSettings.add(workspaceId);
       provisionedUsers.add(userId);
       return;
     }
@@ -206,9 +201,10 @@ export const ensureUserProvisionedWithResolver = async (
 /**
  * Ensure the current user identity mirror and required rows exist.
  *
- * Uses in-memory caches for stable rows (workspace membership and user
- * settings) but always upserts the users row so active identities stay
- * synchronized.
+ * Uses in-memory caches for stable rows (workspace settings and user settings)
+ * but always upserts the users row and re-reads workspace membership, so active
+ * identities stay synchronized and a removed member is rejected on the next
+ * request.
  *
  * Workspace bootstrap happens separately. By the time request handling reaches
  * this helper, the active workspace must already be a valid membership.
@@ -235,6 +231,6 @@ export const ensureTrustedIdentityProvisioned = async (
 };
 
 export const resetProvisioningCachesForTests = (): void => {
-  provisionedMemberships.clear();
+  provisionedWorkspaceSettings.clear();
   provisionedUsers.clear();
 };

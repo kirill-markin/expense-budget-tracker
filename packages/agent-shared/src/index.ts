@@ -155,7 +155,7 @@ const AGENT_SCHEMA_HINTS: Readonly<Record<AllowedRelationName, AgentSchemaHints>
       {
         column: "direction",
         allowedValues: ["income", "spend"],
-        notes: ["The budget model uses only income and spend. The column carries no CHECK, so any other value is stored silently and corrupts budget reporting; never write one."],
+        notes: ["The budget model uses only income and spend. A CHECK constraint rejects writing any other value; rows stored before that constraint was added were not scanned and may still hold another value."],
       },
     ],
   },
