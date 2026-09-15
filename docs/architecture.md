@@ -130,7 +130,7 @@ SQL Lambda (sets RLS context, executes query)
 Postgres (same app role + RLS as web app)
 ```
 
-Agents start from `GET /v1/`, complete email OTP on `auth.*`, store the returned ApiKey, load `/v1/me`, list or create `/v1/workspaces`, optionally inspect `/v1/schema`, select a workspace via `/v1/workspaces/{workspaceId}/select`, and use `/v1/sql/query` for readonly statements or `/v1/sql/execute` for one approved mutation. `/v1/sql` remains compatibility-only for atomic multi-statement scripts. `X-Workspace-Id` works on all three endpoints for explicit overrides, but is optional after a workspace is selected for that API key. The SQL execution path uses the same `app` role and RLS enforcement as the web application — `SET LOCAL app.user_id` and `app.workspace_id` per transaction.
+Agents start from `GET /v1/`, complete email OTP on `auth.*`, store the returned ApiKey, load `/v1/me`, list or create `/v1/workspaces`, optionally inspect `/v1/schema`, select a workspace via `/v1/workspaces/{workspaceId}/select`, and use `/v1/sql/query` for readonly statements or `/v1/sql/execute` for one approved mutation. `/v1/sql` remains compatibility-only for atomic multi-statement scripts. `X-Workspace-Id` works on all three endpoints for explicit overrides, but is optional after a workspace is selected for that API key. The SQL execution path applies the same RLS enforcement as the web application — the pooled `app` role sets `SET LOCAL app.user_id` and `app.workspace_id` per transaction, then `SET LOCAL ROLE` narrows that connection for the user statement: `api_sql_reader` on `/v1/sql/query`, `api_sql_executor` on `/v1/sql/execute`, and `api_sql_executor` for the whole script on the compatibility-only `/v1/sql`.
 
 ### Security
 
@@ -161,6 +161,19 @@ curl -X POST https://api.example.com/v1/sql/execute \
 ```
 
 `X-Workspace-Id` is optional if the same API key has already called `POST /v1/workspaces/{workspaceId}/select`. If no workspace is saved and exactly one workspace exists for the user, the API auto-saves and uses that workspace for the key.
+
+## Agent tools
+
+`packages/agent-shared/src/agentTools.ts` is the single transport-neutral catalog of the five agent tools: `list_workspaces`, `get_schema`, `get_guide`, `sql_query`, and `sql_execute`. Both agent surfaces render their own tool definitions from that catalog instead of keeping private literals — the MCP server in `apps/sql-api/src/mcp/server.ts` and the web chat in `apps/web/src/server/chat/openai/tooling/tools.ts` — and both emit the shared result envelope from `packages/agent-shared/src/agentResults.ts`. A model therefore reads the same tools and the same result contract whether it reached the workspace over MCP or through the browser chat.
+
+A surface profile records the little that each surface narrows: how a workspace is selected, whether a call carries one statement or a script, and which tool names the rendered text points at. The MCP server uses the catalog's own profile, where the caller passes a `workspaceId` returned by `list_workspaces` and may omit it only when exactly one workspace is available. The web chat differs in the workspace default alone: it resolves an omitted `workspaceId` to the workspace the browser session currently has open, so an explicit one is needed only to act on another accessible workspace.
+
+- `get_schema` returns the allowed relations, their columns, and the per-relation hints from `getAgentSchemaHints`, together with the row, result-size, and statement-timeout limits.
+- `get_guide` returns one of three topics: `sql_dialect` for the restricted SQL rules, `writing_data` for the write protocol, and `query_recipes` for the canonical read queries.
+- `sql_query` runs in a repeatable-read, read-only transaction under the `api_sql_reader` role, and `sql_execute` runs under `api_sql_executor`. Reads and writes are separated on purpose.
+- A tool call carries exactly one statement on both surfaces. On the HTTP side, `/v1/sql/query` and `/v1/sql/execute` are single-statement too, while the compatibility-only `/v1/sql` route still accepts a semicolon-separated script. That asymmetry is intentional.
+
+The web chat additionally dispatches `query_database`, the name its SQL tool had before the read/write split, because stored transcripts replay it into the model. It resolves to `sql_query` or `sql_execute` by statement kind and is never advertised.
 
 ## Multi-currency conversion
 

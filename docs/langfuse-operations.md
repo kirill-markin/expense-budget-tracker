@@ -68,12 +68,14 @@ The chat root output uses these result values:
 - `invalidated` when the run was discarded or lost its active-run transition
 - `error` for a persisted stream terminal error or a thrown failure
 
-For a turn that uses `query_database`, expect:
+For a turn that uses tools, expect:
 
 - one root `agent` observation for `chat_turn`
 - at least one nested OpenAI generation observation
-- one nested tool observation for `query_database`
+- one nested tool observation per tool call, named after the tool the model called: `list_workspaces`, `get_schema`, `get_guide`, `sql_query`, or `sql_execute`
 - if the tool result causes a follow-up model call, another nested generation observation under the same trace
+
+Traces recorded before the chat's SQL tool was split carry a tool observation named `query_database`. The chat still dispatches that name so stored transcripts replay, but it is not advertised to the model. A new turn in a session whose stored transcript already carries that name can still produce it, which is why the dispatch alias is kept; a fresh session should not.
 
 For an audio transcription with a chat session id, expect:
 
@@ -106,8 +108,8 @@ After deploying or rotating secrets:
 1. Open the web chat as a normal user.
 2. Send a plain question that should not use tools.
 3. Wait a few seconds for the batch export, then confirm a `chat_turn` trace appears in Langfuse with the expected tags and metadata.
-4. Send a question that should trigger `query_database`.
-5. Confirm the same shape appears after the same batch delay, now with a nested tool observation.
+4. Send a question about the workspace's own data, which should trigger `get_schema` and then `sql_query`.
+5. Confirm the same shape appears after the same batch delay, now with a nested tool observation per tool call.
 
 ## What to check when telemetry is missing
 
@@ -129,7 +131,7 @@ If traces appear but are missing grouping or metadata:
 
 If tool activity is missing from a trace:
 
-- confirm the user turn actually triggered `query_database`
+- confirm the user turn actually triggered a tool call
 - check application logs for `tool_call` events
 - confirm the tool execution completed inside the same request lifecycle
 

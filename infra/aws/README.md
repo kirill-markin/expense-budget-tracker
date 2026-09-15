@@ -482,7 +482,7 @@ The canonical MCP transport is `https://mcp.yourdomain.com/mcp`, and its protect
    - session-scoped grouping by the chat `sessionId`
    - tags `surface:web-chat`, `runtime:local-loop`, and `vendor:openai`
    - metadata with `requestId`, `workspaceId`, `model`, `turnIndex`, and `runState`
-   - nested observations for the OpenAI generation and any local `query_database` tool call
+   - nested observations for the OpenAI generation and any local tool call, each named after the tool the model called, such as `get_schema` or `sql_query`
 
    The production runtime is fully app-managed now: transcript state lives in Postgres, the tool loop runs in the web process, and recovery uses `/api/chat` snapshots instead of provider-managed conversation state. For ongoing operations and troubleshooting, use [`docs/langfuse-operations.md`](../../docs/langfuse-operations.md).
 

@@ -203,7 +203,8 @@ The initialized server advertises:
 Its instructions require the client to start with `list_workspaces`, use an
 explicit `workspaceId` when more than one workspace is available, call
 `get_schema` before SQL, call `get_guide` with topic `writing_data` before the
-first mutation of a task and with topic `sql_dialect` before restricted SQL,
+first mutation of a task, with topic `sql_dialect` before restricted SQL, and
+with topic `query_recipes` before composing reporting SQL by hand,
 route reads to `sql_query`, and route approved writes to `sql_execute`. They
 also identify `expenses:read` and `expenses:write` and link the canonical
 machine discovery endpoint.
@@ -332,7 +333,7 @@ permitted.
 | --- | --- | --- | --- | --- | --- |
 | `list_workspaces` | `List accessible workspaces` | `Use this read-only discovery tool to list every workspace accessible to the authenticated user. It does not create or modify workspaces; pass a returned workspaceId to other tools when more than one is available.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
 | `get_schema` | `Inspect expense SQL schema` | `Use this read-only discovery tool before writing SQL to inspect allowed relations, columns, constraints, and per-relation agent hints for an accessible workspace, including the write semantics of ledger_entries. It does not expose or query system catalogs.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
-| `get_guide` | `Fetch expense usage protocol` | `Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, and with topic sql_dialect before writing SQL against this restricted surface.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
+| `get_guide` | `Fetch expense usage protocol` | `Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, with topic sql_dialect before writing SQL against this restricted surface, and with topic query_recipes before composing reporting SQL by hand.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}]}` | `{"taskSupport":"forbidden"}` |
 | `sql_query` | `Query expense data` | `Use this read-only query tool to run exactly one policy-approved SELECT or WITH...SELECT statement against an accessible workspace. Use it to read existing accounts, categories, and entries before a write, and to verify row counts and balances after a write. It executes in a repeatable-read, read-only transaction under the restricted SQL reader role.` | `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read"]}],"anthropic/maxResultSizeChars":30157}` | `{"taskSupport":"forbidden"}` |
 | `sql_execute` | `Execute expense data mutation` | `Use this write-capable tool only for a mutation the user explicitly approved. Call get_guide with topic writing_data before the first mutation of a task: it defines duplicate checks, transfer pairs, category reuse, probe-then-batch execution, and post-write verification. This tool runs exactly one policy-approved INSERT, UPDATE, or DELETE statement under the restricted SQL executor role and may destructively modify workspace data.` | `{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}` | `{"securitySchemes":[{"type":"oauth2","scopes":["expenses:read","expenses:write"]}],"anthropic/maxResultSizeChars":30157}` | `{"taskSupport":"forbidden"}` |
 
@@ -369,8 +370,8 @@ The `inputSchema` values are, by tool name:
     "properties": {
       "topic": {
         "type": "string",
-        "enum": ["sql_dialect", "writing_data"],
-        "description": "Which protocol to return. Use sql_dialect for the restricted SQL rules: allowed functions, forbidden constructs, date and text matching, result limits, and the result envelope. Use writing_data for the write protocol: duplicate detection, internal transfers, category reuse, bank statement statuses, approval, batch limits, resuming after an interruption, and final balance verification. It covers ledger_entries imports and budget_lines semantics: append-only base rows where the latest insert wins per month, direction, and category."
+        "enum": ["sql_dialect", "writing_data", "query_recipes"],
+        "description": "Which protocol to return. sql_dialect: restricted SQL rules, allowed functions, blocked constructs, date and text matching, result limits, and the result envelope. writing_data: the write protocol for ledger_entries imports and append-only budget_lines, covering duplicate detection, transfers, category reuse, approval, batch limits, resuming, and balance verification. query_recipes: canonical read queries for balances, recent transactions, spending by category, budget plan versus actual, and FX conversion."
       }
     },
     "required": ["topic"]
@@ -459,9 +460,12 @@ affected rows. On a mutation that returned rows, `rowCount` is only the rows
 this response would have carried; on one that returned none it stays the
 affected row count. `data.rowsOmitted: true` is emitted only when rows were
 actually carried, and `data.responseShrunk: true` reports that the shrink
-reached past the rows, cutting the echoed `sql` to a prefix with an explicit
-truncation marker and then, if a full 100-statement script of escape-dense SQL
-is still over budget, replacing it with `sqlOmitted: true`.
+reached past the rows. It first drops the per-statement relation hints and
+leaves the echoed `sql` intact, then cuts that echo to a prefix with an explicit
+truncation marker wherever that marked-up prefix is shorter than the statement
+it replaces, and finally, if a full 100-statement script of escape-dense SQL is
+still over budget, replaces it with `sqlOmitted: true`. So
+`responseShrunk` alone does not tell the caller the echo was touched.
 `data.resultSizeInstructions`
 carries the matching remediation text on every shrunk result. On a non-mutating
 statement, `truncated` covers the row cap and the size cap together, and
@@ -738,6 +742,15 @@ rather than adjusting the expected review result.
 Each scenario starts in a new conversation unless it explicitly depends on a
 previous result. Store screenshots plus sanitized tool request/result logs in
 the private evidence bundle.
+
+`get_guide` has three topics. P4, P5, and P6 each name only the topic that
+step turns on, and in those three scenarios an additional read-only `get_guide`
+call is expected behaviour rather than a deviation, most often with topic
+`query_recipes`, which the server instructions point at before reporting SQL is
+composed by hand and which covers balances, recent transactions, spending by
+category, plan versus actual, and FX conversion. Scenarios that name no topic
+are graded strictly by their own pass evidence; P2 excludes any `get_guide`
+call.
 
 Use this connection-state sequence exactly:
 

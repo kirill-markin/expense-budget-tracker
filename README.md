@@ -34,7 +34,7 @@ The hosted MCP server is available directly at `https://mcp.expense-budget-track
 
 - `list_workspaces` — list workspaces available to the signed-in user
 - `get_schema` — inspect the allowed relations, columns, constraints, and limits
-- `get_guide` — fetch the writing-data or SQL-dialect protocol before acting
+- `get_guide` — fetch the SQL-dialect, writing-data, or query-recipes protocol before acting
 - `sql_query` — run one restricted `SELECT` or `WITH...SELECT`
 - `sql_execute` — run one approved `INSERT`, `UPDATE`, or `DELETE`
 
