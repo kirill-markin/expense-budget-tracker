@@ -29,7 +29,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 ## Components
 
 - `apps/web/`: Next.js app with UI dashboards and API routes for transactions, balances, budget, and FX data; SQL via `pg.Pool`. The web app also includes an AI chat where the user can open `/chat` and talk to their workspace data directly from the browser.
-- `apps/worker/`: TypeScript process that fetches daily ECB, CBR, NBS, NBU, and KuCoin exchange rates into `fx_rates_raw`; runs on a schedule (Docker) or as AWS Lambda
+- `apps/worker/`: TypeScript process that fetches daily ECB, CBR, NBS, NBU, KuCoin, and USDT exchange rates into `fx_rates_raw`; runs on a schedule (Docker) or as AWS Lambda
 - Postgres: single source of truth; schema in `db/migrations/`, views in `db/views/`, reference SQL in `db/queries/`
 
 ## Supported Clients
