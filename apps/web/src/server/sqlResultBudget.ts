@@ -116,6 +116,10 @@ const countRows = <TStatement extends BudgetedSqlStatement>(
   entries: ReadonlyArray<BudgetedSqlStatementEntry<TStatement>>,
 ): number => entries.reduce((total, entry) => total + entry.statement.rows.length, 0);
 
+const countStatementRows = <TStatement extends BudgetedSqlStatement>(
+  statements: ReadonlyArray<TStatement>,
+): number => statements.reduce((total, statement) => total + statement.rows.length, 0);
+
 /**
  * Largest row prefix the halving search measures as fitting MAX_SQL_RESULT_CHARS
  * within one already-built stage, or null when not even zero rows fit.
@@ -160,18 +164,32 @@ const findLargestFittingRowPrefix = <TStatement extends BudgetedSqlStatement>(
  * Applies the caller's shrink stages in order, running the whole row search over
  * each one, and reports which stage the returned statements came from.
  *
- * A stage is tried only after the previous one failed on zero rows, so a field a
+ * A stage is tried only after the previous one failed to ship data, so a field a
  * stage sheds is dropped only when no row prefix could pay for it, and rows are
- * still the first thing to go. When every stage fails, the smallest stage ships
- * over budget row-less rather than failing a read that already ran.
+ * still the first thing to go. Failing to ship data means either that no prefix
+ * fit at all or that the only prefix that fit was empty while the payload had
+ * rows to give: a stage whose whole cost is a re-readable field must never buy
+ * its own survival with every row of the answer, so a later stage that returns
+ * data outranks an earlier one that returns none.
+ *
+ * When no stage ships a row, the earliest stage that fit row-less is returned,
+ * which is the most informative body available and keeps a payload whose
+ * statements alone fill the budget on exactly the outcome it had before. When
+ * every stage fails, the smallest stage ships over budget row-less rather than
+ * failing a read that already ran.
  */
 export const applyStagedSqlResultCharBudget = <TStatement extends BudgetedSqlStatement>(
   entries: ReadonlyArray<BudgetedSqlStatementEntry<TStatement>>,
   measurePayloadChars: (candidate: ReadonlyArray<TStatement>, shrunk: boolean) => number,
   shrinkStages: ReadonlyArray<BudgetedSqlShrinkStage<TStatement>>,
 ): BudgetedSqlResult<TStatement> => {
+  // Fixed before the first stage, because no stage adds or drops a row: a stage
+  // that kept every available row displaced nothing and is accepted at once,
+  // which also leaves a payload that returned no rows on its first stage.
+  const availableRowCount = countRows(entries);
   let smallestEntries = entries;
   let smallestShrunk = false;
+  let rowlessFit: BudgetedSqlResult<TStatement> | null = null;
   for (const stage of [unshrunkStage<TStatement>(), ...shrinkStages]) {
     const staged = entries.map((entry) => stage.build(entry));
     const fitting = findLargestFittingRowPrefix(
@@ -179,10 +197,22 @@ export const applyStagedSqlResultCharBudget = <TStatement extends BudgetedSqlSta
       (candidate) => measurePayloadChars(candidate, stage.shrunk),
     );
     if (fitting !== null) {
-      return { statements: fitting, shrunk: stage.shrunk };
+      const keptRowCount = countStatementRows(fitting);
+      if (keptRowCount > 0 || keptRowCount === availableRowCount) {
+        return { statements: fitting, shrunk: stage.shrunk };
+      }
+      // Kept as the fallback rather than returned: a later stage may still ship
+      // rows, and if none does this earliest row-less fit is what ships.
+      if (rowlessFit === null) {
+        rowlessFit = { statements: fitting, shrunk: stage.shrunk };
+      }
     }
     smallestEntries = staged;
     smallestShrunk = stage.shrunk;
+  }
+
+  if (rowlessFit !== null) {
+    return rowlessFit;
   }
 
   // The residual is the zero-row candidate of the smallest stage, not of the one

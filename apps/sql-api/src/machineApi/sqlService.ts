@@ -1,3 +1,4 @@
+import { getAgentSchemaHints, type AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import {
   executeValidatedExpenseSqlWithinDeadline,
   MAX_SQL_MUTATION_ROWS,
@@ -14,42 +15,8 @@ import {
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { SqlTransactionOutcomeUnknownError } from "../dbDeadline.js";
 import { log, type SqlResultOverBudgetOutcome } from "../logger.js";
-import type { EntityHints, MachineApiDependencies, PgError, TrustedIdentityContext, WorkspaceSummary } from "./types.js";
+import type { MachineApiDependencies, PgError, TrustedIdentityContext, WorkspaceSummary } from "./types.js";
 import { getWorkspaceBeforeDeadline } from "./workspaceService.js";
-
-const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
-  summary: string;
-  related: ReadonlyArray<AllowedRelationName>;
-}>>> = {
-  ledger_entries: {
-    summary: "One row per account movement, including income, spending, and transfers.",
-    related: ["accounts", "workspace_settings", "account_metadata"],
-  },
-  accounts: {
-    summary: "Derived account list built from ledger entries.",
-    related: ["ledger_entries", "account_metadata", "workspace_settings"],
-  },
-  budget_lines: {
-    summary: "Append-only monthly Base budget rows with last-write-wins semantics.",
-    related: ["workspace_settings"],
-  },
-  workspace_settings: {
-    summary: "Per-workspace reporting configuration such as reporting currency.",
-    related: ["ledger_entries", "budget_lines", "accounts"],
-  },
-  account_metadata: {
-    summary: "Per-account metadata such as liquidity, personal/business classification, and regular/investment grouping.",
-    related: ["accounts", "ledger_entries", "workspace_settings"],
-  },
-  fx_rates_raw: {
-    summary: "Canonical raw FX source rates against the internal USD pivot currency.",
-    related: ["fx_rates_daily", "workspace_settings", "ledger_entries"],
-  },
-  fx_rates_daily: {
-    summary: "Query-ready daily all-pairs FX rates used by dashboards and reporting-currency conversion.",
-    related: ["fx_rates_raw", "workspace_settings", "ledger_entries"],
-  },
-};
 
 const USER_SQL_ERROR_CLASSES: ReadonlySet<string> = new Set(["22", "23", "42"]);
 const DEFAULT_USER_SQL_EXECUTION_MESSAGE = "The SQL statement could not be executed";
@@ -65,7 +32,9 @@ const OMITTED_DELETED_ROWS_NOTE = "The rows a DELETE returned no longer exist, s
 const NO_ROWS_RETURNED_NOTE = "It returned no rows, so no row data is missing from this response.";
 // PostgreSQL command tag of the one mutation whose returned rows are unrecoverable.
 const DELETE_COMMAND_TAG = "DELETE";
-const RESPONSE_SHRUNK_NOTE = "The echoed sql was cut to a prefix, or replaced by sqlOmitted, and relation hints were dropped so that the response fits the budget.";
+// The write shrink sheds relation hints before it touches the echo, so the echo
+// survives whole on the first shrunk step; only the hints are always gone.
+const RESPONSE_SHRUNK_NOTE = "Relation hints were dropped, and the echoed sql may be cut to a prefix or replaced by sqlOmitted, so that the response fits the budget.";
 // One text per stage, never one per kept row count: the read shrink binary-searches
 // that count and the search is valid only while the candidate size is monotone in
 // it, so these strings must not vary with the rows a candidate keeps. The statement
@@ -123,6 +92,8 @@ const truncateEchoedSql = (sql: string): string => {
   return truncated.length < sql.length ? truncated : sql;
 };
 
+type SqlRelationHints = Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>>;
+
 type SqlResultStatement = Readonly<{
   sql: string;
   command: string;
@@ -133,7 +104,7 @@ type SqlResultStatement = Readonly<{
   truncated: boolean;
   // Both are shed by a shrink stage, so a shrunk statement omits them.
   referencedRelations?: ReadonlyArray<AllowedRelationName>;
-  entityHints?: EntityHints;
+  hints?: SqlRelationHints;
 }>;
 
 type SqlResultPayload = Readonly<{
@@ -242,19 +213,25 @@ const buildReadResultWithinRowBudget = (
   };
 };
 
+// Every field a statement keeps once its static metadata is gone, enumerated
+// rather than spread so that referencedRelations and hints cannot survive by
+// accident, and so that a field added to SqlResultStatement later has to be
+// classified as sheddable or kept here.
+const withoutStatementRelationHints = (statement: SqlResultStatement): SqlResultStatement => ({
+  sql: statement.sql,
+  command: statement.command,
+  rows: statement.rows,
+  rowCount: statement.rowCount,
+  returnedRowCount: statement.returnedRowCount,
+  totalRowCount: statement.totalRowCount,
+  truncated: statement.truncated,
+});
+
 // Static per-relation metadata the caller can read again from /schema, so it is
 // the first thing a read sheds once dropping rows is not enough.
 const withoutRelationHints = (payload: SqlResultPayload): SqlResultPayload => ({
   ...payload,
-  statements: payload.statements.map((statement) => ({
-    sql: statement.sql,
-    command: statement.command,
-    rows: statement.rows,
-    rowCount: statement.rowCount,
-    returnedRowCount: statement.returnedRowCount,
-    totalRowCount: statement.totalRowCount,
-    truncated: statement.truncated,
-  })),
+  statements: payload.statements.map(withoutStatementRelationHints),
 });
 
 // The caller sent the SQL, so the echo is the last thing worth carrying back.
@@ -346,15 +323,36 @@ const findLargestFittingRowPrefix = (
 // hints, then the echoed statement text, keeping the largest row prefix each
 // stage can afford. Only a script whose bare per-statement echo and counts are
 // over budget on their own survives every stage.
+//
+// A stage is accepted only once it ships data. A zero-row prefix technically
+// fits, so an early stage carrying the full hints of every referenced relation
+// could otherwise buy its own documentation with the whole answer while the next
+// stage, which sheds those hints, would have returned rows. Keeping every
+// available row is accepted at once, which also short-circuits a read that
+// returned no rows at its first fitting stage, keeping whatever that stage still
+// carries; when no stage ships a row, the earliest row-less fit is returned, so
+// no read that degraded to zero rows before starts being rejected.
 const buildReadResultWithinBudget = (
   payload: SqlResultPayload,
 ): BoundedReadResult => {
+  // Fixed before the first stage: no shrink stage adds or drops a row.
+  const availableRowCount = countPayloadRows(payload);
+  let rowlessFit: FittingReadResult | null = null;
   for (const stage of READ_SHRINK_STAGES) {
     const staged = stage.build(payload);
     const fitting = findLargestFittingRowPrefix(staged, stage.responseShrunk);
     if (fitting !== null) {
-      return fitting;
+      if (fitting.keptRowCount > 0 || fitting.keptRowCount === availableRowCount) {
+        return fitting;
+      }
+      if (rowlessFit === null) {
+        rowlessFit = fitting;
+      }
     }
+  }
+
+  if (rowlessFit !== null) {
+    return rowlessFit;
   }
 
   // Every stage failed, so the payload that actually failed is the zero-row
@@ -445,20 +443,28 @@ const buildCommittedWriteResultWithinBudget = (
   }
 
   // Rows are already gone, so the echoed statement and its static relation hints
-  // are what remains over budget. The caller sent the SQL and can look the hints
-  // up again, while every count and the instructions must survive.
-  const withTruncatedSql = {
+  // are what remains over budget. The hints go first, mirroring READ_SHRINK_STAGES:
+  // they are re-readable from /schema, while the echo is the only thing tying each
+  // count in this response back to the statement that produced it. Every count and
+  // the instructions must survive both steps.
+  const withoutHints = {
     ...withoutRows,
-    statements: withoutRows.statements.map((statement) => ({
-      sql: truncateEchoedSql(statement.sql),
-      command: statement.command,
-      rows: [],
-      rowCount: statement.rowCount,
-      returnedRowCount: 0,
-      totalRowCount: statement.totalRowCount,
-      truncated: statement.truncated,
-    })),
+    statements: withoutRows.statements.map(withoutStatementRelationHints),
     ...buildWriteShrinkReport(omittedRows, true),
+  };
+  if (fitsResultBudget(withoutHints)) {
+    return { body: withoutHints, outcome: "write_response_shrunk" };
+  }
+
+  // Shedding the hints was not enough, so the echo the caller already holds is
+  // cut to a prefix. The spread is safe here only because the step above already
+  // rebuilt every statement field by field.
+  const withTruncatedSql = {
+    ...withoutHints,
+    statements: withoutHints.statements.map((statement) => ({
+      ...statement,
+      sql: truncateEchoedSql(statement.sql),
+    })),
   };
   if (fitsResultBudget(withTruncatedSql)) {
     return { body: withTruncatedSql, outcome: "write_response_shrunk" };
@@ -496,32 +502,15 @@ export class AmbiguousSqlMutationOutcomeError extends Error {
   }
 }
 
-const buildEntityHints = (relations: ReadonlyArray<AllowedRelationName>): EntityHints | undefined => {
-  if (relations.length === 0) {
-    return undefined;
+const buildRelationHints = (
+  relations: ReadonlyArray<AllowedRelationName>,
+): SqlRelationHints => Object.fromEntries(relations.map((name) => {
+  const hints = getAgentSchemaHints(name);
+  if (hints === undefined) {
+    throw new Error(`Missing agent schema hints for relation ${name}`);
   }
-
-  const primaryName = relations[0];
-  if (primaryName === undefined) {
-    return undefined;
-  }
-
-  const relatedNames = Array.from(new Set([
-    ...relations.filter((name) => name !== primaryName),
-    ...ENTITY_METADATA[primaryName].related.filter((name) => name !== primaryName),
-  ])).slice(0, 3);
-
-  return {
-    primary: {
-      name: primaryName,
-      summary: ENTITY_METADATA[primaryName].summary,
-    },
-    related: relatedNames.map((name) => ({
-      name,
-      summary: ENTITY_METADATA[name].summary,
-    })),
-  };
-};
+  return [name, hints] as const;
+}));
 
 const isSafeUserSqlDatabaseError = (error: unknown): boolean => {
   if (typeof error !== "object" || error === null) {
@@ -737,20 +726,17 @@ const executeSqlWithWorkspaceGetter = async (
   }
 
   const payload: SqlResultPayload = {
-    statements: result.statements.map((statement) => {
-      const entityHints = buildEntityHints(statement.referencedRelations);
-      return {
-        sql: statement.sql,
-        command: statement.command,
-        rows: statement.rows,
-        rowCount: statement.rowCount,
-        returnedRowCount: statement.returnedRowCount,
-        totalRowCount: statement.totalRowCount,
-        truncated: statement.truncated,
-        referencedRelations: statement.referencedRelations,
-        ...(entityHints === undefined ? {} : { entityHints }),
-      };
-    }),
+    statements: result.statements.map((statement) => ({
+      sql: statement.sql,
+      command: statement.command,
+      rows: statement.rows,
+      rowCount: statement.rowCount,
+      returnedRowCount: statement.returnedRowCount,
+      totalRowCount: statement.totalRowCount,
+      truncated: statement.truncated,
+      referencedRelations: statement.referencedRelations,
+      hints: buildRelationHints(statement.referencedRelations),
+    })),
     workspace,
     limits: {
       maxRows: MAX_SQL_ROWS,

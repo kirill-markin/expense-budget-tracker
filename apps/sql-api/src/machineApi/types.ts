@@ -40,16 +40,6 @@ export type PgError = Error & Readonly<{
   code?: string;
 }>;
 
-export type EntityHint = Readonly<{
-  name: AllowedRelationName;
-  summary: string;
-}>;
-
-export type EntityHints = Readonly<{
-  primary: EntityHint;
-  related: ReadonlyArray<EntityHint>;
-}>;
-
 export type SchemaColumnRow = Readonly<{
   table_name: string;
   column_name: string;

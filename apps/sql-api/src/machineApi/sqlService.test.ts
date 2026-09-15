@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PoolClient, QueryResult } from "pg";
+import { getAgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import {
   createSqlExecutionDeadline,
   MAX_SQL_RESULT_CHARS,
@@ -372,6 +373,14 @@ test("runSql executes every statement in one restricted transaction", async (): 
   assert.equal(statement?.returnedRowCount, 1);
   assert.equal(statement?.totalRowCount, 1);
   assert.equal(statement?.truncated, false);
+  // A statement documents the relations it touched from the one shared source,
+  // keyed by relation name, exactly as the app.* surface returns them.
+  assert.deepEqual(statement?.["hints"], {
+    ledger_entries: getAgentSchemaHints("ledger_entries"),
+  });
+  assert.deepEqual(statements[1]?.["hints"], {
+    accounts: getAgentSchemaHints("accounts"),
+  });
 });
 
 test("runReadOnlySql bounds composed reads in PostgreSQL and preserves accurate truncation metadata", async (): Promise<void> => {
@@ -978,7 +987,7 @@ test("runReadOnlySql shrinks an oversized echoed statement instead of rejecting 
     && echoedSql.includes(`[echoed SQL truncated to 200 of ${String(oversizedSql.length)} characters to fit the result budget]`),
   );
   assert.equal(statement?.["referencedRelations"], undefined);
-  assert.equal(statement?.["entityHints"], undefined);
+  assert.equal(statement?.["hints"], undefined);
   assert.ok(rows.length > 0);
   assert.ok(rows.length < returnedRows.length);
   assert.equal(statement?.["rowCount"], rows.length);
@@ -1021,7 +1030,7 @@ test("runReadOnlySql tells a single zero-row statement that no LIMIT or OFFSET c
 });
 
 test("runSql degrades a multi-statement zero-row read instead of rejecting it", async (): Promise<void> => {
-  // Every statement costs its echo, its referencedRelations, and its entityHints,
+  // Every statement costs its echo, its referencedRelations, and its relation hints,
   // so a script of this length is over budget before a single row is returned.
   const statementCount = 60;
   const sql = Array.from({ length: statementCount }, (_unused, index) => (
@@ -1048,7 +1057,7 @@ test("runSql degrades a multi-statement zero-row read instead of rejecting it", 
   // Only the static metadata is shed; the echo and the counts survive untouched.
   assert.equal(statement?.["sql"], "SELECT entry_id FROM ledger_entries WHERE entry_id = 'entry-0'");
   assert.equal(statement?.["referencedRelations"], undefined);
-  assert.equal(statement?.["entityHints"], undefined);
+  assert.equal(statement?.["hints"], undefined);
   assert.deepEqual(statement?.["rows"], []);
   assert.equal(statement?.["rowCount"], 0);
   assert.equal(statement?.["returnedRowCount"], 0);
@@ -1063,6 +1072,49 @@ test("runSql degrades a multi-statement zero-row read instead of rejecting it", 
   assert.ok(readInstructions(result).includes("a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip"));
   assert.ok(readInstructions(result).includes("send fewer statements per request to keep them"));
   assert.ok(!readInstructions(result).includes("the first row alone is over the budget"));
+});
+
+test("runSql ships rows from the shed stage instead of a hinted stage that fits only at zero rows", async (): Promise<void> => {
+  // Ten statements carry ten copies of the ledger_entries hints, so the unshrunk
+  // payload fits the budget with every row dropped and cannot fit one of these wide
+  // rows beside that documentation. Accepting a zero-row fit would spend the whole
+  // answer on static text the caller can re-read from /schema, while the next stage
+  // sheds the hints and frees far more than a row costs.
+  const statementCount = 10;
+  const sql = Array.from({ length: statementCount }, (_unused, index) => (
+    `SELECT entry_id, note FROM ledger_entries WHERE entry_id = 'entry-${String(index)}'`
+  )).join("; ");
+  const wideRows = [{ entry_id: "entry-0", note: "n".repeat(20_000) }];
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: createCursorContext(() => wideRows),
+  });
+
+  const result = await runSqlWithWorkspaceGetter(
+    dependencies,
+    createAuthenticatedContext(),
+    "user-1",
+    sql,
+    createExecutionDeadline(),
+    workspaceGetter,
+  );
+  const statements = readStatements(result);
+  const statement = statements[0];
+  const rows = statement?.["rows"] as ReadonlyArray<unknown>;
+
+  assert.ok(JSON.stringify(result).length <= MAX_SQL_RESULT_CHARS);
+  assert.equal(statements.length, statementCount);
+  assert.equal(result?.["responseShrunk"], true);
+  assert.equal(statement?.["referencedRelations"], undefined);
+  assert.equal(statement?.["hints"], undefined);
+  // The row the hinted stage would have dropped is the whole point of the read.
+  assert.equal(rows.length, 1);
+  assert.equal(statement?.["rowCount"], 1);
+  assert.equal(statement?.["returnedRowCount"], 1);
+  assert.equal(statement?.["totalRowCount"], 1);
+  assert.equal(statement?.["truncated"], false);
+  // The echo survives: shedding the hints alone brought the response inside budget.
+  assert.equal(statement?.["sql"], "SELECT entry_id, note FROM ledger_entries WHERE entry_id = 'entry-0'");
+  assert.ok(readInstructions(result).includes("Relation hints were dropped"));
 });
 
 test("runSql rejects a read only once its shrunk per-statement echoes are still over budget", async (): Promise<void> => {
@@ -1230,6 +1282,61 @@ test("runSql reports a shrunk echo without claiming rows were dropped", async ()
   assert.equal(statement?.["rowCount"], 100);
   assert.equal(statement?.["returnedRowCount"], 0);
   assert.equal(statement?.["totalRowCount"], 100);
+});
+
+test("runSql keeps a committed write's echoed sql by shedding only its relation hints", async (): Promise<void> => {
+  // Thirty statements are over budget once each carries the full ledger_entries
+  // hints and well inside it without them, so the shrink must stop at the hints:
+  // they are re-readable from /schema, while the echo is what ties each count back
+  // to the statement that produced it.
+  const statementCount = 30;
+  const buildStatementSql = (index: number): string => (
+    `UPDATE ledger_entries SET note = '${"n".repeat(300)}' WHERE entry_id = 'entry-${String(index)}'`
+  );
+  const mutationSql = Array.from(
+    { length: statementCount },
+    (_unused, index) => buildStatementSql(index),
+  ).join("; ");
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: async <T>(
+      _identity: AuthenticatedContext["identity"],
+      _workspaceId: string,
+      _deadline: SqlExecutionDeadline,
+      callback: (queryFn: RestrictedQueryFn) => Promise<T>,
+    ): Promise<T> => callback(async () => ({
+      command: "UPDATE",
+      rowCount: 1,
+      oid: 0,
+      fields: [],
+      rows: [],
+    }) as QueryResult),
+  });
+
+  const result = await runSqlWithWorkspaceGetter(
+    dependencies,
+    createAuthenticatedContext(),
+    "user-1",
+    mutationSql,
+    createExecutionDeadline(),
+    workspaceGetter,
+  );
+  const statements = readStatements(result);
+  const statement = statements[0];
+
+  assert.ok(JSON.stringify(result).length <= MAX_SQL_RESULT_CHARS);
+  assert.equal(statements.length, statementCount);
+  assert.equal(result?.["rowsOmitted"], undefined);
+  assert.equal(result?.["responseShrunk"], true);
+  assert.equal(statement?.["referencedRelations"], undefined);
+  assert.equal(statement?.["hints"], undefined);
+  // The echo is long enough to be worth cutting, so keeping it whole is evidence
+  // that the shrink stopped at the step before the echo.
+  assert.equal(statement?.["sql"], buildStatementSql(0));
+  assert.equal(statement?.["rowCount"], 1);
+  assert.equal(statement?.["returnedRowCount"], 0);
+  assert.equal(statement?.["totalRowCount"], 1);
+  assert.ok(readInstructions(result).includes("The write committed"));
+  assert.ok(readInstructions(result).includes("Relation hints were dropped"));
 });
 
 test("runSql keeps a full script of escape-dense committed mutations within the character budget", async (): Promise<void> => {

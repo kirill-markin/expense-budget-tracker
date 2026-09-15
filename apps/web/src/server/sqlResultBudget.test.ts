@@ -258,6 +258,55 @@ test("applyStagedSqlResultCharBudget sheds a stage when no row prefix pays for i
   assert.equal(statement.totalRowCount, 10);
 });
 
+test("applyStagedSqlResultCharBudget prefers a later stage with rows over an earlier one that fits at zero rows", (): void => {
+  const rowCount = 10;
+  // Sized so the hinted statement fits the budget exactly once every row is gone:
+  // a zero-row prefix is a fit, so without a guard the unshrunk stage would win and
+  // spend the whole answer on hints the caller can read again.
+  const paddingChars = MAX_SQL_RESULT_CHARS
+    - measureHinted([withoutRows(createHintedStatement("", rowCount))]);
+  const oversizedText = createHintedStatement("n".repeat(paddingChars), rowCount);
+  assert.equal(measureHinted([withoutRows(oversizedText)]), MAX_SQL_RESULT_CHARS);
+  assert.ok(measureHinted([oversizedText]) > MAX_SQL_RESULT_CHARS);
+
+  const budgeted = applyStagedSqlResultCharBudget(
+    asHintedReads([oversizedText]),
+    measureHinted,
+    [WITHOUT_HINTS_STAGE],
+  );
+  const statement = budgeted.statements[0];
+
+  assert.ok(statement);
+  assert.ok(measureHinted(budgeted.statements) <= MAX_SQL_RESULT_CHARS);
+  // The hints are wider than a row, so shedding them buys rows back: a stage that
+  // returns data outranks an earlier one that returns none.
+  assert.equal(budgeted.shrunk, true);
+  assert.equal(statement.hints, undefined);
+  assert.ok(statement.rows.length > 0);
+  assert.equal(statement.totalRowCount, rowCount);
+});
+
+test("applyStagedSqlResultCharBudget keeps the hints of a result that has no row to ship", (): void => {
+  // Nothing is displaced when the statement returned no rows, so the guard above
+  // must leave an empty result on its first stage instead of shedding a field and
+  // reporting a shrink that bought nothing.
+  const empty = createHintedStatement(
+    "SELECT entry_id, note FROM ledger_entries WHERE entry_id = 'missing'",
+    0,
+  );
+
+  const budgeted = applyStagedSqlResultCharBudget(
+    asHintedReads([empty]),
+    measureHinted,
+    [WITHOUT_HINTS_STAGE],
+  );
+  const statement = budgeted.statements[0];
+
+  assert.ok(statement);
+  assert.equal(budgeted.shrunk, false);
+  assert.deepEqual(statement, empty);
+});
+
 test("applyStagedSqlResultCharBudget ships the smallest stage when nothing fits", (): void => {
   const statements = [createHintedStatement(
     `SELECT entry_id, note FROM ledger_entries WHERE note = '${"n".repeat(MAX_SQL_RESULT_CHARS)}'`,
