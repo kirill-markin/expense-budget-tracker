@@ -104,6 +104,7 @@ export const QUERY = `
       ) AS rn
     FROM budget_lines
     WHERE kind = 'base'
+      AND direction IN ('income', 'spend')
       AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
       AND budget_month < to_date($3, 'YYYY-MM') + interval '1 month'
   ),
