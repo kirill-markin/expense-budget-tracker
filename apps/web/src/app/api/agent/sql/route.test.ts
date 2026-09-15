@@ -3,10 +3,14 @@ import test from "node:test";
 import { ALLOWED_SQL_FUNCTION_NAMES, SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { postAgentSqlRouteWithDeps } from "@/app/api/agent/sql/route";
 import type { AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
+import { MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "@/server/logger";
 
 const functionCallErrorMessage = `Function pg_sleep() is not allowed in restricted SQL. Allowed functions: ${
   ALLOWED_SQL_FUNCTION_NAMES.map((name) => name.toUpperCase()).join(", ")
 }`;
+
+/** Only a policy rejection logs on this route, so most calls ignore the seam. */
+const ignoreLog = (): void => undefined;
 
 const createAuthenticatedRequest = (): AgentAuthenticatedRequest => ({
   transport: "api_key",
@@ -35,6 +39,7 @@ test("postAgentSqlRouteWithDeps describes per-statement and request-wide row lim
     {
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
       resolveWorkspaceIdForSql: async () => "workspace-1",
+      log: ignoreLog,
       executeAgentSql: async () => ({
         statements: [],
         hintsDropped: false,
@@ -82,6 +87,7 @@ test("postAgentSqlRouteWithDeps reports dropped hints on the body and in the ins
     {
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
       resolveWorkspaceIdForSql: async () => "workspace-1",
+      log: ignoreLog,
       executeAgentSql: async () => ({
         statements: [],
         hintsDropped: true,
@@ -111,6 +117,7 @@ test("postAgentSqlRouteWithDeps reports dropped hints on the body and in the ins
 });
 
 test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", async (): Promise<void> => {
+  const loggedEvents: Array<string> = [];
   const response = await postAgentSqlRouteWithDeps(
     new Request("http://localhost/api/agent/sql", {
       method: "POST",
@@ -122,6 +129,9 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
     {
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
       resolveWorkspaceIdForSql: async () => "workspace-1",
+      log: (event): void => {
+        loggedEvents.push(JSON.stringify(event));
+      },
       executeAgentSql: async () => {
         throw new SqlPolicyError(
           "function_calls_not_allowed",
@@ -132,6 +142,17 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
   );
 
   assert.equal(response.status, 400);
+  // The whole event is pinned: the rejected statement must never join it, and
+  // this message is long enough that the log cap actually truncates it while the
+  // response below still carries it in full.
+  assert.ok(functionCallErrorMessage.length > MAX_SQL_POLICY_LOG_MESSAGE_CHARS);
+  assert.equal(loggedEvents.length, 1);
+  assert.deepEqual(JSON.parse(String(loggedEvents[0])), {
+    domain: "sql-api",
+    action: "sql_policy_rejected",
+    code: "function_calls_not_allowed",
+    message: functionCallErrorMessage.slice(0, MAX_SQL_POLICY_LOG_MESSAGE_CHARS),
+  });
   assert.deepEqual(await response.json(), {
     ok: false,
     data: {
@@ -171,6 +192,7 @@ test("postAgentSqlRouteWithDeps explains how to replace PostgreSQL escape string
         workspaceResolutionCount += 1;
         return "workspace-1";
       },
+      log: ignoreLog,
       executeAgentSql: async () => {
         executionCount += 1;
         throw new Error("executeAgentSql should not be called");
@@ -214,6 +236,7 @@ test("postAgentSqlRouteWithDeps rejects SELECT-only mutations before workspace o
         workspaceResolutionCount += 1;
         return "workspace-1";
       },
+      log: ignoreLog,
       executeAgentSql: async () => {
         executionCount += 1;
         throw new Error("executeAgentSql should not be called");

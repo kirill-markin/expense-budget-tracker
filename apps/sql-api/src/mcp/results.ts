@@ -15,7 +15,7 @@ import {
   type AgentResultData,
   type AgentResultPayload,
 } from "@expense-budget-tracker/agent-shared/agent-results";
-import { getSafeErrorType, log } from "../logger.js";
+import { getSafeErrorType, log, MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "../logger.js";
 import {
   isAmbiguousSqlMutationOutcomeError,
   getUserSqlExecutionMessage,
@@ -61,6 +61,12 @@ export const buildMcpToolErrorResultWithDependencies = (
   }
 
   if (error instanceof SqlPolicyError) {
+    dependencies.log({
+      domain: "sql_api",
+      action: "sql_policy_rejected",
+      code: error.code,
+      message: error.message.slice(0, MAX_SQL_POLICY_LOG_MESSAGE_CHARS),
+    });
     return buildMcpErrorContent(
       error.code,
       error.message,

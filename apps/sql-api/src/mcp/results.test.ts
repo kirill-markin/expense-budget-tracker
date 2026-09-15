@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SqlExecutionDeadlineError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  SqlExecutionDeadlineError,
+  SqlPolicyError,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
   getAmbiguousMutationInstructions,
   getDeadlineInstructions,
@@ -165,4 +168,28 @@ test("ambiguous sql_execute outcomes remain non-retryable until state is verifie
   assert.equal(error["code"], "sql_mutation_outcome_unknown");
   assert.deepEqual(error["details"], { outcome: "unknown", retryable: false });
   assert.equal(payload["instructions"], getAmbiguousMutationInstructions());
+});
+
+/**
+ * A rejected statement is normal MCP traffic, and its code is the only record
+ * of why restricted SQL refused it. The whole event is pinned so the submitted
+ * statement can never join it.
+ */
+test("MCP policy rejections are logged once, with the code and the policy message only", (): void => {
+  const logEvents: Array<SqlApiLogEvent> = [];
+  const policyMessage = "Relation secrets is not allowed in restricted SQL";
+  const payload = readResultPayload(buildMcpToolErrorResultWithDependencies(
+    new SqlPolicyError("relation_not_allowed", policyMessage),
+    "sql_query",
+    { log: (event) => logEvents.push(event) },
+  ));
+  const error = payload["error"] as JsonObject;
+
+  assert.equal(error["code"], "relation_not_allowed");
+  assert.deepEqual(logEvents, [{
+    domain: "sql_api",
+    action: "sql_policy_rejected",
+    code: "relation_not_allowed",
+    message: policyMessage,
+  }]);
 });

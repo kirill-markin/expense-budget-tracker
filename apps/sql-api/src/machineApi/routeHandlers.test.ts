@@ -8,6 +8,7 @@ import {
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { SqlTransactionOutcomeUnknownError } from "../dbDeadline.js";
 import type { RestrictedQueryFn } from "../db.js";
+import type { SqlApiLogEvent } from "../logger.js";
 import { createMachineApiHandler } from "../machineApi.js";
 import {
   handleMeRouteWithResolver,
@@ -19,8 +20,13 @@ import { createAuthenticatedEvent, createEvent, createQueryResult } from "../han
 import type { MachineApiDependencies, MachineRouteContext } from "./types.js";
 import { resolveSqlWorkspaceId } from "./workspaceService.js";
 
-const createDependencies = (): MachineApiDependencies => ({
+const ignoreLog: MachineApiDependencies["log"] = (): void => undefined;
+
+const createDependencies = (
+  log: MachineApiDependencies["log"] = ignoreLog,
+): MachineApiDependencies => ({
   ensureTrustedIdentityProvisioned: async () => undefined,
+  log,
   queryAsTrustedIdentity: async () => {
     throw new Error("queryAsTrustedIdentity should not be called");
   },
@@ -38,9 +44,11 @@ const createDependencies = (): MachineApiDependencies => ({
   },
 });
 
-const createContext = (): MachineRouteContext => ({
+const createContext = (
+  log: MachineApiDependencies["log"] = ignoreLog,
+): MachineRouteContext => ({
   event: createAuthenticatedEvent({}),
-  dependencies: createDependencies(),
+  dependencies: createDependencies(log),
   authenticated: {
     identity: {
       userId: "user-1",
@@ -614,4 +622,41 @@ test("mutating SQL routes keep pre-dispatch deadline failures retryable", async 
     assert.match(payload.instructions, /Retry SQL/u);
     assert.doesNotMatch(payload.instructions, /Verify current state/u);
   }
+});
+
+/**
+ * Policy rejections are the only record of what restricted SQL refuses on the
+ * machine API, so one rejected statement must leave exactly one structured
+ * event carrying the code the client was answered with.
+ */
+test("a statement rejected by policy is logged exactly once with its code", async (): Promise<void> => {
+  const logEvents: Array<SqlApiLogEvent> = [];
+  const context: MachineRouteContext = {
+    ...createContext((event) => logEvents.push(event)),
+    event: createAuthenticatedEvent({
+      body: JSON.stringify({
+        sql: "SELECT account_id FROM accounts; SELECT rate FROM fx_rates_daily",
+      }),
+      httpMethod: "POST",
+      path: "/v1/sql/query",
+      resource: "/sql/query",
+    }),
+  };
+
+  const response = await handleSqlQueryRouteWithWorkspaceResolver(
+    context,
+    async () => null,
+  );
+  const payload = JSON.parse(response.body) as {
+    error: Readonly<{ code: string; message: string }>;
+  };
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(payload.error.code, "single_statement_required");
+  assert.deepEqual(logEvents, [{
+    domain: "sql_api",
+    action: "sql_policy_rejected",
+    code: "single_statement_required",
+    message: payload.error.message,
+  }]);
 });
