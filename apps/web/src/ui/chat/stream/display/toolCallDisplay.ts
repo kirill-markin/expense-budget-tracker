@@ -81,6 +81,17 @@ export const formatStructuredToolText = (
 };
 
 /**
+ * Every tool call whose input carries a SQL statement. query_database is not
+ * registered any more, and is kept here because stored transcripts still hold
+ * its calls.
+ */
+const SQL_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "sql_query",
+  "sql_execute",
+  "query_database",
+]);
+
+/**
  * Formats the tool request body shown above the tool result.
  *
  * Database calls surface the SQL statement directly so the transcript stays
@@ -91,7 +102,7 @@ export const formatToolInput = (
   input: string | null,
 ): string | null => {
   if (input === null) return null;
-  if (name === "query_database") {
+  if (SQL_TOOL_NAMES.has(name)) {
     try {
       const parsed = JSON.parse(input) as Record<string, unknown>;
       if (typeof parsed.sql === "string") return parsed.sql;
@@ -114,7 +125,7 @@ export const formatToolOutput = (
 ): string | null => {
   if (output === null) return null;
   let formattedOutput: string | null = output;
-  if (name === "query_database") {
+  if (SQL_TOOL_NAMES.has(name)) {
     try {
       const parsed = JSON.parse(output) as unknown;
       formattedOutput = JSON.stringify(parsed, null, 2);
@@ -128,9 +139,8 @@ export const formatToolOutput = (
 };
 
 /**
- * Every chat tool serializes its failures as an `ok: false` payload: the
- * discovery tools through the shared result envelope, query_database through its
- * own error shape. A provider reports such a call as `completed`, so the
+ * Every chat tool serializes its failures as an `ok: false` payload of the shared
+ * result envelope. A provider reports such a call as `completed`, so the
  * transcript has to read the payload to label it as failed.
  */
 const isFailedToolOutput = (

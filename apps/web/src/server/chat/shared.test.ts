@@ -2,20 +2,53 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult as PgQueryResult } from "pg";
 import {
+  SQL_EXECUTE_TOOL,
+  SQL_QUERY_TOOL,
+} from "@expense-budget-tracker/agent-shared/agent-tools";
+import {
   MAX_SQL_MUTATION_ROWS,
   MAX_SQL_RESULT_CHARS,
   MAX_SQL_ROWS,
   MCP_SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
+  SqlPolicyError,
+  validateSingleMutationExpenseSql,
+  validateSingleReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
   CHAT_SQL_COMMIT_TIMEOUT_MS,
-  CHAT_SQL_TOOL_NAME,
-  execQuery,
   execQueryWithDependencies,
+  getChatSqlDeadlineMessage,
+  getChatSqlPolicyMessage,
+  type ChatSqlExecutionContext,
+  type ChatSqlTarget,
   type ExecQueryDependencies,
 } from "@/server/chat/shared";
 import { ChatTurnCancelledError } from "@/server/chat/store";
 import type { QueryFn } from "@/server/db/contextRunner";
+import type { WorkspaceSummary } from "@/server/workspaces";
+
+const CONTEXT: ChatSqlExecutionContext = {
+  userId: "user-1",
+  workspaceId: "workspace-1",
+  sessionId: "session-1",
+  turnId: "turn-1",
+};
+
+// Deliberately not the session's workspace-1: every call below runs against
+// another workspace the user is a member of, so the tests show which workspace
+// each part of the transaction is bound to.
+const TARGET_WORKSPACE: WorkspaceSummary = { workspaceId: "workspace-2", name: "Business" };
+
+const READ_TARGET: ChatSqlTarget = {
+  workspace: TARGET_WORKSPACE,
+  instructions: SQL_QUERY_TOOL.successInstructions,
+};
+
+const WRITE_TARGET: ChatSqlTarget = {
+  workspace: TARGET_WORKSPACE,
+  instructions: SQL_EXECUTE_TOOL.successInstructions,
+};
 
 const createQueryResult = (
   command: string,
@@ -67,7 +100,7 @@ const createCursorQueryFn = (
   };
 };
 
-const createUnusedRestrictedRunner = (): ExecQueryDependencies["withRestrictedUserContext"] =>
+const createUnusedRestrictedRunner = (): ExecQueryDependencies["withReadOnlyRestrictedUserContext"] =>
   async <T>(
     _userId: string,
     _workspaceId: string,
@@ -76,73 +109,6 @@ const createUnusedRestrictedRunner = (): ExecQueryDependencies["withRestrictedUs
   ): Promise<T> => {
     throw new Error("Restricted read transaction was not expected");
   };
-
-test("execQuery rejects function calls before reaching the database", async (): Promise<void> => {
-  await assert.rejects(
-    () => execQuery("SELECT pg_sleep(1)", {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    }),
-    (error: unknown) =>
-      error instanceof Error
-      && error.message.startsWith("Function pg_sleep() is not allowed in restricted SQL. Allowed functions: "),
-  );
-});
-
-test("execQuery explains how to replace PostgreSQL escape strings", async (): Promise<void> => {
-  await assert.rejects(
-    () => execQuery("SELECT E'value' FROM ledger_entries", {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    }),
-    (error: unknown) =>
-      error instanceof Error
-      && error.message === "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.",
-  );
-});
-
-test("execQuery rejects data-modifying CTEs before database or mutation lock entry", async (): Promise<void> => {
-  let userContextCount = 0;
-  let restrictedContextCount = 0;
-  let mutationLockCount = 0;
-
-  await assert.rejects(
-    () => execQueryWithDependencies(
-      "WITH changed AS (UPDATE account_metadata SET liquidity = 'low' RETURNING *) SELECT * FROM changed",
-      {
-        userId: "user-1",
-        workspaceId: "workspace-1",
-        sessionId: "session-1",
-        turnId: "turn-1",
-      },
-      {
-        withUserContext: async (): Promise<never> => {
-          userContextCount += 1;
-          throw new Error("User context should not run");
-        },
-        withRestrictedUserContext: async (): Promise<never> => {
-          restrictedContextCount += 1;
-          throw new Error("Restricted context should not run");
-        },
-        lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {
-          mutationLockCount += 1;
-        },
-        now: Date.now,
-      },
-    ),
-    (error: unknown) =>
-      error instanceof Error
-      && error.message === "Data-modifying CTE bodies are not supported; use SELECT, WITH, or VALUES in CTE bodies and move INSERT, UPDATE, or DELETE to the top-level statement. MERGE is not supported",
-  );
-
-  assert.equal(userContextCount, 0);
-  assert.equal(restrictedContextCount, 0);
-  assert.equal(mutationLockCount, 0);
-});
 
 test("cancel-first exact turn fencing rejects before mutating chat SQL", async (): Promise<void> => {
   let mutationCount = 0;
@@ -155,20 +121,16 @@ test("cancel-first exact turn fencing rejects before mutating chat SQL", async (
 
   await assert.rejects(
     () => execQueryWithDependencies(
-      "DELETE FROM ledger_entries WHERE entry_id = 'entry-1'",
-      {
-        userId: "user-1",
-        workspaceId: "workspace-1",
-        sessionId: "session-1",
-        turnId: "turn-1",
-      },
+      validateSingleMutationExpenseSql("DELETE FROM ledger_entries WHERE entry_id = 'entry-1'"),
+      CONTEXT,
+      WRITE_TARGET,
       {
         withUserContext: async <T>(
           _userId: string,
           _workspaceId: string,
           callback: (transactionQueryFn: QueryFn) => Promise<T>,
         ): Promise<T> => callback(queryFn),
-        withRestrictedUserContext: createUnusedRestrictedRunner(),
+        withReadOnlyRestrictedUserContext: createUnusedRestrictedRunner(),
         lockUncancelledChatTurnForMutationWithQuery:
           async (): Promise<void> => {
             throw new ChatTurnCancelledError("session-1", "turn-1");
@@ -218,16 +180,12 @@ test("SQL-first exact turn fencing holds the session lock until mutation commit"
     };
 
   const mutation = execQueryWithDependencies(
-    "DELETE FROM ledger_entries WHERE entry_id = 'entry-1'",
-    {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    },
+    validateSingleMutationExpenseSql("DELETE FROM ledger_entries WHERE entry_id = 'entry-1'"),
+    CONTEXT,
+    WRITE_TARGET,
     {
       withUserContext: withSerializedSessionTransaction,
-      withRestrictedUserContext: createUnusedRestrictedRunner(),
+      withReadOnlyRestrictedUserContext: createUnusedRestrictedRunner(),
       lockUncancelledChatTurnForMutationWithQuery:
         async (): Promise<void> => {},
       now: Date.now,
@@ -260,50 +218,37 @@ const createNoteRows = (rowCount: number): ReadonlyArray<Readonly<Record<string,
     note: "н".repeat(600),
   }));
 
-// The success output apps/web/src/server/chat/openai/tooling/tools.ts emits for
-// one tool call, which is what the model reads, what the turn re-sends, and
-// what the transcript stores and renders.
-const buildChatToolOutput = (sql: string, json: string): string => JSON.stringify({
-  ok: true,
-  tool: CHAT_SQL_TOOL_NAME,
-  sql,
-  ...JSON.parse(json) as Readonly<Record<string, unknown>>,
-});
-
 type ChatSqlPayload = Readonly<{
-  statements: ReadonlyArray<Readonly<{
-    rows: ReadonlyArray<unknown>;
-    rowCount: number;
-    returnedRowCount: number;
-    totalRowCount: number;
-    truncated: boolean;
-  }>>;
+  data: Readonly<{
+    statements: ReadonlyArray<Readonly<{
+      rows: ReadonlyArray<unknown>;
+      rowCount: number;
+      returnedRowCount: number;
+      totalRowCount: number;
+      truncated: boolean;
+    }>>;
+  }>;
 }>;
 
-// A long script, the case where the echo the tool layer adds around the
-// statements array is a large share of the emitted output.
-const LONG_SCRIPT = `SELECT entry_id, note FROM ledger_entries WHERE entry_id IN (${
+// A long statement, the case where the echoed SQL is a large share of the
+// emitted output.
+const LONG_READ_STATEMENT = `SELECT entry_id, note FROM ledger_entries WHERE entry_id IN (${
   Array.from({ length: 500 }, (_value, index) => `'entry-${String(index)}'`).join(", ")
 })`;
 
 test("execQueryWithDependencies returns a chat result within budget unchanged", async (): Promise<void> => {
   const rows = createNoteRows(3);
-  const sql = "SELECT entry_id, note FROM ledger_entries LIMIT 3";
   const queryFn = createCursorQueryFn(rows);
 
   const result = await execQueryWithDependencies(
-    sql,
-    {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    },
+    validateSingleReadOnlyExpenseSql("SELECT entry_id, note FROM ledger_entries LIMIT 3"),
+    CONTEXT,
+    READ_TARGET,
     {
       withUserContext: async (): Promise<never> => {
         throw new Error("User context should not run");
       },
-      withRestrictedUserContext: async <T>(
+      withReadOnlyRestrictedUserContext: async <T>(
         _userId: string,
         _workspaceId: string,
         _statementTimeoutMs: number,
@@ -315,10 +260,10 @@ test("execQueryWithDependencies returns a chat result within budget unchanged", 
   );
 
   const payload = JSON.parse(result.json) as ChatSqlPayload;
-  const statement = payload.statements[0];
+  const statement = payload.data.statements[0];
 
   assert.ok(statement);
-  assert.ok(buildChatToolOutput(sql, result.json).length < MAX_SQL_RESULT_CHARS);
+  assert.ok(result.json.length < MAX_SQL_RESULT_CHARS);
   // The budget leaves a result that fits exactly as the statement built it.
   assert.deepEqual(statement.rows, rows);
   assert.equal(statement.rowCount, rows.length);
@@ -332,18 +277,14 @@ test("execQueryWithDependencies caps the chat tool output the model receives in 
   const queryFn = createCursorQueryFn(rows);
 
   const result = await execQueryWithDependencies(
-    LONG_SCRIPT,
-    {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    },
+    validateSingleReadOnlyExpenseSql(LONG_READ_STATEMENT),
+    CONTEXT,
+    READ_TARGET,
     {
       withUserContext: async (): Promise<never> => {
         throw new Error("User context should not run");
       },
-      withRestrictedUserContext: async <T>(
+      withReadOnlyRestrictedUserContext: async <T>(
         _userId: string,
         _workspaceId: string,
         _statementTimeoutMs: number,
@@ -355,11 +296,11 @@ test("execQueryWithDependencies caps the chat tool output the model receives in 
   );
 
   const payload = JSON.parse(result.json) as ChatSqlPayload;
-  const statement = payload.statements[0];
+  const statement = payload.data.statements[0];
 
   assert.ok(statement);
-  assert.ok(LONG_SCRIPT.length > 5_000);
-  assert.ok(buildChatToolOutput(LONG_SCRIPT, result.json).length <= MAX_SQL_RESULT_CHARS);
+  assert.ok(LONG_READ_STATEMENT.length > 5_000);
+  assert.ok(result.json.length <= MAX_SQL_RESULT_CHARS);
   assert.ok(statement.rows.length > 0);
   assert.ok(statement.rows.length < rows.length);
   assert.equal(statement.rowCount, statement.rows.length);
@@ -370,7 +311,6 @@ test("execQueryWithDependencies caps the chat tool output the model receives in 
 
 test("execQueryWithDependencies keeps the affected row count when a chat mutation is cut", async (): Promise<void> => {
   const rows = createNoteRows(60);
-  const sql = "DELETE FROM ledger_entries WHERE workspace_id = 'workspace-1' RETURNING entry_id, note";
   const queryFn: QueryFn = async (statementSql): Promise<PgQueryResult> => (
     statementSql.startsWith("DELETE ")
       ? createQueryResult("DELETE", rows)
@@ -378,30 +318,28 @@ test("execQueryWithDependencies keeps the affected row count when a chat mutatio
   );
 
   const result = await execQueryWithDependencies(
-    sql,
-    {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    },
+    validateSingleMutationExpenseSql(
+      "DELETE FROM ledger_entries WHERE workspace_id = 'workspace-1' RETURNING entry_id, note",
+    ),
+    CONTEXT,
+    WRITE_TARGET,
     {
       withUserContext: async <T>(
         _userId: string,
         _workspaceId: string,
         callback: (mutatingQueryFn: QueryFn) => Promise<T>,
       ): Promise<T> => callback(queryFn),
-      withRestrictedUserContext: createUnusedRestrictedRunner(),
+      withReadOnlyRestrictedUserContext: createUnusedRestrictedRunner(),
       lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {},
       now: Date.now,
     },
   );
 
   const payload = JSON.parse(result.json) as ChatSqlPayload;
-  const statement = payload.statements[0];
+  const statement = payload.data.statements[0];
 
   assert.ok(statement);
-  assert.ok(buildChatToolOutput(sql, result.json).length <= MAX_SQL_RESULT_CHARS);
+  assert.ok(result.json.length <= MAX_SQL_RESULT_CHARS);
   assert.ok(statement.rows.length > 0);
   assert.ok(statement.rows.length < rows.length);
   // The write committed, so its rowCount keeps naming the rows it affected.
@@ -422,7 +360,6 @@ const createNarrowRows = (
 
 test("execQueryWithDependencies bounds a chat read at the cursor, not at the result set", async (): Promise<void> => {
   const rows = createNarrowRows(250);
-  const sql = "SELECT entry_id FROM ledger_entries";
   const cursorQueryFn = createCursorQueryFn(rows);
   let largestHandedRowCount = 0;
   const queryFn: QueryFn = async (statementSql, params): Promise<PgQueryResult> => {
@@ -432,18 +369,14 @@ test("execQueryWithDependencies bounds a chat read at the cursor, not at the res
   };
 
   const result = await execQueryWithDependencies(
-    sql,
-    {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    },
+    validateSingleReadOnlyExpenseSql("SELECT entry_id FROM ledger_entries"),
+    CONTEXT,
+    READ_TARGET,
     {
       withUserContext: async (): Promise<never> => {
         throw new Error("User context should not run");
       },
-      withRestrictedUserContext: async <T>(
+      withReadOnlyRestrictedUserContext: async <T>(
         _userId: string,
         _workspaceId: string,
         _statementTimeoutMs: number,
@@ -455,7 +388,7 @@ test("execQueryWithDependencies bounds a chat read at the cursor, not at the res
   );
 
   const payload = JSON.parse(result.json) as ChatSqlPayload;
-  const statement = payload.statements[0];
+  const statement = payload.data.statements[0];
 
   assert.ok(statement);
   assert.equal(statement.rows.length, MAX_SQL_ROWS);
@@ -467,6 +400,11 @@ test("execQueryWithDependencies bounds a chat read at the cursor, not at the res
   assert.equal(largestHandedRowCount, MAX_SQL_ROWS + 1);
 });
 
+/**
+ * The policy error reaches the tool layer unwrapped, which is what lets the
+ * emitted envelope carry its code, while the chat message adds the rollback fact
+ * the policy message itself does not state.
+ */
 test("execQueryWithDependencies rejects a chat mutation over the shared row limit", async (): Promise<void> => {
   const affectedRowCount = MAX_SQL_MUTATION_ROWS + 1;
   const queryFn: QueryFn = async (statementSql): Promise<PgQueryResult> => (
@@ -477,27 +415,24 @@ test("execQueryWithDependencies rejects a chat mutation over the shared row limi
 
   await assert.rejects(
     () => execQueryWithDependencies(
-      "DELETE FROM ledger_entries WHERE workspace_id = 'workspace-1'",
-      {
-        userId: "user-1",
-        workspaceId: "workspace-1",
-        sessionId: "session-1",
-        turnId: "turn-1",
-      },
+      validateSingleMutationExpenseSql("DELETE FROM ledger_entries WHERE workspace_id = 'workspace-1'"),
+      CONTEXT,
+      WRITE_TARGET,
       {
         withUserContext: async <T>(
           _userId: string,
           _workspaceId: string,
           callback: (mutatingQueryFn: QueryFn) => Promise<T>,
         ): Promise<T> => callback(queryFn),
-        withRestrictedUserContext: createUnusedRestrictedRunner(),
+        withReadOnlyRestrictedUserContext: createUnusedRestrictedRunner(),
         lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {},
         now: Date.now,
       },
     ),
     (error: unknown) =>
-      error instanceof Error
-      && error.message === `A SQL mutation may affect at most ${String(MAX_SQL_MUTATION_ROWS)} rows per statement; this statement affected ${String(affectedRowCount)}. The whole call was rolled back, so nothing was written. Split the change into calls affecting at most ${String(MAX_SQL_MUTATION_ROWS)} rows each and retry`,
+      error instanceof SqlPolicyError
+      && error.code === "mutation_statement_row_limit_exceeded"
+      && getChatSqlPolicyMessage(error) === `A SQL mutation may affect at most ${String(MAX_SQL_MUTATION_ROWS)} rows per statement; this statement affected ${String(affectedRowCount)}. The whole call was rolled back, so nothing was written. Split the change into calls affecting at most ${String(MAX_SQL_MUTATION_ROWS)} rows each and retry`,
   );
 });
 
@@ -513,18 +448,14 @@ test("execQueryWithDependencies turns an exhausted SQL deadline into an actionab
 
   await assert.rejects(
     () => execQueryWithDependencies(
-      "SELECT entry_id FROM ledger_entries",
-      {
-        userId: "user-1",
-        workspaceId: "workspace-1",
-        sessionId: "session-1",
-        turnId: "turn-1",
-      },
+      validateSingleReadOnlyExpenseSql("SELECT entry_id FROM ledger_entries"),
+      CONTEXT,
+      READ_TARGET,
       {
         withUserContext: async (): Promise<never> => {
           throw new Error("User context should not run");
         },
-        withRestrictedUserContext: async <T>(
+        withReadOnlyRestrictedUserContext: async <T>(
           _userId: string,
           _workspaceId: string,
           _statementTimeoutMs: number,
@@ -535,8 +466,8 @@ test("execQueryWithDependencies turns an exhausted SQL deadline into an actionab
       },
     ),
     (error: unknown) =>
-      error instanceof Error
-      && error.message === `SQL execution exceeded its ${String(MCP_SQL_STATEMENT_TIMEOUT_MS)} ms total deadline before the next database command could start. Any writes in this call were rolled back. Ask for less work per call: a shorter date range, fewer rows, or fewer statements in one script`,
+      error instanceof SqlExecutionDeadlineError
+      && getChatSqlDeadlineMessage(error) === `SQL execution exceeded its ${String(MCP_SQL_STATEMENT_TIMEOUT_MS)} ms total deadline before the next database command could start. Any writes in this call were rolled back. Ask for less work per call: a shorter date range or fewer rows`,
   );
 });
 
@@ -609,24 +540,25 @@ test("execQueryWithDependencies bounds every chat read command with the budget s
   );
 
   await execQueryWithDependencies(
-    sql,
-    {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    },
+    validateSingleReadOnlyExpenseSql(sql),
+    CONTEXT,
+    READ_TARGET,
     {
       withUserContext: async (): Promise<never> => {
         throw new Error("User context should not run");
       },
-      withRestrictedUserContext: async <T>(
+      withReadOnlyRestrictedUserContext: async <T>(
         _userId: string,
-        _workspaceId: string,
+        workspaceId: string,
         statementTimeoutMs: number,
         callback: (restrictedQueryFn: QueryFn) => Promise<T>,
       ): Promise<T> => {
         assert.equal(statementTimeoutMs, MCP_SQL_STATEMENT_TIMEOUT_MS);
+        // A read needs no chat session row, so it binds the target directly.
+        // The repeatable-read read-only transaction and the api_sql_reader role
+        // this runner opens are pinned in
+        // apps/web/src/server/db/contextRunner.test.ts.
+        assert.equal(workspaceId, TARGET_WORKSPACE.workspaceId);
         return callback(queryFn);
       },
       lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {},
@@ -653,6 +585,7 @@ test("execQueryWithDependencies bounds every chat read command with the budget s
 test("execQueryWithDependencies orders the chat mutation privilege commands around the turn lock", async (): Promise<void> => {
   const sql = "DELETE FROM ledger_entries WHERE entry_id = 'entry-1'";
   const calls: Array<RecordedCommand> = [];
+  let lockedWorkspaceId: string | null = null;
   let currentTimeMs = 0;
   const queryFn = createRecordingQueryFn(
     calls,
@@ -667,20 +600,19 @@ test("execQueryWithDependencies orders the chat mutation privilege commands arou
   );
 
   await execQueryWithDependencies(
-    sql,
-    {
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    },
+    validateSingleMutationExpenseSql(sql),
+    CONTEXT,
+    WRITE_TARGET,
     {
       withUserContext: async <T>(
         _userId: string,
-        _workspaceId: string,
+        workspaceId: string,
         callback: (mutatingQueryFn: QueryFn) => Promise<T>,
-      ): Promise<T> => callback(queryFn),
-      withRestrictedUserContext: createUnusedRestrictedRunner(),
+      ): Promise<T> => {
+        lockedWorkspaceId = workspaceId;
+        return callback(queryFn);
+      },
+      withReadOnlyRestrictedUserContext: createUnusedRestrictedRunner(),
       lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {
         calls.push({ text: MUTATION_TURN_LOCK_MARKER, params: [] });
       },
@@ -689,18 +621,126 @@ test("execQueryWithDependencies orders the chat mutation privilege commands arou
   );
 
   // db/migrations/0012_restrict_set_config.sql grants EXECUTE on set_config()
-  // to app alone, so the one set_config() call has to stay ahead of SET LOCAL
-  // ROLE, and it has to bound the turn lock that follows it.
+  // to app alone, so both set_config() calls have to stay ahead of SET LOCAL
+  // ROLE, the first has to bound the turn lock that follows it, and the second
+  // has to come after that lock is held.
   assert.deepEqual(calls.map((call) => call.text), [
     "SELECT set_config('statement_timeout', $1, true)",
     MUTATION_TURN_LOCK_MARKER,
+    "SELECT set_config('app.workspace_id', $1, true)",
     "SET LOCAL ROLE api_sql_executor",
-    `SET LOCAL statement_timeout = ${String(MCP_SQL_STATEMENT_TIMEOUT_MS - (2 * COMMAND_CLOCK_STEP_MS))}`,
+    `SET LOCAL statement_timeout = ${String(MCP_SQL_STATEMENT_TIMEOUT_MS - (3 * COMMAND_CLOCK_STEP_MS))}`,
     sql,
     // A write that spent nearly the whole deadline still commits on this fixed
     // allowance rather than on what little the deadline had left.
     `SET LOCAL statement_timeout = ${String(CHAT_SQL_COMMIT_TIMEOUT_MS)}`,
   ]);
   assert.deepEqual(calls[0]?.params, [String(MCP_SQL_STATEMENT_TIMEOUT_MS)]);
+  // The transaction opens on the session's workspace, so the chat session row
+  // the turn lock reads is visible, and only then binds the target workspace.
+  assert.equal(lockedWorkspaceId, CONTEXT.workspaceId);
+  assert.deepEqual(calls[2]?.params, [TARGET_WORKSPACE.workspaceId]);
   assertInterpolatedTimeouts(calls);
+});
+
+type ChatSqlPolicyCase = Readonly<{
+  code: ConstructorParameters<typeof SqlPolicyError>[0];
+  policyMessage: string;
+  chatMessage: string;
+}>;
+
+/**
+ * Every branch of getChatSqlPolicyMessage that rewrites or extends the shared
+ * policy message. That text is hand-written and reaches the model verbatim, so
+ * nothing else in the repository would notice it being emptied by a refactor.
+ */
+const CHAT_SQL_POLICY_CASES: ReadonlyArray<ChatSqlPolicyCase> = [
+  {
+    code: "single_statement_required",
+    policyMessage: "Exactly one SQL statement is required",
+    chatMessage: "Exactly one SQL statement is required. One call is one transaction, so rows that have to land together, such as both sides of a transfer, belong in one multi-row statement rather than in separate calls",
+  },
+  {
+    code: "mutation_statement_row_limit_exceeded",
+    policyMessage: "A SQL mutation may affect at most 500 rows per statement",
+    chatMessage: `A SQL mutation may affect at most 500 rows per statement. The whole call was rolled back, so nothing was written. Split the change into calls affecting at most ${String(MAX_SQL_MUTATION_ROWS)} rows each and retry`,
+  },
+  {
+    code: "mutation_request_row_limit_exceeded",
+    policyMessage: "A SQL request may affect at most 500 rows",
+    chatMessage: `A SQL request may affect at most 500 rows. The whole call was rolled back, so nothing was written. Split the change into calls affecting at most ${String(MAX_SQL_MUTATION_ROWS)} rows each and retry`,
+  },
+  {
+    code: "on_conflict_not_allowed",
+    policyMessage: "ON CONFLICT is not supported",
+    chatMessage: "ON CONFLICT is not supported in chat queries",
+  },
+  {
+    code: "set_config_not_allowed",
+    policyMessage: "set_config() is not allowed",
+    chatMessage: "set_config() calls are not allowed",
+  },
+  {
+    code: "sql_comments_not_allowed",
+    policyMessage: "SQL comments are not allowed",
+    chatMessage: "SQL comments are not allowed in chat queries",
+  },
+  {
+    code: "quoted_identifiers_not_allowed",
+    policyMessage: "Quoted identifiers are not allowed",
+    chatMessage: "Quoted identifiers are not allowed in chat queries",
+  },
+  {
+    code: "dollar_quoted_strings_not_allowed",
+    policyMessage: "Dollar-quoted strings are not allowed",
+    chatMessage: "Dollar-quoted strings are not allowed in chat queries",
+  },
+  {
+    code: "escape_string_literals_not_allowed",
+    policyMessage: "E'...' escape strings are not allowed",
+    chatMessage: "PostgreSQL E'...' escape strings are unsupported in restricted SQL. Use ordinary single-quoted literals and represent embedded apostrophes by doubling them, for example 'customer''s'.",
+  },
+  {
+    code: "unterminated_string_literal",
+    policyMessage: "Unterminated string literal",
+    chatMessage: "Unterminated SQL string literal",
+  },
+  {
+    code: "invalid_relation_reference",
+    policyMessage: "Invalid relation reference",
+    chatMessage: "Expected relation name after SQL clause",
+  },
+  {
+    code: "relation_not_allowed",
+    policyMessage: "Relation pg_stat_activity is not allowed",
+    chatMessage: "Relation pg_stat_activity is not allowed in chat queries",
+  },
+  {
+    code: "recursive_cte_search_cycle_not_allowed",
+    policyMessage: "Recursive CTE SEARCH and CYCLE clauses are not supported",
+    chatMessage: "Recursive CTE SEARCH and CYCLE clauses are not supported in chat queries. Rewrite the CTE without those clauses",
+  },
+  {
+    code: "read_only_relation_mutation_not_allowed",
+    policyMessage: "Relation accounts is read-only",
+    chatMessage: "Relation accounts is read-only. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata",
+  },
+];
+
+test("getChatSqlPolicyMessage keeps its chat-specific remediation for every branch that adds one", (): void => {
+  for (const policyCase of CHAT_SQL_POLICY_CASES) {
+    assert.equal(
+      getChatSqlPolicyMessage(new SqlPolicyError(policyCase.code, policyCase.policyMessage)),
+      policyCase.chatMessage,
+      `getChatSqlPolicyMessage lost the remediation for ${policyCase.code}`,
+    );
+  }
+});
+
+test("getChatSqlPolicyMessage passes through a policy message that already stands alone", (): void => {
+  const policyMessage = "Read-only SQL cannot contain INSERT, UPDATE, DELETE, or data-modifying CTEs";
+  assert.equal(
+    getChatSqlPolicyMessage(new SqlPolicyError("read_only_sql_required", policyMessage)),
+    policyMessage,
+  );
 });

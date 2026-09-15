@@ -4,7 +4,9 @@ import {
   runStatementWithContext,
   runStatementWithReadOnlyContext,
   runWithContext,
+  runWithReadOnlyContext,
   type QueryFn,
+  type RestrictedDbRole,
 } from "@/server/db/contextRunner";
 import { type UserIdentity } from "@/server/users";
 
@@ -12,7 +14,7 @@ type ContextOptions = Readonly<{
   userId: string;
   workspaceId: string;
   statementTimeoutMs: number | null;
-  useRestrictedRole: boolean;
+  restrictedRole: RestrictedDbRole | null;
 }>;
 
 type DbFacadeDependencies = Readonly<{
@@ -32,7 +34,7 @@ type DbFacade = Readonly<{
   queryAsExistingWorkspace: (userId: string, workspaceId: string, text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
   withUserContext: <T>(userId: string, workspaceId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withUserOnlyContext: <T>(userId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
-  withRestrictedUserContext: <T>(userId: string, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
+  withReadOnlyRestrictedUserContext: <T>(userId: string, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withRestrictedTrustedIdentityContext: <T>(identity: UserIdentity, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
 }>;
 
@@ -76,7 +78,7 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
         userId,
         workspaceId,
         statementTimeoutMs: null,
-        useRestrictedRole: false,
+        restrictedRole: null,
       },
       text,
       params,
@@ -95,7 +97,7 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
         userId: identity.userId,
         workspaceId,
         statementTimeoutMs: null,
-        useRestrictedRole: false,
+        restrictedRole: null,
       },
       text,
       params,
@@ -123,7 +125,7 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
         userId,
         workspaceId,
         statementTimeoutMs: null,
-        useRestrictedRole: false,
+        restrictedRole: null,
       },
       text,
       params,
@@ -141,7 +143,7 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
         userId,
         workspaceId,
         statementTimeoutMs: null,
-        useRestrictedRole: false,
+        restrictedRole: null,
       },
       callback,
     ),
@@ -164,28 +166,35 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
         userId,
         workspaceId: "",
         statementTimeoutMs: null,
-        useRestrictedRole: false,
+        restrictedRole: null,
       },
       callback,
     ),
-  withRestrictedUserContext: async <T>(
+  /**
+   * Run read-only user SQL in one stable-snapshot transaction under the
+   * least-privilege reader role, the shape
+   * apps/sql-api/src/db.ts withReadOnlyRestrictedTrustedIdentityContext uses.
+   * The transaction mode and the role are a second layer behind statement
+   * validation: neither depends on the SQL having been validated at all.
+   */
+  withReadOnlyRestrictedUserContext: async <T>(
     userId: string,
     workspaceId: string,
     statementTimeoutMs: number,
     callback: (queryFn: QueryFn) => Promise<T>,
-  ): Promise<T> =>
-    runForUser(
-      dependencies,
-      userId,
-      workspaceId,
+  ): Promise<T> => {
+    await dependencies.ensureUserProvisioned(userId, workspaceId);
+    return runWithReadOnlyContext(
+      dependencies.getPool(),
       {
         userId,
         workspaceId,
         statementTimeoutMs,
-        useRestrictedRole: true,
+        restrictedRole: "api_sql_reader",
       },
       callback,
-    ),
+    );
+  },
   withRestrictedTrustedIdentityContext: async <T>(
     identity: UserIdentity,
     workspaceId: string,
@@ -200,7 +209,7 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
         userId: identity.userId,
         workspaceId,
         statementTimeoutMs,
-        useRestrictedRole: true,
+        restrictedRole: "api_sql_executor",
       },
       callback,
     ),

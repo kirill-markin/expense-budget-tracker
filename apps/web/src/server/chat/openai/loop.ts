@@ -439,7 +439,11 @@ const runLoopWithDeps = async (
         },
         output.output,
         Date.now(),
-        output.succeeded && output.isMutating,
+        // A mutation the chat ran against another accessible workspace must not
+        // refresh the route-backed content of the workspace the user is viewing.
+        output.succeeded
+        && output.isMutating
+        && output.workspaceId === params.workspaceId,
       );
       toolStates = update.toolStates;
       if (update.event !== null) {
