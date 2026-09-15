@@ -637,6 +637,10 @@ export const getSqlPolicyInstructions = (
     return "ON CONFLICT is not supported in restricted SQL. Use explicit SELECT first, then INSERT or UPDATE as separate steps.";
   }
 
+  if (error.code === "unsupported_sql_construct") {
+    return "Restricted SQL does not support DISTINCT ON, named WINDOW clauses, GROUP BY ROLLUP, CUBE, or GROUPING SETS, or WITHIN GROUP ordered-set aggregates. Replace DISTINCT ON with ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) and rn = 1, repeat a named window inline in every OVER (...), run one statement per grouping level, and compute ordered-set aggregates outside SQL.";
+  }
+
   if (error.code === "set_config_not_allowed") {
     return "Do not call set_config(). User and workspace context are managed by the API.";
   }

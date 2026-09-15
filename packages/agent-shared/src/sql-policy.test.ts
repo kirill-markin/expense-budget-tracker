@@ -365,6 +365,94 @@ test("validateExpenseSql inspects window, filter, and keyword-argument call cont
   );
 });
 
+test("validateExpenseSql names unsupported SQL constructs instead of a function the caller never wrote", (): void => {
+  const rejectedSql: ReadonlyArray<Readonly<{
+    sql: string;
+    construct: string;
+    alternative: string;
+  }>> = [
+    {
+      sql: "SELECT DISTINCT ON (account_id) account_id, ts FROM ledger_entries ORDER BY account_id, ts DESC",
+      construct: "DISTINCT ON (...)",
+      alternative: "ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)",
+    },
+    {
+      sql: "SELECT SUM(amount) OVER w AS s FROM ledger_entries WINDOW w AS (PARTITION BY account_id)",
+      construct: "The named WINDOW w clause",
+      alternative: "Repeat the window inline",
+    },
+    {
+      sql: "SELECT category, SUM(amount) AS s FROM ledger_entries GROUP BY ROLLUP(category)",
+      construct: "GROUP BY ROLLUP(...)",
+      alternative: "one statement per grouping level",
+    },
+    {
+      sql: "SELECT category, SUM(amount) AS s FROM ledger_entries GROUP BY CUBE(category, kind)",
+      construct: "GROUP BY CUBE(...)",
+      alternative: "one statement per grouping level",
+    },
+    {
+      sql: "SELECT category, SUM(amount) AS s FROM ledger_entries GROUP BY GROUPING SETS ((category), ())",
+      construct: "GROUP BY GROUPING SETS (...)",
+      alternative: "one statement per grouping level",
+    },
+    {
+      sql: "SELECT STRING_AGG(category, ',') WITHIN GROUP (ORDER BY category) AS c FROM ledger_entries",
+      construct: "WITHIN GROUP (...)",
+      alternative: "Ordered-set aggregates are unavailable",
+    },
+  ];
+
+  for (const { sql, construct, alternative } of rejectedSql) {
+    assert.throws(
+      () => validateExpenseSql(sql),
+      (error: unknown) =>
+        error instanceof SqlPolicyError
+        && error.code === "unsupported_sql_construct"
+        && error.message.includes(construct)
+        && error.message.includes(alternative),
+      sql,
+    );
+  }
+});
+
+test("validateExpenseSql keeps accepting SQL that only resembles an unsupported construct", (): void => {
+  const acceptedSql: ReadonlyArray<Readonly<{
+    sql: string;
+    relations: ReadonlyArray<string>;
+  }>> = [
+    { sql: "SELECT DISTINCT category FROM ledger_entries", relations: ["ledger_entries"] },
+    {
+      sql: "SELECT COUNT(DISTINCT account_id) AS accounts FROM ledger_entries",
+      relations: ["ledger_entries"],
+    },
+    // String literals are blanked before tokenization, so construct keywords
+    // inside user text must never be mistaken for the construct itself.
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE note ILIKE '%within group%'",
+      relations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE note ILIKE '%distinct on (x)%' OR note ILIKE '%rollup(x)%'",
+      relations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT account_id, SUM(amount) OVER (PARTITION BY account_id ORDER BY ts) AS running FROM ledger_entries",
+      relations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT category, SUM(amount) AS total FROM ledger_entries GROUP BY category HAVING SUM(amount) < 0 ORDER BY total",
+      relations: ["ledger_entries"],
+    },
+  ];
+
+  for (const { sql, relations } of acceptedSql) {
+    const validated = validateExpenseSql(sql);
+    assert.equal(validated.statements.length, 1, sql);
+    assert.deepEqual(validated.statements[0]?.referencedRelations, relations, sql);
+  }
+});
+
 test("validateExpenseSql rejects attribute-notation function calls on indirection expressions", (): void => {
   const rejectedSql: ReadonlyArray<string> = [
     "SELECT entry_id FROM ledger_entries WHERE (amount).pg_sleep IS NULL",

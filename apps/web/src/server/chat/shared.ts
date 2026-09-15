@@ -150,22 +150,16 @@ SELECT ts, account_id, amount, currency, kind, category, counterparty, note FROM
 SELECT category, SUM(amount) AS total FROM ledger_entries WHERE kind = 'spend' AND ts >= '<month-start YYYY-MM-DD>' AND ts < '<next-month-start YYYY-MM-DD>' GROUP BY category ORDER BY total
 
 ### Budget Base plan vs actual (explicit month)
-WITH latest_budget_timestamps AS (
-  SELECT budget_month, direction, category, MAX(inserted_at) AS inserted_at
+WITH ranked_plan AS (
+  SELECT direction, category, planned_value,
+         ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC, planned_value DESC, currency DESC) AS rn
   FROM budget_lines
   WHERE budget_month = '<month-start YYYY-MM-DD>' AND kind = 'base'
-  GROUP BY budget_month, direction, category
 ),
 plan AS (
-  SELECT bl.direction, bl.category, MAX(bl.planned_value) AS planned
-  FROM budget_lines bl
-  JOIN latest_budget_timestamps lbt
-    ON lbt.budget_month = bl.budget_month
-   AND lbt.direction = bl.direction
-   AND lbt.category = bl.category
-   AND lbt.inserted_at = bl.inserted_at
-  WHERE bl.kind = 'base'
-  GROUP BY bl.direction, bl.category
+  SELECT direction, category, planned_value AS planned
+  FROM ranked_plan
+  WHERE rn = 1
 ),
 actual AS (
   SELECT kind AS direction, category, SUM(amount) AS spent
@@ -236,6 +230,9 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
   }
   if (error.code === "on_conflict_not_allowed") {
     return new Error("ON CONFLICT is not supported in chat queries");
+  }
+  if (error.code === "unsupported_sql_construct") {
+    return new Error(error.message);
   }
   if (error.code === "set_config_not_allowed") {
     return new Error("set_config() calls are not allowed");
