@@ -151,10 +151,11 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
    * Run statements against strictly user-scoped tables, whose RLS policies key
    * on app.user_id alone.
    *
-   * Deliberately skips ensureUserProvisioned: that path creates and joins a
-   * workspace as a side effect, which user-scoped counters such as
-   * chat_turn_rate_events must never trigger. app.workspace_id is set to an
-   * empty string so no workspace-scoped policy can match inside this context.
+   * Deliberately skips ensureUserProvisioned: that path requires membership in
+   * a workspace and writes the users and settings rows, while user-scoped
+   * counters such as chat_turn_rate_events have no workspace and must never
+   * trigger those writes. app.workspace_id is set to an empty string so no
+   * workspace-scoped policy can match inside this context.
    */
   withUserOnlyContext: async <T>(
     userId: string,
