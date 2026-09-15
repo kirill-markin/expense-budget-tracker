@@ -3,6 +3,18 @@ import {
   SqlExecutionDeadlineError,
   SqlPolicyError,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  AgentToolError,
+  buildAgentErrorPayload,
+  buildAgentSuccessPayload,
+  getAmbiguousMutationInstructions,
+  getDeadlineInstructions,
+  getSqlPolicyInstructions,
+  getUnexpectedErrorInstructions,
+  serializeAgentPayload,
+  type AgentResultData,
+  type AgentResultPayload,
+} from "@expense-budget-tracker/agent-shared/agent-results";
 import { getSafeErrorType, log } from "../logger.js";
 import {
   isAmbiguousSqlMutationOutcomeError,
@@ -10,23 +22,7 @@ import {
   isUserSqlExecutionError,
 } from "../machineApi/sqlService.js";
 
-export class McpToolError extends Error {
-  readonly code: string;
-  readonly instructions: string;
-  readonly details: Readonly<Record<string, unknown>>;
-
-  constructor(
-    code: string,
-    message: string,
-    instructions: string,
-    details: Readonly<Record<string, unknown>>,
-  ) {
-    super(message);
-    this.code = code;
-    this.instructions = instructions;
-    this.details = details;
-  }
-}
+export { AgentToolError as McpToolError };
 
 export type McpResultDependencies = Readonly<{
   log: typeof log;
@@ -34,89 +30,33 @@ export type McpResultDependencies = Readonly<{
 
 const defaultDependencies: McpResultDependencies = { log };
 
-// Serializes compactly on purpose: a tool result is read by programs and models,
-// never rendered to a human, and indentation is not part of any MCP revision's
-// tool-result contract. Pretty-printing spent roughly a third of every result's
-// characters on whitespace.
-const serializePayload = (payload: Readonly<Record<string, unknown>>): string => {
-  const text = JSON.stringify(payload);
-  if (text === undefined) {
-    throw new Error("MCP result payload could not be serialized");
-  }
-  return text;
+const buildTextContent = (payload: AgentResultPayload): CallToolResult["content"] => {
+  return [{ type: "text", text: serializeAgentPayload(payload) }];
 };
 
-const buildTextContent = (payload: Readonly<Record<string, unknown>>): CallToolResult["content"] => {
-  return [{ type: "text", text: serializePayload(payload) }];
-};
-
-export const buildMcpSuccessResult = <TData extends Readonly<Record<string, unknown>>>(
+export const buildMcpSuccessResult = <TData extends AgentResultData>(
   data: TData,
   instructions: string,
 ): CallToolResult => ({
-  content: buildTextContent({ ok: true, data, instructions }),
+  content: buildTextContent(buildAgentSuccessPayload(data, instructions)),
 });
-
-const getSqlPolicyInstructions = (error: SqlPolicyError, toolName: string): string => {
-  if (error.code === "relation_not_allowed" || error.code === "invalid_relation_reference") {
-    return `Call get_schema to inspect the allowed relations and columns, fix the SQL, then call ${toolName} again.`;
-  }
-  if (error.code === "read_only_sql_required") {
-    return "Send reads to sql_query and approved INSERT, UPDATE, or DELETE statements to sql_execute.";
-  }
-  if (error.code === "mutation_sql_required") {
-    return "Send SELECT and WITH...SELECT statements to sql_query. Call sql_execute only with an approved INSERT, UPDATE, or DELETE mutation.";
-  }
-  if (
-    error.code === "mutation_statement_row_limit_exceeded"
-    || error.code === "mutation_request_row_limit_exceeded"
-  ) {
-    return `Narrow or split the mutation as directed by the error message, then call ${toolName} again.`;
-  }
-  if (error.code === "sql_result_too_large") {
-    return `Dropping rows cannot clear this: the echoed statements are over the result budget on their own, so a lower LIMIT or an OFFSET page returns the same error. Send fewer statements per request, and shorten any statement whose own text is long, then call ${toolName} again.`;
-  }
-  if (error.code === "read_only_relation_mutation_not_allowed") {
-    return `Use sql_query to read this relation and write only to relations allowed by get_schema, then call ${toolName} again.`;
-  }
-  return `Fix the SQL using the policy error message, then call ${toolName} again.`;
-};
 
 const buildMcpErrorContent = (
   code: string,
   message: string,
   instructions: string,
-  details: Readonly<Record<string, unknown>>,
+  details: AgentResultData,
 ): CallToolResult => ({
   isError: true,
-  content: buildTextContent({
-    ok: false,
-    error: {
-      code,
-      message,
-      ...(Object.keys(details).length === 0 ? {} : { details }),
-    },
-    instructions,
-  }),
+  content: buildTextContent(buildAgentErrorPayload(code, message, instructions, details)),
 });
-
-const getUnexpectedErrorInstructions = (toolName: string): string =>
-  `Retry ${toolName} once. If it fails again, stop and report the server error.`;
-
-const getDeadlineInstructions = (toolName: string): string =>
-  toolName === "sql_execute"
-    ? "Retry sql_execute. The deadline expired before the mutation was dispatched, so no mutation was applied."
-    : `Retry ${toolName}. This deadline failure is safe to retry because it cannot have applied a mutation.`;
-
-const getAmbiguousMutationInstructions = (): string =>
-  "Do not blindly retry the mutation. Use sql_query to verify whether it applied, and retry sql_execute only if the change is confirmed absent.";
 
 export const buildMcpToolErrorResultWithDependencies = (
   error: unknown,
   toolName: string,
   dependencies: McpResultDependencies,
 ): CallToolResult => {
-  if (error instanceof McpToolError) {
+  if (error instanceof AgentToolError) {
     return buildMcpErrorContent(error.code, error.message, error.instructions, error.details);
   }
 

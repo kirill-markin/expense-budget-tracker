@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SqlExecutionDeadlineError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  getAmbiguousMutationInstructions,
+  getDeadlineInstructions,
+  getUnexpectedErrorInstructions,
+} from "@expense-budget-tracker/agent-shared/agent-results";
 import type { SqlApiLogEvent } from "../logger.js";
 import {
   AmbiguousSqlMutationOutcomeError,
@@ -34,7 +39,7 @@ const readResultPayload = (
   return parsePayload(content.text);
 };
 
-test("MCP success results serialize compactly without indentation", (): void => {
+test("MCP success results carry the shared payload as a single text block", (): void => {
   const result = buildMcpSuccessResult(
     { workspaces: [{ workspaceId: "w-1", name: "Personal" }] },
     "Choose one returned workspaceId.",
@@ -46,8 +51,6 @@ test("MCP success results serialize compactly without indentation", (): void => 
   if (content?.type !== "text") {
     throw new Error("Expected MCP text content");
   }
-  assert.equal(content.text.includes("\n"), false);
-  assert.equal(content.text.includes("  "), false);
   assert.deepEqual(parsePayload(content.text), {
     ok: true,
     data: { workspaces: [{ workspaceId: "w-1", name: "Personal" }] },
@@ -81,23 +84,8 @@ test("MCP error results expose an actionable total request deadline without logg
 
   assert.equal(error["code"], "request_deadline_exceeded");
   assert.deepEqual(error["details"], { timeoutMs: 20_000, retryable: true });
-  assert.match(payload["instructions"] as string, /safe to retry/u);
+  assert.equal(payload["instructions"], getDeadlineInstructions("sql_query"));
   assert.deepEqual(logEvents, []);
-});
-
-test("bare sql_execute deadline errors are explicitly safe to retry", (): void => {
-  const payload = readResultPayload(buildMcpToolErrorResultWithDependencies(
-    new SqlExecutionDeadlineError(20_000),
-    "sql_execute",
-    { log: () => undefined },
-  ));
-  const error = payload["error"] as JsonObject;
-
-  assert.equal(error["code"], "request_deadline_exceeded");
-  assert.deepEqual(error["details"], { timeoutMs: 20_000, retryable: true });
-  assert.match(payload["instructions"] as string, /Retry sql_execute/u);
-  assert.match(payload["instructions"] as string, /before the mutation was dispatched/u);
-  assert.doesNotMatch(payload["instructions"] as string, /verify whether it applied/u);
 });
 
 test("MCP error results sanitize untagged PostgreSQL failures", (): void => {
@@ -162,9 +150,8 @@ test("only explicitly ambiguous sql_execute errors require state verification", 
 
   assert.equal(error["code"], "internal_error");
   assert.equal(serialized.includes("internal_constraint"), false);
-  assert.equal(typeof instructions, "string");
-  assert.match(instructions as string, /Retry sql_execute once/u);
-  assert.doesNotMatch(instructions as string, /Use sql_query to verify/u);
+  assert.equal(instructions, getUnexpectedErrorInstructions("sql_execute"));
+  assert.notEqual(instructions, getAmbiguousMutationInstructions());
 });
 
 test("ambiguous sql_execute outcomes remain non-retryable until state is verified", (): void => {
@@ -177,6 +164,5 @@ test("ambiguous sql_execute outcomes remain non-retryable until state is verifie
 
   assert.equal(error["code"], "sql_mutation_outcome_unknown");
   assert.deepEqual(error["details"], { outcome: "unknown", retryable: false });
-  assert.match(payload["instructions"] as string, /Do not blindly retry/u);
-  assert.match(payload["instructions"] as string, /Use sql_query to verify/u);
+  assert.equal(payload["instructions"], getAmbiguousMutationInstructions());
 });

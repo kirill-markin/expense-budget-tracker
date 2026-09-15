@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
 
-const entryNames = ["index", "discovery", "sql-policy", "crockford", "agentProtocol"];
+const entryNames = ["index", "discovery", "sql-policy", "crockford", "agentProtocol", "agentResults"];
 
 await build({
   entryPoints: Object.fromEntries(
