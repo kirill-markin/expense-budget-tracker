@@ -3,10 +3,18 @@ import {
   WRITING_DATA_GUIDE,
 } from "@expense-budget-tracker/agent-shared/agent-protocol";
 import {
-  MAX_SQL_ROWS,
+  createSqlExecutionDeadline,
+  executeValidatedExpenseSqlWithinDeadline,
+  getRemainingSqlExecutionMs,
+  MAX_SQL_MUTATION_ROWS,
+  MCP_SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
   SqlPolicyError,
   validateExpenseSql,
-  type ValidatedExpenseSqlStatement,
+  type AllowedRelationName,
+  type ExecutedExpenseSql,
+  type SqlExecutionDeadline,
+  type ValidatedExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ContentPart } from "@/server/chat/types";
 import {
@@ -16,9 +24,6 @@ import {
 import { withRestrictedUserContext, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
 import { lockUncancelledChatTurnForMutationWithQuery } from "@/server/chat/store/turnCancellationStore";
-
-export const MAX_ROWS = MAX_SQL_ROWS;
-export const STATEMENT_TIMEOUT_MS = 10_000;
 
 const formatDatetime = (timezone: string): string => {
   const now = new Date();
@@ -228,6 +233,12 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
   if (error.code === "unsupported_statement") {
     return new Error(error.message);
   }
+  if (
+    error.code === "mutation_statement_row_limit_exceeded"
+    || error.code === "mutation_request_row_limit_exceeded"
+  ) {
+    return new Error(`${error.message}. The whole call was rolled back, so nothing was written. Split the change into calls affecting at most ${String(MAX_SQL_MUTATION_ROWS)} rows each and retry`);
+  }
   if (error.code === "on_conflict_not_allowed") {
     return new Error("ON CONFLICT is not supported in chat queries");
   }
@@ -270,6 +281,9 @@ const toChatSqlError = (error: SqlPolicyError): Error => {
   return new Error(error.message);
 };
 
+const toChatDeadlineError = (error: SqlExecutionDeadlineError): Error =>
+  new Error(`${error.message}. Any writes in this call were rolled back. Ask for less work per call: a shorter date range, fewer rows, or fewer statements in one script`);
+
 export type QueryResult = Readonly<{
   json: string;
 }>;
@@ -298,12 +312,14 @@ export type ExecQueryDependencies = Readonly<{
   withUserContext: UserContextRunner;
   withRestrictedUserContext: RestrictedUserContextRunner;
   lockUncancelledChatTurnForMutationWithQuery: typeof lockUncancelledChatTurnForMutationWithQuery;
+  now: () => number;
 }>;
 
 const DEFAULT_EXEC_QUERY_DEPENDENCIES: ExecQueryDependencies = {
   withUserContext,
   withRestrictedUserContext,
   lockUncancelledChatTurnForMutationWithQuery,
+  now: Date.now,
 };
 
 type ChatSqlStatementResult = Readonly<{
@@ -314,7 +330,7 @@ type ChatSqlStatementResult = Readonly<{
   returnedRowCount: number;
   totalRowCount: number;
   truncated: boolean;
-  referencedRelations: ValidatedExpenseSqlStatement["referencedRelations"];
+  referencedRelations: ReadonlyArray<AllowedRelationName>;
 }>;
 
 // The statements payload of this call, which the tool layer parses back out.
@@ -337,81 +353,123 @@ const serializeChatSqlToolOutput = (
   statements,
 });
 
+// The commit that ends this transaction runs after the call's last SQL command,
+// under whatever statement_timeout that command left behind. PostgreSQL 18
+// disarms the statement timeout in finish_xact_command() before it runs
+// CommitTransactionCommand(), so a small residual does not actually abort the
+// commit's work; this fixed allowance keeps that bound deterministic regardless,
+// and matches the 10 s this path used before it moved to a shrinking deadline.
+export const CHAT_SQL_COMMIT_TIMEOUT_MS = 10_000;
+
+// Every database command of this call is bounded twice: the shared deadline caps
+// the whole script client-side, and each command also carries the budget still
+// left as its own server-side statement_timeout, the way
+// apps/sql-api/src/dbDeadline.ts bounds the same executor's commands. Both paths
+// run these commands as api_sql_executor, which
+// db/migrations/0012_restrict_set_config.sql leaves without EXECUTE on
+// set_config(), so the timeout is set with SET LOCAL. SET takes no bind
+// parameters, and every interpolated value is a positive safe integer: the one
+// getRemainingSqlExecutionMs() returns, or the fixed commit allowance the last
+// command restores for the commit the context runner issues next.
+const runChatSqlWithinDeadline = async (
+  queryFn: QueryFn,
+  validated: ValidatedExpenseSql,
+  deadline: SqlExecutionDeadline,
+): Promise<ExecutedExpenseSql> => {
+  const executed = await executeValidatedExpenseSqlWithinDeadline(
+    validated,
+    deadline,
+    async (request, remainingStatementTimeoutMs) => {
+      await queryFn(
+        `SET LOCAL statement_timeout = ${String(remainingStatementTimeoutMs)}`,
+        [],
+      );
+      return queryFn(request.sql, request.params);
+    },
+  );
+
+  await queryFn(
+    `SET LOCAL statement_timeout = ${String(CHAT_SQL_COMMIT_TIMEOUT_MS)}`,
+    [],
+  );
+  return executed;
+};
+
 // One budgeted result serves every consumer of this call: what the model reads
 // now, what later model calls of the same turn re-send, the stored replay
 // history, and the tool-output block the chat transcript renders. All of them
 // show the same kept rows and the same truncated flag.
-const executeValidatedChatSql = async (
-  queryFn: QueryFn,
+const applyChatSqlBudget = (
   sql: string,
-  statements: ReadonlyArray<ValidatedExpenseSqlStatement>,
-): Promise<ReadonlyArray<ChatSqlStatementResult>> => {
-  const results: Array<BudgetedSqlStatementEntry<ChatSqlStatementResult>> = [];
-  for (const statement of statements) {
-    const result = await queryFn(statement.sql, []);
-    const rows = result.rows.slice(0, MAX_ROWS);
-    results.push({
-      statement: {
-        sql: statement.sql,
-        command: result.command,
-        rows,
-        rowCount: rows.length > 0 ? rows.length : (result.rowCount ?? 0),
-        returnedRowCount: rows.length,
-        totalRowCount: result.rows.length > 0 ? result.rows.length : (result.rowCount ?? 0),
-        truncated: result.rows.length > rows.length,
-        referencedRelations: statement.referencedRelations,
-      },
-      isMutating: statement.isMutating,
-    });
-  }
-
-  return applySqlResultCharBudget(
-    results,
-    (candidate) => serializeChatSqlToolOutput(sql, candidate).length,
-  );
-};
+  executed: ExecutedExpenseSql,
+): ReadonlyArray<ChatSqlStatementResult> => applySqlResultCharBudget(
+  executed.statements.map((
+    statement,
+  ): BudgetedSqlStatementEntry<ChatSqlStatementResult> => ({
+    statement: {
+      sql: statement.sql,
+      command: statement.command,
+      rows: statement.rows,
+      rowCount: statement.rowCount,
+      returnedRowCount: statement.returnedRowCount,
+      totalRowCount: statement.totalRowCount,
+      truncated: statement.truncated,
+      referencedRelations: statement.referencedRelations,
+    },
+    isMutating: statement.isMutating,
+  })),
+  (candidate) => serializeChatSqlToolOutput(sql, candidate).length,
+);
 
 export const execQueryWithDependencies = async (
   sql: string,
   context: ChatSqlExecutionContext,
   dependencies: ExecQueryDependencies,
 ): Promise<QueryResult> => {
-  let validated;
+  const deadline = createSqlExecutionDeadline(
+    MCP_SQL_STATEMENT_TIMEOUT_MS,
+    dependencies.now,
+  );
+
   try {
-    validated = validateExpenseSql(sql);
+    const validated = validateExpenseSql(sql);
+    const isMutating = validated.statements.some((statement) => statement.isMutating);
+    const executed = isMutating
+      ? await dependencies.withUserContext(
+        context.userId,
+        context.workspaceId,
+        async (queryFn) => {
+          // Still the app role here, the only point of this transaction where
+          // set_config() is reachable, and what bounds the turn lock below.
+          await queryFn("SELECT set_config('statement_timeout', $1, true)", [
+            String(getRemainingSqlExecutionMs(deadline)),
+          ]);
+          await dependencies.lockUncancelledChatTurnForMutationWithQuery(
+            queryFn,
+            context.sessionId,
+            context.turnId,
+          );
+          await queryFn("SET LOCAL ROLE api_sql_executor", []);
+          return runChatSqlWithinDeadline(queryFn, validated, deadline);
+        },
+      )
+      : await dependencies.withRestrictedUserContext(
+        context.userId,
+        context.workspaceId,
+        MCP_SQL_STATEMENT_TIMEOUT_MS,
+        async (queryFn) => runChatSqlWithinDeadline(queryFn, validated, deadline),
+      );
+
+    return { json: serializeChatSqlStatements(applyChatSqlBudget(sql, executed)) };
   } catch (error) {
     if (error instanceof SqlPolicyError) {
       throw toChatSqlError(error);
     }
+    if (error instanceof SqlExecutionDeadlineError) {
+      throw toChatDeadlineError(error);
+    }
     throw error;
   }
-
-  const isMutating = validated.statements.some((statement) => statement.isMutating);
-  const statements = isMutating
-    ? await dependencies.withUserContext(
-      context.userId,
-      context.workspaceId,
-      async (queryFn) => {
-        await queryFn("SELECT set_config('statement_timeout', $1, true)", [
-          String(STATEMENT_TIMEOUT_MS),
-        ]);
-        await dependencies.lockUncancelledChatTurnForMutationWithQuery(
-          queryFn,
-          context.sessionId,
-          context.turnId,
-        );
-        await queryFn("SET LOCAL ROLE api_sql_executor", []);
-        return executeValidatedChatSql(queryFn, sql, validated.statements);
-      },
-    )
-    : await dependencies.withRestrictedUserContext(
-      context.userId,
-      context.workspaceId,
-      STATEMENT_TIMEOUT_MS,
-      async (queryFn) => executeValidatedChatSql(queryFn, sql, validated.statements),
-    );
-
-  return { json: serializeChatSqlStatements(statements) };
 };
 
 export const execQuery = async (
