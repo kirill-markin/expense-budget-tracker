@@ -307,6 +307,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
       runOneToolCall: async (toolParams): Promise<Readonly<{
         output: string;
         isMutating: boolean;
+        workspaceId: string | null;
         succeeded: true;
         error: null;
       }>> => {
@@ -318,6 +319,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
         return {
           output: toolOutput,
           isMutating: false,
+          workspaceId: "workspace-1",
           succeeded: true,
           error: null,
         };
@@ -423,11 +425,13 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
       runOneToolCall: async ({ item }): Promise<Readonly<{
         output: string;
         isMutating: boolean;
+        workspaceId: string | null;
         succeeded: true;
         error: null;
       }>> => ({
         output: `{\"tool\":\"${item.call_id}\"}`,
         isMutating: false,
+        workspaceId: "workspace-1",
         succeeded: true,
         error: null,
       }),
@@ -755,4 +759,67 @@ test("runOpenAILoop falls back to base backoff when Retry-After exceeds the pars
     observedDelays[0] !== undefined && observedDelays[0] < 100,
     `expected near-zero base-backoff delay, observed ${String(observedDelays[0])}`,
   );
+});
+
+/**
+ * The resolved workspace decides route refresh: the chat may write to another
+ * workspace the user is a member of, but that write must not refresh the
+ * route-backed content of the workspace the browser has open.
+ */
+test("route refresh fires only for a mutation in the session's active workspace", async (): Promise<void> => {
+  const mutationArguments = "{\"sql\":\"DELETE FROM ledger_entries WHERE entry_id = 'entry-1'\"}";
+
+  const didRefreshRoute = async (mutatedWorkspaceId: string): Promise<boolean> => {
+    const observedEvents: Array<ChatStreamEvent> = [];
+    let modelCallCount = 0;
+
+    await runOpenAILoopWithDeps(
+      createLoopParams(),
+      async (event: ChatStreamEvent): Promise<void> => {
+        observedEvents.push(event);
+      },
+      createTestLoopDeps({
+        runOneModelCall: async () => {
+          modelCallCount += 1;
+          if (modelCallCount === 1) {
+            return {
+              finalResponse: createFinalResponse(""),
+              functionCalls: [createFunctionCall("call-1", "sql_execute", mutationArguments)],
+              replayItems: [createFunctionCallReplayItem("call-1", "sql_execute", mutationArguments)],
+              streamedText: "",
+              toolStates: createStartedToolStates("call-1", "sql_execute", mutationArguments),
+            };
+          }
+
+          return {
+            finalResponse: createFinalResponse("Done"),
+            functionCalls: [],
+            replayItems: [createAssistantReplayItem("Done")],
+            streamedText: "Done",
+            toolStates: createToolCallStateMap(),
+          };
+        },
+        runOneToolCall: async (): Promise<Readonly<{
+          output: string;
+          isMutating: boolean;
+          workspaceId: string | null;
+          succeeded: true;
+          error: null;
+        }>> => ({
+          output: "{\"ok\":true}",
+          isMutating: true,
+          workspaceId: mutatedWorkspaceId,
+          succeeded: true,
+          error: null,
+        }),
+      }),
+    );
+
+    return observedEvents.some(
+      (event) => event.type === "tool_call" && event.refreshRoute === true,
+    );
+  };
+
+  assert.equal(await didRefreshRoute("workspace-1"), true);
+  assert.equal(await didRefreshRoute("workspace-2"), false);
 });

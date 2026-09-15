@@ -26,11 +26,12 @@ export const AGENT_GUIDE_BY_TOPIC: Readonly<Record<AgentGuideTopic, string>> = {
 
 /**
  * How one concrete surface narrows the neutral catalog: whether the caller picks
- * the workspace or the server pins it, and whether one call carries a single
- * statement or a semicolon-separated script.
+ * the workspace, the server pins it, or the caller may pick one and omitting it
+ * falls back to the workspace the caller's session already has open, and whether
+ * one call carries a single statement or a semicolon-separated script.
  */
 export type AgentSurfaceProfile = Readonly<{
-  workspaceSelection: "server-fixed" | "client-chosen";
+  workspaceSelection: "server-fixed" | "client-chosen" | "session-default";
   statementMode: "single" | "script";
   /** Tool name this surface registers for reads. Not an AgentToolName, because a surface may register its own SQL tool. */
   sqlReadToolName: string;
@@ -106,10 +107,14 @@ const formatSqlToolNames = (profile: AgentSurfaceProfile): string =>
     ? profile.sqlReadToolName
     : `${profile.sqlReadToolName} and ${profile.sqlWriteToolName}`;
 
-const buildWorkspaceSelectionInstructions = (profile: AgentSurfaceProfile): string =>
+/** Every tool of this surface that a workspaceId selects the workspace for. */
+const formatWorkspaceScopedToolNames = (profile: AgentSurfaceProfile): string =>
   profile.sqlReadToolName === profile.sqlWriteToolName
-    ? `Choose one returned workspaceId and pass it explicitly to get_schema or ${profile.sqlReadToolName}.`
-    : `Choose one returned workspaceId and pass it explicitly to get_schema, ${profile.sqlReadToolName}, or ${profile.sqlWriteToolName}.`;
+    ? `get_schema or ${profile.sqlReadToolName}`
+    : `get_schema, ${profile.sqlReadToolName}, or ${profile.sqlWriteToolName}`;
+
+const buildWorkspaceSelectionInstructions = (profile: AgentSurfaceProfile): string =>
+  `Choose one returned workspaceId and pass it explicitly to ${formatWorkspaceScopedToolNames(profile)}.`;
 
 /** get_schema points at the SQL tools that come next, so it must name the ones this surface registers. */
 export const getSchemaSuccessInstructions = (profile: AgentSurfaceProfile): string =>
@@ -119,12 +124,18 @@ export const getSchemaSuccessInstructions = (profile: AgentSurfaceProfile): stri
 
 /**
  * The workspaceId field advertises how this surface selects a workspace, so a
- * server-fixed surface must not invite a workspaceId its SQL tool would ignore.
+ * server-fixed surface must not invite a workspaceId its SQL tool would ignore,
+ * and a session-default surface must not demand one it already resolves itself.
  */
-export const getWorkspaceIdInputFieldDescription = (profile: AgentSurfaceProfile): string =>
-  profile.workspaceSelection === "server-fixed"
-    ? `Optional workspaceId returned by list_workspaces. ${formatSqlToolNames(profile)} always acts on the current workspace, so omit this unless you are inspecting another accessible workspace.`
-    : WORKSPACE_ID_INPUT_FIELD.description;
+export const getWorkspaceIdInputFieldDescription = (profile: AgentSurfaceProfile): string => {
+  if (profile.workspaceSelection === "server-fixed") {
+    return `Optional workspaceId returned by list_workspaces. ${formatSqlToolNames(profile)} always acts on the current workspace, so omit this unless you are inspecting another accessible workspace.`;
+  }
+  if (profile.workspaceSelection === "session-default") {
+    return "Optional workspaceId returned by list_workspaces. Omit it to act on the workspace the user currently has open, and pass one only to act on another accessible workspace.";
+  }
+  return WORKSPACE_ID_INPUT_FIELD.description;
+};
 
 /** list_workspaces is the one tool whose next step depends on how many rows it returned. */
 export const getWorkspaceListSuccessInstructions = (
@@ -136,6 +147,9 @@ export const getWorkspaceListSuccessInstructions = (
   }
   if (profile.workspaceSelection === "server-fixed") {
     return `SQL always runs against the current workspace through ${formatSqlToolNames(profile)}. Pass a returned workspaceId only to get_schema, and only to inspect another accessible workspace.`;
+  }
+  if (profile.workspaceSelection === "session-default") {
+    return `Omitting workspaceId acts on the workspace the user currently has open. Pass a returned workspaceId to ${formatWorkspaceScopedToolNames(profile)} only to act on another accessible workspace.`;
   }
   if (workspaceCount === 1) {
     return "Exactly one workspace is available, so workspaceId may be omitted from other tool calls.";

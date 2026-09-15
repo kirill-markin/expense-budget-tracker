@@ -127,7 +127,7 @@ test("the advisory lock is transaction-scoped, keyed on the user, and taken befo
       userId: "user-1",
       workspaceId: "",
       statementTimeoutMs: null,
-      useRestrictedRole: false,
+      restrictedRole: null,
     },
     async (queryFn) => admitDemoChatTurnWithQuery(queryFn, "user-1", NOW),
   );

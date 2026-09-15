@@ -13,8 +13,12 @@
  *                     queryFn sharing one client.
  * withUserOnlyContext() — same, but for strictly user-scoped tables: sets
  *                     app.user_id without provisioning or selecting a workspace.
- * withRestrictedUserContext() — same as withUserContext(), but user SQL runs
- *                     as api_sql_executor after the RLS context is set.
+ * withReadOnlyRestrictedUserContext() — same context, but a repeatable-read,
+ *                     read-only transaction in which user SQL runs as
+ *                     api_sql_reader. For read-only user SQL such as the chat's
+ *                     sql_query tool.
+ * withRestrictedTrustedIdentityContext() — writable transaction in which user
+ *                     SQL runs as api_sql_executor after the RLS context is set.
  */
 import { createDbFacade } from "@/server/db/facade";
 import { getPool as getBasePool, query as queryBase } from "@/server/db/pool";
@@ -39,5 +43,5 @@ export const queryAsTrustedIdentity = facade.queryAsTrustedIdentity;
 export const queryAsExistingWorkspace = facade.queryAsExistingWorkspace;
 export const withUserContext = facade.withUserContext;
 export const withUserOnlyContext = facade.withUserOnlyContext;
-export const withRestrictedUserContext = facade.withRestrictedUserContext;
+export const withReadOnlyRestrictedUserContext = facade.withReadOnlyRestrictedUserContext;
 export const withRestrictedTrustedIdentityContext = facade.withRestrictedTrustedIdentityContext;

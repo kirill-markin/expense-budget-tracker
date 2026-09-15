@@ -104,6 +104,7 @@ test("successful tools keep the default observation level and end once", async (
   const expectedResult: ExecutedChatToolCall = {
     output: toolOutput,
     isMutating: false,
+    workspaceId: "workspace-1",
     succeeded: true,
     error: null,
   };
@@ -135,11 +136,11 @@ test("returned tool failures set the observation error level and end once", asyn
   const expectedResult: ExecutedChatToolCall = {
     output: JSON.stringify({
       ok: false,
-      tool: "query_database",
-      sql: "SELECT 1",
-      error,
+      error: { code: "sql_execution_failed", message: error.message },
+      instructions: "Review SQL syntax, relation names, values, and constraints, then call sql_query again.",
     }),
     isMutating: false,
+    workspaceId: null,
     succeeded: false,
     error,
   };
@@ -206,6 +207,7 @@ test("returned tool failures survive all observation update and end failures", a
   const expectedResult: ExecutedChatToolCall = {
     output: JSON.stringify({ ok: false }),
     isMutating: false,
+    workspaceId: null,
     succeeded: false,
     error: {
       name: "DatabaseError",

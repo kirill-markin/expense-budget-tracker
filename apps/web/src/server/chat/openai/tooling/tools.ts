@@ -4,56 +4,95 @@ import {
   AgentToolError,
   buildAgentErrorPayload,
   buildAgentSuccessPayload,
+  getAmbiguousMutationInstructions,
+  getDeadlineInstructions,
+  getSqlPolicyInstructions,
   getUnexpectedErrorInstructions,
   serializeAgentPayload,
+  type AgentErrorPayload,
   type AgentResultData,
 } from "@expense-budget-tracker/agent-shared/agent-results";
 import {
   AGENT_GUIDE_BY_TOPIC,
   AGENT_GUIDE_TOPICS,
+  AGENT_TOOLS,
   GET_GUIDE_TOOL,
   GET_SCHEMA_TOOL,
   getSchemaSuccessInstructions,
   getWorkspaceIdInputFieldDescription,
   getWorkspaceListSuccessInstructions,
   LIST_WORKSPACES_TOOL,
+  SQL_EXECUTE_TOOL,
+  SQL_QUERY_TOOL,
   type AgentSurfaceProfile,
   type AgentToolDefinition,
   type AgentToolInputField,
   type AgentToolName,
 } from "@expense-budget-tracker/agent-shared/agent-tools";
-import { isExpenseSqlMutation } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  isExpenseSqlMutation,
+  MCP_SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
+  SqlPolicyError,
+  validateSingleMutationExpenseSql,
+  validateSingleReadOnlyExpenseSql,
+  type ValidatedExpenseSql,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
   CHAT_SCHEMA_LIMITS,
   listChatWorkspaces,
   loadAllowedSchemaForChatWorkspace,
   resolveChatWorkspace,
 } from "@/server/chat/dataService";
-import { CHAT_SQL_TOOL_NAME, TOOL_DESCRIPTION, execQuery } from "@/server/chat/shared";
+import {
+  CHAT_SQL_STATEMENT_TIMEOUT_MESSAGE,
+  execQuery,
+  getChatSqlDeadlineMessage,
+  getChatSqlPolicyMessage,
+  isChatSqlStatementTimeoutError,
+  isChatUserSqlExecutionError,
+} from "@/server/chat/shared";
+import {
+  ChatSessionRunTransitionError,
+  ChatTurnCancelledError,
+} from "@/server/chat/store";
+import { DbTransactionOutcomeUnknownError } from "@/server/db/contextRunner";
 import { log } from "@/server/logger";
+import type { WorkspaceSummary } from "@/server/workspaces";
 
 /**
- * How this surface narrows the shared catalog: the server pins every tool call
- * to the session's workspace, and one call carries a semicolon-separated script
- * for the single SQL tool registered here. All catalog instruction text is
- * rendered through this profile so a tool never names a tool this surface does
- * not register, and never advertises a workspaceId that execQuery would ignore.
+ * How this surface narrows the shared catalog: it registers the catalog unchanged
+ * and takes one statement per call, exactly like the MCP surface, and differs only
+ * in the workspace default. A browser session always has a workspace open, so an
+ * omitted workspaceId acts on that workspace instead of requiring the caller to
+ * have exactly one accessible workspace.
  */
 export const WEB_CHAT_SURFACE_PROFILE: AgentSurfaceProfile = {
-  workspaceSelection: "server-fixed",
-  statementMode: "script",
-  sqlReadToolName: CHAT_SQL_TOOL_NAME,
-  sqlWriteToolName: CHAT_SQL_TOOL_NAME,
+  workspaceSelection: "session-default",
+  statementMode: "single",
+  sqlReadToolName: SQL_QUERY_TOOL.name,
+  sqlWriteToolName: SQL_EXECUTE_TOOL.name,
 };
 
 /**
- * An unexpected discovery failure carries internal detail, such as a
- * WorkspaceAccessError or a raw Postgres message, and a discovery tool gives the
- * model nothing to repair with it. The model therefore sees a fixed string while
- * the real error goes to the logs, matching the MCP surface. query_database
- * deliberately keeps its raw message so the model can repair its own SQL.
+ * An unexpected failure carries internal detail, such as a WorkspaceAccessError
+ * naming the user or a connection failure's raw Postgres text, and the model can
+ * repair nothing with it. The model therefore sees a fixed string while the real
+ * error goes to the logs, matching the MCP surface. Redaction is what every
+ * unrecognized error gets; the single exception is a ChatUserSqlExecutionError,
+ * raised only for a statement the database itself rejected.
  */
-const DISCOVERY_INTERNAL_ERROR_MESSAGE = "The tool request could not be completed";
+const CHAT_TOOL_INTERNAL_ERROR_MESSAGE = "The tool request could not be completed";
+
+/**
+ * Not advertised, and dispatchable only because stored transcripts replay this
+ * name into the model. It resolves to the registered tool that now owns its
+ * statement kind, so one policy path serves every SQL call and every result
+ * names a tool this surface registers.
+ */
+const DEPRECATED_CHAT_SQL_TOOL_NAME = "query_database";
+
+type ChatSqlToolName = typeof SQL_QUERY_TOOL.name | typeof SQL_EXECUTE_TOOL.name;
 
 export type OpenAIToolContext = Readonly<{
   /** Primary CloudWatch correlation key: every chat error log must carry it. */
@@ -78,16 +117,9 @@ const DEFAULT_CHAT_TOOL_DEPENDENCIES: ChatToolDependencies = {
   log,
 };
 
-type ToolSuccessPayload = Readonly<Record<string, unknown>>;
-
 export type ChatToolExecutionError = Readonly<{
   name: string;
   message: string;
-}>;
-
-type ToolErrorPayload = Readonly<{
-  sql: string | null;
-  error: ChatToolExecutionError;
 }>;
 
 /**
@@ -112,50 +144,40 @@ export type ExecutedChatToolCall = Readonly<{
    */
   output: string;
   /**
-   * Canonical mutation flag derived from the exact SQL arguments executed for
-   * this tool call. Runtime invalidation must use this value instead of
-   * inferring mutability from earlier streamed tool snapshots.
+   * Canonical mutation flag: true for the write tool alone, which is the only
+   * one whose validator accepts a mutation. Runtime invalidation must use this
+   * value instead of inferring mutability from earlier streamed tool snapshots.
    */
   isMutating: boolean;
+  /**
+   * Workspace the executed statement ran against, or null when the call
+   * executed none. Route refresh also requires it to be the session's active
+   * workspace, so a write to another accessible workspace never refreshes the
+   * page the user is looking at.
+   */
+  workspaceId: string | null;
 }> & ExecutedChatToolCallResult;
 
-type QueryDatabaseToolInput = Readonly<{
+type SqlToolInput = Readonly<{
   sql?: unknown;
 }>;
 
-const queryDatabaseInputSchema = z.object({
-  sql: z.string(),
-});
-
 // Nullable because the strict tool schema renders an optional catalog field as
 // a nullable one, so the model sends null for "use the current workspace".
+const workspaceIdInputSchema = z.string().trim().min(1).nullish();
+
+const sqlToolInputSchema = z.object({
+  sql: z.string(),
+  workspaceId: workspaceIdInputSchema,
+});
+
 const getSchemaInputSchema = z.object({
-  workspaceId: z.string().trim().min(1).nullish(),
+  workspaceId: workspaceIdInputSchema,
 });
 
 const getGuideInputSchema = z.object({
   topic: z.enum(AGENT_GUIDE_TOPICS),
 });
-
-const createToolSuccessResult = (
-  toolName: string,
-  payload: ToolSuccessPayload,
-): string =>
-  JSON.stringify({
-    ok: true,
-    tool: toolName,
-    ...payload,
-  });
-
-const createToolErrorResult = (
-  toolName: string,
-  payload: ToolErrorPayload,
-): string =>
-  JSON.stringify({
-    ok: false,
-    tool: toolName,
-    ...payload,
-  });
 
 const serializeToolError = (
   error: unknown,
@@ -174,26 +196,21 @@ const serializeToolError = (
 };
 
 /**
- * Best-effort SQL extraction used to classify the executed tool call before we
- * know whether execution itself will succeed. Invalid JSON or invalid schema
- * simply means "not classifiable", which falls back to a non-mutating result.
+ * Best-effort SQL extraction used to resolve the deprecated alias before its
+ * arguments are validated. Invalid JSON or invalid schema simply means "not
+ * classifiable", which falls back to the read tool.
  */
 const getSqlFromRawArguments = (
   rawArguments: string,
 ): string | null => {
   try {
-    const parsed = JSON.parse(rawArguments) as QueryDatabaseToolInput;
+    const parsed = JSON.parse(rawArguments) as SqlToolInput;
     return typeof parsed.sql === "string" ? parsed.sql : null;
   } catch {
     return null;
   }
 };
 
-/**
- * Converts parsed SQL into the canonical mutation flag used by route
- * invalidation. Validation failures intentionally degrade to `false` so the
- * runtime never refreshes route content on uncertain metadata.
- */
 const getIsMutatingSql = (
   sql: string | null,
 ): boolean => {
@@ -208,30 +225,25 @@ const getIsMutatingSql = (
   }
 };
 
-const QUERY_DATABASE_TOOL: OpenAI.Responses.FunctionTool = {
-  type: "function",
-  name: CHAT_SQL_TOOL_NAME,
-  description: TOOL_DESCRIPTION,
-  strict: true,
-  parameters: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      sql: {
-        type: "string",
-        description: "SQL script to execute. One or more SELECT, WITH, INSERT, UPDATE, or DELETE statements separated by semicolons.",
-      },
-    },
-    required: ["sql"],
-  },
+/**
+ * The tool that owns this call's statement kind. Only the deprecated alias needs
+ * resolving, and a script it replays from an old transcript still classifies, so
+ * the single-statement rejection that follows names the right replacement tool.
+ */
+const resolveChatSqlToolName = (
+  toolName: string,
+  rawArguments: string,
+): ChatSqlToolName => {
+  if (toolName === SQL_QUERY_TOOL.name) {
+    return SQL_QUERY_TOOL.name;
+  }
+  if (toolName === SQL_EXECUTE_TOOL.name) {
+    return SQL_EXECUTE_TOOL.name;
+  }
+  return getIsMutatingSql(getSqlFromRawArguments(rawArguments))
+    ? SQL_EXECUTE_TOOL.name
+    : SQL_QUERY_TOOL.name;
 };
-
-/** The catalog tools this surface renders; the SQL tools stay chat-specific for now. */
-const CHAT_DISCOVERY_TOOLS: ReadonlyArray<AgentToolDefinition> = [
-  LIST_WORKSPACES_TOOL,
-  GET_SCHEMA_TOOL,
-  GET_GUIDE_TOOL,
-];
 
 type OpenAIToolInputProperty = Readonly<{
   type: "string" | readonly ["string", "null"];
@@ -245,8 +257,8 @@ type OpenAIToolInputProperty = Readonly<{
  * type instead. The enum is rendered from the guide topics because the catalog
  * describes each field without its value domain, and topic is the only field
  * whose values are a closed set. workspaceId is described through the surface
- * profile, because the catalog's own wording invites a workspace switch that
- * only get_schema honours here.
+ * profile, because the catalog's own wording demands a workspaceId this surface
+ * can resolve from the session instead.
  */
 const buildToolInputProperty = (field: AgentToolInputField): OpenAIToolInputProperty => ({
   type: field.required ? "string" : ["string", "null"],
@@ -275,10 +287,9 @@ const buildOpenAIFunctionTool = (
   },
 });
 
-export const OPENAI_CHAT_TOOLS: ReadonlyArray<OpenAI.Responses.FunctionTool> = [
-  QUERY_DATABASE_TOOL,
-  ...CHAT_DISCOVERY_TOOLS.map(buildOpenAIFunctionTool),
-];
+/** The whole shared catalog; the deprecated alias is deliberately not advertised. */
+export const OPENAI_CHAT_TOOLS: ReadonlyArray<OpenAI.Responses.FunctionTool> =
+  AGENT_TOOLS.map(buildOpenAIFunctionTool);
 
 const buildInvalidToolArgumentsError = (
   toolName: AgentToolName,
@@ -307,9 +318,44 @@ const buildDiscoverySuccessResult = (
 ): ExecutedChatToolCall => ({
   output: serializeAgentPayload(buildAgentSuccessPayload(data, instructions)),
   isMutating: false,
+  workspaceId: null,
   succeeded: true,
   error: null,
 });
+
+const logUnexpectedChatToolError = (
+  serializedError: ChatToolExecutionError,
+  toolName: AgentToolName,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): void => {
+  dependencies.log({
+    domain: "chat",
+    action: "error",
+    vendor: "openai",
+    stage: "agent",
+    error: `Chat tool ${toolName} failed: ${serializedError.name}: ${serializedError.message}`,
+    requestId: context.requestId,
+    userId: context.userId,
+    workspaceId: context.workspaceId,
+    sessionId: context.sessionId,
+  });
+};
+
+const buildRedactedErrorPayload = (
+  error: unknown,
+  toolName: AgentToolName,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): AgentErrorPayload => {
+  logUnexpectedChatToolError(serializeToolError(error), toolName, context, dependencies);
+  return buildAgentErrorPayload(
+    "internal_error",
+    CHAT_TOOL_INTERNAL_ERROR_MESSAGE,
+    getUnexpectedErrorInstructions(toolName),
+    {},
+  );
+};
 
 const buildDiscoveryErrorResult = (
   error: unknown,
@@ -317,33 +363,15 @@ const buildDiscoveryErrorResult = (
   context: OpenAIToolContext,
   dependencies: ChatToolDependencies,
 ): ExecutedChatToolCall => {
-  const serializedError = serializeToolError(error);
-  if (!(error instanceof AgentToolError)) {
-    dependencies.log({
-      domain: "chat",
-      action: "error",
-      vendor: "openai",
-      stage: "agent",
-      error: `Chat tool ${toolName} failed: ${serializedError.name}: ${serializedError.message}`,
-      requestId: context.requestId,
-      userId: context.userId,
-      workspaceId: context.workspaceId,
-      sessionId: context.sessionId,
-    });
-  }
   const payload = error instanceof AgentToolError
     ? buildAgentErrorPayload(error.code, error.message, error.instructions, error.details)
-    : buildAgentErrorPayload(
-      "internal_error",
-      DISCOVERY_INTERNAL_ERROR_MESSAGE,
-      getUnexpectedErrorInstructions(toolName),
-      {},
-    );
+    : buildRedactedErrorPayload(error, toolName, context, dependencies);
   return {
     output: serializeAgentPayload(payload),
     isMutating: false,
+    workspaceId: null,
     succeeded: false,
-    error: serializedError,
+    error: serializeToolError(error),
   };
 };
 
@@ -417,6 +445,222 @@ const executeGetGuideToolCall = (
   }
 };
 
+type PreparedSqlToolCall = Readonly<{
+  validated: ValidatedExpenseSql;
+  workspace: WorkspaceSummary;
+}>;
+
+/**
+ * Everything settled before the statement runs. The statement is validated
+ * before the workspace is resolved, the way apps/sql-api/src/mcp/server.ts
+ * orders the same pair, so a rejected statement never reaches the database.
+ */
+const prepareSqlToolCall = async (
+  toolName: ChatSqlToolName,
+  rawArguments: string,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): Promise<PreparedSqlToolCall> => {
+  const input = sqlToolInputSchema.safeParse(
+    parseToolArgumentsJson(rawArguments, toolName),
+  );
+  if (!input.success) {
+    throw buildInvalidToolArgumentsError(toolName, input.error.message);
+  }
+  const validated = toolName === SQL_EXECUTE_TOOL.name
+    ? validateSingleMutationExpenseSql(input.data.sql)
+    : validateSingleReadOnlyExpenseSql(input.data.sql);
+  const workspaces = await dependencies.listChatWorkspaces(context);
+  return {
+    validated,
+    workspace: resolveChatWorkspace(
+      workspaces,
+      input.data.workspaceId ?? undefined,
+      context.workspaceId,
+    ),
+  };
+};
+
+const buildSqlPolicyErrorPayload = (
+  error: SqlPolicyError,
+  toolName: ChatSqlToolName,
+): AgentErrorPayload => buildAgentErrorPayload(
+  error.code,
+  getChatSqlPolicyMessage(error),
+  getSqlPolicyInstructions(error, toolName),
+  {},
+);
+
+/**
+ * Preparation can fail on the arguments, on the statement, or on the workspace
+ * lookup. Only the first two produce something the model can act on; a workspace
+ * lookup that fails any other way carries internal detail, such as a
+ * WorkspaceAccessError or a raw Postgres message, so it is redacted and logged
+ * exactly like a discovery failure.
+ */
+const buildSqlPreparationErrorPayload = (
+  error: unknown,
+  toolName: ChatSqlToolName,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): AgentErrorPayload => {
+  if (error instanceof AgentToolError) {
+    return buildAgentErrorPayload(error.code, error.message, error.instructions, error.details);
+  }
+  if (error instanceof SqlPolicyError) {
+    return buildSqlPolicyErrorPayload(error, toolName);
+  }
+  return buildRedactedErrorPayload(error, toolName, context, dependencies);
+};
+
+/**
+ * An execution failure stays in the shared envelope the MCP surface emits, and
+ * branches the way apps/sql-api/src/mcp/results.ts does, so one contract
+ * describes every tool result. Redaction is the default, exactly as it is there:
+ * the raw message and the invitation to try again are reached only through the
+ * positive ChatUserSqlExecutionError check, which the executor raises for a
+ * statement the database itself rejected and for nothing else.
+ */
+const buildSqlExecutionErrorPayload = (
+  error: unknown,
+  toolName: ChatSqlToolName,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): AgentErrorPayload => {
+  if (error instanceof AgentToolError) {
+    return buildAgentErrorPayload(error.code, error.message, error.instructions, error.details);
+  }
+  if (error instanceof SqlPolicyError) {
+    return buildSqlPolicyErrorPayload(error, toolName);
+  }
+  if (error instanceof SqlExecutionDeadlineError) {
+    return buildAgentErrorPayload(
+      "request_deadline_exceeded",
+      getChatSqlDeadlineMessage(error),
+      getDeadlineInstructions(toolName),
+      { timeoutMs: error.timeoutMs, retryable: true },
+    );
+  }
+  // The deadline above is only checked between database commands, so a single
+  // statement that outlives it is instead cancelled by the per-command
+  // statement_timeout set from the budget still left. That is the ordinary
+  // shape of a slow statement here, and it is the same answer the MCP surface
+  // reaches through its client-side backstop. PostgreSQL blamed the statement
+  // for being too slow rather than for being wrong, so the model is asked for
+  // less work per call, not for a rewrite. The cancellation aborts the
+  // transaction on either tool, so nothing was applied and a retry is safe.
+  if (isChatSqlStatementTimeoutError(error)) {
+    return buildAgentErrorPayload(
+      "request_deadline_exceeded",
+      CHAT_SQL_STATEMENT_TIMEOUT_MESSAGE,
+      getDeadlineInstructions(toolName),
+      { timeoutMs: MCP_SQL_STATEMENT_TIMEOUT_MS, retryable: true },
+    );
+  }
+  // Raised by the mutation turn lock this call runs inside: the user stopped
+  // this turn, or the session moved on to another run. Repeating the call would
+  // be refused again at best and write twice at worst.
+  if (
+    error instanceof ChatTurnCancelledError
+    || error instanceof ChatSessionRunTransitionError
+  ) {
+    return buildAgentErrorPayload(
+      "chat_turn_not_active",
+      "This chat turn is no longer the session's active turn, so the call was abandoned",
+      `Stop this task and do not call ${toolName} again for this turn.`,
+      { retryable: false },
+    );
+  }
+  if (
+    toolName === SQL_EXECUTE_TOOL.name
+    && error instanceof DbTransactionOutcomeUnknownError
+  ) {
+    return buildAgentErrorPayload(
+      "sql_mutation_outcome_unknown",
+      "The SQL mutation transaction outcome is unknown",
+      getAmbiguousMutationInstructions(),
+      { outcome: "unknown", retryable: false },
+    );
+  }
+  // Raised at the one call site that runs the model's own statement, and only
+  // when PostgreSQL blamed that statement. Everything else this call touches —
+  // provisioning, whose message names the user; a pool connection carrying raw
+  // Postgres text; a lost transaction outcome on a read; the shared executor's
+  // own invariants — falls through to the redacted default below, because none
+  // of it is repaired by rewriting SQL.
+  if (isChatUserSqlExecutionError(error)) {
+    return buildAgentErrorPayload(
+      "sql_execution_failed",
+      error.message,
+      `Review SQL syntax, relation names, values, and constraints, then call ${toolName} again.`,
+      {},
+    );
+  }
+  return buildRedactedErrorPayload(error, toolName, context, dependencies);
+};
+
+/**
+ * A failed SQL call never refreshes route-backed content. The refresh gate also
+ * requires `succeeded`, so the null workspace keeps even an ambiguous mutation
+ * from reloading the page on an outcome nobody has verified yet.
+ */
+const buildFailedSqlToolCall = (
+  error: unknown,
+  isMutating: boolean,
+  payload: AgentErrorPayload,
+): ExecutedChatToolCall => ({
+  output: serializeAgentPayload(payload),
+  isMutating,
+  workspaceId: null,
+  succeeded: false,
+  error: serializeToolError(error),
+});
+
+const executeSqlToolCall = async (
+  toolName: ChatSqlToolName,
+  rawArguments: string,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): Promise<ExecutedChatToolCall> => {
+  const isMutating = toolName === SQL_EXECUTE_TOOL.name;
+
+  let prepared: PreparedSqlToolCall;
+  try {
+    prepared = await prepareSqlToolCall(toolName, rawArguments, context, dependencies);
+  } catch (error) {
+    return buildFailedSqlToolCall(
+      error,
+      isMutating,
+      buildSqlPreparationErrorPayload(error, toolName, context, dependencies),
+    );
+  }
+
+  try {
+    // The context keeps naming the browser session's workspace, which scopes the
+    // chat session row the mutation turn lock reads; the statement itself runs
+    // against the resolved workspace carried beside it.
+    const result = await dependencies.execQuery(prepared.validated, context, {
+      workspace: prepared.workspace,
+      instructions: isMutating
+        ? SQL_EXECUTE_TOOL.successInstructions
+        : SQL_QUERY_TOOL.successInstructions,
+    });
+    return {
+      output: result.json,
+      isMutating,
+      workspaceId: prepared.workspace.workspaceId,
+      succeeded: true,
+      error: null,
+    };
+  } catch (error) {
+    return buildFailedSqlToolCall(
+      error,
+      isMutating,
+      buildSqlExecutionErrorPayload(error, toolName, context, dependencies),
+    );
+  }
+};
+
 export const executeChatToolCallWithDependencies = async (
   toolName: string,
   rawArguments: string,
@@ -427,7 +671,8 @@ export const executeChatToolCallWithDependencies = async (
    * This function is the canonical source of tool completion metadata consumed
    * by the chat runtime. Later layers may mark the transcript item as
    * `completed`, but route refresh is allowed only when this result reports
-   * `succeeded === true` and `isMutating === true`.
+   * `succeeded === true`, `isMutating === true`, and a `workspaceId` equal to
+   * the session's active workspace.
    */
   if (toolName === LIST_WORKSPACES_TOOL.name) {
     return executeListWorkspacesToolCall(context, dependencies);
@@ -438,38 +683,20 @@ export const executeChatToolCallWithDependencies = async (
   if (toolName === GET_GUIDE_TOOL.name) {
     return executeGetGuideToolCall(rawArguments, context, dependencies);
   }
-  if (toolName !== CHAT_SQL_TOOL_NAME) {
-    throw new Error(`Unsupported OpenAI tool call: ${toolName}`);
+  if (
+    toolName === SQL_QUERY_TOOL.name
+    || toolName === SQL_EXECUTE_TOOL.name
+    || toolName === DEPRECATED_CHAT_SQL_TOOL_NAME
+  ) {
+    return executeSqlToolCall(
+      resolveChatSqlToolName(toolName, rawArguments),
+      rawArguments,
+      context,
+      dependencies,
+    );
   }
 
-  const sql = getSqlFromRawArguments(rawArguments);
-  const isMutating = getIsMutatingSql(sql);
-
-  try {
-    const parsed = queryDatabaseInputSchema.parse(JSON.parse(rawArguments));
-    const result = await dependencies.execQuery(parsed.sql, context);
-    return {
-      output: createToolSuccessResult(CHAT_SQL_TOOL_NAME, {
-        sql: parsed.sql,
-        ...JSON.parse(result.json) as Readonly<Record<string, unknown>>,
-      }),
-      isMutating,
-      succeeded: true,
-      error: null,
-    };
-  } catch (error) {
-    const serializedError = serializeToolError(error);
-    const payload: ToolErrorPayload = {
-      sql,
-      error: serializedError,
-    };
-    return {
-      output: createToolErrorResult(CHAT_SQL_TOOL_NAME, payload),
-      isMutating,
-      succeeded: false,
-      error: serializedError,
-    };
-  }
+  throw new Error(`Unsupported OpenAI tool call: ${toolName}`);
 };
 
 export const executeChatToolCall = async (
