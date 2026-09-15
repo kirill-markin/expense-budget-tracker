@@ -1,4 +1,3 @@
-import { getAgentSchemaHints, type AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import {
   executeValidatedExpenseSqlWithinDeadline,
   MAX_SQL_MUTATION_ROWS,
@@ -32,9 +31,9 @@ const OMITTED_DELETED_ROWS_NOTE = "The rows a DELETE returned no longer exist, s
 const NO_ROWS_RETURNED_NOTE = "It returned no rows, so no row data is missing from this response.";
 // PostgreSQL command tag of the one mutation whose returned rows are unrecoverable.
 const DELETE_COMMAND_TAG = "DELETE";
-// The write shrink sheds relation hints before it touches the echo, so the echo
-// survives whole on the first shrunk step; only the hints are always gone.
-const RESPONSE_SHRUNK_NOTE = "Relation hints were dropped, and the echoed sql may be cut to a prefix or replaced by sqlOmitted, so that the response fits the budget.";
+// The write shrink drops referencedRelations before it touches the echo, so the
+// echo survives whole on the first shrunk step; only referencedRelations is always gone.
+const RESPONSE_SHRUNK_NOTE = "referencedRelations was dropped, and the echoed sql may be cut to a prefix or replaced by sqlOmitted, so the response fits the budget.";
 // One text per stage, never one per kept row count: the read shrink binary-searches
 // that count and the search is valid only while the candidate size is monotone in
 // it, so these strings must not vary with the rows a candidate keeps. The statement
@@ -54,8 +53,8 @@ const SINGLE_STATEMENT_ZERO_ROW_READ_SHRUNK_REMEDIES = "The statement returned n
 const SCRIPT_READ_SHRUNK_REMEDIES = "The statements share one row budget spent in statement order, so a returnedRowCount of 0 usually means an earlier statement used that budget up rather than that a single row is over it: send fewer statements per request, and lower LIMIT on the earlier statements. Then select fewer or shorter columns, and read the remaining rows with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip.";
 // One statement has nothing to send fewer of, so the two forms name the remedy that
 // exists on each: shortening the statement itself, or sending a shorter script.
-const SINGLE_STATEMENT_READ_RESPONSE_SHRUNK_NOTE = "Relation hints were dropped, and the echoed sql may be cut to a prefix, so that the rows and their counts fit the budget; shorten the statement text and select fewer columns to keep them.";
-const SCRIPT_READ_RESPONSE_SHRUNK_NOTE = "Relation hints were dropped, and the echoed sql may be cut to a prefix, so that the rows and their counts fit the budget; send fewer statements per request to keep them.";
+const SINGLE_STATEMENT_READ_RESPONSE_SHRUNK_NOTE = "referencedRelations was dropped, and the echoed sql may be cut to a prefix, so the rows and their counts fit the budget; shorten the statement text and select fewer columns to keep them.";
+const SCRIPT_READ_RESPONSE_SHRUNK_NOTE = "referencedRelations was dropped, and the echoed sql may be cut to a prefix, so the rows and their counts fit the budget; send fewer statements per request to keep them.";
 
 // Every input is fixed before the row search, so this text is one constant per
 // stage; the search only ever picks how many rows the stage keeps.
@@ -79,9 +78,9 @@ const buildReadShrunkInstructions = (
 };
 
 // Every result echoes back SQL the caller already holds, and one script may carry
-// up to MAX_SQL_SCRIPT_LENGTH characters of it. When dropping rows and relation
-// hints is not enough, the echo is cut to this prefix so the response still
-// identifies each statement without carrying the whole batch back.
+// up to MAX_SQL_SCRIPT_LENGTH characters of it. When dropping rows and
+// referencedRelations is not enough, the echo is cut to this prefix so the
+// response still identifies each statement without carrying the whole batch back.
 const SHRUNK_SQL_ECHO_CHARS = 200;
 
 // The marker costs more characters than a short tail saves, so the original is
@@ -92,8 +91,6 @@ const truncateEchoedSql = (sql: string): string => {
   return truncated.length < sql.length ? truncated : sql;
 };
 
-type SqlRelationHints = Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>>;
-
 type SqlResultStatement = Readonly<{
   sql: string;
   command: string;
@@ -102,9 +99,8 @@ type SqlResultStatement = Readonly<{
   returnedRowCount: number;
   totalRowCount: number;
   truncated: boolean;
-  // Both are shed by a shrink stage, so a shrunk statement omits them.
+  // Shed by a shrink stage, so a shrunk statement omits it.
   referencedRelations?: ReadonlyArray<AllowedRelationName>;
-  hints?: SqlRelationHints;
 }>;
 
 type SqlResultPayload = Readonly<{
@@ -213,11 +209,11 @@ const buildReadResultWithinRowBudget = (
   };
 };
 
-// Every field a statement keeps once its static metadata is gone, enumerated
-// rather than spread so that referencedRelations and hints cannot survive by
-// accident, and so that a field added to SqlResultStatement later has to be
-// classified as sheddable or kept here.
-const withoutStatementRelationHints = (statement: SqlResultStatement): SqlResultStatement => ({
+// Every field a statement keeps once referencedRelations is gone, enumerated
+// rather than spread so that referencedRelations cannot survive by accident, and
+// so that a field added to SqlResultStatement later has to be classified as
+// sheddable or kept here.
+const withoutStatementReferencedRelations = (statement: SqlResultStatement): SqlResultStatement => ({
   sql: statement.sql,
   command: statement.command,
   rows: statement.rows,
@@ -227,11 +223,11 @@ const withoutStatementRelationHints = (statement: SqlResultStatement): SqlResult
   truncated: statement.truncated,
 });
 
-// Static per-relation metadata the caller can read again from /schema, so it is
-// the first thing a read sheds once dropping rows is not enough.
-const withoutRelationHints = (payload: SqlResultPayload): SqlResultPayload => ({
+// It only names the relations of SQL the caller wrote, so it is the first thing
+// a read sheds once dropping rows is not enough.
+const withoutReferencedRelations = (payload: SqlResultPayload): SqlResultPayload => ({
   ...payload,
-  statements: payload.statements.map(withoutStatementRelationHints),
+  statements: payload.statements.map(withoutStatementReferencedRelations),
 });
 
 // The caller sent the SQL, so the echo is the last thing worth carrying back.
@@ -258,13 +254,13 @@ type ReadShrinkStage = Readonly<{
 // every stage fails. When no echo is long enough to be worth cutting it equals
 // the stage before it, which costs one redundant search and never a larger result.
 const SMALLEST_READ_SHRINK_STAGE: ReadShrinkStage = {
-  build: (payload) => withTruncatedEchoedSql(withoutRelationHints(payload)),
+  build: (payload) => withTruncatedEchoedSql(withoutReferencedRelations(payload)),
   responseShrunk: true,
 };
 
 const READ_SHRINK_STAGES: ReadonlyArray<ReadShrinkStage> = [
   { build: (payload) => payload, responseShrunk: false },
-  { build: withoutRelationHints, responseShrunk: true },
+  { build: withoutReferencedRelations, responseShrunk: true },
   SMALLEST_READ_SHRINK_STAGE,
 ];
 
@@ -319,19 +315,18 @@ const findLargestFittingRowPrefix = (
   return fitting;
 };
 
-// Nothing was committed, so a read may degrade: it sheds rows, then relation
-// hints, then the echoed statement text, keeping the largest row prefix each
-// stage can afford. Only a script whose bare per-statement echo and counts are
-// over budget on their own survives every stage.
+// Nothing was committed, so a read may degrade: it sheds rows, then
+// referencedRelations, then the echoed statement text, keeping the largest row
+// prefix each stage can afford. Only a script whose bare per-statement echo and
+// counts are over budget on their own survives every stage.
 //
 // A stage is accepted only once it ships data. A zero-row prefix technically
-// fits, so an early stage carrying the full hints of every referenced relation
-// could otherwise buy its own documentation with the whole answer while the next
-// stage, which sheds those hints, would have returned rows. Keeping every
-// available row is accepted at once, which also short-circuits a read that
-// returned no rows at its first fitting stage, keeping whatever that stage still
-// carries; when no stage ships a row, the earliest row-less fit is returned, so
-// no read that degraded to zero rows before starts being rejected.
+// fits, so the unshrunk stage could otherwise spend the whole answer on echoing
+// SQL the caller already holds while a later stage, which cuts that echo, would
+// have returned rows. Keeping every available row is accepted at once, which
+// also short-circuits a read that returned no rows at its first fitting stage,
+// keeping whatever that stage still carries; when no stage ships a row, the
+// earliest row-less fit is returned instead of a rejection.
 const buildReadResultWithinBudget = (
   payload: SqlResultPayload,
 ): BoundedReadResult => {
@@ -392,10 +387,10 @@ const buildEchoShrinkClause = (statementCount: number, truncatedEchoCount: numbe
   return `, and ${scope} echoed statements cut to a ${String(SHRUNK_SQL_ECHO_CHARS)} character prefix`;
 };
 
-// Reachable only after every row, every relation hint, and all but a prefix of
-// every echo long enough to be worth cutting is gone, so what is left is the
-// fixed per-statement cost of the script itself. Fewer rows cannot clear it, and
-// splitting the work into more batched statements makes it worse.
+// Reachable only after every row, every referencedRelations list, and all but a
+// prefix of every echo long enough to be worth cutting is gone, so what is left
+// is the fixed per-statement cost of the script itself. Fewer rows cannot clear
+// it, and splitting the work into more batched statements makes it worse.
 const buildResultTooLargeError = (
   smallestResultChars: number,
   statementCount: number,
@@ -403,7 +398,7 @@ const buildResultTooLargeError = (
 ): SqlPolicyError =>
   new SqlPolicyError(
     "sql_result_too_large",
-    `The SQL result is ${String(smallestResultChars)} characters with every row dropped, relation hints removed${buildEchoShrinkClause(statementCount, truncatedEchoCount)}, and still exceeds the ${String(MAX_SQL_RESULT_CHARS)} character result budget; send fewer statements per request, and shorten any statement whose own text is long`,
+    `The SQL result is ${String(smallestResultChars)} characters with every row dropped, referencedRelations removed${buildEchoShrinkClause(statementCount, truncatedEchoCount)}, and still exceeds the ${String(MAX_SQL_RESULT_CHARS)} character result budget; send fewer statements per request, and shorten any statement whose own text is long`,
   );
 
 // The mutation transaction already committed, so failing here would push the
@@ -442,26 +437,26 @@ const buildCommittedWriteResultWithinBudget = (
     return { body: withoutRows, outcome: "write_rows_omitted" };
   }
 
-  // Rows are already gone, so the echoed statement and its static relation hints
-  // are what remains over budget. The hints go first, mirroring READ_SHRINK_STAGES:
-  // they are re-readable from /schema, while the echo is the only thing tying each
-  // count in this response back to the statement that produced it. Every count and
-  // the instructions must survive both steps.
-  const withoutHints = {
+  // Rows are already gone, so the echoed statement and its referencedRelations are
+  // what remains over budget. referencedRelations goes first, mirroring
+  // READ_SHRINK_STAGES: the echo is the only thing tying each count in this
+  // response back to the statement that produced it. Every count and the
+  // instructions must survive both steps.
+  const withoutRelations = {
     ...withoutRows,
-    statements: withoutRows.statements.map(withoutStatementRelationHints),
+    statements: withoutRows.statements.map(withoutStatementReferencedRelations),
     ...buildWriteShrinkReport(omittedRows, true),
   };
-  if (fitsResultBudget(withoutHints)) {
-    return { body: withoutHints, outcome: "write_response_shrunk" };
+  if (fitsResultBudget(withoutRelations)) {
+    return { body: withoutRelations, outcome: "write_response_shrunk" };
   }
 
-  // Shedding the hints was not enough, so the echo the caller already holds is
-  // cut to a prefix. The spread is safe here only because the step above already
-  // rebuilt every statement field by field.
+  // Dropping referencedRelations was not enough, so the echo the caller already
+  // holds is cut to a prefix. The spread is safe here only because the step above
+  // already rebuilt every statement field by field.
   const withTruncatedSql = {
-    ...withoutHints,
-    statements: withoutHints.statements.map((statement) => ({
+    ...withoutRelations,
+    statements: withoutRelations.statements.map((statement) => ({
       ...statement,
       sql: truncateEchoedSql(statement.sql),
     })),
@@ -501,16 +496,6 @@ export class AmbiguousSqlMutationOutcomeError extends Error {
     super(AMBIGUOUS_SQL_MUTATION_OUTCOME_MESSAGE, { cause });
   }
 }
-
-const buildRelationHints = (
-  relations: ReadonlyArray<AllowedRelationName>,
-): SqlRelationHints => Object.fromEntries(relations.map((name) => {
-  const hints = getAgentSchemaHints(name);
-  if (hints === undefined) {
-    throw new Error(`Missing agent schema hints for relation ${name}`);
-  }
-  return [name, hints] as const;
-}));
 
 const isSafeUserSqlDatabaseError = (error: unknown): boolean => {
   if (typeof error !== "object" || error === null) {
@@ -735,7 +720,6 @@ const executeSqlWithWorkspaceGetter = async (
       totalRowCount: statement.totalRowCount,
       truncated: statement.truncated,
       referencedRelations: statement.referencedRelations,
-      hints: buildRelationHints(statement.referencedRelations),
     })),
     workspace,
     limits: {

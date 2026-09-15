@@ -438,9 +438,9 @@ emitted text wraps around them, so the declared ceiling is never smaller than
 what a maximally packed result actually emits.
 An oversized read degrades instead of failing, shedding content in a fixed
 order: rows are dropped from the end of the result, then the per-statement
-relation hints, then the echoed `sql` is cut to a 200-character prefix wherever
-that marked-up prefix is shorter than the statement it replaces, and each stage
-keeps the largest row prefix it can still afford. The response reports
+`referencedRelations`, then the echoed `sql` is cut to a 200-character prefix
+wherever that marked-up prefix is shorter than the statement it replaces, and
+each stage keeps the largest row prefix it can still afford. The response reports
 what it carries through the truncation contract the agent guide already names,
 `returnedRowCount` against an unchanged `totalRowCount` plus `truncated: true`.
 For a non-mutating statement `rowCount` keeps equalling the number of rows
@@ -460,12 +460,13 @@ affected rows. On a mutation that returned rows, `rowCount` is only the rows
 this response would have carried; on one that returned none it stays the
 affected row count. `data.rowsOmitted: true` is emitted only when rows were
 actually carried, and `data.responseShrunk: true` reports that the shrink
-reached past the rows. It first drops the per-statement relation hints and
-leaves the echoed `sql` intact, then cuts that echo to a prefix with an explicit
-truncation marker wherever that marked-up prefix is shorter than the statement
-it replaces, and finally, if a full 100-statement script of escape-dense SQL is
-still over budget, replaces it with `sqlOmitted: true`. So
-`responseShrunk` alone does not tell the caller the echo was touched.
+reached past the rows. It first drops the per-statement `referencedRelations`
+and leaves the echoed `sql` intact, then cuts that echo to a prefix with an
+explicit truncation marker wherever that marked-up prefix is shorter than the
+statement it replaces, and finally, if a full 100-statement script of
+escape-dense SQL is still over budget, replaces every echo with
+`sqlOmitted: true`. So `responseShrunk` alone does not tell the caller the echo
+was touched.
 `data.resultSizeInstructions`
 carries the matching remediation text on every shrunk result. On a non-mutating
 statement, `truncated` covers the row cap and the size cap together, and
