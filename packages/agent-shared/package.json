@@ -52,6 +52,17 @@
       },
       "default": "./dist/agentProtocol.js"
     },
+    "./agent-results": {
+      "import": {
+        "types": "./dist/agentResults.d.ts",
+        "default": "./dist/agentResults.js"
+      },
+      "require": {
+        "types": "./dist-cjs/agentResults.d.cts",
+        "default": "./dist-cjs/agentResults.cjs"
+      },
+      "default": "./dist/agentResults.js"
+    },
     "./crockford": {
       "import": {
         "types": "./dist/crockford.d.ts",
