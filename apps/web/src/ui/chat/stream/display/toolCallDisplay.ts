@@ -19,6 +19,12 @@ export const formatToolLabel = (
   name: string,
   t: Translate,
 ): string => {
+  if (name === "list_workspaces") return t("chat.toolListWorkspaces");
+  if (name === "get_schema") return t("chat.toolGetSchema");
+  if (name === "get_guide") return t("chat.toolGetGuide");
+  if (name === "sql_query") return t("chat.toolSqlQuery");
+  if (name === "sql_execute") return t("chat.toolSqlExecute");
+  // Stored transcripts keep this tool name, so its label must stay renderable.
   if (name === "query_database") return t("chat.toolDbQuery");
   if (name === "code_execution") return t("chat.toolCodeExec");
   if (name === "code_interpreter_call" || name === "code_interpreter") return t("chat.toolCodeInterpreter");
