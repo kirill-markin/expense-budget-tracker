@@ -121,7 +121,7 @@ const AGENT_SCHEMA_HINTS: Readonly<Record<AllowedRelationName, AgentSchemaHints>
       "category is free-form text shared with budget_lines; reuse an existing spelling from history exactly instead of inventing a variant.",
       "external_id carries the source identifier used for deduplication.",
       "workspace_id must be set explicitly on every INSERT; read it from workspace_settings.",
-      "account_id follows {a|v|c|i}-{name}-{currency}, where a=regular, v=virtual, c=cash, i=investment, and the same {a|v|c|i}-{name} prefix means the same financial institution.",
+      "account_id follows {a|v|c|i}-{name}-{currency}, where a=regular, v=virtual, c=cash, i=investment, {name} and {currency} are lowercase, {name} using underscores between words and {currency} being the 3-letter ISO 4217 code, and the same {a|v|c|i}-{name} prefix means the same financial institution, for example a-rv_buss-usd for a Revolut Business USD account.",
     ],
     columnConstraints: [{
       column: "kind",
@@ -135,6 +135,7 @@ const AGENT_SCHEMA_HINTS: Readonly<Record<AllowedRelationName, AgentSchemaHints>
     optional: false,
     notes: [
       "SELECT-only derived view. Do not INSERT, UPDATE, or DELETE.",
+      "currency is the most frequent currency across the account's entries rather than a declared account currency, and inserted_at is the earliest insertion time of its entries.",
     ],
   },
   budget_lines: {
@@ -143,12 +144,20 @@ const AGENT_SCHEMA_HINTS: Readonly<Record<AllowedRelationName, AgentSchemaHints>
     optional: false,
     notes: [
       "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
+      "budget_lines carries only the Base plan. The budget the app displays is that plan plus a separate budget_adjustments component these tools cannot read or write, so a planned_value read or written here can differ from the value the user sees.",
     ],
-    columnConstraints: [{
-      column: "kind",
-      allowedValues: ["base"],
-      notes: ["Only base is accepted."],
-    }],
+    columnConstraints: [
+      {
+        column: "kind",
+        allowedValues: ["base"],
+        notes: ["Only base is accepted."],
+      },
+      {
+        column: "direction",
+        allowedValues: ["income", "spend"],
+        notes: ["The budget model uses only income and spend. The column carries no CHECK, so any other value is stored silently and corrupts budget reporting; never write one."],
+      },
+    ],
   },
   account_metadata: {
     summary: "Per-account metadata such as liquidity, personal/business classification, and regular/investment grouping.",
