@@ -38,7 +38,7 @@ const REQUIRED_LEAD_TOOL_NAMES = [
   "sql_execute",
 ] as const;
 
-const GUIDE_TOPICS = ["sql_dialect", "writing_data"] as const;
+const GUIDE_TOPICS = ["sql_dialect", "writing_data", "query_recipes"] as const;
 
 const PUBLISHER_META_KEY = "io.modelcontextprotocol.registry/publisher-provided";
 const MAX_RESULT_SIZE_META_KEY = "anthropic/maxResultSizeChars";
