@@ -171,7 +171,7 @@ SELECT COALESCE(p.direction, a.direction) AS direction,
        COALESCE(p.category, a.category) AS category,
        COALESCE(p.planned, 0) AS planned,
        COALESCE(a.spent, 0) AS actual,
-       COALESCE(p.planned, 0) + COALESCE(a.spent, 0) AS remaining
+       CASE WHEN COALESCE(p.direction, a.direction) = 'spend' THEN COALESCE(p.planned, 0) + COALESCE(a.spent, 0) ELSE COALESCE(p.planned, 0) - COALESCE(a.spent, 0) END AS remaining
 FROM plan p FULL OUTER JOIN actual a ON p.direction = a.direction AND p.category = a.category
 ORDER BY direction, category
 
