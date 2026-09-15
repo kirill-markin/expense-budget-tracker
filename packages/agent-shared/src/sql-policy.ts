@@ -33,12 +33,27 @@ export const ALLOWED_SQL_FUNCTION_NAMES = [
   "min",
   "max",
   "avg",
+  "array_agg",
+  "bool_and",
+  "bool_or",
+  "stddev",
+  "stddev_samp",
+  "stddev_pop",
+  "variance",
+  "var_samp",
+  "var_pop",
   "coalesce",
   "date_trunc",
   "date_part",
   "extract",
   "abs",
   "round",
+  "ceil",
+  "floor",
+  "trunc",
+  "mod",
+  "power",
+  "sqrt",
   "now",
   "current_timestamp",
   "cast",
@@ -47,13 +62,19 @@ export const ALLOWED_SQL_FUNCTION_NAMES = [
   "least",
   "lower",
   "upper",
+  "initcap",
   "length",
   "to_char",
   "trim",
   "btrim",
   "substring",
+  "left",
+  "right",
   "position",
+  "strpos",
+  "starts_with",
   "replace",
+  "regexp_replace",
   "split_part",
   "concat",
   "string_agg",
@@ -101,16 +122,64 @@ const SOURCE_CLAUSE_END: ReadonlySet<string> = new Set([
   "window",
 ]);
 
-// OVER (...) and FILTER (WHERE ...) are clause grammar rather than calls, so
-// the parenthesis belongs to the window or filter clause and its contents stay
-// subject to the same relation and function checks.
+/**
+ * Keywords whose parenthesis is grammar rather than a call, such as NOT (...),
+ * CASE WHEN (...), GROUP BY (...), OVER (...), and FILTER (WHERE ...). The
+ * parenthesis belongs to the clause, and its contents stay subject to the same
+ * relation and function checks.
+ *
+ * A name PostgreSQL can resolve as a function belongs here only when real
+ * grammar puts a parenthesis right after it; otherwise listing it would let a
+ * call reach the server unchecked. LEFT, RIGHT, SUBSTRING, POSITION, OVERLAY,
+ * TRIM, CAST, COALESCE, NULLIF, GREATEST, LEAST, CURRENT_TIMESTAMP,
+ * CURRENT_DATE, CURRENT_TIME, LOCALTIME, LOCALTIMESTAMP, XMLELEMENT, XMLPARSE,
+ * and TREAT have no such form, so they keep going through
+ * ALLOWED_SQL_FUNCTIONS. LIKE and ILIKE do (note LIKE ('%x%')), so they are
+ * listed deliberately despite being function-namable, as BY, SET, OVER, and
+ * FILTER already are. IS and SIMILAR are left out for the opposite reason:
+ * IS is always followed by NULL/TRUE/FALSE/DISTINCT/OF/DOCUMENT/JSON, and
+ * SIMILAR only by TO, whose own entry already covers SIMILAR TO (...). FROM
+ * and JOIN stay out too: they introduce table references, so they keep the
+ * narrower SQL_DERIVED_QUERY_PAREN_KEYWORDS rule that rejects a parenthesized
+ * table list.
+ */
 const SQL_GRAMMAR_PAREN_KEYWORDS: ReadonlySet<string> = new Set([
   "and",
   "or",
-  "where",
+  "not",
   "in",
   "exists",
+  "between",
+  "like",
+  "ilike",
+  "to",
+  "any",
+  "all",
+  "some",
+  "case",
+  "when",
+  "then",
+  "else",
+  "end",
+  "select",
+  "distinct",
+  "as",
+  "set",
   "values",
+  "on",
+  "using",
+  "where",
+  "group",
+  "having",
+  "order",
+  "by",
+  "limit",
+  "offset",
+  "fetch",
+  "union",
+  "except",
+  "intersect",
+  "returning",
   "over",
   "filter",
 ]);
@@ -1197,8 +1266,9 @@ const failUnsupportedSqlConstruct = (construct: string, remedy: string): never =
 /**
  * Rejects the SQL constructs restricted SQL does not support, naming the
  * construct the caller wrote and its supported alternative. Each one puts a
- * parenthesis after a keyword, so the function allowlist would otherwise blame
- * an ON(), AS(), ROLLUP(), or GROUP() function that was never called.
+ * parenthesis after a keyword, so without these rules DISTINCT ON and a named
+ * WINDOW would pass as ordinary keyword grammar, and the function allowlist
+ * would blame a ROLLUP() or CUBE() function that was never called.
  *
  * Every rule is anchored on the full keyword sequence, so plain SELECT
  * DISTINCT, inline OVER (...) windows, and ordinary GROUP BY column lists keep
@@ -1494,30 +1564,14 @@ const assertOnlyAllowedFunctionCallsInSegment = (
     const derivedQueryFirstToken = tokens[index + 2];
     const startsDerivedQuery = derivedQueryFirstToken !== undefined
       && DERIVED_QUERY_FIRST_KEYWORDS.has(derivedQueryFirstToken.lower);
-    if (
-      SQL_GRAMMAR_PAREN_KEYWORDS.has(token.lower)
-      || (SQL_DERIVED_QUERY_PAREN_KEYWORDS.has(token.lower) && startsDerivedQuery)
-    ) {
-      const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
-      const nestedGrammarContext = understandsDeleteUsingGrammar
-        ? "delete_using"
-        : "statement";
-      assertOnlyAllowedFunctionCallsInSegment(
-        tokens,
-        index + 2,
-        closeIndex,
-        nestedGrammarContext,
-      );
-      index = closeIndex;
-      continue;
-    }
-
-    if (!ALLOWED_SQL_FUNCTIONS.has(token.lower)) {
+    const isGrammarParen = SQL_GRAMMAR_PAREN_KEYWORDS.has(token.lower)
+      || (SQL_DERIVED_QUERY_PAREN_KEYWORDS.has(token.lower) && startsDerivedQuery);
+    if (!ALLOWED_SQL_FUNCTIONS.has(token.lower) && !isGrammarParen) {
       failFunctionCallNotAllowed(token.value);
     }
 
     const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
-    const callGrammarContext: SqlGrammarContext = understandsDeleteUsingGrammar
+    const nestedGrammarContext: SqlGrammarContext = understandsDeleteUsingGrammar
       ? "delete_using"
       : "statement";
     if (KEYWORD_ARGUMENT_FUNCTIONS.has(token.lower)) {
@@ -1526,7 +1580,7 @@ const assertOnlyAllowedFunctionCallsInSegment = (
           tokens,
           argument.startIndex,
           argument.endIndex,
-          callGrammarContext,
+          nestedGrammarContext,
         );
       }
       index = closeIndex;
@@ -1537,7 +1591,7 @@ const assertOnlyAllowedFunctionCallsInSegment = (
       tokens,
       index + 2,
       closeIndex,
-      callGrammarContext,
+      nestedGrammarContext,
     );
     index = closeIndex;
   }
