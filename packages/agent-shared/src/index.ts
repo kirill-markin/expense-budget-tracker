@@ -80,6 +80,8 @@ export type AgentSchemaColumnConstraint = Readonly<{
 }>;
 
 export type AgentSchemaHints = Readonly<{
+  summary: string;
+  related: ReadonlyArray<AllowedRelationName>;
   optional: boolean;
   primaryKey?: ReadonlyArray<string>;
   notes: ReadonlyArray<string>;
@@ -107,8 +109,10 @@ export const isAccountMetadataAccountType = (value: string): value is AccountMet
 export const isAccountMetadataGroup = (value: string): value is AccountMetadataGroup =>
   (ACCOUNT_METADATA_GROUP_VALUES as ReadonlyArray<string>).includes(value);
 
-const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>> = {
+const AGENT_SCHEMA_HINTS: Readonly<Record<AllowedRelationName, AgentSchemaHints>> = {
   ledger_entries: {
+    summary: "One row per account movement, including income, spending, and transfers.",
+    related: ["accounts", "workspace_settings", "account_metadata"],
     optional: false,
     primaryKey: ["entry_id"],
     notes: [
@@ -126,12 +130,16 @@ const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSche
     }],
   },
   accounts: {
+    summary: "Derived account list built from ledger entries.",
+    related: ["ledger_entries", "account_metadata", "workspace_settings"],
     optional: false,
     notes: [
       "SELECT-only derived view. Do not INSERT, UPDATE, or DELETE.",
     ],
   },
   budget_lines: {
+    summary: "Append-only monthly Base budget rows with last-write-wins semantics.",
+    related: ["workspace_settings"],
     optional: false,
     notes: [
       "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
@@ -143,6 +151,8 @@ const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSche
     }],
   },
   account_metadata: {
+    summary: "Per-account metadata such as liquidity, personal/business classification, and regular/investment grouping.",
+    related: ["accounts", "ledger_entries", "workspace_settings"],
     optional: true,
     primaryKey: ["workspace_id", "account_id"],
     notes: [
@@ -170,6 +180,8 @@ const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSche
     ],
   },
   workspace_settings: {
+    summary: "Per-workspace reporting configuration such as reporting currency.",
+    related: ["ledger_entries", "budget_lines", "accounts"],
     optional: false,
     primaryKey: ["workspace_id"],
     notes: [
@@ -182,12 +194,16 @@ const AGENT_SCHEMA_HINTS: Readonly<Partial<Record<AllowedRelationName, AgentSche
     }],
   },
   fx_rates_raw: {
+    summary: "Canonical raw FX source rates against the internal USD pivot currency.",
+    related: ["fx_rates_daily", "workspace_settings", "ledger_entries"],
     optional: false,
     notes: [
       "SELECT-only global relation maintained by the FX worker. Do not INSERT, UPDATE, or DELETE.",
     ],
   },
   fx_rates_daily: {
+    summary: "Query-ready daily all-pairs FX rates used by dashboards and reporting-currency conversion.",
+    related: ["fx_rates_raw", "workspace_settings", "ledger_entries"],
     optional: false,
     notes: [
       "SELECT-only global relation maintained by the FX worker. Do not INSERT, UPDATE, or DELETE.",

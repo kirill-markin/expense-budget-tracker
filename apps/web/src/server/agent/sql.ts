@@ -1,6 +1,7 @@
 /**
  * Agent-facing SQL execution on app.* using the shared SQL policy.
  */
+import { getAgentSchemaHints, type AgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import {
   executeValidatedExpenseSql,
   getAllowedRelationNames,
@@ -12,21 +13,14 @@ import {
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { withRestrictedTrustedIdentityContext } from "@/server/db";
 import {
-  applySqlResultCharBudget,
+  applyStagedSqlResultCharBudget,
+  type BudgetedSqlShrinkStage,
   type BudgetedSqlStatementEntry,
 } from "@/server/sqlResultBudget";
 import { type AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
 import { getWorkspaceForTrustedIdentity } from "@/server/workspaces";
 
-type EntityHint = Readonly<{
-  name: AllowedRelationName;
-  summary: string;
-}>;
-
-export type EntityHints = Readonly<{
-  primary: EntityHint;
-  related: ReadonlyArray<EntityHint>;
-}>;
+type AgentSqlRelationHints = Readonly<Partial<Record<AllowedRelationName, AgentSchemaHints>>>;
 
 type AgentSqlStatementResult = Readonly<{
   sql: string;
@@ -37,11 +31,18 @@ type AgentSqlStatementResult = Readonly<{
   totalRowCount: number;
   truncated: boolean;
   referencedRelations: ReadonlyArray<AllowedRelationName>;
-  entityHints?: EntityHints;
+  // Rows are dropped first; a shrink stage sheds this only once no row prefix
+  // fits, not even zero rows, so a shrunk statement omits it and
+  // GET /api/agent/schema still serves the same hints.
+  hints?: AgentSqlRelationHints;
 }>;
 
 export type AgentSqlResult = Readonly<{
   statements: ReadonlyArray<AgentSqlStatementResult>;
+  // Whether the character budget had to shed the per-statement hints. Always
+  // present, so the response states that the hints are complete as plainly as it
+  // states that they are gone, and the measured payload is the emitted one.
+  hintsDropped: boolean;
   workspace: Readonly<{
     workspaceId: string;
     name: string;
@@ -53,40 +54,6 @@ export type AgentSqlResult = Readonly<{
   }>;
 }>;
 
-const ENTITY_METADATA: Readonly<Record<AllowedRelationName, Readonly<{
-  summary: string;
-  related: ReadonlyArray<AllowedRelationName>;
-}>>> = {
-  ledger_entries: {
-    summary: "One row per account movement, including income, spending, and transfers.",
-    related: ["accounts", "workspace_settings", "account_metadata"],
-  },
-  accounts: {
-    summary: "Derived account list built from ledger entries.",
-    related: ["ledger_entries", "account_metadata", "workspace_settings"],
-  },
-  budget_lines: {
-    summary: "Append-only monthly Base budget rows with last-write-wins semantics.",
-    related: ["workspace_settings"],
-  },
-  workspace_settings: {
-    summary: "Per-workspace reporting configuration such as reporting currency.",
-    related: ["ledger_entries", "budget_lines", "accounts"],
-  },
-  account_metadata: {
-    summary: "Per-account metadata such as liquidity, personal/business classification, and regular/investment grouping.",
-    related: ["accounts", "ledger_entries", "workspace_settings"],
-  },
-  fx_rates_raw: {
-    summary: "Canonical raw FX source rates against the internal USD pivot currency.",
-    related: ["fx_rates_daily", "workspace_settings", "ledger_entries"],
-  },
-  fx_rates_daily: {
-    summary: "Query-ready daily all-pairs FX rates used by dashboards and reporting-currency conversion.",
-    related: ["fx_rates_raw", "workspace_settings", "ledger_entries"],
-  },
-};
-
 type PgError = Error & Readonly<{
   code?: string;
 }>;
@@ -97,33 +64,38 @@ const USER_SQL_ERROR_CLASSES: ReadonlySet<string> = new Set([
   "42",
 ]);
 
-const buildEntityHints = (relations: ReadonlyArray<AllowedRelationName>): EntityHints | undefined => {
-  if (relations.length === 0) {
-    return undefined;
+const buildRelationHints = (
+  relations: ReadonlyArray<AllowedRelationName>,
+): AgentSqlRelationHints => Object.fromEntries(relations.map((name) => {
+  const hints = getAgentSchemaHints(name);
+  if (hints === undefined) {
+    throw new Error(`Missing agent schema hints for relation ${name}`);
   }
+  return [name, hints] as const;
+}));
 
-  const primaryName = relations[0];
-  if (primaryName === undefined) {
-    return undefined;
-  }
-  const primaryMetadata = ENTITY_METADATA[primaryName];
-
-  const relatedNames = Array.from(new Set([
-    ...relations.filter((name) => name !== primaryName),
-    ...primaryMetadata.related.filter((name) => name !== primaryName),
-  ])).slice(0, 3);
-  const related = relatedNames.map((name) => ({
-    name,
-    summary: ENTITY_METADATA[name].summary,
-  }));
-
-  return {
-    primary: {
-      name: primaryName,
-      summary: primaryMetadata.summary,
+// Static per-relation documentation the caller can read again from
+// GET /api/agent/schema, and the whole shared hints object for every relation a
+// statement touched is a fixed per-statement cost no row cut can pay for. So it
+// is first in this surface's shrink-stage list, the way apps/sql-api/src/
+// machineApi/sqlService.ts lists relation hints first. Rows are still dropped
+// first: this stage runs only once no row prefix fits, not even zero rows. It is
+// a discrete stage over the whole payload, never a rule inside the search.
+const WITHOUT_HINTS_STAGE: BudgetedSqlShrinkStage<AgentSqlStatementResult> = {
+  build: (entry) => ({
+    ...entry,
+    statement: {
+      sql: entry.statement.sql,
+      command: entry.statement.command,
+      rows: entry.statement.rows,
+      rowCount: entry.statement.rowCount,
+      returnedRowCount: entry.statement.returnedRowCount,
+      totalRowCount: entry.statement.totalRowCount,
+      truncated: entry.statement.truncated,
+      referencedRelations: entry.statement.referencedRelations,
     },
-    related,
-  };
+  }),
+  shrunk: true,
 };
 
 export const getAgentSqlAllowedRelations = (): ReadonlyArray<AllowedRelationName> =>
@@ -166,37 +138,44 @@ export const executeAgentSql = async (
 
   const entries = result.statements.map((
     statement,
-  ): BudgetedSqlStatementEntry<AgentSqlStatementResult> => {
-    const entityHints = buildEntityHints(statement.referencedRelations);
-    return {
-      statement: {
-        sql: statement.sql,
-        command: statement.command,
-        rows: statement.rows,
-        rowCount: statement.rowCount,
-        returnedRowCount: statement.returnedRowCount,
-        totalRowCount: statement.totalRowCount,
-        truncated: statement.truncated,
-        referencedRelations: statement.referencedRelations,
-        ...(entityHints === undefined ? {} : { entityHints }),
-      },
-      isMutating: statement.isMutating,
-    };
-  });
+  ): BudgetedSqlStatementEntry<AgentSqlStatementResult> => ({
+    statement: {
+      sql: statement.sql,
+      command: statement.command,
+      rows: statement.rows,
+      rowCount: statement.rowCount,
+      returnedRowCount: statement.returnedRowCount,
+      totalRowCount: statement.totalRowCount,
+      truncated: statement.truncated,
+      referencedRelations: statement.referencedRelations,
+      hints: buildRelationHints(statement.referencedRelations),
+    },
+    isMutating: statement.isMutating,
+  }));
   const limits: AgentSqlResult["limits"] = {
     maxRows: MAX_SQL_ROWS,
     maxResultChars: MAX_SQL_RESULT_CHARS,
     statementTimeoutMs: SQL_STATEMENT_TIMEOUT_MS,
   };
 
+  // Measured against the result object this function returns, in the shape the
+  // route emits it. The route wraps it in the success envelope and its
+  // instruction text, so the emitted body is that much larger than the budget;
+  // rows are what this sheds first, then the per-statement hints.
+  const budgeted = applyStagedSqlResultCharBudget(
+    entries,
+    (candidate, hintsDropped) => JSON.stringify({
+      statements: candidate,
+      hintsDropped,
+      workspace,
+      limits,
+    }).length,
+    [WITHOUT_HINTS_STAGE],
+  );
+
   return {
-    // Measured against the result object this function returns. The route wraps
-    // it in the success envelope and its instruction text, so the emitted body
-    // is that much larger than the budget; rows are what this can shed.
-    statements: applySqlResultCharBudget(
-      entries,
-      (candidate) => JSON.stringify({ statements: candidate, workspace, limits }).length,
-    ),
+    statements: budgeted.statements,
+    hintsDropped: budgeted.shrunk,
     workspace,
     limits,
   };

@@ -67,6 +67,8 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
   assert.deepEqual(
     schema.find((relation) => relation.name === "accounts")?.hints,
     {
+      summary: "Derived account list built from ledger entries.",
+      related: ["ledger_entries", "account_metadata", "workspace_settings"],
       optional: false,
       notes: [
         "SELECT-only derived view. Do not INSERT, UPDATE, or DELETE.",
@@ -76,6 +78,8 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
   assert.deepEqual(
     schema.find((relation) => relation.name === "budget_lines")?.hints,
     {
+      summary: "Append-only monthly Base budget rows with last-write-wins semantics.",
+      related: ["workspace_settings"],
       optional: false,
       notes: [
         "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
@@ -90,6 +94,8 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
   assert.deepEqual(
     schema.find((relation) => relation.name === "fx_rates_raw")?.hints,
     {
+      summary: "Canonical raw FX source rates against the internal USD pivot currency.",
+      related: ["fx_rates_daily", "workspace_settings", "ledger_entries"],
       optional: false,
       notes: [
         "SELECT-only global relation maintained by the FX worker. Do not INSERT, UPDATE, or DELETE.",
@@ -99,6 +105,8 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
   assert.deepEqual(
     schema.find((relation) => relation.name === "fx_rates_daily")?.hints,
     {
+      summary: "Query-ready daily all-pairs FX rates used by dashboards and reporting-currency conversion.",
+      related: ["fx_rates_raw", "workspace_settings", "ledger_entries"],
       optional: false,
       notes: [
         "SELECT-only global relation maintained by the FX worker. Do not INSERT, UPDATE, or DELETE.",

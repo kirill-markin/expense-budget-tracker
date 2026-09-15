@@ -2,7 +2,8 @@
  * Agent SQL endpoint.
  *
  * Uses the same restricted SQL policy as the API Gateway SQL API, but returns
- * the stable agent envelope plus lightweight entity hints for known relations.
+ * the stable agent envelope plus the shared hints for the relations it touched,
+ * which the character budget sheds before it gives up on a result.
  */
 import { SqlPolicyError, validateExpenseSql } from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
@@ -83,6 +84,19 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
   return "Fix the SQL statement and retry. Use only supported relations.";
 };
 
+// Named only when it happened, beside the hintsDropped flag the body always
+// carries, so the agent knows what is missing and where to read it again.
+const HINTS_DROPPED_NOTE = "The per-statement hints did not fit beside this result, so they were dropped to make room for its rows: read the same hints again with GET /api/agent/schema.";
+
+const buildSqlResultInstructions = (
+  maxRows: number,
+  maxResultChars: number,
+  hintsDropped: boolean,
+): string => [
+  `Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only allowlisted pure aggregate, date, text, cast, and window functions may be called and a rejected call lists the allowed names, and returned rows are capped at ${String(maxRows)} per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata. A result over limits.maxResultChars (${String(maxResultChars)}) characters drops rows across the whole request and sets truncated instead of failing, and when no row prefix is small enough it also drops the per-statement hints and reports hintsDropped: true. A result that still comes back over that budget with every row dropped has spent both, so what is left is the echoed statement text and the fixed per-statement fields: shorten the statement text and send fewer statements per request. For a read cut by this character budget, the kept rows are that statement's first rows, so select fewer or shorter columns, send fewer statements per request, or page the rest with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip. Any mutation in the result already committed and must not be re-sent; it keeps reporting the rows it affected in rowCount, an INSERT or UPDATE's dropped rows are readable with a narrow follow-up SELECT, and a DELETE's are gone.`,
+  ...(hintsDropped ? [HINTS_DROPPED_NOTE] : []),
+].join(" ");
+
 type AgentSqlRouteDependencies = Readonly<{
   authenticateAgentRequest: (request: Request) => Promise<AgentAuthenticatedRequest>;
   resolveWorkspaceIdForSql: typeof resolveWorkspaceIdForSql;
@@ -158,11 +172,16 @@ export const postAgentSqlRouteWithDeps = async (
       buildSuccessEnvelope(
         {
           statements: result.statements,
+          hintsDropped: result.hintsDropped,
           workspace: result.workspace,
           limits: result.limits,
         },
         [],
-        `Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only allowlisted pure aggregate, date, text, cast, and window functions may be called and a rejected call lists the allowed names, and returned rows are capped at ${String(result.limits.maxRows)} per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata. A result over limits.maxResultChars (${String(result.limits.maxResultChars)}) characters drops rows across the whole request and sets truncated instead of failing; when a statement's own text is over that budget the result still returns over budget with every row dropped, and only shortening that text helps. For a read cut by this character budget, the kept rows are that statement's first rows, so select fewer or shorter columns, send fewer statements per request, or page the rest with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip. Any mutation in the result already committed and must not be re-sent; it keeps reporting the rows it affected in rowCount, an INSERT or UPDATE's dropped rows are readable with a narrow follow-up SELECT, and a DELETE's are gone.`,
+        buildSqlResultInstructions(
+          result.limits.maxRows,
+          result.limits.maxResultChars,
+          result.hintsDropped,
+        ),
       ),
     );
   } catch (error) {
