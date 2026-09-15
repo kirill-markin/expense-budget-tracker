@@ -76,7 +76,7 @@ const WRITE_BUDGET_ROWS_GUIDE = `### Budget rows
 Budget plans live in budget_lines and are append-only. Change a plan by inserting a new row; never update or delete an earlier row to change a plan. The latest inserted_at row wins for each budget_month, direction, and category.
 Read the current winning rows for the affected months before proposing a change, and reuse the exact category spelling already used in the user's history. Resolve the winners with ROW_NUMBER() over each budget_month, direction, and category, ordered by inserted_at DESC with planned_value and currency as tiebreakers for rows sharing that timestamp, and keep rn = 1:
 ${BUDGET_WINNING_ROWS_QUERY_EXAMPLE}
-budget_month is the first day of the month, for example 2026-03-01. direction is income or spend. kind accepts only base. planned_value is an absolute value, not a signed ledger amount.
+budget_month is the first day of the month, for example 2026-03-01. direction is income or spend. The column carries no CHECK, so any other value is stored silently and corrupts budget reporting; never write one. kind accepts only base. planned_value is an absolute value, not a signed ledger amount.
 currency is required and must be the workspace reporting currency read from workspace_settings.reporting_currency, because planned values are never converted on read.
 Budget rows follow the same approval, probe-then-batch, and verification rules as entry imports; verify by rerunning that read for the affected months.`;
 

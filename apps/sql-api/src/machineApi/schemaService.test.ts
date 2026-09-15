@@ -72,6 +72,7 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
       optional: false,
       notes: [
         "SELECT-only derived view. Do not INSERT, UPDATE, or DELETE.",
+        "currency is the most frequent currency across the account's entries rather than a declared account currency, and inserted_at is the earliest insertion time of its entries.",
       ],
     },
   );
@@ -83,12 +84,20 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
       optional: false,
       notes: [
         "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
+        "budget_lines carries only the Base plan. The budget the app displays is that plan plus a separate budget_adjustments component these tools cannot read or write, so a planned_value read or written here can differ from the value the user sees.",
       ],
-      columnConstraints: [{
-        column: "kind",
-        allowedValues: ["base"],
-        notes: ["Only base is accepted."],
-      }],
+      columnConstraints: [
+        {
+          column: "kind",
+          allowedValues: ["base"],
+          notes: ["Only base is accepted."],
+        },
+        {
+          column: "direction",
+          allowedValues: ["income", "spend"],
+          notes: ["The budget model uses only income and spend. The column carries no CHECK, so any other value is stored silently and corrupts budget reporting; never write one."],
+        },
+      ],
     },
   );
   assert.deepEqual(

@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResult as PgQueryResult } from "pg";
 import {
+  SQL_DIALECT_GUIDE,
+  WRITING_DATA_GUIDE,
+} from "@expense-budget-tracker/agent-shared/agent-protocol";
+import {
   SQL_EXECUTE_TOOL,
   SQL_QUERY_TOOL,
 } from "@expense-budget-tracker/agent-shared/agent-tools";
@@ -16,6 +20,7 @@ import {
   validateSingleReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
+  buildSystemInstructions,
   CHAT_SQL_COMMIT_TIMEOUT_MS,
   execQueryWithDependencies,
   getChatSqlDeadlineMessage,
@@ -743,4 +748,38 @@ test("getChatSqlPolicyMessage passes through a policy message that already stand
     getChatSqlPolicyMessage(new SqlPolicyError("read_only_sql_required", policyMessage)),
     policyMessage,
   );
+});
+
+test("the chat system prompt leaves schema and SQL protocol to the tools", (): void => {
+  const instructions = buildSystemInstructions("UTC");
+  for (const removedSection of ["## Database Schema", "## Account Naming Convention", "## Key SQL Patterns"]) {
+    assert.ok(
+      !instructions.includes(removedSection),
+      `${removedSection} still ships in every chat turn instead of coming from get_schema or get_guide`,
+    );
+  }
+  assert.ok(!instructions.includes(SQL_DIALECT_GUIDE), "the sql_dialect guide is still interpolated into every turn");
+  assert.ok(!instructions.includes(WRITING_DATA_GUIDE), "the writing_data guide is still interpolated into every turn");
+  assert.ok(instructions.includes("Call get_schema before writing any SQL"));
+  assert.ok(
+    instructions.includes(
+      "Before the first sql_execute of a task, call get_guide with topic writing_data, follow the protocol it returns, and obtain the user's explicit approval",
+    ),
+    "the prompt no longer requires explicit approval before a write",
+  );
+  // The prompt is the only carrier of these directives now that the guides are
+  // fetched on demand, so each one is pinned to its own tool and trigger.
+  const requiredDirectives: ReadonlyArray<string> = [
+    "Call get_guide with topic sql_dialect before SQL that uses functions, case-insensitive matching, or date filters, and before any INSERT, UPDATE, or DELETE.",
+    "Call get_guide with topic query_recipes for balances, recent transactions, spending by category, plan versus actual, or FX conversion.",
+    "Verification after a write is a separate sql_query call, never part of the write call",
+    "Whenever you act on a workspace other than the one the user has open, name that workspace in your reply.",
+    "Call it once per session and reuse that result for every later statement.",
+  ];
+  for (const directive of requiredDirectives) {
+    assert.ok(
+      instructions.includes(directive),
+      `The chat prompt no longer carries its only copy of: ${directive}`,
+    );
+  }
 });
