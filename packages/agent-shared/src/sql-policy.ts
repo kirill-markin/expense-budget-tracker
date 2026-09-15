@@ -16,6 +16,17 @@ export const MAX_SQL_STATEMENTS = 100;
 export const SQL_STATEMENT_TIMEOUT_MS = 25_000;
 export const MCP_SQL_STATEMENT_TIMEOUT_MS = 20_000;
 
+/**
+ * Pure value functions agents need to shape reports. A name is added only when
+ * it cannot reach session state, system catalogs, the filesystem, or the
+ * network, and cannot generate rows or sleep; set_config, current_setting,
+ * pg_sleep, generate_series, query_to_xml, dblink, http, gen_random_uuid, and
+ * workspace or auth helpers stay out. Output size is not an admission
+ * criterion: replace, concat, and string_agg can build large strings, and that
+ * growth is bounded by the statement and transaction timeouts and
+ * MAX_SQL_RESULT_CHARS. repeat, lpad, and rpad are absent only because no agent
+ * flow needs them.
+ */
 export const ALLOWED_SQL_FUNCTION_NAMES = [
   "sum",
   "count",
@@ -23,6 +34,36 @@ export const ALLOWED_SQL_FUNCTION_NAMES = [
   "max",
   "avg",
   "coalesce",
+  "date_trunc",
+  "date_part",
+  "extract",
+  "abs",
+  "round",
+  "now",
+  "current_timestamp",
+  "cast",
+  "nullif",
+  "greatest",
+  "least",
+  "lower",
+  "upper",
+  "length",
+  "to_char",
+  "trim",
+  "btrim",
+  "substring",
+  "position",
+  "replace",
+  "split_part",
+  "concat",
+  "string_agg",
+  "row_number",
+  "lag",
+  "lead",
+  "rank",
+  "dense_rank",
+  "first_value",
+  "last_value",
 ] as const;
 
 export type AllowedSqlFunctionName = typeof ALLOWED_SQL_FUNCTION_NAMES[number];
@@ -60,6 +101,9 @@ const SOURCE_CLAUSE_END: ReadonlySet<string> = new Set([
   "window",
 ]);
 
+// OVER (...) and FILTER (WHERE ...) are clause grammar rather than calls, so
+// the parenthesis belongs to the window or filter clause and its contents stay
+// subject to the same relation and function checks.
 const SQL_GRAMMAR_PAREN_KEYWORDS: ReadonlySet<string> = new Set([
   "and",
   "or",
@@ -67,6 +111,28 @@ const SQL_GRAMMAR_PAREN_KEYWORDS: ReadonlySet<string> = new Set([
   "in",
   "exists",
   "values",
+  "over",
+  "filter",
+]);
+
+/**
+ * PostgreSQL value-expression calls that spell arguments with keywords instead
+ * of commas: EXTRACT(field FROM value), SUBSTRING(value FROM start FOR count),
+ * TRIM(BOTH chars FROM value), and POSITION(needle IN haystack). Inside such a
+ * call, and only at its own parenthesis depth, FROM, FOR, and IN separate
+ * arguments instead of opening a source clause or naming a function.
+ */
+const KEYWORD_ARGUMENT_FUNCTIONS: ReadonlySet<string> = new Set([
+  "extract",
+  "substring",
+  "trim",
+  "position",
+]);
+
+const KEYWORD_ARGUMENT_SEPARATORS: ReadonlySet<string> = new Set([
+  "from",
+  "for",
+  "in",
 ]);
 
 const SQL_DERIVED_QUERY_PAREN_KEYWORDS: ReadonlySet<string> = new Set([
@@ -568,6 +634,41 @@ const findMatchingParen = (
   return fail("invalid_relation_reference", "Expected closing parenthesis");
 };
 
+/**
+ * Splits the argument list of a KEYWORD_ARGUMENT_FUNCTIONS call into the
+ * ordinary expressions it is built from. Nested parentheses are skipped whole,
+ * so a subquery or grouped expression inside the call keeps being validated as
+ * an ordinary segment by the caller.
+ */
+const splitKeywordArgumentSegments = (
+  tokens: ReadonlyArray<SqlToken>,
+  startIndex: number,
+  endIndex: number,
+): ReadonlyArray<Readonly<{ startIndex: number; endIndex: number }>> => {
+  const segments: Array<Readonly<{ startIndex: number; endIndex: number }>> = [];
+  let segmentStartIndex = startIndex;
+
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) {
+      continue;
+    }
+
+    if (token.value === "(") {
+      index = findMatchingParen(tokens, index, endIndex);
+      continue;
+    }
+
+    if (token.value === "," || KEYWORD_ARGUMENT_SEPARATORS.has(token.lower)) {
+      segments.push({ startIndex: segmentStartIndex, endIndex: index });
+      segmentStartIndex = index + 1;
+    }
+  }
+
+  segments.push({ startIndex: segmentStartIndex, endIndex });
+  return segments;
+};
+
 const findPreviousSignificantIndex = (
   tokens: ReadonlyArray<SqlToken>,
   startIndex: number,
@@ -844,6 +945,28 @@ const collectReferencedRelationsFromSegment = (
 
     if (inSourceClause && token.lower === "on") {
       joinExpectsCondition = false;
+      continue;
+    }
+
+    if (
+      !(inSourceClause && expectRelation)
+      && KEYWORD_ARGUMENT_FUNCTIONS.has(token.lower)
+      && tokens[i + 1]?.value === "("
+    ) {
+      const closeIndex = findMatchingParen(tokens, i + 1, endIndex);
+      for (const argument of splitKeywordArgumentSegments(tokens, i + 2, closeIndex)) {
+        mergeRelations(
+          relations,
+          collectReferencedRelationsFromSegment(
+            tokens,
+            argument.startIndex,
+            argument.endIndex,
+            visibleCteNames,
+            understandsDeleteUsingGrammar ? "delete_using" : "statement",
+          ),
+        );
+      }
+      i = closeIndex;
       continue;
     }
 
@@ -1254,11 +1377,27 @@ const assertOnlyAllowedFunctionCallsInSegment = (
     }
 
     const closeIndex = findMatchingParen(tokens, index + 1, endIndex);
+    const callGrammarContext: SqlGrammarContext = understandsDeleteUsingGrammar
+      ? "delete_using"
+      : "statement";
+    if (KEYWORD_ARGUMENT_FUNCTIONS.has(token.lower)) {
+      for (const argument of splitKeywordArgumentSegments(tokens, index + 2, closeIndex)) {
+        assertOnlyAllowedFunctionCallsInSegment(
+          tokens,
+          argument.startIndex,
+          argument.endIndex,
+          callGrammarContext,
+        );
+      }
+      index = closeIndex;
+      continue;
+    }
+
     assertOnlyAllowedFunctionCallsInSegment(
       tokens,
       index + 2,
       closeIndex,
-      understandsDeleteUsingGrammar ? "delete_using" : "statement",
+      callGrammarContext,
     );
     index = closeIndex;
   }

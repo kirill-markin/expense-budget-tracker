@@ -34,7 +34,7 @@ const createUnusedRestrictedRunner = (): ExecQueryDependencies["withRestrictedUs
 
 test("execQuery rejects function calls before reaching the database", async (): Promise<void> => {
   await assert.rejects(
-    () => execQuery("SELECT now()", {
+    () => execQuery("SELECT pg_sleep(1)", {
       userId: "user-1",
       workspaceId: "workspace-1",
       sessionId: "session-1",
@@ -42,7 +42,7 @@ test("execQuery rejects function calls before reaching the database", async (): 
     }),
     (error: unknown) =>
       error instanceof Error
-      && error.message === "Function now() is not allowed in restricted SQL. Allowed functions: SUM, COUNT, MIN, MAX, AVG, COALESCE",
+      && error.message.startsWith("Function pg_sleep() is not allowed in restricted SQL. Allowed functions: "),
   );
 });
 

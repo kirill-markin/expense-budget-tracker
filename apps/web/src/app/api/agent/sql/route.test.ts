@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import { ALLOWED_SQL_FUNCTION_NAMES, SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { postAgentSqlRouteWithDeps } from "@/app/api/agent/sql/route";
 import type { AgentAuthenticatedRequest } from "@/server/agent/apiKeyAuth";
+
+const functionCallErrorMessage = `Function pg_sleep() is not allowed in restricted SQL. Allowed functions: ${
+  ALLOWED_SQL_FUNCTION_NAMES.map((name) => name.toUpperCase()).join(", ")
+}`;
 
 const createAuthenticatedRequest = (): AgentAuthenticatedRequest => ({
   transport: "api_key",
@@ -61,7 +65,7 @@ test("postAgentSqlRouteWithDeps describes per-statement and request-wide row lim
   });
   assert.equal(
     payload.instructions,
-    "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only SUM, COUNT, MIN, MAX, AVG, and COALESCE functions are allowed, and returned rows are capped at 37 per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata. A result over limits.maxResultChars (12345) characters drops rows across the whole request and sets truncated instead of failing; when a statement's own text is over that budget the result still returns over budget with every row dropped, and only shortening that text helps. For a read cut by this character budget, the kept rows are that statement's first rows, so select fewer or shorter columns, send fewer statements per request, or page the rest with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip. Any mutation in the result already committed and must not be re-sent; it keeps reporting the rows it affected in rowCount, an INSERT or UPDATE's dropped rows are readable with a narrow follow-up SELECT, and a DELETE's are gone.",
+    "Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only allowlisted pure aggregate, date, text, cast, and window functions may be called and a rejected call lists the allowed names, and returned rows are capped at 37 per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata. A result over limits.maxResultChars (12345) characters drops rows across the whole request and sets truncated instead of failing; when a statement's own text is over that budget the result still returns over budget with every row dropped, and only shortening that text helps. For a read cut by this character budget, the kept rows are that statement's first rows, so select fewer or shorter columns, send fewer statements per request, or page the rest with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip. Any mutation in the result already committed and must not be re-sent; it keeps reporting the rows it affected in rowCount, an INSERT or UPDATE's dropped rows are readable with a narrow follow-up SELECT, and a DELETE's are gone.",
   );
 });
 
@@ -72,7 +76,7 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ sql: "SELECT now()" }),
+      body: JSON.stringify({ sql: "SELECT pg_sleep(1)" }),
     }),
     {
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
@@ -80,7 +84,7 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
       executeAgentSql: async () => {
         throw new SqlPolicyError(
           "function_calls_not_allowed",
-          "Function now() is not allowed in restricted SQL. Allowed functions: SUM, COUNT, MIN, MAX, AVG, COALESCE",
+          functionCallErrorMessage,
         );
       },
     },
@@ -101,10 +105,10 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
       ],
     },
     actions: [],
-    instructions: "Only allowlisted functions are supported in restricted SQL: SUM, COUNT, MIN, MAX, AVG, and COALESCE. Query only the published tables and views directly, use ILIKE instead of LOWER(...) for case-insensitive text search, and use explicit date ranges instead of NOW() or DATE_TRUNC().",
+    instructions: "Restricted SQL allows a fixed set of pure aggregate, date, text, cast, and window functions, and the error message lists them by name. Query only the published tables and views directly, and prefer ILIKE for case-insensitive text search.",
     error: {
       code: "function_calls_not_allowed",
-      message: "Function now() is not allowed in restricted SQL. Allowed functions: SUM, COUNT, MIN, MAX, AVG, COALESCE",
+      message: functionCallErrorMessage,
     },
   });
 });
