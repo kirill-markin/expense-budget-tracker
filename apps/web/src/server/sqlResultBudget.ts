@@ -3,12 +3,10 @@
  *
  * Both web surfaces emit one whole result per call: the chat sends it into an
  * OpenAI turn that re-sends it on every later model call of the same turn, and
- * the agent SQL route returns it to an API-key client. Dropping rows is the
- * mechanism every caller gets, and a cut is reported through the fields the
- * machine API already uses: returnedRowCount becomes the rows actually shipped,
- * truncated is set, and totalRowCount keeps naming what the query matched. A
- * caller that also attaches a re-readable field, such as the agent SQL route's
- * per-relation hints, opts into shedding it first through a shrink stage.
+ * the agent SQL route returns it to an API-key client. Dropping rows is the only
+ * mechanism, and a cut is reported through the fields the machine API already
+ * uses: returnedRowCount becomes the rows actually shipped, truncated is set,
+ * and totalRowCount keeps naming what the query matched.
  *
  * A read also lowers rowCount to the rows it shipped, while a committed
  * mutation keeps reporting the rows it affected, the same exemption
@@ -39,36 +37,6 @@ export type BudgetedSqlStatementEntry<TStatement extends BudgetedSqlStatement> =
   statement: TStatement;
   isMutating: boolean;
 }>;
-
-/**
- * One ordered stage that sheds a whole re-readable field, mirroring
- * READ_SHRINK_STAGES in apps/sql-api/src/machineApi/sqlService.ts: the stage
- * rebuilds every entry before the row search runs over it, so the field is gone
- * from every candidate that search measures. A stage must never react to a
- * candidate's size; a size-conditional rewrite inside the search would make
- * candidate size non-monotone in the kept row count and silently corrupt the
- * binary step.
- */
-export type BudgetedSqlShrinkStage<TStatement extends BudgetedSqlStatement> = Readonly<{
-  build: (entry: BudgetedSqlStatementEntry<TStatement>) => BudgetedSqlStatementEntry<TStatement>;
-  // Reported back on the result, so the caller can tell the agent what is missing
-  // from the response and where to read it again.
-  shrunk: boolean;
-}>;
-
-export type BudgetedSqlResult<TStatement extends BudgetedSqlStatement> = Readonly<{
-  statements: ReadonlyArray<TStatement>;
-  shrunk: boolean;
-}>;
-
-// The payload as the caller built it. It is always the first stage, so a caller
-// only names the stages it is willing to shed and the search still runs over the
-// whole payload first.
-const unshrunkStage = <TStatement extends BudgetedSqlStatement>(
-): BudgetedSqlShrinkStage<TStatement> => ({
-  build: (entry) => entry,
-  shrunk: false,
-});
 
 // The spread keeps every field the caller's own statement type adds, which the
 // compiler cannot express as the same type parameter, so the result is asserted
@@ -116,21 +84,16 @@ const countRows = <TStatement extends BudgetedSqlStatement>(
   entries: ReadonlyArray<BudgetedSqlStatementEntry<TStatement>>,
 ): number => entries.reduce((total, entry) => total + entry.statement.rows.length, 0);
 
-const countStatementRows = <TStatement extends BudgetedSqlStatement>(
-  statements: ReadonlyArray<TStatement>,
-): number => statements.reduce((total, statement) => total + statement.rows.length, 0);
-
 /**
- * Largest row prefix the halving search measures as fitting MAX_SQL_RESULT_CHARS
- * within one already-built stage, or null when not even zero rows fit.
+ * Largest row prefix the halving search measures as fitting MAX_SQL_RESULT_CHARS,
+ * or null when not even zero rows fit.
  *
  * measurePayloadChars serializes the object the caller actually emits, so the
  * budget covers that envelope instead of the statements alone. Under the
  * premise above payload size strictly grows with the kept row count: an added
  * row costs at least its own JSON and a comma, and the truncated flip from true
- * to false costs one character more. The stage itself is fixed before the first
- * candidate, so the halving search returns the maximal fitting prefix and every
- * candidate it returns was measured under the budget.
+ * to false costs one character more. So the halving search returns the maximal
+ * fitting prefix, and every candidate it returns was measured under the budget.
  */
 const findLargestFittingRowPrefix = <TStatement extends BudgetedSqlStatement>(
   entries: ReadonlyArray<BudgetedSqlStatementEntry<TStatement>>,
@@ -161,71 +124,11 @@ const findLargestFittingRowPrefix = <TStatement extends BudgetedSqlStatement>(
 };
 
 /**
- * Applies the caller's shrink stages in order, running the whole row search over
- * each one, and reports which stage the returned statements came from.
- *
- * A stage is tried only after the previous one failed to ship data, so a field a
- * stage sheds is dropped only when no row prefix could pay for it, and rows are
- * still the first thing to go. Failing to ship data means either that no prefix
- * fit at all or that the only prefix that fit was empty while the payload had
- * rows to give: a stage whose whole cost is a re-readable field must never buy
- * its own survival with every row of the answer, so a later stage that returns
- * data outranks an earlier one that returns none.
- *
- * When no stage ships a row, the earliest stage that fit row-less is returned,
- * which is the most informative body available and keeps a payload whose
- * statements alone fill the budget on exactly the outcome it had before. When
- * every stage fails, the smallest stage ships over budget row-less rather than
- * failing a read that already ran.
- */
-export const applyStagedSqlResultCharBudget = <TStatement extends BudgetedSqlStatement>(
-  entries: ReadonlyArray<BudgetedSqlStatementEntry<TStatement>>,
-  measurePayloadChars: (candidate: ReadonlyArray<TStatement>, shrunk: boolean) => number,
-  shrinkStages: ReadonlyArray<BudgetedSqlShrinkStage<TStatement>>,
-): BudgetedSqlResult<TStatement> => {
-  // Fixed before the first stage, because no stage adds or drops a row: a stage
-  // that kept every available row displaced nothing and is accepted at once,
-  // which also leaves a payload that returned no rows on its first stage.
-  const availableRowCount = countRows(entries);
-  let smallestEntries = entries;
-  let smallestShrunk = false;
-  let rowlessFit: BudgetedSqlResult<TStatement> | null = null;
-  for (const stage of [unshrunkStage<TStatement>(), ...shrinkStages]) {
-    const staged = entries.map((entry) => stage.build(entry));
-    const fitting = findLargestFittingRowPrefix(
-      staged,
-      (candidate) => measurePayloadChars(candidate, stage.shrunk),
-    );
-    if (fitting !== null) {
-      const keptRowCount = countStatementRows(fitting);
-      if (keptRowCount > 0 || keptRowCount === availableRowCount) {
-        return { statements: fitting, shrunk: stage.shrunk };
-      }
-      // Kept as the fallback rather than returned: a later stage may still ship
-      // rows, and if none does this earliest row-less fit is what ships.
-      if (rowlessFit === null) {
-        rowlessFit = { statements: fitting, shrunk: stage.shrunk };
-      }
-    }
-    smallestEntries = staged;
-    smallestShrunk = stage.shrunk;
-  }
-
-  if (rowlessFit !== null) {
-    return rowlessFit;
-  }
-
-  // The residual is the zero-row candidate of the smallest stage, not of the one
-  // that still carried every sheddable field.
-  return { statements: keepRowPrefix(smallestEntries, 0), shrunk: smallestShrunk };
-};
-
-/**
- * Row-only budget for a caller whose statements carry nothing sheddable, so a
- * payload whose statement text alone is over budget ships row-less.
+ * A payload whose statements alone are over budget ships row-less and over
+ * budget rather than failing SQL that already ran.
  */
 export const applySqlResultCharBudget = <TStatement extends BudgetedSqlStatement>(
   entries: ReadonlyArray<BudgetedSqlStatementEntry<TStatement>>,
   measurePayloadChars: (candidate: ReadonlyArray<TStatement>) => number,
 ): ReadonlyArray<TStatement> =>
-  applyStagedSqlResultCharBudget(entries, measurePayloadChars, []).statements;
+  findLargestFittingRowPrefix(entries, measurePayloadChars) ?? keepRowPrefix(entries, 0);

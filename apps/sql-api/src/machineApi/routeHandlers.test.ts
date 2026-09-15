@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createSqlExecutionDeadline,
+  MAX_SQL_RESULT_CHARS,
+  MAX_SQL_ROWS,
   SQL_STATEMENT_TIMEOUT_MS,
   SqlExecutionDeadlineError,
   type SqlExecutionDeadline,
@@ -335,20 +337,12 @@ test("handleSqlQueryRoute describes the read shrink ladder and a deterministic O
   const payload = JSON.parse(response.body) as { instructions: string };
 
   assert.equal(response.statusCode, 200);
-  // A single read shrinks instead of failing, and a stage that only sheds hints
-  // can keep every row, so both flags have to be named.
-  assert.match(payload.instructions, /never fails on this endpoint/u);
-  assert.match(payload.instructions, /sets responseShrunk, which can still fit with every row kept/u);
-  // sql_result_too_large needs more than one statement, so it must not appear here.
-  assert.doesNotMatch(payload.instructions, /sql_result_too_large/u);
-  // OFFSET only reproduces the order under a unique sort key.
-  assert.match(
+  // Pinned whole: a single read shrinks instead of failing, a shrunk stage can
+  // keep every row so both flags are named, sql_result_too_large needs more than
+  // one statement so it is absent, and OFFSET is conditioned on a unique sort key.
+  assert.equal(
     payload.instructions,
-    /orders by a unique column such as ledger_entries\.entry_id/u,
-  );
-  assert.match(
-    payload.instructions,
-    /a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip/u,
+    `Workspace context is required for SQL. Use X-Workspace-Id to override the saved workspace for this API key. This endpoint accepts exactly one read-only SELECT or WITH...SELECT statement. Only supported relations may be queried, only allowlisted pure aggregate, date, text, cast, and window functions may be called and a rejected call lists the allowed names, and returned rows are capped at ${String(MAX_SQL_ROWS)} per request with returnedRowCount, totalRowCount, and truncated metadata. A result is also capped at limits.maxResultChars (${String(MAX_SQL_RESULT_CHARS)}) characters; a read over that budget never fails on this endpoint: it drops trailing rows and sets truncated, then drops referencedRelations and cuts the echoed sql and sets responseShrunk, which can still fit with every row kept, so read truncated and responseShrunk instead of assuming rows were lost. When truncated is set, select fewer or shorter columns, or read the rest with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip.`,
   );
 });
 

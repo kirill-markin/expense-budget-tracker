@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PoolClient, QueryResult } from "pg";
-import { getAgentSchemaHints } from "@expense-budget-tracker/agent-shared";
 import {
   createSqlExecutionDeadline,
   MAX_SQL_RESULT_CHARS,
@@ -346,7 +345,6 @@ test("runSql executes every statement in one restricted transaction", async (): 
   );
   const workspace = (result?.workspace ?? null) as WorkspaceSummary | null;
   const statements = (result?.statements ?? []) as ReadonlyArray<Readonly<Record<string, unknown>>>;
-  const statement = statements[0];
 
   assert.equal(restrictedContextCount, 1);
   assert.equal(workspaceDeadline, executionDeadline);
@@ -369,19 +367,30 @@ test("runSql executes every statement in one restricted transaction", async (): 
       && statementTimeoutMs <= SQL_STATEMENT_TIMEOUT_MS,
   ), true);
   assert.equal(workspace?.workspaceId, "user-1");
-  assert.equal(statements.length, 2);
-  assert.equal(statement?.rowCount, 1);
-  assert.equal(statement?.returnedRowCount, 1);
-  assert.equal(statement?.totalRowCount, 1);
-  assert.equal(statement?.truncated, false);
-  // A statement documents the relations it touched from the one shared source,
-  // keyed by relation name, exactly as the app.* surface returns them.
-  assert.deepEqual(statement?.["hints"], {
-    ledger_entries: getAgentSchemaHints("ledger_entries"),
-  });
-  assert.deepEqual(statements[1]?.["hints"], {
-    accounts: getAgentSchemaHints("accounts"),
-  });
+  // Pinned whole: relation documentation comes only from /schema, so a statement
+  // carries its execution metadata and nothing else.
+  assert.deepEqual(statements, [
+    {
+      sql: "SELECT SUM(amount) AS balance FROM ledger_entries WHERE account_id = 'a-main-usd'",
+      command: "SELECT",
+      rows: [{ balance: "123.45" }],
+      rowCount: 1,
+      returnedRowCount: 1,
+      totalRowCount: 1,
+      truncated: false,
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT COUNT(*) FROM accounts",
+      command: "SELECT",
+      rows: [{ balance: "123.45" }],
+      rowCount: 1,
+      returnedRowCount: 1,
+      totalRowCount: 1,
+      truncated: false,
+      referencedRelations: ["accounts"],
+    },
+  ]);
 });
 
 test("runReadOnlySql bounds composed reads in PostgreSQL and preserves accurate truncation metadata", async (): Promise<void> => {
@@ -978,8 +987,8 @@ test("runReadOnlySql shrinks an oversized echoed statement instead of rejecting 
   const rows = statement?.["rows"] as ReadonlyArray<unknown>;
   const echoedSql = statement?.["sql"];
 
-  // Dropping rows alone can never clear an echo this long, so the read sheds the
-  // relation hints and then the echo itself rather than failing outright.
+  // Dropping rows alone can never clear an echo this long, so the read drops
+  // referencedRelations and cuts the echo itself rather than failing outright.
   assert.ok(JSON.stringify(result).length <= MAX_SQL_RESULT_CHARS);
   assert.equal(result?.["responseShrunk"], true);
   assert.ok(
@@ -988,18 +997,18 @@ test("runReadOnlySql shrinks an oversized echoed statement instead of rejecting 
     && echoedSql.includes(`[echoed SQL truncated to 200 of ${String(oversizedSql.length)} characters to fit the result budget]`),
   );
   assert.equal(statement?.["referencedRelations"], undefined);
-  assert.equal(statement?.["hints"], undefined);
   assert.ok(rows.length > 0);
   assert.ok(rows.length < returnedRows.length);
   assert.equal(statement?.["rowCount"], rows.length);
   assert.equal(statement?.["returnedRowCount"], rows.length);
   assert.equal(statement?.["totalRowCount"], returnedRows.length);
   assert.equal(statement?.["truncated"], true);
-  assert.ok(readInstructions(result).includes("Relation hints were dropped"));
   // A single statement has nothing to send fewer of, so the response-shrunk note
   // names shortening that statement instead.
-  assert.ok(readInstructions(result).includes("shorten the statement text and select fewer columns to keep them"));
-  assert.ok(!readInstructions(result).includes("send fewer statements per request"));
+  assert.equal(
+    readInstructions(result),
+    `This SQL result was shrunk to fit the ${String(MAX_SQL_RESULT_CHARS)} character result budget; returnedRowCount against an unchanged totalRowCount and truncated report exactly what it carries. Select fewer or shorter columns first: when returnedRowCount is 0 the first row alone is over the budget, so a lower LIMIT cannot help, but an OFFSET page that skips past that row can still return data when the statement orders by a unique column such as ledger_entries.entry_id. Once rows come back, lower LIMIT or read the remaining rows with OFFSET under that same unique ORDER BY; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip. referencedRelations was dropped, and the echoed sql may be cut to a prefix, so the rows and their counts fit the budget; shorten the statement text and select fewer columns to keep them.`,
+  );
 });
 
 test("runReadOnlySql tells a single zero-row statement that no LIMIT or OFFSET can help", async (): Promise<void> => {
@@ -1031,12 +1040,16 @@ test("runReadOnlySql tells a single zero-row statement that no LIMIT or OFFSET c
 });
 
 test("runSql degrades a multi-statement zero-row read instead of rejecting it", async (): Promise<void> => {
-  // Every statement costs its echo, its referencedRelations, and its relation hints,
-  // so a script of this length is over budget before a single row is returned.
-  const statementCount = 60;
-  const sql = Array.from({ length: statementCount }, (_unused, index) => (
-    `SELECT entry_id FROM ledger_entries WHERE entry_id = 'entry-${String(index)}'`
-  )).join("; ");
+  // Every statement costs its echo, so a script of this length is over budget
+  // before a single row is returned, and only cutting the echoes brings it inside.
+  const statementCount = 40;
+  const buildStatementSql = (index: number): string => (
+    `SELECT entry_id FROM ledger_entries WHERE note = '${"n".repeat(800)}' AND entry_id = 'entry-${String(index)}'`
+  );
+  const sql = Array.from(
+    { length: statementCount },
+    (_unused, index) => buildStatementSql(index),
+  ).join("; ");
   const dependencies = createDependencies({
     withRestrictedTrustedIdentityContext: createCursorContext(() => []),
   });
@@ -1051,43 +1064,43 @@ test("runSql degrades a multi-statement zero-row read instead of rejecting it", 
   );
   const statements = readStatements(result);
   const statement = statements[0];
+  const firstStatementSql = buildStatementSql(0);
 
   assert.ok(JSON.stringify(result).length <= MAX_SQL_RESULT_CHARS);
   assert.equal(statements.length, statementCount);
   assert.equal(result?.["responseShrunk"], true);
-  // Only the static metadata is shed; the echo and the counts survive untouched.
-  assert.equal(statement?.["sql"], "SELECT entry_id FROM ledger_entries WHERE entry_id = 'entry-0'");
-  assert.equal(statement?.["referencedRelations"], undefined);
-  assert.equal(statement?.["hints"], undefined);
-  assert.deepEqual(statement?.["rows"], []);
-  assert.equal(statement?.["rowCount"], 0);
-  assert.equal(statement?.["returnedRowCount"], 0);
-  assert.equal(statement?.["totalRowCount"], 0);
-  assert.equal(statement?.["truncated"], false);
-  assert.ok(readInstructions(result).includes("Relation hints were dropped"));
-  // A script shares one row budget, so both texts must take the script form and
-  // never claim a single oversized first row.
-  assert.ok(readInstructions(result).includes("The statements share one row budget"));
-  // The script remedy carries the same unique-order condition on its OFFSET advice.
-  assert.ok(readInstructions(result).includes("orders by a unique column such as ledger_entries.entry_id"));
-  assert.ok(readInstructions(result).includes("a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip"));
-  assert.ok(readInstructions(result).includes("send fewer statements per request to keep them"));
-  assert.ok(!readInstructions(result).includes("the first row alone is over the budget"));
+  // referencedRelations is dropped and the echo is cut; the counts survive untouched.
+  assert.deepEqual(statement, {
+    sql: `${firstStatementSql.slice(0, 200)} [echoed SQL truncated to 200 of ${String(firstStatementSql.length)} characters to fit the result budget]`,
+    command: "SELECT",
+    rows: [],
+    rowCount: 0,
+    returnedRowCount: 0,
+    totalRowCount: 0,
+    truncated: false,
+  });
+  // A script shares one row budget, so both texts take the script form, with the
+  // same unique-order condition on its OFFSET advice, and never claim a single
+  // oversized first row.
+  assert.equal(
+    readInstructions(result),
+    `This SQL result was shrunk to fit the ${String(MAX_SQL_RESULT_CHARS)} character result budget; returnedRowCount against an unchanged totalRowCount and truncated report exactly what it carries. The statements share one row budget spent in statement order, so a returnedRowCount of 0 usually means an earlier statement used that budget up rather than that a single row is over it: send fewer statements per request, and lower LIMIT on the earlier statements. Then select fewer or shorter columns, and read the remaining rows with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip. referencedRelations was dropped, and the echoed sql may be cut to a prefix, so the rows and their counts fit the budget; send fewer statements per request to keep them.`,
+  );
 });
 
-test("runSql ships rows from the shed stage instead of a hinted stage that fits only at zero rows", async (): Promise<void> => {
-  // Ten statements carry ten copies of the ledger_entries hints, so the unshrunk
-  // payload fits the budget with every row dropped and cannot fit one of these wide
-  // rows beside that documentation. Accepting a zero-row fit would spend the whole
-  // answer on static text the caller can re-read from /schema, while the next stage
-  // sheds the hints and frees far more than a row costs.
-  const statementCount = 10;
-  const sql = Array.from({ length: statementCount }, (_unused, index) => (
-    `SELECT entry_id, note FROM ledger_entries WHERE entry_id = 'entry-${String(index)}'`
-  )).join("; ");
-  const wideRows = [{ entry_id: "entry-0", note: "n".repeat(20_000) }];
+test("runSql keeps a zero-row script that fits only once referencedRelations is dropped", async (): Promise<void> => {
+  // Every echo is too short for the truncation marker to shorten, so cutting echoes
+  // frees nothing: only dropping referencedRelations from all of these statements
+  // brings the script inside the budget, and that must not become a rejection.
+  const buildStatementSql = (index: number): string => (
+    `SELECT entry_id FROM ledger_entries WHERE note = '${"n".repeat(85)}' AND entry_id = 'entry-${String(index)}'`
+  );
+  const sql = Array.from(
+    { length: MAX_SQL_STATEMENTS },
+    (_unused, index) => buildStatementSql(index),
+  ).join("; ");
   const dependencies = createDependencies({
-    withRestrictedTrustedIdentityContext: createCursorContext(() => wideRows),
+    withRestrictedTrustedIdentityContext: createCursorContext(() => []),
   });
 
   const result = await runSqlWithWorkspaceGetter(
@@ -1099,28 +1112,69 @@ test("runSql ships rows from the shed stage instead of a hinted stage that fits 
     workspaceGetter,
   );
   const statements = readStatements(result);
-  const statement = statements[0];
-  const rows = statement?.["rows"] as ReadonlyArray<unknown>;
+
+  assert.ok(JSON.stringify(result).length <= MAX_SQL_RESULT_CHARS);
+  assert.equal(statements.length, MAX_SQL_STATEMENTS);
+  assert.equal(result?.["responseShrunk"], true);
+  assert.deepEqual(statements[MAX_SQL_STATEMENTS - 1], {
+    sql: buildStatementSql(MAX_SQL_STATEMENTS - 1),
+    command: "SELECT",
+    rows: [],
+    rowCount: 0,
+    returnedRowCount: 0,
+    totalRowCount: 0,
+    truncated: false,
+  });
+});
+
+test("runSql ships rows from the echo-cut stage instead of an unshrunk stage that fits only at zero rows", async (): Promise<void> => {
+  // Ten long echoes fit the budget with every row dropped and cannot fit one of
+  // these wide rows beside them, with or without referencedRelations. Accepting a
+  // zero-row fit would spend the whole answer on SQL the caller already holds,
+  // while the echo-cut stage frees far more than a row costs.
+  const statementCount = 10;
+  const buildStatementSql = (index: number): string => (
+    `SELECT entry_id, note FROM ledger_entries WHERE note = '${"n".repeat(1_900)}' AND entry_id = 'entry-${String(index)}'`
+  );
+  const sql = Array.from(
+    { length: statementCount },
+    (_unused, index) => buildStatementSql(index),
+  ).join("; ");
+  const wideRow = { entry_id: "entry-0", note: "n".repeat(20_000) };
+  const dependencies = createDependencies({
+    withRestrictedTrustedIdentityContext: createCursorContext(() => [wideRow]),
+  });
+
+  const result = await runSqlWithWorkspaceGetter(
+    dependencies,
+    createAuthenticatedContext(),
+    "user-1",
+    sql,
+    createExecutionDeadline(),
+    workspaceGetter,
+  );
+  const statements = readStatements(result);
+  const firstStatementSql = buildStatementSql(0);
 
   assert.ok(JSON.stringify(result).length <= MAX_SQL_RESULT_CHARS);
   assert.equal(statements.length, statementCount);
   assert.equal(result?.["responseShrunk"], true);
-  assert.equal(statement?.["referencedRelations"], undefined);
-  assert.equal(statement?.["hints"], undefined);
-  // The row the hinted stage would have dropped is the whole point of the read.
-  assert.equal(rows.length, 1);
-  assert.equal(statement?.["rowCount"], 1);
-  assert.equal(statement?.["returnedRowCount"], 1);
-  assert.equal(statement?.["totalRowCount"], 1);
-  assert.equal(statement?.["truncated"], false);
-  // The echo survives: shedding the hints alone brought the response inside budget.
-  assert.equal(statement?.["sql"], "SELECT entry_id, note FROM ledger_entries WHERE entry_id = 'entry-0'");
-  assert.ok(readInstructions(result).includes("Relation hints were dropped"));
+  // The row the unshrunk stage would have dropped is the whole point of the read.
+  assert.deepEqual(statements[0], {
+    sql: `${firstStatementSql.slice(0, 200)} [echoed SQL truncated to 200 of ${String(firstStatementSql.length)} characters to fit the result budget]`,
+    command: "SELECT",
+    rows: [wideRow],
+    rowCount: 1,
+    returnedRowCount: 1,
+    totalRowCount: 1,
+    truncated: false,
+  });
 });
 
 test("runSql rejects a read only once its shrunk per-statement echoes are still over budget", async (): Promise<void> => {
-  // A full script of long statements stays over budget even with every row, hint,
-  // and all but a 200-character echo prefix gone, so only fewer statements help.
+  // A full script of long statements stays over budget even with every row, every
+  // referencedRelations list, and all but a 200-character echo prefix gone, so
+  // only fewer statements help.
   const sql = Array.from({ length: MAX_SQL_STATEMENTS }, (_unused, index) => (
     `SELECT entry_id FROM ledger_entries WHERE note = '${"n".repeat(800)}' AND entry_id = 'entry-${String(index)}'`
   )).join("; ");
@@ -1141,14 +1195,17 @@ test("runSql rejects a read only once its shrunk per-statement echoes are still 
       if (!(error instanceof SqlPolicyError) || error.code !== "sql_result_too_large") {
         return false;
       }
+      const match = new RegExp(
+        `^The SQL result is (\\d+) characters with every row dropped, referencedRelations removed, and all ${String(MAX_SQL_STATEMENTS)} echoed statements cut to a 200 character prefix, and still exceeds the ${String(MAX_SQL_RESULT_CHARS)} character result budget; send fewer statements per request, and shorten any statement whose own text is long$`,
+        "u",
+      ).exec(error.message);
       // The reported size must be the fully shrunk payload that actually failed,
-      // not the far larger measurement taken before any stage ran.
-      const reportedChars = Number(/ is (\d+) characters/u.exec(error.message)?.[1]);
-      return error.message.includes(String(MAX_SQL_RESULT_CHARS))
-        && error.message.includes(`all ${String(MAX_SQL_STATEMENTS)} echoed statements`)
-        && error.message.includes("send fewer statements per request")
+      // not the measurement taken before any stage ran, which carried every echo
+      // whole and so exceeded the script's own length.
+      const reportedChars = Number(match?.[1]);
+      return match !== null
         && reportedChars > MAX_SQL_RESULT_CHARS
-        && reportedChars < sql.length / 2;
+        && reportedChars < sql.length;
     },
   );
 });
@@ -1273,7 +1330,10 @@ test("runSql reports a shrunk echo without claiming rows were dropped", async ()
   assert.ok(JSON.stringify(result).length <= MAX_SQL_RESULT_CHARS);
   assert.equal(result?.["rowsOmitted"], undefined);
   assert.equal(result?.["responseShrunk"], true);
-  assert.ok(readInstructions(result).includes("It returned no rows"));
+  assert.equal(
+    readInstructions(result),
+    "The write committed and must not be repeated. It returned no rows, so no row data is missing from this response. referencedRelations was dropped, and the echoed sql may be cut to a prefix or replaced by sqlOmitted, so the response fits the budget.",
+  );
   assert.ok(
     typeof echoedSql === "string"
     && echoedSql.startsWith(mutationSql.slice(0, 200))
@@ -1285,17 +1345,16 @@ test("runSql reports a shrunk echo without claiming rows were dropped", async ()
   assert.equal(statement?.["totalRowCount"], 100);
 });
 
-test("runSql keeps a committed write's echoed sql by shedding only its relation hints", async (): Promise<void> => {
-  // Thirty statements are over budget once each carries the full ledger_entries
-  // hints and well inside it without them, so the shrink must stop at the hints:
-  // they are re-readable from /schema, while the echo is what ties each count back
-  // to the statement that produced it.
-  const statementCount = 30;
+test("runSql keeps a committed write's echoes whole by dropping only referencedRelations", async (): Promise<void> => {
+  // A full script of single-row UPDATEs is over budget only while every statement
+  // carries referencedRelations, and each echo is too short to cut, so the shrink
+  // must stop there rather than replace every echo with sqlOmitted: the echo is
+  // what ties each count back to the statement that produced it.
   const buildStatementSql = (index: number): string => (
-    `UPDATE ledger_entries SET note = '${"n".repeat(300)}' WHERE entry_id = 'entry-${String(index)}'`
+    `UPDATE ledger_entries SET note = '${"n".repeat(105)}' WHERE entry_id = 'entry-${String(index)}'`
   );
   const mutationSql = Array.from(
-    { length: statementCount },
+    { length: MAX_SQL_STATEMENTS },
     (_unused, index) => buildStatementSql(index),
   ).join("; ");
   const dependencies = createDependencies({
@@ -1322,22 +1381,20 @@ test("runSql keeps a committed write's echoed sql by shedding only its relation 
     workspaceGetter,
   );
   const statements = readStatements(result);
-  const statement = statements[0];
 
   assert.ok(JSON.stringify(result).length <= MAX_SQL_RESULT_CHARS);
-  assert.equal(statements.length, statementCount);
+  assert.equal(statements.length, MAX_SQL_STATEMENTS);
   assert.equal(result?.["rowsOmitted"], undefined);
   assert.equal(result?.["responseShrunk"], true);
-  assert.equal(statement?.["referencedRelations"], undefined);
-  assert.equal(statement?.["hints"], undefined);
-  // The echo is long enough to be worth cutting, so keeping it whole is evidence
-  // that the shrink stopped at the step before the echo.
-  assert.equal(statement?.["sql"], buildStatementSql(0));
-  assert.equal(statement?.["rowCount"], 1);
-  assert.equal(statement?.["returnedRowCount"], 0);
-  assert.equal(statement?.["totalRowCount"], 1);
-  assert.ok(readInstructions(result).includes("The write committed"));
-  assert.ok(readInstructions(result).includes("Relation hints were dropped"));
+  assert.deepEqual(statements[MAX_SQL_STATEMENTS - 1], {
+    sql: buildStatementSql(MAX_SQL_STATEMENTS - 1),
+    command: "UPDATE",
+    rows: [],
+    rowCount: 1,
+    returnedRowCount: 0,
+    totalRowCount: 1,
+    truncated: false,
+  });
 });
 
 test("runSql keeps a full script of escape-dense committed mutations within the character budget", async (): Promise<void> => {
