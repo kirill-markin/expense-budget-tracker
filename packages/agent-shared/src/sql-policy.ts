@@ -146,6 +146,33 @@ const DERIVED_QUERY_FIRST_KEYWORDS: ReadonlySet<string> = new Set([
   "values",
 ]);
 
+/**
+ * GROUP BY grouping constructs restricted SQL does not support. They are
+ * spelled like calls, so without a dedicated check the function allowlist
+ * rejects them as a ROLLUP() or CUBE() function the caller never called.
+ */
+const UNSUPPORTED_GROUPING_CONSTRUCTS: ReadonlySet<string> = new Set([
+  "rollup",
+  "cube",
+]);
+
+/**
+ * Keywords that end a GROUP BY list at its own parenthesis depth, so grouping
+ * constructs are only looked for where PostgreSQL would accept one.
+ */
+const GROUP_BY_CLAUSE_END: ReadonlySet<string> = new Set([
+  "having",
+  "order",
+  "limit",
+  "offset",
+  "fetch",
+  "union",
+  "except",
+  "intersect",
+  "returning",
+  "window",
+]);
+
 const ALLOWED_RELATION_NAMES = [
   "ledger_entries",
   "accounts",
@@ -208,6 +235,7 @@ type SqlPolicyErrorCode =
   | "read_only_sql_required"
   | "mutation_sql_required"
   | "on_conflict_not_allowed"
+  | "unsupported_sql_construct"
   | "session_control_not_allowed"
   | "set_config_not_allowed"
   | "function_calls_not_allowed"
@@ -1160,6 +1188,118 @@ const assertSupportedEffectiveStatementsInSegment = (
   assertSupportedNestedWithClauses(tokens, normalized.startIndex, normalized.endIndex);
 };
 
+const failUnsupportedSqlConstruct = (construct: string, remedy: string): never =>
+  fail(
+    "unsupported_sql_construct",
+    `${construct} is not supported in restricted SQL. ${remedy}`,
+  );
+
+/**
+ * Rejects the SQL constructs restricted SQL does not support, naming the
+ * construct the caller wrote and its supported alternative. Each one puts a
+ * parenthesis after a keyword, so the function allowlist would otherwise blame
+ * an ON(), AS(), ROLLUP(), or GROUP() function that was never called.
+ *
+ * Every rule is anchored on the full keyword sequence, so plain SELECT
+ * DISTINCT, inline OVER (...) windows, and ordinary GROUP BY column lists keep
+ * working. String literals are blanked before tokenization, so text that merely
+ * contains these words never reaches this check.
+ */
+const assertNoUnsupportedSqlConstructs = (tokens: ReadonlyArray<SqlToken>): void => {
+  let depth = 0;
+  let groupByListDepth: number | null = null;
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) {
+      continue;
+    }
+
+    if (token.kind === "punct") {
+      if (token.value === "(") {
+        depth += 1;
+      }
+      if (token.value === ")") {
+        depth -= 1;
+        if (groupByListDepth !== null && depth < groupByListDepth) {
+          groupByListDepth = null;
+        }
+      }
+      continue;
+    }
+
+    const nextToken = tokens[index + 1];
+    const followingToken = tokens[index + 2];
+
+    if (
+      token.lower === "distinct"
+      && nextToken?.lower === "on"
+      && followingToken?.value === "("
+    ) {
+      failUnsupportedSqlConstruct(
+        "DISTINCT ON (...)",
+        "Rank the rows with ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) in a subquery or CTE and keep rn = 1.",
+      );
+    }
+
+    if (
+      token.lower === "window"
+      && nextToken?.kind === "word"
+      && followingToken?.lower === "as"
+      && tokens[index + 3]?.value === "("
+    ) {
+      failUnsupportedSqlConstruct(
+        `The named WINDOW ${nextToken.value} clause`,
+        "Repeat the window inline in every OVER (PARTITION BY ... ORDER BY ...).",
+      );
+    }
+
+    if (
+      token.lower === "within"
+      && nextToken?.lower === "group"
+      && followingToken?.value === "("
+    ) {
+      failUnsupportedSqlConstruct(
+        "WITHIN GROUP (...)",
+        "Ordered-set aggregates are unavailable in restricted SQL and have no alternative; compute the value outside SQL.",
+      );
+    }
+
+    if (token.lower === "group" && nextToken?.lower === "by") {
+      groupByListDepth = depth;
+      index += 1;
+      continue;
+    }
+
+    if (groupByListDepth === null) {
+      continue;
+    }
+
+    if (depth === groupByListDepth && GROUP_BY_CLAUSE_END.has(token.lower)) {
+      groupByListDepth = null;
+      continue;
+    }
+
+    if (UNSUPPORTED_GROUPING_CONSTRUCTS.has(token.lower) && nextToken?.value === "(") {
+      failUnsupportedSqlConstruct(
+        `GROUP BY ${token.value.toUpperCase()}(...)`,
+        "Run one statement per grouping level and combine the results yourself.",
+      );
+    }
+
+    if (
+      token.lower === "grouping"
+      && nextToken?.lower === "sets"
+      && followingToken?.value === "("
+    ) {
+      failUnsupportedSqlConstruct(
+        "GROUP BY GROUPING SETS (...)",
+        "Run one statement per grouping level and combine the results yourself.",
+      );
+    }
+  }
+};
+
 const failFunctionCallNotAllowed = (functionName: string): never =>
   fail(
     "function_calls_not_allowed",
@@ -1620,6 +1760,7 @@ const validateExpenseSqlStatement = (sql: string): ValidatedExpenseSqlStatement 
   const tokens = tokenizeSql(sanitizedSql);
   assertSupportedEffectiveStatementsInSegment(tokens, 0, tokens.length);
   assertMutationTargetsAreWritable(tokens, 0, tokens.length);
+  assertNoUnsupportedSqlConstructs(tokens);
   assertOnlyAllowedFunctionCallsInSegment(tokens, 0, tokens.length, "statement");
   assertNoIndirectionAttributeNotation(tokens);
 
