@@ -29,7 +29,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 ## Components
 
 - `apps/web/`: Next.js app with UI dashboards and API routes for transactions, balances, budget, and FX data; SQL via `pg.Pool`. The web app also includes an AI chat where the user can open `/chat` and talk to their workspace data directly from the browser.
-- `apps/worker/`: TypeScript process that fetches daily ECB, CBR, and NBS exchange rates into `exchange_rates`; runs on a schedule (Docker) or as AWS Lambda
+- `apps/worker/`: TypeScript process that fetches daily ECB, CBR, NBS, NBU, and KuCoin exchange rates into `fx_rates_raw`; runs on a schedule (Docker) or as AWS Lambda
 - Postgres: single source of truth; schema in `db/migrations/`, views in `db/views/`, reference SQL in `db/queries/`
 
 ## Supported Clients
@@ -52,7 +52,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `apps/web/src/server/` | Server-side data functions for budget, balances, and transactions |
 | `apps/web/src/ui/` | React components: tables, charts, hooks |
 | `apps/web/src/proxy.ts` | Auth proxy logic controlled by `AUTH_MODE` |
-| `apps/worker/src/fetchers/` | FX rate fetchers: `ecb.ts`, `cbr.ts`, `nbs.ts` |
+| `apps/worker/src/fetchers/` | FX rate fetchers: `ecb.ts`, `cbr.ts`, `nbs.ts`, `nbu.ts`, `kucoin.ts`, `usdt.ts` |
 | `db/migrations/` | Postgres migrations applied in order by `scripts/migrate.sh` |
 | `db/views/` | Postgres views such as `accounts` |
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |

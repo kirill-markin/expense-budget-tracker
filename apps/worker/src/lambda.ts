@@ -10,6 +10,7 @@ import { run as runCbr } from "./fetchers/cbr";
 import { run as runNbs } from "./fetchers/nbs";
 import { run as runNbu } from "./fetchers/nbu";
 import { run as runUsdt } from "./fetchers/usdt";
+import { run as runKucoin } from "./fetchers/kucoin";
 import { endPool } from "./db";
 import { rebuildDailyRates } from "./rebuildDailyRates";
 import type { FetcherOutcome } from "./types";
@@ -22,6 +23,7 @@ export async function handler(): Promise<{ statusCode: number; body: string }> {
       { name: "nbs", run: runNbs },
       { name: "nbu", run: runNbu },
       { name: "usdt", run: runUsdt },
+      { name: "kucoin", run: runKucoin },
     ] as const;
 
     const settled = await Promise.allSettled(fetchers.map((f) => f.run()));

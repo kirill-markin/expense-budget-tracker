@@ -18,7 +18,7 @@ Four components, one database:
 
 1. **web** (`apps/web/`) — Next.js 16 app. Serves the UI and exposes API routes for transactions, balances, budget, and FX data. All SQL runs against Postgres via a shared `pg.Pool` with per-request RLS context.
 2. **sql-api** (`apps/sql-api/`) — Three AWS Lambdas: the `ApiKey` authorizer and v1 machine handler use the existing API Gateway REST API, while the dedicated OAuth-authenticated MCP handler uses a separate API Gateway HTTP API v2 at `mcp.*`. Separate from the web stack — no ALB involved.
-3. **worker** (`apps/worker/`) — TypeScript process that fetches daily raw exchange rates from ECB, CBR, NBS, NBU, and USDT, stores them in `fx_rates_raw`, and rebuilds query-ready all-pairs daily rates in `fx_rates_daily`. Runs on a schedule (local Docker) or as a Lambda (AWS).
+3. **worker** (`apps/worker/`) — TypeScript process that fetches daily raw exchange rates from ECB, CBR, NBS, NBU, KuCoin, and USDT, stores them in `fx_rates_raw`, and rebuilds query-ready all-pairs daily rates in `fx_rates_daily`. Runs on a schedule (local Docker) or as a Lambda (AWS).
 4. **Postgres** — single source of truth with workspace-scoped RLS and derived reporting views.
 
 ## Data model
