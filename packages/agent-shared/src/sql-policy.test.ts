@@ -125,6 +125,21 @@ test("validateExpenseSql allows allowlisted aggregate functions", (): void => {
   }
 });
 
+test("validateExpenseSql allows the newly admitted pure functions", (): void => {
+  const acceptedSql: ReadonlyArray<string> = [
+    "SELECT left(counterparty, 3), bool_or(amount > 0), stddev_samp(amount) FROM ledger_entries",
+    "SELECT initcap(category), right(account_id, 2), strpos(note, 'x'), starts_with(note, 'a'), regexp_replace(note, 'a', 'b') FROM ledger_entries",
+    "SELECT ceil(amount), floor(amount), trunc(amount), mod(amount, 2), power(amount, 2), sqrt(amount) FROM ledger_entries",
+    "SELECT array_agg(account_id), bool_and(amount > 0), stddev(amount), stddev_pop(amount), variance(amount), var_samp(amount), var_pop(amount) FROM ledger_entries",
+  ];
+
+  for (const sql of acceptedSql) {
+    const validated = validateExpenseSql(sql);
+    assert.equal(validated.statements.length, 1, sql);
+    assert.deepEqual(validated.statements[0]?.referencedRelations, ["ledger_entries"], sql);
+  }
+});
+
 test("validateExpenseSql bounds script length and statement count", (): void => {
   assert.throws(
     () => validateExpenseSql(`SELECT '${"x".repeat(MAX_SQL_SCRIPT_LENGTH)}'`),
@@ -853,6 +868,59 @@ test("validateExpenseSql rejects parenthesized joined tables", (): void => {
 
   for (const sql of rejectedSql) {
     assertFunctionCallRejected(sql);
+  }
+});
+
+test("validateExpenseSql allows SQL keyword grammar that puts a parenthesis after a keyword", (): void => {
+  const acceptedSql: ReadonlyArray<string> = [
+    "SELECT CASE WHEN (amount > 0) THEN 'a' ELSE 'b' END FROM ledger_entries",
+    "SELECT CASE WHEN amount > 0 THEN (amount * 2) ELSE 0 END FROM ledger_entries",
+    "SELECT CASE WHEN amount > 0 THEN 1 ELSE (0) END FROM ledger_entries",
+    "SELECT CASE (currency) WHEN 'EUR' THEN 1 ELSE 0 END FROM ledger_entries",
+    "SELECT 1 FROM ledger_entries WHERE NOT (amount > 0)",
+    "SELECT currency, count(*) FROM ledger_entries GROUP BY (currency) HAVING (count(*) > 1)",
+    "SELECT amount FROM ledger_entries ORDER BY (amount + 1)",
+    "SELECT (SELECT 1) FROM ledger_entries",
+    "SELECT (amount + 1) * 2 FROM ledger_entries",
+    "SELECT DISTINCT (currency) FROM ledger_entries",
+    "SELECT 1 FROM ledger_entries WHERE amount BETWEEN (1) AND (2)",
+    "SELECT 1 FROM ledger_entries LIMIT (1)",
+    "SELECT 1 FROM ledger_entries UNION (SELECT 2 FROM ledger_entries)",
+    "SELECT 1 FROM ledger_entries WHERE amount = ANY (ARRAY[1,2])",
+    "SELECT 1 FROM ledger_entries WHERE amount > ALL (ARRAY[1,2])",
+  ];
+
+  for (const sql of acceptedSql) {
+    const validated = validateExpenseSql(sql);
+    assert.equal(validated.statements.length, 1, sql);
+    assert.deepEqual(validated.statements[0]?.referencedRelations, ["ledger_entries"], sql);
+  }
+
+  const joined = validateExpenseSql(
+    "SELECT 1 FROM ledger_entries a JOIN accounts b ON (a.account_id = b.account_id)",
+  );
+  assert.deepEqual(joined.statements[0]?.referencedRelations, ["ledger_entries", "accounts"]);
+});
+
+test("validateExpenseSql still inspects keyword grammar parentheses", (): void => {
+  const rejectedFunctionSql: ReadonlyArray<string> = [
+    "SELECT pg_sleep(1) FROM ledger_entries",
+    "SELECT CASE WHEN (pg_sleep(1) IS NULL) THEN 1 ELSE 0 END FROM ledger_entries",
+    "SELECT 1 FROM ledger_entries ORDER BY (pg_sleep(1))",
+    "SELECT CASE WHEN ((amount).pg_sleep IS NULL) THEN 1 ELSE 0 END FROM ledger_entries",
+  ];
+
+  for (const sql of rejectedFunctionSql) {
+    assertFunctionCallRejected(sql);
+  }
+
+  const rejectedRelationSql: ReadonlyArray<string> = [
+    "SELECT (SELECT 1 FROM pg_class) FROM ledger_entries",
+    "SELECT 1 FROM ledger_entries WHERE NOT (amount > (SELECT 1 FROM pg_class))",
+  ];
+
+  for (const sql of rejectedRelationSql) {
+    assertPolicyError(sql, "relation_not_allowed");
   }
 });
 
