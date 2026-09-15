@@ -627,7 +627,7 @@ export const getSqlPolicyInstructions = (
   }
 
   if (error.code === "unsupported_sql_construct") {
-    return "Restricted SQL does not support DISTINCT ON, named WINDOW clauses, GROUP BY ROLLUP, CUBE, or GROUPING SETS, or WITHIN GROUP ordered-set aggregates. Replace DISTINCT ON with ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) and rn = 1, repeat a named window inline in every OVER (...), run one statement per grouping level, and compute ordered-set aggregates outside SQL.";
+    return "The error message names the unsupported construct and what to do instead. Follow that guidance.";
   }
 
   if (error.code === "set_config_not_allowed") {
