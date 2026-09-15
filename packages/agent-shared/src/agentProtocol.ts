@@ -17,9 +17,10 @@ export const SQL_DIALECT_GUIDE = `## Restricted SQL dialect
 
 Restricted SQL accepts SELECT, WITH, INSERT, UPDATE, and DELETE. Send one statement per call unless the entrypoint you use documents semicolon-separated scripts.
 Relation operations: ledger_entries, budget_lines, workspace_settings, and account_metadata support SELECT and, under existing write-approval rules, INSERT, UPDATE, and DELETE; the derived accounts view and global worker-owned fx_rates_raw and fx_rates_daily relations are SELECT-only. Only allowlisted relations are reachable; internal and security-related relations are blocked.
-Only these function calls are supported: ${ALLOWED_SQL_FUNCTIONS_TEXT}. Every other function is blocked, including NOW, LOWER, DATE_TRUNC, gen_random_uuid, set_config, and workspace or auth helper functions.
-Use ILIKE instead of LOWER(...) for case-insensitive text matching.
-Calculate explicit date literals before running SQL instead of calling NOW() or DATE_TRUNC(), and filter with closed-open ranges: ts >= start date and ts < exclusive end date.
+Only these function calls are supported: ${ALLOWED_SQL_FUNCTIONS_TEXT}. Every other function is blocked, including gen_random_uuid, set_config, and workspace or auth helper functions.
+Window functions over the allowlisted names work with OVER (PARTITION BY ... ORDER BY ...) and an optional frame, aggregates accept FILTER (WHERE ...), and the keyword call forms EXTRACT(field FROM value), SUBSTRING(value FROM start FOR count), TRIM(BOTH chars FROM value), and POSITION(needle IN haystack) are supported.
+Prefer ILIKE over LOWER(...) for case-insensitive text matching.
+Prefer explicit date literals calculated before running SQL, and filter with closed-open ranges: ts >= start date and ts < exclusive end date. Never write NOW() into a stored value such as ledger_entries.ts; calculate an explicit literal for every value you insert or update.
 Use regular single-quoted literals and double an embedded apostrophe, for example 'customer''s'. Dollar-quoted strings and E'...' escape strings are not supported.
 ON CONFLICT is not supported. Read first, then run an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists, except append-only budget_lines, where every plan change is a new INSERT.
 INSERT statements must set workspace_id explicitly; read it from workspace_settings first.
@@ -67,12 +68,12 @@ const WRITE_CHECKLIST_GUIDE = `### Checklist for every entry
 - not a duplicate`;
 
 // Exported so the guide's most policy-sensitive example is validated against the restricted SQL policy in tests.
-export const BUDGET_WINNING_ROWS_QUERY_EXAMPLE = `WITH latest AS (SELECT budget_month, direction, category, MAX(inserted_at) AS inserted_at FROM budget_lines WHERE budget_month >= '<first-affected-month-start YYYY-MM-DD>' AND budget_month < '<exclusive-end-month-start YYYY-MM-DD>' GROUP BY budget_month, direction, category) SELECT b.budget_month, b.direction, b.category, MAX(b.planned_value) AS planned_value, MAX(b.currency) AS currency FROM budget_lines b JOIN latest l ON l.budget_month = b.budget_month AND l.direction = b.direction AND l.category = b.category AND l.inserted_at = b.inserted_at GROUP BY b.budget_month, b.direction, b.category ORDER BY b.budget_month, b.direction, b.category`;
+export const BUDGET_WINNING_ROWS_QUERY_EXAMPLE = `WITH ranked AS (SELECT budget_month, direction, category, planned_value, currency, ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC, planned_value DESC, currency DESC) AS rn FROM budget_lines WHERE budget_month >= '<first-affected-month-start YYYY-MM-DD>' AND budget_month < '<exclusive-end-month-start YYYY-MM-DD>') SELECT budget_month, direction, category, planned_value, currency FROM ranked WHERE rn = 1 ORDER BY budget_month, direction, category`;
 
 const WRITE_BUDGET_ROWS_GUIDE = `### Budget rows
 
 Budget plans live in budget_lines and are append-only. Change a plan by inserting a new row; never update or delete an earlier row to change a plan. The latest inserted_at row wins for each budget_month, direction, and category.
-Read the current winning rows for the affected months before proposing a change, and reuse the exact category spelling already used in the user's history. Window functions are blocked, so resolve the winners with MAX(inserted_at) and a self-join, and collapse rows that share that timestamp with MAX:
+Read the current winning rows for the affected months before proposing a change, and reuse the exact category spelling already used in the user's history. Resolve the winners with ROW_NUMBER() over each budget_month, direction, and category, ordered by inserted_at DESC with planned_value and currency as tiebreakers for rows sharing that timestamp, and keep rn = 1:
 ${BUDGET_WINNING_ROWS_QUERY_EXAMPLE}
 budget_month is the first day of the month, for example 2026-03-01. direction is income or spend. kind accepts only base. planned_value is an absolute value, not a signed ledger amount.
 currency is required and must be the workspace reporting currency read from workspace_settings.reporting_currency, because planned values are never converted on read.

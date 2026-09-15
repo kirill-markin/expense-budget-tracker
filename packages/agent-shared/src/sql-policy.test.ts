@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ALLOWED_SQL_FUNCTION_NAMES,
   createSqlExecutionDeadline,
   executeExpenseSql,
   executeValidatedExpenseSqlWithinDeadline,
@@ -31,13 +32,18 @@ test("machine and MCP SQL deadlines leave response headroom below their gateways
   assert.ok(MCP_SQL_STATEMENT_TIMEOUT_MS < SQL_STATEMENT_TIMEOUT_MS);
 });
 
+const allowedFunctionsMessage = `Allowed functions: ${
+  ALLOWED_SQL_FUNCTION_NAMES.map((name) => name.toUpperCase()).join(", ")
+}`;
+
 const assertFunctionCallRejected = (sql: string): void => {
   assert.throws(
     () => validateExpenseSql(sql),
     (error: unknown) =>
       error instanceof SqlPolicyError
       && error.code === "function_calls_not_allowed"
-      && error.message.includes("Allowed functions: SUM, COUNT, MIN, MAX, AVG, COALESCE"),
+      && error.message.includes(allowedFunctionsMessage),
+    sql,
   );
 };
 
@@ -277,12 +283,86 @@ test("restricted SQL allows merge identifiers and string literals", (): void => 
 
 test("validateExpenseSql rejects non-allowlisted function calls in restricted SQL", (): void => {
   assertFunctionCallRejected("SELECT delete_workspace_for_current_user('x')");
-  assertFunctionCallRejected("SELECT now()");
-  assertFunctionCallRejected("SELECT account_id FROM ledger_entries ORDER BY lower(account_id)");
+  assertFunctionCallRejected("SELECT account_id FROM ledger_entries ORDER BY repeat(account_id, 2)");
   assertFunctionCallRejected("SELECT pg_sleep(1)");
+  assertFunctionCallRejected("SELECT generate_series(1, 10)");
   assertFunctionCallRejected("WITH x AS (SELECT delete_workspace_for_current_user('x')) SELECT * FROM x");
   assertFunctionCallRejected("SELECT count(delete_workspace_for_current_user('x'))");
   assertFunctionCallRejected("INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id) VALUES (gen_random_uuid(), now(), 'a-main-usd', 1, 'USD', 'income', 'workspace-1')");
+});
+
+test("validateExpenseSql allows window, filter, and keyword-argument call syntax", (): void => {
+  const acceptedSql: ReadonlyArray<Readonly<{
+    sql: string;
+    referencedRelations: ReadonlyArray<string>;
+  }>> = [
+    {
+      sql: "SELECT budget_month, planned_value, ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC) AS rn FROM budget_lines",
+      referencedRelations: ["budget_lines"],
+    },
+    {
+      sql: "SELECT account_id, SUM(amount) OVER (PARTITION BY account_id ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM ledger_entries",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT COUNT(*) FILTER (WHERE kind = 'spend') AS spends FROM ledger_entries",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT DATE_TRUNC('month', ts) AS month, SUM(amount) AS total FROM ledger_entries GROUP BY DATE_TRUNC('month', ts)",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT EXTRACT(MONTH FROM ts) AS month FROM ledger_entries",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) AS span_seconds FROM ledger_entries",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT EXTRACT(EPOCH FROM (SELECT MAX(ts) FROM ledger_entries)) AS latest FROM accounts",
+      referencedRelations: ["ledger_entries", "accounts"],
+    },
+    {
+      sql: "SELECT SUBSTRING(note FROM 1 FOR 10) AS note_start FROM ledger_entries",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT TRIM(BOTH ' ' FROM counterparty) AS counterparty FROM ledger_entries",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT POSITION('shop' IN counterparty) AS shop_at FROM ledger_entries",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE ts < NOW()",
+      referencedRelations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT UPPER(category) AS category, CAST(amount AS TEXT) AS amount FROM ledger_entries",
+      referencedRelations: ["ledger_entries"],
+    },
+  ];
+
+  for (const { sql, referencedRelations } of acceptedSql) {
+    const validated = validateExpenseSql(sql);
+    assert.equal(validated.statements.length, 1, sql);
+    assert.deepEqual(validated.statements[0]?.referencedRelations, referencedRelations, sql);
+  }
+});
+
+test("validateExpenseSql inspects window, filter, and keyword-argument call contents", (): void => {
+  assertFunctionCallRejected("SELECT SUM(amount) OVER (PARTITION BY pg_sleep(1)) AS running FROM ledger_entries");
+  assertFunctionCallRejected("SELECT COUNT(*) FILTER (WHERE pg_sleep(1) IS NULL) AS slow FROM ledger_entries");
+  assertFunctionCallRejected("SELECT EXTRACT(MONTH FROM pg_sleep(1)) AS month FROM ledger_entries");
+  assertFunctionCallRejected("SELECT SUBSTRING(repeat(note, 2) FROM 1 FOR 10) AS note_start FROM ledger_entries");
+  assertFunctionCallRejected("SELECT EXTRACT(EPOCH FROM (SELECT pg_sleep(1))) AS x FROM ledger_entries");
+  assertPolicyError(
+    "SELECT EXTRACT(EPOCH FROM (SELECT MAX(backend_start) FROM pg_stat_activity)) AS latest FROM accounts",
+    "relation_not_allowed",
+  );
 });
 
 test("validateExpenseSql rejects attribute-notation function calls on indirection expressions", (): void => {
@@ -530,10 +610,10 @@ test("validateExpenseSql validates every DELETE USING source relation", (): void
     "DELETE FROM ledger_entries AS entries USING generate_series(1, 2) AS generated WHERE entries.amount = generated",
   );
   assertFunctionCallRejected(
-    "DELETE FROM ledger_entries AS entries USING (SELECT lower(account_id) AS account_id FROM accounts) AS lowered WHERE entries.account_id = lowered.account_id",
+    "DELETE FROM ledger_entries AS entries USING (SELECT repeat(account_id, 2) AS account_id FROM accounts) AS repeated WHERE entries.account_id = repeated.account_id",
   );
   assertFunctionCallRejected(
-    "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings JOIN account_metadata AS metadata ON lower(settings.workspace_id) = metadata.workspace_id WHERE entries.workspace_id = settings.workspace_id",
+    "DELETE FROM ledger_entries AS entries USING workspace_settings AS settings JOIN account_metadata AS metadata ON repeat(settings.workspace_id, 2) = metadata.workspace_id WHERE entries.workspace_id = settings.workspace_id",
   );
 });
 
@@ -636,11 +716,11 @@ test("validateExpenseSql allows grouping and derived subqueries after SQL keywor
 
 test("validateExpenseSql inspects functions nested in grouping and derived subqueries", (): void => {
   const rejectedSql: ReadonlyArray<string> = [
-    "SELECT account_id FROM ledger_entries WHERE account_id = 'a-main-usd' AND (lower(kind) = 'expense')",
-    "SELECT account_id FROM ledger_entries WHERE (lower(kind) = 'expense')",
-    "SELECT account_id FROM ledger_entries WHERE kind = 'expense' OR (lower(kind) = 'income')",
-    "SELECT account_id FROM (SELECT lower(account_id) AS account_id FROM ledger_entries) AS entries",
-    "SELECT entries.account_id FROM ledger_entries AS entries JOIN (SELECT lower(account_id) AS account_id FROM accounts) AS account_rows ON entries.account_id = account_rows.account_id",
+    "SELECT account_id FROM ledger_entries WHERE account_id = 'a-main-usd' AND (repeat(kind, 2) = 'expense')",
+    "SELECT account_id FROM ledger_entries WHERE (repeat(kind, 2) = 'expense')",
+    "SELECT account_id FROM ledger_entries WHERE kind = 'expense' OR (repeat(kind, 2) = 'income')",
+    "SELECT account_id FROM (SELECT repeat(account_id, 2) AS account_id FROM ledger_entries) AS entries",
+    "SELECT entries.account_id FROM ledger_entries AS entries JOIN (SELECT repeat(account_id, 2) AS account_id FROM accounts) AS account_rows ON entries.account_id = account_rows.account_id",
   ];
 
   for (const sql of rejectedSql) {

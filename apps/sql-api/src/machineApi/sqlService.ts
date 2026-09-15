@@ -642,7 +642,7 @@ export const getSqlPolicyInstructions = (
   }
 
   if (error.code === "function_calls_not_allowed") {
-    return "Only allowlisted functions are supported in restricted SQL: SUM, COUNT, MIN, MAX, AVG, and COALESCE. Query only the published tables and views directly, use ILIKE instead of LOWER(...) for case-insensitive text search, and use explicit date ranges instead of NOW() or DATE_TRUNC().";
+    return "Restricted SQL allows a fixed set of pure aggregate, date, text, cast, and window functions, and the error message lists them by name. Query only the published tables and views directly, and prefer ILIKE for case-insensitive text search.";
   }
 
   if (error.code === "sql_comments_not_allowed") {
