@@ -46,6 +46,7 @@ import {
 } from "@/server/chat/dataService";
 import {
   CHAT_SQL_STATEMENT_TIMEOUT_MESSAGE,
+  ChatSqlMutationOutcomeUnknownError,
   execQuery,
   getChatSqlDeadlineMessage,
   getChatSqlPolicyMessage,
@@ -56,7 +57,6 @@ import {
   ChatSessionRunTransitionError,
   ChatTurnCancelledError,
 } from "@/server/chat/store";
-import { DbTransactionOutcomeUnknownError } from "@/server/db/contextRunner";
 import { log, MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "@/server/logger";
 import type { WorkspaceSummary } from "@/server/workspaces";
 
@@ -586,10 +586,7 @@ const buildSqlExecutionErrorPayload = (
       { retryable: false },
     );
   }
-  if (
-    toolName === SQL_EXECUTE_TOOL.name
-    && error instanceof DbTransactionOutcomeUnknownError
-  ) {
+  if (error instanceof ChatSqlMutationOutcomeUnknownError) {
     return buildAgentErrorPayload(
       "sql_mutation_outcome_unknown",
       "The SQL mutation transaction outcome is unknown",
@@ -600,7 +597,8 @@ const buildSqlExecutionErrorPayload = (
   // Raised at the one call site that runs the model's own statement, and only
   // when PostgreSQL blamed that statement. Everything else this call touches —
   // provisioning, whose message names the user; a pool connection carrying raw
-  // Postgres text; a lost transaction outcome on a read; the shared executor's
+  // Postgres text; a transaction outcome lost before any mutating statement was
+  // issued, which is every lost outcome on a read; the shared executor's
   // own invariants — falls through to the redacted default below, because none
   // of it is repaired by rewriting SQL.
   if (isChatUserSqlExecutionError(error)) {
