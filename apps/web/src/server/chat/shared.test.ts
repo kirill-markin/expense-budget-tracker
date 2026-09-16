@@ -22,6 +22,7 @@ import {
 import {
   buildSystemInstructions,
   CHAT_SQL_COMMIT_TIMEOUT_MS,
+  ChatSqlMutationOutcomeUnknownError,
   execQueryWithDependencies,
   getChatSqlDeadlineMessage,
   getChatSqlPolicyMessage,
@@ -30,7 +31,7 @@ import {
   type ExecQueryDependencies,
 } from "@/server/chat/shared";
 import { ChatTurnCancelledError } from "@/server/chat/store";
-import type { QueryFn } from "@/server/db/contextRunner";
+import { DbTransactionOutcomeUnknownError, type QueryFn } from "@/server/db/contextRunner";
 import type { WorkspaceSummary } from "@/server/workspaces";
 
 const CONTEXT: ChatSqlExecutionContext = {
@@ -646,6 +647,135 @@ test("execQueryWithDependencies orders the chat mutation privilege commands arou
   assert.equal(lockedWorkspaceId, CONTEXT.workspaceId);
   assert.deepEqual(calls[2]?.params, [TARGET_WORKSPACE.workspaceId]);
   assertInterpolatedTimeouts(calls);
+});
+
+const OUTCOME_TEST_MUTATION_SQL = "DELETE FROM ledger_entries WHERE entry_id = 'entry-1'";
+
+const answerOutcomeTestCommand: QueryFn = async (statementSql): Promise<PgQueryResult> => (
+  statementSql.startsWith("DELETE ")
+    ? createAffectedRowsResult("DELETE", 1)
+    : createAffectedRowsResult("SET", 0)
+);
+
+test("execQueryWithDependencies reports a lost commit outcome as ambiguous once the chat mutation was issued", async (): Promise<void> => {
+  const outcomeUnknown = new DbTransactionOutcomeUnknownError(
+    "commit",
+    new Error("Connection terminated unexpectedly"),
+    undefined,
+  );
+  // The whole body runs, the statement included, and the COMMIT after it never
+  // reports back.
+  const withCommitInDoubt: ExecQueryDependencies["withUserContext"] = async <T>(
+    _userId: string,
+    _workspaceId: string,
+    callback: (mutatingQueryFn: QueryFn) => Promise<T>,
+  ): Promise<T> => {
+    await callback(answerOutcomeTestCommand);
+    throw outcomeUnknown;
+  };
+
+  await assert.rejects(
+    () => execQueryWithDependencies(
+      validateSingleMutationExpenseSql(OUTCOME_TEST_MUTATION_SQL),
+      CONTEXT,
+      WRITE_TARGET,
+      {
+        withUserContext: withCommitInDoubt,
+        withReadOnlyRestrictedUserContext: createUnusedRestrictedRunner(),
+        lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {},
+        now: (): number => 0,
+      },
+    ),
+    (error: unknown) => error instanceof ChatSqlMutationOutcomeUnknownError
+      && error.name === "ChatSqlMutationOutcomeUnknownError"
+      && error.message === "The SQL mutation transaction outcome is unknown"
+      && error.cause === outcomeUnknown,
+  );
+});
+
+type UnissuedMutationFailureCase = Readonly<{
+  failingCommand: string;
+  failure: Error;
+  issuedCommands: ReadonlyArray<string>;
+}>;
+
+const UNISSUED_MUTATION_FAILURE_CASES: ReadonlyArray<UnissuedMutationFailureCase> = [
+  {
+    failingCommand: MUTATION_TURN_LOCK_MARKER,
+    failure: new ChatTurnCancelledError("session-1", "turn-1"),
+    issuedCommands: [
+      "SELECT set_config('statement_timeout', $1, true)",
+      MUTATION_TURN_LOCK_MARKER,
+    ],
+  },
+  // The last command ahead of the statement, so every earlier command ran too.
+  {
+    failingCommand: `SET LOCAL statement_timeout = ${String(MCP_SQL_STATEMENT_TIMEOUT_MS)}`,
+    failure: new Error("Connection terminated unexpectedly"),
+    issuedCommands: [
+      "SELECT set_config('statement_timeout', $1, true)",
+      MUTATION_TURN_LOCK_MARKER,
+      "SELECT set_config('app.workspace_id', $1, true)",
+      "SET LOCAL ROLE api_sql_executor",
+      `SET LOCAL statement_timeout = ${String(MCP_SQL_STATEMENT_TIMEOUT_MS)}`,
+    ],
+  },
+];
+
+test("execQueryWithDependencies rethrows a lost outcome unchanged when the chat mutation was never issued", async (): Promise<void> => {
+  for (const failureCase of UNISSUED_MUTATION_FAILURE_CASES) {
+    const calls: Array<RecordedCommand> = [];
+    const queryFn = createRecordingQueryFn(
+      calls,
+      (): void => {},
+      async (statementSql, params): Promise<PgQueryResult> => {
+        if (statementSql === failureCase.failingCommand) {
+          throw failureCase.failure;
+        }
+        return answerOutcomeTestCommand(statementSql, params);
+      },
+    );
+    // The context runner's answer to a body failure whose ROLLBACK failed too.
+    const withRollbackFailure: ExecQueryDependencies["withUserContext"] = async <T>(
+      _userId: string,
+      _workspaceId: string,
+      callback: (mutatingQueryFn: QueryFn) => Promise<T>,
+    ): Promise<T> => {
+      try {
+        return await callback(queryFn);
+      } catch (error) {
+        throw new DbTransactionOutcomeUnknownError(
+          "transaction",
+          error,
+          new Error("Connection terminated during ROLLBACK"),
+        );
+      }
+    };
+    const lockTurn: ExecQueryDependencies["lockUncancelledChatTurnForMutationWithQuery"] = async (): Promise<void> => {
+      calls.push({ text: MUTATION_TURN_LOCK_MARKER, params: [] });
+      if (MUTATION_TURN_LOCK_MARKER === failureCase.failingCommand) {
+        throw failureCase.failure;
+      }
+    };
+
+    await assert.rejects(
+      () => execQueryWithDependencies(
+        validateSingleMutationExpenseSql(OUTCOME_TEST_MUTATION_SQL),
+        CONTEXT,
+        WRITE_TARGET,
+        {
+          withUserContext: withRollbackFailure,
+          withReadOnlyRestrictedUserContext: createUnusedRestrictedRunner(),
+          lockUncancelledChatTurnForMutationWithQuery: lockTurn,
+          now: (): number => 0,
+        },
+      ),
+      (error: unknown) => error instanceof DbTransactionOutcomeUnknownError
+        && error.failurePhase === "transaction"
+        && error.originalError === failureCase.failure,
+    );
+    assert.deepEqual(calls.map((call) => call.text), failureCase.issuedCommands);
+  }
 });
 
 type ChatSqlPolicyCase = Readonly<{

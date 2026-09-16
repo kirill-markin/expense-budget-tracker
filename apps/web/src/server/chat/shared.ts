@@ -22,7 +22,10 @@ import {
   type BudgetedSqlStatementEntry,
 } from "@/server/sqlResultBudget";
 import { withReadOnlyRestrictedUserContext, withUserContext } from "@/server/db";
-import type { QueryFn } from "@/server/db/contextRunner";
+import {
+  DbTransactionOutcomeUnknownError,
+  type QueryFn,
+} from "@/server/db/contextRunner";
 import { lockUncancelledChatTurnForMutationWithQuery } from "@/server/chat/store/turnCancellationStore";
 import type { WorkspaceSummary } from "@/server/workspaces";
 
@@ -227,6 +230,20 @@ export const throwChatUserSqlExecutionError = (error: unknown): never => {
   );
 };
 
+/**
+ * The model's mutating statement was issued to the database inside a
+ * transaction that ended without a known outcome, so its writes may already be
+ * durable and the model must verify the data instead of retrying. A transaction
+ * that lost its outcome before issuing that statement, such as at the turn
+ * lock, never raises this.
+ */
+export class ChatSqlMutationOutcomeUnknownError extends Error {
+  public constructor(cause: DbTransactionOutcomeUnknownError) {
+    super("The SQL mutation transaction outcome is unknown", { cause });
+    this.name = "ChatSqlMutationOutcomeUnknownError";
+  }
+}
+
 /** The serialized shared tool payload this call emits back into the chat turn. */
 export type QueryResult = Readonly<{
   json: string;
@@ -339,6 +356,7 @@ const runChatSqlWithinDeadline = async (
   queryFn: QueryFn,
   validated: ValidatedExpenseSql,
   deadline: SqlExecutionDeadline,
+  onCommandIssued: (sql: string) => void,
 ): Promise<ExecutedExpenseSql> => {
   const executed = await executeValidatedExpenseSqlWithinDeadline(
     validated,
@@ -349,6 +367,7 @@ const runChatSqlWithinDeadline = async (
         [],
       );
       try {
+        onCommandIssued(request.sql);
         return await queryFn(request.sql, request.params);
       } catch (error) {
         return throwChatUserSqlExecutionError(error);
@@ -404,43 +423,76 @@ export const execQueryWithDependencies = async (
   );
 
   const isMutating = validated.statements.some((statement) => statement.isMutating);
-  const executed = isMutating
-    ? await dependencies.withUserContext(
-      context.userId,
-      // The session's workspace, not the target: the chat session row the turn
-      // lock reads is invisible under any other workspace.
-      context.workspaceId,
-      async (queryFn) => {
-        // Still the app role here, the only point of this transaction where
-        // set_config() is reachable, and what bounds the turn lock below.
-        await queryFn("SELECT set_config('statement_timeout', $1, true)", [
-          String(getRemainingSqlExecutionMs(deadline)),
-        ]);
-        await dependencies.lockUncancelledChatTurnForMutationWithQuery(
-          queryFn,
-          context.sessionId,
-          context.turnId,
-        );
-        // The row lock outlives this rebinding, so the turn stays fenced while
-        // the statement runs against the workspace it was aimed at.
-        await queryFn("SELECT set_config('app.workspace_id', $1, true)", [
-          target.workspace.workspaceId,
-        ]);
-        await queryFn("SET LOCAL ROLE api_sql_executor", []);
-        return runChatSqlWithinDeadline(queryFn, validated, deadline);
-      },
-    )
+  let executed: ExecutedExpenseSql;
+  if (isMutating) {
+    const mutatingSql: ReadonlySet<string> = new Set(
+      validated.statements
+        .filter((statement) => statement.isMutating)
+        .map((statement) => statement.sql),
+    );
+    let mutationIssued = false;
+    try {
+      executed = await dependencies.withUserContext(
+        context.userId,
+        // The session's workspace, not the target: the chat session row the turn
+        // lock reads is invisible under any other workspace.
+        context.workspaceId,
+        async (queryFn) => {
+          // Still the app role here, the only point of this transaction where
+          // set_config() is reachable, and what bounds the turn lock below.
+          await queryFn("SELECT set_config('statement_timeout', $1, true)", [
+            String(getRemainingSqlExecutionMs(deadline)),
+          ]);
+          await dependencies.lockUncancelledChatTurnForMutationWithQuery(
+            queryFn,
+            context.sessionId,
+            context.turnId,
+          );
+          // The row lock outlives this rebinding, so the turn stays fenced while
+          // the statement runs against the workspace it was aimed at.
+          await queryFn("SELECT set_config('app.workspace_id', $1, true)", [
+            target.workspace.workspaceId,
+          ]);
+          await queryFn("SET LOCAL ROLE api_sql_executor", []);
+          return runChatSqlWithinDeadline(
+            queryFn,
+            validated,
+            deadline,
+            (issuedSql) => {
+              if (mutatingSql.has(issuedSql)) {
+                mutationIssued = true;
+              }
+            },
+          );
+        },
+      );
+    } catch (error) {
+      // Only the model's mutating statement, once issued, can have left writes
+      // behind. An outcome lost before that, such as at the turn lock, is
+      // rethrown unchanged for the tool layer to redact.
+      if (error instanceof DbTransactionOutcomeUnknownError && mutationIssued) {
+        throw new ChatSqlMutationOutcomeUnknownError(error);
+      }
+      throw error;
+    }
+  } else {
     // A read needs no chat session row, so it binds the target workspace
     // directly, in the repeatable-read read-only transaction under
     // api_sql_reader that SQL_QUERY_TOOL.description advertises. The role and
     // the transaction mode are what keep this path read-only independently of
     // the validator that accepted the statement.
-    : await dependencies.withReadOnlyRestrictedUserContext(
+    executed = await dependencies.withReadOnlyRestrictedUserContext(
       context.userId,
       target.workspace.workspaceId,
       MCP_SQL_STATEMENT_TIMEOUT_MS,
-      async (queryFn) => runChatSqlWithinDeadline(queryFn, validated, deadline),
+      async (queryFn) => runChatSqlWithinDeadline(
+        queryFn,
+        validated,
+        deadline,
+        (): void => {},
+      ),
     );
+  }
 
   return { json: serializeChatSqlSuccessOutput(target, applyChatSqlBudget(target, executed)) };
 };
