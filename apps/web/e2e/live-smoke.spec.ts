@@ -250,10 +250,14 @@ async function sendChatMessageAndWaitForIdle(
   await sendButton.click();
 
   await expect(messageField).toHaveValue("", { timeout: externalUiTimeoutMs });
+  // Until the server creates a fresh chat's session, the composer shows a disabled
+  // Send and no Stop, so a disabled Send means idle only after Stop was seen.
+  let runStarted = false;
   await expect.poll(
     async () => {
       const stopVisible = await page.getByRole("button", { name: "Stop", exact: true }).isVisible().catch(() => false);
       if (stopVisible) {
+        runStarted = true;
         return "running";
       }
 
@@ -263,7 +267,11 @@ async function sendChatMessageAndWaitForIdle(
       }
 
       const sendEnabled = await sendButton.isEnabled().catch(() => false);
-      return sendEnabled ? "draft" : "idle";
+      if (sendEnabled) {
+        return "draft";
+      }
+
+      return runStarted ? "idle" : "pending";
     },
     { timeout: chatCompletionTimeoutMs },
   ).toBe("idle");
