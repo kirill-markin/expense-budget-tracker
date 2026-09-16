@@ -1,7 +1,8 @@
 import OpenAI from "openai";
 import { CHAT_VENDOR } from "@/lib/chatModels";
 import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
-import type { ChatErrorStage } from "@/server/logger";
+import type { ChatErrorStage, ChatWorkspaceUnavailableEvent } from "@/server/logger";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 export type ChatErrorLogDiagnostics = Readonly<{
   requestId: string;
@@ -226,11 +227,25 @@ export const parseRetryAfterMs = (error: unknown): number | undefined => {
   return undefined;
 };
 
+/** A WorkspaceAccessError is an expected event, not an error; see ChatWorkspaceUnavailableEvent. */
 export const createChatErrorLogEvent = (
   diagnostics: ChatErrorLogDiagnostics,
   stage: ChatErrorStage,
   error: unknown,
-): ChatErrorLogEvent => {
+): ChatErrorLogEvent | ChatWorkspaceUnavailableEvent => {
+  if (error instanceof WorkspaceAccessError) {
+    return {
+      domain: "chat",
+      action: "workspace_unavailable",
+      vendor: CHAT_VENDOR,
+      stage,
+      error: error.message,
+      requestId: diagnostics.requestId,
+      userId: diagnostics.userId,
+      workspaceId: diagnostics.workspaceId,
+      sessionId: diagnostics.sessionId,
+    };
+  }
   const message = error instanceof Error
     ? error.message
     : typeof error === "string"

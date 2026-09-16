@@ -190,6 +190,25 @@ type ChatEvent =
     hasAttachments?: boolean;
     attachmentFileNames?: ReadonlyArray<string>;
   } & ChatAttemptMetadata> & ChatOpenAIErrorContextFields);
+
+/**
+ * The workspace of a chat request or run stopped being accessible to the user,
+ * for example because it was deleted mid-run. Ordinary API routes answer the
+ * same WorkspaceAccessError with a 409, so the action is deliberately kept out
+ * of the `error` family that the CloudWatch web error alarm pages on.
+ */
+export type ChatWorkspaceUnavailableEvent = Readonly<{
+  domain: "chat";
+  action: "workspace_unavailable";
+  vendor: ChatVendor;
+  stage: ChatErrorStage;
+  error: string;
+  requestId?: string;
+  userId?: string;
+  workspaceId?: string;
+  sessionId?: string;
+}>;
+
 type ChatTranscriptionEvent = Readonly<{
   domain: "chat";
   action: "transcription_failed";
@@ -273,7 +292,7 @@ type AuthEvent =
  */
 type DbEvent = Readonly<{ domain: "db"; action: "pool_error"; error: string }>;
 
-type LogEvent = ChatEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
+type LogEvent = ChatEvent | ChatWorkspaceUnavailableEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

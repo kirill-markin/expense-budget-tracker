@@ -12,6 +12,7 @@ import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import type { ChatTurnObservationOutcome } from "@/server/chat/openai/langfuse";
 import {
+  CHAT_RUN_HEARTBEAT_INTERVAL_MS,
   clearActiveChatRunForTests,
   createActiveChatRunForTests,
   getActiveChatRunSubscriberCountForTests,
@@ -30,6 +31,7 @@ import { ChatSessionRunTransitionError } from "@/server/chat/store";
 import { selectChatModelRouting } from "@/server/chat/modelRouting";
 import type { PersistedChatMessageItem } from "@/server/chat/store/shared";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 type ActiveRunPayload = Readonly<{ activeRunId: string }>;
 
@@ -1611,6 +1613,79 @@ test("startPersistedChatRunWithDeps logs rejected background persistence", async
     hasAttachments: params.diagnostics.hasAttachments,
     attachmentFileNames: params.diagnostics.attachmentFileNames,
     errorClass: "Error",
+  }]);
+});
+
+test("startPersistedChatRunWithDeps logs a workspace that vanished mid-run once, without heartbeat errors", async (t): Promise<void> => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const params = createRunParams("session-workspace-unavailable");
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  const workspaceError = new WorkspaceAccessError(params.userId, params.workspaceId);
+  let heartbeatTouchCount = 0;
+  const logLines: Array<string> = [];
+  const originalLog = console.log;
+  console.log = (message?: unknown): void => {
+    logLines.push(String(message));
+  };
+
+  try {
+    const events = startPersistedChatRunWithDeps(
+      params,
+      requireReservation(params.sessionId, params.activeRunId),
+      createRuntimeDependencies(
+        {
+          touchChatSessionHeartbeat: async (): Promise<boolean> => {
+            heartbeatTouchCount += 1;
+            if (heartbeatTouchCount === 1) {
+              return true;
+            }
+            throw workspaceError;
+          },
+          updateAssistantMessageItem: async (): Promise<never> => {
+            throw workspaceError;
+          },
+          runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
+            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
+          }>> => {
+            t.mock.timers.tick(CHAT_RUN_HEARTBEAT_INTERVAL_MS);
+            await new Promise<void>((resolve) => {
+              setImmediate(resolve);
+            });
+            t.mock.timers.tick(CHAT_RUN_HEARTBEAT_INTERVAL_MS * 3);
+            await onEvent(createDeltaEvent("Hello"));
+            return { openaiItems: [] };
+          },
+        },
+        recorded,
+      ),
+    );
+
+    assert.deepEqual(await events.next(), { done: true, value: undefined });
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+  } finally {
+    clearActiveChatRunForTests(params.sessionId);
+    console.log = originalLog;
+  }
+
+  assert.equal(heartbeatTouchCount, 2);
+  assert.deepEqual(logLines.map((line) => JSON.parse(line) as unknown), [{
+    domain: "chat",
+    action: "workspace_unavailable",
+    vendor: "openai",
+    stage: "agent",
+    error: workspaceError.message,
+    requestId: params.requestId,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
   }]);
 });
 

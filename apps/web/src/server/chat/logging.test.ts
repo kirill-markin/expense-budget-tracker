@@ -10,6 +10,7 @@ import {
   type ChatErrorLogDiagnostics,
 } from "@/server/chat/logging";
 import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 const DIAGNOSTICS: ChatErrorLogDiagnostics = {
   requestId: "req-1",
@@ -79,7 +80,7 @@ test("createChatErrorLogEvent merges diagnostics, message, and OpenAI context in
 
   const event = createChatErrorLogEvent(DIAGNOSTICS, "agent", error);
 
-  assert.equal(event.action, "error");
+  assert.ok(event.action === "error");
   assert.equal(event.stage, "agent");
   assert.equal(event.requestId, "req-1");
   assert.equal(event.error, "500 internal_server_error");
@@ -91,10 +92,27 @@ test("createChatErrorLogEvent merges diagnostics, message, and OpenAI context in
 test("createChatErrorLogEvent accepts a plain string and produces no OpenAI context fields", (): void => {
   const event = createChatErrorLogEvent(DIAGNOSTICS, "config", "OPENAI_API_KEY is not set");
 
+  assert.ok(event.action === "error");
   assert.equal(event.error, "OPENAI_API_KEY is not set");
   assert.equal(event.httpStatus, undefined);
   assert.equal(event.openaiRequestId, undefined);
   assert.equal(event.errorClass, undefined);
+});
+
+test("createChatErrorLogEvent logs a WorkspaceAccessError as workspace_unavailable, not error", (): void => {
+  const error = new WorkspaceAccessError("user-1", "workspace-1");
+
+  assert.deepEqual(createChatErrorLogEvent(DIAGNOSTICS, "agent", error), {
+    domain: "chat",
+    action: "workspace_unavailable",
+    vendor: "openai",
+    stage: "agent",
+    error: error.message,
+    requestId: "req-1",
+    userId: "user-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+  });
 });
 
 test("isOpenAITransientError returns true for retryable OpenAI failures", (): void => {

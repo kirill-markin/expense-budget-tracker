@@ -1084,7 +1084,7 @@ test("a turn that is no longer active is never told to retry the call", async ()
  * step inside execQuery can only refuse it after a mid-call change. Its message
  * names the user, which must never reach the model or the reply.
  */
-test("a workspace access failure inside execution is redacted and logged", async (): Promise<void> => {
+test("a workspace access failure inside execution is redacted and logged as workspace_unavailable", async (): Promise<void> => {
   const loggedEvents: Array<string> = [];
 
   const result = await executeChatToolCallWithDependencies(
@@ -1106,6 +1106,15 @@ test("a workspace access failure inside execution is redacted and logged", async
   assert.equal(result.succeeded, false);
   assert.equal(parseToolPayload(result.output).error?.code, "internal_error");
   assert.ok(!result.output.includes(CONTEXT.userId));
-  assert.equal(loggedEvents.length, 1);
-  assert.ok(loggedEvents[0]?.includes("WorkspaceAccessError"));
+  assert.deepEqual(loggedEvents.map((event) => JSON.parse(event) as unknown), [{
+    domain: "chat",
+    action: "workspace_unavailable",
+    vendor: "openai",
+    stage: "agent",
+    error: `User ${CONTEXT.userId} is not a member of workspace ${CONTEXT.workspaceId}`,
+    requestId: CONTEXT.requestId,
+    userId: CONTEXT.userId,
+    workspaceId: CONTEXT.workspaceId,
+    sessionId: CONTEXT.sessionId,
+  }]);
 });

@@ -42,6 +42,7 @@ import type {
   ToolCallContentPart,
 } from "@/server/chat/types";
 import { log, type ChatErrorStage } from "@/server/logger";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
 export const CHAT_RUN_STALE_HEARTBEAT_MS = 30_000;
@@ -581,6 +582,11 @@ export const runPersistedChatSessionWithDeps = async (
       params.sessionId,
       params.activeRunId,
     ).catch((error) => {
+      // The run's next workspace-scoped write fails the same way and logs it once.
+      if (error instanceof WorkspaceAccessError) {
+        clearInterval(heartbeatTimer);
+        return;
+      }
       logChatRunError(params.diagnostics, "stream", error);
     });
   }, CHAT_RUN_HEARTBEAT_INTERVAL_MS);
