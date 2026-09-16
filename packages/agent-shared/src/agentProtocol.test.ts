@@ -65,9 +65,9 @@ const QUERY_RECIPE_STATEMENTS: ReadonlyArray<Readonly<{
     referencedRelations: ["ledger_entries"],
   },
   {
-    label: "base budget plan vs actual",
+    label: "budget plan vs actual",
     sql: BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE,
-    referencedRelations: ["budget_lines", "ledger_entries", "fx_rates_daily"],
+    referencedRelations: ["budget_lines", "budget_adjustments", "ledger_entries", "fx_rates_daily"],
   },
   {
     label: "FX conversion at query time",

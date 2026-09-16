@@ -131,11 +131,13 @@ export const RECENT_TRANSACTIONS_QUERY_EXAMPLE = `SELECT ts, account_id, amount,
 export const SPENDING_BY_CATEGORY_QUERY_EXAMPLE = `SELECT category, SUM(amount) AS total FROM ledger_entries WHERE kind = 'spend' AND ts >= '<month-start YYYY-MM-DD>' AND ts < '<next-month-start YYYY-MM-DD>' GROUP BY category ORDER BY total`;
 
 /**
- * One self-contained statement on purpose: the FULL OUTER JOIN keeps the
+ * One self-contained statement on purpose: the FULL OUTER JOINs keep the
  * reconciliation semantics in the SQL the agent runs rather than in prose it may
  * skip. It mirrors the income and spend rows of QUERY in
- * apps/web/src/server/budget/getBudgetGrid.ts without budget adjustments:
- * planned_value stays unconverted, each ledger amount converts through
+ * apps/web/src/server/budget/getBudgetGrid.ts, which
+ * apps/web/src/server/budget/planVsActualRecipe.postgres.test.ts compares on
+ * real Postgres: planned is the winning Base row plus the month's summed
+ * budget_adjustments and stays unconverted, each ledger amount converts through
  * fx_rates_daily on its entry date unless it is already in the reporting
  * currency, and spend is negated so money out counts as a positive actual.
  * With actual positive in both directions, remaining = planned - actual holds
@@ -151,10 +153,22 @@ export const BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE = `WITH ranked_plan AS (
   FROM budget_lines
   WHERE budget_month = '<month-start YYYY-MM-DD>' AND kind = 'base' AND direction IN ('income', 'spend')
 ),
-plan AS (
-  SELECT direction, category, planned_value AS planned
+base_plan AS (
+  SELECT direction, category, planned_value AS planned_base
   FROM ranked_plan
   WHERE rn = 1
+),
+adjustment AS (
+  SELECT direction, category, SUM(amount) AS planned_adjustment
+  FROM budget_adjustments
+  WHERE budget_month = '<month-start YYYY-MM-DD>'
+  GROUP BY direction, category
+),
+plan AS (
+  SELECT COALESCE(bp.direction, adj.direction) AS direction,
+         COALESCE(bp.category, adj.category) AS category,
+         COALESCE(bp.planned_base, 0) + COALESCE(adj.planned_adjustment, 0) AS planned
+  FROM base_plan bp FULL OUTER JOIN adjustment adj ON bp.direction = adj.direction AND bp.category = adj.category
 ),
 actual AS (
   SELECT le.kind AS direction, le.category,
@@ -197,8 +211,8 @@ ${RECENT_TRANSACTIONS_QUERY_EXAMPLE}
 ### Spending by category (explicit month)
 ${SPENDING_BY_CATEGORY_QUERY_EXAMPLE}
 
-### Base budget plan vs actual (explicit month)
-By convention planned_value is stored in the workspace reporting currency, but the schema does not enforce that, so read budget_lines.currency first when a workspace may still hold legacy rows in another currency. Read <reporting-currency> from workspace_settings.reporting_currency. Like the budget dashboard, the query converts each ledger amount through fx_rates_daily on its entry date unless it is already in the reporting currency, and negates spend so spending and income both read as positive actuals; a positive remaining is still to spend or earn, and a negative one means spend over plan or income above plan. unconverted_entries counts the row's entries in another currency with no rate for their date; SUM skips them, so a non-zero count means actual and remaining are incomplete: report that gap instead of presenting the totals as complete.
+### Budget plan vs actual (explicit month)
+planned adds the sum of the month's budget_adjustments to the winning Base row in budget_lines, counting a missing side as 0, the way the budget dashboard computes its plan. By convention planned_value is stored in the workspace reporting currency, but the schema does not enforce that, so read budget_lines.currency first when a workspace may still hold legacy rows in another currency. Read <reporting-currency> from workspace_settings.reporting_currency. Like the budget dashboard, the query converts each ledger amount through fx_rates_daily on its entry date unless it is already in the reporting currency, and negates spend so spending and income both read as positive actuals; a positive remaining is still to spend or earn, and a negative one means spend over plan or income above plan. unconverted_entries counts the row's entries in another currency with no rate for their date; SUM skips them, so a non-zero count means actual and remaining are incomplete: report that gap instead of presenting the totals as complete.
 ${BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE}
 
 ### FX conversion at query time
