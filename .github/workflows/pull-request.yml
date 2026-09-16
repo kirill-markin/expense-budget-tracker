@@ -76,6 +76,9 @@ jobs:
             sql_api_tests:
               - 'apps/sql-api/**'
               - 'packages/agent-shared/**'
+              - 'db/migrations/**'
+              - 'db/views/**'
+              - 'scripts/migrate.sh'
               - 'server.json'
               - '.github/workflows/pull-request.yml'
               - '.npmrc'
@@ -171,13 +174,13 @@ jobs:
         run: npm ci
 
       - name: Install PostgreSQL client
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.quality_gate.outputs.auth_tests == 'true' || needs.quality_gate.outputs.sql_api_tests == 'true') }}
         run: |
           sudo apt-get update
           sudo apt-get install --yes postgresql-client
 
-      - name: Apply auth test database migrations
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
+      - name: Apply test database migrations
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.quality_gate.outputs.auth_tests == 'true' || needs.quality_gate.outputs.sql_api_tests == 'true') }}
         run: bash scripts/migrate.sh
         env:
           MIGRATION_DATABASE_URL: postgresql://tracker:tracker@localhost:5432/tracker
@@ -199,6 +202,9 @@ jobs:
       - name: Run SQL API unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.sql_api_tests == 'true' }}
         run: npm --workspace expense-budget-tracker-sql-api run test
+        env:
+          MIGRATION_DATABASE_URL: postgresql://tracker:tracker@localhost:5432/tracker
+          APP_DATABASE_URL: postgresql://app:app@localhost:5432/tracker
 
       - name: Run web unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.web_tests == 'true' }}

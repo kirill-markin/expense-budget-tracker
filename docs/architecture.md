@@ -65,7 +65,7 @@ ledger_entries          inserted_at            adjustment_id (PK)
 - `fx_rates_raw` — canonical FX source-of-truth. One row per `(base, USD, rate_date)` triple plus source metadata. **No RLS** — global data.
 - `fx_rates_daily` — query-ready daily all-pairs FX read model. One row per `(base, quote, calendar_date)` triple. **No RLS** — global data.
 - `budget_lines` — append-only Base plan rows. Effective value resolved by latest `inserted_at` per cell. RLS by `workspace_id`.
-- `budget_adjustments` — normalized adjustment rows with optional row notes. Budget reads sum adjustments per cell. RLS by `workspace_id`.
+- `budget_adjustments` — normalized adjustment rows with optional row notes. Budget reads sum adjustments per cell. RLS by `workspace_id`. Agent SQL roles can SELECT every column except the internal `origin` marker and cannot write.
 - `workspace_settings` — one row per workspace storing reporting currency. RLS by `workspace_id`.
 - `accounts` — view derived from `ledger_entries` (inherits RLS automatically).
 
