@@ -12,16 +12,16 @@
     "test": "node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1128.0",
+    "@aws-sdk/client-secrets-manager": "^3.1133.0",
     "@expense-budget-tracker/agent-shared": "1.7.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "hono": "^4.13.7",
+    "hono": "^4.13.8",
     "pg": "^8.23.0",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.163",
-    "@types/node": "^24.13.3",
+    "@types/node": "^24.13.5",
     "@types/pg": "^8.23.1",
     "js-tiktoken": "^1.0.21",
     "typescript": "^6.0.3"
