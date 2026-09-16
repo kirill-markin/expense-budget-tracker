@@ -58,6 +58,7 @@ import {
   ChatTurnCancelledError,
 } from "@/server/chat/store";
 import { log, MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "@/server/logger";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import type { WorkspaceSummary } from "@/server/workspaces";
 
 /**
@@ -348,7 +349,21 @@ const buildRedactedErrorPayload = (
   context: OpenAIToolContext,
   dependencies: ChatToolDependencies,
 ): AgentErrorPayload => {
-  logUnexpectedChatToolError(serializeToolError(error), toolName, context, dependencies);
+  if (error instanceof WorkspaceAccessError) {
+    dependencies.log({
+      domain: "chat",
+      action: "workspace_unavailable",
+      vendor: "openai",
+      stage: "agent",
+      error: error.message,
+      requestId: context.requestId,
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      sessionId: context.sessionId,
+    });
+  } else {
+    logUnexpectedChatToolError(serializeToolError(error), toolName, context, dependencies);
+  }
   return buildAgentErrorPayload(
     "internal_error",
     CHAT_TOOL_INTERNAL_ERROR_MESSAGE,
