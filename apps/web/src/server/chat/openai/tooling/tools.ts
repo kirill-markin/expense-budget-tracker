@@ -57,6 +57,7 @@ import {
   ChatSessionRunTransitionError,
   ChatTurnCancelledError,
 } from "@/server/chat/store";
+import { createChatWorkspaceUnavailableLogEvent } from "@/server/chat/workspaceUnavailableLog";
 import { log, MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "@/server/logger";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import type { WorkspaceSummary } from "@/server/workspaces";
@@ -350,17 +351,11 @@ const buildRedactedErrorPayload = (
   dependencies: ChatToolDependencies,
 ): AgentErrorPayload => {
   if (error instanceof WorkspaceAccessError) {
-    dependencies.log({
-      domain: "chat",
-      action: "workspace_unavailable",
-      vendor: "openai",
-      stage: "agent",
-      error: error.message,
-      requestId: context.requestId,
-      userId: context.userId,
-      workspaceId: context.workspaceId,
-      sessionId: context.sessionId,
-    });
+    dependencies.log(createChatWorkspaceUnavailableLogEvent(
+      { requestId: context.requestId, sessionId: context.sessionId },
+      "agent",
+      error,
+    ));
   } else {
     logUnexpectedChatToolError(serializeToolError(error), toolName, context, dependencies);
   }

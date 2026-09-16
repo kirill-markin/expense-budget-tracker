@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { CHAT_VENDOR } from "@/lib/chatModels";
 import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
+import { createChatWorkspaceUnavailableLogEvent } from "@/server/chat/workspaceUnavailableLog";
 import type { ChatErrorStage, ChatWorkspaceUnavailableEvent } from "@/server/logger";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
@@ -234,17 +235,11 @@ export const createChatErrorLogEvent = (
   error: unknown,
 ): ChatErrorLogEvent | ChatWorkspaceUnavailableEvent => {
   if (error instanceof WorkspaceAccessError) {
-    return {
-      domain: "chat",
-      action: "workspace_unavailable",
-      vendor: CHAT_VENDOR,
+    return createChatWorkspaceUnavailableLogEvent(
+      { requestId: diagnostics.requestId, sessionId: diagnostics.sessionId },
       stage,
-      error: error.message,
-      requestId: diagnostics.requestId,
-      userId: diagnostics.userId,
-      workspaceId: diagnostics.workspaceId,
-      sessionId: diagnostics.sessionId,
-    };
+      error,
+    );
   }
   const message = error instanceof Error
     ? error.message
