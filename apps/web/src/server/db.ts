@@ -17,6 +17,9 @@
  *                     read-only transaction in which user SQL runs as
  *                     api_sql_reader. For read-only user SQL such as the chat's
  *                     sql_query tool.
+ * withReadOnlyRestrictedTrustedIdentityContext() — the same read-only
+ *                     api_sql_reader transaction for an API-key identity. For
+ *                     read-only scripts on the agent SQL endpoint.
  * withRestrictedTrustedIdentityContext() — writable transaction in which user
  *                     SQL runs as api_sql_executor after the RLS context is set.
  */
@@ -44,4 +47,5 @@ export const queryAsExistingWorkspace = facade.queryAsExistingWorkspace;
 export const withUserContext = facade.withUserContext;
 export const withUserOnlyContext = facade.withUserOnlyContext;
 export const withReadOnlyRestrictedUserContext = facade.withReadOnlyRestrictedUserContext;
+export const withReadOnlyRestrictedTrustedIdentityContext = facade.withReadOnlyRestrictedTrustedIdentityContext;
 export const withRestrictedTrustedIdentityContext = facade.withRestrictedTrustedIdentityContext;
