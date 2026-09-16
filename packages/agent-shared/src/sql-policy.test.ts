@@ -416,6 +416,41 @@ test("validateExpenseSql names unsupported SQL constructs instead of a function 
       construct: "WITHIN GROUP (...)",
       alternative: "Ordered-set aggregates are unavailable",
     },
+    // A locking clause classifies as an ordinary read, so without this rule it
+    // reaches the database, where a read-only agent transaction fails it with an
+    // opaque 25006 and a writable script transaction honours it instead.
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE amount < 0 FOR UPDATE",
+      construct: "The FOR UPDATE row-locking clause",
+      alternative: "Drop the clause",
+    },
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE amount < 0 FOR NO KEY UPDATE",
+      construct: "The FOR NO KEY UPDATE row-locking clause",
+      alternative: "guard any follow-up UPDATE or DELETE",
+    },
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE amount < 0 FOR SHARE",
+      construct: "The FOR SHARE row-locking clause",
+      alternative: "an exact WHERE that also matches the values you read",
+    },
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE amount < 0 FOR KEY SHARE",
+      construct: "The FOR KEY SHARE row-locking clause",
+      alternative: "Drop the clause and guard any follow-up UPDATE or DELETE",
+    },
+    // The clause keeps its meaning in any casing and after the trailing
+    // OF / NOWAIT / SKIP LOCKED options.
+    {
+      sql: "SELECT entry_id FROM ledger_entries ORDER BY ts for Update of ledger_entries skip locked",
+      construct: "The FOR UPDATE row-locking clause",
+      alternative: "Drop the clause",
+    },
+    {
+      sql: "WITH recent AS (SELECT entry_id FROM ledger_entries FOR KEY SHARE) SELECT entry_id FROM recent",
+      construct: "The FOR KEY SHARE row-locking clause",
+      alternative: "matches the values you read",
+    },
     {
       sql: "SELECT relname FROM ledger_entries, (pg_class)",
       construct: "A parenthesized table list such as FROM a, (b)",
@@ -468,6 +503,20 @@ test("validateExpenseSql keeps accepting SQL that only resembles an unsupported 
     },
     {
       sql: "SELECT account_id, SUM(amount) OVER (PARTITION BY account_id ORDER BY ts) AS running FROM ledger_entries",
+      relations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE note ILIKE '%for update%' OR note ILIKE '%for key share%'",
+      relations: ["ledger_entries"],
+    },
+    // FOR also separates the arguments of SUBSTRING, where it never starts a
+    // locking clause, whether a word or a number follows it.
+    {
+      sql: "SELECT SUBSTRING(note FROM 1 FOR LENGTH(note)) AS note_start FROM ledger_entries",
+      relations: ["ledger_entries"],
+    },
+    {
+      sql: "SELECT entry_id FROM ledger_entries WHERE SUBSTRING(counterparty FROM 1 FOR 3) = 'ACM'",
       relations: ["ledger_entries"],
     },
     {

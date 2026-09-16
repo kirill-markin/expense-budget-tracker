@@ -244,6 +244,22 @@ const GROUP_BY_CLAUSE_END: ReadonlySet<string> = new Set([
   "window",
 ]);
 
+/**
+ * The words that complete a PostgreSQL row-locking clause after FOR, longest
+ * spelling first within each strength. FOR also separates the arguments of
+ * SUBSTRING(value FROM start FOR count), so the clause is only recognized when
+ * one of these full sequences follows. UPDATE, NO, KEY, and SHARE are
+ * unreserved keywords and therefore legal bare column names, so these sequences
+ * stay free of false positives only while no allowlisted relation has a column
+ * named update, no, key, or share.
+ */
+const ROW_LOCKING_CLAUSE_TAILS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["no", "key", "update"],
+  ["update"],
+  ["key", "share"],
+  ["share"],
+];
+
 const ALLOWED_RELATION_NAMES = [
   "ledger_entries",
   "accounts",
@@ -1277,16 +1293,41 @@ const failUnsupportedSqlConstruct = (construct: string, remedy: string): never =
   );
 
 /**
+ * Returns the row-locking clause that starts at `index`, where that token is
+ * FOR, or null when FOR opens something else. The returned name is the clause
+ * as PostgreSQL spells it, so the error can quote what the caller wrote.
+ */
+const matchRowLockingClause = (
+  tokens: ReadonlyArray<SqlToken>,
+  index: number,
+): string | null => {
+  for (const tail of ROW_LOCKING_CLAUSE_TAILS) {
+    if (tail.every((word, offset) => tokens[index + 1 + offset]?.lower === word)) {
+      return `FOR ${tail.join(" ").toUpperCase()}`;
+    }
+  }
+  return null;
+};
+
+/**
  * Rejects the SQL constructs restricted SQL does not support, naming the
- * construct the caller wrote and its supported alternative. Each one puts a
+ * construct the caller wrote and its supported alternative. Most of them put a
  * parenthesis after a keyword, so without these rules DISTINCT ON and a named
  * WINDOW would pass as ordinary keyword grammar, and the function allowlist
- * would blame a ROLLUP() or CUBE() function that was never called.
+ * would blame a ROLLUP() or CUBE() function that was never called. A row-locking
+ * clause has no parenthesis at all: classification reads the leading keyword, so
+ * a locking SELECT validates as an ordinary read and then behaves differently per
+ * surface. A read-only agent transaction rejects it with an opaque 25006,
+ * parse analysis rejects it with 0A000 as soon as it is combined with an
+ * aggregate, GROUP BY, DISTINCT, or a set operation, and a writable script
+ * transaction honours it and holds the lock for the rest of the script.
+ * Rejecting the whole family here replaces those three outcomes with one rule.
  *
  * Every rule is anchored on the full keyword sequence, so plain SELECT
- * DISTINCT, inline OVER (...) windows, and ordinary GROUP BY column lists keep
- * working. String literals are blanked before tokenization, so text that merely
- * contains these words never reaches this check.
+ * DISTINCT, inline OVER (...) windows, ordinary GROUP BY column lists, and the
+ * FOR of SUBSTRING(value FROM start FOR count) keep working. String literals are
+ * blanked before tokenization, so text that merely contains these words never
+ * reaches this check.
  */
 const assertNoUnsupportedSqlConstructs = (tokens: ReadonlyArray<SqlToken>): void => {
   let depth = 0;
@@ -1346,6 +1387,16 @@ const assertNoUnsupportedSqlConstructs = (tokens: ReadonlyArray<SqlToken>): void
         "WITHIN GROUP (...)",
         "Ordered-set aggregates are unavailable in restricted SQL and have no alternative; compute the value outside SQL.",
       );
+    }
+
+    if (token.lower === "for") {
+      const rowLockingClause = matchRowLockingClause(tokens, index);
+      if (rowLockingClause !== null) {
+        failUnsupportedSqlConstruct(
+          `The ${rowLockingClause} row-locking clause`,
+          "Drop the clause and guard any follow-up UPDATE or DELETE with an exact WHERE that also matches the values you read.",
+        );
+      }
     }
 
     if (token.lower === "group" && nextToken?.lower === "by") {
