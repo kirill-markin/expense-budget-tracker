@@ -80,6 +80,6 @@ export const isDirectionActualOverPlanned = (
   planned: number,
   actual: number,
 ): boolean =>
-  direction === "spend" && planned > 0 && actual > planned;
+  direction === "spend" && actual > planned;
 
 export const isNegativeValueOver = (value: number): boolean => value < 0;
