@@ -11,7 +11,6 @@ import {
   SQL_EXECUTE_TOOL,
   SQL_QUERY_TOOL,
 } from "@expense-budget-tracker/agent-shared/agent-tools";
-import { getAmbiguousMutationInstructions } from "@expense-budget-tracker/agent-shared/agent-results";
 import {
   MCP_SQL_STATEMENT_TIMEOUT_MS,
   type ValidatedExpenseSql,
@@ -25,6 +24,7 @@ import {
 import { DbTransactionOutcomeUnknownError } from "@/server/db/contextRunner";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import {
+  ChatSqlMutationOutcomeUnknownError,
   ChatUserSqlExecutionError,
   throwChatUserSqlExecutionError,
   type ChatSqlExecutionContext,
@@ -945,10 +945,12 @@ test("an unknown mutation outcome sends sql_execute to verify instead of retryin
     CONTEXT,
     {
       execQuery: async (): Promise<never> => {
-        throw new DbTransactionOutcomeUnknownError(
-          "commit",
-          new Error("Connection terminated unexpectedly"),
-          undefined,
+        throw new ChatSqlMutationOutcomeUnknownError(
+          new DbTransactionOutcomeUnknownError(
+            "commit",
+            new Error("Connection terminated unexpectedly"),
+            undefined,
+          ),
         );
       },
       log: unexpectedLog,
@@ -958,13 +960,76 @@ test("an unknown mutation outcome sends sql_execute to verify instead of retryin
   );
 
   assert.equal(result.succeeded, false);
+  assert.equal(result.isMutating, true);
   assert.equal(result.workspaceId, null);
-  const payload = parseToolPayload(result.output);
-  assert.equal(payload.error?.code, "sql_mutation_outcome_unknown");
-  assert.deepEqual(payload.error?.details, { outcome: "unknown", retryable: false });
-  assert.equal(payload.instructions, getAmbiguousMutationInstructions());
-  assert.ok(!result.output.includes("Connection terminated unexpectedly"));
-  assert.ok(!result.output.includes("call sql_execute again"));
+  assert.deepEqual(result.error, {
+    name: "ChatSqlMutationOutcomeUnknownError",
+    message: "The SQL mutation transaction outcome is unknown",
+  });
+  assert.deepEqual(parseToolPayload(result.output), {
+    ok: false,
+    error: {
+      code: "sql_mutation_outcome_unknown",
+      message: "The SQL mutation transaction outcome is unknown",
+      details: { outcome: "unknown", retryable: false },
+    },
+    instructions: "Do not blindly retry the mutation. Use sql_query to verify whether it applied, and retry sql_execute only if the change is confirmed absent.",
+  });
+});
+
+/**
+ * A transaction that lost its outcome before sql_execute issued its statement,
+ * here a turn lock whose ROLLBACK also failed, cannot have applied the
+ * mutation, so it is redacted like any other unexpected failure rather than
+ * reported as an ambiguous write.
+ */
+test("a lost outcome before sql_execute issued its mutation is redacted rather than reported as ambiguous", async (): Promise<void> => {
+  const loggedEvents: Array<string> = [];
+
+  const result = await executeChatToolCallWithDependencies(
+    "sql_execute",
+    JSON.stringify({ sql: MUTATION_SQL }),
+    CONTEXT,
+    {
+      execQuery: async (): Promise<never> => {
+        throw new DbTransactionOutcomeUnknownError(
+          "transaction",
+          new ChatTurnCancelledError("session-1", "turn-1"),
+          new Error("Connection terminated unexpectedly"),
+        );
+      },
+      log: createLogCollector(loggedEvents),
+      listChatWorkspaces: listAllWorkspaces,
+      loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
+    },
+  );
+
+  assert.equal(result.succeeded, false);
+  assert.equal(result.isMutating, true);
+  assert.equal(result.workspaceId, null);
+  assert.deepEqual(result.error, {
+    name: "DbTransactionOutcomeUnknownError",
+    message: "PostgreSQL transaction outcome is unknown",
+  });
+  assert.deepEqual(parseToolPayload(result.output), {
+    ok: false,
+    error: {
+      code: "internal_error",
+      message: "The tool request could not be completed",
+    },
+    instructions: "Retry sql_execute once. If it fails again, stop and report the server error.",
+  });
+  assert.deepEqual(loggedEvents.map((event) => JSON.parse(event) as unknown), [{
+    domain: "chat",
+    action: "error",
+    vendor: "openai",
+    stage: "agent",
+    error: "Chat tool sql_execute failed: DbTransactionOutcomeUnknownError: PostgreSQL transaction outcome is unknown",
+    requestId: CONTEXT.requestId,
+    userId: CONTEXT.userId,
+    workspaceId: CONTEXT.workspaceId,
+    sessionId: CONTEXT.sessionId,
+  }]);
 });
 
 /**
