@@ -10,7 +10,6 @@ test("machine API schema allowlist excludes internal and removed relations", ():
   assert.equal(relationNames.includes("monthly_category_share_items"), false);
   assert.equal(relationNames.includes("monthly_category_share_keys"), false);
   assert.equal(relationNames.includes("budget_comments"), false);
-  assert.equal(relationNames.includes("budget_adjustments"), false);
 });
 
 test("loadAllowedSchema resolves a real workspace context before querying", async (): Promise<void> => {
@@ -83,11 +82,11 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
     schema.find((relation) => relation.name === "budget_lines")?.hints,
     {
       summary: "Append-only monthly Base budget rows with last-write-wins semantics.",
-      related: ["workspace_settings"],
+      related: ["budget_adjustments", "workspace_settings"],
       optional: false,
       notes: [
         "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
-        "budget_lines carries only the Base plan. The budget the app displays is that plan plus a separate budget_adjustments component these tools cannot read or write, so a planned_value read or written here can differ from the value the user sees.",
+        "budget_lines carries only the Base plan. The budget the app displays adds the matching budget_adjustments rows, which these tools can read but not write, so a planned_value read or written here can differ from the value the user sees.",
       ],
       columnConstraints: [
         {
@@ -100,6 +99,21 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
           allowedValues: ["income", "spend"],
           notes: ["The budget model uses only income and spend. A CHECK constraint rejects writing any other value; rows stored before that constraint was added were not scanned and may still hold another value."],
         },
+      ],
+    },
+  );
+  assert.deepEqual(
+    schema.find((relation) => relation.name === "budget_adjustments")?.hints,
+    {
+      summary: "Monthly budget adjustments the app adds on top of the Base plan in budget_lines.",
+      related: ["budget_lines", "workspace_settings"],
+      optional: false,
+      primaryKey: ["adjustment_id"],
+      notes: [
+        "SELECT-only relation edited through the app. Do not INSERT, UPDATE, or DELETE.",
+        "One row per adjustment; several rows can share one budget_month, direction, and category.",
+        "The plan the app displays for a budget_month, direction, and category is the winning Base budget_lines planned_value plus SUM(amount) of the matching rows here, counting a missing side as 0 and converting no currency.",
+        "origin is an internal column these tools cannot read, so SELECT * and any reference to origin fail with a permission error; list the columns explicitly.",
       ],
     },
   );

@@ -913,7 +913,7 @@ Use this connection-state sequence exactly:
   then `get_schema` with the exact `Review Personal` ID; no SQL tool.
 - Expected confirmation boundary: none.
 - Expected result shape: `Success<{workspace, relations, limits}>` with only the
-  seven allowlisted relation names and their deployed columns and hints, and
+  eight allowlisted relation names and their deployed columns and hints, and
   `limits` carrying `maxRows`, `maxResultChars`, and `statementTimeoutMs`.
 - Pass evidence: result workspace matches `Review Personal`; no system catalogs
   or records are returned; no `sql_query` or `sql_execute` call occurs.

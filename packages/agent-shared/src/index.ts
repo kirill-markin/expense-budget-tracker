@@ -140,11 +140,11 @@ const AGENT_SCHEMA_HINTS: Readonly<Record<AllowedRelationName, AgentSchemaHints>
   },
   budget_lines: {
     summary: "Append-only monthly Base budget rows with last-write-wins semantics.",
-    related: ["workspace_settings"],
+    related: ["budget_adjustments", "workspace_settings"],
     optional: false,
     notes: [
       "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
-      "budget_lines carries only the Base plan. The budget the app displays is that plan plus a separate budget_adjustments component these tools cannot read or write, so a planned_value read or written here can differ from the value the user sees.",
+      "budget_lines carries only the Base plan. The budget the app displays adds the matching budget_adjustments rows, which these tools can read but not write, so a planned_value read or written here can differ from the value the user sees.",
     ],
     columnConstraints: [
       {
@@ -157,6 +157,18 @@ const AGENT_SCHEMA_HINTS: Readonly<Record<AllowedRelationName, AgentSchemaHints>
         allowedValues: ["income", "spend"],
         notes: ["The budget model uses only income and spend. A CHECK constraint rejects writing any other value; rows stored before that constraint was added were not scanned and may still hold another value."],
       },
+    ],
+  },
+  budget_adjustments: {
+    summary: "Monthly budget adjustments the app adds on top of the Base plan in budget_lines.",
+    related: ["budget_lines", "workspace_settings"],
+    optional: false,
+    primaryKey: ["adjustment_id"],
+    notes: [
+      "SELECT-only relation edited through the app. Do not INSERT, UPDATE, or DELETE.",
+      "One row per adjustment; several rows can share one budget_month, direction, and category.",
+      "The plan the app displays for a budget_month, direction, and category is the winning Base budget_lines planned_value plus SUM(amount) of the matching rows here, counting a missing side as 0 and converting no currency.",
+      "origin is an internal column these tools cannot read, so SELECT * and any reference to origin fail with a permission error; list the columns explicitly.",
     ],
   },
   account_metadata: {
@@ -304,7 +316,7 @@ export const buildSelectWorkspaceAction = (target: AgentUrlTarget): AgentAction 
 export const buildSchemaAction = (target: AgentUrlTarget): AgentAction => ({
   name: "schema",
   method: "GET",
-  description: "Inspect allowed relations, columns, and hints. Relation operations: ledger_entries, budget_lines, workspace_settings, and account_metadata support SELECT and, under existing write-approval rules, INSERT, UPDATE, and DELETE; the derived accounts view and global worker-owned fx_rates_raw and fx_rates_daily relations are SELECT-only.",
+  description: "Inspect allowed relations, columns, and hints. Relation operations: ledger_entries, budget_lines, workspace_settings, and account_metadata support SELECT and, under existing write-approval rules, INSERT, UPDATE, and DELETE; budget_adjustments, the derived accounts view, and global worker-owned fx_rates_raw and fx_rates_daily relations are SELECT-only.",
   url: resolveActionUrl(target),
   auth: "ApiKey",
 });

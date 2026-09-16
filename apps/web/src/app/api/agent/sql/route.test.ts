@@ -130,6 +130,7 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
         "ledger_entries",
         "accounts",
         "budget_lines",
+        "budget_adjustments",
         "workspace_settings",
         "account_metadata",
         "fx_rates_raw",

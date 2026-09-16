@@ -707,6 +707,49 @@ test("validateExpenseSql rejects INSERT, UPDATE, and DELETE targets that are SEL
   }
 });
 
+test("validateExpenseSql reads budget_adjustments and rejects every write to it", (): void => {
+  const validated = validateExpenseSql(
+    "SELECT adjustment_id, budget_month, direction, category, amount, note FROM budget_adjustments ORDER BY budget_month",
+  );
+  assert.deepEqual(validated, {
+    sql: "SELECT adjustment_id, budget_month, direction, category, amount, note FROM budget_adjustments ORDER BY budget_month",
+    statements: [{
+      sql: "SELECT adjustment_id, budget_month, direction, category, amount, note FROM budget_adjustments ORDER BY budget_month",
+      isMutating: false,
+      referencedRelations: ["budget_adjustments"],
+    }],
+  });
+
+  const rejectedWrites: ReadonlyArray<Readonly<{ sql: string; message: string }>> = [
+    {
+      sql: "INSERT INTO budget_adjustments (workspace_id, budget_month, direction, category, amount) VALUES ('workspace-1', '2026-03-01', 'spend', 'Food', 10)",
+      message: "Relation budget_adjustments is SELECT-only and cannot be targeted by INSERT in restricted SQL",
+    },
+    {
+      sql: "UPDATE budget_adjustments SET amount = 10 WHERE adjustment_id = 'adjustment-1'",
+      message: "Relation budget_adjustments is SELECT-only and cannot be targeted by UPDATE in restricted SQL",
+    },
+    {
+      sql: "DELETE FROM budget_adjustments WHERE adjustment_id = 'adjustment-1'",
+      message: "Relation budget_adjustments is SELECT-only and cannot be targeted by DELETE in restricted SQL",
+    },
+  ];
+
+  for (const { sql, message } of rejectedWrites) {
+    assert.throws(
+      () => validateExpenseSql(sql),
+      (error: unknown): boolean => {
+        assert.ok(error instanceof SqlPolicyError, `Expected SqlPolicyError for ${sql}`);
+        assert.deepEqual(
+          { code: error.code, message: error.message },
+          { code: "read_only_relation_mutation_not_allowed", message },
+        );
+        return true;
+      },
+    );
+  }
+});
+
 test("validateExpenseSql rejects data-modifying CTEs before relation-specific mutation checks", (): void => {
   assert.throws(
     () => validateExpenseSql(
