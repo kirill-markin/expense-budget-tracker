@@ -238,9 +238,26 @@ type SqlPolicyRejectedEvent = Readonly<{
  */
 export const MAX_SQL_POLICY_LOG_MESSAGE_CHARS = 500;
 
+/** The answered error codes logged as a caller-provokable SQL request failure. */
+export type SqlRequestFailedCode = "request_deadline_exceeded" | "agent_sql_failed";
+
+/**
+ * A SQL request answered with a failure any caller can provoke, such as either
+ * execution deadline. Like a policy rejection it is ordinary client traffic, so
+ * the action is deliberately kept out of the `error` family that the CloudWatch
+ * web error alarm pages on.
+ */
+type SqlRequestFailedEvent = Readonly<{
+  domain: "sql-api";
+  action: "sql_request_failed";
+  code: SqlRequestFailedCode;
+  message: string;
+}>;
+
 type SqlApiEvent =
   | Readonly<{ domain: "sql-api"; action: "query"; durationMs: number; rowCount: number }>
   | Readonly<{ domain: "sql-api"; action: "error"; error: string }>
+  | SqlRequestFailedEvent
   | SqlPolicyRejectedEvent;
 
 type AuthEvent =

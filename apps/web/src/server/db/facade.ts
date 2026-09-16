@@ -35,6 +35,7 @@ type DbFacade = Readonly<{
   withUserContext: <T>(userId: string, workspaceId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withUserOnlyContext: <T>(userId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withReadOnlyRestrictedUserContext: <T>(userId: string, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
+  withReadOnlyRestrictedTrustedIdentityContext: <T>(identity: UserIdentity, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withRestrictedTrustedIdentityContext: <T>(identity: UserIdentity, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
 }>;
 
@@ -189,6 +190,24 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
       dependencies.getPool(),
       {
         userId,
+        workspaceId,
+        statementTimeoutMs,
+        restrictedRole: "api_sql_reader",
+      },
+      callback,
+    );
+  },
+  withReadOnlyRestrictedTrustedIdentityContext: async <T>(
+    identity: UserIdentity,
+    workspaceId: string,
+    statementTimeoutMs: number,
+    callback: (queryFn: QueryFn) => Promise<T>,
+  ): Promise<T> => {
+    await dependencies.ensureTrustedIdentityProvisioned(identity, workspaceId);
+    return runWithReadOnlyContext(
+      dependencies.getPool(),
+      {
+        userId: identity.userId,
         workspaceId,
         statementTimeoutMs,
         restrictedRole: "api_sql_reader",

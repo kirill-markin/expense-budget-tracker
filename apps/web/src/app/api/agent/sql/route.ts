@@ -4,7 +4,12 @@
  * Uses the same restricted SQL policy as the API Gateway SQL API, but returns
  * the stable agent envelope.
  */
-import { SqlPolicyError, validateExpenseSql } from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
+  SqlPolicyError,
+  validateExpenseSql,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
   authenticateAgentRequest,
   getAgentAuthError,
@@ -12,9 +17,21 @@ import {
 } from "@/server/agent/apiKeyAuth";
 import { buildSuccessEnvelope } from "@/server/agent/envelope";
 import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agent/responses";
-import { executeAgentSql, getAgentSqlAllowedRelations, getUserSqlExecutionMessage, isUserSqlExecutionError } from "@/server/agent/sql";
+import {
+  AgentSqlMutationOutcomeUnknownError,
+  executeAgentSql,
+  getAgentSqlAllowedRelations,
+  getUserSqlExecutionMessage,
+  isClientProvokedSqlError,
+  isSqlStatementTimeoutError,
+  isUserSqlExecutionError,
+} from "@/server/agent/sql";
 import { resolveWorkspaceIdForSql } from "@/server/agent/workspaceSelection";
-import { log, MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "@/server/logger";
+import {
+  log,
+  MAX_SQL_POLICY_LOG_MESSAGE_CHARS,
+  type SqlRequestFailedCode,
+} from "@/server/logger";
 
 type AgentSqlBody = Readonly<{
   sql?: unknown;
@@ -90,6 +107,8 @@ const buildSqlResultInstructions = (
 ): string =>
   `Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only allowlisted pure aggregate, date, text, cast, and window functions may be called and a rejected call lists the allowed names, and returned rows are capped at ${String(maxRows)} per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata. A result over limits.maxResultChars (${String(maxResultChars)}) characters drops rows across the whole request and sets truncated instead of failing. A result that still comes back over that budget has already dropped every row, so what is left is the echoed statement text and the fixed per-statement fields: shorten the statement text and send fewer statements per request. For a read cut by this character budget, the kept rows are that statement's first rows, so select fewer or shorter columns, send fewer statements per request, or page the rest with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip. Any mutation in the result already committed and must not be re-sent; it keeps reporting the rows it affected in rowCount, an INSERT or UPDATE's dropped rows are readable with a narrow follow-up SELECT, and a DELETE's are gone.`;
 
+const SQL_DEADLINE_INSTRUCTIONS = "Nothing in this request was applied. Send less work per request, such as fewer statements, a narrower date range, or fewer rows, then retry.";
+
 type AgentSqlRouteDependencies = Readonly<{
   authenticateAgentRequest: (request: Request) => Promise<AgentAuthenticatedRequest>;
   resolveWorkspaceIdForSql: typeof resolveWorkspaceIdForSql;
@@ -102,6 +121,39 @@ const DEFAULT_AGENT_SQL_ROUTE_DEPENDENCIES: AgentSqlRouteDependencies = {
   resolveWorkspaceIdForSql,
   executeAgentSql,
   log,
+};
+
+// Both helpers log the answered error code and the reason, cut to the same
+// prefix a policy rejection is cut to. No submitted statement text reaches
+// these messages.
+//
+// Only `error` pages: the CloudWatch web error alarm matches that action, so a
+// failure a caller can provoke at will takes sql_request_failed instead.
+const logAgentSqlError = (
+  logEvent: AgentSqlRouteDependencies["log"],
+  code: string,
+  message: string,
+): void => {
+  // The `error` event carries one string, so the code leads it and the reason
+  // follows.
+  logEvent({
+    domain: "sql-api",
+    action: "error",
+    error: `${code}: ${message.slice(0, MAX_SQL_POLICY_LOG_MESSAGE_CHARS)}`,
+  });
+};
+
+const logAgentSqlRequestFailure = (
+  logEvent: AgentSqlRouteDependencies["log"],
+  code: SqlRequestFailedCode,
+  message: string,
+): void => {
+  logEvent({
+    domain: "sql-api",
+    action: "sql_request_failed",
+    code,
+    message: message.slice(0, MAX_SQL_POLICY_LOG_MESSAGE_CHARS),
+  });
 };
 
 export const postAgentSqlRouteWithDeps = async (
@@ -200,6 +252,46 @@ export const postAgentSqlRouteWithDeps = async (
       );
     }
 
+    // Neither deadline failure arrives unwrapped from a transaction that might
+    // have committed: a mutation the context runner left in doubt arrives as
+    // AgentSqlMutationOutcomeUnknownError, which the branch below answers.
+    if (error instanceof SqlExecutionDeadlineError) {
+      logAgentSqlRequestFailure(dependencies.log, "request_deadline_exceeded", error.message);
+      return jsonAgentError(
+        504,
+        "request_deadline_exceeded",
+        error.message,
+        SQL_DEADLINE_INSTRUCTIONS,
+        { timeoutMs: error.timeoutMs, retryable: true },
+        [],
+      );
+    }
+
+    if (isSqlStatementTimeoutError(error)) {
+      const cancelledMessage = `SQL execution was cancelled after exceeding its ${String(SQL_STATEMENT_TIMEOUT_MS)} ms deadline`;
+      logAgentSqlRequestFailure(dependencies.log, "request_deadline_exceeded", cancelledMessage);
+      return jsonAgentError(
+        504,
+        "request_deadline_exceeded",
+        cancelledMessage,
+        SQL_DEADLINE_INSTRUCTIONS,
+        { timeoutMs: SQL_STATEMENT_TIMEOUT_MS, retryable: true },
+        [],
+      );
+    }
+
+    if (error instanceof AgentSqlMutationOutcomeUnknownError) {
+      logAgentSqlError(dependencies.log, "sql_mutation_outcome_unknown", error.message);
+      return jsonAgentError(
+        500,
+        "sql_mutation_outcome_unknown",
+        error.message,
+        "Do not blindly retry this request. Its writes may already be applied: verify the current data with a SELECT through POST /api/agent/sql, and resend only the changes confirmed absent.",
+        { outcome: "unknown", retryable: false },
+        [],
+      );
+    }
+
     if (isUserSqlExecutionError(error)) {
       return jsonAgentError(
         400,
@@ -211,6 +303,16 @@ export const postAgentSqlRouteWithDeps = async (
       );
     }
 
+    // What reaches here is a failure this route cannot classify: infrastructure
+    // failure, or a transaction left in doubt with no mutation issued among it.
+    // A database error from a client-provokable SQLSTATE class is logged as a
+    // request failure; everything else pages.
+    const terminalMessage = error instanceof Error ? error.message : String(error);
+    if (isClientProvokedSqlError(error)) {
+      logAgentSqlRequestFailure(dependencies.log, "agent_sql_failed", terminalMessage);
+    } else {
+      logAgentSqlError(dependencies.log, "agent_sql_failed", terminalMessage);
+    }
     return jsonAgentUnavailable(
       "agent_sql_failed",
       "Agent SQL is temporarily unavailable",

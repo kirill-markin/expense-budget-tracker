@@ -24,6 +24,8 @@ type ProvisioningCall = Readonly<{
   method: "ensureUserProvisioned" | "ensureTrustedIdentityProvisioned";
   userId: string;
   workspaceId: string;
+  /** Zero when provisioning ran before the transaction opened. */
+  commandsIssuedBefore: number;
 }>;
 
 const emptyResult = (command: string): QueryResult => ({
@@ -67,13 +69,19 @@ const createHarness = (): Harness => {
       },
       getPool: (): Pool => pool,
       ensureUserProvisioned: async (userId, workspaceId): Promise<void> => {
-        provisioning.push({ method: "ensureUserProvisioned", userId, workspaceId });
+        provisioning.push({
+          method: "ensureUserProvisioned",
+          userId,
+          workspaceId,
+          commandsIssuedBefore: commands.length,
+        });
       },
       ensureTrustedIdentityProvisioned: async (identity, workspaceId): Promise<void> => {
         provisioning.push({
           method: "ensureTrustedIdentityProvisioned",
           userId: identity.userId,
           workspaceId,
+          commandsIssuedBefore: commands.length,
         });
       },
     }),
@@ -115,6 +123,7 @@ test("a restricted read runs read-only as api_sql_reader after provisioning the 
     method: "ensureUserProvisioned",
     userId: "user-1",
     workspaceId: "workspace-2",
+    commandsIssuedBefore: 0,
   }]);
   assert.deepEqual(harness.commands, [
     {
@@ -122,6 +131,43 @@ test("a restricted read runs read-only as api_sql_reader after provisioning the 
       params: [],
     },
     ...contextCommands("user-1", "workspace-2", "api_sql_reader"),
+    { text: "SELECT account_id FROM accounts", params: [] },
+    { text: "COMMIT", params: [] },
+  ]);
+});
+
+test("a restricted trusted-identity read runs read-only as api_sql_reader after provisioning the identity", async (): Promise<void> => {
+  const harness = createHarness();
+
+  await harness.facade.withReadOnlyRestrictedTrustedIdentityContext(
+    IDENTITY,
+    "workspace-2",
+    STATEMENT_TIMEOUT_MS,
+    async (queryFn) => queryFn("SELECT account_id FROM accounts", []),
+  );
+
+  // Provisioning is where workspace membership is checked, so it runs before
+  // the transaction opens.
+  assert.deepEqual(harness.provisioning, [{
+    method: "ensureTrustedIdentityProvisioned",
+    userId: IDENTITY.userId,
+    workspaceId: "workspace-2",
+    commandsIssuedBefore: 0,
+  }]);
+  // The role switch comes after every set_config, which api_sql_reader cannot
+  // execute, and before the user SQL, which must run as the reader.
+  assert.deepEqual(harness.commands, [
+    {
+      text: "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+      params: [],
+    },
+    { text: "SELECT set_config('app.user_id', $1, true)", params: [IDENTITY.userId] },
+    { text: "SELECT set_config('app.workspace_id', $1, true)", params: ["workspace-2"] },
+    {
+      text: "SELECT set_config('statement_timeout', $1, true)",
+      params: [String(STATEMENT_TIMEOUT_MS)],
+    },
+    { text: "SET LOCAL ROLE api_sql_reader", params: [] },
     { text: "SELECT account_id FROM accounts", params: [] },
     { text: "COMMIT", params: [] },
   ]);
@@ -141,6 +187,7 @@ test("a restricted trusted-identity call runs writable as api_sql_executor", asy
     method: "ensureTrustedIdentityProvisioned",
     userId: IDENTITY.userId,
     workspaceId: "workspace-2",
+    commandsIssuedBefore: 0,
   }]);
   assert.deepEqual(harness.commands, [
     { text: "BEGIN", params: [] },
