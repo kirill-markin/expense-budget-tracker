@@ -153,7 +153,7 @@ The repository uses the GA Langfuse JS/TS SDK v5 with OpenTelemetry ingestion. I
 
 `LANGFUSE_BASE_URL` can point to Langfuse Cloud or a self-hosted deployment. The application does not discover the server major; self-hosted operators must confirm the target is on Langfuse v4 before completing the project cutover.
 
-Project-dependent migration checks remain blocked until access to the confirmed target project is configured. That includes project reads or writes, representative non-production ingestion, evaluator and export cutovers, and rollback verification. Check these project surfaces separately:
+Migration status, evaluators, and exports are project state, not repository state. Check them on the target host:
 
 - [Migration status](https://cloud.langfuse.com/v4-migration)
 - [Evaluators](https://cloud.langfuse.com/project/~/evals), including active Legacy rows
