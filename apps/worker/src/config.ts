@@ -39,9 +39,9 @@ export async function getDatabaseUrl(): Promise<string> {
 // USD is the target — no rate needed (implicit 1.0).
 // RUB is fetched separately via CBR (ECB suspended RUB since March 2022).
 // RSD is fetched separately via NBS (National Bank of Serbia).
-// BGN stops at 2025-12-31: Bulgaria adopted the euro and ECB no longer publishes it,
-// so the "ECB did not return rates for currencies: BGN" warning is expected, not a fetcher failure.
-export const ECB_CURRENCIES: string[] = ["BGN", "DKK", "EUR", "GBP", "TRY"];
+// BGN is not fetched: Bulgaria adopted the euro and ECB closed the series at 2025-12-31.
+// Historical BGN rows stay in fx_rates_raw and keep serving reports.
+export const ECB_CURRENCIES: string[] = ["DKK", "EUR", "GBP", "TRY"];
 
 export const ECB_EARLIEST_DATE: string = "1999-01-04";
 
