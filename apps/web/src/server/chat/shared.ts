@@ -141,7 +141,7 @@ export const getChatSqlPolicyMessage = (error: SqlPolicyError): string => {
     return "Recursive CTE SEARCH and CYCLE clauses are not supported in chat queries. Rewrite the CTE without those clauses";
   }
   if (error.code === "read_only_relation_mutation_not_allowed") {
-    return `${error.message}. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata`;
+    return `${error.message}. Use SELECT to read it; write only to ledger_entries, budget_lines, budget_adjustments, workspace_settings, or account_metadata`;
   }
   return error.message;
 };

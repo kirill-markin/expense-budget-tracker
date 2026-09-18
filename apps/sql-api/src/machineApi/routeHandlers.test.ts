@@ -145,7 +145,7 @@ test("handleSqlRoute rejects SELECT-only mutations before workspace resolution",
   assert.equal(payload.error.code, "read_only_relation_mutation_not_allowed");
   assert.equal(
     payload.instructions,
-    "Relation fx_rates_daily is SELECT-only and cannot be targeted by DELETE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata.",
+    "Relation fx_rates_daily is SELECT-only and cannot be targeted by DELETE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, budget_adjustments, workspace_settings, or account_metadata.",
   );
   assert.equal(workspaceResolutionCount, 0);
   assert.equal(trustedQueryCount, 0);

@@ -227,7 +227,7 @@ test("postAgentSqlRouteWithDeps rejects SELECT-only mutations before workspace o
   });
   assert.equal(
     payload.instructions,
-    "Relation accounts is SELECT-only and cannot be targeted by UPDATE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata.",
+    "Relation accounts is SELECT-only and cannot be targeted by UPDATE in restricted SQL. Use SELECT to read it; write only to ledger_entries, budget_lines, budget_adjustments, workspace_settings, or account_metadata.",
   );
   assert.equal(workspaceResolutionCount, 0);
   assert.equal(executionCount, 0);
