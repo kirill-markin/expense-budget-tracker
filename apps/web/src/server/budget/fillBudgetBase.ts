@@ -1,11 +1,13 @@
 /**
  * Fill budget base values for remaining months of the year.
  *
- * Given a starting month (e.g. "2026-03"), inserts the same base value
- * for every subsequent month through December of that year. Used by
- * the "fill to year-end" UI action. Returns the number of months filled.
+ * Given a starting month (e.g. "2026-03"), saves the same base value
+ * for every subsequent month through December of that year. A zero value
+ * clears the plan of those months, because zero and "no plan" are the same
+ * state. Used by the "fill to year-end" UI action. Returns the number of
+ * months filled.
  */
-import { insertBudgetPlan } from "@/server/budget/insertBudgetPlan";
+import { saveBudgetPlan } from "@/server/budget/saveBudgetPlan";
 
 type FillBudgetBaseParams = Readonly<{
   fromMonth: string;
@@ -25,7 +27,7 @@ export const fillBudgetBase = async (userId: string, workspaceId: string, params
 
   await Promise.all(
     targetMonths.map((month) =>
-      insertBudgetPlan(userId, workspaceId, {
+      saveBudgetPlan(userId, workspaceId, {
         month,
         direction: params.direction,
         category: params.category,
