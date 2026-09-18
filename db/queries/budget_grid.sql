@@ -14,8 +14,7 @@ WITH latest_base_plans AS (
       ORDER BY inserted_at DESC
     ) AS rn
   FROM budget_lines
-  WHERE kind = 'base'
-    AND direction IN ('income', 'spend')
+  WHERE direction IN ('income', 'spend')
     AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
     AND budget_month < to_date($3, 'YYYY-MM') + interval '1 month'
 ),
@@ -158,7 +157,7 @@ WITH latest_day AS (
   FROM fx_rates_daily
 ),
 data_currencies AS (
-  SELECT DISTINCT currency FROM budget_lines WHERE kind = 'base'
+  SELECT DISTINCT currency FROM budget_lines
   UNION
   SELECT DISTINCT currency FROM ledger_entries
 ),

@@ -38,7 +38,6 @@ test("filling to year-end with zero clears every remaining month", async (t): Pr
     assert.equal(call.userId, "user-1");
     assert.equal(call.workspaceId, "workspace-1");
     assert.equal(call.params.plannedValue, 0);
-    assert.equal(call.params.kind, "base");
     assert.equal(call.params.direction, "spend");
     assert.equal(call.params.category, "Groceries");
   }

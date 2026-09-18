@@ -23,7 +23,7 @@ DISTINCT ON, named WINDOW clauses, GROUP BY ROLLUP, CUBE and GROUPING SETS, WITH
 Prefer ILIKE over LOWER(...) for case-insensitive text matching.
 Prefer explicit date literals calculated before running SQL, and filter with closed-open ranges: ts >= start date and ts < exclusive end date. Never write NOW() into a stored value such as ledger_entries.ts; calculate an explicit literal for every value you insert or update.
 Use regular single-quoted literals and double an embedded apostrophe, for example 'customer''s'. Dollar-quoted strings and E'...' escape strings are not supported.
-ON CONFLICT is not supported. Read first, then run an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists, except append-only budget_lines, where every plan change is a new INSERT.
+ON CONFLICT is not supported. Read first, then run an explicit INSERT when the row is missing or an explicit UPDATE when the row already exists.
 INSERT statements must set workspace_id explicitly; read it from workspace_settings first.
 A SELECT returns at most ${MAX_SQL_ROWS} rows per statement, some entrypoints additionally apply one shared ${MAX_SQL_RETURNED_ROWS}-row returned-row budget across all statements of a single call that SELECT rows and mutation RETURNING rows both consume, and a mutation may affect at most ${MAX_SQL_MUTATION_ROWS} rows per call, so split larger changes into sequential calls.
 Every result is JSON with an ok flag; when ok is false, read the error message and fix the statement before retrying. Before treating a result set as complete, compare returnedRowCount with totalRowCount and check truncated, and narrow the query when the result was capped.`;
@@ -69,16 +69,16 @@ const WRITE_CHECKLIST_GUIDE = `### Checklist for every entry
 - not a duplicate`;
 
 // Exported so the guide's most policy-sensitive example is validated against the restricted SQL policy in tests.
-export const BUDGET_WINNING_ROWS_QUERY_EXAMPLE = `WITH ranked AS (SELECT budget_month, direction, category, planned_value, currency, ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC, planned_value DESC, currency DESC) AS rn FROM budget_lines WHERE budget_month >= '<first-affected-month-start YYYY-MM-DD>' AND budget_month < '<exclusive-end-month-start YYYY-MM-DD>' AND direction IN ('income', 'spend')) SELECT budget_month, direction, category, planned_value, currency FROM ranked WHERE rn = 1 ORDER BY budget_month, direction, category`;
+export const BUDGET_PLAN_ROWS_QUERY_EXAMPLE = `SELECT budget_month, direction, category, planned_value, currency FROM budget_lines WHERE budget_month >= '<first-affected-month-start YYYY-MM-DD>' AND budget_month < '<exclusive-end-month-start YYYY-MM-DD>' AND direction IN ('income', 'spend') ORDER BY budget_month, direction, category`;
 
 const WRITE_BUDGET_ROWS_GUIDE = `### Budget rows
 
-Budget plans live in budget_lines and are append-only. Change a plan by inserting a new row; never update or delete an earlier row to change a plan. The latest inserted_at row wins for each budget_month, direction, and category.
-Read the current winning rows for the affected months before proposing a change, and reuse the exact category spelling already used in the user's history. Resolve the winners with ROW_NUMBER() over each budget_month, direction, and category, ordered by inserted_at DESC with planned_value and currency as tiebreakers for rows sharing that timestamp, and keep rn = 1:
-${BUDGET_WINNING_ROWS_QUERY_EXAMPLE}
-budget_month is the first day of the month, for example 2026-03-01. direction is income or spend. A CHECK constraint rejects writing any other value; rows stored before that constraint was added were not scanned and may still hold another value. kind accepts only base. planned_value is an absolute value, not a signed ledger amount.
+Budget plans live in budget_lines, which holds exactly one row per budget_month, direction, and category. Change a plan with an UPDATE of that row, create the first one with an INSERT, and remove a plan by deleting its row, because planned_value can never be zero and a cleared cell is a missing row.
+Read the current rows for the affected months before proposing a change, and reuse the exact category spelling already used in the user's history:
+${BUDGET_PLAN_ROWS_QUERY_EXAMPLE}
+budget_month is the first day of the month, for example 2026-03-01. direction is income or spend. planned_value is an absolute value, not a signed ledger amount. CHECK constraints reject any other budget_month day, any other direction, and a zero planned_value.
 currency is required and must be the workspace reporting currency read from workspace_settings.reporting_currency, because planned values are never converted on read.
-Adjustments live in budget_adjustments, one row per adjustment, and are not append-only: correct or remove an adjustment with a plain UPDATE or DELETE of that row. Several rows can share one budget_month, direction, and category, and the plan the app displays for a cell is the winning Base budget_lines row plus SUM(amount) of the matching adjustment rows. An INSERT may name only workspace_id, budget_month, direction, category, amount, and note, and workspace_id must always be set explicitly; an UPDATE may name only budget_month, direction, category, amount, and note. budget_month is the first day of the month, direction is income or spend, and amount is a whole number, positive or negative, in the workspace reporting currency.
+Adjustments live in budget_adjustments, one row per adjustment: correct or remove an adjustment with a plain UPDATE or DELETE of that row. Several rows can share one budget_month, direction, and category, and the plan the app displays for a cell is its budget_lines row plus SUM(amount) of the matching adjustment rows. An INSERT may name only workspace_id, budget_month, direction, category, amount, and note, and workspace_id must always be set explicitly; an UPDATE may name only budget_month, direction, category, amount, and note. budget_month is the first day of the month, direction is income or spend, and amount is a whole number, positive or negative, in the workspace reporting currency.
 Budget rows follow the same approval, probe-then-batch, and verification rules as entry imports; verify by rerunning that read for the affected months.`;
 
 const WRITE_QUESTIONS_GUIDE = `### Questions
@@ -137,7 +137,7 @@ export const SPENDING_BY_CATEGORY_QUERY_EXAMPLE = `SELECT category, SUM(amount) 
  * skip. It mirrors the income and spend rows of QUERY in
  * apps/web/src/server/budget/getBudgetGrid.ts, which
  * apps/web/src/server/budget/planVsActualRecipe.postgres.test.ts compares on
- * real Postgres: planned is the winning Base row plus the month's summed
+ * real Postgres: planned is the cell's budget_lines row plus the month's summed
  * budget_adjustments and stays unconverted, each ledger amount converts through
  * fx_rates_daily on its entry date unless it is already in the reporting
  * currency, and spend is negated so money out counts as a positive actual.
@@ -148,16 +148,10 @@ export const SPENDING_BY_CATEGORY_QUERY_EXAMPLE = `SELECT category, SUM(amount) 
  * unconverted_entries counts, per row, the entries SUM skipped for lack of a
  * rate; the grid only flags such rows.
  */
-export const BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE = `WITH ranked_plan AS (
-  SELECT direction, category, planned_value,
-         ROW_NUMBER() OVER (PARTITION BY budget_month, direction, category ORDER BY inserted_at DESC, planned_value DESC, currency DESC) AS rn
-  FROM budget_lines
-  WHERE budget_month = '<month-start YYYY-MM-DD>' AND kind = 'base' AND direction IN ('income', 'spend')
-),
-base_plan AS (
+export const BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE = `WITH base_plan AS (
   SELECT direction, category, planned_value AS planned_base
-  FROM ranked_plan
-  WHERE rn = 1
+  FROM budget_lines
+  WHERE budget_month = '<month-start YYYY-MM-DD>' AND direction IN ('income', 'spend')
 ),
 adjustment AS (
   SELECT direction, category, SUM(amount) AS planned_adjustment
@@ -213,7 +207,7 @@ ${RECENT_TRANSACTIONS_QUERY_EXAMPLE}
 ${SPENDING_BY_CATEGORY_QUERY_EXAMPLE}
 
 ### Budget plan vs actual (explicit month)
-planned adds the sum of the month's budget_adjustments to the winning Base row in budget_lines, counting a missing side as 0, the way the budget dashboard computes its plan. By convention planned_value is stored in the workspace reporting currency, but the schema does not enforce that, so read budget_lines.currency first when a workspace may still hold legacy rows in another currency. Read <reporting-currency> from workspace_settings.reporting_currency. Like the budget dashboard, the query converts each ledger amount through fx_rates_daily on its entry date unless it is already in the reporting currency, and negates spend so spending and income both read as positive actuals; a positive remaining is still to spend or earn, and a negative one means spend over plan or income above plan. unconverted_entries counts the row's entries in another currency with no rate for their date; SUM skips them, so a non-zero count means actual and remaining are incomplete: report that gap instead of presenting the totals as complete.
+planned adds the sum of the month's budget_adjustments to the cell's budget_lines row, counting a missing side as 0, the way the budget dashboard computes its plan. By convention planned_value is stored in the workspace reporting currency, but the schema does not enforce that, so read budget_lines.currency first when a workspace may still hold legacy rows in another currency. Read <reporting-currency> from workspace_settings.reporting_currency. Like the budget dashboard, the query converts each ledger amount through fx_rates_daily on its entry date unless it is already in the reporting currency, and negates spend so spending and income both read as positive actuals; a positive remaining is still to spend or earn, and a negative one means spend over plan or income above plan. unconverted_entries counts the row's entries in another currency with no rate for their date; SUM skips them, so a non-zero count means actual and remaining are incomplete: report that gap instead of presenting the totals as complete.
 ${BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE}
 
 ### FX conversion at query time
