@@ -29,6 +29,7 @@ const makeRow = (
   planned: plannedBase - 10,
   actual: 20,
   hasUnconvertible: false,
+  hasActualRows: false,
 });
 
 const protect = (
@@ -75,6 +76,7 @@ test("stale protection restores an acknowledged row missing from the response", 
     planned: 250,
     actual: 0,
     hasUnconvertible: false,
+    hasActualRows: false,
   }]);
   assert.equal(reconciled.protections.size, 1);
 });

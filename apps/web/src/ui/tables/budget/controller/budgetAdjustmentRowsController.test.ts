@@ -717,6 +717,7 @@ test("rolls definitive patch projections back while keeping the failed draft edi
           planned: 101,
           actual: 0,
           hasUnconvertible: false,
+          hasActualRows: false,
         },
         {
           month: "2027-01",
@@ -727,6 +728,7 @@ test("rolls definitive patch projections back while keeping the failed draft edi
           planned: 200,
           actual: 0,
           hasUnconvertible: false,
+          hasActualRows: false,
         },
       ],
       "2026-12",
@@ -1174,6 +1176,7 @@ test("keeps filtered editor ownership private while projected budget rows stay m
     planned: 147,
     actual: 0,
     hasUnconvertible: false,
+    hasActualRows: false,
   }];
 
   assert.deepEqual(
@@ -1294,6 +1297,7 @@ test("retains protected adjustment cells by explicit remount-safe owner identity
     planned: 0,
     actual: 0,
     hasUnconvertible: false,
+    hasActualRows: false,
   };
   const releaseFirst = harness.runtime.commands.retainCell("first-editor", location);
   const releaseSecond = harness.runtime.commands.retainCell("second-editor", location);
@@ -1653,6 +1657,7 @@ test("projects normalized drafts onto budget rows across the loaded range", (): 
       planned: 11,
       actual: 0,
       hasUnconvertible: false,
+      hasActualRows: false,
     },
     {
       month: "2026-07",
@@ -1663,6 +1668,7 @@ test("projects normalized drafts onto budget rows across the loaded range", (): 
       planned: 6,
       actual: 0,
       hasUnconvertible: false,
+      hasActualRows: false,
     },
     {
       month: "2026-07",
@@ -1673,6 +1679,7 @@ test("projects normalized drafts onto budget rows across the loaded range", (): 
       planned: 0,
       actual: 5,
       hasUnconvertible: false,
+      hasActualRows: false,
     },
   ];
 
@@ -1699,6 +1706,7 @@ test("projects normalized drafts onto budget rows across the loaded range", (): 
         planned: 4,
         actual: 0,
         hasUnconvertible: false,
+        hasActualRows: false,
       },
     ],
   );

@@ -34,6 +34,8 @@ import {
 
 type CategoryRowProps = Readonly<{
   block: DirectionBlock;
+  /** Unfiltered category list of this direction, for the adjustment editor. */
+  directionCategories: ReadonlyArray<string>;
   category: string;
   effectiveAllowlist: ReadonlySet<string> | null;
   localBaseAcknowledgementByCell: BudgetBaseLocalAcknowledgementByCell;
@@ -86,6 +88,7 @@ type CategoryRowProps = Readonly<{
 export const CategoryRow = (props: CategoryRowProps): ReactElement => {
   const {
     block,
+    directionCategories,
     category,
     effectiveAllowlist,
     localBaseAcknowledgementByCell,
@@ -252,7 +255,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 month={column.month}
                 direction={block.direction}
                 category={category}
-                directionCategories={block.categories}
+                directionCategories={directionCategories}
                 effectiveAllowlist={effectiveAllowlist}
                 currentMonth={currentMonth}
                 plannedBase={cell.plannedBase}
@@ -296,7 +299,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   month={column.month}
                   direction={block.direction}
                   category={category}
-                  directionCategories={block.categories}
+                  directionCategories={directionCategories}
                   effectiveAllowlist={effectiveAllowlist}
                   currentMonth={currentMonth}
                   plannedBase={cell.plannedBase}

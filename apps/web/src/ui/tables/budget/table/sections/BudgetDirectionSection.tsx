@@ -17,6 +17,11 @@ import { DirectionSubtotalRow } from "./direction/DirectionSubtotalRow";
 
 export type BudgetDirectionSectionProps = Readonly<{
   block: DirectionBlock;
+  /**
+   * Every category of this direction, including the ones the grid hides. Only
+   * the rendered rows are filtered; pickers must keep the full list.
+   */
+  directionCategories: ReadonlyArray<string>;
   effectiveAllowlist: ReadonlySet<string> | null;
   localBaseAcknowledgementByCell: BudgetBaseLocalAcknowledgementByCell;
   columnSequence: ReadonlyArray<ColumnEntry>;
@@ -70,6 +75,7 @@ export type BudgetDirectionSectionProps = Readonly<{
 export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): ReactElement => {
   const {
     block,
+    directionCategories,
     effectiveAllowlist,
     localBaseAcknowledgementByCell,
     columnSequence,
@@ -115,11 +121,12 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
         openDrillDown={openDrillDown}
       />
       {block.categories
-        .filter((category) => category !== "" || block.categories.length > 1)
+        .filter((category) => category !== "" || directionCategories.length > 1)
         .map((category) => (
           <CategoryRow
             key={category}
             block={block}
+            directionCategories={directionCategories}
             category={category}
             effectiveAllowlist={effectiveAllowlist}
             localBaseAcknowledgementByCell={

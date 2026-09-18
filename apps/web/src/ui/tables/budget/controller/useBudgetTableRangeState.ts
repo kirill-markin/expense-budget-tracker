@@ -58,6 +58,7 @@ type UseBudgetTableRangeStateParams = Readonly<{
     monthTo: string,
     signal: AbortSignal,
   ) => Promise<BudgetAdjustmentRangeLoadOutcome>;
+  onCategoryEdited: (direction: string, category: string) => void;
 }>;
 
 export type BudgetTableRangeState = Readonly<{
@@ -247,6 +248,7 @@ const buildNewBudgetRow = (
   planned: plannedBase + plannedModifier,
   actual: 0,
   hasUnconvertible: false,
+  hasActualRows: false,
 });
 
 const applyPlanSaveToRows = (
@@ -316,6 +318,7 @@ export const useBudgetTableRangeState = ({
   refreshToken,
   onVisibleRangeRefreshStart,
   loadBudgetRange,
+  onCategoryEdited,
 }: UseBudgetTableRangeStateParams): BudgetTableRangeState => {
   const [allRows, setAllRows] = useState<ReadonlyArray<BudgetRow>>(rows);
   const [
@@ -503,8 +506,9 @@ export const useBudgetTableRangeState = ({
     category: string,
     value: number,
   ): void => {
+    onCategoryEdited(direction, category);
     setAllRows((previous) => applyPlanSaveToRows(previous, month, direction, category, value));
-  }, []);
+  }, [onCategoryEdited]);
 
   const issueBaseMutation = useCallback((
     cells: ReadonlyArray<BudgetBaseCell>,
@@ -537,9 +541,10 @@ export const useBudgetTableRangeState = ({
       (month): BudgetBaseCell => ({ month, direction, category }),
     );
     const mutationGeneration = issueBaseMutation(targetCells);
+    onCategoryEdited(direction, category);
     setAllRows((previous) => applyFillMonthsToRows(previous, sourceMonth, direction, category, baseValue));
     return mutationGeneration;
-  }, [issueBaseMutation]);
+  }, [issueBaseMutation, onCategoryEdited]);
 
   const publishBaseAcknowledgements = useCallback((
     cells: ReadonlyArray<BudgetBaseCell>,
