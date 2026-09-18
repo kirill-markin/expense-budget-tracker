@@ -15,6 +15,7 @@ import { runWithContext, runWithReadOnlyContext, type QueryFn } from "@/server/d
 type BudgetDirection = "income" | "spend";
 
 type BaseLineSeed = Readonly<{
+  budgetMonth: string;
   direction: BudgetDirection;
   category: string;
   plannedValue: string;
@@ -73,6 +74,11 @@ const postgresTestSkip: boolean | string = databaseUrlsMissing && process.env.CI
 const FIXTURE_MONTH = "2026-03";
 const MONTH_START = "2026-03-01";
 const NEXT_MONTH_START = "2026-04-01";
+// Each grid read puts this month on one side of the plan window's
+// GREATEST(planFrom, monthFrom) bound and the fixture month on the other, so a
+// plan row seeded here is excluded only by that bound, whichever operand wins.
+const PREVIOUS_MONTH = "2026-02";
+const PREVIOUS_MONTH_START = "2026-02-01";
 const REPORTING_CURRENCY = "USD";
 
 const EUR_USD_RATE: FxRateSeed = {
@@ -84,8 +90,16 @@ const EUR_USD_RATE: FxRateSeed = {
 
 // One row per cell, which budget_lines_cell_idx now enforces.
 const BASE_LINES: ReadonlyArray<BaseLineSeed> = [
-  { direction: "income", category: "Salary", plannedValue: "1000" },
-  { direction: "spend", category: "Groceries", plannedValue: "400" },
+  { budgetMonth: MONTH_START, direction: "income", category: "Salary", plannedValue: "1000" },
+  { budgetMonth: MONTH_START, direction: "spend", category: "Groceries", plannedValue: "400" },
+  // Belongs to the next month and must not reach the fixture month's plan.
+  { budgetMonth: NEXT_MONTH_START, direction: "income", category: "Salary", plannedValue: "777" },
+  // Kept out of the plan by the GREATEST(planFrom, monthFrom) lower bound in
+  // both grid reads: the first read has this month inside the grid month range
+  // but before planFrom, the second has it at planFrom but before monthFrom. It
+  // carries no ledger entries, so the recipe, which is bound to the fixture
+  // month, still matches the grid.
+  { budgetMonth: PREVIOUS_MONTH_START, direction: "income", category: "Salary", plannedValue: "888" },
 ];
 
 const ADJUSTMENTS: ReadonlyArray<AdjustmentSeed> = [
@@ -198,7 +212,7 @@ const insertFixture = async (pool: pg.Pool, fixture: RecipeFixture): Promise<voi
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           fixture.workspaceId,
-          MONTH_START,
+          line.budgetMonth,
           line.direction,
           line.category,
           REPORTING_CURRENCY,
@@ -267,16 +281,26 @@ const assertSessionRole = async (queryFn: QueryFn, effectiveRole: SessionRole): 
 
 /**
  * Runs QUERY the way getBudgetGrid does: as app under the workspace context,
- * with plan and actual ranges that both cover the fixture month.
+ * with the caller's monthFrom and planFrom, which production drives to either
+ * order as the displayed range moves around the current month. monthTo and
+ * actualTo stay at the fixture month in every read: widening monthTo would admit
+ * the next month's base line and adjustment, and widening actualTo alone would
+ * change nothing because LEAST(monthTo, actualTo) already clamps the actual
+ * window to the fixture month.
  */
-const readGridCells = async (pool: pg.Pool, fixture: RecipeFixture): Promise<ReadonlyArray<PlanVsActualCell>> => {
+const readGridCells = async (
+  pool: pg.Pool,
+  fixture: RecipeFixture,
+  monthFrom: string,
+  planFrom: string,
+): Promise<ReadonlyArray<PlanVsActualCell>> => {
   const result = await runWithContext(
     pool,
     { userId: fixture.userId, workspaceId: fixture.workspaceId, statementTimeoutMs: null, restrictedRole: null },
     async (queryFn) => {
       await assertSessionRole(queryFn, "app");
       // getBudgetGrid's parameter order: reportCurrency, monthFrom, monthTo, planFrom, actualTo.
-      return queryFn(QUERY, [REPORTING_CURRENCY, FIXTURE_MONTH, FIXTURE_MONTH, FIXTURE_MONTH, FIXTURE_MONTH]);
+      return queryFn(QUERY, [REPORTING_CURRENCY, monthFrom, FIXTURE_MONTH, planFrom, FIXTURE_MONTH]);
     },
   );
   return z.array(GRID_ROW_SCHEMA).parse(result.rows).map((row): PlanVsActualCell => ({
@@ -341,9 +365,20 @@ test(
       await insertFixture(ownerPool, fixture);
       fixtureSeeded = true;
 
-      const gridCells = await readGridCells(appPool, fixture);
+      const gridCells = await readGridCells(appPool, fixture, PREVIOUS_MONTH, FIXTURE_MONTH);
+      // The same read with the plan window's two operands swapped, which
+      // production reaches when the displayed range starts after the current
+      // month. monthFrom wins GREATEST(planFrom, monthFrom) here, so dropping it
+      // would admit the previous month's plan row; the read above pins planFrom
+      // the same way, and together they pin both operands.
+      const reversedPlanWindowCells = await readGridCells(appPool, fixture, FIXTURE_MONTH, PREVIOUS_MONTH);
       const recipeCells = await readRecipeCells(appPool, fixture);
       assert.deepEqual(gridCells, EXPECTED_CELLS, "the grid must show the fixture's plan and actuals");
+      assert.deepEqual(
+        reversedPlanWindowCells,
+        EXPECTED_CELLS,
+        "the grid must show the same cells when monthFrom wins the plan window's lower bound",
+      );
       assert.deepEqual(recipeCells, gridCells, "the recipe must return the grid's figures");
     } finally {
       try {
