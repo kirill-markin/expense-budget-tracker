@@ -6,26 +6,18 @@
 -- all-pairs rows in fx_rates_daily, so budget reads use simple equality joins.
 
 -- QUERY: main budget grid — planned (Base plus normalized adjustments) vs actual per month/direction/category.
-WITH latest_base_plans AS (
-  SELECT
-    budget_month, direction, category, planned_value,
-    ROW_NUMBER() OVER (
-      PARTITION BY budget_month, direction, category
-      ORDER BY inserted_at DESC
-    ) AS rn
-  FROM budget_lines
-  WHERE direction IN ('income', 'spend')
-    AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
-    AND budget_month < to_date($3, 'YYYY-MM') + interval '1 month'
-),
-planned_base AS (
+WITH planned_base AS (
+  -- budget_lines_cell_idx makes this one row per month/direction/category
+  -- within the workspace, so the plan needs no winner resolution.
   SELECT
     to_char(budget_month, 'YYYY-MM') AS month,
     direction,
     category,
     planned_value::double precision AS planned_base
-  FROM latest_base_plans
-  WHERE rn = 1
+  FROM budget_lines
+  WHERE direction IN ('income', 'spend')
+    AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
+    AND budget_month < to_date($3, 'YYYY-MM') + interval '1 month'
 ),
 adjustments AS (
   SELECT
