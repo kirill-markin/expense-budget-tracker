@@ -5,6 +5,7 @@ import { Fragment, type ReactElement } from "react";
 import type { NumberFormat } from "@/lib/locale";
 import type { BudgetBaseLocalAcknowledgementByCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import {
+  buildBudgetValueColumns,
   type CellValue,
   type ColumnEntry,
   type DirectionBlock,
@@ -12,6 +13,7 @@ import {
 } from "@/ui/tables/budget/budgetTableLogic";
 import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
+import { AddCategoryRow } from "./direction/AddCategoryRow";
 import { CategoryRow } from "./direction/CategoryRow";
 import { DirectionSubtotalRow } from "./direction/DirectionSubtotalRow";
 
@@ -70,6 +72,7 @@ export type BudgetDirectionSectionProps = Readonly<{
   ) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
+  onAddCategory: (direction: string, category: string) => void;
 }>;
 
 export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): ReactElement => {
@@ -98,10 +101,15 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
     onFillMonthsAcknowledged,
     onSyncStart,
     onSyncEnd,
+    onAddCategory,
   } = props;
 
   const useFilteredSubtotals = effectiveAllowlist !== null;
   const allowedCategoriesArray = effectiveAllowlist !== null ? [...effectiveAllowlist] : null;
+  // Transfers carry no named categories, and in filtered mode a new name would
+  // render as a masked, unusable row, so neither case offers the control.
+  const canAddCategory = effectiveAllowlist === null
+    && (block.direction === "income" || block.direction === "spend");
 
   return (
     <Fragment>
@@ -152,6 +160,13 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
             onSyncEnd={onSyncEnd}
           />
         ))}
+      {canAddCategory && (
+        <AddCategoryRow
+          direction={block.direction}
+          valueColumnCount={buildBudgetValueColumns(columnSequence, currentMonth).length}
+          onAddCategory={onAddCategory}
+        />
+      )}
     </Fragment>
   );
 };

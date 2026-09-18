@@ -122,6 +122,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
                   }
                   onSyncStart={controller.onSyncStart}
                   onSyncEnd={controller.onSyncEnd}
+                  onAddCategory={controller.addCategory}
                 />
               </Fragment>
             ))}

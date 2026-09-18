@@ -675,6 +675,57 @@ tbody tr:last-child .currentMonthActual {
   color: #fff;
 }
 
+.addCategoryButton {
+  padding-block: 2px;
+  padding-inline: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-align: start;
+  cursor: var(--cursor-pointer);
+}
+
+.addCategoryButton:hover {
+  color: var(--text);
+}
+
+.addCategoryButton:focus-visible,
+.addCategoryInput:focus {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.addCategoryInput {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding-block: 2px;
+  padding-inline: 4px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  outline: none;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+}
+
+.addCategoryInput[aria-invalid="true"] {
+  border-color: #c0392b;
+}
+
+.addCategoryMessage {
+  padding: 4px 10px;
+  text-align: start;
+}
+
+.addCategoryError {
+  color: #c0392b;
+  font-size: 11px;
+  white-space: normal;
+}
+
 .copyToast {
   position: fixed;
   bottom: 16px;
