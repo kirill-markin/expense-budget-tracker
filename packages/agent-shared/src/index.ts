@@ -143,7 +143,7 @@ const AGENT_SCHEMA_HINTS: Readonly<Record<AllowedRelationName, AgentSchemaHints>
     related: ["budget_adjustments", "workspace_settings"],
     optional: false,
     notes: [
-      "Exactly one row per budget_month, direction, and category: UPDATE that row to change a plan, INSERT to create the first one, and DELETE it to remove the plan, because planned_value can never be zero.",
+      "Exactly one row per budget_month, direction, and category: UPDATE that row to change a plan, INSERT to create the first one, and DELETE it to remove the plan, because planned_value can never be zero. That key, together with workspace_id, is enforced by the unique index budget_lines_cell_idx over workspace_id, budget_month, direction, and category, so an INSERT into a cell that already has a row, or an UPDATE that moves a row onto another cell that already has one, fails with a unique violation.",
       "budget_lines carries only the Base plan. The budget the app displays adds the matching budget_adjustments rows, so a planned_value read or written here can differ from the value the user sees.",
     ],
     columnConstraints: [
