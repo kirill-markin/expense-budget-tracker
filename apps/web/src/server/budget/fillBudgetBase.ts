@@ -31,7 +31,6 @@ export const fillBudgetBase = async (userId: string, workspaceId: string, params
         month,
         direction: params.direction,
         category: params.category,
-        kind: "base",
         plannedValue: params.baseValue,
       }),
     ),

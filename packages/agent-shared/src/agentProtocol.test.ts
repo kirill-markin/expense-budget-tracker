@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ACCOUNT_BALANCES_QUERY_EXAMPLE,
+  BUDGET_PLAN_ROWS_QUERY_EXAMPLE,
   BUDGET_PLAN_VS_ACTUAL_QUERY_EXAMPLE,
-  BUDGET_WINNING_ROWS_QUERY_EXAMPLE,
   FX_CONVERSION_QUERY_EXAMPLE,
   QUERY_RECIPES_GUIDE,
   RECENT_TRANSACTIONS_QUERY_EXAMPLE,
@@ -34,10 +34,10 @@ test("the shared write guide composes every section exactly once and in order", 
 });
 
 // The guide teaches this SQL shape to production agents, so the restricted SQL policy must keep accepting it.
-test("the budget winning-rows example the guide ships passes the restricted SQL policy", (): void => {
-  assert.ok(WRITING_DATA_GUIDE.includes(BUDGET_WINNING_ROWS_QUERY_EXAMPLE));
+test("the budget plan-rows example the guide ships passes the restricted SQL policy", (): void => {
+  assert.ok(WRITING_DATA_GUIDE.includes(BUDGET_PLAN_ROWS_QUERY_EXAMPLE));
 
-  const validated = validateSingleReadOnlyExpenseSql(BUDGET_WINNING_ROWS_QUERY_EXAMPLE);
+  const validated = validateSingleReadOnlyExpenseSql(BUDGET_PLAN_ROWS_QUERY_EXAMPLE);
   assert.deepEqual(validated.statements[0]?.referencedRelations, ["budget_lines"]);
   assert.equal(validated.statements[0]?.isMutating, false);
 });

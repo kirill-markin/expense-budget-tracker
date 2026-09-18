@@ -81,23 +81,18 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
   assert.deepEqual(
     schema.find((relation) => relation.name === "budget_lines")?.hints,
     {
-      summary: "Append-only monthly Base budget rows with last-write-wins semantics.",
+      summary: "Monthly Base budget rows, one row per budget month, direction, and category.",
       related: ["budget_adjustments", "workspace_settings"],
       optional: false,
       notes: [
-        "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
+        "Exactly one row per budget_month, direction, and category: UPDATE that row to change a plan, INSERT to create the first one, and DELETE it to remove the plan, because planned_value can never be zero.",
         "budget_lines carries only the Base plan. The budget the app displays adds the matching budget_adjustments rows, so a planned_value read or written here can differ from the value the user sees.",
       ],
       columnConstraints: [
         {
-          column: "kind",
-          allowedValues: ["base"],
-          notes: ["Only base is accepted."],
-        },
-        {
           column: "direction",
           allowedValues: ["income", "spend"],
-          notes: ["The budget model uses only income and spend. A CHECK constraint rejects writing any other value; rows stored before that constraint was added were not scanned and may still hold another value."],
+          notes: ["The budget model uses only income and spend. A CHECK constraint rejects writing any other value."],
         },
       ],
     },
@@ -114,7 +109,7 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
         "INSERT may name only workspace_id, budget_month, direction, category, amount, and note, and UPDATE only budget_month, direction, category, amount, and note; adjustment_id, created_at, and updated_at are generated and workspace_id never changes, so naming one of them fails with a permission error that names the table instead of the offending column.",
         "budget_month is the first day of the month, for example 2026-03-01; amount is a whole number between -9007199254740991 and 9007199254740991; category is 1 to 200 characters; note is at most 2000 characters. CHECK constraints reject any other value.",
         "One row per adjustment; several rows can share one budget_month, direction, and category.",
-        "The plan the app displays for a budget_month, direction, and category is the winning Base budget_lines planned_value plus SUM(amount) of the matching rows here, counting a missing side as 0 and converting no currency.",
+        "The plan the app displays for a budget_month, direction, and category is the budget_lines planned_value plus SUM(amount) of the matching rows here, counting a missing side as 0 and converting no currency.",
         "origin is an internal column these tools can neither read nor write, so SELECT * and any reference to origin fail with a permission error; list the columns explicitly and let an inserted row take its default origin.",
       ],
       columnConstraints: [{

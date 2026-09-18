@@ -18,7 +18,6 @@ type BaseLineSeed = Readonly<{
   direction: BudgetDirection;
   category: string;
   plannedValue: string;
-  insertedAt: string;
 }>;
 
 type AdjustmentSeed = Readonly<{
@@ -83,11 +82,10 @@ const EUR_USD_RATE: FxRateSeed = {
   rate: "1.5",
 };
 
+// One row per cell, which budget_lines_cell_idx now enforces.
 const BASE_LINES: ReadonlyArray<BaseLineSeed> = [
-  // Superseded by the later Salary row.
-  { direction: "income", category: "Salary", plannedValue: "900", insertedAt: "2026-02-20T10:00:00.000Z" },
-  { direction: "income", category: "Salary", plannedValue: "1000", insertedAt: "2026-02-25T10:00:00.000Z" },
-  { direction: "spend", category: "Groceries", plannedValue: "400", insertedAt: "2026-02-25T10:00:00.000Z" },
+  { direction: "income", category: "Salary", plannedValue: "1000" },
+  { direction: "spend", category: "Groceries", plannedValue: "400" },
 ];
 
 const ADJUSTMENTS: ReadonlyArray<AdjustmentSeed> = [
@@ -196,8 +194,8 @@ const insertFixture = async (pool: pg.Pool, fixture: RecipeFixture): Promise<voi
     for (const line of BASE_LINES) {
       await client.query(
         `INSERT INTO public.budget_lines
-           (workspace_id, budget_month, direction, category, kind, currency, planned_value, inserted_at)
-         VALUES ($1, $2, $3, $4, 'base', $5, $6, $7)`,
+           (workspace_id, budget_month, direction, category, currency, planned_value)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           fixture.workspaceId,
           MONTH_START,
@@ -205,7 +203,6 @@ const insertFixture = async (pool: pg.Pool, fixture: RecipeFixture): Promise<voi
           line.category,
           REPORTING_CURRENCY,
           line.plannedValue,
-          line.insertedAt,
         ],
       );
     }

@@ -4,7 +4,7 @@
  * Runs seven queries in true parallel (separate DB connections via queryAs):
  * 1. QUERY — planned Base plus grouped normalized adjustments vs actual per
  *    month/direction/category, with FX conversion via exact-date joins on
- *    fx_rates_daily. Base uses last-write-wins on inserted_at.
+ *    fx_rates_daily. budget_lines holds one row per cell.
  * 2. BUDGET_ADJUSTMENTS_DETAIL_QUERY — normalized adjustment rows for the
  *    loaded month range.
  * 3. CUMULATIVE_BALANCE — actual income/spend/transfer totals before the loaded
@@ -109,8 +109,7 @@ export const QUERY = `
         ORDER BY inserted_at DESC
       ) AS rn
     FROM budget_lines
-    WHERE kind = 'base'
-      AND direction IN ('income', 'spend')
+    WHERE direction IN ('income', 'spend')
       AND budget_month >= GREATEST(to_date($4, 'YYYY-MM'), to_date($2, 'YYYY-MM'))
       AND budget_month < to_date($3, 'YYYY-MM') + interval '1 month'
   ),
@@ -248,7 +247,7 @@ const WARNINGS_QUERY = `
     FROM fx_rates_daily
   ),
   data_currencies AS (
-    SELECT DISTINCT currency FROM budget_lines WHERE kind = 'base'
+    SELECT DISTINCT currency FROM budget_lines
     UNION
     SELECT DISTINCT currency FROM ledger_entries
   ),

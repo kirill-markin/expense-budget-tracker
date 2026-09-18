@@ -191,7 +191,7 @@ export const GET_GUIDE_TOOL = {
   description: "Use this read-only tool to fetch the current usage protocol for this workspace data model before acting on it. It returns guidance text only and never reads or changes workspace data. Call it with topic writing_data before the first INSERT, UPDATE, or DELETE of a task, including any bank statement or CSV import, with topic sql_dialect before writing SQL against this restricted surface, and with topic query_recipes before composing reporting SQL by hand.",
   inputFields: [{
     name: "topic",
-    description: "Which protocol to return. sql_dialect: restricted SQL rules, allowed functions, blocked constructs, date and text matching, result limits, and the result envelope. writing_data: the write protocol for ledger_entries imports and append-only budget_lines, covering duplicate detection, transfers, category reuse, approval, batch limits, resuming, and balance verification. query_recipes: canonical read queries for balances, recent transactions, spending by category, budget plan versus actual, and FX conversion.",
+    description: "Which protocol to return. sql_dialect: restricted SQL rules, allowed functions, blocked constructs, date and text matching, result limits, and the result envelope. writing_data: the write protocol for ledger_entries imports and budget_lines plans, covering duplicate detection, transfers, category reuse, approval, batch limits, resuming, and balance verification. query_recipes: canonical read queries for balances, recent transactions, spending by category, budget plan versus actual, and FX conversion.",
     required: true,
   }],
   annotations: READ_ONLY_ANNOTATIONS,
