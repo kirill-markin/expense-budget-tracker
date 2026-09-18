@@ -86,7 +86,7 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
       optional: false,
       notes: [
         "Append-only Base budget rows. The latest inserted_at value wins for each budget_month, direction, and category.",
-        "budget_lines carries only the Base plan. The budget the app displays adds the matching budget_adjustments rows, which these tools can read but not write, so a planned_value read or written here can differ from the value the user sees.",
+        "budget_lines carries only the Base plan. The budget the app displays adds the matching budget_adjustments rows, so a planned_value read or written here can differ from the value the user sees.",
       ],
       columnConstraints: [
         {
@@ -110,11 +110,18 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
       optional: false,
       primaryKey: ["adjustment_id"],
       notes: [
-        "SELECT-only relation edited through the app. Do not INSERT, UPDATE, or DELETE.",
+        "Edited through the app and, under existing write-approval rules, with INSERT, UPDATE, and DELETE here; workspace_id must be set explicitly on every INSERT, read it from workspace_settings.",
+        "INSERT may name only workspace_id, budget_month, direction, category, amount, and note, and UPDATE only budget_month, direction, category, amount, and note; adjustment_id, created_at, and updated_at are generated and workspace_id never changes, so naming one of them fails with a permission error that names the table instead of the offending column.",
+        "budget_month is the first day of the month, for example 2026-03-01; amount is a whole number between -9007199254740991 and 9007199254740991; category is 1 to 200 characters; note is at most 2000 characters. CHECK constraints reject any other value.",
         "One row per adjustment; several rows can share one budget_month, direction, and category.",
         "The plan the app displays for a budget_month, direction, and category is the winning Base budget_lines planned_value plus SUM(amount) of the matching rows here, counting a missing side as 0 and converting no currency.",
-        "origin is an internal column these tools cannot read, so SELECT * and any reference to origin fail with a permission error; list the columns explicitly.",
+        "origin is an internal column these tools can neither read nor write, so SELECT * and any reference to origin fail with a permission error; list the columns explicitly and let an inserted row take its default origin.",
       ],
+      columnConstraints: [{
+        column: "direction",
+        allowedValues: ["income", "spend"],
+        notes: ["The budget model uses only income and spend. A CHECK constraint rejects writing any other value."],
+      }],
     },
   );
   assert.deepEqual(

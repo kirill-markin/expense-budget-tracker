@@ -55,7 +55,7 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
   }
 
   if (error.code === "read_only_relation_mutation_not_allowed") {
-    return `${error.message}. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata.`;
+    return `${error.message}. Use SELECT to read it; write only to ledger_entries, budget_lines, budget_adjustments, workspace_settings, or account_metadata.`;
   }
 
   if (error.code === "recursive_cte_search_cycle_not_allowed") {
