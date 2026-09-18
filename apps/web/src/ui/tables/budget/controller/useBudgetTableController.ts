@@ -76,6 +76,7 @@ export type BudgetTableController = Readonly<{
   fxBreakdownMonth: string | null;
   mebByLiq: Readonly<Record<string, Readonly<Record<string, number>>>>;
   scrollToCurrentMonth: () => void;
+  addCategory: (direction: string, category: string) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
   handlePlanSave: (
@@ -154,6 +155,22 @@ export const useBudgetTableController = (
       return next;
     });
   }, []);
+
+  // Categories the user named in the grid before any row exists for them. They
+  // are rendered from here until the first saved plan value makes the server
+  // return them, and are gone after a reload when nothing was saved.
+  const [sessionAddedCategoriesByDirection, setSessionAddedCategoriesByDirection] =
+    useState<ReadonlyMap<string, ReadonlyArray<string>>>(new Map());
+  const addCategory = useCallback((direction: string, category: string): void => {
+    markCategoryEdited(direction, category);
+    setSessionAddedCategoriesByDirection((previous): ReadonlyMap<string, ReadonlyArray<string>> => {
+      const current = previous.get(direction) ?? [];
+      if (current.includes(category)) return previous;
+      const next = new Map(previous);
+      next.set(direction, [...current, category]);
+      return next;
+    });
+  }, [markCategoryEdited]);
 
   const adjustmentsController = useBudgetAdjustmentRowsController({
     adjustments: props.adjustments,
@@ -252,6 +269,7 @@ export const useBudgetTableController = (
     effectiveAllowlist,
     adjustmentRows: budgetAdjustments.rows,
     sessionEditedCategoryKeys,
+    sessionAddedCategoriesByDirection,
   });
 
   const [drillDownFilter, setDrillDownFilter] = useState<DrillDownFilter | null>(null);
@@ -312,6 +330,7 @@ export const useBudgetTableController = (
     fxBreakdownMonth,
     mebByLiq: rangeState.mebByLiq,
     scrollToCurrentMonth: viewportState.scrollToCurrentMonth,
+    addCategory,
     onSyncStart: rangeState.onSyncStart,
     onSyncEnd: rangeState.onSyncEnd,
     handlePlanSave: rangeState.handlePlanSave,
