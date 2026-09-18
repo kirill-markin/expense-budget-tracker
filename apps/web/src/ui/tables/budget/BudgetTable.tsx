@@ -89,10 +89,11 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
             currentYear={controller.currentYear}
           />
           <tbody>
-            {controller.blocks.map((block) => (
-              <Fragment key={block.direction}>
+            {controller.blocks.map((section) => (
+              <Fragment key={section.block.direction}>
                 <BudgetDirectionSection
-                  block={block}
+                  block={section.block}
+                  directionCategories={section.directionCategories}
                   effectiveAllowlist={controller.effectiveAllowlist}
                   localBaseAcknowledgementByCell={
                     controller.localBaseAcknowledgementByCell

@@ -19,6 +19,7 @@ const budgetRow = (
   planned,
   actual,
   hasUnconvertible: false,
+  hasActualRows: false,
 });
 
 test("computeYearTotal uses actuals from completed months in the current-year plan", (): void => {

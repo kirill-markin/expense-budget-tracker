@@ -11,16 +11,19 @@ import type {
   CellValue,
   ColumnEntry,
   CumulativeBalance,
-  DirectionBlock,
   YearTotalComputed,
 } from "@/ui/tables/budget/budgetTableLogic";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
-import { useBudgetTableDerivedState } from "@/ui/tables/budget/controller/useBudgetTableDerivedState";
+import type { BudgetGridSection } from "@/ui/tables/budget/controller/useBudgetTableDerivedState";
+import { getBudgetCategoryKey, useBudgetTableDerivedState } from "@/ui/tables/budget/controller/useBudgetTableDerivedState";
 import { useBudgetTableRangeState } from "@/ui/tables/budget/controller/useBudgetTableRangeState";
 import { useBudgetTableViewport } from "@/ui/tables/budget/controller/useBudgetTableViewport";
 import { useBudgetTableYearTotals } from "@/ui/tables/budget/controller/useBudgetTableYearTotals";
 import { useBudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/useBudgetAdjustmentRowsController";
-import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
+import type {
+  BudgetAdjustmentCellLocation,
+  BudgetAdjustmentRowsController,
+} from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import type { BudgetBaseLocalAcknowledgementByCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import { getBudgetDisplayRange } from "@/ui/tables/budget/budgetTableLogic";
 
@@ -48,7 +51,7 @@ export type BudgetTableController = Readonly<{
   loadedFrom: string;
   loadedTo: string;
   months: ReadonlyArray<string>;
-  blocks: ReadonlyArray<DirectionBlock>;
+  blocks: ReadonlyArray<BudgetGridSection>;
   columnSequence: ReadonlyArray<ColumnEntry>;
   allCategories: ReadonlyArray<string>;
   filteredSubtotalsMap: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
@@ -137,13 +140,45 @@ export const useBudgetTableController = (
     invalidateYearTotalsRef.current(years);
   }, []);
 
-  const budgetAdjustments = useBudgetAdjustmentRowsController({
+  // A category the user touches in this session stays visible until the page
+  // reloads, so clearing the last non-zero value cannot make the row vanish
+  // under the cursor.
+  const [sessionEditedCategoryKeys, setSessionEditedCategoryKeys] =
+    useState<ReadonlySet<string>>(new Set());
+  const markCategoryEdited = useCallback((direction: string, category: string): void => {
+    const key = getBudgetCategoryKey(direction, category);
+    setSessionEditedCategoryKeys((previous): ReadonlySet<string> => {
+      if (previous.has(key)) return previous;
+      const next = new Set(previous);
+      next.add(key);
+      return next;
+    });
+  }, []);
+
+  const adjustmentsController = useBudgetAdjustmentRowsController({
     adjustments: props.adjustments,
     planFrom: currentMonth,
     actualTo: currentMonth,
     refreshToken: props.refreshToken,
     invalidateYears: invalidateAdjustmentYears,
   });
+
+  // Retaining a cell means its adjustment editor is open, which is the single
+  // gate every adjustment create, patch and delete passes through.
+  // The wrapper must keep the stable identity the retaining effect depends on.
+  const retainAdjustmentCell = adjustmentsController.retainCell;
+  const retainEditedCell = useCallback((
+    ownerId: string,
+    location: BudgetAdjustmentCellLocation,
+  ): (() => void) => {
+    markCategoryEdited(location.direction, location.category);
+    return retainAdjustmentCell(ownerId, location);
+  }, [markCategoryEdited, retainAdjustmentCell]);
+
+  const budgetAdjustments: BudgetAdjustmentRowsController = {
+    ...adjustmentsController,
+    retainCell: retainEditedCell,
+  };
 
   const rangeState = useBudgetTableRangeState({
     rows: props.rows,
@@ -159,6 +194,7 @@ export const useBudgetTableController = (
     refreshToken: props.refreshToken,
     onVisibleRangeRefreshStart: handleVisibleRangeRefreshStart,
     loadBudgetRange: budgetAdjustments.loadRange,
+    onCategoryEdited: markCategoryEdited,
   });
 
   const { yearComputed, invalidateYearTotals, resetYearTotals } = useBudgetTableYearTotals({
@@ -214,6 +250,8 @@ export const useBudgetTableController = (
     mebByLiq: rangeState.mebByLiq,
     currentMonth,
     effectiveAllowlist,
+    adjustmentRows: budgetAdjustments.rows,
+    sessionEditedCategoryKeys,
   });
 
   const [drillDownFilter, setDrillDownFilter] = useState<DrillDownFilter | null>(null);

@@ -41,6 +41,12 @@ export type BudgetRow = Readonly<{
   planned: number;
   actual: number;
   hasUnconvertible: boolean;
+  /**
+   * True when the actual window holds at least one ledger entry for this
+   * month/direction/category, regardless of the net sum: a purchase and its
+   * full refund net to 0 but still count as facts.
+   */
+  hasActualRows: boolean;
 }>;
 
 export type ConversionWarning = Readonly<{
@@ -186,7 +192,8 @@ export const QUERY = `
     COALESCE(p.planned_modifier, 0) AS planned_modifier,
     COALESCE(p.planned_base, 0) + COALESCE(p.planned_modifier, 0) AS planned,
     COALESCE(a.actual, 0) AS actual,
-    COALESCE(a.has_unconvertible, FALSE) AS has_unconvertible
+    COALESCE(a.has_unconvertible, FALSE) AS has_unconvertible,
+    a.month IS NOT NULL AS has_actual_rows
   FROM planned p
   FULL OUTER JOIN actual a
     USING (month, direction, category)
@@ -446,7 +453,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
   }
 
   return {
-    rows: rowsResult.rows.map((row: { month: string; direction: string; category: string; planned_base: number; planned_modifier: number; planned: number; actual: number; has_unconvertible: boolean }) => ({
+    rows: rowsResult.rows.map((row: { month: string; direction: string; category: string; planned_base: number; planned_modifier: number; planned: number; actual: number; has_unconvertible: boolean; has_actual_rows: boolean }) => ({
       month: row.month,
       direction: row.direction,
       category: row.category,
@@ -455,6 +462,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
       planned: Number(row.planned),
       actual: Number(row.actual),
       hasUnconvertible: row.has_unconvertible,
+      hasActualRows: row.has_actual_rows,
     })),
     adjustments: mapBudgetAdjustmentRows(adjustmentsResult.rows, "budget grid adjustment details"),
     conversionWarnings: warningResult.rows.map((row: { currency: string }) => ({

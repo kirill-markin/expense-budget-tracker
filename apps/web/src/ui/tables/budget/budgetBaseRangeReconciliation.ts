@@ -160,6 +160,7 @@ const buildNewBudgetRow = (
   planned: value,
   actual: 0,
   hasUnconvertible: false,
+  hasActualRows: false,
 });
 
 export const applyBudgetBaseToRows = (

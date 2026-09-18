@@ -97,7 +97,9 @@ SELECT
   COALESCE(p.planned_modifier, 0) AS planned_modifier,
   COALESCE(p.planned_base, 0) + COALESCE(p.planned_modifier, 0) AS planned,
   COALESCE(a.actual, 0) AS actual,
-  COALESCE(a.has_unconvertible, FALSE) AS has_unconvertible
+  COALESCE(a.has_unconvertible, FALSE) AS has_unconvertible,
+  -- True when the actual window holds ledger entries for the cell, even when they net to zero.
+  a.month IS NOT NULL AS has_actual_rows
 FROM planned p
 FULL OUTER JOIN actual a
   USING (month, direction, category)

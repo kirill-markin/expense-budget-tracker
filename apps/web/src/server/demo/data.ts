@@ -268,9 +268,11 @@ const generate = (): DemoData => {
     }
 
     let transferNet = 0;
+    let hasTransferEntries = false;
     for (let ti = 0; ti < TRANSFERS.length; ti++) {
       const t = TRANSFERS[ti];
       if (mi % t.every !== t.offset) continue;
+      hasTransferEntries = true;
       const evId = `ev${String(++eventN).padStart(3, "0")}`;
       const ts = new Date(Date.UTC(y, m - 1, Math.min(t.day, 28), 8)).toISOString();
       const fromUsd = round2(t.fromAmt * (FX[t.fromCur] ?? 1));
@@ -293,7 +295,11 @@ const generate = (): DemoData => {
         };
       }
     }
-    actuals.set(`${month}|transfer|`, round2((actuals.get(`${month}|transfer|`) ?? 0) + transferNet));
+    // Keep `actuals` a map of cells that really hold entries: the budget rows
+    // read it both for the amount and for the presence of demo transactions.
+    if (hasTransferEntries) {
+      actuals.set(`${month}|transfer|`, round2((actuals.get(`${month}|transfer|`) ?? 0) + transferNet));
+    }
 
     let totalUsd = 0;
     const nativeBal: Record<string, number> = { USD: 0, EUR: 0, GBP: 0 };
@@ -358,13 +364,16 @@ const generate = (): DemoData => {
         month, direction: bp.direction, category: bp.category,
         plannedBase: bp.planned, plannedModifier: 0, planned: bp.planned,
         actual: isPast ? round2(actual) : 0, hasUnconvertible: false,
+        hasActualRows: isPast && actuals.has(key),
       });
     }
+    const transferKey = `${month}|transfer|`;
     budgetRows.push({
       month, direction: "transfer", category: "",
       plannedBase: 0, plannedModifier: 0, planned: 0,
-      actual: isPast ? round2(actuals.get(`${month}|transfer|`) ?? 0) : 0,
+      actual: isPast ? round2(actuals.get(transferKey) ?? 0) : 0,
       hasUnconvertible: false,
+      hasActualRows: isPast && actuals.has(transferKey),
     });
   }
 
@@ -704,6 +713,7 @@ export const getDemoBudgetGrid = (
       planned: plannedModifier,
       actual: 0,
       hasUnconvertible: false,
+      hasActualRows: false,
     });
   }
   return {

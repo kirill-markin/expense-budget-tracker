@@ -67,6 +67,7 @@ const createBudgetRow = (
   planned: plannedBase + plannedModifier,
   actual: 0,
   hasUnconvertible: false,
+  hasActualRows: false,
 });
 
 const requireSnapshot = (
@@ -710,6 +711,45 @@ test("zero-valued move provenance hides the stale source until a fresh-enough ra
   assert.equal(originalProvenance.size, 0);
   assert.equal(provenance.size, 1);
   assert.equal(source.draft.month, "2026-07");
+});
+
+test("keeps a moved-away source cell that still holds ledger rows netting to zero", (): void => {
+  const source = createBudgetAdjustmentEditorRow(createAdjustment(
+    "refunded-move", 0, "2026-07", "spend", "Source", null, "2026-07-01T00:00:00.000Z",
+  ));
+  const current = requireSnapshot({
+    ...source.draft,
+    month: "2026-08",
+    category: "Destination",
+  }, "2026-07");
+  const moved = replaceBudgetAdjustmentDraft([source], source.adjustmentId, {
+    ...source.draft,
+    month: current.month,
+    category: current.category,
+  });
+  const provenance = recordBudgetAdjustmentCellMove(
+    new Map<string, number>(),
+    { direction: source.direction, previous: source.confirmed, current },
+    5,
+    "2026-07",
+  );
+  const refundedRows: ReadonlyArray<BudgetRow> = [
+    { ...createBudgetRow("2026-07", "spend", "Source", 0, 0), hasActualRows: true },
+  ];
+
+  const result = applyBudgetAdjustmentRows(
+    refundedRows,
+    moved,
+    "2026-07",
+    "2026-08",
+    "2026-07",
+    new Set(provenance.keys()),
+  );
+  const sourceRow = result.find((row) => row.month === "2026-07" && row.category === "Source");
+
+  assert.equal(sourceRow?.hasActualRows, true);
+  assert.equal(sourceRow?.plannedModifier, 0);
+  assert.equal(sourceRow?.planned, 0);
 });
 
 test("pure helpers reject invalid structural inputs without mutating inputs", (): void => {

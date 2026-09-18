@@ -16,6 +16,7 @@ const budgetRow = (
   planned,
   actual: 0,
   hasUnconvertible: false,
+  hasActualRows: false,
 });
 
 const spendCategories = (

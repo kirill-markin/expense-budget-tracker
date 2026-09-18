@@ -438,7 +438,8 @@ export const applyBudgetAdjustmentRows = (
     const cellTotal = totals.get(key);
     const hasNoIndependentValue = row.plannedBase === 0
       && row.actual === 0
-      && !row.hasUnconvertible;
+      && !row.hasUnconvertible
+      && !row.hasActualRows;
     const isStaleAdjustmentOnly = hasNoIndependentValue
       && cellTotal === undefined
       && (row.plannedModifier !== 0 || invalidatedCellKeys.has(key));
@@ -474,6 +475,7 @@ export const applyBudgetAdjustmentRows = (
       planned: plannedModifier,
       actual: 0,
       hasUnconvertible: false,
+      hasActualRows: false,
     });
   }
   return sortBudgetRows(result);
@@ -527,6 +529,7 @@ export const applyBudgetAdjustmentRowsWithProtectedCells = (
       planned: 0,
       actual: 0,
       hasUnconvertible: false,
+      hasActualRows: false,
     });
   }
 
