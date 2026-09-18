@@ -378,15 +378,17 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
-  // Lambda FX fetcher approaching timeout (5 min = 300s, alarm at 4 min = 240s)
+  // A normal FX fetch runs in seconds now that ECB is fetched incrementally and the daily
+  // rates table is rebuilt incrementally, so 1 minute flags a regression long before the
+  // unchanged 5-minute Lambda timeout.
   new cloudwatch.Alarm(scope, "FxLambdaDurationAlarm", {
     metric: props.fxFetcher.metricDuration({
       period: cdk.Duration.hours(1),
       statistic: "Maximum",
     }),
-    threshold: 240_000,
+    threshold: 60_000,
     evaluationPeriods: 1,
-    alarmDescription: "FX fetcher Lambda duration exceeded 4 minutes (timeout is 5)",
+    alarmDescription: "FX fetcher Lambda duration exceeded 1 minute (timeout is 5 minutes)",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
