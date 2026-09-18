@@ -9,6 +9,8 @@ import type {
   DirectionBlock,
 } from "@/ui/tables/budget/budgetTableLogic";
 import {
+  DIRECTION_LABELS,
+  DIRECTION_ORDER,
   LIQUIDITY_ORDER,
   buildBlocks,
   buildBudgetTaintedState,
@@ -17,6 +19,7 @@ import {
   computeCumulativeBalances,
   computeCumulativeBalancesByLiquidity,
   computeFxAdjustments,
+  zeroCellValue,
 } from "@/ui/tables/budget/budgetTableLogic";
 import type { BudgetAdjustmentEditorRow } from "@/ui/tables/budget/budgetAdjustmentRowsState";
 import { generateMonthRange } from "@/lib/monthUtils";
@@ -62,6 +65,64 @@ export const selectVisibleBudgetCategoryKeys = (
  */
 const UNCATEGORIZED_CATEGORY = "";
 
+const NO_SESSION_ADDED_CATEGORIES: ReadonlyArray<string> = [];
+
+/**
+ * The directions that carry named categories, in the order the grid renders
+ * them. Transfers are excluded: they have no named categories, so an empty
+ * transfer section would offer nothing.
+ */
+const NAMED_CATEGORY_DIRECTIONS: ReadonlyArray<string> = ["income", "spend"];
+
+const buildEmptyDirectionBlock = (
+  direction: string,
+  months: ReadonlyArray<string>,
+): DirectionBlock => ({
+  direction,
+  label: DIRECTION_LABELS[direction] ?? direction,
+  categories: [],
+  cells: new Map(),
+  subtotals: new Map(months.map((month): [string, CellValue] => [month, zeroCellValue])),
+});
+
+/**
+ * Guarantees an income and a spend block even when no row carries that
+ * direction: `buildBlocks` emits a block only for a direction present in the
+ * data, so a workspace whose last spend category vanished would lose the
+ * section, and with it the only place a category can be named. The synthesized
+ * block holds no categories and zero subtotals over the displayed months, which
+ * the balance, FX and liquidity rows already treat exactly like a direction
+ * with no block at all.
+ * Filtered mode synthesizes nothing: the grid offers no add-category control
+ * there, so a synthesized block would render only a header and an all-zero
+ * subtotal row that reads as "income is zero" rather than "not present".
+ */
+export const withNamedCategoryDirectionBlocks = (
+  blocks: ReadonlyArray<DirectionBlock>,
+  months: ReadonlyArray<string>,
+  effectiveAllowlist: ReadonlySet<string> | null,
+): ReadonlyArray<DirectionBlock> => {
+  if (effectiveAllowlist !== null) {
+    return blocks;
+  }
+  const missing = NAMED_CATEGORY_DIRECTIONS.filter((direction): boolean =>
+    !blocks.some((block): boolean => block.direction === direction));
+  if (missing.length === 0) {
+    return blocks;
+  }
+  const byDirection = new Map<string, DirectionBlock>(
+    blocks.map((block): [string, DirectionBlock] => [block.direction, block]),
+  );
+  for (const direction of missing) {
+    byDirection.set(direction, buildEmptyDirectionBlock(direction, months));
+  }
+  // `buildBlocks` only ever emits directions from DIRECTION_ORDER, so ordering
+  // by it keeps every existing block exactly where it was.
+  return DIRECTION_ORDER
+    .map((direction): DirectionBlock | undefined => byDirection.get(direction))
+    .filter((block): block is DirectionBlock => block !== undefined);
+};
+
 /**
  * Drops the categories that carry nothing real from one direction block. The
  * result feeds the rendered category rows only: every category list the user
@@ -78,6 +139,25 @@ export const hideEmptyBudgetCategories = (
     category === UNCATEGORIZED_CATEGORY
     || visibleCategoryKeys.has(getBudgetCategoryKey(block.direction, category))),
 });
+
+/**
+ * Adds the categories the user named in the budget grid during this session to
+ * one direction block. Such a name has no row anywhere yet, so it exists in no
+ * `buildBlocks` output and the hiding rule alone could never surface it; it
+ * joins the unfiltered block so that every picker list sees it too, and it
+ * renders as an all-zero category row until a plan value is saved for it.
+ */
+export const withSessionAddedBudgetCategories = (
+  block: DirectionBlock,
+  sessionAddedCategories: ReadonlyArray<string>,
+): DirectionBlock => {
+  const known = new Set(block.categories);
+  const added = sessionAddedCategories.filter((category): boolean => !known.has(category));
+  if (added.length === 0) {
+    return block;
+  }
+  return { ...block, categories: [...block.categories, ...added] };
+};
 
 /**
  * One direction section of the grid. `block` carries the category rows the grid
@@ -122,6 +202,7 @@ type UseBudgetTableDerivedStateParams = Readonly<{
   effectiveAllowlist: ReadonlySet<string> | null;
   adjustmentRows: ReadonlyArray<BudgetAdjustmentEditorRow>;
   sessionEditedCategoryKeys: ReadonlySet<string>;
+  sessionAddedCategoriesByDirection: ReadonlyMap<string, ReadonlyArray<string>>;
 }>;
 
 export const useBudgetTableDerivedState = ({
@@ -137,6 +218,7 @@ export const useBudgetTableDerivedState = ({
   effectiveAllowlist,
   adjustmentRows,
   sessionEditedCategoryKeys,
+  sessionAddedCategoriesByDirection,
 }: UseBudgetTableDerivedStateParams): BudgetTableDerivedState => {
   const months = useMemo<ReadonlyArray<string>>(
     () => generateMonthRange(displayFrom, displayTo),
@@ -149,8 +231,23 @@ export const useBudgetTableDerivedState = ({
   );
 
   const allBlocks = useMemo<ReadonlyArray<DirectionBlock>>(
-    () => buildBlocks(allRows, months, currentMonth, effectiveAllowlist),
+    () => withNamedCategoryDirectionBlocks(
+      buildBlocks(allRows, months, currentMonth, effectiveAllowlist),
+      months,
+      effectiveAllowlist,
+    ),
     [allRows, months, currentMonth, effectiveAllowlist],
+  );
+
+  // The session-added names join the unfiltered blocks, so from here on they
+  // are treated exactly like a category that already has rows: the hiding rule
+  // keeps them because adding one also marks it edited in this session.
+  const blocksWithSessionAdded = useMemo<ReadonlyArray<DirectionBlock>>(
+    () => allBlocks.map((block): DirectionBlock => withSessionAddedBudgetCategories(
+      block,
+      sessionAddedCategoriesByDirection.get(block.direction) ?? NO_SESSION_ADDED_CATEGORIES,
+    )),
+    [allBlocks, sessionAddedCategoriesByDirection],
   );
 
   const blocks = useMemo<ReadonlyArray<BudgetGridSection>>(() => {
@@ -159,11 +256,11 @@ export const useBudgetTableDerivedState = ({
       adjustmentRows,
       sessionEditedCategoryKeys,
     );
-    return allBlocks.map((block): BudgetGridSection => ({
+    return blocksWithSessionAdded.map((block): BudgetGridSection => ({
       block: hideEmptyBudgetCategories(block, visibleCategoryKeys),
       directionCategories: block.categories,
     }));
-  }, [allBlocks, allRows, adjustmentRows, sessionEditedCategoryKeys]);
+  }, [blocksWithSessionAdded, allRows, adjustmentRows, sessionEditedCategoryKeys]);
 
   const columnSequence = useMemo<ReadonlyArray<ColumnEntry>>(
     () => buildColumnSequence(months),
@@ -174,13 +271,13 @@ export const useBudgetTableDerivedState = ({
   // picker, which must keep offering a category the grid currently hides.
   const allCategories = useMemo<ReadonlyArray<string>>(() => {
     const categories = new Set<string>();
-    for (const block of allBlocks) {
+    for (const block of blocksWithSessionAdded) {
       for (const category of block.categories) {
         categories.add(category);
       }
     }
     return [...categories].sort();
-  }, [allBlocks]);
+  }, [blocksWithSessionAdded]);
 
   const filteredSubtotalsMap = useMemo<ReadonlyMap<string, ReadonlyMap<string, CellValue>>>(() => {
     if (effectiveAllowlist === null) {
