@@ -13,6 +13,33 @@
 import { query, withClient } from "./db";
 import type { RebuildDailyRatesResult } from "./types";
 
+/**
+ * Earliest calendar date whose daily pairs can have changed since the previous
+ * rebuild: the earliest rate_date among raw rows ingested after the newest
+ * daily row was written. An empty fx_rates_daily yields the earliest raw
+ * rate_date, which recomputes the whole history.
+ */
+const WINDOW_START_SQL = `
+  SELECT MIN(rate_date)::text AS window_start
+  FROM fx_rates_raw
+  WHERE inserted_at > COALESCE(
+    (SELECT MAX(inserted_at) FROM fx_rates_daily),
+    '-infinity'::timestamptz
+  )
+`;
+
+const LATEST_CALENDAR_DATE_SQL = `
+  SELECT MAX(calendar_date)::text AS latest_calendar_date
+  FROM fx_rates_daily
+`;
+
+/**
+ * Recompute every pair for calendar dates at or after $1.
+ *
+ * bounds and raw_ranges stay global because a carry-forward range that starts
+ * before the window still supplies the rate inside it; only the emitted
+ * calendar days are clamped to the window.
+ */
 const REBUILD_DAILY_RATES_SQL = `
   WITH bounds AS (
     SELECT
@@ -51,7 +78,11 @@ const REBUILD_DAILY_RATES_SQL = `
       1::numeric AS rate_to_usd,
       d::date AS source_rate_date
     FROM validated_bounds vb
-    CROSS JOIN LATERAL generate_series(vb.min_date, vb.max_date, INTERVAL '1 day') AS d
+    CROSS JOIN LATERAL generate_series(
+      GREATEST(vb.min_date, $1::date),
+      vb.max_date,
+      INTERVAL '1 day'
+    ) AS d
   ),
   pivot_daily AS (
     SELECT
@@ -60,7 +91,11 @@ const REBUILD_DAILY_RATES_SQL = `
       rr.rate,
       rr.source_rate_date
     FROM raw_ranges rr
-    CROSS JOIN LATERAL generate_series(rr.range_start, rr.range_end, INTERVAL '1 day') AS d
+    CROSS JOIN LATERAL generate_series(
+      GREATEST(rr.range_start, $1::date),
+      rr.range_end,
+      INTERVAL '1 day'
+    ) AS d
     UNION ALL
     SELECT
       ud.currency,
@@ -101,10 +136,13 @@ const REBUILD_DAILY_RATES_SQL = `
 `;
 
 /**
- * Rebuild the entire daily all-pairs FX table in one pass.
+ * Recompute the daily all-pairs FX table for the calendar dates affected by
+ * raw rates ingested since the previous rebuild.
  *
- * v1 intentionally uses truncate-and-repopulate because the dataset is small
- * and the product explicitly does not preserve legacy dual-read behavior.
+ * Calendar dates before the window start cannot have changed, because no raw
+ * row with an earlier rate_date was ingested since then. A raw row committed
+ * while this transaction runs is not recomputed here: its inserted_at is newer
+ * than the daily rows written now, so the next run picks it up.
  */
 export const rebuildDailyRates = async (): Promise<RebuildDailyRatesResult> => {
   const rawCountResult = await query("SELECT COUNT(*)::int AS row_count FROM fx_rates_raw", []);
@@ -116,8 +154,29 @@ export const rebuildDailyRates = async (): Promise<RebuildDailyRatesResult> => {
   return withClient(async (client) => {
     await client.query("BEGIN");
     try {
-      await client.query("TRUNCATE TABLE fx_rates_daily");
-      const rebuildResult = await client.query(REBUILD_DAILY_RATES_SQL);
+      const windowResult = await client.query(WINDOW_START_SQL);
+      const windowStart = (windowResult.rows[0] as { window_start: string | null }).window_start;
+
+      if (windowStart === null) {
+        const latestResult = await client.query(LATEST_CALENDAR_DATE_SQL);
+        const latestCalendarDate = (
+          latestResult.rows[0] as { latest_calendar_date: string | null }
+        ).latest_calendar_date;
+        if (latestCalendarDate === null) {
+          throw new Error(
+            "Cannot rebuild fx_rates_daily: no raw rates ingested since the last rebuild, yet fx_rates_daily is empty",
+          );
+        }
+        await client.query("COMMIT");
+        console.log(
+          "No raw FX rates ingested since the last rebuild; fx_rates_daily left unchanged:",
+          JSON.stringify({ latest_calendar_date: latestCalendarDate }),
+        );
+        return { inserted: 0, latest_calendar_date: latestCalendarDate };
+      }
+
+      await client.query("DELETE FROM fx_rates_daily WHERE calendar_date >= $1::date", [windowStart]);
+      const rebuildResult = await client.query(REBUILD_DAILY_RATES_SQL, [windowStart]);
       const row = rebuildResult.rows[0] as {
         inserted_count: string | number;
         latest_calendar_date: string | null;
