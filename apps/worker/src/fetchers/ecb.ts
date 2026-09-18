@@ -7,7 +7,7 @@
  */
 
 import { ECB_BASE_URL, ECB_CURRENCIES, ECB_EARLIEST_DATE } from "../config";
-import { addDays, todayIso } from "../dateUtils";
+import { addDays, daysBetween, todayIso } from "../dateUtils";
 import { getRateDateRanges, insertRows } from "../dbQueries";
 import type { FxRawRateRow, DateRange, FetcherResult } from "../types";
 
@@ -32,13 +32,17 @@ interface ECBRate {
  *
  * ECB CSV columns include CURRENCY, TIME_PERIOD, OBS_VALUE among others.
  * Each row is one daily rate: how many units of CURRENCY per 1 EUR.
+ *
+ * A period that contains no observations — a weekend, a TARGET holiday, or the
+ * hours before the ~16:00 CET publication — is answered with HTTP 200 and a
+ * completely empty body, not with a header-only CSV, so that is zero rates.
  */
 function parseEcbCsv(csvText: string): ECBRate[] {
-  const lines = csvText.split("\n");
-  if (lines.length === 0) {
+  if (csvText.trim() === "") {
     return [];
   }
 
+  const lines = csvText.split("\n");
   const headers = lines[0].split(",");
   const currencyIdx = headers.indexOf("CURRENCY");
   const timePeriodIdx = headers.indexOf("TIME_PERIOD");
@@ -127,6 +131,108 @@ function convertEurRatesToUsd(ecbRates: ECBRate[]): FxRawRateRow[] {
 // ECB API
 // ---------------------------------------------------------------------------
 
+// ECB answers one request for the whole requested range, and its cost is server-side
+// query time rather than transfer: a one-year range is measured at 4-16 s and the full
+// 1999-to-today history at ~122 s, almost all of it before the first byte. So the
+// per-attempt timeout grows with the requested range instead of being a single fixed
+// value, and the whole retry loop is bounded by ECB_TOTAL_BUDGET_MS, which leaves room
+// inside the 300 s Lambda for the other five fetchers (~1 s) and the daily rebuild (~13 s).
+const ECB_REQUEST_TIMEOUT_BASE_MS = 15_000;
+
+const ECB_REQUEST_TIMEOUT_PER_DAY_MS = 20;
+
+const ECB_REQUEST_TIMEOUT_MAX_MS = 240_000;
+
+const ECB_TOTAL_BUDGET_MS = 240_000;
+
+const ECB_REQUEST_ATTEMPTS = 3;
+
+const ECB_RETRY_DELAY_MS = 1_000;
+
+/** One HTTP attempt, classified into what the caller should do next. */
+type EcbAttempt =
+  | { kind: "ok"; body: string }
+  | { kind: "transient"; error: Error }
+  | { kind: "permanent"; error: Error };
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Per-attempt timeout for a request covering `days` days.
+ *
+ * The ceiling stays inside the Lambda budget, so a full-history range still gets one
+ * complete attempt, while a short daily range keeps its full retry allowance.
+ */
+function requestTimeoutMs(days: number): number {
+  return Math.min(
+    ECB_REQUEST_TIMEOUT_BASE_MS + days * ECB_REQUEST_TIMEOUT_PER_DAY_MS,
+    ECB_REQUEST_TIMEOUT_MAX_MS,
+  );
+}
+
+async function attemptEcbRequest(url: string, timeoutMs: number): Promise<EcbAttempt> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (response.ok) {
+      return { kind: "ok", body: await response.text() };
+    }
+    // 5xx and 429 can clear on their own; any other 4xx is a defect in the request
+    // itself (bad currency key, malformed period) that an identical retry repeats.
+    const error = new Error(`ECB API error: ${response.status} ${response.statusText}`);
+    if (response.status >= 500 || response.status === 429) {
+      return { kind: "transient", error };
+    }
+    return { kind: "permanent", error };
+  } catch (error) {
+    // Connection failure, or the per-attempt timeout aborting the request or body read.
+    return {
+      kind: "transient",
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
+}
+
+/**
+ * Request the ECB CSV, retrying only transient failures.
+ *
+ * Attempt 1 always runs; a further one is started only while the elapsed time plus one
+ * more timeout still fits ECB_TOTAL_BUDGET_MS, so the loop stays within that budget.
+ */
+async function fetchEcbCsv(url: string, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + ECB_TOTAL_BUDGET_MS;
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= ECB_REQUEST_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      await delay(ECB_RETRY_DELAY_MS * (attempt - 1));
+      if (Date.now() + timeoutMs > deadline) {
+        break;
+      }
+    }
+
+    const result = await attemptEcbRequest(url, timeoutMs);
+    if (result.kind === "ok") {
+      return result.body;
+    }
+    if (result.kind === "permanent") {
+      throw result.error;
+    }
+
+    lastError = result.error;
+    console.warn("ECB request attempt failed", {
+      url,
+      attempt,
+      attempts: ECB_REQUEST_ATTEMPTS,
+      timeout_ms: timeoutMs,
+      error: result.error.message,
+    });
+  }
+
+  throw lastError ?? new Error(`ECB request failed after ${ECB_REQUEST_ATTEMPTS} attempts: ${url}`);
+}
+
 /** Fetch daily rates from ECB SDMX REST API as CSV. */
 async function fetchEcbRates(
   currenciesWithUsd: string[],
@@ -135,14 +241,12 @@ async function fetchEcbRates(
 ): Promise<string> {
   const currencyKey = currenciesWithUsd.join("+");
   const url = `${ECB_BASE_URL}/D.${currencyKey}.EUR.SP00.A?format=csvdata&startPeriod=${startPeriod}&endPeriod=${endPeriod}`;
+  const days = daysBetween(startPeriod, endPeriod) + 1;
+  const timeoutMs = requestTimeoutMs(days);
 
-  console.log("Fetching ECB rates", { url });
+  console.log("Fetching ECB rates", { url, days, timeout_ms: timeoutMs });
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`ECB API error: ${response.status} ${response.statusText}`);
-  }
-  return response.text();
+  return fetchEcbCsv(url, timeoutMs);
 }
 
 // ---------------------------------------------------------------------------
@@ -193,10 +297,9 @@ export async function run(): Promise<FetcherResult> {
   const ecbCurrencies = determineEcbCurrencies(ECB_CURRENCIES);
   const dateRanges = await getRateDateRanges(ECB_CURRENCIES);
 
-  const allCurrenciesPresent = ECB_CURRENCIES.every((c) => c in dateRanges);
-  const needsBackfill =
-    !allCurrenciesPresent ||
-    Object.values(dateRanges).some((r) => r.min_date > ECB_EARLIEST_DATE);
+  // Only a currency without any row needs the full history; otherwise fetch forward
+  // from what is already stored, so a daily run covers one or two days.
+  const needsBackfill = ECB_CURRENCIES.some((c) => !(c in dateRanges));
 
   let start: string;
   if (needsBackfill) {
@@ -217,6 +320,18 @@ export async function run(): Promise<FetcherResult> {
 
   const csvText = await fetchEcbRates(ecbCurrencies, start, end);
   const ecbRates = parseEcbCsv(csvText);
+
+  if (ecbRates.length === 0) {
+    // ECB published nothing in this period: a weekend, a TARGET holiday, or a run
+    // before the ~16:00 CET publication. Nothing is missing and nothing is suspended,
+    // so the stored coverage is reported unchanged and no warning is raised.
+    console.log(`No ECB observations for period ${start} to ${end}`);
+    const storedMaxDates = Object.values(dateRanges).map((r) => r.max_date).sort();
+    const latestStored =
+      storedMaxDates.length > 0 ? storedMaxDates[storedMaxDates.length - 1] : end;
+    return { inserted: 0, latest_date: latestStored, missing_currencies: [] };
+  }
+
   const allRows = convertEurRatesToUsd(ecbRates);
 
   const returnedCurrencies = new Set(allRows.map((r) => r.base_currency));
