@@ -277,7 +277,6 @@ const ALLOWED_RELATIONS: ReadonlySet<string> = new Set(ALLOWED_RELATION_NAMES);
 
 const READ_ONLY_RELATION_NAMES: ReadonlyArray<AllowedRelationName> = [
   "accounts",
-  "budget_adjustments",
   "fx_rates_raw",
   "fx_rates_daily",
 ] as const;

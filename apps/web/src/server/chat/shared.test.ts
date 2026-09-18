@@ -858,7 +858,7 @@ const CHAT_SQL_POLICY_CASES: ReadonlyArray<ChatSqlPolicyCase> = [
   {
     code: "read_only_relation_mutation_not_allowed",
     policyMessage: "Relation accounts is read-only",
-    chatMessage: "Relation accounts is read-only. Use SELECT to read it; write only to ledger_entries, budget_lines, workspace_settings, or account_metadata",
+    chatMessage: "Relation accounts is read-only. Use SELECT to read it; write only to ledger_entries, budget_lines, budget_adjustments, workspace_settings, or account_metadata",
   },
 ];
 

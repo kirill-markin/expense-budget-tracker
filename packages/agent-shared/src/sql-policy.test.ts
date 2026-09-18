@@ -707,46 +707,35 @@ test("validateExpenseSql rejects INSERT, UPDATE, and DELETE targets that are SEL
   }
 });
 
-test("validateExpenseSql reads budget_adjustments and rejects every write to it", (): void => {
-  const validated = validateExpenseSql(
-    "SELECT adjustment_id, budget_month, direction, category, amount, note FROM budget_adjustments ORDER BY budget_month",
-  );
-  assert.deepEqual(validated, {
-    sql: "SELECT adjustment_id, budget_month, direction, category, amount, note FROM budget_adjustments ORDER BY budget_month",
+test("validateExpenseSql reads and writes budget_adjustments like any other mutable relation", (): void => {
+  const readSql =
+    "SELECT adjustment_id, budget_month, direction, category, amount, note FROM budget_adjustments ORDER BY budget_month";
+  assert.deepEqual(validateExpenseSql(readSql), {
+    sql: readSql,
     statements: [{
-      sql: "SELECT adjustment_id, budget_month, direction, category, amount, note FROM budget_adjustments ORDER BY budget_month",
+      sql: readSql,
       isMutating: false,
       referencedRelations: ["budget_adjustments"],
     }],
   });
 
-  const rejectedWrites: ReadonlyArray<Readonly<{ sql: string; message: string }>> = [
-    {
-      sql: "INSERT INTO budget_adjustments (workspace_id, budget_month, direction, category, amount) VALUES ('workspace-1', '2026-03-01', 'spend', 'Food', 10)",
-      message: "Relation budget_adjustments is SELECT-only and cannot be targeted by INSERT in restricted SQL",
-    },
-    {
-      sql: "UPDATE budget_adjustments SET amount = 10 WHERE adjustment_id = 'adjustment-1'",
-      message: "Relation budget_adjustments is SELECT-only and cannot be targeted by UPDATE in restricted SQL",
-    },
-    {
-      sql: "DELETE FROM budget_adjustments WHERE adjustment_id = 'adjustment-1'",
-      message: "Relation budget_adjustments is SELECT-only and cannot be targeted by DELETE in restricted SQL",
-    },
+  const acceptedWrites: ReadonlyArray<string> = [
+    "INSERT INTO budget_adjustments (workspace_id, budget_month, direction, category, amount) VALUES ('workspace-1', '2026-03-01', 'spend', 'Food', 10)",
+    "UPDATE budget_adjustments SET amount = 10 WHERE adjustment_id = 'adjustment-1'",
+    "UPDATE budget_adjustments SET category = 'Groceries' WHERE category = 'Grocery'",
+    "DELETE FROM budget_adjustments WHERE adjustment_id = 'adjustment-1'",
   ];
 
-  for (const { sql, message } of rejectedWrites) {
-    assert.throws(
-      () => validateExpenseSql(sql),
-      (error: unknown): boolean => {
-        assert.ok(error instanceof SqlPolicyError, `Expected SqlPolicyError for ${sql}`);
-        assert.deepEqual(
-          { code: error.code, message: error.message },
-          { code: "read_only_relation_mutation_not_allowed", message },
-        );
-        return true;
-      },
-    );
+  for (const sql of acceptedWrites) {
+    const validated = validateExpenseSql(sql);
+    assert.deepEqual(validated, {
+      sql,
+      statements: [{
+        sql,
+        isMutating: true,
+        referencedRelations: ["budget_adjustments"],
+      }],
+    }, sql);
   }
 });
 

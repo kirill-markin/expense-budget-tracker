@@ -73,6 +73,10 @@ const PERMISSION_DENIED = {
   code: "42501",
   message: "permission denied for table budget_adjustments",
 } as const;
+const ROW_LEVEL_SECURITY_VIOLATION = {
+  code: "42501",
+  message: 'new row violates row-level security policy for table "budget_adjustments"',
+} as const;
 
 const createFixture = (): IsolationFixture => {
   const suffix = randomUUID().replaceAll("-", "");
@@ -284,9 +288,43 @@ const assertPermissionDenied = async (
   );
 };
 
+const assertRowLevelSecurityViolation = async (
+  context: AgentContext,
+  sql: string,
+  params: ReadonlyArray<string>,
+): Promise<void> => {
+  await assert.rejects(
+    withAgentTransaction(context, async (client): Promise<void> => {
+      await client.query(sql, Array.from(params));
+    }),
+    (error: unknown): boolean => {
+      assert.ok(error instanceof Error, `${context.role}: ${sql} must fail with a PostgreSQL error`);
+      assert.deepEqual(
+        { code: (error as PgError).code, message: error.message },
+        ROW_LEVEL_SECURITY_VIOLATION,
+        `${context.role}: ${sql}`,
+      );
+      return true;
+    },
+  );
+};
+
+const assertNoRowsAffected = async (
+  context: AgentContext,
+  label: string,
+  sql: string,
+  params: ReadonlyArray<string>,
+): Promise<void> => {
+  const rowCount: number | null = await withAgentTransaction(
+    context,
+    async (client): Promise<number | null> => (await client.query(sql, Array.from(params))).rowCount,
+  );
+  assert.equal(rowCount, 0, `${context.role}: ${label}`);
+};
+
 for (const role of AGENT_ROLES) {
   test(
-    `${role} reads budget_adjustments only for a selected workspace the user belongs to and can never write them`,
+    `${role} reads budget_adjustments only for a selected workspace the user belongs to and never reaches the internal origin column`,
     { skip: postgresTestSkip },
     async (): Promise<void> => {
       if (databaseUrlsMissing) {
@@ -435,28 +473,44 @@ for (const role of AGENT_ROLES) {
         };
         const workspaceAAdjustmentId = workspaceARows[0]?.adjustment_id;
         assert.ok(workspaceAAdjustmentId !== undefined, "fixture must seed a workspace A adjustment");
-        await assertPermissionDenied(
-          memberContext,
-          `INSERT INTO budget_adjustments (workspace_id, budget_month, direction, category, amount)
-           VALUES ($1, '2026-03-01', 'spend', 'Groceries', 5)`,
-          [fixture.workspaceA],
-        );
-        await assertPermissionDenied(
-          memberContext,
-          "UPDATE budget_adjustments SET amount = 5 WHERE adjustment_id = $1",
-          [workspaceAAdjustmentId],
-        );
-        await assertPermissionDenied(
-          memberContext,
-          "DELETE FROM budget_adjustments WHERE adjustment_id = $1",
-          [workspaceAAdjustmentId],
-        );
+        // The internal origin marker stays outside every grant of both roles.
         await assertPermissionDenied(
           memberContext,
           "SELECT origin FROM budget_adjustments WHERE adjustment_id = $1",
           [workspaceAAdjustmentId],
         );
         await assertPermissionDenied(memberContext, "SELECT * FROM budget_adjustments", []);
+        await assertPermissionDenied(
+          memberContext,
+          `INSERT INTO budget_adjustments (workspace_id, budget_month, direction, category, amount, origin)
+           VALUES ($1, '2026-03-01', 'spend', 'Groceries', 5, 'legacy')`,
+          [fixture.workspaceA],
+        );
+        await assertPermissionDenied(
+          memberContext,
+          "UPDATE budget_adjustments SET origin = 'legacy' WHERE adjustment_id = $1",
+          [workspaceAAdjustmentId],
+        );
+
+        if (role === "api_sql_reader") {
+          // The reader role holds a column-level SELECT and no write grant at all.
+          await assertPermissionDenied(
+            memberContext,
+            `INSERT INTO budget_adjustments (workspace_id, budget_month, direction, category, amount)
+             VALUES ($1, '2026-03-01', 'spend', 'Groceries', 5)`,
+            [fixture.workspaceA],
+          );
+          await assertPermissionDenied(
+            memberContext,
+            "UPDATE budget_adjustments SET amount = 5 WHERE adjustment_id = $1",
+            [workspaceAAdjustmentId],
+          );
+          await assertPermissionDenied(
+            memberContext,
+            "DELETE FROM budget_adjustments WHERE adjustment_id = $1",
+            [workspaceAAdjustmentId],
+          );
+        }
 
         const storedRows = await ownerPool.query(
           `SELECT ${ADJUSTMENT_COLUMNS}, origin
@@ -468,7 +522,7 @@ for (const role of AGENT_ROLES) {
         assert.deepEqual(
           storedRows.rows,
           fixture.adjustments.map(({ origin, row }) => ({ ...row, origin })),
-          `${role}: seeded adjustments must be unchanged after the denied writes`,
+          `${role}: seeded adjustments must be unchanged after the denied statements`,
         );
       } finally {
         try {
@@ -480,3 +534,169 @@ for (const role of AGENT_ROLES) {
     },
   );
 }
+
+test(
+  "api_sql_executor writes budget_adjustments of the selected workspace only, legacy-origin rows included",
+  { skip: postgresTestSkip },
+  async (): Promise<void> => {
+    if (databaseUrlsMissing) {
+      throw new Error(`${MISSING_DATABASE_URLS_MESSAGE}; CI=true forbids skipping this test`);
+    }
+
+    const fixture = createFixture();
+    const ownerPool = new pg.Pool({ connectionString: migrationDatabaseUrl });
+
+    try {
+      await insertFixture(ownerPool, fixture);
+
+      const userRow = fixture.adjustments
+        .find((seeded) => seeded.origin === "user" && seeded.row.workspace_id === fixture.workspaceA)
+        ?.row;
+      const legacyRow = fixture.adjustments
+        .find((seeded) => seeded.origin === "legacy" && seeded.row.workspace_id === fixture.workspaceA)
+        ?.row;
+      const otherWorkspaceRow = fixture.adjustments
+        .find((seeded) => seeded.row.workspace_id === fixture.workspaceB)
+        ?.row;
+      assert.ok(userRow !== undefined, "fixture must seed a user-origin workspace A adjustment");
+      assert.ok(legacyRow !== undefined, "fixture must seed a legacy-origin workspace A adjustment");
+      assert.ok(otherWorkspaceRow !== undefined, "fixture must seed a workspace B adjustment");
+
+      // Every case rolls its transaction back, so the seeded rows below still
+      // prove the denied writes changed nothing.
+      const selectedWorkspace: AgentContext = {
+        role: "api_sql_executor",
+        userId: fixture.userA,
+        workspaceId: fixture.workspaceA,
+      };
+
+      await withAgentTransaction(selectedWorkspace, async (client): Promise<void> => {
+        const inserted = await client.query(
+          `INSERT INTO budget_adjustments (workspace_id, budget_month, direction, category, amount, note)
+           VALUES ($1, '2026-03-01', 'spend', 'Groceries', 5, 'Agent write')
+           RETURNING workspace_id, budget_month::text AS budget_month, direction, category,
+             amount::text AS amount, note`,
+          [fixture.workspaceA],
+        );
+        assert.deepEqual(inserted.rows, [{
+          workspace_id: fixture.workspaceA,
+          budget_month: "2026-03-01",
+          direction: "spend",
+          category: "Groceries",
+          amount: "5",
+          note: "Agent write",
+        }]);
+      });
+
+      await withAgentTransaction(selectedWorkspace, async (client): Promise<void> => {
+        const updated = await client.query(
+          `UPDATE budget_adjustments SET category = 'Groceries and household', amount = 7
+           WHERE adjustment_id = $1
+           RETURNING adjustment_id, category, amount::text AS amount`,
+          [userRow.adjustment_id],
+        );
+        assert.deepEqual(updated.rows, [{
+          adjustment_id: userRow.adjustment_id,
+          category: "Groceries and household",
+          amount: "7",
+        }]);
+      });
+
+      // A legacy-origin row is an ordinary row: the transitional freeze is gone.
+      await withAgentTransaction(selectedWorkspace, async (client): Promise<void> => {
+        const renamed = await client.query(
+          "UPDATE budget_adjustments SET category = 'Base salary' WHERE adjustment_id = $1 RETURNING adjustment_id",
+          [legacyRow.adjustment_id],
+        );
+        assert.deepEqual(renamed.rows, [{ adjustment_id: legacyRow.adjustment_id }]);
+
+        const deleted = await client.query(
+          "DELETE FROM budget_adjustments WHERE adjustment_id = $1 RETURNING adjustment_id",
+          [legacyRow.adjustment_id],
+        );
+        assert.deepEqual(deleted.rows, [{ adjustment_id: legacyRow.adjustment_id }]);
+      });
+
+      // workspace_id carries no UPDATE grant, so no statement can re-home a
+      // visible row into another workspace.
+      await assertPermissionDenied(
+        selectedWorkspace,
+        "UPDATE budget_adjustments SET workspace_id = $2 WHERE adjustment_id = $1",
+        [userRow.adjustment_id, fixture.workspaceB],
+      );
+
+      const insertSql =
+        `INSERT INTO budget_adjustments (workspace_id, budget_month, direction, category, amount)
+         VALUES ($1, '2026-03-01', 'spend', 'Groceries', 5)`;
+      // Only the policies decide which workspace a row may belong to.
+      await assertRowLevelSecurityViolation(selectedWorkspace, insertSql, [fixture.workspaceB]);
+      await assertRowLevelSecurityViolation(
+        { role: "api_sql_executor", userId: fixture.userA, workspaceId: fixture.workspaceB },
+        insertSql,
+        [fixture.workspaceB],
+      );
+      await assertRowLevelSecurityViolation(
+        { role: "api_sql_executor", userId: fixture.userA, workspaceId: null },
+        insertSql,
+        [fixture.workspaceA],
+      );
+      await assertRowLevelSecurityViolation(
+        { role: "api_sql_executor", userId: null, workspaceId: fixture.workspaceA },
+        insertSql,
+        [fixture.workspaceA],
+      );
+
+      const updateSql = "UPDATE budget_adjustments SET amount = 5 WHERE adjustment_id = $1";
+      const deleteSql = "DELETE FROM budget_adjustments WHERE adjustment_id = $1";
+      const invisibleWriteCases: ReadonlyArray<Readonly<{
+        label: string;
+        context: AgentContext;
+        adjustmentId: string;
+      }>> = [
+        {
+          label: "workspace B's row stays invisible while workspace A is selected",
+          context: selectedWorkspace,
+          adjustmentId: otherWorkspaceRow.adjustment_id,
+        },
+        {
+          label: "selecting workspace B without membership sees none of its rows",
+          context: { role: "api_sql_executor", userId: fixture.userA, workspaceId: fixture.workspaceB },
+          adjustmentId: otherWorkspaceRow.adjustment_id,
+        },
+        {
+          label: "unset app.workspace_id sees no row to change",
+          context: { role: "api_sql_executor", userId: fixture.userA, workspaceId: null },
+          adjustmentId: userRow.adjustment_id,
+        },
+        {
+          label: "unset app.user_id sees no row to change",
+          context: { role: "api_sql_executor", userId: null, workspaceId: fixture.workspaceA },
+          adjustmentId: userRow.adjustment_id,
+        },
+      ];
+      for (const { label, context, adjustmentId } of invisibleWriteCases) {
+        await assertNoRowsAffected(context, `UPDATE: ${label}`, updateSql, [adjustmentId]);
+        await assertNoRowsAffected(context, `DELETE: ${label}`, deleteSql, [adjustmentId]);
+      }
+
+      const storedRows = await ownerPool.query(
+        `SELECT ${ADJUSTMENT_COLUMNS}, origin
+         FROM public.budget_adjustments
+         WHERE workspace_id = ANY($1::TEXT[])
+         ORDER BY adjustment_id`,
+        [[fixture.workspaceA, fixture.workspaceB]],
+      );
+      assert.deepEqual(
+        storedRows.rows,
+        fixture.adjustments.map(({ origin, row }) => ({ ...row, origin })),
+        "seeded adjustments must be unchanged after every rolled-back and rejected write",
+      );
+    } finally {
+      try {
+        await deleteFixture(ownerPool, fixture);
+      } finally {
+        await ownerPool.end();
+      }
+    }
+  },
+);
