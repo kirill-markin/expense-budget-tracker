@@ -9,7 +9,7 @@ import { extractUserId, extractWorkspaceId } from "@/server/userId";
 
 export const POST = async (request: Request): Promise<Response> =>
   handleRoute(
-    { route: "/api/budget-plan-fill", method: "POST", internalErrorMessage: "Database insert failed" },
+    { route: "/api/budget-plan-fill", method: "POST", internalErrorMessage: "Database write failed" },
     async (): Promise<Response> => {
       const body = parseBudgetPlanFillBody(await parseJsonBody(request, z.unknown()));
 
