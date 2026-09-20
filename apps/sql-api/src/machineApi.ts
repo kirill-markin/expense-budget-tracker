@@ -89,6 +89,7 @@ export const createMachineApiHandler = (
         errorType: getSafeErrorType(error),
       });
       return buildRetryableErrorResponse(
+        dependencies.log,
         "agent_auth_unavailable",
         "Retry the request in a moment.",
         error,

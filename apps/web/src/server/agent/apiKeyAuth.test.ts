@@ -88,6 +88,32 @@ test("an unrevoked ApiKey for a disabled account is refused and the refusal is l
   assert.deepEqual(loggedEvents, [{ domain: "auth", action: "agent_account_disabled", userId: "user-1" }]);
 });
 
+test("a failed account-state read is logged apart from a refusal", async (): Promise<void> => {
+  const touchedConnections: Array<string> = [];
+  const loggedEvents: Array<LoggedEvent> = [];
+  const dependencies: AgentApiKeyAuthDependencies = {
+    ...createDependencies(null, touchedConnections, loggedEvents),
+    loadStoredAccountState: async () => {
+      throw new Error("connect ECONNREFUSED 10.0.1.23:5432");
+    },
+  };
+
+  await assert.rejects(
+    () => authenticateAgentRequestWithDependencies(createRequest(), dependencies),
+    (error: unknown): boolean => getAgentAuthError(error) === null
+      && error instanceof Error
+      && error.message === "connect ECONNREFUSED 10.0.1.23:5432",
+  );
+  assert.deepEqual(touchedConnections, []);
+  // The routes answer this as an unavailable envelope, so without its own
+  // event an auth-path outage would read as a wave of revocations.
+  assert.deepEqual(loggedEvents, [{
+    domain: "auth",
+    action: "agent_auth_unavailable",
+    error: "connect ECONNREFUSED 10.0.1.23:5432",
+  }]);
+});
+
 test("an unrevoked ApiKey for a deleted account is refused", async (): Promise<void> => {
   const dependencies = createDependencies(null, []);
 

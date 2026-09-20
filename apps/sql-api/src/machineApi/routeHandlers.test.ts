@@ -574,50 +574,186 @@ test("mutating SQL routes require state verification after an ambiguous deadline
   }
 });
 
-test("mutating SQL routes keep pre-dispatch deadline failures retryable", async (): Promise<void> => {
-  const context: MachineRouteContext = {
-    ...createContext(),
-    event: createAuthenticatedEvent({
-      body: JSON.stringify({
-        sql: "UPDATE account_metadata SET liquidity = 'low' WHERE account_id = 'a-main-usd'",
-      }),
-      httpMethod: "POST",
-      path: "/v1/sql/execute",
-      resource: "/sql/execute",
+/**
+ * A deadline is deterministic: the same statement expires again, so every SQL
+ * route has to name it instead of answering the retryable envelope an agent
+ * reads as an outage worth re-sending unchanged. The two shapes below are the
+ * ones the routes classify as a deadline, and neither is a SQLSTATE class the
+ * user-error branch catches.
+ */
+const SQL_DEADLINE_ROUTE_CASES = [
+  {
+    handleRoute: handleSqlQueryRouteWithWorkspaceResolver,
+    sql: "SELECT account_id FROM accounts",
+  },
+  {
+    handleRoute: handleSqlExecuteRouteWithWorkspaceResolver,
+    sql: "UPDATE account_metadata SET liquidity = 'low' WHERE account_id = 'a-main-usd'",
+  },
+  {
+    handleRoute: handleSqlRouteWithWorkspaceResolver,
+    sql: "SELECT account_id FROM accounts",
+  },
+] as const;
+
+const createSqlFailureContext = (
+  sql: string,
+  runInRestrictedContext: MachineApiDependencies["withRestrictedTrustedIdentityContext"],
+  log: MachineApiDependencies["log"],
+): MachineRouteContext => ({
+  ...createContext(log),
+  event: createAuthenticatedEvent({
+    body: JSON.stringify({ sql }),
+    httpMethod: "POST",
+    path: "/v1/sql",
+    resource: "/sql",
+  }),
+  dependencies: {
+    ...createDependencies(log),
+    resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: async () => ({
+      workspaceId: "workspace-1",
+      created: false,
     }),
-    dependencies: {
-      ...createDependencies(),
-      resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: async () => ({
-        workspaceId: "workspace-1",
-        created: false,
-      }),
-      queryAsTrustedIdentityBeforeDeadline: async () => createQueryResult([{
-        workspace_id: "workspace-1",
-        name: "Personal",
-      }]),
-      withRestrictedTrustedIdentityContext: async <T>(): Promise<T> => {
+    queryAsTrustedIdentityBeforeDeadline: async () => createQueryResult([{
+      workspace_id: "workspace-1",
+      name: "Personal",
+    }]),
+    withReadOnlyRestrictedTrustedIdentityContext: runInRestrictedContext,
+    withRestrictedTrustedIdentityContext: runInRestrictedContext,
+  },
+});
+
+const resolveTestWorkspaceId = async (): Promise<string> => "workspace-1";
+
+type SqlDeadlinePayload = Readonly<{
+  data: Readonly<{ timeoutMs: number; retryable: boolean }>;
+  error: Readonly<{ code: string; message: string }>;
+  instructions: string;
+}>;
+
+test("SQL routes name a pre-dispatch deadline rather than answering an outage", async (): Promise<void> => {
+  for (const { handleRoute, sql } of SQL_DEADLINE_ROUTE_CASES) {
+    const logEvents: Array<SqlApiLogEvent> = [];
+    const context = createSqlFailureContext(
+      sql,
+      async <T>(): Promise<T> => {
         throw new SqlExecutionDeadlineError(SQL_STATEMENT_TIMEOUT_MS);
       },
-    },
-  };
-  const resolveWorkspaceId = async (): Promise<string> => "workspace-1";
+      (event) => logEvents.push(event),
+    );
 
-  for (const handleRoute of [
-    handleSqlExecuteRouteWithWorkspaceResolver,
-    handleSqlRouteWithWorkspaceResolver,
-  ] as const) {
-    const response = await handleRoute(context, resolveWorkspaceId);
-    const payload = JSON.parse(response.body) as {
-      data: Readonly<{ retryable: boolean }>;
-      error: Readonly<{ code: string }>;
-      instructions: string;
-    };
+    const response = await handleRoute(context, resolveTestWorkspaceId);
+    const payload = JSON.parse(response.body) as SqlDeadlinePayload;
 
-    assert.equal(response.statusCode, 500);
-    assert.deepEqual(payload.data, { retryable: true });
-    assert.equal(payload.error.code, "agent_sql_failed");
-    assert.match(payload.instructions, /Retry SQL/u);
+    assert.equal(response.statusCode, 504);
+    assert.deepEqual(payload.data, { timeoutMs: SQL_STATEMENT_TIMEOUT_MS, retryable: true });
+    assert.equal(payload.error.code, "request_deadline_exceeded");
+    assert.equal(
+      payload.error.message,
+      `SQL execution exceeded its ${String(SQL_STATEMENT_TIMEOUT_MS)} ms total deadline before the next database command could start`,
+    );
+    // The answer attributes the expiry to no phase: it claims only that the
+    // submitted SQL applied nothing, then offers both remedies.
+    assert.match(payload.instructions, /None of the submitted SQL was applied/u);
+    assert.match(payload.instructions, /Send less work per request/u);
+    assert.match(payload.instructions, /send X-Workspace-Id/u);
     assert.doesNotMatch(payload.instructions, /Verify current state/u);
+    // A deterministic timeout is not an infrastructure fault, so it must not
+    // be recorded as one.
+    assert.deepEqual(logEvents, []);
+  }
+});
+
+test("SQL routes name a cancelled statement as the same deadline failure", async (): Promise<void> => {
+  for (const { handleRoute, sql } of SQL_DEADLINE_ROUTE_CASES) {
+    const logEvents: Array<SqlApiLogEvent> = [];
+    const context = createSqlFailureContext(
+      sql,
+      async <T>(
+        _identity: MachineRouteContext["authenticated"]["identity"],
+        _workspaceId: string,
+        _deadline: SqlExecutionDeadline,
+        callback: (queryFn: RestrictedQueryFn) => Promise<T>,
+      ): Promise<T> => callback(async (_sql, _params, _statementTimeoutMs, onDispatch) => {
+        onDispatch();
+        throw Object.assign(
+          new Error("canceling statement due to statement timeout"),
+          { code: "57014" },
+        );
+      }),
+      (event) => logEvents.push(event),
+    );
+
+    const response = await handleRoute(context, resolveTestWorkspaceId);
+    const payload = JSON.parse(response.body) as SqlDeadlinePayload;
+
+    assert.equal(response.statusCode, 504);
+    assert.deepEqual(payload.data, { timeoutMs: SQL_STATEMENT_TIMEOUT_MS, retryable: true });
+    assert.equal(payload.error.code, "request_deadline_exceeded");
+    assert.equal(
+      payload.error.message,
+      `SQL execution was cancelled after exceeding its ${String(SQL_STATEMENT_TIMEOUT_MS)} ms deadline`,
+    );
+    assert.match(payload.instructions, /None of the submitted SQL was applied/u);
+    assert.match(payload.instructions, /Send less work per request/u);
+    assert.match(payload.instructions, /send X-Workspace-Id/u);
+    // The raw PostgreSQL cancel text is not what the caller is answered with.
+    assert.doesNotMatch(response.body, /canceling statement/u);
+    assert.deepEqual(logEvents, []);
+  }
+});
+
+/**
+ * The deadline also covers workspace resolution, which runs before any
+ * submitted statement. Both shapes are reachable there: the between-commands
+ * check raises SqlExecutionDeadlineError, and persisting the auto-selected
+ * workspace is a real write whose statement PostgreSQL can cancel first.
+ */
+const SQL_DEADLINE_ERROR_SHAPES = [
+  {
+    error: new SqlExecutionDeadlineError(SQL_STATEMENT_TIMEOUT_MS),
+    message: `SQL execution exceeded its ${String(SQL_STATEMENT_TIMEOUT_MS)} ms total deadline before the next database command could start`,
+  },
+  {
+    error: Object.assign(
+      new Error("canceling statement due to statement timeout"),
+      { code: "57014" },
+    ),
+    message: `SQL execution was cancelled after exceeding its ${String(SQL_STATEMENT_TIMEOUT_MS)} ms deadline`,
+  },
+] as const;
+
+test("SQL routes name a deadline that expires while resolving the workspace", async (): Promise<void> => {
+  for (const { handleRoute, sql } of SQL_DEADLINE_ROUTE_CASES) {
+    for (const { error, message } of SQL_DEADLINE_ERROR_SHAPES) {
+      const logEvents: Array<SqlApiLogEvent> = [];
+      const context = createSqlFailureContext(
+        sql,
+        async <T>(): Promise<T> => {
+          throw new Error("SQL must not run once workspace resolution failed");
+        },
+        (event) => logEvents.push(event),
+      );
+
+      const response = await handleRoute(context, async (): Promise<string> => {
+        throw error;
+      });
+      const payload = JSON.parse(response.body) as SqlDeadlinePayload;
+
+      assert.equal(response.statusCode, 504);
+      assert.deepEqual(payload.data, { timeoutMs: SQL_STATEMENT_TIMEOUT_MS, retryable: true });
+      assert.equal(payload.error.code, "request_deadline_exceeded");
+      assert.equal(payload.error.message, message);
+      // Resolution can already have created a workspace or saved the selected
+      // one on the API key, so the claim is scoped to the submitted SQL and
+      // must not say the whole request applied nothing.
+      assert.match(payload.instructions, /None of the submitted SQL was applied/u);
+      // The same answer as the execution site: both remedies, no attribution.
+      assert.match(payload.instructions, /Send less work per request/u);
+      assert.match(payload.instructions, /send X-Workspace-Id/u);
+      assert.doesNotMatch(response.body, /canceling statement/u);
+      assert.deepEqual(logEvents, []);
+    }
   }
 });
 

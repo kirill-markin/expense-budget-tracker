@@ -2,8 +2,8 @@
  * Postgres-backed pin for the production account-state gate.
  *
  * The unit tests inject a stub loader, so nothing there proves the default
- * wiring works: that withUserOnlyContext really sets app.user_id inside the
- * transaction, so the user_self_access policy on `users`
+ * wiring works: that withUserOnlyContext really sets app.user_id for the
+ * queries it runs, so the user_self_access policy on `users`
  * (db/migrations/0013_users.sql) returns the caller's own row instead of zero
  * rows, which apiKeyAuth maps to `account_disabled`. A silent break there would
  * refuse every API-key caller at once, so it is exercised against a real

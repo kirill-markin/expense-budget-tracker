@@ -18,6 +18,22 @@ import type { MachineApiDependencies, PgError, TrustedIdentityContext, Workspace
 import { getWorkspaceBeforeDeadline } from "./workspaceService.js";
 
 const USER_SQL_ERROR_CLASSES: ReadonlySet<string> = new Set(["22", "23", "42"]);
+// PostgreSQL cancelled a statement at the per-command statement_timeout derived
+// from the deadline still left. The total deadline is only checked between
+// commands, so one slow statement expires it this way rather than through
+// SqlExecutionDeadlineError. Class 57 is not a USER_SQL_ERROR_CLASS, so without
+// this check the cancel would be answered as an unclassified infrastructure
+// fault.
+//
+// PostgreSQL also raises 57014 for an operator pg_cancel_backend, and that is
+// deliberately not distinguished. Both cancels abort and roll back the
+// transaction, so the caller-visible facts are identical; the only thing an
+// operator cancel makes slightly off is the "send less work" advice, which is
+// harmless for a hand cancel an operator is already watching. Telling them
+// apart would mean matching the localized message text ("canceling statement
+// due to statement timeout" against "due to user request"), which lc_messages
+// can translate, so the test would be a guess dressed as a check.
+const STATEMENT_TIMEOUT_ERROR_CODE = "57014";
 const DEFAULT_USER_SQL_EXECUTION_MESSAGE = "The SQL statement could not be executed";
 const AMBIGUOUS_SQL_MUTATION_OUTCOME_MESSAGE = "The SQL mutation transaction outcome is unknown";
 const WRITE_COMMITTED_NOTE = "The write committed and must not be repeated.";
@@ -525,6 +541,11 @@ const throwUserSqlExecutionError = (error: unknown): never => {
 
 export const isUserSqlExecutionError = (error: unknown): error is UserSqlExecutionError =>
   error instanceof UserSqlExecutionError;
+
+export const isSqlStatementTimeoutError = (error: unknown): boolean =>
+  typeof error === "object"
+  && error !== null
+  && (error as PgError).code === STATEMENT_TIMEOUT_ERROR_CODE;
 
 export const isAmbiguousSqlMutationOutcomeError = (
   error: unknown,

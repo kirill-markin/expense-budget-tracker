@@ -81,6 +81,19 @@ export type SqlApiLogEvent =
     domain: "sql_api";
     action: "agent_auth_unavailable";
     errorType: SafeErrorType;
+  }>
+  // A request answered with the retryable 500 envelope. The response carries a
+  // fixed message, so this is the only record of what actually failed: a `pg`
+  // connect failure names the private database endpoint, which must stay out
+  // of a caller-visible body. The reason is a driver or runtime message rather
+  // than submitted SQL, but it is still cut to
+  // MAX_SQL_POLICY_LOG_MESSAGE_CHARS so one failure cannot write a huge line.
+  | Readonly<{
+    domain: "sql_api";
+    action: "agent_request_unavailable";
+    code: string;
+    errorType: SafeErrorType;
+    message: string;
   }>;
 
 export const log = (event: SqlApiLogEvent): void => {
