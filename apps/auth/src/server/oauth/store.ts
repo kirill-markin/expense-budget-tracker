@@ -1,8 +1,8 @@
 import { query, withTransaction, type QueryFn } from "../db.js";
 import {
-  getCognitoOAuthOwnerStatus,
-  type CognitoOAuthOwnerStatus,
-} from "../cognitoUserStatus.js";
+  runtimeOAuthOwnerPolicy,
+  type OAuthOwnerPolicy,
+} from "./owner.js";
 import {
   createOpaqueToken,
   hashOpaqueToken,
@@ -20,14 +20,14 @@ export type OAuthStoreDependencies = Readonly<{
   query: QueryFn;
   withTransaction: TransactionRunner;
   createOpaqueToken: (prefix: "cl" | "ac" | "at" | "rt") => string;
-  getCognitoOAuthOwnerStatus: (userId: string) => Promise<CognitoOAuthOwnerStatus>;
+  ownerPolicy: OAuthOwnerPolicy;
 }>;
 
 const defaultDependencies: OAuthStoreDependencies = {
   query,
   withTransaction,
   createOpaqueToken,
-  getCognitoOAuthOwnerStatus,
+  ownerPolicy: runtimeOAuthOwnerPolicy,
 };
 
 export type OAuthTokenResult = Readonly<{
@@ -195,7 +195,7 @@ export const issueAuthorizationCodeWithDependencies = async (
   dependencies: OAuthStoreDependencies,
 ): Promise<string> => {
   await cleanupExpiredOAuthState(dependencies.query);
-  const ownerStatus = await dependencies.getCognitoOAuthOwnerStatus(userId);
+  const ownerStatus = await dependencies.ownerPolicy.readOwnerStatus(userId, dependencies.query);
   if (ownerStatus === "inactive") {
     await revokeActiveConnectionsForUser(userId, dependencies);
     throw oauthError("access_denied", "User is not eligible for OAuth authorization", 400);
@@ -203,7 +203,7 @@ export const issueAuthorizationCodeWithDependencies = async (
   const code = dependencies.createOpaqueToken("ac");
   const codeHash = hashOpaqueToken(code);
   return dependencies.withTransaction(async (queryFn: QueryFn) => {
-    await queryFn("SELECT auth.sync_authenticated_user($1, $2)", [userId, email]);
+    await dependencies.ownerPolicy.syncAuthenticatedUser(queryFn, userId, email);
     const connectionResult = await queryFn(
       `INSERT INTO auth.oauth_connections (client_id, user_id, resource)
        VALUES ($1, $2, $3)
@@ -352,14 +352,14 @@ export const exchangeAuthorizationCodeWithDependencies = async (
   if (record.revoked || !record.unexpired) throw invalidAuthorizationCodeGrant();
   validateAuthorizationCodeBinding(record, clientId, redirectUri, resource, codeVerifier);
 
-  const ownerStatus = await dependencies.getCognitoOAuthOwnerStatus(record.userId);
+  const ownerStatus = await dependencies.ownerPolicy.readOwnerStatus(record.userId, dependencies.query);
   if (ownerStatus === "inactive") {
     await revokeActiveConnectionsForUser(record.userId, dependencies);
     throw invalidAuthorizationCodeGrant();
   }
 
-  // Cognito eligibility is a point-in-time snapshot. The locked read below
-  // revalidates all authorization-code state without holding a row lock over AWS retries.
+  // Owner eligibility is a point-in-time snapshot. The locked read below
+  // revalidates all authorization-code state without holding a row lock over the owner lookup.
   const exchangeResult = await dependencies.withTransaction(async (queryFn: QueryFn): Promise<OAuthTokenResult | null> => {
     const lockedRecord = await lockAuthorizationCodeForExchange(queryFn, codeHash);
     if (lockedRecord.used) {
@@ -488,14 +488,14 @@ export const exchangeRefreshTokenWithDependencies = async (
   if (!record.unexpired) throw invalidRefreshGrant();
   narrowScopes(record.scopes, requestedScopes);
 
-  const ownerStatus = await dependencies.getCognitoOAuthOwnerStatus(record.userId);
+  const ownerStatus = await dependencies.ownerPolicy.readOwnerStatus(record.userId, dependencies.query);
   if (ownerStatus === "inactive") {
     await revokeActiveConnectionsForUser(record.userId, dependencies);
     throw invalidRefreshGrant();
   }
 
-  // Cognito eligibility is a point-in-time snapshot. The locked read below
-  // revalidates all refresh-token state without holding a row lock over AWS retries.
+  // Owner eligibility is a point-in-time snapshot. The locked read below
+  // revalidates all refresh-token state without holding a row lock over the owner lookup.
   const exchangeResult = await rotateRefreshToken(
     tokenHash,
     record.userId,

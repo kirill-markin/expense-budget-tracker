@@ -74,6 +74,17 @@
       },
       "default": "./dist/agentResults.js"
     },
+    "./account-status": {
+      "import": {
+        "types": "./dist/accountStatus.d.ts",
+        "default": "./dist/accountStatus.js"
+      },
+      "require": {
+        "types": "./dist-cjs/accountStatus.d.cts",
+        "default": "./dist-cjs/accountStatus.cjs"
+      },
+      "default": "./dist/accountStatus.js"
+    },
     "./proxy-jwt": {
       "import": {
         "types": "./dist/proxyJwt.d.ts",
