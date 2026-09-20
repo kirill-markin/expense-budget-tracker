@@ -41,10 +41,16 @@ export type AgentAuthenticatedRequest = Readonly<{
   lastUsedAt: string | null;
 }>;
 
-/** Account state an ApiKey caller never proves and must not be allowed to assert. */
+/**
+ * Stored user columns an ApiKey caller never proves and must not be allowed
+ * to assert. `emailVerified` is not account state, but the MCP access-token
+ * gate admits on it, so an ApiKey request must carry the stored value rather
+ * than raise it.
+ */
 export type StoredAccountState = Readonly<{
   cognitoStatus: string;
   cognitoEnabled: boolean;
+  emailVerified: boolean;
 }>;
 
 export type AgentApiKeyAuthDependencies = Readonly<{
@@ -86,7 +92,7 @@ export const getAgentAuthError = (error: unknown): AgentAuthError | null => {
 export const loadStoredAccountState = async (userId: string): Promise<StoredAccountState | null> =>
   withUserOnlyContext(userId, async (queryFn) => {
     const result = await queryFn(
-      "SELECT cognito_status, cognito_enabled FROM users WHERE user_id = $1",
+      "SELECT cognito_status, cognito_enabled, email_verified FROM users WHERE user_id = $1",
       [userId],
     );
     if (result.rows.length > 1) {
@@ -100,10 +106,15 @@ export const loadStoredAccountState = async (userId: string): Promise<StoredAcco
     }
     const cognitoStatus = row["cognito_status"];
     const cognitoEnabled = row["cognito_enabled"];
-    if (typeof cognitoStatus !== "string" || typeof cognitoEnabled !== "boolean") {
+    const emailVerified = row["email_verified"];
+    if (
+      typeof cognitoStatus !== "string"
+      || typeof cognitoEnabled !== "boolean"
+      || typeof emailVerified !== "boolean"
+    ) {
       throw new Error(`loadStoredAccountState: user ${userId} has invalid stored account state`);
     }
-    return { cognitoStatus, cognitoEnabled };
+    return { cognitoStatus, cognitoEnabled, emailVerified };
   });
 
 const DEFAULT_AGENT_API_KEY_AUTH_DEPENDENCIES: AgentApiKeyAuthDependencies = {
@@ -117,9 +128,12 @@ const DEFAULT_AGENT_API_KEY_AUTH_DEPENDENCIES: AgentApiKeyAuthDependencies = {
  *
  * A valid key proves only that the key exists and is unrevoked. Account state
  * comes from the stored `users` row: a disabled account is refused, and the
- * identity carries the stored `cognito_status`/`cognito_enabled` so the
- * provisioning upsert downstream writes them back unchanged instead of
- * silently re-enabling the account.
+ * identity carries the stored `cognito_status`/`cognito_enabled` rather than
+ * asserted ones. The provisioning upsert downstream never updates those
+ * columns for an existing row either, so a key holder cannot re-enable an
+ * account an operator disabled in the database. `email_verified` is carried
+ * the same way: the key proves nothing about the address, and the MCP
+ * access-token gate admits on the stored value.
  */
 export const authenticateAgentRequestWithDependencies = async (
   request: Request,
@@ -205,7 +219,7 @@ export const authenticateAgentRequestWithDependencies = async (
     identity: {
       userId: row.user_id,
       email: trustedEmail,
-      emailVerified: true,
+      emailVerified: trustedAccount.emailVerified,
       cognitoStatus: trustedAccount.cognitoStatus,
       cognitoEnabled: trustedAccount.cognitoEnabled,
     },

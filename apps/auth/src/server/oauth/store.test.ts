@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type { QueryResult, QueryResultRow } from "pg";
+import { COGNITO_AUTHENTICATED_STATUS } from "@expense-budget-tracker/agent-shared/account-status";
 import type { QueryFn } from "../db.js";
 import {
   getOAuthOwnerPolicy,
@@ -251,6 +252,59 @@ test("authorization-code issuance cleans expired state before opening its transa
   );
 
   assert.deepEqual(sequence, ["cleanup", "validate_owner", "sync_user", "upsert_connection", "insert_code"]);
+});
+
+test("consent for an email another subject owns is a protocol error, not a server error", async (): Promise<void> => {
+  // Exactly what auth.mirror_authenticated_user raises: the collision keeps
+  // the SQLSTATE and constraint name, and carries the actionable text. The
+  // message is static because it ends up in error_description on a redirect
+  // to the client, which must not learn the user's address.
+  const collision = Object.assign(
+    new Error("This email is already registered to a different user"),
+    {
+      code: "23505",
+      constraint: "idx_users_email",
+      hint: "Accounts are never linked automatically: sign in with the subject that owns this email.",
+    },
+  );
+  let codeInserted = false;
+  const dependencies = createDependencies(async (text) => {
+    if (text.startsWith("SELECT auth.sync_authenticated_user")) throw collision;
+    if (text.startsWith("INSERT INTO auth.oauth_authorization_codes")) codeInserted = true;
+    return result([]);
+  }, { ...emptyTokens(), ac: ["ebt_ac_collision"] });
+
+  await assert.rejects(
+    issueAuthorizationCodeWithDependencies(
+      authorizationRequest,
+      "user-1",
+      "owner@example.com",
+      dependencies,
+    ),
+    (error: unknown) => isOAuthProtocolError(error)
+      && error.oauthCode === "access_denied"
+      && error.status === 400
+      && error.message === collision.message,
+  );
+  assert.equal(codeInserted, false);
+});
+
+test("an unrelated consent failure is not mistaken for the email collision", async (): Promise<void> => {
+  const failure = Object.assign(new Error("deadlock detected"), { code: "40P01" });
+  const dependencies = createDependencies(async (text) => {
+    if (text.startsWith("SELECT auth.sync_authenticated_user")) throw failure;
+    return result([]);
+  }, { ...emptyTokens(), ac: ["ebt_ac_unrelated"] });
+
+  await assert.rejects(
+    issueAuthorizationCodeWithDependencies(
+      authorizationRequest,
+      "user-1",
+      "user@example.com",
+      dependencies,
+    ),
+    (error: unknown) => error === failure,
+  );
 });
 
 test("cleanup failures abort issuance before a transaction opens", async (): Promise<void> => {
@@ -1408,10 +1462,11 @@ type ProxyDatabase = Readonly<{
 /**
  * An in-memory stand-in for the auth-service database in proxy_jwt mode.
  *
- * `auth.mirror_authenticated_user` is modelled exactly as migration 0079
- * writes it: a first sighting inserts the passed status, an existing row keeps
- * its account state. `auth.sync_authenticated_user` is a hard failure here,
- * because a proxy consent round-trip must never take the state-raising path.
+ * `auth.mirror_authenticated_user` is modelled exactly as migrations 0079 and
+ * 0080 write it: a first sighting inserts the passed status, an existing row
+ * keeps its account state. `auth.sync_authenticated_user` is a hard failure
+ * here, because a proxy consent round-trip must never take the Cognito path,
+ * which provisions a first sighting as `CONFIRMED`.
  */
 const createProxyDatabase = (seededUser: MirroredUser | null): ProxyDatabase => {
   const users = new Map<string, MirroredUser>();
@@ -1438,7 +1493,7 @@ const createProxyDatabase = (seededUser: MirroredUser | null): ProxyDatabase => 
       return result([]);
     }
     if (text.startsWith("SELECT auth.sync_authenticated_user")) {
-      throw new Error("proxy_jwt consent must not raise the mirrored account state");
+      throw new Error("proxy_jwt consent must not take the Cognito mirror path");
     }
     if (text.startsWith("INSERT INTO auth.oauth_connections")) {
       return result([{ connection_id: PROXY_CONNECTION_ID }]);
@@ -1704,4 +1759,69 @@ test("the owner account-state migration reads the mirror and never raises it", (
   assert.match(ownerStateMigration, /GRANT EXECUTE ON FUNCTION auth\.get_oauth_owner_account_state\(TEXT\) TO auth_service/u);
   assert.match(ownerStateMigration, /REVOKE ALL ON FUNCTION auth\.mirror_authenticated_user\(TEXT, TEXT, TEXT\) FROM PUBLIC/u);
   assert.match(ownerStateMigration, /GRANT EXECUTE ON FUNCTION auth\.mirror_authenticated_user\(TEXT, TEXT, TEXT\) TO auth_service/u);
+});
+
+test("the account-state migration makes every login and consent writer insert-only for account state", (): void => {
+  const accountStateMigration = readFileSync(
+    fileURLToPath(new URL("../../../../../db/migrations/0080_account_state_insert_only.sql", import.meta.url)),
+    "utf8",
+  );
+  const mirrorFunctionSql = readMigrationRange(
+    accountStateMigration,
+    "CREATE OR REPLACE FUNCTION auth.mirror_authenticated_user(",
+    "CREATE OR REPLACE FUNCTION auth.sync_authenticated_user(",
+  );
+  const conflictUpdateSql = mirrorFunctionSql.slice(mirrorFunctionSql.indexOf("ON CONFLICT"));
+  assert.match(
+    conflictUpdateSql,
+    /ON CONFLICT \(user_id\) DO UPDATE\s+SET email = EXCLUDED\.email,\s+email_verified = EXCLUDED\.email_verified,\s+last_seen_at = now\(\),\s+updated_at = now\(\);/u,
+  );
+  // Account state is frozen after the first sighting; email_verified is not
+  // account state and must keep following the authenticated identity.
+  assert.doesNotMatch(conflictUpdateSql, /cognito_status|cognito_enabled/u);
+
+  // OTP login, agent API-key creation and Cognito consent share this function,
+  // and it must now record the identity through the insert-only writer.
+  const syncFunctionSql = readMigrationSection(
+    accountStateMigration,
+    "CREATE OR REPLACE FUNCTION auth.sync_authenticated_user(",
+  );
+  assert.doesNotMatch(syncFunctionSql, /INSERT INTO public\.users/u);
+  // The status the wrapper passes is the shared vocabulary's confirmed value,
+  // asserted from the constant so the SQL literal cannot drift away from it.
+  assert.match(
+    syncFunctionSql,
+    new RegExp(
+      `PERFORM auth\\.mirror_authenticated_user\\(p_user_id, p_email, '${COGNITO_AUTHENTICATED_STATUS}'\\);`,
+      "u",
+    ),
+  );
+
+  // An email owned by another subject is an actionable conflict, not a server error.
+  assert.match(mirrorFunctionSql, /GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;/u);
+  assert.match(
+    mirrorFunctionSql,
+    /USING ERRCODE = 'unique_violation',\s+CONSTRAINT = 'idx_users_email',/u,
+  );
+  // The same index also catches the transient race between two concurrent
+  // first requests for one subject, which provisioning.ts recovers from. Only
+  // a committed row owned by someone else is permanent, so the handler
+  // resolves the owner and re-raises the original error otherwise.
+  assert.match(
+    mirrorFunctionSql,
+    /SELECT user_id INTO v_owner FROM public\.users WHERE email = p_email;\s+IF v_owner IS NULL OR v_owner = p_user_id THEN\s+RAISE;\s+END IF;/u,
+  );
+  // The message is relayed verbatim into an agent envelope and into an OAuth
+  // error_description on a redirect, so it stays free of the address, the
+  // caller's subject and the owning subject.
+  assert.match(
+    mirrorFunctionSql,
+    /RAISE EXCEPTION 'This email is already registered to a different user'\s+USING ERRCODE/u,
+  );
+  // The address and the caller's subject belong in DETAIL, which stays in the
+  // database log rather than travelling to the client.
+  assert.match(mirrorFunctionSql, /DETAIL = format\('Subject %s claimed email %s', p_user_id, p_email\),/u);
+
+  assert.match(accountStateMigration, /GRANT EXECUTE ON FUNCTION auth\.sync_authenticated_user\(TEXT, TEXT\) TO auth_service/u);
+  assert.match(accountStateMigration, /GRANT EXECUTE ON FUNCTION auth\.mirror_authenticated_user\(TEXT, TEXT, TEXT\) TO auth_service/u);
 });

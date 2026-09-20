@@ -31,6 +31,14 @@ const createClientRejectingWith = (error: unknown): PoolClient => ({
   },
 } as unknown as PoolClient);
 
+/** Records every statement the upsert issues. */
+const createRecordingClient = (statements: Array<string>): PoolClient => ({
+  query: async (text: string): Promise<QueryResult> => {
+    statements.push(text);
+    return emptyResult();
+  },
+} as unknown as PoolClient);
+
 const emailUniqueViolation = (): Error =>
   Object.assign(
     new Error('duplicate key value violates unique constraint "idx_users_email"'),
@@ -61,4 +69,23 @@ test("any other database error is rethrown untouched", async (): Promise<void> =
   const client = createClientRejectingWith(cause);
 
   await assert.rejects(() => upsertUserIdentity(client, IDENTITY), (error: unknown): boolean => error === cause);
+});
+
+test("a browser page load provisions a first-seen user but never updates stored account state", async (): Promise<void> => {
+  const statements: Array<string> = [];
+
+  await upsertUserIdentity(createRecordingClient(statements), IDENTITY);
+
+  const insert = statements.find((text) => text.startsWith("INSERT INTO users")) ?? "";
+  // A first sighting still gets its account state.
+  assert.match(insert, /INSERT INTO users \(\s+user_id,\s+email,\s+email_verified,\s+cognito_status,\s+cognito_enabled\s+\)/u);
+  // An existing row keeps its account state, so a session request cannot
+  // re-enable a disabled account, while email_verified keeps following the
+  // verified identity token in both directions.
+  const conflictUpdate = insert.slice(insert.indexOf("ON CONFLICT"));
+  assert.match(
+    conflictUpdate,
+    /SET email = EXCLUDED\.email,\s+email_verified = EXCLUDED\.email_verified,\s+last_seen_at = now\(\),\s+updated_at = now\(\)/u,
+  );
+  assert.doesNotMatch(conflictUpdate, /cognito_status|cognito_enabled/u);
 });

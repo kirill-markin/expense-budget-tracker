@@ -22,6 +22,16 @@ import {
   waitForPoolBeforeDeadline,
 } from "./dbPool.js";
 
+/**
+ * An authenticated identity as the request knows it.
+ *
+ * `cognitoStatus` and `cognitoEnabled` are the account state to provision a
+ * first-seen user with. They never describe an existing row: stored account
+ * state is authoritative and is read, not asserted. `emailVerified` is not
+ * account state but the current claim about this address, so it keeps
+ * tracking the authenticated identity — which on this ApiKey surface means
+ * the stored value, since a key proves nothing about the address.
+ */
 export type UserIdentity = Readonly<{
   userId: string;
   email: string;
@@ -178,10 +188,19 @@ export const withTransaction = async <T>(
  * Callers must already be in a transaction. The transaction-scoped advisory
  * lock serializes identity writes for this user across runtime instances.
  *
- * `cognito_status` and `cognito_enabled` are written from the identity as
- * given, so every caller must pass account state it actually knows. The
- * ApiKey path reads both from the stored row instead of asserting them, which
- * is what keeps a disabled account disabled.
+ * `cognito_status` and `cognito_enabled` provision a first-seen row and are
+ * never updated on conflict. An ordinary request therefore cannot raise the
+ * stored account state whatever identity it carries, which is what makes
+ * `cognito_enabled` a revocation lever: it changes only where account state
+ * is administered.
+ *
+ * `email_verified` keeps following the authenticated identity on conflict. It
+ * is no revocation lever, so it stays repairable — but every caller on this
+ * surface authenticated with an ApiKey, which proves nothing about the
+ * address, and so passes the stored value straight back. The repair happens
+ * on the surfaces that verified the address; the MCP access-token gate reads
+ * the stored value, and a key holder it refused must not be able to raise it
+ * from here.
  */
 export const upsertUserIdentity = async (
   queryFn: QueryFn,
@@ -202,8 +221,6 @@ export const upsertUserIdentity = async (
      ON CONFLICT (user_id) DO UPDATE
        SET email = EXCLUDED.email,
            email_verified = EXCLUDED.email_verified,
-           cognito_status = EXCLUDED.cognito_status,
-           cognito_enabled = EXCLUDED.cognito_enabled,
            last_seen_at = now(),
            updated_at = now()`,
     [
