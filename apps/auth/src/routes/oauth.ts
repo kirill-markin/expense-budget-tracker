@@ -4,6 +4,7 @@ import {
   MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
   MAX_OAUTH_LOGIN_QUERY_BYTES,
 } from "@expense-budget-tracker/agent-shared";
+import { PROXY_JWT_UNAUTHORIZED_MESSAGE } from "@expense-budget-tracker/agent-shared/proxy-jwt";
 import {
   getOAuthConfig,
   isOAuthProtocolError,
@@ -23,6 +24,7 @@ import {
   registerOAuthClient,
 } from "../server/oauth/store.js";
 import { resolveBrowserSession, type BrowserIdentity } from "../server/oauth/session.js";
+import { getAuthServiceMode, type AuthServiceMode } from "../server/authMode.js";
 import {
   getSafeErrorType,
   log,
@@ -40,6 +42,7 @@ export type OAuthRouteDependencies = Readonly<{
   exchangeAuthorizationCode: typeof exchangeAuthorizationCode;
   exchangeRefreshToken: typeof exchangeRefreshToken;
   resolveBrowserSession: typeof resolveBrowserSession;
+  getAuthServiceMode: () => AuthServiceMode;
   log: (event: OAuthServerErrorEvent) => void;
 }>;
 
@@ -51,6 +54,7 @@ const defaultDependencies: OAuthRouteDependencies = {
   exchangeAuthorizationCode,
   exchangeRefreshToken,
   resolveBrowserSession,
+  getAuthServiceMode: (): AuthServiceMode => getAuthServiceMode(process.env),
   log,
 };
 
@@ -327,13 +331,26 @@ const buildLoginRedirect = (issuer: string, request: AuthorizationRequest): stri
   return redirect;
 };
 
+/**
+ * In proxy_jwt mode this service hosts no login page, so an unresolved identity
+ * is answered with 401 and no login redirect is built: sign-in belongs to the
+ * upstream proxy. In cognito mode the redirect is built before the session
+ * lookup, as it was, so its size assertion still runs on every request.
+ */
 const requireBrowserIdentity = async (
   c: Context,
-  loginRedirect: string,
+  issuer: string,
+  request: AuthorizationRequest,
   dependencies: OAuthRouteDependencies,
 ): Promise<BrowserIdentity | Response> => {
+  const loginRedirect = dependencies.getAuthServiceMode() === "proxy_jwt"
+    ? null
+    : buildLoginRedirect(issuer, request);
   const identity = await dependencies.resolveBrowserSession(c);
-  return identity === null ? c.redirect(loginRedirect, 302) : identity;
+  if (identity !== null) return identity;
+  return loginRedirect === null
+    ? c.text(PROXY_JWT_UNAUTHORIZED_MESSAGE, 401)
+    : c.redirect(loginRedirect, 302);
 };
 
 export const createOAuthApp = (dependencies: OAuthRouteDependencies): Hono => {
@@ -424,7 +441,7 @@ app.get("/oauth/authorize", async (c) => {
     const { client, request } = await loadAuthorizationRequest(params, config.resource, dependencies.getOAuthClient);
     authorizationRequest = request;
     validateConsentSubmissionSize(request);
-    const identity = await requireBrowserIdentity(c, buildLoginRedirect(config.issuer, request), dependencies);
+    const identity = await requireBrowserIdentity(c, config.issuer, request, dependencies);
     if (identity instanceof Response) return identity;
     c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
     c.header("X-Frame-Options", "DENY");
@@ -462,7 +479,7 @@ app.post("/oauth/authorize", async (c) => {
     const { request } = await loadAuthorizationRequest(params, config.resource, dependencies.getOAuthClient);
     authorizationRequest = request;
     const decision = readRequiredParameter(params, "decision");
-    const identity = await requireBrowserIdentity(c, buildLoginRedirect(config.issuer, request), dependencies);
+    const identity = await requireBrowserIdentity(c, config.issuer, request, dependencies);
     if (identity instanceof Response) return identity;
     if (decision === "deny") return c.redirect(appendAuthorizationResult(request.redirectUri, { error: "access_denied", state: request.state }), 302);
     if (decision !== "allow") throw oauthError("invalid_request", "Consent decision must be allow or deny", 400);

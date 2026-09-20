@@ -7,6 +7,7 @@ import agentVerifyCode from "../routes/agentVerifyCode.js";
 import loginPage from "../routes/loginPage.js";
 import robots from "../routes/robots.js";
 import oauth from "../routes/oauth.js";
+import { getAuthServiceMode, type AuthServiceMode } from "./authMode.js";
 import { getSafeErrorType, log, type AuthUnhandledErrorEvent } from "./logger.js";
 
 export type AuthAppDependencies = Readonly<{
@@ -56,7 +57,17 @@ export const createAuthApp = (dependencies: AuthAppDependencies): Hono => {
   return app;
 };
 
+/**
+ * In proxy_jwt mode the upstream proxy owns sign-in, so the email OTP routes
+ * and the login page are not registered at all and answer 404: no dormant
+ * email login path is left behind the proxy.
+ */
+export const getAuthRoutes = (authMode: AuthServiceMode): ReadonlyArray<Hono> =>
+  authMode === "proxy_jwt"
+    ? [health, robots, oauth]
+    : [health, sendCode, verifyCode, agentSendCode, agentVerifyCode, loginPage, robots, oauth];
+
 export const createDefaultAuthApp = (): Hono => createAuthApp({
-  routes: [health, sendCode, verifyCode, agentSendCode, agentVerifyCode, loginPage, robots, oauth],
+  routes: getAuthRoutes(getAuthServiceMode(process.env)),
   log,
 });

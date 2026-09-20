@@ -49,6 +49,13 @@ export type OAuthEndpointServerErrorEvent = Readonly<{
   errorType: SafeErrorType;
 }>;
 
+/** AUTH_MODE=proxy_jwt: the edge token was absent or failed verification. */
+export type ProxyIdentityRejectedEvent = Readonly<{
+  domain: "auth";
+  action: "proxy_identity_rejected";
+  error: string;
+}>;
+
 export type AuthUnhandledErrorEvent = Readonly<{
   domain: "auth";
   action: "unhandled_error";
@@ -76,6 +83,7 @@ type AuthEvent =
   | CognitoOAuthOwnerRetryEvent
   | OAuthAuthorizationServerErrorEvent
   | OAuthEndpointServerErrorEvent
+  | ProxyIdentityRejectedEvent
   | AuthUnhandledErrorEvent
   | Readonly<{ domain: "auth"; action: "error"; error: string }>;
 

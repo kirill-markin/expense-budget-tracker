@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 import type { QueryResult, QueryResultRow } from "pg";
 import type { QueryFn } from "../db.js";
 import {
+  getOAuthOwnerPolicy,
+  type OAuthOwnerPolicy,
+  type OAuthOwnerStatus,
+} from "./owner.js";
+import {
   exchangeAuthorizationCodeWithDependencies,
   exchangeRefreshTokenWithDependencies,
   issueAuthorizationCodeWithDependencies,
@@ -70,6 +75,17 @@ const ownerListingFunctionSql = readMigrationRange(
   "CREATE FUNCTION auth.record_oauth_connection_activity(p_connection_id TEXT)",
 );
 
+/**
+ * A policy that answers the owner check as the test dictates while keeping the
+ * real `cognito` mirror write, which most cases here assert on.
+ */
+const ownerPolicyReading = (
+  readOwnerStatus: (userId: string) => Promise<OAuthOwnerStatus>,
+): OAuthOwnerPolicy => ({
+  ...getOAuthOwnerPolicy("cognito"),
+  readOwnerStatus: (userId: string): Promise<OAuthOwnerStatus> => readOwnerStatus(userId),
+});
+
 const createDependencies = (
   queryFn: QueryFn,
   tokens: Readonly<Record<"cl" | "ac" | "at" | "rt", ReadonlyArray<string>>>,
@@ -84,7 +100,7 @@ const createDependencies = (
       offsets[prefix] += 1;
       return token;
     },
-    getCognitoOAuthOwnerStatus: async () => "active",
+    ownerPolicy: ownerPolicyReading(async () => "active"),
   };
 };
 
@@ -219,12 +235,12 @@ test("authorization-code issuance cleans expired state before opening its transa
         transactionOpen = false;
       }
     },
-    getCognitoOAuthOwnerStatus: async (userId) => {
+    ownerPolicy: ownerPolicyReading(async (userId) => {
       assert.equal(userId, "user-1");
       assert.equal(transactionOpen, false);
       sequence.push("validate_owner");
       return "active";
-    },
+    }),
   };
 
   await issueAuthorizationCodeWithDependencies(
@@ -286,10 +302,10 @@ test("inactive owners are revoked before browser identity can sync or issue an a
       transactionOpened = true;
       return callback(async () => result([]));
     },
-    getCognitoOAuthOwnerStatus: async (userId) => {
+    ownerPolicy: ownerPolicyReading(async (userId) => {
       assert.equal(userId, "user-1");
       return "inactive";
-    },
+    }),
   };
 
   await assert.rejects(
@@ -335,10 +351,10 @@ test("authorization-code exchange cleanup failure precedes every exchange side e
       transactionOpened = true;
       return callback(transactionQuery);
     },
-    getCognitoOAuthOwnerStatus: async () => {
+    ownerPolicy: ownerPolicyReading(async () => {
       cognitoCalled = true;
       return "active";
-    },
+    }),
   };
 
   await assert.rejects(
@@ -400,10 +416,10 @@ test("inactive owners cannot exchange authorization codes and lose every active 
       transactionOpened = true;
       return callback(queryFn);
     },
-    getCognitoOAuthOwnerStatus: async (userId) => {
+    ownerPolicy: ownerPolicyReading(async (userId) => {
       assert.equal(userId, "user-1");
       return "inactive";
-    },
+    }),
   };
 
   await assert.rejects(
@@ -454,10 +470,10 @@ test("refresh exchange cleanup failure precedes every rotation side effect", asy
       transactionOpened = true;
       return callback(transactionQuery);
     },
-    getCognitoOAuthOwnerStatus: async () => {
+    ownerPolicy: ownerPolicyReading(async () => {
       cognitoCalled = true;
       return "active";
-    },
+    }),
   };
 
   await assert.rejects(
@@ -789,12 +805,12 @@ test("active owner validation runs outside the transaction before locked refresh
         transactionOpen = false;
       }
     },
-    getCognitoOAuthOwnerStatus: async (requestedUserId) => {
+    ownerPolicy: ownerPolicyReading(async (requestedUserId) => {
       assert.equal(requestedUserId, "user-1");
       assert.equal(transactionOpen, false);
       sequence.push("cognito_check");
       return "active";
-    },
+    }),
   };
 
   await exchangeRefreshTokenWithDependencies(
@@ -855,7 +871,7 @@ test("inactive owners revoke every active OAuth connection and receive generic i
       transactionOpened = true;
       return callback(queryFn);
     },
-    getCognitoOAuthOwnerStatus: async () => "inactive",
+    ownerPolicy: ownerPolicyReading(async () => "inactive"),
   };
 
   await assert.rejects(
@@ -904,7 +920,7 @@ test("transient owner validation failure neither consumes the refresh token nor 
       transactionOpened = true;
       return callback(queryFn);
     },
-    getCognitoOAuthOwnerStatus: async () => { throw transientFailure; },
+    ownerPolicy: ownerPolicyReading(async () => { throw transientFailure; }),
   };
 
   await assert.rejects(
@@ -970,14 +986,14 @@ test("disablement immediately after an active snapshot is enforced at the next r
   });
   const dependencies: OAuthStoreDependencies = {
     ...baseDependencies,
-    getCognitoOAuthOwnerStatus: async () => {
+    ownerPolicy: ownerPolicyReading(async () => {
       ownerChecks += 1;
       if (ownerChecks === 1) {
         ownerActive = false;
         return "active";
       }
       return ownerActive ? "active" : "inactive";
-    },
+    }),
   };
 
   const issuedDuringRace = await exchangeRefreshTokenWithDependencies(
@@ -1373,4 +1389,319 @@ test("revoked connections cannot exchange authorization codes or refresh tokens"
   assert.equal(codeConsumed, false);
   assert.equal(accessTokenInserted, false);
   assert.equal(refreshTokenInserted, false);
+});
+
+const PROXY_USER_ID = "proxy-user-1";
+const PROXY_USER_EMAIL = "proxy-user@example.com";
+const PROXY_CONNECTION_ID = "connection-proxy-1";
+
+type MirroredUser = { email: string; status: string; enabled: boolean };
+
+type ProxyDatabase = Readonly<{
+  queryFn: QueryFn;
+  users: Map<string, MirroredUser>;
+  refreshTokenHashes: Array<string>;
+  seedRefreshToken: (token: string) => void;
+  revokedConnectionCount: () => number;
+}>;
+
+/**
+ * An in-memory stand-in for the auth-service database in proxy_jwt mode.
+ *
+ * `auth.mirror_authenticated_user` is modelled exactly as migration 0079
+ * writes it: a first sighting inserts the passed status, an existing row keeps
+ * its account state. `auth.sync_authenticated_user` is a hard failure here,
+ * because a proxy consent round-trip must never take the state-raising path.
+ */
+const createProxyDatabase = (seededUser: MirroredUser | null): ProxyDatabase => {
+  const users = new Map<string, MirroredUser>();
+  if (seededUser !== null) users.set(PROXY_USER_ID, { ...seededUser });
+  const codes = new Map<string, { used: boolean; redirectUri: string; codeChallenge: string; scopes: ReadonlyArray<string> }>();
+  const refreshTokens = new Map<string, { used: boolean; scopes: ReadonlyArray<string> }>();
+  const refreshTokenHashes: Array<string> = [];
+  let revokedConnections = 0;
+
+  const queryFn: QueryFn = async (text, params) => {
+    if (isOAuthCleanupQuery(text) || isOAuthActivityQuery(text)) return result([]);
+    if (text.startsWith("SELECT account_status, account_enabled")) {
+      const user = users.get(String(params[0]));
+      return result(user === undefined
+        ? []
+        : [{ account_status: user.status, account_enabled: user.enabled }]);
+    }
+    if (text.startsWith("SELECT auth.mirror_authenticated_user")) {
+      const [userId, email, initialStatus] = params as ReadonlyArray<string>;
+      const existing = users.get(userId);
+      users.set(userId, existing === undefined
+        ? { email, status: initialStatus, enabled: true }
+        : { ...existing, email });
+      return result([]);
+    }
+    if (text.startsWith("SELECT auth.sync_authenticated_user")) {
+      throw new Error("proxy_jwt consent must not raise the mirrored account state");
+    }
+    if (text.startsWith("INSERT INTO auth.oauth_connections")) {
+      return result([{ connection_id: PROXY_CONNECTION_ID }]);
+    }
+    if (text.startsWith("INSERT INTO auth.oauth_authorization_codes")) {
+      const [codeHash, , redirectUri, codeChallenge, scopes] = params as ReadonlyArray<unknown>;
+      codes.set(String(codeHash), {
+        used: false,
+        redirectUri: String(redirectUri),
+        codeChallenge: String(codeChallenge),
+        scopes: scopes as ReadonlyArray<string>,
+      });
+      return result([]);
+    }
+    if (text.startsWith("SELECT oac.connection_id")) {
+      const code = codes.get(String(params[0]));
+      if (code === undefined) return result([]);
+      return result([{
+        connection_id: PROXY_CONNECTION_ID,
+        user_id: PROXY_USER_ID,
+        redirect_uri: code.redirectUri,
+        code_challenge: code.codeChallenge,
+        scopes: [...code.scopes],
+        used: code.used,
+        unexpired: true,
+        client_id: authorizationRequest.clientId,
+        resource: authorizationRequest.resource,
+        revoked: false,
+      }]);
+    }
+    if (text.startsWith("UPDATE auth.oauth_authorization_codes")) {
+      const code = codes.get(String(params[0]));
+      if (code !== undefined) code.used = true;
+      return result([]);
+    }
+    if (text.startsWith("SELECT ort.connection_id")) {
+      const refreshToken = refreshTokens.get(String(params[0]));
+      if (refreshToken === undefined) return result([]);
+      return result([{
+        connection_id: PROXY_CONNECTION_ID,
+        user_id: PROXY_USER_ID,
+        scopes: [...refreshToken.scopes],
+        used: refreshToken.used,
+        unexpired: true,
+        client_id: authorizationRequest.clientId,
+        resource: authorizationRequest.resource,
+        revoked: false,
+      }]);
+    }
+    if (text.startsWith("UPDATE auth.oauth_refresh_tokens")) {
+      const refreshToken = refreshTokens.get(String(params[0]));
+      if (refreshToken !== undefined) refreshToken.used = true;
+      return result([]);
+    }
+    if (text.startsWith("INSERT INTO auth.oauth_refresh_tokens")) {
+      const [tokenHash, , scopes] = params as ReadonlyArray<unknown>;
+      refreshTokens.set(String(tokenHash), { used: false, scopes: scopes as ReadonlyArray<string> });
+      refreshTokenHashes.push(String(tokenHash));
+      return result([]);
+    }
+    if (text.startsWith("INSERT INTO auth.oauth_access_tokens")) return result([]);
+    if (text.startsWith("UPDATE auth.oauth_connections")) {
+      revokedConnections += 1;
+      return result([{ connection_id: PROXY_CONNECTION_ID }]);
+    }
+    throw new Error(`Unexpected proxy_jwt query: ${text}`);
+  };
+
+  return {
+    queryFn,
+    users,
+    refreshTokenHashes,
+    seedRefreshToken: (token: string): void => {
+      refreshTokens.set(hash(token), { used: false, scopes: authorizationRequest.scopes });
+    },
+    revokedConnectionCount: (): number => revokedConnections,
+  };
+};
+
+const createProxyDependencies = (
+  database: ProxyDatabase,
+  tokens: Readonly<Record<"cl" | "ac" | "at" | "rt", ReadonlyArray<string>>>,
+): OAuthStoreDependencies => ({
+  ...createDependencies(database.queryFn, tokens),
+  query: database.queryFn,
+  ownerPolicy: getOAuthOwnerPolicy("proxy_jwt"),
+});
+
+/**
+ * Run with every Cognito variable removed, so any call that still reaches the
+ * user pool throws instead of quietly passing.
+ */
+const withoutCognitoEnvironment = async (operation: () => Promise<void>): Promise<void> => {
+  const cognitoKeys = ["COGNITO_USER_POOL_ID", "COGNITO_REGION", "COGNITO_CLIENT_ID"] as const;
+  const previous = cognitoKeys.map((key): readonly [string, string | undefined] => [key, process.env[key]]);
+  for (const key of cognitoKeys) delete process.env[key];
+  try {
+    await operation();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+};
+
+test("proxy_jwt issues and exchanges a code against the identity mirror, with no Cognito reachable", async (): Promise<void> => {
+  await withoutCognitoEnvironment(async (): Promise<void> => {
+    const database = createProxyDatabase({ email: PROXY_USER_EMAIL, status: "PROXY", enabled: true });
+    const dependencies = createProxyDependencies(database, {
+      ...emptyTokens(),
+      ac: ["ebt_ac_proxy-issued"],
+      at: ["ebt_at_proxy-issued"],
+      rt: ["ebt_rt_proxy-issued"],
+    });
+
+    const code = await issueAuthorizationCodeWithDependencies(
+      authorizationRequest,
+      PROXY_USER_ID,
+      PROXY_USER_EMAIL,
+      dependencies,
+    );
+    assert.equal(code, "ebt_ac_proxy-issued");
+
+    const tokens = await exchangeAuthorizationCodeWithDependencies(
+      code,
+      authorizationRequest.clientId,
+      authorizationRequest.redirectUri,
+      authorizationRequest.resource,
+      verifier,
+      dependencies,
+    );
+    assert.equal(tokens.accessToken, "ebt_at_proxy-issued");
+    assert.equal(tokens.refreshToken, "ebt_rt_proxy-issued");
+    assert.equal(tokens.expiresIn, 3600);
+    assert.equal(tokens.scope, "expenses:read expenses:write");
+    assert.equal(database.revokedConnectionCount(), 0);
+
+    const refreshed = await exchangeRefreshTokenWithDependencies(
+      tokens.refreshToken,
+      authorizationRequest.clientId,
+      authorizationRequest.resource,
+      null,
+      { ...dependencies, createOpaqueToken: (prefix) => `ebt_${prefix}_proxy-refreshed` },
+    );
+    assert.equal(refreshed.accessToken, "ebt_at_proxy-refreshed");
+    assert.deepEqual(database.users.get(PROXY_USER_ID), {
+      email: PROXY_USER_EMAIL,
+      status: "PROXY",
+      enabled: true,
+    });
+  });
+});
+
+test("proxy_jwt consent mirrors a first-seen edge identity as PROXY without raising later state", async (): Promise<void> => {
+  await withoutCognitoEnvironment(async (): Promise<void> => {
+    const database = createProxyDatabase(null);
+    const dependencies = createProxyDependencies(database, {
+      ...emptyTokens(),
+      ac: ["ebt_ac_proxy-first", "ebt_ac_proxy-second"],
+    });
+
+    await issueAuthorizationCodeWithDependencies(
+      authorizationRequest,
+      PROXY_USER_ID,
+      PROXY_USER_EMAIL,
+      dependencies,
+    );
+    assert.deepEqual(database.users.get(PROXY_USER_ID), {
+      email: PROXY_USER_EMAIL,
+      status: "PROXY",
+      enabled: true,
+    });
+
+    // The owner is disabled after the first consent; a second round-trip must
+    // be refused instead of restoring the account through the mirror write.
+    const owner = database.users.get(PROXY_USER_ID);
+    assert.notEqual(owner, undefined);
+    if (owner !== undefined) owner.enabled = false;
+
+    await assert.rejects(
+      issueAuthorizationCodeWithDependencies(
+        authorizationRequest,
+        PROXY_USER_ID,
+        PROXY_USER_EMAIL,
+        dependencies,
+      ),
+      (error: unknown) => isOAuthProtocolError(error) && error.oauthCode === "access_denied",
+    );
+    assert.equal(database.users.get(PROXY_USER_ID)?.enabled, false);
+    assert.equal(database.revokedConnectionCount(), 1);
+  });
+});
+
+test("proxy_jwt refuses an owner the mirror reports as not active, at issuance and at refresh", async (): Promise<void> => {
+  await withoutCognitoEnvironment(async (): Promise<void> => {
+    const inactiveOwners: ReadonlyArray<MirroredUser> = [
+      { email: PROXY_USER_EMAIL, status: "PROXY", enabled: false },
+      { email: PROXY_USER_EMAIL, status: "ARCHIVED", enabled: true },
+    ];
+    for (const owner of inactiveOwners) {
+      const database = createProxyDatabase(owner);
+      const dependencies = createProxyDependencies(database, {
+        ...emptyTokens(),
+        ac: ["ebt_ac_proxy-refused"],
+      });
+
+      await assert.rejects(
+        issueAuthorizationCodeWithDependencies(
+          authorizationRequest,
+          PROXY_USER_ID,
+          PROXY_USER_EMAIL,
+          dependencies,
+        ),
+        (error: unknown) => isOAuthProtocolError(error)
+          && error.oauthCode === "access_denied"
+          && error.status === 400,
+      );
+
+      database.seedRefreshToken("ebt_rt_proxy-existing");
+      await assert.rejects(
+        exchangeRefreshTokenWithDependencies(
+          "ebt_rt_proxy-existing",
+          authorizationRequest.clientId,
+          authorizationRequest.resource,
+          null,
+          dependencies,
+        ),
+        (error: unknown) => isOAuthProtocolError(error) && error.oauthCode === "invalid_grant",
+      );
+      assert.equal(database.refreshTokenHashes.length, 0);
+      assert.equal(database.revokedConnectionCount(), 2);
+    }
+  });
+});
+
+test("the owner account-state migration reads the mirror and never raises it", (): void => {
+  const ownerStateMigration = readFileSync(
+    fileURLToPath(new URL("../../../../../db/migrations/0079_oauth_owner_account_state.sql", import.meta.url)),
+    "utf8",
+  );
+  assert.match(
+    ownerStateMigration,
+    /CREATE FUNCTION auth\.get_oauth_owner_account_state\(p_user_id TEXT\)\s+RETURNS TABLE\(account_status TEXT, account_enabled BOOLEAN\)/u,
+  );
+  assert.match(
+    ownerStateMigration,
+    /SELECT account\.cognito_status, account\.cognito_enabled\s+FROM public\.users AS account\s+WHERE account\.user_id = p_user_id/u,
+  );
+  const mirrorFunctionSql = readMigrationSection(
+    ownerStateMigration,
+    "CREATE FUNCTION auth.mirror_authenticated_user(",
+  );
+  assert.match(
+    mirrorFunctionSql,
+    /ON CONFLICT \(user_id\) DO UPDATE\s+SET email = EXCLUDED\.email,\s+last_seen_at = now\(\),\s+updated_at = now\(\);/u,
+  );
+  const conflictUpdateSql = mirrorFunctionSql.slice(mirrorFunctionSql.indexOf("ON CONFLICT"));
+  assert.doesNotMatch(conflictUpdateSql, /cognito_status|cognito_enabled|email_verified/u);
+  assert.doesNotMatch(ownerStateMigration, /CREATE OR REPLACE FUNCTION auth\.sync_authenticated_user/u);
+  assert.match(ownerStateMigration, /SECURITY DEFINER/u);
+  assert.match(ownerStateMigration, /REVOKE ALL ON FUNCTION auth\.get_oauth_owner_account_state\(TEXT\) FROM PUBLIC/u);
+  assert.match(ownerStateMigration, /GRANT EXECUTE ON FUNCTION auth\.get_oauth_owner_account_state\(TEXT\) TO auth_service/u);
+  assert.match(ownerStateMigration, /REVOKE ALL ON FUNCTION auth\.mirror_authenticated_user\(TEXT, TEXT, TEXT\) FROM PUBLIC/u);
+  assert.match(ownerStateMigration, /GRANT EXECUTE ON FUNCTION auth\.mirror_authenticated_user\(TEXT, TEXT, TEXT\) TO auth_service/u);
 });
