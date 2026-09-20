@@ -30,6 +30,24 @@ export type UserIdentity = Readonly<{
   cognitoEnabled: boolean;
 }>;
 
+const COGNITO_AUTHENTICATED_STATUS = "CONFIRMED";
+/** Identity asserted by the upstream proxy when the web app runs AUTH_MODE=proxy_jwt. */
+const PROXY_AUTHENTICATED_STATUS = "PROXY";
+
+/**
+ * `users.cognito_status` values that mean the account is currently active.
+ *
+ * The column name is historical: it also stores statuses no Cognito user pool
+ * produces. Membership is exact, so every other status denies access, and
+ * `cognito_enabled` stays the per-request revocation lever for every provider.
+ */
+const ACTIVE_USER_STATUSES: ReadonlySet<string> = new Set([
+  COGNITO_AUTHENTICATED_STATUS,
+  PROXY_AUTHENTICATED_STATUS,
+]);
+
+export const isActiveUserStatus = (status: string): boolean => ACTIVE_USER_STATUSES.has(status);
+
 export const query = async (text: string, params: ReadonlyArray<unknown>): Promise<pg.QueryResult> =>
   (await getPool()).query(text, params as Array<unknown>);
 
