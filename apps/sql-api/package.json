@@ -9,11 +9,14 @@
     "build": "rm -rf dist && tsc",
     "lint": "tsc --noEmit",
     "pretest": "npm run build",
-    "test": "node --test \"dist/**/*.test.js\""
+    "test": "node --test \"dist/**/*.test.js\"",
+    "start:machine-api": "node dist/serve-machine-api.js",
+    "start:mcp": "node dist/serve-mcp.js"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1133.0",
     "@expense-budget-tracker/agent-shared": "1.7.0",
+    "@hono/node-server": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "hono": "^4.13.8",
     "pg": "^8.23.0",

@@ -52,13 +52,25 @@ export const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Re
   });
 };
 
-export const normalizePath = (event: APIGatewayProxyEvent): string => {
-  const rawPath = event.path === "" ? "/" : event.path;
-  if (rawPath === "/v1" || rawPath === "/v1/") {
+// Single source for the machine API routing shapes, so the router and the
+// container HTTP adapter can never drift apart.
+export const DISCOVERY_PATHS: ReadonlySet<string> = new Set(["/", "/agent"]);
+
+export const SOURCE_DISCOVERY_PATHS: ReadonlySet<string> = new Set(["/openapi.json", "/swagger.json"]);
+
+// The only machine API route with a path parameter. The router matches it and
+// the container adapter resolves {workspaceId} from the same pattern.
+export const SELECT_WORKSPACE_PATH_PATTERN = /^\/workspaces\/(?<workspaceId>[^/]+)\/select$/u;
+
+export const normalizeRoutePath = (rawPath: string): string => {
+  const path = rawPath === "" ? "/" : rawPath;
+  if (path === "/v1" || path === "/v1/") {
     return "/";
   }
-  return rawPath.startsWith("/v1/") ? rawPath.slice(3) : rawPath;
+  return path.startsWith("/v1/") ? path.slice(3) : path;
 };
+
+export const normalizePath = (event: APIGatewayProxyEvent): string => normalizeRoutePath(event.path);
 
 export const readJsonBody = (event: APIGatewayProxyEvent): JsonBody | null => {
   if (event.body === null) {
