@@ -3,12 +3,11 @@ import test from "node:test";
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { AgentApiKeyContext } from "./agentApiKeyAuth.js";
 import {
-  MAX_REQUEST_BODY_BYTES,
-  RequestBodyTooLargeError,
   createMachineApiFetch,
   createProxyEventFromRequest,
   createResponseFromProxyResult,
 } from "./machineApiHttp.js";
+import { MAX_REQUEST_BODY_BYTES, RequestBodyTooLargeError } from "./requestBodyLimit.js";
 
 const AUTHENTICATED: AgentApiKeyContext = {
   userId: "user-1",
@@ -216,12 +215,28 @@ test("rejects a body whose declared length exceeds the limit before reading it",
   );
 });
 
-test("rejects a body that exceeds the limit while it is being read", async () => {
+test("rejects a streamed body on the chunk that crosses the limit and stops reading", async () => {
   // A request body without a declared Content-Length is bounded while it is
-  // streamed, so the limit holds even when the client declares nothing.
+  // streamed, so the limit holds even when the client declares nothing. Two
+  // chunks of this size cross the ceiling, and the stream never ends: a guard
+  // that drained the body instead of cancelling it would never return.
+  const chunk = new Uint8Array(Math.floor(MAX_REQUEST_BODY_BYTES / 2) + 1).fill(0x78);
+  let pulls = 0;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull: (controller) => {
+      pulls += 1;
+      controller.enqueue(chunk);
+    },
+    cancel: () => {
+      cancelled = true;
+    },
+  }, { highWaterMark: 0 });
+
   const request = new Request("http://api.example.com/v1/sql/execute", {
     method: "POST",
-    body: "x".repeat(MAX_REQUEST_BODY_BYTES + 1),
+    body,
+    duplex: "half",
   });
   assert.equal(request.headers.get("content-length"), null);
 
@@ -229,4 +244,10 @@ test("rejects a body that exceeds the limit while it is being read", async () =>
     () => createProxyEventFromRequest(request, AUTHENTICATED),
     RequestBodyTooLargeError,
   );
+
+  assert.equal(pulls, 2);
+  assert.equal(cancelled, true);
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(pulls, 2);
 });
