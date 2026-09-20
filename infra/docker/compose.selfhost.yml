@@ -1,0 +1,224 @@
+# Self-hosting stack: the whole product outside AWS, behind an edge proxy.
+#
+# This file is standalone and shares nothing with the development stack in
+# infra/docker/compose.yml: a different Compose project name, its own volume,
+# AUTH_MODE=proxy_jwt everywhere identity is read, and no unauthenticated
+# fallback. Read docs/self-hosting.md before starting it — the edge proxy
+# configuration, the paths that must bypass it, and the revocation procedure
+# are all there, and the stack is unsafe to expose without them.
+#
+# Start it with an explicit env file, so it can never pick up infra/docker/.env
+# from the development stack:
+#
+#   cp infra/docker/.env.selfhost.example infra/docker/.env.selfhost
+#   $EDITOR infra/docker/.env.selfhost
+#   docker compose -f infra/docker/compose.selfhost.yml \
+#     --env-file infra/docker/.env.selfhost up -d --build
+#
+# Every variable below is required and has no default: the `${VAR:?...}` form
+# stops Compose before a service starts with a silently empty value. The two
+# exceptions are SELFHOST_BIND_ADDRESS and the optional integrations at the
+# bottom of each service.
+#
+# Published ports are for the edge proxy only. They bind to
+# SELFHOST_BIND_ADDRESS, which defaults to loopback: the proxy terminates TLS
+# and forwards to these ports, and nothing else reaches them. Postgres is not
+# published at all; use `docker compose ... exec postgres psql`.
+
+name: expense-budget-tracker-selfhost
+
+services:
+  postgres:
+    image: postgres:18.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the env file}
+      POSTGRES_DB: tracker
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracker"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Runs every migration and view, then sets the three service role passwords.
+  # It connects as `tracker`, the superuser the postgres image creates, and
+  # that matters beyond DDL: the SECURITY DEFINER helpers in migrations 0079
+  # and 0080 are owned by whoever runs this step, and they read and write
+  # public.users, which has FORCE ROW LEVEL SECURITY. A definer that cannot
+  # bypass RLS breaks account state silently. See docs/self-hosting.md.
+  migrate:
+    image: postgres:18.6
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MIGRATION_DATABASE_URL: postgresql://tracker:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the env file}@postgres:5432/tracker
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in the env file}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?set AUTH_DB_PASSWORD in the env file}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:?set WORKER_DB_PASSWORD in the env file}
+    volumes:
+      - ../../scripts:/scripts:ro
+      - ../../db:/db:ro
+    entrypoint: ["bash", "/scripts/migrate.sh"]
+    restart: "no"
+
+  # The browser app. In proxy_jwt it verifies the edge token on every request
+  # and hosts no login of its own; an absent or invalid token is answered 401.
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${SELFHOST_BIND_ADDRESS:-127.0.0.1}:3000:3000"
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in the env file}@postgres:5432/tracker
+      AUTH_MODE: proxy_jwt
+      # The public origin of the app. Startup fails unless this parses as a
+      # bare absolute origin. It must be https: the workspace cookie is set
+      # with Secure, and on http the browser drops it and the bootstrap
+      # redirect becomes a loop.
+      CORS_ORIGIN: https://${APP_HOST:?set APP_HOST in the env file}
+      # Read in every mode by the public discovery routes /api/agent and
+      # /.well-known/agent.json, which derive the advertised api. and mcp.
+      # hostnames from it.
+      AUTH_DOMAIN: ${AUTH_HOST:?set AUTH_HOST in the env file}
+      AUTH_PROXY_JWT_HEADER: ${AUTH_PROXY_JWT_HEADER:?set AUTH_PROXY_JWT_HEADER in the env file}
+      AUTH_PROXY_JWKS_URL: ${AUTH_PROXY_JWKS_URL:?set AUTH_PROXY_JWKS_URL in the env file}
+      AUTH_PROXY_JWT_ISSUER: ${AUTH_PROXY_JWT_ISSUER:?set AUTH_PROXY_JWT_ISSUER in the env file}
+      AUTH_PROXY_JWT_AUDIENCE: ${AUTH_PROXY_JWT_AUDIENCE_APP:?set AUTH_PROXY_JWT_AUDIENCE_APP in the env file}
+      # Optional integrations. The chat at /chat needs the OpenAI key; the
+      # Langfuse group is all-or-nothing and LANGFUSE_RELEASE must then be a
+      # 64-character lowercase hex fingerprint.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+      LANGFUSE_RELEASE: ${LANGFUSE_RELEASE:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # The OAuth authorization server for MCP clients. In proxy_jwt the email OTP
+  # routes and the login page are not registered at all, so this service only
+  # serves /health, /robots.txt and the /oauth surface, and it takes the
+  # person's identity from the same edge token the web app reads.
+  auth:
+    build:
+      context: ../..
+      dockerfile: apps/auth/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${SELFHOST_BIND_ADDRESS:-127.0.0.1}:8081:8081"
+    environment:
+      PORT: "8081"
+      AUTH_MODE: proxy_jwt
+      AUTH_DATABASE_URL: postgresql://auth_service:${AUTH_DB_PASSWORD:?set AUTH_DB_PASSWORD in the env file}@postgres:5432/tracker
+      # Startup requires both, and both shapes are checked: OAUTH_ISSUER must
+      # be exactly https://auth.<domain> and OAUTH_RESOURCE exactly
+      # https://mcp.<same-domain>/mcp, with no port and no trailing slash.
+      OAUTH_ISSUER: https://${AUTH_HOST:?set AUTH_HOST in the env file}
+      OAUTH_RESOURCE: https://${MCP_HOST:?set MCP_HOST in the env file}/mcp
+      # Required at startup but inert in this mode: both are read only by the
+      # Cognito login page and session cookies, which are not registered here.
+      ALLOWED_REDIRECT_URIS: https://${APP_HOST:?set APP_HOST in the env file}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:?set COOKIE_DOMAIN in the env file}
+      AUTH_PROXY_JWT_HEADER: ${AUTH_PROXY_JWT_HEADER:?set AUTH_PROXY_JWT_HEADER in the env file}
+      AUTH_PROXY_JWKS_URL: ${AUTH_PROXY_JWKS_URL:?set AUTH_PROXY_JWKS_URL in the env file}
+      AUTH_PROXY_JWT_ISSUER: ${AUTH_PROXY_JWT_ISSUER:?set AUTH_PROXY_JWT_ISSUER in the env file}
+      AUTH_PROXY_JWT_AUDIENCE: ${AUTH_PROXY_JWT_AUDIENCE_AUTH:?set AUTH_PROXY_JWT_AUDIENCE_AUTH in the env file}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # The MCP server, the same Hono app the Lambda serves. The transport runs
+  # DNS-rebinding protection against the host of OAUTH_RESOURCE, so a /mcp
+  # request whose Host header is anything but MCP_HOST is answered 403
+  # invalid_request_source. The edge must forward the original Host.
+  mcp:
+    build:
+      context: ../..
+      dockerfile: apps/sql-api/Dockerfile
+    command: ["node", "dist/serve-mcp.js"]
+    restart: unless-stopped
+    ports:
+      - "${SELFHOST_BIND_ADDRESS:-127.0.0.1}:8082:8082"
+    environment:
+      PORT: "8082"
+      DATABASE_URL: postgresql://app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in the env file}@postgres:5432/tracker
+      OAUTH_ISSUER: https://${AUTH_HOST:?set AUTH_HOST in the env file}
+      OAUTH_RESOURCE: https://${MCP_HOST:?set MCP_HOST in the env file}/mcp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8082/.well-known/oauth-protected-resource/mcp || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # The /v1 machine API, the same handler the API Gateway Lambda serves.
+  # PUBLIC_API_BASE_URL and PUBLIC_AUTH_BASE_URL are not optional here: without
+  # them both URLs are inferred from the request Host header, and any request
+  # whose Host is not api.<domain> makes GET /v1/ fail while deriving the MCP
+  # URL, with a bare 500 and no envelope.
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/sql-api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${SELFHOST_BIND_ADDRESS:-127.0.0.1}:8083:8083"
+    environment:
+      PORT: "8083"
+      DATABASE_URL: postgresql://app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in the env file}@postgres:5432/tracker
+      PUBLIC_API_BASE_URL: https://${API_HOST:?set API_HOST in the env file}/v1
+      PUBLIC_AUTH_BASE_URL: https://${AUTH_HOST:?set AUTH_HOST in the env file}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8083/v1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Daily FX rate fetcher. It serves no HTTP and reads no identity, so it has
+  # no edge exposure and no AUTH_MODE of its own.
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://worker:${WORKER_DB_PASSWORD:?set WORKER_DB_PASSWORD in the env file}@postgres:5432/tracker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

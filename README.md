@@ -82,6 +82,7 @@ After `POST /v1/workspaces/{workspaceId}/select`, the API key remembers that wor
 ## Documentation
 
 - [Deployment](docs/deployment.md) — local Docker Compose and AWS CDK setup
+- [Self-hosting](docs/self-hosting.md) — run the whole product outside AWS from one compose stack behind an edge proxy
 - [AWS deployment](infra/aws/README.md) — full AWS CDK guide
 
 - [Architecture](docs/architecture.md) — system overview, data model, multi-currency design

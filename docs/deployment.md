@@ -41,6 +41,10 @@ make down
 | `make build` | Rebuild container images (not `auth`, which is in the `cognito` profile: use `COMPOSE_PROFILES=cognito make build`) |
 | `make lint` | Run web + worker linters |
 
+## Self-hosting outside AWS
+
+To run the whole product on your own machine behind an edge proxy that authenticates people, use the standalone stack in [`infra/docker/compose.selfhost.yml`](../infra/docker/compose.selfhost.yml) and follow [`docs/self-hosting.md`](./self-hosting.md). It is a different auth mode (`AUTH_MODE=proxy_jwt`) from both the local stack above and AWS, and it must not be started without reading that guide: the edge configuration, the paths that have to bypass it, and the revocation procedure are all there.
+
 ## AWS (CDK)
 
 Full AWS deployment guide is in [`infra/aws/README.md`](../infra/aws/README.md).

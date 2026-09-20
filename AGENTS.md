@@ -59,11 +59,13 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `apps/web/src/server/apiKeys.ts` | API key generation, hashing, CRUD |
 | `apps/web/src/app/api/api-keys/route.ts` | API key management endpoints (`GET`/`POST`/`DELETE`) |
 | `apps/sql-api/` | SQL API Lambda handlers for API Gateway: `ApiKey` authorizer, v1 machine API, and the OAuth MCP server in `src/mcp/server.ts` |
+| `apps/sql-api/Dockerfile` | Container image for the same code: the default command serves `/v1`, `node dist/serve-mcp.js` serves `/mcp` |
 | `packages/agent-shared/src/agentTools.ts` | Shared catalog of the five agent tools (`list_workspaces`, `get_schema`, `get_guide`, `sql_query`, `sql_execute`) that both the MCP server and the web chat render |
 | `packages/agent-shared/src/agentResults.ts` | Shared agent tool result envelope and the remediation instructions both surfaces return |
 | `apps/web/src/server/demo/data.ts` | Static demo data for demo mode without a DB |
 | `apps/web/src/lib/demoMode.ts` | Demo mode check; enabled by `demo=true` browser cookie toggled in the UI, no env var needed |
 | `infra/docker/compose.yml` | Local Docker Compose for Postgres, migrate, web, and worker |
+| `infra/docker/compose.selfhost.yml` | Standalone self-hosting stack (`AUTH_MODE=proxy_jwt`) behind an edge proxy; see `docs/self-hosting.md` |
 | `infra/aws/` | AWS CDK stack for ECS Fargate, RDS, ALB/Cognito, API Gateway, Lambda, and WAF |
 | `scripts/migrate.sh` | Runs migrations and views against `DATABASE_URL` |
 | `.env.example` | Environment variable reference |
@@ -133,6 +135,7 @@ AWS profile and region setup is in `## AWS Deployment`. Start from logs and trac
 
 - [docs/architecture.md](docs/architecture.md) - system overview, data model, agent tool surfaces, multi-currency design, auth model
 - [docs/deployment.md](docs/deployment.md) - local Docker Compose and AWS CDK setup
+- [docs/self-hosting.md](docs/self-hosting.md) - running the whole product outside AWS behind an edge proxy: hostnames, bypass list, revocation
 - [docs/langfuse-operations.md](docs/langfuse-operations.md) - Langfuse trace shape, filters, and telemetry troubleshooting
 - [infra/aws/README.md](infra/aws/README.md) - full AWS CDK deployment guide
 - [Makefile](Makefile) - `make up`, `make down`, `make migrate`, `make build`, `make lint`
