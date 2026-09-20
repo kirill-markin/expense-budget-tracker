@@ -300,6 +300,11 @@ export const createMcpApp = (dependencies: McpHandlerDependencies): Hono =>
     () => createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, dependencies.now),
   );
 
+/**
+ * MCP app wired to the production dependencies, for the container entry point.
+ */
+export const createDefaultMcpApp = (): Hono => createMcpApp(defaultDependencies);
+
 export const createMcpHandler = (
   dependencies: McpHandlerDependencies,
 ): McpHttpApiV2Handler =>

@@ -21,7 +21,14 @@ import {
   handleSqlQueryRoute,
   handleSqlRoute,
 } from "./machineApi/routeHandlers.js";
-import { createMachineRouteContext, getAuthenticatedContext, normalizePath } from "./machineApi/request.js";
+import {
+  DISCOVERY_PATHS,
+  SELECT_WORKSPACE_PATH_PATTERN,
+  SOURCE_DISCOVERY_PATHS,
+  createMachineRouteContext,
+  getAuthenticatedContext,
+  normalizePath,
+} from "./machineApi/request.js";
 import { json } from "./machineApi/responses.js";
 import type { MachineApiDependencies } from "./machineApi/types.js";
 
@@ -42,11 +49,11 @@ export const createMachineApiHandler = (
   return async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
     const path = normalizePath(event);
 
-    if (event.httpMethod === "GET" && (path === "/" || path === "/agent")) {
+    if (event.httpMethod === "GET" && DISCOVERY_PATHS.has(path)) {
       return handleDiscoveryRoute(event);
     }
 
-    if (event.httpMethod === "GET" && (path === "/openapi.json" || path === "/swagger.json")) {
+    if (event.httpMethod === "GET" && SOURCE_DISCOVERY_PATHS.has(path)) {
       return handleSourceDiscoveryRoute(event);
     }
 
@@ -82,7 +89,7 @@ export const createMachineApiHandler = (
       return handleCreateWorkspaceRoute(context);
     }
 
-    if (event.httpMethod === "POST" && /^\/workspaces\/[^/]+\/select$/u.test(path)) {
+    if (event.httpMethod === "POST" && SELECT_WORKSPACE_PATH_PATTERN.test(path)) {
       return handleSelectWorkspaceRoute(context);
     }
 

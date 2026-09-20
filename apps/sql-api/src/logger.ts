@@ -25,6 +25,14 @@ export type SqlResultOverBudgetOutcome =
 export const MAX_SQL_POLICY_LOG_MESSAGE_CHARS = 500;
 
 export type SqlApiLogEvent =
+  // Emitted once by a container entry point after it starts listening. The
+  // Lambda handlers never emit it.
+  | Readonly<{
+    domain: "sql_api";
+    action: "container_started";
+    surface: "machine_api" | "mcp";
+    port: number;
+  }>
   | Readonly<{
     domain: "sql_api";
     action: "mcp_unexpected_error";

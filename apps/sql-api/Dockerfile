@@ -1,0 +1,63 @@
+FROM node:24.21.0-alpine AS npm
+RUN npm install --global npm@12.0.2
+
+FROM npm AS deps
+
+WORKDIR /workspace
+
+COPY .npmrc package.json package-lock.json ./
+COPY apps/auth/package.json apps/auth/package.json
+COPY apps/sql-api/package.json apps/sql-api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/worker/package.json apps/worker/package.json
+COPY packages/agent-shared/package.json packages/agent-shared/package.json
+COPY infra/aws/package.json infra/aws/package.json
+RUN npm ci
+
+FROM node:24.21.0-alpine AS builder
+
+WORKDIR /workspace
+
+COPY --from=deps /workspace/node_modules ./node_modules
+COPY . .
+RUN cd packages/agent-shared && ../../node_modules/.bin/tsc -p tsconfig.json
+RUN cd apps/sql-api && ../../node_modules/.bin/tsc -p tsconfig.json
+
+FROM npm AS prod-deps
+
+WORKDIR /workspace
+
+COPY .npmrc package.json package-lock.json ./
+COPY apps/auth/package.json apps/auth/package.json
+COPY apps/sql-api/package.json apps/sql-api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/worker/package.json apps/worker/package.json
+COPY packages/agent-shared/package.json packages/agent-shared/package.json
+COPY infra/aws/package.json infra/aws/package.json
+RUN npm ci --omit=dev
+
+FROM node:24.21.0-alpine
+
+WORKDIR /app/apps/sql-api
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 sqlapi
+
+ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-global-bundle.pem
+
+COPY --from=prod-deps /workspace/node_modules /app/node_modules
+COPY --from=builder /workspace/packages/agent-shared/package.json /app/packages/agent-shared/package.json
+COPY --from=builder /workspace/packages/agent-shared/dist /app/packages/agent-shared/dist
+COPY --from=builder /workspace/apps/sql-api/package.json ./package.json
+COPY --from=builder /workspace/apps/sql-api/dist ./dist
+
+USER sqlapi
+
+# Documents the port the runtime configuration is expected to use. PORT itself
+# stays unset on purpose: the entry points require it explicitly, so a container
+# started without it fails instead of listening on a surprising default.
+EXPOSE 8082
+
+# The machine API is the default surface; the MCP service overrides the command
+# with ["node", "dist/serve-mcp.js"].
+CMD ["node", "dist/serve-machine-api.js"]
