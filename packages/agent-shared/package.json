@@ -74,6 +74,17 @@
       },
       "default": "./dist/agentResults.js"
     },
+    "./proxy-jwt": {
+      "import": {
+        "types": "./dist/proxyJwt.d.ts",
+        "default": "./dist/proxyJwt.js"
+      },
+      "require": {
+        "types": "./dist-cjs/proxyJwt.d.cts",
+        "default": "./dist-cjs/proxyJwt.cjs"
+      },
+      "default": "./dist/proxyJwt.js"
+    },
     "./crockford": {
       "import": {
         "types": "./dist/crockford.d.ts",
@@ -90,6 +101,9 @@
     "build": "tsc && node scripts/build-cjs.mjs",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "aws-jwt-verify": "^5.2.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

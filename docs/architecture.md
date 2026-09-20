@@ -189,10 +189,11 @@ Conversion to the reporting currency uses a two-layer FX model:
 
 ## Auth model
 
-Zero built-in auth logic. Two modes controlled by `AUTH_MODE` env var:
+Zero built-in auth logic. Three modes controlled by `AUTH_MODE` env var:
 
 - `none` (the app has no built-in default and refuses to start without an explicit value; the local Docker compose file supplies `none` as its own default) — no authentication. userId is hardcoded to `"local"`, workspaceId is `"local"`, and all data belongs to this single workspace. Startup requires a local http `CORS_ORIGIN`, and it refuses a production build or a non-loopback `HOST` unless `ALLOW_INSECURE_NO_AUTH=true` opts in deliberately, as the local Docker stack does (production image bound to `0.0.0.0` inside the container, published on `127.0.0.1` only).
 - `cognito` — passwordless Email OTP via Cognito (Essentials tier, USER_AUTH + EMAIL_OTP). Auth is handled by a standalone Hono service on `auth.*`. IdToken is stored in `session` cookie (Domain=baseDomain), verified by `CognitoJwtVerifier` in the web app. Extracts `sub` claim as userId. The browser keeps the active workspace in a `workspace` cookie; if it is missing or stale, the app resolves the newest accessible workspace or creates the first one automatically. Redirects to `auth.*/login` if the session cookie is missing or invalid. Open registration: anyone can sign up via Cognito — each user gets a first regular workspace plus workspace-scoped isolation via RLS.
+- `proxy_jwt` — an upstream proxy authenticates the user and forwards a signed RS256 JWT in the header named by `AUTH_PROXY_JWT_HEADER`, verified in the web app against `AUTH_PROXY_JWKS_URL` with exact `AUTH_PROXY_JWT_ISSUER` and `AUTH_PROXY_JWT_AUDIENCE` matching. The `sub` claim becomes userId and the `email` claim the address; the edge already authenticated the identity, so it is treated as verified. An `exp` claim is mandatory, within a 60-second clock-skew grace: the header token is the whole session here, with no cookie, refresh, or revocation behind it. Vendor-neutral: Cloudflare Access, oauth2-proxy, or any equivalent gateway is configuration, not code. Requests without a valid token get `401` and never a redirect, because login belongs to the proxy. Startup requires a non-empty `CORS_ORIGIN`, in any scheme or host shape but parseable as an absolute origin with no trailing slash or path, because behind a proxy the app cannot infer its public origin from the request URL. Workspace handling is the same as in `cognito` mode.
 
 Details in `apps/web/src/proxy.ts`.
 

@@ -12,6 +12,19 @@ import { type SupportedLocale } from "@/lib/locale";
 export const LOCAL_USER_EMAIL = "local@example.invalid";
 export const LOCAL_USER_STATUS = "LOCAL";
 export const COGNITO_AUTHENTICATED_STATUS = "CONFIRMED";
+/** Identity asserted by the upstream proxy when AUTH_MODE=proxy_jwt. */
+export const PROXY_AUTHENTICATED_STATUS = "PROXY";
+
+const UNIQUE_VIOLATION_CODE = "23505";
+const EMAIL_UNIQUE_INDEX = "idx_users_email";
+
+const isEmailAlreadyTakenError = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const pgError = error as Readonly<{ code?: unknown; constraint?: unknown }>;
+  return pgError.code === UNIQUE_VIOLATION_CODE && pgError.constraint === EMAIL_UNIQUE_INDEX;
+};
 
 export type UserIdentity = Readonly<{
   userId: string;
@@ -29,6 +42,9 @@ export type UserIdentity = Readonly<{
  *
  * `last_seen_at` and `updated_at` move forward on every authenticated request
  * so the row reflects recent activity without changing `first_seen_at`.
+ *
+ * Emails are unique per user: two subjects claiming the same address is a
+ * conflict the app refuses rather than silently linking the accounts.
  */
 export const upsertUserIdentity = async (
   client: PoolClient,
@@ -38,29 +54,45 @@ export const upsertUserIdentity = async (
     "SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64))::bigint)",
     [identity.userId],
   );
-  await client.query(
-    `INSERT INTO users (
-       user_id,
-       email,
-       email_verified,
-       cognito_status,
-       cognito_enabled
-     ) VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (user_id) DO UPDATE
-       SET email = EXCLUDED.email,
-           email_verified = EXCLUDED.email_verified,
-           cognito_status = EXCLUDED.cognito_status,
-           cognito_enabled = EXCLUDED.cognito_enabled,
-           last_seen_at = now(),
-           updated_at = now()`,
-    [
-      identity.userId,
-      identity.email,
-      identity.emailVerified,
-      identity.cognitoStatus,
-      identity.cognitoEnabled,
-    ],
-  );
+  try {
+    await client.query(
+      `INSERT INTO users (
+         user_id,
+         email,
+         email_verified,
+         cognito_status,
+         cognito_enabled
+       ) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id) DO UPDATE
+         SET email = EXCLUDED.email,
+             email_verified = EXCLUDED.email_verified,
+             cognito_status = EXCLUDED.cognito_status,
+             cognito_enabled = EXCLUDED.cognito_enabled,
+             last_seen_at = now(),
+             updated_at = now()`,
+      [
+        identity.userId,
+        identity.email,
+        identity.emailVerified,
+        identity.cognitoStatus,
+        identity.cognitoEnabled,
+      ],
+    );
+  } catch (error) {
+    if (isEmailAlreadyTakenError(error)) {
+      // The PostgreSQL discriminators must survive the clearer message: callers
+      // such as the provisioning race recovery match on `code` and `constraint`
+      // to tell a concurrent first request apart from a real collision.
+      throw Object.assign(
+        new Error(
+          `Email ${identity.email} is already registered to a different user than subject ${identity.userId}. Accounts are never linked automatically: sign in with the subject that owns this email, or change the email on one of the two identities.`,
+          { cause: error },
+        ),
+        { code: UNIQUE_VIOLATION_CODE, constraint: EMAIL_UNIQUE_INDEX },
+      );
+    }
+    throw error;
+  }
 };
 
 /**
