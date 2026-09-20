@@ -53,11 +53,10 @@ COPY --from=builder /workspace/apps/sql-api/dist ./dist
 
 USER sqlapi
 
-# Documents the port the runtime configuration is expected to use. PORT itself
-# stays unset on purpose: the entry points require it explicitly, so a container
-# started without it fails instead of listening on a surprising default.
-EXPOSE 8082
-
+# PORT stays unset on purpose: both entry points require it explicitly, so a
+# container started without it fails instead of listening on a surprising
+# default. There is no EXPOSE directive for the same reason.
+#
 # The machine API is the default surface; the MCP service overrides the command
 # with ["node", "dist/serve-mcp.js"].
 CMD ["node", "dist/serve-machine-api.js"]
