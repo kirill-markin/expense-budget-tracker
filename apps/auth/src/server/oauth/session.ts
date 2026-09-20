@@ -8,8 +8,15 @@ import {
   JwtWithoutValidKidError,
   KidNotFoundInJwksError,
 } from "aws-jwt-verify/error";
+import {
+  createProxyJwtAuthenticatorFromEnv,
+  extractProxyJwtToken,
+  type ProxyJwtAuthenticator,
+} from "@expense-budget-tracker/agent-shared/proxy-jwt";
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { getAuthServiceMode } from "../authMode.js";
+import { log, type ProxyIdentityRejectedEvent } from "../logger.js";
 import {
   isDefinitiveCognitoRefreshRejection,
   refreshCognitoSession,
@@ -159,5 +166,58 @@ const defaultDependencies: BrowserSessionDependencies = {
   clearBrowserSessionCookies,
 };
 
+let proxyJwtAuthenticator: ProxyJwtAuthenticator | undefined;
+
+/** Built once per process, so the verifier's JWKS is fetched and cached once. */
+const getProxyJwtAuthenticator = (): ProxyJwtAuthenticator => {
+  if (proxyJwtAuthenticator === undefined) {
+    proxyJwtAuthenticator = createProxyJwtAuthenticatorFromEnv(process.env);
+  }
+  return proxyJwtAuthenticator;
+};
+
+export type ProxyJwtSessionDependencies = Readonly<{
+  getProxyJwtAuthenticator: () => ProxyJwtAuthenticator;
+  log: (event: ProxyIdentityRejectedEvent) => void;
+}>;
+
+/**
+ * AUTH_MODE=proxy_jwt identity resolution. The edge token is the only identity
+ * source: no cookie is read and Cognito is never called. An absent, expired, or
+ * otherwise rejected token resolves to null, exactly like an absent session, so
+ * the caller decides how an unauthenticated browser is answered.
+ *
+ * This resolver completes identity resolution only. Code and token issuance
+ * is still Cognito-bound: every issuance and exchange path in ./store.ts
+ * gates on getCognitoOAuthOwnerStatus, which throws without Cognito
+ * configuration and surfaces as a generic server_error. Making that check
+ * provider-neutral is the remaining work, and ./store.ts is where it lands.
+ */
+export const resolveProxyJwtSessionWithDependencies = async (
+  c: Context,
+  dependencies: ProxyJwtSessionDependencies,
+): Promise<BrowserIdentity | null> => {
+  const authenticator = dependencies.getProxyJwtAuthenticator();
+  try {
+    const token = extractProxyJwtToken(c.req.raw.headers, authenticator.headerName);
+    const { userId, email } = await authenticator.verify(token);
+    return { userId, email };
+  } catch (error) {
+    dependencies.log({
+      domain: "auth",
+      action: "proxy_identity_rejected",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+};
+
+const defaultProxyJwtDependencies: ProxyJwtSessionDependencies = {
+  getProxyJwtAuthenticator,
+  log,
+};
+
 export const resolveBrowserSession = (c: Context): Promise<BrowserIdentity | null> =>
-  resolveBrowserSessionWithDependencies(c, defaultDependencies);
+  getAuthServiceMode(process.env) === "proxy_jwt"
+    ? resolveProxyJwtSessionWithDependencies(c, defaultProxyJwtDependencies)
+    : resolveBrowserSessionWithDependencies(c, defaultDependencies);

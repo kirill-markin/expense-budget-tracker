@@ -55,6 +55,7 @@ const createDependencies = (
     expiresIn: 3600, scope: "expenses:read",
   }),
   resolveBrowserSession: async () => ({ userId: "user-1", email: "user@example.com" }),
+  getAuthServiceMode: () => "cognito",
   log: () => {},
   ...overrides,
 });
@@ -753,4 +754,41 @@ test("invalid non-empty session cookies are cleared before authorize redirects t
   assert.equal(response.status, 302);
   assert.match(response.headers.get("location") ?? "", /^https:\/\/auth\.example\.com\/login\?/u);
   assert.match(response.headers.getSetCookie().join("\n"), /session=;/u);
+});
+
+test("proxy_jwt mode answers an unresolved authorize identity with 401 instead of a login redirect", async (): Promise<void> => {
+  const app = createOAuthApp(createDependencies({
+    getAuthServiceMode: () => "proxy_jwt",
+    resolveBrowserSession: async () => null,
+  }));
+
+  const authorize = await app.request(`${issuer}/oauth/authorize?${authorizationParams().toString()}`);
+  const consent = await app.fetch(consentRequest(
+    new URLSearchParams({ ...Object.fromEntries(authorizationParams()), decision: "allow" }),
+    issuer,
+    "same-origin",
+  ));
+
+  for (const response of [authorize, consent]) {
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("location"), null);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.match(await response.text(), /upstream authentication proxy/u);
+  }
+});
+
+test("proxy_jwt mode issues a code for an identity resolved from the edge token", async (): Promise<void> => {
+  const app = createOAuthApp(createDependencies({
+    getAuthServiceMode: () => "proxy_jwt",
+    resolveBrowserSession: async () => ({ userId: "edge-user", email: "edge@example.com" }),
+  }));
+
+  const response = await app.fetch(consentRequest(
+    new URLSearchParams({ ...Object.fromEntries(authorizationParams()), decision: "allow" }),
+    issuer,
+    "same-origin",
+  ));
+
+  assert.equal(response.status, 302);
+  assert.match(response.headers.get("location") ?? "", /[?&]code=ebt_ac_issued-code(&|$)/u);
 });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Hono } from "hono";
 import { createLoginPageApp } from "../routes/loginPage.js";
-import { createAuthApp } from "./app.js";
+import { createAuthApp, getAuthRoutes } from "./app.js";
 import type { AuthUnhandledErrorEvent } from "./logger.js";
 
 test("root failures are structured and generic without logging request credentials", async (): Promise<void> => {
@@ -61,4 +61,47 @@ test("root failures are structured and generic without logging request credentia
   const serializedEvents = JSON.stringify(events);
   assert.equal(serializedEvents.includes(authorizationCode), false);
   assert.equal(serializedEvents.includes(sessionCookie), false);
+});
+
+const EMAIL_LOGIN_PATHS = [
+  "/login",
+  "/api/send-code",
+  "/api/verify-code",
+  "/api/agent/send-code",
+  "/api/agent/verify-code",
+] as const;
+
+const ALWAYS_REGISTERED_PATHS = [
+  "/health",
+  "/robots.txt",
+  "/oauth/authorize",
+  "/oauth/token",
+  "/oauth/register",
+  "/.well-known/oauth-authorization-server",
+] as const;
+
+const registeredPaths = (authMode: "cognito" | "proxy_jwt"): ReadonlySet<string> =>
+  new Set(createAuthApp({ routes: getAuthRoutes(authMode), log: () => {} })
+    .routes
+    .map((route) => route.path));
+
+test("cognito mode registers the email login routes and proxy_jwt mode omits them", async (): Promise<void> => {
+  const cognitoPaths = registeredPaths("cognito");
+  const proxyJwtPaths = registeredPaths("proxy_jwt");
+
+  for (const path of ALWAYS_REGISTERED_PATHS) {
+    assert.equal(cognitoPaths.has(path), true, `${path} must stay registered in cognito mode`);
+    assert.equal(proxyJwtPaths.has(path), true, `${path} must stay registered in proxy_jwt mode`);
+  }
+  for (const path of EMAIL_LOGIN_PATHS) {
+    assert.equal(cognitoPaths.has(path), true, `${path} must stay registered in cognito mode`);
+    assert.equal(proxyJwtPaths.has(path), false, `${path} must not be registered in proxy_jwt mode`);
+  }
+
+  const app = createAuthApp({ routes: getAuthRoutes("proxy_jwt"), log: () => {} });
+  assert.equal((await app.request("https://auth.example.com/login")).status, 404);
+  assert.equal(
+    (await app.request("https://auth.example.com/api/send-code", { method: "POST" })).status,
+    404,
+  );
 });
