@@ -20,7 +20,14 @@ const PROXY_JWT_ENV_VAR_NAMES = [
 
 export type ProxyJwtEnvVarName = (typeof PROXY_JWT_ENV_VAR_NAMES)[number];
 
-export type ProxyJwtEnv = Readonly<Partial<Record<ProxyJwtEnvVarName, string>>>;
+/**
+ * An environment-shaped record such as `process.env`: the four variables read
+ * here are named and typed, while the index signature keeps the type open to
+ * the rest of the environment. All four are optional to the compiler because
+ * their absence is a runtime error naming each missing one, not a type error.
+ */
+export type ProxyJwtEnv = Readonly<Record<string, string | undefined>> &
+  Readonly<Partial<Record<ProxyJwtEnvVarName, string>>>;
 
 export type ProxyJwtConfig = Readonly<{
   headerName: string;
