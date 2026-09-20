@@ -281,6 +281,7 @@ type SqlApiEvent =
 
 type AuthEvent =
   | Readonly<{ domain: "auth"; action: "refresh" }>
+  | Readonly<{ domain: "auth"; action: "insecure_no_auth"; message: string }>
   | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "error"; error: string }>;
 

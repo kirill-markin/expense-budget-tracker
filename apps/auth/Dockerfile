@@ -14,12 +14,16 @@ COPY packages/agent-shared/package.json packages/agent-shared/package.json
 COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci
 
-FROM node:24.21.0-alpine AS builder
+FROM npm AS builder
 
 WORKDIR /workspace
 
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
+# Build the shared workspace package inside the image: its dist is gitignored,
+# so a fresh clone has none and the final stage below could not copy it.
+# Running it after COPY also overwrites any stale dist copied in from the host.
+RUN npm run build --workspace @expense-budget-tracker/agent-shared
 RUN cd apps/auth && ../../node_modules/.bin/tsc -p tsconfig.json
 
 FROM npm AS prod-deps
