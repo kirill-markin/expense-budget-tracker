@@ -301,7 +301,11 @@ export const createMcpApp = (dependencies: McpHandlerDependencies): Hono =>
   );
 
 /**
- * MCP app wired to the production dependencies, for the container entry point.
+ * MCP app wired to the production dependencies.
+ *
+ * It applies no request body ceiling of its own. The container entry point
+ * reaches it through the adapter in mcpHttp.ts, which applies the shared
+ * ceiling, and the Lambda path relies on the API Gateway cap.
  */
 export const createDefaultMcpApp = (): Hono => createMcpApp(defaultDependencies);
 

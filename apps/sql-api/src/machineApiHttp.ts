@@ -10,9 +10,11 @@
  * uses. A request without a valid key reaches the handler with an empty
  * authorizer context, so the 401 envelope is produced by the handler itself.
  *
- * Unlike API Gateway, the container is exposed directly, so it enforces its own
- * request body ceiling and never buffers a body for a request that no route
- * will read one from.
+ * Unlike API Gateway, the container is exposed directly, so it enforces the
+ * shared request body ceiling itself. An unauthenticated request outside the
+ * public discovery routes is answered without its body being read at all; every
+ * other request is buffered up to the ceiling, whether or not its route reads a
+ * body.
  */
 
 import { randomUUID } from "node:crypto";
@@ -32,6 +34,11 @@ import {
   normalizeRoutePath,
 } from "./machineApi/request.js";
 import { json } from "./machineApi/responses.js";
+import {
+  MAX_REQUEST_BODY_BYTES,
+  RequestBodyTooLargeError,
+  readBoundedRequestText,
+} from "./requestBodyLimit.js";
 
 export type MachineApiFetch = (request: Request) => Promise<Response>;
 
@@ -86,65 +93,10 @@ const readPathParameters = (normalizedPath: string): Record<string, string> | nu
   return { workspaceId: match.groups?.["workspaceId"] ?? "" };
 };
 
-// API Gateway rejected any payload above its 10 MB hard cap before the
-// integration ran. The container keeps the same ceiling so a legitimate client
-// sees identical behavior, and an oversized body is refused before it is read.
-export const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
-
-export class RequestBodyTooLargeError extends Error {
-  readonly maxBytes: number;
-
-  constructor(maxBytes: number) {
-    super(`Request body exceeds the machine API limit of ${String(maxBytes)} bytes`);
-    this.name = "RequestBodyTooLargeError";
-    this.maxBytes = maxBytes;
-  }
-}
-
 // The routes the machine API answers without an authorizer context. Any other
 // route gets a 401 from the handler, so its body is never read.
 const readsBodyWithoutAuthentication = (method: string, normalizedPath: string): boolean =>
   method === "GET" && (DISCOVERY_PATHS.has(normalizedPath) || SOURCE_DISCOVERY_PATHS.has(normalizedPath));
-
-const exceedsDeclaredContentLength = (request: Request, maxBytes: number): boolean => {
-  // Node's HTTP parser rejects a malformed Content-Length before the handler
-  // runs; the streaming guard below is the authoritative limit in every case,
-  // and this header check only avoids reading a body already declared too big.
-  const declared = Number(request.headers.get("content-length"));
-  return Number.isFinite(declared) && declared > maxBytes;
-};
-
-const readBoundedRequestText = async (request: Request, maxBytes: number): Promise<string> => {
-  if (exceedsDeclaredContentLength(request, maxBytes)) {
-    throw new RequestBodyTooLargeError(maxBytes);
-  }
-
-  const stream = request.body;
-  if (stream === null) {
-    return "";
-  }
-
-  const reader = stream.getReader();
-  const chunks: Array<Uint8Array> = [];
-  let readBytes = 0;
-
-  for (;;) {
-    const chunk = await reader.read();
-    if (chunk.done) {
-      break;
-    }
-
-    readBytes += chunk.value.byteLength;
-    if (readBytes > maxBytes) {
-      await reader.cancel();
-      throw new RequestBodyTooLargeError(maxBytes);
-    }
-
-    chunks.push(chunk.value);
-  }
-
-  return Buffer.concat(chunks).toString("utf8");
-};
 
 const buildRequestBodyTooLargeResult = (error: RequestBodyTooLargeError): APIGatewayProxyResult =>
   json(
@@ -168,7 +120,7 @@ export const createProxyEventFromRequest = async (
   const queryEntries: Array<readonly [string, string]> = [...url.searchParams.entries()];
   const body = authenticated === null && !readsBodyWithoutAuthentication(request.method, normalizedPath)
     ? ""
-    : await readBoundedRequestText(request, MAX_REQUEST_BODY_BYTES);
+    : await readBoundedRequestText(request, "machine API", MAX_REQUEST_BODY_BYTES);
 
   const event: APIGatewayProxyEvent = {
     body: body === "" ? null : body,
