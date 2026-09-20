@@ -7,6 +7,11 @@
  *                     extracts the `sub` claim as userId. Unauthenticated users are
  *                     redirected to the auth service (auth.*) for login.
  *                     Expired tokens are refreshed inline (no GET redirect).
+ * AUTH_MODE=proxy_jwt — an upstream proxy authenticates the user and forwards a signed
+ *                     JWT in the AUTH_PROXY_JWT_HEADER header, verified against
+ *                     AUTH_PROXY_JWKS_URL. Vendor-neutral: Cloudflare Access and any
+ *                     equivalent gateway are configuration. Requests without a valid
+ *                     token get 401, never a redirect: login belongs to the proxy.
  *
  * The resolved userId is forwarded as x-user-id and, once established, the
  * active workspace is forwarded as x-workspace-id to downstream route
@@ -14,6 +19,11 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { JwtExpiredError } from "aws-jwt-verify/error";
+import {
+  createProxyJwtAuthenticatorFromEnv,
+  extractProxyJwtToken,
+  type ProxyJwtAuthenticator,
+} from "@expense-budget-tracker/agent-shared/proxy-jwt";
 import { getJwtVerifier, refreshTokens } from "@/server/cognitoAuth";
 import { hasApiKeyAuthorization } from "@/server/authHeader";
 import { log } from "@/server/logger";
@@ -34,6 +44,8 @@ const CSRF_HEADER_NAME = "x-csrf-token";
 const WORKSPACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CSRF_TOKEN_RE = /^[0-9a-f]{64}$/;
 const WORKSPACE_BOOTSTRAP_PATH = "/api/workspaces/bootstrap";
+const PROXY_JWT_UNAUTHORIZED_MESSAGE =
+  "Unauthorized: this deployment expects an upstream authentication proxy to forward a verified identity token. Sign in through the proxy and retry.";
 
 const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/auth/logout",
@@ -70,6 +82,16 @@ const getAuthMode = (): AuthMode => {
     throw new Error("CORS_ORIGIN must be set when AUTH_MODE=cognito");
   }
   return authMode;
+};
+
+let proxyJwtAuthenticator: ProxyJwtAuthenticator | undefined;
+
+/** Built once per runtime instance so the JWKS is fetched and cached once. */
+const getProxyJwtAuthenticator = (): ProxyJwtAuthenticator => {
+  if (proxyJwtAuthenticator === undefined) {
+    proxyJwtAuthenticator = createProxyJwtAuthenticatorFromEnv(process.env);
+  }
+  return proxyJwtAuthenticator;
 };
 
 const SECURITY_HEADERS: ReadonlyArray<[string, string]> = [
@@ -283,6 +305,41 @@ const handleMissingWorkspaceCookie = (
   return response;
 };
 
+/**
+ * Identity in proxy_jwt mode comes from the upstream proxy only. An absent or
+ * invalid token is answered with 401 rather than a redirect, because this app
+ * hosts no login flow in this mode.
+ */
+const handleProxyJwtRequest = async (
+  request: NextRequest,
+  nonce: string,
+): Promise<NextResponse> => {
+  const authenticator = getProxyJwtAuthenticator();
+
+  let identity: VerifiedIdentity;
+  try {
+    const token = extractProxyJwtToken(request.headers, authenticator.headerName);
+    identity = await authenticator.verify(token);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log({ domain: "auth", action: "proxy_auth_error", error: message });
+    const response = new NextResponse(PROXY_JWT_UNAUTHORIZED_MESSAGE, { status: 401 });
+    addSecurityHeaders(response, nonce);
+    return response;
+  }
+
+  if (request.nextUrl.pathname === WORKSPACE_BOOTSTRAP_PATH) {
+    return forwardWithIdentity(request, identity, null, nonce);
+  }
+
+  const workspaceId = resolveWorkspaceId(request);
+  if (workspaceId === null) {
+    return handleMissingWorkspaceCookie(request, nonce);
+  }
+
+  return forwardWithIdentity(request, identity, workspaceId, nonce);
+};
+
 export const proxy = async (request: NextRequest): Promise<NextResponse> => {
   const { pathname } = request.nextUrl;
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
@@ -304,7 +361,8 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
     );
   }
 
-  // AUTH_MODE=cognito — public paths are exempt from auth (CSRF already checked above)
+  // AUTH_MODE=cognito and AUTH_MODE=proxy_jwt — public paths are exempt from
+  // auth (CSRF already checked above)
   if (isPublicPath(pathname)) {
     const csp = buildCsp(nonce);
     const headers = new Headers(request.headers);
@@ -332,6 +390,10 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
     const response = NextResponse.next({ request: { headers } });
     addSecurityHeaders(response, nonce, csp);
     return response;
+  }
+
+  if (authMode === "proxy_jwt") {
+    return handleProxyJwtRequest(request, nonce);
   }
 
   const sessionCookie = request.cookies.get("session")?.value ?? "";

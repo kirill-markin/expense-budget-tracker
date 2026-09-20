@@ -2,10 +2,12 @@
  * Production startup validation.
  *
  * Called once by Next.js on server boot. Checks:
- * - AUTH_MODE is set explicitly to "none" or "cognito"
+ * - AUTH_MODE is set explicitly to "none", "cognito", or "proxy_jwt"
  * - COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID, COGNITO_REGION are set when AUTH_MODE=cognito
  * - CORS_ORIGIN is set when AUTH_MODE=cognito (required for CSRF protection)
  * - AUTH_DOMAIN is set when AUTH_MODE=cognito (auth service subdomain)
+ * - AUTH_PROXY_JWT_HEADER, AUTH_PROXY_JWKS_URL, AUTH_PROXY_JWT_ISSUER,
+ *   AUTH_PROXY_JWT_AUDIENCE and CORS_ORIGIN are set when AUTH_MODE=proxy_jwt
  * - AUTH_MODE=none is allowed only for explicit local dev/test, or for a
  *   deployment that opts in with ALLOW_INSECURE_NO_AUTH=true
  * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (cognito/ECS)

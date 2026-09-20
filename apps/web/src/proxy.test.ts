@@ -3,54 +3,68 @@ import test from "node:test";
 import { NextRequest } from "next/server";
 import { isPublicPath, proxy, resolveWorkspaceIdFromCookie } from "./proxy";
 
-type EnvSnapshot = Readonly<{
-  AUTH_MODE: string | undefined;
-  AUTH_DOMAIN: string | undefined;
-  CORS_ORIGIN: string | undefined;
-  NODE_ENV: string | undefined;
-}>;
+const MANAGED_ENV_KEYS = [
+  "AUTH_MODE",
+  "AUTH_DOMAIN",
+  "CORS_ORIGIN",
+  "NODE_ENV",
+  "AUTH_PROXY_JWT_HEADER",
+  "AUTH_PROXY_JWKS_URL",
+  "AUTH_PROXY_JWT_ISSUER",
+  "AUTH_PROXY_JWT_AUDIENCE",
+] as const;
 
-const captureEnv = (): EnvSnapshot => ({
-  AUTH_MODE: process.env.AUTH_MODE,
-  AUTH_DOMAIN: process.env.AUTH_DOMAIN,
-  CORS_ORIGIN: process.env.CORS_ORIGIN,
-  NODE_ENV: process.env.NODE_ENV,
-});
+type ManagedEnvKey = (typeof MANAGED_ENV_KEYS)[number];
+type EnvSnapshot = Readonly<Partial<Record<ManagedEnvKey, string>>>;
 
-const restoreEnv = (snapshot: EnvSnapshot): void => {
-  if (snapshot.AUTH_MODE === undefined) {
-    delete process.env.AUTH_MODE;
-  } else {
-    process.env.AUTH_MODE = snapshot.AUTH_MODE;
-  }
-  if (snapshot.AUTH_DOMAIN === undefined) {
-    delete process.env.AUTH_DOMAIN;
-  } else {
-    process.env.AUTH_DOMAIN = snapshot.AUTH_DOMAIN;
-  }
-  if (snapshot.CORS_ORIGIN === undefined) {
-    delete process.env.CORS_ORIGIN;
-  } else {
-    process.env.CORS_ORIGIN = snapshot.CORS_ORIGIN;
-  }
-  if (snapshot.NODE_ENV === undefined) {
-    Reflect.deleteProperty(process.env, "NODE_ENV");
-  } else {
-    Reflect.set(process.env, "NODE_ENV", snapshot.NODE_ENV);
+const captureEnv = (): EnvSnapshot =>
+  Object.fromEntries(
+    MANAGED_ENV_KEYS.map((key: ManagedEnvKey): [ManagedEnvKey, string | undefined] => [key, process.env[key]]),
+  ) as EnvSnapshot;
+
+const applyEnv = (values: EnvSnapshot): void => {
+  for (const key of MANAGED_ENV_KEYS) {
+    const value = values[key];
+    if (value === undefined) {
+      Reflect.deleteProperty(process.env, key);
+    } else {
+      Reflect.set(process.env, key, value);
+    }
   }
 };
 
-const withCognitoEnv = async (run: () => Promise<void>): Promise<void> => {
+const withEnv = async (values: EnvSnapshot, run: () => Promise<void>): Promise<void> => {
   const snapshot = captureEnv();
-  process.env.AUTH_MODE = "cognito";
-  process.env.AUTH_DOMAIN = "auth.example.com";
-  process.env.CORS_ORIGIN = "https://app.example.com";
+  for (const [key, value] of Object.entries(values)) {
+    Reflect.set(process.env, key, value);
+  }
   try {
     await run();
   } finally {
-    restoreEnv(snapshot);
+    applyEnv(snapshot);
   }
 };
+
+const COGNITO_ENV: EnvSnapshot = {
+  AUTH_MODE: "cognito",
+  AUTH_DOMAIN: "auth.example.com",
+  CORS_ORIGIN: "https://app.example.com",
+};
+
+const PROXY_JWT_HEADER = "cf-access-jwt-assertion";
+
+const PROXY_JWT_ENV: EnvSnapshot = {
+  AUTH_MODE: "proxy_jwt",
+  CORS_ORIGIN: "https://app.example.com",
+  AUTH_PROXY_JWT_HEADER: PROXY_JWT_HEADER,
+  AUTH_PROXY_JWKS_URL: "https://team.cloudflareaccess.com/cdn-cgi/access/certs",
+  AUTH_PROXY_JWT_ISSUER: "https://team.cloudflareaccess.com",
+  AUTH_PROXY_JWT_AUDIENCE: "application-audience-tag",
+};
+
+const withCognitoEnv = async (run: () => Promise<void>): Promise<void> => withEnv(COGNITO_ENV, run);
+
+const withProxyJwtEnv = async (run: () => Promise<void>): Promise<void> => withEnv(PROXY_JWT_ENV, run);
 
 const createRequest = (path: string): NextRequest =>
   new NextRequest(`https://app.example.com${path}`, { method: "GET" });
@@ -129,5 +143,72 @@ test("production CSP allows only same-origin and blob workers", async (): Promis
 
     assert.match(csp, /(?:^|; )worker-src 'self' blob:(?:;|$)/u);
     assert.doesNotMatch(csp, /script-src[^;]*'unsafe-eval'/u);
+  });
+});
+
+test("proxy_jwt answers a request without a proxy token with 401 and no redirect", async (): Promise<void> => {
+  await withProxyJwtEnv(async (): Promise<void> => {
+    const response = await proxy(createRequest("/transactions"));
+
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("location"), null);
+    assert.match(await response.text(), /upstream authentication proxy/u);
+  });
+});
+
+test("proxy_jwt rejects a token it cannot verify", async (): Promise<void> => {
+  await withProxyJwtEnv(async (): Promise<void> => {
+    const request = new NextRequest("https://app.example.com/api/budget-grid", {
+      method: "GET",
+      headers: { [PROXY_JWT_HEADER]: "not-a-jwt" },
+    });
+
+    const response = await proxy(request);
+
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("location"), null);
+  });
+});
+
+test("proxy_jwt keeps public paths and the ApiKey agent surface exempt", async (): Promise<void> => {
+  await withProxyJwtEnv(async (): Promise<void> => {
+    const publicResponse = await proxy(createRequest("/share/monthly/public-token"));
+    assert.equal(publicResponse.status, 200);
+
+    const agentRequest = new NextRequest("https://app.example.com/api/agent/sql", {
+      method: "GET",
+      headers: { authorization: "ApiKey ebt_live_example" },
+    });
+    const agentResponse = await proxy(agentRequest);
+    assert.equal(agentResponse.status, 200);
+    assert.equal(agentResponse.headers.get("location"), null);
+  });
+});
+
+test("proxy_jwt still fails CSRF validation before authenticating a mutating request", async (): Promise<void> => {
+  await withProxyJwtEnv(async (): Promise<void> => {
+    const request = new NextRequest("https://app.example.com/api/transactions", {
+      method: "POST",
+      headers: { [PROXY_JWT_HEADER]: "not-a-jwt", "x-user-id": "injected-user" },
+    });
+
+    const response = await proxy(request);
+
+    assert.equal(response.status, 403);
+    assert.equal(await response.text(), "CSRF validation failed");
+  });
+});
+
+test("a proxy-shaped request is still redirected to login while AUTH_MODE=cognito", async (): Promise<void> => {
+  await withCognitoEnv(async (): Promise<void> => {
+    const request = new NextRequest("https://app.example.com/transactions", {
+      method: "GET",
+      headers: { [PROXY_JWT_HEADER]: "any-token" },
+    });
+
+    const response = await proxy(request);
+
+    assert.equal(response.status, 307);
+    assert.match(response.headers.get("location") ?? "", /^https:\/\/auth\.example\.com\/login/u);
   });
 });

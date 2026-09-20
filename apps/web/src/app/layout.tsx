@@ -57,7 +57,9 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   const { chatOpen, chatWidth } = await readChatCookies();
   const currentUserId = extractUserIdFromHeaders(headersList);
 
-  const authEnabled = process.env.AUTH_MODE === "cognito";
+  // Every authenticated mode carries a real per-user identity, so the active
+  // workspace must be resolved against it. AUTH_MODE=none has a single fixed one.
+  const authEnabled = process.env.AUTH_MODE !== "none";
   let reportingCurrency = "USD";
   let workspaces: ReadonlyArray<WorkspaceSummary> = [];
   let currentWorkspaceId = "";
