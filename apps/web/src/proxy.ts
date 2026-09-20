@@ -22,6 +22,7 @@ import { JwtExpiredError } from "aws-jwt-verify/error";
 import {
   createProxyJwtAuthenticatorFromEnv,
   extractProxyJwtToken,
+  PROXY_JWT_UNAUTHORIZED_MESSAGE,
   type ProxyJwtAuthenticator,
 } from "@expense-budget-tracker/agent-shared/proxy-jwt";
 import { getJwtVerifier, refreshTokens } from "@/server/cognitoAuth";
@@ -44,8 +45,6 @@ const CSRF_HEADER_NAME = "x-csrf-token";
 const WORKSPACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CSRF_TOKEN_RE = /^[0-9a-f]{64}$/;
 const WORKSPACE_BOOTSTRAP_PATH = "/api/workspaces/bootstrap";
-const PROXY_JWT_UNAUTHORIZED_MESSAGE =
-  "Unauthorized: this deployment expects an upstream authentication proxy to forward a verified identity token. Sign in through the proxy and retry.";
 
 const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/auth/logout",

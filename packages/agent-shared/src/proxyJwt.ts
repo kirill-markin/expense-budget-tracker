@@ -47,6 +47,15 @@ export type ProxyJwtAuthenticator = Readonly<{
   verify: (token: string) => Promise<ProxyJwtIdentity>;
 }>;
 
+/**
+ * The 401 body returned to a browser whose request carries no valid edge
+ * token. Shared so the web app and the auth service answer with one sentence:
+ * in this mode neither hosts a login page, and the user has to sign in at the
+ * proxy instead.
+ */
+export const PROXY_JWT_UNAUTHORIZED_MESSAGE =
+  "Unauthorized: this deployment expects an upstream authentication proxy to forward a verified identity token. Sign in through the proxy and retry.";
+
 /** The only signature algorithm accepted from the upstream proxy. */
 const ACCEPTED_ALGORITHM = "RS256";
 
