@@ -8,7 +8,7 @@
 # `CORS_ORIGIN=http://127.0.0.1:3000 make up`.
 COMPOSE := docker compose -f infra/docker/compose.yml
 
-.PHONY: up down migrate dev build lint
+.PHONY: up down migrate dev build lint selfhost-verify
 
 up:
 	$(COMPOSE) up -d
@@ -28,3 +28,14 @@ build:
 lint:
 	cd apps/web && npm run lint
 	cd apps/worker && npm run lint
+
+# End-to-end verification of the AUTH_MODE=proxy_jwt self-hosting path against
+# infra/docker/compose.selfhost.yml. It brings that stack up behind a local
+# fake edge in its own Compose project, runs the checks, and tears it down with
+# its volume. It shares nothing with the development stack above, nothing with
+# a real self-host deployment on this machine, and touches no application code.
+# This default run stops at check 1 by design: no container can trust the fake
+# edge's private CA. See "Why --trust-edge-ca exists" in
+# scripts/selfhost-verify/README.md, and read that README first.
+selfhost-verify:
+	node scripts/selfhost-verify/verify.mjs
