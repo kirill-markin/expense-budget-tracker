@@ -5,6 +5,7 @@ import { createAuthenticatedEvent, createEvent } from "../handlerTestUtils.js";
 import type { SqlApiLogEvent } from "../logger.js";
 import { createMachineApiHandler } from "../machineApi.js";
 import { resolveAuthenticatedContext } from "./request.js";
+import { RETRYABLE_ERROR_MESSAGE } from "./responses.js";
 
 const STORED_IDENTITY: UserIdentity = {
   userId: "user-1",
@@ -99,7 +100,7 @@ test("a database failure during the account-state read answers a retryable envel
   const handler = createMachineApiHandler({
     log: (event) => { logged.push(event); },
     loadTrustedUserIdentityBeforeDeadline: async () => {
-      throw new Error("pool exhausted");
+      throw new Error("connect ECONNREFUSED 10.0.1.23:5432");
     },
   });
 
@@ -114,9 +115,23 @@ test("a database failure during the account-state read answers a retryable envel
   assert.equal(payload.ok, false);
   assert.equal(payload.data.retryable, true);
   assert.equal(payload.error.code, "agent_auth_unavailable");
-  assert.equal(payload.error.message, "pool exhausted");
-  // An auth-path outage must be distinguishable from a wave of revocations.
-  assert.deepEqual(logged, [{ domain: "sql_api", action: "agent_auth_unavailable", errorType: "error" }]);
+  // This path answers before any route authorization, so the cause stays in
+  // the log: the caller gets the retryable contract, not the database host.
+  assert.equal(payload.error.message, RETRYABLE_ERROR_MESSAGE);
+  assert.doesNotMatch(response.body, /10\.0\.1\.23/u);
+  // An auth-path outage must be distinguishable from a wave of revocations,
+  // and the redacted cause has to survive somewhere, so both events reach the
+  // one injected logger.
+  assert.deepEqual(logged, [
+    { domain: "sql_api", action: "agent_auth_unavailable", errorType: "error" },
+    {
+      domain: "sql_api",
+      action: "agent_request_unavailable",
+      code: "agent_auth_unavailable",
+      errorType: "error",
+      message: "connect ECONNREFUSED 10.0.1.23:5432",
+    },
+  ]);
 });
 
 test("an unauthenticated request still answers 401 while the database is down", async (): Promise<void> => {

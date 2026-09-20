@@ -97,9 +97,21 @@ const getAuthorizerString = (
  * Outcome of resolving the caller behind an ApiKey request.
  *
  * `account_disabled` covers both a user whose stored `cognito_enabled` is
- * false and a user whose `users` row no longer exists: the authorizer result
- * is cached for minutes, so a key accepted there can outlive the account. It
- * carries the refused `userId` so the caller can log which account was cut off.
+ * false and a user whose `users` row no longer exists. The authorizer proves
+ * that the presented secret hashed to an unrevoked key row whose LEFT JOINed
+ * `users.email` was non-empty, and nothing beyond that:
+ * `auth.validate_agent_api_key` returns neither `cognito_enabled` nor
+ * `cognito_status`, so account state has to be read from `users` on every
+ * request. Authorizer caching is not the reason: the `TokenAuthorizer` in
+ * infra/aws/lib/api-gateway.ts sets `resultsCacheTtl` to zero.
+ *
+ * The missing-row arm is a live refusal rather than dead code, even though
+ * agentApiKeyAuth.ts already answers 401 when that email is null, which is
+ * what a deleted `users` row returns. The row can be deleted between the
+ * authorizer's read and this one, and this read runs under `app.user_id` and
+ * the `user_self_access` RLS policy on `users`, so a context that fails to
+ * apply returns zero rows. Both must refuse rather than pass. It carries the
+ * refused `userId` so the caller can log which account was cut off.
  */
 export type AuthenticationOutcome =
   | Readonly<{ outcome: "missing_api_key" }>

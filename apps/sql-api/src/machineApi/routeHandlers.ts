@@ -16,6 +16,7 @@ import {
   MAX_SQL_RESULT_CHARS,
   MAX_SQL_ROWS,
   SQL_STATEMENT_TIMEOUT_MS,
+  SqlExecutionDeadlineError,
   SqlPolicyError,
   validateExpenseSql,
   validateSingleMutationExpenseSql,
@@ -33,6 +34,7 @@ import {
   getSqlPolicyInstructions,
   getUserSqlExecutionMessage,
   isAmbiguousSqlMutationOutcomeError,
+  isSqlStatementTimeoutError,
   isUserSqlExecutionError,
   runReadOnlySql,
   runSql,
@@ -87,6 +89,7 @@ export const handleMeRouteWithResolver = async (
     );
   } catch (error) {
     return buildRetryableErrorResponse(
+      context.dependencies.log,
       "agent_me_failed",
       "Retry /me in a moment.",
       error,
@@ -120,6 +123,7 @@ export const handleSchemaRoute = async (
     );
   } catch (error) {
     return buildRetryableErrorResponse(
+      context.dependencies.log,
       "agent_schema_failed",
       "Retry /schema in a moment.",
       error,
@@ -150,6 +154,7 @@ export const handleListWorkspacesRoute = async (
     );
   } catch (error) {
     return buildRetryableErrorResponse(
+      context.dependencies.log,
       "agent_workspaces_failed",
       `Retry ${context.apiBaseUrl}/workspaces in a moment.`,
       error,
@@ -208,6 +213,7 @@ export const handleCreateWorkspaceRoute = async (
     );
   } catch (error) {
     return buildRetryableErrorResponse(
+      context.dependencies.log,
       "agent_workspace_create_failed",
       "Retry workspace creation in a moment.",
       error,
@@ -264,6 +270,7 @@ export const handleSelectWorkspaceRoute = async (
     );
   } catch (error) {
     return buildRetryableErrorResponse(
+      context.dependencies.log,
       "agent_workspace_select_failed",
       "Retry workspace selection in a moment.",
       error,
@@ -295,6 +302,59 @@ const buildSqlPolicyErrorResponse = (
       getSqlPolicyInstructions(error, context.apiBaseUrl),
       error.code,
       error.message,
+    ),
+  );
+};
+
+// A deadline is deterministic and caller-actionable: the same work will expire
+// again, so the answer has to say so instead of reading as an outage the caller
+// should retry unchanged. Both classification sites run provisioning work under
+// the same deadline, so the answer attributes the expiry to nothing: it states
+// only the one claim that is exactly true at both, then offers the remedies as
+// remedies rather than as a diagnosis. The claim is scoped to the submitted SQL
+// because the request as a whole can have changed something: resolving a
+// workspace can create one and save it on the API key in committed transactions
+// of its own, which a later deadline does not undo. At the execution site the
+// claim holds because the ambiguous-outcome branch has already taken every
+// failure that could have left a mutation in doubt; at the resolution site
+// because no submitted statement ran at all. The remedies name no statement
+// count, because /sql/query and /sql/execute accept exactly one statement.
+const SQL_DEADLINE_INSTRUCTIONS = "None of the submitted SQL was applied. Send less work per request, such as a narrower date range or fewer rows, or send X-Workspace-Id, then retry.";
+
+/**
+ * Answer an expired SQL execution deadline, or null when the failure is not one
+ * of the two shapes classified here.
+ *
+ * The deadline between commands raises SqlExecutionDeadlineError, while a
+ * single slow statement is cancelled by PostgreSQL at the per-command
+ * statement_timeout. Both are answered with the code, status and timeout the
+ * web and MCP surfaces use, so one agent sees one contract across all three.
+ * Both call sites pass the same instructions; see the constant above.
+ */
+const buildSqlDeadlineErrorResponse = (
+  error: unknown,
+  instructions: string,
+): APIGatewayProxyResult | null => {
+  const deadline = error instanceof SqlExecutionDeadlineError
+    ? { message: error.message, timeoutMs: error.timeoutMs }
+    : isSqlStatementTimeoutError(error)
+      ? {
+        message: `SQL execution was cancelled after exceeding its ${String(SQL_STATEMENT_TIMEOUT_MS)} ms deadline`,
+        timeoutMs: SQL_STATEMENT_TIMEOUT_MS,
+      }
+      : null;
+  if (deadline === null) {
+    return null;
+  }
+
+  return json(
+    504,
+    buildErrorEnvelope(
+      { timeoutMs: deadline.timeoutMs, retryable: true },
+      [],
+      instructions,
+      "request_deadline_exceeded",
+      deadline.message,
     ),
   );
 };
@@ -347,6 +407,7 @@ const handleValidatedSqlRouteWithWorkspaceResolver = async <TValidated extends V
     }
 
     return buildRetryableErrorResponse(
+      context.dependencies.log,
       "agent_sql_failed",
       "Retry SQL in a moment.",
       error,
@@ -366,7 +427,16 @@ const handleValidatedSqlRouteWithWorkspaceResolver = async <TValidated extends V
       executionDeadline,
     );
   } catch (error) {
+    // Provisioning work runs under the deadline at this site and at the
+    // execution site below, so the answer does not attribute the expiry to a
+    // phase and is the same at both.
+    const deadlineResponse = buildSqlDeadlineErrorResponse(error, SQL_DEADLINE_INSTRUCTIONS);
+    if (deadlineResponse !== null) {
+      return deadlineResponse;
+    }
+
     return buildRetryableErrorResponse(
+      context.dependencies.log,
       "agent_sql_failed",
       "Retry SQL in a moment.",
       error,
@@ -441,7 +511,16 @@ const handleValidatedSqlRouteWithWorkspaceResolver = async <TValidated extends V
       );
     }
 
+    // Classified after the ambiguous-outcome branch, so a deadline that could
+    // have left a mutation in doubt is never answered as one whose submitted
+    // SQL applied nothing.
+    const deadlineResponse = buildSqlDeadlineErrorResponse(error, SQL_DEADLINE_INSTRUCTIONS);
+    if (deadlineResponse !== null) {
+      return deadlineResponse;
+    }
+
     return buildRetryableErrorResponse(
+      context.dependencies.log,
       "agent_sql_failed",
       "Retry SQL in a moment.",
       error,

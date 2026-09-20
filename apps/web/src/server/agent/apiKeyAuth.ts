@@ -174,7 +174,20 @@ export const authenticateAgentRequestWithDependencies = async (
   }
   const trustedEmail = email as string;
 
-  const storedAccount = await dependencies.loadStoredAccountState(row.user_id);
+  let storedAccount: StoredAccountState | null;
+  try {
+    storedAccount = await dependencies.loadStoredAccountState(row.user_id);
+  } catch (error) {
+    // The routes answer this as an unavailable envelope, which on its own is
+    // indistinguishable from a revocation wave, so the outage is logged here
+    // at the one place the account-state read happens.
+    dependencies.log({
+      domain: "auth",
+      action: "agent_auth_unavailable",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
   // An empty stored status is not an active account: `users.cognito_status` is
   // NOT NULL but not non-empty, so refuse rather than treat it as usable state.
   if (storedAccount === null || !storedAccount.cognitoEnabled || storedAccount.cognitoStatus === "") {

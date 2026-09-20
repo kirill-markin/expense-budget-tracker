@@ -289,6 +289,20 @@ type AuthEvent =
    * out of the `error` family that the CloudWatch web error alarm pages on.
    */
   | Readonly<{ domain: "auth"; action: "agent_account_disabled"; userId: string }>
+  /**
+   * The stored account-state read itself failed, so the ApiKey request was
+   * answered as retryable instead of refused. It is kept apart from the
+   * refusal above so an auth-path database outage is never read as a wave of
+   * revocations, and it mirrors the machine API's `agent_auth_unavailable` so
+   * both surfaces are diagnosable the same way. The action itself is
+   * deliberately kept out of the `error` family that the CloudWatch web error
+   * alarm pages on, because the request is answered as a retryable 500 rather
+   * than refused. That does not mean such an outage never pages: on
+   * POST /api/agent/sql the same failure also reaches the terminal catch and
+   * is logged as `agent_sql_failed` with action `error`, which does page. On
+   * /api/agent/me, /schema and /workspaces this event is the only record.
+   */
+  | Readonly<{ domain: "auth"; action: "agent_auth_unavailable"; error: string }>
   | Readonly<{ domain: "auth"; action: "insecure_no_auth"; message: string }>
   | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "error"; error: string }>;
