@@ -24,6 +24,11 @@ export const buildRequestIdentity = (headersList: Headers): UserIdentity => {
     userId,
     email,
     emailVerified,
+    // Account state to provision a first-seen user with, not a claim about an
+    // existing row: the identity mirror never updates these columns on
+    // conflict. Reading the stored values here instead would cost a query the
+    // mirror write would ignore, and the browser session is gated by the
+    // identity provider rather than by this pair.
     cognitoStatus: resolveMirroredStatus(userId),
     cognitoEnabled: true,
   };

@@ -72,6 +72,20 @@ test("the authenticated identity carries the stored account state, not a hardcod
   );
 });
 
+test("the authenticated identity carries the stored email_verified, which an ApiKey never proves", async (): Promise<void> => {
+  const resolution = await resolveAuthenticatedContext(
+    createAuthenticatedEvent({}),
+    loadStored({ ...STORED_IDENTITY, emailVerified: false }, []),
+  );
+
+  // The MCP access-token gate admits on this column. A key holder it refused
+  // must not be able to raise it back with one /v1 call.
+  assert.equal(
+    resolution.outcome === "authenticated" ? resolution.authenticated.identity.emailVerified : null,
+    false,
+  );
+});
+
 test("the machine API answers 403 for a disabled account and provisions nothing", async (): Promise<void> => {
   const logged: Array<SqlApiLogEvent> = [];
   const handler = createMachineApiHandler({

@@ -1,3 +1,4 @@
+import { isEmailAlreadyRegisteredError } from "../accountState.js";
 import { query, withTransaction, type QueryFn } from "../db.js";
 import {
   runtimeOAuthOwnerPolicy,
@@ -203,7 +204,17 @@ export const issueAuthorizationCodeWithDependencies = async (
   const code = dependencies.createOpaqueToken("ac");
   const codeHash = hashOpaqueToken(code);
   return dependencies.withTransaction(async (queryFn: QueryFn) => {
-    await dependencies.ownerPolicy.syncAuthenticatedUser(queryFn, userId, email);
+    try {
+      await dependencies.ownerPolicy.syncAuthenticatedUser(queryFn, userId, email);
+    } catch (error) {
+      // This subject's address already belongs to another one. Accounts are
+      // never linked automatically, so consent can never succeed for this
+      // pair: the client is told so instead of getting a server error.
+      if (isEmailAlreadyRegisteredError(error)) {
+        throw oauthError("access_denied", error.message, 400);
+      }
+      throw error;
+    }
     const connectionResult = await queryFn(
       `INSERT INTO auth.oauth_connections (client_id, user_id, resource)
        VALUES ($1, $2, $3)

@@ -68,7 +68,7 @@ test("an unrevoked ApiKey for a disabled account is refused and the refusal is l
   const touchedConnections: Array<string> = [];
   const loggedEvents: Array<LoggedEvent> = [];
   const dependencies = createDependencies(
-    { cognitoStatus: "CONFIRMED", cognitoEnabled: false },
+    { cognitoStatus: "CONFIRMED", cognitoEnabled: false, emailVerified: true },
     touchedConnections,
     loggedEvents,
   );
@@ -126,7 +126,7 @@ test("an unrevoked ApiKey for a deleted account is refused", async (): Promise<v
 test("the authenticated identity carries the stored account state, not a hardcoded CONFIRMED", async (): Promise<void> => {
   const touchedConnections: Array<string> = [];
   const dependencies = createDependencies(
-    { cognitoStatus: "PROXY", cognitoEnabled: true },
+    { cognitoStatus: "PROXY", cognitoEnabled: true, emailVerified: true },
     touchedConnections,
   );
 
@@ -142,10 +142,24 @@ test("the authenticated identity carries the stored account state, not a hardcod
   assert.deepEqual(touchedConnections, ["connection-1"]);
 });
 
+test("the identity carries the stored email_verified, which an ApiKey never proves", async (): Promise<void> => {
+  const touchedConnections: Array<string> = [];
+  const dependencies = createDependencies(
+    { cognitoStatus: "CONFIRMED", cognitoEnabled: true, emailVerified: false },
+    touchedConnections,
+  );
+
+  const authenticated = await authenticateAgentRequestWithDependencies(createRequest(), dependencies);
+
+  // The MCP access-token gate admits on this column, so an ApiKey request must
+  // not be able to raise it back through the provisioning upsert downstream.
+  assert.equal(authenticated.identity.emailVerified, false);
+});
+
 test("an empty stored status is refused as an inactive account, not a server error", async (): Promise<void> => {
   const touchedConnections: Array<string> = [];
   const dependencies = createDependencies(
-    { cognitoStatus: "", cognitoEnabled: true },
+    { cognitoStatus: "", cognitoEnabled: true, emailVerified: true },
     touchedConnections,
   );
 

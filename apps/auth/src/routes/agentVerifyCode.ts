@@ -5,6 +5,7 @@
  * exchanges a valid Email OTP challenge for a long-lived agent API key.
  */
 import { Hono } from "hono";
+import { isEmailAlreadyRegisteredError } from "../server/accountState.js";
 import {
   lookupAgentOtpChallenge,
   markAgentOtpChallengeUsed,
@@ -75,12 +76,25 @@ const logRejectedAttempt = (
 };
 
 const mapVerifyError = (error: unknown): Readonly<{
-  status: 400 | 500;
+  status: 400 | 409 | 500;
   code: string;
   message: string;
   instructions: string;
   data: Readonly<Record<string, unknown>>;
 }> => {
+  // The email already belongs to another subject. The mirror cannot link the
+  // two accounts, so this is permanent: it must not reach the caller as the
+  // retryable server error the default branch below returns.
+  if (isEmailAlreadyRegisteredError(error)) {
+    return {
+      status: 409,
+      code: "email_already_registered",
+      message: error.message,
+      instructions: error.hint,
+      data: { field: "email", retryable: false },
+    };
+  }
+
   const cognitoError = error as CognitoFailure;
   if (cognitoError.cognitoType === "CodeMismatchException" || cognitoError.cognitoType === "NotAuthorizedException") {
     return {

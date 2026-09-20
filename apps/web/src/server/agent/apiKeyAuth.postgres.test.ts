@@ -51,18 +51,21 @@ test(
 
       assert.deepEqual(
         await loadStoredAccountState(userId),
-        { cognitoStatus: "CONFIRMED", cognitoEnabled: true },
+        { cognitoStatus: "CONFIRMED", cognitoEnabled: true, emailVerified: true },
         "an enabled account must be readable through its own RLS context",
       );
 
+      // email_verified is cleared alongside the account state: an ApiKey
+      // proves nothing about the address, so the stored value is what the
+      // request must carry into the MCP access-token gate.
       await ownerPool.query(
-        "UPDATE public.users SET cognito_enabled = false WHERE user_id = $1",
+        "UPDATE public.users SET cognito_enabled = false, email_verified = false WHERE user_id = $1",
         [userId],
       );
 
       assert.deepEqual(
         await loadStoredAccountState(userId),
-        { cognitoStatus: "CONFIRMED", cognitoEnabled: false },
+        { cognitoStatus: "CONFIRMED", cognitoEnabled: false, emailVerified: false },
         "disabling the row must be visible on the very next read",
       );
 

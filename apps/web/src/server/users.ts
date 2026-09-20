@@ -32,6 +32,15 @@ const isEmailAlreadyTakenError = (error: unknown): boolean => {
   return pgError.code === UNIQUE_VIOLATION_CODE && pgError.constraint === EMAIL_UNIQUE_INDEX;
 };
 
+/**
+ * An authenticated identity as the request knows it.
+ *
+ * `cognitoStatus` and `cognitoEnabled` are the account state to provision a
+ * first-seen user with. They never describe an existing row: stored account
+ * state is authoritative and is read, not asserted. `emailVerified` is not
+ * account state but the provider's current claim about this address, so it
+ * keeps tracking the identity token on every request.
+ */
 export type UserIdentity = Readonly<{
   userId: string;
   email: string;
@@ -52,10 +61,20 @@ export type UserIdentity = Readonly<{
  * Emails are unique per user: two subjects claiming the same address is a
  * conflict the app refuses rather than silently linking the accounts.
  *
- * `cognito_status` and `cognito_enabled` are written from the identity as
- * given, so every caller must pass account state it actually knows. The ApiKey
- * path reads both from the stored row instead of asserting them, which is what
- * keeps a disabled account disabled.
+ * `cognito_status` and `cognito_enabled` provision a first-seen row and are
+ * never updated on conflict. An ordinary request therefore cannot raise the
+ * stored account state whatever identity it carries, which is what makes
+ * `cognito_enabled` a revocation lever: it changes only where account state
+ * is administered.
+ *
+ * `email_verified` keeps following the verified identity token in both
+ * directions. It is no revocation lever — it is the provider's current claim
+ * — but the MCP access-token gate reads the stored value, so freezing it at
+ * first sighting would strand a subject first seen before the provider marked
+ * the address verified, with no in-product way to repair the row. Only a
+ * caller that actually verified the address passes a fresh value here: the
+ * ApiKey surfaces carry the stored one, so a key holder the MCP gate refused
+ * cannot raise it from another surface.
  */
 export const upsertUserIdentity = async (
   client: PoolClient,
@@ -77,8 +96,6 @@ export const upsertUserIdentity = async (
        ON CONFLICT (user_id) DO UPDATE
          SET email = EXCLUDED.email,
              email_verified = EXCLUDED.email_verified,
-             cognito_status = EXCLUDED.cognito_status,
-             cognito_enabled = EXCLUDED.cognito_enabled,
              last_seen_at = now(),
              updated_at = now()`,
       [

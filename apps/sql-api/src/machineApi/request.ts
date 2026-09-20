@@ -122,11 +122,14 @@ export type AuthenticationOutcome =
  * Resolve the authenticated context for an ApiKey request.
  *
  * The authorizer proves only that an unrevoked key exists for this user; it
- * proves nothing about the account still being active. So `cognito_status` and
- * `cognito_enabled` are read from the stored `users` row rather than asserted
- * here, a disabled account is refused, and the values the provisioning upsert
- * later writes back are the stored ones. A key holder therefore cannot
- * re-enable an account an operator disabled in the database.
+ * proves nothing about the account still being active, and nothing about the
+ * address being verified. So `cognito_status`, `cognito_enabled` and
+ * `email_verified` are all read from the stored `users` row rather than
+ * asserted here, and a disabled account is refused. The provisioning upsert
+ * downstream never updates the two account-state columns for an existing row,
+ * and `email_verified` is carried back unchanged, so a key holder can neither
+ * re-enable an account an operator disabled nor raise the flag the MCP
+ * access-token gate reads.
  */
 export const resolveAuthenticatedContext = async (
   event: APIGatewayProxyEvent,
@@ -150,7 +153,7 @@ export const resolveAuthenticatedContext = async (
       identity: {
         userId,
         email,
-        emailVerified: true,
+        emailVerified: storedIdentity.emailVerified,
         cognitoStatus: storedIdentity.cognitoStatus,
         cognitoEnabled: storedIdentity.cognitoEnabled,
       },
