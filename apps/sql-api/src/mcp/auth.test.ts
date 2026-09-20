@@ -24,6 +24,23 @@ const IDENTITY: UserIdentity = {
   cognitoStatus: "CONFIRMED",
   cognitoEnabled: true,
 };
+const PROXY_IDENTITY: UserIdentity = { ...IDENTITY, cognitoStatus: "PROXY" };
+
+/**
+ * Statuses the gate must keep rejecting. Beyond the Cognito lifecycle values,
+ * the case and prefix variants pin exact set membership.
+ */
+const INACTIVE_STATUSES: ReadonlyArray<string> = [
+  "UNCONFIRMED",
+  "RESET_REQUIRED",
+  "FORCE_CHANGE_PASSWORD",
+  "ARCHIVED",
+  "LOCAL",
+  "proxy",
+  "PROXY_JWT",
+  "CONFIRMED_PENDING",
+  "",
+];
 
 type AuthCalls = {
   queries: Array<Readonly<{ text: string; params: ReadonlyArray<unknown> }>>;
@@ -206,9 +223,13 @@ test("MCP auth rejects absent and currently untrusted user identities as invalid
       identity: { ...IDENTITY, cognitoEnabled: false },
     },
     {
-      name: "non-confirmed Cognito status",
-      identity: { ...IDENTITY, cognitoStatus: "FORCE_CHANGE_PASSWORD" },
+      name: "disabled proxy-provisioned identity",
+      identity: { ...PROXY_IDENTITY, cognitoEnabled: false },
     },
+    ...INACTIVE_STATUSES.map((cognitoStatus) => ({
+      name: `inactive status ${JSON.stringify(cognitoStatus)}`,
+      identity: { ...IDENTITY, cognitoStatus },
+    })),
   ];
 
   for (const testCase of cases) {
@@ -226,5 +247,50 @@ test("MCP auth rejects absent and currently untrusted user identities as invalid
       testCase.name,
     );
     assert.deepEqual(calls.loadedUserIds, [IDENTITY.userId], testCase.name);
+  }
+});
+
+test("MCP auth accepts an identity provisioned through the authentication proxy", async (): Promise<void> => {
+  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+  const result = await authenticateMcpAccessTokenWithDependencies(
+    ACCESS_TOKEN,
+    RESOURCE,
+    createDeadline(),
+    createDependencies([validRow({})], PROXY_IDENTITY, calls),
+  );
+
+  assert.deepEqual(result.identity, PROXY_IDENTITY);
+  assert.deepEqual(calls.loadedUserIds, [PROXY_IDENTITY.userId]);
+});
+
+// An ApiKey request rewrites `cognito_status` to `CONFIRMED`, so a
+// proxy-provisioned user who also calls the machine API can have either stored
+// value. The gate admits both, and `cognito_enabled` revokes either one.
+test("MCP auth gates a proxy-provisioned user identically after an ApiKey request rewrote the stored status", async (): Promise<void> => {
+  for (const cognitoStatus of ["PROXY", "CONFIRMED"]) {
+    const activeCalls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+    const result = await authenticateMcpAccessTokenWithDependencies(
+      ACCESS_TOKEN,
+      RESOURCE,
+      createDeadline(),
+      createDependencies([validRow({})], { ...IDENTITY, cognitoStatus }, activeCalls),
+    );
+    assert.equal(result.identity.cognitoStatus, cognitoStatus);
+
+    const revokedCalls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+    await assert.rejects(
+      () => authenticateMcpAccessTokenWithDependencies(
+        ACCESS_TOKEN,
+        RESOURCE,
+        createDeadline(),
+        createDependencies(
+          [validRow({})],
+          { ...IDENTITY, cognitoStatus, cognitoEnabled: false },
+          revokedCalls,
+        ),
+      ),
+      (error: unknown) => error instanceof McpAuthenticationError,
+      cognitoStatus,
+    );
   }
 });
