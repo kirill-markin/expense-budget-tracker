@@ -1,0 +1,11 @@
+# Shell and SQL files are bind-mounted into Linux containers (migrate runs
+# scripts/migrate.sh, tests assert on \n-delimited SQL), so they must keep LF
+# in the working tree even with core.autocrlf=true on Windows.
+*.sh text eol=lf
+*.sql text eol=lf
+
+# Environment examples are copied to .env and read by dotenv parsers and by
+# shell `source`, which are not guaranteed to strip a trailing CR, so keep
+# them LF as well. The pattern matches at any depth: the repository root, the
+# Compose one in infra/docker, and the shell-sourced one in scripts/cloudflare.
+.env.example text eol=lf

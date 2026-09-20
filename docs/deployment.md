@@ -12,14 +12,20 @@
 make up
 ```
 
-This runs `docker compose -f infra/docker/compose.yml up -d`, which starts:
+This runs `docker compose -f infra/docker/compose.yml up -d`. The compose file itself defaults to a local development stack (`AUTH_MODE=none`, `ALLOW_INSECURE_NO_AUTH=true`, `CORS_ORIGIN=http://localhost:3000`), so the stack is unauthenticated and published on loopback only; running `docker compose` directly behaves the same, since the make targets add no environment of their own. It starts:
 
 1. **postgres** — Postgres 18 with health check.
 2. **migrate** — init container that runs `scripts/migrate.sh` (all migrations + views).
 3. **web** — Next.js app on `http://localhost:3000`.
 4. **worker** — TypeScript FX rate fetcher on a daily schedule.
 
-If you want Langfuse tracing in local Docker, set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, and an explicit 64-character lowercase hexadecimal `LANGFUSE_RELEASE` together in `.env`. Leave the three connection values unset if you do not want telemetry; `LANGFUSE_RELEASE` alone does not enable it.
+### Configuration
+
+Copy [`infra/docker/.env.example`](../infra/docker/.env.example) to `infra/docker/.env` to change anything. Compose resolves each variable from the shell environment first, then that file, then the defaults in the compose file — written as `${VAR:-default}`, except `AUTH_MODE` and `ALLOW_INSECURE_NO_AUTH`, which use `${VAR-default}` so an explicit empty value is not replaced. Operator configuration wins over the development defaults for any non-empty value.
+
+`AUTH_MODE=cognito` is not a supported configuration of this compose stack. That mode makes the web app require the `DB_HOST`/`DB_PASSWORD` pair (`apps/web/src/instrumentation.ts`), while the `web` service here wires `DATABASE_URL` instead; `infra/docker/.env` cannot supply the missing pair either, because Compose reads that file for variable interpolation and the service has no `env_file`. The authenticated deployment lives in AWS — see [`infra/aws/README.md`](../infra/aws/README.md). The standalone `auth` service is kept out of the default stack by the `cognito` profile for the same reason: enabling the profile starts that service (with real Cognito credentials) but does not give the web app an authenticated stack.
+
+If you want Langfuse tracing in local Docker, set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, and an explicit 64-character lowercase hexadecimal `LANGFUSE_RELEASE` together in `infra/docker/.env`. Leave the three connection values unset if you do not want telemetry; `LANGFUSE_RELEASE` alone does not enable it.
 
 ### Stop
 
@@ -32,7 +38,7 @@ make down
 | Command | Description |
 |---|---|
 | `make dev` | Start in foreground (logs visible) |
-| `make build` | Rebuild container images |
+| `make build` | Rebuild container images (not `auth`, which is in the `cognito` profile: use `COMPOSE_PROFILES=cognito make build`) |
 | `make lint` | Run web + worker linters |
 
 ## AWS (CDK)

@@ -14,10 +14,15 @@ COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci
 
 # --- Stage 2: Build ---
-FROM node:24.21.0-alpine AS builder
+FROM npm AS builder
 WORKDIR /workspace
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
+# Build the shared workspace package inside the image: its dist is gitignored,
+# so a fresh clone has none, and `next build` is invoked directly below without
+# the prebuild hook of apps/web/package.json. Running it after COPY also
+# overwrites any stale dist copied in from the host.
+RUN npm run build --workspace @expense-budget-tracker/agent-shared
 RUN cd apps/web && node scripts/copy-pdfjs-assets.mjs && ../../node_modules/.bin/next build
 
 # --- Stage 3: Production runner ---

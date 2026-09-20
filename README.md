@@ -24,6 +24,8 @@ make up          # start Postgres, run migrations, start web + worker
 
 Open `http://localhost:3000`.
 
+This local stack is unauthenticated and published on loopback only. To change any of it, copy `infra/docker/.env.example` to `infra/docker/.env`: the shell environment and that file both outrank the development defaults in `infra/docker/compose.yml`. `AUTH_MODE=cognito` is not a supported configuration of this stack: the `web` service wires `DATABASE_URL`, not the `DB_HOST`/`DB_PASSWORD` pair that mode requires. The authenticated deployment lives in AWS, which deploys from `infra/aws` and never reads the compose file. Details in [docs/deployment.md](docs/deployment.md).
+
 ## Usage with AI agents
 
 Connect through either the hosted MCP server or the direct Agent API. Their credentials are separate and are not interchangeable: MCP uses OAuth Bearer access, while the Agent API uses an `ApiKey`.

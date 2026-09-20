@@ -1,6 +1,15 @@
-# Local dev: `make up` starts all services (postgres + migrate + web + worker).
-# AWS (EC2): only migrate + web run via `--no-deps`; postgres is RDS,
-# and DATABASE_URL / MIGRATION_DATABASE_URL come from .env (--env-file).
+# Local development stack: `make up` starts all services
+# (postgres + migrate + web + worker). By default it serves unauthenticated
+# requests on loopback only (AUTH_MODE=none, ALLOW_INSECURE_NO_AUTH=true,
+# every published port bound to 127.0.0.1). It is not used for any hosted
+# deployment: AWS deploys from infra/aws (CDK) and never reads this file.
+#
+# The `${VAR:-default}` values below are the lowest-priority source. Compose
+# ranks the shell environment first, then infra/docker/.env, then these
+# defaults, so setting a non-empty value in either place wins. AUTH_MODE and
+# ALLOW_INSECURE_NO_AUTH use the colon-less form on purpose: an explicitly
+# empty value reaches the app and fails startup instead of silently falling
+# back to the unauthenticated defaults.
 
 services:
   postgres:
@@ -11,7 +20,7 @@ services:
       POSTGRES_PASSWORD: tracker
       POSTGRES_DB: tracker
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
@@ -42,12 +51,18 @@ services:
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://app:app@postgres:5432/tracker}
       HOST: "0.0.0.0"
       PORT: "3000"
-      AUTH_MODE: ${AUTH_MODE:?AUTH_MODE must be set explicitly}
+      # Local development defaults: an unauthenticated stack on loopback.
+      # Override any of them in the shell or in infra/docker/.env; both rank
+      # above these defaults. AUTH_MODE=cognito is not supported here: it
+      # requires DB_HOST/DB_PASSWORD, which this service does not wire.
+      AUTH_MODE: ${AUTH_MODE-none}
+      ALLOW_INSECURE_NO_AUTH: ${ALLOW_INSECURE_NO_AUTH-true}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
       COGNITO_REGION: ${COGNITO_REGION:-}
@@ -64,18 +79,25 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/live || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
 
+  # Standalone auth service. It requires real Cognito credentials, so the
+  # `cognito` profile keeps it out of the default stack; starting it does not
+  # make the web service authenticated, and the authenticated deployment lives
+  # in infra/aws. To work on this service alone, enable the profile in the
+  # shell or in infra/docker/.env:
+  #   COMPOSE_PROFILES=cognito docker compose -f infra/docker/compose.yml up -d
   auth:
+    profiles: ["cognito"]
     build:
       context: ../..
       dockerfile: apps/auth/Dockerfile
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     environment:
       PORT: "8081"
       ALLOWED_REDIRECT_URIS: ${ALLOWED_REDIRECT_URIS:-http://localhost:3000}
@@ -88,15 +110,15 @@ services:
       AUTH_DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql://auth_service:${AUTH_DB_PASSWORD:-auth_service}@postgres:5432/tracker}
       SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY:-}
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
 
   worker:
     build:
-      context: ../../apps/worker
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://worker:${WORKER_DB_PASSWORD:-worker}@postgres:5432/tracker

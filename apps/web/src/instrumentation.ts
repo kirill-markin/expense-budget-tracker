@@ -6,7 +6,8 @@
  * - COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID, COGNITO_REGION are set when AUTH_MODE=cognito
  * - CORS_ORIGIN is set when AUTH_MODE=cognito (required for CSRF protection)
  * - AUTH_DOMAIN is set when AUTH_MODE=cognito (auth service subdomain)
- * - AUTH_MODE=none is allowed only for explicit local dev/test
+ * - AUTH_MODE=none is allowed only for explicit local dev/test, or for a
+ *   deployment that opts in with ALLOW_INSECURE_NO_AUTH=true
  * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (cognito/ECS)
  * - LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL are either all set or all absent
  * - LANGFUSE_RELEASE is an explicit release fingerprint when Langfuse telemetry is enabled
@@ -14,8 +15,9 @@
  * Throws with all collected errors on misconfiguration. Skipped in dev.
  */
 import { NodeSDK } from "@opentelemetry/sdk-node";
-import { getAuthModeValidationErrors } from "@/server/authMode";
+import { getAuthModeValidationErrors, isInsecureNoAuthAllowed } from "@/server/authMode";
 import { createLangfuseSpanProcessor } from "@/server/chat/openai/langfuse";
+import { log } from "@/server/logger";
 
 let telemetrySdk: NodeSDK | null = null;
 let telemetryStarted = false;
@@ -117,6 +119,15 @@ export const register = (): void => {
     throw new Error(
       `Startup validation failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
     );
+  }
+
+  if (authMode === "none" && isInsecureNoAuthAllowed(process.env)) {
+    log({
+      domain: "auth",
+      action: "insecure_no_auth",
+      message:
+        "ALLOW_INSECURE_NO_AUTH=true with AUTH_MODE=none: this instance serves every request unauthenticated. Expose it on loopback only.",
+    });
   }
 
   startTelemetryIfConfigured();

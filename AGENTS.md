@@ -108,7 +108,7 @@ AUTH_MODE=none CORS_ORIGIN=http://127.0.0.1:3001 npm run dev -- -H 127.0.0.1 -p 
 
 Toggle Demo mode with the All/Demo button in the header. It sets a `demo=true` browser cookie and serves data from `apps/web/src/server/demo/data.ts` in memory, so no Postgres is required and code changes hot-reload immediately.
 
-Use `make dev` (Docker Compose) only when you need a real database, such as for migrations, SQL queries, or the worker. Docker runs a production Next.js build, so each code change requires `docker compose -f infra/docker/compose.yml build web`.
+Use `make dev` (Docker Compose) only when you need a real database, such as for migrations, SQL queries, or the worker. Docker runs a production Next.js build, so each code change requires `make build`.
 
 ## Logging
 
