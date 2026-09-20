@@ -9,11 +9,17 @@ import { type PoolClient } from "pg";
 
 import { type SupportedLocale } from "@/lib/locale";
 
+/**
+ * The mirrored account-state vocabulary is shared with the SQL API and the
+ * auth service, so one source decides which statuses mean an active account.
+ */
+export {
+  COGNITO_AUTHENTICATED_STATUS,
+  PROXY_AUTHENTICATED_STATUS,
+} from "@expense-budget-tracker/agent-shared/account-status";
+
 export const LOCAL_USER_EMAIL = "local@example.invalid";
 export const LOCAL_USER_STATUS = "LOCAL";
-export const COGNITO_AUTHENTICATED_STATUS = "CONFIRMED";
-/** Identity asserted by the upstream proxy when AUTH_MODE=proxy_jwt. */
-export const PROXY_AUTHENTICATED_STATUS = "PROXY";
 
 const UNIQUE_VIOLATION_CODE = "23505";
 const EMAIL_UNIQUE_INDEX = "idx_users_email";

@@ -6,7 +6,10 @@ export const validateAuthEnvironment = (): void => {
   const authMode = getAuthServiceMode(process.env);
   const errors: Array<string> = [];
   // Cognito and the OTP session it backs are unused in proxy_jwt mode: the
-  // login routes are not registered and identity comes from the edge token.
+  // login routes are not registered, identity comes from the edge token, and
+  // the OAuth owner check reads the local identity mirror instead of the user
+  // pool. Nothing in that mode reaches COGNITO_USER_POOL_ID or COGNITO_REGION
+  // at runtime, so demanding them here would fail a valid deployment.
   if (authMode === "cognito") {
     if (!process.env.COGNITO_CLIENT_ID) errors.push("COGNITO_CLIENT_ID");
     if (!process.env.COGNITO_USER_POOL_ID) errors.push("COGNITO_USER_POOL_ID");

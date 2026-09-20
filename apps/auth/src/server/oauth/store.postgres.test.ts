@@ -188,8 +188,13 @@ test(
         createOpaqueToken: (prefix) => {
           throw new Error(`OAuth Postgres replay test unexpectedly created a ${prefix} token`);
         },
-        getCognitoOAuthOwnerStatus: async (userId) => {
-          throw new Error(`OAuth Postgres replay test unexpectedly checked Cognito owner ${userId}`);
+        ownerPolicy: {
+          readOwnerStatus: async (userId: string) => {
+            throw new Error(`OAuth Postgres replay test unexpectedly checked owner ${userId}`);
+          },
+          syncAuthenticatedUser: async (_queryFn, userId: string) => {
+            throw new Error(`OAuth Postgres replay test unexpectedly mirrored owner ${userId}`);
+          },
         },
       };
 

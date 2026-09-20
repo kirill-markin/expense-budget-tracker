@@ -187,11 +187,9 @@ export type ProxyJwtSessionDependencies = Readonly<{
  * otherwise rejected token resolves to null, exactly like an absent session, so
  * the caller decides how an unauthenticated browser is answered.
  *
- * This resolver completes identity resolution only. Code and token issuance
- * is still Cognito-bound: every issuance and exchange path in ./store.ts
- * gates on getCognitoOAuthOwnerStatus, which throws without Cognito
- * configuration and surfaces as a generic server_error. Making that check
- * provider-neutral is the remaining work, and ./store.ts is where it lands.
+ * This resolver completes identity resolution only. Whether the resolved owner
+ * may then receive OAuth credentials is decided by the mode-selected policy in
+ * ./owner.ts, which reads the local identity mirror in this mode.
  */
 export const resolveProxyJwtSessionWithDependencies = async (
   c: Context,
