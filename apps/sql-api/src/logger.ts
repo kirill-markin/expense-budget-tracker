@@ -64,6 +64,23 @@ export type SqlApiLogEvent =
     action: "sql_policy_rejected";
     code: SqlPolicyError["code"];
     message: string;
+  }>
+  // An ApiKey request refused because the stored users row is disabled or gone.
+  // Disabling that row is the one per-request revocation lever, so the refusal
+  // is logged to make it visible to an operator. It is an ordinary refusal
+  // rather than an incident, so it carries its own action and no error field.
+  | Readonly<{
+    domain: "sql_api";
+    action: "agent_account_disabled";
+    userId: string;
+  }>
+  // The account-state read itself failed, so the request was answered as
+  // retryable rather than refused. It is kept apart from the refusal above so
+  // an auth-path database outage is never read as a wave of revocations.
+  | Readonly<{
+    domain: "sql_api";
+    action: "agent_auth_unavailable";
+    errorType: SafeErrorType;
   }>;
 
 export const log = (event: SqlApiLogEvent): void => {

@@ -281,6 +281,14 @@ type SqlApiEvent =
 
 type AuthEvent =
   | Readonly<{ domain: "auth"; action: "refresh" }>
+  /**
+   * An ApiKey request was refused because the stored `users` row is disabled or
+   * gone. Disabling that row is the one per-request revocation lever, so the
+   * refusal is logged to make it visible to an operator. It is an ordinary
+   * refusal rather than a server failure, so the action is deliberately kept
+   * out of the `error` family that the CloudWatch web error alarm pages on.
+   */
+  | Readonly<{ domain: "auth"; action: "agent_account_disabled"; userId: string }>
   | Readonly<{ domain: "auth"; action: "insecure_no_auth"; message: string }>
   | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "error"; error: string }>;

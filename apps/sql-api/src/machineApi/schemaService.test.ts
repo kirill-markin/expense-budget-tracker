@@ -25,6 +25,9 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
 
   const dependencies: MachineApiDependencies = {
     ensureTrustedIdentityProvisioned: async () => undefined,
+    loadTrustedUserIdentityBeforeDeadline: async () => {
+      throw new Error("loadTrustedUserIdentityBeforeDeadline should not be called");
+    },
     log: () => {
       throw new Error("log should not be called");
     },

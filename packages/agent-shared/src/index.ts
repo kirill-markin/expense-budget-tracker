@@ -5,6 +5,18 @@ import type { AllowedRelationName } from "./sql-policy.js";
  */
 export const AGENT_API_KEY_ENV_VAR_NAME = "EXPENSE_BUDGET_TRACKER_API_KEY";
 export const API_KEY_AUTHORIZATION_SCHEME = "Authorization: ApiKey <key>";
+/**
+ * Remediation every API-key surface returns when the stored account is
+ * disabled or no longer provisioned. Creating another key cannot lift this
+ * refusal, so the instruction must never point an agent back at key setup.
+ */
+export const ACCOUNT_DISABLED_INSTRUCTIONS = "Ask the operator of this deployment to re-enable the account. A valid API key cannot restore access on its own.";
+/**
+ * Refusal message paired with ACCOUNT_DISABLED_INSTRUCTIONS. Both API-key
+ * surfaces are contractually required to answer the same way, so the message
+ * lives here instead of being duplicated in each of them.
+ */
+export const ACCOUNT_DISABLED_MESSAGE = "This account is disabled or no longer provisioned";
 export const AGENT_OAUTH_SCOPES = ["expenses:read", "expenses:write"] as const;
 export const SQL_API_DB_POOL_MAX_CONNECTIONS = 1;
 // Keep raw OAuth query strings below the ALB 16 KiB request-line ceiling,
