@@ -4,6 +4,7 @@ import type { AllowedRelationName } from "@expense-budget-tracker/agent-shared/s
 import type { log } from "../logger.js";
 import {
   ensureTrustedIdentityProvisioned,
+  loadTrustedUserIdentityBeforeDeadline,
   queryAsTrustedIdentity,
   queryAsTrustedIdentityBeforeDeadline,
   resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline,
@@ -25,6 +26,7 @@ export type AuthenticatedContext = TrustedIdentityContext & Readonly<{
 
 export type MachineApiDependencies = Readonly<{
   ensureTrustedIdentityProvisioned: typeof ensureTrustedIdentityProvisioned;
+  loadTrustedUserIdentityBeforeDeadline: typeof loadTrustedUserIdentityBeforeDeadline;
   log: typeof log;
   queryAsTrustedIdentity: typeof queryAsTrustedIdentity;
   queryAsTrustedIdentityBeforeDeadline: typeof queryAsTrustedIdentityBeforeDeadline;

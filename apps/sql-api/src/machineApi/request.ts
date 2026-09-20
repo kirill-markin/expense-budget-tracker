@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import { buildAgentDiscoveryEnvelope } from "@expense-budget-tracker/agent-shared/discovery";
+import type { UserIdentity } from "../db.js";
 import type { AuthenticatedContext, JsonBody, MachineApiDependencies, MachineRouteContext } from "./types.js";
 
 const trimTrailingSlash = (value: string): string =>
@@ -92,26 +93,60 @@ const getAuthorizerString = (
   return typeof value === "string" ? value : "";
 };
 
-export const getAuthenticatedContext = (event: APIGatewayProxyEvent): AuthenticatedContext | null => {
+/**
+ * Outcome of resolving the caller behind an ApiKey request.
+ *
+ * `account_disabled` covers both a user whose stored `cognito_enabled` is
+ * false and a user whose `users` row no longer exists: the authorizer result
+ * is cached for minutes, so a key accepted there can outlive the account. It
+ * carries the refused `userId` so the caller can log which account was cut off.
+ */
+export type AuthenticationOutcome =
+  | Readonly<{ outcome: "missing_api_key" }>
+  | Readonly<{ outcome: "account_disabled"; userId: string }>
+  | Readonly<{ outcome: "authenticated"; authenticated: AuthenticatedContext }>;
+
+/**
+ * Resolve the authenticated context for an ApiKey request.
+ *
+ * The authorizer proves only that an unrevoked key exists for this user; it
+ * proves nothing about the account still being active. So `cognito_status` and
+ * `cognito_enabled` are read from the stored `users` row rather than asserted
+ * here, a disabled account is refused, and the values the provisioning upsert
+ * later writes back are the stored ones. A key holder therefore cannot
+ * re-enable an account an operator disabled in the database.
+ */
+export const resolveAuthenticatedContext = async (
+  event: APIGatewayProxyEvent,
+  loadStoredIdentity: (userId: string) => Promise<UserIdentity | null>,
+): Promise<AuthenticationOutcome> => {
   const userId = getAuthorizerString(event, "userId");
   const email = getAuthorizerString(event, "email");
 
   if (userId === "" || email === "") {
-    return null;
+    return { outcome: "missing_api_key" };
+  }
+
+  const storedIdentity = await loadStoredIdentity(userId);
+  if (storedIdentity === null || !storedIdentity.cognitoEnabled) {
+    return { outcome: "account_disabled", userId };
   }
 
   return {
-    identity: {
-      userId,
-      email,
-      emailVerified: true,
-      cognitoStatus: "CONFIRMED",
-      cognitoEnabled: true,
+    outcome: "authenticated",
+    authenticated: {
+      identity: {
+        userId,
+        email,
+        emailVerified: true,
+        cognitoStatus: storedIdentity.cognitoStatus,
+        cognitoEnabled: storedIdentity.cognitoEnabled,
+      },
+      connectionId: getAuthorizerString(event, "connectionId"),
+      label: getAuthorizerString(event, "label"),
+      createdAt: getAuthorizerString(event, "createdAt"),
+      lastUsedAt: getAuthorizerString(event, "lastUsedAt") || null,
     },
-    connectionId: getAuthorizerString(event, "connectionId"),
-    label: getAuthorizerString(event, "label"),
-    createdAt: getAuthorizerString(event, "createdAt"),
-    lastUsedAt: getAuthorizerString(event, "lastUsedAt") || null,
   };
 };
 

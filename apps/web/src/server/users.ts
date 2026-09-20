@@ -51,6 +51,11 @@ export type UserIdentity = Readonly<{
  *
  * Emails are unique per user: two subjects claiming the same address is a
  * conflict the app refuses rather than silently linking the accounts.
+ *
+ * `cognito_status` and `cognito_enabled` are written from the identity as
+ * given, so every caller must pass account state it actually knows. The ApiKey
+ * path reads both from the stored row instead of asserting them, which is what
+ * keeps a disabled account disabled.
  */
 export const upsertUserIdentity = async (
   client: PoolClient,

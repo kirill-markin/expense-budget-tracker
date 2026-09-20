@@ -177,8 +177,13 @@ export const withTransaction = async <T>(
  *
  * Callers must already be in a transaction. The transaction-scoped advisory
  * lock serializes identity writes for this user across runtime instances.
+ *
+ * `cognito_status` and `cognito_enabled` are written from the identity as
+ * given, so every caller must pass account state it actually knows. The
+ * ApiKey path reads both from the stored row instead of asserting them, which
+ * is what keeps a disabled account disabled.
  */
-const upsertUserIdentity = async (
+export const upsertUserIdentity = async (
   queryFn: QueryFn,
   identity: UserIdentity,
 ): Promise<void> => {

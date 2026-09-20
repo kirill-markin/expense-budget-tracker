@@ -28,6 +28,9 @@ const createDependencies = (
   log: MachineApiDependencies["log"] = ignoreLog,
 ): MachineApiDependencies => ({
   ensureTrustedIdentityProvisioned: async () => undefined,
+  loadTrustedUserIdentityBeforeDeadline: async () => {
+    throw new Error("loadTrustedUserIdentityBeforeDeadline should not be called");
+  },
   log,
   queryAsTrustedIdentity: async () => {
     throw new Error("queryAsTrustedIdentity should not be called");

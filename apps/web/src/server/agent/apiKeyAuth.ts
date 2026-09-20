@@ -5,9 +5,11 @@
  * direct unrestricted access to key rows.
  */
 import crypto from "node:crypto";
+import { ACCOUNT_DISABLED_MESSAGE } from "@expense-budget-tracker/agent-shared";
 import { normalizeCrockfordToken } from "@expense-budget-tracker/agent-shared/crockford";
-import { COGNITO_AUTHENTICATED_STATUS, type UserIdentity } from "@/server/users";
-import { query } from "@/server/db";
+import { type UserIdentity } from "@/server/users";
+import { query, withUserOnlyContext } from "@/server/db";
+import { log } from "@/server/logger";
 import { parseAuthorizationHeader, type ParsedAuthorization } from "@/server/authHeader";
 
 const KEY_PREFIX = "ebta";
@@ -39,6 +41,18 @@ export type AgentAuthenticatedRequest = Readonly<{
   lastUsedAt: string | null;
 }>;
 
+/** Account state an ApiKey caller never proves and must not be allowed to assert. */
+export type StoredAccountState = Readonly<{
+  cognitoStatus: string;
+  cognitoEnabled: boolean;
+}>;
+
+export type AgentApiKeyAuthDependencies = Readonly<{
+  query: typeof query;
+  loadStoredAccountState: (userId: string) => Promise<StoredAccountState | null>;
+  log: typeof log;
+}>;
+
 const fail = (code: string, status: number, message: string): never => {
   const error = new Error(message) as AgentAuthError;
   error.code = code;
@@ -64,7 +78,53 @@ export const getAgentAuthError = (error: unknown): AgentAuthError | null => {
   return null;
 };
 
-export const authenticateAgentRequest = async (request: Request): Promise<AgentAuthenticatedRequest> => {
+/**
+ * Read the stored account state for a user under that user's RLS context.
+ *
+ * `users` is strictly user-scoped, so app.user_id alone selects the row.
+ */
+export const loadStoredAccountState = async (userId: string): Promise<StoredAccountState | null> =>
+  withUserOnlyContext(userId, async (queryFn) => {
+    const result = await queryFn(
+      "SELECT cognito_status, cognito_enabled FROM users WHERE user_id = $1",
+      [userId],
+    );
+    if (result.rows.length > 1) {
+      throw new Error(
+        `loadStoredAccountState: expected at most 1 users row for ${userId}, got ${String(result.rows.length)}`,
+      );
+    }
+    const row = result.rows[0] as Readonly<Record<string, unknown>> | undefined;
+    if (row === undefined) {
+      return null;
+    }
+    const cognitoStatus = row["cognito_status"];
+    const cognitoEnabled = row["cognito_enabled"];
+    if (typeof cognitoStatus !== "string" || typeof cognitoEnabled !== "boolean") {
+      throw new Error(`loadStoredAccountState: user ${userId} has invalid stored account state`);
+    }
+    return { cognitoStatus, cognitoEnabled };
+  });
+
+const DEFAULT_AGENT_API_KEY_AUTH_DEPENDENCIES: AgentApiKeyAuthDependencies = {
+  query,
+  loadStoredAccountState,
+  log,
+};
+
+/**
+ * Authenticate an ApiKey request.
+ *
+ * A valid key proves only that the key exists and is unrevoked. Account state
+ * comes from the stored `users` row: a disabled account is refused, and the
+ * identity carries the stored `cognito_status`/`cognito_enabled` so the
+ * provisioning upsert downstream writes them back unchanged instead of
+ * silently re-enabling the account.
+ */
+export const authenticateAgentRequestWithDependencies = async (
+  request: Request,
+  dependencies: AgentApiKeyAuthDependencies,
+): Promise<AgentAuthenticatedRequest> => {
   const parsedAuthorization = parseAuthorizationHeader(request.headers.get("authorization"));
   if (parsedAuthorization === null) {
     fail("missing_api_key", 401, "Missing ApiKey authorization");
@@ -94,7 +154,7 @@ export const authenticateAgentRequest = async (request: Request): Promise<AgentA
     fail("invalid_api_key", 401, "Invalid ApiKey format");
   }
 
-  const result = await query("SELECT * FROM auth.validate_agent_api_key($1)", [keyId]);
+  const result = await dependencies.query("SELECT * FROM auth.validate_agent_api_key($1)", [keyId]);
   if (result.rows.length !== 1) {
     fail("invalid_api_key", 401, "Invalid ApiKey");
   }
@@ -114,7 +174,18 @@ export const authenticateAgentRequest = async (request: Request): Promise<AgentA
   }
   const trustedEmail = email as string;
 
-  query("SELECT auth.touch_agent_api_key_usage($1)", [row.connection_id]).catch(() => {});
+  const storedAccount = await dependencies.loadStoredAccountState(row.user_id);
+  // An empty stored status is not an active account: `users.cognito_status` is
+  // NOT NULL but not non-empty, so refuse rather than treat it as usable state.
+  if (storedAccount === null || !storedAccount.cognitoEnabled || storedAccount.cognitoStatus === "") {
+    // Disabling the stored row is the one per-request revocation lever, so the
+    // refusal is logged for the operator who pulled it.
+    dependencies.log({ domain: "auth", action: "agent_account_disabled", userId: row.user_id });
+    fail("account_disabled", 403, ACCOUNT_DISABLED_MESSAGE);
+  }
+  const trustedAccount = storedAccount as StoredAccountState;
+
+  dependencies.query("SELECT auth.touch_agent_api_key_usage($1)", [row.connection_id]).catch(() => {});
 
   return {
     transport: "api_key",
@@ -122,8 +193,8 @@ export const authenticateAgentRequest = async (request: Request): Promise<AgentA
       userId: row.user_id,
       email: trustedEmail,
       emailVerified: true,
-      cognitoStatus: COGNITO_AUTHENTICATED_STATUS,
-      cognitoEnabled: true,
+      cognitoStatus: trustedAccount.cognitoStatus,
+      cognitoEnabled: trustedAccount.cognitoEnabled,
     },
     connectionId: row.connection_id,
     label: row.label,
@@ -131,3 +202,6 @@ export const authenticateAgentRequest = async (request: Request): Promise<AgentA
     lastUsedAt: row.last_used_at,
   };
 };
+
+export const authenticateAgentRequest = async (request: Request): Promise<AgentAuthenticatedRequest> =>
+  authenticateAgentRequestWithDependencies(request, DEFAULT_AGENT_API_KEY_AUTH_DEPENDENCIES);
