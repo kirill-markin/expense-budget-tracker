@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { SqlExecutionDeadline } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { z } from "zod";
 import {
+  isActiveUserStatus,
   loadTrustedUserIdentityBeforeDeadline,
   queryBeforeDeadline,
   type UserIdentity,
@@ -114,7 +115,7 @@ export const authenticateMcpAccessTokenWithDependencies = async (
     || identity.userId !== row.user_id
     || !identity.emailVerified
     || !identity.cognitoEnabled
-    || identity.cognitoStatus !== "CONFIRMED"
+    || !isActiveUserStatus(identity.cognitoStatus)
   ) {
     throw new McpAuthenticationError();
   }
