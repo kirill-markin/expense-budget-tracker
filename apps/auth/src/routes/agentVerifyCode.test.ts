@@ -45,8 +45,8 @@ const createApp = (createAgentConnection: () => Promise<AgentConnectionResult>):
     now: (): number => 1_700_000_000_000,
   });
 
-const postVerifyCode = (app: Hono): Promise<Response> =>
-  app.request("/api/agent/verify-code", {
+const postVerifyCode = async (app: Hono): Promise<Response> =>
+  await app.request("/api/agent/verify-code", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code: "12345678", otpSessionToken: "otp-session", label: "laptop" }),
