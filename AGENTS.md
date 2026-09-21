@@ -56,8 +56,9 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `db/migrations/` | Postgres migrations applied in order by `scripts/migrate.sh` |
 | `db/views/` | Postgres views such as `accounts` |
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |
-| `apps/web/src/server/apiKeys.ts` | API key generation, hashing, CRUD |
-| `apps/web/src/app/api/api-keys/route.ts` | API key management endpoints (`GET`/`POST`/`DELETE`) |
+| `apps/web/src/server/agent/connections.ts` | Agent connections: API key minting and hashing, listing, active-key cap, revocation |
+| `apps/web/src/server/agent/apiKeyAuth.ts` | Verifies `Authorization: ApiKey <key>` requests against the stored key hashes |
+| `apps/web/src/app/api/agent-connections/` | Agent connection endpoints: `GET`/`POST` on the collection, `POST` on the `revoke` routes |
 | `apps/sql-api/` | SQL API Lambda handlers for API Gateway: `ApiKey` authorizer, v1 machine API, and the OAuth MCP server in `src/mcp/server.ts` |
 | `apps/sql-api/Dockerfile` | Container image for the same code: the default command serves `/v1`, `node dist/serve-mcp.js` serves `/mcp` |
 | `packages/agent-shared/src/agentTools.ts` | Shared catalog of the five agent tools (`list_workspaces`, `get_schema`, `get_guide`, `sql_query`, `sql_execute`) that both the MCP server and the web chat render |
