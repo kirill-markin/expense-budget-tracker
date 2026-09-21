@@ -11,12 +11,16 @@
  * its own Compose project and writes its env file under tmp/, never over
  * infra/docker/.env.selfhost.
  *
- * Read scripts/selfhost-verify/README.md for what each check proves and for
- * the one documented deviation, --trust-edge-ca.
+ * The fake edge's JWKS certificate is issued by a CA of its own, so the run
+ * also exercises the trust extension docs/self-hosting.md gives a gateway
+ * behind internal PKI: SELFHOST_EDGE_CA_DIR and NODE_EXTRA_CA_CERTS in the env
+ * file below, both documented variables of the shipped stack.
+ *
+ * Read scripts/selfhost-verify/README.md for what each check proves.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer, request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { dirname, resolve } from "node:path";
@@ -29,7 +33,12 @@ const STATE_DIR = resolve(REPO_ROOT, "tmp", "selfhost-verify");
 // overwrite it.
 const ENV_FILE = resolve(STATE_DIR, ".env.selfhost");
 const COMPOSE_FILE = resolve(REPO_ROOT, "infra", "docker", "compose.selfhost.yml");
-const TRUST_OVERRIDE_FILE = resolve(STATE_DIR, "compose.trust-edge-ca.yml");
+// The directory SELFHOST_EDGE_CA_DIR points the stack at. It holds the edge
+// CA certificate and nothing else: the CA private key stays in STATE_DIR and
+// is never mounted into a container.
+const CA_DIR = resolve(STATE_DIR, "ca");
+const CA_FILE_NAME = "edge-ca.pem";
+const CA_MOUNT_PATH = `/etc/ssl/selfhost-ca/${CA_FILE_NAME}`;
 // compose.selfhost.yml pins `name: expense-budget-tracker-selfhost`, which is
 // the project a real self-hoster on this machine is running. This run must
 // never adopt it: it rebuilds services and tears the project down with its
@@ -61,22 +70,10 @@ const LOCAL_ROW_MARKER = "selfhost-verify-local-row";
 const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 const options = {
-  trustEdgeCa: process.argv.includes("--trust-edge-ca"),
   keepUp: process.argv.includes("--keep-up"),
 };
 
-// Every result line carries the marker when the deviation is in force, so a
-// pasted tail of a green run can never be mistaken for the shipped stack.
-const RESULT_PREFIX = options.trustEdgeCa ? "[--trust-edge-ca] " : "";
-
 const log = (line) => process.stdout.write(`${line}\n`);
-
-const logDeviationBanner = () => {
-  log("!! --trust-edge-ca: running with a compose override that is NOT part of the");
-  log("!! shipped stack. It mounts the fake edge's CA into web and auth and sets");
-  log("!! NODE_EXTRA_CA_CERTS. A green run under this flag does not mean the stack");
-  log("!! as documented works; see scripts/selfhost-verify/README.md.");
-};
 
 class CheckFailure extends Error {}
 
@@ -91,7 +88,6 @@ const expect = (condition, message) => {
 const composeArgs = () => [
   "compose",
   "-f", COMPOSE_FILE,
-  ...(options.trustEdgeCa ? ["-f", TRUST_OVERRIDE_FILE] : []),
   "--env-file", ENV_FILE,
   "-p", COMPOSE_PROJECT,
 ];
@@ -127,6 +123,12 @@ const writeEnvFile = () => {
     "AUTH_PROXY_JWT_AUDIENCE_APP=selfhost-verify-audience",
     "AUTH_PROXY_JWT_AUDIENCE_AUTH=selfhost-verify-audience",
     "",
+    "# No public CA signed the fake edge's JWKS certificate, so the stack is",
+    "# given its CA the way docs/self-hosting.md gives one to a gateway behind",
+    "# internal PKI. Both variables are part of compose.selfhost.yml.",
+    `SELFHOST_EDGE_CA_DIR=${CA_DIR}`,
+    `NODE_EXTRA_CA_CERTS=${CA_MOUNT_PATH}`,
+    "",
     "POSTGRES_PASSWORD=selfhost-verify-postgres",
     "APP_DB_PASSWORD=selfhost-verify-app",
     "AUTH_DB_PASSWORD=selfhost-verify-auth",
@@ -136,25 +138,18 @@ const writeEnvFile = () => {
 };
 
 /**
- * The one deviation from the shipped stack, and only with --trust-edge-ca.
- * See the README: nothing in compose.selfhost.yml or .env.selfhost.example can
- * make a container trust a JWKS certificate that no public CA signed.
+ * Publishes the edge CA certificate, and only that certificate, into the
+ * directory the env file points SELFHOST_EDGE_CA_DIR at. Copied rather than
+ * mounted from STATE_DIR because that directory also holds the CA private key.
+ * The containers run as a non-root user, so the directory has to be traversable
+ * and the file readable by one — mkdirSync takes the process umask, which under
+ * a restrictive one would leave the mount unreadable and fail check 1.
  */
-const writeTrustOverride = () => {
-  writeFileSync(TRUST_OVERRIDE_FILE, [
-    "# DEVIATION, written by scripts/selfhost-verify/verify.mjs --trust-edge-ca.",
-    "# Not part of the shipped stack. It exists only so the checks after the",
-    "# JWKS fetch can be run at all; see scripts/selfhost-verify/README.md.",
-    "services:",
-    ...["web", "auth"].flatMap((service) => [
-      `  ${service}:`,
-      "    environment:",
-      "      NODE_EXTRA_CA_CERTS: /run/selfhost-verify/edge-ca.pem",
-      "    volumes:",
-      `      - ${resolve(STATE_DIR, "edge-ca.pem")}:/run/selfhost-verify/edge-ca.pem:ro`,
-    ]),
-    "",
-  ].join("\n"));
+const publishEdgeCa = () => {
+  mkdirSync(CA_DIR, { recursive: true });
+  chmodSync(CA_DIR, 0o755);
+  copyFileSync(resolve(STATE_DIR, CA_FILE_NAME), resolve(CA_DIR, CA_FILE_NAME));
+  chmodSync(resolve(CA_DIR, CA_FILE_NAME), 0o644);
 };
 
 const startFakeEdge = (echoPort) => new Promise((resolvePromise, rejectPromise) => {
@@ -475,7 +470,7 @@ const ensureAgentApiKey = () => {
 };
 
 const checks = [
-  ["web request through the edge resolves the test identity", async () => {
+  ["a web request through the edge verifies the privately issued JWKS and resolves the test identity", async () => {
     const response = await browserGet(`https://${APP_HOST}/`);
     expect(response.status === 200, `The app answered ${String(response.status)} instead of 200`);
     expect(readUserColumn("email") === EMAIL, `users.email is "${readUserColumn("email")}", expected "${EMAIL}"`);
@@ -747,9 +742,10 @@ const checks = [
 // --------------------------------------------------------------------------
 
 /**
- * Two different failures land here with the same log action, and only one of
- * them is the documented certificate gap: on a Docker without
- * host.docker.internal the JWKS URL does not resolve at all.
+ * Two different failures land here with the same log action, and they have
+ * nothing to do with each other: the CA the stack was given does not cover the
+ * edge's JWKS certificate, or, on a Docker without host.docker.internal, the
+ * JWKS URL does not resolve at all.
  */
 const describeJwksFailure = () => {
   let line;
@@ -761,8 +757,10 @@ const describeJwksFailure = () => {
   log(`      web container said: ${line.trim()}`);
   // The certificate error names host.docker.internal too, so it is tested first.
   if (/certificate|self-signed/i.test(line)) {
-    log("      That is the documented certificate gap, not a broken harness:");
-    log("      see \"Why --trust-edge-ca exists\" in scripts/selfhost-verify/README.md.");
+    log("      The containers did not trust the edge CA. SELFHOST_EDGE_CA_DIR and");
+    log("      NODE_EXTRA_CA_CERTS in the env file this run wrote should have");
+    log(`      mounted ${CA_FILE_NAME} at ${CA_MOUNT_PATH}; see`);
+    log("      scripts/selfhost-verify/README.md.");
     return;
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(line)) {
@@ -840,21 +838,19 @@ const main = async () => {
   for (const stale of ["edge-ca.pem", "edge-ca-key.pem", "edge-cert.pem", "edge-key.pem", "edge.csr", "edge-cert.ext"]) {
     rmSync(resolve(STATE_DIR, stale), { force: true });
   }
+  rmSync(CA_DIR, { recursive: true, force: true });
   writeEnvFile();
-  // Before the edge starts: composeArgs() passes this file to every compose
-  // invocation as soon as the flag is set, so an early exit would otherwise
-  // make the teardown `down -v` fail with "no such file".
-  if (options.trustEdgeCa) writeTrustOverride();
   installSignalHandlers();
-
-  if (options.trustEdgeCa) logDeviationBanner();
 
   let failed = false;
   try {
     log("→ starting the fake edge");
     echoServer = await startEchoServer();
     edge = await startFakeEdge(echoServer.address().port);
-    caCertificate = readFileSync(resolve(STATE_DIR, "edge-ca.pem"));
+    caCertificate = readFileSync(resolve(STATE_DIR, CA_FILE_NAME));
+    // After the edge, which issues the CA, and before the containers, which
+    // mount the directory it is published into.
+    publishEdgeCa();
 
     log("→ docker compose up -d --build");
     compose(["up", "-d", "--build"]);
@@ -865,10 +861,10 @@ const main = async () => {
       const number = index + 1;
       try {
         await run();
-        log(`${RESULT_PREFIX}PASS ${String(number)}. ${title}`);
+        log(`PASS ${String(number)}. ${title}`);
       } catch (error) {
         failed = true;
-        log(`${RESULT_PREFIX}FAIL ${String(number)}. ${title}`);
+        log(`FAIL ${String(number)}. ${title}`);
         log(`      ${error instanceof Error ? error.message : String(error)}`);
         if (number === 1) describeJwksFailure();
         break;
@@ -878,8 +874,6 @@ const main = async () => {
     cleanup();
   }
 
-  // Repeated at the end so the disclosure survives a pasted tail of the run.
-  if (options.trustEdgeCa) logDeviationBanner();
   process.exitCode = failed || teardownFailed ? 1 : 0;
 };
 

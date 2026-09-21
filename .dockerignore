@@ -12,3 +12,11 @@ infra/aws/cdk.context.local.json
 **/.env
 **/.env.*
 !**/.env*.example
+# CA material, kept out of the build context so it never reaches a build stage
+# or an image layer. No build step reads either path: every Dockerfile copies
+# the repository root and then builds from apps/ and packages/ only.
+# tmp/ holds scripts/selfhost-verify state, including the harness CA's private
+# key; infra/docker/selfhost-ca/ is the default SELFHOST_EDGE_CA_DIR, mounted
+# from the host at run time and never built from.
+tmp/
+infra/docker/selfhost-ca/

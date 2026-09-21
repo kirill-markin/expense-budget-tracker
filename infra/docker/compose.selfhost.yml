@@ -16,9 +16,11 @@
 #     --env-file infra/docker/.env.selfhost up -d --build
 #
 # Every variable below is required and has no default: the `${VAR:?...}` form
-# stops Compose before a service starts with a silently empty value. The two
-# exceptions are SELFHOST_BIND_ADDRESS and the optional integrations at the
-# bottom of each service.
+# stops Compose before a service starts with a silently empty value. The
+# exceptions are SELFHOST_BIND_ADDRESS, the NODE_EXTRA_CA_CERTS and
+# SELFHOST_EDGE_CA_DIR pair that lets web and auth verify a privately issued
+# JWKS certificate, and the optional integrations at the bottom of each
+# service.
 #
 # Published ports are for the edge proxy only. They bind to
 # SELFHOST_BIND_ADDRESS, which defaults to loopback: the proxy terminates TLS
@@ -91,6 +93,12 @@ services:
       AUTH_PROXY_JWKS_URL: ${AUTH_PROXY_JWKS_URL:?set AUTH_PROXY_JWKS_URL in the env file}
       AUTH_PROXY_JWT_ISSUER: ${AUTH_PROXY_JWT_ISSUER:?set AUTH_PROXY_JWT_ISSUER in the env file}
       AUTH_PROXY_JWT_AUDIENCE: ${AUTH_PROXY_JWT_AUDIENCE_APP:?set AUTH_PROXY_JWT_AUDIENCE_APP in the env file}
+      # Extends the trust store Node verifies the JWKS certificate with, for a
+      # gateway whose certificate a public CA did not sign. Empty by default,
+      # which Node ignores; the path must be inside the read-only mount below.
+      # Certificate verification itself is never relaxed. See the same block in
+      # .env.selfhost.example and docs/self-hosting.md.
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-}
       # Optional integrations. The chat at /chat needs the OpenAI key; the
       # Langfuse group is all-or-nothing and LANGFUSE_RELEASE must then be a
       # 64-character lowercase hex fingerprint.
@@ -99,6 +107,10 @@ services:
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
       LANGFUSE_RELEASE: ${LANGFUSE_RELEASE:-}
+    volumes:
+      # The operator's CA bundle directory. Defaults to infra/docker/selfhost-ca,
+      # which ships empty, so an unconfigured stack mounts nothing of substance.
+      - ${SELFHOST_EDGE_CA_DIR:-./selfhost-ca}:/etc/ssl/selfhost-ca:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,6 +150,11 @@ services:
       AUTH_PROXY_JWKS_URL: ${AUTH_PROXY_JWKS_URL:?set AUTH_PROXY_JWKS_URL in the env file}
       AUTH_PROXY_JWT_ISSUER: ${AUTH_PROXY_JWT_ISSUER:?set AUTH_PROXY_JWT_ISSUER in the env file}
       AUTH_PROXY_JWT_AUDIENCE: ${AUTH_PROXY_JWT_AUDIENCE_AUTH:?set AUTH_PROXY_JWT_AUDIENCE_AUTH in the env file}
+      # The same JWKS certificate this service fetches, so the same trust
+      # extension as on web; see the comment there.
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-}
+    volumes:
+      - ${SELFHOST_EDGE_CA_DIR:-./selfhost-ca}:/etc/ssl/selfhost-ca:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -34,8 +34,9 @@ lint:
 # fake edge in its own Compose project, runs the checks, and tears it down with
 # its volume. It shares nothing with the development stack above, nothing with
 # a real self-host deployment on this machine, and touches no application code.
-# This default run stops at check 1 by design: no container can trust the fake
-# edge's private CA. See "Why --trust-edge-ca exists" in
-# scripts/selfhost-verify/README.md, and read that README first.
+# The fake edge's JWKS certificate is privately issued, and the stack is given
+# its CA through the documented SELFHOST_EDGE_CA_DIR and NODE_EXTRA_CA_CERTS
+# variables, so this default run needs no flag. Read
+# scripts/selfhost-verify/README.md first.
 selfhost-verify:
 	node scripts/selfhost-verify/verify.mjs

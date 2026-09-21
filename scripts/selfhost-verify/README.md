@@ -6,16 +6,15 @@ Runs the whole `AUTH_MODE=proxy_jwt` path from [`docs/self-hosting.md`](../../do
 make selfhost-verify
 ```
 
-That brings up `infra/docker/compose.selfhost.yml`, starts the fake edge, runs the checks, and tears the stack down with its volume. **The default run stops at check 1 by design** — read [Why `--trust-edge-ca` exists](#why---trust-edge-ca-exists). Flags go through `node scripts/selfhost-verify/verify.mjs` directly:
+That brings up `infra/docker/compose.selfhost.yml`, starts the fake edge, runs the checks, and tears the stack down with its volume. The stack is configured only through the variables `infra/docker/.env.selfhost.example` documents — including the two that make it trust the edge's privately issued JWKS certificate, see [The privately issued JWKS](#the-privately-issued-jwks) — so a green run is a statement about the stack as shipped. One flag goes through `node scripts/selfhost-verify/verify.mjs` directly:
 
 | Flag | Effect |
 | --- | --- |
 | `--keep-up` | leave the stack running after the run, for debugging |
-| `--trust-edge-ca` | the one deviation from the shipped stack — read [Why `--trust-edge-ca` exists](#why---trust-edge-ca-exists) before using it |
 
 Needs:
 
-- **Docker Desktop**, not stock Docker Engine. The containers fetch the JWKS from the host through `host.docker.internal`, and `compose.selfhost.yml` sets no `extra_hosts`, so on a Docker without that name the run stops at check 1 with a resolution error. The run tells that failure apart from the certificate gap below and says which one it hit.
+- **Docker Desktop**, not stock Docker Engine. The containers fetch the JWKS from the host through `host.docker.internal`, and `compose.selfhost.yml` sets no `extra_hosts`, so on a Docker without that name the run stops at check 1 with a resolution error. The run tells that failure apart from a certificate failure and says which one it hit.
 - `openssl`, for the local CA and the edge certificate.
 - Network access: the images download the AWS RDS CA bundle at build time, as `docs/self-hosting.md` describes.
 - Free loopback ports `3000`, `8081`, `8082`, `8083` for the stack, `8443` and `8444` for the edge and its JWKS, and one ephemeral port the harness's echo upstream takes for itself.
@@ -56,7 +55,7 @@ The guide's `/mcp` and `/.well-known/oauth-protected-resource/*` bypass rows hav
 
 | # | What it proves |
 | --- | --- |
-| 1 | A web request through the edge is answered 200 and provisions the edge subject with `cognito_status = 'PROXY'` and the token's email. |
+| 1 | `web` fetches and verifies a JWKS served under a certificate no public CA signed, and a request through the edge is answered 200 and provisions the edge subject with `cognito_status = 'PROXY'` and the token's email. |
 | 2 | The forged identity header is live — presented straight at the web container it provisions a second account — and the edge nonetheless keeps it out: overwritten behind Access, and, on the bypassed `ECHO_HOST` where stripping is the only defence, never forwarded at all. The echo upstream reports the headers it received, on a `/.well-known/…` path and on a `/mcp` path, and the probe header it did receive is asserted too, so an empty answer cannot pass. |
 | 3 | A non-public app path straight at the published `web` port, and `/oauth/authorize` straight at the published `auth` port, are both answered 401 with the shared unauthorized message, never a redirect. Public paths, `/v1` and `/mcp` answer a direct request by design, and so does `/api/live`, which the run itself waits on. |
 | 4 | Discovery, dynamic client registration, the consent page, the consent submission and the token exchange all work through the edge, and the token endpoint issues an `ebt_at_` access token. |
@@ -70,25 +69,41 @@ The guide's `/mcp` and `/.well-known/oauth-protected-resource/*` bypass rows hav
 
 Checks 6 and 9 share an agent API key seeded straight into `auth.agent_api_keys`, and the run says so in its output. `AUTH_MODE=proxy_jwt` registers no route that can create one — the only issuing path is the email OTP endpoint the mode removes — so "`/v1` cannot be reached because no key can be created" stays separate from "`/v1` does not work".
 
-## Why `--trust-edge-ca` exists
+## The privately issued JWKS
 
-**The default run fails at check 1, and that is a finding, not a bug in the harness.**
-
-`AUTH_PROXY_JWKS_URL` is fetched by `aws-jwt-verify` through `node:https`. That rejects a plain-http URL outright:
-
-```
-{"domain":"auth","action":"proxy_auth_error","error":"Protocol \"http:\" not supported. Expected \"https:\""}
-```
-
-and it rejects an https URL whose certificate no public CA signed:
+`AUTH_PROXY_JWKS_URL` is fetched by `aws-jwt-verify` through `node:https`, which verifies the certificate like any other https client. The fake edge issues its own CA and serves the JWKS under it, so this harness is exactly the case a self-hosted gateway behind internal PKI is in, and without the CA the run stops at check 1:
 
 ```
 {"domain":"auth","action":"proxy_auth_error","error":"Failed to fetch https://host.docker.internal:8444/cdn-cgi/access/certs: self-signed certificate in certificate chain"}
 ```
 
-Neither `compose.selfhost.yml` nor `.env.selfhost.example` exposes `NODE_EXTRA_CA_CERTS`, so nothing in the shipped stack can make a container trust a private CA. Cloudflare Access is unaffected — its JWKS is publicly trusted — but the guide's claim that "any gateway that mints an RS256 JWT with `sub`, `email` and a numeric `exp` works" does not hold for a self-hosted gateway behind internal PKI, which is a large part of who reads a self-hosting guide. It also means the guide's own advice to "treat the first deployment as the first test" cannot be followed locally.
+A plain-http JWKS URL is refused before that, by the same library:
 
-`--trust-edge-ca` writes a compose override that mounts the fake edge's CA into `web` and `auth` and sets `NODE_EXTRA_CA_CERTS`, purely so checks 2 to 11 can be run at all. It is not part of the shipped stack. The run prints a banner saying so before the checks and again immediately before it exits, and prefixes every result line with `[--trust-edge-ca]`, so no excerpt of the output can be mistaken for the shipped stack working. **A green run under that flag does not mean the stack as documented works.**
+```
+{"domain":"auth","action":"proxy_auth_error","error":"Protocol \"http:\" not supported. Expected \"https:\""}
+```
+
+The run answers the first of the two with the same two variables [`docs/self-hosting.md`](../../docs/self-hosting.md) gives an operator in [A gateway of your own](../../docs/self-hosting.md#a-gateway-of-your-own), written into the env file it generates:
+
+```
+SELFHOST_EDGE_CA_DIR=<repo>/tmp/selfhost-verify/ca
+NODE_EXTRA_CA_CERTS=/etc/ssl/selfhost-ca/edge-ca.pem
+```
+
+`compose.selfhost.yml` mounts that directory read-only on `web` and `auth` at `/etc/ssl/selfhost-ca`. Only the CA certificate is copied into it; the CA private key stays one directory up in `tmp/selfhost-verify/`, which is mounted nowhere, and `.dockerignore` excludes `tmp/` so neither file reaches the build context or an image layer either. Check 1 is therefore a check of the trust extension and not only of the identity: it passes only because the stack was given the CA.
+
+Both halves of that were exercised by hand, one run each, and both fail check 1 with the certificate error above. Dropping `NODE_EXTRA_CA_CERTS` leaves the CA mounted but unnamed, so Node never reads it. Dropping `SELFHOST_EDGE_CA_DIR` instead leaves the variable naming `/etc/ssl/selfhost-ca/edge-ca.pem` while the mount falls back to the empty `infra/docker/selfhost-ca`, so the file is absent and Node only warns — `Ignoring extra certs from …, load failed: … No such file or directory` — and verifies against its default store, which is the same 401. An unreadable bundle warns the same way, with `Permission denied`, which is why the run gives that directory `0755` and the file `0644` rather than leaving them to the process umask.
+
+The harness has no flag for either case, and needs none: `verify.mjs` inherits the shell's environment, and `docker compose` ranks a shell variable above `--env-file`, so setting one empty in front of the command is enough. `compose.selfhost.yml` writes both as `${VAR:-…}`, which treats empty as unset, so each command below reproduces one half:
+
+```
+SELFHOST_EDGE_CA_DIR= node scripts/selfhost-verify/verify.mjs
+NODE_EXTRA_CA_CERTS= node scripts/selfhost-verify/verify.mjs
+```
+
+Nothing has to be prepared or kept for this. Both runs generate their own `tmp/selfhost-verify/`, and both delete it at teardown along with the env file and the CA, the same as any run without `--keep-up`.
+
+This extends the trust store. Nothing here, and nothing in the stack, disables certificate verification.
 
 ## Manual check: Safari and `__Host-csrf` over plain http
 
