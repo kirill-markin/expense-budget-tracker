@@ -107,7 +107,14 @@ const buildSqlResultInstructions = (
 ): string =>
   `Access is limited to the selected workspace and this user's memberships. Prefer SELECT first. Only supported relations are available, multiple statements are allowed, only allowlisted pure aggregate, date, text, cast, and window functions may be called and a rejected call lists the allowed names, and returned rows are capped at ${String(maxRows)} per statement and across the whole request, with returnedRowCount, totalRowCount, and truncated metadata. A result over limits.maxResultChars (${String(maxResultChars)}) characters drops rows across the whole request and sets truncated instead of failing. A result that still comes back over that budget has already dropped every row, so what is left is the echoed statement text and the fixed per-statement fields: shorten the statement text and send fewer statements per request. For a read cut by this character budget, the kept rows are that statement's first rows, so select fewer or shorter columns, send fewer statements per request, or page the rest with OFFSET when the statement orders by a unique column such as ledger_entries.entry_id; a non-unique ORDER BY leaves tied rows in an arbitrary order that OFFSET can repeat or skip. Any mutation in the result already committed and must not be re-sent; it keeps reporting the rows it affected in rowCount, an INSERT or UPDATE's dropped rows are readable with a narrow follow-up SELECT, and a DELETE's are gone.`;
 
-const SQL_DEADLINE_INSTRUCTIONS = "Nothing in this request was applied. Send less work per request, such as fewer statements, a narrower date range, or fewer rows, then retry.";
+// The claim is scoped to the submitted SQL because the request as a whole can
+// have changed something: resolving a workspace saves the selected workspace on
+// the API key in a committed transaction of its own, which a later deadline
+// does not undo. The remedies are offered as remedies rather than as a
+// diagnosis, so the answer attributes the expiry to no phase. This is the same
+// shape the machine API returns; see SQL_DEADLINE_INSTRUCTIONS in
+// apps/sql-api/src/machineApi/routeHandlers.ts.
+const SQL_DEADLINE_INSTRUCTIONS = "None of the submitted SQL was applied. Send less work per request, such as fewer statements, a narrower date range, or fewer rows, then retry.";
 
 type AgentSqlRouteDependencies = Readonly<{
   authenticateAgentRequest: (request: Request) => Promise<AgentAuthenticatedRequest>;

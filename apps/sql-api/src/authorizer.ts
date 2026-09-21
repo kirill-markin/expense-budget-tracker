@@ -5,7 +5,9 @@
  * ./agentApiKeyAuth.js and returns an IAM policy + context with
  * usageIdentifierKey for per-key throttling via Usage Plans.
  *
- * API Gateway caches results for 5 minutes by Authorization header value.
+ * API Gateway authorizer caching is disabled: infra/aws/lib/api-gateway.ts
+ * sets `resultsCacheTtl` to zero, so every request is validated here and a
+ * revoked key is refused on the next request instead of after a cache window.
  */
 
 import type { APIGatewayTokenAuthorizerEvent, APIGatewayAuthorizerResult } from "aws-lambda";

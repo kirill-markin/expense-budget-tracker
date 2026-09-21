@@ -5,6 +5,7 @@ node_modules/
 # Build output
 .next/
 dist/
+packages/agent-shared/dist-cjs/
 cdk.out/
 *.tsbuildinfo
 

@@ -235,7 +235,7 @@ test("postAgentSqlRouteWithDeps rejects SELECT-only mutations before workspace o
 
 const READ_SQL = "SELECT account_id FROM accounts";
 const MUTATION_SQL = "DELETE FROM ledger_entries WHERE entry_id = 'entry-1'";
-const DEADLINE_INSTRUCTIONS = "Nothing in this request was applied. Send less work per request, such as fewer statements, a narrower date range, or fewer rows, then retry.";
+const DEADLINE_INSTRUCTIONS = "None of the submitted SQL was applied. Send less work per request, such as fewer statements, a narrower date range, or fewer rows, then retry.";
 const CANCELLED_MESSAGE = `SQL execution was cancelled after exceeding its ${String(SQL_STATEMENT_TIMEOUT_MS)} ms deadline`;
 const UNAVAILABLE_PAYLOAD = {
   ok: false,

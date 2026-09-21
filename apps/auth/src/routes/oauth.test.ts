@@ -5,6 +5,7 @@ import {
   MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
   MAX_OAUTH_LOGIN_QUERY_BYTES,
 } from "@expense-budget-tracker/agent-shared";
+import { PROXY_JWT_UNAUTHORIZED_MESSAGE } from "@expense-budget-tracker/agent-shared/proxy-jwt";
 import {
   createOAuthApp,
   MAX_CONSENT_REQUEST_BYTES,
@@ -773,7 +774,7 @@ test("proxy_jwt mode answers an unresolved authorize identity with 401 instead o
     assert.equal(response.status, 401);
     assert.equal(response.headers.get("location"), null);
     assert.equal(response.headers.get("cache-control"), "no-store");
-    assert.match(await response.text(), /upstream authentication proxy/u);
+    assert.equal(await response.text(), PROXY_JWT_UNAUTHORIZED_MESSAGE);
   }
 });
 
