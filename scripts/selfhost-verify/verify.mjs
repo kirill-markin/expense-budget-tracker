@@ -659,6 +659,28 @@ const checks = [
       `A direct request advertised apiBaseUrl ${String(directEnvelope.data?.apiBaseUrl)} instead of the configured public URL`);
     expect(directEnvelope.data?.mcp?.url === OAUTH_RESOURCE,
       `A direct request advertised MCP url ${String(directEnvelope.data?.mcp?.url)} instead of the configured public URL`);
+
+    // The email OTP onboarding exists only in AUTH_MODE=cognito: the auth
+    // service registers neither /api/agent/send-code nor /api/agent/verify-code
+    // here, so an envelope advertising them would send an agent to a 404. The
+    // `api` service gets AUTH_MODE=proxy_jwt for exactly this text.
+    for (const [label, body] of [["through the edge", envelope], ["direct", directEnvelope]]) {
+      expect(body.actions?.some((action) => action.name === "send_code") !== true,
+        `The ${label} discovery envelope offers send_code, which answers 404 in proxy_jwt`);
+      expect(body.data?.auth?.bootstrapUrl === undefined,
+        `The ${label} discovery envelope advertises bootstrapUrl ${String(body.data?.auth?.bootstrapUrl)}, which answers 404 in proxy_jwt`);
+      expect(typeof body.instructions === "string" && !body.instructions.includes("send_code"),
+        `The ${label} discovery instructions still tell the agent to call send_code`);
+      expect(body.instructions.includes("Create an API key"),
+        `The ${label} discovery instructions do not name the browser key creation this mode actually serves`);
+      // The app is a separate host from this API, so pointing at the browser
+      // is useless unless the envelope also says which origin, in a field and
+      // in the sentence an agent reads out loud.
+      expect(body.data?.appBaseUrl === `https://${APP_HOST}`,
+        `The ${label} discovery envelope advertised appBaseUrl ${String(body.data?.appBaseUrl)} instead of the configured https://${APP_HOST}`);
+      expect(body.instructions.includes(`browser app at https://${APP_HOST}`),
+        `The ${label} discovery instructions do not name https://${APP_HOST} as the place the key is created`);
+    }
   }],
 
   ["oversized bodies are refused by the explicit payload limit on /v1 and /mcp", async () => {

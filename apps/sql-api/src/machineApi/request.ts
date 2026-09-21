@@ -1,5 +1,8 @@
 import type { APIGatewayProxyEvent } from "aws-lambda";
-import { buildAgentDiscoveryEnvelope } from "@expense-budget-tracker/agent-shared/discovery";
+import {
+  buildAgentDiscoveryEnvelope,
+  type AgentOnboarding,
+} from "@expense-budget-tracker/agent-shared/discovery";
 import type { UserIdentity } from "../db.js";
 import type { AuthenticatedContext, JsonBody, MachineApiDependencies, MachineRouteContext } from "./types.js";
 
@@ -42,13 +45,43 @@ export const getMcpUrl = (event: APIGatewayProxyEvent): string => {
   return authUrl.toString();
 };
 
+/**
+ * The browser app runs on its own hostname, which this service never sees: its
+ * callers reach api.<domain>. The onboarding it advertises under proxy_jwt is
+ * "create a key in the app", so that origin has to be configured, and there is
+ * nothing to fall back to — an inferred one would send the user to a host that
+ * may not exist.
+ */
+const getAppBaseUrl = (): string => {
+  const configured = process.env.PUBLIC_APP_BASE_URL;
+  if (configured === undefined || configured === "") {
+    throw new Error(
+      "AUTH_MODE=proxy_jwt requires PUBLIC_APP_BASE_URL to be set to the public origin of the browser app, the only place this mode creates an agent API key",
+    );
+  }
+
+  return trimTrailingSlash(configured);
+};
+
+/**
+ * This service authenticates every caller with an ApiKey and never with the
+ * edge token, so AUTH_MODE is read here for one reason only: the auth service
+ * registers the email OTP routes solely in cognito mode, and advertising them
+ * under proxy_jwt sends an agent to a 404. An unset or unrecognized value
+ * keeps the email OTP shape, which is what the hosted deployment serves.
+ */
+const getOnboarding = (authBaseUrl: string): AgentOnboarding =>
+  process.env.AUTH_MODE === "proxy_jwt"
+    ? { kind: "browser_api_key", appBaseUrl: getAppBaseUrl() }
+    : { kind: "email_otp", bootstrapUrl: `${authBaseUrl}/api/agent/send-code` };
+
 export const buildDiscoveryEnvelope = (event: APIGatewayProxyEvent): Readonly<Record<string, unknown>> => {
   const authBaseUrl = getAuthBaseUrl(event);
 
   return buildAgentDiscoveryEnvelope({
     apiBaseUrl: getApiBaseUrl(event),
     authBaseUrl,
-    bootstrapUrl: `${authBaseUrl}/api/agent/send-code`,
+    onboarding: getOnboarding(authBaseUrl),
     mcpUrl: getMcpUrl(event),
   });
 };
