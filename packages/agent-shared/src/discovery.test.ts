@@ -18,13 +18,19 @@ const SOURCE_LINKS = {
   authRoutesUrl: "https://github.com/kirill-markin/expense-budget-tracker/tree/main/apps/auth/src/routes",
 };
 
-test("agent discovery advertises runtime documentation and implementation source", (): void => {
-  const envelope = buildAgentDiscoveryEnvelope({
+const buildEmailOtpEnvelope = (): ReturnType<typeof buildAgentDiscoveryEnvelope> =>
+  buildAgentDiscoveryEnvelope({
     apiBaseUrl: API_BASE_URL,
     authBaseUrl: "https://auth.expense-budget-tracker.com",
-    bootstrapUrl: "https://auth.expense-budget-tracker.com/api/agent/send-code",
+    onboarding: {
+      kind: "email_otp",
+      bootstrapUrl: "https://auth.expense-budget-tracker.com/api/agent/send-code",
+    },
     mcpUrl: "https://mcp.expense-budget-tracker.com/mcp",
   });
+
+test("agent discovery advertises runtime documentation and implementation source", (): void => {
+  const envelope = buildEmailOtpEnvelope();
 
   assert.deepEqual(envelope.data["docs"], {
     discoveryUrl: `${API_BASE_URL}/`,
@@ -76,6 +82,84 @@ test("agent discovery advertises runtime documentation and implementation source
   );
   assert.match(envelope.instructions, /is not available over this API\./u);
   assert.equal(envelope.actions.some((action) => action.name === "openapi"), false);
+});
+
+// The auth service registers the email OTP routes only in AUTH_MODE=cognito,
+// so a browser-onboarding deployment must advertise neither the bootstrap URL
+// nor the send_code action: both answer 404 there.
+test("browser onboarding replaces the email OTP bootstrap with the in-app key creation", (): void => {
+  const envelope = buildAgentDiscoveryEnvelope({
+    apiBaseUrl: API_BASE_URL,
+    authBaseUrl: "https://auth.example.com",
+    onboarding: { kind: "browser_api_key", appBaseUrl: "https://app.example.com" },
+    mcpUrl: "https://mcp.example.com/mcp",
+  });
+
+  assert.deepEqual(envelope.data["auth"], {
+    scheme: "Authorization: ApiKey <key>",
+    oauth: {
+      issuer: "https://auth.example.com",
+      scopes: ["expenses:read", "expenses:write"],
+    },
+  });
+  assert.equal(envelope.actions.some((action) => action.name === "send_code"), false);
+  assert.deepEqual(envelope.actions.map((action) => action.name), [
+    "schema",
+    "run_sql_query",
+    "run_sql_execute",
+  ]);
+  assert.equal(envelope.instructions.includes("send_code"), false);
+  assert.equal(envelope.instructions.includes("/api/agent/send-code"), false);
+  // The app runs on its own hostname, so the envelope has to name it: without
+  // it an agent holding only this response cannot tell the user where to go.
+  assert.equal(envelope.data["appBaseUrl"], "https://app.example.com");
+  assert.match(
+    envelope.instructions,
+    /in the browser app at https:\/\/app\.example\.com, under Settings -> Agent and Program Access -> Create an API key/u,
+  );
+  assert.match(
+    envelope.instructions,
+    /no key is issued to a terminal or an API call without a signed-in browser session/u,
+  );
+  // Everything downstream of obtaining a key is shared with the email OTP shape.
+  assert.ok(
+    envelope.instructions.includes(`${API_BASE_URL}/workspaces/{workspaceId}/select before SQL`),
+    "Browser onboarding must keep the shared endpoint walkthrough",
+  );
+  assert.ok(envelope.instructions.includes(SQL_DIALECT_GUIDE));
+  assert.ok(envelope.instructions.includes(WRITE_APPROVAL_GUIDE));
+});
+
+// The hosted cognito deployment serves this shape, and it must stay byte for
+// byte what it was before onboarding became mode-dependent: same keys, same
+// order, no appBaseUrl, send_code first.
+test("the email OTP shape keeps the send_code action first and its bootstrap URL", (): void => {
+  const envelope = buildEmailOtpEnvelope();
+
+  assert.deepEqual(Object.keys(envelope.data), [
+    "service",
+    "auth",
+    "apiBaseUrl",
+    "authBaseUrl",
+    "mcp",
+    "docs",
+    "capabilities",
+  ]);
+  assert.deepEqual(Object.keys(envelope.data["auth"] as object), [
+    "bootstrapUrl",
+    "scheme",
+    "oauth",
+  ]);
+  assert.equal(
+    (envelope.data["auth"] as Readonly<{ bootstrapUrl: string }>).bootstrapUrl,
+    "https://auth.expense-budget-tracker.com/api/agent/send-code",
+  );
+  assert.equal(envelope.actions[0]?.name, "send_code");
+  assert.equal(
+    envelope.actions[0]?.url,
+    "https://auth.expense-budget-tracker.com/api/agent/send-code",
+  );
+  assert.match(envelope.instructions, /then call send_code/u);
 });
 
 test("source discovery explains the conventional OpenAPI compatibility response", (): void => {
