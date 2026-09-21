@@ -1,5 +1,16 @@
 import crypto from "node:crypto";
 
+/**
+ * Wire format of an agent API key: `<prefix>_<keyId>_<secret>`.
+ *
+ * Every issuer and every verifier reads these from here. A private copy in one
+ * of them would silently mint keys the verifiers reject as `invalid_api_key`,
+ * and nothing in either module could notice the divergence.
+ */
+export const AGENT_API_KEY_PREFIX = "ebta";
+export const AGENT_API_KEY_ID_LENGTH = 8;
+export const AGENT_API_KEY_SECRET_LENGTH = 26;
+
 const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CROCKFORD_RE = /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]+$/;
 

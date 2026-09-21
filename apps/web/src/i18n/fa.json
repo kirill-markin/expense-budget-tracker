@@ -73,6 +73,8 @@
   "agentAccess.agentDescription": "این دو خط را در ایجنت خود کپی کنید.",
   "agentAccess.discoveryLink": "Discovery endpoint را باز کنید",
   "agentAccess.connectionsTitle": "ایجنت‌های متصل",
+  "agentAccess.createTitle": "ایجاد کلید API",
+  "agentAccess.createLabelPlaceholder": "برچسب اتصال (مثلاً Claude Code agent)",
   "agentAccess.type": "نوع اتصال",
   "agentAccess.typeApiKey": "کلید API",
   "agentAccess.typeOauth": "OAuth",

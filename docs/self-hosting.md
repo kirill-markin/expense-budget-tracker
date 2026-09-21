@@ -189,8 +189,8 @@ UPDATE auth.oauth_connections
 SET revoked_at = now(), updated_at = now()
 WHERE user_id = '<user_id>' AND revoked_at IS NULL;
 
--- 4. Kill the agent API keys they already hold. This mode cannot create one,
---    so a row exists only from a stack previously run under AUTH_MODE=cognito.
+-- 4. Kill the agent API keys they already hold, including any the person
+--    created for themselves in Settings.
 UPDATE auth.agent_api_keys
 SET revoked_at = now()
 WHERE user_id = '<user_id>' AND revoked_at IS NULL;
@@ -211,7 +211,7 @@ Removing the person at the identity provider is a different lever again. It stop
 - **No local password or email OTP login.** In `proxy_jwt` the auth service does not register `/login`, `/api/send-code` or `/api/verify-code` at all; they answer 404. No dormant email login is left behind the proxy.
 - **No mixing of auth modes.** `AUTH_MODE=cognito` requires a Cognito user pool, and `AUTH_MODE=none` is unauthenticated; this stack pins `proxy_jwt` on both services that read identity.
 - **No plain http.** See [Before you start](#before-you-start).
-- **No agent API keys, so the `/v1` machine API is not usable here.** The only code path that issues one is `POST /api/agent/verify-code` on the auth service, and `proxy_jwt` does not register it. The web UI lists and revokes agent connections but cannot create a key. The `api` service still runs and answers its public discovery routes — and its discovery response still advertises the email OTP onboarding that this mode removed — but every authenticated route answers `missing_api_key`. Machine access in this deployment is the MCP server.
+- **No terminal onboarding for the `/v1` machine API.** The only route that issues an agent API key from a terminal is `POST /api/agent/verify-code` on the auth service, and `proxy_jwt` does not register it. Create the key in the browser instead: **Settings → Agent and Program Access → Create an API key** mints one for the identity the edge already authenticated, shows it once, and stores only its hash. `/v1` then accepts it as `Authorization: ApiKey <key>`. One user may hold 25 un-revoked keys at once, which bounds what a stolen browser session can mint; revoked keys do not count, so rotation is never blocked. Its discovery response still advertises the email OTP onboarding that this mode removed; ignore that step and bring your own key.
 
 ## First boot
 

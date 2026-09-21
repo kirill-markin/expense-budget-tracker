@@ -73,6 +73,8 @@
   "agentAccess.agentDescription": "העתק את שתי השורות האלה לתוך הסוכן שלך.",
   "agentAccess.discoveryLink": "פתח את נקודת הקצה לגילוי",
   "agentAccess.connectionsTitle": "סוכנים מחוברים",
+  "agentAccess.createTitle": "צור מפתח API",
+  "agentAccess.createLabelPlaceholder": "תווית החיבור (למשל Claude Code agent)",
   "agentAccess.type": "סוג חיבור",
   "agentAccess.typeApiKey": "מפתח API",
   "agentAccess.typeOauth": "OAuth",

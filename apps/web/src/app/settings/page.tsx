@@ -9,6 +9,7 @@ import { t } from "@/i18n/serverT";
 import { getDemoCategories } from "@/server/demo/data";
 import { getFilteredCategories } from "@/server/filteredCategories";
 import { getAvailableCurrencies } from "@/server/getAvailableCurrencies";
+import { getConfiguredAuthMode } from "@/server/authMode";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getCategories } from "@/server/transactions/getTransactions";
@@ -119,7 +120,7 @@ async function AgentConnectionsData() {
   const demo = await isDemoMode();
 
   if (demo) {
-    return <AgentConnectionsManager initialConnections={[]} />;
+    return <AgentConnectionsManager initialConnections={[]} canCreateApiKey={false} />;
   }
 
   const headersList = await headers();
@@ -127,7 +128,12 @@ async function AgentConnectionsData() {
   const workspaceId = extractWorkspaceIdFromHeaders(headersList);
   const connections = await listAgentConnections(userId, workspaceId);
 
-  return <AgentConnectionsManager initialConnections={connections} />;
+  return (
+    <AgentConnectionsManager
+      initialConnections={connections}
+      canCreateApiKey={getConfiguredAuthMode(process.env) === "proxy_jwt"}
+    />
+  );
 }
 
 export default async function SettingsPage() {

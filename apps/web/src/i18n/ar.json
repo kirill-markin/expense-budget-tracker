@@ -73,6 +73,8 @@
   "agentAccess.agentDescription": "انسخ هذين السطرين إلى الوكيل الذي تستخدمه.",
   "agentAccess.discoveryLink": "فتح رابط الاكتشاف",
   "agentAccess.connectionsTitle": "الوكلاء المرتبطون",
+  "agentAccess.createTitle": "إنشاء مفتاح API",
+  "agentAccess.createLabelPlaceholder": "تسمية الاتصال (مثلاً Claude Code agent)",
   "agentAccess.type": "نوع الاتصال",
   "agentAccess.typeApiKey": "مفتاح API",
   "agentAccess.typeOauth": "OAuth",

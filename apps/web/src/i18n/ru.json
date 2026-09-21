@@ -73,6 +73,8 @@
   "agentAccess.agentDescription": "Скопируйте эти две строки и добавьте их в конфигурацию своего агента.",
   "agentAccess.discoveryLink": "Открыть discovery-эндпоинт",
   "agentAccess.connectionsTitle": "Подключённые агенты",
+  "agentAccess.createTitle": "Создать API-ключ",
+  "agentAccess.createLabelPlaceholder": "Название подключения (например, Claude Code agent)",
   "agentAccess.type": "Тип подключения",
   "agentAccess.typeApiKey": "API-ключ",
   "agentAccess.typeOauth": "OAuth",

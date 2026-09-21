@@ -67,7 +67,7 @@ The guide's `/mcp` and `/.well-known/oauth-protected-resource/*` bypass rows hav
 | 10 | A row written into the pre-seeded `local` workspace is unreachable from the proxy identity: `sql_query` cannot select that workspace, the row is absent from the identity's own workspace, `list_workspaces` does not offer `local`, and the browser cannot make it the active workspace. |
 | 11 | The MCP gate admits `'PROXY'` and denies any other stored status against a live database: renaming the stored value denies the same token, and restoring it admits the token again. |
 
-Checks 6 and 9 share an agent API key seeded straight into `auth.agent_api_keys`, and the run says so in its output. `AUTH_MODE=proxy_jwt` registers no route that can create one — the only issuing path is the email OTP endpoint the mode removes — so "`/v1` cannot be reached because no key can be created" stays separate from "`/v1` does not work".
+Checks 6 and 9 share an agent API key minted through the app's own `POST /api/agent-connections` route, on the browser session check 1 established. That route is the only issuing path this mode has, since it registers no email OTP endpoint, so the key both checks use is itself evidence that `/v1` is reachable here. The helper also asserts that the stored `key_hash` is the sha256 of the issued secret: the plaintext is returned once and never kept.
 
 ## The privately issued JWKS
 

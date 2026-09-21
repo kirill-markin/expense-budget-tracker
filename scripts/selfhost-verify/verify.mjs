@@ -67,7 +67,6 @@ const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 const PROXY_JWT_UNAUTHORIZED_MESSAGE =
   "Unauthorized: this deployment expects an upstream authentication proxy to forward a verified identity token. Sign in through the proxy and retry.";
 const LOCAL_ROW_MARKER = "selfhost-verify-local-row";
-const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 const options = {
   keepUp: process.argv.includes("--keep-up"),
@@ -332,8 +331,6 @@ const workspaceIds = (body) =>
 
 const base64url = (value) => Buffer.from(value).toString("base64url");
 const sha256hex = (value) => createHash("sha256").update(value).digest("hex");
-const crockford = (length) =>
-  Array.from(randomBytes(length), (byte) => CROCKFORD_ALPHABET[byte % 32]).join("");
 
 const mcpCall = async (accessToken, payload, { extraBody = null } = {}) => {
   const body = extraBody ?? JSON.stringify(payload);
@@ -452,21 +449,35 @@ const readUserColumn = (column, userId = SUBJECT) =>
 const readLastSeenEpoch = () => Number(readUserColumn("extract(epoch from last_seen_at)"));
 
 /**
- * No agent API key can be created in proxy_jwt: the only issuing route is the
- * email OTP endpoint this mode does not register. Seeding one directly is what
- * makes any authenticated /v1 request possible here, and saying so keeps
- * "/v1 cannot be reached because no key can be created" separate from
- * "/v1 does not work".
+ * Mints the /v1 key the way a self-hoster has to: through the app's own
+ * creation route, on the browser session the edge already authenticated.
+ * Seeding the row straight into auth.agent_api_keys would exercise the
+ * machine API without exercising the only path this mode has to reach it.
  */
-const ensureAgentApiKey = () => {
+const ensureAgentApiKey = async () => {
   if (state.apiKey !== "") return;
-  const keyId = crockford(8);
-  const secret = crockford(26);
-  psql(`INSERT INTO auth.agent_api_keys (user_id, label, key_id, key_hash, selected_workspace_id)
-        VALUES ('${SUBJECT}', 'selfhost-verify', '${keyId}', '${sha256hex(secret)}', '${state.workspaceId}')`);
-  state.apiKey = `ebta_${keyId}_${secret}`;
-  log("      note: the /v1 API key was seeded straight into the database, because");
-  log("      AUTH_MODE=proxy_jwt registers no route that can create one.");
+  const csrfToken = cookieJar.get("__Host-csrf") ?? "";
+  expect(csrfToken !== "", "The browser jar carries no CSRF cookie, so no app POST can be made");
+  const created = await send(`https://${APP_HOST}/api/agent-connections`, {
+    method: "POST",
+    headers: {
+      cookie: cookieHeader(),
+      origin: `https://${APP_HOST}`,
+      "content-type": "application/json",
+      "x-csrf-token": csrfToken,
+    },
+    body: JSON.stringify({ label: "selfhost-verify" }),
+  });
+  expect(created.status === 200,
+    `Creating an agent API key answered ${String(created.status)}: ${created.body.slice(0, 300)}`);
+  const { apiKey } = JSON.parse(created.body);
+  expect(typeof apiKey === "string" && apiKey.startsWith("ebta_"),
+    `The creation route returned no ebta_ key: ${created.body.slice(0, 300)}`);
+  // The plaintext is returned once; what is kept is its hash.
+  const storedHash = psql(`SELECT key_hash FROM auth.agent_api_keys WHERE key_id = '${apiKey.split("_")[1]}'`);
+  expect(storedHash === sha256hex(apiKey.split("_")[2]),
+    "The stored key_hash is not the sha256 of the issued secret");
+  state.apiKey = apiKey;
 };
 
 const checks = [
@@ -573,10 +584,10 @@ const checks = [
   }],
 
   ["disabling the user cuts every agent surface, and no request raises the flag back", async () => {
-    // Seeded before the user is disabled: the /v1 refusal below is only worth
+    // Created before the user is disabled: the /v1 refusal below is only worth
     // making with a key that would otherwise have been accepted, which check 9
     // is what proves.
-    ensureAgentApiKey();
+    await ensureAgentApiKey();
     psql(`UPDATE public.users SET cognito_enabled = false, updated_at = now() WHERE user_id = '${SUBJECT}'`);
 
     const refused = await mcpCall(state.accessToken, { jsonrpc: "2.0", id: 4, method: "tools/list", params: {} });
@@ -651,11 +662,11 @@ const checks = [
   }],
 
   ["oversized bodies are refused by the explicit payload limit on /v1 and /mcp", async () => {
-    ensureAgentApiKey();
+    await ensureAgentApiKey();
     const accepted = await send(`https://${API_HOST}/v1/me`, {
       headers: { authorization: `ApiKey ${state.apiKey}` },
     });
-    expect(accepted.status === 200, `The seeded key was refused by /v1/me: ${String(accepted.status)} ${accepted.body.slice(0, 200)}`);
+    expect(accepted.status === 200, `The created key was refused by /v1/me: ${String(accepted.status)} ${accepted.body.slice(0, 200)}`);
 
     const oversized = Buffer.alloc(MAX_REQUEST_BODY_BYTES + 1, 0x20).toString("latin1");
     const refusedApi = await send(`https://${API_HOST}/v1/sql/query`, {

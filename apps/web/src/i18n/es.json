@@ -73,6 +73,8 @@
   "agentAccess.agentDescription": "Copia estas dos líneas en tu agente.",
   "agentAccess.discoveryLink": "Abrir endpoint de descubrimiento",
   "agentAccess.connectionsTitle": "Agentes conectados",
+  "agentAccess.createTitle": "Crear una clave API",
+  "agentAccess.createLabelPlaceholder": "Etiqueta de la conexión (ej. Claude Code agent)",
   "agentAccess.type": "Tipo de conexión",
   "agentAccess.typeApiKey": "Clave API",
   "agentAccess.typeOauth": "OAuth",

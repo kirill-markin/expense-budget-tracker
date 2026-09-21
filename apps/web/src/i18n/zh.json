@@ -73,6 +73,8 @@
   "agentAccess.agentDescription": "将这两行复制到你的智能体配置中。",
   "agentAccess.discoveryLink": "打开发现端点",
   "agentAccess.connectionsTitle": "已接入的智能体",
+  "agentAccess.createTitle": "创建 API 密钥",
+  "agentAccess.createLabelPlaceholder": "连接名称（例如 Claude Code agent）",
   "agentAccess.type": "连接类型",
   "agentAccess.typeApiKey": "API 密钥",
   "agentAccess.typeOauth": "OAuth",
