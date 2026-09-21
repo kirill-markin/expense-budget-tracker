@@ -1,0 +1,7 @@
+# The default SELFHOST_EDGE_CA_DIR of compose.selfhost.yml: the directory both
+# `web` and `auth` mount read-only at /etc/ssl/selfhost-ca. Drop the CA bundle
+# of a privately issued JWKS certificate here and point NODE_EXTRA_CA_CERTS at
+# it; see docs/self-hosting.md. This file keeps the directory in the repository
+# and keeps whatever is put beside it out of git.
+*
+!.gitignore

@@ -42,7 +42,7 @@ docker compose -f infra/docker/compose.selfhost.yml \
 
 Pass `--env-file` on every later command too, including `down`, `logs` and `exec`. The file is deliberately not named `.env`: Compose reads `infra/docker/.env` automatically, and that one belongs to the development stack.
 
-Every variable in the env file is required and has no default, except `SELFHOST_BIND_ADDRESS` and the optional integrations at the bottom. A missing required value stops the command instead of starting a container with an empty setting.
+Every variable in the env file is required and has no default, except `SELFHOST_BIND_ADDRESS`, the `SELFHOST_EDGE_CA_DIR` and `NODE_EXTRA_CA_CERTS` pair that lets `web` and `auth` trust a privately issued JWKS certificate, and the optional integrations at the bottom. A missing required value stops the command instead of starting a container with an empty setting.
 
 Services and the ports they publish to the edge:
 
@@ -61,7 +61,7 @@ Route the edge to the ports above by hostname: `APP_HOST` → 3000, `AUTH_HOST` 
 
 ### Build-time network dependency
 
-`apps/web/Dockerfile`, `apps/auth/Dockerfile` and `apps/sql-api/Dockerfile` all download the AWS RDS CA bundle from `truststore.pki.rds.amazonaws.com` during the build. This stack keeps that as is rather than maintaining a second set of images, and the bundle is unused at runtime here: the SQL API pool enables TLS only when `DB_SECRET_ARN` is set, the auth pool only when `DB_HOST` is set, the web pool only when `AUTH_MODE=cognito`, none of which holds in this stack, and nothing sets `NODE_EXTRA_CA_CERTS`. The cost is that `docker compose ... build` needs to reach that host.
+`apps/web/Dockerfile`, `apps/auth/Dockerfile` and `apps/sql-api/Dockerfile` all download the AWS RDS CA bundle from `truststore.pki.rds.amazonaws.com` during the build. This stack keeps that as is rather than maintaining a second set of images, and the bundle is unused at runtime here: the SQL API pool enables TLS only when `DB_SECRET_ARN` is set, the auth pool only when `DB_HOST` is set, the web pool only when `AUTH_MODE=cognito`, none of which holds in this stack. `NODE_EXTRA_CA_CERTS` is defined but empty on `web` and `auth`, and not defined at all on `api`, `mcp` and `worker`; Node ignores it either way. If you do set it, for a privately issued JWKS certificate, it names your own bundle, not this one — Node reads a single file. The cost is that `docker compose ... build` needs to reach that host.
 
 ### Migration role privileges
 
@@ -76,7 +76,7 @@ The repository's Postgres tests run against a database whose definer is the supe
 
 ## Edge proxy: Cloudflare Access
 
-Any gateway that mints an RS256 JWT with `sub`, `email` and a numeric `exp` works — the verification is vendor-neutral, and a 60-second clock-skew grace is the only tolerance. Cloudflare Access is the configuration below.
+Any gateway that mints an RS256 JWT with `sub`, `email` and a numeric `exp` works — the verification is vendor-neutral, and a 60-second clock-skew grace is the only tolerance. What the gateway must also give you is an https JWKS endpoint whose certificate the containers can verify: Cloudflare Access is served by a public CA and needs nothing further, while a gateway of your own may need [A gateway of your own](#a-gateway-of-your-own). Cloudflare Access is the configuration below.
 
 1. Create a **self-hosted Access application** covering `APP_HOST` and `AUTH_HOST`. Put both hostnames in one application so they share one audience tag; with two applications, set `AUTH_PROXY_JWT_AUDIENCE_APP` and `AUTH_PROXY_JWT_AUDIENCE_AUTH` to their respective tags.
 2. Add the policy that decides who may sign in.
@@ -93,7 +93,29 @@ Any gateway that mints an RS256 JWT with `sub`, `email` and a numeric `exp` work
 
 The header name and the URL shapes in this table, and the claim names Cloudflare puts in the token, are Cloudflare's own and are not checked against this repository's code. See [Verification status](#verification-status).
 
+Leave `SELFHOST_EDGE_CA_DIR` and `NODE_EXTRA_CA_CERTS` unset: the `cloudflareaccess.com` certificate is publicly trusted, so the containers verify the JWKS fetch with the trust store they already ship.
+
 `API_HOST` and `MCP_HOST` are not behind Access at all: both are machine surfaces with their own credentials.
+
+## A gateway of your own
+
+Everything above except the Cloudflare-specific values holds for any other gateway — oauth2-proxy, Authelia, Keycloak behind a reverse proxy, an in-house one. Two things about the JWKS endpoint are worth settling before the first boot, because both fail the same way: every request is answered 401, and each service logs it under its own action. Grep `web` for `{"domain":"auth","action":"proxy_auth_error", ...}` and `auth` for `{"domain":"auth","action":"proxy_identity_rejected", ...}` — same domain, same error string, two different action names. A silent `auth` container is not a healthy one; it is failing the same fetch and answering 401 on `/oauth/authorize`.
+
+- **`AUTH_PROXY_JWKS_URL` must be https.** A plain-http URL is refused before any request goes out, with `Protocol "http:" not supported. Expected "https:"`.
+- **Its certificate must verify.** Behind internal PKI it does not, and the error is `Failed to fetch https://…: self-signed certificate in certificate chain`. Give the containers the issuing CA:
+
+```
+# in infra/docker/.env.selfhost
+# with the bundle copied into infra/docker/selfhost-ca
+SELFHOST_EDGE_CA_DIR=./selfhost-ca
+NODE_EXTRA_CA_CERTS=/etc/ssl/selfhost-ca/internal-root.pem
+```
+
+`SELFHOST_EDGE_CA_DIR` is a directory on the host — an existing one, and a directory, not the bundle file; Compose mounts **all of it** read-only on `web` and `auth` — the two services that verify the edge token — at `/etc/ssl/selfhost-ca`. It must therefore hold certificate material and nothing else: every file in it is readable inside both containers, so an internal PKI's own state directory, whose private keys are the point of it, is the wrong thing to name here. Copy the bundle into a directory kept for that alone. The repository ships one — `infra/docker/selfhost-ca`, the default when the variable is unset, relative to `infra/docker/` as in the example above; its contents are gitignored, and `.dockerignore` keeps them out of the build context too. `NODE_EXTRA_CA_CERTS` is the path inside the container, so it must name that mount point plus the file: a host path does not exist there. Node reads exactly one file, so concatenate the certificates if the chain needs more than one.
+
+`web` and `auth` run as a non-root user, which has to traverse the mount and read the bundle — `chmod a+rx` that dedicated directory and `a+r` the bundle file in it. Nothing above or beside it needs widening; that is the second reason not to point the variable at a directory shared with anything else. Both paths must also be right: a path that does not exist, a path that is a file, an unreadable bundle (Node logs only `Ignoring extra certs` and falls back to its default store), or the wrong certificate all produce the same 401 as supplying no CA at all.
+
+This extends the trust store; it does not weaken it. It is not scoped to the JWKS fetch either: `NODE_EXTRA_CA_CERTS` widens trust for every outbound TLS connection `web` and `auth` make, the OpenAI and Langfuse integrations further down the env file included, so name a CA you are willing to trust for all of their egress. There is no setting here that skips certificate verification, and a self-hosting deployment should not want one: the JWKS is the only thing standing between a forged header and an identity.
 
 ## What must bypass the edge
 
@@ -205,8 +227,10 @@ So the data entered under `AUTH_MODE=none` is unreachable after the switch. Your
 
 The code this guide describes is merged and read back from the repository: the container entry points, the `proxy_jwt` mode in both services, the OAuth hostname checks, the MCP status allowlist and host validation, the account-state helpers in migrations `0079` and `0080`, and each refusal named in [Revoking access](#revoking-access).
 
-The stack as a whole has **not** been run end to end. There is no automated harness for it yet, so treat the first deployment as the first test: bring it up, confirm `GET https://api.<domain>/v1/` answers a discovery envelope rather than a 500, confirm that a request to the app carrying no edge token is answered 401 and never redirected, and complete one MCP OAuth flow before relying on it.
+The stack as a whole is run end to end by [`scripts/selfhost-verify`](../scripts/selfhost-verify/README.md), on one machine with Docker and no cloud account: `make selfhost-verify` brings up this very compose file against a local edge that mints RS256 tokens over a JWKS of its own, runs eleven checks, and tears the project down with its volume. Those checks cover the trust extension above and the identity it protects, the edge's stripping of a forged identity header, the 401 on a direct request that bypasses the edge, the whole MCP OAuth flow through to a working token and tool calls, revocation on the next request after the user is disabled, the `/v1` discovery envelope, the payload limits, and the isolation of the pre-seeded `local` workspace from a `proxy_jwt` identity. A green run is a statement about the stack as shipped: the harness configures it only through the variables `infra/docker/.env.selfhost.example` documents.
 
-Three things here are outside the repository and are not checked against it: the Cloudflare-specific values (header name, JWKS and issuer URL shapes, claim names, and the service-token note), the behavior of an identity provider when you remove someone, and that `psql -U tracker` connects without a password from inside the `postgres:18.6` container.
+What it does not settle, and what the first real deployment therefore still tests: the harness mints the edge token itself, so the shape of a real Cloudflare token is unchecked; it never boots the stack under `AUTH_MODE=none` first; and it is not a browser, so the `__Host-csrf` behavior over plain http stays a manual check. Its own README lists these. The negative case of the CA above is settled: with either variable removed, the first check fails on the self-signed chain, by hand, one run each.
+
+Two things here are outside the repository and are not checked against it: the Cloudflare-specific values (header name, JWKS and issuer URL shapes, claim names, and the service-token note), and the behavior of an identity provider when you remove someone. A third, that `psql -U tracker` connects without a password from inside the `postgres:18.6` container, the harness now settles: every run reads the database that way.
 
 That the bundled `tracker` role bypasses row-level security is settled: CI applies the migrations as `tracker` against the same `postgres:18.6` image, and `apps/auth/src/server/accountState.postgres.test.ts` then writes `public.users` through a definer owned by that role with no `app.user_id` set, which only passes if the definer bypasses RLS.
