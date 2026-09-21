@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
+import { PROXY_JWT_UNAUTHORIZED_MESSAGE } from "@expense-budget-tracker/agent-shared/proxy-jwt";
 import { isPublicPath, proxy, resolveWorkspaceIdFromCookie } from "./proxy";
 
 const MANAGED_ENV_KEYS = [
@@ -152,7 +153,7 @@ test("proxy_jwt answers a request without a proxy token with 401 and no redirect
 
     assert.equal(response.status, 401);
     assert.equal(response.headers.get("location"), null);
-    assert.match(await response.text(), /upstream authentication proxy/u);
+    assert.equal(await response.text(), PROXY_JWT_UNAUTHORIZED_MESSAGE);
   });
 });
 
