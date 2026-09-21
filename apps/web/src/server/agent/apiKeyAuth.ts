@@ -6,15 +6,16 @@
  */
 import crypto from "node:crypto";
 import { ACCOUNT_DISABLED_MESSAGE } from "@expense-budget-tracker/agent-shared";
-import { normalizeCrockfordToken } from "@expense-budget-tracker/agent-shared/crockford";
+import {
+  AGENT_API_KEY_ID_LENGTH,
+  AGENT_API_KEY_PREFIX,
+  AGENT_API_KEY_SECRET_LENGTH,
+  normalizeCrockfordToken,
+} from "@expense-budget-tracker/agent-shared/crockford";
 import { type UserIdentity } from "@/server/users";
 import { query, withUserOnlyContext } from "@/server/db";
 import { log } from "@/server/logger";
 import { parseAuthorizationHeader, type ParsedAuthorization } from "@/server/authHeader";
-
-const KEY_PREFIX = "ebta";
-const KEY_ID_LENGTH = 8;
-const SECRET_LENGTH = 26;
 
 type KeyLookupRow = Readonly<{
   connection_id: string;
@@ -155,13 +156,13 @@ export const authenticateAgentRequestWithDependencies = async (
   try {
     const normalizedCredentials = parsed.credentials.replace(/[\s-]/g, "").toUpperCase();
     const parts = normalizedCredentials.split("_");
-    if (parts.length !== 3 || parts[0] !== KEY_PREFIX.toUpperCase()) {
+    if (parts.length !== 3 || parts[0] !== AGENT_API_KEY_PREFIX.toUpperCase()) {
       fail("invalid_api_key", 401, "Invalid ApiKey format");
     }
 
     keyId = normalizeCrockfordToken(parts[1] ?? "", "agent ApiKey keyId");
     secret = normalizeCrockfordToken(parts[2] ?? "", "agent ApiKey secret");
-    if (keyId.length !== KEY_ID_LENGTH || secret.length !== SECRET_LENGTH) {
+    if (keyId.length !== AGENT_API_KEY_ID_LENGTH || secret.length !== AGENT_API_KEY_SECRET_LENGTH) {
       fail("invalid_api_key", 401, "Invalid ApiKey format");
     }
   } catch {

@@ -11,7 +11,12 @@
  */
 
 import crypto from "node:crypto";
-import { normalizeCrockfordToken } from "@expense-budget-tracker/agent-shared/crockford";
+import {
+  AGENT_API_KEY_ID_LENGTH,
+  AGENT_API_KEY_PREFIX,
+  AGENT_API_KEY_SECRET_LENGTH,
+  normalizeCrockfordToken,
+} from "@expense-budget-tracker/agent-shared/crockford";
 import { query } from "./db.js";
 
 export type AgentApiKeyAuthDependencies = Readonly<{
@@ -39,9 +44,9 @@ type AgentApiKeyRow = Readonly<{
 }>;
 
 const AUTHORIZATION_SCHEME = "ApiKey ";
-const KEY_PREFIX = "EBTA";
-const KEY_ID_LENGTH = 8;
-const SECRET_LENGTH = 26;
+// The credentials are uppercased before this comparison, so the shared
+// lowercase prefix is matched in its uppercase form.
+const KEY_PREFIX = AGENT_API_KEY_PREFIX.toUpperCase();
 
 const hashSecret = (secret: string): string =>
   crypto.createHash("sha256").update(secret).digest("hex");
@@ -74,7 +79,7 @@ export const validateAgentApiKeyAuthorization = async (
     return null;
   }
 
-  if (keyId.length !== KEY_ID_LENGTH || secret.length !== SECRET_LENGTH) {
+  if (keyId.length !== AGENT_API_KEY_ID_LENGTH || secret.length !== AGENT_API_KEY_SECRET_LENGTH) {
     return null;
   }
 

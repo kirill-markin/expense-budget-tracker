@@ -3,14 +3,24 @@
  *
  * Keys are user-owned long-lived connection credentials. They are not SQL API
  * keys and are stored separately from workspace-scoped machine tokens.
+ *
+ * This OTP issuer inserts into auth.agent_api_keys with no active-key cap and
+ * no advisory lock, unlike the web issuer in
+ * apps/web/src/server/agent/connections.ts, which serialises on a per-user
+ * advisory lock and enforces MAX_ACTIVE_API_KEY_CONNECTIONS. That is safe today
+ * only because AUTH_MODE=proxy_jwt registers no OTP route, so this path does
+ * not exist in that mode and the web cap covers every path the mode has. If the
+ * OTP route were ever registered under proxy_jwt, the cap would be bypassed
+ * entirely: apply the same lock and cap here before changing that gating.
  */
 import crypto from "node:crypto";
-import { createCrockfordToken } from "../crockford.js";
+import {
+  AGENT_API_KEY_ID_LENGTH,
+  AGENT_API_KEY_PREFIX,
+  AGENT_API_KEY_SECRET_LENGTH,
+  createCrockfordToken,
+} from "@expense-budget-tracker/agent-shared/crockford";
 import { withTransaction } from "../db.js";
-
-const KEY_ID_LENGTH = 8;
-const SECRET_LENGTH = 26;
-const KEY_PREFIX = "ebta";
 
 const hashSecret = (secret: string): string =>
   crypto.createHash("sha256").update(secret).digest("hex");
@@ -58,10 +68,10 @@ export const createAgentConnectionWithTransaction = async (
     throw new Error("Agent connection label must be 1-200 characters");
   }
 
-  const keyId = createCrockfordToken(KEY_ID_LENGTH);
-  const secret = createCrockfordToken(SECRET_LENGTH);
+  const keyId = createCrockfordToken(AGENT_API_KEY_ID_LENGTH);
+  const secret = createCrockfordToken(AGENT_API_KEY_SECRET_LENGTH);
   const keyHash = hashSecret(secret);
-  const apiKey = `${KEY_PREFIX}_${keyId}_${secret}`;
+  const apiKey = `${AGENT_API_KEY_PREFIX}_${keyId}_${secret}`;
 
   return runInTransaction(async (queryFn) => {
     await queryFn("SELECT auth.sync_authenticated_user($1, $2)", [userId, email]);
