@@ -209,6 +209,14 @@ services:
     environment:
       PORT: "8083"
       DATABASE_URL: postgresql://app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in the env file}@postgres:5432/tracker
+      # Discovery text only: this service still authenticates every caller
+      # with an ApiKey and resolves no identity from it. Without the mode,
+      # GET /v1/ advertises the email OTP onboarding that only cognito
+      # registers, and every route of it answers 404 here. PUBLIC_APP_BASE_URL
+      # is what that text points an agent at: in this mode a key exists only
+      # where a signed-in browser makes it, and GET /v1/ fails without it.
+      AUTH_MODE: proxy_jwt
+      PUBLIC_APP_BASE_URL: https://${APP_HOST:?set APP_HOST in the env file}
       PUBLIC_API_BASE_URL: https://${API_HOST:?set API_HOST in the env file}/v1
       PUBLIC_AUTH_BASE_URL: https://${AUTH_HOST:?set AUTH_HOST in the env file}
     depends_on:
