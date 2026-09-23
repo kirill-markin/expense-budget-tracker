@@ -1,5 +1,5 @@
 FROM node:24.21.0-alpine AS npm
-RUN npm install --global npm@12.0.2
+RUN npm install --global npm@12.1.0
 
 FROM npm AS deps
 
