@@ -20,14 +20,14 @@
   },
   "dependencies": {
     "@aws-crypto/client-node": "^5.0.2",
-    "@aws-sdk/client-secrets-manager": "^3.1138.0",
+    "@aws-sdk/client-secrets-manager": "^3.1143.0",
     "@expense-budget-tracker/agent-shared": "1.7.0",
-    "aws-cdk-lib": "^2.270.0",
+    "aws-cdk-lib": "^2.271.0",
     "constructs": "^10.8.1"
   },
   "devDependencies": {
-    "@types/node": "^24.13.6",
-    "aws-cdk": "^2.1142.0",
+    "@types/node": "^24.19.0",
+    "aws-cdk": "^2.1143.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
