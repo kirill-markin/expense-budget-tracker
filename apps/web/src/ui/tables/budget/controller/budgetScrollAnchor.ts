@@ -129,5 +129,10 @@ export const getBudgetScrollLeftDelta = (
     );
   }
   const delta = currentInlineOffset - anchorInlineOffset;
+  if (delta === 0) {
+    // No drift is no drift in either direction, so the mirrored zero stays the
+    // plain zero a caller compares against rather than a negative one.
+    return 0;
+  }
   return isRtl ? -delta : delta;
 };
