@@ -7,6 +7,7 @@ import {
   adjustCumulativeBeforeForPrependedRows,
   getBudgetRangeExtension,
   getTargetFillMonths,
+  type BudgetPlansMode,
   type BudgetRangeExtension,
 } from "@/ui/tables/budget/budgetTableLogic";
 import {
@@ -40,6 +41,24 @@ import {
 
 const BATCH_SIZE = 6;
 
+/**
+ * How a refresh of the whole loaded range settled.
+ *
+ * - "accepted": its rows are in state, so the loaded window is the fresh one.
+ * - "failed": the refresh ran out of its failure allowance, so the state still
+ *   holds the old rows.
+ * - "cancelled": no attempt reported a result the state could take, so the old
+ *   rows stay and nothing failed either. Produced when the table unmounted or
+ *   the refresh never started, when the mode this refresh publishes is no
+ *   longer the requested one, including before its first attempt, so the
+ *   switch queued behind it owns the window, and when newer requests kept
+ *   superseding its responses until its superseded allowance ran out.
+ */
+export type BudgetVisibleRangeRefreshOutcome =
+  | "accepted"
+  | "cancelled"
+  | "failed";
+
 type UseBudgetTableRangeStateParams = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
   displayMonthFrom: string;
@@ -51,8 +70,19 @@ type UseBudgetTableRangeStateParams = Readonly<{
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
   hasBusinessAccount: boolean;
+  /** Display mode the user asked for; a refresh fetches and publishes it. */
+  plansMode: BudgetPlansMode;
   refreshToken: string;
   onVisibleRangeRefreshStart: () => void;
+  /**
+   * Called exactly once per start, with how the refresh settled and the mode
+   * it ran for. Only "accepted" means rows fetched for that mode's plan window
+   * reached the state, so only then may the table start rendering it.
+   */
+  onVisibleRangeRefreshEnd: (
+    outcome: BudgetVisibleRangeRefreshOutcome,
+    refreshedPlansMode: BudgetPlansMode,
+  ) => void;
   loadBudgetRange: (
     monthFrom: string,
     monthTo: string,
@@ -315,8 +345,10 @@ export const useBudgetTableRangeState = ({
   monthEndBalancesByLiquidity,
   businessPersonalTransfers: initialBusinessPersonalTransfers,
   hasBusinessAccount: initialHasBusinessAccount,
+  plansMode,
   refreshToken,
   onVisibleRangeRefreshStart,
+  onVisibleRangeRefreshEnd,
   loadBudgetRange,
   onCategoryEdited,
 }: UseBudgetTableRangeStateParams): BudgetTableRangeState => {
@@ -333,6 +365,9 @@ export const useBudgetTableRangeState = ({
   const [businessPersonalTransfers, setBusinessPersonalTransfers] = useState<Readonly<Record<string, BusinessPersonalTransferCell>>>(initialBusinessPersonalTransfers);
   const [hasBusinessAccount, setHasBusinessAccount] = useState<boolean>(initialHasBusinessAccount);
   const [pendingSaves, setPendingSaves] = useState<number>(0);
+
+  const plansModeRef = useRef<BudgetPlansMode>(plansMode);
+  plansModeRef.current = plansMode;
 
   const isLoadingViewportRangeRef = useRef<boolean>(false);
   const viewportRetryTimerRef = useRef<number | null>(null);
@@ -467,29 +502,136 @@ export const useBudgetTableRangeState = ({
       });
   }, []);
 
-  const runVisibleRangeRefresh = useCallback(async (): Promise<void> => {
-    const lifecycleSignal = lifecycleAbortControllerRef.current?.signal;
-    if (lifecycleSignal === undefined || lifecycleSignal.aborted) {
-      return;
-    }
-    onVisibleRangeRefreshStart();
+  // A refresh carries the whole loaded range, including the plan window the
+  // caller is waiting for, so a single network blip must not settle it: it
+  // retries like the background viewport loads do before reporting a failure.
+  const attemptVisibleRangeRefresh = useCallback(async (
+    lifecycleSignal: AbortSignal,
+    refreshPlansMode: BudgetPlansMode,
+  ): Promise<BudgetVisibleRangeRefreshOutcome> => {
+    let completedAttemptCount = 0;
+    let supersededAttemptCount = 0;
+    while (true) {
+      if (lifecycleSignal.aborted) {
+        return "cancelled";
+      }
+      // The read resolves its plan window from the requested mode, which a
+      // retry gap is long enough to change. An attempt may therefore only run
+      // while that mode is still the one this refresh publishes, so the rows
+      // it lands always cover the published window; the switch that changed
+      // the mode has already queued its own refresh behind this one.
+      if (plansModeRef.current !== refreshPlansMode) {
+        return "cancelled";
+      }
+      const monthFrom = loadedFromRef.current;
+      const monthTo = loadedToRef.current;
+      let failure: unknown;
+      try {
+        const outcome = await loadGeneratedBudgetRange(
+          monthFrom,
+          monthTo,
+          lifecycleSignal,
+        );
+        if (lifecycleSignal.aborted) return "cancelled";
+        if (outcome.status === "accepted") {
+          const result = outcome.result;
+          const reconciledRows = reconcileAcceptedBaseRange(result, outcome.request);
+          applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setHasBusinessAccount, result, reconciledRows);
+          return "accepted";
+        }
+        // Nothing failed here: a newer request for the same months landed
+        // first, which adjustment recovery issues outside this serialized
+        // queue, so this response is simply not the freshest one any more.
+        // Losing that race must not spend the attempts a flaky network needs,
+        // so it runs on its own allowance and reports "cancelled" once that is
+        // spent: no failure happened, and the requested mode stays visibly out
+        // of sync until the next refresh or the user asks again.
+        supersededAttemptCount += 1;
+        const supersededRetryDelayMs = getBudgetBackgroundRetryDelayMs(
+          supersededAttemptCount,
+        );
+        const supersede = new Error(
+          `Budget visible range refresh ${monthFrom}..${monthTo} was superseded ${supersededAttemptCount} time(s)`,
+        );
+        if (supersededRetryDelayMs === null) {
+          logBudgetTableWarning(
+            `visible range refresh gave up after ${supersededAttemptCount} superseded responses`,
+            supersede,
+          );
+          return "cancelled";
+        }
+        logBudgetTableWarning(
+          `visible range refresh retrying in ${supersededRetryDelayMs}ms after a superseded response`,
+          supersede,
+        );
+        const supersededWaitOutcome = await waitForBudgetBackgroundRetry(
+          supersededRetryDelayMs,
+          lifecycleSignal,
+        );
+        if (supersededWaitOutcome === "cancelled") {
+          return "cancelled";
+        }
+        continue;
+      } catch (error) {
+        if (lifecycleSignal.aborted) return "cancelled";
+        failure = error;
+      }
 
-    try {
-      const outcome = await loadGeneratedBudgetRange(
-        loadedFromRef.current,
-        loadedToRef.current,
+      completedAttemptCount += 1;
+      const retryDelayMs = getBudgetBackgroundRetryDelayMs(
+        completedAttemptCount,
+      );
+      if (retryDelayMs === null) {
+        logBudgetTableError(
+          `visible range refresh exhausted ${completedAttemptCount} attempts`,
+          failure,
+        );
+        return "failed";
+      }
+      logBudgetTableWarning(
+        `visible range refresh retrying in ${retryDelayMs}ms after attempt ${completedAttemptCount}`,
+        failure,
+      );
+      const waitOutcome = await waitForBudgetBackgroundRetry(
+        retryDelayMs,
         lifecycleSignal,
       );
-      if (lifecycleSignal.aborted) return;
-      if (outcome.status === "superseded") return;
-      const result = outcome.result;
-      const reconciledRows = reconcileAcceptedBaseRange(result, outcome.request);
-      applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setHasBusinessAccount, result, reconciledRows);
-    } catch (error) {
-      if (lifecycleSignal.aborted) return;
-      logBudgetTableError("visible range refresh", error);
+      if (waitOutcome === "cancelled") {
+        return "cancelled";
+      }
     }
-  }, [loadGeneratedBudgetRange, onVisibleRangeRefreshStart, reconcileAcceptedBaseRange]);
+  }, [loadGeneratedBudgetRange, reconcileAcceptedBaseRange]);
+
+  const runVisibleRangeRefresh = useCallback(async (): Promise<void> => {
+    // The mode is decided once here and carried through every attempt, so one
+    // refresh fetches exactly one plan window and publishes that same window.
+    const refreshPlansMode = plansModeRef.current;
+    // Start and end stay paired on every path, including a throw out of the
+    // start callback, so no early return can leave the caller waiting on a
+    // refresh that never reports. A missing or aborted lifecycle means the
+    // table is unmounting: React runs the lifecycle cleanup and its
+    // replacement inside one commit, so a queued refresh cannot observe a
+    // mounted table without a live signal, and a remount re-enqueues this
+    // refresh through the refresh effect below.
+    let outcome: BudgetVisibleRangeRefreshOutcome = "cancelled";
+    try {
+      onVisibleRangeRefreshStart();
+      const lifecycleSignal = lifecycleAbortControllerRef.current?.signal;
+      if (lifecycleSignal === undefined || lifecycleSignal.aborted) {
+        return;
+      }
+      outcome = await attemptVisibleRangeRefresh(
+        lifecycleSignal,
+        refreshPlansMode,
+      );
+    } finally {
+      onVisibleRangeRefreshEnd(outcome, refreshPlansMode);
+    }
+  }, [
+    attemptVisibleRangeRefresh,
+    onVisibleRangeRefreshEnd,
+    onVisibleRangeRefreshStart,
+  ]);
 
   useEffect(() => {
     if (!initialRefreshHandledRef.current) {

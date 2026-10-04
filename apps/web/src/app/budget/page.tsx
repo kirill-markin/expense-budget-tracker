@@ -15,6 +15,13 @@ import { getUserSettings } from "@/server/userSettings";
 import { getDemoBudgetAdjustmentsForSession, parseDemoBudgetAdjustmentSessionCookie } from "@/server/demo/budgetAdjustments";
 import { getDemoBudgetGrid, getDemoFieldHints } from "@/server/demo/data";
 import { BudgetTable } from "@/ui/tables/budget/BudgetTable";
+import {
+  BUDGET_PLANS_MODE_COOKIE,
+  BUDGET_PLANS_MODE_QUERY_PARAM,
+  getBudgetPlanFrom,
+  resolveBudgetPlansMode,
+  type BudgetPlansMode,
+} from "@/ui/tables/budget/budgetTableLogic";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +29,29 @@ export const dynamic = "force-dynamic";
 const INITIAL_PAST_MONTHS = 6;
 const INITIAL_FUTURE_MONTHS = 12;
 
-async function BudgetData() {
+type BudgetSearchParams = Record<string, string | Array<string> | undefined>;
+
+type BudgetDashboardPageProps = Readonly<{
+  searchParams: Promise<BudgetSearchParams>;
+}>;
+
+/**
+ * Reads the display mode for the server render: the query parameter names it
+ * explicitly, the cookie carries the user's last choice. A repeated parameter
+ * is ignored, which leaves the cookie or the default in charge.
+ */
+const readBudgetPlansMode = async (
+  searchParams: BudgetSearchParams,
+): Promise<BudgetPlansMode> => {
+  const queryValue = searchParams[BUDGET_PLANS_MODE_QUERY_PARAM];
+  const cookieStore = await cookies();
+  return resolveBudgetPlansMode(
+    typeof queryValue === "string" ? queryValue : null,
+    cookieStore.get(BUDGET_PLANS_MODE_COOKIE)?.value ?? null,
+  );
+};
+
+async function BudgetData({ plansMode }: Readonly<{ plansMode: BudgetPlansMode }>) {
   const demo = await isDemoMode();
   // A route refresh regenerates this token so the grid and its client-side
   // overlays can refetch live data against the same refreshed snapshot.
@@ -30,6 +59,7 @@ async function BudgetData() {
   const currentMonth = getCurrentMonth();
   const monthFrom = offsetMonth(currentMonth, -INITIAL_PAST_MONTHS);
   const monthTo = offsetMonth(currentMonth, INITIAL_FUTURE_MONTHS);
+  const planFrom = getBudgetPlanFrom(plansMode, monthFrom, currentMonth);
 
   if (demo) {
     const cookieStore = await cookies();
@@ -50,7 +80,7 @@ async function BudgetData() {
     } = getDemoBudgetGrid(
       monthFrom,
       monthTo,
-      currentMonth,
+      planFrom,
       currentMonth,
       adjustments,
     );
@@ -67,6 +97,7 @@ async function BudgetData() {
         hasBusinessAccount={hasBusinessAccount}
         initialMonthFrom={monthFrom}
         initialMonthTo={monthTo}
+        initialPlansMode={plansMode}
         reportingCurrency="USD"
         hints={hints}
         refreshToken={refreshToken}
@@ -88,7 +119,7 @@ async function BudgetData() {
     businessPersonalTransfers,
     hasBusinessAccount,
   }, reportingCurrency, hints] = await Promise.all([
-    getBudgetGrid(userId, workspaceId, monthFrom, monthTo, currentMonth, currentMonth),
+    getBudgetGrid(userId, workspaceId, monthFrom, monthTo, planFrom, currentMonth),
     getReportCurrency(userId, workspaceId),
     getFieldHints(userId, workspaceId),
   ]);
@@ -105,6 +136,7 @@ async function BudgetData() {
       hasBusinessAccount={hasBusinessAccount}
       initialMonthFrom={monthFrom}
       initialMonthTo={monthTo}
+      initialPlansMode={plansMode}
       reportingCurrency={reportingCurrency}
       hints={hints}
       refreshToken={refreshToken}
@@ -112,8 +144,9 @@ async function BudgetData() {
   );
 }
 
-export default async function BudgetDashboardPage() {
+export default async function BudgetDashboardPage({ searchParams }: BudgetDashboardPageProps) {
   const demo = await isDemoMode();
+  const plansMode = await readBudgetPlansMode(await searchParams);
   let locale = DEFAULT_USER_SETTINGS.locale;
   if (demo) {
     locale = await getLocaleCookie();
@@ -136,7 +169,7 @@ export default async function BudgetDashboardPage() {
         <h1 className="title">{t(locale, "nav.budget")}</h1>
 
         <Suspense fallback={<LoadingIndicator />}>
-          <BudgetData />
+          <BudgetData plansMode={plansMode} />
         </Suspense>
       </section>
     </main>

@@ -11,6 +11,9 @@ import {
   computeFxAdjustments,
   lookupCell,
   zeroCellValue,
+  type BudgetPlansMode,
+  type CellValue,
+  type CumulativeBalance,
   type DirectionBlock,
 } from "@/ui/tables/budget/budgetTableLogic";
 import {
@@ -306,11 +309,11 @@ test("synthesized zero subtotals are indistinguishable from a missing direction"
   assert.deepEqual(
     computeCumulativeBalances(
       MONTHS, incomeSubtotals, spendSubtotals, undefined,
-      cumBefore, noTaintedMonths, CURRENT_MONTH, monthEndBalances,
+      cumBefore, noTaintedMonths, CURRENT_MONTH, monthEndBalances, "actuals",
     ),
     computeCumulativeBalances(
       MONTHS, undefined, undefined, undefined,
-      cumBefore, noTaintedMonths, CURRENT_MONTH, monthEndBalances,
+      cumBefore, noTaintedMonths, CURRENT_MONTH, monthEndBalances, "actuals",
     ),
   );
   assert.deepEqual(
@@ -319,10 +322,10 @@ test("synthesized zero subtotals are indistinguishable from a missing direction"
   );
   assert.deepEqual(
     computeCumulativeBalancesByLiquidity(
-      MONTHS, incomeSubtotals, spendSubtotals, undefined, CURRENT_MONTH, monthEndByLiquidity,
+      MONTHS, incomeSubtotals, spendSubtotals, undefined, CURRENT_MONTH, monthEndByLiquidity, "actuals",
     ),
     computeCumulativeBalancesByLiquidity(
-      MONTHS, undefined, undefined, undefined, CURRENT_MONTH, monthEndByLiquidity,
+      MONTHS, undefined, undefined, undefined, CURRENT_MONTH, monthEndByLiquidity, "actuals",
     ),
   );
 });
@@ -332,4 +335,105 @@ test("a synthesized direction adds only zeros to the filtered subtotals", (): vo
     computeAllowedSubtotals(directionBlock([], "spend"), MONTHS, new Set(["Coffee"])).get("2026-07"),
     zeroCellValue,
   );
+});
+
+const PAST_PLAN_MONTHS: ReadonlyArray<string> = ["2026-01", "2026-02", "2026-03"];
+const PAST_PLAN_CURRENT_MONTH = "2026-03";
+
+const cellValues = (
+  values: Readonly<Record<string, Readonly<{ planned: number; actual: number }>>>,
+): ReadonlyMap<string, CellValue> => new Map(
+  Object.entries(values).map(([month, value]): [string, CellValue] => [
+    month,
+    { plannedBase: value.planned, plannedModifier: 0, planned: value.planned, actual: value.actual },
+  ]),
+);
+
+const PAST_PLAN_INCOME = cellValues({
+  "2026-01": { planned: 200, actual: 150 },
+  "2026-02": { planned: 300, actual: 250 },
+  "2026-03": { planned: 400, actual: 100 },
+});
+
+const PAST_PLAN_SPEND = cellValues({
+  "2026-01": { planned: 50, actual: 40 },
+  "2026-02": { planned: 60, actual: 30 },
+  "2026-03": { planned: 70, actual: 20 },
+});
+
+const PAST_PLAN_MONTH_END_BALANCES: Readonly<Record<string, number>> = {
+  "2025-12": 1000,
+  "2026-01": 1100,
+  "2026-02": 1150,
+  "2026-03": 1200,
+};
+
+const PAST_PLAN_MONTH_END_BY_LIQUIDITY: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  "2025-12": { high: 500, medium: 200 },
+  "2026-01": { high: 600, medium: 200 },
+  "2026-02": { high: 650, medium: 180 },
+};
+
+const cumulativeBalancesForMode = (
+  plansMode: BudgetPlansMode,
+): ReadonlyMap<string, CumulativeBalance> => computeCumulativeBalances(
+  PAST_PLAN_MONTHS,
+  PAST_PLAN_INCOME,
+  PAST_PLAN_SPEND,
+  undefined,
+  { incomeActual: 0, spendActual: 0, transferActual: 0 },
+  new Set<string>(),
+  PAST_PLAN_CURRENT_MONTH,
+  PAST_PLAN_MONTH_END_BALANCES,
+  plansMode,
+);
+
+test("a past balance plan is anchored to the previous month-end in the all-plans mode", (): void => {
+  const balances = cumulativeBalancesForMode("all-plans");
+
+  // Each past plan is the month's opening balance plus its own planned delta,
+  // so it never carries the previous months' plan surplus forward.
+  assert.deepEqual(balances.get("2026-01"), { plan: 1150, actual: 1100, isTainted: false });
+  assert.deepEqual(balances.get("2026-02"), { plan: 1340, actual: 1150, isTainted: false });
+  assert.deepEqual(balances.get("2026-03"), { plan: 1480, actual: 1200, isTainted: false });
+});
+
+test("the default mode keeps past balances on their real month-end values", (): void => {
+  const balances = cumulativeBalancesForMode("actuals");
+
+  assert.deepEqual(balances.get("2026-01"), { plan: 1100, actual: 1100, isTainted: false });
+  assert.deepEqual(balances.get("2026-02"), { plan: 1150, actual: 1150, isTainted: false });
+  assert.deepEqual(balances.get("2026-03"), { plan: 1480, actual: 1200, isTainted: false });
+});
+
+test("past liquidity plans route the planned delta to high over the previous actual tiers", (): void => {
+  const projected = computeCumulativeBalancesByLiquidity(
+    PAST_PLAN_MONTHS,
+    PAST_PLAN_INCOME,
+    PAST_PLAN_SPEND,
+    undefined,
+    PAST_PLAN_CURRENT_MONTH,
+    PAST_PLAN_MONTH_END_BY_LIQUIDITY,
+    "all-plans",
+  );
+
+  assert.deepEqual(projected.get("2026-01"), { high: 650, medium: 200 });
+  assert.deepEqual(projected.get("2026-02"), { high: 840, medium: 200 });
+  assert.deepEqual(projected.get("2026-03"), { high: 980, medium: 180 });
+});
+
+test("the default mode keeps past liquidity tiers on their actual values", (): void => {
+  const projected = computeCumulativeBalancesByLiquidity(
+    PAST_PLAN_MONTHS,
+    PAST_PLAN_INCOME,
+    PAST_PLAN_SPEND,
+    undefined,
+    PAST_PLAN_CURRENT_MONTH,
+    PAST_PLAN_MONTH_END_BY_LIQUIDITY,
+    "actuals",
+  );
+
+  assert.deepEqual(projected.get("2026-01"), { high: 600, medium: 200 });
+  assert.deepEqual(projected.get("2026-02"), { high: 650, medium: 180 });
+  assert.deepEqual(projected.get("2026-03"), { high: 980, medium: 180 });
 });

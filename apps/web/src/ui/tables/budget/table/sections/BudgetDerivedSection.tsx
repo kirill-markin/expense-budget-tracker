@@ -10,6 +10,7 @@ import {
   formatAmount,
   formatSignedAmount,
   zeroCellValue,
+  type BudgetPlansMode,
   type CellValue,
   type ColumnEntry,
   type CumulativeBalance,
@@ -54,6 +55,7 @@ export type BudgetDerivedSectionProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  plansMode: BudgetPlansMode;
   loadedFrom: string;
   loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
@@ -80,6 +82,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
     columnSequence,
     currentMonth,
     currentYear,
+    plansMode,
     loadedFrom,
     loadedTo,
     yearComputed,
@@ -117,6 +120,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         columnSequence={columnSequence}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        plansMode={plansMode}
         loadedFrom={loadedFrom}
         loadedTo={loadedTo}
         yearComputed={yearComputed}
@@ -134,7 +138,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             {derivedVisibility.showData ? null : MASKED_CELL_PLACEHOLDER}
           </td>
         )}
-        renderCurrentYear={(year, yearData) => (
+        renderSplitYear={(year, yearData) => (
           <Fragment key={`total-${year}`}>
             <td className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
               {derivedVisibility.showData ? null : MASKED_CELL_PLACEHOLDER}
@@ -151,6 +155,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: 0,
             actual: fx ?? 0,
             isTainted: false,
@@ -169,6 +174,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           key: month,
           month,
           currentMonth,
+          plansMode,
           planned: 0,
           actual: 0,
           isTainted: false,
@@ -182,13 +188,14 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           formatter: formatFxAmount,
           onActualClick: null,
         })}
-        renderCurrentMonth={(month) => {
+        renderSplitMonth={(month) => {
           const fx = fxAdjustments.get(month);
           const fxClickable = canOpenDerivedDrillDown && fx !== undefined;
           return renderValueCells({
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: 0,
             actual: fx ?? 0,
             isTainted: false,
@@ -210,6 +217,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         columnSequence={columnSequence}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        plansMode={plansMode}
         loadedFrom={loadedFrom}
         loadedTo={loadedTo}
         yearComputed={yearComputed}
@@ -233,7 +241,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             </td>
           );
         }}
-        renderCurrentYear={(year, yearData) => {
+        renderSplitYear={(year, yearData) => {
           const yearTotalPlanStateClass = buildYearTotalStateClass(yearData.anyTainted, isNegativeValueOver(yearData.remainder.planned));
           const yearTotalActualStateClass = buildYearTotalStateClass(yearData.anyTainted, isNegativeValueOver(yearData.remainder.actual));
           return (
@@ -258,6 +266,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: remainderPlan,
             actual: remainderActual,
             isTainted,
@@ -283,6 +292,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: remainderPlan,
             actual: remainderActual,
             isTainted,
@@ -297,7 +307,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             onActualClick: null,
           });
         }}
-        renderCurrentMonth={(month) => {
+        renderSplitMonth={(month) => {
           const income = incomeSubtotals?.get(month) ?? zeroCellValue;
           const spend = spendSubtotals?.get(month) ?? zeroCellValue;
           const transfer = transferSubtotals?.get(month) ?? zeroCellValue;
@@ -308,6 +318,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: remainderPlan,
             actual: remainderActual,
             isTainted,
@@ -329,6 +340,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         columnSequence={columnSequence}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        plansMode={plansMode}
         loadedFrom={loadedFrom}
         loadedTo={loadedTo}
         yearComputed={yearComputed}
@@ -352,7 +364,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             </td>
           );
         }}
-        renderCurrentYear={(year, yearData) => {
+        renderSplitYear={(year, yearData) => {
           const yearTotalPlanStateClass = buildYearTotalStateClass(yearData.decemberBalance.isTainted, isNegativeValueOver(yearData.decemberBalance.plan));
           const yearTotalActualStateClass = buildYearTotalStateClass(yearData.decemberBalance.isTainted, isNegativeValueOver(yearData.decemberBalance.actual));
           return (
@@ -372,6 +384,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: balance.plan,
             actual: balance.actual,
             isTainted: balance.isTainted,
@@ -392,6 +405,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: balance.plan,
             actual: balance.actual,
             isTainted: balance.isTainted,
@@ -406,12 +420,13 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             onActualClick: null,
           });
         }}
-        renderCurrentMonth={(month) => {
+        renderSplitMonth={(month) => {
           const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: balance.plan,
             actual: balance.actual,
             isTainted: balance.isTainted,
@@ -435,6 +450,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           columnSequence={columnSequence}
           currentMonth={currentMonth}
           currentYear={currentYear}
+          plansMode={plansMode}
           loadedFrom={loadedFrom}
           loadedTo={loadedTo}
           yearComputed={yearComputed}
@@ -452,6 +468,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           columnSequence={columnSequence}
           currentMonth={currentMonth}
           currentYear={currentYear}
+          plansMode={plansMode}
           loadedFrom={loadedFrom}
           loadedTo={loadedTo}
           yearComputed={yearComputed}
@@ -477,7 +494,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               {derivedVisibility.showData ? null : MASKED_CELL_PLACEHOLDER}
             </td>
           )}
-          renderCurrentYear={(year, yearData) => {
+          renderSplitYear={(year, yearData) => {
             const cell = yearData.businessPersonalTransfer;
             const stateClass = buildYearTotalStateClass(cell.hasUnconvertible, false);
             return (
@@ -500,6 +517,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               key: month,
               month,
               currentMonth,
+              plansMode,
               planned: 0,
               actual: cell.actual,
               isTainted: cell.hasUnconvertible,
@@ -518,6 +536,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             key: month,
             month,
             currentMonth,
+            plansMode,
             planned: 0,
             actual: 0,
             isTainted: false,
@@ -531,12 +550,13 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             formatter: formatAmount,
             onActualClick: null,
           })}
-          renderCurrentMonth={(month) => {
+          renderSplitMonth={(month) => {
             const cell = businessPersonalTransfers[month] ?? ZERO_BUSINESS_PERSONAL_TRANSFER;
             return renderValueCells({
               key: month,
               month,
               currentMonth,
+              plansMode,
               planned: 0,
               actual: cell.actual,
               isTainted: cell.hasUnconvertible,

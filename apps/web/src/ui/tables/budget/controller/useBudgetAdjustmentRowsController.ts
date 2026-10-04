@@ -13,13 +13,25 @@ import {
   type BudgetAdjustmentRowsController,
   type BudgetAdjustmentRowsControllerRuntime,
 } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
+import {
+  getBudgetPlanFrom,
+  type BudgetPlansMode,
+} from "@/ui/tables/budget/budgetTableLogic";
 
 const AUTOSAVE_DELAY_MS = 600;
 
 type UseBudgetAdjustmentRowsControllerParams = Readonly<{
   adjustments: ReadonlyArray<BudgetAdjustment>;
+  /** First month whose adjustments the editor may change. */
   planFrom: string;
   actualTo: string;
+  currentMonth: string;
+  /**
+   * Mode whose plan window every budget-grid range read must cover. The
+   * caller resolves it from the requested and the loaded mode, so a read that
+   * lands while a switch is pending is valid for both layouts.
+   */
+  rangePlansMode: BudgetPlansMode;
   refreshToken: string;
   invalidateYears: (years: ReadonlySet<string>) => void;
 }>;
@@ -28,18 +40,22 @@ export const useBudgetAdjustmentRowsController = ({
   adjustments,
   planFrom,
   actualTo,
+  currentMonth,
+  rangePlansMode,
   refreshToken,
   invalidateYears,
 }: UseBudgetAdjustmentRowsControllerParams): BudgetAdjustmentRowsController => {
   const currentRequestRef = useRef({
-    planFrom,
     actualTo,
+    currentMonth,
+    rangePlansMode,
     refreshToken,
     invalidateYears,
   });
   currentRequestRef.current = {
-    planFrom,
     actualTo,
+    currentMonth,
+    rangePlansMode,
     refreshToken,
     invalidateYears,
   };
@@ -56,10 +72,12 @@ export const useBudgetAdjustmentRowsController = ({
       deleteAdjustment: (adjustmentId) => deleteBudgetAdjustment(adjustmentId),
       fetchRange: (monthFrom, monthTo, signal) => {
         const current = currentRequestRef.current;
+        // Every budget-grid read of this table goes through here, so the plan
+        // window follows the resolved range mode on all of them.
         return fetchBudgetRange(
           monthFrom,
           monthTo,
-          current.planFrom,
+          getBudgetPlanFrom(current.rangePlansMode, monthFrom, current.currentMonth),
           current.actualTo,
           current.refreshToken,
           signal,

@@ -3,9 +3,11 @@ import { Fragment, type ReactElement } from "react";
 import { MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import {
-  isFutureMonth,
   isBudgetMonthLoaded,
   isPastMonth,
+  isSplitBudgetMonth,
+  isSplitBudgetYear,
+  type BudgetPlansMode,
   type ColumnEntry,
 } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
@@ -25,6 +27,7 @@ export type RenderValueCellsParams = Readonly<{
   key: string;
   month: string;
   currentMonth: string;
+  plansMode: BudgetPlansMode;
   planned: number;
   actual: number;
   isTainted: boolean;
@@ -43,17 +46,21 @@ export type RenderColumnCellsParams = Readonly<{
   column: ColumnEntry;
   currentMonth: string;
   currentYear: string;
+  plansMode: BudgetPlansMode;
   loadedFrom: string;
   loadedTo: string;
   isYearLoading: boolean;
-  renderYearLoading: (isCurrentYear: boolean) => ReactElement;
+  /** `isSplitYear` tells the loading placeholder how many columns to fill. */
+  renderYearLoading: (isSplitYear: boolean) => ReactElement;
   renderMonthLoading: (month: string) => ReactElement;
   renderPastYear: () => ReactElement;
   renderFutureYear: () => ReactElement;
-  renderCurrentYear: () => ReactElement;
+  /** Plan and Actual year columns: the current year, and past years in "all-plans" mode. */
+  renderSplitYear: () => ReactElement;
   renderPastMonth: () => ReactElement;
   renderFutureMonth: () => ReactElement;
-  renderCurrentMonth: () => ReactElement;
+  /** Plan and Actual month columns; only the real current month is emphasized. */
+  renderSplitMonth: (isCurrentMonth: boolean) => ReactElement;
 }>;
 
 export const buildYearTotalStateClass = (isError: boolean, isOver: boolean): string => {
@@ -79,6 +86,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     key,
     month,
     currentMonth,
+    plansMode,
     planned,
     actual,
     isTainted,
@@ -99,20 +107,20 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
   const visibleActualValueClass = isMasked ? "" : actualValueClass;
   const visibleActualClick = isMasked ? null : onActualClick;
 
-  if (isPastMonth(month, currentMonth)) {
-    const clickableClass = visibleActualClick !== null ? ` ${styles.cellClickable}` : "";
-    return (
-      <td
-        key={key}
-        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${clickableClass} ${visibleActualValueClass}`}
-        onClick={visibleActualClick ?? undefined}
-      >
-        {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
-      </td>
-    );
-  }
+  if (!isSplitBudgetMonth(month, currentMonth, plansMode)) {
+    if (isPastMonth(month, currentMonth)) {
+      const pastClickableClass = visibleActualClick !== null ? ` ${styles.cellClickable}` : "";
+      return (
+        <td
+          key={key}
+          className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${pastClickableClass} ${visibleActualValueClass}`}
+          onClick={visibleActualClick ?? undefined}
+        >
+          {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
+        </td>
+      );
+    }
 
-  if (isFutureMonth(month, currentMonth)) {
     return (
       <td
         key={key}
@@ -124,15 +132,18 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
   }
 
   const clickableClass = visibleActualClick !== null ? ` ${styles.cellClickable}` : "";
+  // Only the real current month carries the emphasis box.
+  const planEmphasisClass = month === currentMonth ? ` ${styles.currentMonthPlan}` : "";
+  const actualEmphasisClass = month === currentMonth ? ` ${styles.currentMonthActual}` : "";
   return (
     <Fragment key={key}>
       <td
-        className={`${styles.cell} ${styles.currentMonthPlan}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
+        className={`${styles.cell}${planEmphasisClass}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
       >
         {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
       </td>
       <td
-        className={`${styles.cell} ${styles.currentMonthActual}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass} ${visibleActualValueClass}`}
+        className={`${styles.cell}${actualEmphasisClass}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass} ${visibleActualValueClass}`}
         onClick={visibleActualClick ?? undefined}
       >
         {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
@@ -141,8 +152,8 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
   );
 };
 
-export const renderSubtotalYearLoadingCells = (year: string, isCurrentYear: boolean): ReactElement => {
-  if (isCurrentYear) {
+export const renderSubtotalYearLoadingCells = (year: string, isSplitYear: boolean): ReactElement => {
+  if (isSplitYear) {
     return (
       <Fragment key={`total-${year}`}>
         <td className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal} ${styles.yearLoading}`}>&hellip;</td>
@@ -158,8 +169,8 @@ export const renderSubtotalYearLoadingCells = (year: string, isCurrentYear: bool
   );
 };
 
-export const renderDerivedYearLoadingCells = (year: string, isCurrentYear: boolean): ReactElement => {
-  if (isCurrentYear) {
+export const renderDerivedYearLoadingCells = (year: string, isSplitYear: boolean): ReactElement => {
+  if (isSplitYear) {
     return (
       <Fragment key={`total-${year}`}>
         <td className={`${styles.cell} ${styles.yearTotal} ${styles.yearLoading}`}>&hellip;</td>
@@ -177,10 +188,10 @@ export const renderDerivedYearLoadingCells = (year: string, isCurrentYear: boole
 
 export const renderMaskedYearCells = (
   year: string,
-  isCurrentYear: boolean,
+  isSplitYear: boolean,
   maskClass: string,
 ): ReactElement => {
-  if (isCurrentYear) {
+  if (isSplitYear) {
     return (
       <Fragment key={`total-${year}`}>
         <td className={`${styles.cell} ${styles.yearTotal}${maskClass}`}>{MASKED_CELL_PLACEHOLDER}</td>
@@ -200,8 +211,9 @@ export const renderUnloadedMonthCells = (
   month: string,
   currentMonth: string,
   cellClassName: string,
+  plansMode: BudgetPlansMode,
 ): ReactElement => {
-  if (month !== currentMonth) {
+  if (!isSplitBudgetMonth(month, currentMonth, plansMode)) {
     return (
       <td key={month} className={`${cellClassName} ${styles.monthLoading}`}>
         &hellip;
@@ -209,12 +221,15 @@ export const renderUnloadedMonthCells = (
     );
   }
 
+  // Only the real current month carries the emphasis box.
+  const planEmphasisClass = month === currentMonth ? ` ${styles.currentMonthPlan}` : "";
+  const actualEmphasisClass = month === currentMonth ? ` ${styles.currentMonthActual}` : "";
   return (
     <Fragment key={month}>
-      <td className={`${cellClassName} ${styles.currentMonthPlan} ${styles.monthLoading}`}>
+      <td className={`${cellClassName}${planEmphasisClass} ${styles.monthLoading}`}>
         &hellip;
       </td>
-      <td className={`${cellClassName} ${styles.currentMonthActual} ${styles.monthLoading}`}>
+      <td className={`${cellClassName}${actualEmphasisClass} ${styles.monthLoading}`}>
         &hellip;
       </td>
     </Fragment>
@@ -226,6 +241,7 @@ export const renderColumnCells = (params: RenderColumnCellsParams): ReactElement
     column,
     currentMonth,
     currentYear,
+    plansMode,
     loadedFrom,
     loadedTo,
     isYearLoading,
@@ -233,34 +249,34 @@ export const renderColumnCells = (params: RenderColumnCellsParams): ReactElement
     renderMonthLoading,
     renderPastYear,
     renderFutureYear,
-    renderCurrentYear,
+    renderSplitYear,
     renderPastMonth,
     renderFutureMonth,
-    renderCurrentMonth,
+    renderSplitMonth,
   } = params;
 
   if (column.kind === "year-total") {
     if (isYearLoading) {
-      return renderYearLoading(column.year === currentYear);
+      return renderYearLoading(isSplitBudgetYear(column.year, currentYear, plansMode));
+    }
+    if (isSplitBudgetYear(column.year, currentYear, plansMode)) {
+      return renderSplitYear();
     }
     if (column.year < currentYear) {
       return renderPastYear();
     }
-    if (column.year > currentYear) {
-      return renderFutureYear();
-    }
-    return renderCurrentYear();
+    return renderFutureYear();
   }
 
   if (!isBudgetMonthLoaded(column.month, loadedFrom, loadedTo)) {
     return renderMonthLoading(column.month);
   }
 
+  if (isSplitBudgetMonth(column.month, currentMonth, plansMode)) {
+    return renderSplitMonth(column.month === currentMonth);
+  }
   if (isPastMonth(column.month, currentMonth)) {
     return renderPastMonth();
   }
-  if (isFutureMonth(column.month, currentMonth)) {
-    return renderFutureMonth();
-  }
-  return renderCurrentMonth();
+  return renderFutureMonth();
 };

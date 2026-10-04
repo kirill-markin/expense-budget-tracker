@@ -155,6 +155,12 @@ export type BudgetPlanCellProps = Readonly<{
   taintedClass: string;
   isPlanOver: boolean;
   cmClass: string;
+  /**
+   * Whether this cell may offer filling the rest of its calendar year. The
+   * caller denies it for elapsed months, whose fill would overwrite the plans
+   * of every later month of that year.
+   */
+  canFillRestOfYear: boolean;
   budgetAdjustments: BudgetAdjustmentRowsController;
   onPlanSave: (
     month: string,
@@ -208,6 +214,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     taintedClass,
     isPlanOver,
     cmClass,
+    canFillRestOfYear,
     budgetAdjustments,
     onPlanSave,
     onBaseMutationIssued,
@@ -1104,7 +1111,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     numberFormat,
   );
   const computedTotal = parsedBase.ok ? parsedBase.value + adjustmentTotal : 0;
-  const canFill = !isDecember(month);
+  const canFill = canFillRestOfYear && !isDecember(month);
   const modifierIconClass = direction === "income"
     ? (plannedModifier > 0 ? styles.iconGood : styles.iconBad)
     : (plannedModifier > 0 ? styles.iconBadUp : styles.iconGoodDown);

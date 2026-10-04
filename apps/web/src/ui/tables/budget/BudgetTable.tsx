@@ -2,7 +2,9 @@
 
 import { Fragment, type CSSProperties, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import { cn } from "@/lib/cn";
 import alertStyles from "@/ui/Alert.module.css";
+import controlStyles from "@/ui/Controls.module.css";
 import { useCopyToast } from "@/ui/hooks/useCopyToast";
 import { useFormat } from "@/ui/FormatProvider";
 import { FxBreakdownPanel } from "@/ui/tables/fx-breakdown/FxBreakdownPanel";
@@ -35,6 +37,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
   const valueColumns = buildBudgetValueColumns(
     controller.columnSequence,
     controller.currentMonth,
+    controller.plansMode,
   );
   const tableGeometryStyle: BudgetTableGeometryStyle = {
     "--budget-value-column-width": `${BUDGET_VALUE_COLUMN_WIDTH_PX}px`,
@@ -65,9 +68,79 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
         <button className={styles.todayButton} type="button" onClick={controller.scrollToCurrentMonth}>
           {t("common.today")}
         </button>
-        {controller.pendingSaves > 0 && (
+        {/*
+          The pressed segment follows the mode on screen, never the requested
+          one: until the requested mode's rows land it is only pending, which
+          its own treatment says instead of claiming a layout nobody sees.
+        */}
+        <div
+          className={controlStyles.segmented}
+          aria-busy={controller.isPlansModeRefreshing}
+        >
+          <button
+            className={cn(
+              controlStyles.segment,
+              controller.plansMode === "actuals" ? controlStyles.segmentActive : "",
+              controller.isPlansModePending && controller.requestedPlansMode === "actuals"
+                ? controlStyles.segmentPending
+                : "",
+            )}
+            type="button"
+            data-testid="budget-plans-mode-actuals"
+            aria-pressed={controller.plansMode === "actuals"}
+            disabled={controller.isPlansModeRefreshing}
+            onClick={() => controller.setPlansMode("actuals")}
+          >
+            {t("budget.plansModeActuals")}
+          </button>
+          <button
+            className={cn(
+              controlStyles.segment,
+              controller.plansMode === "all-plans" ? controlStyles.segmentActive : "",
+              controller.isPlansModePending && controller.requestedPlansMode === "all-plans"
+                ? controlStyles.segmentPending
+                : "",
+            )}
+            type="button"
+            data-testid="budget-plans-mode-all"
+            aria-pressed={controller.plansMode === "all-plans"}
+            disabled={controller.isPlansModeRefreshing}
+            onClick={() => controller.setPlansMode("all-plans")}
+          >
+            {t("budget.plansModeAll")}
+          </button>
+        </div>
+        {/*
+          Outstanding writes and a stuck display mode are independent states,
+          so they are siblings in this flex row: a save in flight keeps its
+          indicator, which the page's unload guard relies on, whatever the mode
+          switcher is doing. A mode that is still on its way is part of the
+          same "syncing" signal; one that is stuck is not syncing at all and
+          says so next to its retry.
+        */}
+        {(
+          controller.pendingSaves > 0
+          || (controller.isPlansModePending && !controller.isPlansModeStuck)
+        ) && (
           <span className={styles.syncStatus} data-testid="budget-sync-status">
             {t("common.syncing")}
+          </span>
+        )}
+        {controller.isPlansModeStuck && (
+          <span
+            className={styles.plansModeStuck}
+            role="status"
+            data-testid="budget-plans-mode-stuck"
+          >
+            <span>{t("budget.plansModeNotLoaded")}</span>
+            <button
+              className={styles.todayButton}
+              type="button"
+              data-testid="budget-plans-mode-retry"
+              onClick={controller.retryPlansModeSwitch}
+            >
+              {t("budget.plansModeRetry")}
+            </button>
           </span>
         )}
       </div>
@@ -87,6 +160,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
             columnSequence={controller.columnSequence}
             currentMonth={controller.currentMonth}
             currentYear={controller.currentYear}
+            plansMode={controller.plansMode}
           />
           <tbody>
             {controller.blocks.map((section) => (
@@ -101,6 +175,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
                   columnSequence={controller.columnSequence}
                   currentMonth={controller.currentMonth}
                   currentYear={controller.currentYear}
+                  plansMode={controller.plansMode}
                   loadedFrom={controller.loadedFrom}
                   loadedTo={controller.loadedTo}
                   yearComputed={controller.yearComputed}
@@ -131,6 +206,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
               columnSequence={controller.columnSequence}
               currentMonth={controller.currentMonth}
               currentYear={controller.currentYear}
+              plansMode={controller.plansMode}
               loadedFrom={controller.loadedFrom}
               loadedTo={controller.loadedTo}
               yearComputed={controller.yearComputed}

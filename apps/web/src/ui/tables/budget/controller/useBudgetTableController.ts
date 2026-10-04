@@ -8,6 +8,7 @@ import type { BudgetAdjustment } from "@/server/budget/budgetAdjustments";
 import type { BudgetRow, BusinessPersonalTransferCell, ConversionWarning, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 import { getCurrentMonth, getYear } from "@/lib/monthUtils";
 import type {
+  BudgetPlansMode,
   CellValue,
   ColumnEntry,
   CumulativeBalance,
@@ -16,7 +17,11 @@ import type {
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import type { BudgetGridSection } from "@/ui/tables/budget/controller/useBudgetTableDerivedState";
 import { getBudgetCategoryKey, useBudgetTableDerivedState } from "@/ui/tables/budget/controller/useBudgetTableDerivedState";
-import { useBudgetTableRangeState } from "@/ui/tables/budget/controller/useBudgetTableRangeState";
+import { useBudgetPlansMode } from "@/ui/tables/budget/controller/useBudgetPlansMode";
+import {
+  useBudgetTableRangeState,
+  type BudgetVisibleRangeRefreshOutcome,
+} from "@/ui/tables/budget/controller/useBudgetTableRangeState";
 import { useBudgetTableViewport } from "@/ui/tables/budget/controller/useBudgetTableViewport";
 import { useBudgetTableYearTotals } from "@/ui/tables/budget/controller/useBudgetTableYearTotals";
 import { useBudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/useBudgetAdjustmentRowsController";
@@ -25,7 +30,13 @@ import type {
   BudgetAdjustmentRowsController,
 } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import type { BudgetBaseLocalAcknowledgementByCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
-import { getBudgetDisplayRange } from "@/ui/tables/budget/budgetTableLogic";
+import {
+  getBudgetDisplayRange,
+  getBudgetPlansModeSwitchState,
+  getBudgetRangeFetchPlansMode,
+  getBudgetRefreshToken,
+  getSettledBudgetPlansMode,
+} from "@/ui/tables/budget/budgetTableLogic";
 
 export type BudgetTableProps = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
@@ -38,6 +49,7 @@ export type BudgetTableProps = Readonly<{
   hasBusinessAccount: boolean;
   initialMonthFrom: string;
   initialMonthTo: string;
+  initialPlansMode: BudgetPlansMode;
   reportingCurrency: string;
   hints: FieldHints;
   refreshToken: string;
@@ -48,6 +60,31 @@ export type BudgetTableController = Readonly<{
   localBaseAcknowledgementByCell: BudgetBaseLocalAcknowledgementByCell;
   currentMonth: string;
   currentYear: string;
+  /**
+   * Mode the rows in state were fetched for, and therefore the one the whole
+   * table renders: columns, split months and years, plans, balances and
+   * liquidity rows all follow it.
+   */
+  plansMode: BudgetPlansMode;
+  /** Mode the user asked for; it drives the fetch and the switcher. */
+  requestedPlansMode: BudgetPlansMode;
+  /**
+   * The requested mode is not the one on screen: its refresh is queued, in
+   * flight, or has settled without landing. The switcher marks the requested
+   * segment as pending while this holds, so the segment it shows as selected
+   * always matches the layout the user is looking at.
+   */
+  isPlansModePending: boolean;
+  /** A refresh of the loaded range is in flight. */
+  isPlansModeRefreshing: boolean;
+  /**
+   * The requested mode is pending with no refresh running, so nothing is going
+   * to bring it on screen on its own and the switcher offers the retry. Purely
+   * derived from the two signals above, which is what keeps it from outliving
+   * the request it describes.
+   */
+  isPlansModeStuck: boolean;
+  /** First loaded month the value cells can render. */
   loadedFrom: string;
   loadedTo: string;
   months: ReadonlyArray<string>;
@@ -76,6 +113,12 @@ export type BudgetTableController = Readonly<{
   fxBreakdownMonth: string | null;
   mebByLiq: Readonly<Record<string, Readonly<Record<string, number>>>>;
   scrollToCurrentMonth: () => void;
+  setPlansMode: (plansMode: BudgetPlansMode) => void;
+  /**
+   * Refreshes the loaded range again, which is exactly the run a stuck request
+   * is waiting for; offered only while `isPlansModeStuck` holds.
+   */
+  retryPlansModeSwitch: () => void;
   addCategory: (direction: string, category: string) => void;
   onSyncStart: () => void;
   onSyncEnd: () => void;
@@ -127,6 +170,23 @@ export const useBudgetTableController = (
 
   const currentMonth = useMemo(() => getCurrentMonth(), []);
   const currentYear = useMemo(() => getYear(currentMonth), [currentMonth]);
+  const { plansMode, setPlansMode } = useBudgetPlansMode(props.initialPlansMode);
+  const plansModeRef = useRef<BudgetPlansMode>(plansMode);
+  plansModeRef.current = plansMode;
+  // The mode the rows in state were fetched for, and the single source of
+  // truth for everything the table renders. A switch widens or narrows the
+  // plan window, so every loaded month and year total refetches through the
+  // refresh token below; the layout follows only once those rows land, which
+  // leaves a failed switch showing the previous, fully loaded view.
+  const [loadedPlansMode, setLoadedPlansMode] = useState<BudgetPlansMode>(
+    props.initialPlansMode,
+  );
+  const loadedPlansModeRef = useRef<BudgetPlansMode>(loadedPlansMode);
+  loadedPlansModeRef.current = loadedPlansMode;
+  const [isRangeRefreshing, setIsRangeRefreshing] = useState<boolean>(false);
+  // Switching the mode has to refetch every loaded range and year total, which
+  // is exactly what a new refresh token does.
+  const refreshToken = getBudgetRefreshToken(props.refreshToken, plansMode);
   const displayRange = useMemo(() => getBudgetDisplayRange(currentMonth), [currentMonth]);
   const [observedYearTotals, setObservedYearTotals] = useState<ReadonlySet<string>>(new Set());
   const resetYearTotalsRef = useRef<() => void>(() => undefined);
@@ -134,7 +194,26 @@ export const useBudgetTableController = (
     () => undefined,
   );
   const handleVisibleRangeRefreshStart = useCallback((): void => {
+    setIsRangeRefreshing(true);
     resetYearTotalsRef.current();
+  }, []);
+  // Only rows that actually landed may change the rendered mode. A failed or
+  // cancelled refresh leaves the previous, fully loaded view on screen, so no
+  // column ever reads a plan out of rows nobody fetched it for; the requested
+  // mode then stays pending with nothing running, which is the stuck state the
+  // switcher derives its retry from.
+  const handleVisibleRangeRefreshEnd = useCallback((
+    outcome: BudgetVisibleRangeRefreshOutcome,
+    refreshedPlansMode: BudgetPlansMode,
+  ): void => {
+    setIsRangeRefreshing(false);
+    setLoadedPlansMode((loadedMode): BudgetPlansMode => (
+      getSettledBudgetPlansMode(
+        loadedMode,
+        refreshedPlansMode,
+        outcome === "accepted",
+      )
+    ));
   }, []);
 
   const invalidateAdjustmentYears = useCallback((years: ReadonlySet<string>): void => {
@@ -174,9 +253,12 @@ export const useBudgetTableController = (
 
   const adjustmentsController = useBudgetAdjustmentRowsController({
     adjustments: props.adjustments,
+    // First month that accepts adjustment edits; the API rejects earlier ones.
     planFrom: currentMonth,
     actualTo: currentMonth,
-    refreshToken: props.refreshToken,
+    currentMonth,
+    rangePlansMode: getBudgetRangeFetchPlansMode(plansMode, loadedPlansMode),
+    refreshToken,
     invalidateYears: invalidateAdjustmentYears,
   });
 
@@ -208,8 +290,10 @@ export const useBudgetTableController = (
     monthEndBalancesByLiquidity: props.monthEndBalancesByLiquidity,
     businessPersonalTransfers: props.businessPersonalTransfers,
     hasBusinessAccount: props.hasBusinessAccount,
-    refreshToken: props.refreshToken,
+    plansMode,
+    refreshToken,
     onVisibleRangeRefreshStart: handleVisibleRangeRefreshStart,
+    onVisibleRangeRefreshEnd: handleVisibleRangeRefreshEnd,
     loadBudgetRange: budgetAdjustments.loadRange,
     onCategoryEdited: markCategoryEdited,
   });
@@ -217,8 +301,9 @@ export const useBudgetTableController = (
   const { yearComputed, invalidateYearTotals, resetYearTotals } = useBudgetTableYearTotals({
     observedYears: observedYearTotals,
     currentMonth,
+    plansMode: loadedPlansMode,
     effectiveAllowlist,
-    refreshToken: props.refreshToken,
+    refreshToken,
   });
   resetYearTotalsRef.current = resetYearTotals;
   invalidateYearTotalsRef.current = invalidateYearTotals;
@@ -251,10 +336,32 @@ export const useBudgetTableController = (
 
   const viewportState = useBudgetTableViewport({
     currentMonth,
+    // The value columns are re-widthed by the mode that renders, so the
+    // scroll anchor is restored when the loaded rows change the layout.
+    plansMode: loadedPlansMode,
     pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
     onMonthsObserved: rangeState.requestVisibleMonths,
     onYearTotalsObserved: handleYearTotalsObserved,
   });
+
+  const refreshLoadedRange = rangeState.refreshLoadedRange;
+  const requestPlansMode = useCallback((
+    nextPlansMode: BudgetPlansMode,
+  ): void => {
+    if (
+      nextPlansMode === plansModeRef.current
+      && nextPlansMode === loadedPlansModeRef.current
+    ) {
+      return;
+    }
+    if (nextPlansMode !== plansModeRef.current) {
+      setPlansMode(nextPlansMode);
+      return;
+    }
+    // The mode is already requested but its rows never landed, so asking for
+    // it again means running its refresh again.
+    refreshLoadedRange();
+  }, [refreshLoadedRange, setPlansMode]);
 
   const derivedState = useBudgetTableDerivedState({
     allRows: rowsWithAdjustments,
@@ -266,6 +373,7 @@ export const useBudgetTableController = (
     meb: rangeState.meb,
     mebByLiq: rangeState.mebByLiq,
     currentMonth,
+    plansMode: loadedPlansMode,
     effectiveAllowlist,
     adjustmentRows: budgetAdjustments.rows,
     sessionEditedCategoryKeys,
@@ -296,12 +404,25 @@ export const useBudgetTableController = (
     setFxBreakdownMonth(null);
   }, []);
 
+  // Everything the switcher says about the requested mode is read off the
+  // current render, so no notice can survive the request it is about.
+  const plansModeSwitchState = getBudgetPlansModeSwitchState(
+    plansMode,
+    loadedPlansMode,
+    isRangeRefreshing,
+  );
+
   return {
     effectiveAllowlist,
     localBaseAcknowledgementByCell:
       rangeState.localBaseAcknowledgementByCell,
     currentMonth,
     currentYear,
+    plansMode: loadedPlansMode,
+    requestedPlansMode: plansMode,
+    isPlansModePending: plansModeSwitchState !== "settled",
+    isPlansModeRefreshing: isRangeRefreshing,
+    isPlansModeStuck: plansModeSwitchState === "stuck",
     loadedFrom: rangeState.loadedFrom,
     loadedTo: rangeState.loadedTo,
     months: derivedState.months,
@@ -330,6 +451,8 @@ export const useBudgetTableController = (
     fxBreakdownMonth,
     mebByLiq: rangeState.mebByLiq,
     scrollToCurrentMonth: viewportState.scrollToCurrentMonth,
+    setPlansMode: requestPlansMode,
+    retryPlansModeSwitch: refreshLoadedRange,
     addCategory,
     onSyncStart: rangeState.onSyncStart,
     onSyncEnd: rangeState.onSyncEnd,

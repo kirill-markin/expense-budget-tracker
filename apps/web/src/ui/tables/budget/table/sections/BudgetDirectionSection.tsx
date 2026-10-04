@@ -6,6 +6,7 @@ import type { NumberFormat } from "@/lib/locale";
 import type { BudgetBaseLocalAcknowledgementByCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import {
   buildBudgetValueColumns,
+  type BudgetPlansMode,
   type CellValue,
   type ColumnEntry,
   type DirectionBlock,
@@ -29,6 +30,7 @@ export type BudgetDirectionSectionProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  plansMode: BudgetPlansMode;
   loadedFrom: string;
   loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
@@ -84,6 +86,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
     columnSequence,
     currentMonth,
     currentYear,
+    plansMode,
     loadedFrom,
     loadedTo,
     yearComputed,
@@ -118,6 +121,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
         columnSequence={columnSequence}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        plansMode={plansMode}
         loadedFrom={loadedFrom}
         loadedTo={loadedTo}
         yearComputed={yearComputed}
@@ -143,6 +147,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
             columnSequence={columnSequence}
             currentMonth={currentMonth}
             currentYear={currentYear}
+            plansMode={plansMode}
             loadedFrom={loadedFrom}
             loadedTo={loadedTo}
             yearComputed={yearComputed}
@@ -163,7 +168,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
       {canAddCategory && (
         <AddCategoryRow
           direction={block.direction}
-          valueColumnCount={buildBudgetValueColumns(columnSequence, currentMonth).length}
+          valueColumnCount={buildBudgetValueColumns(columnSequence, currentMonth, plansMode).length}
           onAddCategory={onAddCategory}
         />
       )}

@@ -1,4 +1,9 @@
 import { getYear, offsetMonth } from "@/lib/monthUtils";
+import {
+  isSplitBudgetMonth,
+  isSplitBudgetYear,
+  type BudgetPlansMode,
+} from "@/ui/tables/budget/model/plansMode";
 
 export type ColumnEntry = Readonly<
   | { kind: "month"; month: string }
@@ -105,13 +110,14 @@ export const buildColumnSequence = (months: ReadonlyArray<string>): ReadonlyArra
 export const buildBudgetValueColumns = (
   columnSequence: ReadonlyArray<ColumnEntry>,
   currentMonth: string,
+  plansMode: BudgetPlansMode,
 ): ReadonlyArray<BudgetValueColumn> => {
   const currentYear = getYear(currentMonth);
   const result: Array<BudgetValueColumn> = [];
 
   for (const column of columnSequence) {
     if (column.kind === "month") {
-      if (column.month === currentMonth) {
+      if (isSplitBudgetMonth(column.month, currentMonth, plansMode)) {
         result.push(
           { key: `${column.month}-plan` },
           { key: `${column.month}-actual` },
@@ -122,7 +128,7 @@ export const buildBudgetValueColumns = (
       continue;
     }
 
-    if (column.year === currentYear) {
+    if (isSplitBudgetYear(column.year, currentYear, plansMode)) {
       result.push(
         { key: `total-${column.year}-plan` },
         { key: `total-${column.year}-actual` },
@@ -152,6 +158,19 @@ export const monthToDateTo = (month: string): string => {
   const [y, m] = month.split("-").map(Number);
   return `${month}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
 };
+
+/**
+ * A month a fill may start from.
+ *
+ * Filling rewrites the base plan of every later month of the same calendar
+ * year, so starting it in an elapsed month would overwrite recorded plan
+ * history together with the current and future budget. Plan history stays
+ * editable one month at a time.
+ */
+export const isBudgetFillSourceMonth = (
+  month: string,
+  currentMonth: string,
+): boolean => month >= currentMonth;
 
 export const getTargetFillMonths = (sourceMonth: string): ReadonlyArray<string> => {
   const year = sourceMonth.substring(0, 4);

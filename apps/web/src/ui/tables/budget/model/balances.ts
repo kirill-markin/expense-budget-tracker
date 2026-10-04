@@ -2,6 +2,7 @@ import { offsetMonth } from "@/lib/monthUtils";
 import type { BudgetRow, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 import { zeroCellValue } from "@/ui/tables/budget/model/cells";
 import type { CellValue } from "@/ui/tables/budget/model/cells";
+import type { BudgetPlansMode } from "@/ui/tables/budget/model/plansMode";
 
 export const LIQUIDITY_ORDER: ReadonlyArray<string> = ["high", "medium", "low"];
 export const LIQUIDITY_LABELS: Readonly<Record<string, string>> = { high: "Balance (high)", medium: "Balance (medium)", low: "Balance (low)" };
@@ -81,6 +82,11 @@ export const adjustCumulativeBeforeForPrependedRows = (
  *   month's monthEndBalance.
  * Future months: plan column only, projected from the last known monthEndBalance.
  *
+ * In "all-plans" mode a past month's plan follows the same anchored rule as the
+ * current month: the balance the month started from plus that month's planned
+ * delta. The anchor is the previous month's real month-end balance, so the value
+ * never depends on how far the loaded range reaches to the left.
+ *
  * Falls back to budget-computed cumulative when monthEndBalances are empty.
  * Transfer actuals are always included (transfers have no planned values).
  */
@@ -93,6 +99,7 @@ export const computeCumulativeBalances = (
   taintedMonthSet: ReadonlySet<string>,
   currentMonth: string,
   monthEndBalances: Readonly<Record<string, number>>,
+  plansMode: BudgetPlansMode,
 ): ReadonlyMap<string, CumulativeBalance> => {
   const result = new Map<string, CumulativeBalance>();
   // cumBefore covers months strictly before the loaded range - always past, so use actual.
@@ -107,6 +114,8 @@ export const computeCumulativeBalances = (
     const inc = incomeSubtotals?.get(month) ?? zeroCellValue;
     const spd = spendSubtotals?.get(month) ?? zeroCellValue;
     const txf = transferSubtotals?.get(month) ?? zeroCellValue;
+    // The balance this month starts from, before its own values are applied.
+    const openingBalance = cumulativeActual;
     if (month < currentMonth) {
       // Past month: use real portfolio value if available.
       if (month in monthEndBalances) {
@@ -132,7 +141,13 @@ export const computeCumulativeBalances = (
       cumulativeActual += inc.planned - spd.planned + txf.actual;
     }
     if (taintedMonthSet.has(month)) taintedSoFar = true;
-    result.set(month, { plan: cumulativePlan, actual: cumulativeActual, isTainted: taintedSoFar });
+    // The anchored past plan is a presented value only: the running cumulative
+    // keeps carrying the real month-end balances, so no past plan accumulates
+    // into the months that follow it.
+    const plan = plansMode === "all-plans" && month < currentMonth
+      ? openingBalance + (inc.planned - spd.planned + txf.actual)
+      : cumulativePlan;
+    result.set(month, { plan, actual: cumulativeActual, isTainted: taintedSoFar });
   }
   return result;
 };
@@ -142,6 +157,11 @@ export const computeCumulativeBalances = (
  * Past months: use actual monthEndBalancesByLiquidity when available.
  * Current & future months: route the planned budget delta entirely to "high";
  * "medium" and "low" stay frozen at their last known actual values.
+ *
+ * In "all-plans" mode a past month reports the same anchored projection as the
+ * current month instead of its actual tiers: the previous month's actual tiers
+ * with that month's planned delta routed to "high". The running state still
+ * follows the actual tiers, so no past projection carries forward.
  */
 export const computeCumulativeBalancesByLiquidity = (
   months: ReadonlyArray<string>,
@@ -150,6 +170,7 @@ export const computeCumulativeBalancesByLiquidity = (
   transferSubtotals: ReadonlyMap<string, CellValue> | undefined,
   currentMonth: string,
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>,
+  plansMode: BudgetPlansMode,
 ): ReadonlyMap<string, Readonly<Record<string, number>>> => {
   const result = new Map<string, Readonly<Record<string, number>>>();
   const running: Record<string, number> = {};
@@ -167,6 +188,11 @@ export const computeCumulativeBalancesByLiquidity = (
 
   for (const month of months) {
     if (month < currentMonth) {
+      const inc = incomeSubtotals?.get(month) ?? zeroCellValue;
+      const spd = spendSubtotals?.get(month) ?? zeroCellValue;
+      const txf = transferSubtotals?.get(month) ?? zeroCellValue;
+      // The tiers this month starts from, before its own values are applied.
+      const openingTiers: Readonly<Record<string, number>> = { ...running };
       // Past month: replace running state with actual data.
       const actual = monthEndBalancesByLiquidity[month];
       if (actual !== undefined) {
@@ -178,11 +204,17 @@ export const computeCumulativeBalancesByLiquidity = (
         }
       } else {
         // No actual data - route budget delta to "high".
-        const inc = incomeSubtotals?.get(month) ?? zeroCellValue;
-        const spd = spendSubtotals?.get(month) ?? zeroCellValue;
-        const txf = transferSubtotals?.get(month) ?? zeroCellValue;
         const delta = inc.actual - spd.actual + txf.actual;
         running["high"] = (running["high"] ?? 0) + delta;
+      }
+      if (plansMode === "all-plans") {
+        // Presented projection only: the running state keeps the actual tiers.
+        const plannedDelta = inc.planned - spd.planned + txf.actual;
+        result.set(month, {
+          ...openingTiers,
+          high: (openingTiers["high"] ?? 0) + plannedDelta,
+        });
+        continue;
       }
     } else if (month === currentMonth) {
       const inc = incomeSubtotals?.get(month) ?? zeroCellValue;
