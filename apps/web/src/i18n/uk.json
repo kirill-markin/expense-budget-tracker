@@ -238,7 +238,7 @@
   "budget.adjustmentDelete": "Видалити коригування",
   "budget.adjustmentDeleting": "Видалення…",
   "budget.adjustmentInvalidAmount": "Введіть ціле число або залиште поле порожнім для нуля.",
-  "budget.adjustmentInvalidMonth": "Виберіть поточний або майбутній місяць.",
+  "budget.adjustmentInvalidMonth": "Виберіть коректний місяць.",
   "budget.adjustmentInvalidCategory": "Виберіть категорію.",
   "budget.adjustmentInvalidNote": "Нотатка має містити не більше 2000 символів.",
   "budget.adjustmentSaveFailed": "Не вдалося зберегти коригування.",

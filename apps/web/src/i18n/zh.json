@@ -238,7 +238,7 @@
   "budget.adjustmentDelete": "删除调整项",
   "budget.adjustmentDeleting": "正在删除…",
   "budget.adjustmentInvalidAmount": "请输入整数，或留空表示零。",
-  "budget.adjustmentInvalidMonth": "请选择当前月份或未来月份。",
+  "budget.adjustmentInvalidMonth": "请选择有效的月份。",
   "budget.adjustmentInvalidCategory": "请选择类别。",
   "budget.adjustmentInvalidNote": "备注不得超过 2000 个字符。",
   "budget.adjustmentSaveFailed": "无法保存调整。",

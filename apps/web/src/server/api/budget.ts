@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { getCurrentMonth } from "@/lib/monthUtils";
 import { createBadRequestError } from "@/server/api/errors";
 import { adjustmentIdSchema, adjustmentUuidSchema, budgetAdjustmentNoteSchema, budgetPlanKindSchema, categorySchema, directionSchema, finiteIntegerSchema, finiteNumberSchema, monthSchema, parseRequiredQueryParam, parseWithSchema } from "@/server/api/validation";
 import type { CreateBudgetAdjustmentParams, PatchBudgetAdjustmentParams } from "@/server/budget/budgetAdjustments";
@@ -39,15 +38,9 @@ const budgetPlanBodySchema = z.object({
   plannedValue: finiteNumberSchema("plannedValue"),
 });
 
-const currentOrFutureMonthSchema = monthSchema.superRefine((value, ctx) => {
-  if (value < getCurrentMonth()) {
-    ctx.addIssue({ code: "custom", message: "Invalid month. Expected current or future month" });
-  }
-});
-
 const budgetAdjustmentCreateBodySchema = z.object({
   adjustmentId: adjustmentUuidSchema,
-  month: currentOrFutureMonthSchema,
+  month: monthSchema,
   direction: directionSchema,
   category: categorySchema,
   amount: finiteIntegerSchema("amount"),
@@ -57,7 +50,7 @@ const budgetAdjustmentCreateBodySchema = z.object({
 const budgetAdjustmentPatchBodySchema = z.object({
   amount: finiteIntegerSchema("amount").optional(),
   note: budgetAdjustmentNoteSchema.optional(),
-  month: currentOrFutureMonthSchema.optional(),
+  month: monthSchema.optional(),
   category: categorySchema.optional(),
 }).strict().refine(
   (value): boolean => Object.keys(value).length > 0,

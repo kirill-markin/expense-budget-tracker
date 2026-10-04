@@ -238,7 +238,7 @@
   "budget.adjustmentDelete": "حذف تعدیل",
   "budget.adjustmentDeleting": "در حال حذف…",
   "budget.adjustmentInvalidAmount": "یک عدد صحیح وارد کنید یا برای صفر خالی بگذارید.",
-  "budget.adjustmentInvalidMonth": "ماه جاری یا یک ماه آینده را انتخاب کنید.",
+  "budget.adjustmentInvalidMonth": "یک ماه معتبر را انتخاب کنید.",
   "budget.adjustmentInvalidCategory": "یک دسته‌بندی انتخاب کنید.",
   "budget.adjustmentInvalidNote": "یادداشت باید حداکثر ۲۰۰۰ نویسه باشد.",
   "budget.adjustmentSaveFailed": "ذخیره تعدیل ممکن نشد.",

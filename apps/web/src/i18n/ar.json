@@ -238,7 +238,7 @@
   "budget.adjustmentDelete": "حذف التعديل",
   "budget.adjustmentDeleting": "جارٍ الحذف…",
   "budget.adjustmentInvalidAmount": "أدخل عددًا صحيحًا أو اترك الحقل فارغًا للصفر.",
-  "budget.adjustmentInvalidMonth": "اختر الشهر الحالي أو شهرًا مستقبليًا.",
+  "budget.adjustmentInvalidMonth": "اختر شهرًا صالحًا.",
   "budget.adjustmentInvalidCategory": "اختر فئة.",
   "budget.adjustmentInvalidNote": "يجب ألا تتجاوز الملاحظة 2000 حرف.",
   "budget.adjustmentSaveFailed": "تعذر حفظ التعديل.",
