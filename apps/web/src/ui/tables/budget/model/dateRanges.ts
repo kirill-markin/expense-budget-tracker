@@ -28,7 +28,11 @@ export type BudgetValueColumn = Readonly<{
   key: string;
   /** Column rendered inside the year-total band. */
   isYearTotal: boolean;
-  /** Set only for the two split columns of the current month. */
+  /**
+   * Set only for the two split columns of the real current month. The
+   * "all-plans" mode splits every elapsed month as well, and those columns
+   * carry null: the current-month emphasis belongs to one month alone.
+   */
   currentMonthPart: BudgetCurrentMonthPart | null;
 }>;
 
@@ -125,9 +129,20 @@ export const buildBudgetValueColumns = (
   for (const column of columnSequence) {
     if (column.kind === "month") {
       if (isSplitBudgetMonth(column.month, currentMonth, plansMode)) {
+        // Which months split depends on the mode; which month is the current
+        // one does not. Only the latter identifies an emphasized column.
+        const isCurrentMonth = column.month === currentMonth;
         result.push(
-          { key: `${column.month}-plan`, isYearTotal: false, currentMonthPart: "plan" },
-          { key: `${column.month}-actual`, isYearTotal: false, currentMonthPart: "actual" },
+          {
+            key: `${column.month}-plan`,
+            isYearTotal: false,
+            currentMonthPart: isCurrentMonth ? "plan" : null,
+          },
+          {
+            key: `${column.month}-actual`,
+            isYearTotal: false,
+            currentMonthPart: isCurrentMonth ? "actual" : null,
+          },
         );
       } else {
         result.push({ key: column.month, isYearTotal: false, currentMonthPart: null });

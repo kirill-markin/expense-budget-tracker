@@ -121,6 +121,40 @@ test("splits every elapsed month and year in the all-plans mode", (): void => {
   ]);
 });
 
+test("marks only the real current month as the emphasized split column in the all-plans mode", (): void => {
+  const months = generateMonthRange("2025-11", "2026-10");
+  const valueColumns = buildBudgetValueColumns(
+    buildColumnSequence(months),
+    "2026-02",
+    "all-plans",
+  );
+
+  // The mode splits every elapsed month, yet the current-month emphasis box
+  // belongs to one month alone, so exactly two columns may claim a part.
+  assert.deepEqual(
+    valueColumns.filter((column) => column.currentMonthPart !== null),
+    [
+      { key: "2026-02-plan", isYearTotal: false, currentMonthPart: "plan" },
+      { key: "2026-02-actual", isYearTotal: false, currentMonthPart: "actual" },
+    ],
+  );
+  // Elapsed split months and elapsed split year totals carry no part.
+  assert.deepEqual(
+    valueColumns.filter((column) => column.key.startsWith("2025-12")),
+    [
+      { key: "2025-12-plan", isYearTotal: false, currentMonthPart: null },
+      { key: "2025-12-actual", isYearTotal: false, currentMonthPart: null },
+    ],
+  );
+  assert.deepEqual(
+    valueColumns.filter((column) => column.key.startsWith("total-2025")),
+    [
+      { key: "total-2025-plan", isYearTotal: true, currentMonthPart: null },
+      { key: "total-2025-actual", isYearTotal: true, currentMonthPart: null },
+    ],
+  );
+});
+
 test("keeps one column per elapsed month and year in the default mode", (): void => {
   const months = generateMonthRange("2025-11", "2026-04");
   const valueColumns = buildBudgetValueColumns(
