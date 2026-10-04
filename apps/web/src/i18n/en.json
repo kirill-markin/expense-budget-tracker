@@ -242,7 +242,7 @@
   "budget.adjustmentDelete": "Delete adjustment",
   "budget.adjustmentDeleting": "Deleting…",
   "budget.adjustmentInvalidAmount": "Enter a whole number or leave blank for zero.",
-  "budget.adjustmentInvalidMonth": "Choose the current month or a future month.",
+  "budget.adjustmentInvalidMonth": "Choose a valid month.",
   "budget.adjustmentInvalidCategory": "Choose a category.",
   "budget.adjustmentInvalidNote": "Keep the note within 2,000 characters.",
   "budget.adjustmentSaveFailed": "The adjustment could not be saved.",

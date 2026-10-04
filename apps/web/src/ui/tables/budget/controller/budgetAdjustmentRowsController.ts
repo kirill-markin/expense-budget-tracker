@@ -147,7 +147,6 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 
 export type BudgetAdjustmentRowsControllerDependencies = Readonly<{
   initialAdjustments: ReadonlyArray<BudgetAdjustment>;
-  planFrom: string;
   autosaveDelayMs: number;
   createAdjustment: (params: CreateBudgetAdjustmentParams) => Promise<BudgetAdjustment>;
   patchAdjustment: (
@@ -219,11 +218,10 @@ const isRangeFailureSuperseded = (
 
 const buildValidationMap = (
   rows: ReadonlyArray<BudgetAdjustmentEditorRow>,
-  planFrom: string,
 ): ReadonlyMap<string, BudgetAdjustmentDraftError> => {
   const errors = new Map<string, BudgetAdjustmentDraftError>();
   for (const row of rows) {
-    const parsed = parseBudgetAdjustmentDraft(row.draft, planFrom);
+    const parsed = parseBudgetAdjustmentDraft(row.draft);
     if (!parsed.ok) errors.set(row.adjustmentId, parsed.error);
   }
   return errors;
@@ -239,7 +237,6 @@ export const createBudgetAdjustmentRowsController = (
 ): BudgetAdjustmentRowsControllerRuntime => {
   let reconciliation = createBudgetAdjustmentRowsReconciliationState(
     dependencies.initialAdjustments,
-    dependencies.planFrom,
   );
   let disposed = false;
   let lifecycleAbortController = new AbortController();
@@ -267,7 +264,7 @@ export const createBudgetAdjustmentRowsController = (
   const createSnapshot = (): BudgetAdjustmentRowsControllerState => ({
     rows: reconciliation.rows,
     invalidatedCellKeys: getBudgetAdjustmentInvalidatedCellKeys(reconciliation),
-    validationByAdjustmentId: buildValidationMap(reconciliation.rows, dependencies.planFrom),
+    validationByAdjustmentId: buildValidationMap(reconciliation.rows),
     errorByAdjustmentId: new Map(rowErrors),
     operationByAdjustmentId: new Map(rowOperations),
     recoveringAdjustmentIds: new Set(activeRecoveries.keys()),
@@ -527,7 +524,7 @@ export const createBudgetAdjustmentRowsController = (
         return "deleted";
       }
 
-      const parsed = parseBudgetAdjustmentDraft(row.draft, dependencies.planFrom);
+      const parsed = parseBudgetAdjustmentDraft(row.draft);
       if (!parsed.ok) return "invalid";
       if (!hasDirtyFields(reconciliation, adjustmentId)) {
         clearRowError(adjustmentId);
@@ -585,7 +582,7 @@ export const createBudgetAdjustmentRowsController = (
       candidate.adjustmentId === adjustmentId);
     if (row === undefined) return false;
     if (reconciliation.optimisticCreateByAdjustmentId.has(adjustmentId)) return true;
-    return parseBudgetAdjustmentDraft(row.draft, dependencies.planFrom).ok
+    return parseBudgetAdjustmentDraft(row.draft).ok
       && hasDirtyFields(reconciliation, adjustmentId)
       && !reconciliation.ambiguousRangeRequirementByAdjustmentId.has(adjustmentId);
   };
@@ -772,7 +769,7 @@ export const createBudgetAdjustmentRowsController = (
         `Cannot refresh missing budget adjustment "${adjustmentId}"`,
       ));
     }
-    const parsed = parseBudgetAdjustmentDraft(row.draft, dependencies.planFrom);
+    const parsed = parseBudgetAdjustmentDraft(row.draft);
     const draftMonth = parsed.ok ? parsed.snapshot.month : row.confirmed.month;
     const monthFrom = row.confirmed.month < draftMonth
       ? row.confirmed.month
@@ -907,7 +904,6 @@ export const createBudgetAdjustmentRowsController = (
       location.month,
       location.direction,
       location.category,
-      dependencies.planFrom,
     );
 
   const retainCell = (
@@ -946,7 +942,6 @@ export const createBudgetAdjustmentRowsController = (
     getProjectedRows(effectiveAllowlist),
     loadedFrom,
     loadedTo,
-    dependencies.planFrom,
     getBudgetAdjustmentInvalidatedCellKeys(reconciliation),
     [...protectedCellOwners.values()].map(
       (owner): ProtectedBudgetAdjustmentCell => owner.cell,

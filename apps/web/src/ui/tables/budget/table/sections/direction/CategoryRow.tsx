@@ -262,7 +262,6 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 category={category}
                 directionCategories={directionCategories}
                 effectiveAllowlist={effectiveAllowlist}
-                currentMonth={currentMonth}
                 plannedBase={cell.plannedBase}
                 localBaseAcknowledgement={localBaseAcknowledgementByCell.get(
                   getBudgetBaseCellKey({
@@ -307,7 +306,6 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   category={category}
                   directionCategories={directionCategories}
                   effectiveAllowlist={effectiveAllowlist}
-                  currentMonth={currentMonth}
                   plannedBase={cell.plannedBase}
                   localBaseAcknowledgement={localBaseAcknowledgementByCell.get(
                     getBudgetBaseCellKey({

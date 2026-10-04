@@ -145,7 +145,6 @@ export type BudgetPlanCellProps = Readonly<{
   category: string;
   directionCategories: ReadonlyArray<string>;
   effectiveAllowlist: ReadonlySet<string> | null;
-  currentMonth: string;
   plannedBase: number;
   localBaseAcknowledgement: BudgetBaseLocalAcknowledgement | null;
   plannedModifier: number;
@@ -204,7 +203,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     category,
     directionCategories,
     effectiveAllowlist,
-    currentMonth,
     plannedBase,
     localBaseAcknowledgement,
     plannedModifier,
@@ -1236,7 +1234,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
               <BudgetAdjustmentEditor
                 editorId={editorId}
                 location={adjustmentLocation}
-                currentMonth={currentMonth}
                 categories={directionCategories}
                 effectiveAllowlist={effectiveAllowlist}
                 editorAnchorByAdjustmentId={

@@ -48,7 +48,7 @@ const createUuid = (index: number): string =>
 
 test("optimistic create installs a blank final-ID row and issues one immutable request", (): void => {
   const adjustmentId = createUuid(1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([]);
   const optimistic = addOptimisticBudgetAdjustmentRow(
     initial,
     adjustmentId,
@@ -102,10 +102,26 @@ test("optimistic create installs a blank final-ID row and issues one immutable r
   );
 });
 
+test("optimistic create accepts a past month and keeps it in the issued request", (): void => {
+  const adjustmentId = createUuid(101);
+  const optimistic = addOptimisticBudgetAdjustmentRow(
+    createBudgetAdjustmentRowsReconciliationState([]),
+    adjustmentId,
+    "2026-01",
+    "spend",
+    "Food",
+  );
+  const issued = issueBudgetAdjustmentCreateRequest(optimistic, adjustmentId);
+
+  assert.equal(optimistic.rows[0].draft.month, "2026-01");
+  assert.equal(optimistic.rows[0].confirmed.month, "2026-01");
+  assert.equal(issued.request.params.month, "2026-01");
+});
+
 test("create acknowledgement preserves newer edits and survives ranges issued before it", (): void => {
   const adjustmentId = createUuid(2);
   const optimistic = addOptimisticBudgetAdjustmentRow(
-    createBudgetAdjustmentRowsReconciliationState([], "2026-07"),
+    createBudgetAdjustmentRowsReconciliationState([]),
     adjustmentId,
     "2026-07",
     "spend",
@@ -171,7 +187,7 @@ test("create acknowledgement preserves newer edits and survives ranges issued be
 test("a clean acknowledged create is removable only by a later authoritative range", (): void => {
   const adjustmentId = createUuid(3);
   const optimistic = addOptimisticBudgetAdjustmentRow(
-    createBudgetAdjustmentRowsReconciliationState([], "2026-07"),
+    createBudgetAdjustmentRowsReconciliationState([]),
     adjustmentId,
     "2026-07",
     "income",
@@ -212,7 +228,7 @@ test("a clean acknowledged create is removable only by a later authoritative ran
 test("failed create retains its exact payload for retry while newer drafts stay local", (): void => {
   const adjustmentId = createUuid(4);
   const optimistic = addOptimisticBudgetAdjustmentRow(
-    createBudgetAdjustmentRowsReconciliationState([], "2026-07"),
+    createBudgetAdjustmentRowsReconciliationState([]),
     adjustmentId,
     "2026-07",
     "spend",
@@ -281,7 +297,7 @@ test("failed create retains its exact payload for retry while newer drafts stay 
 test("create acknowledgements require exact provenance and strict matching rows", (): void => {
   const adjustmentId = createUuid(5);
   const optimistic = addOptimisticBudgetAdjustmentRow(
-    createBudgetAdjustmentRowsReconciliationState([], "2026-07"),
+    createBudgetAdjustmentRowsReconciliationState([]),
     adjustmentId,
     "2026-07",
     "spend",
@@ -324,7 +340,7 @@ test("create acknowledgements require exact provenance and strict matching rows"
 });
 
 test("settled create acknowledgement history is bounded", (): void => {
-  let state = createBudgetAdjustmentRowsReconciliationState([], "2026-07");
+  let state = createBudgetAdjustmentRowsReconciliationState([]);
   const requests: Array<BudgetAdjustmentCreateRequest> = [];
   for (let index = 10; index < 22; index += 1) {
     const adjustmentId = createUuid(index);
@@ -376,7 +392,7 @@ test("settled create acknowledgement history is bounded", (): void => {
 
 test("patch params are minimal and blank amount parses as zero", (): void => {
   const adjustment = createAdjustment("minimal", 5, "2026-07", "spend", "Food", null, 1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
   const edited = editDraft(initial, adjustment.adjustmentId, createDraft("", "2026-08", "Dining", "note"));
   const issued = issueBudgetAdjustmentPatchRequest(edited, adjustment.adjustmentId);
   assert.deepEqual(issued.request.params, { amount: 0, note: "note", month: "2026-08", category: "Dining" });
@@ -387,7 +403,7 @@ test("patch params are minimal and blank amount parses as zero", (): void => {
 test("raw zero formats survive only while semantically equal to the canonical amount", (): void => {
   for (const amountInput of ["", "0", "+0", "-0", "00", "+00", "-00", " 0 "]) {
     const adjustment = createAdjustment("raw-zero", 0, "2026-07", "spend", "Zero", "Old", 1);
-    const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+    const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
     const edited = editDraft(initial, adjustment.adjustmentId, createDraft(amountInput, "2026-07", "Zero", "New"));
     const patch = issueBudgetAdjustmentPatchRequest(edited, adjustment.adjustmentId);
     assert.deepEqual(patch.request.params, { note: "New" });
@@ -399,7 +415,7 @@ test("raw zero formats survive only while semantically equal to the canonical am
 
 test("a note-only raw-zero race accepts a changed canonical server amount", (): void => {
   const adjustment = createAdjustment("zero-race", 0, "2026-07", "spend", "Zero", "Old", 1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
   const requested = editDraft(initial, adjustment.adjustmentId, createDraft("+0", "2026-07", "Zero", "New"));
   const patch = issueBudgetAdjustmentPatchRequest(requested, adjustment.adjustmentId);
   const reformatted = editDraft(patch.state, adjustment.adjustmentId, createDraft("00", "2026-07", "Zero", "New"));
@@ -416,7 +432,7 @@ test("a note-only raw-zero race accepts a changed canonical server amount", (): 
 test("invalid and genuinely newer semantic amount edits remain visible after acknowledgement", (): void => {
   for (const amountInput of ["invalid", "7"]) {
     const adjustment = createAdjustment("newer", 0, "2026-07", "spend", "Zero", "Old", 1);
-    const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+    const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
     const edited = editDraft(initial, adjustment.adjustmentId, createDraft("0", "2026-07", "Zero", "New"));
     const patch = issueBudgetAdjustmentPatchRequest(edited, adjustment.adjustmentId);
     const newer = editDraft(patch.state, adjustment.adjustmentId, createDraft(amountInput, "2026-07", "Zero", "New"));
@@ -429,7 +445,7 @@ test("invalid and genuinely newer semantic amount edits remain visible after ack
 
 test("patches serialize newer drafts and retire protection after authoritative absence", (): void => {
   const adjustment = createAdjustment("serial", 0, "2026-07", "spend", "Food", null, 1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
   const first = issueBudgetAdjustmentPatchRequest(editDraft(initial, adjustment.adjustmentId,
     createDraft("1", "2026-07", "Food", "")), adjustment.adjustmentId);
   const newer = editDraft(first.state, adjustment.adjustmentId, createDraft("2", "2026-07", "Food", "local"));
@@ -450,7 +466,7 @@ test("patches serialize newer drafts and retire protection after authoritative a
 
 test("patch requests and acknowledgements are strict, exact, and repeat-safe", (): void => {
   const adjustment = createAdjustment("strict", 1, "2026-07", "spend", "Food", null, 1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
   const patch = issueBudgetAdjustmentPatchRequest(editDraft(initial, adjustment.adjustmentId,
     createDraft("2", "2026-07", "Food", "")), adjustment.adjustmentId);
   assert.throws(() => reconcileBudgetAdjustmentPatchAcknowledgement(patch.state,
@@ -483,7 +499,7 @@ test("patch requests and acknowledgements are strict, exact, and repeat-safe", (
 
 test("definitive patch failure retries, while ambiguity needs a later authoritative range", (): void => {
   const adjustment = createAdjustment("failure", 0, "2026-07", "spend", "Food", null, 1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
   const edited = editDraft(initial, adjustment.adjustmentId, createDraft("1", "2026-07", "Food", ""));
   const definitiveRequest = issueBudgetAdjustmentPatchRequest(edited, adjustment.adjustmentId);
   const newer = editDraft(definitiveRequest.state, adjustment.adjustmentId, createDraft("2", "2026-07", "Food", ""));
@@ -508,7 +524,7 @@ test("definitive patch failure retries, while ambiguity needs a later authoritat
 
 test("ambiguous moves require a found row or accepted source and target coverage", (): void => {
   const adjustment = createAdjustment("ambiguous-move", 0, "2026-07", "spend", "Source", null, 1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
   const patch = issueBudgetAdjustmentPatchRequest(editDraft(initial, adjustment.adjustmentId, createDraft("0", "2026-08", "Target", "")), adjustment.adjustmentId);
   const preFailure = issueBudgetAdjustmentRangeRequest(patch.state, "2026-07", "2026-08");
   const ambiguous = reconcileBudgetAdjustmentPatchAmbiguousFailure(preFailure.state, patch.request);
@@ -545,7 +561,7 @@ test("ambiguous moves require a found row or accepted source and target coverage
 
 test("zero and invalid moved drafts provisionally invalidate their confirmed source", (): void => {
   const adjustment = createAdjustment("provisional", 0, "2026-07", "spend", "Source", null, 1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([adjustment]);
   const sourceKey = getBudgetAdjustmentCellKey("2026-07", "spend", "Source");
   for (const [amountInput, noteInput] of [["0", ""], ["invalid", ""], ["0", "x".repeat(2001)]]) {
     const moved = editDraft(initial, adjustment.adjustmentId,
@@ -559,7 +575,7 @@ test("confirmed zero moves and both delete outcomes invalidate source cells", ()
   for (const outcome of ["deleted", "already-absent"] as const) {
     const move = createAdjustment(`move-${outcome}`, 0, "2026-07", "spend", "Move", null, 1);
     const remove = createAdjustment(`delete-${outcome}`, 0, "2026-08", "spend", "Delete", null, 1);
-    const initial = createBudgetAdjustmentRowsReconciliationState([remove, move], "2026-07");
+    const initial = createBudgetAdjustmentRowsReconciliationState([remove, move]);
     const patch = issueBudgetAdjustmentPatchRequest(editDraft(initial, move.adjustmentId,
       createDraft("0", "2026-09", "Target", "")), move.adjustmentId);
     const moved = reconcileBudgetAdjustmentPatchAcknowledgement(patch.state, patch.request,
@@ -583,7 +599,7 @@ test("confirmed zero moves and both delete outcomes invalidate source cells", ()
 test("delete failures preserve drafts, permit retry, and mark ambiguity only when needed", (): void => {
   const adjustment = createAdjustment("delete-retry", 4, "2026-07", "spend", "Food", null, 1);
   const dirty = editDraft(
-    createBudgetAdjustmentRowsReconciliationState([adjustment], "2026-07"),
+    createBudgetAdjustmentRowsReconciliationState([adjustment]),
     adjustment.adjustmentId,
     createDraft("5", "2026-07", "Food", "local"),
   );
@@ -614,7 +630,7 @@ test("range ordering owns moves, deletion, and off-range source invalidations", 
   const movedB = { ...original, month: "2026-08", category: "B" };
   const movedC = { ...original, month: "2026-09", category: "C" };
   for (const newerFirst of [false, true]) {
-    const initial = createBudgetAdjustmentRowsReconciliationState([original], "2026-07");
+    const initial = createBudgetAdjustmentRowsReconciliationState([original]);
     const older = issueBudgetAdjustmentRangeRequest(initial, "2026-07", "2026-08");
     const newer = issueBudgetAdjustmentRangeRequest(older.state, "2026-07", "2026-09");
     const first = newerFirst
@@ -633,7 +649,7 @@ test("range ordering owns moves, deletion, and off-range source invalidations", 
     ], [0, 0, 0]);
   }
 
-  const initial = createBudgetAdjustmentRowsReconciliationState([original], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([original]);
   const move = issueBudgetAdjustmentRangeRequest(initial, "2026-08", "2026-08");
   const moved = reconcileBudgetAdjustmentRangeResponse(move.state, move.request, [movedB]);
   const sourceKey = getBudgetAdjustmentCellKey("2026-07", "spend", "A");
@@ -650,7 +666,7 @@ test("range ordering owns moves, deletion, and off-range source invalidations", 
 test("stale ranges cannot regress patch/delete, while later source ranges clear invalidations", (): void => {
   const move = createAdjustment("patched", 0, "2026-07", "spend", "Move", null, 1);
   const remove = createAdjustment("deleted", 0, "2026-07", "spend", "Delete", null, 1);
-  const initial = createBudgetAdjustmentRowsReconciliationState([remove, move], "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState([remove, move]);
   const staleRange = issueBudgetAdjustmentRangeRequest(initial, "2026-07", "2026-08");
   const patch = issueBudgetAdjustmentPatchRequest(
     editDraft(staleRange.state, move.adjustmentId, createDraft("0", "2026-08", "Target", "")),
@@ -708,7 +724,7 @@ test("mutation history is bounded, retains pending requests, and transitions are
   const retryRow = createAdjustment("retry", 0, "2026-07", "income", "A", null, 1);
   const adjustments = [pendingRow, retryRow];
   const originalAdjustments = structuredClone(adjustments);
-  const initial = createBudgetAdjustmentRowsReconciliationState(adjustments, "2026-07");
+  const initial = createBudgetAdjustmentRowsReconciliationState(adjustments);
   const originalRows = structuredClone(initial.rows);
   const pending = issueBudgetAdjustmentDeleteRequest(initial, pendingRow.adjustmentId);
   let state = pending.state;

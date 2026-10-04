@@ -72,9 +72,8 @@ const createBudgetRow = (
 
 const requireSnapshot = (
   draft: BudgetAdjustmentDraft,
-  currentMonth: string,
 ): BudgetAdjustmentSnapshot => {
-  const parsed = parseBudgetAdjustmentDraft(draft, currentMonth);
+  const parsed = parseBudgetAdjustmentDraft(draft);
   if (!parsed.ok) throw new Error(`Expected a valid adjustment draft: ${parsed.error.message}`);
   return parsed.snapshot;
 };
@@ -129,10 +128,10 @@ test("canonicalizes server and draft notes without losing editable text", (): vo
   assert.equal(nullNote.confirmed.note, null);
   assert.equal(emptyNote.draft.noteInput, "");
   assert.equal(emptyNote.confirmed.note, null);
-  assert.equal(requireSnapshot({ ...nullNote.draft, noteInput: "Draft text" }, "2026-07").note, "Draft text");
+  assert.equal(requireSnapshot({ ...nullNote.draft, noteInput: "Draft text" }).note, "Draft text");
 });
 
-test("accepts current and future months and rejects past months", (): void => {
+test("accepts past, current, and future months and rejects malformed ones", (): void => {
   const draft: BudgetAdjustmentDraft = {
     amountInput: "0",
     noteInput: "",
@@ -140,12 +139,15 @@ test("accepts current and future months and rejects past months", (): void => {
     category: "Groceries",
   };
 
-  assert.equal(parseBudgetAdjustmentDraft(draft, "2026-07").ok, true);
-  assert.equal(parseBudgetAdjustmentDraft({ ...draft, month: "2026-08" }, "2026-07").ok, true);
-  const past = parseBudgetAdjustmentDraft({ ...draft, month: "2026-06" }, "2026-07");
-  assert.equal(past.ok, false);
-  assert.equal(past.ok ? null : past.error.code, "pastMonth");
-  assert.match(past.ok ? "" : past.error.message, /2026-07 or later/);
+  assert.equal(parseBudgetAdjustmentDraft(draft).ok, true);
+  assert.equal(parseBudgetAdjustmentDraft({ ...draft, month: "2026-08" }).ok, true);
+  const past = parseBudgetAdjustmentDraft({ ...draft, month: "2026-06" });
+  assert.equal(past.ok, true);
+  assert.equal(past.ok ? past.snapshot.month : null, "2026-06");
+  const malformed = parseBudgetAdjustmentDraft({ ...draft, month: "2026-13" });
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.ok ? null : malformed.error.code, "invalidMonth");
+  assert.match(malformed.ok ? "" : malformed.error.message, /YYYY-MM with a valid month/);
 });
 
 test("validates category and note limits by code point", (): void => {
@@ -155,11 +157,11 @@ test("validates category and note limits by code point", (): void => {
     month: "2026-07",
     category: "Groceries",
   };
-  const emptyCategory = parseBudgetAdjustmentDraft({ ...draft, category: "" }, "2026-07");
-  const longNote = parseBudgetAdjustmentDraft(
-    { ...draft, noteInput: "\u{1F680}".repeat(2001) },
-    "2026-07",
-  );
+  const emptyCategory = parseBudgetAdjustmentDraft({ ...draft, category: "" });
+  const longNote = parseBudgetAdjustmentDraft({
+    ...draft,
+    noteInput: "\u{1F680}".repeat(2001),
+  });
 
   assert.equal(emptyCategory.ok ? null : emptyCategory.error.code, "invalidCategory");
   assert.equal(longNote.ok ? null : longNote.error.code, "invalidNote");
@@ -219,20 +221,17 @@ test("keeps moved drafts private until confirmed and draft categories are both v
     "2026-07",
     "spend",
     "Allowed",
-    "2026-07",
   ), []);
   assert.equal(getBudgetAdjustmentCellTotal(
     visibleRows,
     "2026-07",
     "spend",
     "Allowed",
-    "2026-07",
   ), 0);
   assert.deepEqual(
     applyBudgetAdjustmentRows(
       [createBudgetRow("2026-07", "spend", "Allowed", 100, 47)],
       visibleRows,
-      "2026-07",
       "2026-07",
       "2026-07",
       new Set(),
@@ -362,7 +361,6 @@ test("projects a retained adjustment-only cell only when its category is visible
     [],
     "2026-07",
     "2026-07",
-    "2026-07",
     new Set(),
     [protectedCell],
     null,
@@ -374,7 +372,6 @@ test("projects a retained adjustment-only cell only when its category is visible
     applyBudgetAdjustmentRowsWithProtectedCells(
       [],
       [],
-      "2026-07",
       "2026-07",
       "2026-07",
       new Set(),
@@ -389,7 +386,6 @@ test("projects a retained adjustment-only cell only when its category is visible
       [],
       "2026-07",
       "2026-07",
-      "2026-07",
       new Set(),
       [protectedCell],
       null,
@@ -400,7 +396,6 @@ test("projects a retained adjustment-only cell only when its category is visible
     applyBudgetAdjustmentRowsWithProtectedCells(
       [],
       [],
-      "2026-07",
       "2026-07",
       "2026-07",
       new Set(),
@@ -431,7 +426,7 @@ test("orders rows deterministically and selects an exact cell", (): void => {
     ["july", "income", "a-row", "z-row"],
   );
   assert.deepEqual(
-    getBudgetAdjustmentCellRows(input, "2026-08", "spend", "Dining", "2026-07")
+    getBudgetAdjustmentCellRows(input, "2026-08", "spend", "Dining")
       .map((row) => row.adjustmentId),
     ["a-row", "z-row"],
   );
@@ -453,7 +448,6 @@ test("aggregates multiple, cancelling, and zero-valued rows while keeping zero c
     adjustments,
     "2026-07",
     "2026-07",
-    "2026-07",
     new Set(),
   );
   const byCategory = new Map(result.map((row) => [row.category, row]));
@@ -462,13 +456,13 @@ test("aggregates multiple, cancelling, and zero-valued rows while keeping zero c
   assert.equal(byCategory.get("Cancelling")?.plannedModifier, 0);
   assert.equal(byCategory.get("Zero")?.plannedModifier, 0);
   assert.deepEqual(
-    getBudgetAdjustmentCellRows(adjustments, "2026-07", "spend", "Zero", "2026-07")
+    getBudgetAdjustmentCellRows(adjustments, "2026-07", "spend", "Zero")
       .map((row) => row.adjustmentId),
     ["zero"],
   );
 });
 
-test("does not apply or synthesize adjustments before the explicit plan boundary", (): void => {
+test("applies a past-month adjustment to its own month and leaves other months untouched", (): void => {
   const historical = createBudgetAdjustmentEditorRow(createAdjustment(
     "historical", 50, "2026-06", "spend", "Phantom", null, "2026-06-01T00:00:00.000Z",
   ));
@@ -485,17 +479,43 @@ test("does not apply or synthesize adjustments before the explicit plan boundary
     [historical, current],
     "2026-06",
     "2026-08",
-    "2026-07",
     new Set(),
   );
+  const synthesized = result.find((row) =>
+    row.month === "2026-06" && row.category === "Phantom");
 
-  assert.equal(result.some((row) => row.month === "2026-06" && row.category === "Phantom"), false);
+  assert.equal(synthesized?.plannedModifier, 50);
+  assert.equal(synthesized?.planned, 50);
+  assert.equal(result.some((row) => row.month === "2026-07" && row.category === "Phantom"), false);
   assert.equal(result.some((row) => row.month === "2026-07" && row.category === "Current"), true);
   assert.deepEqual(result.find((row) => row.category === "Existing"), historicalActual);
   assert.equal(
-    getBudgetAdjustmentCellTotal([historical], "2026-06", "spend", "Phantom", "2026-07"),
+    getBudgetAdjustmentCellTotal([historical], "2026-06", "spend", "Phantom"),
+    50,
+  );
+  assert.equal(
+    getBudgetAdjustmentCellTotal([historical], "2026-07", "spend", "Phantom"),
     0,
   );
+});
+
+test("keeps months outside the loaded range out of the adjustment overlay", (): void => {
+  const beforeRange = createBudgetAdjustmentEditorRow(createAdjustment(
+    "before", 50, "2026-05", "spend", "Outside", null, "2026-05-01T00:00:00.000Z",
+  ));
+  const afterRange = createBudgetAdjustmentEditorRow(createAdjustment(
+    "after", 70, "2026-09", "spend", "Outside", null, "2026-09-01T00:00:00.000Z",
+  ));
+
+  const result = applyBudgetAdjustmentRows(
+    [],
+    [beforeRange, afterRange],
+    "2026-06",
+    "2026-08",
+    new Set(),
+  );
+
+  assert.deepEqual(result, []);
 });
 
 test("keeps invalid draft locations in the confirmed cell without hiding validation errors", (): void => {
@@ -505,7 +525,7 @@ test("keeps invalid draft locations in the confirmed cell without hiding validat
   const cases: ReadonlyArray<Readonly<{
     name: string;
     draft: BudgetAdjustmentDraft;
-    errorCode: "invalidMonth" | "pastMonth" | "invalidCategory";
+    errorCode: "invalidMonth" | "invalidCategory";
   }>> = [
     {
       name: "empty month",
@@ -516,11 +536,6 @@ test("keeps invalid draft locations in the confirmed cell without hiding validat
       name: "malformed month",
       draft: { ...source.draft, amountInput: "25", month: "2026-13", category: "Draft" },
       errorCode: "invalidMonth",
-    },
-    {
-      name: "past month",
-      draft: { ...source.draft, amountInput: "25", month: "2026-06", category: "Draft" },
-      errorCode: "pastMonth",
     },
     {
       name: "empty category",
@@ -540,22 +555,22 @@ test("keeps invalid draft locations in the confirmed cell without hiding validat
   ];
 
   for (const input of cases) {
-    const parsed = parseBudgetAdjustmentDraft(input.draft, "2026-07");
+    const parsed = parseBudgetAdjustmentDraft(input.draft);
     assert.equal(parsed.ok ? null : parsed.error.code, input.errorCode, input.name);
     const rows = replaceBudgetAdjustmentDraft([source], source.adjustmentId, input.draft);
     assert.equal(
-      getBudgetAdjustmentRowCellKey(rows[0], "2026-07"),
+      getBudgetAdjustmentRowCellKey(rows[0]),
       getBudgetAdjustmentCellKey("2026-08", "spend", "Confirmed"),
       input.name,
     );
     assert.deepEqual(
-      getBudgetAdjustmentCellRows(rows, "2026-08", "spend", "Confirmed", "2026-07")
+      getBudgetAdjustmentCellRows(rows, "2026-08", "spend", "Confirmed")
         .map((row) => row.adjustmentId),
       [source.adjustmentId],
       input.name,
     );
     assert.equal(
-      getBudgetAdjustmentCellTotal(rows, "2026-08", "spend", "Confirmed", "2026-07"),
+      getBudgetAdjustmentCellTotal(rows, "2026-08", "spend", "Confirmed"),
       25,
       input.name,
     );
@@ -564,7 +579,6 @@ test("keeps invalid draft locations in the confirmed cell without hiding validat
       rows,
       "2026-07",
       "2026-09",
-      "2026-07",
       new Set(),
     );
     assert.deepEqual(
@@ -581,7 +595,6 @@ test("keeps invalid draft locations in the confirmed cell without hiding validat
       current: { ...source.confirmed, month: "", category: "Draft" },
     },
     1,
-    "2026-07",
   ).size, 0);
 });
 
@@ -594,10 +607,10 @@ test("sums safe integer adjustments exactly across unsafe intermediate totals", 
   ].map(createBudgetAdjustmentEditorRow);
 
   assert.equal(
-    getBudgetAdjustmentCellTotal(rows, "2026-07", "spend", "Exact", "2026-07"),
+    getBudgetAdjustmentCellTotal(rows, "2026-07", "spend", "Exact"),
     2,
   );
-  const budget = applyBudgetAdjustmentRows([], rows, "2026-07", "2026-07", "2026-07", new Set());
+  const budget = applyBudgetAdjustmentRows([], rows, "2026-07", "2026-07", new Set());
   assert.equal(budget[0].plannedModifier, 2);
   assert.equal(budget[0].planned, 2);
 });
@@ -617,7 +630,6 @@ test("rejects unsafe final adjustment totals and unsafe planned values", (): voi
       "2026-07",
       "spend",
       "Unsafe",
-      "2026-07",
     ),
     /adjustment total.*outside the JavaScript safe integer range/,
   );
@@ -625,7 +637,6 @@ test("rejects unsafe final adjustment totals and unsafe planned values", (): voi
     () => applyBudgetAdjustmentRows(
       [createBudgetRow("2026-07", "spend", "Unsafe", maximum, 0)],
       [oneRow],
-      "2026-07",
       "2026-07",
       "2026-07",
       new Set(),
@@ -655,7 +666,6 @@ test("moves a row across month and category without mutating source rows", (): v
     moved,
     "2026-07",
     "2026-08",
-    "2026-07",
     new Set(),
   );
   const sourceCell = result.find((row) => row.month === "2026-07" && row.category === "Groceries");
@@ -677,7 +687,7 @@ test("zero-valued move provenance hides the stale source until a fresh-enough ra
     ...source.draft,
     month: "2026-08",
     category: "Destination",
-  }, "2026-07");
+  });
   const moved = replaceBudgetAdjustmentDraft([source], source.adjustmentId, {
     ...source.draft,
     month: current.month,
@@ -688,7 +698,6 @@ test("zero-valued move provenance hides the stale source until a fresh-enough ra
     originalProvenance,
     { direction: source.direction, previous: source.confirmed, current },
     5,
-    "2026-07",
   );
   const staleBudgetRows = [createBudgetRow("2026-07", "spend", "Source", 0, 0)];
 
@@ -697,7 +706,6 @@ test("zero-valued move provenance hides the stale source until a fresh-enough ra
     moved,
     "2026-07",
     "2026-08",
-    "2026-07",
     new Set(provenance.keys()),
   );
   assert.equal(result.some((row) => row.month === "2026-07" && row.category === "Source"), false);
@@ -721,7 +729,7 @@ test("keeps a moved-away source cell that still holds ledger rows netting to zer
     ...source.draft,
     month: "2026-08",
     category: "Destination",
-  }, "2026-07");
+  });
   const moved = replaceBudgetAdjustmentDraft([source], source.adjustmentId, {
     ...source.draft,
     month: current.month,
@@ -731,7 +739,6 @@ test("keeps a moved-away source cell that still holds ledger rows netting to zer
     new Map<string, number>(),
     { direction: source.direction, previous: source.confirmed, current },
     5,
-    "2026-07",
   );
   const refundedRows: ReadonlyArray<BudgetRow> = [
     { ...createBudgetRow("2026-07", "spend", "Source", 0, 0), hasActualRows: true },
@@ -742,7 +749,6 @@ test("keeps a moved-away source cell that still holds ledger rows netting to zer
     moved,
     "2026-07",
     "2026-08",
-    "2026-07",
     new Set(provenance.keys()),
   );
   const sourceRow = result.find((row) => row.month === "2026-07" && row.category === "Source");

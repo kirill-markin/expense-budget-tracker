@@ -31,7 +31,7 @@ export type BudgetAdjustmentEditorRow = Readonly<{
 }>;
 
 export type BudgetAdjustmentDraftError = Readonly<{
-  code: "invalidAmount" | "unsafeAmount" | "invalidMonth" | "pastMonth" | "invalidCategory" | "invalidNote";
+  code: "invalidAmount" | "unsafeAmount" | "invalidMonth" | "invalidCategory" | "invalidNote";
   message: string;
 }>;
 
@@ -145,15 +145,13 @@ export const getBudgetAdjustmentEditorCellRows = (
   }),
 );
 
-const isValidDraftLocation = (draft: BudgetAdjustmentDraft, planFrom: string): boolean =>
+const isValidDraftLocation = (draft: BudgetAdjustmentDraft): boolean =>
   MONTH_PATTERN.test(draft.month)
-  && draft.month >= planFrom
   && isValidBudgetAdjustmentCategory(draft.category);
 
 const getEffectiveLocation = (
   row: BudgetAdjustmentEditorRow,
-  planFrom: string,
-): BudgetAdjustmentLocation => isValidDraftLocation(row.draft, planFrom)
+): BudgetAdjustmentLocation => isValidDraftLocation(row.draft)
   ? { month: row.draft.month, category: row.draft.category }
   : { month: row.confirmed.month, category: row.confirmed.category };
 
@@ -191,9 +189,7 @@ export const parseBudgetAdjustmentAmount = (
 
 export const parseBudgetAdjustmentDraft = (
   draft: BudgetAdjustmentDraft,
-  currentMonth: string,
 ): ParsedBudgetAdjustmentDraft => {
-  validateMonth(currentMonth, "Current month");
   const amount = parseBudgetAdjustmentAmount(draft.amountInput);
   if (!amount.ok) return amount;
   if (!MONTH_PATTERN.test(draft.month)) {
@@ -202,15 +198,6 @@ export const parseBudgetAdjustmentDraft = (
       error: {
         code: "invalidMonth",
         message: `Budget adjustment month "${draft.month}" must use YYYY-MM with a valid month`,
-      },
-    };
-  }
-  if (draft.month < currentMonth) {
-    return {
-      ok: false,
-      error: {
-        code: "pastMonth",
-        message: `Budget adjustment month "${draft.month}" must be ${currentMonth} or later`,
       },
     };
   }
@@ -290,10 +277,8 @@ export const getBudgetAdjustmentCellKey = (
 
 export const getBudgetAdjustmentRowCellKey = (
   row: BudgetAdjustmentEditorRow,
-  planFrom: string,
 ): string => {
-  validateMonth(planFrom, "Budget adjustment plan boundary");
-  const location = getEffectiveLocation(row, planFrom);
+  const location = getEffectiveLocation(row);
   return getBudgetAdjustmentCellKey(location.month, row.direction, location.category);
 };
 
@@ -302,16 +287,14 @@ export const getBudgetAdjustmentCellRows = (
   month: string,
   direction: BudgetAdjustmentDirection,
   category: string,
-  planFrom: string,
-): ReadonlyArray<BudgetAdjustmentEditorRow> => {
-  validateMonth(planFrom, "Budget adjustment plan boundary");
-  return sortBudgetAdjustmentRows(rows.filter((row): boolean => {
-    const location = getEffectiveLocation(row, planFrom);
+): ReadonlyArray<BudgetAdjustmentEditorRow> => sortBudgetAdjustmentRows(
+  rows.filter((row): boolean => {
+    const location = getEffectiveLocation(row);
     return location.month === month
       && row.direction === direction
       && location.category === category;
-  }));
-};
+  }),
+);
 
 export const replaceBudgetAdjustmentDraft = (
   rows: ReadonlyArray<BudgetAdjustmentEditorRow>,
@@ -335,11 +318,8 @@ export const getBudgetAdjustmentCellTotal = (
   month: string,
   direction: BudgetAdjustmentDirection,
   category: string,
-  planFrom: string,
 ): number => {
-  validateMonth(planFrom, "Budget adjustment plan boundary");
-  if (month < planFrom) return 0;
-  const total = getBudgetAdjustmentCellRows(rows, month, direction, category, planFrom)
+  const total = getBudgetAdjustmentCellRows(rows, month, direction, category)
     .reduce((sum, row): bigint => sum + BigInt(getOptimisticAmount(row)), BigInt(0));
   return toSafeNumber(total, `Budget adjustment total for ${month}/${direction}/${category}`);
 };
@@ -362,14 +342,13 @@ const toSafeNumber = (value: bigint, context: string): number => {
 
 const aggregateAdjustmentRows = (
   rows: ReadonlyArray<BudgetAdjustmentEditorRow>,
-  plannedFrom: string,
+  loadedFrom: string,
   loadedTo: string,
-  planFrom: string,
 ): ReadonlyMap<string, AdjustmentCellTotal> => {
   const totals = new Map<string, AdjustmentCellTotal>();
   for (const row of rows) {
-    const location = getEffectiveLocation(row, planFrom);
-    if (location.month < plannedFrom || location.month > loadedTo) continue;
+    const location = getEffectiveLocation(row);
+    if (location.month < loadedFrom || location.month > loadedTo) continue;
     const key = getBudgetAdjustmentCellKey(location.month, row.direction, location.category);
     const previous = totals.get(key);
     totals.set(key, {
@@ -414,13 +393,10 @@ export const applyBudgetAdjustmentRows = (
   adjustmentRows: ReadonlyArray<BudgetAdjustmentEditorRow>,
   loadedFrom: string,
   loadedTo: string,
-  planFrom: string,
   invalidatedCellKeys: ReadonlySet<string>,
 ): ReadonlyArray<BudgetRow> => {
   validateRange(loadedFrom, loadedTo, "Budget adjustment display range");
-  validateMonth(planFrom, "Budget adjustment plan boundary");
-  const plannedFrom = loadedFrom > planFrom ? loadedFrom : planFrom;
-  const totals = aggregateAdjustmentRows(adjustmentRows, plannedFrom, loadedTo, planFrom);
+  const totals = aggregateAdjustmentRows(adjustmentRows, loadedFrom, loadedTo);
   const existingKeys = new Set<string>();
   const result: Array<BudgetRow> = [];
 
@@ -428,7 +404,6 @@ export const applyBudgetAdjustmentRows = (
     if (
       row.month < loadedFrom
       || row.month > loadedTo
-      || row.month < plannedFrom
       || (row.direction !== "income" && row.direction !== "spend")
     ) {
       result.push(row);
@@ -486,7 +461,6 @@ export const applyBudgetAdjustmentRowsWithProtectedCells = (
   adjustmentRows: ReadonlyArray<BudgetAdjustmentEditorRow>,
   loadedFrom: string,
   loadedTo: string,
-  planFrom: string,
   invalidatedCellKeys: ReadonlySet<string>,
   protectedCells: ReadonlyArray<ProtectedBudgetAdjustmentCell>,
   effectiveAllowlist: ReadonlySet<string> | null,
@@ -496,7 +470,6 @@ export const applyBudgetAdjustmentRowsWithProtectedCells = (
     adjustmentRows,
     loadedFrom,
     loadedTo,
-    planFrom,
     invalidatedCellKeys,
   );
   const existingKeys = new Set(projectedRows
@@ -512,7 +485,6 @@ export const applyBudgetAdjustmentRowsWithProtectedCells = (
     if (
       cell.month < loadedFrom
       || cell.month > loadedTo
-      || cell.month < planFrom
       || !isBudgetAdjustmentCategoryVisible(cell.category, effectiveAllowlist)
     ) {
       continue;
@@ -540,13 +512,10 @@ export const recordBudgetAdjustmentCellMove = (
   current: ReadonlyMap<string, number>,
   move: BudgetAdjustmentCellMove,
   mutationRevision: number,
-  planFrom: string,
 ): ReadonlyMap<string, number> => {
   validateRevision(mutationRevision, "Budget adjustment move revision");
-  validateMonth(planFrom, "Budget adjustment plan boundary");
   const next = new Map(current);
   const currentLocation = MONTH_PATTERN.test(move.current.month)
-    && move.current.month >= planFrom
     && isValidBudgetAdjustmentCategory(move.current.category)
     ? move.current
     : move.previous;

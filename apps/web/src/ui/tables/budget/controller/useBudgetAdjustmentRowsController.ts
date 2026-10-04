@@ -64,7 +64,6 @@ export const useBudgetAdjustmentRowsController = ({
   if (runtimeRef.current === null) {
     runtimeRef.current = createBudgetAdjustmentRowsController({
       initialAdjustments: adjustments,
-      planFrom,
       autosaveDelayMs: AUTOSAVE_DELAY_MS,
       createAdjustment: (params) => createBudgetAdjustment(params),
       patchAdjustment: (adjustmentId, params) =>

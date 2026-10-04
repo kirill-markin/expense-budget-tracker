@@ -168,7 +168,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
       {canAddCategory && (
         <AddCategoryRow
           direction={block.direction}
-          valueColumnCount={buildBudgetValueColumns(columnSequence, currentMonth, plansMode).length}
+          valueColumns={buildBudgetValueColumns(columnSequence, currentMonth, plansMode)}
           onAddCategory={onAddCategory}
         />
       )}

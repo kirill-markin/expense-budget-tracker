@@ -35,7 +35,6 @@ import {
   type BudgetAdjustmentSnapshot,
 } from "@/ui/tables/budget/budgetAdjustmentRowsState";
 
-const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const RECENT_SETTLED_MUTATION_LIMIT = 8;
 const OPTIMISTIC_ROW_TIMESTAMP = "9999-12-31T23:59:59.999Z";
 
@@ -99,7 +98,6 @@ export type BudgetAdjustmentOptimisticCreate = Readonly<{
 
 export type BudgetAdjustmentRowsReconciliationState =
   BudgetAdjustmentRangeReconciliationState & Readonly<{
-    planFrom: string;
     latestMutationRequestId: number;
     latestMutationRevision: number;
     confirmedMutationRevisionById: ReadonlyMap<string, number>;
@@ -137,12 +135,6 @@ export type BudgetAdjustmentDeleteAcknowledgement = Readonly<{
   state: BudgetAdjustmentRowsReconciliationState;
   outcome: "applied" | "already-applied" | "stale";
 }>;
-
-const validateMonth = (month: string, context: string): void => {
-  if (!MONTH_PATTERN.test(month)) {
-    throw new RangeError(`${context} must use YYYY-MM with a valid month; received "${month}"`);
-  }
-};
 
 const validateRequestId = (requestId: number, context: string): void => {
   if (!Number.isSafeInteger(requestId) || requestId < 1) {
@@ -401,30 +393,25 @@ const enumerateMonths = (monthFrom: string, monthTo: string): ReadonlyArray<stri
 
 export const createBudgetAdjustmentRowsReconciliationState = (
   adjustments: ReadonlyArray<unknown>,
-  planFrom: string,
-): BudgetAdjustmentRowsReconciliationState => {
-  validateMonth(planFrom, "Budget adjustment plan boundary");
-  return {
-    ...createBudgetAdjustmentRangeReconciliationState(adjustments),
-    planFrom,
-    latestMutationRequestId: 0,
-    latestMutationRevision: 0,
-    confirmedMutationRevisionById: new Map(),
-    deletedMutationRevisionById: new Map(),
-    cellInvalidationRevisionByKey: new Map(),
-    rangeInvalidationRequestIdByCellKey: new Map(),
-    mutationRequestsById: new Map(),
-    settledMutationRequestIds: new Set(),
-    appliedCreateRequestIds: new Set(),
-    appliedDeleteRequestIds: new Set(),
-    optimisticCreateByAdjustmentId: new Map(),
-    latestCreateRequestIdByAdjustmentId: new Map(),
-    latestPatchRequestIdByAdjustmentId: new Map(),
-    latestDeleteRequestIdByAdjustmentId: new Map(),
-    ambiguousRangeRequirementByAdjustmentId: new Map(),
-    rangeMutationRevisionByRequestId: new Map(),
-  };
-};
+): BudgetAdjustmentRowsReconciliationState => ({
+  ...createBudgetAdjustmentRangeReconciliationState(adjustments),
+  latestMutationRequestId: 0,
+  latestMutationRevision: 0,
+  confirmedMutationRevisionById: new Map(),
+  deletedMutationRevisionById: new Map(),
+  cellInvalidationRevisionByKey: new Map(),
+  rangeInvalidationRequestIdByCellKey: new Map(),
+  mutationRequestsById: new Map(),
+  settledMutationRequestIds: new Set(),
+  appliedCreateRequestIds: new Set(),
+  appliedDeleteRequestIds: new Set(),
+  optimisticCreateByAdjustmentId: new Map(),
+  latestCreateRequestIdByAdjustmentId: new Map(),
+  latestPatchRequestIdByAdjustmentId: new Map(),
+  latestDeleteRequestIdByAdjustmentId: new Map(),
+  ambiguousRangeRequirementByAdjustmentId: new Map(),
+  rangeMutationRevisionByRequestId: new Map(),
+});
 
 const createOptimisticRangeProvenance = (
   direction: BudgetAdjustmentDirection,
@@ -465,7 +452,7 @@ export const addOptimisticBudgetAdjustmentRow = (
     month,
     category,
   };
-  const parsed = parseBudgetAdjustmentDraft(draft, state.planFrom);
+  const parsed = parseBudgetAdjustmentDraft(draft);
   if (!parsed.ok) {
     throw new Error(
       `Cannot add optimistic budget adjustment "${parsedAdjustmentId}": ${parsed.error.message}`,
@@ -744,7 +731,7 @@ export const issueBudgetAdjustmentPatchRequest = (
       `Cannot patch budget adjustment "${adjustmentId}" until a range issued after its ambiguous failure is reconciled`,
     );
   }
-  const parsed = parseBudgetAdjustmentDraft(row.draft, state.planFrom);
+  const parsed = parseBudgetAdjustmentDraft(row.draft);
   if (!parsed.ok) {
     throw new Error(`Cannot patch budget adjustment "${adjustmentId}": ${parsed.error.message}`);
   }
@@ -1273,7 +1260,6 @@ export const reconcileBudgetAdjustmentPatchAcknowledgement = (
         current: canonical.confirmed,
       },
       latestMutationRevision,
-      state.planFrom,
     ),
   }, issued.requestId);
   return { state: next, outcome: "accepted" };
