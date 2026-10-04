@@ -1,17 +1,21 @@
 "use client";
 
-import { useState, type ReactElement } from "react";
+import { Fragment, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
   parseBudgetCategoryName,
   type BudgetCategoryNameError,
 } from "@/ui/tables/budget/budgetCategoryName";
+import type {
+  BudgetCurrentMonthPart,
+  BudgetValueColumn,
+} from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 
 type AddCategoryRowProps = Readonly<{
   direction: string;
-  valueColumnCount: number;
+  valueColumns: ReadonlyArray<BudgetValueColumn>;
   onAddCategory: (direction: string, category: string) => void;
 }>;
 
@@ -20,14 +24,32 @@ const ERROR_MESSAGE_KEY: Readonly<Record<BudgetCategoryNameError, string>> = {
   tooLong: "budget.addCategoryTooLong",
 };
 
+const CURRENT_MONTH_PART_CLASS: Readonly<Record<BudgetCurrentMonthPart, string>> = {
+  plan: styles.currentMonthPlan,
+  actual: styles.currentMonthActual,
+};
+
 /**
- * Trailing row of a direction block that names a new category. The name only
- * enters the session state here; it becomes a stored category as soon as the
- * user saves a plan value in one of its cells.
+ * Mirrors the class combination a category row gives the same physical column,
+ * so the row keeps every vertical column border and the year-total band fill.
+ */
+const buildValueCellClassName = (column: BudgetValueColumn): string => {
+  const yearTotalClass = column.isYearTotal ? ` ${styles.yearTotal}` : "";
+  const currentMonthClass = column.currentMonthPart === null
+    ? ""
+    : ` ${CURRENT_MONTH_PART_CLASS[column.currentMonthPart]}`;
+  return `${styles.cell}${yearTotalClass}${currentMonthClass}`;
+};
+
+/**
+ * Trailing row of a direction block that names a new category, followed by a
+ * second row while the typed name is rejected. The name only enters the
+ * session state here; it becomes a stored category as soon as the user saves a
+ * plan value in one of its cells.
  */
 export const AddCategoryRow = ({
   direction,
-  valueColumnCount,
+  valueColumns,
   onAddCategory,
 }: AddCategoryRowProps): ReactElement => {
   const { t } = useTranslation();
@@ -76,58 +98,66 @@ export const AddCategoryRow = ({
   };
 
   return (
-    <tr className={styles.categoryRow}>
-      <td className={`${styles.categoryLabel} ${styles.stickyCol}`}>
-        {draft === null
-          ? (
-            <button
-              type="button"
-              className={styles.addCategoryButton}
-              data-testid={`budget-add-category-${direction}`}
-              onClick={(): void => setDraft("")}
+    <Fragment>
+      <tr className={styles.categoryRow}>
+        <td className={`${styles.categoryLabel} ${styles.stickyCol}`}>
+          {draft === null
+            ? (
+              <button
+                type="button"
+                className={styles.addCategoryButton}
+                data-testid={`budget-add-category-${direction}`}
+                onClick={(): void => setDraft("")}
+              >
+                {t("budget.addCategory")}
+              </button>
+            )
+            : (
+              <input
+                type="text"
+                className={styles.addCategoryInput}
+                data-testid={`budget-add-category-input-${direction}`}
+                aria-label={t("budget.addCategory")}
+                aria-invalid={error !== null}
+                autoFocus
+                value={draft}
+                onChange={(event): void => {
+                  setDraft(event.target.value);
+                  setError(null);
+                }}
+                onKeyDown={(event): void => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitDraft();
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelDraft();
+                  }
+                }}
+                onBlur={commitOnBlur}
+              />
+            )}
+        </td>
+        {valueColumns.map((column) => (
+          <td key={column.key} className={buildValueCellClassName(column)} />
+        ))}
+      </tr>
+      {error !== null && (
+        <tr className={styles.categoryRow}>
+          <td className={`${styles.categoryLabel} ${styles.stickyCol}`} />
+          <td className={styles.addCategoryMessage} colSpan={valueColumns.length}>
+            <span
+              className={styles.addCategoryError}
+              data-testid={`budget-add-category-error-${direction}`}
+              role="alert"
             >
-              {t("budget.addCategory")}
-            </button>
-          )
-          : (
-            <input
-              type="text"
-              className={styles.addCategoryInput}
-              data-testid={`budget-add-category-input-${direction}`}
-              aria-label={t("budget.addCategory")}
-              aria-invalid={error !== null}
-              autoFocus
-              value={draft}
-              onChange={(event): void => {
-                setDraft(event.target.value);
-                setError(null);
-              }}
-              onKeyDown={(event): void => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  commitDraft();
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelDraft();
-                }
-              }}
-              onBlur={commitOnBlur}
-            />
-          )}
-      </td>
-      <td className={styles.addCategoryMessage} colSpan={valueColumnCount}>
-        {error !== null && (
-          <span
-            className={styles.addCategoryError}
-            data-testid={`budget-add-category-error-${direction}`}
-            role="alert"
-          >
-            {t(ERROR_MESSAGE_KEY[error])}
-          </span>
-        )}
-      </td>
-    </tr>
+              {t(ERROR_MESSAGE_KEY[error])}
+            </span>
+          </td>
+        </tr>
+      )}
+    </Fragment>
   );
 };

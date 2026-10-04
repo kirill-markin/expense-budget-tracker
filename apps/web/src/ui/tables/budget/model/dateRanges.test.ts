@@ -72,11 +72,17 @@ test("flattens the fixed calendar into stable physical value columns", (): void 
   assert.equal(valueColumns.length, 21 * 13 + 2);
   assert.deepEqual(
     valueColumns.filter((column) => column.key.startsWith("2026-08")),
-    [{ key: "2026-08-plan" }, { key: "2026-08-actual" }],
+    [
+      { key: "2026-08-plan", isYearTotal: false, currentMonthPart: "plan" },
+      { key: "2026-08-actual", isYearTotal: false, currentMonthPart: "actual" },
+    ],
   );
   assert.deepEqual(
     valueColumns.filter((column) => column.key.startsWith("total-2026")),
-    [{ key: "total-2026-plan" }, { key: "total-2026-actual" }],
+    [
+      { key: "total-2026-plan", isYearTotal: true, currentMonthPart: null },
+      { key: "total-2026-actual", isYearTotal: true, currentMonthPart: null },
+    ],
   );
 });
 
