@@ -679,6 +679,51 @@ test("moves a row across month and category without mutating source rows", (): v
   assert.deepEqual(budgetRows, originalBudgetRows);
 });
 
+test("moves a row backward into an earlier month and clears the later source cell", (): void => {
+  const source = createBudgetAdjustmentEditorRow(createAdjustment(
+    "backward-move", 40, "2026-08", "spend", "Groceries", null, "2026-08-01T00:00:00.000Z",
+  ));
+  const budgetRows = [
+    createBudgetRow("2026-06", "spend", "Groceries", 50, 0),
+    createBudgetRow("2026-08", "spend", "Groceries", 100, 40),
+  ];
+  const moved = replaceBudgetAdjustmentDraft([source], source.adjustmentId, {
+    ...source.draft,
+    month: "2026-06",
+  });
+
+  assert.equal(
+    getBudgetAdjustmentRowCellKey(moved[0]),
+    getBudgetAdjustmentCellKey("2026-06", "spend", "Groceries"),
+  );
+  assert.deepEqual(
+    getBudgetAdjustmentCellRows(moved, "2026-06", "spend", "Groceries")
+      .map((row) => row.adjustmentId),
+    [source.adjustmentId],
+  );
+  assert.deepEqual(
+    getBudgetAdjustmentCellRows(moved, "2026-08", "spend", "Groceries")
+      .map((row) => row.adjustmentId),
+    [],
+  );
+  assert.equal(getBudgetAdjustmentCellTotal(moved, "2026-06", "spend", "Groceries"), 40);
+  assert.equal(getBudgetAdjustmentCellTotal(moved, "2026-08", "spend", "Groceries"), 0);
+
+  const result = applyBudgetAdjustmentRows(
+    budgetRows,
+    moved,
+    "2026-06",
+    "2026-08",
+    new Set(),
+  );
+  const destinationCell = result.find((row) => row.month === "2026-06" && row.category === "Groceries");
+  const sourceCell = result.find((row) => row.month === "2026-08" && row.category === "Groceries");
+  assert.equal(destinationCell?.plannedModifier, 40);
+  assert.equal(destinationCell?.planned, 90);
+  assert.equal(sourceCell?.plannedModifier, 0);
+  assert.equal(sourceCell?.planned, 100);
+});
+
 test("zero-valued move provenance hides the stale source until a fresh-enough range", (): void => {
   const source = createBudgetAdjustmentEditorRow(createAdjustment(
     "zero-move", 0, "2026-07", "spend", "Source", null, "2026-07-01T00:00:00.000Z",

@@ -22,8 +22,6 @@ const AUTOSAVE_DELAY_MS = 600;
 
 type UseBudgetAdjustmentRowsControllerParams = Readonly<{
   adjustments: ReadonlyArray<BudgetAdjustment>;
-  /** First month whose adjustments the editor may change. */
-  planFrom: string;
   actualTo: string;
   currentMonth: string;
   /**
@@ -38,7 +36,6 @@ type UseBudgetAdjustmentRowsControllerParams = Readonly<{
 
 export const useBudgetAdjustmentRowsController = ({
   adjustments,
-  planFrom,
   actualTo,
   currentMonth,
   rangePlansMode,
