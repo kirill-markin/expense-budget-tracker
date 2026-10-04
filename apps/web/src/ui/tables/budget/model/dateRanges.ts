@@ -16,8 +16,15 @@ export type BudgetRangeExtension = Readonly<{
   monthTo: string;
 }>;
 
+/** Which half of the split current-month column a value column renders. */
+export type BudgetCurrentMonthPart = "plan" | "actual";
+
 export type BudgetValueColumn = Readonly<{
   key: string;
+  /** Column rendered inside the year-total band. */
+  isYearTotal: boolean;
+  /** Set only for the two split columns of the current month. */
+  currentMonthPart: BudgetCurrentMonthPart | null;
 }>;
 
 const DISPLAY_YEAR_RADIUS = 10;
@@ -113,22 +120,22 @@ export const buildBudgetValueColumns = (
     if (column.kind === "month") {
       if (column.month === currentMonth) {
         result.push(
-          { key: `${column.month}-plan` },
-          { key: `${column.month}-actual` },
+          { key: `${column.month}-plan`, isYearTotal: false, currentMonthPart: "plan" },
+          { key: `${column.month}-actual`, isYearTotal: false, currentMonthPart: "actual" },
         );
       } else {
-        result.push({ key: column.month });
+        result.push({ key: column.month, isYearTotal: false, currentMonthPart: null });
       }
       continue;
     }
 
     if (column.year === currentYear) {
       result.push(
-        { key: `total-${column.year}-plan` },
-        { key: `total-${column.year}-actual` },
+        { key: `total-${column.year}-plan`, isYearTotal: true, currentMonthPart: null },
+        { key: `total-${column.year}-actual`, isYearTotal: true, currentMonthPart: null },
       );
     } else {
-      result.push({ key: `total-${column.year}` });
+      result.push({ key: `total-${column.year}`, isYearTotal: true, currentMonthPart: null });
     }
   }
 
