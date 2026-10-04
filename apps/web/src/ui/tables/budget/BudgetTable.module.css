@@ -32,6 +32,17 @@
   margin-inline-start: auto;
 }
 
+/* A display mode the user asked for that nothing is loading any more. Not an
+   error: it states the fact and offers the retry, in the text colour. */
+.plansModeStuck {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text);
+  margin-inline-start: auto;
+}
+
 .scroll {
   --budget-category-column-width: 180px;
 

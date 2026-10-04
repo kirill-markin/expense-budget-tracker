@@ -8,6 +8,7 @@ import type { NumberFormat } from "@/lib/locale";
 import {
   formatAmount,
   zeroCellValue,
+  type BudgetPlansMode,
   type CellValue,
   type ColumnEntry,
   type DirectionBlock,
@@ -32,6 +33,7 @@ type DirectionSubtotalRowProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  plansMode: BudgetPlansMode;
   loadedFrom: string;
   loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
@@ -49,6 +51,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
     columnSequence,
     currentMonth,
     currentYear,
+    plansMode,
     loadedFrom,
     loadedTo,
     yearComputed,
@@ -77,15 +80,17 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
           column,
           currentMonth,
           currentYear,
+          plansMode,
           loadedFrom,
           loadedTo,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
-          renderYearLoading: (isCurrentYearValue) =>
-            renderYearLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+          renderYearLoading: (isSplitYearValue) =>
+            renderYearLoading(column.kind === "year-total" ? column.year : "", isSplitYearValue),
           renderMonthLoading: (month) => renderUnloadedMonthCells(
             month,
             currentMonth,
             `${styles.cell}${subtotalClass}`,
+            plansMode,
           ),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
@@ -121,7 +126,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               </td>
             );
           },
-          renderCurrentYear: () => {
+          renderSplitYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", true);
             }
@@ -159,6 +164,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               key: column.month,
               month: column.month,
               currentMonth,
+              plansMode,
               planned: subtotal.planned,
               actual: subtotal.actual,
               isTainted,
@@ -187,6 +193,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               key: column.month,
               month: column.month,
               currentMonth,
+              plansMode,
               planned: subtotal.planned,
               actual: subtotal.actual,
               isTainted,
@@ -201,7 +208,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               onActualClick: null,
             });
           },
-          renderCurrentMonth: () => {
+          renderSplitMonth: () => {
             if (column.kind !== "month") {
               return renderYearLoading("invalid", false);
             }
@@ -213,6 +220,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               key: column.month,
               month: column.month,
               currentMonth,
+              plansMode,
               planned: subtotal.planned,
               actual: subtotal.actual,
               isTainted,

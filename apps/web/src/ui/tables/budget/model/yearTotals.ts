@@ -5,6 +5,7 @@ import type { CumulativeBalance } from "@/ui/tables/budget/model/balances";
 import { buildBlocks, computeAllowedSubtotals } from "@/ui/tables/budget/model/blocks";
 import { lookupCell, sumCellValuesOverMonths, zeroCellValue } from "@/ui/tables/budget/model/cells";
 import type { CellValue } from "@/ui/tables/budget/model/cells";
+import type { BudgetPlansMode } from "@/ui/tables/budget/model/plansMode";
 
 /**
  * Result of fetching a full year's budget data from the server.
@@ -40,14 +41,23 @@ export type YearTotalComputed = Readonly<{
   anyTainted: boolean;
 }>;
 
+/**
+ * Sums a year of cells for the year-total column.
+ *
+ * In "actuals" mode the current year's plan reports what the year is actually
+ * expected to end at: the elapsed months contribute their actual. In
+ * "all-plans" mode every year's plan is the pure sum of the twelve monthly
+ * plans, which is the number the per-month Plan columns add up to.
+ */
 const sumCellValuesForYear = (
   months: ReadonlyArray<string>,
   getValue: (month: string) => CellValue,
   year: string,
   currentMonth: string,
+  plansMode: BudgetPlansMode,
 ): CellValue => {
   const total = sumCellValuesOverMonths(months, getValue);
-  if (year !== getYear(currentMonth)) {
+  if (plansMode === "all-plans" || year !== getYear(currentMonth)) {
     return total;
   }
 
@@ -74,6 +84,7 @@ export const computeYearTotal = (
   year: string,
   currentMonth: string,
   allowlist: ReadonlySet<string> | null,
+  plansMode: BudgetPlansMode,
 ): YearTotalComputed => {
   const yearMonths = getYearMonths(year);
   const blocks = buildBlocks(rows, yearMonths, currentMonth, allowlist);
@@ -84,11 +95,11 @@ export const computeYearTotal = (
   for (const block of blocks) {
     directionSubtotals.set(
       block.direction,
-      sumCellValuesForYear(yearMonths, (m) => block.subtotals.get(m) ?? zeroCellValue, year, currentMonth),
+      sumCellValuesForYear(yearMonths, (m) => block.subtotals.get(m) ?? zeroCellValue, year, currentMonth, plansMode),
     );
     const catTotals = new Map<string, CellValue>();
     for (const cat of block.categories) {
-      catTotals.set(cat, sumCellValuesForYear(yearMonths, (m) => lookupCell(block.cells, m, cat), year, currentMonth));
+      catTotals.set(cat, sumCellValuesForYear(yearMonths, (m) => lookupCell(block.cells, m, cat), year, currentMonth, plansMode));
     }
     directionCategoryTotals.set(block.direction, catTotals);
   }
@@ -99,7 +110,7 @@ export const computeYearTotal = (
       const filtered = computeAllowedSubtotals(block, yearMonths, allowlist);
       filteredSubtotals.set(
         block.direction,
-        sumCellValuesForYear(yearMonths, (m) => filtered.get(m) ?? zeroCellValue, year, currentMonth),
+        sumCellValuesForYear(yearMonths, (m) => filtered.get(m) ?? zeroCellValue, year, currentMonth, plansMode),
       );
     }
   }
@@ -130,7 +141,7 @@ export const computeYearTotal = (
   const inc = blocks.find((b) => b.direction === "income")?.subtotals;
   const spd = blocks.find((b) => b.direction === "spend")?.subtotals;
   const txf = blocks.find((b) => b.direction === "transfer")?.subtotals;
-  const cumBalances = computeCumulativeBalances(yearMonths, inc, spd, txf, cumulativeBefore, taintedMonthSet, currentMonth, monthEndBalances);
+  const cumBalances = computeCumulativeBalances(yearMonths, inc, spd, txf, cumulativeBefore, taintedMonthSet, currentMonth, monthEndBalances, plansMode);
   const decemberBalance = cumBalances.get(`${year}-12`) ?? { plan: 0, actual: 0, isTainted: anyTainted };
 
   const yearFxMap = computeFxAdjustments(yearMonths, inc, spd, txf, monthEndBalances, currentMonth);
@@ -154,7 +165,7 @@ export const computeYearTotal = (
 
   const decemberBalancesByLiquidity = monthEndBalancesByLiquidity[`${year}-12`] ?? {};
 
-  const projectedLiqMap = computeCumulativeBalancesByLiquidity(yearMonths, inc, spd, txf, currentMonth, monthEndBalancesByLiquidity);
+  const projectedLiqMap = computeCumulativeBalancesByLiquidity(yearMonths, inc, spd, txf, currentMonth, monthEndBalancesByLiquidity, plansMode);
   const decemberBalancesByLiquidityPlan = projectedLiqMap.get(`${year}-12`) ?? {};
 
   return {

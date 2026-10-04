@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
+import type { BudgetPlansMode } from "@/ui/tables/budget/model/plansMode";
 import { computeYearTotal } from "@/ui/tables/budget/model/yearTotals";
 
 const budgetRow = (
@@ -47,6 +48,7 @@ test("computeYearTotal uses actuals from completed months in the current-year pl
     "2026",
     "2026-05",
     new Set(["Included"]),
+    "actuals",
   );
 
   assert.deepEqual(total.directionCategoryTotals.get("income")?.get("Included"), {
@@ -86,9 +88,64 @@ test("computeYearTotal keeps full-year plans for past and future years", (): voi
       year,
       "2026-05",
       null,
+      "actuals",
     );
 
     assert.equal(total.directionCategoryTotals.get("income")?.get("Salary")?.planned, 180);
     assert.equal(total.directionCategoryTotals.get("income")?.get("Salary")?.actual, 114);
   }
+});
+
+test("computeYearTotal sums pure plans for the current year in the all-plans mode", (): void => {
+  const rows: ReadonlyArray<BudgetRow> = [
+    budgetRow("2026-01", "income", "Salary", 100, 10),
+    budgetRow("2026-05", "income", "Salary", 50, 5),
+    budgetRow("2026-12", "income", "Salary", 30, 99),
+    budgetRow("2026-01", "spend", "Cost", 100, 5),
+  ];
+
+  const total = computeYearTotal(
+    rows,
+    { incomeActual: 0, spendActual: 0, transferActual: 0 },
+    {},
+    {},
+    {},
+    "2026",
+    "2026-05",
+    null,
+    "all-plans",
+  );
+
+  assert.deepEqual(total.directionCategoryTotals.get("income")?.get("Salary"), {
+    plannedBase: 180,
+    plannedModifier: 0,
+    planned: 180,
+    actual: 114,
+  });
+  assert.equal(total.directionSubtotals.get("income")?.planned, 180);
+  assert.equal(total.directionSubtotals.get("spend")?.planned, 100);
+  assert.equal(total.remainder.planned, 80);
+  assert.equal(total.remainder.actual, 109);
+});
+
+test("computeYearTotal keeps the elapsed-month substitution out of past years in both modes", (): void => {
+  const rows: ReadonlyArray<BudgetRow> = [
+    budgetRow("2025-03", "income", "Salary", 70, 7),
+    budgetRow("2025-11", "income", "Salary", 40, 4),
+  ];
+  const yearTotalForMode = (plansMode: BudgetPlansMode): number | undefined =>
+    computeYearTotal(
+      rows,
+      { incomeActual: 0, spendActual: 0, transferActual: 0 },
+      {},
+      {},
+      {},
+      "2025",
+      "2026-05",
+      null,
+      plansMode,
+    ).directionSubtotals.get("income")?.planned;
+
+  assert.equal(yearTotalForMode("actuals"), 110);
+  assert.equal(yearTotalForMode("all-plans"), 110);
 });

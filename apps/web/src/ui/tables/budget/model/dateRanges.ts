@@ -1,4 +1,9 @@
 import { getYear, offsetMonth } from "@/lib/monthUtils";
+import {
+  isSplitBudgetMonth,
+  isSplitBudgetYear,
+  type BudgetPlansMode,
+} from "@/ui/tables/budget/model/plansMode";
 
 export type ColumnEntry = Readonly<
   | { kind: "month"; month: string }
@@ -23,7 +28,11 @@ export type BudgetValueColumn = Readonly<{
   key: string;
   /** Column rendered inside the year-total band. */
   isYearTotal: boolean;
-  /** Set only for the two split columns of the current month. */
+  /**
+   * Set only for the two split columns of the real current month. The
+   * "all-plans" mode splits every elapsed month as well, and those columns
+   * carry null: the current-month emphasis belongs to one month alone.
+   */
   currentMonthPart: BudgetCurrentMonthPart | null;
 }>;
 
@@ -112,16 +121,28 @@ export const buildColumnSequence = (months: ReadonlyArray<string>): ReadonlyArra
 export const buildBudgetValueColumns = (
   columnSequence: ReadonlyArray<ColumnEntry>,
   currentMonth: string,
+  plansMode: BudgetPlansMode,
 ): ReadonlyArray<BudgetValueColumn> => {
   const currentYear = getYear(currentMonth);
   const result: Array<BudgetValueColumn> = [];
 
   for (const column of columnSequence) {
     if (column.kind === "month") {
-      if (column.month === currentMonth) {
+      if (isSplitBudgetMonth(column.month, currentMonth, plansMode)) {
+        // Which months split depends on the mode; which month is the current
+        // one does not. Only the latter identifies an emphasized column.
+        const isCurrentMonth = column.month === currentMonth;
         result.push(
-          { key: `${column.month}-plan`, isYearTotal: false, currentMonthPart: "plan" },
-          { key: `${column.month}-actual`, isYearTotal: false, currentMonthPart: "actual" },
+          {
+            key: `${column.month}-plan`,
+            isYearTotal: false,
+            currentMonthPart: isCurrentMonth ? "plan" : null,
+          },
+          {
+            key: `${column.month}-actual`,
+            isYearTotal: false,
+            currentMonthPart: isCurrentMonth ? "actual" : null,
+          },
         );
       } else {
         result.push({ key: column.month, isYearTotal: false, currentMonthPart: null });
@@ -129,7 +150,7 @@ export const buildBudgetValueColumns = (
       continue;
     }
 
-    if (column.year === currentYear) {
+    if (isSplitBudgetYear(column.year, currentYear, plansMode)) {
       result.push(
         { key: `total-${column.year}-plan`, isYearTotal: true, currentMonthPart: null },
         { key: `total-${column.year}-actual`, isYearTotal: true, currentMonthPart: null },
@@ -159,6 +180,19 @@ export const monthToDateTo = (month: string): string => {
   const [y, m] = month.split("-").map(Number);
   return `${month}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
 };
+
+/**
+ * A month a fill may start from.
+ *
+ * Filling rewrites the base plan of every later month of the same calendar
+ * year, so starting it in an elapsed month would overwrite recorded plan
+ * history together with the current and future budget. Plan history stays
+ * editable one month at a time.
+ */
+export const isBudgetFillSourceMonth = (
+  month: string,
+  currentMonth: string,
+): boolean => month >= currentMonth;
 
 export const getTargetFillMonths = (sourceMonth: string): ReadonlyArray<string> => {
   const year = sourceMonth.substring(0, 4);

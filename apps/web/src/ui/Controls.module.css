@@ -29,6 +29,15 @@
   opacity: 0.65;
 }
 
+/* Asked for, not applied yet: the other segment still matches what is shown. */
+.segmentPending {
+  border-style: dashed;
+  border-color: var(--text);
+  color: var(--text);
+  z-index: 1;
+  position: relative;
+}
+
 .segmentActive {
   color: var(--bg);
   border-color: var(--text);

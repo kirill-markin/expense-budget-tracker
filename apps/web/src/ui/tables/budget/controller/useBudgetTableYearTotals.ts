@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { YearFetchResult, YearTotalComputed } from "@/ui/tables/budget/budgetTableLogic";
+import type { BudgetPlansMode, YearFetchResult, YearTotalComputed } from "@/ui/tables/budget/budgetTableLogic";
 import { computeYearTotal } from "@/ui/tables/budget/budgetTableLogic";
 import { fetchBudgetRange } from "@/ui/tables/budget/budgetTableApi";
 import {
@@ -27,6 +27,7 @@ export type BudgetTableYearTotalsState = Readonly<{
 type UseBudgetTableYearTotalsParams = Readonly<{
   observedYears: ReadonlySet<string>;
   currentMonth: string;
+  plansMode: BudgetPlansMode;
   effectiveAllowlist: ReadonlySet<string> | null;
   refreshToken: string;
 }>;
@@ -48,6 +49,11 @@ type YearRetryProgressRecord = Readonly<{
   progress: BudgetBackgroundRetryProgress;
 }>;
 
+/**
+ * A year total reads a whole calendar year, so its plan window already opens at
+ * January: the request is the same in both display modes. The refresh token
+ * carries the mode, so a switch still refetches every cached year total.
+ */
 export const buildYearTotalRequest = (
   year: string,
   currentMonth: string,
@@ -96,6 +102,7 @@ export const snapshotYearTotalInvalidation = (
 export const useBudgetTableYearTotals = ({
   observedYears,
   currentMonth,
+  plansMode,
   effectiveAllowlist,
   refreshToken,
 }: UseBudgetTableYearTotalsParams): BudgetTableYearTotalsState => {
@@ -374,11 +381,12 @@ export const useBudgetTableYearTotals = ({
           year,
           currentMonth,
           effectiveAllowlist,
+          plansMode,
         ),
       );
     }
     return result;
-  }, [yearFetchResults, currentMonth, effectiveAllowlist]);
+  }, [yearFetchResults, currentMonth, effectiveAllowlist, plansMode]);
 
   const invalidateYearTotals = useCallback((years: ReadonlySet<string>): void => {
     const invalidatedYears = snapshotYearTotalInvalidation(years);

@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { BudgetRow, CumulativeBefore } from "@/server/budget/getBudgetGrid";
 import type {
+  BudgetPlansMode,
   CellValue,
   ColumnEntry,
   CumulativeBalance,
@@ -199,6 +200,7 @@ type UseBudgetTableDerivedStateParams = Readonly<{
   meb: Readonly<Record<string, number>>;
   mebByLiq: Readonly<Record<string, Readonly<Record<string, number>>>>;
   currentMonth: string;
+  plansMode: BudgetPlansMode;
   effectiveAllowlist: ReadonlySet<string> | null;
   adjustmentRows: ReadonlyArray<BudgetAdjustmentEditorRow>;
   sessionEditedCategoryKeys: ReadonlySet<string>;
@@ -215,6 +217,7 @@ export const useBudgetTableDerivedState = ({
   meb,
   mebByLiq,
   currentMonth,
+  plansMode,
   effectiveAllowlist,
   adjustmentRows,
   sessionEditedCategoryKeys,
@@ -317,8 +320,9 @@ export const useBudgetTableDerivedState = ({
         taintedMonths,
         currentMonth,
         meb,
+        plansMode,
       ),
-    [loadedMonths, incomeSubtotals, spendSubtotals, transferSubtotals, cumBefore, taintedMonths, currentMonth, meb],
+    [loadedMonths, incomeSubtotals, spendSubtotals, transferSubtotals, cumBefore, taintedMonths, currentMonth, meb, plansMode],
   );
 
   const fxAdjustments = useMemo<ReadonlyMap<string, number>>(
@@ -352,8 +356,9 @@ export const useBudgetTableDerivedState = ({
         transferSubtotals,
         currentMonth,
         mebByLiq,
+        plansMode,
       ),
-    [loadedMonths, incomeSubtotals, spendSubtotals, transferSubtotals, currentMonth, mebByLiq],
+    [loadedMonths, incomeSubtotals, spendSubtotals, transferSubtotals, currentMonth, mebByLiq, plansMode],
   );
 
   return {

@@ -7,6 +7,7 @@ import { MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import {
   formatAmount,
+  type BudgetPlansMode,
   type ColumnEntry,
   type YearTotalComputed,
 } from "@/ui/tables/budget/budgetTableLogic";
@@ -23,6 +24,7 @@ type LiquidityRowProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  plansMode: BudgetPlansMode;
   loadedFrom: string;
   loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
@@ -39,6 +41,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
     columnSequence,
     currentMonth,
     currentYear,
+    plansMode,
     loadedFrom,
     loadedTo,
     yearComputed,
@@ -52,10 +55,10 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
   const renderValue = (value: number): string => (
     showData ? formatAmount(value, numberFormat) : MASKED_CELL_PLACEHOLDER
   );
-  const renderYearLoading = (year: string, isCurrentYearValue: boolean): ReactElement => (
+  const renderYearLoading = (year: string, isSplitYearValue: boolean): ReactElement => (
     showData
-      ? renderDerivedYearLoadingCells(year, isCurrentYearValue)
-      : renderMaskedYearCells(year, isCurrentYearValue, derivedMaskClass)
+      ? renderDerivedYearLoadingCells(year, isSplitYearValue)
+      : renderMaskedYearCells(year, isSplitYearValue, derivedMaskClass)
   );
 
   return (
@@ -71,13 +74,14 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
           column,
           currentMonth,
           currentYear,
+          plansMode,
           loadedFrom,
           loadedTo,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
-          renderYearLoading: (isCurrentYearValue) =>
-            renderYearLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+          renderYearLoading: (isSplitYearValue) =>
+            renderYearLoading(column.kind === "year-total" ? column.year : "", isSplitYearValue),
           renderMonthLoading: (month) =>
-            renderUnloadedMonthCells(month, currentMonth, styles.cell),
+            renderUnloadedMonthCells(month, currentMonth, styles.cell, plansMode),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
@@ -98,7 +102,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
               </td>
             );
           },
-          renderCurrentYear: () => {
+          renderSplitYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", true);
             }
@@ -133,16 +137,19 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
               </td>
             );
           },
-          renderCurrentMonth: () => {
+          renderSplitMonth: (isCurrentMonth) => {
             if (column.kind !== "month") {
               return renderYearLoading("invalid", false);
             }
+            // Only the real current month carries the emphasis box.
+            const planEmphasisClass = isCurrentMonth ? ` ${styles.currentMonthPlan}` : "";
+            const actualEmphasisClass = isCurrentMonth ? ` ${styles.currentMonthActual}` : "";
             return (
               <Fragment key={column.month}>
-                <td className={`${styles.cell} ${styles.currentMonthPlan}${derivedMaskClass}`}>
+                <td className={`${styles.cell}${planEmphasisClass}${derivedMaskClass}`}>
                   {renderValue(projectedLiqBalances.get(column.month)?.[liquidity] ?? 0)}
                 </td>
-                <td className={`${styles.cell} ${styles.currentMonthActual}${derivedMaskClass}`}>
+                <td className={`${styles.cell}${actualEmphasisClass}${derivedMaskClass}`}>
                   {renderValue(mebByLiq[column.month]?.[liquidity] ?? 0)}
                 </td>
               </Fragment>

@@ -3,6 +3,7 @@
 import type { ReactElement } from "react";
 
 import {
+  type BudgetPlansMode,
   type ColumnEntry,
   type YearTotalComputed,
 } from "@/ui/tables/budget/budgetTableLogic";
@@ -20,15 +21,16 @@ type MetricRowProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  plansMode: BudgetPlansMode;
   loadedFrom: string;
   loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   renderPastYear: (year: string, yearData: YearTotalComputed) => ReactElement;
   renderFutureYear: (year: string, yearData: YearTotalComputed) => ReactElement;
-  renderCurrentYear: (year: string, yearData: YearTotalComputed) => ReactElement;
+  renderSplitYear: (year: string, yearData: YearTotalComputed) => ReactElement;
   renderPastMonth: (month: string) => ReactElement;
   renderFutureMonth: (month: string) => ReactElement;
-  renderCurrentMonth: (month: string) => ReactElement;
+  renderSplitMonth: (month: string, isCurrentMonth: boolean) => ReactElement;
   loadingKind: "subtotal" | "derived";
   showData: boolean;
   maskClass: string;
@@ -41,16 +43,17 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
     columnSequence,
     currentMonth,
     currentYear,
+    plansMode,
     loadedFrom,
     loadedTo,
     yearComputed,
     rowClassName,
     renderPastYear,
     renderFutureYear,
-    renderCurrentYear,
+    renderSplitYear,
     renderPastMonth,
     renderFutureMonth,
-    renderCurrentMonth,
+    renderSplitMonth,
     loadingKind,
     showData,
     maskClass,
@@ -58,10 +61,10 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
   const renderVisibleLoading = loadingKind === "subtotal"
     ? renderSubtotalYearLoadingCells
     : renderDerivedYearLoadingCells;
-  const renderLoading = (year: string, isCurrentYear: boolean): ReactElement => (
+  const renderLoading = (year: string, isSplitYear: boolean): ReactElement => (
     showData
-      ? renderVisibleLoading(year, isCurrentYear)
-      : renderMaskedYearCells(year, isCurrentYear, maskClass)
+      ? renderVisibleLoading(year, isSplitYear)
+      : renderMaskedYearCells(year, isSplitYear, maskClass)
   );
 
   return (
@@ -73,17 +76,19 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
           column,
           currentMonth,
           currentYear,
+          plansMode,
           loadedFrom,
           loadedTo,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
-          renderYearLoading: (isCurrentYearValue) =>
-            renderLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+          renderYearLoading: (isSplitYearValue) =>
+            renderLoading(column.kind === "year-total" ? column.year : "", isSplitYearValue),
           renderMonthLoading: (month) => renderUnloadedMonthCells(
             month,
             currentMonth,
             loadingKind === "subtotal"
               ? `${styles.cell} ${styles.cellSubtotal}`
               : styles.cell,
+            plansMode,
           ),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
@@ -97,11 +102,11 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
             }
             return renderFutureYear(column.year, yearData);
           },
-          renderCurrentYear: () => {
+          renderSplitYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderLoading(column.kind === "year-total" ? column.year : "", true);
             }
-            return renderCurrentYear(column.year, yearData);
+            return renderSplitYear(column.year, yearData);
           },
           renderPastMonth: () => {
             if (column.kind !== "month") {
@@ -115,11 +120,11 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
             }
             return renderFutureMonth(column.month);
           },
-          renderCurrentMonth: () => {
+          renderSplitMonth: (isCurrentMonth) => {
             if (column.kind !== "month") {
               return renderLoading("invalid", false);
             }
-            return renderCurrentMonth(column.month);
+            return renderSplitMonth(column.month, isCurrentMonth);
           },
         });
       })}

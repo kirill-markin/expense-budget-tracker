@@ -12,8 +12,10 @@ import {
 import type { BudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/budgetAdjustmentRowsController";
 import {
   formatAmount,
+  isBudgetFillSourceMonth,
   lookupCell,
   zeroCellValue,
+  type BudgetPlansMode,
   type ColumnEntry,
   type DirectionBlock,
   type YearTotalComputed,
@@ -42,6 +44,7 @@ type CategoryRowProps = Readonly<{
   columnSequence: ReadonlyArray<ColumnEntry>;
   currentMonth: string;
   currentYear: string;
+  plansMode: BudgetPlansMode;
   loadedFrom: string;
   loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
@@ -95,6 +98,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     columnSequence,
     currentMonth,
     currentYear,
+    plansMode,
     loadedFrom,
     loadedTo,
     yearComputed,
@@ -112,10 +116,10 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     onSyncEnd,
   } = props;
   const categoryVisibility = getCellVisibility(effectiveAllowlist, category);
-  const renderYearLoading = (year: string, isCurrentYearValue: boolean): ReactElement => (
+  const renderYearLoading = (year: string, isSplitYearValue: boolean): ReactElement => (
     categoryVisibility.showData
-      ? renderDerivedYearLoadingCells(year, isCurrentYearValue)
-      : renderMaskedYearCells(year, isCurrentYearValue, categoryVisibility.maskClass)
+      ? renderDerivedYearLoadingCells(year, isSplitYearValue)
+      : renderMaskedYearCells(year, isSplitYearValue, categoryVisibility.maskClass)
   );
 
   return (
@@ -132,13 +136,14 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
           column,
           currentMonth,
           currentYear,
+          plansMode,
           loadedFrom,
           loadedTo,
           isYearLoading: column.kind === "year-total" && yearData === undefined,
-          renderYearLoading: (isCurrentYearValue) =>
-            renderYearLoading(column.kind === "year-total" ? column.year : "", isCurrentYearValue),
+          renderYearLoading: (isSplitYearValue) =>
+            renderYearLoading(column.kind === "year-total" ? column.year : "", isSplitYearValue),
           renderMonthLoading: (month) =>
-            renderUnloadedMonthCells(month, currentMonth, styles.cell),
+            renderUnloadedMonthCells(month, currentMonth, styles.cell, plansMode),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
@@ -184,7 +189,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               </td>
             );
           },
-          renderCurrentYear: () => {
+          renderSplitYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", true);
             }
@@ -272,6 +277,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 taintedClass={taintedClass}
                 isPlanOver={false}
                 cmClass=""
+                canFillRestOfYear={isBudgetFillSourceMonth(column.month, currentMonth)}
                 budgetAdjustments={budgetAdjustments}
                 onPlanSave={onPlanSave}
                 onBaseMutationIssued={onBaseMutationIssued}
@@ -283,7 +289,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               />
             );
           },
-          renderCurrentMonth: () => {
+          renderSplitMonth: (isCurrentMonth) => {
             if (column.kind !== "month") {
               return renderYearLoading("invalid", false);
             }
@@ -314,7 +320,8 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   maskClass={categoryVisibility.maskClass}
                   taintedClass={taintedClass}
                   isPlanOver={false}
-                  cmClass={` ${styles.currentMonthPlan}`}
+                  cmClass={isCurrentMonth ? ` ${styles.currentMonthPlan}` : ""}
+                  canFillRestOfYear={isBudgetFillSourceMonth(column.month, currentMonth)}
                   budgetAdjustments={budgetAdjustments}
                   onPlanSave={onPlanSave}
                   onBaseMutationIssued={onBaseMutationIssued}
@@ -325,7 +332,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   onSyncEnd={onSyncEnd}
                 />
                 <td
-                  className={`${styles.cell} ${styles.currentMonthActual}${categoryVisibility.maskClass}${categoryVisibility.showData ? taintedClass : ""}${categoryVisibility.showData && isActualOver ? ` ${tableStateStyles.over}` : ""}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                  className={`${styles.cell}${isCurrentMonth ? ` ${styles.currentMonthActual}` : ""}${categoryVisibility.maskClass}${categoryVisibility.showData ? taintedClass : ""}${categoryVisibility.showData && isActualOver ? ` ${tableStateStyles.over}` : ""}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
                   data-testid={categoryVisibility.showData
                     ? `budget-actual-${column.month}:${block.direction}:${category}`
                     : undefined}
