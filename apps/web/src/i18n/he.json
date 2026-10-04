@@ -238,7 +238,7 @@
   "budget.adjustmentDelete": "מחיקת התאמה",
   "budget.adjustmentDeleting": "מוחק…",
   "budget.adjustmentInvalidAmount": "יש להזין מספר שלם או להשאיר ריק עבור אפס.",
-  "budget.adjustmentInvalidMonth": "יש לבחור בחודש הנוכחי או בחודש עתידי.",
+  "budget.adjustmentInvalidMonth": "יש לבחור חודש תקין.",
   "budget.adjustmentInvalidCategory": "יש לבחור קטגוריה.",
   "budget.adjustmentInvalidNote": "ההערה יכולה להכיל עד 2,000 תווים.",
   "budget.adjustmentSaveFailed": "לא ניתן לשמור את ההתאמה.",

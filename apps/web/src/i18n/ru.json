@@ -238,7 +238,7 @@
   "budget.adjustmentDelete": "Удалить корректировку",
   "budget.adjustmentDeleting": "Удаление…",
   "budget.adjustmentInvalidAmount": "Введите целое число или оставьте поле пустым для нуля.",
-  "budget.adjustmentInvalidMonth": "Выберите текущий или будущий месяц.",
+  "budget.adjustmentInvalidMonth": "Выберите корректный месяц.",
   "budget.adjustmentInvalidCategory": "Выберите категорию.",
   "budget.adjustmentInvalidNote": "Примечание должно содержать не более 2000 символов.",
   "budget.adjustmentSaveFailed": "Не удалось сохранить корректировку.",

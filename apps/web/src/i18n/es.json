@@ -238,7 +238,7 @@
   "budget.adjustmentDelete": "Eliminar ajuste",
   "budget.adjustmentDeleting": "Eliminando…",
   "budget.adjustmentInvalidAmount": "Introduce un número entero o déjalo vacío para usar cero.",
-  "budget.adjustmentInvalidMonth": "Elige el mes actual o uno futuro.",
+  "budget.adjustmentInvalidMonth": "Elige un mes válido.",
   "budget.adjustmentInvalidCategory": "Elige una categoría.",
   "budget.adjustmentInvalidNote": "Limita la nota a 2000 caracteres.",
   "budget.adjustmentSaveFailed": "No se pudo guardar el ajuste.",

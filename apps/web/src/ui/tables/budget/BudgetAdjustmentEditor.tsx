@@ -28,7 +28,6 @@ const MAX_MONTH = "9999-12";
 type BudgetAdjustmentEditorProps = Readonly<{
   editorId: string;
   location: BudgetAdjustmentCellLocation;
-  currentMonth: string;
   categories: ReadonlyArray<string>;
   effectiveAllowlist: ReadonlySet<string> | null;
   editorAnchorByAdjustmentId: ReadonlyMap<
@@ -49,7 +48,6 @@ const getValidationMessageKey = (
     case "unsafeAmount":
       return "budget.adjustmentInvalidAmount";
     case "invalidMonth":
-    case "pastMonth":
       return "budget.adjustmentInvalidMonth";
     case "invalidCategory":
       return "budget.adjustmentInvalidCategory";
@@ -69,7 +67,6 @@ const getLocationValidationField = (
 ): BudgetAdjustmentLocationField => {
   switch (error.code) {
     case "invalidMonth":
-    case "pastMonth":
       return "month";
     case "invalidCategory":
       return "category";
@@ -93,7 +90,6 @@ export const BudgetAdjustmentEditor = (
   const {
     editorId,
     location,
-    currentMonth,
     categories,
     effectiveAllowlist,
     editorAnchorByAdjustmentId,
@@ -327,10 +323,7 @@ export const BudgetAdjustmentEditor = (
       locationValidationFrameByAdjustmentIdRef.current.delete(adjustmentId);
       const currentRow = controller.getRow(adjustmentId, null);
       if (currentRow === null) return;
-      const currentValidation = parseBudgetAdjustmentDraft(
-        currentRow.draft,
-        currentMonth,
-      );
+      const currentValidation = parseBudgetAdjustmentDraft(currentRow.draft);
       if (currentValidation.ok || currentValidation.error.code !== error.code) {
         return;
       }
@@ -372,7 +365,7 @@ export const BudgetAdjustmentEditor = (
 
     clearLocationInputValidity(row.adjustmentId);
     replaceDraft(row, draft);
-    const parsed = parseBudgetAdjustmentDraft(draft, currentMonth);
+    const parsed = parseBudgetAdjustmentDraft(draft);
     if (!parsed.ok) {
       reportLocationValidation(
         row.adjustmentId,
@@ -438,14 +431,13 @@ export const BudgetAdjustmentEditor = (
   ): HTMLElement | undefined => {
     const currentRow = controller.getRow(adjustmentId, null);
     if (currentRow === null) return undefined;
-    const parsed = parseBudgetAdjustmentDraft(currentRow.draft, currentMonth);
+    const parsed = parseBudgetAdjustmentDraft(currentRow.draft);
     if (parsed.ok) return amountInputRefs.current.get(adjustmentId);
     switch (parsed.error.code) {
       case "invalidAmount":
       case "unsafeAmount":
         return amountInputRefs.current.get(adjustmentId);
       case "invalidMonth":
-      case "pastMonth":
         return monthInputRefs.current.get(adjustmentId);
       case "invalidCategory":
         return categoryInputRefs.current.get(adjustmentId);
@@ -583,8 +575,7 @@ export const BudgetAdjustmentEditor = (
             && validation?.code !== "invalidCategory";
           const amountInvalid = validation?.code === "invalidAmount"
             || validation?.code === "unsafeAmount";
-          const monthInvalid = validation?.code === "invalidMonth"
-            || validation?.code === "pastMonth";
+          const monthInvalid = validation?.code === "invalidMonth";
           const categoryInvalid = categoryUnavailable
             || validation?.code === "invalidCategory";
           const noteInvalid = validation?.code === "invalidNote";
@@ -687,7 +678,6 @@ export const BudgetAdjustmentEditor = (
                   aria-invalid={monthInvalid}
                   aria-describedby={monthInvalid && validationMessage !== null ? errorId : undefined}
                   required
-                  min={currentMonth}
                   max={MAX_MONTH}
                   value={row.draft.month}
                   onChange={(event) => {

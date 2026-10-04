@@ -90,7 +90,7 @@ test("budget adjustment category and note limits count Unicode code points", ():
   );
 });
 
-test("budget adjustment create rejects past months, non-integers, and unknown fields", (): void => {
+test("budget adjustment create accepts any valid month and rejects non-integers and unknown fields", (): void => {
   const valid = {
     adjustmentId: ADJUSTMENT_ID,
     month: getCurrentMonth(),
@@ -104,9 +104,13 @@ test("budget adjustment create rejects past months, non-integers, and unknown fi
     () => parseBudgetAdjustmentCreateBody({ ...valid, adjustmentId: "not-a-uuid" }),
     /Expected UUID/,
   );
+  assert.equal(
+    parseBudgetAdjustmentCreateBody({ ...valid, month: offsetMonth(valid.month, -1) }).month,
+    offsetMonth(valid.month, -1),
+  );
   assertBadRequest(
-    () => parseBudgetAdjustmentCreateBody({ ...valid, month: offsetMonth(valid.month, -1) }),
-    /current or future month/,
+    () => parseBudgetAdjustmentCreateBody({ ...valid, month: "2026-13" }),
+    /Invalid month format/,
   );
   assertBadRequest(
     () => parseBudgetAdjustmentCreateBody({ ...valid, amount: 10.5 }),
@@ -134,7 +138,7 @@ test("budget adjustment create rejects past months, non-integers, and unknown fi
   );
 });
 
-test("budget adjustment patch accepts only editable fields and allows edits without a month", (): void => {
+test("budget adjustment patch accepts only editable fields, any valid month, and edits without a month", (): void => {
   assert.deepEqual(parseBudgetAdjustmentPatchBody({ amount: -25 }), { amount: -25 });
   assert.deepEqual(parseBudgetAdjustmentPatchBody({ note: null }), { note: null });
   assert.deepEqual(parseBudgetAdjustmentPatchBody({
@@ -145,10 +149,15 @@ test("budget adjustment patch accepts only editable fields and allows edits with
     category: "Dining",
   });
 
+  assert.deepEqual(
+    parseBudgetAdjustmentPatchBody({ month: offsetMonth(getCurrentMonth(), -1) }),
+    { month: offsetMonth(getCurrentMonth(), -1) },
+  );
+
   assertBadRequest(() => parseBudgetAdjustmentPatchBody({}), /at least one editable field/);
   assertBadRequest(
-    () => parseBudgetAdjustmentPatchBody({ month: offsetMonth(getCurrentMonth(), -1) }),
-    /current or future month/,
+    () => parseBudgetAdjustmentPatchBody({ month: "2026-13" }),
+    /Invalid month format/,
   );
   assertBadRequest(
     () => parseBudgetAdjustmentPatchBody({ direction: "income" }),

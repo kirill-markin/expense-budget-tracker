@@ -210,7 +210,6 @@ const createHarness = (
 
   const runtime = createBudgetAdjustmentRowsController({
     initialAdjustments,
-    planFrom: "2026-07",
     autosaveDelayMs: 600,
     createAdjustment: async (params): Promise<BudgetAdjustment> => {
       createCalls.push({ ...params });
