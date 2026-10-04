@@ -253,8 +253,6 @@ export const useBudgetTableController = (
 
   const adjustmentsController = useBudgetAdjustmentRowsController({
     adjustments: props.adjustments,
-    // First month that accepts adjustment edits; the API rejects earlier ones.
-    planFrom: currentMonth,
     actualTo: currentMonth,
     currentMonth,
     rangePlansMode: getBudgetRangeFetchPlansMode(plansMode, loadedPlansMode),
