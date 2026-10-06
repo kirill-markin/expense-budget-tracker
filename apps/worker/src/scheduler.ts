@@ -29,14 +29,33 @@ async function runDailyRebuild(): Promise<void> {
   console.log("Daily FX rebuild result:", JSON.stringify(rebuildResult));
 }
 
+/** The rebuild runs even when fetchers fail, so the carry-forward still fills the day. */
 async function runAll(): Promise<void> {
-  await runFetcher("ECB", runEcb);
-  await runFetcher("CBR", runCbr);
-  await runFetcher("NBS", runNbs);
-  await runFetcher("NBU", runNbu);
-  await runFetcher("USDT", runUsdt);
-  await runFetcher("KuCoin", runKucoin);
+  const fetchers: readonly { name: string; run: () => Promise<unknown> }[] = [
+    { name: "ECB", run: runEcb },
+    { name: "CBR", run: runCbr },
+    { name: "NBS", run: runNbs },
+    { name: "NBU", run: runNbu },
+    { name: "USDT", run: runUsdt },
+    { name: "KuCoin", run: runKucoin },
+  ];
+
+  const failures: { name: string; error: string }[] = [];
+  for (const fetcher of fetchers) {
+    try {
+      await runFetcher(fetcher.name, fetcher.run);
+    } catch (err: unknown) {
+      failures.push({ name: fetcher.name, error: String(err) });
+      console.error(`${fetcher.name} fetch failed:`, err);
+    }
+  }
+
   await runDailyRebuild();
+
+  if (failures.length > 0) {
+    const detail = failures.map((f) => `${f.name}: ${f.error}`).join("; ");
+    throw new Error(`FX fetchers failed: ${detail}`);
+  }
 }
 
 cron.schedule("0 8 * * *", () => {
