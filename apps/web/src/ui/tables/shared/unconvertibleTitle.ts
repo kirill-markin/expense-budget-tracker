@@ -32,3 +32,37 @@ export const buildUnconvertibleMonthsTitle = (
   }
   return buildUnconvertibleCurrenciesTitle([...currencies], formatReason);
 };
+
+/**
+ * Both reason builders of one row or section, sharing its month map, localized
+ * `formatReason` and masking gate: each returns `null` for a trusted value and
+ * for a masked one, because a hidden amount must not explain itself.
+ *
+ * Year totals come from their own full-year fetch, so their reason comes from
+ * that fetch too: the month map only covers the horizontally loaded range.
+ */
+export const createUnconvertibleTitleBuilders = (
+  params: Readonly<{
+    currenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
+    formatReason: (currencies: string) => string;
+    showData: boolean;
+  }>,
+): Readonly<{
+  monthsTitle: (isTainted: boolean, includesMonth: (month: string) => boolean) => string | null;
+  currenciesTitle: (isTainted: boolean, currencies: ReadonlyArray<string>) => string | null;
+}> => {
+  const { currenciesByMonth, formatReason, showData } = params;
+
+  return {
+    monthsTitle: (isTainted: boolean, includesMonth: (month: string) => boolean): string | null => (
+      isTainted && showData
+        ? buildUnconvertibleMonthsTitle(currenciesByMonth, includesMonth, formatReason)
+        : null
+    ),
+    currenciesTitle: (isTainted: boolean, currencies: ReadonlyArray<string>): string | null => (
+      isTainted && showData
+        ? buildUnconvertibleCurrenciesTitle(currencies, formatReason)
+        : null
+    ),
+  };
+};

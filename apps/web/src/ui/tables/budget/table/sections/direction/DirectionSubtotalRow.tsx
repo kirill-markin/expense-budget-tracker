@@ -17,10 +17,7 @@ import {
 } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
-import {
-  buildUnconvertibleCurrenciesTitle,
-  buildUnconvertibleMonthsTitle,
-} from "@/ui/tables/shared/unconvertibleTitle";
+import { createUnconvertibleTitleBuilders } from "@/ui/tables/shared/unconvertibleTitle";
 import { buildUnpairedTransferLegsTitle } from "@/ui/tables/shared/unpairedTransferTitle";
 import {
   buildDirectionMonthDrillDownFilter,
@@ -76,29 +73,12 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
     openDrillDown,
   } = props;
   const { t } = useTranslation();
-  const formatUnconvertibleReason = (currencies: string): string =>
-    t("common.unconvertibleReason", { currencies });
-  const unconvertibleTitle = (
-    isTainted: boolean,
-    includesMonth: (month: string) => boolean,
-  ): string | null => (
-    isTainted
-      ? buildUnconvertibleMonthsTitle(unconvertibleCurrenciesByMonth, includesMonth, formatUnconvertibleReason)
-      : null
-  );
-  /**
-   * Year totals come from their own full-year fetch, so their reason comes from
-   * that fetch too: the month map only covers the horizontally loaded range.
-   */
-  const yearUnconvertibleTitle = (
-    isTainted: boolean,
-    currencies: ReadonlyArray<string>,
-  ): string | undefined => (
-    isTainted
-      ? (buildUnconvertibleCurrenciesTitle(currencies, formatUnconvertibleReason) ?? undefined)
-      : undefined
-  );
   const dirVis: CellVisibility = { showData: true, maskClass: "" };
+  const { monthsTitle: unconvertibleTitle, currenciesTitle: yearUnconvertibleTitle } = createUnconvertibleTitleBuilders({
+    currenciesByMonth: unconvertibleCurrenciesByMonth,
+    formatReason: (currencies: string): string => t("common.unconvertibleReason", { currencies }),
+    showData: dirVis.showData,
+  });
   const isTransfer = block.direction === "transfer";
   const labelClass = isTransfer ? styles.categoryLabel : styles.directionLabel;
   const subtotalClass = isTransfer ? "" : ` ${styles.cellSubtotal}`;
@@ -181,7 +161,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               <td
                 key={`total-${column.year}`}
                 className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
-                title={yearUnconvertibleTitle(isYearTainted, yearCurrencies)}
+                title={yearUnconvertibleTitle(isYearTainted, yearCurrencies) ?? undefined}
                 onClick={dirVis.showData
                   ? () => openDrillDown(buildDirectionYearDrillDownFilter(column.year, block.direction, allowedCategoriesArray))
                   : undefined}
@@ -222,13 +202,13 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               <Fragment key={`total-${column.year}`}>
                 <td
                   className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalPlanStateClass}`}
-                  title={yearUnconvertibleTitle(isYearPlanTainted, yearCurrencies)}
+                  title={yearUnconvertibleTitle(isYearPlanTainted, yearCurrencies) ?? undefined}
                 >
                   {formatAmount(yearSubtotal.planned, numberFormat)}
                 </td>
                 <td
                   className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalActualStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
-                  title={yearUnconvertibleTitle(isYearTainted, yearCurrencies)}
+                  title={yearUnconvertibleTitle(isYearTainted, yearCurrencies) ?? undefined}
                   onClick={dirVis.showData
                     ? () => openDrillDown(buildDirectionYearDrillDownFilter(column.year, block.direction, allowedCategoriesArray))
                     : undefined}

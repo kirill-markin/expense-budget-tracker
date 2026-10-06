@@ -6,6 +6,7 @@ import { buildBudgetTaintedState } from "@/ui/tables/budget/model/balances";
 import {
   buildUnconvertibleCurrenciesTitle,
   buildUnconvertibleMonthsTitle,
+  createUnconvertibleTitleBuilders,
 } from "@/ui/tables/shared/unconvertibleTitle";
 
 const formatReason = (currencies: string): string => `no rate for ${currencies}`;
@@ -72,6 +73,42 @@ test("buildUnconvertibleMonthsTitle unions and sorts the currencies of every inc
     buildUnconvertibleMonthsTitle(currenciesByMonth, (month) => month.startsWith("2026-"), formatReason),
     "no rate for GRAM, RSD, USDT",
   );
+});
+
+const visibleBuilders = createUnconvertibleTitleBuilders({
+  currenciesByMonth: new Map([
+    ["2026-01", ["GRAM"]],
+    ["2026-02", ["USDT", "RSD"]],
+  ]),
+  formatReason,
+  showData: true,
+});
+
+const maskedBuilders = createUnconvertibleTitleBuilders({
+  currenciesByMonth: new Map([["2026-01", ["GRAM"]]]),
+  formatReason,
+  showData: false,
+});
+
+test("createUnconvertibleTitleBuilders reports the currencies of the included months", (): void => {
+  assert.equal(
+    visibleBuilders.monthsTitle(true, (month) => month.startsWith("2026-")),
+    "no rate for GRAM, RSD, USDT",
+  );
+});
+
+test("createUnconvertibleTitleBuilders reports the year currencies it is given", (): void => {
+  assert.equal(visibleBuilders.currenciesTitle(true, ["USDT", "GRAM"]), "no rate for GRAM, USDT");
+});
+
+test("createUnconvertibleTitleBuilders gives a trusted value no reason", (): void => {
+  assert.equal(visibleBuilders.monthsTitle(false, () => true), null);
+  assert.equal(visibleBuilders.currenciesTitle(false, ["GRAM"]), null);
+});
+
+test("createUnconvertibleTitleBuilders gives a masked value no reason", (): void => {
+  assert.equal(maskedBuilders.monthsTitle(true, () => true), null);
+  assert.equal(maskedBuilders.currenciesTitle(true, ["GRAM"]), null);
 });
 
 test("buildBudgetTaintedState keys the currency union by month", (): void => {

@@ -7,8 +7,8 @@ test("a trusted value inside its plan carries no state", (): void => {
   assert.deepEqual(resolveYearTotalStateTokens(false, false), []);
 });
 
-test("an untrusted value takes the warning colour and the warning background", (): void => {
-  assert.deepEqual(resolveYearTotalStateTokens(true, false), ["warning", "warningBackground"]);
+test("an untrusted value takes the warning colour and its year-total override", (): void => {
+  assert.deepEqual(resolveYearTotalStateTokens(true, false), ["warning", "warningForeground"]);
 });
 
 test("an over value takes the danger colour and the danger background", (): void => {

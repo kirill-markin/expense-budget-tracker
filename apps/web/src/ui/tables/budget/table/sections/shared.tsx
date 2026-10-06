@@ -95,7 +95,7 @@ const YEAR_TOTAL_STATE_CLASSES: Readonly<Record<YearTotalStateToken, string>> = 
   warning: tableStateStyles.warning,
   over: tableStateStyles.over,
   danger: styles.yearTotalDanger,
-  warningBackground: styles.yearTotalWarning,
+  warningForeground: styles.yearTotalWarning,
 };
 
 /** `isWarning` marks a value that could not be fully converted, never an error. */
