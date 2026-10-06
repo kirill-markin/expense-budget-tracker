@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { POST } from "@/app/api/transactions/update/route";
+import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
 const updateBody = {
   entryId: "entry-123",
@@ -39,7 +40,7 @@ test("Demo update accepts eventId and returns the complete updated ledger entry"
   }));
 
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {
+  const expected: LedgerEntry = {
     entryId: "entry-123",
     eventId: "event-456",
     ts: "2026-07-12T09:30:00.000Z",
@@ -52,5 +53,6 @@ test("Demo update accepts eventId and returns the complete updated ledger entry"
     counterparty: "Example Cloud",
     note: "Monthly subscription",
     isUnpairedTransfer: false,
-  });
+  };
+  assert.deepEqual(await response.json(), expected);
 });

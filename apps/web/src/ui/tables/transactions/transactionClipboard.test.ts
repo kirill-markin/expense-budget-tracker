@@ -9,7 +9,7 @@ import {
   toTransactionClipboardPayload,
 } from "./transactionClipboard";
 
-test("toTransactionClipboardPayload maps every ledger value to stable snake_case keys", (): void => {
+test("toTransactionClipboardPayload maps the stored ledger fields to stable snake_case keys and omits the derived unpaired flag", (): void => {
   const entry: LedgerEntry = {
     note: "Monthly subscription",
     currency: "EUR",

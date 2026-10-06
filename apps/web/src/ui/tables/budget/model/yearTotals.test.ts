@@ -150,3 +150,70 @@ test("computeYearTotal keeps the elapsed-month substitution out of past years in
   assert.equal(yearTotalForMode("actuals"), 110);
   assert.equal(yearTotalForMode("all-plans"), 110);
 });
+
+test("computeYearTotal embeds actuals in the plan only for the current year in the actuals mode", (): void => {
+  const planEmbedsActualsFor = (year: string, plansMode: BudgetPlansMode): boolean =>
+    computeYearTotal(
+      [],
+      { incomeActual: 0, spendActual: 0, transferActual: 0 },
+      {},
+      {},
+      {},
+      year,
+      "2026-05",
+      null,
+      plansMode,
+    ).planEmbedsActuals;
+
+  assert.equal(planEmbedsActualsFor("2026", "actuals"), true);
+  assert.equal(planEmbedsActualsFor("2025", "actuals"), false);
+  assert.equal(planEmbedsActualsFor("2027", "actuals"), false);
+  assert.equal(planEmbedsActualsFor("2026", "all-plans"), false);
+  assert.equal(planEmbedsActualsFor("2025", "all-plans"), false);
+  assert.equal(planEmbedsActualsFor("2027", "all-plans"), false);
+});
+
+test("computeYearTotal unions unconvertible currencies per direction, per category and per year", (): void => {
+  const unconvertibleRow = (
+    month: string,
+    direction: string,
+    category: string,
+    currencies: ReadonlyArray<string>,
+  ): BudgetRow => ({
+    ...budgetRow(month, direction, category, 0, 0),
+    hasUnconvertible: true,
+    unconvertibleCurrencies: currencies,
+  });
+
+  const rows: ReadonlyArray<BudgetRow> = [
+    unconvertibleRow("2026-01", "spend", "Groceries", ["USD", "RSD"]),
+    unconvertibleRow("2026-03", "spend", "Groceries", ["EUR", "USD"]),
+    unconvertibleRow("2026-03", "spend", "Rent", ["GBP"]),
+    unconvertibleRow("2026-07", "income", "Salary", ["RSD"]),
+    budgetRow("2026-02", "spend", "Groceries", 10, 10),
+    budgetRow("2026-02", "transfer", "Move", 5, 5),
+  ];
+
+  const total = computeYearTotal(
+    rows,
+    { incomeActual: 0, spendActual: 0, transferActual: 0 },
+    {},
+    {},
+    {},
+    "2026",
+    "2026-05",
+    null,
+    "actuals",
+  );
+
+  assert.deepEqual(total.unconvertibleCurrenciesByDirection, new Map([
+    ["spend", ["EUR", "GBP", "RSD", "USD"]],
+    ["income", ["RSD"]],
+  ]));
+  assert.deepEqual(total.unconvertibleCurrenciesByCategory, new Map([
+    ["spend::Groceries", ["EUR", "RSD", "USD"]],
+    ["spend::Rent", ["GBP"]],
+    ["income::Salary", ["RSD"]],
+  ]));
+  assert.deepEqual(total.unconvertibleCurrencies, ["EUR", "GBP", "RSD", "USD"]);
+});
