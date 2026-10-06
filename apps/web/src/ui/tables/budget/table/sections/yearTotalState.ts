@@ -3,10 +3,10 @@
  *
  * `isWarning` marks a value that could not be fully converted to the report
  * currency; `isOver` a genuine over-plan or negative value. Red wins over
- * yellow: a value that is both keeps the danger background, never the warning
- * one, so "untrusted" never hides a real over-plan.
+ * yellow: a value that is both takes the danger colour, never the warning one,
+ * so "untrusted" never hides a real over-plan.
  */
-export type YearTotalStateToken = "warning" | "over" | "danger" | "warningBackground";
+export type YearTotalStateToken = "warning" | "over" | "danger" | "warningForeground";
 
 export const resolveYearTotalStateTokens = (
   isWarning: boolean,
@@ -22,7 +22,7 @@ export const resolveYearTotalStateTokens = (
     tokens.push("over");
     tokens.push("danger");
   } else if (isWarning) {
-    tokens.push("warningBackground");
+    tokens.push("warningForeground");
   }
 
   return tokens;

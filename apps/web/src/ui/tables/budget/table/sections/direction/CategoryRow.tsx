@@ -24,10 +24,7 @@ import {
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
-import {
-  buildUnconvertibleCurrenciesTitle,
-  buildUnconvertibleMonthsTitle,
-} from "@/ui/tables/shared/unconvertibleTitle";
+import { createUnconvertibleTitleBuilders } from "@/ui/tables/shared/unconvertibleTitle";
 import {
   buildCategoryMonthDrillDownFilter,
   buildCategoryYearDrillDownFilter,
@@ -125,28 +122,11 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
   } = props;
   const { t } = useTranslation();
   const categoryVisibility = getCellVisibility(effectiveAllowlist, category);
-  const formatUnconvertibleReason = (currencies: string): string =>
-    t("common.unconvertibleReason", { currencies });
-  const unconvertibleTitle = (
-    isTainted: boolean,
-    includesMonth: (month: string) => boolean,
-  ): string | undefined => (
-    isTainted && categoryVisibility.showData
-      ? (buildUnconvertibleMonthsTitle(unconvertibleCurrenciesByMonth, includesMonth, formatUnconvertibleReason) ?? undefined)
-      : undefined
-  );
-  /**
-   * Year totals come from their own full-year fetch, so their reason comes from
-   * that fetch too: the month map only covers the horizontally loaded range.
-   */
-  const yearUnconvertibleTitle = (
-    isTainted: boolean,
-    currencies: ReadonlyArray<string>,
-  ): string | undefined => (
-    isTainted && categoryVisibility.showData
-      ? (buildUnconvertibleCurrenciesTitle(currencies, formatUnconvertibleReason) ?? undefined)
-      : undefined
-  );
+  const { monthsTitle: unconvertibleTitle, currenciesTitle: yearUnconvertibleTitle } = createUnconvertibleTitleBuilders({
+    currenciesByMonth: unconvertibleCurrenciesByMonth,
+    formatReason: (currencies: string): string => t("common.unconvertibleReason", { currencies }),
+    showData: categoryVisibility.showData,
+  });
   const renderYearLoading = (year: string, isSplitYearValue: boolean): ReactElement => (
     categoryVisibility.showData
       ? renderDerivedYearLoadingCells(year, isSplitYearValue)
@@ -192,7 +172,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               <td
                 key={`total-${column.year}`}
                 className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
-                title={yearUnconvertibleTitle(isYearTainted, yearCurrencies)}
+                title={yearUnconvertibleTitle(isYearTainted, yearCurrencies) ?? undefined}
                 data-testid={categoryVisibility.showData
                   ? `budget-year-actual-${column.year}:${block.direction}:${category}`
                   : undefined}
@@ -245,7 +225,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               <Fragment key={`total-${column.year}`}>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalPlanStateClass}`}
-                  title={yearUnconvertibleTitle(isYearPlanTainted, yearCurrencies)}
+                  title={yearUnconvertibleTitle(isYearPlanTainted, yearCurrencies) ?? undefined}
                   data-testid={categoryVisibility.showData
                     ? `budget-year-plan-${column.year}:${block.direction}:${category}`
                     : undefined}
@@ -254,7 +234,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 </td>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalActualStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
-                  title={yearUnconvertibleTitle(isYearTainted, yearCurrencies)}
+                  title={yearUnconvertibleTitle(isYearTainted, yearCurrencies) ?? undefined}
                   data-testid={categoryVisibility.showData
                     ? `budget-year-actual-${column.year}:${block.direction}:${category}`
                     : undefined}
@@ -280,7 +260,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               <td
                 key={column.month}
                 className={`${styles.cell}${monthDividerClass}${categoryVisibility.maskClass}${taintedClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
-                title={unconvertibleTitle(isTainted, (month) => month === column.month)}
+                title={unconvertibleTitle(isTainted, (month) => month === column.month) ?? undefined}
                 onClick={categoryVisibility.showData
                   ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                   : undefined}
@@ -372,7 +352,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 />
                 <td
                   className={`${styles.cell}${isCurrentMonth ? ` ${styles.currentMonthActual}` : ""}${categoryVisibility.maskClass}${categoryVisibility.showData ? taintedClass : ""}${categoryVisibility.showData && isActualOver ? ` ${tableStateStyles.over}` : ""}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
-                  title={unconvertibleTitle(isTainted, (month) => month === column.month)}
+                  title={unconvertibleTitle(isTainted, (month) => month === column.month) ?? undefined}
                   data-testid={categoryVisibility.showData
                     ? `budget-actual-${column.month}:${block.direction}:${category}`
                     : undefined}
