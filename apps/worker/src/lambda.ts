@@ -3,6 +3,8 @@
  *
  * Invoked by EventBridge schedule rules. It ingests raw source rates first and
  * then rebuilds the query-ready all-pairs daily FX table in one coherent pass.
+ * The rebuild also runs when sources fail, so a failed day still gets its rows
+ * from the carry-forward; the run then throws to surface the dead sources.
  */
 
 import { run as runEcb } from "./fetchers/ecb";
@@ -43,12 +45,15 @@ export async function handler(): Promise<{ statusCode: number; body: string }> {
     }
     console.log("All fetchers complete:", JSON.stringify(results));
 
+    const rebuildResult = await rebuildDailyRates();
+    console.log("Daily FX rebuild complete:", JSON.stringify(rebuildResult));
+
     if (errors.length === fetchers.length) {
       throw new Error(`All fetchers failed: ${errors.map(([k]) => k).join(", ")}`);
     }
-
-    const rebuildResult = await rebuildDailyRates();
-    console.log("Daily FX rebuild complete:", JSON.stringify(rebuildResult));
+    if (errors.length > 0) {
+      throw new Error(`Fetchers failed: ${errors.map(([k]) => k).join(", ")}`);
+    }
 
     return {
       statusCode: 200,
