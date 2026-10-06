@@ -219,6 +219,12 @@ tbody tr:last-child .currentMonthActual {
   box-shadow: inset 2px 0 0 0 var(--text), inset 0 -2px 0 0 var(--text);
 }
 
+/* Separates one elapsed month's Plan and Actual block from the elapsed month
+   before it, over the full height of the column. */
+.monthDivider {
+  border-inline-start: 1px solid var(--panel-border);
+}
+
 .yearTotal {
   background: var(--text);
   color: var(--budget-table-year-total-color, var(--bg));

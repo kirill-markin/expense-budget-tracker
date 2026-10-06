@@ -34,6 +34,11 @@ export type BudgetValueColumn = Readonly<{
    * carry null: the current-month emphasis belongs to one month alone.
    */
   currentMonthPart: BudgetCurrentMonthPart | null;
+  /**
+   * Set on the column that opens a month separated from the month before it,
+   * which draws the divider on its inline-start edge.
+   */
+  startsMonthDivider: boolean;
 }>;
 
 const DISPLAY_YEAR_RADIUS = 10;
@@ -118,6 +123,33 @@ export const buildColumnSequence = (months: ReadonlyArray<string>): ReadonlyArra
   return result;
 };
 
+/**
+ * Whether the column at this index opens a month that reads apart from the
+ * one before it, so the first cell of its column group draws the divider.
+ *
+ * Only "all-plans" splits an elapsed month into Plan and Actual, and only two
+ * neighbouring elapsed months need a line between them: the current month
+ * carries its own emphasis box, a future month is a single column with
+ * nothing to separate, and a year-total block sets itself apart with its fill
+ * and its own end border.
+ */
+export const startsBudgetMonthDivider = (
+  columnSequence: ReadonlyArray<ColumnEntry>,
+  index: number,
+  currentMonth: string,
+  plansMode: BudgetPlansMode,
+): boolean => {
+  if (plansMode !== "all-plans" || index === 0) {
+    return false;
+  }
+  const column = columnSequence[index];
+  const previousColumn = columnSequence[index - 1];
+  return column.kind === "month"
+    && previousColumn.kind === "month"
+    && isPastMonth(column.month, currentMonth)
+    && isPastMonth(previousColumn.month, currentMonth);
+};
+
 export const buildBudgetValueColumns = (
   columnSequence: ReadonlyArray<ColumnEntry>,
   currentMonth: string,
@@ -126,7 +158,8 @@ export const buildBudgetValueColumns = (
   const currentYear = getYear(currentMonth);
   const result: Array<BudgetValueColumn> = [];
 
-  for (const column of columnSequence) {
+  for (const [index, column] of columnSequence.entries()) {
+    const startsMonthDivider = startsBudgetMonthDivider(columnSequence, index, currentMonth, plansMode);
     if (column.kind === "month") {
       if (isSplitBudgetMonth(column.month, currentMonth, plansMode)) {
         // Which months split depends on the mode; which month is the current
@@ -137,26 +170,28 @@ export const buildBudgetValueColumns = (
             key: `${column.month}-plan`,
             isYearTotal: false,
             currentMonthPart: isCurrentMonth ? "plan" : null,
+            startsMonthDivider,
           },
           {
             key: `${column.month}-actual`,
             isYearTotal: false,
             currentMonthPart: isCurrentMonth ? "actual" : null,
+            startsMonthDivider: false,
           },
         );
       } else {
-        result.push({ key: column.month, isYearTotal: false, currentMonthPart: null });
+        result.push({ key: column.month, isYearTotal: false, currentMonthPart: null, startsMonthDivider });
       }
       continue;
     }
 
     if (isSplitBudgetYear(column.year, currentYear, plansMode)) {
       result.push(
-        { key: `total-${column.year}-plan`, isYearTotal: true, currentMonthPart: null },
-        { key: `total-${column.year}-actual`, isYearTotal: true, currentMonthPart: null },
+        { key: `total-${column.year}-plan`, isYearTotal: true, currentMonthPart: null, startsMonthDivider: false },
+        { key: `total-${column.year}-actual`, isYearTotal: true, currentMonthPart: null, startsMonthDivider: false },
       );
     } else {
-      result.push({ key: `total-${column.year}`, isYearTotal: true, currentMonthPart: null });
+      result.push({ key: `total-${column.year}`, isYearTotal: true, currentMonthPart: null, startsMonthDivider: false });
     }
   }
 

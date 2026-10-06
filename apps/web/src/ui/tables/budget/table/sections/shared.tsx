@@ -7,6 +7,7 @@ import {
   isPastMonth,
   isSplitBudgetMonth,
   isSplitBudgetYear,
+  startsBudgetMonthDivider,
   type BudgetPlansMode,
   type ColumnEntry,
 } from "@/ui/tables/budget/budgetTableLogic";
@@ -23,6 +24,21 @@ export {
   isNegativeValueOver,
 } from "../helpers";
 
+/**
+ * Class the first cell of a divided month carries, with the leading space the
+ * cell class templates expect. Empty for every column that starts no divider.
+ */
+export const buildMonthDividerClass = (
+  columnSequence: ReadonlyArray<ColumnEntry>,
+  index: number,
+  currentMonth: string,
+  plansMode: BudgetPlansMode,
+): string => (
+  startsBudgetMonthDivider(columnSequence, index, currentMonth, plansMode)
+    ? ` ${styles.monthDivider}`
+    : ""
+);
+
 export type RenderValueCellsParams = Readonly<{
   key: string;
   month: string;
@@ -34,6 +50,8 @@ export type RenderValueCellsParams = Readonly<{
   isPlanOver: boolean;
   isActualOver: boolean;
   isSubtotal: boolean;
+  /** Divider carried by the first cell this month renders, or an empty class. */
+  monthDividerClass: string;
   maskClass: string;
   plannedValueClass: string;
   actualValueClass: string;
@@ -93,6 +111,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     isPlanOver,
     isActualOver,
     isSubtotal,
+    monthDividerClass,
     maskClass,
     plannedValueClass,
     actualValueClass,
@@ -113,7 +132,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
       return (
         <td
           key={key}
-          className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${pastClickableClass} ${visibleActualValueClass}`}
+          className={`${styles.cell}${monthDividerClass}${subtotalClass}${maskClass}${taintedClass}${pastClickableClass} ${visibleActualValueClass}`}
           onClick={visibleActualClick ?? undefined}
         >
           {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
@@ -124,7 +143,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     return (
       <td
         key={key}
-        className={`${styles.cell}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
+        className={`${styles.cell}${monthDividerClass}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
       >
         {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
       </td>
@@ -138,7 +157,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
   return (
     <Fragment key={key}>
       <td
-        className={`${styles.cell}${planEmphasisClass}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
+        className={`${styles.cell}${monthDividerClass}${planEmphasisClass}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
       >
         {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
       </td>
@@ -212,10 +231,11 @@ export const renderUnloadedMonthCells = (
   currentMonth: string,
   cellClassName: string,
   plansMode: BudgetPlansMode,
+  monthDividerClass: string,
 ): ReactElement => {
   if (!isSplitBudgetMonth(month, currentMonth, plansMode)) {
     return (
-      <td key={month} className={`${cellClassName} ${styles.monthLoading}`}>
+      <td key={month} className={`${cellClassName}${monthDividerClass} ${styles.monthLoading}`}>
         &hellip;
       </td>
     );
@@ -226,7 +246,7 @@ export const renderUnloadedMonthCells = (
   const actualEmphasisClass = month === currentMonth ? ` ${styles.currentMonthActual}` : "";
   return (
     <Fragment key={month}>
-      <td className={`${cellClassName}${planEmphasisClass} ${styles.monthLoading}`}>
+      <td className={`${cellClassName}${monthDividerClass}${planEmphasisClass} ${styles.monthLoading}`}>
         &hellip;
       </td>
       <td className={`${cellClassName}${actualEmphasisClass} ${styles.monthLoading}`}>

@@ -19,6 +19,7 @@ import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import {
   buildDirectionMonthDrillDownFilter,
   buildDirectionYearDrillDownFilter,
+  buildMonthDividerClass,
   buildYearTotalStateClass,
   isDirectionActualOverPlanned,
   renderColumnCells,
@@ -74,8 +75,9 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
       <td className={`${labelClass} ${styles.stickyCol}`}>
         {t(`budget.direction${block.direction.charAt(0).toUpperCase()}${block.direction.slice(1)}`)}
       </td>
-      {columnSequence.map((column) => {
+      {columnSequence.map((column, index) => {
         const yearData = column.kind === "year-total" ? yearComputed.get(column.year) : undefined;
+        const monthDividerClass = buildMonthDividerClass(columnSequence, index, currentMonth, plansMode);
         return renderColumnCells({
           column,
           currentMonth,
@@ -91,6 +93,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
             currentMonth,
             `${styles.cell}${subtotalClass}`,
             plansMode,
+            monthDividerClass,
           ),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
@@ -171,6 +174,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               isPlanOver: false,
               isActualOver: false,
               isSubtotal: !isTransfer,
+              monthDividerClass,
               maskClass: dirVis.maskClass,
               plannedValueClass: "",
               actualValueClass: "",
@@ -200,6 +204,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               isPlanOver: false,
               isActualOver: false,
               isSubtotal: !isTransfer,
+              monthDividerClass,
               maskClass: dirVis.maskClass,
               plannedValueClass: "",
               actualValueClass: "",
@@ -227,6 +232,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               isPlanOver: false,
               isActualOver: isDirectionActualOverPlanned(block.direction, subtotal.planned, subtotal.actual),
               isSubtotal: !isTransfer,
+              monthDividerClass,
               maskClass: dirVis.maskClass,
               plannedValueClass: "",
               actualValueClass: "",

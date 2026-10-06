@@ -9,6 +9,7 @@ import {
 } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import {
+  buildMonthDividerClass,
   renderColumnCells,
   renderDerivedYearLoadingCells,
   renderMaskedYearCells,
@@ -28,9 +29,9 @@ type MetricRowProps = Readonly<{
   renderPastYear: (year: string, yearData: YearTotalComputed) => ReactElement;
   renderFutureYear: (year: string, yearData: YearTotalComputed) => ReactElement;
   renderSplitYear: (year: string, yearData: YearTotalComputed) => ReactElement;
-  renderPastMonth: (month: string) => ReactElement;
-  renderFutureMonth: (month: string) => ReactElement;
-  renderSplitMonth: (month: string, isCurrentMonth: boolean) => ReactElement;
+  renderPastMonth: (month: string, monthDividerClass: string) => ReactElement;
+  renderFutureMonth: (month: string, monthDividerClass: string) => ReactElement;
+  renderSplitMonth: (month: string, isCurrentMonth: boolean, monthDividerClass: string) => ReactElement;
   loadingKind: "subtotal" | "derived";
   showData: boolean;
   maskClass: string;
@@ -70,8 +71,9 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
   return (
     <tr className={rowClassName}>
       <td className={`${rowClassName === styles.directionRow ? styles.directionLabel : styles.categoryLabel} ${styles.stickyCol}`}>{label}</td>
-      {columnSequence.map((column) => {
+      {columnSequence.map((column, index) => {
         const yearData = column.kind === "year-total" ? yearComputed.get(column.year) : undefined;
+        const monthDividerClass = buildMonthDividerClass(columnSequence, index, currentMonth, plansMode);
         return renderColumnCells({
           column,
           currentMonth,
@@ -89,6 +91,7 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
               ? `${styles.cell} ${styles.cellSubtotal}`
               : styles.cell,
             plansMode,
+            monthDividerClass,
           ),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
@@ -112,19 +115,19 @@ export const MetricRow = (props: MetricRowProps): ReactElement => {
             if (column.kind !== "month") {
               return renderLoading("invalid", false);
             }
-            return renderPastMonth(column.month);
+            return renderPastMonth(column.month, monthDividerClass);
           },
           renderFutureMonth: () => {
             if (column.kind !== "month") {
               return renderLoading("invalid", false);
             }
-            return renderFutureMonth(column.month);
+            return renderFutureMonth(column.month, monthDividerClass);
           },
           renderSplitMonth: (isCurrentMonth) => {
             if (column.kind !== "month") {
               return renderLoading("invalid", false);
             }
-            return renderSplitMonth(column.month, isCurrentMonth);
+            return renderSplitMonth(column.month, isCurrentMonth, monthDividerClass);
           },
         });
       })}
