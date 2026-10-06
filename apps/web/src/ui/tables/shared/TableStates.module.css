@@ -1,3 +1,12 @@
+/*
+ * A value that could not be fully converted to the report currency: untrusted,
+ * not over budget. Declared before the red states so a value that is both
+ * untrusted and genuinely over plan still reads as red.
+ */
+.warning {
+  color: var(--table-state-warning-color, #b7791f);
+}
+
 .over,
 .error {
   color: var(--table-state-danger-color, #c0392b);

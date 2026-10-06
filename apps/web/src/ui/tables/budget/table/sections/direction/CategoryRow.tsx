@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, type ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 
 import { getCellVisibility, MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
@@ -23,6 +24,10 @@ import {
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
+import {
+  buildUnconvertibleCurrenciesTitle,
+  buildUnconvertibleMonthsTitle,
+} from "@/ui/tables/shared/unconvertibleTitle";
 import {
   buildCategoryMonthDrillDownFilter,
   buildCategoryYearDrillDownFilter,
@@ -50,6 +55,7 @@ type CategoryRowProps = Readonly<{
   loadedTo: string;
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   taintedCells: ReadonlySet<string>;
+  unconvertibleCurrenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
   numberFormat: NumberFormat;
   budgetAdjustments: BudgetAdjustmentRowsController;
   copyToClipboard: (value: string) => void;
@@ -104,6 +110,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     loadedTo,
     yearComputed,
     taintedCells,
+    unconvertibleCurrenciesByMonth,
     numberFormat,
     budgetAdjustments,
     copyToClipboard,
@@ -116,7 +123,30 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     onSyncStart,
     onSyncEnd,
   } = props;
+  const { t } = useTranslation();
   const categoryVisibility = getCellVisibility(effectiveAllowlist, category);
+  const formatUnconvertibleReason = (currencies: string): string =>
+    t("common.unconvertibleReason", { currencies });
+  const unconvertibleTitle = (
+    isTainted: boolean,
+    includesMonth: (month: string) => boolean,
+  ): string | undefined => (
+    isTainted && categoryVisibility.showData
+      ? (buildUnconvertibleMonthsTitle(unconvertibleCurrenciesByMonth, includesMonth, formatUnconvertibleReason) ?? undefined)
+      : undefined
+  );
+  /**
+   * Year totals come from their own full-year fetch, so their reason comes from
+   * that fetch too: the month map only covers the horizontally loaded range.
+   */
+  const yearUnconvertibleTitle = (
+    isTainted: boolean,
+    currencies: ReadonlyArray<string>,
+  ): string | undefined => (
+    isTainted && categoryVisibility.showData
+      ? (buildUnconvertibleCurrenciesTitle(currencies, formatUnconvertibleReason) ?? undefined)
+      : undefined
+  );
   const renderYearLoading = (year: string, isSplitYearValue: boolean): ReactElement => (
     categoryVisibility.showData
       ? renderDerivedYearLoadingCells(year, isSplitYearValue)
@@ -152,13 +182,17 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
             }
             const yearCell =
               yearData.directionCategoryTotals.get(block.direction)?.get(category) ?? zeroCellValue;
+            const categoryKey = `${block.direction}::${category}`;
+            const isYearTainted = yearData.taintedCategories.has(categoryKey);
+            const yearCurrencies = yearData.unconvertibleCurrenciesByCategory.get(categoryKey) ?? [];
             const yearTotalStateClass = categoryVisibility.showData
-              ? buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false)
+              ? buildYearTotalStateClass(isYearTainted, false)
               : "";
             return (
               <td
                 key={`total-${column.year}`}
                 className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                title={yearUnconvertibleTitle(isYearTainted, yearCurrencies)}
                 data-testid={categoryVisibility.showData
                   ? `budget-year-actual-${column.year}:${block.direction}:${category}`
                   : undefined}
@@ -176,13 +210,10 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
             }
             const yearCell =
               yearData.directionCategoryTotals.get(block.direction)?.get(category) ?? zeroCellValue;
-            const yearTotalStateClass = categoryVisibility.showData
-              ? buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false)
-              : "";
             return (
               <td
                 key={`total-${column.year}`}
-                className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalStateClass}`}
+                className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}`}
                 data-testid={categoryVisibility.showData
                   ? `budget-year-plan-${column.year}:${block.direction}:${category}`
                   : undefined}
@@ -198,16 +229,23 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
             const yearCell =
               yearData.directionCategoryTotals.get(block.direction)?.get(category) ?? zeroCellValue;
             const isActualOver = isDirectionActualOverPlanned(block.direction, yearCell.planned, yearCell.actual);
+            const categoryKey = `${block.direction}::${category}`;
+            const isYearTainted = yearData.taintedCategories.has(categoryKey);
+            const yearCurrencies = yearData.unconvertibleCurrenciesByCategory.get(categoryKey) ?? [];
+            // This year's plan sums the elapsed months' actuals in "actuals"
+            // mode, so an unconvertible actual leaves the plan incomplete too.
+            const isYearPlanTainted = yearData.planEmbedsActuals && isYearTainted;
             const yearTotalPlanStateClass = categoryVisibility.showData
-              ? buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), false)
+              ? buildYearTotalStateClass(isYearPlanTainted, false)
               : "";
             const yearTotalActualStateClass = categoryVisibility.showData
-              ? buildYearTotalStateClass(yearData.taintedCategories.has(`${block.direction}::${category}`), isActualOver)
+              ? buildYearTotalStateClass(isYearTainted, isActualOver)
               : "";
             return (
               <Fragment key={`total-${column.year}`}>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalPlanStateClass}`}
+                  title={yearUnconvertibleTitle(isYearPlanTainted, yearCurrencies)}
                   data-testid={categoryVisibility.showData
                     ? `budget-year-plan-${column.year}:${block.direction}:${category}`
                     : undefined}
@@ -216,6 +254,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 </td>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalActualStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                  title={yearUnconvertibleTitle(isYearTainted, yearCurrencies)}
                   data-testid={categoryVisibility.showData
                     ? `budget-year-actual-${column.year}:${block.direction}:${category}`
                     : undefined}
@@ -233,13 +272,15 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               return renderYearLoading("invalid", false);
             }
             const cell = lookupCell(block.cells, column.month, category);
-            const taintedClass = categoryVisibility.showData && taintedCells.has(`${block.direction}::${column.month}::${category}`)
-              ? ` ${tableStateStyles.error}`
+            const isTainted = taintedCells.has(`${block.direction}::${column.month}::${category}`);
+            const taintedClass = categoryVisibility.showData && isTainted
+              ? ` ${tableStateStyles.warning}`
               : "";
             return (
               <td
                 key={column.month}
                 className={`${styles.cell}${monthDividerClass}${categoryVisibility.maskClass}${taintedClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                title={unconvertibleTitle(isTainted, (month) => month === column.month)}
                 onClick={categoryVisibility.showData
                   ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                   : undefined}
@@ -253,9 +294,6 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               return renderYearLoading("invalid", false);
             }
             const cell = lookupCell(block.cells, column.month, category);
-            const taintedClass = taintedCells.has(`${block.direction}::${column.month}::${category}`)
-              ? ` ${tableStateStyles.error}`
-              : "";
             return (
               <BudgetPlanCell
                 key={`${column.month}-plan`}
@@ -276,7 +314,6 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 planned={cell.planned}
                 showData={categoryVisibility.showData}
                 maskClass={categoryVisibility.maskClass}
-                taintedClass={taintedClass}
                 isPlanOver={false}
                 cmClass=""
                 monthDividerClass={monthDividerClass}
@@ -297,9 +334,8 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
               return renderYearLoading("invalid", false);
             }
             const cell = lookupCell(block.cells, column.month, category);
-            const taintedClass = taintedCells.has(`${block.direction}::${column.month}::${category}`)
-              ? ` ${tableStateStyles.error}`
-              : "";
+            const isTainted = taintedCells.has(`${block.direction}::${column.month}::${category}`);
+            const taintedClass = isTainted ? ` ${tableStateStyles.warning}` : "";
             const isActualOver = isDirectionActualOverPlanned(block.direction, cell.planned, cell.actual);
             return (
               <Fragment key={column.month}>
@@ -321,7 +357,6 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   planned={cell.planned}
                   showData={categoryVisibility.showData}
                   maskClass={categoryVisibility.maskClass}
-                  taintedClass={taintedClass}
                   isPlanOver={false}
                   cmClass={isCurrentMonth ? ` ${styles.currentMonthPlan}` : ""}
                   monthDividerClass={monthDividerClass}
@@ -337,6 +372,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 />
                 <td
                   className={`${styles.cell}${isCurrentMonth ? ` ${styles.currentMonthActual}` : ""}${categoryVisibility.maskClass}${categoryVisibility.showData ? taintedClass : ""}${categoryVisibility.showData && isActualOver ? ` ${tableStateStyles.over}` : ""}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                  title={unconvertibleTitle(isTainted, (month) => month === column.month)}
                   data-testid={categoryVisibility.showData
                     ? `budget-actual-${column.month}:${block.direction}:${category}`
                     : undefined}

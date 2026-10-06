@@ -13,6 +13,7 @@ import {
 } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
+import { resolveYearTotalStateTokens, type YearTotalStateToken } from "./yearTotalState";
 export {
   buildBusinessPersonalTransferMonthDrillDownFilter,
   buildBusinessPersonalTransferYearDrillDownFilter,
@@ -46,7 +47,16 @@ export type RenderValueCellsParams = Readonly<{
   plansMode: BudgetPlansMode;
   planned: number;
   actual: number;
-  isTainted: boolean;
+  /**
+   * Plan values are stored in the report currency and never pass through an
+   * exchange rate, so only rows whose plan is derived from actuals set this.
+   */
+  isPlanTainted: boolean;
+  isActualTainted: boolean;
+  /** Native hover reason for the untrusted plan cell, or null when it has none. */
+  planTitle: string | null;
+  /** Native hover reason for the untrusted actual cell, or null when it has none. */
+  actualTitle: string | null;
   isPlanOver: boolean;
   isActualOver: boolean;
   isSubtotal: boolean;
@@ -81,20 +91,17 @@ export type RenderColumnCellsParams = Readonly<{
   renderSplitMonth: (isCurrentMonth: boolean) => ReactElement;
 }>;
 
-export const buildYearTotalStateClass = (isError: boolean, isOver: boolean): string => {
-  const classNames: string[] = [];
+const YEAR_TOTAL_STATE_CLASSES: Readonly<Record<YearTotalStateToken, string>> = {
+  warning: tableStateStyles.warning,
+  over: tableStateStyles.over,
+  danger: styles.yearTotalDanger,
+  warningBackground: styles.yearTotalWarning,
+};
 
-  if (isError) {
-    classNames.push(tableStateStyles.error);
-  }
-
-  if (isOver) {
-    classNames.push(tableStateStyles.over);
-  }
-
-  if (classNames.length > 0) {
-    classNames.push(styles.yearTotalDanger);
-  }
+/** `isWarning` marks a value that could not be fully converted, never an error. */
+export const buildYearTotalStateClass = (isWarning: boolean, isOver: boolean): string => {
+  const classNames = resolveYearTotalStateTokens(isWarning, isOver)
+    .map((token) => YEAR_TOTAL_STATE_CLASSES[token]);
 
   return classNames.length > 0 ? ` ${classNames.join(" ")}` : "";
 };
@@ -107,7 +114,10 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     plansMode,
     planned,
     actual,
-    isTainted,
+    isPlanTainted,
+    isActualTainted,
+    planTitle,
+    actualTitle,
     isPlanOver,
     isActualOver,
     isSubtotal,
@@ -121,7 +131,10 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
   } = params;
   const isMasked = maskClass.includes("data-masked");
   const subtotalClass = isSubtotal ? ` ${styles.cellSubtotal}` : "";
-  const taintedClass = !isMasked && isTainted ? ` ${tableStateStyles.error}` : "";
+  const plannedTaintedClass = !isMasked && isPlanTainted ? ` ${tableStateStyles.warning}` : "";
+  const actualTaintedClass = !isMasked && isActualTainted ? ` ${tableStateStyles.warning}` : "";
+  const visiblePlanTitle = isMasked ? undefined : (planTitle ?? undefined);
+  const visibleActualTitle = isMasked ? undefined : (actualTitle ?? undefined);
   const visiblePlannedValueClass = isMasked ? "" : plannedValueClass;
   const visibleActualValueClass = isMasked ? "" : actualValueClass;
   const visibleActualClick = isMasked ? null : onActualClick;
@@ -132,7 +145,8 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
       return (
         <td
           key={key}
-          className={`${styles.cell}${monthDividerClass}${subtotalClass}${maskClass}${taintedClass}${pastClickableClass} ${visibleActualValueClass}`}
+          className={`${styles.cell}${monthDividerClass}${subtotalClass}${maskClass}${actualTaintedClass}${pastClickableClass} ${visibleActualValueClass}`}
+          title={visibleActualTitle}
           onClick={visibleActualClick ?? undefined}
         >
           {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
@@ -143,7 +157,8 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
     return (
       <td
         key={key}
-        className={`${styles.cell}${monthDividerClass}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
+        className={`${styles.cell}${monthDividerClass}${subtotalClass}${maskClass}${plannedTaintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
+        title={visiblePlanTitle}
       >
         {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
       </td>
@@ -157,12 +172,14 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
   return (
     <Fragment key={key}>
       <td
-        className={`${styles.cell}${monthDividerClass}${planEmphasisClass}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
+        className={`${styles.cell}${monthDividerClass}${planEmphasisClass}${subtotalClass}${maskClass}${plannedTaintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
+        title={visiblePlanTitle}
       >
         {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
       </td>
       <td
-        className={`${styles.cell}${actualEmphasisClass}${subtotalClass}${maskClass}${taintedClass}${!isMasked && isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass} ${visibleActualValueClass}`}
+        className={`${styles.cell}${actualEmphasisClass}${subtotalClass}${maskClass}${actualTaintedClass}${!isMasked && isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass} ${visibleActualValueClass}`}
+        title={visibleActualTitle}
         onClick={visibleActualClick ?? undefined}
       >
         {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}

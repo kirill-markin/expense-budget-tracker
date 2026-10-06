@@ -450,6 +450,7 @@ export const applyBudgetAdjustmentRows = (
       planned: plannedModifier,
       actual: 0,
       hasUnconvertible: false,
+      unconvertibleCurrencies: [],
       hasActualRows: false,
     });
   }
@@ -501,6 +502,7 @@ export const applyBudgetAdjustmentRowsWithProtectedCells = (
       planned: 0,
       actual: 0,
       hasUnconvertible: false,
+      unconvertibleCurrencies: [],
       hasActualRows: false,
     });
   }

@@ -98,6 +98,7 @@ export type BudgetTableController = Readonly<{
   taintedCells: ReadonlySet<string>;
   taintedDirectionMonths: ReadonlySet<string>;
   taintedMonths: ReadonlySet<string>;
+  unconvertibleCurrenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
   cumulativeBalances: ReadonlyMap<string, CumulativeBalance>;
   fxAdjustments: ReadonlyMap<string, number>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
@@ -434,6 +435,7 @@ export const useBudgetTableController = (
     taintedCells: derivedState.taintedCells,
     taintedDirectionMonths: derivedState.taintedDirectionMonths,
     taintedMonths: derivedState.taintedMonths,
+    unconvertibleCurrenciesByMonth: derivedState.unconvertibleCurrenciesByMonth,
     cumulativeBalances: derivedState.cumulativeBalances,
     fxAdjustments: derivedState.fxAdjustments,
     businessPersonalTransfers: rangeState.businessPersonalTransfers,
