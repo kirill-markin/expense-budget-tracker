@@ -6,6 +6,12 @@
  * - fx_rates_daily is the application read model and stores every supported
  *   base->quote pair for every calendar day
  *
+ * Coverage always reaches at least tomorrow: days whose market rates are not
+ * published yet carry the last known rate forward, so every reader's exact-date
+ * join finds a row even right after a calendar rollover, and in any workspace
+ * timezone ahead of the database timezone. Such a day is rewritten with the true
+ * rate once its raw row arrives.
+ *
  * The rebuild step intentionally centralizes all pair derivation here so the
  * dashboards do not have to repeat cross-currency logic in their own SQL.
  */
@@ -28,8 +34,17 @@ const WINDOW_START_SQL = `
   )
 `;
 
-const LATEST_CALENDAR_DATE_SQL = `
-  SELECT MAX(calendar_date)::text AS latest_calendar_date
+/**
+ * Current coverage of the read model. carry_forward_start is the first day the
+ * rebuild must emit to reach tomorrow, the same coverage end the rebuild uses,
+ * and is null once coverage already reaches it.
+ */
+const DAILY_COVERAGE_SQL = `
+  SELECT
+    MAX(calendar_date)::text AS latest_calendar_date,
+    CASE
+      WHEN MAX(calendar_date) < CURRENT_DATE + 1 THEN (MAX(calendar_date) + 1)::text
+    END AS carry_forward_start
   FROM fx_rates_daily
 `;
 
@@ -39,6 +54,12 @@ const LATEST_CALENDAR_DATE_SQL = `
  * bounds and raw_ranges stay global because a carry-forward range that starts
  * before the window still supplies the rate inside it; only the emitted
  * calendar days are clamped to the window.
+ *
+ * Emitted days end at coverage_end, which runs past the newest raw rate_date
+ * whenever tomorrow is later, so each currency's last known rate is carried one
+ * day beyond today without any staleness cap. That buffer day keeps a reader
+ * covered between a calendar rollover and the next rebuild, and is rewritten
+ * with the true rate once its raw row arrives.
  */
 const REBUILD_DAILY_RATES_SQL = `
   WITH bounds AS (
@@ -50,7 +71,7 @@ const REBUILD_DAILY_RATES_SQL = `
   validated_bounds AS (
     SELECT
       min_date,
-      max_date
+      GREATEST(max_date, CURRENT_DATE + 1) AS coverage_end
     FROM bounds
     WHERE min_date IS NOT NULL
       AND max_date IS NOT NULL
@@ -64,7 +85,7 @@ const REBUILD_DAILY_RATES_SQL = `
           PARTITION BY base_currency
           ORDER BY rate_date
         ) - INTERVAL '1 day',
-        (SELECT max_date FROM validated_bounds)
+        (SELECT coverage_end FROM validated_bounds)
       )::date AS range_end,
       rate,
       rate_date AS source_rate_date
@@ -80,7 +101,7 @@ const REBUILD_DAILY_RATES_SQL = `
     FROM validated_bounds vb
     CROSS JOIN LATERAL generate_series(
       GREATEST(vb.min_date, $1::date),
-      vb.max_date,
+      vb.coverage_end,
       INTERVAL '1 day'
     ) AS d
   ),
@@ -143,6 +164,9 @@ const REBUILD_DAILY_RATES_SQL = `
  * row with an earlier rate_date was ingested since then. A raw row committed
  * while this transaction runs is not recomputed here: its inserted_at is newer
  * than the daily rows written now, so the next run picks it up.
+ *
+ * With no newly ingested raw rates the rebuild still extends coverage from the
+ * day after the latest covered day up to tomorrow.
  */
 export const rebuildDailyRates = async (): Promise<RebuildDailyRatesResult> => {
   const rawCountResult = await query("SELECT COUNT(*)::int AS row_count FROM fx_rates_raw", []);
@@ -155,24 +179,33 @@ export const rebuildDailyRates = async (): Promise<RebuildDailyRatesResult> => {
     await client.query("BEGIN");
     try {
       const windowResult = await client.query(WINDOW_START_SQL);
-      const windowStart = (windowResult.rows[0] as { window_start: string | null }).window_start;
+      const ingestedWindowStart = (windowResult.rows[0] as { window_start: string | null }).window_start;
+      let windowStart: string;
 
-      if (windowStart === null) {
-        const latestResult = await client.query(LATEST_CALENDAR_DATE_SQL);
-        const latestCalendarDate = (
-          latestResult.rows[0] as { latest_calendar_date: string | null }
-        ).latest_calendar_date;
-        if (latestCalendarDate === null) {
+      if (ingestedWindowStart === null) {
+        const coverageResult = await client.query(DAILY_COVERAGE_SQL);
+        const coverage = coverageResult.rows[0] as
+          | { latest_calendar_date: string | null; carry_forward_start: string | null }
+          | undefined;
+        if (coverage === undefined) {
+          throw new Error("Failed to rebuild fx_rates_daily: coverage query returned no row");
+        }
+        if (coverage.latest_calendar_date === null) {
           throw new Error(
             "Cannot rebuild fx_rates_daily: no raw rates ingested since the last rebuild, yet fx_rates_daily is empty",
           );
         }
-        await client.query("COMMIT");
-        console.log(
-          "No raw FX rates ingested since the last rebuild; fx_rates_daily left unchanged:",
-          JSON.stringify({ latest_calendar_date: latestCalendarDate }),
-        );
-        return { inserted: 0, latest_calendar_date: latestCalendarDate };
+        if (coverage.carry_forward_start === null) {
+          await client.query("COMMIT");
+          console.log(
+            "No raw FX rates ingested since the last rebuild; fx_rates_daily left unchanged:",
+            JSON.stringify({ latest_calendar_date: coverage.latest_calendar_date }),
+          );
+          return { inserted: 0, latest_calendar_date: coverage.latest_calendar_date };
+        }
+        windowStart = coverage.carry_forward_start;
+      } else {
+        windowStart = ingestedWindowStart;
       }
 
       await client.query("DELETE FROM fx_rates_daily WHERE calendar_date >= $1::date", [windowStart]);
