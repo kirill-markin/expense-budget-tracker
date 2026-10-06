@@ -17,6 +17,11 @@ export type BudgetTaintedState = Readonly<{
   taintedCells: ReadonlySet<string>;
   taintedDirectionMonths: ReadonlySet<string>;
   taintedMonths: ReadonlySet<string>;
+  /**
+   * Currencies that had no exchange rate in a month, sorted. The reason shown
+   * on every untrusted cell of that month: per-cell detail is not threaded.
+   */
+  unconvertibleCurrenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
 }>;
 
 export const buildBudgetTaintedState = (
@@ -25,6 +30,7 @@ export const buildBudgetTaintedState = (
   const taintedCells = new Set<string>();
   const taintedDirectionMonths = new Set<string>();
   const taintedMonths = new Set<string>();
+  const currenciesByMonth = new Map<string, Set<string>>();
 
   for (const row of rows) {
     if (!row.hasUnconvertible) {
@@ -34,12 +40,26 @@ export const buildBudgetTaintedState = (
     taintedCells.add(`${row.direction}::${row.month}::${row.category}`);
     taintedDirectionMonths.add(`${row.direction}::${row.month}`);
     taintedMonths.add(row.month);
+    const monthCurrencies = currenciesByMonth.get(row.month);
+    if (monthCurrencies === undefined) {
+      currenciesByMonth.set(row.month, new Set(row.unconvertibleCurrencies));
+    } else {
+      for (const currency of row.unconvertibleCurrencies) {
+        monthCurrencies.add(currency);
+      }
+    }
+  }
+
+  const unconvertibleCurrenciesByMonth = new Map<string, ReadonlyArray<string>>();
+  for (const [month, currencies] of currenciesByMonth) {
+    unconvertibleCurrenciesByMonth.set(month, [...currencies].sort());
   }
 
   return {
     taintedCells,
     taintedDirectionMonths,
     taintedMonths,
+    unconvertibleCurrenciesByMonth,
   };
 };
 

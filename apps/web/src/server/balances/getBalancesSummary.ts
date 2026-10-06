@@ -48,6 +48,8 @@ export type CurrencyTotal = Readonly<{
   balanceNegative: number;
   balanceReport: number | null;
   hasUnconvertible: boolean;
+  /** Distinct currencies of this row that had no exchange rate. */
+  unconvertibleCurrencies: ReadonlyArray<string>;
 }>;
 
 export type ConversionWarning = Readonly<{
@@ -110,7 +112,8 @@ export const TOTALS_QUERY = `
       WHEN ab.currency = $1 THEN ab.balance
       ELSE ab.balance * lr.rate::double precision
     END) AS balance_report,
-    bool_or(ab.currency != $1 AND lr.rate IS NULL) AS has_unconvertible
+    bool_or(ab.currency != $1 AND lr.rate IS NULL) AS has_unconvertible,
+    COALESCE(array_agg(DISTINCT ab.currency) FILTER (WHERE ab.currency != $1 AND lr.rate IS NULL), '{}') AS unconvertible_currencies
   FROM account_balances ab
   LEFT JOIN latest_rates lr ON lr.base_currency = ab.currency
   GROUP BY ab.currency
@@ -282,6 +285,7 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
         balance_negative: number;
         balance_report: number | null;
         has_unconvertible: boolean;
+        unconvertible_currencies: ReadonlyArray<string>;
       }) => ({
         currency: row.currency,
         balance: Number(row.balance),
@@ -289,6 +293,7 @@ export const getBalancesSummary = async (userId: string, workspaceId: string): P
         balanceNegative: Number(row.balance_negative),
         balanceReport: row.balance_report !== null ? Number(row.balance_report) : null,
         hasUnconvertible: row.has_unconvertible,
+        unconvertibleCurrencies: row.unconvertible_currencies,
       })),
       conversionWarnings: warningResult.rows.map((row: { currency: string }) => ({
         currency: row.currency,

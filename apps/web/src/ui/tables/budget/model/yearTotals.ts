@@ -39,7 +39,33 @@ export type YearTotalComputed = Readonly<{
   taintedCategories: ReadonlySet<string>;
   taintedDirections: ReadonlySet<string>;
   anyTainted: boolean;
+  /**
+   * True when this year's Plan column embeds actuals, so an unconvertible
+   * actual taints the plan side as well. Plans themselves never pass through
+   * an exchange rate; only this mixed-in actual can make them incomplete.
+   */
+  planEmbedsActuals: boolean;
+  /** Unconvertible currencies of this year keyed by `direction`, sorted. */
+  unconvertibleCurrenciesByDirection: ReadonlyMap<string, ReadonlyArray<string>>;
+  /** Unconvertible currencies of this year keyed by `direction::category`, sorted. */
+  unconvertibleCurrenciesByCategory: ReadonlyMap<string, ReadonlyArray<string>>;
+  /**
+   * Union over the whole year, sorted, for year-wide cells. December's
+   * cumulative balance covers every month of the year, so it reads the same list.
+   */
+  unconvertibleCurrencies: ReadonlyArray<string>;
 }>;
+
+/**
+ * In "actuals" mode the current year's plan reports what the year is actually
+ * expected to end at: the elapsed months contribute their actual, which is an
+ * FX-converted value. Every other year and mode keeps a pure plan.
+ */
+const doesYearPlanEmbedActuals = (
+  year: string,
+  currentMonth: string,
+  plansMode: BudgetPlansMode,
+): boolean => plansMode === "actuals" && year === getYear(currentMonth);
 
 /**
  * Sums a year of cells for the year-total column.
@@ -57,7 +83,7 @@ const sumCellValuesForYear = (
   plansMode: BudgetPlansMode,
 ): CellValue => {
   const total = sumCellValuesOverMonths(months, getValue);
-  if (plansMode === "all-plans" || year !== getYear(currentMonth)) {
+  if (!doesYearPlanEmbedActuals(year, currentMonth, plansMode)) {
     return total;
   }
 
@@ -67,6 +93,31 @@ const sumCellValuesForYear = (
     planned += month < currentMonth ? cell.actual : cell.planned;
   }
   return { ...total, planned };
+};
+
+const collectCurrencies = (
+  target: Map<string, Set<string>>,
+  key: string,
+  currencies: ReadonlyArray<string>,
+): void => {
+  const collected = target.get(key);
+  if (collected === undefined) {
+    target.set(key, new Set(currencies));
+    return;
+  }
+  for (const currency of currencies) {
+    collected.add(currency);
+  }
+};
+
+const toSortedCurrencyLists = (
+  source: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlyMap<string, ReadonlyArray<string>> => {
+  const sorted = new Map<string, ReadonlyArray<string>>();
+  for (const [key, currencies] of source) {
+    sorted.set(key, [...currencies].sort());
+  }
+  return sorted;
 };
 
 /**
@@ -128,12 +179,21 @@ export const computeYearTotal = (
   const taintedCategories = new Set<string>();
   const taintedDirections = new Set<string>();
   const taintedMonthSet = new Set<string>();
+  const currenciesByDirection = new Map<string, Set<string>>();
+  const currenciesByCategory = new Map<string, Set<string>>();
+  const yearCurrencies = new Set<string>();
   let anyTainted = false;
   for (const row of rows) {
     if (row.hasUnconvertible) {
-      taintedCategories.add(`${row.direction}::${row.category}`);
+      const categoryKey = `${row.direction}::${row.category}`;
+      taintedCategories.add(categoryKey);
       taintedDirections.add(row.direction);
       taintedMonthSet.add(row.month);
+      collectCurrencies(currenciesByDirection, row.direction, row.unconvertibleCurrencies);
+      collectCurrencies(currenciesByCategory, categoryKey, row.unconvertibleCurrencies);
+      for (const currency of row.unconvertibleCurrencies) {
+        yearCurrencies.add(currency);
+      }
       anyTainted = true;
     }
   }
@@ -184,5 +244,9 @@ export const computeYearTotal = (
     taintedCategories,
     taintedDirections,
     anyTainted,
+    planEmbedsActuals: doesYearPlanEmbedActuals(year, currentMonth, plansMode),
+    unconvertibleCurrenciesByDirection: toSortedCurrencyLists(currenciesByDirection),
+    unconvertibleCurrenciesByCategory: toSortedCurrencyLists(currenciesByCategory),
+    unconvertibleCurrencies: [...yearCurrencies].sort(),
   };
 };

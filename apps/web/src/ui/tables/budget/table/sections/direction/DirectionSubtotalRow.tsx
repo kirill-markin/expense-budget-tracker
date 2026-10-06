@@ -17,6 +17,10 @@ import {
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import {
+  buildUnconvertibleCurrenciesTitle,
+  buildUnconvertibleMonthsTitle,
+} from "@/ui/tables/shared/unconvertibleTitle";
+import {
   buildDirectionMonthDrillDownFilter,
   buildDirectionYearDrillDownFilter,
   buildMonthDividerClass,
@@ -40,6 +44,7 @@ type DirectionSubtotalRowProps = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   filteredSubtotalsMap: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
   taintedDirectionMonths: ReadonlySet<string>;
+  unconvertibleCurrenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
   numberFormat: NumberFormat;
   useFilteredSubtotals: boolean;
   allowedCategoriesArray: ReadonlyArray<string> | null;
@@ -58,12 +63,35 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
     yearComputed,
     filteredSubtotalsMap,
     taintedDirectionMonths,
+    unconvertibleCurrenciesByMonth,
     numberFormat,
     useFilteredSubtotals,
     allowedCategoriesArray,
     openDrillDown,
   } = props;
   const { t } = useTranslation();
+  const formatUnconvertibleReason = (currencies: string): string =>
+    t("common.unconvertibleReason", { currencies });
+  const unconvertibleTitle = (
+    isTainted: boolean,
+    includesMonth: (month: string) => boolean,
+  ): string | null => (
+    isTainted
+      ? buildUnconvertibleMonthsTitle(unconvertibleCurrenciesByMonth, includesMonth, formatUnconvertibleReason)
+      : null
+  );
+  /**
+   * Year totals come from their own full-year fetch, so their reason comes from
+   * that fetch too: the month map only covers the horizontally loaded range.
+   */
+  const yearUnconvertibleTitle = (
+    isTainted: boolean,
+    currencies: ReadonlyArray<string>,
+  ): string | undefined => (
+    isTainted
+      ? (buildUnconvertibleCurrenciesTitle(currencies, formatUnconvertibleReason) ?? undefined)
+      : undefined
+  );
   const dirVis: CellVisibility = { showData: true, maskClass: "" };
   const isTransfer = block.direction === "transfer";
   const labelClass = isTransfer ? styles.categoryLabel : styles.directionLabel;
@@ -102,11 +130,14 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
             const yearSubtotal = useFilteredSubtotals
               ? (yearData.filteredSubtotals.get(block.direction) ?? zeroCellValue)
               : (yearData.directionSubtotals.get(block.direction) ?? zeroCellValue);
-            const yearTotalStateClass = buildYearTotalStateClass(yearData.taintedDirections.has(block.direction), false);
+            const isYearTainted = yearData.taintedDirections.has(block.direction);
+            const yearCurrencies = yearData.unconvertibleCurrenciesByDirection.get(block.direction) ?? [];
+            const yearTotalStateClass = buildYearTotalStateClass(isYearTainted, false);
             return (
               <td
                 key={`total-${column.year}`}
                 className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
+                title={yearUnconvertibleTitle(isYearTainted, yearCurrencies)}
                 onClick={dirVis.showData
                   ? () => openDrillDown(buildDirectionYearDrillDownFilter(column.year, block.direction, allowedCategoriesArray))
                   : undefined}
@@ -122,9 +153,8 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
             const yearSubtotal = useFilteredSubtotals
               ? (yearData.filteredSubtotals.get(block.direction) ?? zeroCellValue)
               : (yearData.directionSubtotals.get(block.direction) ?? zeroCellValue);
-            const yearTotalStateClass = buildYearTotalStateClass(yearData.taintedDirections.has(block.direction), false);
             return (
-              <td key={`total-${column.year}`} className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalStateClass}`}>
+              <td key={`total-${column.year}`} className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}`}>
                 {formatAmount(yearSubtotal.planned, numberFormat)}
               </td>
             );
@@ -137,15 +167,24 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               ? (yearData.filteredSubtotals.get(block.direction) ?? zeroCellValue)
               : (yearData.directionSubtotals.get(block.direction) ?? zeroCellValue);
             const isActualOver = isDirectionActualOverPlanned(block.direction, yearSubtotal.planned, yearSubtotal.actual);
-            const yearTotalPlanStateClass = buildYearTotalStateClass(yearData.taintedDirections.has(block.direction), false);
-            const yearTotalActualStateClass = buildYearTotalStateClass(yearData.taintedDirections.has(block.direction), isActualOver);
+            const isYearTainted = yearData.taintedDirections.has(block.direction);
+            const yearCurrencies = yearData.unconvertibleCurrenciesByDirection.get(block.direction) ?? [];
+            // This year's plan sums the elapsed months' actuals in "actuals"
+            // mode, so an unconvertible actual leaves the plan incomplete too.
+            const isYearPlanTainted = yearData.planEmbedsActuals && isYearTainted;
+            const yearTotalPlanStateClass = buildYearTotalStateClass(isYearPlanTainted, false);
+            const yearTotalActualStateClass = buildYearTotalStateClass(isYearTainted, isActualOver);
             return (
               <Fragment key={`total-${column.year}`}>
-                <td className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalPlanStateClass}`}>
+                <td
+                  className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalPlanStateClass}`}
+                  title={yearUnconvertibleTitle(isYearPlanTainted, yearCurrencies)}
+                >
                   {formatAmount(yearSubtotal.planned, numberFormat)}
                 </td>
                 <td
                   className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalActualStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
+                  title={yearUnconvertibleTitle(isYearTainted, yearCurrencies)}
                   onClick={dirVis.showData
                     ? () => openDrillDown(buildDirectionYearDrillDownFilter(column.year, block.direction, allowedCategoriesArray))
                     : undefined}
@@ -170,7 +209,10 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               plansMode,
               planned: subtotal.planned,
               actual: subtotal.actual,
-              isTainted,
+              isPlanTainted: false,
+              isActualTainted: isTainted,
+              planTitle: null,
+              actualTitle: unconvertibleTitle(isTainted, (month) => month === column.month),
               isPlanOver: false,
               isActualOver: false,
               isSubtotal: !isTransfer,
@@ -200,7 +242,10 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               plansMode,
               planned: subtotal.planned,
               actual: subtotal.actual,
-              isTainted,
+              isPlanTainted: false,
+              isActualTainted: isTainted,
+              planTitle: null,
+              actualTitle: unconvertibleTitle(isTainted, (month) => month === column.month),
               isPlanOver: false,
               isActualOver: false,
               isSubtotal: !isTransfer,
@@ -228,7 +273,10 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               plansMode,
               planned: subtotal.planned,
               actual: subtotal.actual,
-              isTainted,
+              isPlanTainted: false,
+              isActualTainted: isTainted,
+              planTitle: null,
+              actualTitle: unconvertibleTitle(isTainted, (month) => month === column.month),
               isPlanOver: false,
               isActualOver: isDirectionActualOverPlanned(block.direction, subtotal.planned, subtotal.actual),
               isSubtotal: !isTransfer,

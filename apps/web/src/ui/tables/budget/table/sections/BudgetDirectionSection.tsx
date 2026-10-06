@@ -37,6 +37,7 @@ export type BudgetDirectionSectionProps = Readonly<{
   filteredSubtotalsMap: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
   taintedDirectionMonths: ReadonlySet<string>;
   taintedCells: ReadonlySet<string>;
+  unconvertibleCurrenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
   numberFormat: NumberFormat;
   budgetAdjustments: BudgetAdjustmentRowsController;
   copyToClipboard: (value: string) => void;
@@ -93,6 +94,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
     filteredSubtotalsMap,
     taintedDirectionMonths,
     taintedCells,
+    unconvertibleCurrenciesByMonth,
     numberFormat,
     budgetAdjustments,
     copyToClipboard,
@@ -127,6 +129,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
         yearComputed={yearComputed}
         filteredSubtotalsMap={filteredSubtotalsMap}
         taintedDirectionMonths={taintedDirectionMonths}
+        unconvertibleCurrenciesByMonth={unconvertibleCurrenciesByMonth}
         numberFormat={numberFormat}
         useFilteredSubtotals={useFilteredSubtotals}
         allowedCategoriesArray={allowedCategoriesArray}
@@ -152,6 +155,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
             loadedTo={loadedTo}
             yearComputed={yearComputed}
             taintedCells={taintedCells}
+            unconvertibleCurrenciesByMonth={unconvertibleCurrenciesByMonth}
             numberFormat={numberFormat}
             budgetAdjustments={budgetAdjustments}
             copyToClipboard={copyToClipboard}

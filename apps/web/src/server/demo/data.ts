@@ -347,7 +347,7 @@ const generate = (): DemoData => {
       currency, balance,
       balancePositive: balance > 0 ? balance : 0,
       balanceNegative: balance < 0 ? balance : 0,
-      balanceReport: usd, hasUnconvertible: false,
+      balanceReport: usd, hasUnconvertible: false, unconvertibleCurrencies: [],
     }));
 
   // Budget rows (past months with actuals + future months plan-only)
@@ -363,7 +363,7 @@ const generate = (): DemoData => {
       budgetRows.push({
         month, direction: bp.direction, category: bp.category,
         plannedBase: bp.planned, plannedModifier: 0, planned: bp.planned,
-        actual: isPast ? round2(actual) : 0, hasUnconvertible: false,
+        actual: isPast ? round2(actual) : 0, hasUnconvertible: false, unconvertibleCurrencies: [],
         hasActualRows: isPast && actuals.has(key),
       });
     }
@@ -373,6 +373,7 @@ const generate = (): DemoData => {
       plannedBase: 0, plannedModifier: 0, planned: 0,
       actual: isPast ? round2(actuals.get(transferKey) ?? 0) : 0,
       hasUnconvertible: false,
+      unconvertibleCurrencies: [],
       hasActualRows: isPast && actuals.has(transferKey),
     });
   }
@@ -713,6 +714,7 @@ export const getDemoBudgetGrid = (
       planned: plannedModifier,
       actual: 0,
       hasUnconvertible: false,
+      unconvertibleCurrencies: [],
       hasActualRows: false,
     });
   }

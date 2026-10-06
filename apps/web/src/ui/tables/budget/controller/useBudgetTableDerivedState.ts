@@ -183,6 +183,7 @@ export type BudgetTableDerivedState = Readonly<{
   taintedCells: ReadonlySet<string>;
   taintedDirectionMonths: ReadonlySet<string>;
   taintedMonths: ReadonlySet<string>;
+  unconvertibleCurrenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
   cumulativeBalances: ReadonlyMap<string, CumulativeBalance>;
   fxAdjustments: ReadonlyMap<string, number>;
   liquidityTiers: ReadonlyArray<string>;
@@ -307,7 +308,7 @@ export const useBudgetTableDerivedState = ({
   const transferSubtotals = blocks.find((section) => section.block.direction === "transfer")?.block.subtotals;
 
   const taintedState = useMemo(() => buildBudgetTaintedState(allRows), [allRows]);
-  const { taintedCells, taintedDirectionMonths, taintedMonths } = taintedState;
+  const { taintedCells, taintedDirectionMonths, taintedMonths, unconvertibleCurrenciesByMonth } = taintedState;
 
   const cumulativeBalances = useMemo<ReadonlyMap<string, CumulativeBalance>>(
     () =>
@@ -373,6 +374,7 @@ export const useBudgetTableDerivedState = ({
     taintedCells,
     taintedDirectionMonths,
     taintedMonths,
+    unconvertibleCurrenciesByMonth,
     cumulativeBalances,
     fxAdjustments,
     liquidityTiers,

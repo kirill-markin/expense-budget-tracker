@@ -11,6 +11,7 @@ import { cn } from "@/lib/cn";
 import type { NumberFormat } from "@/lib/locale";
 import type { CurrencyTotal } from "@/server/balances/getBalancesSummary";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
+import { buildUnconvertibleCurrenciesTitle } from "@/ui/tables/shared/unconvertibleTitle";
 import { DataTable } from "@/ui/tables/shared/data-table/DataTable";
 import type { ColumnDef, SortState } from "@/ui/tables/shared/data-table/types";
 import { formatAmount } from "@/ui/tables/shared/format";
@@ -67,6 +68,8 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
     reportingCurrencyTotals,
   } = props;
   const { t } = useTranslation();
+  const formatUnconvertibleReason = (currencies: string): string =>
+    t("common.unconvertibleReason", { currencies });
   const getAccountGroupLabel = (accountGroup: AccountMetadataGroup): string =>
     t(`balances.accountGroup${accountGroup.charAt(0).toUpperCase()}${accountGroup.slice(1)}`);
 
@@ -111,7 +114,13 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balanceReport",
       header: t("balances.equivalent", { currency: reportingCurrency }),
       renderCell: (row: CurrencyTotal): ReactElement => (
-        <td key="balanceReport" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass, row.hasUnconvertible ? tableStateStyles.error : "")}>
+        <td
+          key="balanceReport"
+          className={cn(tableStyles.cell, tableStyles.cellRight, maskClass, row.hasUnconvertible ? tableStateStyles.warning : "")}
+          title={maskClass === ""
+            ? (buildUnconvertibleCurrenciesTitle(row.unconvertibleCurrencies, formatUnconvertibleReason) ?? undefined)
+            : undefined}
+        >
           {row.balanceReport !== null ? formatAmount(row.balanceReport, numberFormat) : "\u2014"}
         </td>
       ),

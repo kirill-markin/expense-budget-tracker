@@ -151,7 +151,6 @@ export type BudgetPlanCellProps = Readonly<{
   planned: number;
   showData: boolean;
   maskClass: string;
-  taintedClass: string;
   isPlanOver: boolean;
   cmClass: string;
   /** Divider this cell carries when it opens a month set apart from the one before it. */
@@ -211,7 +210,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     planned,
     showData,
     maskClass,
-    taintedClass,
     isPlanOver,
     cmClass,
     monthDividerClass,
@@ -1135,7 +1133,6 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
         monthDividerClass,
         cmClass,
         maskClass,
-        showData ? taintedClass : "",
         showData && isPlanOver ? tableStateStyles.over : "",
       )}
       data-testid={showData ? `budget-plan-cell-${editorId}` : undefined}

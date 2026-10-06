@@ -41,6 +41,7 @@ const budgetRow = (
   planned,
   actual,
   hasUnconvertible: false,
+  unconvertibleCurrencies: [],
   hasActualRows,
 });
 

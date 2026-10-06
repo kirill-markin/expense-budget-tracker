@@ -236,6 +236,12 @@ tbody tr:last-child .currentMonthActual {
   --table-state-danger-color: #e74c3c;
 }
 
+/* Lighter amber so the untrusted state stays readable on the dark year total. */
+.yearTotalWarning {
+  --budget-table-year-total-color: #f5c451;
+  --table-state-warning-color: #f5c451;
+}
+
 .yearTotal.remainderNegative:not(:global(.data-masked)) {
   color: #e74c3c;
 }

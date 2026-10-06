@@ -182,6 +182,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
                   filteredSubtotalsMap={controller.filteredSubtotalsMap}
                   taintedDirectionMonths={controller.taintedDirectionMonths}
                   taintedCells={controller.taintedCells}
+                  unconvertibleCurrenciesByMonth={controller.unconvertibleCurrenciesByMonth}
                   numberFormat={numberFormat}
                   budgetAdjustments={controller.budgetAdjustments}
                   copyToClipboard={copyToClipboard}
@@ -214,6 +215,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
               spendSubtotals={controller.spendSubtotals}
               transferSubtotals={controller.transferSubtotals}
               taintedMonths={controller.taintedMonths}
+              unconvertibleCurrenciesByMonth={controller.unconvertibleCurrenciesByMonth}
               fxAdjustments={controller.fxAdjustments}
               businessPersonalTransfers={controller.businessPersonalTransfers}
               hasBusinessAccount={controller.hasBusinessAccount}

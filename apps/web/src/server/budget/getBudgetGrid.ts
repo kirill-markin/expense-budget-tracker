@@ -41,6 +41,8 @@ export type BudgetRow = Readonly<{
   planned: number;
   actual: number;
   hasUnconvertible: boolean;
+  /** Distinct entry currencies of this cell that had no exchange rate. */
+  unconvertibleCurrencies: ReadonlyArray<string>;
   /**
    * True when the actual window holds at least one ledger entry for this
    * month/direction/category, regardless of the net sum: a purchase and its
@@ -165,7 +167,8 @@ export const QUERY = `
             END
         END
       END) AS actual,
-      bool_or(le.currency != $1 AND r.rate IS NULL) AS has_unconvertible
+      bool_or(le.currency != $1 AND r.rate IS NULL) AS has_unconvertible,
+      array_agg(DISTINCT le.currency) FILTER (WHERE le.currency != $1 AND r.rate IS NULL) AS unconvertible_currencies
     FROM ledger_entries le
     LEFT JOIN fx_rates_daily r
       ON r.quote_currency = $1
@@ -184,6 +187,7 @@ export const QUERY = `
     COALESCE(p.planned_base, 0) + COALESCE(p.planned_modifier, 0) AS planned,
     COALESCE(a.actual, 0) AS actual,
     COALESCE(a.has_unconvertible, FALSE) AS has_unconvertible,
+    COALESCE(a.unconvertible_currencies, '{}') AS unconvertible_currencies,
     a.month IS NOT NULL AS has_actual_rows
   FROM planned p
   FULL OUTER JOIN actual a
@@ -444,7 +448,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
   }
 
   return {
-    rows: rowsResult.rows.map((row: { month: string; direction: string; category: string; planned_base: number; planned_modifier: number; planned: number; actual: number; has_unconvertible: boolean; has_actual_rows: boolean }) => ({
+    rows: rowsResult.rows.map((row: { month: string; direction: string; category: string; planned_base: number; planned_modifier: number; planned: number; actual: number; has_unconvertible: boolean; unconvertible_currencies: ReadonlyArray<string>; has_actual_rows: boolean }) => ({
       month: row.month,
       direction: row.direction,
       category: row.category,
@@ -453,6 +457,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
       planned: Number(row.planned),
       actual: Number(row.actual),
       hasUnconvertible: row.has_unconvertible,
+      unconvertibleCurrencies: row.unconvertible_currencies,
       hasActualRows: row.has_actual_rows,
     })),
     adjustments: mapBudgetAdjustmentRows(adjustmentsResult.rows, "budget grid adjustment details"),
