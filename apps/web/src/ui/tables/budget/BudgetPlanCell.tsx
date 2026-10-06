@@ -154,6 +154,8 @@ export type BudgetPlanCellProps = Readonly<{
   taintedClass: string;
   isPlanOver: boolean;
   cmClass: string;
+  /** Divider this cell carries when it opens a month set apart from the one before it. */
+  monthDividerClass: string;
   /**
    * Whether this cell may offer filling the rest of its calendar year. The
    * caller denies it for elapsed months, whose fill would overwrite the plans
@@ -212,6 +214,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
     taintedClass,
     isPlanOver,
     cmClass,
+    monthDividerClass,
     canFillRestOfYear,
     budgetAdjustments,
     onPlanSave,
@@ -1129,6 +1132,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
       className={cn(
         styles.cell,
         showData ? styles.cellEditable : "",
+        monthDividerClass,
         cmClass,
         maskClass,
         showData ? taintedClass : "",

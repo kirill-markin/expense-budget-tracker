@@ -38,7 +38,8 @@ const buildValueCellClassName = (column: BudgetValueColumn): string => {
   const currentMonthClass = column.currentMonthPart === null
     ? ""
     : ` ${CURRENT_MONTH_PART_CLASS[column.currentMonthPart]}`;
-  return `${styles.cell}${yearTotalClass}${currentMonthClass}`;
+  const monthDividerClass = column.startsMonthDivider ? ` ${styles.monthDivider}` : "";
+  return `${styles.cell}${monthDividerClass}${yearTotalClass}${currentMonthClass}`;
 };
 
 /**

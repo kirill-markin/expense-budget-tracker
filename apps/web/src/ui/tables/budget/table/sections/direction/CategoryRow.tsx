@@ -26,6 +26,7 @@ import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 import {
   buildCategoryMonthDrillDownFilter,
   buildCategoryYearDrillDownFilter,
+  buildMonthDividerClass,
   buildYearTotalStateClass,
   isDirectionActualOverPlanned,
   renderColumnCells,
@@ -130,8 +131,9 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
       >
         {categoryVisibility.showData ? category : MASKED_CELL_PLACEHOLDER}
       </td>
-      {columnSequence.map((column) => {
+      {columnSequence.map((column, index) => {
         const yearData = column.kind === "year-total" ? yearComputed.get(column.year) : undefined;
+        const monthDividerClass = buildMonthDividerClass(columnSequence, index, currentMonth, plansMode);
         return renderColumnCells({
           column,
           currentMonth,
@@ -143,7 +145,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
           renderYearLoading: (isSplitYearValue) =>
             renderYearLoading(column.kind === "year-total" ? column.year : "", isSplitYearValue),
           renderMonthLoading: (month) =>
-            renderUnloadedMonthCells(month, currentMonth, styles.cell, plansMode),
+            renderUnloadedMonthCells(month, currentMonth, styles.cell, plansMode, monthDividerClass),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
@@ -237,7 +239,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
             return (
               <td
                 key={column.month}
-                className={`${styles.cell}${categoryVisibility.maskClass}${taintedClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
+                className={`${styles.cell}${monthDividerClass}${categoryVisibility.maskClass}${taintedClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
                 onClick={categoryVisibility.showData
                   ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                   : undefined}
@@ -277,6 +279,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                 taintedClass={taintedClass}
                 isPlanOver={false}
                 cmClass=""
+                monthDividerClass={monthDividerClass}
                 canFillRestOfYear={isBudgetFillSourceMonth(column.month, currentMonth)}
                 budgetAdjustments={budgetAdjustments}
                 onPlanSave={onPlanSave}
@@ -321,6 +324,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   taintedClass={taintedClass}
                   isPlanOver={false}
                   cmClass={isCurrentMonth ? ` ${styles.currentMonthPlan}` : ""}
+                  monthDividerClass={monthDividerClass}
                   canFillRestOfYear={isBudgetFillSourceMonth(column.month, currentMonth)}
                   budgetAdjustments={budgetAdjustments}
                   onPlanSave={onPlanSave}

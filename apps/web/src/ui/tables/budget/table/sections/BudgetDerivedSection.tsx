@@ -148,7 +148,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             </td>
           </Fragment>
         )}
-        renderPastMonth={(month) => {
+        renderPastMonth={(month, monthDividerClass) => {
           const fx = fxAdjustments.get(month);
           const fxClickable = canOpenDerivedDrillDown && fx !== undefined;
           return renderValueCells({
@@ -162,6 +162,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: false,
             isActualOver: false,
             isSubtotal: false,
+            monthDividerClass,
             maskClass: `${derivedMaskClass}${fxClickable ? ` ${styles.cellClickable}` : ""}`,
             plannedValueClass: "",
             actualValueClass: "",
@@ -170,7 +171,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             onActualClick: fxClickable ? () => openFxBreakdown(month) : null,
           });
         }}
-        renderFutureMonth={(month) => renderValueCells({
+        renderFutureMonth={(month, monthDividerClass) => renderValueCells({
           key: month,
           month,
           currentMonth,
@@ -181,6 +182,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           isPlanOver: false,
           isActualOver: false,
           isSubtotal: false,
+          monthDividerClass,
           maskClass: derivedMaskClass,
           plannedValueClass: "",
           actualValueClass: "",
@@ -188,7 +190,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           formatter: formatFxAmount,
           onActualClick: null,
         })}
-        renderSplitMonth={(month) => {
+        renderSplitMonth={(month, isCurrentMonth, monthDividerClass) => {
           const fx = fxAdjustments.get(month);
           const fxClickable = canOpenDerivedDrillDown && fx !== undefined;
           return renderValueCells({
@@ -202,6 +204,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: false,
             isActualOver: false,
             isSubtotal: false,
+            monthDividerClass,
             maskClass: derivedMaskClass,
             plannedValueClass: "",
             actualValueClass: "",
@@ -255,7 +258,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             </Fragment>
           );
         }}
-        renderPastMonth={(month) => {
+        renderPastMonth={(month, monthDividerClass) => {
           const income = incomeSubtotals?.get(month) ?? zeroCellValue;
           const spend = spendSubtotals?.get(month) ?? zeroCellValue;
           const transfer = transferSubtotals?.get(month) ?? zeroCellValue;
@@ -273,6 +276,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: false,
             isActualOver: false,
             isSubtotal: true,
+            monthDividerClass,
             maskClass: derivedMaskClass,
             plannedValueClass: getRemainderValueClass(remainderPlan, isTainted),
             actualValueClass: getRemainderValueClass(remainderActual, isTainted),
@@ -281,7 +285,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             onActualClick: null,
           });
         }}
-        renderFutureMonth={(month) => {
+        renderFutureMonth={(month, monthDividerClass) => {
           const income = incomeSubtotals?.get(month) ?? zeroCellValue;
           const spend = spendSubtotals?.get(month) ?? zeroCellValue;
           const transfer = transferSubtotals?.get(month) ?? zeroCellValue;
@@ -299,6 +303,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: isNegativeValueOver(remainderPlan),
             isActualOver: false,
             isSubtotal: true,
+            monthDividerClass,
             maskClass: derivedMaskClass,
             plannedValueClass: getRemainderValueClass(remainderPlan, isTainted),
             actualValueClass: getRemainderValueClass(remainderActual, isTainted),
@@ -307,7 +312,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             onActualClick: null,
           });
         }}
-        renderSplitMonth={(month) => {
+        renderSplitMonth={(month, isCurrentMonth, monthDividerClass) => {
           const income = incomeSubtotals?.get(month) ?? zeroCellValue;
           const spend = spendSubtotals?.get(month) ?? zeroCellValue;
           const transfer = transferSubtotals?.get(month) ?? zeroCellValue;
@@ -325,6 +330,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: isNegativeValueOver(remainderPlan),
             isActualOver: isNegativeValueOver(remainderActual),
             isSubtotal: true,
+            monthDividerClass,
             maskClass: derivedMaskClass,
             plannedValueClass: getRemainderValueClass(remainderPlan, isTainted),
             actualValueClass: getRemainderValueClass(remainderActual, isTainted),
@@ -378,7 +384,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             </Fragment>
           );
         }}
-        renderPastMonth={(month) => {
+        renderPastMonth={(month, monthDividerClass) => {
           const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
@@ -391,6 +397,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: false,
             isActualOver: false,
             isSubtotal: true,
+            monthDividerClass,
             maskClass: derivedMaskClass,
             plannedValueClass: "",
             actualValueClass: "",
@@ -399,7 +406,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             onActualClick: null,
           });
         }}
-        renderFutureMonth={(month) => {
+        renderFutureMonth={(month, monthDividerClass) => {
           const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
@@ -412,6 +419,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: isNegativeValueOver(balance.plan),
             isActualOver: false,
             isSubtotal: true,
+            monthDividerClass,
             maskClass: derivedMaskClass,
             plannedValueClass: "",
             actualValueClass: "",
@@ -420,7 +428,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             onActualClick: null,
           });
         }}
-        renderSplitMonth={(month) => {
+        renderSplitMonth={(month, isCurrentMonth, monthDividerClass) => {
           const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
@@ -433,6 +441,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: isNegativeValueOver(balance.plan),
             isActualOver: isNegativeValueOver(balance.actual),
             isSubtotal: true,
+            monthDividerClass,
             maskClass: derivedMaskClass,
             plannedValueClass: "",
             actualValueClass: "",
@@ -511,7 +520,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               </Fragment>
             );
           }}
-          renderPastMonth={(month) => {
+          renderPastMonth={(month, monthDividerClass) => {
             const cell = businessPersonalTransfers[month] ?? ZERO_BUSINESS_PERSONAL_TRANSFER;
             return renderValueCells({
               key: month,
@@ -524,6 +533,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               isPlanOver: false,
               isActualOver: false,
               isSubtotal: false,
+              monthDividerClass,
               maskClass: derivedMaskClass,
               plannedValueClass: "",
               actualValueClass: "",
@@ -532,7 +542,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               onActualClick: canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferMonthDrillDownFilter(month)) : null,
             });
           }}
-          renderFutureMonth={(month) => renderValueCells({
+          renderFutureMonth={(month, monthDividerClass) => renderValueCells({
             key: month,
             month,
             currentMonth,
@@ -543,6 +553,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             isPlanOver: false,
             isActualOver: false,
             isSubtotal: false,
+            monthDividerClass,
             maskClass: derivedMaskClass,
             plannedValueClass: "",
             actualValueClass: "",
@@ -550,7 +561,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             formatter: formatAmount,
             onActualClick: null,
           })}
-          renderSplitMonth={(month) => {
+          renderSplitMonth={(month, isCurrentMonth, monthDividerClass) => {
             const cell = businessPersonalTransfers[month] ?? ZERO_BUSINESS_PERSONAL_TRANSFER;
             return renderValueCells({
               key: month,
@@ -563,6 +574,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               isPlanOver: false,
               isActualOver: false,
               isSubtotal: false,
+              monthDividerClass,
               maskClass: derivedMaskClass,
               plannedValueClass: "",
               actualValueClass: "",

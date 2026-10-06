@@ -13,6 +13,7 @@ import {
 } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import {
+  buildMonthDividerClass,
   renderColumnCells,
   renderDerivedYearLoadingCells,
   renderMaskedYearCells,
@@ -68,8 +69,9 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
           ? t(`budget.liquidity${liquidity.charAt(0).toUpperCase()}${liquidity.slice(1)}`)
           : MASKED_CELL_PLACEHOLDER}
       </td>
-      {columnSequence.map((column) => {
+      {columnSequence.map((column, index) => {
         const yearData = column.kind === "year-total" ? yearComputed.get(column.year) : undefined;
+        const monthDividerClass = buildMonthDividerClass(columnSequence, index, currentMonth, plansMode);
         return renderColumnCells({
           column,
           currentMonth,
@@ -81,7 +83,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
           renderYearLoading: (isSplitYearValue) =>
             renderYearLoading(column.kind === "year-total" ? column.year : "", isSplitYearValue),
           renderMonthLoading: (month) =>
-            renderUnloadedMonthCells(month, currentMonth, styles.cell, plansMode),
+            renderUnloadedMonthCells(month, currentMonth, styles.cell, plansMode, monthDividerClass),
           renderPastYear: () => {
             if (column.kind !== "year-total" || yearData === undefined) {
               return renderYearLoading(column.kind === "year-total" ? column.year : "", false);
@@ -122,7 +124,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
               return renderYearLoading("invalid", false);
             }
             return (
-              <td key={column.month} className={`${styles.cell}${derivedMaskClass}`}>
+              <td key={column.month} className={`${styles.cell}${monthDividerClass}${derivedMaskClass}`}>
                 {renderValue(mebByLiq[column.month]?.[liquidity] ?? 0)}
               </td>
             );
@@ -132,7 +134,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
               return renderYearLoading("invalid", false);
             }
             return (
-              <td key={column.month} className={`${styles.cell}${derivedMaskClass}`}>
+              <td key={column.month} className={`${styles.cell}${monthDividerClass}${derivedMaskClass}`}>
                 {renderValue(projectedLiqBalances.get(column.month)?.[liquidity] ?? 0)}
               </td>
             );
@@ -146,7 +148,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
             const actualEmphasisClass = isCurrentMonth ? ` ${styles.currentMonthActual}` : "";
             return (
               <Fragment key={column.month}>
-                <td className={`${styles.cell}${planEmphasisClass}${derivedMaskClass}`}>
+                <td className={`${styles.cell}${monthDividerClass}${planEmphasisClass}${derivedMaskClass}`}>
                   {renderValue(projectedLiqBalances.get(column.month)?.[liquidity] ?? 0)}
                 </td>
                 <td className={`${styles.cell}${actualEmphasisClass}${derivedMaskClass}`}>

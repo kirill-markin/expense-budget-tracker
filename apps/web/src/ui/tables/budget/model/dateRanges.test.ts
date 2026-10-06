@@ -10,6 +10,7 @@ import {
   getTargetFillMonths,
   isBudgetFillSourceMonth,
   isBudgetMonthLoaded,
+  startsBudgetMonthDivider,
 } from "@/ui/tables/budget/model/dateRanges";
 
 test("builds the fixed budget calendar from January ten years ago through December ten years ahead", (): void => {
@@ -76,15 +77,15 @@ test("flattens the fixed calendar into stable physical value columns", (): void 
   assert.deepEqual(
     valueColumns.filter((column) => column.key.startsWith("2026-08")),
     [
-      { key: "2026-08-plan", isYearTotal: false, currentMonthPart: "plan" },
-      { key: "2026-08-actual", isYearTotal: false, currentMonthPart: "actual" },
+      { key: "2026-08-plan", isYearTotal: false, currentMonthPart: "plan", startsMonthDivider: false },
+      { key: "2026-08-actual", isYearTotal: false, currentMonthPart: "actual", startsMonthDivider: false },
     ],
   );
   assert.deepEqual(
     valueColumns.filter((column) => column.key.startsWith("total-2026")),
     [
-      { key: "total-2026-plan", isYearTotal: true, currentMonthPart: null },
-      { key: "total-2026-actual", isYearTotal: true, currentMonthPart: null },
+      { key: "total-2026-plan", isYearTotal: true, currentMonthPart: null, startsMonthDivider: false },
+      { key: "total-2026-actual", isYearTotal: true, currentMonthPart: null, startsMonthDivider: false },
     ],
   );
 });
@@ -134,23 +135,23 @@ test("marks only the real current month as the emphasized split column in the al
   assert.deepEqual(
     valueColumns.filter((column) => column.currentMonthPart !== null),
     [
-      { key: "2026-02-plan", isYearTotal: false, currentMonthPart: "plan" },
-      { key: "2026-02-actual", isYearTotal: false, currentMonthPart: "actual" },
+      { key: "2026-02-plan", isYearTotal: false, currentMonthPart: "plan", startsMonthDivider: false },
+      { key: "2026-02-actual", isYearTotal: false, currentMonthPart: "actual", startsMonthDivider: false },
     ],
   );
   // Elapsed split months and elapsed split year totals carry no part.
   assert.deepEqual(
     valueColumns.filter((column) => column.key.startsWith("2025-12")),
     [
-      { key: "2025-12-plan", isYearTotal: false, currentMonthPart: null },
-      { key: "2025-12-actual", isYearTotal: false, currentMonthPart: null },
+      { key: "2025-12-plan", isYearTotal: false, currentMonthPart: null, startsMonthDivider: true },
+      { key: "2025-12-actual", isYearTotal: false, currentMonthPart: null, startsMonthDivider: false },
     ],
   );
   assert.deepEqual(
     valueColumns.filter((column) => column.key.startsWith("total-2025")),
     [
-      { key: "total-2025-plan", isYearTotal: true, currentMonthPart: null },
-      { key: "total-2025-actual", isYearTotal: true, currentMonthPart: null },
+      { key: "total-2025-plan", isYearTotal: true, currentMonthPart: null, startsMonthDivider: false },
+      { key: "total-2025-actual", isYearTotal: true, currentMonthPart: null, startsMonthDivider: false },
     ],
   );
 });
@@ -193,4 +194,29 @@ test("spans a fill from the month after the source through December", (): void =
   // Every target of an elapsed source month is a month this mode shows as
   // history, which is why such a source is refused above.
   assert.equal(getTargetFillMonths("2026-01").length, 11);
+});
+
+test("starts a month divider only between two neighbouring elapsed months", (): void => {
+  const columnSequence = buildColumnSequence(generateMonthRange("2025-11", "2026-04"));
+  const dividers = columnSequence.map(
+    (_column, index) => startsBudgetMonthDivider(columnSequence, index, "2026-03", "all-plans"),
+  );
+
+  // 2025-11 opens the sequence, 2026-01 follows the year-total block, 2026-03
+  // is the current month and 2026-04 is a future single column: none of them
+  // has an elapsed month to be set apart from.
+  assert.deepEqual(columnSequence.map((column) => (column.kind === "month" ? column.month : column.year)), [
+    "2025-11", "2025-12", "2025", "2026-01", "2026-02", "2026-03", "2026-04",
+  ]);
+  assert.deepEqual(dividers, [false, true, false, false, true, false, false]);
+});
+
+test("starts no month divider in the default mode", (): void => {
+  // Elapsed months render one column there, so there are no blocks to divide.
+  const columnSequence = buildColumnSequence(generateMonthRange("2025-11", "2026-04"));
+
+  assert.deepEqual(
+    columnSequence.map((_column, index) => startsBudgetMonthDivider(columnSequence, index, "2026-03", "actuals")),
+    columnSequence.map(() => false),
+  );
 });
