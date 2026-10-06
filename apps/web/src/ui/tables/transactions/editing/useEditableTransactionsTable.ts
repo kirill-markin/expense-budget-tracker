@@ -18,6 +18,7 @@ import {
   type AuthoritativeRowOverride,
   type TransactionSaveState,
 } from "./transactionSaveQueue";
+import { computeUnpairedTransferRemarks } from "./unpairedTransferMarkers";
 
 export type CreateLedgerEntryRequest = Readonly<{
   ts: string;
@@ -345,6 +346,13 @@ export const useEditableTransactionsTable = (
     authoritativeOverridesRef.current = nextOverrides;
   }, []);
 
+  const remarkEventSiblings = useCallback((eventId: string, mutatedEntryId: string): void => {
+    for (const row of computeUnpairedTransferRemarks(rowsRef.current, eventId, mutatedEntryId)) {
+      protectAuthoritativeEntry(row);
+      replaceEntry(row);
+    }
+  }, [protectAuthoritativeEntry, replaceEntry]);
+
   const processEntryQueue = useCallback(async (entryId: string): Promise<void> => {
     while (true) {
       const state = saveStatesRef.current.get(entryId);
@@ -373,13 +381,14 @@ export const useEditableTransactionsTable = (
         protectAuthoritativeEntry(accepted.row);
         saveStatesRef.current.delete(entryId);
         replaceEntry(accepted.row);
+        remarkEventSiblings(accepted.row.eventId, accepted.row.entryId);
         clearEntryPending(entryId);
         return;
       }
 
       saveStatesRef.current.set(entryId, accepted.state);
     }
-  }, [clearEntryPending, protectAuthoritativeEntry, replaceEntry, scroll]);
+  }, [clearEntryPending, protectAuthoritativeEntry, remarkEventSiblings, replaceEntry, scroll]);
 
   const updateEntry = useCallback((entryId: string, patch: EditableLedgerEntryPatch): void => {
     const entry = rowsRef.current.find((item) => item.entryId === entryId);
@@ -425,17 +434,26 @@ export const useEditableTransactionsTable = (
     const prevFetchedRows = scroll.rows;
     const prevTotal = scroll.total;
 
+    // Load-bearing for the remark below, not an optimization:
+    // `computeUnpairedTransferRemarks` requires rows without the deleted leg,
+    // and the `rows` resync in `useLayoutEffect` is not guaranteed to have run.
+    rowsRef.current = removeLedgerEntry(rowsRef.current, entryId);
     setCreatedRows((prev) => removeLedgerEntry(prev, entryId));
     scroll.setRows((prev) => removeLedgerEntry(prev, entryId));
     scroll.setTotal((prev) => prev - 1);
 
-    deleteTransactionEntry(entryId).catch((error: unknown) => {
-      setCreatedRows(prevCreatedRows);
-      scroll.setRows(prevFetchedRows);
-      scroll.setTotal(prevTotal);
-      scroll.setError(getErrorMessage(error));
-    });
-  }, [createdRows, onDirty, rows, scroll]);
+    // Two-argument `then` so the rollback reacts only to the request itself:
+    // a throw from the remark must not resurrect an already deleted row.
+    deleteTransactionEntry(entryId).then(
+      (): void => remarkEventSiblings(entry.eventId, entryId),
+      (error: unknown) => {
+        setCreatedRows(prevCreatedRows);
+        scroll.setRows(prevFetchedRows);
+        scroll.setTotal(prevTotal);
+        scroll.setError(getErrorMessage(error));
+      },
+    );
+  }, [createdRows, onDirty, remarkEventSiblings, rows, scroll]);
 
   return {
     rows,
