@@ -261,6 +261,7 @@ const generate = (): DemoData => {
         ts: new Date(Date.UTC(y, m - 1, Math.min(p.day, 28), 9 + (pi % 12))).toISOString(),
         accountId: p.account, amount, amountReport, currency: p.currency,
         kind: p.kind, category: p.category, counterparty: p.counterparty, note: noteFor(p.category, abbr),
+        isUnpairedTransfer: false,
       });
       accBal[p.account] = round2((accBal[p.account] ?? 0) + amount);
       const key = `${month}|${p.kind}|${p.category}`;
@@ -278,8 +279,8 @@ const generate = (): DemoData => {
       const fromUsd = round2(t.fromAmt * (FX[t.fromCur] ?? 1));
       const toUsd = round2(t.toAmt * (FX[t.toCur] ?? 1));
       entries.push(
-        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.from, amount: t.fromAmt, amountReport: fromUsd, currency: t.fromCur, kind: "transfer", category: null, counterparty: null, note: `To ${t.to}` },
-        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.to, amount: t.toAmt, amountReport: toUsd, currency: t.toCur, kind: "transfer", category: null, counterparty: null, note: `From ${t.from}` },
+        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.from, amount: t.fromAmt, amountReport: fromUsd, currency: t.fromCur, kind: "transfer", category: null, counterparty: null, note: `To ${t.to}`, isUnpairedTransfer: false },
+        { entryId: `d${String(++entryN).padStart(3, "0")}`, eventId: evId, ts, accountId: t.to, amount: t.toAmt, amountReport: toUsd, currency: t.toCur, kind: "transfer", category: null, counterparty: null, note: `From ${t.from}`, isUnpairedTransfer: false },
       );
       accBal[t.from] = round2((accBal[t.from] ?? 0) + t.fromAmt);
       accBal[t.to] = round2((accBal[t.to] ?? 0) + t.toAmt);
@@ -557,6 +558,18 @@ export const getDemoTransactionsPage = (filter: TransactionsFilter): Transaction
   return { entries: sorted.slice(filter.offset, filter.offset + filter.limit), total: filtered.length };
 };
 
+/**
+ * Structural pairing state of a demo transfer leg: the generated demo set pairs
+ * every transfer, so only a leg created during the session, which carries an
+ * event of its own, comes back unpaired.
+ */
+export const isDemoUnpairedTransfer = (entryId: string, eventId: string, kind: string): boolean => {
+  if (kind !== "transfer") return false;
+  return !generate().entries.some((entry) => (
+    entry.eventId === eventId && entry.kind === "transfer" && entry.entryId !== entryId
+  ));
+};
+
 export const getDemoAccounts = (): ReadonlyArray<AccountOption> =>
   Object.keys(ACCOUNT_CURRENCIES).sort().map((accountId) => ({ accountId }));
 
@@ -726,6 +739,8 @@ export const getDemoBudgetGrid = (
     monthEndBalances,
     monthEndBalancesByLiquidity,
     businessPersonalTransfers,
+    // Every demo transfer is generated as a pair of legs.
+    unpairedTransferLegs: {},
     hasBusinessAccount,
   };
 };

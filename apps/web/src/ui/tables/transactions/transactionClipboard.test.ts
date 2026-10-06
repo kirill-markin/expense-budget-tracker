@@ -22,6 +22,7 @@ test("toTransactionClipboardPayload maps every ledger value to stable snake_case
     ts: "2026-07-12T09:30:00.000Z",
     kind: "spend",
     amount: -24.5,
+    isUnpairedTransfer: false,
   };
 
   const payload = toTransactionClipboardPayload(entry);
@@ -67,6 +68,7 @@ test("serializeTransactionClipboard preserves nulls and returns deterministic re
     category: null,
     counterparty: null,
     note: null,
+    isUnpairedTransfer: false,
   };
 
   assert.equal(
@@ -100,6 +102,7 @@ test("isTransactionCopyAvailable follows filtered visibility and pending-save st
     category: "Groceries",
     counterparty: null,
     note: null,
+    isUnpairedTransfer: false,
   };
 
   assert.equal(isTransactionCopyAvailable(entry, null, new Set()), true);

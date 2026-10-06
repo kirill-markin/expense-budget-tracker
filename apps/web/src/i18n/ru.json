@@ -55,6 +55,8 @@
   "common.to": "По",
   "common.invalidNumber": "Введите корректное число в выбранном формате.",
   "common.unconvertibleReason": "Нет курса для {{currencies}}; записи в этой валюте не вошли в этот итог",
+  "common.unpairedTransferReason": "Перевод без второй стороны; добавьте парную запись или запишите как расход",
+  "common.unpairedTransferMore": "+{{count}} ещё",
   "currency.title": "Валюта отчётности",
   "apiKeys.copyWarning": "Скопируйте API-ключ сейчас — он больше не будет показан.",
   "apiKeys.copy": "Копировать",

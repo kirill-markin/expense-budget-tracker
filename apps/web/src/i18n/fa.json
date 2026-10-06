@@ -55,6 +55,8 @@
   "common.to": "تا",
   "common.invalidNumber": "یک عدد معتبر با قالب انتخاب‌شده وارد کنید.",
   "common.unconvertibleReason": "نرخ تبدیل برای {{currencies}} وجود ندارد؛ مبالغ این ارز در این جمع لحاظ نشده‌اند",
+  "common.unpairedTransferReason": "انتقال بدون طرف دوم؛ رکورد متناظر را اضافه کنید یا آن را هزینه ثبت کنید",
+  "common.unpairedTransferMore": "+{{count}} مورد دیگر",
   "currency.title": "ارز گزارش",
   "apiKeys.copyWarning": "کلید API را الان کپی کنید — دوباره نمایش داده نخواهد شد.",
   "apiKeys.copy": "کپی",

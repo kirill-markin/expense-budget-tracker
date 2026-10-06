@@ -14,6 +14,7 @@ const ledgerEntrySchema = z.object({
   category: z.string().nullable(),
   counterparty: z.string().nullable(),
   note: z.string().nullable(),
+  isUnpairedTransfer: z.boolean(),
 });
 
 export type TransactionSaveState = Readonly<{

@@ -6,6 +6,7 @@ import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { handleRoute } from "@/server/api/handleRoute";
 import { parseTransactionsCreateBody } from "@/server/api/transactions";
 import { parseJsonBody } from "@/server/api/validation";
+import { isDemoUnpairedTransfer } from "@/server/demo/data";
 import { getDemoAmountReport } from "@/server/demo/transactions";
 import { createLedgerEntry } from "@/server/transactions/createLedgerEntry";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
@@ -18,8 +19,9 @@ export const POST = async (request: Request): Promise<Response> =>
 
       if (isDemoModeFromRequest(request)) {
         const eventId = randomUUID();
+        const entryId = randomUUID();
         return Response.json({
-          entryId: randomUUID(),
+          entryId,
           eventId,
           ts: new Date(body.ts).toISOString(),
           accountId: body.accountId,
@@ -30,6 +32,7 @@ export const POST = async (request: Request): Promise<Response> =>
           category: body.category,
           counterparty: body.counterparty,
           note: body.note,
+          isUnpairedTransfer: isDemoUnpairedTransfer(entryId, eventId, body.kind),
         });
       }
 

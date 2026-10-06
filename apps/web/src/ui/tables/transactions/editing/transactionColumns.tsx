@@ -12,6 +12,7 @@ import { EditableNote } from "@/ui/tables/editable/EditableNote";
 import { EditableText } from "@/ui/tables/editable/EditableText";
 import type { ColumnDef } from "@/ui/tables/shared/data-table/types";
 import { formatAmount, formatDateTime } from "@/ui/tables/shared/format";
+import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
 import { isTransactionCopyAvailable } from "../transactionClipboard";
 import transactionStyles from "../TransactionsTable.module.css";
@@ -119,6 +120,7 @@ export const editableAmountColumn = (
       entryId={row.entryId}
       currentValue={row.amount}
       maskClass={getMaskClass(row)}
+      isUnpairedTransfer={row.isUnpairedTransfer}
       onAmountCommit={onAmountCommit}
     />
   ),
@@ -271,9 +273,19 @@ export const buildTransactionColumns = (maskClass: string, fmt: FormatParams): R
   amount: {
     key: "amount",
     header: fmt.t("table.amount"),
-    renderCell: (row: LedgerEntry): ReactElement => (
-      <td key="amount" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.amount, fmt.numberFormat)}</td>
-    ),
+    renderCell: (row: LedgerEntry): ReactElement => {
+      // A masked cell hides its amount, so it hides the reason that amount is distorted too.
+      const showUnpairedWarning = row.isUnpairedTransfer && !maskClass.includes("data-masked");
+      return (
+        <td
+          key="amount"
+          className={cn(tableStyles.cell, tableStyles.cellRight, maskClass, showUnpairedWarning ? tableStateStyles.warning : "")}
+          title={showUnpairedWarning ? fmt.t("common.unpairedTransferReason") : undefined}
+        >
+          {formatAmount(row.amount, fmt.numberFormat)}
+        </td>
+      );
+    },
     rightAlign: true,
     sortKey: "amount",
   },

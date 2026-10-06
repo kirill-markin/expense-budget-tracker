@@ -45,6 +45,7 @@ const makeEntry = (overrides: Partial<LedgerEntry>): LedgerEntry => ({
   category: "Software",
   counterparty: "Example Cloud",
   note: "Monthly subscription",
+  isUnpairedTransfer: false,
   ...overrides,
 });
 

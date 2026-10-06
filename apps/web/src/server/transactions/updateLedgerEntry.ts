@@ -7,6 +7,7 @@
 import { queryAs } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { mapLedgerEntryRow, type LedgerEntry, type LedgerEntryRow } from "@/server/transactions/getTransactions";
+import { buildUnpairedTransferCondition } from "@/server/transactions/unpairedTransfer";
 
 type UpdateLedgerEntryParams = Readonly<{
   entryId: string;
@@ -44,7 +45,7 @@ export const updateLedgerEntry = async (
           amount = $8,
           currency = $9
         WHERE entry_id = $10
-        RETURNING entry_id, event_id, ts, account_id, amount, currency, kind, category, counterparty, note
+        RETURNING entry_id, event_id, ts, account_id, amount, currency, kind, category, counterparty, note, workspace_id
       )
       SELECT
         u.entry_id,
@@ -61,7 +62,8 @@ export const updateLedgerEntry = async (
         u.kind,
         u.category,
         u.counterparty,
-        u.note
+        u.note,
+        (${buildUnpairedTransferCondition("u")}) AS is_unpaired_transfer
       FROM updated u
       LEFT JOIN fx_rates_daily r
         ON r.quote_currency = $1

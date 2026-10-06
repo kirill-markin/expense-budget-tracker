@@ -55,6 +55,8 @@
   "common.to": "To",
   "common.invalidNumber": "Enter a valid number in the selected format.",
   "common.unconvertibleReason": "No exchange rate for {{currencies}}; entries in that currency are missing from this total",
+  "common.unpairedTransferReason": "Transfer with no second leg; add the matching leg or record it as a spend",
+  "common.unpairedTransferMore": "+{{count}} more",
   "currency.title": "Reporting currency",
   "apiKeys.copyWarning": "Copy the API key now — it will not be shown again.",
   "apiKeys.copy": "Copy",
