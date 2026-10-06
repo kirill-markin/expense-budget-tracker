@@ -147,6 +147,19 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
       ? (buildUnconvertibleCurrenciesTitle(currencies, formatUnconvertibleReason) ?? undefined)
       : undefined
   );
+  /**
+   * The per-liquidity rows split the same converted month-end balance as the
+   * Balance row, so they inherit its cumulative taint.
+   */
+  const resolveLiquidityMonthTaint = (
+    month: string,
+  ): Readonly<{ isTainted: boolean; title: string | undefined }> => {
+    const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
+    return {
+      isTainted: balance.isTainted,
+      title: unconvertibleTitle(balance.isTainted, (candidate) => candidate <= month) ?? undefined,
+    };
+  };
 
   return (
     <>
@@ -164,7 +177,11 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         maskClass={derivedMaskClass}
         rowClassName={styles.categoryRow}
         renderPastYear={(year, yearData) => (
-          <td key={`total-${year}`} className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
+          <td
+            key={`total-${year}`}
+            className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(buildYearTotalStateClass(yearData.decemberBalance.isTainted, false))}`}
+            title={yearUnconvertibleTitle(yearData.decemberBalance.isTainted, yearData.unconvertibleCurrencies)}
+          >
             {renderDerivedValue(formatFxAmount(yearData.yearFxAdjust, numberFormat))}
           </td>
         )}
@@ -178,7 +195,10 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             <td className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
               {derivedVisibility.showData ? null : MASKED_CELL_PLACEHOLDER}
             </td>
-            <td className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}`}>
+            <td
+              className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(buildYearTotalStateClass(yearData.decemberBalance.isTainted, false))}`}
+              title={yearUnconvertibleTitle(yearData.decemberBalance.isTainted, yearData.unconvertibleCurrencies)}
+            >
               {renderDerivedValue(formatFxAmount(yearData.yearFxAdjust, numberFormat))}
             </td>
           </Fragment>
@@ -186,6 +206,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         renderPastMonth={(month, monthDividerClass) => {
           const fx = fxAdjustments.get(month);
           const fxClickable = canOpenDerivedDrillDown && fx !== undefined;
+          const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
             month,
@@ -194,9 +215,9 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             planned: 0,
             actual: fx ?? 0,
             isPlanTainted: false,
-            isActualTainted: false,
+            isActualTainted: balance.isTainted,
             planTitle: null,
-            actualTitle: null,
+            actualTitle: unconvertibleTitle(balance.isTainted, (candidate) => candidate <= month),
             isPlanOver: false,
             isActualOver: false,
             isSubtotal: false,
@@ -234,6 +255,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
         renderSplitMonth={(month, isCurrentMonth, monthDividerClass) => {
           const fx = fxAdjustments.get(month);
           const fxClickable = canOpenDerivedDrillDown && fx !== undefined;
+          const balance = getLoadedCumulativeBalance(cumulativeBalances, month);
           return renderValueCells({
             key: month,
             month,
@@ -242,9 +264,9 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             planned: 0,
             actual: fx ?? 0,
             isPlanTainted: false,
-            isActualTainted: false,
+            isActualTainted: balance.isTainted,
             planTitle: null,
-            actualTitle: null,
+            actualTitle: unconvertibleTitle(balance.isTainted, (candidate) => candidate <= month),
             isPlanOver: false,
             isActualOver: false,
             isSubtotal: false,
@@ -568,6 +590,8 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
           derivedMaskClass={derivedMaskClass}
           mebByLiq={mebByLiq}
           projectedLiqBalances={projectedLiqBalances}
+          resolveMonthTaint={resolveLiquidityMonthTaint}
+          resolveYearTitle={yearUnconvertibleTitle}
         />
       ))}
 
