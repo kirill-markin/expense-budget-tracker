@@ -8,6 +8,7 @@
  */
 import { withUserContext, queryAs } from "@/server/db";
 import { getReportCurrency } from "@/server/reportCurrency";
+import { buildUnpairedTransferCondition } from "@/server/transactions/unpairedTransfer";
 
 export type LedgerEntry = Readonly<{
   entryId: string;
@@ -21,6 +22,8 @@ export type LedgerEntry = Readonly<{
   category: string | null;
   counterparty: string | null;
   note: string | null;
+  /** Transfer leg whose event holds no second transfer leg. */
+  isUnpairedTransfer: boolean;
 }>;
 
 export type LedgerEntryRow = Readonly<{
@@ -35,6 +38,7 @@ export type LedgerEntryRow = Readonly<{
   category: string | null;
   counterparty: string | null;
   note: string | null;
+  is_unpaired_transfer: boolean;
 }>;
 
 export const mapLedgerEntryRow = (row: LedgerEntryRow): LedgerEntry => ({
@@ -49,6 +53,7 @@ export const mapLedgerEntryRow = (row: LedgerEntryRow): LedgerEntry => ({
   category: row.category,
   counterparty: row.counterparty,
   note: row.note,
+  isUnpairedTransfer: row.is_unpaired_transfer,
 });
 
 export type AccountOption = Readonly<{
@@ -253,7 +258,8 @@ export const getTransactionsPage = async (
         WHEN r.rate IS NOT NULL THEN le.amount::double precision * r.rate::double precision
         ELSE NULL
       END AS amount_report,
-      le.currency, le.kind, le.category, le.counterparty, le.note
+      le.currency, le.kind, le.category, le.counterparty, le.note,
+      (${buildUnpairedTransferCondition("le")}) AS is_unpaired_transfer
     FROM ledger_entries le
     LEFT JOIN fx_rates_daily r
       ON r.quote_currency = $1

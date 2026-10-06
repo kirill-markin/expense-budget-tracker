@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import type { CellVisibility } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
+import type { UnpairedTransferLeg } from "@/server/budget/getBudgetGrid";
 import {
   formatAmount,
   zeroCellValue,
@@ -20,6 +21,7 @@ import {
   buildUnconvertibleCurrenciesTitle,
   buildUnconvertibleMonthsTitle,
 } from "@/ui/tables/shared/unconvertibleTitle";
+import { buildUnpairedTransferLegsTitle } from "@/ui/tables/shared/unpairedTransferTitle";
 import {
   buildDirectionMonthDrillDownFilter,
   buildDirectionYearDrillDownFilter,
@@ -33,6 +35,8 @@ import {
   renderValueCells,
 } from "../shared";
 
+const EMPTY_UNPAIRED_LEGS: ReadonlyArray<UnpairedTransferLeg> = [];
+
 type DirectionSubtotalRowProps = Readonly<{
   block: DirectionBlock;
   columnSequence: ReadonlyArray<ColumnEntry>;
@@ -44,6 +48,7 @@ type DirectionSubtotalRowProps = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   filteredSubtotalsMap: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
   taintedDirectionMonths: ReadonlySet<string>;
+  unpairedTransferLegs: Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>;
   unconvertibleCurrenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
   numberFormat: NumberFormat;
   useFilteredSubtotals: boolean;
@@ -63,6 +68,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
     yearComputed,
     filteredSubtotalsMap,
     taintedDirectionMonths,
+    unpairedTransferLegs,
     unconvertibleCurrenciesByMonth,
     numberFormat,
     useFilteredSubtotals,
@@ -97,6 +103,44 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
   const labelClass = isTransfer ? styles.categoryLabel : styles.directionLabel;
   const subtotalClass = isTransfer ? "" : ` ${styles.cellSubtotal}`;
   const renderYearLoading = isTransfer ? renderDerivedYearLoadingCells : renderSubtotalYearLoadingCells;
+  /** Only the Transfer row sums transfer legs, so only it can hold unpaired ones. */
+  const unpairedLegsOfMonth = (month: string): ReadonlyArray<UnpairedTransferLeg> => (
+    isTransfer ? (unpairedTransferLegs[month] ?? EMPTY_UNPAIRED_LEGS) : EMPTY_UNPAIRED_LEGS
+  );
+  const formatUnpairedLeg = (leg: UnpairedTransferLeg): string =>
+    `${leg.date} \u00b7 ${leg.accountId} \u00b7 ${formatAmount(leg.amount, numberFormat)} ${leg.currency}`;
+  /**
+   * Filtered mode masks the amounts this cell sums, so the per-leg dates,
+   * accounts and amounts stay hidden and only the heading explains the colour.
+   */
+  const unpairedTitle = (month: string): string | null => {
+    const legs = unpairedLegsOfMonth(month);
+    if (legs.length === 0) {
+      return null;
+    }
+    const heading = t("common.unpairedTransferReason");
+    if (useFilteredSubtotals) {
+      return heading;
+    }
+    return buildUnpairedTransferLegsTitle(
+      legs,
+      heading,
+      formatUnpairedLeg,
+      (count) => t("common.unpairedTransferMore", { count }),
+    );
+  };
+  /**
+   * A month can be both FX-untrusted and hold unpaired legs: one warning colour,
+   * the currency sentence first and the legs after it.
+   */
+  const monthActualTitle = (month: string, isTainted: boolean): string | null => {
+    const reasons = [
+      unconvertibleTitle(isTainted, (candidate) => candidate === month),
+      unpairedTitle(month),
+    ].filter((reason): reason is string => reason !== null);
+
+    return reasons.length === 0 ? null : reasons.join("\n");
+  };
 
   return (
     <tr className={styles.directionRow}>
@@ -202,6 +246,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               ? filteredSubtotalsMap.get(block.direction)?.get(column.month)
               : block.subtotals.get(column.month)) ?? zeroCellValue;
             const isTainted = taintedDirectionMonths.has(`${block.direction}::${column.month}`);
+            const hasUnpairedLegs = unpairedLegsOfMonth(column.month).length > 0;
             return renderValueCells({
               key: column.month,
               month: column.month,
@@ -210,9 +255,9 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               planned: subtotal.planned,
               actual: subtotal.actual,
               isPlanTainted: false,
-              isActualTainted: isTainted,
+              isActualTainted: isTainted || hasUnpairedLegs,
               planTitle: null,
-              actualTitle: unconvertibleTitle(isTainted, (month) => month === column.month),
+              actualTitle: monthActualTitle(column.month, isTainted),
               isPlanOver: false,
               isActualOver: false,
               isSubtotal: !isTransfer,
@@ -235,6 +280,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               ? filteredSubtotalsMap.get(block.direction)?.get(column.month)
               : block.subtotals.get(column.month)) ?? zeroCellValue;
             const isTainted = taintedDirectionMonths.has(`${block.direction}::${column.month}`);
+            // A future-dated leg lies outside the actual range the unpaired-leg query covers, so it is never marked.
             return renderValueCells({
               key: column.month,
               month: column.month,
@@ -245,7 +291,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               isPlanTainted: false,
               isActualTainted: isTainted,
               planTitle: null,
-              actualTitle: unconvertibleTitle(isTainted, (month) => month === column.month),
+              actualTitle: unconvertibleTitle(isTainted, (candidate) => candidate === column.month),
               isPlanOver: false,
               isActualOver: false,
               isSubtotal: !isTransfer,
@@ -266,6 +312,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               ? filteredSubtotalsMap.get(block.direction)?.get(column.month)
               : block.subtotals.get(column.month)) ?? zeroCellValue;
             const isTainted = taintedDirectionMonths.has(`${block.direction}::${column.month}`);
+            const hasUnpairedLegs = unpairedLegsOfMonth(column.month).length > 0;
             return renderValueCells({
               key: column.month,
               month: column.month,
@@ -274,9 +321,9 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               planned: subtotal.planned,
               actual: subtotal.actual,
               isPlanTainted: false,
-              isActualTainted: isTainted,
+              isActualTainted: isTainted || hasUnpairedLegs,
               planTitle: null,
-              actualTitle: unconvertibleTitle(isTainted, (month) => month === column.month),
+              actualTitle: monthActualTitle(column.month, isTainted),
               isPlanOver: false,
               isActualOver: isDirectionActualOverPlanned(block.direction, subtotal.planned, subtotal.actual),
               isSubtotal: !isTransfer,

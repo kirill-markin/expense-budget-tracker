@@ -76,6 +76,7 @@ async function BudgetData({ plansMode }: Readonly<{ plansMode: BudgetPlansMode }
       monthEndBalances,
       monthEndBalancesByLiquidity,
       businessPersonalTransfers,
+      unpairedTransferLegs,
       hasBusinessAccount,
     } = getDemoBudgetGrid(
       monthFrom,
@@ -94,6 +95,7 @@ async function BudgetData({ plansMode }: Readonly<{ plansMode: BudgetPlansMode }
         monthEndBalances={monthEndBalances}
         monthEndBalancesByLiquidity={monthEndBalancesByLiquidity}
         businessPersonalTransfers={businessPersonalTransfers}
+        unpairedTransferLegs={unpairedTransferLegs}
         hasBusinessAccount={hasBusinessAccount}
         initialMonthFrom={monthFrom}
         initialMonthTo={monthTo}
@@ -117,6 +119,7 @@ async function BudgetData({ plansMode }: Readonly<{ plansMode: BudgetPlansMode }
     monthEndBalances,
     monthEndBalancesByLiquidity,
     businessPersonalTransfers,
+    unpairedTransferLegs,
     hasBusinessAccount,
   }, reportingCurrency, hints] = await Promise.all([
     getBudgetGrid(userId, workspaceId, monthFrom, monthTo, planFrom, currentMonth),
@@ -133,6 +136,7 @@ async function BudgetData({ plansMode }: Readonly<{ plansMode: BudgetPlansMode }
       monthEndBalances={monthEndBalances}
       monthEndBalancesByLiquidity={monthEndBalancesByLiquidity}
       businessPersonalTransfers={businessPersonalTransfers}
+      unpairedTransferLegs={unpairedTransferLegs}
       hasBusinessAccount={hasBusinessAccount}
       initialMonthFrom={monthFrom}
       initialMonthTo={monthTo}

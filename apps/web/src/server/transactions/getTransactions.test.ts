@@ -16,6 +16,7 @@ test("mapLedgerEntryRow maps the authoritative database event and recalculated r
     category: "Software",
     counterparty: "Example Cloud",
     note: "Monthly subscription",
+    is_unpaired_transfer: false,
   };
 
   assert.deepEqual(mapLedgerEntryRow(row), {
@@ -30,5 +31,6 @@ test("mapLedgerEntryRow maps the authoritative database event and recalculated r
     category: "Software",
     counterparty: "Example Cloud",
     note: "Monthly subscription",
+    isUnpairedTransfer: false,
   });
 });

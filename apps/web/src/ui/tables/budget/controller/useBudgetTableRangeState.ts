@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BudgetGridResult, BudgetRow, BusinessPersonalTransferCell, CumulativeBefore } from "@/server/budget/getBudgetGrid";
+import type { BudgetGridResult, BudgetRow, BusinessPersonalTransferCell, CumulativeBefore, UnpairedTransferLeg } from "@/server/budget/getBudgetGrid";
 import { offsetMonth } from "@/lib/monthUtils";
 import {
   adjustCumulativeBeforeForPrependedRows,
@@ -69,6 +69,7 @@ type UseBudgetTableRangeStateParams = Readonly<{
   monthEndBalances: Readonly<Record<string, number>>;
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  unpairedTransferLegs: Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>;
   hasBusinessAccount: boolean;
   /** Display mode the user asked for; a refresh fetches and publishes it. */
   plansMode: BudgetPlansMode;
@@ -100,6 +101,7 @@ export type BudgetTableRangeState = Readonly<{
   meb: Readonly<Record<string, number>>;
   mebByLiq: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  unpairedTransferLegs: Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>;
   hasBusinessAccount: boolean;
   pendingSaves: number;
   onSyncStart: () => void;
@@ -145,6 +147,7 @@ const applyFetchedBudgetResult = (
   setMeb: (value: Readonly<Record<string, number>>) => void,
   setMebByLiq: (value: Readonly<Record<string, Readonly<Record<string, number>>>>) => void,
   setBusinessPersonalTransfers: (value: Readonly<Record<string, BusinessPersonalTransferCell>>) => void,
+  setUnpairedTransferLegs: (value: Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>) => void,
   setHasBusinessAccount: (value: boolean) => void,
   result: BudgetGridResult,
   rows: ReadonlyArray<BudgetRow>,
@@ -154,6 +157,7 @@ const applyFetchedBudgetResult = (
   setMeb(result.monthEndBalances);
   setMebByLiq(result.monthEndBalancesByLiquidity);
   setBusinessPersonalTransfers(result.businessPersonalTransfers);
+  setUnpairedTransferLegs(result.unpairedTransferLegs);
   setHasBusinessAccount(result.hasBusinessAccount);
 };
 
@@ -345,6 +349,7 @@ export const useBudgetTableRangeState = ({
   monthEndBalances,
   monthEndBalancesByLiquidity,
   businessPersonalTransfers: initialBusinessPersonalTransfers,
+  unpairedTransferLegs: initialUnpairedTransferLegs,
   hasBusinessAccount: initialHasBusinessAccount,
   plansMode,
   refreshToken,
@@ -364,6 +369,7 @@ export const useBudgetTableRangeState = ({
   const [meb, setMeb] = useState<Readonly<Record<string, number>>>(monthEndBalances);
   const [mebByLiq, setMebByLiq] = useState<Readonly<Record<string, Readonly<Record<string, number>>>>>(monthEndBalancesByLiquidity);
   const [businessPersonalTransfers, setBusinessPersonalTransfers] = useState<Readonly<Record<string, BusinessPersonalTransferCell>>>(initialBusinessPersonalTransfers);
+  const [unpairedTransferLegs, setUnpairedTransferLegs] = useState<Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>>(initialUnpairedTransferLegs);
   const [hasBusinessAccount, setHasBusinessAccount] = useState<boolean>(initialHasBusinessAccount);
   const [pendingSaves, setPendingSaves] = useState<number>(0);
 
@@ -537,7 +543,7 @@ export const useBudgetTableRangeState = ({
         if (outcome.status === "accepted") {
           const result = outcome.result;
           const reconciledRows = reconcileAcceptedBaseRange(result, outcome.request);
-          applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setHasBusinessAccount, result, reconciledRows);
+          applyFetchedBudgetResult(setAllRows, setCumBefore, setMeb, setMebByLiq, setBusinessPersonalTransfers, setUnpairedTransferLegs, setHasBusinessAccount, result, reconciledRows);
           return "accepted";
         }
         // Nothing failed here: a newer request for the same months landed
@@ -952,6 +958,10 @@ export const useBudgetTableRangeState = ({
         ...previous,
         ...result.businessPersonalTransfers,
       }));
+      setUnpairedTransferLegs((previous) => ({
+        ...previous,
+        ...result.unpairedTransferLegs,
+      }));
       setHasBusinessAccount(result.hasBusinessAccount);
     }
   }, [displayMonthFrom, displayMonthTo, loadViewportRangeWithRetry, reconcileAcceptedBaseRange]);
@@ -1107,6 +1117,7 @@ export const useBudgetTableRangeState = ({
     meb,
     mebByLiq,
     businessPersonalTransfers,
+    unpairedTransferLegs,
     hasBusinessAccount,
     pendingSaves,
     onSyncStart,

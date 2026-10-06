@@ -3,6 +3,7 @@
 import { Fragment, type ReactElement } from "react";
 
 import type { NumberFormat } from "@/lib/locale";
+import type { UnpairedTransferLeg } from "@/server/budget/getBudgetGrid";
 import type { BudgetBaseLocalAcknowledgementByCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import {
   buildBudgetValueColumns,
@@ -36,6 +37,7 @@ export type BudgetDirectionSectionProps = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   filteredSubtotalsMap: ReadonlyMap<string, ReadonlyMap<string, CellValue>>;
   taintedDirectionMonths: ReadonlySet<string>;
+  unpairedTransferLegs: Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>;
   taintedCells: ReadonlySet<string>;
   unconvertibleCurrenciesByMonth: ReadonlyMap<string, ReadonlyArray<string>>;
   numberFormat: NumberFormat;
@@ -93,6 +95,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
     yearComputed,
     filteredSubtotalsMap,
     taintedDirectionMonths,
+    unpairedTransferLegs,
     taintedCells,
     unconvertibleCurrenciesByMonth,
     numberFormat,
@@ -129,6 +132,7 @@ export const BudgetDirectionSection = (props: BudgetDirectionSectionProps): Reac
         yearComputed={yearComputed}
         filteredSubtotalsMap={filteredSubtotalsMap}
         taintedDirectionMonths={taintedDirectionMonths}
+        unpairedTransferLegs={unpairedTransferLegs}
         unconvertibleCurrenciesByMonth={unconvertibleCurrenciesByMonth}
         numberFormat={numberFormat}
         useFilteredSubtotals={useFilteredSubtotals}

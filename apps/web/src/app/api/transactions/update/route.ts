@@ -4,6 +4,7 @@ import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { handleRoute } from "@/server/api/handleRoute";
 import { parseTransactionsUpdateBody } from "@/server/api/transactions";
 import { parseJsonBody } from "@/server/api/validation";
+import { isDemoUnpairedTransfer } from "@/server/demo/data";
 import { getDemoAmountReport } from "@/server/demo/transactions";
 import { updateLedgerEntry } from "@/server/transactions/updateLedgerEntry";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
@@ -28,6 +29,7 @@ export const POST = async (request: Request): Promise<Response> =>
             category: body.category,
             counterparty: body.counterparty,
             note: body.note,
+            isUnpairedTransfer: isDemoUnpairedTransfer(body.entryId, body.eventId, body.kind),
           });
         }
         return Response.json({ ok: true });

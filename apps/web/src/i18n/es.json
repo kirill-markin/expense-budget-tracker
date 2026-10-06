@@ -55,6 +55,8 @@
   "common.to": "Hasta",
   "common.invalidNumber": "Introduzca un número válido en el formato seleccionado.",
   "common.unconvertibleReason": "Sin tipo de cambio para {{currencies}}; los importes en esa moneda faltan en este total",
+  "common.unpairedTransferReason": "Transferencia sin la segunda parte; añade el movimiento correspondiente o regístrala como gasto",
+  "common.unpairedTransferMore": "+{{count}} más",
   "currency.title": "Moneda de reporte",
   "apiKeys.copyWarning": "Copie la clave API ahora — no se mostrará de nuevo.",
   "apiKeys.copy": "Copiar",

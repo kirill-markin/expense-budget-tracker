@@ -154,6 +154,7 @@ const createGrid = (
   monthEndBalances: {},
   monthEndBalancesByLiquidity: {},
   businessPersonalTransfers: {},
+  unpairedTransferLegs: {},
   hasBusinessAccount: false,
 });
 

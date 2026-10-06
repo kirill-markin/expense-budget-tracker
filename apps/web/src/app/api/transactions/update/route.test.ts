@@ -51,5 +51,6 @@ test("Demo update accepts eventId and returns the complete updated ledger entry"
     category: "Software",
     counterparty: "Example Cloud",
     note: "Monthly subscription",
+    isUnpairedTransfer: false,
   });
 });

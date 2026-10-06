@@ -55,6 +55,8 @@
   "common.to": "עד",
   "common.invalidNumber": "יש להזין מספר תקין בתבנית שנבחרה.",
   "common.unconvertibleReason": "אין שער חליפין עבור {{currencies}}; רשומות במטבע זה חסרות בסך הזה",
+  "common.unpairedTransferReason": "העברה בלי צד שני; הוסיפו את הרישום המשלים או רשמו אותה כהוצאה",
+  "common.unpairedTransferMore": "+{{count}} נוספים",
   "currency.title": "מטבע דיווח",
   "apiKeys.copyWarning": "העתק את מפתח ה-API עכשיו — הוא לא יוצג שוב.",
   "apiKeys.copy": "העתק",

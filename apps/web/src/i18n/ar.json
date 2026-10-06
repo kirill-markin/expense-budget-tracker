@@ -55,6 +55,8 @@
   "common.to": "إلى",
   "common.invalidNumber": "أدخل رقمًا صالحًا بالتنسيق المحدد.",
   "common.unconvertibleReason": "لا يوجد سعر صرف لـ {{currencies}}؛ القيود بهذه العملة غير مُدرجة في هذا الإجمالي",
+  "common.unpairedTransferReason": "تحويل بلا طرف ثانٍ؛ أضف القيد المقابل أو سجّله كمصروف",
+  "common.unpairedTransferMore": "+{{count}} أخرى",
   "currency.title": "عملة التقارير",
   "apiKeys.copyWarning": "انسخ مفتاح API الآن — لن يظهر مرة أخرى.",
   "apiKeys.copy": "نسخ",

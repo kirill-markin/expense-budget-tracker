@@ -55,6 +55,8 @@
   "common.to": "到",
   "common.invalidNumber": "请按所选格式输入有效数字。",
   "common.unconvertibleReason": "没有 {{currencies}} 的汇率；该币种的记录未计入此合计",
+  "common.unpairedTransferReason": "转账缺少另一笔记录；请补上配对记录，或改记为支出",
+  "common.unpairedTransferMore": "另有 {{count}} 条",
   "currency.title": "报告货币",
   "apiKeys.copyWarning": "请立即复制 API 密钥 — 之后将不再显示。",
   "apiKeys.copy": "复制",

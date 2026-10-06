@@ -5,7 +5,7 @@ import type { RefObject } from "react";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import type { FieldHints } from "@/server/transactions/getTransactions";
 import type { BudgetAdjustment } from "@/server/budget/budgetAdjustments";
-import type { BudgetRow, BusinessPersonalTransferCell, ConversionWarning, CumulativeBefore } from "@/server/budget/getBudgetGrid";
+import type { BudgetRow, BusinessPersonalTransferCell, ConversionWarning, CumulativeBefore, UnpairedTransferLeg } from "@/server/budget/getBudgetGrid";
 import { getCurrentMonth, getYear } from "@/lib/monthUtils";
 import type {
   BudgetPlansMode,
@@ -46,6 +46,7 @@ export type BudgetTableProps = Readonly<{
   monthEndBalances: Readonly<Record<string, number>>;
   monthEndBalancesByLiquidity: Readonly<Record<string, Readonly<Record<string, number>>>>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  unpairedTransferLegs: Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>;
   hasBusinessAccount: boolean;
   initialMonthFrom: string;
   initialMonthTo: string;
@@ -102,6 +103,7 @@ export type BudgetTableController = Readonly<{
   cumulativeBalances: ReadonlyMap<string, CumulativeBalance>;
   fxAdjustments: ReadonlyMap<string, number>;
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  unpairedTransferLegs: Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>;
   hasBusinessAccount: boolean;
   liquidityTiers: ReadonlyArray<string>;
   hasLiquidityBreakdown: boolean;
@@ -288,6 +290,7 @@ export const useBudgetTableController = (
     monthEndBalances: props.monthEndBalances,
     monthEndBalancesByLiquidity: props.monthEndBalancesByLiquidity,
     businessPersonalTransfers: props.businessPersonalTransfers,
+    unpairedTransferLegs: props.unpairedTransferLegs,
     hasBusinessAccount: props.hasBusinessAccount,
     plansMode,
     refreshToken,
@@ -439,6 +442,7 @@ export const useBudgetTableController = (
     cumulativeBalances: derivedState.cumulativeBalances,
     fxAdjustments: derivedState.fxAdjustments,
     businessPersonalTransfers: rangeState.businessPersonalTransfers,
+    unpairedTransferLegs: rangeState.unpairedTransferLegs,
     hasBusinessAccount: rangeState.hasBusinessAccount,
     liquidityTiers: derivedState.liquidityTiers,
     hasLiquidityBreakdown: derivedState.hasLiquidityBreakdown,

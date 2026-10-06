@@ -1,7 +1,7 @@
 /**
  * Budget grid assembly for the budget dashboard.
  *
- * Runs seven queries in true parallel (separate DB connections via queryAs):
+ * Runs eight queries in true parallel (separate DB connections via queryAs):
  * 1. QUERY — planned Base plus grouped normalized adjustments vs actual per
  *    month/direction/category, with FX conversion via exact-date joins on
  *    fx_rates_daily. budget_lines holds one row per cell.
@@ -16,6 +16,9 @@
  *    events crossing explicitly business and personal accounts.
  * 7. HAS_BUSINESS_ACCOUNT — whether the workspace has any explicit business
  *    account classification, used to show or hide the derived row.
+ * 8. UNPAIRED_TRANSFER_LEGS — transfer legs in the loaded month range whose
+ *    event holds no second leg, so the Transfer row can mark the months they
+ *    distort.
  *
  * Performance notes:
  * - The worker already expanded raw market data into exact-date all-pairs rows.
@@ -28,6 +31,7 @@
  *   connection, serializing all queries despite Promise.all.
  */
 import { queryAs } from "@/server/db";
+import { buildUnpairedTransferCondition } from "@/server/transactions/unpairedTransfer";
 import { BUDGET_ADJUSTMENTS_DETAIL_QUERY, mapBudgetAdjustmentRows, type BudgetAdjustment } from "@/server/budget/budgetAdjustments";
 import { getLatestFxCalendarDate } from "@/server/fxRates";
 import { getReportCurrency } from "@/server/reportCurrency";
@@ -74,6 +78,14 @@ export type BusinessPersonalTransferCell = Readonly<{
   hasUnconvertible: boolean;
 }>;
 
+/** One leg of a transfer whose event holds no second leg, in its own currency. */
+export type UnpairedTransferLeg = Readonly<{
+  date: string;
+  accountId: string;
+  amount: number;
+  currency: string;
+}>;
+
 export type BudgetGridResult = Readonly<{
   rows: ReadonlyArray<BudgetRow>;
   adjustments: ReadonlyArray<BudgetAdjustment>;
@@ -99,6 +111,11 @@ export type BudgetGridResult = Readonly<{
    * business -> personal and negative for personal -> business.
    */
   businessPersonalTransfers: Readonly<Record<string, BusinessPersonalTransferCell>>;
+  /**
+   * Transfer legs with no second leg, keyed by the "YYYY-MM" of the leg. A
+   * month with any of them has a distorted transfer total.
+   */
+  unpairedTransferLegs: Readonly<Record<string, ReadonlyArray<UnpairedTransferLeg>>>;
   hasBusinessAccount: boolean;
 }>;
 
@@ -375,6 +392,20 @@ export const BUSINESS_PERSONAL_TRANSFER_QUERY = `
   ORDER BY 1
 `;
 
+export const UNPAIRED_TRANSFER_LEGS_QUERY = `
+  SELECT
+    to_char(le.ts::date, 'YYYY-MM') AS month,
+    to_char(le.ts::date, 'YYYY-MM-DD') AS leg_date,
+    le.account_id,
+    le.amount::double precision AS amount,
+    le.currency
+  FROM ledger_entries le
+  WHERE le.ts::date >= to_date($1, 'YYYY-MM')
+    AND le.ts::date < (LEAST(to_date($2, 'YYYY-MM'), to_date($3, 'YYYY-MM')) + interval '1 month')::date
+    AND (${buildUnpairedTransferCondition("le")})
+  ORDER BY le.ts, le.account_id
+`;
+
 const HAS_BUSINESS_ACCOUNT_QUERY = `
   SELECT EXISTS (
     SELECT 1
@@ -399,7 +430,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
   ]);
 
   // Each queryAs acquires its own connection from the pool and sets RLS context
-  // independently, so Promise.all runs all 7 queries on separate connections
+  // independently, so Promise.all runs all 8 queries on separate connections
   // in true DB-level parallel. The old withUserContext shared one connection,
   // which serialized all queries despite Promise.all (a single pg.Client can
   // only execute one query at a time).
@@ -411,6 +442,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
     balanceResult,
     businessPersonalTransferResult,
     hasBusinessAccountResult,
+    unpairedTransferLegsResult,
   ] = await Promise.all([
     queryAs(userId, workspaceId, QUERY, [reportCurrency, monthFrom, monthTo, planFrom, actualTo]),
     queryAs(userId, workspaceId, BUDGET_ADJUSTMENTS_DETAIL_QUERY, [workspaceId, monthFrom, monthTo]),
@@ -419,6 +451,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
     queryAs(userId, workspaceId, MONTH_END_BALANCES_QUERY, [reportCurrency, monthFrom, actualTo, latestFxCalendarDate]),
     queryAs(userId, workspaceId, BUSINESS_PERSONAL_TRANSFER_QUERY, [reportCurrency, monthFrom, monthTo, actualTo]),
     queryAs(userId, workspaceId, HAS_BUSINESS_ACCOUNT_QUERY, []),
+    queryAs(userId, workspaceId, UNPAIRED_TRANSFER_LEGS_QUERY, [monthFrom, monthTo, actualTo]),
   ]);
 
   const cumulative: CumulativeRaw = cumulativeResult.rows[0] as CumulativeRaw;
@@ -440,6 +473,22 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
       actual: Number(row.actual),
       hasUnconvertible: row.has_unconvertible,
     };
+  }
+
+  const unpairedTransferLegs: Record<string, Array<UnpairedTransferLeg>> = {};
+  for (const row of unpairedTransferLegsResult.rows as ReadonlyArray<{ month: string; leg_date: string; account_id: string; amount: number; currency: string }>) {
+    const monthLegs = unpairedTransferLegs[row.month];
+    const leg: UnpairedTransferLeg = {
+      date: row.leg_date,
+      accountId: row.account_id,
+      amount: Number(row.amount),
+      currency: row.currency,
+    };
+    if (monthLegs === undefined) {
+      unpairedTransferLegs[row.month] = [leg];
+      continue;
+    }
+    monthLegs.push(leg);
   }
 
   const hasBusinessAccountRow = hasBusinessAccountResult.rows[0] as { has_business_account: boolean } | undefined;
@@ -473,6 +522,7 @@ export const getBudgetGrid = async (userId: string, workspaceId: string, monthFr
     monthEndBalances,
     monthEndBalancesByLiquidity,
     businessPersonalTransfers,
+    unpairedTransferLegs,
     hasBusinessAccount: hasBusinessAccountRow.has_business_account,
   };
 };

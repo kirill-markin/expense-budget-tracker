@@ -181,6 +181,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
                   yearComputed={controller.yearComputed}
                   filteredSubtotalsMap={controller.filteredSubtotalsMap}
                   taintedDirectionMonths={controller.taintedDirectionMonths}
+                  unpairedTransferLegs={controller.unpairedTransferLegs}
                   taintedCells={controller.taintedCells}
                   unconvertibleCurrenciesByMonth={controller.unconvertibleCurrenciesByMonth}
                   numberFormat={numberFormat}

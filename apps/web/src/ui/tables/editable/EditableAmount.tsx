@@ -8,6 +8,7 @@ import { useFormat } from "@/ui/FormatProvider";
 
 import { formatAmount, parseMonetaryNumberEdit } from "@/ui/tables/shared/format";
 import { useTableEditorActivation } from "@/ui/tables/shared/TableEditorActivationProvider";
+import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
 import styles from "@/ui/tables/shared/TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
@@ -16,11 +17,13 @@ type Props = Readonly<{
   entryId: string;
   currentValue: number;
   maskClass: string;
+  /** Marks the amount of a transfer leg whose event has no second leg. */
+  isUnpairedTransfer: boolean;
   onAmountCommit: (entryId: string, newAmount: number, oldAmount: number) => void;
 }>;
 
 export const EditableAmount = (props: Props): ReactElement => {
-  const { entryId, currentValue, maskClass, onAmountCommit } = props;
+  const { entryId, currentValue, maskClass, isUnpairedTransfer, onAmountCommit } = props;
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
   const editorId = `transaction-amount:${entryId}`;
@@ -107,11 +110,20 @@ export const EditableAmount = (props: Props): ReactElement => {
   };
 
   const isMasked = maskClass.length > 0;
+  // A masked cell hides its amount, so it hides the reason that amount is distorted too.
+  const showUnpairedWarning = isUnpairedTransfer && !isMasked;
 
   return (
     <td
       ref={cellRef}
-      className={cn(styles.cell, styles.cellRight, !isMasked ? styles.editable : "", maskClass)}
+      className={cn(
+        styles.cell,
+        styles.cellRight,
+        !isMasked ? styles.editable : "",
+        maskClass,
+        showUnpairedWarning ? tableStateStyles.warning : "",
+      )}
+      title={showUnpairedWarning ? t("common.unpairedTransferReason") : undefined}
       data-testid={`transaction-amount-${entryId}`}
       onClick={isMasked ? undefined : startEditing}
     >
