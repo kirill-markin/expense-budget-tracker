@@ -15,7 +15,7 @@ permissions:
 jobs:
   quality_gate:
     name: PR Quality Gate
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     outputs:
       auth_tests: ${{ steps.changes.outputs.auth_tests }}
@@ -144,7 +144,7 @@ jobs:
           || needs.quality_gate.outputs.web_tests == 'true'
         )
       }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     services:
       postgres:
