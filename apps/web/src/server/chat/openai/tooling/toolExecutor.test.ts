@@ -77,7 +77,19 @@ const createRecordingObservation = (): RecordingObservation =>
     end: null,
   });
 
-const ignoreLog: ToolExecutorDependencies["log"] = (): void => {};
+type ToolCallLogRecord = Extract<ToolExecutorLogEvent, { action: "tool_call" }>;
+
+const collectToolCallRecords = (
+  events: ReadonlyArray<ToolExecutorLogEvent>,
+): ReadonlyArray<ToolCallLogRecord> => events.filter(
+  (event): event is ToolCallLogRecord => event.action === "tool_call",
+);
+
+const collectErrorEvents = (
+  events: ReadonlyArray<ToolExecutorLogEvent>,
+): ReadonlyArray<ToolExecutorLogEvent> => events.filter(
+  (event): boolean => event.action === "error",
+);
 
 const createToolExecutorParams = (
   rootObservation: LangfuseObservation,
@@ -108,9 +120,12 @@ test("successful tools keep the default observation level and end once", async (
     succeeded: true,
     error: null,
   };
+  const logEvents: Array<ToolExecutorLogEvent> = [];
   const dependencies: ToolExecutorDependencies = {
     executeChatToolCall: async (): Promise<ExecutedChatToolCall> => expectedResult,
-    log: ignoreLog,
+    log: (event): void => {
+      logEvents.push(event);
+    },
   };
 
   const result = await runOneToolCallWithDependencies(
@@ -125,6 +140,12 @@ test("successful tools keep the default observation level and end once", async (
   });
   assert.deepEqual(recording.lifecycle, ["attributes", "end"]);
   assert.equal(recording.getEndCount(), 1);
+  const records = collectToolCallRecords(logEvents);
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.status, "completed");
+  assert.equal(records[0]?.errorCode, null);
+  assert.equal(records[0]?.workspaceId, "workspace-1");
+  assert.equal(typeof records[0]?.durationMs, "number");
 });
 
 test("returned tool failures set the observation error level and end once", async (): Promise<void> => {
@@ -143,10 +164,14 @@ test("returned tool failures set the observation error level and end once", asyn
     workspaceId: null,
     succeeded: false,
     error,
+    errorCode: "sql_execution_failed",
   };
+  const logEvents: Array<ToolExecutorLogEvent> = [];
   const dependencies: ToolExecutorDependencies = {
     executeChatToolCall: async (): Promise<ExecutedChatToolCall> => expectedResult,
-    log: ignoreLog,
+    log: (event): void => {
+      logEvents.push(event);
+    },
   };
 
   const result = await runOneToolCallWithDependencies(
@@ -164,16 +189,25 @@ test("returned tool failures set the observation error level and end once", asyn
   }]);
   assert.deepEqual(recording.lifecycle, ["attributes", "update", "end"]);
   assert.equal(recording.getEndCount(), 1);
+  const records = collectToolCallRecords(logEvents);
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.status, "error");
+  assert.equal(records[0]?.errorCode, "sql_execution_failed");
+  // The failed result carries no workspace, so the record keeps the session one.
+  assert.equal(records[0]?.workspaceId, "workspace-1");
 });
 
 test("thrown tool failures set the observation error level and rethrow", async (): Promise<void> => {
   const recording = createRecordingObservation();
   const expectedError = new TypeError("database connection closed");
+  const logEvents: Array<ToolExecutorLogEvent> = [];
   const dependencies: ToolExecutorDependencies = {
     executeChatToolCall: async (): Promise<never> => {
       throw expectedError;
     },
-    log: ignoreLog,
+    log: (event): void => {
+      logEvents.push(event);
+    },
   };
 
   await assert.rejects(
@@ -184,6 +218,10 @@ test("thrown tool failures set the observation error level and rethrow", async (
     (error: unknown): boolean => error === expectedError,
   );
 
+  const records = collectToolCallRecords(logEvents);
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.status, "error");
+  assert.equal(records[0]?.errorCode, "internal_error");
   assert.deepEqual(recording.otelUpdates[0]?.output, {
     error: "database connection closed",
   });
@@ -213,6 +251,7 @@ test("returned tool failures survive all observation update and end failures", a
       name: "DatabaseError",
       message: "query failed",
     },
+    errorCode: "internal_error",
   };
   const logEvents: Array<ToolExecutorLogEvent> = [];
   const dependencies: ToolExecutorDependencies = {
@@ -229,7 +268,9 @@ test("returned tool failures survive all observation update and end failures", a
 
   assert.equal(result, expectedResult);
   assert.deepEqual(recording.lifecycle, ["attributes", "update", "end"]);
-  assert.deepEqual(logEvents, [
+  assert.equal(logEvents.length, 4);
+  assert.equal(collectToolCallRecords(logEvents).length, 1);
+  assert.deepEqual(collectErrorEvents(logEvents), [
     {
       domain: "chat",
       action: "error",
@@ -295,12 +336,15 @@ test("thrown tool failures survive all observation update and end failures", asy
   );
 
   assert.deepEqual(recording.lifecycle, ["attributes", "update", "end"]);
+  assert.equal(logEvents.length, 4);
+  assert.equal(collectToolCallRecords(logEvents).length, 1);
+  const errorEvents = collectErrorEvents(logEvents);
   assert.deepEqual(
-    logEvents.map((event): string | null => "requestId" in event ? event.requestId ?? null : null),
+    errorEvents.map((event): string | null => "requestId" in event ? event.requestId ?? null : null),
     ["request-1", "request-1", "request-1"],
   );
   assert.deepEqual(
-    logEvents.map((event): string | null => "error" in event ? event.error ?? null : null),
+    errorEvents.map((event): string | null => "error" in event ? event.error ?? null : null),
     [
       `Langfuse tool observation update_attributes failed for query_database (tool-call-1): ${attributesError.message}`,
       `Langfuse tool observation update failed for query_database (tool-call-1): ${updateError.message}`,
