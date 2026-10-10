@@ -3,6 +3,7 @@ import { z } from "zod";
 import { handleRoute } from "@/server/api/handleRoute";
 import { parseJsonBody } from "@/server/api/validation";
 import { ApiRouteError, createBadRequestError } from "@/server/api/errors";
+import { deleteWorkspaceChatFileObjects } from "@/server/chatFiles/cleanup";
 import {
   deleteWorkspace,
   listWorkspaces,
@@ -16,11 +17,13 @@ const bodySchema = z.object({
 
 type DeleteWorkspaceRouteDependencies = Readonly<{
   listWorkspaces: typeof listWorkspaces;
+  deleteWorkspaceChatFileObjects: typeof deleteWorkspaceChatFileObjects;
   deleteWorkspace: typeof deleteWorkspace;
 }>;
 
 const DEFAULT_DELETE_WORKSPACE_ROUTE_DEPENDENCIES: DeleteWorkspaceRouteDependencies = {
   listWorkspaces,
+  deleteWorkspaceChatFileObjects,
   deleteWorkspace,
 };
 
@@ -49,6 +52,10 @@ export const postDeleteWorkspaceRouteWithDeps = async (
       }
 
       try {
+        // Stored objects first: the database deletion cascades their rows and
+        // cannot reach object storage. The cleanup rejects a workspace the
+        // deletion would refuse, so it raises before removing any object.
+        await dependencies.deleteWorkspaceChatFileObjects(userId, currentWorkspaceId, targetWorkspaceId);
         await dependencies.deleteWorkspace(userId, currentWorkspaceId, targetWorkspaceId);
       } catch (error) {
         if (error instanceof WorkspaceDeletionRequiresSingleMemberError) {

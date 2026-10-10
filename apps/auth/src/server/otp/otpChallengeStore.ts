@@ -219,6 +219,48 @@ export const createAgentOtpChallenge = async (
 ): Promise<string> =>
   createOtpChallenge("agent", normalizedEmail, cognitoSession, null, nowMs);
 
+/**
+ * Creates an agent challenge that supersedes the email's unused ones, so the
+ * store keeps at most one live challenge for that email no matter how often the
+ * send repeats. Marking the earlier rows used is the only invalidation the
+ * auth_service role can perform: it has no DELETE on auth.otp_challenges.
+ *
+ * Only the review-email send may use this: for a real user it would silently
+ * kill a challenge another device is still waiting to verify. Two overlapping
+ * sends can each insert before seeing the other's row; the deploy smoke that
+ * drives this path is serialized, and such rows still expire with the shared TTL.
+ */
+export const createSupersedingAgentOtpChallenge = async (
+  normalizedEmail: string,
+  cognitoSession: string,
+  nowMs: number,
+): Promise<string> => withTransaction(async (queryFn) => {
+  const now = new Date(nowMs);
+  const handle = createCrockfordToken(OTP_HANDLE_LENGTH);
+
+  await queryFn(
+    [
+      "UPDATE auth.otp_challenges",
+      "SET used_at = $2",
+      "WHERE transport = 'agent'",
+      "AND normalized_email = $1",
+      "AND used_at IS NULL",
+    ].join(" "),
+    [normalizedEmail, now],
+  );
+
+  await queryFn(
+    [
+      "INSERT INTO auth.otp_challenges",
+      "(challenge_id_hash, transport, normalized_email, cognito_session, csrf_token, created_at, expires_at, failed_attempts)",
+      "VALUES ($1, 'agent', $2, $3, NULL, $4, $5, 0)",
+    ].join(" "),
+    [hashOpaqueToken(handle), normalizedEmail, cognitoSession, now, new Date(nowMs + OTP_CHALLENGE_TTL_MS)],
+  );
+
+  return handle;
+});
+
 export const reissueLatestAgentOtpChallenge = async (
   normalizedEmail: string,
   nowMs: number,

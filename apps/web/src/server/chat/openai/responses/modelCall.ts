@@ -251,6 +251,7 @@ export const runOneModelCall = async (
     );
     log(buildChatResponseLogEvent({
       requestId: params.requestId,
+      userId: params.userId,
       sessionId: params.sessionId,
       callIndex,
       promptCacheKey,

@@ -35,6 +35,7 @@ test("postAgentWorkspaceDeleteRouteWithDeps returns 403 when workspace has multi
     {
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
       getWorkspaceForTrustedIdentity: async () => ({ workspaceId: "workspace-1", name: "Shared" }),
+      deleteWorkspaceChatFileObjectsForTrustedIdentity: async () => undefined,
       deleteWorkspaceForTrustedIdentity: async () => {
         throw new WorkspaceDeletionRequiresSingleMemberError(2);
       },
@@ -54,17 +55,47 @@ test("postAgentWorkspaceDeleteRouteWithDeps returns 403 when workspace has multi
   });
 });
 
+test("postAgentWorkspaceDeleteRouteWithDeps returns 403 when chat file cleanup refuses a shared workspace", async (): Promise<void> => {
+  let deleteCalled = false;
+  const response = await postAgentWorkspaceDeleteRouteWithDeps(
+    createRequest("Shared"),
+    { params: Promise.resolve({ workspaceId: "workspace-1" }) },
+    {
+      authenticateAgentRequest: async () => createAuthenticatedRequest(),
+      getWorkspaceForTrustedIdentity: async () => ({ workspaceId: "workspace-1", name: "Shared" }),
+      deleteWorkspaceChatFileObjectsForTrustedIdentity: async () => {
+        throw new WorkspaceDeletionRequiresSingleMemberError(2);
+      },
+      deleteWorkspaceForTrustedIdentity: async () => {
+        deleteCalled = true;
+        return { workspaceId: "workspace-1", name: "Shared" };
+      },
+    },
+  );
+
+  assert.equal(response.status, 403);
+  assert.equal(deleteCalled, false);
+});
+
 test("postAgentWorkspaceDeleteRouteWithDeps allows single-member workspace deletion", async (): Promise<void> => {
+  const calls: Array<string> = [];
   const response = await postAgentWorkspaceDeleteRouteWithDeps(
     createRequest("Project Alpha"),
     { params: Promise.resolve({ workspaceId: "workspace-a0f0f8e4" }) },
     {
       authenticateAgentRequest: async () => createAuthenticatedRequest(),
       getWorkspaceForTrustedIdentity: async () => ({ workspaceId: "workspace-a0f0f8e4", name: "Project Alpha" }),
-      deleteWorkspaceForTrustedIdentity: async () => ({ workspaceId: "workspace-a0f0f8e4", name: "Project Alpha" }),
+      deleteWorkspaceChatFileObjectsForTrustedIdentity: async (identity, targetWorkspaceId) => {
+        calls.push(`chat-files:${identity.userId}:${targetWorkspaceId}`);
+      },
+      deleteWorkspaceForTrustedIdentity: async () => {
+        calls.push("workspace");
+        return { workspaceId: "workspace-a0f0f8e4", name: "Project Alpha" };
+      },
     },
   );
 
+  assert.deepEqual(calls, ["chat-files:user-1:workspace-a0f0f8e4", "workspace"]);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     ok: true,

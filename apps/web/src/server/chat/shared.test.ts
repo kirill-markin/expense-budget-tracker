@@ -881,7 +881,7 @@ test("getChatSqlPolicyMessage passes through a policy message that already stand
 });
 
 test("the chat system prompt leaves schema and SQL protocol to the tools", (): void => {
-  const instructions = buildSystemInstructions("UTC");
+  const instructions = buildSystemInstructions();
   for (const removedSection of ["## Database Schema", "## Account Naming Convention", "## Key SQL Patterns"]) {
     assert.ok(
       !instructions.includes(removedSection),

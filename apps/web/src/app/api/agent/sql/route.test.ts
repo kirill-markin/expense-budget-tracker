@@ -138,7 +138,7 @@ test("postAgentSqlRouteWithDeps maps function-call policy failures to 400", asyn
       ],
     },
     actions: [],
-    instructions: "Restricted SQL allows a fixed set of pure aggregate, date, text, cast, and window functions, and the error message lists them by name. Query only the published tables and views directly, and prefer ILIKE for case-insensitive text search.",
+    instructions: "Restricted SQL allows a fixed set of pure aggregate, date, text, cast, and window functions, and the error message explains what it rejected and what to write instead. Query only the published tables and views directly, and prefer ILIKE for case-insensitive text search.",
     error: {
       code: "function_calls_not_allowed",
       message: functionCallErrorMessage,

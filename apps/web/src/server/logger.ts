@@ -103,6 +103,7 @@ type ChatEvent =
     action: "response";
     vendor: ChatVendor;
     requestId: string;
+    userId: string;
     sessionId: string;
     model: string;
     callIndex: number;
@@ -184,6 +185,23 @@ type ChatEvent =
     recentTurnCount: number;
     limit: number;
   }>
+  /**
+   * A chat attachment upload was minted or confirmed. Both are ordinary
+   * working steps, so the action is deliberately kept out of the `error` family
+   * that the CloudWatch web error alarm pages on; it exists so upload volume
+   * and the gap between minted and confirmed stay countable per session.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "file_upload_minted" | "file_upload_confirmed";
+    route: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    fileId: string;
+    mediaType: string;
+    sizeBytes: number;
+  }>
   | Readonly<{
     domain: "chat";
     action: "run_transition_skipped";
@@ -246,6 +264,22 @@ type ChatTranscriptionEvent = Readonly<{
   upstreamMessage: string | null;
   upstreamRequestId: string | null;
   error: string;
+}>;
+
+/**
+ * Chat file objects reclaimed when their workspace went away. The bucket has no
+ * expiration rule, so this is the only reclaim path, and objectCount counts the
+ * objects actually deleted, including on the failure the error propagates.
+ * not_configured records a deployment that stores no chat file at all.
+ */
+type ChatFilesEvent = Readonly<{
+  domain: "chat-files";
+  action: "workspace_objects_deleted";
+  outcome: "deleted" | "failed" | "not_configured";
+  workspaceId: string;
+  sessionCount: number;
+  objectCount: number;
+  error: string | null;
 }>;
 
 type ApiEvent =
@@ -336,7 +370,7 @@ type AuthEvent =
  */
 type DbEvent = Readonly<{ domain: "db"; action: "pool_error"; error: string }>;
 
-type LogEvent = ChatEvent | ChatWorkspaceUnavailableEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
+type LogEvent = ChatEvent | ChatWorkspaceUnavailableEvent | ChatTranscriptionEvent | ChatFilesEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

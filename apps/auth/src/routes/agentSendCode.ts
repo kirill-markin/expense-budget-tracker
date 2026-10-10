@@ -7,7 +7,11 @@
  */
 import { randomInt } from "node:crypto";
 import { Hono, type Context } from "hono";
-import { createAgentOtpChallenge, reissueLatestAgentOtpChallenge } from "../server/otp/otpChallengeStore.js";
+import {
+  createAgentOtpChallenge,
+  createSupersedingAgentOtpChallenge,
+  reissueLatestAgentOtpChallenge,
+} from "../server/otp/otpChallengeStore.js";
 import { buildErrorEnvelope, buildSuccessEnvelope, buildVerifyCodeAction } from "../server/agent/agentEnvelope.js";
 import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp } from "../server/cognitoAuth.js";
@@ -33,6 +37,11 @@ type AgentSendCodeDependencies = Readonly<{
   createDemoAgentOtpSession: (email: string) => string;
   checkAndRecordOtpSendDecision: (normalizedEmail: string, requestIp: string) => Promise<OtpSendDecision>;
   createAgentOtpChallenge: (normalizedEmail: string, cognitoSession: string, nowMs: number) => Promise<string>;
+  createSupersedingAgentOtpChallenge: (
+    normalizedEmail: string,
+    cognitoSession: string,
+    nowMs: number,
+  ) => Promise<string>;
   reissueLatestAgentOtpChallenge: (normalizedEmail: string, nowMs: number) => Promise<string | null>;
   now: () => number;
 }>;
@@ -73,12 +82,45 @@ export const createAgentSendCodeApp = (dependencies: AgentSendCodeDependencies):
       );
     }
 
-    const demoPassword = dependencies.getDemoEmailPassword(email);
-    if (demoPassword !== null) {
+    // The review email short-circuits ahead of the limiter so a deploy smoke can
+    // always sign in, and supersedes its own previous challenge instead of being
+    // metered, so repeated sends leave a single live row behind.
+    if (dependencies.getDemoEmailPassword(email) !== null) {
+      // Verify-code resolves the token as an opaque handle and reads the demo
+      // marker off the stored session, so the review email persists that marker
+      // in place of a Cognito session and no code is ever sent.
+      const demoSession = dependencies.createDemoAgentOtpSession(email);
+
+      let otpSessionToken: string;
+      try {
+        otpSessionToken = await dependencies.createSupersedingAgentOtpChallenge(
+          email,
+          demoSession,
+          dependencies.now(),
+        );
+      } catch (error) {
+        log({
+          domain: "auth",
+          action: "agent_send_code_demo_sign_in_error",
+          maskedEmail: maskEmail(email),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return c.json(
+          buildErrorEnvelope(
+            { retryable: true },
+            [],
+            "The auth backend is temporarily unavailable. Retry in a moment.",
+            "auth_backend_unavailable",
+            "Failed to send code",
+          ),
+          500,
+        );
+      }
+
       log({ domain: "auth", action: "agent_send_code_demo_sign_in", maskedEmail: maskEmail(email) });
       return c.json(
         buildSuccessEnvelope(
-          { otpSessionToken: dependencies.createDemoAgentOtpSession(email) },
+          { otpSessionToken },
           [buildVerifyCodeAction()],
           "Demo review account recognized. Call verify-code next to mint the API key for this session.",
         ),
@@ -177,6 +219,7 @@ const app = createAgentSendCodeApp({
   createDemoAgentOtpSession,
   checkAndRecordOtpSendDecision,
   createAgentOtpChallenge,
+  createSupersedingAgentOtpChallenge,
   reissueLatestAgentOtpChallenge,
   now: () => Date.now(),
 });
