@@ -13,6 +13,7 @@ import {
   PDF_MAXIMUM_PAGE_COUNT,
   PDF_MAXIMUM_PAGE_JPEG_BYTES,
   PDF_MAXIMUM_PAGE_TEXT_CHARACTERS,
+  PDF_MAXIMUM_SOURCE_BYTES,
   PDF_MAXIMUM_TOTAL_JPEG_BYTES,
   PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS,
   PDF_MEDIA_TYPE,
@@ -26,6 +27,13 @@ import type {
   ImageContentPart,
   PdfContentPart,
 } from "@/server/chat/types";
+
+/**
+ * Per-attachment decoded-byte ceiling for image and file parts. The browser
+ * already refuses a larger upload, so the server owns the same limit rather
+ * than trusting the client that claims it.
+ */
+export const CHAT_ATTACHMENT_MAXIMUM_BYTES = PDF_MAXIMUM_SOURCE_BYTES;
 
 const IMAGE_SIGNATURE_BYTE_COUNT = MAX_HEIC_FTYP_BOX_BYTES;
 const BASE64_PREFIX_CHARACTER_COUNT = Math.ceil(IMAGE_SIGNATURE_BYTE_COUNT / 3) * 4;
@@ -100,6 +108,22 @@ export class LegacyPdfFileAttachmentError extends Error {
   }
 }
 
+export class ChatAttachmentTooLargeError extends Error {
+  public constructor(
+    partIndex: number,
+    mediaType: string,
+    fileName: string | null,
+    sizeBytes: number,
+  ) {
+    super(
+      `${formatContentPartContext(partIndex, mediaType, fileName)} decodes to `
+      + `${String(sizeBytes)} bytes; the maximum attachment size is `
+      + `${String(CHAT_ATTACHMENT_MAXIMUM_BYTES)} bytes.`,
+    );
+    this.name = "ChatAttachmentTooLargeError";
+  }
+}
+
 export class InvalidPdfAttachmentError extends Error {
   public constructor(partIndex: number, fileName: string, reason: string) {
     super(
@@ -157,10 +181,24 @@ const decodeTolerantBase64Prefix = (value: string): Uint8Array => {
   );
 };
 
+const validateAttachmentByteLength = (
+  base64Data: string,
+  partIndex: number,
+  mediaType: string,
+  fileName: string | null,
+): void => {
+  const sizeBytes = getBase64DecodedByteLength(base64Data);
+  if (sizeBytes > CHAT_ATTACHMENT_MAXIMUM_BYTES) {
+    throw new ChatAttachmentTooLargeError(partIndex, mediaType, fileName, sizeBytes);
+  }
+};
+
 const validateImagePart = (
   part: ImageContentPart,
   partIndex: number,
 ): void => {
+  validateAttachmentByteLength(part.base64Data, partIndex, part.mediaType, null);
+
   const normalizedMediaType = normalizeOpenAIImageMimeType(part.mediaType);
   if (normalizedMediaType === null) {
     throw new UnsupportedImageMediaTypeError(partIndex, part.mediaType);
@@ -185,6 +223,8 @@ const validateFilePart = (
   part: FileContentPart,
   partIndex: number,
 ): void => {
+  validateAttachmentByteLength(part.base64Data, partIndex, part.mediaType, part.fileName);
+
   if (isLegacyRawPdfFilePart(part)) {
     throw new LegacyPdfFileAttachmentError(
       partIndex,
