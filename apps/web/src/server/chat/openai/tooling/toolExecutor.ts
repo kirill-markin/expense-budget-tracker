@@ -71,6 +71,38 @@ const logToolTelemetryError = (
   });
 };
 
+type ToolCallOutcome = Readonly<{
+  status: "completed" | "error";
+  errorCode: string | null;
+}>;
+
+/**
+ * The single CloudWatch record for an executed chat tool call, emitted once per
+ * call next to the Langfuse observation it mirrors. The recorded workspace is
+ * the session's, which every call has; the result's own workspace stays
+ * reserved for the route-refresh gate.
+ */
+const logToolCallRecord = (
+  params: ToolExecutorParams,
+  outcome: ToolCallOutcome,
+  durationMs: number,
+  logger: typeof log,
+): void => {
+  logger({
+    domain: "chat",
+    action: "tool_call",
+    vendor: "openai",
+    tool: params.item.name,
+    status: outcome.status,
+    durationMs,
+    errorCode: outcome.errorCode,
+    requestId: params.requestId,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+  });
+};
+
 const runToolTelemetryOperation = (
   params: ToolExecutorParams,
   operation: ToolTelemetryOperation,
@@ -154,6 +186,14 @@ export const runOneToolCallWithDependencies = async (
         },
         dependencies.log,
       );
+      // Today only an unsupported tool name throws here, and the MCP surface
+      // answers an unhandled error with the same code.
+      logToolCallRecord(
+        params,
+        { status: "error", errorCode: "internal_error" },
+        Date.now() - startedAt,
+        dependencies.log,
+      );
       throw error;
     }
 
@@ -185,6 +225,14 @@ export const runOneToolCallWithDependencies = async (
         dependencies.log,
       );
     }
+    logToolCallRecord(
+      params,
+      output.succeeded
+        ? { status: "completed", errorCode: null }
+        : { status: "error", errorCode: output.errorCode },
+      Date.now() - startedAt,
+      dependencies.log,
+    );
     return output;
   } finally {
     runToolTelemetryOperation(

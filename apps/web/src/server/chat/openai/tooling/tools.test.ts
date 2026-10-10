@@ -283,6 +283,8 @@ test("a multi-statement script is rejected with single_statement_required", asyn
   assert.equal(result.succeeded, false);
   const payload = parseToolPayload(result.output);
   assert.equal(payload.error?.code, "single_statement_required");
+  // The code telemetry records is the one the model received.
+  assert.equal(result.succeeded ? null : result.errorCode, "single_statement_required");
   assert.match(payload.instructions, /call sql_query once for each statement/u);
   // The whole event is pinned: the rejected statement must never join it, and
   // the raw policy message is recorded rather than the chat-specific rewrite.

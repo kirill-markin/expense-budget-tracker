@@ -127,7 +127,8 @@ export type ChatToolExecutionError = Readonly<{
 /**
  * A completed transcript item refreshes route-backed content only when the
  * execution succeeded and mutated data. Failed executions retain their
- * structured error separately from the serialized model-facing output.
+ * structured error separately from the serialized model-facing output, plus the
+ * agent error code the model received, so telemetry records that exact code.
  */
 type ExecutedChatToolCallResult =
   | Readonly<{
@@ -137,6 +138,7 @@ type ExecutedChatToolCallResult =
   | Readonly<{
     succeeded: false;
     error: ChatToolExecutionError;
+    errorCode: string;
   }>;
 
 export type ExecutedChatToolCall = Readonly<{
@@ -382,6 +384,7 @@ const buildDiscoveryErrorResult = (
     workspaceId: null,
     succeeded: false,
     error: serializeToolError(error),
+    errorCode: payload.error.code,
   };
 };
 
@@ -637,6 +640,7 @@ const buildFailedSqlToolCall = (
   workspaceId: null,
   succeeded: false,
   error: serializeToolError(error),
+  errorCode: payload.error.code,
 });
 
 const executeSqlToolCall = async (
