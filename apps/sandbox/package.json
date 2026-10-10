@@ -1,0 +1,23 @@
+{
+  "name": "expense-budget-tracker-sandbox",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test --test-timeout=60000 \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "just-bash": "3.6.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.164",
+    "@types/node": "^24.19.1",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

@@ -10,6 +10,7 @@ import * as cloudwatch_actions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as sns from "aws-cdk-lib/aws-sns";
 import { Construct } from "constructs";
+import { CHAT_SANDBOX_RESERVED_CONCURRENCY } from "./chat-sandbox";
 
 export interface MonitoringProps {
   alertEmail: string;
@@ -27,6 +28,7 @@ export interface MonitoringProps {
   sqlApiFn: lambda.Function;
   mcpHttpApi: apigwv2.HttpApi;
   mcpFn: lambda.Function;
+  chatSandboxFn: lambda.Function;
   customEmailSenderFn: lambda.IFunction;
 }
 
@@ -465,6 +467,32 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 1,
     evaluationPeriods: 1,
     alarmDescription: "MCP Lambda invocation was throttled; reserved concurrency limit is 20",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // Chat sandbox Lambda errors. It opens no database connection, so it has no
+  // pool-error filter above. An error here is a sandbox fault and never a bad
+  // chat command: a command that fails, overruns its budget or kills its own
+  // process is returned as tool output with a non-zero exit code.
+  new cloudwatch.Alarm(scope, "ChatSandboxLambdaErrorAlarm", {
+    metric: props.chatSandboxFn.metricErrors({
+      period: cdk.Duration.minutes(15),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: "Chat sandbox Lambda had errors",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  new cloudwatch.Alarm(scope, "ChatSandboxLambdaThrottleAlarm", {
+    metric: props.chatSandboxFn.metricThrottles({
+      period: cdk.Duration.minutes(5),
+      statistic: "Sum",
+    }),
+    threshold: 1,
+    evaluationPeriods: 1,
+    alarmDescription: `Chat sandbox Lambda invocation was throttled; reserved concurrency limit is ${String(CHAT_SANDBOX_RESERVED_CONCURRENCY)}`,
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
