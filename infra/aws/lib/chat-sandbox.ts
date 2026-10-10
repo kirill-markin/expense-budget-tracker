@@ -77,12 +77,24 @@ export function chatSandbox(scope: Construct, props: ChatSandboxProps): ChatSand
       nodeModules: ["just-bash"],
       commandHooks: {
         beforeBundling: () => [],
-        // npm reads this file from the install directory. The two optional
-        // native dependencies only add zstd and xz support, which nothing here
-        // uses, and they would otherwise be built from source inside the
-        // bundling step.
+        // Two hooks, for two different problems with the same pair of packages.
+        //
+        // `omit=optional` keeps just-bash's optional native dependencies off
+        // disk: they only add zstd and xz support, which nothing here uses, and
+        // they would otherwise be built from source inside the bundling step.
+        // Measured: 37 packages installed with it, 75 without.
+        //
+        // `allowScripts` is needed because the repository's `.npmrc` sets
+        // `strict-allow-scripts=true`, and this install runs in a staging
+        // directory against a package.json that CDK generates, so the denials
+        // in the root package.json do not apply to it. The check validates the
+        // lockfile tree before `omit` is applied, so omitting the packages is
+        // not enough on its own - without these two entries the asset fails to
+        // bundle with ESTRICTALLOWSCRIPTS and the whole deploy stops. Denying
+        // rather than approving is the point: nothing here needs their scripts.
         beforeInstall: (_inputDir: string, outputDir: string) => [
           `echo 'omit=optional' > ${path.join(outputDir, ".npmrc")}`,
+          `node -e "const fs=require('fs');const p=require('path').join(process.argv[1],'package.json');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.allowScripts={...j.allowScripts,'@mongodb-js/zstd':false,'node-liblzma':false};fs.writeFileSync(p,JSON.stringify(j,null,2)+'\\n');" ${outputDir}`,
         ],
         afterBundling: () => [],
       },
