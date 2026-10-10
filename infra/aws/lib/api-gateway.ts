@@ -15,6 +15,7 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambda_nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
+import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 import * as path from "path";
 
@@ -48,6 +49,24 @@ const lambdaBundling: lambda_nodejs.BundlingOptions = {
 const lambdaEnvBase: Record<string, string> = {
   NODE_EXTRA_CA_CERTS: "/var/task/rds-global-bundle.pem",
 };
+
+export const createSqlApiAccessLogFormat = (): apigw.AccessLogFormat =>
+  apigw.AccessLogFormat.custom(JSON.stringify({
+    requestId: apigw.AccessLogField.contextRequestId(),
+    httpMethod: apigw.AccessLogField.contextHttpMethod(),
+    resourcePath: apigw.AccessLogField.contextResourcePath(),
+    path: apigw.AccessLogField.contextPath(),
+    status: apigw.AccessLogField.contextStatus(),
+    protocol: apigw.AccessLogField.contextProtocol(),
+    responseLength: apigw.AccessLogField.contextResponseLength(),
+    requestTime: apigw.AccessLogField.contextRequestTime(),
+    ip: apigw.AccessLogField.contextIdentitySourceIp(),
+    userAgent: apigw.AccessLogField.contextIdentityUserAgent(),
+    integrationStatus: apigw.AccessLogField.contextIntegrationStatus(),
+    integrationLatency: apigw.AccessLogField.contextIntegrationLatency(),
+    integrationError: apigw.AccessLogField.contextIntegrationErrorMessage(),
+    errorMessage: apigw.AccessLogField.contextErrorMessage(),
+  }));
 
 export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGatewayResult {
   const sqlApiEntry = path.join(__dirname, "../../../apps/sql-api/src");
@@ -93,6 +112,10 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
   sqlApiFn.addEnvironment("PUBLIC_AUTH_BASE_URL", `https://auth.${props.baseDomain}`);
 
   // --- REST API ---
+  const accessLogGroup = new logs.LogGroup(scope, "SqlApiAccessLogGroup", {
+    retention: logs.RetentionDays.ONE_MONTH,
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+  });
   const restApi = new apigw.RestApi(scope, "SqlRestApi", {
     restApiName: "expense-tracker-sql-api",
     description: "SQL API for machine clients (LLM agents, scripts)",
@@ -100,6 +123,8 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
       stageName: "v1",
       throttlingBurstLimit: 100,
       throttlingRateLimit: 50,
+      accessLogDestination: new apigw.LogGroupLogDestination(accessLogGroup),
+      accessLogFormat: createSqlApiAccessLogFormat(),
     },
   });
 
