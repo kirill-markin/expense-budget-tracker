@@ -113,6 +113,7 @@ const synthesizeMonitoringTemplate = (): Template => {
     sqlApiFn: stubFunction(stack, "SqlApiFn"),
     mcpHttpApi: new apigwv2.HttpApi(stack, "McpHttpApi"),
     mcpFn: stubFunction(stack, "McpFn"),
+    chatSandboxFn: stubFunction(stack, "ChatSandboxFn"),
     customEmailSenderFn: stubFunction(stack, "CustomEmailSenderFn"),
   });
   return Template.fromStack(stack);

@@ -5,6 +5,10 @@ FROM npm AS deps
 
 WORKDIR /workspace
 
+# apps/sandbox/package.json is deliberately missing from the list below: it
+# would pull just-bash's 91 MB vendored CPython tree into every image, and the
+# sandbox ships as a Lambda bundle instead. `npm ci` reconciles the lockfile
+# without it; verified on npm 11.17.0 and 12.2.0.
 COPY .npmrc package.json package-lock.json ./
 COPY apps/auth/package.json apps/auth/package.json
 COPY apps/sql-api/package.json apps/sql-api/package.json

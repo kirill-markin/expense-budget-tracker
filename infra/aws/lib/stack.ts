@@ -12,6 +12,7 @@ import { ingress } from "./ingress";
 import { fxFetcher } from "./fx-fetcher";
 import { apiGateway } from "./api-gateway";
 import { mcpGateway } from "./mcp-gateway";
+import { chatSandbox } from "./chat-sandbox";
 import { monitoring } from "./monitoring";
 import { ciCd } from "./ci-cd";
 import { backupPlan } from "./backup";
@@ -118,6 +119,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       baseDomain,
       mcpCertificateArn,
     });
+    const sandbox = chatSandbox(this, { chatFilesBucket: chatFiles.chatFilesBucket });
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,
@@ -134,6 +136,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       sqlApiFn: api.sqlApiFn,
       mcpHttpApi: mcp.httpApi,
       mcpFn: mcp.mcpFn,
+      chatSandboxFn: sandbox.chatSandboxFn,
       customEmailSenderFn: authResult.customEmailSenderFn,
     });
     ciCd(this, {
