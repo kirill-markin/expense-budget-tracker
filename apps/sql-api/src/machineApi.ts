@@ -2,7 +2,9 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import {
   ACCOUNT_DISABLED_INSTRUCTIONS,
   ACCOUNT_DISABLED_MESSAGE,
-  AGENT_API_KEY_ENV_VAR_NAME,
+  MISSING_API_KEY_CODE,
+  MISSING_API_KEY_INSTRUCTIONS,
+  MISSING_API_KEY_MESSAGE,
   buildErrorEnvelope,
 } from "@expense-budget-tracker/agent-shared";
 import {
@@ -103,9 +105,9 @@ export const createMachineApiHandler = (
         buildErrorEnvelope(
           {},
           [],
-          `Send Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME}.`,
-          "missing_api_key",
-          "Missing ApiKey authorization",
+          MISSING_API_KEY_INSTRUCTIONS,
+          MISSING_API_KEY_CODE,
+          MISSING_API_KEY_MESSAGE,
         ),
       );
     }

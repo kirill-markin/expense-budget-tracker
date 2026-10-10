@@ -17,6 +17,14 @@ export const ACCOUNT_DISABLED_INSTRUCTIONS = "Ask the operator of this deploymen
  * lives here instead of being duplicated in each of them.
  */
 export const ACCOUNT_DISABLED_MESSAGE = "This account is disabled or no longer provisioned";
+/**
+ * Refusal for a request that carries no Authorization header. The SQL Lambda
+ * and the API Gateway template that answers before the Lambda ever runs must
+ * return the same text, so it lives here instead of in each of them.
+ */
+export const MISSING_API_KEY_CODE = "missing_api_key";
+export const MISSING_API_KEY_MESSAGE = "Missing ApiKey authorization";
+export const MISSING_API_KEY_INSTRUCTIONS = `Send Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME}.`;
 export const AGENT_OAUTH_SCOPES = ["expenses:read", "expenses:write"] as const;
 export const SQL_API_DB_POOL_MAX_CONNECTIONS = 1;
 // Keep raw OAuth query strings below the ALB 16 KiB request-line ceiling,

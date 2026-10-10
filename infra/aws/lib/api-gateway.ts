@@ -18,6 +18,14 @@ import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 import * as path from "path";
+import {
+  AGENT_API_KEY_ENV_VAR_NAME,
+  API_KEY_AUTHORIZATION_SCHEME,
+  MISSING_API_KEY_CODE,
+  MISSING_API_KEY_INSTRUCTIONS,
+  MISSING_API_KEY_MESSAGE,
+  buildErrorEnvelope,
+} from "@expense-budget-tracker/agent-shared";
 
 export interface ApiGatewayProps {
   vpc: ec2.Vpc;
@@ -68,8 +76,42 @@ export const createSqlApiAccessLogFormat = (): apigw.AccessLogFormat =>
     errorMessage: apigw.AccessLogField.contextErrorMessage(),
   }));
 
+/**
+ * Credential refusals API Gateway answers on its own, before the SQL Lambda
+ * runs, rendered as the agent envelope every other /v1 response returns.
+ *
+ * A request with no Authorization header at all never reaches the authorizer,
+ * so this mirrors the missing_api_key branch in apps/sql-api/src/machineApi.ts
+ * through the shared constants; that branch still answers for the container
+ * runtime that serves the same routes without a gateway in front. A header
+ * that is present but unparseable does reach the authorizer and is refused by
+ * the ACCESS_DENIED template below.
+ */
+export const createMissingApiKeyResponseBody = (): string => JSON.stringify(buildErrorEnvelope(
+  {},
+  [],
+  MISSING_API_KEY_INSTRUCTIONS,
+  MISSING_API_KEY_CODE,
+  MISSING_API_KEY_MESSAGE,
+));
+
+/**
+ * The authorizer denied the request, which covers both a header that does not
+ * use the ApiKey scheme and a key that is invalid or revoked. Repeating the
+ * same request cannot succeed, so the instruction names both causes in the
+ * order the caller can check them.
+ */
+export const createRejectedApiKeyResponseBody = (apiBaseUrl: string): string => JSON.stringify(buildErrorEnvelope(
+  {},
+  [],
+  `Either the request header is not exactly ${API_KEY_AUTHORIZATION_SCHEME}, or the key is invalid or revoked. Check the header first; if it is correct, get a new key through the onboarding in GET ${apiBaseUrl}/, then send Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME}.`,
+  "api_key_not_accepted",
+  "API key not accepted",
+));
+
 export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGatewayResult {
   const sqlApiEntry = path.join(__dirname, "../../../apps/sql-api/src");
+  const publicApiBaseUrl = `https://api.${props.baseDomain}/v1`;
 
   // --- Lambda Authorizer ---
   const authorizerFn = new lambda_nodejs.NodejsFunction(scope, "SqlApiAuthorizer", {
@@ -108,7 +150,7 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
   sqlApiFn.addEnvironment("DB_SECRET_ARN", props.appDbSecret.secretArn);
   sqlApiFn.addEnvironment("DB_HOST", props.db.dbInstanceEndpointAddress);
   sqlApiFn.addEnvironment("DB_NAME", "tracker");
-  sqlApiFn.addEnvironment("PUBLIC_API_BASE_URL", `https://api.${props.baseDomain}/v1`);
+  sqlApiFn.addEnvironment("PUBLIC_API_BASE_URL", publicApiBaseUrl);
   sqlApiFn.addEnvironment("PUBLIC_AUTH_BASE_URL", `https://auth.${props.baseDomain}`);
 
   // --- REST API ---
@@ -126,6 +168,18 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
       accessLogDestination: new apigw.LogGroupLogDestination(accessLogGroup),
       accessLogFormat: createSqlApiAccessLogFormat(),
     },
+  });
+
+  restApi.addGatewayResponse("SqlApiUnauthorizedResponse", {
+    type: apigw.ResponseType.UNAUTHORIZED,
+    statusCode: "401",
+    templates: { "application/json": createMissingApiKeyResponseBody() },
+  });
+
+  restApi.addGatewayResponse("SqlApiAccessDeniedResponse", {
+    type: apigw.ResponseType.ACCESS_DENIED,
+    statusCode: "403",
+    templates: { "application/json": createRejectedApiKeyResponseBody(publicApiBaseUrl) },
   });
 
   // --- Token Authorizer ---
