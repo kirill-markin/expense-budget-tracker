@@ -359,7 +359,8 @@ async function selectWorkspace(apiKey, workspaceId) {
   expectEnvelope(payload, "workspace_select");
   assertCondition(payload.data.workspace?.workspaceId === workspaceId, "workspace_select: workspaceId mismatch");
   assertCondition(payload.data.sqlRequest?.header === "X-Workspace-Id", "workspace_select: missing sqlRequest header");
-  expectActionNamed(payload, "run_sql", "workspace_select");
+  expectActionNamed(payload, "run_sql_query", "workspace_select");
+  expectActionNamed(payload, "run_sql_execute", "workspace_select");
 }
 
 async function verifySchema(apiKey) {
