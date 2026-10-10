@@ -69,7 +69,28 @@ type ChatEvent =
     userId?: string;
     workspaceId?: string;
   }>
-  | Readonly<{ domain: "chat"; action: "tool_call"; vendor: ChatVendor; tool: string; status: ToolStatus; durationMs?: number }>
+  /**
+   * One record per executed chat tool call. For a returned failure `errorCode`
+   * is the agent error code the model itself received, so CloudWatch counts
+   * failures by the same code the MCP surface and the machine API report; a
+   * call that threw before producing any model-facing payload is recorded as
+   * the synthesized `"internal_error"`. `workspaceId` is the chat session's
+   * workspace, so failures group per workspace even when the call produced no
+   * workspace of its own.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "tool_call";
+    vendor: ChatVendor;
+    tool: string;
+    status: ToolStatus;
+    durationMs: number;
+    errorCode: string | null;
+    requestId: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+  }>
   | Readonly<{
     domain: "chat";
     action: TaskProtectionAction;
