@@ -1,6 +1,8 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
+  NotFound,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -41,6 +43,28 @@ const requirePresignExpiry = (expiresInSeconds: number): number => {
   }
 
   return expiresInSeconds;
+};
+
+const MISSING_OBJECT_ERROR_NAMES: ReadonlySet<string> = new Set(["NotFound", "NoSuchKey"]);
+
+/**
+ * A head or read of an object that is not there. The NotFound class only
+ * answers for errors thrown by the very @aws-sdk/client-s3 copy this module
+ * imports, so the error name is accepted beside it. A bare 404 is deliberately
+ * not enough: NoSuchBucket is a 404 too, and reporting a misconfigured
+ * CHAT_FILES_BUCKET as an absent upload would turn an infrastructure fault
+ * into a caller-shaped answer on every request.
+ */
+const isMissingObjectError = (error: unknown): boolean => {
+  if (error instanceof NotFound) {
+    return true;
+  }
+
+  return typeof error === "object"
+    && error !== null
+    && "name" in error
+    && typeof error.name === "string"
+    && MISSING_OBJECT_ERROR_NAMES.has(error.name);
 };
 
 // encodeURIComponent leaves "'", "(", ")", "!" and "*" raw, and the first four
@@ -142,9 +166,15 @@ export class ChatFilesObjectStore {
     );
   }
 
+  /**
+   * Signed upload URL for exactly one object of exactly one size: content-type
+   * and content-length are part of the signature, so the holder cannot store a
+   * body larger than the size the app accepted, and cannot relabel it.
+   */
   async presignPutUrl(
     objectKey: string,
     mediaType: string,
+    sizeBytes: number,
     expiresInSeconds: number,
   ): Promise<string> {
     return getSignedUrl(
@@ -153,9 +183,37 @@ export class ChatFilesObjectStore {
         Bucket: this.bucket,
         Key: requireChatFileObjectKey(objectKey),
         ContentType: mediaType,
+        ContentLength: sizeBytes,
       }),
-      { expiresIn: requirePresignExpiry(expiresInSeconds) },
+      {
+        expiresIn: requirePresignExpiry(expiresInSeconds),
+        signableHeaders: new Set(["content-length", "content-type"]),
+      },
     );
+  }
+
+  /**
+   * Size of a stored object, or null when it does not exist: an upload the
+   * browser never completed is an expected state, not a failure.
+   */
+  async headObjectSize(objectKey: string): Promise<number | null> {
+    const key = requireChatFileObjectKey(objectKey);
+    try {
+      const response = await this.client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      if (response.ContentLength === undefined) {
+        throw new Error(`Object head returned no size, bucket=${this.bucket}, key=${key}`);
+      }
+
+      return response.ContentLength;
+    } catch (error) {
+      if (isMissingObjectError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
   }
 
   async readObjectBytes(objectKey: string): Promise<Uint8Array> {
