@@ -9,6 +9,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 import * as path from "path";
 import { CHAT_FILES_OBJECT_PREFIX } from "./chat-files-bucket";
+import { CHAT_SANDBOX_FUNCTION_NAME } from "./chat-sandbox";
 
 export interface ComputeProps {
   vpc: ec2.Vpc;
@@ -175,6 +176,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       // deployment can point the same code at an S3-compatible service, which
       // is also the only place path-style addressing is needed.
       CHAT_FILES_S3_FORCE_PATH_STYLE: "false",
+      CHAT_SANDBOX_FUNCTION_NAME,
       LANGFUSE_BASE_URL: props.langfuseBaseUrl,
       LANGFUSE_RELEASE: webDockerImageAsset.assetHash,
       // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
@@ -215,6 +217,20 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     webTaskDef.taskRole,
     `${CHAT_FILES_OBJECT_PREFIX}*`,
   );
+
+  // The chat sandbox function is created after this construct, so the grant
+  // names it by its fixed name instead of taking the construct. Nothing else is
+  // granted: the sandbox receives everything it may touch as pre-signed URLs in
+  // the invocation payload.
+  webTaskDef.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: ["lambda:InvokeFunction"],
+    resources: [cdk.Stack.of(scope).formatArn({
+      service: "lambda",
+      resource: "function",
+      resourceName: CHAT_SANDBOX_FUNCTION_NAME,
+      arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
+    })],
+  }));
 
   // Near-zero-downtime rolling update: with the ECS defaults (minHealthyPercent=100%,
   // maxPercent=200%) a new task starts alongside the old one. ALB routes traffic to
