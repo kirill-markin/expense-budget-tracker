@@ -40,21 +40,45 @@ export type StoredOpenAIReplayFunctionCallOutput = Readonly<{
   status?: OpenAI.Responses.ResponseInputItem.FunctionCallOutput["status"];
 }>;
 
+/**
+ * Opaque server-side summary of everything the model was sent ahead of it.
+ * Replaying it in place of the turns it absorbed is the whole point of
+ * compaction, so the older part of the transcript is never resent.
+ */
+export type StoredOpenAIReplayCompactionItem = Readonly<{
+  type: "compaction";
+  id: string;
+  encrypted_content: string;
+}>;
+
 export type StoredOpenAIReplayItem =
   | StoredOpenAIReplayReasoningItem
   | StoredOpenAIReplayMessage
   | StoredOpenAIReplayFunctionToolCall
-  | StoredOpenAIReplayFunctionCallOutput;
+  | StoredOpenAIReplayFunctionCallOutput
+  | StoredOpenAIReplayCompactionItem;
 
 type LegacyStoredOpenAIReplayItem =
   | OpenAI.Responses.ResponseOutputMessage
   | OpenAI.Responses.ResponseReasoningItem
   | OpenAI.Responses.ResponseFunctionToolCall
-  | OpenAI.Responses.ResponseInputItem.FunctionCallOutput;
+  | OpenAI.Responses.ResponseInputItem.FunctionCallOutput
+  | OpenAI.Responses.ResponseCompactionItem;
 
 type NormalizeStoredOpenAIReplayItemsResult = Readonly<{
   items: ReadonlyArray<StoredOpenAIReplayItem>;
   droppedReasoningItems: number;
+  droppedCompactionItems: number;
+}>;
+
+export type StoredOpenAIReplayItemsResult = Readonly<{
+  items: ReadonlyArray<StoredOpenAIReplayItem>;
+  droppedCompactionItems: number;
+}>;
+
+export type ChatCompactionBoundary = Readonly<{
+  messageIndex: number;
+  itemIndex: number;
 }>;
 
 export type ServerChatMessage = ChatMessage & Readonly<{
@@ -71,6 +95,27 @@ const requireReplayCallId = (callId: string | null | undefined): string => {
   }
 
   return callId;
+};
+
+/**
+ * A compaction item is replayable only with both of its fields, and persisted
+ * payloads are untrusted JSONB, so an incomplete one is reported as absent.
+ */
+const toReplayCompactionItem = (
+  item: Readonly<{ id?: string | null; encrypted_content?: string | null }>,
+): StoredOpenAIReplayCompactionItem | null => {
+  if (typeof item.id !== "string" || item.id.length === 0) {
+    return null;
+  }
+  if (typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0) {
+    return null;
+  }
+
+  return {
+    type: "compaction",
+    id: item.id,
+    encrypted_content: item.encrypted_content,
+  };
 };
 
 export const toStoredOpenAIReplayItem = (
@@ -121,6 +166,34 @@ export const toStoredOpenAIReplayItem = (
   throw new Error(`Unsupported OpenAI response item for chat replay: ${item.type}`);
 };
 
+/**
+ * Persists one response's output items. An unreplayable compaction item is
+ * dropped rather than thrown on: the answer it belongs to has already streamed
+ * to the browser, and without the item the next call just replays the history
+ * the item would have stood for.
+ */
+export const toStoredOpenAIReplayItems = (
+  items: ReadonlyArray<OpenAI.Responses.ResponseOutputItem>,
+): StoredOpenAIReplayItemsResult => {
+  const storedItems: Array<StoredOpenAIReplayItem> = [];
+  let droppedCompactionItems = 0;
+
+  for (const item of items) {
+    if (item.type === "compaction") {
+      const compactionItem = toReplayCompactionItem(item);
+      if (compactionItem === null) {
+        droppedCompactionItems += 1;
+        continue;
+      }
+      storedItems.push(compactionItem);
+      continue;
+    }
+    storedItems.push(toStoredOpenAIReplayItem(item));
+  }
+
+  return { items: storedItems, droppedCompactionItems };
+};
+
 const normalizeStoredOpenAIReplayItem = (
   item: StoredOpenAIReplayItem | LegacyStoredOpenAIReplayItem,
 ): StoredOpenAIReplayItem | null => {
@@ -166,6 +239,10 @@ const normalizeStoredOpenAIReplayItem = (
     };
   }
 
+  if (item.type === "compaction") {
+    return toReplayCompactionItem(item);
+  }
+
   return null;
 };
 
@@ -174,12 +251,16 @@ export const normalizeStoredOpenAIReplayItems = (
 ): NormalizeStoredOpenAIReplayItemsResult => {
   const normalizedItems: Array<StoredOpenAIReplayItem> = [];
   let droppedReasoningItems = 0;
+  let droppedCompactionItems = 0;
 
   for (const item of items) {
     const normalizedItem = normalizeStoredOpenAIReplayItem(item);
     if (normalizedItem === null) {
       if (item.type === "reasoning") {
         droppedReasoningItems += 1;
+      }
+      if (item.type === "compaction") {
+        droppedCompactionItems += 1;
       }
       continue;
     }
@@ -189,6 +270,7 @@ export const normalizeStoredOpenAIReplayItems = (
   return {
     items: normalizedItems,
     droppedReasoningItems,
+    droppedCompactionItems,
   };
 };
 
@@ -196,3 +278,76 @@ export const toOpenAIResponseInputItem = (
   item: StoredOpenAIReplayItem,
 ): OpenAI.Responses.ResponseInputItem =>
   item as unknown as OpenAI.Responses.ResponseInputItem;
+
+/**
+ * Index of the newest replayable compaction item, or `-1`. One response can
+ * carry two compaction items, so only the newest stands for the whole context
+ * ahead of it.
+ */
+export const findLatestCompactionItemIndex = (
+  items: ReadonlyArray<StoredOpenAIReplayItem>,
+): number =>
+  items.findLastIndex(
+    (item) => item.type === "compaction" && toReplayCompactionItem(item) !== null,
+  );
+
+/**
+ * Newest persisted compaction item of a session. Everything ahead of it is
+ * already inside its encrypted summary, so replaying those turns would send the
+ * same context twice. Only assistant turns replay from `openaiItems`, so only
+ * they can carry the boundary.
+ */
+export const findLatestChatCompactionBoundary = (
+  messages: ReadonlyArray<ServerChatMessage>,
+): ChatCompactionBoundary | null => {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages.at(messageIndex);
+    const items = message?.role === "assistant" ? message.openaiItems : undefined;
+    if (items === undefined) {
+      continue;
+    }
+
+    const itemIndex = findLatestCompactionItemIndex(items);
+    if (itemIndex !== -1) {
+      return { messageIndex, itemIndex };
+    }
+  }
+
+  return null;
+};
+
+/**
+ * Replays an item sequence from `startIndex`, the index of a compaction item.
+ *
+ * A `function_call_output` the loop appended after that item is not inside it,
+ * so the cut restores its own `function_call` from before the cut directly in
+ * front of it. An output whose call is absent from the whole sequence is
+ * dropped: OpenAI answers that orphan with `400 No tool call found for function
+ * call output`.
+ */
+export const replayItemsFromCompaction = (
+  items: ReadonlyArray<StoredOpenAIReplayItem>,
+  startIndex: number,
+): ReadonlyArray<StoredOpenAIReplayItem> => {
+  const keptItems = items.slice(startIndex);
+  const keptCallIds = new Set<string>(
+    keptItems.flatMap((item) => (item.type === "function_call" ? [item.call_id] : [])),
+  );
+  const cutCalls = new Map<string, StoredOpenAIReplayFunctionToolCall>(
+    items.slice(0, startIndex).flatMap((
+      item,
+    ): ReadonlyArray<readonly [string, StoredOpenAIReplayFunctionToolCall]> => (
+      item.type === "function_call" ? [[item.call_id, item]] : []
+    )),
+  );
+
+  return keptItems.flatMap((item): ReadonlyArray<StoredOpenAIReplayItem> => {
+    if (item.type !== "function_call_output" || keptCallIds.has(item.call_id)) {
+      return [item];
+    }
+
+    const call = cutCalls.get(item.call_id);
+
+    return call === undefined ? [] : [call, item];
+  });
+};

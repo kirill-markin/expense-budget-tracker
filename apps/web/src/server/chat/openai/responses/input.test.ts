@@ -315,6 +315,76 @@ test("buildChatCompletionInput rejects a stored legacy PDF before OpenAI mapping
   }
 });
 
+test("buildChatCompletionInput replays a stored session from its newest compaction item", async (): Promise<void> => {
+  const localMessages: ReadonlyArray<ServerChatMessage> = [
+    { role: "user", content: [{ type: "text", text: "First question" }] },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "First answer" }],
+      openaiItems: [{
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: "First answer", annotations: [] }],
+      }],
+    },
+    { role: "user", content: [{ type: "text", text: "Third question" }] },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Third answer" }],
+      openaiItems: [
+        {
+          type: "function_call",
+          call_id: "call-compacted",
+          name: "sql_query",
+          arguments: "{}",
+        },
+        {
+          type: "compaction",
+          id: "compaction-1",
+          encrypted_content: "opaque-summary",
+        },
+        {
+          type: "function_call_output",
+          call_id: "call-compacted",
+          output: "{\"rows\":[]}",
+        },
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: "Third answer", annotations: [] }],
+        },
+      ],
+    },
+  ];
+
+  const input = await buildChatCompletionInput(
+    localMessages,
+    [{ type: "text", text: "Continue" }],
+    "Europe/Madrid",
+  );
+
+  // The turns ahead of the compaction item are inside its summary, while the
+  // tool result stored behind it keeps its own call.
+  assert.deepEqual(input.map((item) => item.type), [
+    "message",
+    "compaction",
+    "function_call",
+    "function_call_output",
+    "message",
+    "message",
+    "message",
+  ]);
+  assert.deepEqual(input[1], {
+    type: "compaction",
+    id: "compaction-1",
+    encrypted_content: "opaque-summary",
+  });
+  assert.equal(JSON.stringify(input).includes("First question"), false);
+  assert.equal(JSON.stringify(input).includes("Third question"), false);
+});
+
 test("PDF telemetry carries only the source digest and derived page summaries", async (): Promise<void> => {
   const sanitized = await sanitizeContentPartsForTelemetry([{
     type: "pdf",

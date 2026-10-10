@@ -4,6 +4,12 @@ export const CHAT_MODEL_REASONING_EFFORT = "medium" as const;
 export const CHAT_FALLBACK_MODEL_ID = "gpt-6-luna" as const;
 export const CHAT_FALLBACK_MODEL_REASONING_EFFORT = "max" as const;
 export const CHAT_MODEL_REASONING_SUMMARY = "auto" as const;
+/**
+ * Input-token threshold handed to OpenAI server-side compaction. A call whose
+ * input exceeds it is answered with a compaction item standing for the context
+ * it absorbed, which later calls replay instead of the turns themselves.
+ */
+export const CHAT_COMPACT_THRESHOLD_TOKENS = 80_000;
 export const CHAT_MODEL_LABEL = "GPT-6.1 Sol" as const;
 export const CHAT_PROVIDER_LABEL = "OpenAI" as const;
 export const CHAT_MODEL_REASONING_LABEL = `${CHAT_MODEL_REASONING_EFFORT.slice(0, 1).toUpperCase()}${CHAT_MODEL_REASONING_EFFORT.slice(1)}` as const;

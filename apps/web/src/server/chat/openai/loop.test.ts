@@ -7,6 +7,7 @@ import {
   CHAT_MODEL_ID,
   CHAT_MODEL_REASONING_EFFORT,
 } from "@/lib/chatModels";
+import { ti } from "@/i18n/serverT";
 import {
   CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
   runOpenAILoopWithDeps,
@@ -113,6 +114,28 @@ const createFinalResponse = (
     output: [],
   } as unknown as OpenAI.Responses.Response);
 
+const COMPACTION_REPLAY_ITEM: StoredOpenAIReplayItem = {
+  type: "compaction",
+  id: "compaction-1",
+  encrypted_content: "opaque-summary",
+};
+
+/** A compacting call: its `input_tokens` report the pre-compaction input. */
+const createCompactedResponse = (
+  inputTokens: number,
+): OpenAI.Responses.Response =>
+  ({
+    output_text: "",
+    output: [],
+    usage: {
+      input_tokens: inputTokens,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: 10,
+      output_tokens_details: { reasoning_tokens: 0 },
+      total_tokens: inputTokens + 10,
+    },
+  } as unknown as OpenAI.Responses.Response);
+
 const createDeferred = (): Readonly<{
   promise: Promise<void>;
   resolve: () => void;
@@ -184,6 +207,110 @@ test("runOpenAILoop propagates the default model policy to an ordinary call", as
 
   assert.equal(observedRequests[0]?.model, CHAT_MODEL_ID);
   assert.equal(observedRequests[0]?.reasoning.effort, CHAT_MODEL_REASONING_EFFORT);
+});
+
+test("runOpenAILoop replays an in-run compaction item with the tool result and the datetime last", async (): Promise<void> => {
+  const params = createLoopParams();
+  const systemItem: OpenAI.Responses.ResponseInputItem = {
+    type: "message",
+    role: "system",
+    content: "Instructions",
+  };
+  const userItem: OpenAI.Responses.ResponseInputItem = {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "Hello" }],
+  };
+  const datetimeItem: OpenAI.Responses.ResponseInputItem = {
+    type: "message",
+    role: "system",
+    content: "Current date and time: 2026-10-10 09:00 (Europe/Madrid)",
+  };
+  const openAIRequests: Array<OpenAIResponsesRequest> = [];
+  const compactionEvents: Array<Parameters<LoopDeps["log"]>[0]> = [];
+
+  const completion = await runOpenAILoopWithDeps(
+    params,
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> =>
+        [systemItem, userItem, datetimeItem],
+      log: (event: Parameters<LoopDeps["log"]>[0]): void => {
+        if ("action" in event && event.action === "history_compacted") {
+          compactionEvents.push(event);
+        }
+      },
+      runOneModelCall: async (
+        _client: OpenAI,
+        _callParams: StartOpenAILoopParams,
+        _emitEvent: OpenAILoopEventHandler,
+        request: OpenAIResponsesRequest,
+        _promptCacheKey: string,
+        callIndex: number,
+      ) => {
+        openAIRequests.push(request);
+        if (callIndex === 1) {
+          // The compaction item closes the output, so the tool result the loop
+          // appends next lands behind it without its own call.
+          return {
+            finalResponse: createCompactedResponse(180_000),
+            functionCalls: [createFunctionCall("call-1", "sql_query", "{}")],
+            replayItems: [
+              createFunctionCallReplayItem("call-1", "sql_query", "{}"),
+              COMPACTION_REPLAY_ITEM,
+            ],
+            streamedText: "",
+            toolStates: createStartedToolStates("call-1", "sql_query", "{}"),
+          };
+        }
+
+        return {
+          finalResponse: createFinalResponse("Done"),
+          functionCalls: [],
+          replayItems: [createAssistantReplayItem("Done")],
+          streamedText: "Done",
+          toolStates: createToolCallStateMap(),
+        };
+      },
+      runOneToolCall: async (): Promise<Readonly<{
+        output: string;
+        isMutating: boolean;
+        workspaceId: string | null;
+        succeeded: true;
+        error: null;
+      }>> => ({
+        output: "{\"rows\":[]}",
+        isMutating: false,
+        workspaceId: "workspace-1",
+        succeeded: true,
+        error: null,
+      }),
+    }),
+  );
+
+  assert.deepEqual(compactionEvents, [{
+    domain: "chat",
+    action: "history_compacted",
+    vendor: "openai",
+    requestId: "req-loop",
+    sessionId: "session-1",
+    callIndex: 1,
+    compactionItems: 1,
+    callInputTokens: 180_000,
+  }]);
+  assert.deepEqual(openAIRequests.at(-1)?.input, [
+    systemItem,
+    COMPACTION_REPLAY_ITEM,
+    createFunctionCallReplayItem("call-1", "sql_query", "{}"),
+    { type: "function_call_output", call_id: "call-1", output: "{\"rows\":[]}" },
+    datetimeItem,
+  ]);
+  assert.deepEqual(completion.openaiItems, [
+    createFunctionCallReplayItem("call-1", "sql_query", "{}"),
+    COMPACTION_REPLAY_ITEM,
+    createFunctionCallOutputReplayItem("call-1", "{\"rows\":[]}"),
+    createAssistantReplayItem("Done"),
+  ]);
 });
 
 test("runOpenAILoop waits for async event handling before resolving completion", async (): Promise<void> => {
@@ -467,6 +594,93 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
     { type: "done" },
   ]);
   assert.deepEqual(completion.openaiItems.at(-1), createAssistantReplayItem("Continue from checkpoint B"));
+});
+
+test("runOpenAILoop keeps only the compaction item of an unusable tool-limit summary call", async (): Promise<void> => {
+  const params = createLoopParams();
+  const fallbackText = ti(params.locale, "chat.toolCallLimitReachedContinue", {
+    limit: CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
+  });
+  const compactionEvents: Array<Parameters<LoopDeps["log"]>[0]> = [];
+
+  const completion = await runOpenAILoopWithDeps(
+    params,
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      log: (event: Parameters<LoopDeps["log"]>[0]): void => {
+        if ("action" in event && event.action === "history_compacted") {
+          compactionEvents.push(event);
+        }
+      },
+      runOneModelCall: async (
+        _client: OpenAI,
+        _callParams: StartOpenAILoopParams,
+        _emitEvent: OpenAILoopEventHandler,
+        _request: OpenAIResponsesRequest,
+        _promptCacheKey: string,
+        callIndex: number,
+      ) => {
+        if (callIndex <= CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS) {
+          const callId = `call-${String(callIndex)}`;
+          return {
+            finalResponse: createFinalResponse(""),
+            functionCalls: [createFunctionCall(callId, "query_database", "{}")],
+            replayItems: [createFunctionCallReplayItem(callId, "query_database", "{}")],
+            streamedText: "",
+            toolStates: createStartedToolStates(callId, "query_database", "{}"),
+          };
+        }
+
+        // The summary call compacted and still asked for a tool, so its answer
+        // is unusable: the compaction item is the only replayable part, and its
+        // unanswered call must not reach the next turn.
+        return {
+          finalResponse: createCompactedResponse(200_000),
+          functionCalls: [createFunctionCall("call-summary", "query_database", "{}")],
+          replayItems: [
+            COMPACTION_REPLAY_ITEM,
+            createFunctionCallReplayItem("call-summary", "query_database", "{}"),
+          ],
+          streamedText: "",
+          toolStates: createStartedToolStates("call-summary", "query_database", "{}"),
+        };
+      },
+      runOneToolCall: async ({ item }): Promise<Readonly<{
+        output: string;
+        isMutating: boolean;
+        workspaceId: string | null;
+        succeeded: true;
+        error: null;
+      }>> => ({
+        output: `{\"tool\":\"${item.call_id}\"}`,
+        isMutating: false,
+        workspaceId: "workspace-1",
+        succeeded: true,
+        error: null,
+      }),
+    }),
+  );
+
+  assert.deepEqual(compactionEvents, [{
+    domain: "chat",
+    action: "history_compacted",
+    vendor: "openai",
+    requestId: "req-loop",
+    sessionId: "session-1",
+    callIndex: CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS + 1,
+    compactionItems: 1,
+    callInputTokens: 200_000,
+  }]);
+  assert.deepEqual(completion.openaiItems.slice(-2), [
+    COMPACTION_REPLAY_ITEM,
+    createAssistantReplayItem(fallbackText),
+  ]);
+  assert.ok(
+    !completion.openaiItems.some(
+      (item) => "call_id" in item && item.call_id === "call-summary",
+    ),
+    "the summary call's unanswered function call must not reach the next turn",
+  );
 });
 
 test("runOpenAILoop retries the same call on a transient OpenAI 5xx error", async (): Promise<void> => {
