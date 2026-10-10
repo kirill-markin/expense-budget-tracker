@@ -19,11 +19,13 @@ const POOL_ERROR_NAMESPACE = "ExpenseBudgetTracker/Db";
 const POOL_ERROR_METRIC_NAME = "PoolErrors";
 
 // Rendered CloudWatch filter patterns, written out literally so they can be compared with a
-// real log line: the ECS surfaces log one JSON object per line, while Lambda prefixes every
-// line with a timestamp and request id and can only be matched as text.
+// real log line. Every structured surface is matched on its fields, so text a client can get
+// into a log group cannot forge a pool error; only the FX worker, which has no structured
+// logger and receives no client text, is matched as a term.
 const WEB_POOL_ERROR_PATTERN = '{ ($.domain = "db") && ($.action = "pool_error") }';
 const AUTH_POOL_ERROR_PATTERN = '{ ($.domain = "auth") && ($.action = "db_pool_error") }';
-const SQL_API_POOL_ERROR_PATTERN = '"database_pool_error"';
+const SQL_API_POOL_ERROR_PATTERN =
+  '{ ($.domain = "sql_api") && ($.action = "database_pool_error") }';
 const FX_POOL_ERROR_PATTERN = '"Postgres pool error"';
 
 type MetricFilterShape = Readonly<{
