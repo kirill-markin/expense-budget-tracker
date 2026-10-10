@@ -30,6 +30,7 @@ type ChatResponseLogEvent = Readonly<{
   action: "response";
   vendor: "openai";
   requestId: string;
+  userId: string;
   sessionId: string;
   model: string;
   callIndex: number;
@@ -128,6 +129,7 @@ const getResponseUsage = (
 export const buildChatResponseLogEvent = (
   params: Readonly<{
     requestId: string;
+    userId: string;
     sessionId: string;
     callIndex: number;
     promptCacheKey: string;
@@ -145,6 +147,7 @@ export const buildChatResponseLogEvent = (
     action: "response",
     vendor: "openai",
     requestId: params.requestId,
+    userId: params.userId,
     sessionId: params.sessionId,
     model: params.model,
     callIndex: params.callIndex,

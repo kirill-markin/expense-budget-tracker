@@ -10,6 +10,7 @@ import {
   buildDocxPromptText,
   buildTextFilePromptText,
   buildWorkbookPromptText,
+  capAttachmentPromptText,
   isCsvAttachment,
   isDocxAttachment,
   isPdfAttachment,
@@ -23,6 +24,7 @@ import {
   type ServerChatMessage,
 } from "@/server/chat/openai/responses/replayItems";
 import {
+  ChatAttachmentTooLargeError,
   HeicFileAttachmentError,
   ImageMimeSignatureMismatchError,
   InvalidPdfAttachmentError,
@@ -31,7 +33,7 @@ import {
   UnsupportedImageMediaTypeError,
   validateChatAttachments,
 } from "@/server/chat/attachments/validation";
-import { buildSystemInstructions } from "@/server/chat/shared";
+import { buildSystemInstructions, formatDatetime } from "@/server/chat/shared";
 import { log } from "@/server/logger";
 
 type OpenAIInputItem = OpenAI.Responses.ResponseInputItem;
@@ -51,7 +53,8 @@ const MAX_TOOL_PAYLOAD_LENGTH = 4_000;
 const MAX_REASONING_SUMMARY_LENGTH = 2_000;
 
 const isChatAttachmentValidationError = (error: unknown): error is Error =>
-  error instanceof HeicFileAttachmentError
+  error instanceof ChatAttachmentTooLargeError
+  || error instanceof HeicFileAttachmentError
   || error instanceof ImageMimeSignatureMismatchError
   || error instanceof InvalidPdfAttachmentError
   || error instanceof InvalidBase64ImageDataError
@@ -118,15 +121,36 @@ const mapPdfAttachmentPart = (
     },
   ]);
 
+/** Extracted text for every format we can read; `null` for opaque binaries. */
+const buildExtractedFilePromptText = async (
+  part: FileContentPart,
+): Promise<string | null> => {
+  if (isCsvAttachment(part) || isTextFileAttachment(part)) {
+    return buildTextFilePromptText(part);
+  }
+
+  if (isWorkbookAttachment(part)) {
+    return buildWorkbookPromptText(part);
+  }
+
+  if (isDocxAttachment(part)) {
+    return buildDocxPromptText(part);
+  }
+
+  return null;
+};
+
 /**
  * Maps a persisted attachment back into the exact content shape we want to
  * resend to the model on later turns.
  *
- * The policy is intentionally format-aware:
+ * The policy is intentionally format-aware. Every format we can extract is sent
+ * as extracted text alone: the original bytes would be a second, billed copy of
+ * the same content on every turn.
  * - CSV files -> `input_text` only
- * - other text-like files -> `input_text` + original `input_file`
- * - workbooks -> extracted CSV text + original `input_file`
- * - DOCX -> extracted raw text + original `input_file`
+ * - other text-like files -> extracted text `input_text` only
+ * - workbooks -> extracted CSV text `input_text` only
+ * - DOCX -> extracted raw text `input_text` only
  * - images -> native `input_image`
  * - logical PDFs -> ordered extracted-text + JPEG page pairs
  * - legacy raw PDFs -> rejected before model input construction
@@ -144,64 +168,25 @@ const mapAttachmentPart = async (
       }];
     case "pdf":
       return mapPdfAttachmentPart(part);
-    case "file":
+    case "file": {
       if (isPdfAttachment(part)) {
         throw new LegacyPdfFileAttachmentError(0, part.mediaType, part.fileName);
       }
-      if (isCsvAttachment(part)) {
+
+      const promptText = await buildExtractedFilePromptText(part);
+      if (promptText === null) {
         return [{
-          type: "input_text",
-          text: buildTextFilePromptText(part),
+          type: "input_file",
+          filename: part.fileName,
+          file_data: buildFileDataUrl(part),
         }];
       }
 
-      if (isTextFileAttachment(part)) {
-        return [
-          {
-            type: "input_text",
-            text: buildTextFilePromptText(part),
-          },
-          {
-            type: "input_file",
-            filename: part.fileName,
-            file_data: buildFileDataUrl(part),
-          },
-        ];
-      }
-
-      if (isWorkbookAttachment(part)) {
-        return [
-          {
-            type: "input_text",
-            text: buildWorkbookPromptText(part),
-          },
-          {
-            type: "input_file",
-            filename: part.fileName,
-            file_data: buildFileDataUrl(part),
-          },
-        ];
-      }
-
-      if (isDocxAttachment(part)) {
-        return [
-          {
-            type: "input_text",
-            text: await buildDocxPromptText(part),
-          },
-          {
-            type: "input_file",
-            filename: part.fileName,
-            file_data: buildFileDataUrl(part),
-          },
-        ];
-      }
-
       return [{
-        type: "input_file",
-        filename: part.fileName,
-        file_data: buildFileDataUrl(part),
+        type: "input_text",
+        text: capAttachmentPromptText(part.fileName, promptText),
       }];
+    }
   }
 };
 
@@ -422,7 +407,7 @@ export const buildChatCompletionInput = async (
   const input: Array<OpenAIInputItem> = [{
     role: "system",
     type: "message",
-    content: buildSystemInstructions(timezone),
+    content: buildSystemInstructions(),
   }];
 
   for (const message of normalizedHistory) {
@@ -438,5 +423,16 @@ export const buildChatCompletionInput = async (
   }
 
   input.push(await buildUserInputMessage(turnInput));
+
+  // The clock is the only part of the prompt that moves between turns, so it is
+  // the last input item. OpenAI matches the cache on the longest byte-identical
+  // prefix, so everything ahead of it - instructions, replayed history and the
+  // current user message - stays inside the prefix the next turn can reuse.
+  input.push({
+    role: "system",
+    type: "message",
+    content: formatDatetime(timezone),
+  });
+
   return input;
 };
