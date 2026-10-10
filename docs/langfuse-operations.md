@@ -132,7 +132,7 @@ If traces appear but are missing grouping or metadata:
 If tool activity is missing from a trace:
 
 - confirm the user turn actually triggered a tool call
-- check application logs for `tool_call` events
+- check application logs for `tool_call` events with the queries in [agent-telemetry.md](agent-telemetry.md)
 - confirm the tool execution completed inside the same request lifecycle
 
 If a chat works but no Langfuse data is exported:
