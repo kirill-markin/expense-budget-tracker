@@ -15,6 +15,7 @@ import {
   type OpenAILoopCompletion,
   type StartOpenAILoopParams,
 } from "@/server/chat/openai/loop";
+import type { ChatCompletionInput } from "@/server/chat/openai/responses/input";
 import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import {
@@ -44,7 +45,10 @@ const createLoopParams = (): StartOpenAILoopParams => ({
 type LoopDeps = Parameters<typeof runOpenAILoopWithDeps>[2];
 
 const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
-  buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> => [],
+  buildChatCompletionInput: async (): Promise<ChatCompletionInput> => ({
+    items: [],
+    replayedMessages: 0,
+  }),
   getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
   runOneModelCall: async (): Promise<never> => {
     throw new Error("runOneModelCall was invoked but the test did not override it via createTestLoopDeps");
@@ -106,12 +110,22 @@ const createFunctionCall = (
   status: "completed",
 });
 
+const FINAL_RESPONSE_INPUT_TOKENS = 1_200;
+const FINAL_RESPONSE_OUTPUT_TOKENS = 300;
+
 const createFinalResponse = (
   outputText: string,
 ): OpenAI.Responses.Response =>
   ({
     output_text: outputText,
     output: [],
+    usage: {
+      input_tokens: FINAL_RESPONSE_INPUT_TOKENS,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: FINAL_RESPONSE_OUTPUT_TOKENS,
+      output_tokens_details: { reasoning_tokens: 0 },
+      total_tokens: FINAL_RESPONSE_INPUT_TOKENS + FINAL_RESPONSE_OUTPUT_TOKENS,
+    },
   } as unknown as OpenAI.Responses.Response);
 
 const COMPACTION_REPLAY_ITEM: StoredOpenAIReplayItem = {
@@ -233,8 +247,10 @@ test("runOpenAILoop replays an in-run compaction item with the tool result and t
     params,
     async (): Promise<void> => {},
     createTestLoopDeps({
-      buildChatCompletionInput: async (): Promise<ReadonlyArray<OpenAI.Responses.ResponseInputItem>> =>
-        [systemItem, userItem, datetimeItem],
+      buildChatCompletionInput: async (): Promise<ChatCompletionInput> => ({
+        items: [systemItem, userItem, datetimeItem],
+        replayedMessages: 2,
+      }),
       log: (event: Parameters<LoopDeps["log"]>[0]): void => {
         if ("action" in event && event.action === "history_compacted") {
           compactionEvents.push(event);
@@ -311,6 +327,13 @@ test("runOpenAILoop replays an in-run compaction item with the tool result and t
     createFunctionCallOutputReplayItem("call-1", "{\"rows\":[]}"),
     createAssistantReplayItem("Done"),
   ]);
+  // The measured call replayed from the compaction item, not from the stored
+  // history, so its usage sizes this turn's own items alone.
+  assert.deepEqual(completion.replayMeasurement, {
+    inputTokens: FINAL_RESPONSE_INPUT_TOKENS,
+    outputTokens: FINAL_RESPONSE_OUTPUT_TOKENS,
+    replayedMessages: 0,
+  });
 });
 
 test("runOpenAILoop waits for async event handling before resolving completion", async (): Promise<void> => {
@@ -379,6 +402,11 @@ test("runOpenAILoop waits for async event handling before resolving completion",
   ]);
   assert.deepEqual(completion, {
     openaiItems: [createAssistantReplayItem("Partial answer")],
+    replayMeasurement: {
+      inputTokens: FINAL_RESPONSE_INPUT_TOKENS,
+      outputTokens: FINAL_RESPONSE_OUTPUT_TOKENS,
+      replayedMessages: 0,
+    },
   } satisfies OpenAILoopCompletion);
 });
 
@@ -594,6 +622,9 @@ test("runOpenAILoop emits a synthetic final delta and returns the summary replay
     { type: "done" },
   ]);
   assert.deepEqual(completion.openaiItems.at(-1), createAssistantReplayItem("Continue from checkpoint B"));
+  // The summary answer is usable, so the stored items are what that call sent
+  // and the turn is measured.
+  assert.notEqual(completion.replayMeasurement, undefined);
 });
 
 test("runOpenAILoop keeps only the compaction item of an unusable tool-limit summary call", async (): Promise<void> => {
@@ -681,6 +712,11 @@ test("runOpenAILoop keeps only the compaction item of an unusable tool-limit sum
     ),
     "the summary call's unanswered function call must not reach the next turn",
   );
+  // The stored items are a compaction item plus one synthetic line, not what the
+  // summary call sent, so no measurement is recorded: the whole pre-compaction
+  // input would otherwise be attributed to a message replaying a few hundred
+  // tokens, and the next window could push past the answer the user just read.
+  assert.equal(completion.replayMeasurement, undefined);
 });
 
 test("runOpenAILoop retries the same call on a transient OpenAI 5xx error", async (): Promise<void> => {
@@ -711,6 +747,11 @@ test("runOpenAILoop retries the same call on a transient OpenAI 5xx error", asyn
   assert.equal(attemptCount, 2);
   assert.deepEqual(completion, {
     openaiItems: [createAssistantReplayItem("Recovered")],
+    replayMeasurement: {
+      inputTokens: FINAL_RESPONSE_INPUT_TOKENS,
+      outputTokens: FINAL_RESPONSE_OUTPUT_TOKENS,
+      replayedMessages: 0,
+    },
   } satisfies OpenAILoopCompletion);
 });
 

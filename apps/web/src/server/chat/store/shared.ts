@@ -1,4 +1,5 @@
 import type {
+  ChatHistoryMeasurement,
   ServerChatMessage,
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
@@ -67,6 +68,7 @@ export type PersistedChatMessageItem = Readonly<{
   role: "user" | "assistant";
   content: ReadonlyArray<ContentPart>;
   openaiItems?: ReadonlyArray<StoredOpenAIReplayItem>;
+  replayMeasurement?: ChatHistoryMeasurement;
   state: ChatItemState;
   isError: boolean;
   isStopped: boolean;
@@ -118,6 +120,7 @@ export type UpdateChatMessageItemParams = Readonly<{
   content: ReadonlyArray<ContentPart>;
   state: ChatItemState;
   assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
+  assistantReplayMeasurement?: ChatHistoryMeasurement;
 }>;
 
 export type UpdateChatMessageItemAndInvalidateMainContentParams = Readonly<{
@@ -160,6 +163,14 @@ export type CompleteChatRunParams = Readonly<{
   assistantItemId: string;
   assistantContent: ReadonlyArray<ContentPart>;
   assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
+  /**
+   * Recorded for every run whose stored items are what its last model call
+   * sent, which is all of them but the tool-limit fallback: that branch stores a
+   * compaction item and one synthetic line in place of an unusable answer, so
+   * its measurement would describe a message that no longer exists and the turn
+   * is sized by estimate instead.
+   */
+  assistantReplayMeasurement?: ChatHistoryMeasurement;
 }>;
 
 export type UserStoppedChatRunUpdatePlan = Readonly<{

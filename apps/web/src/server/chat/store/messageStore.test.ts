@@ -176,3 +176,86 @@ test("assistant terminal errors and invalidating progress advance visible sessio
   assert.match(recordedQueries[0].text, /last_message_at = CASE/);
   assert.match(recordedQueries[1].text, /last_message_at = CASE/);
 });
+
+const createStoredAssistantRow = (
+  storedReplayMeasurement: unknown,
+): QueryResult => ({
+  command: "SELECT",
+  rowCount: 1,
+  oid: 0,
+  fields: [],
+  rows: [{
+    item_id: "assistant-1",
+    session_id: "session-1",
+    state: "completed",
+    payload: {
+      role: "assistant",
+      content: [{ type: "text", text: "Done" }],
+      ...(storedReplayMeasurement === undefined
+        ? {}
+        : { replayMeasurement: storedReplayMeasurement }),
+    },
+    created_at: "2026-05-02T13:00:00.000Z",
+    updated_at: "2026-05-02T13:00:00.000Z",
+  }],
+});
+
+const createStoredAssistantQueryFn = (
+  storedReplayMeasurement: unknown,
+  persistedPayloads: Array<unknown>,
+): QueryFn => async (_text, params): Promise<QueryResult> => {
+  persistedPayloads.push(JSON.parse(String(params[2])));
+  return createStoredAssistantRow(storedReplayMeasurement);
+};
+
+test("a completed assistant turn persists its replay measurement", async (): Promise<void> => {
+  const persistedPayloads: Array<unknown> = [];
+  const replayMeasurement = { inputTokens: 12_000, outputTokens: 800, replayedMessages: 6 };
+
+  const item = await updateChatItemWithQuery(
+    createStoredAssistantQueryFn(replayMeasurement, persistedPayloads),
+    {
+      sessionId: "session-1",
+      itemId: "assistant-1",
+      content: [{ type: "text", text: "Done" }],
+      state: "completed",
+      assistantReplayMeasurement: replayMeasurement,
+    },
+  );
+
+  assert.deepEqual(persistedPayloads, [{
+    role: "assistant",
+    content: [{ type: "text", text: "Done" }],
+    replayMeasurement,
+  }]);
+  assert.deepEqual(item.replayMeasurement, replayMeasurement);
+});
+
+test("an unusable stored replay measurement reads as absent", async (): Promise<void> => {
+  // A JSONB row written by an older code path, and one whose counts did not
+  // survive serialization: either must leave the turn unmeasured rather than
+  // feed a non-number into every later history weight.
+  const unusableMeasurements: ReadonlyArray<unknown> = [
+    undefined,
+    null,
+    { inputTokens: 1_000 },
+    { inputTokens: null, outputTokens: 200, replayedMessages: 1 },
+    { inputTokens: 1_000.5, outputTokens: 200, replayedMessages: 1 },
+    { inputTokens: "1000", outputTokens: 200, replayedMessages: 1 },
+    { inputTokens: -1, outputTokens: 200, replayedMessages: 1 },
+  ];
+
+  for (const storedReplayMeasurement of unusableMeasurements) {
+    const item = await updateChatItemWithQuery(
+      createStoredAssistantQueryFn(storedReplayMeasurement, []),
+      {
+        sessionId: "session-1",
+        itemId: "assistant-1",
+        content: [{ type: "text", text: "Done" }],
+        state: "completed",
+      },
+    );
+
+    assert.equal(item.replayMeasurement, undefined);
+  }
+});

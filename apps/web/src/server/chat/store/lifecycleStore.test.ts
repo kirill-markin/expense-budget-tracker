@@ -15,6 +15,7 @@ import {
   requireAcceptedChatTurnWithQuery,
 } from "@/server/chat/store/lifecycleStore";
 import { updateAssistantMessageItemWithQuery } from "@/server/chat/store/messageStore";
+import type { ChatHistoryMeasurement } from "@/server/chat/openai/responses/replayItems";
 import {
   ChatSessionConflictError,
   ChatSessionRunTransitionError,
@@ -172,16 +173,24 @@ const createUserCancelQueryFn = (options: UserCancelQueryOptions): QueryFn => as
   throw new Error(`Unexpected query: ${text}`);
 };
 
+const TERMINAL_RUN_REPLAY_MEASUREMENT: ChatHistoryMeasurement = {
+  inputTokens: 9_000,
+  outputTokens: 400,
+  replayedMessages: 2,
+};
+
 const createTerminalRunParams = (): Readonly<{
   sessionId: string;
   activeRunId: string;
   assistantItemId: string;
   assistantContent: ReadonlyArray<{ type: "text"; text: string }>;
+  assistantReplayMeasurement: ChatHistoryMeasurement;
 }> => ({
   sessionId: "session-1",
   activeRunId: "run-1",
   assistantItemId: "assistant-1",
   assistantContent: [{ type: "text", text: "Answer" }],
+  assistantReplayMeasurement: TERMINAL_RUN_REPLAY_MEASUREMENT,
 });
 
 const createFreshRunQueryFn = (
@@ -257,6 +266,13 @@ test("completeChatRunWithQuery locks the active run before updating the assistan
   assert.match(recordedQueries[0].text, /active_run_id = \$2/);
   assert.equal(recordedQueries[1].text.includes("UPDATE public.chat_items"), true);
   assert.equal(recordedQueries[2].text.includes("UPDATE public.chat_sessions"), true);
+  // The completed turn carries the usage later turns size the history from.
+  assert.deepEqual(
+    (JSON.parse(String(recordedQueries[1].params[2])) as Readonly<{
+      replayMeasurement: ChatHistoryMeasurement;
+    }>).replayMeasurement,
+    TERMINAL_RUN_REPLAY_MEASUREMENT,
+  );
 });
 
 test("prepareFreshChatRunWithQuery creates one running session and the two required items", async (): Promise<void> => {

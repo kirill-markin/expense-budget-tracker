@@ -9,6 +9,7 @@ import {
 import { prependSessionEvent } from "@/server/chat/http/freshSessionRoute";
 import { createChatEventStream } from "@/server/chat/http/sse";
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
+import type { OpenAILoopCompletion } from "@/server/chat/openai/loop";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import type { ChatTurnObservationOutcome } from "@/server/chat/openai/langfuse";
 import {
@@ -34,6 +35,18 @@ import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 type ActiveRunPayload = Readonly<{ activeRunId: string }>;
+
+/** Stands for the usage the provider reported for the run's last model call. */
+const createLoopCompletion = (
+  openaiItems: ReadonlyArray<StoredOpenAIReplayItem>,
+): OpenAILoopCompletion => ({
+  openaiItems,
+  replayMeasurement: {
+    inputTokens: 2_000,
+    outputTokens: 500,
+    replayedMessages: 1,
+  },
+});
 
 type Deferred = Readonly<{
   promise: Promise<void>;
@@ -151,11 +164,8 @@ const createRuntimeDependencies = (
     completedPayload: unknown;
   },
 ): ChatRuntimeDependencies => ({
-  runOpenAILoop: overrides.runOpenAILoop ?? (async (): Promise<Readonly<{
-    openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-  }>> => ({
-    openaiItems: [],
-  })),
+  runOpenAILoop: overrides.runOpenAILoop ?? (async (): Promise<OpenAILoopCompletion> =>
+    createLoopCompletion([])),
   startChatTurnObservation: overrides.startChatTurnObservation ?? (async (
     _params,
     fn: (
@@ -257,12 +267,10 @@ test("runPersistedChatSessionWithDeps reports and runs the effective fallback mo
             observedTraceModel = observationParams.model;
             await fn(null);
           },
-          runOpenAILoop: async (loopParams): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (loopParams): Promise<OpenAILoopCompletion> => {
             observedLoopModel = loopParams.model;
             observedLoopReasoningEffort = loopParams.reasoningEffort;
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         recorded,
@@ -316,9 +324,7 @@ test("runPersistedChatSessionWithDeps persists stopped state for user aborts wit
           runOpenAILoop: async (
             loopParams,
             onEvent,
-          ): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          ): Promise<OpenAILoopCompletion> => {
             assert.equal(loopParams.sessionId, params.sessionId);
             assert.equal(loopParams.turnId, params.activeRunId);
             await onEvent(createDeltaEvent("Partial answer"));
@@ -379,9 +385,7 @@ test("runPersistedChatSessionWithDeps classifies persisted cancellation before a
           startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
             rootOutcome = await fn(null);
           },
-          runOpenAILoop: async (): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             assert.deepEqual(stopActiveChatRun(params.sessionId, params.activeRunId), {
               stopped: true,
               activeRunId: params.activeRunId,
@@ -467,9 +471,7 @@ test("runPersistedChatSessionWithDeps retries requested cancellation after stop 
           lifecycle.push("runtime-cancel-persisted");
           recorded.cancelledPayload = payload;
         },
-        runOpenAILoop: async (): Promise<Readonly<{
-          openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-        }>> => {
+        runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
           lifecycle.push("loop-started");
           loopStarted.resolve();
           await releaseLoopRejection.promise;
@@ -548,16 +550,14 @@ test("runPersistedChatSessionWithDeps stops post-event work after cancellation p
           startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
             rootOutcome = await fn(null);
           },
-          runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
             assert.deepEqual(stopActiveChatRun(params.sessionId, params.activeRunId), {
               stopped: true,
               activeRunId: params.activeRunId,
             });
             await onEvent(createDeltaEvent("Must not be processed"));
             postEventWorkRan = true;
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         recorded,
@@ -615,12 +615,10 @@ test("runPersistedChatSessionWithDeps stops tool work when a pending event write
             await releaseProgressWrite.promise;
             return baseDependencies.updateAssistantMessageItem(userId, workspaceId, payload);
           },
-          runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
             await onEvent(createStartedToolCallEvent());
             postEventToolExecutionAttempted = true;
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         recorded,
@@ -703,12 +701,10 @@ test("runPersistedChatSessionWithDeps keeps persisted cancellation when an in-fl
             operation: "update assistant progress",
           });
         },
-        runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
-          openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-        }>> => {
+        runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
           await onEvent(createDeltaEvent("Partial answer"));
           postEventWorkRan = true;
-          return { openaiItems: [] };
+          return createLoopCompletion([]);
         },
       },
       recorded,
@@ -791,9 +787,7 @@ test("runPersistedChatSessionWithDeps rejects abort cancellation persistence thr
               lifecycle.push("cancel-persist");
               throw storeError;
             },
-            runOpenAILoop: async (): Promise<Readonly<{
-              openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-            }>> => {
+            runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
               assert.deepEqual(stopActiveChatRun(params.sessionId, params.activeRunId), {
                 stopped: true,
                 activeRunId: params.activeRunId,
@@ -849,15 +843,13 @@ test("runPersistedChatSessionWithDeps rejects event cancellation persistence thr
               lifecycle.push("cancel-persist");
               throw storeError;
             },
-            runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
-              openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-            }>> => {
+            runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
               assert.deepEqual(stopActiveChatRun(params.sessionId, params.activeRunId), {
                 stopped: true,
                 activeRunId: params.activeRunId,
               });
               await onEvent(createDeltaEvent("Ignored after cancellation"));
-              return { openaiItems: [] };
+              return createLoopCompletion([]);
             },
           },
           recorded,
@@ -907,14 +899,12 @@ test("runPersistedChatSessionWithDeps rejects resolved-loop cancellation persist
               lifecycle.push("cancel-persist");
               throw storeError;
             },
-            runOpenAILoop: async (): Promise<Readonly<{
-              openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-            }>> => {
+            runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
               assert.deepEqual(stopActiveChatRun(params.sessionId, params.activeRunId), {
                 stopped: true,
                 activeRunId: params.activeRunId,
               });
-              return { openaiItems: [] };
+              return createLoopCompletion([]);
             },
           },
           recorded,
@@ -964,9 +954,7 @@ test("runPersistedChatSessionWithDeps persists terminal errors when the provider
           runOpenAILoop: async (
             _loopParams,
             onEvent,
-          ): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          ): Promise<OpenAILoopCompletion> => {
             await onEvent(createDeltaEvent("Partial answer"));
             throw new Error("Provider stream failed");
           },
@@ -1040,9 +1028,7 @@ test("runPersistedChatSessionWithDeps retries requested cancellation after termi
           recorded.cancelledPayload = payload;
           lifecycle.push("cancellation-persisted");
         },
-        runOpenAILoop: async (): Promise<Readonly<{
-          openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-        }>> => {
+        runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
           throw new Error("Provider stream failed");
         },
       },
@@ -1117,9 +1103,7 @@ test("runPersistedChatSessionWithDeps rejects terminal failure persistence throu
               lifecycle.push("terminal-persist");
               throw storeError;
             },
-            runOpenAILoop: async (): Promise<Readonly<{
-              openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-            }>> => {
+            runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
               throw new Error("Provider stream failed");
             },
           },
@@ -1171,13 +1155,13 @@ test("startPersistedChatRunWithDeps persists and streams recovery for poisoned H
       requireReservation(sessionId, params.activeRunId),
       createRuntimeDependencies(
         {
-          runOpenAILoop: async (loopParams): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (loopParams): Promise<OpenAILoopCompletion> => {
             await buildChatCompletionInput(
               loopParams.localMessages,
               loopParams.turnInput,
               loopParams.timezone,
+              loopParams.sessionId,
+              loopParams.requestId,
             );
             throw new Error("Expected stored attachment preflight to reject the input");
           },
@@ -1231,9 +1215,7 @@ test("runPersistedChatSessionWithDeps skips terminal error persistence when prov
           startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
             rootOutcome = await fn(null);
           },
-          runOpenAILoop: async (): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             throw new Error("Provider stream failed");
           },
           persistAssistantTerminalError: async (): Promise<void> => {
@@ -1285,9 +1267,7 @@ test("runPersistedChatSessionWithDeps skips cancellation persistence when user a
           runOpenAILoop: async (
             _loopParams,
             _onEvent,
-          ): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          ): Promise<OpenAILoopCompletion> => {
             assert.deepEqual(stopActiveChatRun(sessionId, params.activeRunId), {
               stopped: true,
               activeRunId: params.activeRunId,
@@ -1424,12 +1404,10 @@ test("cancelling the session-prefixed SSE stream unsubscribes a pending read wit
     requireReservation(sessionId, params.activeRunId),
     createRuntimeDependencies(
       {
-        runOpenAILoop: async (): Promise<Readonly<{
-          openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-        }>> => {
+        runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
           runStarted.resolve();
           await releaseBackendRun.promise;
-          return { openaiItems: [] };
+          return createLoopCompletion([]);
         },
         endTaskProtection: async (): Promise<void> => {
           backendRunFinished.resolve();
@@ -1495,13 +1473,11 @@ test("startPersistedChatRunWithDeps emits done only after completion persistence
     requireReservation(params.sessionId, params.activeRunId),
     createRuntimeDependencies(
       {
-        runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
-          openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-        }>> => {
+        runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
           await onEvent(finalDelta);
           await onEvent({ type: "done" });
           lifecycle.push("loop-done-returned");
-          return { openaiItems: [] };
+          return createLoopCompletion([]);
         },
         completeChatRun: async (_userId, _workspaceId, payload): Promise<void> => {
           lifecycle.push("complete-started");
@@ -1572,11 +1548,9 @@ test("startPersistedChatRunWithDeps logs rejected background persistence", async
       requireReservation(params.sessionId, params.activeRunId),
       createRuntimeDependencies(
         {
-          runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
             await onEvent({ type: "done" });
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
           completeChatRun: async (): Promise<void> => {
             throw storeError;
@@ -1650,16 +1624,14 @@ test("startPersistedChatRunWithDeps logs a workspace that vanished mid-run once,
           updateAssistantMessageItem: async (): Promise<never> => {
             throw workspaceError;
           },
-          runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
             t.mock.timers.tick(CHAT_RUN_HEARTBEAT_INTERVAL_MS);
             await new Promise<void>((resolve) => {
               setImmediate(resolve);
             });
             t.mock.timers.tick(CHAT_RUN_HEARTBEAT_INTERVAL_MS * 3);
             await onEvent(createDeltaEvent("Hello"));
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         recorded,
@@ -1707,11 +1679,9 @@ test("startPersistedChatRunWithDeps suppresses done when completion loses its tr
       requireReservation(params.sessionId, params.activeRunId),
       createRuntimeDependencies(
         {
-          runOpenAILoop: async (_loopParams, onEvent): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
             await onEvent({ type: "done" });
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
           completeChatRun: async (): Promise<void> => {
             throw new ChatSessionRunTransitionError({
@@ -1825,9 +1795,7 @@ test("startPersistedChatRunWithDeps replaces persisted local stop state without 
       oldParams,
       createRuntimeDependencies(
         {
-          runOpenAILoop: async (): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             oldLoopStarted.resolve();
             await oldRelease.promise;
             const abortError = new Error("User aborted");
@@ -1863,11 +1831,9 @@ test("startPersistedChatRunWithDeps replaces persisted local stop state without 
       newReservation,
       createRuntimeDependencies(
         {
-          runOpenAILoop: async (): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             await newRelease.promise;
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         newRecorded,
@@ -1933,14 +1899,12 @@ test("late done from a replaced run does not close the newer stream", async (): 
           runOpenAILoop: async (
             _loopParams,
             onEvent,
-          ): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          ): Promise<OpenAILoopCompletion> => {
             oldLoopStarted.resolve();
             await oldEmitDone.promise;
             await onEvent({ type: "done" });
             oldPostEventWorkRan = true;
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         oldRecorded,
@@ -1963,11 +1927,9 @@ test("late done from a replaced run does not close the newer stream", async (): 
       newReservation,
       createRuntimeDependencies(
         {
-          runOpenAILoop: async (): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             await newRelease.promise;
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         newRecorded,
@@ -2038,11 +2000,9 @@ test("runPersistedChatSessionWithDeps persists finalized output before resolving
           runOpenAILoop: async (
             _loopParams,
             onEvent,
-          ): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          ): Promise<OpenAILoopCompletion> => {
             await onEvent(createDeltaEvent("Done"));
-            return { openaiItems: replayItems };
+            return createLoopCompletion(replayItems);
           },
         },
         recorded,
@@ -2101,11 +2061,9 @@ test("runPersistedChatSessionWithDeps does not enter OpenAI when startup admissi
       createRuntimeDependencies(
         {
           touchChatSessionHeartbeat: async (): Promise<boolean> => false,
-          runOpenAILoop: async (): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             openAILoopCallCount += 1;
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         recorded,
@@ -2148,11 +2106,9 @@ test("runPersistedChatSessionWithDeps logs startup store errors without terminal
           touchChatSessionHeartbeat: async (): Promise<boolean> => {
             throw storeError;
           },
-          runOpenAILoop: async (): Promise<Readonly<{
-            openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
-          }>> => {
+          runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             openAILoopCallCount += 1;
-            return { openaiItems: [] };
+            return createLoopCompletion([]);
           },
         },
         recorded,

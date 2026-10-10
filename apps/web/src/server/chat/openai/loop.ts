@@ -12,6 +12,8 @@ import {
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
+  findLatestCompactionItemIndex,
+  type ChatHistoryMeasurement,
   type StoredOpenAIReplayMessage,
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
@@ -22,6 +24,7 @@ import {
   buildOpenAIResponsesRequestWithOptions,
   buildPromptCacheKey,
   getResponseInputTokens,
+  getResponseOutputTokens,
   type OpenAIResponsesRequest,
 } from "@/server/chat/openai/responses/request";
 import {
@@ -96,6 +99,16 @@ type OpenAILoopDependencies = Readonly<{
 
 export type OpenAILoopCompletion = Readonly<{
   openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
+  /**
+   * What the run's last model call sent and produced. Persisted with the turn
+   * so later turns size the stored history from measured usage instead of a
+   * character estimate.
+   *
+   * Absent when the stored items are not what that call sent, which is the
+   * tool-limit fallback below: the turn is then sized by estimate, like one that
+   * errored or was cancelled.
+   */
+  replayMeasurement?: ChatHistoryMeasurement;
 }>;
 
 export type OpenAILoopEventHandler = (
@@ -302,6 +315,26 @@ const runOneModelCallWithRetry = async (
 };
 
 /**
+ * Stored messages the next call's input will contain. A compaction item this
+ * run already collected replaces the replayed history in every later call of
+ * the run, so such a call measures this turn's own items alone.
+ */
+const selectReplayedMessages = (
+  baseReplayedMessages: number,
+  continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
+): number =>
+  findLatestCompactionItemIndex(continuationItems) === -1 ? baseReplayedMessages : 0;
+
+const buildReplayMeasurement = (
+  modelCall: ModelCallResult,
+  replayedMessages: number,
+): ChatHistoryMeasurement => ({
+  inputTokens: getResponseInputTokens(modelCall.finalResponse),
+  outputTokens: getResponseOutputTokens(modelCall.finalResponse),
+  replayedMessages,
+});
+
+/**
  * Records a call that came back with a compaction item. Every later call of the
  * run replays from that item instead of the context it absorbed, and
  * `buildOpenAIResponsesRequest` applies that cut.
@@ -340,6 +373,7 @@ const completeToolLimitSummaryTurn = async (
   log: typeof serverLog,
   client: OpenAI,
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
+  baseReplayedMessages: number,
   continuationItems: Array<StoredOpenAIReplayItem>,
   promptCacheKey: string,
 ): Promise<OpenAILoopCompletion> => {
@@ -354,6 +388,7 @@ const completeToolLimitSummaryTurn = async (
   });
 
   const summaryCallIndex = CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS + 1;
+  const replayedMessages = selectReplayedMessages(baseReplayedMessages, continuationItems);
   const summaryCall = await runOneModelCallWithRetry({
     runOneModelCallFn,
     backoffMs,
@@ -379,6 +414,7 @@ const completeToolLimitSummaryTurn = async (
 
   logInRunCompaction(log, params, summaryCallIndex, summaryCall);
 
+  const replayMeasurement = buildReplayMeasurement(summaryCall, replayedMessages);
   const finalResponseText = summaryCall.finalResponse.output_text.trim();
   const finalAssistantText = finalResponseText.length > 0
     ? finalResponseText
@@ -391,6 +427,7 @@ const completeToolLimitSummaryTurn = async (
     await emitEvent({ type: "done" });
     return {
       openaiItems: continuationItems,
+      replayMeasurement,
     };
   }
 
@@ -408,9 +445,12 @@ const completeToolLimitSummaryTurn = async (
     await pushSyntheticAssistantDelta(emitEvent, fallbackText, summaryCallIndex - 1);
   }
   await emitEvent({ type: "done" });
-  return {
-    openaiItems: continuationItems,
-  };
+  // No measurement: what this branch stores is a compaction item plus one
+  // synthetic line, while the measurement covers the whole pre-compaction call.
+  // Attributing a six-figure input to a message that replays a few hundred
+  // tokens would let the next window push straight past the answer the user
+  // just read. The estimate sizes exactly what the message does replay.
+  return { openaiItems: continuationItems };
 };
 
 const runLoopWithDeps = async (
@@ -419,16 +459,22 @@ const runLoopWithDeps = async (
   dependencies: OpenAILoopDependencies,
 ): Promise<OpenAILoopCompletion> => {
   const client = dependencies.getObservedOpenAIClient();
-  const baseInput = await dependencies.buildChatCompletionInput(
+  const {
+    items: baseInput,
+    replayedMessages: baseReplayedMessages,
+  } = await dependencies.buildChatCompletionInput(
     params.localMessages,
     params.turnInput,
     params.timezone,
+    params.sessionId,
+    params.requestId,
   );
   const continuationItems: Array<StoredOpenAIReplayItem> = [];
   const promptCacheKey = buildPromptCacheKey(params.sessionId);
 
   const retryBackoffMs = dependencies.getModelCallRetryBackoffMs();
   for (let callIndex = 1; callIndex <= CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS; callIndex += 1) {
+    const replayedMessages = selectReplayedMessages(baseReplayedMessages, continuationItems);
     const modelCall = await runOneModelCallWithRetry({
       runOneModelCallFn: dependencies.runOneModelCall,
       backoffMs: retryBackoffMs,
@@ -457,6 +503,7 @@ const runLoopWithDeps = async (
       await emitEvent({ type: "done" });
       return {
         openaiItems: continuationItems,
+        replayMeasurement: buildReplayMeasurement(modelCall, replayedMessages),
       };
     }
 
@@ -506,6 +553,7 @@ const runLoopWithDeps = async (
         dependencies.log,
         client,
         baseInput,
+        baseReplayedMessages,
         continuationItems,
         promptCacheKey,
       );
