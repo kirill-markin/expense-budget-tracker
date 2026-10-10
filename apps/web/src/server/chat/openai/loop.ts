@@ -21,6 +21,7 @@ import {
   buildOpenAIResponsesRequest,
   buildOpenAIResponsesRequestWithOptions,
   buildPromptCacheKey,
+  getResponseInputTokens,
   type OpenAIResponsesRequest,
 } from "@/server/chat/openai/responses/request";
 import {
@@ -300,6 +301,36 @@ const runOneModelCallWithRetry = async (
   );
 };
 
+/**
+ * Records a call that came back with a compaction item. Every later call of the
+ * run replays from that item instead of the context it absorbed, and
+ * `buildOpenAIResponsesRequest` applies that cut.
+ */
+const logInRunCompaction = (
+  log: typeof serverLog,
+  params: StartOpenAILoopParams,
+  callIndex: number,
+  modelCall: ModelCallResult,
+): void => {
+  const compactionItems = modelCall.replayItems.filter(
+    (item) => item.type === "compaction",
+  ).length;
+  if (compactionItems === 0) {
+    return;
+  }
+
+  log({
+    domain: "chat",
+    action: "history_compacted",
+    vendor: "openai",
+    requestId: params.requestId,
+    sessionId: params.sessionId,
+    callIndex,
+    compactionItems,
+    callInputTokens: getResponseInputTokens(modelCall.finalResponse),
+  });
+};
+
 const completeToolLimitSummaryTurn = async (
   params: StartOpenAILoopParams,
   emitEvent: OpenAILoopEventHandler,
@@ -346,6 +377,8 @@ const completeToolLimitSummaryTurn = async (
     callIndex: summaryCallIndex,
   });
 
+  logInRunCompaction(log, params, summaryCallIndex, summaryCall);
+
   const finalResponseText = summaryCall.finalResponse.output_text.trim();
   const finalAssistantText = finalResponseText.length > 0
     ? finalResponseText
@@ -362,7 +395,15 @@ const completeToolLimitSummaryTurn = async (
   }
 
   const fallbackText = buildToolLimitFallbackText(params.locale);
-  continuationItems.push(createAssistantReplayMessage(fallbackText));
+  // The summary call's own answer is unusable here, but a compaction item it
+  // returned is the only replayable form of the context it absorbed, so the
+  // next turn still needs it. Its unanswered function calls are left out: this
+  // turn ends without running them, and replaying a call without its output is
+  // rejected.
+  continuationItems.push(
+    ...summaryCall.replayItems.filter((item) => item.type === "compaction"),
+    createAssistantReplayMessage(fallbackText),
+  );
   if (summaryCall.streamedText.length === 0) {
     await pushSyntheticAssistantDelta(emitEvent, fallbackText, summaryCallIndex - 1);
   }
@@ -410,6 +451,7 @@ const runLoopWithDeps = async (
     });
 
     continuationItems.push(...modelCall.replayItems);
+    logInRunCompaction(dependencies.log, params, callIndex, modelCall);
 
     if (modelCall.functionCalls.length === 0) {
       await emitEvent({ type: "done" });

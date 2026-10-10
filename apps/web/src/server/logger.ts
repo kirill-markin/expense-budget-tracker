@@ -4,7 +4,7 @@ import type { ChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
-type ChatReplayDropReason = "missing_encrypted_content";
+type ChatReplayDropReason = "missing_encrypted_content" | "missing_replay_fields";
 
 /**
  * Optional vendor-side error context attached to chat error and retry log
@@ -143,9 +143,35 @@ type ChatEvent =
     domain: "chat";
     action: "replay_item_dropped";
     vendor: ChatVendor;
-    itemType: "reasoning";
+    itemType: "reasoning" | "compaction";
     reason: ChatReplayDropReason;
     count: number;
+    /**
+     * Joins the drop to the exact model call, and so to the `history_compacted`
+     * record it is the negation of, which is keyed by `callIndex` too. Absent
+     * for a session-history drop, which is emitted while building the input and
+     * holds no request context.
+     */
+    requestId?: string;
+    sessionId?: string;
+    callIndex?: number;
+  }>
+  /**
+   * A model call came back with a compaction item, so every later call of the
+   * run and every later turn of the session replays from that item instead of
+   * the context it absorbed.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "history_compacted";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    callIndex: number;
+    /** One response can carry more than one; the newest one is replayed. */
+    compactionItems: number;
+    /** Pre-compaction input of this call: what the threshold was measured against. */
+    callInputTokens: number;
   }>
   | Readonly<{
     domain: "chat";

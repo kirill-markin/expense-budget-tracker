@@ -1,10 +1,13 @@
 import type OpenAI from "openai";
 import {
+  CHAT_COMPACT_THRESHOLD_TOKENS,
   CHAT_MODEL_REASONING_SUMMARY,
   type ChatEffectiveModelId,
   type ChatEffectiveReasoningEffort,
 } from "@/lib/chatModels";
 import {
+  findLatestCompactionItemIndex,
+  replayItemsFromCompaction,
   toOpenAIResponseInputItem,
   type StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
@@ -23,6 +26,10 @@ export type OpenAIResponsesRequest = Readonly<{
   }>;
   prompt_cache_key: string;
   safety_identifier: string;
+  context_management: [Readonly<{
+    type: "compaction";
+    compact_threshold: number;
+  }>];
 }>;
 
 type ChatResponseLogEvent = Readonly<{
@@ -44,15 +51,74 @@ type ChatResponseLogEvent = Readonly<{
   totalTokens: number;
 }>;
 
+const requireSystemInstructionsItem = (
+  baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
+): OpenAI.Responses.ResponseInputItem => {
+  const systemItem = baseInput.at(0);
+  if (systemItem === undefined || !("role" in systemItem) || systemItem.role !== "system") {
+    throw new Error(
+      "OpenAI chat input does not open with a system message, so a compaction cut "
+      + "cannot restate the instructions",
+    );
+  }
+
+  return systemItem;
+};
+
+/**
+ * The trailing datetime system item. The system instructions carry no clock, so
+ * a compaction cut has to move this item through instead of dropping it, or
+ * every later call of the run resolves relative dates from nothing.
+ */
+const requireTrailingDatetimeItem = (
+  baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
+): OpenAI.Responses.ResponseInputItem => {
+  const datetimeItem = baseInput.length < 2 ? undefined : baseInput.at(-1);
+  if (
+    datetimeItem === undefined
+    || !("role" in datetimeItem)
+    || datetimeItem.role !== "system"
+  ) {
+    throw new Error(
+      "OpenAI chat input does not end with a datetime system message, so a "
+      + "compaction cut cannot keep the clock",
+    );
+  }
+
+  return datetimeItem;
+};
+
 const buildOpenAIInput = (
   baseInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
   continuationItems: ReadonlyArray<StoredOpenAIReplayItem>,
   extraInput: ReadonlyArray<OpenAI.Responses.ResponseInputItem>,
-): Array<OpenAI.Responses.ResponseInputItem> => [
-  ...baseInput,
-  ...continuationItems.map(toOpenAIResponseInputItem),
-  ...extraInput,
-];
+): Array<OpenAI.Responses.ResponseInputItem> => {
+  const compactionIndex = findLatestCompactionItemIndex(continuationItems);
+  if (compactionIndex === -1) {
+    return [
+      ...baseInput,
+      ...continuationItems.map(toOpenAIResponseInputItem),
+      ...extraInput,
+    ];
+  }
+
+  // This run compacted its own context: the compaction item carries the
+  // replayed history, the current user message and this run's earlier items, so
+  // only the system instructions are restated ahead of it and the datetime item
+  // moves through the cut to stay the last input item.
+  //
+  // Known inconsistency, deferred to the datetime replay-identity work that
+  // owns it: `extraInput` precedes the datetime item here and follows it on the
+  // branch above, where `baseInput` already ends with the clock. Both orders are
+  // accepted, so unifying them is deferred rather than overlooked.
+  return [
+    requireSystemInstructionsItem(baseInput),
+    ...replayItemsFromCompaction(continuationItems, compactionIndex)
+      .map(toOpenAIResponseInputItem),
+    ...extraInput,
+    requireTrailingDatetimeItem(baseInput),
+  ];
+};
 
 export const buildPromptCacheKey = (
   sessionId: string,
@@ -79,6 +145,10 @@ export const buildOpenAIResponsesRequest = (
   },
   prompt_cache_key: buildPromptCacheKey(sessionId),
   safety_identifier: buildOpenAISafetyIdentifier(userId),
+  context_management: [{
+    type: "compaction",
+    compact_threshold: CHAT_COMPACT_THRESHOLD_TOKENS,
+  }],
 });
 
 export const buildOpenAIResponsesRequestWithOptions = (
@@ -103,6 +173,10 @@ export const buildOpenAIResponsesRequestWithOptions = (
   },
   prompt_cache_key: buildPromptCacheKey(sessionId),
   safety_identifier: buildOpenAISafetyIdentifier(userId),
+  context_management: [{
+    type: "compaction",
+    compact_threshold: CHAT_COMPACT_THRESHOLD_TOKENS,
+  }],
 });
 
 const getResponseStopReason = (
@@ -125,6 +199,15 @@ const getResponseUsage = (
 
   return response.usage;
 };
+
+/**
+ * A compacting call reports its pre-compaction input here, so this is what the
+ * threshold was measured against, not what the next call will send.
+ */
+export const getResponseInputTokens = (
+  response: OpenAI.Responses.Response,
+): number =>
+  getResponseUsage(response).input_tokens;
 
 export const buildChatResponseLogEvent = (
   params: Readonly<{
