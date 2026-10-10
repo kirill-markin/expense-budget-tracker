@@ -11,6 +11,7 @@ import {
   type AgentAuthenticatedRequest,
 } from "@/server/agent/apiKeyAuth";
 import { jsonAgentAuthError, jsonAgentError, jsonAgentUnavailable } from "@/server/agent/responses";
+import { deleteWorkspaceChatFileObjectsForTrustedIdentity } from "@/server/chatFiles/cleanup";
 import {
   deleteWorkspaceForTrustedIdentity,
   getWorkspaceForTrustedIdentity,
@@ -26,12 +27,14 @@ type RouteContext = Readonly<{
 type AgentWorkspaceDeleteRouteDependencies = Readonly<{
   authenticateAgentRequest: (request: Request) => Promise<AgentAuthenticatedRequest>;
   getWorkspaceForTrustedIdentity: typeof getWorkspaceForTrustedIdentity;
+  deleteWorkspaceChatFileObjectsForTrustedIdentity: typeof deleteWorkspaceChatFileObjectsForTrustedIdentity;
   deleteWorkspaceForTrustedIdentity: typeof deleteWorkspaceForTrustedIdentity;
 }>;
 
 const DEFAULT_AGENT_WORKSPACE_DELETE_ROUTE_DEPENDENCIES: AgentWorkspaceDeleteRouteDependencies = {
   authenticateAgentRequest,
   getWorkspaceForTrustedIdentity,
+  deleteWorkspaceChatFileObjectsForTrustedIdentity,
   deleteWorkspaceForTrustedIdentity,
 };
 
@@ -106,6 +109,13 @@ export const postAgentWorkspaceDeleteRouteWithDeps = async (
     }
 
     try {
+      // Stored objects first: the database deletion cascades their rows and
+      // cannot reach object storage. The cleanup rejects a workspace the
+      // deletion would refuse, so it raises before removing any object.
+      await dependencies.deleteWorkspaceChatFileObjectsForTrustedIdentity(
+        authenticated.identity,
+        workspaceId,
+      );
       await dependencies.deleteWorkspaceForTrustedIdentity(authenticated.identity, workspaceId);
     } catch (error) {
       if (error instanceof WorkspaceDeletionRequiresSingleMemberError) {
