@@ -1441,6 +1441,63 @@ const failFunctionCallNotAllowed = (functionName: string): never =>
     `Function ${functionName}() is not allowed in restricted SQL. Allowed functions: ${ALLOWED_SQL_FUNCTIONS_DESCRIPTION}`,
   );
 
+const failAliasColumnListNotSupported = (aliasName: string): never =>
+  fail(
+    "function_calls_not_allowed",
+    `Alias column lists such as AS ${aliasName}(...) are not supported in restricted SQL. Write a bare AS ${aliasName}: a VALUES source exposes its columns as ${aliasName}.column1, ${aliasName}.column2 and so on, in the order the source lists them, while a subquery source exposes the names of its own select list, so name them there, such as SELECT a AS x, b AS y, and read ${aliasName}.x, ${aliasName}.y.`,
+  );
+
+/**
+ * Recognizes a derived-table alias column list, such as the `(spent_on, amount)`
+ * of `FROM (VALUES (...)) AS v(spent_on, amount)`, where `aliasIndex` holds the
+ * alias identifier. The construct has the shape of a call, so without this
+ * check the allowlist reports a missing function the caller never meant to call.
+ *
+ * Two conditions keep genuine calls on the function-call message: the alias
+ * follows the `)` that closes the VALUES list or subquery, directly or through
+ * the optional AS, and the parenthesis holds a plain comma-separated identifier
+ * list. The second one also excludes a type modifier such as
+ * CAST(amount AS numeric(10, 2)), because PostgreSQL spells modifiers with
+ * numeric literals, which tokenize as punctuation here.
+ */
+const isDerivedTableAliasColumnList = (
+  tokens: ReadonlyArray<SqlToken>,
+  aliasIndex: number,
+  endIndex: number,
+): boolean => {
+  const previousIndex = findPreviousSignificantIndex(tokens, aliasIndex - 1);
+  if (previousIndex === null) {
+    return false;
+  }
+  const sourceEndIndex = tokens[previousIndex]?.lower === "as"
+    ? findPreviousSignificantIndex(tokens, previousIndex - 1)
+    : previousIndex;
+  if (sourceEndIndex === null || tokens[sourceEndIndex]?.value !== ")") {
+    return false;
+  }
+
+  let expectColumnName = true;
+  for (let index = aliasIndex + 2; index < endIndex; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) {
+      return false;
+    }
+    if (expectColumnName) {
+      if (token.kind !== "word") {
+        return false;
+      }
+      expectColumnName = false;
+      continue;
+    }
+    if (token.value === ",") {
+      expectColumnName = true;
+      continue;
+    }
+    return token.value === ")";
+  }
+  return false;
+};
+
 /**
  * Tokens that can terminate a PostgreSQL indirection chain immediately before a
  * `.` field access: `)` closes a parenthesized expression and `]` closes a
@@ -1632,6 +1689,9 @@ const assertOnlyAllowedFunctionCallsInSegment = (
     const isGrammarParen = SQL_GRAMMAR_PAREN_KEYWORDS.has(token.lower)
       || (SQL_DERIVED_QUERY_PAREN_KEYWORDS.has(token.lower) && startsDerivedQuery);
     if (!ALLOWED_SQL_FUNCTIONS.has(token.lower) && !isGrammarParen) {
+      if (isDerivedTableAliasColumnList(tokens, index, endIndex)) {
+        failAliasColumnListNotSupported(token.value);
+      }
       failFunctionCallNotAllowed(token.value);
     }
 

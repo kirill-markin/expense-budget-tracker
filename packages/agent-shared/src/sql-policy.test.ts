@@ -306,6 +306,45 @@ test("validateExpenseSql rejects non-allowlisted function calls in restricted SQ
   assertFunctionCallRejected("INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id) VALUES (gen_random_uuid(), now(), 'a-main-usd', 1, 'USD', 'income', 'workspace-1')");
 });
 
+test("validateExpenseSql blames the alias column list instead of a missing function", (): void => {
+  const rejectedSql: ReadonlyArray<string> = [
+    "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id) SELECT 'e1', v.column1, 'a-main-usd', v.column2, 'USD', 'spend', 'workspace-1' FROM (VALUES ('2026-10-07', -12), ('2026-10-08', -8)) AS v(spent_on, amount)",
+    // AS is optional in PostgreSQL, so the same construct also arrives without it.
+    "SELECT v.spent_on FROM (VALUES ('2026-10-07', -12)) v(spent_on, amount)",
+    "SELECT v.spent_on FROM (SELECT ts, amount FROM ledger_entries) AS v(spent_on, spent)",
+  ];
+
+  for (const sql of rejectedSql) {
+    assert.throws(
+      () => validateExpenseSql(sql),
+      (error: unknown) =>
+        error instanceof SqlPolicyError
+        && error.code === "function_calls_not_allowed"
+        && error.message.includes("Alias column lists such as AS v(...) are not supported")
+        && error.message.includes("v.column1, v.column2")
+        && error.message.includes("SELECT a AS x, b AS y"),
+      sql,
+    );
+  }
+
+  // A cast type modifier and an INSERT target alias have the same shape and keep the function-call message.
+  assertFunctionCallRejected("SELECT CAST(sum(amount) AS numeric(10, 2)) FROM ledger_entries");
+  assertFunctionCallRejected("INSERT INTO ledger_entries AS t (event_id, ts, account_id, amount, currency, kind, workspace_id) VALUES ('e1', '2026-10-07', 'a-main-usd', 1, 'USD', 'income', 'workspace-1')");
+});
+
+// The alias message and the dialect guide teach these two shapes to production agents,
+// so the restricted SQL policy must keep accepting them.
+test("the bare-alias forms the rejection message recommends pass the restricted SQL policy", (): void => {
+  assert.equal(
+    validateExpenseSql("SELECT v.column1, v.column2 FROM (VALUES ('2026-10-07', -12)) AS v").statements[0]?.isMutating,
+    false,
+  );
+  assert.equal(
+    validateExpenseSql("SELECT v.x FROM (SELECT ts AS x FROM ledger_entries) AS v").statements[0]?.isMutating,
+    false,
+  );
+});
+
 test("validateExpenseSql allows window, filter, and keyword-argument call syntax", (): void => {
   const acceptedSql: ReadonlyArray<Readonly<{
     sql: string;

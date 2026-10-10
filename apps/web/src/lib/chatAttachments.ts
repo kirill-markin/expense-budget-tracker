@@ -1,6 +1,9 @@
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
-import { isLegacyRawPdfFilePart } from "@/lib/chatPdf";
+import {
+  PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS,
+  isLegacyRawPdfFilePart,
+} from "@/lib/chatPdf";
 import type {
   FileContentPart,
   ImageContentPart,
@@ -11,14 +14,16 @@ import type {
  * Canonical attachment policy shared by runtime chat input reconstruction and
  * markdown export generation.
  *
- * Runtime / model-input behavior:
+ * Runtime / model-input behavior. Extracted text is the only representation of
+ * an extractable format, bounded per attachment by
+ * {@link capAttachmentPromptText} at model-input construction:
  * - CSV files are decoded as UTF-8 and sent as `input_text` only.
- * - Other plain text-like files are decoded as UTF-8 and sent both as
- *   `input_text` and as the original `input_file`.
- * - XLS/XLSX workbooks are converted to per-sheet CSV text and sent both as
- *   `input_text` and as the original `input_file`.
- * - DOCX files are deterministically converted to raw text and sent both as
- *   `input_text` and as the original `input_file`.
+ * - Other plain text-like files are decoded as UTF-8 and sent as `input_text`
+ *   only.
+ * - XLS/XLSX workbooks are converted to per-sheet CSV text and sent as
+ *   `input_text` only.
+ * - DOCX files are deterministically converted to raw text and sent as
+ *   `input_text` only, or as an explicit no-extractable-text line.
  * - Images remain native `input_image` items backed by base64 data URLs.
  * - Logical PDFs render as ordered extracted-text + JPEG `input_image` page pairs.
  * - Legacy raw PDF file parts are rejected before model input construction.
@@ -27,7 +32,8 @@ import type {
  * Markdown export behavior:
  * - Text-like files render as fenced code/text blocks.
  * - XLS/XLSX render as per-sheet CSV blocks.
- * - DOCX renders as extracted raw text when extraction succeeds.
+ * - DOCX renders as extracted raw text, or `[no-extractable-text]` when the
+ *   file carries none.
  * - Images render as `[binary-data]`.
  * - Logical PDFs render extracted text plus a marker for each rendered page image.
  * - Legacy raw PDFs render as `[legacy-pdf-reattach-required]`.
@@ -45,7 +51,16 @@ export const BINARY_DATA_PLACEHOLDER = "[binary-data]";
 export const LEGACY_PDF_REATTACH_PLACEHOLDER = "[legacy-pdf-reattach-required]";
 export const PDF_RENDERED_PAGE_PLACEHOLDER = "[rendered-page-image]";
 export const PDF_MISSING_TEXT_PLACEHOLDER = "[no-embedded-text]";
-export const DOCX_OPENAI_NATIVE_PLACEHOLDER = "[docx-openai-native-attached]";
+export const DOCX_MISSING_TEXT_PLACEHOLDER = "[no-extractable-text]";
+
+// Model-facing counterpart of DOCX_MISSING_TEXT_PLACEHOLDER: an image-only DOCX
+// must read as unextractable rather than as an empty document.
+const DOCX_MISSING_TEXT_PROMPT_LINE =
+  "[No text could be extracted from this DOCX file. Ask the user to re-attach it as a PDF or images.]";
+
+// One number bounds the extracted text of every attachment format, reusing the
+// aggregate limit logical PDFs are already validated against.
+export const ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS = PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS;
 
 const CSV_MEDIA_TYPES = new Set([
   "application/csv",
@@ -153,6 +168,33 @@ const buildCodeBlockLines = (
 
 const getTextDecoder = (): TextDecoder =>
   new TextDecoder("utf-8", { fatal: true });
+
+const hasOpenCodeFence = (
+  promptText: string,
+): boolean =>
+  promptText.split("\n").filter((line) => line.startsWith("```")).length % 2 === 1;
+
+/**
+ * Bounds one attachment's extracted text. Applied by model-input construction
+ * only, so the markdown export keeps the full extraction. A cut that lands
+ * inside a fenced block closes that fence before the marker.
+ */
+export const capAttachmentPromptText = (
+  fileName: string,
+  promptText: string,
+): string => {
+  if (promptText.length <= ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS) {
+    return promptText;
+  }
+
+  const keptText = promptText.slice(0, ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS);
+  return [
+    keptText,
+    ...(hasOpenCodeFence(keptText) ? ["```"] : []),
+    `[truncated: extracted text of ${fileName} exceeded `
+    + `${String(ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS)} characters]`,
+  ].join("\n");
+};
 
 const decodeUtf8File = (
   part: FileContentPart,
@@ -292,7 +334,9 @@ export const buildDocxPromptText = async (
   const rawText = await extractDocxText(part);
   return [
     `Attached DOCX file: ${part.fileName}`,
-    ...buildCodeBlockLines("text", rawText),
+    ...(rawText.length === 0
+      ? [DOCX_MISSING_TEXT_PROMPT_LINE]
+      : buildCodeBlockLines("text", rawText)),
   ].join("\n");
 };
 
@@ -353,7 +397,7 @@ export const serializeAttachmentForMarkdown = async (
         mediaType: part.mediaType,
         lines: text.length > 0
           ? buildCodeBlockLines("text", text)
-          : [DOCX_OPENAI_NATIVE_PLACEHOLDER],
+          : [DOCX_MISSING_TEXT_PLACEHOLDER],
       };
     }
 

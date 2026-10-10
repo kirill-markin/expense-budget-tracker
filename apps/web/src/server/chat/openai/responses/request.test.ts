@@ -24,6 +24,7 @@ test("buildChatResponseLogEvent records the effective request model", (): void =
 
   const event = buildChatResponseLogEvent({
     requestId: "request-1",
+    userId: "user-1",
     sessionId: "session-1",
     callIndex: 1,
     promptCacheKey: "session-1",

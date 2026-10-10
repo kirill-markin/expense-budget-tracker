@@ -160,7 +160,7 @@ test("buildChatCompletionInput expands logical PDF pages into ordered text and J
     "Europe/Madrid",
   );
 
-  assert.equal(input.length, 3);
+  assert.equal(input.length, 4);
   const userMessage = input[1];
   assert.equal(userMessage.type, "message");
   if (userMessage.type !== "message" || typeof userMessage.content === "string") {
@@ -230,7 +230,7 @@ test("buildChatCompletionInput removes a JSONB-reordered copy of the current log
     "Europe/Madrid",
   );
 
-  assert.equal(input.length, 2);
+  assert.equal(input.length, 3);
   const userMessage = input[1];
   assert.equal(userMessage.type, "message");
   if (userMessage.type !== "message" || typeof userMessage.content === "string") {

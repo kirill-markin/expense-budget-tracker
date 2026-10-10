@@ -103,6 +103,7 @@ type ChatEvent =
     action: "response";
     vendor: ChatVendor;
     requestId: string;
+    userId: string;
     sessionId: string;
     model: string;
     callIndex: number;
