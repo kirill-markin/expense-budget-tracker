@@ -1,6 +1,8 @@
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -13,6 +15,41 @@ const CHAT_FILES_OBJECT_PREFIX = "sessions/";
 
 export const buildChatFileObjectKey = (sessionId: string, fileId: string): string =>
   `${CHAT_FILES_OBJECT_PREFIX}${sessionId}/${fileId}`;
+
+const buildSessionObjectPrefix = (sessionId: string): string =>
+  `${CHAT_FILES_OBJECT_PREFIX}${sessionId}/`;
+
+// S3 DeleteObjects takes at most this many keys per request.
+const MAX_DELETE_OBJECTS_BATCH_SIZE = 1000;
+
+export const splitObjectKeysIntoDeleteBatches = (
+  objectKeys: ReadonlyArray<string>,
+): ReadonlyArray<ReadonlyArray<string>> => {
+  const batches: Array<ReadonlyArray<string>> = [];
+  for (
+    let batchStart = 0;
+    batchStart < objectKeys.length;
+    batchStart += MAX_DELETE_OBJECTS_BATCH_SIZE
+  ) {
+    batches.push(objectKeys.slice(batchStart, batchStart + MAX_DELETE_OBJECTS_BATCH_SIZE));
+  }
+
+  return batches;
+};
+
+/**
+ * The keys one batch request failed to remove. S3 still deletes every other key
+ * of the request, so a caller reporting what it reclaimed must subtract these.
+ */
+export class ChatFileObjectBatchDeleteError extends Error {
+  public readonly failedObjectKeys: ReadonlyArray<string>;
+
+  public constructor(message: string, failedObjectKeys: ReadonlyArray<string>) {
+    super(message);
+    this.name = "ChatFileObjectBatchDeleteError";
+    this.failedObjectKeys = failedObjectKeys;
+  }
+}
 
 const requireChatFileObjectKey = (objectKey: string): string => {
   if (!objectKey.startsWith(CHAT_FILES_OBJECT_PREFIX)) {
@@ -174,6 +211,72 @@ export class ChatFilesObjectStore {
       new DeleteObjectCommand({ Bucket: this.bucket, Key: requireChatFileObjectKey(objectKey) }),
     );
   }
+
+  /**
+   * Every key stored under one session's prefix, including an object whose
+   * chat_files row was already removed or never written.
+   */
+  async listSessionObjectKeys(sessionId: string): Promise<ReadonlyArray<string>> {
+    const prefix = buildSessionObjectPrefix(sessionId);
+    const objectKeys: Array<string> = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const response = await this.client.send(new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      }));
+      for (const storedObject of response.Contents ?? []) {
+        if (storedObject.Key === undefined) {
+          throw new Error(
+            `Object listing returned an entry without a key, bucket=${this.bucket}, prefix=${prefix}`,
+          );
+        }
+
+        objectKeys.push(storedObject.Key);
+      }
+      if (response.IsTruncated === true && response.NextContinuationToken === undefined) {
+        throw new Error(
+          `Object listing reported more results without a continuation token, bucket=${this.bucket}, prefix=${prefix}, listedCount=${objectKeys.length}`,
+        );
+      }
+
+      continuationToken = response.IsTruncated === true
+        ? response.NextContinuationToken
+        : undefined;
+    } while (continuationToken !== undefined);
+
+    return objectKeys;
+  }
+
+  /** One request, so a caller knows exactly which keys a failure left behind. */
+  async deleteObjectBatch(objectKeys: ReadonlyArray<string>): Promise<void> {
+    if (objectKeys.length === 0 || objectKeys.length > MAX_DELETE_OBJECTS_BATCH_SIZE) {
+      throw new Error(
+        `Object batch delete takes between 1 and ${MAX_DELETE_OBJECTS_BATCH_SIZE} keys, got ${objectKeys.length}`,
+      );
+    }
+
+    const response = await this.client.send(new DeleteObjectsCommand({
+      Bucket: this.bucket,
+      Delete: {
+        Objects: objectKeys.map((objectKey) => ({ Key: requireChatFileObjectKey(objectKey) })),
+        // Only the failures come back; a successful key needs no echo.
+        Quiet: true,
+      },
+    }));
+    const failures = response.Errors ?? [];
+    if (failures.length > 0) {
+      const failureDetails = failures
+        .map((failure) => `${failure.Key ?? "<unknown key>"}=${failure.Code ?? "<no code>"}`)
+        .join(", ");
+      throw new ChatFileObjectBatchDeleteError(
+        `Object batch delete failed, bucket=${this.bucket}, failedCount=${failures.length}, failures=${failureDetails}`,
+        failures.map((failure) => failure.Key ?? "<unknown key>"),
+      );
+    }
+  }
 }
 
 let objectStore: ChatFilesObjectStore | null = null;
@@ -185,4 +288,18 @@ export const getChatFilesObjectStore = (): ChatFilesObjectStore => {
 
   objectStore = new ChatFilesObjectStore(readChatFilesObjectStoreConfig());
   return objectStore;
+};
+
+/**
+ * Null when the deployment stores no chat files at all: CHAT_FILES_* is set by
+ * the AWS stack only, so local Docker and the self-hosted stack hold no object
+ * for a caller that merely reclaims them. Any surface that mints or reads a key
+ * must keep using getChatFilesObjectStore() and fail without a bucket.
+ */
+export const getChatFilesObjectStoreIfConfigured = (): ChatFilesObjectStore | null => {
+  if (readOptionalEnvValue("CHAT_FILES_BUCKET") === null) {
+    return null;
+  }
+
+  return getChatFilesObjectStore();
 };

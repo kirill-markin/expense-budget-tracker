@@ -249,6 +249,22 @@ type ChatTranscriptionEvent = Readonly<{
   error: string;
 }>;
 
+/**
+ * Chat file objects reclaimed when their workspace went away. The bucket has no
+ * expiration rule, so this is the only reclaim path, and objectCount counts the
+ * objects actually deleted, including on the failure the error propagates.
+ * not_configured records a deployment that stores no chat file at all.
+ */
+type ChatFilesEvent = Readonly<{
+  domain: "chat-files";
+  action: "workspace_objects_deleted";
+  outcome: "deleted" | "failed" | "not_configured";
+  workspaceId: string;
+  sessionCount: number;
+  objectCount: number;
+  error: string | null;
+}>;
+
 type ApiEvent =
   | Readonly<{ domain: "api"; action: "error"; route: string; method: string; error: string }>
   | Readonly<{ domain: "api"; action: "shutdown_draining"; signal: string }>
@@ -337,7 +353,7 @@ type AuthEvent =
  */
 type DbEvent = Readonly<{ domain: "db"; action: "pool_error"; error: string }>;
 
-type LogEvent = ChatEvent | ChatWorkspaceUnavailableEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
+type LogEvent = ChatEvent | ChatWorkspaceUnavailableEvent | ChatTranscriptionEvent | ChatFilesEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));
