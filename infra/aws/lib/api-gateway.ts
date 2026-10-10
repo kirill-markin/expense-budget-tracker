@@ -86,6 +86,10 @@ export const createSqlApiAccessLogFormat = (): apigw.AccessLogFormat =>
  * runtime that serves the same routes without a gateway in front. A header
  * that is present but unparseable does reach the authorizer and is refused by
  * the ACCESS_DENIED template below.
+ *
+ * Both bodies become Velocity templates, which silently strip an undefined
+ * reference such as `$SOME_VAR` instead of rendering it, and render a
+ * backslash escape verbatim. Name environment variables bare in this text.
  */
 export const createMissingApiKeyResponseBody = (): string => JSON.stringify(buildErrorEnvelope(
   {},
@@ -104,7 +108,7 @@ export const createMissingApiKeyResponseBody = (): string => JSON.stringify(buil
 export const createRejectedApiKeyResponseBody = (apiBaseUrl: string): string => JSON.stringify(buildErrorEnvelope(
   {},
   [],
-  `Either the request header is not exactly ${API_KEY_AUTHORIZATION_SCHEME}, or the key is invalid or revoked. Check the header first; if it is correct, get a new key through the onboarding in GET ${apiBaseUrl}/, then send Authorization: ApiKey $${AGENT_API_KEY_ENV_VAR_NAME}.`,
+  `Either the request header is not exactly ${API_KEY_AUTHORIZATION_SCHEME}, or the key is invalid or revoked. Check the header first; if it is correct, get a new key through the onboarding in GET ${apiBaseUrl}/, then store it in ${AGENT_API_KEY_ENV_VAR_NAME} and send it in that header.`,
   "api_key_not_accepted",
   "API key not accepted",
 ));
