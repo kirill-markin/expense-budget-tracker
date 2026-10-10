@@ -93,9 +93,12 @@ export const createAgentConnectionWithTransaction = async (
     }
 
     const connectionId = result.rows[0]?.["connection_id"];
-    const createdAt = result.rows[0]?.["created_at"];
+    // node-pg parses the TIMESTAMPTZ created_at into a JS Date, while
+    // AgentConnectionResult.createdAt is the ISO-8601 string the route returns.
+    const rawCreatedAt = result.rows[0]?.["created_at"];
+    const createdAt = rawCreatedAt instanceof Date ? rawCreatedAt.toISOString() : rawCreatedAt;
     if (typeof connectionId !== "string" || typeof createdAt !== "string") {
-      throw new Error("createAgentConnection: expected string connection_id and created_at");
+      throw new Error("createAgentConnection: expected string connection_id and Date or string created_at");
     }
 
     return {

@@ -10,6 +10,7 @@ type QueryCall = Readonly<{
 
 const createTransactionRunner = (
   resolvedWorkspaceId: string | null,
+  createdAt: Date | string,
   calls: Array<QueryCall>,
 ): (<T>(callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<Readonly<{ rows: ReadonlyArray<Readonly<Record<string, unknown>>> }>>) => Promise<T>) => Promise<T>) =>
   async <T>(callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<Readonly<{ rows: ReadonlyArray<Readonly<Record<string, unknown>>> }>>) => Promise<T>): Promise<T> =>
@@ -28,7 +29,7 @@ const createTransactionRunner = (
 
       if (text.includes("INSERT INTO auth.agent_api_keys")) {
         return {
-          rows: [{ connection_id: "connection-1", created_at: "2026-04-09T00:00:00.000Z" }],
+          rows: [{ connection_id: "connection-1", created_at: createdAt }],
         };
       }
 
@@ -42,7 +43,7 @@ test("createAgentConnection stores selected workspace when resolver returns one"
     "user-1",
     "user@example.com",
     "Desktop",
-    createTransactionRunner("workspace-1", calls),
+    createTransactionRunner("workspace-1", "2026-04-09T00:00:00.000Z", calls),
   );
 
   const insertCall = calls.find((call) => call.text.includes("INSERT INTO auth.agent_api_keys"));
@@ -57,10 +58,23 @@ test("createAgentConnection leaves selected workspace null when resolver is ambi
     "user-1",
     "user@example.com",
     "Desktop",
-    createTransactionRunner(null, calls),
+    createTransactionRunner(null, "2026-04-09T00:00:00.000Z", calls),
   );
 
   const insertCall = calls.find((call) => call.text.includes("INSERT INTO auth.agent_api_keys"));
   assert.ok(insertCall);
   assert.equal(insertCall.params[4], null);
+});
+
+test("createAgentConnection converts the Date node-pg returns for created_at into ISO-8601", async (): Promise<void> => {
+  const calls: Array<QueryCall> = [];
+
+  const connection = await createAgentConnectionWithTransaction(
+    "user-1",
+    "user@example.com",
+    "Desktop",
+    createTransactionRunner("workspace-1", new Date("2026-10-03T07:08:09.000Z"), calls),
+  );
+
+  assert.equal(connection.createdAt, "2026-10-03T07:08:09.000Z");
 });
