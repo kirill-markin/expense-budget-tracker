@@ -51,13 +51,31 @@ const buildMcpErrorContent = (
   content: buildTextContent(buildAgentErrorPayload(code, message, instructions, details)),
 });
 
+/**
+ * The code one failed tool call reports, shared by the client-visible envelope
+ * and the mcp_tool_call record so the two can never disagree.
+ */
+export const getMcpToolErrorCode = (error: unknown): string => {
+  if (error instanceof AgentToolError) return error.code;
+  if (error instanceof SqlPolicyError) return error.code;
+  if (error instanceof SqlExecutionDeadlineError) return "request_deadline_exceeded";
+  if (isAmbiguousSqlMutationOutcomeError(error)) return "sql_mutation_outcome_unknown";
+  if (isUserSqlExecutionError(error)) return "sql_execution_failed";
+  return "internal_error";
+};
+
 export const buildMcpToolErrorResultWithDependencies = (
   error: unknown,
   toolName: string,
   dependencies: McpResultDependencies,
 ): CallToolResult => {
   if (error instanceof AgentToolError) {
-    return buildMcpErrorContent(error.code, error.message, error.instructions, error.details);
+    return buildMcpErrorContent(
+      getMcpToolErrorCode(error),
+      error.message,
+      error.instructions,
+      error.details,
+    );
   }
 
   if (error instanceof SqlPolicyError) {
@@ -68,7 +86,7 @@ export const buildMcpToolErrorResultWithDependencies = (
       message: error.message.slice(0, MAX_SQL_POLICY_LOG_MESSAGE_CHARS),
     });
     return buildMcpErrorContent(
-      error.code,
+      getMcpToolErrorCode(error),
       error.message,
       getSqlPolicyInstructions(error, toolName),
       {},
@@ -77,7 +95,7 @@ export const buildMcpToolErrorResultWithDependencies = (
 
   if (error instanceof SqlExecutionDeadlineError) {
     return buildMcpErrorContent(
-      "request_deadline_exceeded",
+      getMcpToolErrorCode(error),
       `The MCP request exceeded its ${String(error.timeoutMs)} ms total execution deadline`,
       getDeadlineInstructions(toolName),
       { timeoutMs: error.timeoutMs, retryable: true },
@@ -86,7 +104,7 @@ export const buildMcpToolErrorResultWithDependencies = (
 
   if (isAmbiguousSqlMutationOutcomeError(error)) {
     return buildMcpErrorContent(
-      "sql_mutation_outcome_unknown",
+      getMcpToolErrorCode(error),
       error.message,
       getAmbiguousMutationInstructions(),
       { outcome: "unknown", retryable: false },
@@ -95,7 +113,7 @@ export const buildMcpToolErrorResultWithDependencies = (
 
   if (isUserSqlExecutionError(error)) {
     return buildMcpErrorContent(
-      "sql_execution_failed",
+      getMcpToolErrorCode(error),
       getUserSqlExecutionMessage(error),
       `Review SQL syntax, relation names, values, and constraints, then call ${toolName} again.`,
       {},
@@ -110,7 +128,7 @@ export const buildMcpToolErrorResultWithDependencies = (
     errorType: getSafeErrorType(error),
   });
   return buildMcpErrorContent(
-    "internal_error",
+    getMcpToolErrorCode(error),
     "The MCP tool request could not be completed",
     getUnexpectedErrorInstructions(toolName),
     {},

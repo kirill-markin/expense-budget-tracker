@@ -12,6 +12,7 @@ import {
   SQL_EXECUTE_TOOL,
   SQL_QUERY_TOOL,
   WORKSPACE_ID_INPUT_FIELD,
+  type AgentToolName,
 } from "@expense-budget-tracker/agent-shared/agent-tools";
 import {
   MAX_SQL_RESULT_CHARS,
@@ -23,6 +24,7 @@ import {
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { z } from "zod";
 import { getReadOnlyTransactionDeadlineError } from "../dbDeadline.js";
+import { log } from "../logger.js";
 import type { WorkspaceSummary } from "../machineApi/types.js";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
 import {
@@ -34,15 +36,12 @@ import { mcpDataServices, type McpDataServices } from "./dataService.js";
 import {
   buildMcpSuccessResult,
   buildMcpToolErrorResult,
+  getMcpToolErrorCode,
   McpToolError,
 } from "./results.js";
 
 const SERVER_NAME = "expense-budget-tracker";
 const SERVER_VERSION = "1.7.0";
-type ReadOnlyMcpToolName =
-  | typeof LIST_WORKSPACES_TOOL.name
-  | typeof GET_SCHEMA_TOOL.name
-  | typeof SQL_QUERY_TOOL.name;
 
 const guideTopicSchema = z.enum(AGENT_GUIDE_TOPICS).describe(
   getAgentToolInputFieldDescription(GET_GUIDE_TOOL, "topic"),
@@ -55,12 +54,14 @@ const workspaceIdSchema = z.string().trim().min(1).optional().describe(
 export type McpServerDependencies = McpDataServices & Readonly<{
   validateSingleReadOnlyExpenseSql: typeof validateSingleReadOnlyExpenseSql;
   validateSingleMutationExpenseSql: typeof validateSingleMutationExpenseSql;
+  log: typeof log;
 }>;
 
 const defaultDependencies: McpServerDependencies = {
   ...mcpDataServices,
   validateSingleReadOnlyExpenseSql,
   validateSingleMutationExpenseSql,
+  log,
 };
 
 type OAuthSecurityScheme = Readonly<{
@@ -188,17 +189,67 @@ const requireSqlResult = (
   return result;
 };
 
-const buildReadOnlyMcpToolErrorResult = (
-  error: unknown,
-  toolName: ReadOnlyMcpToolName,
-): CallToolResult => buildMcpToolErrorResult(
-  getReadOnlyTransactionDeadlineError(error) ?? error,
-  toolName,
-);
+// A read tool's transaction uncertainty can only be its own deadline, because a
+// read leaves no effect to be uncertain about.
+const unwrapReadOnlyToolError = (error: unknown): unknown =>
+  getReadOnlyTransactionDeadlineError(error) ?? error;
+
+// A mutation whose transaction outcome is unknown must stay ambiguous, so a
+// write tool reports its failure exactly as thrown, and a tool that opens no
+// transaction has nothing to unwrap.
+const keepToolErrorAsThrown = (error: unknown): unknown => error;
+
+/**
+ * The one place a tool call is recorded from, so every call writes exactly one
+ * mcp_tool_call record: on success after the result is fully built, and on
+ * failure with the same code the returned envelope carries. The body reports
+ * its workspace as soon as it resolves one, so a failure after resolution is
+ * still grouped by workspace, and only a failure before it records none.
+ * Logging the success outside the guarded block keeps a logging failure from
+ * turning a built result into a client-visible error.
+ */
+const recordMcpToolCall = async (
+  toolName: AgentToolName,
+  normalizeError: (error: unknown) => unknown,
+  caller: string | null,
+  dependencies: McpServerDependencies,
+  callTool: (reportWorkspace: (workspaceId: string) => void) => Promise<CallToolResult>,
+): Promise<CallToolResult> => {
+  let resolvedWorkspaceId: string | null = null;
+  let result: CallToolResult;
+  try {
+    result = await callTool((workspaceId: string): void => {
+      resolvedWorkspaceId = workspaceId;
+    });
+  } catch (error) {
+    const toolError = normalizeError(error);
+    dependencies.log({
+      domain: "sql_api",
+      action: "mcp_tool_call",
+      tool: toolName,
+      outcome: "error",
+      errorCode: getMcpToolErrorCode(toolError),
+      workspaceId: resolvedWorkspaceId,
+      caller,
+    });
+    return buildMcpToolErrorResult(toolError, toolName);
+  }
+  dependencies.log({
+    domain: "sql_api",
+    action: "mcp_tool_call",
+    tool: toolName,
+    outcome: "success",
+    errorCode: null,
+    workspaceId: resolvedWorkspaceId,
+    caller,
+  });
+  return result;
+};
 
 export const createMcpServerWithDependencies = (
   connection: AuthenticatedMcpAccessToken,
   deadline: SqlExecutionDeadline,
+  caller: string | null,
   dependencies: McpServerDependencies,
 ): McpServer => {
   const server = new McpServer(
@@ -223,18 +274,20 @@ export const createMcpServerWithDependencies = (
       annotations: LIST_WORKSPACES_TOOL.annotations,
       _meta: buildToolSecurityMetadata(LIST_WORKSPACES_TOOL.advertisedScopes),
     },
-    async (): Promise<CallToolResult> => {
-      try {
+    async (): Promise<CallToolResult> => recordMcpToolCall(
+      LIST_WORKSPACES_TOOL.name,
+      unwrapReadOnlyToolError,
+      caller,
+      dependencies,
+      async (): Promise<CallToolResult> => {
         requireScope(connection, LIST_WORKSPACES_TOOL.requiredScope);
         const workspaces = await dependencies.listWorkspaces(connection.identity, deadline);
         return buildMcpSuccessResult(
           { workspaces },
           getWorkspaceListSuccessInstructions(workspaces.length, AGENT_TOOLS_SURFACE_PROFILE),
         );
-      } catch (error) {
-        return buildReadOnlyMcpToolErrorResult(error, LIST_WORKSPACES_TOOL.name);
-      }
-    },
+      },
+    ),
   );
 
   server.registerTool(
@@ -246,8 +299,12 @@ export const createMcpServerWithDependencies = (
       annotations: GET_SCHEMA_TOOL.annotations,
       _meta: buildToolSecurityMetadata(GET_SCHEMA_TOOL.advertisedScopes),
     },
-    async ({ workspaceId }): Promise<CallToolResult> => {
-      try {
+    async ({ workspaceId }): Promise<CallToolResult> => recordMcpToolCall(
+      GET_SCHEMA_TOOL.name,
+      unwrapReadOnlyToolError,
+      caller,
+      dependencies,
+      async (reportWorkspace): Promise<CallToolResult> => {
         requireScope(connection, GET_SCHEMA_TOOL.requiredScope);
         const workspace = await resolveWorkspace(
           connection,
@@ -255,6 +312,7 @@ export const createMcpServerWithDependencies = (
           dependencies,
           deadline,
         );
+        reportWorkspace(workspace.workspaceId);
         const relations = await dependencies.loadAllowedSchemaForWorkspace(
           connection.identity,
           workspace.workspaceId,
@@ -272,10 +330,8 @@ export const createMcpServerWithDependencies = (
           },
           GET_SCHEMA_TOOL.successInstructions,
         );
-      } catch (error) {
-        return buildReadOnlyMcpToolErrorResult(error, GET_SCHEMA_TOOL.name);
-      }
-    },
+      },
+    ),
   );
 
   server.registerTool(
@@ -287,17 +343,19 @@ export const createMcpServerWithDependencies = (
       annotations: GET_GUIDE_TOOL.annotations,
       _meta: buildToolSecurityMetadata(GET_GUIDE_TOOL.advertisedScopes),
     },
-    async ({ topic }): Promise<CallToolResult> => {
-      try {
+    async ({ topic }): Promise<CallToolResult> => recordMcpToolCall(
+      GET_GUIDE_TOOL.name,
+      keepToolErrorAsThrown,
+      caller,
+      dependencies,
+      async (): Promise<CallToolResult> => {
         requireScope(connection, GET_GUIDE_TOOL.requiredScope);
         return buildMcpSuccessResult(
           { topic, guide: AGENT_GUIDE_BY_TOPIC[topic] },
           GET_GUIDE_TOOL.successInstructions,
         );
-      } catch (error) {
-        return buildMcpToolErrorResult(error, GET_GUIDE_TOOL.name);
-      }
-    },
+      },
+    ),
   );
 
   server.registerTool(
@@ -314,8 +372,12 @@ export const createMcpServerWithDependencies = (
       annotations: SQL_QUERY_TOOL.annotations,
       _meta: buildSqlToolMetadata(SQL_QUERY_TOOL.advertisedScopes),
     },
-    async ({ sql, workspaceId }): Promise<CallToolResult> => {
-      try {
+    async ({ sql, workspaceId }): Promise<CallToolResult> => recordMcpToolCall(
+      SQL_QUERY_TOOL.name,
+      unwrapReadOnlyToolError,
+      caller,
+      dependencies,
+      async (reportWorkspace): Promise<CallToolResult> => {
         requireScope(connection, SQL_QUERY_TOOL.requiredScope);
         const validated = dependencies.validateSingleReadOnlyExpenseSql(sql);
         const workspace = await resolveWorkspace(
@@ -324,6 +386,7 @@ export const createMcpServerWithDependencies = (
           dependencies,
           deadline,
         );
+        reportWorkspace(workspace.workspaceId);
         const result = await dependencies.runReadOnlySql(
           { identity: connection.identity },
           workspace.workspaceId,
@@ -334,10 +397,8 @@ export const createMcpServerWithDependencies = (
           requireSqlResult(result, workspace.workspaceId),
           SQL_QUERY_TOOL.successInstructions,
         );
-      } catch (error) {
-        return buildReadOnlyMcpToolErrorResult(error, SQL_QUERY_TOOL.name);
-      }
-    },
+      },
+    ),
   );
 
   server.registerTool(
@@ -354,8 +415,12 @@ export const createMcpServerWithDependencies = (
       annotations: SQL_EXECUTE_TOOL.annotations,
       _meta: buildSqlToolMetadata(SQL_EXECUTE_TOOL.advertisedScopes),
     },
-    async ({ sql, workspaceId }): Promise<CallToolResult> => {
-      try {
+    async ({ sql, workspaceId }): Promise<CallToolResult> => recordMcpToolCall(
+      SQL_EXECUTE_TOOL.name,
+      keepToolErrorAsThrown,
+      caller,
+      dependencies,
+      async (reportWorkspace): Promise<CallToolResult> => {
         requireScope(connection, SQL_EXECUTE_TOOL.requiredScope);
         const validated = dependencies.validateSingleMutationExpenseSql(sql);
         const workspace = await resolveWorkspace(
@@ -364,6 +429,7 @@ export const createMcpServerWithDependencies = (
           dependencies,
           deadline,
         );
+        reportWorkspace(workspace.workspaceId);
         const result = await dependencies.runSql(
           { identity: connection.identity },
           workspace.workspaceId,
@@ -374,10 +440,8 @@ export const createMcpServerWithDependencies = (
           requireSqlResult(result, workspace.workspaceId),
           SQL_EXECUTE_TOOL.successInstructions,
         );
-      } catch (error) {
-        return buildMcpToolErrorResult(error, SQL_EXECUTE_TOOL.name);
-      }
-    },
+      },
+    ),
   );
 
   return server;
@@ -386,4 +450,5 @@ export const createMcpServerWithDependencies = (
 export const createMcpServer = (
   connection: AuthenticatedMcpAccessToken,
   deadline: SqlExecutionDeadline,
-): McpServer => createMcpServerWithDependencies(connection, deadline, defaultDependencies);
+  caller: string | null,
+): McpServer => createMcpServerWithDependencies(connection, deadline, caller, defaultDependencies);

@@ -16,7 +16,7 @@ import {
 } from "./mcp/auth.js";
 import type { McpRuntimeConfig } from "./mcp/config.js";
 import { createMcpServer } from "./mcp/server.js";
-import type { SqlApiLogEvent } from "./logger.js";
+import { MAX_MCP_CALLER_LOG_CHARS, type SqlApiLogEvent } from "./logger.js";
 import {
   createMcpApp,
   createMcpHandler,
@@ -70,13 +70,16 @@ const authenticatedHeaders = (): Readonly<Record<string, string>> => ({
   host: CONFIG.canonicalHost,
 });
 
-const initializeRequest = (): Request => new Request(RESOURCE, {
+const CLIENT_USER_AGENT = "mcp-handler-test/1.0";
+
+const initializeRequest = (userAgent: string): Request => new Request(RESOURCE, {
   method: "POST",
   headers: {
     ...authenticatedHeaders(),
     accept: "application/json, text/event-stream",
     "content-type": "application/json",
     origin: CONFIG.resourceOrigin,
+    "user-agent": userAgent,
   },
   body: JSON.stringify({
     jsonrpc: "2.0",
@@ -537,6 +540,7 @@ test("MCP handler uses stateless JSON transport with no session identifier", asy
   let serverCreations = 0;
   const authenticationDeadlines: Array<SqlExecutionDeadline> = [];
   const serverDeadlines: Array<SqlExecutionDeadline> = [];
+  const serverCallers: Array<string | null> = [];
   const dependencies = createDependencies(async (token, resource, deadline) => {
     assert.equal(token, ACCESS_TOKEN);
     assert.equal(resource, RESOURCE);
@@ -545,15 +549,16 @@ test("MCP handler uses stateless JSON transport with no session identifier", asy
   }, []);
   const app = createMcpApp({
     ...dependencies,
-    createMcpServer: (connection, deadline) => {
+    createMcpServer: (connection, deadline, caller) => {
       serverCreations += 1;
       serverDeadlines.push(deadline);
-      return createMcpServer(connection, deadline);
+      serverCallers.push(caller);
+      return createMcpServer(connection, deadline, caller);
     },
   });
 
   for (let requestNumber = 0; requestNumber < 2; requestNumber += 1) {
-    const response = await app.request(initializeRequest());
+    const response = await app.request(initializeRequest(CLIENT_USER_AGENT));
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /^application\/json/u);
     assert.equal(response.headers.get("mcp-session-id"), null);
@@ -567,6 +572,29 @@ test("MCP handler uses stateless JSON transport with no session identifier", asy
   assert.deepEqual(
     authenticationDeadlines.map((deadline) => deadline.timeoutMs),
     [MCP_SQL_STATEMENT_TIMEOUT_MS, MCP_SQL_STATEMENT_TIMEOUT_MS],
+  );
+  assert.deepEqual(serverCallers, [CLIENT_USER_AGENT, CLIENT_USER_AGENT]);
+});
+
+test("MCP handler labels the caller with a bounded, sanitized User-Agent", async (): Promise<void> => {
+  const serverCallers: Array<string | null> = [];
+  const app = createMcpApp({
+    ...createDependencies(async () => CONNECTION, []),
+    createMcpServer: (connection, deadline, caller) => {
+      serverCallers.push(caller);
+      return createMcpServer(connection, deadline, caller);
+    },
+  });
+
+  // An action name in the header would otherwise reach a log group whose
+  // metric filter matches bare terms, so its underscores must not survive.
+  const response = await app.request(
+    initializeRequest(`database_pool_error/${"9".repeat(200)}`),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    serverCallers,
+    [`database.pool.error/${"9".repeat(200)}`.slice(0, MAX_MCP_CALLER_LOG_CHARS)],
   );
 });
 

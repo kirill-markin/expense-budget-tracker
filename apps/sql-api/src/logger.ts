@@ -1,3 +1,4 @@
+import type { AgentToolName } from "@expense-budget-tracker/agent-shared/agent-tools";
 import type { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 
 export type SafeErrorType = "error" | "type_error" | "range_error" | "non_error";
@@ -24,6 +25,22 @@ export type SqlResultOverBudgetOutcome =
 // this prefix; the message returned to the caller is never truncated.
 export const MAX_SQL_POLICY_LOG_MESSAGE_CHARS = 500;
 
+// The caller label is the client-controlled User-Agent header, so it is cut
+// to this prefix before it is logged.
+export const MAX_MCP_CALLER_LOG_CHARS = 120;
+
+// Everything outside this set is replaced before the label is logged, so
+// client-controlled text can neither forge a log line nor spell a term a
+// CloudWatch metric filter matches, such as an action name with underscores.
+const MCP_CALLER_LOG_DISALLOWED_CHARS = /[^A-Za-z0-9 .\-+\/()]/gu;
+
+// The caller label of one hosted MCP client: the User-Agent header reduced to
+// the logged charset and length, and null when the client sends no header.
+export const buildMcpCallerLabel = (userAgent: string | null): string | null =>
+  userAgent === null
+    ? null
+    : userAgent.replace(MCP_CALLER_LOG_DISALLOWED_CHARS, ".").slice(0, MAX_MCP_CALLER_LOG_CHARS);
+
 export type SqlApiLogEvent =
   // Emitted once by a container entry point after it starts listening. The
   // Lambda handlers never emit it.
@@ -32,6 +49,20 @@ export type SqlApiLogEvent =
     action: "container_started";
     surface: "machine_api" | "mcp";
     port: number;
+  }>
+  // One record per hosted MCP tool call, so the surface has a tool-call volume
+  // and a failure rate. errorCode repeats the code the client-visible envelope
+  // carries, and caller is the client User-Agent reduced by
+  // buildMcpCallerLabel. Tool calls bundled into one request are not correlated
+  // with each other.
+  | Readonly<{
+    domain: "sql_api";
+    action: "mcp_tool_call";
+    tool: AgentToolName;
+    outcome: "success" | "error";
+    errorCode: string | null;
+    workspaceId: string | null;
+    caller: string | null;
   }>
   | Readonly<{
     domain: "sql_api";

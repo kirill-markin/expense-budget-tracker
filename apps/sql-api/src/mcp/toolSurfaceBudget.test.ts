@@ -92,6 +92,7 @@ const toolSurfaceDependencies: McpServerDependencies = {
   runSql: () => rejectUnusedDataService("runSql"),
   validateSingleReadOnlyExpenseSql,
   validateSingleMutationExpenseSql,
+  log: () => undefined,
 };
 
 // Result-shape checks have to reach the tool handlers, so they need serving stubs
@@ -107,6 +108,7 @@ const toolResultDependencies: McpServerDependencies = {
   }],
   validateSingleReadOnlyExpenseSql,
   validateSingleMutationExpenseSql,
+  log: () => undefined,
   runReadOnlySql: async (_authenticated, workspaceId, validated, deadline) => ({
     statements: [{
       sql: validated.sql,

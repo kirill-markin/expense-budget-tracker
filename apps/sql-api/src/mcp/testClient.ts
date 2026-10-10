@@ -10,6 +10,10 @@ import {
   type McpServerDependencies,
 } from "./server.js";
 
+// The in-memory harness carries no HTTP request, so every server it creates
+// records this fixed client label.
+export const TEST_MCP_CALLER = "mcp-test-client/1.0";
+
 // Single in-memory MCP client harness shared by the sql-api MCP tests, so transport
 // wiring, the fixed test clock, and the close ordering cannot drift between them.
 export const withMcpClient = async <T>(
@@ -19,7 +23,12 @@ export const withMcpClient = async <T>(
   callback: (client: Client) => Promise<T>,
 ): Promise<T> => {
   const deadline = createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, () => 10_000);
-  const server = createMcpServerWithDependencies(connection, deadline, dependencies);
+  const server = createMcpServerWithDependencies(
+    connection,
+    deadline,
+    TEST_MCP_CALLER,
+    dependencies,
+  );
   const client = new Client({ name: clientName, version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

@@ -21,7 +21,7 @@ import {
   buildProtectedResourceMetadata,
 } from "./mcp/resourceMetadata.js";
 import { createMcpServer } from "./mcp/server.js";
-import { getSafeErrorType, log } from "./logger.js";
+import { buildMcpCallerLabel, getSafeErrorType, log } from "./logger.js";
 
 const BEARER_AUTHORIZATION_PATTERN = /^[Bb][Ee][Aa][Rr][Ee][Rr]\s+(ebt_at_[A-Za-z0-9_-]{43})$/u;
 
@@ -168,7 +168,11 @@ const handleMcpTransportRequest = async (
   deadline: SqlExecutionDeadline,
   dependencies: McpHandlerDependencies,
 ): Promise<Response> => {
-  const server = dependencies.createMcpServer(connection, deadline);
+  const server = dependencies.createMcpServer(
+    connection,
+    deadline,
+    buildMcpCallerLabel(request.headers.get("user-agent")),
+  );
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

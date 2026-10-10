@@ -7,6 +7,7 @@ import {
   SQL_DIALECT_GUIDE,
   WRITING_DATA_GUIDE,
 } from "@expense-budget-tracker/agent-shared/agent-protocol";
+import type { AgentToolName } from "@expense-budget-tracker/agent-shared/agent-tools";
 import {
   MAX_SQL_RESULT_CHARS,
   MCP_SQL_STATEMENT_TIMEOUT_MS,
@@ -16,9 +17,10 @@ import {
   validateSingleReadOnlyExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { SqlTransactionOutcomeUnknownError } from "../dbDeadline.js";
+import type { SqlApiLogEvent } from "../logger.js";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
 import { MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS, type McpServerDependencies } from "./server.js";
-import { withMcpClient } from "./testClient.js";
+import { TEST_MCP_CALLER, withMcpClient } from "./testClient.js";
 
 const PERSONAL_WORKSPACE_ID = "workspace-personal";
 const BUSINESS_WORKSPACE_ID = "workspace-business";
@@ -33,6 +35,7 @@ type ToolCalls = {
   schemaDeadlines: Array<SqlExecutionDeadline>;
   queryDeadlines: Array<SqlExecutionDeadline>;
   executeDeadlines: Array<SqlExecutionDeadline>;
+  logEvents: Array<SqlApiLogEvent>;
 };
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -210,6 +213,9 @@ const createDependencies = (
   },
   validateSingleReadOnlyExpenseSql,
   validateSingleMutationExpenseSql,
+  log: (event) => {
+    calls.logEvents.push(event);
+  },
   runReadOnlySql: async (_authenticated, workspaceId, validated, deadline) => {
     calls.queriedWorkspaceIds.push(workspaceId);
     calls.queryDeadlines.push(deadline);
@@ -269,6 +275,34 @@ const createCalls = (): ToolCalls => ({
   schemaDeadlines: [],
   queryDeadlines: [],
   executeDeadlines: [],
+  logEvents: [],
+});
+
+const successToolCallRecord = (
+  tool: AgentToolName,
+  workspaceId: string | null,
+): SqlApiLogEvent => ({
+  domain: "sql_api",
+  action: "mcp_tool_call",
+  tool,
+  outcome: "success",
+  errorCode: null,
+  workspaceId,
+  caller: TEST_MCP_CALLER,
+});
+
+const errorToolCallRecord = (
+  tool: AgentToolName,
+  errorCode: string,
+  workspaceId: string | null,
+): SqlApiLogEvent => ({
+  domain: "sql_api",
+  action: "mcp_tool_call",
+  tool,
+  outcome: "error",
+  errorCode,
+  workspaceId,
+  caller: TEST_MCP_CALLER,
 });
 
 const withClient = (
@@ -403,6 +437,12 @@ test("MCP server emits the public runtime contract and routes successful tool ca
     calls.workspaceDeadlines.every((deadline) => deadline === calls.workspaceDeadlines[0]),
     true,
   );
+  assert.deepEqual(calls.logEvents, [
+    successToolCallRecord("list_workspaces", null),
+    successToolCallRecord("get_schema", BUSINESS_WORKSPACE_ID),
+    successToolCallRecord("sql_query", PERSONAL_WORKSPACE_ID),
+    successToolCallRecord("sql_execute", BUSINESS_WORKSPACE_ID),
+  ]);
 });
 
 test("get_guide serves the shared protocol text without reaching any data service", async (): Promise<void> => {
@@ -458,6 +498,12 @@ test("MCP tools require explicit workspace membership when selection is ambiguou
     calls.workspaceDeadlines.map((deadline) => deadline.timeoutMs),
     [MCP_SQL_STATEMENT_TIMEOUT_MS, MCP_SQL_STATEMENT_TIMEOUT_MS],
   );
+  // The codes pinned here are the ones the two envelopes above returned, so a
+  // record can never classify a failure differently from the client's result.
+  assert.deepEqual(calls.logEvents, [
+    errorToolCallRecord("sql_query", "workspace_selection_required", null),
+    errorToolCallRecord("get_schema", "workspace_not_found", null),
+  ]);
 });
 
 test("MCP read tools preserve an empty workspace list without provisioning state", async (): Promise<void> => {
@@ -574,6 +620,39 @@ test("readonly MCP tools unwrap transaction deadline uncertainty as request dead
       assert.equal(error["code"], "request_deadline_exceeded");
       assert.deepEqual(error["details"], { timeoutMs: 20_000, retryable: true });
     },
+  );
+
+  assert.deepEqual(
+    calls.logEvents,
+    [errorToolCallRecord("list_workspaces", "request_deadline_exceeded", null)],
+  );
+});
+
+test("a failed MCP tool call records the workspace it had already resolved", async (): Promise<void> => {
+  const calls = createCalls();
+  const dependencies: McpServerDependencies = {
+    ...createDependencies([PERSONAL_WORKSPACE_ID], calls),
+    runReadOnlySql: async () => {
+      throw new SqlExecutionDeadlineError(MCP_SQL_STATEMENT_TIMEOUT_MS);
+    },
+  };
+
+  await withClient(
+    createConnection(["expenses:read"]),
+    dependencies,
+    async (client): Promise<void> => {
+      const result = await client.callTool({
+        name: "sql_query",
+        arguments: { sql: "SELECT amount FROM ledger_entries" },
+      });
+      assert.equal(result.isError, true);
+      assert.equal(readErrorCode(parseToolPayload(result)), "request_deadline_exceeded");
+    },
+  );
+
+  assert.deepEqual(
+    calls.logEvents,
+    [errorToolCallRecord("sql_query", "request_deadline_exceeded", PERSONAL_WORKSPACE_ID)],
   );
 });
 
