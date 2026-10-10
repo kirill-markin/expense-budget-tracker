@@ -185,6 +185,23 @@ type ChatEvent =
     recentTurnCount: number;
     limit: number;
   }>
+  /**
+   * A chat attachment upload was minted or confirmed. Both are ordinary
+   * working steps, so the action is deliberately kept out of the `error` family
+   * that the CloudWatch web error alarm pages on; it exists so upload volume
+   * and the gap between minted and confirmed stay countable per session.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "file_upload_minted" | "file_upload_confirmed";
+    route: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    fileId: string;
+    mediaType: string;
+    sizeBytes: number;
+  }>
   | Readonly<{
     domain: "chat";
     action: "run_transition_skipped";
