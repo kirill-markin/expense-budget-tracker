@@ -77,24 +77,34 @@ export function chatSandbox(scope: Construct, props: ChatSandboxProps): ChatSand
       nodeModules: ["just-bash"],
       commandHooks: {
         beforeBundling: () => [],
-        // Two hooks, for two different problems with the same pair of packages.
+        // Two settings, for two different problems with the same pair of
+        // packages, and `.npmrc` is the only file this hook can usefully write:
+        // CDK runs `beforeInstall` and only then writes the staging
+        // `package.json` as `{dependencies}`, overwriting whatever the hook left
+        // there, and there is no hook between that write and `npm ci`. So a
+        // `package.json` field - `allowScripts`, for instance - cannot be
+        // injected from here at all.
         //
         // `omit=optional` keeps just-bash's optional native dependencies off
         // disk: they only add zstd and xz support, which nothing here uses, and
         // they would otherwise be built from source inside the bundling step.
         // Measured: 37 packages installed with it, 75 without.
         //
-        // `allowScripts` is needed because the repository's `.npmrc` sets
-        // `strict-allow-scripts=true`, and this install runs in a staging
-        // directory against a package.json that CDK generates, so the denials
-        // in the root package.json do not apply to it. The check validates the
-        // lockfile tree before `omit` is applied, so omitting the packages is
-        // not enough on its own - without these two entries the asset fails to
-        // bundle with ESTRICTALLOWSCRIPTS and the whole deploy stops. Denying
-        // rather than approving is the point: nothing here needs their scripts.
+        // `ignore-scripts` is what lets this install run at all. The repository
+        // `.npmrc` sets `strict-allow-scripts=true`, which this staging
+        // directory inherits while the root `package.json`'s `allowScripts`
+        // denials do not reach it, and the check validates the lockfile tree
+        // before `omit` is applied - so omitting those packages is not enough
+        // and the asset fails to bundle with ESTRICTALLOWSCRIPTS, stopping the
+        // whole deploy. Disabling scripts satisfies the check by making it
+        // vacuous, and is stricter than denying the two packages by name: this
+        // directory exists only to stage files for a Lambda bundle, so nothing
+        // installed here has any business running an install script. Verified
+        // against npm 12.2.0, the version `packageManager` pins: just-bash
+        // installs intact (46 MB, 1113 files, `python.wasm` present) and both a
+        // shell command and `python3` run from it.
         beforeInstall: (_inputDir: string, outputDir: string) => [
-          `echo 'omit=optional' > ${path.join(outputDir, ".npmrc")}`,
-          `node -e "const fs=require('fs');const p=require('path').join(process.argv[1],'package.json');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.allowScripts={...j.allowScripts,'@mongodb-js/zstd':false,'node-liblzma':false};fs.writeFileSync(p,JSON.stringify(j,null,2)+'\\n');" ${outputDir}`,
+          `printf 'omit=optional\\nignore-scripts=true\\n' > ${path.join(outputDir, ".npmrc")}`,
         ],
         afterBundling: () => [],
       },
