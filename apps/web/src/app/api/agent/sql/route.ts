@@ -79,7 +79,7 @@ const getSqlPolicyInstructions = (error: SqlPolicyError): string => {
   }
 
   if (error.code === "function_calls_not_allowed") {
-    return "Restricted SQL allows a fixed set of pure aggregate, date, text, cast, and window functions, and the error message lists them by name. Query only the published tables and views directly, and prefer ILIKE for case-insensitive text search.";
+    return "Restricted SQL allows a fixed set of pure aggregate, date, text, cast, and window functions, and the error message explains what it rejected and what to write instead. Query only the published tables and views directly, and prefer ILIKE for case-insensitive text search.";
   }
 
   if (error.code === "sql_comments_not_allowed") {
