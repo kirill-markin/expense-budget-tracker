@@ -16,8 +16,10 @@ type WorkspaceRow = Readonly<{
   name: string;
 }>;
 
-const DELETE_WORKSPACE_REQUIRES_SINGLE_MEMBER_DB_MESSAGE_PREFIX =
-  "delete_workspace_for_current_user: workspace deletion is only allowed when the workspace has exactly one member; found ";
+// Raised by every SECURITY DEFINER function that guards the deletion, both the
+// deletion itself and the chat session lister the object cleanup reads first.
+const DELETE_WORKSPACE_REQUIRES_SINGLE_MEMBER_DB_MESSAGE_PATTERN =
+  /^(?:delete_workspace_for_current_user|list_workspace_chat_session_ids_for_current_user): workspace deletion is only allowed when the workspace has exactly one member; found (\d+)/u;
 
 const buildWorkspaceDeletionRequiresSingleMemberMessage = (memberCount: number): string =>
   `Workspace deletion is only allowed when the workspace has exactly one member; found ${memberCount}.`;
@@ -32,17 +34,17 @@ export class WorkspaceDeletionRequiresSingleMemberError extends Error {
   }
 }
 
-const parseWorkspaceDeletionRequiresSingleMemberError = (error: unknown): WorkspaceDeletionRequiresSingleMemberError | null => {
+export const parseWorkspaceDeletionRequiresSingleMemberError = (error: unknown): WorkspaceDeletionRequiresSingleMemberError | null => {
   if (!(error instanceof Error)) {
     return null;
   }
 
-  if (!error.message.startsWith(DELETE_WORKSPACE_REQUIRES_SINGLE_MEMBER_DB_MESSAGE_PREFIX)) {
+  const match = DELETE_WORKSPACE_REQUIRES_SINGLE_MEMBER_DB_MESSAGE_PATTERN.exec(error.message);
+  if (match === null) {
     return null;
   }
 
-  const memberCountRaw = error.message.slice(DELETE_WORKSPACE_REQUIRES_SINGLE_MEMBER_DB_MESSAGE_PREFIX.length);
-  const memberCount = Number.parseInt(memberCountRaw, 10);
+  const memberCount = Number.parseInt(match[1] ?? "", 10);
   if (!Number.isInteger(memberCount)) {
     return null;
   }

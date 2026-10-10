@@ -8,7 +8,7 @@ import {
   type ToolCallPosition,
 } from "@/server/chat/openai/tooling/toolCalls";
 import {
-  toStoredOpenAIReplayItem,
+  toStoredOpenAIReplayItems,
   type StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
 import {
@@ -249,6 +249,8 @@ export const runOneModelCall = async (
       emitEvent,
       callIndex,
     );
+    // Recorded before the replay mapping, which throws on an output item it
+    // cannot persist: a call that dies there is exactly the one worth measuring.
     log(buildChatResponseLogEvent({
       requestId: params.requestId,
       userId: params.userId,
@@ -259,12 +261,28 @@ export const runOneModelCall = async (
       model: request.model,
       response: finalResponse,
     }));
+    const { items: replayItems, droppedCompactionItems } = toStoredOpenAIReplayItems(
+      finalResponse.output,
+    );
+    if (droppedCompactionItems > 0) {
+      log({
+        domain: "chat",
+        action: "replay_item_dropped",
+        vendor: "openai",
+        itemType: "compaction",
+        reason: "missing_replay_fields",
+        count: droppedCompactionItems,
+        requestId: params.requestId,
+        sessionId: params.sessionId,
+        callIndex,
+      });
+    }
     return {
       finalResponse,
       functionCalls: finalResponse.output
         .filter((item) => item.type === "function_call")
         .map((item) => item as ParsedFunctionToolCall),
-      replayItems: finalResponse.output.map(toStoredOpenAIReplayItem),
+      replayItems,
       streamedText,
       toolStates,
     };

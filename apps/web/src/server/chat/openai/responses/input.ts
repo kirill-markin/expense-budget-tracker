@@ -19,7 +19,9 @@ import {
 } from "@/lib/chatAttachments";
 import { getPdfDerivedImageByteLength } from "@/lib/chatPdf";
 import {
+  findLatestChatCompactionBoundary,
   normalizeStoredOpenAIReplayItems,
+  replayItemsFromCompaction,
   toOpenAIResponseInputItem,
   type ServerChatMessage,
 } from "@/server/chat/openai/responses/replayItems";
@@ -312,12 +314,16 @@ const validateStoredUserMessageAttachments = (
 };
 
 const validateReplayAttachments = (
-  localMessages: ReadonlyArray<ServerChatMessage>,
+  replayedMessages: ReadonlyArray<ServerChatMessage>,
   turnInput: ReadonlyArray<ContentPart>,
+  messageIndexOffset: number,
 ): void => {
-  localMessages.forEach((message, messageIndex): void => {
+  replayedMessages.forEach((message, messageIndex): void => {
     if (message.role === "user") {
-      validateStoredUserMessageAttachments(message.content, messageIndex);
+      validateStoredUserMessageAttachments(
+        message.content,
+        messageIndexOffset + messageIndex,
+      );
     }
   });
   validateChatAttachments(turnInput);
@@ -325,9 +331,17 @@ const validateReplayAttachments = (
 
 const buildAssistantHistoryItems = (
   message: ServerChatMessage,
+  compactionItemIndex: number | null,
 ): ReadonlyArray<OpenAIInputItem> => {
   if (message.openaiItems !== undefined) {
-    const { items, droppedReasoningItems } = normalizeStoredOpenAIReplayItems(message.openaiItems);
+    const replayedItems = compactionItemIndex === null
+      ? message.openaiItems
+      : replayItemsFromCompaction(message.openaiItems, compactionItemIndex);
+    const {
+      items,
+      droppedReasoningItems,
+      droppedCompactionItems,
+    } = normalizeStoredOpenAIReplayItems(replayedItems);
     if (droppedReasoningItems > 0) {
       log({
         domain: "chat",
@@ -336,6 +350,16 @@ const buildAssistantHistoryItems = (
         itemType: "reasoning",
         reason: "missing_encrypted_content",
         count: droppedReasoningItems,
+      });
+    }
+    if (droppedCompactionItems > 0) {
+      log({
+        domain: "chat",
+        action: "replay_item_dropped",
+        vendor: "openai",
+        itemType: "compaction",
+        reason: "missing_replay_fields",
+        count: droppedCompactionItems,
       });
     }
 
@@ -394,15 +418,22 @@ export const buildChatCompletionInput = async (
   timezone: string,
 ): Promise<ReadonlyArray<OpenAIInputItem>> => {
   /**
-   * Rebuild the full app-owned session history for manual Responses API
-   * context management.
+   * Rebuild the app-owned session history for manual Responses API context
+   * management.
    *
    * User turns replay from app transcript content so attachments can be
    * rehydrated with the same policy as the current turn. Assistant turns replay
    * only from persisted native OpenAI items stored in `openaiItems`.
+   *
+   * The replay starts at the newest persisted compaction item, whose encrypted
+   * summary already carries every turn ahead of it, and otherwise at the start
+   * of the session.
    */
   const normalizedHistory = normalizeHistoryMessages(localMessages, turnInput);
-  validateReplayAttachments(normalizedHistory, turnInput);
+  const compactionBoundary = findLatestChatCompactionBoundary(normalizedHistory);
+  const startIndex = compactionBoundary?.messageIndex ?? 0;
+  const replayedHistory = normalizedHistory.slice(startIndex);
+  validateReplayAttachments(replayedHistory, turnInput, startIndex);
 
   const input: Array<OpenAIInputItem> = [{
     role: "system",
@@ -410,9 +441,12 @@ export const buildChatCompletionInput = async (
     content: buildSystemInstructions(),
   }];
 
-  for (const message of normalizedHistory) {
+  for (const [offset, message] of replayedHistory.entries()) {
     if (message.role === "assistant") {
-      input.push(...buildAssistantHistoryItems(message));
+      input.push(...buildAssistantHistoryItems(
+        message,
+        offset === 0 && compactionBoundary !== null ? compactionBoundary.itemIndex : null,
+      ));
       continue;
     }
 

@@ -4,7 +4,7 @@ import type { ChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
 export type ChatErrorStage = "config" | "auth" | "stream" | "agent";
-type ChatReplayDropReason = "missing_encrypted_content";
+type ChatReplayDropReason = "missing_encrypted_content" | "missing_replay_fields";
 
 /**
  * Optional vendor-side error context attached to chat error and retry log
@@ -143,9 +143,35 @@ type ChatEvent =
     domain: "chat";
     action: "replay_item_dropped";
     vendor: ChatVendor;
-    itemType: "reasoning";
+    itemType: "reasoning" | "compaction";
     reason: ChatReplayDropReason;
     count: number;
+    /**
+     * Joins the drop to the exact model call, and so to the `history_compacted`
+     * record it is the negation of, which is keyed by `callIndex` too. Absent
+     * for a session-history drop, which is emitted while building the input and
+     * holds no request context.
+     */
+    requestId?: string;
+    sessionId?: string;
+    callIndex?: number;
+  }>
+  /**
+   * A model call came back with a compaction item, so every later call of the
+   * run and every later turn of the session replays from that item instead of
+   * the context it absorbed.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "history_compacted";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    callIndex: number;
+    /** One response can carry more than one; the newest one is replayed. */
+    compactionItems: number;
+    /** Pre-compaction input of this call: what the threshold was measured against. */
+    callInputTokens: number;
   }>
   | Readonly<{
     domain: "chat";
@@ -184,6 +210,23 @@ type ChatEvent =
     userId: string;
     recentTurnCount: number;
     limit: number;
+  }>
+  /**
+   * A chat attachment upload was minted or confirmed. Both are ordinary
+   * working steps, so the action is deliberately kept out of the `error` family
+   * that the CloudWatch web error alarm pages on; it exists so upload volume
+   * and the gap between minted and confirmed stay countable per session.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "file_upload_minted" | "file_upload_confirmed";
+    route: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    fileId: string;
+    mediaType: string;
+    sizeBytes: number;
   }>
   | Readonly<{
     domain: "chat";
@@ -247,6 +290,22 @@ type ChatTranscriptionEvent = Readonly<{
   upstreamMessage: string | null;
   upstreamRequestId: string | null;
   error: string;
+}>;
+
+/**
+ * Chat file objects reclaimed when their workspace went away. The bucket has no
+ * expiration rule, so this is the only reclaim path, and objectCount counts the
+ * objects actually deleted, including on the failure the error propagates.
+ * not_configured records a deployment that stores no chat file at all.
+ */
+type ChatFilesEvent = Readonly<{
+  domain: "chat-files";
+  action: "workspace_objects_deleted";
+  outcome: "deleted" | "failed" | "not_configured";
+  workspaceId: string;
+  sessionCount: number;
+  objectCount: number;
+  error: string | null;
 }>;
 
 type ApiEvent =
@@ -337,7 +396,7 @@ type AuthEvent =
  */
 type DbEvent = Readonly<{ domain: "db"; action: "pool_error"; error: string }>;
 
-type LogEvent = ChatEvent | ChatWorkspaceUnavailableEvent | ChatTranscriptionEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
+type LogEvent = ChatEvent | ChatWorkspaceUnavailableEvent | ChatTranscriptionEvent | ChatFilesEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

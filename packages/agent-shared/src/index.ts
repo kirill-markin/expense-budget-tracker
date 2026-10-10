@@ -4,6 +4,10 @@ import type { AllowedRelationName } from "./sql-policy.js";
  * Shared machine-readable contract for agent-facing auth and setup flows.
  */
 export const AGENT_API_KEY_ENV_VAR_NAME = "EXPENSE_BUDGET_TRACKER_API_KEY";
+// Interpolated into the API Gateway credential-refusal templates, which
+// Velocity renders: keep this value and every instruction built from it free
+// of `$`, `#` and backslash. Callers that need a shell-style example build it
+// at the call site, the way discovery.ts does.
 export const API_KEY_AUTHORIZATION_SCHEME = "Authorization: ApiKey <key>";
 /**
  * Remediation every API-key surface returns when the stored account is
@@ -17,6 +21,18 @@ export const ACCOUNT_DISABLED_INSTRUCTIONS = "Ask the operator of this deploymen
  * lives here instead of being duplicated in each of them.
  */
 export const ACCOUNT_DISABLED_MESSAGE = "This account is disabled or no longer provisioned";
+/**
+ * Refusal for a request that carries no Authorization header. The SQL Lambda
+ * and the API Gateway template that answers before the Lambda ever runs must
+ * return the same text, so it lives here instead of in each of them. The
+ * gateway renders that template as Velocity and silently strips an undefined
+ * reference, so the instruction must name the environment variable bare and
+ * carry no `$` sigil. The onboarding pointer stays relative because both
+ * surfaces serve it under /v1/ on the host the caller just reached.
+ */
+export const MISSING_API_KEY_CODE = "missing_api_key";
+export const MISSING_API_KEY_MESSAGE = "Missing ApiKey authorization";
+export const MISSING_API_KEY_INSTRUCTIONS = `Send ${API_KEY_AUTHORIZATION_SCHEME}, where <key> is the API key stored in the ${AGENT_API_KEY_ENV_VAR_NAME} environment variable. With no key yet, GET /v1/ on this host returns the onboarding steps.`;
 export const AGENT_OAUTH_SCOPES = ["expenses:read", "expenses:write"] as const;
 export const SQL_API_DB_POOL_MAX_CONNECTIONS = 1;
 // Keep raw OAuth query strings below the ALB 16 KiB request-line ceiling,

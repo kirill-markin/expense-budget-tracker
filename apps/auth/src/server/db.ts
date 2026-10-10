@@ -27,7 +27,7 @@ const getConnectionString = (): string => {
 
 let pool: pg.Pool | undefined;
 
-const getPool = (): pg.Pool => {
+export const getPool = (): pg.Pool => {
   if (pool !== undefined) {
     return pool;
   }
