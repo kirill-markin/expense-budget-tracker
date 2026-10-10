@@ -19,6 +19,7 @@ export interface OutputsProps {
   userPool: cognito.UserPool;
   alertTopic: sns.Topic;
   accessLogsBucket: s3.Bucket;
+  chatFilesBucket: s3.Bucket;
   cluster: ecs.Cluster;
   webService: ecs.FargateService;
   migrateTaskDef: ecs.FargateTaskDefinition;
@@ -66,6 +67,10 @@ export function outputs(scope: Construct, props: OutputsProps): void {
   new cdk.CfnOutput(scope, "AccessLogsBucket", {
     value: props.accessLogsBucket.bucketName,
     description: "S3 bucket for ALB access logs",
+  });
+  new cdk.CfnOutput(scope, "ChatFilesBucket", {
+    value: props.chatFilesBucket.bucketName,
+    description: "S3 bucket for chat session files",
   });
   new cdk.CfnOutput(scope, "EcsClusterName", {
     value: props.cluster.clusterName,

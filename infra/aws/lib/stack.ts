@@ -6,6 +6,7 @@ import { auth } from "./auth";
 import { preSignUp } from "./pre-signup";
 import { database } from "./database";
 import { secrets } from "./secrets";
+import { chatFilesBucket } from "./chat-files-bucket";
 import { compute } from "./compute";
 import { ingress } from "./ingress";
 import { fxFetcher } from "./fx-fetcher";
@@ -61,10 +62,12 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
     const dbResult = database(this, { vpc: net.vpc, dbSg: net.dbSg });
     const sec = secrets(this);
+    const chatFiles = chatFilesBucket(this, { appDomain });
     const comp = compute(this, {
       vpc: net.vpc,
       ecsSg: net.ecsSg,
       db: dbResult.db,
+      chatFilesBucket: chatFiles.chatFilesBucket,
       appDbSecret: dbResult.appDbSecret,
       authDbSecret: dbResult.authDbSecret,
       workerDbSecret: dbResult.workerDbSecret,
@@ -151,6 +154,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       userPool: authResult.userPool,
       alertTopic: mon.alertTopic,
       accessLogsBucket: ing.accessLogsBucket,
+      chatFilesBucket: chatFiles.chatFilesBucket,
       cluster: comp.cluster,
       webService: comp.webService,
       migrateTaskDef: comp.migrateTaskDef,

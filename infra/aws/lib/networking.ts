@@ -38,6 +38,13 @@ export function networking(scope: Construct): NetworkingResult {
     "Allow VPC traffic to NAT instance",
   );
 
+  // Keeps chat file object traffic off the single NAT instance: a gateway
+  // endpoint routes S3 requests from the private subnets directly to S3.
+  vpc.addGatewayEndpoint("S3GatewayEndpoint", {
+    service: ec2.GatewayVpcEndpointAwsService.S3,
+    subnets: [{ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }],
+  });
+
   // --- Security Groups ---
   // ALB only accepts traffic from Cloudflare edge servers.
   // IPs loaded from cloudflare-ips.json — run scripts/update-cloudflare-ips.sh to refresh.
