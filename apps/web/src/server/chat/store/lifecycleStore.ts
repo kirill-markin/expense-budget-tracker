@@ -377,6 +377,7 @@ export const completeChatRunWithQuery = async (
     content: params.assistantContent,
     state: "completed",
     assistantOpenAIItems: params.assistantOpenAIItems,
+    assistantReplayMeasurement: params.assistantReplayMeasurement,
   });
 
   await completeChatSessionRunWithQuery(

@@ -209,6 +209,15 @@ export const getResponseInputTokens = (
 ): number =>
   getResponseUsage(response).input_tokens;
 
+/**
+ * The items this call produced. Its own input could not contain them, and the
+ * next turn replays them, so sizing a stored turn needs both numbers.
+ */
+export const getResponseOutputTokens = (
+  response: OpenAI.Responses.Response,
+): number =>
+  getResponseUsage(response).output_tokens;
+
 export const buildChatResponseLogEvent = (
   params: Readonly<{
     requestId: string;

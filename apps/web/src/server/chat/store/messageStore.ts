@@ -11,13 +11,18 @@ import {
   type UpdateChatMessageItemAndInvalidateMainContentParams,
   type UpdateChatMessageItemParams,
 } from "./shared";
-import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
+import {
+  parseChatHistoryMeasurement,
+  type ChatHistoryMeasurement,
+  type StoredOpenAIReplayItem,
+} from "@/server/chat/openai/responses/replayItems";
 import { lockActiveChatSessionRunWithQuery } from "./sessionStore";
 
 type ChatItemPayload = Readonly<{
   role: "user" | "assistant";
   content: ReadonlyArray<ContentPart>;
   openaiItems?: ReadonlyArray<StoredOpenAIReplayItem>;
+  replayMeasurement?: ChatHistoryMeasurement;
 }>;
 
 type ChatItemRow = Readonly<{
@@ -171,12 +176,16 @@ const requireChatItemRow = (
 const toChatItemPayload = (
   role: "user" | "assistant",
   content: ReadonlyArray<ContentPart>,
-  assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>,
+  assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | undefined,
+  assistantReplayMeasurement: ChatHistoryMeasurement | undefined,
 ): ChatItemPayload => ({
   role,
   content,
   ...(role === "assistant" && assistantOpenAIItems !== undefined
     ? { openaiItems: assistantOpenAIItems }
+    : {}),
+  ...(role === "assistant" && assistantReplayMeasurement !== undefined
+    ? { replayMeasurement: assistantReplayMeasurement }
     : {}),
 });
 
@@ -196,6 +205,12 @@ export const mapChatItemRow = (row: ChatItemRow): PersistedChatMessageItem => ({
   role: row.payload.role,
   content: row.payload.content,
   openaiItems: row.payload.role === "assistant" ? row.payload.openaiItems : undefined,
+  // The payload is JSONB written by older code paths too, so the measurement is
+  // validated here rather than trusted: a malformed one must read as absent, or
+  // it propagates into every history weight of the session.
+  replayMeasurement: row.payload.role === "assistant"
+    ? parseChatHistoryMeasurement(row.payload.replayMeasurement)
+    : undefined,
   state: row.state,
   isError: row.state === "error",
   isStopped: row.state === "cancelled",
@@ -219,7 +234,12 @@ export const insertChatItemWithQuery = async (
     params.itemId,
     params.sessionId,
     params.state,
-    JSON.stringify(toChatItemPayload(params.role, params.content, params.assistantOpenAIItems)),
+    JSON.stringify(toChatItemPayload(
+      params.role,
+      params.content,
+      params.assistantOpenAIItems,
+      undefined,
+    )),
     isVisibleChatItemActivity(params.role, params.state, params.content),
   ]);
 
@@ -269,7 +289,12 @@ export const updateChatItemWithQuery = async (
   const result = await queryFn(UPDATE_CHAT_ITEM_SQL, [
     params.itemId,
     params.sessionId,
-    JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
+    JSON.stringify(toChatItemPayload(
+      "assistant",
+      params.content,
+      params.assistantOpenAIItems,
+      params.assistantReplayMeasurement,
+    )),
     params.state,
     isVisibleChatItemActivity("assistant", params.state, params.content),
   ]);
@@ -289,7 +314,12 @@ export const updateChatItemAndInvalidateMainContentWithQuery = async (
   const result = await queryFn(UPDATE_CHAT_ITEM_AND_INVALIDATE_MAIN_CONTENT_SQL, [
     params.itemId,
     params.sessionId,
-    JSON.stringify(toChatItemPayload("assistant", params.content, params.assistantOpenAIItems)),
+    JSON.stringify(toChatItemPayload(
+      "assistant",
+      params.content,
+      params.assistantOpenAIItems,
+      undefined,
+    )),
     params.state,
     isVisibleChatItemActivity("assistant", params.state, params.content),
   ]);

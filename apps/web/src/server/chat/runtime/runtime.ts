@@ -943,6 +943,9 @@ export const runPersistedChatSessionWithDeps = async (
               assistantItemId: params.assistantItemId,
               assistantContent,
               assistantOpenAIItems,
+              ...(completion.replayMeasurement === undefined
+                ? {}
+                : { assistantReplayMeasurement: completion.replayMeasurement }),
             },
           );
         } catch (error) {

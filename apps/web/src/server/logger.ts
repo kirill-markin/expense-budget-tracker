@@ -1,5 +1,6 @@
 import type { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
+import type { ChatHistoryBoundary } from "@/server/chat/openai/responses/history";
 
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
@@ -155,6 +156,59 @@ type ChatEvent =
     requestId?: string;
     sessionId?: string;
     callIndex?: number;
+  }>
+  /**
+   * The replayed session history was bounded before the first call of a turn:
+   * `compaction` replays from the newest stored compaction item, `window` drops
+   * the oldest turns to fit the sent-input budget, `stale_compaction` means the
+   * history from that compaction item onward no longer fit, so the item was
+   * dropped and the window applied instead.
+   *
+   * `unboundedSentInputTokens` is what the same turn would have sent replaying
+   * the whole stored history, so the two token fields together show how much
+   * the bound removed.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "history_bounded";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    boundary: Exclude<ChatHistoryBoundary, "none">;
+    droppedMessages: number;
+    unboundedSentInputTokens: number;
+    sentInputTokens: number;
+    budgetTokens: number;
+  }>
+  /**
+   * A text attachment could not be decoded while the history was being sized, so
+   * that part fell back to a byte bound instead of its real decoded length.
+   * Carries no request context: sizing is a pure function of the stored history
+   * and runs below the request plumbing.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "attachment_sizing_decode_failed";
+    vendor: ChatVendor;
+    mediaType: string;
+    sizeBytes: number;
+    error: string;
+  }>
+  /**
+   * An attachment could not be extracted while the history was being sized, so
+   * that part fell back to a bound instead of its real extracted length. The
+   * turn itself is unaffected here: if the part is replayed, the request build
+   * extracts it again and raises the real error.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "attachment_sizing_extraction_failed";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    mediaType: string;
+    sizeBytes: number;
+    error: string;
   }>
   /**
    * A model call came back with a compaction item, so every later call of the

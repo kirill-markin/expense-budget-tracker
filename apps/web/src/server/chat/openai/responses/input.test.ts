@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as XLSX from "xlsx";
+import { CHAT_SENT_INPUT_BUDGET_TOKENS } from "@/lib/chatModels";
 import {
   LegacyPdfFileAttachmentError,
   UnsupportedImageMediaTypeError,
@@ -9,7 +11,10 @@ import {
   sanitizeContentPartsForTelemetry,
   UnsupportedStoredChatAttachmentError,
 } from "@/server/chat/openai/responses/input";
-import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
+import type {
+  ServerChatMessage,
+  StoredOpenAIReplayItem,
+} from "@/server/chat/openai/responses/replayItems";
 import type { ContentPart } from "@/server/chat/types";
 
 const HEIC_BASE64_PREFIX = "AAAAGGZ0eXBoZWljAAAAAA==";
@@ -34,7 +39,7 @@ test("buildChatCompletionInput rejects a legacy HEIC attachment without mutating
   const originalTurnInput = structuredClone(turnInput);
 
   await assert.rejects(
-    buildChatCompletionInput(localMessages, turnInput, "Europe/Madrid"),
+    buildChatCompletionInput(localMessages, turnInput, "Europe/Madrid", "session-1", "req-1"),
     (error: unknown): boolean => {
       assert.ok(error instanceof UnsupportedStoredChatAttachmentError);
       assert.equal(error.fileName, "IMG_7071.HEIC");
@@ -60,10 +65,12 @@ test("buildChatCompletionInput replays a prepared JPEG as a native input image",
     }],
   }];
 
-  const input = await buildChatCompletionInput(
+  const { items: input } = await buildChatCompletionInput(
     localMessages,
     [{ type: "text", text: "What is in the image?" }],
     "Europe/Madrid",
+    "session-1",
+    "req-1",
   );
 
   assert.deepEqual(input[1], {
@@ -88,10 +95,12 @@ test("buildChatCompletionInput replays CSV content identified by MIME without a 
     }],
   }];
 
-  const input = await buildChatCompletionInput(
+  const { items: input } = await buildChatCompletionInput(
     localMessages,
     [{ type: "text", text: "Continue" }],
     "Europe/Madrid",
+    "session-1",
+    "req-1",
   );
 
   assert.deepEqual(input[1], {
@@ -105,7 +114,7 @@ test("buildChatCompletionInput replays CSV content identified by MIME without a 
 });
 
 test("buildChatCompletionInput sends current CSV content identified by uppercase extension without a native input file", async (): Promise<void> => {
-  const input = await buildChatCompletionInput(
+  const { items: input } = await buildChatCompletionInput(
     [],
     [{
       type: "file",
@@ -114,6 +123,8 @@ test("buildChatCompletionInput sends current CSV content identified by uppercase
       base64Data: CSV_BASE64,
     }],
     "Europe/Madrid",
+    "session-1",
+    "req-1",
   );
 
   assert.deepEqual(input[1], {
@@ -136,6 +147,8 @@ test("buildChatCompletionInput keeps current-turn attachment validation distinct
         base64Data: HEIC_BASE64_PREFIX,
       }],
       "Europe/Madrid",
+      "session-1",
+      "req-1",
     ),
     UnsupportedImageMediaTypeError,
   );
@@ -154,10 +167,12 @@ test("buildChatCompletionInput expands logical PDF pages into ordered text and J
       { pageNumber: 2, text: "", jpegBase64Data: secondJpeg },
     ],
   };
-  const input = await buildChatCompletionInput(
+  const { items: input } = await buildChatCompletionInput(
     [{ role: "user", content: [pdfPart] }],
     [{ type: "text", text: "Continue with this statement" }],
     "Europe/Madrid",
+    "session-1",
+    "req-1",
   );
 
   assert.equal(input.length, 4);
@@ -224,10 +239,12 @@ test("buildChatCompletionInput removes a JSONB-reordered copy of the current log
     type: canonicalPdf.type,
   };
 
-  const input = await buildChatCompletionInput(
+  const { items: input } = await buildChatCompletionInput(
     [{ role: "user", content: [persistedPdf] }],
     currentTurn,
     "Europe/Madrid",
+    "session-1",
+    "req-1",
   );
 
   assert.equal(input.length, 3);
@@ -304,6 +321,8 @@ test("buildChatCompletionInput rejects a stored legacy PDF before OpenAI mapping
         localMessages,
         [{ type: "text", text: "Continue" }],
         "Europe/Madrid",
+        "session-1",
+        "req-1",
       ),
       (error: unknown): boolean => {
         assert.ok(error instanceof UnsupportedStoredChatAttachmentError);
@@ -359,10 +378,12 @@ test("buildChatCompletionInput replays a stored session from its newest compacti
     },
   ];
 
-  const input = await buildChatCompletionInput(
+  const { items: input } = await buildChatCompletionInput(
     localMessages,
     [{ type: "text", text: "Continue" }],
     "Europe/Madrid",
+    "session-1",
+    "req-1",
   );
 
   // The turns ahead of the compaction item are inside its summary, while the
@@ -383,6 +404,222 @@ test("buildChatCompletionInput replays a stored session from its newest compacti
   });
   assert.equal(JSON.stringify(input).includes("First question"), false);
   assert.equal(JSON.stringify(input).includes("Third question"), false);
+});
+
+const LONG_TURN_TEXT_CHARACTERS = 12_000;
+
+/**
+ * One stored turn big enough that a few dozen of them pass the sent-input
+ * budget, with a marker the assertions can look for in the built input.
+ */
+const createLongStoredTurn = (
+  turnIndex: number,
+  assistantItems: ReadonlyArray<StoredOpenAIReplayItem>,
+): ReadonlyArray<ServerChatMessage> => [
+  {
+    role: "user",
+    content: [{
+      type: "text",
+      text: `Turn ${String(turnIndex)} question ${"q".repeat(LONG_TURN_TEXT_CHARACTERS)}`,
+    }],
+  },
+  {
+    role: "assistant",
+    content: [{ type: "text", text: `Turn ${String(turnIndex)} answer` }],
+    openaiItems: [
+      ...assistantItems,
+      {
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{
+          type: "output_text",
+          text: `Turn ${String(turnIndex)} answer ${"a".repeat(LONG_TURN_TEXT_CHARACTERS)}`,
+          annotations: [],
+        }],
+      },
+    ],
+  },
+];
+
+const createLongStoredSession = (
+  turnCount: number,
+  compactionTurnIndex: number | null,
+): ReadonlyArray<ServerChatMessage> =>
+  Array.from({ length: turnCount }).flatMap((_, turnIndex) =>
+    createLongStoredTurn(
+      turnIndex,
+      turnIndex === compactionTurnIndex
+        ? [{ type: "compaction", id: "compaction-1", encrypted_content: "opaque-summary" }]
+        : [],
+    ));
+
+test("buildChatCompletionInput trims the oldest turns of a session that outgrew the sent-input budget", async (): Promise<void> => {
+  const localMessages = createLongStoredSession(40, null);
+
+  const { items: input, replayedMessages } = await buildChatCompletionInput(
+    localMessages,
+    [{ type: "text", text: "Continue" }],
+    "Europe/Madrid",
+    "session-1",
+    "req-1",
+  );
+
+  // Instructions, then a replayed user turn: an assistant turn whose question
+  // was dropped would answer nothing.
+  const firstHistoryItem = input[1];
+  assert.ok(firstHistoryItem !== undefined && "role" in firstHistoryItem);
+  assert.equal(firstHistoryItem.role, "user");
+  const serializedInput = JSON.stringify(input);
+  assert.equal(serializedInput.includes("Turn 0 question"), false);
+  assert.ok(serializedInput.includes(`Turn ${String(localMessages.length / 2 - 1)} answer`));
+  assert.ok(replayedMessages < localMessages.length);
+  assert.ok(replayedMessages > 0);
+});
+
+test("buildChatCompletionInput keeps replaying history when a small workbook is attached", async (): Promise<void> => {
+  // A container attachment cannot be sized from its own bytes, and the cap that
+  // bounds its extracted text is 200k tokens - more than the whole budget. Sized
+  // that way, a tiny spreadsheet made no cut fit, collapsed the replay to the
+  // newest pair, and the monotone boundary then held it there for the rest of
+  // the session. This workbook extracts to a few hundred characters and must be
+  // charged that.
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["date", "amount"], ["2026-08-16", -844.82]]),
+    "Ledger",
+  );
+  const localMessages = createLongStoredSession(20, null);
+  const turnInput: ReadonlyArray<ContentPart> = [
+    { type: "text", text: "What does this sheet say?" },
+    {
+      type: "file",
+      fileName: "ledger.xlsx",
+      mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      base64Data: XLSX.write(workbook, { type: "base64", bookType: "xlsx" }),
+    },
+  ];
+
+  const { items: input, replayedMessages } = await buildChatCompletionInput(
+    localMessages,
+    turnInput,
+    "Europe/Madrid",
+    "session-1",
+    "req-1",
+  );
+
+  // The session is still replayed around the attachment rather than erased, and
+  // the workbook is sent once, as extracted CSV.
+  assert.ok(
+    replayedMessages > 2,
+    `Only ${String(replayedMessages)} messages survived a ${String(localMessages.length)} `
+    + "message session with one small workbook attached",
+  );
+  const serializedInput = JSON.stringify(input);
+  assert.ok(serializedInput.includes("Sheet: Ledger"));
+  assert.ok(serializedInput.includes("2026-08-16"));
+  assert.equal(serializedInput.includes("truncated: extracted text"), false);
+});
+
+test("buildChatCompletionInput keeps replaying history around a small stored workbook", async (): Promise<void> => {
+  // The stored-attachment half of the same defect. One small spreadsheet sitting
+  // in the history used to be charged the extracted-text cap - more than the
+  // whole budget for a single content part - so every cut was unfit and the
+  // monotone boundary pinned the session at its newest pair for good.
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["date", "amount"], ["2026-08-16", -844.82]]),
+    "Ledger",
+  );
+  const storedWorkbookTurn: ReadonlyArray<ServerChatMessage> = [
+    {
+      role: "user",
+      content: [{
+        type: "file",
+        fileName: "ledger.xlsx",
+        mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        base64Data: XLSX.write(workbook, { type: "base64", bookType: "xlsx" }),
+      }],
+    },
+    ...createLongStoredTurn(99, []).slice(1),
+  ];
+  const turnInput: ReadonlyArray<ContentPart> = [{ type: "text", text: "Continue" }];
+
+  const withoutWorkbook = await buildChatCompletionInput(
+    createLongStoredSession(20, null),
+    turnInput,
+    "Europe/Madrid",
+    "session-1",
+    "req-1",
+  );
+  const withWorkbook = await buildChatCompletionInput(
+    [...createLongStoredSession(19, null), ...storedWorkbookTurn],
+    turnInput,
+    "Europe/Madrid",
+    "session-1",
+    "req-1",
+  );
+
+  // One stored spreadsheet must not cost the session its history.
+  assert.ok(
+    withWorkbook.replayedMessages >= withoutWorkbook.replayedMessages - 2,
+    `A stored workbook cut the replay from ${String(withoutWorkbook.replayedMessages)} `
+    + `messages to ${String(withWorkbook.replayedMessages)}`,
+  );
+  // And it is replayed as its extracted CSV, once.
+  assert.ok(JSON.stringify(withWorkbook.items).includes("Sheet: Ledger"));
+});
+
+test("buildChatCompletionInput keeps the newest turn and drops a compaction item the budget no longer accepts", async (): Promise<void> => {
+  const localMessages: ReadonlyArray<ServerChatMessage> = [
+    ...createLongStoredTurn(0, []),
+    {
+      role: "user",
+      content: [{ type: "text", text: "Turn 1 question" }],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Turn 1 answer" }],
+      openaiItems: [
+        { type: "compaction", id: "compaction-1", encrypted_content: "opaque-summary" },
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{
+            type: "output_text",
+            // One turn larger than the whole budget on its own, so no
+            // user-aligned cut fits and the compaction item behind it no longer
+            // stands for a history that fits either.
+            text: "o".repeat(CHAT_SENT_INPUT_BUDGET_TOKENS * 4),
+            annotations: [],
+          }],
+        },
+      ],
+    },
+  ];
+
+  const { items: input } = await buildChatCompletionInput(
+    localMessages,
+    [{ type: "text", text: "Continue" }],
+    "Europe/Madrid",
+    "session-1",
+    "req-1",
+  );
+
+  // The newest question and its answer are kept rather than the session being
+  // erased, and the stale compaction item is not replayed in the middle of a
+  // history that is being sent in full.
+  assert.equal(input.some((item) => item.type === "compaction"), false);
+  assert.equal(JSON.stringify(input).includes("opaque-summary"), false);
+  const firstHistoryItem = input[1];
+  assert.ok(firstHistoryItem !== undefined && "role" in firstHistoryItem);
+  assert.equal(firstHistoryItem.role, "user");
+  const serializedInput = JSON.stringify(input);
+  assert.ok(serializedInput.includes("Turn 1 question"));
+  assert.equal(serializedInput.includes("Turn 0 question"), false);
 });
 
 test("PDF telemetry carries only the source digest and derived page summaries", async (): Promise<void> => {

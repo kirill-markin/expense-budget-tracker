@@ -196,7 +196,7 @@ export const capAttachmentPromptText = (
   ].join("\n");
 };
 
-const decodeUtf8File = (
+export const decodeUtf8File = (
   part: FileContentPart,
 ): string => {
   try {
