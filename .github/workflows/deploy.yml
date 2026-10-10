@@ -272,6 +272,8 @@ jobs:
 
       - name: Run live agent API smoke
         run: |
+          # pipefail: without it the step status comes from tee and a failing smoke reports success.
+          set -euo pipefail
           mkdir -p artifacts
           node scripts/live-agent-api-smoke.mjs 2>&1 | tee artifacts/agent-api-smoke.log
         env:
