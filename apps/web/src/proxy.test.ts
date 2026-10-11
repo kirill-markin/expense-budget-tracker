@@ -171,18 +171,28 @@ test("proxy_jwt rejects a token it cannot verify", async (): Promise<void> => {
   });
 });
 
-test("proxy_jwt keeps public paths and the ApiKey agent surface exempt", async (): Promise<void> => {
+test("proxy_jwt keeps public paths exempt and gives an ApiKey no app-origin surface", async (): Promise<void> => {
   await withProxyJwtEnv(async (): Promise<void> => {
     const publicResponse = await proxy(createRequest("/share/monthly/public-token"));
     assert.equal(publicResponse.status, 200);
 
-    const agentRequest = new NextRequest("https://app.example.com/api/agent/sql", {
+    // An ApiKey buys no app-origin privilege: an /api/agent/ path is exempt
+    // from neither proxy auth nor CSRF, whatever the method.
+    const readRequest = new NextRequest("https://app.example.com/api/agent/sql", {
       method: "GET",
       headers: { authorization: "ApiKey ebt_live_example" },
     });
-    const agentResponse = await proxy(agentRequest);
-    assert.equal(agentResponse.status, 200);
-    assert.equal(agentResponse.headers.get("location"), null);
+    const readResponse = await proxy(readRequest);
+    assert.equal(readResponse.status, 401);
+    assert.equal(readResponse.headers.get("location"), null);
+
+    const writeRequest = new NextRequest("https://app.example.com/api/agent/sql", {
+      method: "POST",
+      headers: { authorization: "ApiKey ebt_live_example" },
+    });
+    const writeResponse = await proxy(writeRequest);
+    assert.equal(writeResponse.status, 403);
+    assert.equal(await writeResponse.text(), "CSRF validation failed");
   });
 });
 

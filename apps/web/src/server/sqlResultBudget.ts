@@ -1,12 +1,11 @@
 /**
  * Character budget for the SQL results the web app hands to an agent.
  *
- * Both web surfaces emit one whole result per call: the chat sends it into an
- * OpenAI turn that re-sends it on every later model call of the same turn, and
- * the agent SQL route returns it to an API-key client. Dropping rows is the only
- * mechanism, and a cut is reported through the fields the machine API already
- * uses: returnedRowCount becomes the rows actually shipped, truncated is set,
- * and totalRowCount keeps naming what the query matched.
+ * The chat emits one whole result per call and sends it into an OpenAI turn
+ * that re-sends it on every later model call of the same turn. Dropping rows is
+ * the only mechanism, and a cut is reported through the fields the machine API
+ * already uses: returnedRowCount becomes the rows actually shipped, truncated is
+ * set, and totalRowCount keeps naming what the query matched.
  *
  * A read also lowers rowCount to the rows it shipped, while a committed
  * mutation keeps reporting the rows it affected, the same exemption
@@ -17,7 +16,7 @@
 import { MAX_SQL_RESULT_CHARS } from "@expense-budget-tracker/agent-shared/sql-policy";
 
 /**
- * Premise of the row search below, which both callers satisfy: every field a
+ * Premise of the row search below, which the caller satisfies: every field a
  * cut rewrites is non-decreasing in the kept row count, so rowCount and
  * returnedRowCount must be the statement's own rows.length whenever it returned
  * rows. A caller passing counts unrelated to rows.length would make candidate
@@ -30,9 +29,9 @@ export type BudgetedSqlStatement = Readonly<{
   truncated: boolean;
 }>;
 
-// isMutating travels beside the statement instead of inside it, because neither
-// caller's agent-facing statement shape carries that flag. Pairing it with the
-// statement keeps the two aligned without an index lookup.
+// isMutating travels beside the statement instead of inside it, because the
+// caller's agent-facing statement shape does not carry that flag. Pairing it
+// with the statement keeps the two aligned without an index lookup.
 export type BudgetedSqlStatementEntry<TStatement extends BudgetedSqlStatement> = Readonly<{
   statement: TStatement;
   isMutating: boolean;
