@@ -8,6 +8,34 @@
  * vendored CPython tree stay out of the web image.
  */
 import { z, type RefinementCtx } from "zod";
+import { MAX_REFUSALS } from "./refusalLog.js";
+
+/**
+ * Refusal channels one command's notes can carry: /files and /work.
+ *
+ * Each is a RefusalLog, each is bounded by MAX_REFUSALS, and each adds one
+ * suppressed-count note when it hits that bound.
+ */
+export const SANDBOX_REFUSAL_CHANNEL_COUNT = 2;
+
+/**
+ * Notes of one response that may be a refusal, counted from the front.
+ *
+ * `describeSandboxNotes` emits the execution-failure note, then both refusal
+ * channels, then the /work diff's bulk per-file notes - so every refusal is
+ * inside this many entries and everything past it is bulk. The caller uses that
+ * to give refusals priority over its own notes while keeping bulk notes below
+ * them, which matters because a loop that overruns its write slots produces
+ * thousands of the bulk kind.
+ *
+ * Here, computed, rather than spelled out on the caller's side: it was a
+ * hardcoded 48 over there, correct against today's bounds and with nothing but
+ * prose linking the two. Raising MAX_REFUSALS or adding a third channel would
+ * have silently reclassified real refusals as bulk, where that same storm can
+ * drop them. bashOperation.test.ts pins the property rather than the number.
+ */
+export const SANDBOX_MAX_PRIORITY_NOTES =
+  1 + SANDBOX_REFUSAL_CHANNEL_COUNT * (MAX_REFUSALS + 1);
 
 /** Mount point holding the user's originals, mounted read-only. */
 export const SANDBOX_FILES_DIR = "/files";

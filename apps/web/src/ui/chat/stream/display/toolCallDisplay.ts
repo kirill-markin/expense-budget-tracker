@@ -24,6 +24,7 @@ export const formatToolLabel = (
   if (name === "get_guide") return t("chat.toolGetGuide");
   if (name === "sql_query") return t("chat.toolSqlQuery");
   if (name === "sql_execute") return t("chat.toolSqlExecute");
+  if (name === "bash") return t("chat.toolBash");
   // Stored transcripts keep this tool name, so its label must stay renderable.
   if (name === "query_database") return t("chat.toolDbQuery");
   if (name === "code_execution") return t("chat.toolCodeExec");

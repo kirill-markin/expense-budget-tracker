@@ -39,6 +39,7 @@ const createLoopParams = (): StartOpenAILoopParams => ({
   turnInput: [{ type: "text", text: "Hello" }],
   model: CHAT_MODEL_ID,
   reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
+  isDemoMode: false,
   rootObservation: null,
 });
 

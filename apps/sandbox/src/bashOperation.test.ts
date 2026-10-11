@@ -20,6 +20,8 @@ import {
 import {
   parseChatSandboxBashRequest,
   SANDBOX_FILES_DIR,
+  SANDBOX_MAX_PRIORITY_NOTES,
+  SANDBOX_REFUSAL_CHANNEL_COUNT,
   SANDBOX_OBJECT_HOSTS_ENV_VAR,
   SANDBOX_PATH_MAX_DEPTH,
   SANDBOX_WORK_DIR,
@@ -33,8 +35,9 @@ import {
   ObjectTransferError,
   type SandboxObjectTransfer,
 } from "./objects.js";
-import type { PresignedFs } from "./presignedFs.js";
-import type { RecordingWorkFs } from "./workFs.js";
+import type { PresignedFs, PresignedRefusals } from "./presignedFs.js";
+import { MAX_REFUSALS } from "./refusalLog.js";
+import type { RecordingWorkFs, WorkRefusals } from "./workFs.js";
 
 type RecordedWrite = Readonly<{ putUrl: string; mediaType: string; content: string }>;
 
@@ -2037,4 +2040,88 @@ test("bytes of a cleanly deleted file are released", async (): Promise<void> => 
   assert.deepEqual(diff.deletedPaths, ["/work/kept.bin"]);
   assert.deepEqual(savedPaths(diff), ["/work/added.txt"]);
   assert.deepEqual(diff.notes, []);
+});
+
+/**
+ * No refusal note is ever placed past the bound the web task prioritizes by.
+ *
+ * The property, not the number: SANDBOX_MAX_PRIORITY_NOTES is computed from
+ * MAX_REFUSALS and the channel count, and the caller gives everything inside it
+ * priority over its own notes while everything past it ranks below them. A
+ * refusal that slipped past would be reclassified as a bulk per-file note,
+ * where a write-slot storm of two thousand can drop it - and the refusal
+ * channel exists precisely so a failed read never reads as a missing file.
+ *
+ * So this fails if a later change adds a refusal channel or reorders
+ * describeSandboxNotes to put the /work diff's notes before a refusal. Raising
+ * MAX_REFUSALS needs no guard: SANDBOX_MAX_PRIORITY_NOTES is derived from it,
+ * so the two cannot drift apart - which is the whole point of computing it in
+ * contract.ts rather than restating it.
+ */
+test("every refusal note is inside the priority bound the caller uses", (): void => {
+  const refusals = (kind: "denied" | "unreachable"): PresignedRefusals => ({
+    // Both channels at their bound, which is the most refusals one command can
+    // name, plus the suppressed-count note each adds on top.
+    recorded: Array.from({ length: MAX_REFUSALS }, (_unused, index) => ({
+      path: `/refused-${String(index)}.csv`,
+      kind,
+      detail: "HTTP 403",
+    })),
+    suppressedCount: 7,
+    raisedWrite: null,
+  });
+  const filesRefusals = refusals("denied");
+  const workRefusals: WorkRefusals = {
+    recorded: refusals("unreachable").recorded.map((refusal) => ({
+      path: refusal.path,
+      kind: "unreachable" as const,
+      detail: refusal.detail,
+    })),
+    suppressedCount: 7,
+  };
+  // And a /work diff that produced far more notes than the refusals, which is
+  // the shape that makes the boundary matter.
+  const workNotes = Array.from(
+    { length: 2_000 },
+    (_unused, index) => `"/work/out-${String(index)}.csv" was not saved: one command can save at most 64 files`,
+  );
+
+  const notes = describeSandboxNotes(
+    { stdout: "", stderr: "", exitCode: 1, failure: "ENOSPC: out of space" },
+    filesRefusals,
+    workRefusals,
+    workNotes,
+  );
+  const refusalNotes = new Set([
+    ...describeFileRefusals(filesRefusals),
+    ...describeWorkRefusals(workRefusals),
+  ]);
+
+  // Every refusal this command produced is in the response, and all of them are
+  // inside the bound.
+  assert.equal(refusalNotes.size, SANDBOX_REFUSAL_CHANNEL_COUNT * (MAX_REFUSALS + 1));
+  for (const note of refusalNotes) {
+    const index = notes.indexOf(note);
+    assert.ok(index >= 0, `a refusal was not emitted at all: ${note}`);
+    assert.ok(
+      index < SANDBOX_MAX_PRIORITY_NOTES,
+      `a refusal sits at index ${String(index)}, past the ${String(SANDBOX_MAX_PRIORITY_NOTES)} the caller prioritizes`,
+    );
+  }
+  // The complement, asserted structurally: EVERYTHING past the bound came from
+  // the bulk input. Asserting "nothing past the bound is in this set of
+  // refusals" instead was the hole - a third refusal channel's notes are in
+  // neither that set nor either loop's domain, so appending one after
+  // describeWorkRefusals (the natural position, and the one
+  // describeSandboxNotes's own ordering docblock invites) left its refusals
+  // sitting at indices 43-63 with the suite green. That is the tier-5 region
+  // reportWithinBudget lets a 2,000-note write-slot storm drop, which is the
+  // demotion this constant exists to prevent.
+  const bulk = new Set(workNotes);
+  for (const note of notes.slice(SANDBOX_MAX_PRIORITY_NOTES)) {
+    assert.ok(
+      bulk.has(note),
+      `a note past the ${String(SANDBOX_MAX_PRIORITY_NOTES)} the caller prioritizes is not a bulk /work note, so it is being demoted to tier 5: ${note}`,
+    );
+  }
 });

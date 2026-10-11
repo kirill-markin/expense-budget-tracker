@@ -311,6 +311,7 @@
   "chat.toolGetGuide": "Руководство по использованию",
   "chat.toolSqlQuery": "SQL-запрос",
   "chat.toolSqlExecute": "Выполнение SQL",
+  "chat.toolBash": "Команда в оболочке",
   "chat.toolStatusRunning": "Выполняется",
   "chat.toolStatusInProgress": "В процессе",
   "chat.toolStatusInterpreting": "Обрабатывает",

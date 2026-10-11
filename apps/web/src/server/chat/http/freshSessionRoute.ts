@@ -1,5 +1,6 @@
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import { getLocaleFromRequest } from "@/lib/localeCookie";
+import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { ti } from "@/i18n/serverT";
 import { handleRoute } from "@/server/api/handleRoute";
 import { admitDemoChatTurn } from "@/server/chat/demoRateLimit";
@@ -44,6 +45,7 @@ type FreshChatSessionRouteDependencies = Readonly<{
   prepareFreshChatRun: typeof prepareFreshChatRun;
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
   startPersistedChatRun: typeof startPersistedChatRun;
+  isDemoModeFromRequest: typeof isDemoModeFromRequest;
   admitDemoChatTurn: typeof admitDemoChatTurn;
   isServerDraining: typeof isServerDraining;
   log: typeof log;
@@ -56,6 +58,7 @@ const DEFAULT_FRESH_CHAT_SESSION_ROUTE_DEPENDENCIES: FreshChatSessionRouteDepend
   prepareFreshChatRun,
   persistAssistantTerminalError,
   startPersistedChatRun,
+  isDemoModeFromRequest,
   admitDemoChatTurn,
   isServerDraining,
   log,
@@ -277,6 +280,7 @@ export const postFreshChatSessionRouteWithDeps = async (
             activeRunId: preparedRun.activeRunId,
             locale,
             timezone: body.timezone,
+            isDemoMode: dependencies.isDemoModeFromRequest(request),
             assistantItemId: preparedRun.assistantItem.itemId,
             localMessages: preparedRun.localMessages,
             turnInput: preparedRun.turnInput,

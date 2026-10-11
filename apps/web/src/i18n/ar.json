@@ -311,6 +311,7 @@
   "chat.toolGetGuide": "دليل الاستخدام",
   "chat.toolSqlQuery": "استعلام SQL",
   "chat.toolSqlExecute": "تنفيذ SQL",
+  "chat.toolBash": "أمر طرفية",
   "chat.toolStatusRunning": "جارٍ التشغيل",
   "chat.toolStatusInProgress": "جارٍ التنفيذ",
   "chat.toolStatusInterpreting": "جارٍ التفسير",

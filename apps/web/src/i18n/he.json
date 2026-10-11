@@ -311,6 +311,7 @@
   "chat.toolGetGuide": "מדריך שימוש",
   "chat.toolSqlQuery": "שאילתת SQL",
   "chat.toolSqlExecute": "הרצת SQL",
+  "chat.toolBash": "פקודת מסוף",
   "chat.toolStatusRunning": "פועל",
   "chat.toolStatusInProgress": "בתהליך",
   "chat.toolStatusInterpreting": "מפרש",

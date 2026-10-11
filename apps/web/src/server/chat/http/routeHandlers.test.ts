@@ -122,6 +122,7 @@ const createPostDependencies = (
   startPersistedChatRun: overrides.startPersistedChatRun ?? (() => (async function* (): AsyncGenerator<ChatStreamEvent> {
     yield { type: "done" };
   })()),
+  isDemoModeFromRequest: overrides.isDemoModeFromRequest ?? (() => false),
   admitDemoChatTurn: overrides.admitDemoChatTurn ?? (async () => ({ kind: "allowed" })),
   isServerDraining: overrides.isServerDraining ?? (() => false),
   log: overrides.log ?? (() => undefined),

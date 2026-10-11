@@ -230,6 +230,36 @@ export class ChatFilesObjectStore {
   }
 
   /**
+   * Signed upload URL for a sandbox write slot, whose size nobody knows yet.
+   *
+   * A pre-signed PUT signs the headers it is minted with, and the slot is
+   * minted before the command that fills it has run, so content-length cannot
+   * be part of the signature the way presignPutUrl makes it for a browser
+   * upload whose size the app already accepted. The ceiling on what a slot may
+   * receive is therefore enforced by the sandbox, which refuses to save a file
+   * past SANDBOX_FILE_MAX_BYTES and names it in a note instead; this URL only
+   * binds the bucket, the key, the method and the content type.
+   */
+  async presignWorkFileUploadUrl(
+    objectKey: string,
+    mediaType: string,
+    expiresInSeconds: number,
+  ): Promise<string> {
+    return getSignedUrl(
+      this.client,
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: requireChatFileObjectKey(objectKey),
+        ContentType: mediaType,
+      }),
+      {
+        expiresIn: requirePresignExpiry(expiresInSeconds),
+        signableHeaders: new Set(["content-type"]),
+      },
+    );
+  }
+
+  /**
    * Size of a stored object, or null when it does not exist: an upload the
    * browser never completed is an expected state, not a failure.
    */
@@ -253,15 +283,55 @@ export class ChatFilesObjectStore {
     }
   }
 
-  async readObjectBytes(objectKey: string): Promise<Uint8Array> {
-    const response = await this.client.send(
-      new GetObjectCommand({ Bucket: this.bucket, Key: requireChatFileObjectKey(objectKey) }),
-    );
-    if (response.Body === undefined) {
-      throw new Error(`Object read returned no body, bucket=${this.bucket}, key=${objectKey}`);
-    }
+  /**
+   * Bytes of a stored object, or null when it does not exist.
+   *
+   * Null rather than a raised error, for the same reason headObjectSize answers
+   * that way: a chat_files row whose object is gone is a caller-shaped state,
+   * not an operator-shaped one. Raising instead reached handleRoute's
+   * `action: "error"` log, which infra/aws/lib/monitoring.ts pages on for a
+   * single record - so one stale row would page the on-call while the caller
+   * had a perfectly good answer to give the model.
+   */
+  async readObjectBytes(objectKey: string): Promise<Uint8Array | null> {
+    const key = requireChatFileObjectKey(objectKey);
+    try {
+      const response = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      if (response.Body === undefined) {
+        throw new Error(`Object read returned no body, bucket=${this.bucket}, key=${key}`);
+      }
 
-    return response.Body.transformToByteArray();
+      return await response.Body.transformToByteArray();
+    } catch (error) {
+      if (isMissingObjectError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Store bytes the app itself holds, under a key it minted.
+   *
+   * Every other write to this bucket is a pre-signed PUT someone else performs;
+   * this is for the one body the app has in memory, the spilled output of a
+   * command that overran the model's character budget.
+   */
+  async writeObject(
+    objectKey: string,
+    mediaType: string,
+    content: Uint8Array,
+  ): Promise<void> {
+    await this.client.send(new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: requireChatFileObjectKey(objectKey),
+      ContentType: mediaType,
+      ContentLength: content.byteLength,
+      Body: content,
+    }));
   }
 
   async deleteObject(objectKey: string): Promise<void> {

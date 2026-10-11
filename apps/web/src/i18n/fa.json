@@ -311,6 +311,7 @@
   "chat.toolGetGuide": "راهنمای استفاده",
   "chat.toolSqlQuery": "پرس‌وجوی SQL",
   "chat.toolSqlExecute": "اجرای SQL",
+  "chat.toolBash": "فرمان پوسته",
   "chat.toolStatusRunning": "در حال اجرا",
   "chat.toolStatusInProgress": "در حال انجام",
   "chat.toolStatusInterpreting": "در حال تفسیر",

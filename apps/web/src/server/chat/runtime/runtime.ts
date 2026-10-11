@@ -83,6 +83,12 @@ export type StartPersistedChatRunParams = Readonly<{
   activeRunId: string;
   locale: SupportedLocale;
   timezone: string;
+  /**
+   * Demo-mode state of the request that started this run, read there and
+   * carried here: this run outlives its request, so the request scope the
+   * cookie lives in is gone by the time a tool call needs the answer.
+   */
+  isDemoMode: boolean;
   assistantItemId: string;
   localMessages: ReadonlyArray<ServerChatMessage>;
   turnInput: ReadonlyArray<ContentPart>;
@@ -845,6 +851,7 @@ export const runPersistedChatSessionWithDeps = async (
             turnId: params.activeRunId,
             locale: params.locale,
             timezone: params.timezone,
+            isDemoMode: params.isDemoMode,
             localMessages: params.localMessages,
             turnInput: params.turnInput,
             model: params.modelRouting.effectiveModel,

@@ -107,6 +107,7 @@ const createToolExecutorParams = (
   workspaceId: "workspace-1",
   sessionId: "session-1",
   turnId: "turn-1",
+  isDemoMode: false,
   rootObservation,
 });
 

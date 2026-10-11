@@ -311,6 +311,7 @@
   "chat.toolGetGuide": "Guía de uso",
   "chat.toolSqlQuery": "Consulta SQL",
   "chat.toolSqlExecute": "Ejecución de SQL",
+  "chat.toolBash": "Comando de shell",
   "chat.toolStatusRunning": "En ejecución",
   "chat.toolStatusInProgress": "En progreso",
   "chat.toolStatusInterpreting": "Interpretando",

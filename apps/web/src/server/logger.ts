@@ -362,6 +362,79 @@ type ChatFilesEvent = Readonly<{
   error: string | null;
 }>;
 
+/**
+ * One `bash` command of the web chat's file sandbox: the metadata of every call
+ * and the command the model wrote, which is the only record of what ran.
+ *
+ * No file content is logged on success. A non-zero exit carries a capped slice
+ * of each stream, because a command that failed is the one case where the
+ * output is the diagnosis and nothing else in CloudWatch holds it; a command
+ * that worked is described by its counts alone.
+ *
+ * `outcome` separates the three endings that need different reading: the
+ * sandbox ran the command, the chat refused to run it at all (demo mode, no
+ * function configured, a file set past a bound), or the invocation itself
+ * failed. Only the last is a server fault, and it is deliberately not in the
+ * `error` action family the CloudWatch web error alarm pages on - the alarm
+ * pages on the chat error the tool result also produces.
+ */
+type ChatSandboxEvent = Readonly<{
+  domain: "chat";
+  action: "sandbox_command";
+  outcome: "completed" | "refused" | "failed";
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  turnId: string;
+  toolCallId: string;
+  /** Cut to MAX_SANDBOX_COMMAND_LOG_CHARS: the model writes this text. */
+  command: string;
+  fileCount: number;
+  workFileCount: number;
+  mountedBytes: number;
+  exitCode: number | null;
+  durationMs: number;
+  savedCount: number;
+  deletedCount: number;
+  noteCount: number;
+  /** True when the model-facing output was cut and spilled to a /work file. */
+  outputSpilled: boolean;
+  /** Present only on a non-zero exit, each cut to MAX_SANDBOX_OUTPUT_LOG_CHARS. */
+  stdoutSlice?: string;
+  stderrSlice?: string;
+  /** The refusal reason, or the invocation failure; null when the command ran. */
+  error: string | null;
+}>;
+
+/**
+ * A sandbox invocation that was retried. Throttling and transport failures are
+ * the only retried classes, so this records a capacity or network event rather
+ * than a fault of the request, and the call may still have succeeded.
+ */
+type ChatSandboxRetryEvent = Readonly<{
+  domain: "chat";
+  action: "sandbox_invoke_retry";
+  requestId: string;
+  sessionId: string;
+  attempt: number;
+  attempts: number;
+  error: string;
+}>;
+
+/**
+ * The model writes the command, and nothing bounds its length but the chat's
+ * own input budget, so the logged copy is cut to this prefix. The command the
+ * sandbox receives is never truncated.
+ */
+export const MAX_SANDBOX_COMMAND_LOG_CHARS = 2_000;
+
+/**
+ * Stream slice one failed command may log. Long enough for a traceback or a
+ * usage message, short enough that a failing loop cannot fill the log group.
+ */
+export const MAX_SANDBOX_OUTPUT_LOG_CHARS = 2_000;
+
 type ApiEvent =
   | Readonly<{ domain: "api"; action: "error"; route: string; method: string; error: string }>
   | Readonly<{ domain: "api"; action: "shutdown_draining"; signal: string }>
@@ -428,7 +501,17 @@ type AuthEvent =
  */
 type DbEvent = Readonly<{ domain: "db"; action: "pool_error"; error: string }>;
 
-type LogEvent = ChatEvent | ChatWorkspaceUnavailableEvent | ChatTranscriptionEvent | ChatFilesEvent | ApiEvent | SqlApiEvent | AuthEvent | DbEvent;
+type LogEvent =
+  | ChatEvent
+  | ChatWorkspaceUnavailableEvent
+  | ChatTranscriptionEvent
+  | ChatFilesEvent
+  | ChatSandboxEvent
+  | ChatSandboxRetryEvent
+  | ApiEvent
+  | SqlApiEvent
+  | AuthEvent
+  | DbEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

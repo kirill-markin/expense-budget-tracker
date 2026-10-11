@@ -129,6 +129,29 @@ const INSERT_CHAT_FILE_SQL = `
   RETURNING ${SELECTED_COLUMNS}
 `;
 
+/**
+ * Clear the /work row a new save is about to take the place of.
+ *
+ * A changed /work file always arrives on a new object key, because the
+ * pre-signed slot that received it was minted before anyone knew which path it
+ * would hold. The row's identity is (session_id, file_id) and its object key is
+ * derived from that pair, so the row cannot merely be repointed: it is replaced
+ * by one whose file id is the slot's. The old object is left behind -
+ * reclaiming it is item 10's job, and deleting it here would race a reader
+ * already holding a pre-signed URL for it.
+ *
+ * Confined to a row this surface owns. A conflicting row of another origin
+ * would be an attachment or a derivative at a /work path, which nothing can
+ * produce, so it is left alone and the insert that follows fails loudly rather
+ * than removing a file the user uploaded.
+ */
+const DELETE_REPLACED_WORK_CHAT_FILE_SQL = `
+  DELETE FROM public.chat_files
+  WHERE session_id = $1
+    AND path = $2
+    AND origin = 'work'
+`;
+
 const SELECT_CHAT_FILE_BY_ID_SQL = `
   SELECT ${SELECTED_COLUMNS}
   FROM public.chat_files
@@ -252,6 +275,66 @@ export const insertChatFile = async (
     const row = result.rows[0] as ChatFileRow | undefined;
     if (row === undefined) {
       throw new Error(`Chat file insert returned no row, sessionId=${newChatFile.sessionId}, path=${newChatFile.path}`);
+    }
+
+    return mapChatFileRow(row);
+  });
+};
+
+/**
+ * Store the row for one /work file the sandbox reported saving, replacing
+ * whatever this session held at that path.
+ *
+ * The caller mints the file id, because the slot the sandbox uploaded into was
+ * signed for the key that id derives - which is why this replaces rather than
+ * updates: a row keeping its old file id would carry an object key that no
+ * longer names the object holding its bytes, and every later mount of that
+ * session would fail its ownership check. Derivatives of the replaced row go
+ * with it through ON DELETE CASCADE, which is correct: the content they
+ * describe is gone.
+ *
+ * Both statements run in one transaction, so a save never leaves the path with
+ * no row at all.
+ */
+export const upsertWorkChatFile = async (
+  userId: string,
+  workspaceId: string,
+  newChatFile: NewChatFile,
+): Promise<ChatFile> => {
+  if (!isChatFileId(newChatFile.fileId)) {
+    throw new Error(`Chat file id must be a lowercase UUID, got "${newChatFile.fileId}"`);
+  }
+  if (newChatFile.origin !== "work") {
+    throw new Error(
+      `upsertWorkChatFile stores work files only, got origin "${newChatFile.origin}"`,
+    );
+  }
+
+  const objectKey = buildChatFileObjectKey(newChatFile.sessionId, newChatFile.fileId);
+  return withUserContext(userId, workspaceId, async (queryFn) => {
+    await queryFn(DELETE_REPLACED_WORK_CHAT_FILE_SQL, [
+      newChatFile.sessionId,
+      newChatFile.path,
+    ]);
+    const result = await queryFn(INSERT_CHAT_FILE_SQL, [
+      newChatFile.fileId,
+      newChatFile.sessionId,
+      userId,
+      workspaceId,
+      newChatFile.origin,
+      newChatFile.sourceFileId,
+      newChatFile.path,
+      objectKey,
+      newChatFile.mediaType,
+      newChatFile.sizeBytes,
+      newChatFile.sha256,
+    ]);
+    const row = result.rows[0] as ChatFileRow | undefined;
+    if (row === undefined) {
+      throw new Error(
+        "Chat work file insert returned no row, "
+        + `sessionId=${newChatFile.sessionId}, path=${newChatFile.path}`,
+      );
     }
 
     return mapChatFileRow(row);
