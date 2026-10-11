@@ -271,8 +271,11 @@ export class PresignedFs implements IFileSystem {
    * again, and a second download spends another pre-signed GET on bytes the
    * script was already handed. Nothing is evicted, so the cache needs a ceiling
    * of its own: unbounded, the mount grows until the kernel OOM-kills the
-   * function, and because one process serves one chat session that kills the
-   * session mid-command instead of answering with a tool error.
+   * function. One process serves one chat session, so that ends the session's
+   * command rather than another chat's - as a non-zero exit code and a note
+   * when the kernel picks this child, and as a dead invocation when it picks
+   * the supervisor or kills the whole cgroup, which prepareProcess.ts is where
+   * the difference is reasoned about.
    *
    * The caller states the ceiling, the way RecordingWorkFs is given its own, so
    * the mount cannot hold more than its construction allowed whatever it was

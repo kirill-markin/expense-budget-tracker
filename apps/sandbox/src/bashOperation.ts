@@ -30,6 +30,7 @@ import {
   classifyObjectReadFailure,
   createPresignedObjectTransfer,
   hashObjectContent,
+  OBJECT_READ_FAILURE_ADVICE,
   requireDescribedObject,
   type ObjectReadFailure,
   type SandboxObjectTransfer,
@@ -166,22 +167,20 @@ const toQuotedFilesPath = (mountRelativePath: string): string =>
  * incomplete answer over the user's finances as a complete one. Every kind
  * therefore says, in its own words, that the file exists and the read failed.
  *
- * The kinds differ in exactly one thing that matters: whether another attempt
- * can help. A digest mismatch must never read as "retry" - it means the object
- * changed under a session that already recorded its checksum, so every later
- * attempt fails the same way and the session is what has to be redone.
+ * Five of the seven are objects.ts's, spread in rather than written here: a
+ * read failure's kind and the advice for that kind are one decision, and this
+ * surface is one of three that render it - `pdf_page` and `prepare` read the
+ * same objects over the same transfer and classify them the same way. The two
+ * added here are the two only a command can provoke, which is why the record
+ * is keyed by PresignedRefusalKind and the shared one by ObjectReadFailure.
  *
  * A Record over the union rather than a switch, so a new kind cannot be added
  * without its advice.
  */
 const REFUSAL_ADVICE: Readonly<Record<PresignedRefusalKind, string>> = {
+  ...OBJECT_READ_FAILURE_ADVICE,
   read_only: `was not changed: ${SANDBOX_FILES_DIR} holds the user's original files and is read-only. Copy it into ${SANDBOX_WORK_DIR} and change the copy there.`,
-  denied: "exists, and object storage answered the request for its content and refused it, which is what an expired or revoked pre-signed URL does and what a fault on its side does; the quoted status says which. Do not treat the file as missing or empty. A new tool call is signed afresh, so running the command again is worth one attempt; if it is refused again, say the file could not be read.",
-  unreachable: "exists, and the request for its content got no answer after three attempts. Do not treat the file as missing or empty. This is transient, so run the command again.",
-  size_mismatch: "exists, and its stored content is not the size this chat recorded for it, so the sandbox refused to hand over bytes it had already told you it was not reading. Running the command again cannot change this. Report that the file could not be read rather than answering from what you do have.",
-  digest_mismatch: "exists, and its stored content no longer matches the checksum this chat recorded, so the file changed after this chat listed it. Running the command again cannot change this: every attempt will fail the same way. Tell the user the file changed and that the chat has to reopen it, and do not answer from any other copy.",
   memory_limit: "was not read: this command has already read as much of the originals as it may hold in memory at once. Read fewer files in one command, or process them one file at a time.",
-  unknown: "exists, and reading it failed for the reason quoted. Do not treat the file as missing or empty: report that it could not be read.",
 };
 
 /**

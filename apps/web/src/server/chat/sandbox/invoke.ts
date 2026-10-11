@@ -32,6 +32,7 @@ import {
   SANDBOX_FILES_DIR,
   SANDBOX_MAX_PRIORITY_NOTES,
   SANDBOX_FILES_REQUEST_MAX_BYTES,
+  SANDBOX_PREPARE_MAX_DERIVATIVES,
   SANDBOX_WORK_DIR,
   SANDBOX_WORK_FILE_MEDIA_TYPE,
 } from "../../../../../sandbox/src/contract";
@@ -92,6 +93,62 @@ const SANDBOX_URL_EXPIRES_IN_SECONDS = 600;
  * model can split the work across calls.
  */
 export const CHAT_SANDBOX_WRITE_SLOTS = 64;
+
+/**
+ * Both directions of equality, as one type each way round.
+ *
+ * `Exact` is two conditional assignabilities rather than one because `extends`
+ * is one-directional: `64 extends number` holds and `number extends 64` does
+ * not, so a single test would pass for a widened constant. The tuple wrappers
+ * stop a union distributing across the check.
+ *
+ * The failure branches are `false` and not `never`, which is the difference
+ * between a gate and a decoration: `never` is assignable to every type, so
+ * `Assert<never>` satisfies a `true` constraint and the whole check passes
+ * silently for unequal values. Written as it is, tsc raises TS2344 - "Type
+ * 'false' does not satisfy the constraint 'true'" - naming the alias below.
+ * Verified against this repository's own tsc in all three directions: equal
+ * literals pass, unequal literals fail, and a constant widened to `number`
+ * fails.
+ */
+type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+type Assert<T extends true> = T;
+
+/**
+ * Fail the build whose slot count no longer serves a `prepare` as well.
+ *
+ * Two independent choices that happen to agree today, which is the whole reason
+ * this is here. The number above is sized against the `bash` response budget,
+ * while SANDBOX_PREPARE_MAX_DERIVATIVES is how many derivatives one source may
+ * produce - and a prepare caller that reuses this slot set needs them equal in
+ * both directions. Fewer, and a source with more parts than slots is not
+ * answered at all: the sandbox raises, because the shortfall is the caller's
+ * and not the file's, and the invocation fails with nothing a chat can show.
+ * More, and the prepare request schema rejects the set outright, which reaches
+ * the caller the same way. Nothing links the two numbers in prose, so the
+ * dependency fails the module that states one of them instead.
+ *
+ * A type and not a runtime throw, which is the difference between stating that
+ * and doing it. Only `/_global-error`, `/favicon.ico` and `/icon.svg`
+ * prerender in this app; every other route is `ƒ`, so this module is bundled at
+ * build time and never evaluated, and a throw at its top level could not fail a
+ * build however it was worded. What it would do instead is fail at runtime, on
+ * first import, inside a module the chat tool surface imports - taking down
+ * `bash`, which has users, over an invariant about `prepare`, which has none.
+ *
+ * Both constants are `const` numbers with no annotation, so each has its own
+ * literal type and the comparison is decidable at compile time. Checked against
+ * this repository's own tsc: a one-sided change makes `Exact` resolve to
+ * `never`, which fails `Assert`'s `true` constraint as TS2344, in `tsc --noEmit`
+ * and in `next build` alike.
+ *
+ * Exported because an unused local type alias is a lint finding, and the thing
+ * that must not happen to a build gate is for somebody to delete it to quiet a
+ * warning.
+ */
+export type ChatSandboxWriteSlotsAreThePrepareDerivativeCap =
+  Assert<Exact<typeof CHAT_SANDBOX_WRITE_SLOTS, typeof SANDBOX_PREPARE_MAX_DERIVATIVES>>;
 
 /**
  * Attempts a throttled invocation gets, counting the first, and the base of

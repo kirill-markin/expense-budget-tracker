@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import { crc32, deflateSync } from "node:zlib";
 import { PDFDocument } from "pdf-lib";
@@ -7,7 +8,11 @@ import {
   SANDBOX_PDF_PAGE_MAX_BYTES,
   type ChatSandboxPdfPageResponse,
 } from "./contract.js";
-import { hashObjectContent, type SandboxObjectTransfer } from "./objects.js";
+import {
+  hashObjectContent,
+  ObjectTransferError,
+  type SandboxObjectTransfer,
+} from "./objects.js";
 import { extractPdfPage } from "./pdfPageOperation.js";
 
 const HOST = "objects.example";
@@ -199,4 +204,149 @@ test("a source whose bytes do not match the row's digest is refused", async (): 
   assert.equal(response.status, "failed");
   assert.ok(response.status === "failed");
   assert.match(response.error, /has sha256 [0-9a-f]{64}, expected c{64}/u);
+  // And the one thing the library's own message does not say: that no retry of
+  // this can work. The kinds that are worth another attempt and the kinds that
+  // are not must not read alike.
+  assert.match(response.error, /Asking for it again cannot change this/u);
+});
+
+/**
+ * Read one page over a transfer that fails the way the caller chooses.
+ *
+ * The PDF is real and the page number is valid, so a case that stopped
+ * classifying the read cannot pass by answering something else: the only
+ * answers reachable are the read's own.
+ */
+const readPageOverFailingRead = async (
+  error: unknown,
+): Promise<ChatSandboxPdfPageResponse> => {
+  const bytes = await buildSizedPdf();
+  const path = "/files/statement.pdf";
+
+  return extractPdfPage(
+    {
+      operation: "pdf_page",
+      source: {
+        path,
+        mediaType: "application/pdf",
+        sizeBytes: bytes.byteLength,
+        sha256: hashObjectContent(bytes),
+        mtimeMs: 1_700_000_000_000,
+        getUrl: `https://${HOST}${path}`,
+      },
+      page: 1,
+    },
+    {
+      readObject: (): Promise<Uint8Array> => Promise.reject(error),
+      writeObject: async (): Promise<void> => {
+        throw new Error("pdf_page writes nothing");
+      },
+    },
+  );
+};
+
+/**
+ * A failed read, answered with the advice its kind gets everywhere else.
+ *
+ * This operation reads a /files original over the same transfer, classified by
+ * the same classifyObjectReadFailure, as a `bash` command and a /work seed do -
+ * and it was the one of the three that said only "page 1 could not be read:"
+ * followed by whatever HTTP status came back. A model given that has no next
+ * step: it cannot tell a transient 503 from a file it will never read, so it
+ * either gives up on real data or retries something that cannot work.
+ *
+ * Each case reds the blanket catch this operation had around the read, which
+ * answered with the library's message and no advice at all.
+ */
+const READ_FAILURES: ReadonlyArray<Readonly<{ label: string; error: Error; advice: RegExp }>> = [
+  {
+    label: "a 5xx outlived all three attempts",
+    error: new ObjectTransferError("Pre-signed object read failed with HTTP 503: SlowDown", 503),
+    advice: /asking for it again is worth one attempt/u,
+  },
+  {
+    label: "storage answered nothing at all",
+    error: new ObjectTransferError("Pre-signed object read failed: socket closed", null),
+    advice: /This is transient, so ask for it again/u,
+  },
+];
+
+/**
+ * And the read failure that is this sandbox's own, which must not be answered.
+ *
+ * The asymmetry that was wrong: `prepare` raised a bug of its own in the read
+ * phase while this operation answered one, through the same
+ * classifyObjectReadFailure and over the same transfer. `unknown` is the kind a
+ * TypeError with no cause gets, and its advice tells the model the file exists
+ * and the read failed - so a dereference here reported a healthy PDF as
+ * unreadable, on invocations that all report success, with no Errors datapoint
+ * and nothing in any log saying otherwise.
+ *
+ * No cause, which is the discriminator and not a detail: with one this is a
+ * dropped socket, and the cases above are exactly that.
+ *
+ * It reds the first catch without its defect check.
+ */
+test("a page whose read failed on this workspace's own TypeError is raised", async (): Promise<void> => {
+  const error = new TypeError("Cannot read properties of undefined (reading 'byteLength')");
+  await assert.rejects(readPageOverFailingRead(error), (raised: unknown) => {
+    assert.equal(raised, error, "the failure an operator has to see was answered instead");
+
+    return true;
+  });
+});
+
+for (const { label, error, advice } of READ_FAILURES) {
+  test(`a page whose read failed because ${label} is answered with its next step`, async (): Promise<void> => {
+    const response = await readPageOverFailingRead(error);
+    assert.equal(response.status, "failed");
+    assert.ok(response.status === "failed");
+    assert.match(response.error, /"\/files\/statement\.pdf" exists/u);
+    assert.match(response.error, advice);
+    // The reason itself still travels, quoted, because the advice names a kind
+    // and not a status.
+    assert.match(response.error, /Pre-signed object read failed/u);
+  });
+}
+
+/**
+ * The pdf-lib this build either carries or does not, which is the one failure
+ * here that is not about this document.
+ *
+ * It fails every PDF of the deployment, forever, on invocations that all report
+ * success: no Errors datapoint, no `action: "error"`, not even a
+ * derivatives_error row, because this operation stores nothing. The model is
+ * simply told page 1 could not be read, and nothing anywhere records that the
+ * bundle is broken. So it is raised - the only channel it has - and the model
+ * loses nothing by it, because no retry of a bundling defect succeeds.
+ *
+ * The library is replaced by a module that throws what esbuild's shim throws,
+ * through a data URL so it cannot collide with the real module in the loader
+ * cache. It reds the unwrapped `await import("pdf-lib")`, which answered this
+ * as a property of the page.
+ */
+test("a pdf-lib this build cannot load is raised rather than answered", async (): Promise<void> => {
+  const document = await buildSizedPdf();
+  const stub = "throw new Error('Dynamic require of \"url\" is not supported');\n";
+  const hooks = registerHooks({
+    resolve: (specifier, context, next) => specifier === "pdf-lib"
+      ? { url: `data:text/javascript,${encodeURIComponent(stub)}`, shortCircuit: true }
+      : next(specifier, context),
+  });
+  try {
+    await assert.rejects(readPage(document, 1), (raised: unknown) => {
+      assert.ok(raised instanceof Error);
+      assert.equal(raised.name, "ConversionLibraryError");
+      assert.match(raised.message, /could not load the 'pdf-lib' library/u);
+      assert.match(raised.message, /defect of this build rather than a property of any source/u);
+
+      return true;
+    });
+  } finally {
+    hooks.deregister();
+  }
+
+  // And the same page comes back with the real library, so this proves the
+  // classification rather than a fixture that was never readable.
+  requireRendered(await readPage(document, 1));
 });

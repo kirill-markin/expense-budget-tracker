@@ -9,45 +9,37 @@
  * commands of one session reuse it; the first command of another session kills
  * it first, which is also the mechanism the self-hosted container will use.
  *
+ * What this module holds is that pairing and what a dead child means to a
+ * command; the fork, the handshake, the one command under a deadline and the
+ * kill are childProcess.ts, shared with the conversion child.
+ *
  * The child is this same file re-executed as a script: the deployed Lambda is a
  * single bundle, so the fork target is the bundle itself and the branch at the
  * bottom becomes the child's main.
  */
-import { fork, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { constants } from "node:os";
 import { fileURLToPath } from "node:url";
 import { SANDBOX_COMMAND_BUDGET_MS } from "./bashOperation.js";
+import {
+  canSandboxChildAcceptCommand,
+  forkSandboxChild,
+  sendSandboxChildCommand,
+  terminateSandboxChild,
+  type SandboxChildOutcome,
+  type SandboxChildSpec,
+} from "./childProcess.js";
 import type { ChatSandboxBashRequest, ChatSandboxBashResponse } from "./contract.js";
 import {
   SANDBOX_CHILD_ENV_VAR,
   startSandboxChild,
   type SandboxChildCommand,
-  type SandboxChildMessage,
 } from "./sessionChild.js";
-
-const CHILD_READY_TIMEOUT_MS = 10_000;
-
-/** Time the child gets to report after its own transfer deadline has passed. */
-const CHILD_GRACE_MS = 1_000;
 
 /** Exit code a shell reports for a process the kernel killed with signal N. */
 const SIGNAL_EXIT_BASE = 128;
 
-/** Time a SIGKILLed child gets to be reaped before the runner stops waiting. */
-const CHILD_EXIT_TIMEOUT_MS = 5_000;
-
-/**
- * How one session's child process is started.
- *
- * Stated rather than taken from the parent, so the production child gets a
- * known interpreter and a known environment, and so a test can pair the same
- * supervisor with a stub child that needs neither just-bash nor a network.
- */
-export type SessionChildSpec = Readonly<{
-  modulePath: string;
-  execArgv: ReadonlyArray<string>;
-  env: NodeJS.ProcessEnv;
-}>;
+export type SessionChildSpec = SandboxChildSpec;
 
 export type SessionCommandRunner = (
   request: ChatSandboxBashRequest,
@@ -56,188 +48,32 @@ export type SessionCommandRunner = (
 
 type SessionChild = Readonly<{ sessionId: string; child: ChildProcess }>;
 
-type CommandOutcome =
-  | Readonly<{ kind: "response"; response: ChatSandboxBashResponse }>
-  | Readonly<{ kind: "timeout" }>
-  | Readonly<{ kind: "exit"; code: number | null; signal: NodeJS.Signals | null }>
-  /** The command never reached the child, so it has not run at all. */
-  | Readonly<{ kind: "unsendable"; error: string }>;
+type CommandOutcome = SandboxChildOutcome<ChatSandboxBashResponse>;
 
 /** What a command that did reach its child can end as. */
 type StartedCommandOutcome = Exclude<CommandOutcome, { kind: "unsendable" }>;
 
-/**
- * Liveness is the process, not its channel: a child whose IPC channel closed is
- * still a process holding this environment's memory, and must still be killed.
- */
-const isRunning = (child: ChildProcess): boolean =>
-  child.exitCode === null && child.signalCode === null;
-
-const canAcceptCommand = (child: ChildProcess): boolean => isRunning(child) && child.connected;
-
-/**
- * Wait for a killed child to be reaped, but not forever.
- *
- * This is the one unbounded await the runner used to make inside its mutual
- * exclusion region, which makes it the one place that can wedge an execution
- * environment for every later invocation rather than failing one of them.
- * SIGKILL is not catchable, so the only way past the bound is a process the
- * kernel cannot schedule - uninterruptible I/O - and leaving such a process
- * unreaped is strictly better than never serving this environment again. The
- * timer is unreferenced, so winning the race costs the caller no delay.
- */
-const awaitExit = (child: ChildProcess, timeoutMs: number): Promise<void> =>
-  new Promise<void>((resolve) => {
-    const onExit = (): void => {
-      clearTimeout(timer);
-      resolve();
-    };
-    // Removed on the way out either way: a child this environment has given up
-    // on must not stay referenced by a listener of a settled promise.
-    const timer = setTimeout(() => {
-      child.off("exit", onExit);
-      resolve();
-    }, timeoutMs);
-    timer.unref();
-    child.once("exit", onExit);
-  });
-
-const terminate = async (session: SessionChild): Promise<void> => {
-  if (!isRunning(session.child)) {
-    return;
-  }
-
-  const exited = awaitExit(session.child, CHILD_EXIT_TIMEOUT_MS);
-  session.child.kill("SIGKILL");
-  await exited;
-};
-
-const waitForReady = (child: ChildProcess): Promise<void> =>
-  new Promise<void>((resolve, reject) => {
-    const settle = (): void => {
-      clearTimeout(timer);
-      child.off("message", onMessage);
-      child.off("exit", onExit);
-      child.off("error", onError);
-    };
-    const onMessage = (message: SandboxChildMessage): void => {
-      if (message.kind === "ready") {
-        settle();
-        resolve();
-      }
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
-      settle();
-      reject(new Error(
-        `Chat sandbox session process exited before it was ready (code ${String(code)}, signal ${String(signal)})`,
-      ));
-    };
-    const onError = (error: Error): void => {
-      settle();
-      reject(new Error(`Chat sandbox session process failed to start: ${error.message}`));
-    };
-    const timer = setTimeout(() => {
-      settle();
-      reject(new Error(
-        `Chat sandbox session process did not become ready within ${String(CHILD_READY_TIMEOUT_MS)} ms`,
-      ));
-    }, CHILD_READY_TIMEOUT_MS);
-
-    child.on("message", onMessage);
-    child.once("exit", onExit);
-    child.once("error", onError);
-  });
-
-/**
- * Measured cost of a session change with just-bash 3.6.0, on an Apple M-series
- * laptop: about 100 ms from fork to the first command's result, of which 60-70
- * ms is node start-up plus the just-bash import and the rest the first exec; a
- * first `python3` command adds roughly 165 ms more for the CPython worker. The
- * next command of the same session costs about 2 ms of overhead, so only a
- * session change pays anything.
- */
 const forkSessionChild = async (
   spec: SessionChildSpec,
   sessionId: string,
-): Promise<SessionChild> => {
-  const child = fork(spec.modulePath, [], {
-    execArgv: [...spec.execArgv],
-    env: { ...spec.env },
-    // The child inherits the Lambda's own stdout and stderr, so its logs reach
-    // the same log stream, and it gets no stdin. What a model-authored command
-    // prints does not reach that stream: just-bash keeps every stream inside
-    // its own buffers and returns them as the command's result. Measured
-    // against 3.6.0 by intercepting the real process.stdout while running
-    // `echo`, `echo >&2`, writes to /dev/stdout and /dev/stderr, and python's
-    // sys.stdout, sys.stderr and os.write(1, ...): not one byte reached it. So
-    // a command cannot forge a log line a monitoring filter would parse, and
-    // only this workspace's own structured logs land here.
-    stdio: ["ignore", "inherit", "inherit", "ipc"],
-  });
-
-  try {
-    await waitForReady(child);
-  } catch (error) {
-    child.kill("SIGKILL");
-    throw error;
-  }
-
-  return { sessionId, child };
-};
+): Promise<SessionChild> => ({
+  sessionId,
+  child: await forkSandboxChild(spec),
+});
 
 const sendCommand = (
   session: SessionChild,
   request: ChatSandboxBashRequest,
   deadlineEpochMs: number,
-): Promise<CommandOutcome> =>
-  new Promise<CommandOutcome>((resolve, reject) => {
-    const settle = (): void => {
-      clearTimeout(timer);
-      session.child.off("message", onMessage);
-      session.child.off("exit", onExit);
-      session.child.off("error", onError);
-    };
-    const onMessage = (message: SandboxChildMessage): void => {
-      if (message.kind === "result") {
-        settle();
-        resolve({ kind: "response", response: message.response });
-        return;
-      }
-      if (message.kind === "failure") {
-        settle();
-        reject(new Error(`Chat sandbox command failed: ${message.error}`));
-      }
-    };
-    // A child that dies while running a command is an outcome of that command:
-    // the kernel's cgroup OOM killer and a V8 heap-limit abort both end here,
-    // and both are what the script the model wrote asked for.
-    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
-      settle();
-      resolve({ kind: "exit", code, signal });
-    };
-    const onError = (error: Error): void => {
-      settle();
-      reject(new Error(`Chat sandbox session process failed: ${error.message}`));
-    };
-    const timer = setTimeout(() => {
-      settle();
-      resolve({ kind: "timeout" });
-    }, Math.max(deadlineEpochMs + CHILD_GRACE_MS - Date.now(), 0));
+): Promise<CommandOutcome> => {
+  const command: SandboxChildCommand = { kind: "bash", request, deadlineEpochMs };
 
-    session.child.on("message", onMessage);
-    session.child.once("exit", onExit);
-    session.child.once("error", onError);
-
-    const command: SandboxChildCommand = { kind: "bash", request, deadlineEpochMs };
-    // A child can die between the liveness check and this write, which Node
-    // reports here rather than as an exit, and the command has not started yet.
-    session.child.send(command, (error: Error | null) => {
-      if (error !== null) {
-        settle();
-        resolve({ kind: "unsendable", error: error.message });
-      }
-    });
-  });
+  return sendSandboxChildCommand<SandboxChildCommand, ChatSandboxBashResponse>(
+    session.child,
+    command,
+    deadlineEpochMs,
+  );
+};
 
 const budgetExceededResponse = (startedAt: number): ChatSandboxBashResponse => ({
   stdout: "",
@@ -275,7 +111,7 @@ const childExitCode = (code: number | null, signal: NodeJS.Signals | null): numb
     const signalNumber: number | undefined = constants.signals[signal];
     if (signalNumber === undefined) {
       throw new Error(
-        `Chat sandbox session process was killed by ${signal}, which os.constants.signals does not number on this platform`,
+        `Chat sandbox child process was killed by ${signal}, which os.constants.signals does not number on this platform`,
       );
     }
 
@@ -283,7 +119,7 @@ const childExitCode = (code: number | null, signal: NodeJS.Signals | null): numb
   }
   if (code === null) {
     throw new Error(
-      "Chat sandbox session process exited reporting neither an exit code nor a signal",
+      "Chat sandbox child process exited reporting neither an exit code nor a signal",
     );
   }
 
@@ -345,9 +181,10 @@ export const createSessionRunner = (spec: SessionChildSpec): SessionCommandRunne
     const startedAt = Date.now();
     if (
       currentSession !== null
-      && (currentSession.sessionId !== request.sessionId || !canAcceptCommand(currentSession.child))
+      && (currentSession.sessionId !== request.sessionId
+        || !canSandboxChildAcceptCommand(currentSession.child))
     ) {
-      await terminate(currentSession);
+      await terminateSandboxChild(currentSession.child);
       currentSession = null;
     }
     if (currentSession === null) {
@@ -362,13 +199,13 @@ export const createSessionRunner = (spec: SessionChildSpec): SessionCommandRunne
         // The command has not run, so it runs in a replacement child rather
         // than failing an invocation that nothing about the command caused. A
         // child that just reported ready is the sandbox's own fault again.
-        await terminate(session);
+        await terminateSandboxChild(session.child);
         currentSession = await forkSessionChild(spec, request.sessionId);
         session = currentSession;
         const resent = await sendCommand(session, request, deadlineEpochMs);
         if (resent.kind === "unsendable") {
           throw new Error(
-            `Chat sandbox command could not be sent to a session process that had just reported ready: ${resent.error}`,
+            `Chat sandbox command could not be sent to a child process that had just reported ready: ${resent.error}`,
           );
         }
         outcome = resent;
@@ -376,7 +213,7 @@ export const createSessionRunner = (spec: SessionChildSpec): SessionCommandRunne
         outcome = sent;
       }
     } catch (error) {
-      await terminate(session);
+      await terminateSandboxChild(session.child);
       currentSession = null;
       throw error;
     }
@@ -386,7 +223,7 @@ export const createSessionRunner = (spec: SessionChildSpec): SessionCommandRunne
 
     // A child that overran its budget or died is in an unknown state, so it
     // never serves the next command, even of the same session.
-    await terminate(session);
+    await terminateSandboxChild(session.child);
     currentSession = null;
     return outcome.kind === "timeout"
       ? budgetExceededResponse(startedAt)
