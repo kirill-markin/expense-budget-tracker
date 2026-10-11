@@ -441,11 +441,11 @@ type ApiEvent =
   | Readonly<{ domain: "api"; action: "shutdown_chat_request_rejected"; route: string; method: string }>;
 
 /**
- * A restricted SQL policy rejection, emitted by every surface that turns one
- * into a response: the agent SQL route and the web chat SQL tools. It is
- * ordinary client traffic, so it stays out of the `error` action the CloudWatch
- * web error alarm pages on. Only the policy code and the policy reason are
- * logged: no submitted statement text, no parameter values and no result rows.
+ * A restricted SQL policy rejection, emitted by the web chat SQL tools when
+ * they turn one into a response. It is ordinary client traffic, so it stays
+ * out of the `error` action the CloudWatch web error alarm pages on. Only the
+ * policy code and the policy reason are logged: no submitted statement text, no
+ * parameter values and no result rows.
  * What these messages interpolate is SQL identifiers and bounded counts, and an
  * identifier is quoted verbatim, so the reason is cut to
  * MAX_SQL_POLICY_LOG_MESSAGE_CHARS before it is logged.
@@ -466,7 +466,7 @@ type SqlPolicyRejectedEvent = Readonly<{
 export const MAX_SQL_POLICY_LOG_MESSAGE_CHARS = 500;
 
 /** The answered error codes logged as a caller-provokable SQL request failure. */
-export type SqlRequestFailedCode = "request_deadline_exceeded" | "agent_sql_failed";
+export type SqlRequestFailedCode = "request_deadline_exceeded";
 
 /**
  * A SQL request answered with a failure any caller can provoke, such as either
@@ -489,28 +489,6 @@ type SqlApiEvent =
 
 type AuthEvent =
   | Readonly<{ domain: "auth"; action: "refresh" }>
-  /**
-   * An ApiKey request was refused because the stored `users` row is disabled or
-   * gone. Disabling that row is the one per-request revocation lever, so the
-   * refusal is logged to make it visible to an operator. It is an ordinary
-   * refusal rather than a server failure, so the action is deliberately kept
-   * out of the `error` family that the CloudWatch web error alarm pages on.
-   */
-  | Readonly<{ domain: "auth"; action: "agent_account_disabled"; userId: string }>
-  /**
-   * The stored account-state read itself failed, so the ApiKey request was
-   * answered as retryable instead of refused. It is kept apart from the
-   * refusal above so an auth-path database outage is never read as a wave of
-   * revocations, and it mirrors the machine API's `agent_auth_unavailable` so
-   * both surfaces are diagnosable the same way. The action itself is
-   * deliberately kept out of the `error` family that the CloudWatch web error
-   * alarm pages on, because the request is answered as a retryable 500 rather
-   * than refused. That does not mean such an outage never pages: on
-   * POST /api/agent/sql the same failure also reaches the terminal catch and
-   * is logged as `agent_sql_failed` with action `error`, which does page. On
-   * /api/agent/me, /schema and /workspaces this event is the only record.
-   */
-  | Readonly<{ domain: "auth"; action: "agent_auth_unavailable"; error: string }>
   | Readonly<{ domain: "auth"; action: "insecure_no_auth"; message: string }>
   | Readonly<{ domain: "auth"; action: "proxy_auth_error"; error: string }>
   | Readonly<{ domain: "auth"; action: "error"; error: string }>;
