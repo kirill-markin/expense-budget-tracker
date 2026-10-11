@@ -12,6 +12,14 @@
  * records nothing and updates the seed instead, because recording it would
  * download a file to prove its digest did not change. Removals are not
  * recorded: they are found by comparing the surviving tree with the baseline.
+ *
+ * A refused seed read is recorded too, through the same channel /files has: a
+ * seed is a lazy entry whose loader spends a pre-signed GET on first read, and
+ * when that GET is refused the shell answers "No such file or directory" for a
+ * file that exists. On the user's own scratch data that reads as "your working
+ * file is gone", so `cat` and `wc` used to leave the model with nothing
+ * contradicting it and `cp` reported exit 0 having copied nothing. See
+ * `recordRefusal`.
  */
 import { InMemoryFs } from "just-bash";
 import type {
@@ -22,12 +30,39 @@ import type {
   FsStat,
   MkdirOptions,
 } from "just-bash";
+import type { ObjectReadFailure } from "./objects.js";
 import { parentOf } from "./presignedFs.js";
+import {
+  createRefusalLog,
+  type RecordedRefusals,
+  type RefusalLog,
+} from "./refusalLog.js";
 
 // just-bash does not re-export this option shape from its package root; method
 // parameters are compared structurally, so a local copy keeps the overrides
 // assignable.
 type WriteFileOptionsLike = Readonly<{ encoding?: BufferEncoding }>;
+
+/**
+ * Why this mount refused a seeded file, separated by what the model should do
+ * next.
+ *
+ * Only read failures: nothing refuses a write to /work, which is the whole
+ * point of the mount, so there is no `read_only` kind here and no
+ * `raisedWrite` to tell a propagated error apart by.
+ *
+ * Deliberately no `memory_limit` either, unlike /files. This filesystem does
+ * have a ceiling - InMemoryFs raises ENOSPC past `maxTotalBytes` - but it
+ * raises from the writer, outside the seed loader that is the only thing here
+ * able to record anything, and reaching it needs about a gibibyte live in one
+ * command, which the function's own memory may not survive first. Adding a kind
+ * for a path no test can reach would be advice nothing produces; the ENOSPC
+ * still reaches the model, as the "did not run to completion" note.
+ */
+export type WorkRefusalKind = ObjectReadFailure;
+
+/** What one command refused to read out of /work, under the shared bounds. */
+export type WorkRefusals = RecordedRefusals<WorkRefusalKind>;
 
 /** What the request already states about a seeded /work file. */
 export type SeededWorkFile = Readonly<{ sizeBytes: number; mtimeMs: number }>;
@@ -55,10 +90,41 @@ export class RecordingWorkFs extends InMemoryFs {
 
   private readonly seededFiles: Map<string, SeedMetadata>;
 
+  /** Seed reads this command refused, bounded and deduplicated like /files. */
+  private readonly refusals: RefusalLog<WorkRefusalKind>;
+
   public constructor(maxTotalBytes: number) {
     super(undefined, { maxTotalBytes });
     this.mutatedPrefixes = new Set();
     this.seededFiles = new Map();
+    this.refusals = createRefusalLog();
+  }
+
+  /**
+   * Record a seed read this mount could not serve, because the shell will not
+   * carry it to the model.
+   *
+   * The seed loader is the only place that can: it is what spends the
+   * pre-signed GET, and every reader above it - `cat`, `wc`, `cp`, the /work
+   * diff - sees nothing but the error it rethrows, which just-bash renders as
+   * its own fixed "No such file or directory". Called from the loader
+   * `createWorkFs` builds, which knows the mount-relative path and classifies
+   * the failure through `classifyObjectReadFailure`, the same way /files does.
+   *
+   * `cp` is why this is not merely nice to have: `cp /work/a /work/b` over a
+   * refused seed exits 0 with empty streams, because the copy succeeds on a
+   * lazy entry that is never materialized. The only note it used to produce
+   * came from the /work diff, which named `/work/b` and said it "was not
+   * saved" - the wrong file and the wrong reason for a command whose source
+   * could not be read.
+   */
+  public recordRefusal(path: string, kind: WorkRefusalKind, detail: string): void {
+    this.refusals.record(this.resolvePath("/", path), kind, detail);
+  }
+
+  /** Every distinct seed read this command refused, in the order they happened. */
+  public getRefusals(): WorkRefusals {
+    return this.refusals.getRecorded();
   }
 
   /**
