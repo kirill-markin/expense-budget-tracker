@@ -45,14 +45,25 @@ export const CHAT_SENT_INPUT_BUDGET_TOKENS = 120_000;
  * end to end and started dropping turns at around 83k real tokens, barely above
  * the compaction threshold this budget deliberately sits 40k above.
  *
- * Measured with `o200k_base` on the real prompt: instructions 673 + tool schemas
- * 805 + clock 44 = 1,522 tokens. 2,600 leaves about 1,000 tokens - some 70% -
- * for the instructions and the tool catalog to grow, and prices a session's
- * first turn at 1,078 tokens of new content: a question answered with a tool
- * call and reasoning clears that, a session opened with "hi" does not and stays
- * on estimates, which is the one shape this value gives up on. Simulated at
- * 2,600: a first turn of 1,079 new tokens measures 200 of 200 later turns, one
- * of 1,077 measures none of them.
+ * Measured with `o200k_base` on the real prompt: instructions 1,045 + tool
+ * schemas 989 + clock 44 = 2,078 tokens. The schema figure is the five catalog
+ * tools at their measured 805 plus 184 for the rendered `bash` tool; the
+ * instructions grew from 673 when the `## Files and the shell` section was
+ * added for it, re-measured whole rather than estimated.
+ *
+ * 2,600 therefore leaves 522 tokens of headroom, and that number is the one to
+ * read before adding anything here: the prompt and the tool catalog have to fit
+ * inside it. It is also exactly what a session's first turn is priced at - the
+ * reserve minus the real overhead - so a question answered with a tool call and
+ * reasoning clears it comfortably while a session opened with "hi" does not and
+ * stays on estimates, which is the one shape this value gives up on. Raising
+ * the reserve to buy room is the mistake this whole comment exists to prevent:
+ * every token added above the real overhead is added to that admission price.
+ *
+ * The simulation behind the choice was run when the overhead was 1,522 and the
+ * price was 1,078: a first turn of 1,079 new tokens measured 200 of 200 later
+ * turns, one of 1,077 measured none. The mechanism is unchanged and the price
+ * is now lower, so measurement starts more easily than it did then, not less.
  */
 export const CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS = 2_600;
 export const CHAT_MODEL_LABEL = "GPT-6.1 Sol" as const;

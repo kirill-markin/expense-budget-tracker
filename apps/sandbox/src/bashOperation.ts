@@ -81,8 +81,13 @@ const MAX_STREAM_CHARS = 400_000;
  *
  * A Lambda RequestResponse payload is capped at 6 MB while `maxOutputSize`
  * allows 256 MiB. JSON escaping turns one control byte into six characters, so
- * the budget stays a factor of six below the limit. The web task applies its
- * own, much smaller, model-facing budget on top.
+ * the budget stays a factor of six below the limit.
+ *
+ * This is the transport ceiling and nothing more: 800,000 characters against
+ * the 30,000 the caller may hand a model, so it cuts this response again -
+ * across every field, not only the streams - before any of it becomes prompt
+ * text. The shares below are what keeps one list from taking the response; they
+ * are not what keeps one list out of the model's context.
  */
 export const MAX_RESPONSE_CHARS = 800_000;
 
@@ -955,6 +960,14 @@ export const diffWorkFiles = async (
    * conservative in the one direction that matters - it counts a file it
    * declines to save as keeping the bytes it already had, so it can never
    * accept a set that bricks the chat.
+   *
+   * The note states the condition and prescribes nothing, deliberately. This
+   * layer cannot know whether the chat can still run a command: its caller may
+   * have failed to remove a row, in which case its own note has just said the
+   * chat can run nothing further and cannot delete its own files - and an
+   * instruction here to delete some would be two notes in one result telling
+   * the model opposite things, which is the defect this channel exists to
+   * prevent. The remedy belongs to the layer that knows, which is the caller.
    */
   const projectedBytes = pending.reduce(
     (total, save) => total + save.content.byteLength - save.previousBytes,
@@ -969,7 +982,7 @@ export const diffWorkFiles = async (
       );
       if (stillOverBudget !== null) {
         notes.push(
-          `${toQuotedChatPath(save.path)} was not saved: ${projectedOverBudget}, and saving it would stop every later command of this chat from running. Delete files from ${SANDBOX_WORK_DIR} before writing more.`,
+          `${toQuotedChatPath(save.path)} was not saved: ${projectedOverBudget}, and saving it would stop every later command of this chat from running. ${SANDBOX_WORK_DIR} has to hold less before anything more can be written to it.`,
         );
         continue;
       }

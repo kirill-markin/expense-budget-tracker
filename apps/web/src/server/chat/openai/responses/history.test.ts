@@ -98,10 +98,15 @@ const createAssistantMessage = (
 const TURN_TEXT_CHARACTERS = 6_000;
 
 /**
- * The real per-call overhead, measured with `o200k_base`: instructions 673 +
- * tool schemas 805 + clock 44.
+ * The real per-call overhead, measured with `o200k_base`: instructions 1,045 +
+ * tool schemas 989 + clock 44.
+ *
+ * Re-measured when the `bash` tool added its prompt section and its schema.
+ * This grounds the simulation below against the real tokenizer, so leaving it
+ * at the old 1,522 would have understated every simulated call by what that
+ * tool added and checked a weaker bound than the test claims to.
  */
-const REAL_OVERHEAD_TOKENS = 1_522;
+const REAL_OVERHEAD_TOKENS = 2_078;
 
 /**
  * What the module charges for one rendered PDF page image. Mirrored here so a

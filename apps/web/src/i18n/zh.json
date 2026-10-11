@@ -311,6 +311,7 @@
   "chat.toolGetGuide": "使用指南",
   "chat.toolSqlQuery": "SQL 查询",
   "chat.toolSqlExecute": "运行 SQL",
+  "chat.toolBash": "Shell 命令",
   "chat.toolStatusRunning": "运行中",
   "chat.toolStatusInProgress": "处理中",
   "chat.toolStatusInterpreting": "解析中",

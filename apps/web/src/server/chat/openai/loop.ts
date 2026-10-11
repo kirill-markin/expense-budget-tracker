@@ -127,6 +127,8 @@ export type StartOpenAILoopParams = Readonly<{
   turnInput: ReadonlyArray<ContentPart>;
   model: ChatEffectiveModelId;
   reasoningEffort: ChatEffectiveReasoningEffort;
+  /** Demo-mode state of the request that started this run, captured there. */
+  isDemoMode: boolean;
   signal?: AbortSignal;
   rootObservation: LangfuseObservation | null;
 }>;
@@ -516,6 +518,7 @@ const runLoopWithDeps = async (
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
         turnId: params.turnId,
+        isDemoMode: params.isDemoMode,
         rootObservation: params.rootObservation,
       });
       const update = applyToolCallOutput(

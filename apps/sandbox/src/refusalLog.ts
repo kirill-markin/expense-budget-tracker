@@ -21,8 +21,12 @@
  * not their number - so the bound is chosen for the response rather than
  * derived from the file set, and exceeding it is reported as its own note
  * instead of quietly dropping what this channel exists to say.
+ *
+ * Exported because the web task's note priority is derived from it: see
+ * SANDBOX_MAX_PRIORITY_NOTES in contract.ts, which is the one definition both
+ * sides use.
  */
-const MAX_REFUSALS = 20;
+export const MAX_REFUSALS = 20;
 
 /**
  * Characters of the underlying failure one refusal may quote.

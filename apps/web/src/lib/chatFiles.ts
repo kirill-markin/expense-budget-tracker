@@ -6,6 +6,24 @@
 
 export const CHAT_FILE_MAXIMUM_BYTES = 50 * 1024 * 1024;
 
+/**
+ * Where an attachment is mounted, which is SANDBOX_FILES_DIR in
+ * apps/sandbox/src/contract.ts and must stay equal to it.
+ *
+ * Spelled out rather than imported, and the import is the tempting option now
+ * that the server has a path to that module. Two things make it the wrong
+ * trade, and both are narrower than "it would bloat the client": no browser
+ * module imports this file today - every current importer is server code or a
+ * test - so the concern is this file's stated purpose, which is to be the
+ * policy the upload UI shares; and `apps/sandbox` declares no
+ * `"sideEffects": false`, so a bundler asked to pull one string out of the
+ * contract module cannot drop the zod request schema that comes with it. The
+ * cost is latent rather than present, which is the kind that lands later.
+ *
+ * The equality is asserted instead, in server/chat/sandbox/invoke.test.ts,
+ * where importing the contract is already free - so the two cannot drift in
+ * either direction without failing CI.
+ */
 export const CHAT_FILE_SANDBOX_DIRECTORY = "/files";
 
 // A browser reports this type whenever its own registry does not know an

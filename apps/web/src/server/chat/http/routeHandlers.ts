@@ -1,5 +1,6 @@
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import { getLocaleFromRequest } from "@/lib/localeCookie";
+import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { ti } from "@/i18n/serverT";
 import { handleRoute } from "@/server/api/handleRoute";
 import { admitDemoChatTurn } from "@/server/chat/demoRateLimit";
@@ -60,6 +61,7 @@ type PostChatRouteDependencies = Readonly<{
   admitChatRunStart: typeof admitChatRunStart;
   requireAcceptedChatTurn: typeof requireAcceptedChatTurn;
   startPersistedChatRun: typeof startPersistedChatRun;
+  isDemoModeFromRequest: typeof isDemoModeFromRequest;
   admitDemoChatTurn: typeof admitDemoChatTurn;
   isServerDraining: typeof isServerDraining;
   log: typeof log;
@@ -84,6 +86,7 @@ const DEFAULT_POST_CHAT_ROUTE_DEPENDENCIES: PostChatRouteDependencies = {
   admitChatRunStart,
   requireAcceptedChatTurn,
   startPersistedChatRun,
+  isDemoModeFromRequest,
   admitDemoChatTurn,
   isServerDraining,
   log,
@@ -302,6 +305,7 @@ export const postChatRouteWithDeps = async (
         activeRunId: preparedRun.activeRunId,
         locale,
         timezone: body.timezone,
+        isDemoMode: dependencies.isDemoModeFromRequest(request),
         assistantItemId: preparedRun.assistantItem.itemId,
         localMessages: preparedRun.localMessages,
         turnInput: preparedRun.turnInput,

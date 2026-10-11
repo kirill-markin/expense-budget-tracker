@@ -14,6 +14,12 @@ type ToolExecutorParams = Readonly<{
   workspaceId: string;
   sessionId: string;
   turnId: string;
+  /**
+   * Captured when the request arrived and carried down with the run, because a
+   * persisted run outlives its request and the file tools have to refuse in
+   * demo mode rather than fail against a database that is not there.
+   */
+  isDemoMode: boolean;
   rootObservation: LangfuseObservation | null;
 }>;
 
@@ -156,6 +162,8 @@ export const runOneToolCallWithDependencies = async (
           workspaceId: params.workspaceId,
           sessionId: params.sessionId,
           turnId: params.turnId,
+          toolCallId: params.item.call_id,
+          isDemoMode: params.isDemoMode,
         },
       );
     } catch (error) {

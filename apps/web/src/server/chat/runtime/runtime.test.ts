@@ -113,6 +113,7 @@ const createRunParams = (
   activeRunId: `run-${sessionId}`,
   locale: "en",
   timezone: "Europe/Madrid",
+  isDemoMode: false,
   assistantItemId: "assistant-1",
   localMessages: [],
   turnInput: [{ type: "text", text: "Hello" }],
