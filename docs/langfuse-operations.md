@@ -101,6 +101,11 @@ Useful metadata for narrowing a trace:
 - root output `result` to separate completed, cancelled, invalidated, and failed turns
 - `turnIndex` to understand where in the chat history the problem happened
 
+Reading those filters through `GET /api/public/v2/observations`:
+
+- passing any `fields` value drops the core columns `name`, `userId`, `sessionId`, `level`, `isRootObservation`, and `statusMessage`, which carries the tool error text, from every row, and neither `fields=core,io` nor `fields=default,io` restores them, so a scan that needs both those columns and `io` has to run two passes over the same filter and join them on `id`
+- `level=ERROR`, spelled in exactly that case because `level=error` answers `400 Invalid request data`, is the cheapest way to find failures, and it returns two independent classes at once: failed tool spans, and turn roots that failed on their own, which need not be the same turns. Add `type=TOOL` — one of the few columns `fields` keeps — to count tool failures, and count the roots in a separate pass rather than deduplicating them away.
+
 ## First production smoke check
 
 After deploying or rotating secrets:
@@ -145,6 +150,7 @@ If a chat works but no Langfuse data is exported:
 
 - attachment `base64Data` is not sent to Langfuse
 - telemetry is masked before export for emails, phones, API-key-like strings, and long number sequences
+- numbers and date literals inside recorded SQL can export as `<masked-phone>`, and a bare `'YYYY-MM-DD'` reliably does, so read the mask patterns in `apps/web/src/server/chat/openai/langfuse.ts` before trusting any number in an exported statement
 - telemetry failures are not part of the chat correctness path; the chat can succeed even when export fails
 
 ## Current non-goals
