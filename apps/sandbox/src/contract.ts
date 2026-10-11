@@ -66,11 +66,14 @@ export const SANDBOX_FILES_DIR = "/files";
 export const SANDBOX_WORK_DIR = "/work";
 
 /**
- * Content type of every /work object.
+ * Content type of every object this sandbox writes back through a slot: a /work
+ * file a command produced, and a derivative `prepare` extracted from a source.
  *
  * A pre-signed PUT signs its Content-Type, so the slot has to be minted with a
- * type before anyone knows what the script will write into it. Downloads of
- * these objects are always forced to `attachment`, so the stored type is never
+ * type before anyone knows what will be written into it - which is also why one
+ * type covers both: the caller mints the slot without knowing whether the
+ * answer will be a `.txt`, a `.csv` or an archive entry. Downloads of these
+ * objects are always forced to `attachment`, so the stored type is never
  * interpreted as a document.
  */
 export const SANDBOX_WORK_FILE_MEDIA_TYPE = "application/octet-stream";
@@ -129,6 +132,62 @@ export const describeUnsaveableWorkBytes = (totalBytes: number): string | null =
     : null;
 
 /**
+ * Derivatives one `prepare` may produce for one source, which is also how many
+ * write slots its caller has to mint.
+ *
+ * The sandbox decides how many derivatives a source has - one `.txt` for a
+ * document, one `.csv` per sheet, one entry per archive member - while the
+ * caller has to sign the slots before any of that is known. So the bound is
+ * stated here, in the contract, and both sides read the same number: a source
+ * with more parts than this is refused with an error rather than prepared
+ * partially.
+ *
+ * A caller that minted fewer slots than this gets neither answer, and that is
+ * the one thing a prepare caller has to read this number for. How many parts a
+ * source has is a property of the source; how many slots the request carries is
+ * a property of the caller, and a 30-sheet workbook answered as unconvertible
+ * because 8 slots were signed for it would be a permanent verdict on a file
+ * that is fine. So the sandbox raises instead, the invocation fails, and the
+ * caller mints this many - not however many slots some other operation of the
+ * same sandbox happens to spend.
+ *
+ * 64 is chosen for the manifest rather than for the parser: every derivative
+ * becomes a file of the chat that the model is told about, and a hundred
+ * sidecars of one upload would crowd out the rest of the session's files.
+ */
+export const SANDBOX_PREPARE_MAX_DERIVATIVES = 64;
+
+/**
+ * Characters of extractable text one source may be converted into, across every
+ * derivative it produces.
+ *
+ * The sandbox counterpart of ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS in
+ * apps/web/src/lib/chatPdf.ts, which is 500,000 and cannot be imported here
+ * because apps/sandbox is deliberately not a web dependency. It is 67 times
+ * larger because the two numbers bound different things: that one bounds what
+ * reaches a model's context in one turn, while a derivative here is a file the
+ * model reads with `grep` and `head`, so the only thing to bound is what gets
+ * stored. What it costs depends on the script and not on the count alone: in
+ * UTF-16 the characters are 64 MiB while they are being assembled, and stored
+ * as UTF-8 they are 32 MiB of ASCII but 96 MiB of CJK, three bytes to the
+ * character. The larger figure is the one to size against - it passes the 100
+ * MiB a stored file may be and is stored - and it is why this is a count of
+ * characters and not a count of bytes: no constant turns one into the other, so
+ * the only way to bound the bytes would be to bound the bytes.
+ *
+ * It bounds the derivative and not the conversion, and the distinction is the
+ * whole shape of this operation: it is spent as pieces arrive - a PDF text item
+ * at a time, a workbook sheet at a time, so no second sheet is built once the
+ * first exhausted the allowance - but within one piece it is a verdict rather
+ * than a bound, because `sheet_to_csv` and mammoth each return a whole piece
+ * before anything can count it. What bounds the conversion itself is the heap
+ * cap and the wall clock of the child process in prepareProcess.ts, which is
+ * the only thing that can bound a parser without agreeing with it about what
+ * expands.
+ */
+export const SANDBOX_PREPARE_MAX_TEXT_CHARACTERS = 32 * 1024 * 1024;
+
+/**
  * Bytes of one-page PDF the `pdf_page` answer may carry.
  *
  * A Lambda RequestResponse payload is capped at 6 MB and the page travels as
@@ -150,8 +209,12 @@ export const SANDBOX_PDF_PAGE_MAX_BYTES = 3 * 1024 * 1024;
  * needs its own ceiling for a different reason: PresignedFs keeps every byte it
  * downloads for the rest of the command and evicts nothing, so without this a
  * `grep -r /files` over enough originals exhausts the function's memory. That
- * ends as an OOM kill of the session's child process mid-command, which the
- * caller sees as a dead invocation rather than as a tool error it can report.
+ * ends as an OOM kill, which is answered as a command outcome when the kernel
+ * picks the session's child - sessionProcess.ts reports that exit as a non-zero
+ * code with a note - and as a dead invocation when it picks the supervisor
+ * instead, or when the cgroup kills every process in it at once. Which of the
+ * two happens is not this schema's to decide, and the reasoning it depends on
+ * is in prepareProcess.ts.
  * PresignedFs states the same number as its own ceiling, so the mount cannot
  * exceed it even for a file set that never passed through this schema.
  */
@@ -448,6 +511,45 @@ export type ChatSandboxBashResponse = Readonly<{
 }>;
 
 /**
+ * Reject a document request the slots cannot serve.
+ *
+ * Only the slot ids, because the source is one file: a duplicate slot id has
+ * the same character here as in a `bash` request - one of the two entries would
+ * be lost, and with it a derivative the answer claims was stored.
+ */
+const checkDocumentRequestShape = (
+  request: Readonly<{ writeSlots: ReadonlyArray<z.infer<typeof chatSandboxWriteSlotSchema>> }>,
+  ctx: RefinementCtx,
+): void => {
+  const duplicateSlotId = findDuplicate(request.writeSlots.map((slot) => slot.slotId));
+  if (duplicateSlotId !== undefined) {
+    addCustomIssue(ctx, `writeSlots repeats the slotId '${duplicateSlotId}'`);
+  }
+};
+
+/**
+ * Convert one source file into the text derivatives stored beside it.
+ *
+ * No sessionId, unlike `bash`, and the difference is not an omission: a
+ * conversion reads one object, writes into the slots of this one invocation and
+ * keeps nothing, so there is no process state a later chat could observe. It
+ * does run in a child process, as `bash` does, but for the opposite reason: not
+ * to keep a session's state apart from the next one's, but to be killable, so a
+ * parser that will not fit in memory or in the clock dies with the child
+ * instead of with the invocation.
+ */
+export const chatSandboxPrepareRequestSchema = z.object({
+  operation: z.literal("prepare"),
+  source: chatSandboxFileSchema,
+  // At least one slot, because a prepare with nowhere to write can only fail;
+  // never more than the derivatives one source may produce, because a caller
+  // that minted more has read a different bound than this sandbox enforces.
+  writeSlots: z.array(chatSandboxWriteSlotSchema)
+    .min(1)
+    .max(SANDBOX_PREPARE_MAX_DERIVATIVES),
+}).superRefine(checkDocumentRequestShape);
+
+/**
  * Return one page of a PDF as a PDF of its own.
  *
  * The page number is the model's, so it is bounded here only by being a whole
@@ -456,10 +558,6 @@ export type ChatSandboxBashResponse = Readonly<{
  * rejection that reaches the caller as a raised error with no page count in it.
  * The chat tool declares this field with no minimum, so 0 and -1 are both
  * things a model will ask for.
- *
- * No sessionId, unlike `bash`, and the difference is not an omission: this
- * operation reads one object and keeps nothing, so there is no process state a
- * later chat could observe and no session child to own.
  */
 export const chatSandboxPdfPageRequestSchema = z.object({
   operation: z.literal("pdf_page"),
@@ -467,7 +565,59 @@ export const chatSandboxPdfPageRequestSchema = z.object({
   page: z.number().int(),
 });
 
+export type ChatSandboxPrepareRequest = z.infer<typeof chatSandboxPrepareRequestSchema>;
 export type ChatSandboxPdfPageRequest = z.infer<typeof chatSandboxPdfPageRequestSchema>;
+
+/**
+ * What one `prepare` produced, or why it produced nothing.
+ *
+ * A union rather than a nullable error beside a list, so a partial result is
+ * not expressible: neither answer that produced nothing has a derivatives field
+ * at all, and the caller therefore cannot record half of an archive as a
+ * complete set of sidecars. The objects of slots such a prepare already
+ * uploaded stay in the bucket, unreferenced by any row, which is the caller's
+ * to collect - nothing the chat can see was stored.
+ *
+ * Two ways to produce nothing rather than one, because the caller has to do
+ * two different things about them and cannot be asked to tell them apart from
+ * the error text. `failed` is a verdict about the source - a corrupt or
+ * encrypted container, a part past a cap, a name that cannot be stored - which
+ * the caller records as a permanent derivatives_error and never retries.
+ * `unavailable` is the conversion not getting the chance the file deserves:
+ * object storage not answering, or the kernel choosing this invocation's
+ * conversion child over whatever else held the function's memory. The same
+ * source tried a minute earlier or later would have been stored, so the caller
+ * may retry it and must not write it down as a fact about the file. Without
+ * the second arm both arrived as one `failed`, and a bucket refusing writes for
+ * a minute marked every file uploaded in that minute unconvertible for good.
+ *
+ * How many retries is in the error text rather than here, and it has to be:
+ * storage answering "refused" is both an expired signature, which a fresh tool
+ * call fixes, and a deleted object, which nothing fixes. So that one reason
+ * names its own bound - one more attempt - and a caller that loops on this arm
+ * without reading it never reaches a terminal state for a file that is gone.
+ *
+ * The discriminator is the status and not a `retryable` flag beside `failed`,
+ * so there is one field to switch on rather than two that can disagree. What is
+ * neither - this build cannot load a parser, this repository's own code is
+ * wrong, the request carries fewer write slots than the source has parts - is
+ * not in this union at all: those are raised, because each is a fault an
+ * operator has to fix and no retry and no verdict can.
+ *
+ * `notes` carries what is true about a successful prepare that its files do not
+ * say: a PDF with no text layer, a type with no derivative at all. Like every
+ * other note of this contract it is rendered into a model-visible prompt, so
+ * the untrusted media type or path inside one is quoted and escaped.
+ */
+export type ChatSandboxPrepareResponse =
+  | Readonly<{
+    status: "prepared";
+    derivatives: ReadonlyArray<ChatSandboxWrittenFile>;
+    notes: ReadonlyArray<string>;
+    durationMs: number;
+  }>
+  | Readonly<{ status: "failed"; error: string; durationMs: number }>
+  | Readonly<{ status: "unavailable"; error: string; durationMs: number }>;
 
 /**
  * One page of a PDF, as base64 of a one-page PDF.
@@ -581,6 +731,13 @@ export const parseChatSandboxBashRequest = (payload: unknown): ChatSandboxBashRe
   return request;
 };
 
+export const parseChatSandboxPrepareRequest = (payload: unknown): ChatSandboxPrepareRequest => {
+  const request = requireParsedRequest(chatSandboxPrepareRequestSchema.safeParse(payload));
+  requireAllowedObjectUrls([request.source], request.writeSlots);
+
+  return request;
+};
+
 export const parseChatSandboxPdfPageRequest = (payload: unknown): ChatSandboxPdfPageRequest => {
   const request = requireParsedRequest(chatSandboxPdfPageRequestSchema.safeParse(payload));
   // No write slots: this operation returns the page in its answer and stores
@@ -590,7 +747,7 @@ export const parseChatSandboxPdfPageRequest = (payload: unknown): ChatSandboxPdf
   return request;
 };
 
-export const SANDBOX_OPERATIONS = ["bash", "pdf_page"] as const;
+export const SANDBOX_OPERATIONS = ["bash", "prepare", "pdf_page"] as const;
 
 export type ChatSandboxOperation = (typeof SANDBOX_OPERATIONS)[number];
 

@@ -75,6 +75,18 @@ export function chatSandbox(scope: Construct, props: ChatSandboxProps): ChatSand
       // resolved at runtime, and the 9.9 MB vendored CPython tree has to keep
       // its exact relative paths.
       nodeModules: ["just-bash"],
+      // The document parsers are CommonJS and reach for node builtins with
+      // `require`, which esbuild cannot turn into an import while emitting an ES
+      // module: it emits a `__require` shim that throws
+      // `Dynamic require of "url" is not supported` instead, and it picks the
+      // real `require` over the shim when one is in scope. Without this line
+      // every DOCX fails at runtime in the bundle while passing unbundled under
+      // `tsx`, which is the same shape as the pdf.js worker below and was found
+      // the same way: by converting one of each format inside a real bundle.
+      // The alias is what the guard greps for, and it is capitalised so that
+      // `createRequire(import.meta.url)` inside a bundled dependency cannot
+      // stand in for it.
+      banner: "import { createRequire as __nodeCreateRequire } from 'node:module'; const require = __nodeCreateRequire(import.meta.url);",
       commandHooks: {
         beforeBundling: () => [],
         // Two settings, for two different problems with the same pair of
@@ -106,7 +118,36 @@ export function chatSandbox(scope: Construct, props: ChatSandboxProps): ChatSand
         beforeInstall: (_inputDir: string, outputDir: string) => [
           `printf 'omit=optional\\nignore-scripts=true\\n' > ${path.join(outputDir, ".npmrc")}`,
         ],
-        afterBundling: () => [],
+        // Two things the emitted bundle has to carry that no test of this
+        // repository can check, because both are differences between the bundle
+        // and the unbundled layout every suite runs in: the source passes under
+        // `tsx` either way, so the bundle is what gets asserted, and a failure
+        // here fails the deploy instead of production.
+        //
+        // pdf.js reaches for its worker through a runtime `await import`, which
+        // no bundler can follow, so prepareOperation.ts imports the worker by a
+        // static specifier and parks it on `globalThis.pdfjsWorker`. Dropping
+        // that one line takes this bundle from 7,481,080 to 4,859,753 bytes and
+        // makes every PDF fail with "Setting up fake worker failed". Its token
+        // is our own line as esbuild re-emits it, not a pdf.js symbol, and it
+        // asserts both halves of what that protects: the assignment is there,
+        // and `await Promise.resolve().then(...)` is what esbuild writes when it
+        // has inlined the imported module rather than left a dynamic import for
+        // the runtime to resolve. The banner's token is the capitalised alias
+        // above, for the reason recorded there. Measured: each appears exactly
+        // once with its line and not at all without it, neither depends on
+        // anything but this repository and esbuild, and a pdfjs-dist upgrade
+        // that moves the worker file fails here rather than in production.
+        // Neither would survive `minify: true`, which this construct does not
+        // set.
+        //
+        // Braced because CDK joins every hook's steps with `&&` into one
+        // `bash -c`: an ungrouped `|| { ...; exit 1; }` would report this
+        // message for a failure in any earlier step of the same command.
+        afterBundling: (_inputDir: string, outputDir: string) => [
+          `{ grep -q 'pdfjsWorker ??= await Promise.resolve' ${path.join(outputDir, "index.mjs")} || { echo 'chat sandbox bundle carries no pdf.js worker: restore the static import of pdfjs-dist/legacy/build/pdf.worker.mjs and the globalThis.pdfjsWorker assignment in apps/sandbox/src/prepareOperation.ts, or every PDF fails at runtime with "Setting up fake worker failed"' >&2; exit 1; }; }`,
+          `{ grep -q '__nodeCreateRequire(import.meta.url)' ${path.join(outputDir, "index.mjs")} || { echo 'chat sandbox bundle has no CommonJS require: restore the createRequire banner in infra/aws/lib/chat-sandbox.ts, or every DOCX fails at runtime with a dynamic-require error for a node builtin' >&2; exit 1; }; }`,
+        ],
       },
     },
   });

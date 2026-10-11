@@ -13,11 +13,14 @@ import type { Context } from "aws-lambda";
 import {
   parseChatSandboxBashRequest,
   parseChatSandboxPdfPageRequest,
+  parseChatSandboxPrepareRequest,
   readChatSandboxOperation,
   type ChatSandboxBashResponse,
   type ChatSandboxPdfPageResponse,
+  type ChatSandboxPrepareResponse,
 } from "./contract.js";
 import { runChatSandboxPdfPage } from "./pdfPageOperation.js";
+import { runChatSandboxPrepare } from "./prepareProcess.js";
 import { runSessionCommand } from "./sessionProcess.js";
 
 /**
@@ -29,7 +32,7 @@ const RESPONSE_MARGIN_MS = 3_000;
 export const handler = async (
   event: unknown,
   context: Context,
-): Promise<ChatSandboxBashResponse | ChatSandboxPdfPageResponse> => {
+): Promise<ChatSandboxBashResponse | ChatSandboxPrepareResponse | ChatSandboxPdfPageResponse> => {
   // Read before it is validated, because each operation is validated as itself:
   // the pre-signed URLs a `bash` request carries are not the ones a document
   // operation carries, and only the matching schema knows which are required.
@@ -38,9 +41,12 @@ export const handler = async (
 
   switch (operation) {
     case "bash":
-      // The only operation that runs in a child process, because it is the only
-      // one that leaves state behind: see sessionProcess.ts.
+      // One of the two operations that run in a child process, and the only one
+      // that leaves state behind: see sessionProcess.ts.
       return runSessionCommand(parseChatSandboxBashRequest(event), deadlineEpochMs);
+    case "prepare":
+      // Also a child process, for the opposite reason: see prepareProcess.ts.
+      return runChatSandboxPrepare(parseChatSandboxPrepareRequest(event), deadlineEpochMs);
     case "pdf_page":
       return runChatSandboxPdfPage(parseChatSandboxPdfPageRequest(event), deadlineEpochMs);
   }

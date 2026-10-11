@@ -800,15 +800,15 @@ test("every /files refusal names the file and says what to do about it", (): voi
   }
 
   // Worth another attempt.
-  assert.match(notes[0] ?? "", /running the command again is worth one attempt/);
-  assert.match(notes[1] ?? "", /run the command again/);
+  assert.match(notes[0] ?? "", /asking for it again is worth one attempt/);
+  assert.match(notes[1] ?? "", /so ask for it again/);
   // Not worth another attempt, and the digest case must never read as a retry:
   // the object changed under a session that had already recorded its checksum.
   assert.match(notes[2] ?? "", /no longer matches the checksum/);
   assert.match(notes[2] ?? "", /cannot change this: every attempt will fail the same way/);
-  assert.doesNotMatch(notes[2] ?? "", /worth one attempt|run the command again/);
-  assert.match(notes[3] ?? "", /Running the command again cannot change this/);
-  assert.doesNotMatch(notes[3] ?? "", /worth one attempt|run the command again/);
+  assert.doesNotMatch(notes[2] ?? "", /worth one attempt|so ask for it again/);
+  assert.match(notes[3] ?? "", /Asking for it again cannot change this/);
+  assert.doesNotMatch(notes[3] ?? "", /worth one attempt|so ask for it again/);
   // Neither of the two that are not read failures claims the read failed.
   assert.match(notes[4] ?? "", /Read fewer files in one command/);
   assert.match(notes[5] ?? "", /read-only. Copy it into \/work/);

@@ -7,6 +7,7 @@ import {
   type ChatSandboxBashResponse,
   type ChatSandboxFile,
   type ChatSandboxPdfPageResponse,
+  type ChatSandboxPrepareResponse,
 } from "./contract.js";
 import { handler } from "./handler.js";
 import { hashObjectContent } from "./objects.js";
@@ -24,14 +25,19 @@ import { hashObjectContent } from "./objects.js";
  * runner: an unknown operation would otherwise fall through the switch and
  * answer `null`, which the web task can only report as a malformed response.
  *
- * The `bash` arm is deliberately not driven from here, and the arm's wiring is
- * still covered: deleting it fails `tsc` on the non-exhaustive switch, while
- * swapping the two arm bodies or losing the deadline term is caught by the
- * pdf_page tests below, which would then be answered by the session runner or
- * under the wrong deadline. What a bash test would add is a real forked session
- * child, which the runner keeps for the session's next command and is given no
- * shutdown method - so it outlives the last assertion, holds its IPC channel
- * open, and hangs the suite until the job timeout. Do not add it back.
+ * The `bash` and `prepare` arms are deliberately not driven from here, and
+ * their wiring is still covered: deleting an arm fails `tsc` on the
+ * non-exhaustive switch, while swapping arm bodies or losing the deadline term
+ * is caught by the pdf_page tests below, which would then be answered by
+ * another runner or under the wrong deadline. What those two tests would add is
+ * a real forked child, and neither child can be forked from a suite: the
+ * production specs start a plain `node` on this module path, which is the
+ * bundle in the Lambda and a TypeScript file here. Each is driven through its
+ * own runner over an injected spec instead - see sessionProcess.test.ts and
+ * prepareProcess.test.ts. A session child additionally has no shutdown method,
+ * because the runner keeps it for the session's next command, so it outlives
+ * the last assertion, holds its IPC channel open, and hangs the suite until the
+ * job timeout. Do not add either back.
  */
 
 const OBJECT_HOST = "objects.example";
@@ -39,7 +45,10 @@ const OBJECT_HOST = "objects.example";
 /** Set once here, before any call, because the parsers read it per call. */
 process.env[SANDBOX_OBJECT_HOSTS_ENV_VAR] = OBJECT_HOST;
 
-type SandboxAnswer = ChatSandboxBashResponse | ChatSandboxPdfPageResponse;
+type SandboxAnswer =
+  | ChatSandboxBashResponse
+  | ChatSandboxPrepareResponse
+  | ChatSandboxPdfPageResponse;
 
 /** The one thing the handler asks the Lambda context for. */
 const contextWithRemaining = (remainingTimeMs: number): Context =>
@@ -95,9 +104,17 @@ const withServedObject = async <T>(
   }
 };
 
+/**
+ * `prepared` and `unavailable` are excluded as well as the shapeless answers,
+ * because the two document operations share a `status` field and an identical
+ * `failed` arm: a payload answered by the wrong one of them is only visible in
+ * the arms that differ, which are every arm a prepare has and a pdf_page does
+ * not.
+ */
 const requirePdfPageAnswer = (answer: SandboxAnswer): ChatSandboxPdfPageResponse => {
   assert.ok(
-    typeof answer === "object" && answer !== null && "status" in answer,
+    typeof answer === "object" && answer !== null && "status" in answer
+      && answer.status !== "prepared" && answer.status !== "unavailable",
     `the pdf_page arm answered ${String(JSON.stringify(answer))} instead of a pdf_page response`,
   );
 

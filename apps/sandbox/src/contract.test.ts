@@ -3,10 +3,12 @@ import test from "node:test";
 import {
   parseChatSandboxBashRequest,
   parseChatSandboxPdfPageRequest,
+  parseChatSandboxPrepareRequest,
   readChatSandboxOperation,
   SANDBOX_FILE_MAX_BYTES,
   SANDBOX_OBJECT_HOSTS_ENV_VAR,
   SANDBOX_OPERATIONS,
+  SANDBOX_PREPARE_MAX_DERIVATIVES,
 } from "./contract.js";
 
 const ALLOWED_HOST = "chat-files.s3.eu-central-1.amazonaws.com";
@@ -254,12 +256,20 @@ test("the host allowlist and the URL agree on a default port", (): void => {
   });
 });
 
-type PdfPageRequestOverrides = Readonly<{
+type DocumentRequestOverrides = Readonly<{
   source?: unknown;
+  writeSlots?: ReadonlyArray<unknown>;
   page?: unknown;
 }>;
 
-const pdfPageRequest = (overrides: PdfPageRequestOverrides): unknown => ({
+const prepareRequest = (overrides: DocumentRequestOverrides): unknown => ({
+  operation: "prepare",
+  source: file({ path: "/files/statement.pdf" }),
+  writeSlots: [{ slotId: "slot-0", putUrl: `https://${ALLOWED_HOST}/sessions/s1/slot-0` }],
+  ...overrides,
+});
+
+const pdfPageRequest = (overrides: DocumentRequestOverrides): unknown => ({
   operation: "pdf_page",
   source: file({ path: "/files/statement.pdf" }),
   page: 2,
@@ -269,14 +279,56 @@ const pdfPageRequest = (overrides: PdfPageRequestOverrides): unknown => ({
 // The host allowlist is the whole boundary for a function with unrestricted
 // egress, so each operation has to be checked on its own: a new one that parsed
 // its payload without reaching the allowlist would be a hole no schema sees.
-test("a pdf_page request refuses a pre-signed URL outside the allowlist", (): void => {
+test("a document operation refuses a pre-signed URL outside the allowlist", (): void => {
   withAllowedHosts(ALLOWED_HOST, () => {
+    assert.equal(parseChatSandboxPrepareRequest(prepareRequest({})).writeSlots.length, 1);
     assert.equal(parseChatSandboxPdfPageRequest(pdfPageRequest({})).page, 2);
+    assert.throws(
+      () => parseChatSandboxPrepareRequest(prepareRequest({
+        source: file({ getUrl: "https://attacker.example/x" }),
+      })),
+      /not one of the object-storage hosts/,
+    );
+    assert.throws(
+      () => parseChatSandboxPrepareRequest(prepareRequest({
+        writeSlots: [{ slotId: "slot-0", putUrl: "https://attacker.example/x" }],
+      })),
+      /not one of the object-storage hosts/,
+    );
     assert.throws(
       () => parseChatSandboxPdfPageRequest(pdfPageRequest({
         source: file({ getUrl: "https://attacker.example/x" }),
       })),
       /not one of the object-storage hosts/,
+    );
+  });
+});
+
+// The caller mints the slots before it can know how many parts the source has,
+// so both ends of that bound are the contract's and not the caller's guess.
+test("a prepare request with no slots, or more than one source may need, is refused", (): void => {
+  withAllowedHosts(ALLOWED_HOST, () => {
+    assert.throws(
+      () => parseChatSandboxPrepareRequest(prepareRequest({ writeSlots: [] })),
+      /does not match its schema/,
+    );
+    assert.throws(
+      () => parseChatSandboxPrepareRequest(prepareRequest({
+        writeSlots: Array.from({ length: SANDBOX_PREPARE_MAX_DERIVATIVES + 1 }, (_unused, index) => ({
+          slotId: `slot-${String(index)}`,
+          putUrl: `https://${ALLOWED_HOST}/sessions/s1/slot-${String(index)}`,
+        })),
+      })),
+      /does not match its schema/,
+    );
+    assert.throws(
+      () => parseChatSandboxPrepareRequest(prepareRequest({
+        writeSlots: [
+          { slotId: "slot-0", putUrl: `https://${ALLOWED_HOST}/one` },
+          { slotId: "slot-0", putUrl: `https://${ALLOWED_HOST}/two` },
+        ],
+      })),
+      /repeats the slotId/,
     );
   });
 });
@@ -306,7 +358,7 @@ test("a pdf_page request with a page that is not a whole number is refused", ():
 test("only the operations this sandbox serves can be read from a payload", (): void => {
   assert.deepEqual(
     SANDBOX_OPERATIONS.map((operation) => readChatSandboxOperation({ operation })),
-    ["bash", "pdf_page"],
+    ["bash", "prepare", "pdf_page"],
   );
   for (const payload of [{ operation: "sql" }, { operation: "" }, {}, null, "bash"]) {
     assert.throws(

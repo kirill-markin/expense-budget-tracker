@@ -6,6 +6,7 @@
  * or sqlite worker is ever shared across sessions.
  */
 import { runChatSandboxBash } from "./bashOperation.js";
+import type { SandboxChildMessage as ChildMessage } from "./childProcess.js";
 import type { ChatSandboxBashRequest, ChatSandboxBashResponse } from "./contract.js";
 
 /** Set on the forked process only, which is how the same file becomes the child's main. */
@@ -17,10 +18,7 @@ export type SandboxChildCommand = Readonly<{
   deadlineEpochMs: number;
 }>;
 
-export type SandboxChildMessage =
-  | Readonly<{ kind: "ready" }>
-  | Readonly<{ kind: "result"; response: ChatSandboxBashResponse }>
-  | Readonly<{ kind: "failure"; error: string }>;
+export type SandboxChildMessage = ChildMessage<ChatSandboxBashResponse>;
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? `${error.name}: ${error.message}` : String(error);

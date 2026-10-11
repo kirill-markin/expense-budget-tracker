@@ -473,9 +473,26 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
   // Chat sandbox Lambda errors. It opens no database connection, so it has no
-  // pool-error filter above. An error here is a sandbox fault and never a bad
-  // chat command: a command that fails, overruns its budget or kills its own
-  // process is returned as tool output with a non-zero exit code.
+  // pool-error filter above.
+  //
+  // An error here is a fault an operator has to fix, and that is what the
+  // threshold of one is for. Nothing a payload can ask for is meant to reach
+  // it: a command that fails, overruns its budget or kills its own process
+  // comes back as tool output with a non-zero exit code, a document that cannot
+  // be converted comes back as `status: "failed"` - including one whose text
+  // will not fit in a JavaScript string and one whose conversion child crossed
+  // its memory ceiling - and object storage refusing or not answering, or the
+  // kernel picking that child for another process's memory, comes back as
+  // `status: "unavailable"` for the caller to retry.
+  //
+  // What is left is the list of raise paths, kept here because the threshold of
+  // one is only defensible while every entry is a defect: a bundle that cannot
+  // load one of the document parsers, a TypeError of the sandbox's own, a
+  // prepare request carrying fewer write slots than a source has parts, a
+  // caller invoking one runner concurrently, a conversion child that could not
+  // be forked or never completed its ready handshake, and a command that could
+  // not be sent to a child which had just reported ready. Each is a wiring or
+  // build defect that no retry fixes and that nothing else reports.
   new cloudwatch.Alarm(scope, "ChatSandboxLambdaErrorAlarm", {
     metric: props.chatSandboxFn.metricErrors({
       period: cdk.Duration.minutes(15),

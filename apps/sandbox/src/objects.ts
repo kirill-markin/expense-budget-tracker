@@ -145,8 +145,14 @@ export class ObjectContentMismatchError extends Error {
  * undefined - has none. That is the distinction worth drawing: anything else
  * from an attempt would otherwise spend three attempts and two delays of the
  * invocation's budget on an outcome no retry can change.
+ *
+ * Exported because this is the only place the `cause` test is written, and a
+ * second caller needs it for the opposite question: sandboxDefect.ts asks
+ * whether a TypeError is this workspace's own bug, and every answer above is a
+ * TypeError that is not. A copy of the test there would be the half that
+ * drifts, and the drift reads as a transient outage raised as a FunctionError.
  */
-const isTransportFailure = (error: unknown): boolean =>
+export const isObjectTransportFailure = (error: unknown): boolean =>
   (error instanceof TypeError && error.cause !== undefined)
   || (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"));
 
@@ -178,8 +184,42 @@ export const classifyObjectReadFailure = (error: unknown): ObjectReadFailure => 
   // `unknown` is a named case rather than a fallback: the invocation deadline
   // and anything this workspace raised itself land here, and the note that
   // reports it quotes the error instead of guessing a next step.
-  return isTransportFailure(error) ? "unreachable" : "unknown";
+  return isObjectTransportFailure(error) ? "unreachable" : "unknown";
 };
+
+/**
+ * What the caller should do about each kind of failed read, in words it can
+ * hand to a model.
+ *
+ * Here rather than in bashOperation.ts, which is where it was written, because
+ * this module owns ObjectReadFailure and classifyObjectReadFailure: a kind and
+ * the advice for that kind are one decision, and `Record` over the union is
+ * what makes a new kind impossible to add without its text.
+ *
+ * The wording is deliberately channel-neutral. Three surfaces render these -
+ * a `bash` command's /files note, a `pdf_page` answer and a `prepare` answer -
+ * and only the first has a command to run again, so "run the command again"
+ * was false on two of the three. "Ask for it again" is true of all of them: a
+ * shell command, a tool call and a caller's retry are the same act here.
+ *
+ * The kinds differ in exactly one thing that matters: whether another attempt
+ * can help, and how many. `denied` is bounded at one, because object storage
+ * answered and refused - a fresh tool call signs new URLs, so one more attempt
+ * is worth making and an unbounded loop is not. `unreachable` is transient and
+ * unbounded. The two mismatches must never read as "retry" at all: the object
+ * and the row a caller recorded its size and digest from disagree, so every
+ * later attempt fails the same way.
+ */
+export const OBJECT_READ_FAILURE_ADVICE: Readonly<Record<ObjectReadFailure, string>> = {
+  denied: "exists, and object storage answered the request for its content and refused it, which is what an expired or revoked pre-signed URL does and what a fault on its side does; the quoted status says which. Do not treat the file as missing or empty. A new tool call is signed afresh, so asking for it again is worth one attempt; if it is refused again, say the file could not be read.",
+  unreachable: "exists, and the request for its content got no answer after three attempts. Do not treat the file as missing or empty. This is transient, so ask for it again.",
+  size_mismatch: "exists, and its stored content is not the size this chat recorded for it, so the sandbox refused to hand over bytes it had already told you it was not reading. Asking for it again cannot change this. Report that the file could not be read rather than answering from what you do have.",
+  digest_mismatch: "exists, and its stored content no longer matches the checksum this chat recorded, so the file changed after this chat listed it. Asking for it again cannot change this: every attempt will fail the same way. Tell the user the file changed and that the chat has to reopen it, and do not answer from any other copy.",
+  unknown: "exists, and reading it failed for the reason quoted. Do not treat the file as missing or empty: report that it could not be read.",
+};
+
+export const describeObjectReadFailure = (kind: ObjectReadFailure): string =>
+  OBJECT_READ_FAILURE_ADVICE[kind];
 
 const isRetryable = (error: unknown): boolean => {
   if (error instanceof ObjectTransferError) {
@@ -193,7 +233,7 @@ const isRetryable = (error: unknown): boolean => {
       || RETRYABLE_STATUSES.has(error.status);
   }
 
-  return isTransportFailure(error);
+  return isObjectTransportFailure(error);
 };
 
 const attemptTimeoutMs = (deadlineEpochMs: number): number => {
