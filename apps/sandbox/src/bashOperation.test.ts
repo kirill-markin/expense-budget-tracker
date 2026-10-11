@@ -18,6 +18,7 @@ import {
   type WorkDiff,
 } from "./bashOperation.js";
 import {
+  MAX_REFUSALS,
   parseChatSandboxBashRequest,
   SANDBOX_FILES_DIR,
   SANDBOX_MAX_PRIORITY_NOTES,
@@ -36,7 +37,6 @@ import {
   type SandboxObjectTransfer,
 } from "./objects.js";
 import type { PresignedFs, PresignedRefusals } from "./presignedFs.js";
-import { MAX_REFUSALS } from "./refusalLog.js";
 import type { RecordingWorkFs, WorkRefusals } from "./workFs.js";
 
 type RecordedWrite = Readonly<{ putUrl: string; mediaType: string; content: string }>;

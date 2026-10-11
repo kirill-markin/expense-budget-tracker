@@ -67,6 +67,28 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     "!apps/auth",
     "apps/auth/**",
     "!apps/auth/package.json",
+    "!apps/sandbox",
+    "apps/sandbox/**",
+    // The web build imports apps/sandbox/src/contract.ts as source - it is the
+    // single definition of the request and response shapes the web task and the
+    // chat sandbox Lambda must agree on. That one file, and nothing else from
+    // this workspace: it imports only zod, deliberately, so the web build's
+    // graph never reaches a second file here.
+    //
+    // The intermediate `src` is deliberately NOT un-excluded. Measured against
+    // aws-cdk-lib 2.272.0's own DockerIgnoreStrategy: adding "!apps/sandbox/src"
+    // re-includes that whole directory, 15 files, among them bashOperation.ts,
+    // which imports just-bash. It is not needed either, because that strategy
+    // auto-adds the ancestor negations of every "!" pattern to the instance it
+    // uses to decide whether to DESCEND into a directory, while the instance
+    // that decides whether to COPY a file keeps "apps/sandbox/**" - so the
+    // walker reaches this file without the directory being re-included.
+    //
+    // apps/sandbox/package.json stays excluded, which is what keeps just-bash's
+    // 91 MB vendored CPython tree out of this image: every Dockerfile copies
+    // the package.json files it wants by explicit path, and `npm ci` reconciles
+    // the lockfile without this workspace.
+    "!apps/sandbox/src/contract.ts",
     "!apps/sql-api",
     "apps/sql-api/**",
     "!apps/sql-api/package.json",
