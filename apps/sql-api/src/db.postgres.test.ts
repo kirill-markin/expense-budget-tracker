@@ -6,13 +6,29 @@
  * request. Whatever account state the request carries, a disabled row stays
  * disabled, while `email_verified` still follows the authenticated identity
  * so the MCP access-token gate cannot strand a subject permanently.
+ *
+ * The same database proves the read back: `loadTrustedUserIdentityBeforeDeadline`
+ * is the loader `/v1` (machineApi.ts) and the MCP OAuth gate (mcp/auth.ts)
+ * authenticate every request with, and it runs as the `app` role, so the
+ * `user_self_access` policy on `users` (db/migrations/0013_users.sql) has to
+ * return the caller's own row. A silent break there reads as `null`, which
+ * `/v1` answers with `account_disabled` for every API-key caller at once.
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 
-import { upsertUserIdentity, type UserIdentity } from "./db.js";
+import {
+  SQL_STATEMENT_TIMEOUT_MS,
+  createSqlExecutionDeadline,
+} from "@expense-budget-tracker/agent-shared/sql-policy";
+import {
+  loadTrustedUserIdentityBeforeDeadline,
+  upsertUserIdentity,
+  type UserIdentity,
+} from "./db.js";
+import { getPool } from "./dbPool.js";
 
 const migrationDatabaseUrl = process.env.MIGRATION_DATABASE_URL ?? "";
 const appDatabaseUrl = process.env.APP_DATABASE_URL ?? "";
@@ -23,6 +39,14 @@ const MISSING_DATABASE_URLS_MESSAGE =
 const postgresTestSkip: boolean | string = databaseUrlsMissing && process.env.CI !== "true"
   ? MISSING_DATABASE_URLS_MESSAGE
   : false;
+
+// The shared pool resolves its connection string lazily on first use, so
+// pointing it at the app role here is enough for the identity loader to run as
+// the role RLS applies to. Without a URL to point it at, leave the variable
+// alone: a run that shares the process must not inherit an empty string.
+if (appDatabaseUrl !== "") {
+  process.env.DATABASE_URL = appDatabaseUrl;
+}
 
 type StoredAccountRow = Readonly<{
   email: string;
@@ -129,6 +153,75 @@ test(
         await ownerPool.query("DELETE FROM public.users WHERE user_id = $1", [userId]);
       } finally {
         await Promise.all([ownerPool.end(), appPool.end()]);
+      }
+    }
+  },
+);
+
+test(
+  "loadTrustedUserIdentityBeforeDeadline reads the caller's own users row under its own RLS context",
+  { skip: postgresTestSkip },
+  async (): Promise<void> => {
+    if (databaseUrlsMissing) {
+      throw new Error(`${MISSING_DATABASE_URLS_MESSAGE}; CI=true forbids skipping this test`);
+    }
+
+    const userId = `sql-api-self-read-user-${randomUUID().replaceAll("-", "")}`;
+    const email = `${userId}@example.invalid`;
+    const ownerPool = new pg.Pool({ connectionString: migrationDatabaseUrl });
+
+    try {
+      await ownerPool.query(
+        `INSERT INTO public.users (user_id, email, email_verified, cognito_status, cognito_enabled)
+         VALUES ($1, $2, true, 'CONFIRMED', true)`,
+        [userId, email],
+      );
+
+      // Each read starts its own deadline, exactly as a request does.
+      const enabledDeadline = createSqlExecutionDeadline(SQL_STATEMENT_TIMEOUT_MS, Date.now);
+      assert.deepEqual(
+        await loadTrustedUserIdentityBeforeDeadline(userId, enabledDeadline),
+        {
+          userId,
+          email,
+          emailVerified: true,
+          cognitoStatus: "CONFIRMED",
+          cognitoEnabled: true,
+        },
+        "an enabled account must be readable through its own RLS context",
+      );
+
+      await ownerPool.query(
+        "UPDATE public.users SET cognito_enabled = false, cognito_status = 'DISABLED' WHERE user_id = $1",
+        [userId],
+      );
+
+      const disabledDeadline = createSqlExecutionDeadline(SQL_STATEMENT_TIMEOUT_MS, Date.now);
+      assert.deepEqual(
+        await loadTrustedUserIdentityBeforeDeadline(userId, disabledDeadline),
+        {
+          userId,
+          email,
+          emailVerified: true,
+          cognitoStatus: "DISABLED",
+          cognitoEnabled: false,
+        },
+        "disabling the row must be visible on the very next read",
+      );
+
+      // A subject with no row reads as null, which /v1 refuses the same way.
+      const absentDeadline = createSqlExecutionDeadline(SQL_STATEMENT_TIMEOUT_MS, Date.now);
+      assert.equal(
+        await loadTrustedUserIdentityBeforeDeadline(`${userId}-absent`, absentDeadline),
+        null,
+      );
+    } finally {
+      try {
+        await ownerPool.query("DELETE FROM public.users WHERE user_id = $1", [userId]);
+      } finally {
+        // The provider keeps the ended pool cached, so this teardown belongs to
+        // the last case in the file and nothing after it may read the database.
+        await Promise.all([ownerPool.end(), (await getPool()).end()]);
       }
     }
   },

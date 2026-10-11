@@ -18,8 +18,8 @@
  *                     api_sql_reader. For read-only user SQL such as the chat's
  *                     sql_query tool.
  * withReadOnlyRestrictedTrustedIdentityContext() — the same read-only
- *                     api_sql_reader transaction for an API-key identity. For
- *                     read-only scripts on the agent SQL endpoint.
+ *                     api_sql_reader transaction for an already-trusted
+ *                     UserIdentity rather than a request-scoped user id.
  * withRestrictedTrustedIdentityContext() — writable transaction in which user
  *                     SQL runs as api_sql_executor after the RLS context is set.
  */

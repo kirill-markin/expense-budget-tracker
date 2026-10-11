@@ -64,10 +64,6 @@ export const CREATE_WORKSPACE_INPUT: Readonly<Record<string, string>> = {
   name: "string",
 };
 
-export const RUN_SQL_INPUT: Readonly<Record<string, string>> = {
-  sql: "string",
-};
-
 export const RUN_SQL_WITH_WORKSPACE_INPUT: Readonly<Record<string, string>> = {
   sql: "string",
   "X-Workspace-Id": "optional string",
@@ -348,17 +344,6 @@ export const buildSchemaAction = (target: AgentUrlTarget): AgentAction => ({
   method: "GET",
   description: "Inspect allowed relations, columns, and hints. Relation operations: ledger_entries, budget_lines, budget_adjustments, workspace_settings, and account_metadata support SELECT and, under existing write-approval rules, INSERT, UPDATE, and DELETE; the derived accounts view and the global worker-owned fx_rates_raw and fx_rates_daily relations are SELECT-only.",
   url: resolveActionUrl(target),
-  auth: "ApiKey",
-});
-
-export const buildRunSqlAction = (
-  target: AgentUrlTarget,
-  input: Readonly<Record<string, string>>,
-): AgentAction => ({
-  name: "run_sql",
-  method: "POST",
-  url: resolveActionUrl(target),
-  input,
   auth: "ApiKey",
 });
 
