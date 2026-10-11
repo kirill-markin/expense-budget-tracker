@@ -8,7 +8,29 @@
  * vendored CPython tree stay out of the web image.
  */
 import { z, type RefinementCtx } from "zod";
-import { MAX_REFUSALS } from "./refusalLog.js";
+
+/**
+ * Distinct refusals one command may name, per channel.
+ *
+ * Refusals are deduplicated by path and kind, so this bounds how many
+ * different things went wrong, not how often: `for i in $(seq 1000); do cat
+ * /files/x.csv; done` produces exactly one. Nothing caps how many files a chat
+ * session holds - the web app bounds their bytes and their duplicate names,
+ * not their number - so the bound is chosen for the response rather than
+ * derived from the file set, and exceeding it is reported as its own note
+ * instead of quietly dropping what this channel exists to say.
+ *
+ * It lives here, in the contract, rather than in refusalLog.ts which enforces
+ * it, for two reasons that point the same way. SANDBOX_MAX_PRIORITY_NOTES below
+ * is computed from it, so the file that publishes the derived number should own
+ * the input; and the web task imports this module as source, so a bound reached
+ * through another file would drag that file into the web build's graph - which
+ * it did, by a `.js`-suffixed relative specifier that the web bundler cannot
+ * resolve to a `.ts` file, because `resolve.extensions` appends an extension
+ * and never replaces one. The contract now imports nothing but zod, which is
+ * what keeps it importable from both sides.
+ */
+export const MAX_REFUSALS = 20;
 
 /**
  * Refusal channels one command's notes can carry: /files and /work.

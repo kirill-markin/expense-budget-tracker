@@ -10,23 +10,7 @@
  * exists to end, on whichever mount got the weaker copy. One implementation
  * makes that divergence impossible to write.
  */
-
-/**
- * Distinct refusals one command may name.
- *
- * Refusals are deduplicated by path and kind, so this bounds how many
- * different things went wrong, not how often: `for i in $(seq 1000); do cat
- * /files/x.csv; done` produces exactly one. Nothing caps how many files a chat
- * session holds - the web app bounds their bytes and their duplicate names,
- * not their number - so the bound is chosen for the response rather than
- * derived from the file set, and exceeding it is reported as its own note
- * instead of quietly dropping what this channel exists to say.
- *
- * Exported because the web task's note priority is derived from it: see
- * SANDBOX_MAX_PRIORITY_NOTES in contract.ts, which is the one definition both
- * sides use.
- */
-export const MAX_REFUSALS = 20;
+import { MAX_REFUSALS } from "./contract.js";
 
 /**
  * Characters of the underlying failure one refusal may quote.
