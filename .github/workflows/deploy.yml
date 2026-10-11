@@ -137,17 +137,28 @@ jobs:
       - name: Read stack outputs
         id: outputs
         run: |
-          get_output() {
-            aws cloudformation describe-stacks \
+          set -euo pipefail
+          # describe-stacks --query exits 0 and prints an empty string or "None"
+          # for an unknown output key, so the value itself has to be checked.
+          # The value is never command-substituted inside `echo`: there the step
+          # status would come from `echo` and stay green on a failed read.
+          write_output() {
+            local value
+            value=$(aws cloudformation describe-stacks \
               --stack-name ${{ env.STACK_NAME }} \
-              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" \
-              --output text
+              --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" \
+              --output text)
+            if [[ -z "${value//[[:space:]]/}" || "$value" == "None" ]]; then
+              echo "::error::Stack ${{ env.STACK_NAME }} returned no value for output $2, needed as step output '$1' by the later deploy steps. Check that the CDK deploy exported it."
+              exit 1
+            fi
+            echo "$1=$value" >> "$GITHUB_OUTPUT"
           }
-          echo "cluster=$(get_output EcsClusterName)" >> "$GITHUB_OUTPUT"
-          echo "service=$(get_output EcsServiceName)" >> "$GITHUB_OUTPUT"
-          echo "migrate_task=$(get_output MigrateTaskDefArn)" >> "$GITHUB_OUTPUT"
-          echo "migrate_sg=$(get_output MigrateSecurityGroupId)" >> "$GITHUB_OUTPUT"
-          echo "fx_function=$(get_output FxFetcherFunctionName)" >> "$GITHUB_OUTPUT"
+          write_output cluster EcsClusterName
+          write_output service EcsServiceName
+          write_output migrate_task MigrateTaskDefArn
+          write_output migrate_sg MigrateSecurityGroupId
+          write_output fx_function FxFetcherFunctionName
 
       # Run database migrations as a one-off ECS task after every deploy.
       # The script is idempotent, and always running it avoids schema drift when
