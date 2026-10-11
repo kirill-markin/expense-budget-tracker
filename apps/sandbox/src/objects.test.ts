@@ -96,8 +96,8 @@ const failureMessage = async (status: number, body: string): Promise<string> => 
 // <AWSAccessKeyId> is an artefact of S3 putting a long <Message> first, so the
 // identifiers are removed by shape rather than by word order.
 test("a quoted error body carries no credential, whatever its shape", async (): Promise<void> => {
-  // Every key id below is an AWS documentation example: the EXAMPLE suffix is
-  // what keeps secret scanning off a file made of credential-shaped strings.
+  // Every key id below is an AWS documentation example. The EXAMPLE suffix is
+  // allowlisted for AKIA only; .github/secret_scanning.yml excludes this file.
   const shortDenial = await failureMessage(
     403,
     "<Error><Code>AccessDenied</Code><AWSAccessKeyId>AKIAIOSFODNN7EXAMPLE</AWSAccessKeyId></Error>",
