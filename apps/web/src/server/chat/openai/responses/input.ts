@@ -222,11 +222,12 @@ const isContainerAttachmentPart = (
  * - The standing limit of this whole approach: against a reader that ignores
  *   declared sizes, no directory-only bound is sound. JSZip - the DOCX path - is
  *   such a reader, so a deflated entry declaring 100 bytes inflates in full
- *   whatever this gate computed. It is unreachable today only because `mammoth`
- *   throws on every `.docx` before reaching that point, which is luck rather
- *   than design. Persisting the extracted length when the attachment is stored
- *   is what actually closes it, and that is the same item 06/07 above - this is
- *   the reason the DOCX path needs it rather than merely benefiting from it.
+ *   whatever this gate computed. That path is live now that the
+ *   `@xmldom/xmldom` override is back inside `mammoth`'s declared range, so a
+ *   `.docx` is read through instead of aborting at the first XML parse. The
+ *   current turn's own extraction is unbounded by design - it must extract
+ *   exactly what it is about to send - so what closes this is a
+ *   decompressed-size bound on the read itself, which nothing here provides.
  */
 const CONTAINER_SIZING_MAXIMUM_UNCOMPRESSED_BYTES = 1_048_576;
 const CONTAINER_SIZING_TOTAL_UNCOMPRESSED_BUDGET_BYTES = 2_097_152;
