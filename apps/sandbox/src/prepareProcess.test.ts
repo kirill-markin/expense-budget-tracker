@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import test, { after } from "node:test";
@@ -12,6 +13,8 @@ import type {
 import {
   answerPrepareChildExit,
   createPrepareRunner,
+  parseChildResidentBytes,
+  readChildResidentBytes,
   SANDBOX_PREPARE_CHILD_ENV_VAR,
   type ChatSandboxPrepareRunner,
   type SandboxChildResidentReader,
@@ -695,5 +698,232 @@ test("the resident bound measured every conversion above and refused none of the
   assert.ok(
     highest < RESIDENT_CEILING_BYTES,
     `a real conversion of this suite held ${String(Math.round(highest / 1024 / 1024))} MiB, at or past the ${String(RESIDENT_CEILING_BYTES / 1024 / 1024)} MiB ceiling`,
+  );
+});
+/**
+ * A live process's /proc/<pid>/status, as Linux writes it.
+ *
+ * Trimmed to the memory block and a few fields around it, because the block is
+ * the whole of what the parse is asked about. The figures are all different on
+ * purpose: that is what makes the case below a test of which field was read
+ * rather than of the arithmetic, since a parse that took `VmHWM`, `VmPeak`,
+ * `VmSwap`, `RssAnon`, `RssFile` or `RssShmem` would return one of the other
+ * numbers and never fail.
+ */
+const LIVE_PROC_STATUS = [
+  "Name:\tnode",
+  "State:\tS (sleeping)",
+  "Pid:\t4242",
+  "VmPeak:\t 2097152 kB",
+  "VmSize:\t 1048576 kB",
+  "VmLck:\t       0 kB",
+  "VmPin:\t       0 kB",
+  "VmHWM:\t  524288 kB",
+  "VmRSS:\t  262144 kB",
+  "RssAnon:\t  131072 kB",
+  "RssFile:\t  129024 kB",
+  "RssShmem:\t    2048 kB",
+  "VmData:\t  196608 kB",
+  "VmStk:\t     132 kB",
+  "VmExe:\t     772 kB",
+  "VmLib:\t    2492 kB",
+  "VmPTE:\t    1024 kB",
+  "VmSwap:\t    4096 kB",
+  "Threads:\t11",
+  "",
+].join("\n");
+
+/** What the file above says, in bytes. */
+const LIVE_PROC_STATUS_BYTES = 262_144 * 1024;
+
+/**
+ * The same process once it has died and before its parent has reaped it.
+ *
+ * A zombie has released its address space, and the kernel writes the memory
+ * block only while one exists, so every `Vm` and `Rss` line is gone - and with
+ * them `Umask`, taken from the `fs` struct a zombie has released too. The file
+ * itself stays until the reap, so this is not the ENOENT the read arm answers;
+ * it is a status file with no figure in it.
+ */
+const ZOMBIE_PROC_STATUS = [
+  "Name:\tnode",
+  "State:\tZ (zombie)",
+  "Pid:\t4242",
+  "PPid:\t4200",
+  "Threads:\t1",
+  "SigQ:\t0/63649",
+  "",
+].join("\n");
+
+/**
+ * A runtime that publishes the block and not the field, which is the one thing
+ * here no real file can be made to say.
+ *
+ * Derived from the live file rather than written out, so a fixture edit cannot
+ * leave this one claiming a shape the other no longer has.
+ */
+const PROC_STATUS_WITHOUT_RESIDENT = LIVE_PROC_STATUS
+  .split("\n")
+  .filter((line): boolean => !line.startsWith("VmRSS:"))
+  .join("\n");
+
+/**
+ * The file the production reader reads, for the one case that needs a real one.
+ *
+ * Named as a precondition rather than as a platform, because that is what the
+ * case tests for: a developer machine has no /proc at all, which is the reason
+ * the reader is a port to begin with. CI runs this suite on Linux, which is
+ * also what production runs, so the case runs where its answer means something.
+ */
+const SELF_PROC_STATUS_PATH = "/proc/self/status";
+
+/**
+ * The figure, and that it is the figure and not one of its six neighbours.
+ *
+ * The production reader is the one component of this module that runs only in
+ * production - every other case substitutes it, which is what the port is for -
+ * so nothing but this exercises the regex or the kB it converts. And the
+ * conversion is the half that is silent when wrong: a reader off by 1,024 reads
+ * a 7 GiB child as 7 MiB and the bound never fires at all.
+ *
+ * It reds the `* 1024`, either dropped or turned into `/ 1024`; it reds the `m`
+ * flag coming off the pattern, because without it `^` and `$` anchor to the
+ * whole file rather than to a line, nothing matches, and the parse falls
+ * through to the memory-block arm and raises; and it reds a pattern loosened to
+ * `Rss` or to a prefix test, which is how a neighbour gets read instead.
+ *
+ * It does not red the two anchors coming off, and that is not a gap. The
+ * literal `VmRSS:` is what picks the field out: no neighbour in this file -
+ * `VmHWM`, `VmPeak`, `VmSwap`, `RssAnon`, `RssFile`, `RssShmem` - contains that
+ * text, so `/VmRSS:\s+(\d+) kB/mu` reads the same 256 MiB here. What the
+ * anchors buy is that the match is a whole `VmRSS` line and not a `VmRSS:`
+ * found inside a longer one, a shape no /proc/<pid>/status writes and so a
+ * shape nothing here can cover. They stay because this reads a kernel
+ * interface and matching it exactly costs nothing.
+ */
+test("a live process's memory block is read as its resident bytes", (): void => {
+  assert.equal(
+    parseChildResidentBytes("/proc/4242/status", LIVE_PROC_STATUS),
+    LIVE_PROC_STATUS_BYTES,
+    "the resident figure was not read as the VmRSS line in kB",
+  );
+});
+
+/**
+ * A child that has died and not yet been reaped, which is the window every
+ * death of this operation goes through.
+ *
+ * V8 aborting on its heap ceiling and the kernel's OOM kill both leave a zombie
+ * between the child's last instruction and libuv reaping it, and a poll landing
+ * there reads a file that exists and carries no figure. Measured by review at a
+ * 1 ms poll over 20 real heap-abort deaths: 17 of 5,244 reads, about 0.85 ms
+ * per death, which is roughly 0.3% of deaths at the 250 ms this polls at.
+ *
+ * It has to be `null` rather than a raise, and the reason is where the raise
+ * would happen: the poll runs in a `setInterval` callback, outside the
+ * conversion's own `try/finally`, so it is an uncaught exception that returns no
+ * response at all and leaves the child unterminated - losing the very refusal
+ * this bound exists to produce, and paging an operator with a message blaming
+ * the runtime for a child that had simply exited.
+ *
+ * It reds an absent `VmRSS` raising unconditionally, which is what it did.
+ */
+test("a process that has released its memory is no figure rather than a fault", (): void => {
+  assert.equal(
+    parseChildResidentBytes("/proc/4242/status", ZOMBIE_PROC_STATUS),
+    null,
+    "a zombie's status was not read as the process being gone",
+  );
+});
+
+/**
+ * And the raise that survives it, which is the whole reason the two are told
+ * apart instead of both reading as "no figure".
+ *
+ * The kernel's own test, borrowed: the memory block is written under `if (mm)`
+ * and the fields above it unconditionally, so a status carrying any `Vm` field
+ * is a process whose address space still exists. One that exists and publishes
+ * no `VmRSS` is a runtime this build cannot measure, and answering `null` there
+ * would be this bound silently absent for the life of the deployment - which is
+ * the failure the figure above is the only guard against.
+ *
+ * No runtime surveyed writes this fixture, which is why it is written by hand:
+ * `task_mem()` emits the whole `VmPeak`-to-`VmSwap` run as one unconditional
+ * straight-line sequence, so a non-NULL `mm` always yields `VmRSS`; nommu Linux
+ * emits no `Vm` field at all, which is the `null` of the case above; and gVisor
+ * always emits `VmRSS` beside `VmSize`. So what this pins is a guard against a
+ * runtime this build has not met, not a shape anybody has read off a real file.
+ *
+ * It reds the fix for the zombie written as an unconditional `null`, which is
+ * the easy way to make the case above pass.
+ */
+test("a memory block with no resident field is a fault of this build", (): void => {
+  assert.throws(
+    () => parseChildResidentBytes("/proc/4242/status", PROC_STATUS_WITHOUT_RESIDENT),
+    (raised: unknown) => {
+      assert.ok(raised instanceof Error);
+      assert.match(raised.message, /^\/proc\/4242\/status publishes a memory block with no 'VmRSS: <n> kB' line/u);
+      assert.match(raised.message, /resident memory of a conversion child cannot be bounded on this runtime/u);
+
+      return true;
+    },
+    "a live address space this build cannot measure was not raised",
+  );
+});
+
+/**
+ * The read arm, on the pid every conversion ends as.
+ *
+ * Pid 0 rather than a child this suite forked and killed: Linux lists no entry
+ * for it and a machine without /proc lists none for anything, so this is the
+ * absent file with no reap to wait for and no recycled pid to race. What it
+ * pins is that the absent file is answered and not raised - the ordinary end of
+ * every conversion, several times per poll as the child is being reaped.
+ *
+ * It reds the `try/catch` around the read coming off, on every platform.
+ */
+test("a pid with no status file is no figure", (): void => {
+  assert.equal(
+    readChildResidentBytes(0),
+    null,
+    "a pid with no status file was not read as the process being gone",
+  );
+});
+
+/**
+ * And the one fact the fixtures above cannot establish: that a real Linux
+ * publishes the line they are shaped like.
+ *
+ * Everything else here is the parse, which is honest about its input and says
+ * nothing about whether the input is real. If /proc/<pid>/status ever stopped
+ * carrying `VmRSS: <n> kB` - a different unit, a different separator, a
+ * container runtime masking it - every case above would still pass and the
+ * deployment would raise on its first conversion. So this one reads the real
+ * file for a real live pid, through the real reader, and is skipped where there
+ * is no such file to read.
+ *
+ * The figure is checked for being a plausible resident size rather than for any
+ * particular number, because it is this process's own and changes between runs:
+ * a Node process holding at least a mebibyte and less than a tebibyte. Nothing
+ * here checks that the figure is a whole number of kibibytes - the parse
+ * multiplies a kB figure by 1,024, so it could not be anything else, and the
+ * check would hold whatever the file said.
+ *
+ * It reds the path, the unit and the regex all at once, and it is the only case
+ * that reds the path.
+ */
+test("the real runtime publishes the resident field this parse is built on", {
+  skip: existsSync(SELF_PROC_STATUS_PATH)
+    ? false
+    : `${SELF_PROC_STATUS_PATH} does not exist on this platform, so there is no real figure to read`,
+}, (): void => {
+  const bytes = readChildResidentBytes(process.pid);
+  assert.ok(
+    bytes !== null,
+    `${SELF_PROC_STATUS_PATH} exists and published no resident figure for this process`,
+  );
+  assert.ok(
+    bytes > 1024 * 1024 && bytes < 1024 * 1024 * 1024 * 1024,
+    `this process was reported as holding ${String(bytes)} bytes, which is not a resident size`,
   );
 });
