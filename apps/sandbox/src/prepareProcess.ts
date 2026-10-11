@@ -258,12 +258,85 @@ const PREPARE_CHILD_MEMORY_POLL_MS = 250;
  * refusal must follow, another reports the child's real resident memory and the
  * documents already in the suite must be converted untouched.
  *
- * `null` means the figure is not published for this pid, which is two things
- * and neither is a failure: the process has already gone, which is how every
- * conversion ends, and the platform does not publish it. Both mean there is
- * nothing to compare, so the poll does nothing and the next one asks again.
+ * `null` means there is no figure to compare for this pid, which is three
+ * things and none of them is a failure: the process has already gone, which is
+ * how every conversion ends; it is on its way out and has released the address
+ * space the figure is taken from, which every death passes through; and the
+ * platform does not publish it. All three mean the poll does nothing and the
+ * next one asks again.
  */
 export type SandboxChildResidentReader = (pid: number) => number | null;
+
+/**
+ * The one field of /proc/<pid>/status this bound is made of.
+ *
+ * Anchored at both ends with the `m` flag, which is the whole of its precision:
+ * the file also carries `VmHWM`, `VmPeak`, `VmSwap`, `RssAnon`, `RssFile` and
+ * `RssShmem`, and a peak or a sum read as the current figure would kill
+ * conversions that never held it.
+ */
+const PROC_STATUS_RESIDENT_BYTES = /^VmRSS:\s+(\d+) kB$/mu;
+
+/**
+ * Any field of the same block, which exists only while the process has an
+ * address space.
+ *
+ * The kernel's own test, borrowed rather than guessed: proc_pid_status prints
+ * the fields above the block unconditionally and calls task_mem - the whole
+ * `VmPeak`..`VmSwap` run - under `if (mm)`. So a status file carrying any `Vm`
+ * field is a process whose address space the kernel still holds, and one
+ * carrying none has released it. That is what separates the two things an
+ * absent `VmRSS` can mean, and it costs a second pass over a string already
+ * read.
+ */
+const PROC_STATUS_MEMORY_BLOCK = /^Vm[A-Za-z]+:\s+\d+ kB$/mu;
+
+/**
+ * What one /proc/<pid>/status says about resident memory.
+ *
+ * Parsed apart from the read because one of its three answers no real file can
+ * be made to produce: a status that publishes a memory block and no `VmRSS` is
+ * a runtime this build does not understand, and the only way to show that
+ * raise - and to show that it is not what a dead child gets - is to hand the
+ * function the text. The path is a parameter rather than rebuilt here so the
+ * message names the file that was actually read.
+ */
+export const parseChildResidentBytes = (statusPath: string, status: string): number | null => {
+  const field = PROC_STATUS_RESIDENT_BYTES.exec(status);
+  if (field !== null) {
+    return Number(field[1]) * 1024;
+  }
+  // No memory block at all, so the process has released its address space: a
+  // zombie waiting to be reaped, or the last instructions of one exiting.
+  // Which is the `null` above: it is gone, and there is nothing to compare.
+  //
+  // This is the window every death goes through - V8 aborting on its heap
+  // ceiling and the kernel's OOM kill alike - between the child dying and
+  // libuv reaping it, so a poll landing in it is ordinary. It must not raise:
+  // the poll runs in a timer, outside the conversion's own try/finally, so a
+  // raise there is an uncaught exception that returns no response at all,
+  // leaves the child unterminated, and pages an operator with a reason
+  // blaming the runtime for a child that had simply exited.
+  if (PROC_STATUS_MEMORY_BLOCK.exec(status) === null) {
+    return null;
+  }
+
+  // A block, and no `VmRSS` in it: a live address space this code cannot
+  // measure, which is this bound silently absent for the life of the
+  // deployment and the one thing here worth a raise.
+  //
+  // No runtime surveyed reaches it, and the raise is a guard against one that
+  // has not been met rather than a state anybody has observed: Linux's
+  // task_mem() emits the whole `VmPeak`-to-`VmSwap` run as one unconditional
+  // straight-line sequence, so a non-NULL `mm` always yields `VmRSS`; nommu
+  // Linux emits no `Vm` field at all, which is the `null` above; and gVisor
+  // always emits `VmRSS` beside `VmSize`, writing 0 once the `mm` is gone,
+  // which the ceiling then ignores. It is kept anyway, because the alternative
+  // on an unknown runtime is measuring nothing and not being told.
+  throw new Error(
+    `${statusPath} publishes a memory block with no 'VmRSS: <n> kB' line, so the resident memory of a conversion child cannot be bounded on this runtime`,
+  );
+};
 
 /**
  * The production reader: Linux's own figure for the child, in bytes.
@@ -274,25 +347,20 @@ export type SandboxChildResidentReader = (pid: number) => number | null;
  * architecture the function is built for.
  *
  * A read that fails is the process being gone, which is ENOENT and the ordinary
- * end of every conversion; a file that exists and does not carry the field is
- * not, and raises rather than reading as "no figure", because that would be
- * this bound silently absent for the life of the deployment.
+ * end of every conversion. A file that exists is the parse's question, and it
+ * answers the same `null` for a process that still has a status file and no
+ * longer has the address space the figure is taken from.
  */
 export const readChildResidentBytes: SandboxChildResidentReader = (pid) => {
+  const statusPath = `/proc/${String(pid)}/status`;
   let status: string;
   try {
-    status = readFileSync(`/proc/${String(pid)}/status`, "utf8");
+    status = readFileSync(statusPath, "utf8");
   } catch {
     return null;
   }
-  const field = /^VmRSS:\s+(\d+) kB$/mu.exec(status);
-  if (field === null) {
-    throw new Error(
-      `/proc/${String(pid)}/status does not carry a 'VmRSS: <n> kB' line, so the resident memory of a conversion child cannot be bounded on this runtime`,
-    );
-  }
 
-  return Number(field[1]) * 1024;
+  return parseChildResidentBytes(statusPath, status);
 };
 
 /** What the parent learned while one conversion ran. */

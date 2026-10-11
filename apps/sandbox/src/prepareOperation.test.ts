@@ -1181,6 +1181,10 @@ test("a TypeError raised while converting is raised rather than answered", async
  * RangeError exempted in the predicate instead - which would have answered a
  * genuine out-of-range bug anywhere in this phase as the user's file being
  * broken.
+ *
+ * The stub's message is the half of the identity this asserts: the case below
+ * is the other half, and together they say that this answer belongs to
+ * `Invalid string length` and to nothing else wearing the same class.
  */
 test("a sheet whose text will not fit in one string is the file's own refusal", async (): Promise<void> => {
   const workbook = buildWorkbook([["Budget", [["date"], ["2026-01-01"]]]], "xlsx");
@@ -1210,6 +1214,88 @@ test("a sheet whose text will not fit in one string is the file's own refusal", 
   assert.match(failed.error, /Invalid string length/u);
 
   requirePrepared((await convert()).response);
+});
+
+/**
+ * The RangeError messages of that same expression which are not this answer's.
+ *
+ * Two of them, and two is the point. A narrowing wide enough to be wrong can be
+ * wrong in more than one way, and one message only reds the narrowings that
+ * happen to admit it: `Maximum call stack size exceeded` carries no "length",
+ * so a narrowing written as a test on "length" admits `Invalid typed array
+ * length: -1` and passes on the call-stack message alone. Both strings are
+ * V8's own text on Node 24.19, so the pair reds a test on `length`, a test on
+ * `exceeded`, and a test on nothing but the class.
+ */
+const FOREIGN_RANGE_ERROR_MESSAGES = [
+  "Maximum call stack size exceeded",
+  "Invalid typed array length: -1",
+] as const;
+
+/**
+ * And the RangeErrors inside the same expression which are neither the document
+ * nor that one error.
+ *
+ * The class is not the error. Measured on Node 24.19, `Maximum call stack size
+ * exceeded` is a RangeError, and SheetJS and mammoth both walk their documents
+ * recursively - a DOCX table nests arbitrarily - so a deep enough package
+ * raises one at exactly the site the case above stubs; `Invalid typed array
+ * length: -1`, `Invalid array length` and `Array buffer allocation failed` are
+ * RangeErrors there too. Matched by class they all got the answer above: a
+ * permanent, model-visible verdict on the user's file stating a reason that is
+ * not true of it, with nothing anywhere saying the sandbox was the one at
+ * fault.
+ *
+ * So this one raises instead, which is the answer sandboxDefect.ts gives every
+ * other RangeError in this build, and it raises carrying V8's own text - the
+ * only thing that can later say whether a nesting bound is worth adding. The
+ * identity of the raised error is asserted and not just the rejection, because
+ * a conversion that failed for some other reason would also reject here.
+ *
+ * It reds asSourceTextTooLarge matching RangeError by class, which is what it
+ * did, and it reds any narrowing still wide enough to admit either message - a
+ * test on `length`, on `exceeded`, or on nothing but the class. The case above
+ * reds a narrowing in the other direction, because its stub's message is the
+ * one this answer does belong to.
+ */
+test("a RangeError that is not a string-length overflow stays a defect of this build", async (): Promise<void> => {
+  const workbook = buildWorkbook([["Budget", [["date"], ["2026-01-01"]]]], "xlsx");
+  for (const message of FOREIGN_RANGE_ERROR_MESSAGES) {
+    const stub = "export const read = () => ({ SheetNames: ['Budget'], Sheets: { Budget: {} } });\n"
+      + `export const utils = { sheet_to_csv: () => { throw new RangeError(${JSON.stringify(message)}); } };\n`;
+    const hooks = registerHooks({
+      resolve: (specifier, context, next) => specifier === "xlsx"
+        ? { url: `data:text/javascript,${encodeURIComponent(stub)}`, shortCircuit: true }
+        : next(specifier, context),
+    });
+    try {
+      await assert.rejects(
+        prepare(
+          "/files/nested.xlsx",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          workbook,
+          4,
+          null,
+          {},
+        ),
+        (raised: unknown) => {
+          assert.ok(
+            raised instanceof RangeError,
+            `a RangeError that is not this operation's reached the caller as something else: ${String(raised)}`,
+          );
+          assert.equal(
+            raised.message,
+            message,
+            "the raised error is not the one the library threw",
+          );
+
+          return true;
+        },
+      );
+    } finally {
+      hooks.deregister();
+    }
+  }
 });
 
 test("a conversion library that cannot be loaded is labelled a defect of this build", async (): Promise<void> => {

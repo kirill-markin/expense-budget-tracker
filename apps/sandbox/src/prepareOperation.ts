@@ -169,6 +169,15 @@ const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 /**
+ * V8's whole message for a string built past the length one may hold.
+ *
+ * Exact rather than a substring: `Invalid typed array length: -1` shows that
+ * these messages carry the offending value, so a test loose enough to be
+ * convenient is loose enough to absorb an error that is not this one.
+ */
+const V8_STRING_LENGTH_EXCEEDED = "Invalid string length";
+
+/**
  * The one RangeError a document can provoke, turned into a verdict on that
  * document.
  *
@@ -201,9 +210,24 @@ const describeError = (error: unknown): string =>
  * 32 M characters, an order of magnitude below this - and it simply never gets
  * to speak for a piece this large, because it is spent on the string after the
  * string exists.
+ *
+ * Which RangeError, by its message and not by its class, because the class is
+ * several errors and only this one is the document's. Measured on Node 24.19:
+ * `Maximum call stack size exceeded` is a RangeError, and both libraries walk
+ * their documents recursively - a DOCX table nests arbitrarily - so a deep
+ * enough package raises one inside the same expression; `Invalid typed array
+ * length: -1` and `Array buffer allocation failed` are RangeErrors too. Matched
+ * by class, each of them became this verdict: a permanent, model-visible
+ * refusal of the user's file stating a reason that is not true of it, with
+ * nothing anywhere saying the sandbox was the one at fault. Matched by message
+ * they keep the answer sandboxDefect.ts gives every other RangeError in this
+ * build - a fault of the build, raised - and they raise carrying their own
+ * text, which is the only thing that can say whether a depth bound is worth
+ * adding. The scope is already narrow enough for that to be safe: one library
+ * expression per `try`, with none of this repository's own code inside either.
  */
 const asSourceTextTooLarge = (subject: string, error: unknown): unknown =>
-  error instanceof RangeError
+  error instanceof RangeError && error.message === V8_STRING_LENGTH_EXCEEDED
     ? new Error(
       `${subject} needs more extractable text than one JavaScript string can hold, so it cannot be converted: ${describeError(error)}`,
     )

@@ -485,14 +485,49 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
   // kernel picking that child for another process's memory, comes back as
   // `status: "unavailable"` for the caller to retry.
   //
-  // What is left is the list of raise paths, kept here because the threshold of
-  // one is only defensible while every entry is a defect: a bundle that cannot
-  // load one of the document parsers, a TypeError of the sandbox's own, a
-  // prepare request carrying fewer write slots than a source has parts, a
-  // caller invoking one runner concurrently, a conversion child that could not
-  // be forked or never completed its ready handshake, and a command that could
-  // not be sent to a child which had just reported ready. Each is a wiring or
-  // build defect that no retry fixes and that nothing else reports.
+  // What is left is every raise path that reaches the handler. The list is kept
+  // complete, and kept here, because the threshold of one is only defensible
+  // while every entry on it is a defect - a representative list cannot carry
+  // that argument. Grouped by what is broken:
+  //
+  // Deployment wiring, read once from the environment: CHAT_SANDBOX_OBJECT_HOSTS
+  // unset, or carrying an entry that is not a bare `host` or `host:port`. A
+  // typo there raises on the deployment's first request and is plausibly the
+  // likeliest entry here to ever fire.
+  //
+  // A caller not holding to this sandbox's contract: a payload that does not
+  // match its schema; a payload naming an `operation` this sandbox does not
+  // serve; a pre-signed URL whose host is not one of the deployment's; a
+  // prepare request carrying fewer write slots than a source has parts; and a
+  // caller invoking one runner concurrently.
+  //
+  // The build: a bundle that cannot load one of the document parsers; and a
+  // TypeError, ReferenceError or RangeError of the sandbox's own, every one of
+  // them but the `Invalid string length` the answer above covers - so a parser
+  // overrunning its own recursion on a deeply nested document pages here,
+  // carrying V8's text, rather than being written down as that document being
+  // broken.
+  //
+  // The child protocol, on the bash path and the conversion path alike: a child
+  // that could not be forked, never completed its ready handshake, or reported
+  // ready without a pid; a command or a conversion that could not be sent to a
+  // child which had just reported ready; an IPC or serialization `error` event
+  // on a channel a command had already been written to; and an exit reporting a
+  // signal `os.constants.signals` does not number, or reporting neither a code
+  // nor a signal.
+  //
+  // The runtime: a /proc/<pid>/status publishing a memory block with no `VmRSS`
+  // line, which leaves a conversion child's resident memory unbounded.
+  //
+  // Each is a wiring, contract, build or runtime defect that no retry fixes and
+  // that nothing else reports. What is deliberately not on the list is
+  // presignedFs.ts's refusals: they are raised into just-bash and consumed by
+  // it as a failing command, and never reach the handler.
+  //
+  // The runtime entry is also the one exception to how they arrive: it is read
+  // from a poll timer rather than from the request, so it lands as an
+  // uncaughtException with no response written, where every other entry is a
+  // rejected handler promise.
   new cloudwatch.Alarm(scope, "ChatSandboxLambdaErrorAlarm", {
     metric: props.chatSandboxFn.metricErrors({
       period: cdk.Duration.minutes(15),
