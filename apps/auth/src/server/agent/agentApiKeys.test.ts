@@ -10,7 +10,7 @@ type QueryCall = Readonly<{
 
 const createTransactionRunner = (
   resolvedWorkspaceId: string | null,
-  createdAt: Date | string,
+  createdAt: Date | string | number,
   calls: Array<QueryCall>,
 ): (<T>(callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<Readonly<{ rows: ReadonlyArray<Readonly<Record<string, unknown>>> }>>) => Promise<T>) => Promise<T>) =>
   async <T>(callback: (queryFn: (text: string, params: ReadonlyArray<unknown>) => Promise<Readonly<{ rows: ReadonlyArray<Readonly<Record<string, unknown>>> }>>) => Promise<T>): Promise<T> =>
@@ -77,4 +77,18 @@ test("createAgentConnection converts the Date node-pg returns for created_at int
   );
 
   assert.equal(connection.createdAt, "2026-10-03T07:08:09.000Z");
+});
+
+test("createAgentConnection rejects a created_at that is neither Date nor string", async (): Promise<void> => {
+  const calls: Array<QueryCall> = [];
+
+  await assert.rejects(
+    createAgentConnectionWithTransaction(
+      "user-1",
+      "user@example.com",
+      "Desktop",
+      createTransactionRunner("workspace-1", 0, calls),
+    ),
+    /createAgentConnection: expected string connection_id and Date or string created_at/,
+  );
 });
