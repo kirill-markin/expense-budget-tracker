@@ -21,7 +21,10 @@ const runId = (process.env.GITHUB_RUN_ID ?? `${Date.now()}`).trim();
 // Same prefix the scheduled deleter defaults to (scripts/cleanup-live-e2e-workspaces.mjs),
 // so the workspace this run creates and the ones it skips stay in step with it.
 const disposableWorkspacePrefix = "E2E ";
-const workspaceName = `${disposableWorkspacePrefix}agent api ${runId}`;
+// That deleter ages a workspace by the last space-separated part of its name,
+// read as a millisecond epoch, so the name ends with one and keeps the run id
+// ahead of it for traceability.
+const workspaceName = `${disposableWorkspacePrefix}agent api run${runId} ${Date.now()}`;
 const connectionLabel = `agent-api-smoke-${runId}`;
 const retryDelayMs = 2_000;
 const maxAttempts = 5;
@@ -55,6 +58,7 @@ async function main() {
     await selectWorkspace(issuedApiKey, createdWorkspaceId);
     const relationName = await verifySchema(issuedApiKey);
     await verifySql(issuedApiKey, relationName);
+    await verifySqlWriteThenRead(issuedApiKey, createdWorkspaceId);
     console.log(`[agent-smoke] success runId=${runId} workspaceId=${createdWorkspaceId}`);
   } catch (error) {
     smokeFailure = error instanceof Error ? error : new Error(describeError(error));
@@ -129,29 +133,25 @@ function shouldRetryStatus(status) {
   return status >= 500;
 }
 
+function buildStatusFailureMessage(label, method, url, status, payload) {
+  return `[agent-smoke] ${label} failed method=${method} url=${url} status=${status} body=${JSON.stringify(payload)}`;
+}
+
 async function requestJson(method, url, headers, body, expectedStatus, label, retryEnabled) {
   let attempt = 1;
   /** @type {Error | null} */
   let lastError = null;
 
   while (attempt <= maxAttempts) {
+    /** @type {Response} */
+    let response;
+    /** @type {Record<string, unknown>} */
+    let payload;
+    // Only the transport is guarded: a status this run must not retry is
+    // decided below, outside the catch, so it ends the run on its first error.
     try {
-      const response = await fetch(url, buildRequestOptions(method, headers, body));
-      const payload = await readResponseBody(response);
-
-      if (response.status === expectedStatus) {
-        return payload;
-      }
-
-      const failureMessage = `[agent-smoke] ${label} failed method=${method} url=${url} status=${response.status} body=${JSON.stringify(payload)}`;
-      if (!retryEnabled || !shouldRetryStatus(response.status) || attempt === maxAttempts) {
-        throw new Error(failureMessage);
-      }
-
-      console.warn(`${failureMessage} retry=${attempt}/${maxAttempts}`);
-      await sleep(retryDelayMs);
-      attempt += 1;
-      continue;
+      response = await fetch(url, buildRequestOptions(method, headers, body));
+      payload = await readResponseBody(response);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (!retryEnabled || attempt === maxAttempts) {
@@ -161,10 +161,55 @@ async function requestJson(method, url, headers, body, expectedStatus, label, re
       console.warn(`[agent-smoke] ${label} transport failure method=${method} url=${url} error=${lastError.message} retry=${attempt}/${maxAttempts}`);
       await sleep(retryDelayMs);
       attempt += 1;
+      continue;
     }
+
+    if (response.status === expectedStatus) {
+      return payload;
+    }
+
+    const failureMessage = buildStatusFailureMessage(label, method, url, response.status, payload);
+    if (!retryEnabled || !shouldRetryStatus(response.status) || attempt === maxAttempts) {
+      throw new Error(failureMessage);
+    }
+
+    console.warn(`${failureMessage} retry=${attempt}/${maxAttempts}`);
+    await sleep(retryDelayMs);
+    attempt += 1;
   }
 
   throw lastError ?? new Error(`[agent-smoke] ${label} failed without an error`);
+}
+
+/**
+ * One unretried request that reports an unknown server-side effect to the
+ * caller instead of throwing: a 5xx, or a transport failure that may have been
+ * raised after the request reached the server. Every other unexpected status
+ * fails on the first response, as requestJson does.
+ *
+ * @returns {Promise<{ payload: Record<string, unknown> | null, unresolvedOutcome: string }>} exactly one of the two is set
+ */
+async function requestJsonKeepingUnresolvedOutcome(method, url, headers, body, expectedStatus, label) {
+  /** @type {Response} */
+  let response;
+  /** @type {Record<string, unknown>} */
+  let payload;
+  try {
+    response = await fetch(url, buildRequestOptions(method, headers, body));
+    payload = await readResponseBody(response);
+  } catch (error) {
+    return { payload: null, unresolvedOutcome: `${label} transport failure method=${method} url=${url} error=${describeError(error)}` };
+  }
+
+  if (response.status === expectedStatus) {
+    return { payload, unresolvedOutcome: "" };
+  }
+
+  if (response.status < 500) {
+    throw new Error(buildStatusFailureMessage(label, method, url, response.status, payload));
+  }
+
+  return { payload: null, unresolvedOutcome: `${label} status=${response.status} body=${JSON.stringify(payload)}` };
 }
 
 function expectEnvelope(payload, label) {
@@ -596,6 +641,83 @@ async function verifySql(apiKey, relationName) {
   assertCondition(Array.isArray(payload.data.statements), "sql: statements is not an array");
   assertCondition(payload.data.statements.length >= 1, "sql: expected at least one statement");
   assertCondition(payload.data.statements[0]?.referencedRelations?.includes(relationName), "sql: referencedRelations mismatch");
+}
+
+/**
+ * Cover the two SQL endpoints /workspaces/{id}/select advertises as
+ * run_sql_execute and run_sql_query: write one row, then read it back, so a
+ * write that reports success without persisting fails the smoke.
+ *
+ * The marker account id is unique per run, so the read-back finds the row only
+ * if this run's own write committed. account_metadata is the smallest
+ * agent-writable relation (workspace_id, account_id, and defaulted columns) and
+ * has no foreign key on account_id, so the row needs nothing else in the
+ * workspace. It dies with the workspace the cleanup deletes.
+ */
+async function verifySqlWriteThenRead(apiKey, workspaceId) {
+  // Both ids are interpolated into SQL literals, so they must stay free of
+  // quotes; the server generates them, and a surprise ends the run here.
+  assertCondition(/^[A-Za-z0-9_-]+$/.test(workspaceId), `sql_write: unexpected workspaceId ${workspaceId}`);
+  const markerAccountId = `smoke-${runId}-${randomBytes(8).toString("hex")}`;
+  assertCondition(/^[A-Za-z0-9_-]+$/.test(markerAccountId), `sql_write: unexpected marker ${markerAccountId}`);
+  // The header the select step asserts, sent explicitly so both statements run
+  // in the workspace this run owns rather than the key's saved one.
+  const headers = { ...buildApiKeyHeaders(apiKey), "x-workspace-id": workspaceId };
+
+  // Neither retried nor failed while the outcome is unknown: the insert is not
+  // idempotent, so a blind retry would hit the primary key, and the API answers
+  // an unknown mutation outcome by telling clients to verify instead of retry.
+  // The read-back below is that verification, so it decides this step.
+  const write = await requestJsonKeepingUnresolvedOutcome(
+    "POST",
+    `${apiBaseUrl}/sql/execute`,
+    headers,
+    { sql: `INSERT INTO account_metadata (workspace_id, account_id, liquidity) VALUES ('${workspaceId}', '${markerAccountId}', 'low')` },
+    200,
+    "sql_write",
+  );
+
+  // Empty unless the write left its outcome unknown; then it reaches whichever
+  // read-back failure ends the run, since it is the first fact a reader needs.
+  const unresolvedWrite = write.payload === null ? ` (unresolved ${write.unresolvedOutcome})` : "";
+  if (write.payload === null) {
+    console.error(`[agent-smoke] sql_write unresolved, verifying through sql/query instead of retrying: ${write.unresolvedOutcome}`);
+  } else {
+    expectEnvelope(write.payload, "sql_write");
+    assertCondition(Array.isArray(write.payload.data.statements), "sql_write: statements is not an array");
+    const writeStatement = write.payload.data.statements[0];
+    assertCondition(writeStatement?.command === "INSERT", `sql_write: expected an INSERT command, got ${JSON.stringify(writeStatement?.command)}`);
+    assertCondition(writeStatement?.rowCount === 1, `sql_write: expected one affected row, got ${JSON.stringify(writeStatement?.rowCount)}`);
+    assertCondition(writeStatement?.referencedRelations?.includes("account_metadata"), "sql_write: referencedRelations mismatch");
+  }
+
+  try {
+    const readPayload = await requestJson(
+      "POST",
+      `${apiBaseUrl}/sql/query`,
+      headers,
+      { sql: `SELECT account_id, liquidity FROM account_metadata WHERE workspace_id = '${workspaceId}' AND account_id = '${markerAccountId}'` },
+      200,
+      "sql_read_back",
+      true,
+    );
+
+    expectEnvelope(readPayload, "sql_read_back");
+    assertCondition(Array.isArray(readPayload.data.statements), "sql_read_back: statements is not an array");
+    const readStatement = readPayload.data.statements[0];
+    assertCondition(readStatement?.command === "SELECT", `sql_read_back: expected a SELECT command, got ${JSON.stringify(readStatement?.command)}`);
+    assertCondition(Array.isArray(readStatement?.rows), "sql_read_back: rows is not an array");
+    assertCondition(
+      readStatement.rows.length === 1,
+      `sql_read_back: expected exactly the written row, got ${readStatement.rows.length} rows for account_id=${markerAccountId} in workspaceId=${workspaceId}`,
+    );
+    assertCondition(readStatement.rows[0]?.account_id === markerAccountId, `sql_read_back: account_id mismatch in ${JSON.stringify(readStatement.rows[0])}`);
+    assertCondition(readStatement.rows[0]?.liquidity === "low", `sql_read_back: liquidity mismatch in ${JSON.stringify(readStatement.rows[0])}`);
+  } catch (error) {
+    throw new Error(`${describeError(error)}${unresolvedWrite}`);
+  }
+
+  console.log(`[agent-smoke] sql_read_back accountId=${markerAccountId} workspaceId=${workspaceId}`);
 }
 
 await main();
