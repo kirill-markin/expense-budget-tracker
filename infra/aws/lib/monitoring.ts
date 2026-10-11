@@ -237,10 +237,12 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
   // Lambda prefixes every stdout line with a timestamp and request id, but a JSON filter
   // still matches the object that follows that prefix, so the three Lambda surfaces are
   // matched on their structured fields like the ECS ones. A bare term would also count any
-  // line that merely quotes the action name, and these log groups carry client-derived text
-  // such as the identifier echoed back in a `sql_policy_rejected` message. All three bundle
-  // `apps/sql-api`, so they share one pool logger and one pattern. Reading `fn.logGroup`
-  // also materializes the function log group the filter needs to attach to.
+  // line that merely quotes the action name, and the machine-API and MCP groups carry
+  // client-derived text such as the identifier echoed back in a `sql_policy_rejected`
+  // message. All three bundle `apps/sql-api`, so they share one pool logger and one
+  // pattern: that same pattern covers the authorizer group, which emits no client-derived
+  // text of its own. Reading `fn.logGroup` also materializes the function log group the
+  // filter needs to attach to.
   // A frozen execution environment cannot process I/O, so a pooled connection dropped while
   // it sleeps only surfaces when that environment is next thawed.
   const sqlApiDbPoolErrorPattern = logs.FilterPattern.all(
