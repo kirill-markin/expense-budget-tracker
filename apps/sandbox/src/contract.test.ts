@@ -110,7 +110,7 @@ test("a file set the two mounts cannot represent is refused", (): void => {
     );
     assert.throws(
       () => parseChatSandboxBashRequest(request({ files: [file({}), file({})] })),
-      /repeats the path/,
+      /is listed twice/,
     );
     assert.throws(
       () => parseChatSandboxBashRequest(request({
