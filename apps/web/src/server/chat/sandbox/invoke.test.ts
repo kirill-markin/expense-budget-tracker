@@ -887,9 +887,11 @@ test("a chat left over the /work ceiling is told so, and told it cannot recover"
   assert.ok(terminal !== undefined, JSON.stringify(notes));
   assert.match(terminal, /no way to delete its own files/u);
   assert.match(terminal, /continue in a new chat/u);
-  // The remedy that is not available must not be offered.
+  // The remedy that is not available must not be offered, in either number:
+  // the note's noun agrees with its count, so a negative written against one
+  // form only would miss a regression that emitted the other.
   assert.ok(
-    !notes.some((note) => /Delete them again in a later command/u.test(note)),
+    !notes.some((note) => /Delete (it|them) again in a later command/u.test(note)),
     "an unreachable remedy must not be named",
   );
 });
@@ -917,8 +919,57 @@ test("a failed delete below the ceiling is told to retry the delete", async (): 
   );
 
   const notes = result.kind === "ran" ? result.data.sandboxNotes : [];
-  assert.ok(notes.some((note) => /Delete them again in a later command/u.test(note)));
+  // Singular, because the fixture fails exactly one delete and the note's noun
+  // agrees with its count.
+  assert.ok(
+    notes.some((note) => /^1 \/work file this command deleted is still recorded in this chat\. Delete it again in a later command, in one that does not read it first\.$/u.test(note)),
+    `the singular remedy was not emitted: ${JSON.stringify(notes)}`,
+  );
   assert.ok(!notes.some((note) => /No command of this chat can run/u.test(note)));
+  assert.deepEqual(result.kind === "ran" ? result.data.deletedPaths : ["unset"], []);
+});
+
+/**
+ * The plural branch of that same note, which nothing reached before.
+ *
+ * The singular/plural split is exactly what went stale: the assertion above was
+ * written before the branch existed and kept expecting the plural wording, so
+ * the suite failed on the first real run while the code was right. One branch
+ * covered and one not is how that happens, so both are covered now.
+ */
+test("two failed deletes below the ceiling are told in the plural", async (): Promise<void> => {
+  const rows = ["/work/old-1.csv", "/work/old-2.csv"].map((path, index) => createChatFile({
+    fileId: fileIdOf(31 + index),
+    origin: "work",
+    path,
+  }));
+  const harness = createHarness(
+    rows,
+    answerOf({ deletedPaths: rows.map((row) => row.path) }),
+    {
+      deleteChatFile: async (): Promise<never> => {
+        throw new Error("row removal failed");
+      },
+    },
+  );
+
+  const result = await runChatSandboxCommandWithDependencies(
+    "rm /work/old-1.csv /work/old-2.csv",
+    CONTEXT,
+    harness.dependencies,
+  );
+
+  const notes = result.kind === "ran" ? result.data.sandboxNotes : [];
+  assert.ok(
+    notes.some((note) => /^2 \/work files this command deleted are still recorded in this chat\. Delete them again in a later command, in one that does not read them first\.$/u.test(note)),
+    `the plural remedy was not emitted: ${JSON.stringify(notes)}`,
+  );
+  // One aggregate note for the pair, not one per file: the per-path notes carry
+  // the names, and this one carries the count.
+  assert.equal(
+    notes.filter((note) => /Delete them again in a later command/u.test(note)).length,
+    1,
+  );
   assert.deepEqual(result.kind === "ran" ? result.data.deletedPaths : ["unset"], []);
 });
 
