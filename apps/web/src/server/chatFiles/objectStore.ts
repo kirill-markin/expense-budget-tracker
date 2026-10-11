@@ -180,6 +180,24 @@ export class ChatFilesObjectStore {
     this.client = new S3Client({
       region: config.region,
       forcePathStyle: config.forcePathStyle,
+      // Keep this. The SDK default, WHEN_SUPPORTED, adds a checksum to every
+      // PutObject - including the ones this module only pre-signs, which carry
+      // no body at mint time. It therefore signed x-amz-checksum-crc32 of an
+      // empty body (AAAAAA==) and x-amz-sdk-checksum-algorithm into the query
+      // string, and the upload still succeeded only because S3 chooses to
+      // ignore a wrong checksum delivered that way. WHEN_REQUIRED mints the
+      // seven SigV4 parameters plus the SDK's x-id marker, and nothing else. A
+      // body-verified digest is a separate decision and must be signed as a
+      // header, not hoisted into the query, to be enforced at all.
+      //
+      // The option sits on the client, so it reaches every call this module
+      // makes, not only the pre-signed ones. writeObject loses an
+      // x-amz-checksum-crc32 it used to compute correctly, which is benign
+      // because SigV4 still signs x-amz-content-sha256 over the body it sends.
+      // deleteObjectBatch keeps its checksum, because DeleteObjects requires
+      // one and that requirement is an independent condition this option does
+      // not relax.
+      requestChecksumCalculation: "WHEN_REQUIRED",
       ...(config.endpoint === null ? {} : { endpoint: config.endpoint }),
     });
   }
