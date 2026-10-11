@@ -409,6 +409,37 @@ const unavailableResponse = (
 });
 
 /**
+ * What a dead conversion child means, as a function of its exit and nothing else.
+ *
+ * Separated from the runner and exported for one reason: it is a decision,
+ * where everything around it is machinery. A SIGKILL this supervisor did not
+ * order is the kernel's, and `unavailable` for the reason unavailableResponse
+ * states; V8's own heap-limit abort, which arrives as SIGABRT, and any exit
+ * code are the document, and `failed`. No fork, pid or clock enters it, so a
+ * test can state all three without one - see prepareProcess.test.ts for why
+ * that matters.
+ */
+export const answerPrepareChildExit = (
+  request: ChatSandboxPrepareRequest,
+  startedAt: number,
+  heapMb: number,
+  exit: Readonly<{ code: number | null; signal: NodeJS.Signals | null }>,
+): ChatSandboxPrepareResponse =>
+  exit.signal === "SIGKILL"
+    ? unavailableResponse(
+      request,
+      startedAt,
+      "converting it had the process doing it killed by the kernel for the memory of this sandbox, which this invocation may have been holding for something else",
+    )
+    : refusedResponse(
+      request,
+      startedAt,
+      exit.signal === null
+        ? `converting it ended the process doing it with exit code ${String(exit.code)}, which is how exhausting the ${String(heapMb)} MiB heap one conversion may use ends`
+        : `converting it had the process doing it killed by ${exit.signal}, which is how exhausting the ${String(heapMb)} MiB heap one conversion may use ends`,
+    );
+
+/**
  * One conversion in one child, under a stated heap ceiling.
  *
  * The ceiling is a parameter rather than read from the constant above because
@@ -537,21 +568,8 @@ export const createPrepareRunner = (
               `converting it had the process doing it hold ${String(Math.round(exceededBytes / 1024 / 1024))} MiB of memory, past the ${String(PREPARE_CHILD_RESIDENT_CEILING_MB)} MiB one conversion may hold, so it was stopped`,
             );
           }
-          if (outcome.signal === "SIGKILL") {
-            return unavailableResponse(
-              request,
-              startedAt,
-              "converting it had the process doing it killed by the kernel for the memory of this sandbox, which this invocation may have been holding for something else",
-            );
-          }
 
-          return refusedResponse(
-            request,
-            startedAt,
-            outcome.signal === null
-              ? `converting it ended the process doing it with exit code ${String(outcome.code)}, which is how exhausting the ${String(heapMb)} MiB heap one conversion may use ends`
-              : `converting it had the process doing it killed by ${outcome.signal}, which is how exhausting the ${String(heapMb)} MiB heap one conversion may use ends`,
-          );
+          return answerPrepareChildExit(request, startedAt, heapMb, outcome);
         }
         case "unsendable":
           throw new Error(

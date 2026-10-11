@@ -10,6 +10,7 @@ import type {
   ChatSandboxPrepareResponse,
 } from "./contract.js";
 import {
+  answerPrepareChildExit,
   createPrepareRunner,
   SANDBOX_PREPARE_CHILD_ENV_VAR,
   type ChatSandboxPrepareRunner,
@@ -32,6 +33,11 @@ import {
  * A conversion child left alive holds an open IPC channel, which keeps this
  * process from ever exiting and turns a regression into a hung run instead of a
  * red one, so the count of live children is asserted after each case.
+ *
+ * The case that states what a dead child means forks nothing, deliberately:
+ * that answer is a pure function of the child's exit, and its own docstring
+ * records why driving it through a real child was a test of the machine
+ * instead.
  */
 
 /**
@@ -55,8 +61,9 @@ const SMALL_HEAP_MB = 256;
 
 /**
  * Production's ceiling, used by every case whose child must be endable only by
- * the thing that case is about - the clock below, and the kernel's kill further
- * down, neither of which may share a child with V8's abort.
+ * the thing that case is about - the clock below, which may not share a child
+ * with V8's abort - and quoted by the exit case further down, which has no
+ * child at all and only needs the number its refusals name.
  *
  * It is a ceiling and not a reservation, which is worth stating because this is
  * the heaviest thing the suite runs and the number invites the other reading.
@@ -77,19 +84,11 @@ const SMALL_HEAP_MB = 256;
  */
 const PRODUCTION_HEAP_MB = 4_096;
 
-/**
- * Where the child reads its source and writes its derivatives.
- *
- * `gets` is the one observable moment a case outside the child has of the child
- * being busy: the source is requested only after the command arrives, so the
- * first GET is the earliest point at which a conversion is in flight. A case
- * that has to interrupt one keys off that rather than off a guessed delay.
- */
+/** Where the child reads its source and writes its derivatives. */
 type ObjectService = Readonly<{
   server: Server;
   origin: string;
   puts: Array<string>;
-  gets: Array<string>;
 }>;
 
 /**
@@ -100,31 +99,13 @@ type ObjectService = Readonly<{
  */
 const PUT_REFUSED_STATUS = 503;
 
-/**
- * `onSourceRequested` runs synchronously on each GET, before one byte of the
- * body is written, which is the only moment a case outside the child can act on
- * a conversion that has not started yet: the child is parked on this socket
- * until the body arrives, so whatever the hook does happens while the child
- * holds nothing. A case that has to end a conversion in flight without racing
- * it uses this rather than a timer.
- */
 const startObjectService = async (
   content: Uint8Array,
   putStatus = 200,
-  onSourceRequested: (() => void) | null = null,
 ): Promise<ObjectService> => {
   const puts: Array<string> = [];
-  const gets: Array<string> = [];
   const server = createServer((request, response) => {
     if (request.method === "GET") {
-      gets.push(request.url ?? "");
-      if (onSourceRequested !== null) {
-        onSourceRequested();
-      }
-      // The hook may have ended the process this body is for, so the write goes
-      // to a peer that is already gone: swallowed, because an unhandled socket
-      // error here would end the run instead of the case.
-      response.on("error", (): void => {});
       response.writeHead(200);
       response.end(content);
       return;
@@ -147,7 +128,6 @@ const startObjectService = async (
     server,
     origin: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`,
     puts,
-    gets,
   };
 };
 
@@ -187,8 +167,15 @@ const liveChildPids = (): ReadonlyArray<number> =>
 
 const liveChildCount = (): number => liveChildPids().length;
 
+/**
+ * The one request every case here converts.
+ *
+ * The origin is a parameter rather than the service, because the case that
+ * states the exit decision has no service: nothing in it is fetched, and the
+ * request is there only as the file the answer names.
+ */
 const prepareRequest = (
-  service: ObjectService,
+  origin: string,
   content: Uint8Array,
 ): ChatSandboxPrepareRequest => ({
   operation: "prepare",
@@ -198,9 +185,9 @@ const prepareRequest = (
     mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     sha256: createHash("sha256").update(content).digest("hex"),
     mtimeMs: 1,
-    getUrl: `${service.origin}/source`,
+    getUrl: `${origin}/source`,
   },
-  writeSlots: [{ slotId: "slot-0", putUrl: `${service.origin}/slot-0` }],
+  writeSlots: [{ slotId: "slot-0", putUrl: `${origin}/slot-0` }],
 });
 
 const convert = async (
@@ -210,7 +197,7 @@ const convert = async (
 ): Promise<Readonly<{ response: ChatSandboxPrepareResponse; puts: ReadonlyArray<string> }>> => {
   const service = await startObjectService(content);
   try {
-    const response = await run(prepareRequest(service, content), deadlineEpochMs);
+    const response = await run(prepareRequest(service.origin, content), deadlineEpochMs);
 
     return { response, puts: service.puts };
   } finally {
@@ -469,9 +456,9 @@ test("a second conversion arriving while one is in flight is refused", async ():
   const content = buildDocx("<w:p><w:r><w:t>Statement total 1234.56</w:t></w:r></w:p>");
   const service = await startObjectService(content);
   try {
-    const first = run(prepareRequest(service, content), Date.now() + AMPLE_DEADLINE_MS);
+    const first = run(prepareRequest(service.origin, content), Date.now() + AMPLE_DEADLINE_MS);
     await assert.rejects(
-      run(prepareRequest(service, content), Date.now() + AMPLE_DEADLINE_MS),
+      run(prepareRequest(service.origin, content), Date.now() + AMPLE_DEADLINE_MS),
       /already converting a source, so it cannot also convert "\/files\/report\.docx"/u,
       "the second conversion was not refused",
     );
@@ -505,7 +492,7 @@ test("a conversion whose upload is refused is answered unavailable, not failed o
   const content = buildDocx("<w:p><w:r><w:t>Statement total 1234.56</w:t></w:r></w:p>");
   const service = await startObjectService(content, PUT_REFUSED_STATUS);
   try {
-    const response = await run(prepareRequest(service, content), Date.now() + AMPLE_DEADLINE_MS);
+    const response = await run(prepareRequest(service.origin, content), Date.now() + AMPLE_DEADLINE_MS);
 
     assert.equal(
       response.status,
@@ -535,8 +522,8 @@ test("the runner accepts the next conversion after a concurrent one was refused"
   const content = buildDocx("<w:p><w:r><w:t>Statement total 1234.56</w:t></w:r></w:p>");
   const service = await startObjectService(content);
   try {
-    const first = run(prepareRequest(service, content), Date.now() + AMPLE_DEADLINE_MS);
-    await assert.rejects(run(prepareRequest(service, content), Date.now() + AMPLE_DEADLINE_MS));
+    const first = run(prepareRequest(service.origin, content), Date.now() + AMPLE_DEADLINE_MS);
+    await assert.rejects(run(prepareRequest(service.origin, content), Date.now() + AMPLE_DEADLINE_MS));
     await first;
   } finally {
     service.server.close();
@@ -588,8 +575,8 @@ test("a conversion holding more than the resident ceiling is refused for that, a
 });
 
 /**
- * A SIGKILL this supervisor did not order, which is the opposite verdict on the
- * same exit.
+ * The three deaths a conversion child can die, and the one of them that is not
+ * a fact about the document.
  *
  * A cgroup v2 OOM kill picks by oom_badness across the whole cgroup, so the
  * process that dies need not be the one that grew: a `pdf_page` earlier in the
@@ -597,72 +584,85 @@ test("a conversion holding more than the resident ceiling is refused for that, a
  * the parent, and sessionProcess.ts keeps a warm `bash` child holding the
  * previous command's retained originals and a python worker. A conversion
  * selected for either is not a fact about the document, and `failed` is
- * recorded as a permanent derivatives_error the caller never retries.
+ * recorded as a permanent derivatives_error the caller never retries - so an
+ * unordered SIGKILL is `unavailable`, while V8's own heap abort (SIGABRT) and
+ * any exit code are the document and `failed`.
  *
- * The kill is delivered from here rather than by a kernel this suite cannot
- * arrange, which is exactly the signal the production path sees: the watch is
- * not what killed it, so the arm must read the signal and not the figure. It
- * reds the single `refusedResponse` both kills used to share.
+ * It is stated on answerPrepareChildExit rather than driven through a real
+ * child, and that is a finding rather than a preference. The end-to-end form of
+ * this one case - fork a child, find its pid with `ps`, signal it mid-conversion
+ * - was rewritten four times and red a different way each time: a fixed 600 ms
+ * timer that killed nothing when the fork was slow; a pid poll that found the
+ * child between the fork and the ready handshake, which is the `unsendable` arm
+ * and a raised error; a kill racing V8's own abort, where CI got the SIGABRT
+ * and the signal won only locally; and a kill ordered from inside the source
+ * GET, which found no live child pid to signal at all on ubuntu-26.04-arm. The
+ * production classification was right in all four. What kept failing was a
+ * fork, `ps` pid discovery and timing - three environment-dependent mechanisms,
+ * none of which is the behaviour under test.
+ *
+ * And the behaviour under test needs none of them: the answer is a pure
+ * function of the exit, so the exits are supplied. The one thing the end-to-end
+ * form proved that this cannot - that a real child's death reaches this parent
+ * as an exit outcome at all - is proved by the heap case above, which drives a
+ * real forked child to a real SIGABRT and has been stable throughout. So do not
+ * put the kernel-kill fork back: it buys nothing that case does not already
+ * buy, and it costs seconds and a fourth race.
+ *
+ * The three arms are one decision and are pinned together. It reds the single
+ * `refusedResponse` both kills used to share, an arm that answers every signal
+ * `unavailable`, and a classifier that stops reading the exit code.
  */
-test("a child killed by the kernel while converting is answered unavailable, not failed", async (): Promise<void> => {
-  // Production's heap, and the small document, because the signal has to be the
-  // only death this child can suffer.
-  //
-  // The kill is delivered from inside the source GET, synchronously, before one
-  // byte of the body is written: the child has been sent the command, has asked
-  // for the source and is parked on the socket, so it has parsed nothing and
-  // holds nothing that any ceiling - V8's heap cap or the resident watch - could
-  // notice. With the body withheld there is nothing for the fixture to keep the
-  // child busy with either, which is why the document here is the one that
-  // converts in milliseconds rather than a crafted monster.
-  //
-  // Three near misses are real and all three were hit writing this, so none of
-  // the headroom above is decoration. A fixed delay long enough to be safe
-  // leaves the case waiting out its whole deadline whenever it is not. A poll
-  // for the child's pid finds it between the fork and the ready handshake and
-  // kills it before the command is sent, which is the `unsendable` arm and a
-  // raised error, not this one. And a kill timed off the first GET but
-  // delivered from a 20 ms interval after the body had gone out - the version
-  // CI reds - races the conversion it is trying to interrupt: a 3,000,000
-  // paragraph document under the 256 MiB test heap marches toward V8's abort
-  // while the parent's timer waits its turn on a loaded event loop, and the
-  // death that arrives first is SIGABRT, answered `failed`, which is this arm's
-  // opposite and the right answer to that death. Linux reached the abort first
-  // and macOS the signal, so it passed locally and red on ubuntu-26.04-arm.
-  // This version removes the competitor instead of outrunning it; putting back
-  // the heavy fixture, the small heap or the timer puts the race back.
-  const run = createPrepareRunner(PRODUCTION_HEAP_MB, CHECKOUT_INTERPRETER, readRealResidentBytes);
-  const content = buildDocx("<w:p><w:r><w:t>Statement total 1234.56</w:t></w:r></w:p>");
-  const killed: Array<number> = [];
-  const service = await startObjectService(content, 200, (): void => {
-    for (const pid of liveChildPids()) {
-      process.kill(pid, "SIGKILL");
-      killed.push(pid);
-    }
-  });
-  try {
-    const response = await run(prepareRequest(service, content), Date.now() + AMPLE_DEADLINE_MS);
+test("a conversion child's exit is answered by how it died, and only the kernel's kill is retryable", (): void => {
+  // Nothing here is fetched or stored, so the request is only the file the
+  // answer names and the heap the refusals quote is production's.
+  const request = prepareRequest("http://127.0.0.1:1", encode("x"));
+  const startedAt = Date.now();
 
-    // The hook firing is the premise, not a detail: a case whose signal was
-    // never sent would be watching a conversion succeed, not an arm.
-    assert.equal(
-      killed.length,
-      1,
-      `the conversion child was not signalled exactly once: ${JSON.stringify(killed)}`,
-    );
-    assert.equal(
-      response.status,
-      "unavailable",
-      `the kernel's kill was not answered as retryable: ${JSON.stringify(response)}`,
-    );
-    assert.ok(response.status === "unavailable");
-    assert.match(response.error, /"\/files\/report\.docx" could not be prepared now/u);
-    assert.match(response.error, /killed by the kernel for the memory of this sandbox/u);
-    assert.deepEqual(service.puts, [], "a conversion that was killed stored something");
-    assert.equal(liveChildCount(), 0, "the killed child was not reaped");
-  } finally {
-    service.server.close();
-  }
+  const killed = answerPrepareChildExit(request, startedAt, PRODUCTION_HEAP_MB, {
+    code: null,
+    signal: "SIGKILL",
+  });
+  assert.equal(
+    killed.status,
+    "unavailable",
+    `the kernel's kill was not answered as retryable: ${JSON.stringify(killed)}`,
+  );
+  assert.ok(killed.status === "unavailable");
+  assert.match(killed.error, /"\/files\/report\.docx" could not be prepared now/u);
+  assert.match(killed.error, /killed by the kernel for the memory of this sandbox/u);
+
+  const aborted = answerPrepareChildExit(request, startedAt, PRODUCTION_HEAP_MB, {
+    code: null,
+    signal: "SIGABRT",
+  });
+  assert.equal(
+    aborted.status,
+    "failed",
+    `V8's heap abort was not recorded against the document: ${JSON.stringify(aborted)}`,
+  );
+  assert.ok(aborted.status === "failed");
+  assert.match(aborted.error, /"\/files\/report\.docx" could not be prepared:/u);
+  assert.match(
+    aborted.error,
+    /killed by SIGABRT, which is how exhausting the 4096 MiB heap one conversion may use ends/u,
+  );
+
+  const exited = answerPrepareChildExit(request, startedAt, PRODUCTION_HEAP_MB, {
+    code: 134,
+    signal: null,
+  });
+  assert.equal(
+    exited.status,
+    "failed",
+    `an exit code was not recorded against the document: ${JSON.stringify(exited)}`,
+  );
+  assert.ok(exited.status === "failed");
+  assert.match(exited.error, /"\/files\/report\.docx" could not be prepared:/u);
+  assert.match(
+    exited.error,
+    /ended the process doing it with exit code 134, which is how exhausting the 4096 MiB heap one conversion may use ends/u,
+  );
 });
 
 /**
