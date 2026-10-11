@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   parseChatSandboxBashRequest,
+  parseChatSandboxPdfPageRequest,
+  readChatSandboxOperation,
   SANDBOX_FILE_MAX_BYTES,
   SANDBOX_OBJECT_HOSTS_ENV_VAR,
+  SANDBOX_OPERATIONS,
 } from "./contract.js";
 
 const ALLOWED_HOST = "chat-files.s3.eu-central-1.amazonaws.com";
@@ -249,4 +252,67 @@ test("the host allowlist and the URL agree on a default port", (): void => {
       /carries more than a host and a port/,
     );
   });
+});
+
+type PdfPageRequestOverrides = Readonly<{
+  source?: unknown;
+  page?: unknown;
+}>;
+
+const pdfPageRequest = (overrides: PdfPageRequestOverrides): unknown => ({
+  operation: "pdf_page",
+  source: file({ path: "/files/statement.pdf" }),
+  page: 2,
+  ...overrides,
+});
+
+// The host allowlist is the whole boundary for a function with unrestricted
+// egress, so each operation has to be checked on its own: a new one that parsed
+// its payload without reaching the allowlist would be a hole no schema sees.
+test("a pdf_page request refuses a pre-signed URL outside the allowlist", (): void => {
+  withAllowedHosts(ALLOWED_HOST, () => {
+    assert.equal(parseChatSandboxPdfPageRequest(pdfPageRequest({})).page, 2);
+    assert.throws(
+      () => parseChatSandboxPdfPageRequest(pdfPageRequest({
+        source: file({ getUrl: "https://attacker.example/x" }),
+      })),
+      /not one of the object-storage hosts/,
+    );
+  });
+});
+
+// A page outside the document is answered by the operation with the real page
+// count, below the first page as much as past the last, so only what a page
+// number cannot be at all is refused here: a schema rejection is raised out of
+// the handler and carries no page count the model could use.
+test("a pdf_page request with a page that is not a whole number is refused", (): void => {
+  withAllowedHosts(ALLOWED_HOST, () => {
+    for (const page of [1.5, "2", null]) {
+      assert.throws(
+        () => parseChatSandboxPdfPageRequest(pdfPageRequest({ page })),
+        /does not match its schema/,
+        `page ${JSON.stringify(page)} must be refused`,
+      );
+    }
+    for (const page of [0, -1, 10_000]) {
+      assert.equal(parseChatSandboxPdfPageRequest(pdfPageRequest({ page })).page, page);
+    }
+  });
+});
+
+// The handler routes on this before any schema runs, and each operation reaches
+// different code with a different set of pre-signed URLs, so an unknown
+// operation must not read as the one that happens to be checked first.
+test("only the operations this sandbox serves can be read from a payload", (): void => {
+  assert.deepEqual(
+    SANDBOX_OPERATIONS.map((operation) => readChatSandboxOperation({ operation })),
+    ["bash", "pdf_page"],
+  );
+  for (const payload of [{ operation: "sql" }, { operation: "" }, {}, null, "bash"]) {
+    assert.throws(
+      () => readChatSandboxOperation(payload),
+      /names no operation this sandbox serves/,
+      `${JSON.stringify(payload)} must be refused`,
+    );
+  }
 });

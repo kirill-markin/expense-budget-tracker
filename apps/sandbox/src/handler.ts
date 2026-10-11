@@ -10,7 +10,14 @@
  * request can reach nothing.
  */
 import type { Context } from "aws-lambda";
-import { parseChatSandboxBashRequest, type ChatSandboxBashResponse } from "./contract.js";
+import {
+  parseChatSandboxBashRequest,
+  parseChatSandboxPdfPageRequest,
+  readChatSandboxOperation,
+  type ChatSandboxBashResponse,
+  type ChatSandboxPdfPageResponse,
+} from "./contract.js";
+import { runChatSandboxPdfPage } from "./pdfPageOperation.js";
 import { runSessionCommand } from "./sessionProcess.js";
 
 /**
@@ -22,11 +29,19 @@ const RESPONSE_MARGIN_MS = 3_000;
 export const handler = async (
   event: unknown,
   context: Context,
-): Promise<ChatSandboxBashResponse> => {
-  // `operation` is a discriminator the request schema pins to the one operation
-  // this sandbox serves; later operations branch here on its value.
-  const request = parseChatSandboxBashRequest(event);
+): Promise<ChatSandboxBashResponse | ChatSandboxPdfPageResponse> => {
+  // Read before it is validated, because each operation is validated as itself:
+  // the pre-signed URLs a `bash` request carries are not the ones a document
+  // operation carries, and only the matching schema knows which are required.
+  const operation = readChatSandboxOperation(event);
   const deadlineEpochMs = Date.now() + context.getRemainingTimeInMillis() - RESPONSE_MARGIN_MS;
 
-  return runSessionCommand(request, deadlineEpochMs);
+  switch (operation) {
+    case "bash":
+      // The only operation that runs in a child process, because it is the only
+      // one that leaves state behind: see sessionProcess.ts.
+      return runSessionCommand(parseChatSandboxBashRequest(event), deadlineEpochMs);
+    case "pdf_page":
+      return runChatSandboxPdfPage(parseChatSandboxPdfPageRequest(event), deadlineEpochMs);
+  }
 };

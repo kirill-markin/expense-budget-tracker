@@ -129,6 +129,20 @@ export const describeUnsaveableWorkBytes = (totalBytes: number): string | null =
     : null;
 
 /**
+ * Bytes of one-page PDF the `pdf_page` answer may carry.
+ *
+ * A Lambda RequestResponse payload is capped at 6 MB and the page travels as
+ * base64, which inflates by 4/3: 3 MiB of PDF is 4 MiB of base64, leaving the
+ * rest of the response and the margin almost 2 MB. Measured against what the
+ * limit has to accommodate: a text statement page copied out of a 20-page
+ * statement is 2,233 bytes, and a full-page 1700x2200 scan whose JPEG is
+ * incompressible random noise - a harder page than any real scan - is 1,974,710
+ * bytes, so the cap sits above the worst measured page and still an order of
+ * magnitude below the transport limit.
+ */
+export const SANDBOX_PDF_PAGE_MAX_BYTES = 3 * 1024 * 1024;
+
+/**
  * Aggregate /files bytes one request may list.
  *
  * The same number as the /work ceiling above, because both mounts hold one chat
@@ -434,6 +448,45 @@ export type ChatSandboxBashResponse = Readonly<{
 }>;
 
 /**
+ * Return one page of a PDF as a PDF of its own.
+ *
+ * The page number is the model's, so it is bounded here only by being a whole
+ * number: a page outside the document, below the first as much as past the
+ * last, is answered as a failure naming the real page count, not as a schema
+ * rejection that reaches the caller as a raised error with no page count in it.
+ * The chat tool declares this field with no minimum, so 0 and -1 are both
+ * things a model will ask for.
+ *
+ * No sessionId, unlike `bash`, and the difference is not an omission: this
+ * operation reads one object and keeps nothing, so there is no process state a
+ * later chat could observe and no session child to own.
+ */
+export const chatSandboxPdfPageRequestSchema = z.object({
+  operation: z.literal("pdf_page"),
+  source: chatSandboxFileSchema,
+  page: z.number().int(),
+});
+
+export type ChatSandboxPdfPageRequest = z.infer<typeof chatSandboxPdfPageRequestSchema>;
+
+/**
+ * One page of a PDF, as base64 of a one-page PDF.
+ *
+ * `pageCount` travels with it because the model asked for a page by number and
+ * the only way it learns the number it may ask for next is from here.
+ */
+export type ChatSandboxPdfPageResponse =
+  | Readonly<{
+    status: "rendered";
+    page: number;
+    pageCount: number;
+    pdfBase64: string;
+    sizeBytes: number;
+    durationMs: number;
+  }>
+  | Readonly<{ status: "failed"; error: string; durationMs: number }>;
+
+/**
  * Normalize one allowlist entry through the same parser the comparison uses.
  *
  * `new URL` drops an explicit default port, so `https://bucket.example:443/k`
@@ -491,23 +544,76 @@ const requireAllowedObjectHost = (
   }
 };
 
-export const parseChatSandboxBashRequest = (payload: unknown): ChatSandboxBashRequest => {
-  const parsed = chatSandboxBashRequestSchema.safeParse(payload);
-  if (!parsed.success) {
-    throw new Error(`Chat sandbox request does not match its schema: ${parsed.error.message}`);
-  }
-
-  // Host matching happens here rather than inside the schema so a missing
-  // allowlist fails as its own explicit error instead of a validation issue.
+/**
+ * Check every pre-signed URL of one request against the deployment's hosts.
+ *
+ * One function for every operation, because the allowlist is what stands
+ * between a malformed or hostile payload and an arbitrary HTTPS host, and an
+ * operation that forgot to call it would be a hole no schema can see. Host
+ * matching happens here rather than inside a schema so a missing allowlist
+ * fails as its own explicit error instead of a validation issue.
+ */
+const requireAllowedObjectUrls = (
+  files: ReadonlyArray<ChatSandboxFile>,
+  writeSlots: ReadonlyArray<ChatSandboxWriteSlot>,
+): void => {
   const allowedHosts = readAllowedObjectHosts();
-  for (const file of parsed.data.files) {
+  for (const file of files) {
     requireAllowedObjectHost(file.getUrl, `getUrl of '${file.path}'`, allowedHosts);
   }
-  for (const slot of parsed.data.writeSlots) {
+  for (const slot of writeSlots) {
     requireAllowedObjectHost(slot.putUrl, `putUrl of slot '${slot.slotId}'`, allowedHosts);
   }
+};
 
-  return parsed.data;
+const requireParsedRequest = <T>(result: z.ZodSafeParseResult<T>): T => {
+  if (!result.success) {
+    throw new Error(`Chat sandbox request does not match its schema: ${result.error.message}`);
+  }
+
+  return result.data;
+};
+
+export const parseChatSandboxBashRequest = (payload: unknown): ChatSandboxBashRequest => {
+  const request = requireParsedRequest(chatSandboxBashRequestSchema.safeParse(payload));
+  requireAllowedObjectUrls(request.files, request.writeSlots);
+
+  return request;
+};
+
+export const parseChatSandboxPdfPageRequest = (payload: unknown): ChatSandboxPdfPageRequest => {
+  const request = requireParsedRequest(chatSandboxPdfPageRequestSchema.safeParse(payload));
+  // No write slots: this operation returns the page in its answer and stores
+  // nothing, so it mints no PUT the allowlist would have to cover.
+  requireAllowedObjectUrls([request.source], []);
+
+  return request;
+};
+
+export const SANDBOX_OPERATIONS = ["bash", "pdf_page"] as const;
+
+export type ChatSandboxOperation = (typeof SANDBOX_OPERATIONS)[number];
+
+const operationSchema = z.object({ operation: z.enum(SANDBOX_OPERATIONS) });
+
+/**
+ * Which operation a payload asks for, before it is parsed as one.
+ *
+ * The handler has to route before it can validate, and an unknown operation
+ * must not be read as the one that happens to be checked first: each operation
+ * reaches different code with a different set of pre-signed URLs, so the
+ * discriminator is read on its own and anything else fails naming what this
+ * sandbox serves.
+ */
+export const readChatSandboxOperation = (payload: unknown): ChatSandboxOperation => {
+  const parsed = operationSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error(
+      `Chat sandbox request names no operation this sandbox serves: 'operation' must be one of ${SANDBOX_OPERATIONS.join(", ")}`,
+    );
+  }
+
+  return parsed.data.operation;
 };
 
 /**
