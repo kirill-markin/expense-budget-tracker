@@ -96,6 +96,8 @@ const failureMessage = async (status: number, body: string): Promise<string> => 
 // <AWSAccessKeyId> is an artefact of S3 putting a long <Message> first, so the
 // identifiers are removed by shape rather than by word order.
 test("a quoted error body carries no credential, whatever its shape", async (): Promise<void> => {
+  // Every key id below is an AWS documentation example: the EXAMPLE suffix is
+  // what keeps secret scanning off a file made of credential-shaped strings.
   const shortDenial = await failureMessage(
     403,
     "<Error><Code>AccessDenied</Code><AWSAccessKeyId>AKIAIOSFODNN7EXAMPLE</AWSAccessKeyId></Error>",
@@ -108,9 +110,9 @@ test("a quoted error body carries no credential, whatever its shape", async (): 
 
   const credentialQuery = await failureMessage(
     403,
-    '{"error":"denied","credential":"ASIAY34FZKBOKMUTVV7A/20261010/eu-central-1/s3/aws4_request"}',
+    '{"error":"denied","credential":"ASIAIOSFODNN7EXAMPLE/20261010/eu-central-1/s3/aws4_request"}',
   );
-  assert.doesNotMatch(credentialQuery, /ASIAY34FZKBOKMUTVV7A/);
+  assert.doesNotMatch(credentialQuery, /ASIAIOSFODNN7EXAMPLE/);
   assert.match(credentialQuery, /\[redacted\]/);
 
   const signatureFailure = await failureMessage(
