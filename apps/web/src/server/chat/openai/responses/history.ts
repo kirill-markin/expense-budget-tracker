@@ -25,17 +25,23 @@
  * assistant turn, `content` for a user turn, never both.
  *
  * A measurement is used whichever of the routed models produced it, but only
- * while it still leaves tokens for the messages it newly covers. A compacted
- * call reports its small post-compaction input, so a later measurement over a
- * superset input can legitimately come in below its predecessor; sizing those
- * messages from such a measurement would weight a whole turn at nothing, so they
- * keep their estimates instead. An already assigned weight is never rewritten,
- * which keeps the series append-only: the size of a stored message is fixed when
- * it is first sized, so identical history always yields the identical replay
- * boundary.
+ * while it still leaves tokens for the messages in its range that no earlier
+ * measurement had sized. A compacted call reports its small post-compaction
+ * input, so a later measurement over a superset input can legitimately come in
+ * below its predecessor; sizing those messages from such a measurement would
+ * weight a whole turn at nothing, so they keep their estimates instead. A
+ * weight derived from a measurement is never rewritten; a weight derived from an
+ * estimate is superseded by any measurement whose range covers it, so one call
+ * re-sizes everything it replayed at once rather than only the messages no
+ * earlier call had reached. No weight is therefore revised by more than one
+ * measurement - estimate to measurement and no further - and identical history
+ * always yields the identical replay boundary. One revision sits outside that
+ * bound: an estimate can be replaced by another estimate when a growing history
+ * pushes a stored container out of the extraction budget and it falls back to
+ * its cap, which only persisting an attachment's extracted length removes.
  *
- * That raise-only rule is not what makes a cross-model measurement safe, since a
- * lower measurement is adopted as it stands whenever it is still positive. What
+ * That rule is not what makes a cross-model measurement safe, since a lower
+ * measurement is adopted as it stands whenever it is still positive. What
  * makes it safe is that `CHAT_MODEL_ID` and `CHAT_FALLBACK_MODEL_ID`, which
  * `modelRouting.ts` can switch between mid-session, are of one family and count
  * with the same `o200k` tokenizer, so no model id has to be persisted beside a
@@ -44,14 +50,14 @@
  * The replay boundary is NOT monotone, and three attempts to make it so each
  * produced a P1 - permanent truncation of healthy sessions, then oscillation -
  * so do not reintroduce a floor here. What guards against attempt 2's thrash is
- * the append-only weight rule above, and it is now the only thing that does: a
- * weight is fixed when first assigned, so a message's size changes at most once,
- * from estimate to measurement. That bounds backwards motion at one step per
- * measured turn, converging forward. Stepping back is safe because weights are
- * never negative - the sent input is non-increasing in the start index - and the
- * budget is re-checked, so an earlier start is only ever taken when the larger
- * history genuinely fits. The reasoning is kept in full at
- * `selectChatHistoryWindowStart`.
+ * the weight rule above, and it is now the only thing that does: a
+ * measurement-derived weight is immutable, so no weight is revised by more than
+ * one measurement - estimate to measurement and no further. That bounds
+ * measurement-driven backwards motion at one step per message, converging
+ * forward. Stepping back is safe because weights are never negative - the sent
+ * input is non-increasing in the start index - and the budget is re-checked, so
+ * an earlier start is only ever taken when the larger history genuinely fits.
+ * The reasoning is kept in full at `selectChatHistoryWindowStart`.
  *
  *
  * The invariant that governs every number below: **sizing may never claim a
@@ -514,6 +520,17 @@ const splitSegmentTokens = (
 };
 
 /**
+ * One message's weight and whether a measurement produced it. The provenance
+ * exists only while the weights are being built - it is what a measurement
+ * consults to decide which weights inside its range it may supersede - and
+ * nothing persists it: the same stored history re-derives it from scratch.
+ */
+type MessageTokenWeight = Readonly<{
+  tokens: number;
+  fromMeasurement: boolean;
+}>;
+
+/**
  * Token weight of every message.
  *
  * A measurement on the assistant message at `index` covers the messages from
@@ -523,61 +540,90 @@ const splitSegmentTokens = (
  * carries is removed here and added back once when the sent input is computed,
  * so it is counted exactly once.
  *
- * The reserve therefore cancels out of the budget comparison, but not out of the
- * acceptance test below, where it sets the price of starting to measure a
- * session at all. Write `R` for the reserve constant and `O` for the real
- * per-call overhead the provider counted. A measurement whose covered range was
- * already sized by an earlier measurement subtracts a sum that carries that
- * range's real history less one `R - O`, so its segment reduces to this turn's
- * own new content and is accepted however small the turn is: a chain of
- * measurements, once started, sustains itself. The first measurement of a chain
- * has nothing to cancel against and reduces to `(R - O) + newContent`, so a
- * session whose first turn brings less new content than `R - O` is charged its
- * estimate - and estimates read high by design, so their excess accumulates in
- * the sum each later turn has to clear and the session rarely recovers. The
- * reserve is therefore set just above the measured overhead rather than
- * comfortably above it: what it buys is the first turn's admission.
- *
- * The measured segment is `inputTokens + outputTokens - reserve` minus whatever
- * an earlier measurement already assigned inside the same range, which makes
- * the suffix total from `index - replayedMessages` exactly equal to that call's
- * real measured input. Nothing is inferred about messages the measurement did
+ * Inside its own range the measurement is the truth, so it supersedes every
+ * weight there that came from an estimate and keeps every weight that came from
+ * an earlier measurement: only the measured ones are subtracted, and the
+ * remainder is re-split across all the rest it covers. The suffix total from
+ * `index - replayedMessages` is then exactly that call's real measured input
+ * however much of its range an earlier call had already sized, and no weight is
+ * revised by more than one measurement - estimate to measurement, never
+ * measurement to measurement - which is what holds the replay boundary steady
+ * with no clamp on it. Nothing is inferred about messages the measurement did
  * not cover: those keep their estimate, so a call that replayed a cut history
  * sizes only the part it sent.
  *
- * A segment left with nothing to spend means the measurement no longer exceeds
- * what its range already carries - another tokenizer, or a post-compaction
- * input. Its newly covered messages then keep their own estimates rather than a
- * zero weight, so no turn is ever sized at nothing.
+ * Because an estimate inside the range is replaced rather than subtracted, an
+ * estimate reading high cannot price a measurement out: a session starts
+ * measuring itself as soon as one call's own `input + output` exceeds the
+ * reserve, whatever shape its turns take.
+ *
+ * A segment left with nothing to spend means the measurement does not exceed
+ * what the measured part of its range already carries - another tokenizer, or a
+ * post-compaction input. Its estimate-derived messages then keep their own
+ * estimates rather than a zero weight, so no turn is ever sized at nothing, and
+ * a later measurement may still supersede them.
  */
 const buildMessageTokenWeights = (
   messages: ReadonlyArray<ServerChatMessage>,
   extractedText: ChatAttachmentExtractedText | undefined,
 ): ReadonlyArray<number> => {
-  const weights: Array<number> = [];
-  let pendingEstimates: Array<number> = [];
+  const weights: Array<MessageTokenWeight> = [];
   for (const [index, message] of messages.entries()) {
-    pendingEstimates.push(estimateMessageTokens(message, extractedText));
+    weights.push({
+      tokens: estimateMessageTokens(message, extractedText),
+      fromMeasurement: false,
+    });
     const measurement = message.replayMeasurement;
     if (measurement === undefined) {
       continue;
     }
 
     const coveredStart = Math.max(0, index - measurement.replayedMessages);
-    const uncoveredCount = Math.max(0, coveredStart - weights.length);
-    weights.push(...pendingEstimates.slice(0, uncoveredCount));
-    const coveredEstimates = pendingEstimates.slice(uncoveredCount);
+    const covered = weights.slice(coveredStart);
+    const coveredEstimates: Array<number> = [];
+    let measuredTokens = 0;
+    for (const weight of covered) {
+      if (weight.fromMeasurement) {
+        measuredTokens += weight.tokens;
+      } else {
+        coveredEstimates.push(weight.tokens);
+      }
+    }
+
     const segmentTokens = measurement.inputTokens
       + measurement.outputTokens
       - CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS
-      - sumTokens(weights.slice(coveredStart));
-    weights.push(...(segmentTokens > 0
-      ? splitSegmentTokens(coveredEstimates, segmentTokens)
-      : coveredEstimates));
-    pendingEstimates = [];
+      - measuredTokens;
+    // `covered` always holds at least one estimate - this message's own, pushed
+    // above, since no measurement's range reaches past its own index - so an
+    // all-measured range is not a case to guard. The test is a validity check on
+    // the arithmetic and not only on the sign: `isMeasurementCount` keeps `NaN`
+    // out of a stored measurement but admits `1e308`, and `1e308 + 1e308` is
+    // `Infinity`, whose split spreads `Infinity - Infinity` as `NaN` over every
+    // weight in the range. `selectChatHistoryWindowStart` and
+    // `computeSentInputTokens` then read an unsizeable session and collapse it to
+    // its newest user turn on its every later turn, so a non-finite segment is
+    // rejected and its range keeps its estimates, exactly as a segment with
+    // nothing to spend does.
+    if (!(Number.isFinite(segmentTokens) && segmentTokens > 0)) {
+      continue;
+    }
+
+    const segmentWeights = splitSegmentTokens(coveredEstimates, segmentTokens);
+    let spentWeights = 0;
+    for (const [offset, weight] of covered.entries()) {
+      if (weight.fromMeasurement) {
+        continue;
+      }
+      weights[coveredStart + offset] = {
+        tokens: segmentWeights[spentWeights],
+        fromMeasurement: true,
+      };
+      spentWeights += 1;
+    }
   }
 
-  return [...weights, ...pendingEstimates];
+  return weights.map((weight) => weight.tokens);
 };
 
 /**
@@ -644,10 +690,11 @@ export const computeSentInputTokens = (
  * see them - sizing has no way to tell an extracted container from an unreadable
  * one - or turned the clamp off often enough to let the boundary oscillate
  * (measured `0, 6, 0, 12, 0, 18`). What guards against that oscillation is the
- * append-only weight rule: a weight is fixed when first assigned, so identical
- * history yields an identical boundary and a message's size never changes under
- * the window. What remains is a boundary that may step back once as each
- * measurement replaces an estimate, converging forward from there.
+ * weight rule: a measurement-derived weight is immutable, so identical history
+ * yields an identical boundary and no weight is revised by more than one
+ * measurement under the window. What remains is a boundary that may step back
+ * once as each measurement supersedes the estimates in its range, converging
+ * forward from there.
  *
  * Stepping back is safe by construction: weights are never negative, so the sent
  * input is non-increasing in the start index and the budget is re-checked here,
