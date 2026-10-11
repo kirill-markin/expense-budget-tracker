@@ -2,7 +2,8 @@
  * Post-deploy smoke for the public agent API contract.
  *
  * Validates runtime discovery and every supported endpoint using the shared
- * review email path, then cleans up the disposable workspace via the web app.
+ * review email path, then revokes the minted API key and deletes the
+ * disposable workspace via the web app.
  */
 import { randomBytes } from "node:crypto";
 
@@ -17,7 +18,10 @@ const appBaseUrl = trimTrailingSlash(
 );
 const reviewEmail = (process.env.EXPENSE_AGENT_SMOKE_REVIEW_EMAIL ?? "e2e-test@example.com").trim().toLowerCase();
 const runId = (process.env.GITHUB_RUN_ID ?? `${Date.now()}`).trim();
-const workspaceName = `E2E agent api ${runId}`;
+// Same prefix the scheduled deleter defaults to (scripts/cleanup-live-e2e-workspaces.mjs),
+// so the workspace this run creates and the ones it skips stay in step with it.
+const disposableWorkspacePrefix = "E2E ";
+const workspaceName = `${disposableWorkspacePrefix}agent api ${runId}`;
 const connectionLabel = `agent-api-smoke-${runId}`;
 const retryDelayMs = 2_000;
 const maxAttempts = 5;
@@ -30,33 +34,46 @@ async function main() {
   /** @type {string | null} */
   let issuedApiKey = null;
   /** @type {string | null} */
-  let cleanupFailure = null;
+  let mintedConnectionId = null;
+  /** @type {Error | null} */
+  let smokeFailure = null;
 
   try {
     await verifyDiscoveryEndpoints();
     await verifySourceDiscoveryEndpoints();
     const otpSessionToken = await sendAgentCode();
-    issuedApiKey = await verifyAgentCode(otpSessionToken);
+    // The key is live in auth.agent_api_keys as soon as the mint response
+    // exists, so capture it before any other check: every assertion below runs
+    // with cleanup already armed.
+    const minted = await mintAgentApiKey(otpSessionToken);
+    issuedApiKey = minted.apiKey;
+    mintedConnectionId = minted.connectionId;
+    verifyAgentCodeContract(minted.payload);
     await verifyUnauthorizedMe();
-    await verifyAuthenticatedEndpoints(issuedApiKey);
+    await verifyAuthenticatedEndpoints(issuedApiKey, mintedConnectionId);
     createdWorkspaceId = await createWorkspace(issuedApiKey, workspaceName);
     await selectWorkspace(issuedApiKey, createdWorkspaceId);
     const relationName = await verifySchema(issuedApiKey);
     await verifySql(issuedApiKey, relationName);
     console.log(`[agent-smoke] success runId=${runId} workspaceId=${createdWorkspaceId}`);
-  } finally {
-    if (createdWorkspaceId !== null) {
-      try {
-        await deleteWorkspaceThroughWeb(createdWorkspaceId, workspaceName);
-      } catch (error) {
-        cleanupFailure = error instanceof Error ? error.message : String(error);
-        console.error(`[agent-smoke] cleanup_failed workspaceId=${createdWorkspaceId} error=${cleanupFailure}`);
-      }
-    }
+  } catch (error) {
+    smokeFailure = error instanceof Error ? error : new Error(describeError(error));
+  }
 
-    if (cleanupFailure !== null) {
-      throw new Error(`Agent API smoke cleanup failed: ${cleanupFailure}`);
+  const cleanupFailures = await runCleanup(mintedConnectionId, issuedApiKey, createdWorkspaceId);
+
+  if (cleanupFailures.length > 0) {
+    if (smokeFailure !== null) {
+      console.error(`[agent-smoke] smoke_failed error=${smokeFailure.message}`);
     }
+    throw new Error(
+      `Agent API smoke cleanup failed: ${cleanupFailures.join("; ")}`,
+      smokeFailure === null ? undefined : { cause: smokeFailure },
+    );
+  }
+
+  if (smokeFailure !== null) {
+    throw smokeFailure;
   }
 }
 
@@ -68,6 +85,10 @@ function assertCondition(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function describeError(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function sleep(ms) {
@@ -201,8 +222,165 @@ async function signInWithDemoEmail() {
   return payload.idToken;
 }
 
-async function deleteWorkspaceThroughWeb(workspaceId, targetWorkspaceName) {
-  const idToken = await signInWithDemoEmail();
+async function attemptCleanupStep(label, action) {
+  try {
+    await action();
+    return null;
+  } catch (error) {
+    const message = describeError(error);
+    console.error(`[agent-smoke] cleanup_failed step=${label} error=${message}`);
+    return `${label}: ${message}`;
+  }
+}
+
+/** Ids an operator needs to finish by hand, listing only what is still live. */
+function withLeftovers(failure, connectionId, workspaceId) {
+  return `${failure} (left behind: connectionId=${connectionId ?? "none"} workspaceId=${workspaceId ?? "none"})`;
+}
+
+/**
+ * Revoke the API key this run minted and delete the workspace it created.
+ *
+ * Never throws: every failure is returned so the caller can report it next to
+ * the smoke failure that may have triggered the cleanup. One web sign-in
+ * serves both calls, each action runs even when the other fails, and the run
+ * fails on any failure instead of leaving a live key or a workspace behind.
+ */
+async function runCleanup(mintedConnectionId, issuedApiKey, createdWorkspaceId) {
+  if (mintedConnectionId === null && createdWorkspaceId === null) {
+    return [];
+  }
+
+  /** @type {string} */
+  let idToken;
+  try {
+    idToken = await signInWithDemoEmail();
+  } catch (error) {
+    const message = describeError(error);
+    console.error(`[agent-smoke] cleanup_failed step=web_sign_in error=${message}`);
+    return [withLeftovers(`web_sign_in: ${message}`, mintedConnectionId, createdWorkspaceId)];
+  }
+
+  /** @type {Array<string>} */
+  const failures = [];
+  /** @type {string | null} */
+  let liveConnectionId = mintedConnectionId;
+  /** @type {string | null} */
+  let liveWorkspaceId = createdWorkspaceId;
+
+  if (mintedConnectionId !== null) {
+    const failure = await attemptCleanupStep("revoke_connection", async () => {
+      assertCondition(issuedApiKey !== null, "revoke_connection: connection id captured without its API key");
+      await revokeMintedConnection(idToken, issuedApiKey, mintedConnectionId, createdWorkspaceId);
+    });
+    if (failure !== null) {
+      failures.push(failure);
+    } else {
+      liveConnectionId = null;
+    }
+  }
+
+  if (createdWorkspaceId !== null) {
+    const failure = await attemptCleanupStep(
+      "delete_workspace",
+      async () => deleteWorkspaceThroughWeb(idToken, createdWorkspaceId, workspaceName),
+    );
+    if (failure !== null) {
+      failures.push(failure);
+    } else {
+      liveWorkspaceId = null;
+    }
+  }
+
+  return failures.map((failure) => withLeftovers(failure, liveConnectionId, liveWorkspaceId));
+}
+
+/**
+ * Revoke the minted connection before the workspace delete below removes the
+ * scope it runs in: the web route resolves a workspace from the request, and
+ * ensureProvisionedIdentity rejects a workspace the account no longer belongs
+ * to (apps/web/src/server/db/provisioning.ts).
+ *
+ * The workspace this run created is the first scope because the run owns it.
+ * It is not guaranteed to survive, so a failed attempt retries once against a
+ * workspace of the review account that no cleanup removes; both errors are
+ * reported if that retry fails too.
+ */
+async function revokeMintedConnection(idToken, apiKey, connectionId, createdWorkspaceId) {
+  if (createdWorkspaceId === null) {
+    const workspaceId = await resolveRevokeWorkspaceId(apiKey, connectionId);
+    await revokeConnectionThroughWeb(idToken, workspaceId, connectionId);
+    return;
+  }
+
+  try {
+    await revokeConnectionThroughWeb(idToken, createdWorkspaceId, connectionId);
+    return;
+  } catch (error) {
+    const firstMessage = describeError(error);
+    console.warn(`[agent-smoke] revoke_scope_retry workspaceId=${createdWorkspaceId} error=${firstMessage}`);
+    try {
+      const workspaceId = await resolveRevokeWorkspaceId(apiKey, connectionId);
+      await revokeConnectionThroughWeb(idToken, workspaceId, connectionId);
+    } catch (retryError) {
+      throw new Error(
+        `${describeError(retryError)} (first scope workspaceId=${createdWorkspaceId}: ${firstMessage})`,
+        { cause: error },
+      );
+    }
+  }
+}
+
+/**
+ * Pick a workspace of the review account to scope the revoke call. Disposable
+ * workspaces are skipped: sibling smoke jobs and the scheduled cleanup create
+ * and delete them concurrently with this run.
+ */
+async function resolveRevokeWorkspaceId(apiKey, connectionId) {
+  const payload = await requestJson(
+    "GET",
+    `${apiBaseUrl}/workspaces`,
+    { authorization: `ApiKey ${apiKey}` },
+    null,
+    200,
+    "revoke_scope_lookup",
+    true,
+  );
+
+  const workspaces = Array.isArray(payload.data?.workspaces) ? payload.data.workspaces : [];
+  const stable = workspaces.find((candidate) => (
+    typeof candidate?.workspaceId === "string"
+    && candidate.workspaceId !== ""
+    && typeof candidate?.name === "string"
+    && !candidate.name.startsWith(disposableWorkspacePrefix)
+  ));
+
+  assertCondition(
+    stable !== undefined,
+    `revoke_scope_lookup: no workspace outside the disposable "${disposableWorkspacePrefix}" prefix among ${workspaces.length} workspaces of ${reviewEmail}; revoke connectionId=${connectionId} by hand`,
+  );
+  return stable.workspaceId;
+}
+
+async function revokeConnectionThroughWeb(idToken, workspaceId, connectionId) {
+  const payload = await requestJson(
+    "POST",
+    `${appBaseUrl}/api/agent-connections/${connectionId}/revoke`,
+    buildWebAuthHeaders(idToken, workspaceId),
+    null,
+    200,
+    "revoke_connection",
+    true,
+  );
+
+  assertCondition(
+    payload.revoked === true,
+    `revoke_connection: expected revoked=true, got ${JSON.stringify(payload)}`,
+  );
+  console.log(`[agent-smoke] cleanup_revoked connectionId=${connectionId}`);
+}
+
+async function deleteWorkspaceThroughWeb(idToken, workspaceId, targetWorkspaceName) {
   const payload = await requestJson(
     "POST",
     `${appBaseUrl}/api/workspaces/${workspaceId}/delete`,
@@ -284,7 +462,12 @@ async function sendAgentCode() {
   return payload.data.otpSessionToken;
 }
 
-async function verifyAgentCode(otpSessionToken) {
+/**
+ * Mint the API key and return it with its connection id and the raw response.
+ * The contract checks stay with the caller, which is the only place that can
+ * arm the cleanup revoking this key.
+ */
+async function mintAgentApiKey(otpSessionToken) {
   const payload = await requestJson(
     "POST",
     `${authBaseUrl}/api/agent/verify-code`,
@@ -295,14 +478,24 @@ async function verifyAgentCode(otpSessionToken) {
     true,
   );
 
-  expectEnvelope(payload, "agent_verify_code");
+  // The key row exists as soon as this response does, so name it before any
+  // assertion: a failure below must still leave an operator a handle.
+  console.log(`[agent-smoke] minted connectionId=${payload?.data?.connection?.connectionId ?? "none"} label=${connectionLabel}`);
+  assertCondition(
+    typeof payload?.data?.connection?.connectionId === "string" && payload.data.connection.connectionId !== "",
+    "agent_verify_code: missing connectionId",
+  );
   assertCondition(typeof payload.data.apiKey === "string" && payload.data.apiKey !== "", "agent_verify_code: missing apiKey");
+  return { apiKey: payload.data.apiKey, connectionId: payload.data.connection.connectionId, payload };
+}
+
+function verifyAgentCodeContract(payload) {
+  expectEnvelope(payload, "agent_verify_code");
   assertCondition(payload.data.connection?.label === connectionLabel, "agent_verify_code: connection label mismatch");
   expectActionNamed(payload, "load_account", "agent_verify_code");
   expectActionNamed(payload, "list_workspaces", "agent_verify_code");
   expectActionNamed(payload, "select_workspace", "agent_verify_code");
   expectActionNamed(payload, "schema", "agent_verify_code");
-  return payload.data.apiKey;
 }
 
 async function verifyUnauthorizedMe() {
@@ -311,14 +504,17 @@ async function verifyUnauthorizedMe() {
   assertCondition(payload.error?.code === "missing_api_key", "me_unauthorized: expected missing_api_key");
 }
 
-async function verifyAuthenticatedEndpoints(apiKey) {
+async function verifyAuthenticatedEndpoints(apiKey, mintedConnectionId) {
   const headers = { authorization: `ApiKey ${apiKey}` };
 
   const mePayload = await requestJson("GET", `${apiBaseUrl}/me`, headers, null, 200, "me_authorized", true);
   expectEnvelope(mePayload, "me_authorized");
   assertCondition(typeof mePayload.data.user?.userId === "string" && mePayload.data.user.userId !== "", "me_authorized: missing userId");
   assertCondition(mePayload.data.user?.email === reviewEmail, "me_authorized: email mismatch");
-  assertCondition(typeof mePayload.data.connection?.connectionId === "string" && mePayload.data.connection.connectionId !== "", "me_authorized: missing connectionId");
+  assertCondition(
+    mePayload.data.connection?.connectionId === mintedConnectionId,
+    `me_authorized: connectionId ${JSON.stringify(mePayload.data.connection?.connectionId)} does not match the minted connection ${mintedConnectionId}`,
+  );
   assertCondition(mePayload.data.connection?.label === connectionLabel, "me_authorized: connection label mismatch");
   assertCondition(!("defaultWorkspaceId" in mePayload.data), "me_authorized: defaultWorkspaceId should be omitted");
 
