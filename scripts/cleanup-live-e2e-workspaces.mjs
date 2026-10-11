@@ -3,7 +3,9 @@
  *
  * Uses the same demo email bypass as the live smoke tests to authenticate,
  * lists workspaces via the web API, and deletes any with the configured
- * prefix that are older than the TTL.
+ * prefix that are older than the TTL. A second pass revokes agent API keys
+ * the post-deploy smoke left behind when it was killed before its own
+ * revocation.
  */
 import { randomBytes } from "node:crypto";
 
@@ -22,19 +24,47 @@ const fetchRetryAttempts = 3;
 const fetchRetryDelayMs = 1_000;
 const workspaceDeleteRequiresSingleMemberMessage =
   "Workspace deletion is only allowed when the workspace has exactly one member;";
+// Deterministic label prefix scripts/live-agent-api-smoke.mjs mints its key
+// with; like the workspace prefix, it is a literal duplicated in both files.
+const agentKeyLabelPrefix = "agent-api-smoke-";
+// Plausibility window for a trailing workspace-name token read as a
+// millisecond epoch. Not every E2E name ends in a clock reading: the agent API
+// smoke ends its name with a GitHub run id, which is an 11-digit number that
+// parses to 1971 and would otherwise look stale the instant the workspace is
+// created. Deletion is destructive and racing a running deploy, so an age this
+// script cannot prove means skip: an extra workspace survives to the next run,
+// while a wrong delete fails a smoke whose own checks passed.
+const nameTimestampFloorMs = Date.UTC(2024, 0, 1);
+const nameTimestampClockSkewMs = 5 * 60 * 1_000;
 
 async function main() {
   const failures = [];
   const skipped = [];
 
   for (const email of reviewEmails) {
+    let idToken = null;
     try {
-      const idToken = await signInWithDemoEmail(email);
+      idToken = await signInWithDemoEmail(email);
+    } catch (error) {
+      failures.push(`email=${email} pass=sign_in: ${getErrorMessage(error)}`);
+      continue;
+    }
+
+    try {
       let workspaceCookie = await resolveWorkspaceCookie(idToken);
       const workspaces = await listWorkspaces(idToken, workspaceCookie);
-      const staleWorkspaces = workspaces.filter((w) => shouldDeleteWorkspace(w));
+      const staleWorkspaces = workspaces.filter((w) => classifyWorkspace(w) === "delete");
+      const unageableWorkspaces = workspaces.filter((w) => classifyWorkspace(w) === "unageable");
 
-      console.log(`[cleanup] email=${email} workspaces=${workspaces.length} stale=${staleWorkspaces.length}`);
+      console.log(
+        `[cleanup] email=${email} workspaces=${workspaces.length} stale=${staleWorkspaces.length} unageable=${unageableWorkspaces.length}`,
+      );
+
+      for (const workspace of unageableWorkspaces) {
+        skipped.push(
+          `name=${workspace.name} id=${workspace.workspaceId}: age is not provable from the workspace name; delete by hand only after confirming no run owns it`,
+        );
+      }
 
       for (const workspace of staleWorkspaces) {
         try {
@@ -53,8 +83,31 @@ async function main() {
         }
       }
     } catch (error) {
-      const message = getErrorMessage(error);
-      failures.push(`email=${email}: ${message}`);
+      failures.push(`email=${email} pass=workspaces: ${getErrorMessage(error)}`);
+    }
+
+    // A leftover credential is the security-relevant half of the cleanup, so
+    // this pass resolves its own workspace cookie and reports its own failure
+    // even when the workspace pass above failed. It shares the sign-in above,
+    // so a sign-in failure skips the email before either pass runs.
+    try {
+      const workspaceCookie = await resolveWorkspaceCookie(idToken);
+      const connections = await listAgentConnections(idToken, workspaceCookie);
+      const staleConnections = connections.filter((c) => shouldRevokeConnection(c));
+
+      console.log(`[cleanup] email=${email} connections=${connections.length} stale_connections=${staleConnections.length}`);
+
+      for (const connection of staleConnections) {
+        try {
+          await revokeAgentConnection(idToken, workspaceCookie, connection);
+        } catch (error) {
+          failures.push(
+            `email=${email} pass=agent_keys connection=${connection.connectionId}: ${getErrorMessage(error)}`,
+          );
+        }
+      }
+    } catch (error) {
+      failures.push(`email=${email} pass=agent_keys: ${getErrorMessage(error)}`);
     }
   }
 
@@ -176,23 +229,46 @@ async function listWorkspaces(idToken, workspaceCookie) {
   return payload;
 }
 
-function shouldDeleteWorkspace(workspace) {
+/**
+ * "delete" when the name carries the prefix and a timestamp proving the TTL has
+ * passed, "unageable" when it carries the prefix but no provable age, so the
+ * run can name what it refused to age, and "keep" for everything else.
+ */
+function classifyWorkspace(workspace) {
   if (typeof workspace.name !== "string" || !workspace.name.startsWith(workspacePrefix)) {
-    return false;
+    return "keep";
   }
 
-  // Extract the timestamp from the workspace name: "E2E web 1234567890"
-  const parts = workspace.name.split(" ");
-  const lastPart = parts[parts.length - 1];
-  const timestamp = Number.parseInt(lastPart, 10);
-
-  if (Number.isNaN(timestamp)) {
-    // Can't determine age — skip
-    return false;
+  const timestampMs = parseNameTimestampMs(workspace.name);
+  if (timestampMs === null) {
+    return "unageable";
   }
 
-  const ageHours = (Date.now() - timestamp) / (60 * 60 * 1000);
-  return ageHours >= ttlHours;
+  return hoursSince(timestampMs) >= ttlHours ? "delete" : "keep";
+}
+
+/**
+ * Reads the trailing token of a workspace name as a millisecond epoch
+ * ("E2E web 1234567890"), and returns null when the value is not plausibly a
+ * recent one.
+ */
+function parseNameTimestampMs(name) {
+  const parts = name.split(" ");
+  const timestampMs = Number.parseInt(parts[parts.length - 1], 10);
+
+  if (Number.isNaN(timestampMs)) {
+    return null;
+  }
+
+  if (timestampMs < nameTimestampFloorMs || timestampMs > Date.now() + nameTimestampClockSkewMs) {
+    return null;
+  }
+
+  return timestampMs;
+}
+
+function hoursSince(timestampMs) {
+  return (Date.now() - timestampMs) / (60 * 60 * 1_000);
 }
 
 async function deleteWorkspace(idToken, workspaceCookie, workspace) {
@@ -216,6 +292,92 @@ async function deleteWorkspace(idToken, workspaceCookie, workspace) {
   }
 
   console.log(`[cleanup] deleted workspace name=${workspace.name} id=${workspace.workspaceId}`);
+}
+
+async function listAgentConnections(idToken, workspaceCookie) {
+  const url = `${appBaseUrl}/api/agent-connections`;
+  const response = await fetchWithRetry(url, {
+    method: "GET",
+    headers: buildAuthHeaders(idToken, workspaceCookie),
+    redirect: "manual",
+  }, "list_agent_connections");
+
+  if (response.status === 307 || response.status === 302) {
+    throw new Error(`Agent connection list redirected: url=${url} location=${response.headers.get("location") ?? ""}`);
+  }
+
+  const payload = await readJsonResponse(response, "Agent connection list");
+
+  if (!response.ok) {
+    throw new Error(`Agent connection list failed: url=${url} status=${response.status} body=${formatPayload(payload)}`);
+  }
+
+  if (!Array.isArray(payload.connections)) {
+    throw new Error(`Agent connection list payload has no connections array: ${formatPayload(payload)}`);
+  }
+
+  return payload.connections;
+}
+
+/**
+ * A key is reclaimable only when the smoke demonstrably failed to revoke its
+ * own: it carries the smoke's label, is still active, and has outlived the
+ * workspace TTL, so a key minted by a deploy running right now is never taken.
+ */
+function shouldRevokeConnection(connection) {
+  // The list is a tagged union of API-key and OAuth rows, where an OAuth row's
+  // label is its client-supplied client_name; the revoke endpoint below handles
+  // api_key rows only.
+  if (connection.type !== "api_key") {
+    return false;
+  }
+
+  if (typeof connection.label !== "string") {
+    throw new Error(`Agent connection ${JSON.stringify(connection)} is missing label`);
+  }
+
+  if (!connection.label.startsWith(agentKeyLabelPrefix)) {
+    return false;
+  }
+
+  if (connection.revokedAt !== null && connection.revokedAt !== undefined) {
+    return false;
+  }
+
+  if (typeof connection.createdAt !== "string") {
+    throw new Error(`Agent connection ${JSON.stringify(connection)} is missing createdAt`);
+  }
+
+  const createdAtMs = Date.parse(connection.createdAt);
+  if (Number.isNaN(createdAtMs)) {
+    throw new Error(`Agent connection ${JSON.stringify(connection)} has an unparseable createdAt`);
+  }
+
+  return hoursSince(createdAtMs) >= ttlHours;
+}
+
+async function revokeAgentConnection(idToken, workspaceCookie, connection) {
+  if (typeof connection.connectionId !== "string" || connection.connectionId === "") {
+    throw new Error(`Agent connection ${JSON.stringify(connection)} is missing connectionId`);
+  }
+
+  const url = `${appBaseUrl}/api/agent-connections/${connection.connectionId}/revoke`;
+  const response = await fetchWithRetry(url, {
+    method: "POST",
+    headers: buildAuthHeaders(idToken, workspaceCookie),
+  }, `revoke_agent_connection id=${connection.connectionId}`);
+
+  const payload = await readJsonResponse(response, "Agent connection revoke");
+
+  if (!response.ok) {
+    throw new Error(`Revoke agent connection failed: id=${connection.connectionId} url=${url} status=${response.status} body=${formatPayload(payload)}`);
+  }
+
+  if (payload.revoked !== true) {
+    throw new Error(`Revoke agent connection did not revoke: id=${connection.connectionId} url=${url} body=${formatPayload(payload)}`);
+  }
+
+  console.log(`[cleanup] revoked connection label=${connection.label} id=${connection.connectionId}`);
 }
 
 async function fetchWithRetry(url, options, label) {
