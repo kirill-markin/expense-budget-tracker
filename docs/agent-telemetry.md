@@ -48,6 +48,8 @@ aws logs get-query-results --profile expense-tracker --region eu-central-1 \
 
 In the Lambda groups each structured line is prefixed by timestamp, request id and `INFO`, so the raw line is not valid JSON. Logs Insights still discovers the embedded JSON fields, which is why the queries below filter on `action` directly. `aws logs filter-log-events` is a usable fallback when a single-group grep is enough: both `--filter-pattern '{ $.action = "mcp_tool_call" }'` and `--filter-pattern '"mcp_tool_call"'` match these lines. A record takes up to about a minute to reach the group at all, so a call made seconds ago is missing from every read, filtered or not.
 
+An unfiltered `filter-log-events` dump is a poor census tool even though its filtered form is fine: without a filter pattern it is dominated by Lambda platform lines — `INIT_START`, `START`, `END`, `REPORT`. `--limit` and `--max-items` stop a read without reporting an error, but a truncated read still leaves `nextToken` (`NextToken` when `--max-items` stopped it) in the output while a completed read returns only `events` and `searchedLogStreams`, so check for that key before trusting a count. Pull the records out with a filter pattern, and aggregate with Logs Insights, which every query below uses.
+
 ## Hosted MCP server
 
 Tool-call volume and failure rate by tool, then the same split by failure code and by client:
