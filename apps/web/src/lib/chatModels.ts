@@ -32,18 +32,16 @@ export const CHAT_SENT_INPUT_BUDGET_TOKENS = 120_000;
  * instructions, tool schemas and clock outgrow it.
  *
  * Counter-intuitively, over-estimating is not the safe direction for this one
- * constant. It is safe for the budget comparison, where it cancels, and fatal
+ * constant. It is safe for the budget comparison, where it cancels, and costly
  * for the attribution: the reserve is subtracted from every stored measurement
- * before that measurement is attributed, so the gap between this constant and
- * the real per-call overhead `O` is what a session has to pay to start measuring
- * itself at all. The gap is charged once, to the first measurement of a chain -
- * every later measurement cancels against its predecessor and is accepted
- * however small its turn is - but a session that fails to pay it is charged
- * estimates, which read high by design, and their accumulating excess keeps
- * later measurements out too. At 8,000 against a real overhead of 1,522 no
- * measurement was ever usable: a simulated 120-turn session stayed on estimates
- * end to end and started dropping turns at around 83k real tokens, barely above
- * the compaction threshold this budget deliberately sits 40k above.
+ * before that measurement is attributed, so a measurement is usable only while
+ * its own `input + output` exceeds the reserve plus whatever earlier
+ * measurements already attributed inside its range. A session whose stored
+ * content has not yet passed that price is sized by estimate, and estimates read
+ * high by design, so it drops history early. At 8,000 against a real overhead of
+ * 1,522 no measurement was ever usable: a simulated 120-turn session stayed on
+ * estimates end to end and started dropping turns at around 83k real tokens,
+ * barely above the compaction threshold this budget deliberately sits 40k above.
  *
  * Measured with `o200k_base` on the real prompt: instructions 1,045 + tool
  * schemas 989 + clock 44 = 2,078 tokens. The schema figure is the five catalog
@@ -53,17 +51,13 @@ export const CHAT_SENT_INPUT_BUDGET_TOKENS = 120_000;
  *
  * 2,600 therefore leaves 522 tokens of headroom, and that number is the one to
  * read before adding anything here: the prompt and the tool catalog have to fit
- * inside it. It is also exactly what a session's first turn is priced at - the
- * reserve minus the real overhead - so a question answered with a tool call and
- * reasoning clears it comfortably while a session opened with "hi" does not and
- * stays on estimates, which is the one shape this value gives up on. Raising
- * the reserve to buy room is the mistake this whole comment exists to prevent:
- * every token added above the real overhead is added to that admission price.
- *
- * The simulation behind the choice was run when the overhead was 1,522 and the
- * price was 1,078: a first turn of 1,079 new tokens measured 200 of 200 later
- * turns, one of 1,077 measured none. The mechanism is unchanged and the price
- * is now lower, so measurement starts more easily than it did then, not less.
+ * inside it. It is also what a session's own stored content has to pass before
+ * its first measurement is usable - the reserve minus the real overhead - so a
+ * session opened with "hi" is sized by estimate until a call of its own clears
+ * that price, and the measurement that clears it then supersedes those
+ * estimates. Raising the reserve to buy room is the mistake this whole comment
+ * exists to prevent: every token added above the real overhead is added to that
+ * price and delays the turn at which the session starts sizing itself.
  */
 export const CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS = 2_600;
 export const CHAT_MODEL_LABEL = "GPT-6.1 Sol" as const;

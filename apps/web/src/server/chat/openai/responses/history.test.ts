@@ -11,6 +11,7 @@ import {
   estimateContentPartsTokens,
   measureChatHistory,
   planChatHistoryReplay,
+  type ChatHistoryBoundary,
 } from "@/server/chat/openai/responses/history";
 import {
   parseChatHistoryMeasurement,
@@ -186,7 +187,8 @@ test("the fixed per-call reserve covers the real instructions, tool schemas and 
     + `the ${String(CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS)} token reserve. Re-measure `
     + "the prompt with o200k and trim it, or shrink the tool catalog - do NOT raise "
     + "the reserve: every token of reserve above the real overhead is a token added to "
-    + "the admission price of the first measurement of every session.",
+    + "the price a session's own content has to pass before its first measurement is "
+    + "usable.",
   );
 });
 
@@ -930,8 +932,9 @@ test("the first measurements on an unmeasured session widen it without oscillati
   // What must not happen is the attempt-2 symptom, a boundary that keeps
   // swinging. Each step back is a single widening paid once per measured turn,
   // so the series falls at most until the sizing is measured and then only
-  // rises. Nothing clamps it: the append-only rule means a weight changes at
-  // most once, from estimate to measurement, which bounds the backwards steps.
+  // rises. Nothing clamps it: a measurement-derived weight is immutable, so no
+  // weight is revised by more than one measurement, which bounds the backwards
+  // steps.
   let messages = createUnmeasuredSession(40, null);
   const startIndexes: Array<number> = [];
 
@@ -979,11 +982,12 @@ test("the first measurements on an unmeasured session widen it without oscillati
 
 test("a measured session's boundary never pulls back", (): void => {
   // Attempt 2's failure class, and the guarantee that survives without any
-  // boundary clamp: the append-only weight rule is what delivers it. A weight is
-  // fixed when first assigned, so in a session measured from the start no
-  // message ever gets cheaper, the total only grows, and the boundary only moves
-  // forward - the prompt-cache prefix of the previous turn survives and turns
-  // the user watched being dropped do not reappear.
+  // boundary clamp: the immutability of a measurement-derived weight is what
+  // delivers it. In a session measured from its first turn every weight comes
+  // from a measurement, so there is never an estimate left for a later one to
+  // supersede: no message ever gets cheaper, the total only grows, and the
+  // boundary only moves forward - the prompt-cache prefix of the previous turn
+  // survives and turns the user watched being dropped do not reappear.
   let messages: ReadonlyArray<ServerChatMessage> = [];
   const startIndexes: Array<number> = [];
 
@@ -1151,4 +1155,476 @@ test("a large turn trims only its own call", (): void => {
     `Moving the boundary back sent ${String(shortTurnRealTokens)} real tokens, past `
     + `the ${String(CHAT_SENT_INPUT_BUDGET_TOKENS)} token budget`,
   );
+});
+
+/** Weight of every message, which is what a supersede rewrites. */
+const messageTokenWeights = (
+  messages: ReadonlyArray<ServerChatMessage>,
+): ReadonlyArray<number> => {
+  const { prefixTokens } = measureChatHistory(messages);
+
+  return prefixTokens.slice(1).map((tokens, index) => tokens - prefixTokens[index]);
+};
+
+test("a measurement supersedes the estimates in its range and never a measured weight", (): void => {
+  // The three coverage shapes that have to compose: a plain measurement, one
+  // whose range straddles it - starting inside it and ending past it - and one
+  // that replayed nothing at all because its own run compacted its context. The
+  // property each has to leave standing is the suffix identity: the history
+  // from a measurement's own covered start weighs exactly what that call
+  // measured, less the reserve, however much of its range an earlier call had
+  // already sized.
+  const earlier: ChatHistoryMeasurement = {
+    inputTokens: 30_000,
+    outputTokens: 1_500,
+    replayedMessages: 2,
+  };
+  const straddling: ChatHistoryMeasurement = {
+    inputTokens: 70_000,
+    outputTokens: 2_500,
+    replayedMessages: 5,
+  };
+  const compactedOwnContext: ChatHistoryMeasurement = {
+    inputTokens: 90_000,
+    outputTokens: 3_000,
+    replayedMessages: 0,
+  };
+  const body = (label: string): string => `${label} ${"x".repeat(TURN_TEXT_CHARACTERS)}`;
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    createUserMessage(body("Question 0")),
+    createAssistantMessage(body("Answer 0"), undefined, []),
+    createUserMessage(body("Question 1")),
+    createAssistantMessage(body("Answer 1"), earlier, []),
+    createUserMessage(body("Question 2")),
+    createAssistantMessage(body("Answer 2"), undefined, []),
+    createUserMessage(body("Question 3")),
+    createAssistantMessage(body("Answer 3"), straddling, []),
+    createUserMessage(body("Question 4")),
+    createAssistantMessage(body("Answer 4"), compactedOwnContext, []),
+  ];
+
+  const sizing = measureChatHistory(messages);
+
+  // Each measurement's own range weighs exactly what that call measured.
+  assert.equal(
+    sizing.prefixTokens[4] - sizing.prefixTokens[1],
+    earlier.inputTokens + earlier.outputTokens - CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS,
+  );
+  assert.equal(
+    sizing.prefixTokens[8] - sizing.prefixTokens[2],
+    straddling.inputTokens
+    + straddling.outputTokens
+    - CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS,
+  );
+  assert.equal(
+    sizing.prefixTokens[10] - sizing.prefixTokens[9],
+    compactedOwnContext.inputTokens
+    + compactedOwnContext.outputTokens
+    - CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS,
+  );
+  // Neither later measurement touched a weight the first one had measured.
+  const weights = messageTokenWeights(messages);
+  assert.deepEqual(
+    weights.slice(2, 4),
+    messageTokenWeights(messages.slice(0, 4)).slice(2, 4),
+  );
+  assert.deepEqual(weights.slice(0, 9), messageTokenWeights(messages.slice(0, 9)));
+  // And the estimates inside the straddling range were replaced, not kept.
+  const estimatedWeights = messageTokenWeights(
+    messages.map((message) => ({ ...message, replayMeasurement: undefined })),
+  );
+  for (const index of [4, 5, 6, 7]) {
+    assert.notEqual(
+      weights[index],
+      estimatedWeights[index],
+      `Message ${String(index)} kept its estimate inside a measured range`,
+    );
+  }
+});
+
+test("a measurement whose token pair overflows leaves the session sizeable", (): void => {
+  // `isMeasurementCount` admits any non-negative integer and `Number.isInteger`
+  // is true of `1e308`, so a stored pair summing to `Infinity` reaches the
+  // weights through the real read path below rather than around it. Split across
+  // a range it would make every prefix `NaN` - `Infinity - Infinity` from the
+  // second offset on - and collapse the session onto its newest user turn on its
+  // every later turn, which is why the segment is checked for finiteness and not
+  // only for sign.
+  const overflowing = parseChatHistoryMeasurement({
+    inputTokens: 1e308,
+    outputTokens: 1e308,
+    replayedMessages: 3,
+  });
+  assert.ok(
+    overflowing !== undefined,
+    "The parser rejected the overflowing pair, so this case can no longer reach "
+    + "the weights and its guard belongs in `replayItems.ts` alone",
+  );
+  const body = (label: string): string => `${label} ${"x".repeat(TURN_TEXT_CHARACTERS)}`;
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    createUserMessage(body("Question 0")),
+    createAssistantMessage(body("Answer 0"), undefined, []),
+    createUserMessage(body("Question 1")),
+    createAssistantMessage(body("Answer 1"), overflowing, []),
+    createUserMessage(body("Question 2")),
+    createAssistantMessage(body("Answer 2"), undefined, []),
+  ];
+
+  const sizing = measureChatHistory(messages);
+
+  // Every boundary is still a number, and the covered range kept exactly the
+  // estimates it would have carried had the measurement never been stored.
+  assert.ok(
+    sizing.prefixTokens.every((tokens) => Number.isFinite(tokens)),
+    `An overflowing measurement sized the history at ${sizing.prefixTokens.join(", ")}`,
+  );
+  assert.deepEqual(
+    messageTokenWeights(messages),
+    messageTokenWeights(
+      messages.map((message) => ({ ...message, replayMeasurement: undefined })),
+    ),
+  );
+  // So the window still plans a real replay instead of collapsing onto the
+  // newest question.
+  const plan = planChatHistoryReplay(messages, TURN_INPUT);
+  assert.ok(
+    Number.isFinite(plan.sentInputTokens),
+    `The plan sized the turn at ${String(plan.sentInputTokens)} tokens`,
+  );
+  assert.ok(
+    plan.sentInputTokens <= CHAT_SENT_INPUT_BUDGET_TOKENS,
+    `The plan sent ${String(plan.sentInputTokens)} tokens, past the `
+    + `${String(CHAT_SENT_INPUT_BUDGET_TOKENS)} token budget`,
+  );
+  assert.equal(plan.startIndex, 0, "The overflowing measurement still cut the history");
+});
+
+test("sizing is a pure function of the stored history", (): void => {
+  // Determinism is what keeps the prompt-cache prefix still, and the provenance
+  // a supersede reasons about must not outlive one computation: the same stored
+  // history has to yield the same weights and the same boundary whatever was
+  // sized in between. Eight turns nobody measured, then one measurement
+  // reaching back over the last few messages only, so the older half is still
+  // on estimates and the longer history sized in between really does supersede
+  // weights this one keeps.
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    ...createUnmeasuredSession(8, null),
+    createUserMessage(`Question 8 ${"q".repeat(TURN_TEXT_CHARACTERS)}`),
+    createAssistantMessage(
+      `Answer 8 ${"a".repeat(TURN_TEXT_CHARACTERS)}`,
+      { inputTokens: 40_000, outputTokens: 2_000, replayedMessages: 5 },
+      [],
+    ),
+  ];
+  const storedBefore = JSON.stringify(messages);
+
+  const first = measureChatHistory(messages);
+  measureChatHistory(createUnmeasuredSession(4, 1));
+  const longer = measureChatHistory([
+    ...messages,
+    createUserMessage(`Question 9 ${"q".repeat(TURN_TEXT_CHARACTERS)}`),
+    createAssistantMessage(
+      `Answer 9 ${"a".repeat(TURN_TEXT_CHARACTERS)}`,
+      { inputTokens: 60_000, outputTokens: 2_000, replayedMessages: 19 },
+      [],
+    ),
+  ]);
+  const second = measureChatHistory(messages);
+
+  // The longer history really did re-size the shared prefix, so anything that
+  // leaked between the two calls would be visible here.
+  assert.notEqual(longer.prefixTokens[1], first.prefixTokens[1]);
+  assert.deepEqual(first, second);
+  assert.deepEqual(
+    planChatHistoryReplay(messages, TURN_INPUT),
+    planChatHistoryReplay(messages, TURN_INPUT),
+  );
+  // Nothing was written back into the stored rows: where a weight came from is
+  // derived every time, never persisted beside the message.
+  assert.equal(JSON.stringify(messages), storedBefore);
+});
+
+type RecoveringTurn = Readonly<{
+  startIndex: number;
+  replayedMessages: number;
+  realSentInputTokens: number;
+  boundary: ChatHistoryBoundary;
+}>;
+
+/**
+ * Drives turns onto a session stored before measurements existed, counting how
+ * often each message's weight is revised. One turn switches model, so the
+ * per-call overhead changes and is never the reserve, and one errors and stores
+ * no measurement at all.
+ */
+const runRecoveringSession = (
+  realTokensOf: (text: string) => number,
+  legacyMessages: ReadonlyArray<ServerChatMessage>,
+  turns: number,
+): Readonly<{
+  turnResults: ReadonlyArray<RecoveringTurn>;
+  revisionsByMessage: ReadonlyMap<number, number>;
+  messages: ReadonlyArray<ServerChatMessage>;
+}> => {
+  let messages = legacyMessages;
+  let previousWeights = messageTokenWeights(messages);
+  const revisionsByMessage = new Map<number, number>();
+  const turnResults: Array<RecoveringTurn> = [];
+
+  for (let turnIndex = 0; turnIndex < turns; turnIndex += 1) {
+    const question = `Question new ${String(turnIndex)} ${"q".repeat(TURN_TEXT_CHARACTERS)}`;
+    const answer = `Answer new ${String(turnIndex)} ${"a".repeat(TURN_TEXT_CHARACTERS)}`;
+    const plan = planChatHistoryReplay(messages, [{ type: "text", text: question }]);
+    // Repeated identical turns must not flap between boundaries.
+    assert.deepEqual(
+      plan,
+      planChatHistoryReplay(messages, [{ type: "text", text: question }]),
+    );
+    const overheadTokens = turnIndex === 3
+      ? SIMULATED_OVERHEAD_TOKENS + 400
+      : SIMULATED_OVERHEAD_TOKENS;
+    const realSent = overheadTokens
+      + messages.slice(plan.startIndex).reduce(
+        (total, message) => total + message.content.reduce(
+          (parts, part) => parts + (part.type === "text" ? realTokensOf(part.text) : 0),
+          0,
+        ),
+        0,
+      )
+      + realTokensOf(question);
+    messages = [
+      ...messages,
+      createUserMessage(question),
+      createAssistantMessage(
+        answer,
+        turnIndex === 5
+          ? undefined
+          : {
+            inputTokens: realSent,
+            outputTokens: realTokensOf(answer),
+            replayedMessages: messages.length + 1 - plan.startIndex,
+          },
+        [],
+      ),
+    ];
+    const weights = messageTokenWeights(messages);
+    for (const [index, weight] of previousWeights.entries()) {
+      if (weight !== weights[index]) {
+        revisionsByMessage.set(index, (revisionsByMessage.get(index) ?? 0) + 1);
+      }
+    }
+    turnResults.push({
+      startIndex: plan.startIndex,
+      replayedMessages: messages.length - 2 - plan.startIndex,
+      realSentInputTokens: realSent,
+      boundary: plan.boundary,
+    });
+    previousWeights = weights;
+  }
+
+  return { turnResults, revisionsByMessage, messages };
+};
+
+test("a legacy session recovers through supersedes without revising a weight twice", (): void => {
+  // The bound the whole relaxation rests on: a weight may go from estimate to
+  // measurement and no further. Nothing clamps the boundary - three attempts at
+  // a floor produced three P1s - so a weight that may be revised twice is a
+  // boundary free to swing, which is attempt 2's failure. Counted per message
+  // over a session carrying every row the sizing has to survive.
+  const legacyMessages = createUnmeasuredSession(40, 1);
+
+  const { turnResults, revisionsByMessage, messages } = runRecoveringSession(
+    realTextTokens,
+    legacyMessages,
+    10,
+  );
+
+  const startIndexes = turnResults.map((turn) => turn.startIndex);
+  const series = startIndexes.join(", ");
+  // The rows this session was built to carry really are in play: a compaction
+  // item the budget no longer accepts, and a turn that stored no measurement.
+  assert.ok(
+    turnResults.some((turn) => turn.boundary === "stale_compaction"),
+    `No turn was bounded past its compaction item: ${
+      turnResults.map((turn) => turn.boundary).join(", ")}`,
+  );
+  assert.ok(
+    messages.slice(legacyMessages.length).some(
+      (message) => message.role === "assistant" && message.replayMeasurement === undefined,
+    ),
+    "The errored turn stored a measurement after all",
+  );
+  // The estimates bound the session hard on its first post-deploy turn, and the
+  // measurements give the history back.
+  assert.ok(startIndexes[0] > 0, `The window never bound: ${series}`);
+  assert.ok(
+    turnResults[turnResults.length - 1].replayedMessages
+    >= turnResults[0].replayedMessages * 2,
+    `A measured session recovered ${String(turnResults[0].replayedMessages)} to `
+    + `${String(turnResults[turnResults.length - 1].replayedMessages)} messages`,
+  );
+  // One falling phase, then one rising phase: never a second reversal.
+  const reversals = startIndexes.filter((startIndex, offset) => {
+    const previous = startIndexes[offset - 1];
+    const beforeThat = startIndexes[offset - 2];
+
+    return previous !== undefined
+      && beforeThat !== undefined
+      && startIndex > previous
+      && previous < beforeThat;
+  }).length;
+  assert.ok(reversals <= 1, `The replay boundary oscillated: ${series}`);
+  // Every turn's real input stayed inside the budget while it widened, counted
+  // at an overhead that is not the reserve.
+  for (const [offset, turn] of turnResults.entries()) {
+    assert.ok(
+      turn.realSentInputTokens <= CHAT_SENT_INPUT_BUDGET_TOKENS,
+      `Turn ${String(offset)} of a recovering session really sent `
+      + `${String(turn.realSentInputTokens)} tokens, past the `
+      + `${String(CHAT_SENT_INPUT_BUDGET_TOKENS)} token budget`,
+    );
+  }
+  const revisions = [...revisionsByMessage.values()];
+  assert.ok(
+    revisions.length > 0,
+    "No weight was ever superseded, so this test cannot see a second revision",
+  );
+  assert.equal(
+    Math.max(...revisions),
+    1,
+    `A message's weight was revised ${String(Math.max(...revisions))} times`,
+  );
+});
+
+test("the densest legacy session stays inside the budget while measurements widen it", (): void => {
+  // A supersede that over-corrected would widen the window past what the model
+  // accepts, and tabular text is where that shows first: this product's import
+  // format tokenizes near 1.5 characters per token while the sizing bounds it
+  // at 1.4, so the margin is thin by design.
+  const realTokensOf = (text: string): number =>
+    Math.ceil(text.length / DENSE_CHARACTERS_PER_TOKEN);
+
+  const { turnResults } = runRecoveringSession(
+    realTokensOf,
+    createDenseUnmeasuredSession(40),
+    10,
+  );
+
+  for (const [offset, turn] of turnResults.entries()) {
+    assert.ok(
+      turn.realSentInputTokens <= CHAT_SENT_INPUT_BUDGET_TOKENS,
+      `Turn ${String(offset)} of a recovering tabular session really sent `
+      + `${String(turn.realSentInputTokens)} tokens at `
+      + `${String(DENSE_CHARACTERS_PER_TOKEN)} characters per token, past the `
+      + `${String(CHAT_SENT_INPUT_BUDGET_TOKENS)} token budget`,
+    );
+  }
+  // The guard is not won by never widening, nor by staying far from the budget:
+  // the supersede puts this session's real input within a few percent of the
+  // ceiling, which is where an over-correction would breach it.
+  const replayedMessages = turnResults.map((turn) => turn.replayedMessages);
+  assert.ok(
+    Math.max(...replayedMessages) > replayedMessages[0],
+    `The tabular session never widened: ${replayedMessages.join(", ")}`,
+  );
+  const maxRealSentInputTokens = Math.max(
+    ...turnResults.map((turn) => turn.realSentInputTokens),
+  );
+  assert.ok(
+    maxRealSentInputTokens >= CHAT_SENT_INPUT_BUDGET_TOKENS * 0.9,
+    `The tabular session never sent more than ${String(maxRealSentInputTokens)} real `
+    + `tokens, well under the ${String(CHAT_SENT_INPUT_BUDGET_TOKENS)} token budget`,
+  );
+});
+
+/**
+ * Real `o200k` tokens of the stored messages from `startIndex` on, counted the
+ * way replay sends them and without the per-call overhead, so a measured range
+ * can be compared against the weights it was split into.
+ */
+const realSuffixTokens = (
+  messages: ReadonlyArray<ServerChatMessage>,
+  startIndex: number,
+): number => realSentInputTokens(messages, startIndex, []) - REAL_OVERHEAD_TOKENS;
+
+/**
+ * Prose the character estimate reads 9.7x high, against 1.5x for the big tables
+ * below and 1.9x for the small ones. Measured with the `o200k` helper above over
+ * these exact strings, each in the accounting replay uses for it: a user turn's
+ * content for the prose, an assistant turn's stored replay items for the tables.
+ */
+const russianText = (label: string, sentences: number): string =>
+  `${label} ${"Ежемесячный обзор бюджета охватывает каждый счёт и расход. ".repeat(sentences)}`;
+
+/**
+ * How far below the real suffix a measured boundary may be sized, over the
+ * fixture below.
+ *
+ * Under-stating a suffix is the direction that breaches the budget: the window
+ * reads the history behind the boundary as cheaper than it is and replays more
+ * than the call can hold. Splitting in proportion to the estimates holds every
+ * interior boundary of this fixture at 0.762 of its real suffix or better, and a
+ * uniform `1 / count` split of the same segment reaches 0.137, so the floor sits
+ * between the two shapes rather than at either one's margin: at this fixture's
+ * own 0.762 it would pin this fixture instead of the property, since mixed
+ * content whose prose-to-table ratio differs leaves a different residual.
+ *
+ * What that costs in sensitivity, measured over this fixture by blending the two
+ * splits: a 75% proportional / 25% uniform split still bottoms out at 0.606 and
+ * passes, and 26% uniform reaches 0.600 and fails, so the floor catches a split
+ * roughly a quarter or more of the way to uniform and nothing weaker.
+ */
+const MEASURED_SUFFIX_TRACKING_FLOOR = 0.6;
+
+test("a measurement is split across its range by size, not by message count", (): void => {
+  // A first measurement now re-sizes every message it replayed, so how it
+  // spreads its tokens decides every boundary interior to that range and
+  // nothing else does. The shape that exposes the choice is a real one: a
+  // Russian-language session whose answers carry tabular pastes, where the
+  // estimate reads 9.7x high on the prose and 1.5x on the big tables, and whose
+  // last two answers are a hundred times the size of its first six.
+  const turns: ReadonlyArray<ServerChatMessage> = [
+    ...Array.from({ length: 6 }).flatMap((_, turnIndex) => [
+      createUserMessage(russianText(`Вопрос ${String(turnIndex)}`, 6)),
+      createAssistantMessage(denseText(`Ответ ${String(turnIndex)}`, 3), undefined, []),
+    ]),
+    ...Array.from({ length: 2 }).flatMap((_, turnIndex) => [
+      createUserMessage(russianText(`Вопрос с таблицей ${String(turnIndex)}`, 6)),
+      createAssistantMessage(denseText(`Ответ с таблицей ${String(turnIndex)}`, 400), undefined, []),
+    ]),
+  ];
+  // The call's overhead is taken as exactly the reserve, so its segment is
+  // exactly the real content of the range it covers and every gap between a
+  // sized suffix and the real one below is the split's own doing.
+  const realRangeTokens = realSuffixTokens(turns, 0);
+  const outputTokens = realSuffixTokens(turns, turns.length - 1);
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    ...turns.slice(0, -1),
+    createAssistantMessage(
+      denseText("Ответ с таблицей 1", 400),
+      {
+        inputTokens: CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS + realRangeTokens - outputTokens,
+        outputTokens,
+        replayedMessages: turns.length - 1,
+      },
+      [],
+    ),
+  ];
+
+  const sizing = measureChatHistory(messages);
+
+  // The measurement really did size the whole range, so the boundaries below
+  // are the split's and not the estimates'.
+  assert.equal(sizing.totalTokens, realRangeTokens);
+  for (let boundary = 1; boundary < messages.length; boundary += 1) {
+    const sizedSuffix = sizing.totalTokens - sizing.prefixTokens[boundary];
+    const realSuffix = realSuffixTokens(messages, boundary);
+    assert.ok(
+      sizedSuffix >= realSuffix * MEASURED_SUFFIX_TRACKING_FLOOR,
+      `The history from message ${String(boundary)} really costs `
+      + `${String(realSuffix)} o200k tokens and is sized at ${String(sizedSuffix)}, `
+      + `${(sizedSuffix / realSuffix).toFixed(2)}x of it: a measurement has to be `
+      + "spread across its range in proportion to what each message holds",
+    );
+  }
 });
