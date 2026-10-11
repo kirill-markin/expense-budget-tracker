@@ -54,7 +54,9 @@ const CHECKOUT_INTERPRETER = ["--import", "tsx"] as const;
 const SMALL_HEAP_MB = 256;
 
 /**
- * Production's ceiling, so the clock case is the only thing that can end one.
+ * Production's ceiling, used by every case whose child must be endable only by
+ * the thing that case is about - the clock below, and the kernel's kill further
+ * down, neither of which may share a child with V8's abort.
  *
  * It is a ceiling and not a reservation, which is worth stating because this is
  * the heaviest thing the suite runs and the number invites the other reading.
@@ -98,15 +100,31 @@ type ObjectService = Readonly<{
  */
 const PUT_REFUSED_STATUS = 503;
 
+/**
+ * `onSourceRequested` runs synchronously on each GET, before one byte of the
+ * body is written, which is the only moment a case outside the child can act on
+ * a conversion that has not started yet: the child is parked on this socket
+ * until the body arrives, so whatever the hook does happens while the child
+ * holds nothing. A case that has to end a conversion in flight without racing
+ * it uses this rather than a timer.
+ */
 const startObjectService = async (
   content: Uint8Array,
   putStatus = 200,
+  onSourceRequested: (() => void) | null = null,
 ): Promise<ObjectService> => {
   const puts: Array<string> = [];
   const gets: Array<string> = [];
   const server = createServer((request, response) => {
     if (request.method === "GET") {
       gets.push(request.url ?? "");
+      if (onSourceRequested !== null) {
+        onSourceRequested();
+      }
+      // The hook may have ended the process this body is for, so the write goes
+      // to a peer that is already gone: swallowed, because an unhandled socket
+      // error here would end the run instead of the case.
+      response.on("error", (): void => {});
       response.writeHead(200);
       response.end(content);
       return;
@@ -587,29 +605,51 @@ test("a conversion holding more than the resident ceiling is refused for that, a
  * reds the single `refusedResponse` both kills used to share.
  */
 test("a child killed by the kernel while converting is answered unavailable, not failed", async (): Promise<void> => {
-  const run = createPrepareRunner(SMALL_HEAP_MB, CHECKOUT_INTERPRETER, readRealResidentBytes);
-  const content = buildDocx("<w:p/>".repeat(3_000_000));
-  const service = await startObjectService(content);
-  // Killed once the child has asked for its source, which is what makes this
-  // the `exit` arm of a conversion in flight. Both near misses are real and
-  // both were hit while writing this: a fixed delay long enough to be safe
-  // leaves the case waiting out its whole deadline whenever it is not, and a
-  // poll for the child's pid finds it between the fork and the ready handshake
-  // and kills it before the command is sent - which is the `unsendable` arm and
-  // a raised error, not this one. The first GET is after the command and before
-  // the conversion, and nothing else in the request is served before it.
-  const killer = setInterval((): void => {
-    if (service.gets.length === 0) {
-      return;
-    }
-    clearInterval(killer);
+  // Production's heap, and the small document, because the signal has to be the
+  // only death this child can suffer.
+  //
+  // The kill is delivered from inside the source GET, synchronously, before one
+  // byte of the body is written: the child has been sent the command, has asked
+  // for the source and is parked on the socket, so it has parsed nothing and
+  // holds nothing that any ceiling - V8's heap cap or the resident watch - could
+  // notice. With the body withheld there is nothing for the fixture to keep the
+  // child busy with either, which is why the document here is the one that
+  // converts in milliseconds rather than a crafted monster.
+  //
+  // Three near misses are real and all three were hit writing this, so none of
+  // the headroom above is decoration. A fixed delay long enough to be safe
+  // leaves the case waiting out its whole deadline whenever it is not. A poll
+  // for the child's pid finds it between the fork and the ready handshake and
+  // kills it before the command is sent, which is the `unsendable` arm and a
+  // raised error, not this one. And a kill timed off the first GET but
+  // delivered from a 20 ms interval after the body had gone out - the version
+  // CI reds - races the conversion it is trying to interrupt: a 3,000,000
+  // paragraph document under the 256 MiB test heap marches toward V8's abort
+  // while the parent's timer waits its turn on a loaded event loop, and the
+  // death that arrives first is SIGABRT, answered `failed`, which is this arm's
+  // opposite and the right answer to that death. Linux reached the abort first
+  // and macOS the signal, so it passed locally and red on ubuntu-26.04-arm.
+  // This version removes the competitor instead of outrunning it; putting back
+  // the heavy fixture, the small heap or the timer puts the race back.
+  const run = createPrepareRunner(PRODUCTION_HEAP_MB, CHECKOUT_INTERPRETER, readRealResidentBytes);
+  const content = buildDocx("<w:p><w:r><w:t>Statement total 1234.56</w:t></w:r></w:p>");
+  const killed: Array<number> = [];
+  const service = await startObjectService(content, 200, (): void => {
     for (const pid of liveChildPids()) {
       process.kill(pid, "SIGKILL");
+      killed.push(pid);
     }
-  }, 20);
+  });
   try {
     const response = await run(prepareRequest(service, content), Date.now() + AMPLE_DEADLINE_MS);
 
+    // The hook firing is the premise, not a detail: a case whose signal was
+    // never sent would be watching a conversion succeed, not an arm.
+    assert.equal(
+      killed.length,
+      1,
+      `the conversion child was not signalled exactly once: ${JSON.stringify(killed)}`,
+    );
     assert.equal(
       response.status,
       "unavailable",
@@ -621,7 +661,6 @@ test("a child killed by the kernel while converting is answered unavailable, not
     assert.deepEqual(service.puts, [], "a conversion that was killed stored something");
     assert.equal(liveChildCount(), 0, "the killed child was not reaped");
   } finally {
-    clearInterval(killer);
     service.server.close();
   }
 });
