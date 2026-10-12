@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CHAT_SENT_INPUT_BUDGET_TOKENS } from "@/lib/chatModels";
 import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
+import { EMPTY_CHAT_TURN_FILE_CONTEXT } from "@/server/chatFiles/sessionContext";
 
 /**
  * Separate from `input.test.ts` because the logger has to be mocked before the
@@ -59,6 +60,7 @@ test("buildChatCompletionInput reports the bound it applied", async (t): Promise
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
   const renderedInput = JSON.stringify(items);
 

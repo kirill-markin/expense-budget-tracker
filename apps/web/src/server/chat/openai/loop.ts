@@ -11,9 +11,13 @@ import {
 } from "@/server/chat/openai/tooling/toolCalls";
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import { runChatFileDerivativesPass } from "@/server/chatFiles/derivatives";
+import { buildChatTurnFileContext } from "@/server/chatFiles/sessionContext";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
+  buildChatFileViewReplayItem,
   findLatestCompactionItemIndex,
+  listStoredChatFileViewCalls,
+  toPersistedOpenAIReplayItems,
   type ChatHistoryMeasurement,
   type StoredOpenAIReplayMessage,
   type ServerChatMessage,
@@ -33,6 +37,7 @@ import {
   type ModelCallResult,
 } from "@/server/chat/openai/responses/modelCall";
 import { runOneToolCall } from "@/server/chat/openai/tooling/toolExecutor";
+import type { ExecutedChatToolCall } from "@/server/chat/openai/tooling/tools";
 import {
   classifyOpenAITransientError,
   extractOpenAIErrorContext,
@@ -91,6 +96,7 @@ const sleepWithAbort = (
 type OpenAILoopDependencies = Readonly<{
   buildChatCompletionInput: typeof buildChatCompletionInput;
   runChatFileDerivativesPass: typeof runChatFileDerivativesPass;
+  buildChatTurnFileContext: typeof buildChatTurnFileContext;
   getObservedOpenAIClient: typeof getObservedOpenAIClient;
   runOneModelCall: typeof runOneModelCall;
   runOneToolCall: typeof runOneToolCall;
@@ -144,9 +150,30 @@ const toFunctionCallOutputInputItem = (
   output,
 });
 
+/**
+ * One executed tool call as the rest of this run sends it.
+ *
+ * A viewed file is the one result that is not text: it carries a native image or
+ * PDF page part, which this run sends as it is and persists as the reference
+ * inside it - see toPersistedOpenAIReplayItems at this function's return points.
+ */
+const buildToolOutputReplayItem = (
+  callId: string,
+  result: ExecutedChatToolCall,
+): StoredOpenAIReplayItem =>
+  result.fileView === undefined
+    ? toStoredOpenAIReplayItem(toFunctionCallOutputInputItem(callId, result.output))
+    : buildChatFileViewReplayItem(
+      callId,
+      result.fileView.text,
+      result.fileView.part,
+      result.fileView.reference,
+    );
+
 const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   buildChatCompletionInput,
   runChatFileDerivativesPass,
+  buildChatTurnFileContext,
   getObservedOpenAIClient,
   runOneModelCall,
   runOneToolCall,
@@ -431,7 +458,7 @@ const completeToolLimitSummaryTurn = async (
     }
     await emitEvent({ type: "done" });
     return {
-      openaiItems: continuationItems,
+      openaiItems: toPersistedOpenAIReplayItems(continuationItems),
       replayMeasurement,
     };
   }
@@ -455,7 +482,7 @@ const completeToolLimitSummaryTurn = async (
   // Attributing a six-figure input to a message that replays a few hundred
   // tokens would let the next window push straight past the answer the user
   // just read. The estimate sizes exactly what the message does replay.
-  return { openaiItems: continuationItems };
+  return { openaiItems: toPersistedOpenAIReplayItems(continuationItems) };
 };
 
 const runLoopWithDeps = async (
@@ -480,6 +507,20 @@ const runLoopWithDeps = async (
     isDemoMode: params.isDemoMode,
     signal: params.signal ?? null,
   });
+  // After the conversions, so the listing it builds names the derivatives this
+  // turn just created, and before the input, which carries both the listing and
+  // the bytes of the view_file results the stored history replays.
+  const fileContext = await dependencies.buildChatTurnFileContext(
+    {
+      requestId: params.requestId,
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      isDemoMode: params.isDemoMode,
+    },
+    listStoredChatFileViewCalls(params.localMessages),
+    params.signal ?? null,
+  );
   const {
     items: baseInput,
     replayedMessages: baseReplayedMessages,
@@ -489,6 +530,7 @@ const runLoopWithDeps = async (
     params.timezone,
     params.sessionId,
     params.requestId,
+    fileContext,
   );
   const continuationItems: Array<StoredOpenAIReplayItem> = [];
   const promptCacheKey = buildPromptCacheKey(params.sessionId);
@@ -523,7 +565,7 @@ const runLoopWithDeps = async (
     if (modelCall.functionCalls.length === 0) {
       await emitEvent({ type: "done" });
       return {
-        openaiItems: continuationItems,
+        openaiItems: toPersistedOpenAIReplayItems(continuationItems),
         replayMeasurement: buildReplayMeasurement(modelCall, replayedMessages),
       };
     }
@@ -560,9 +602,7 @@ const runLoopWithDeps = async (
       if (update.event !== null) {
         await emitEvent(update.event);
       }
-      continuationItems.push(toStoredOpenAIReplayItem(
-        toFunctionCallOutputInputItem(functionCall.call_id, output.output),
-      ));
+      continuationItems.push(buildToolOutputReplayItem(functionCall.call_id, output));
     }
 
     if (callIndex === CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS) {

@@ -194,6 +194,29 @@ const IMAGE_TOKENS = 2_000;
 const PDF_PAGE_IMAGE_TOKENS = 1_500;
 
 /**
+ * One `view_file` result the input rebuilds from its stored reference.
+ *
+ * An image is the `IMAGE_TOKENS` bound above. A PDF page is sent as a one-page
+ * PDF, which the provider turns into that page's image plus its extracted text,
+ * so it is charged that same `IMAGE_TOKENS` bound, rather than
+ * `PDF_PAGE_IMAGE_TOKENS`, plus 2,000 tokens of text, which is around 2,800
+ * characters at this module's own ratio.
+ *
+ * The one constant here that is not an upper bound, and deliberately: a dense
+ * page of 5,000 to 6,000 extracted characters runs nearer 5,500 real tokens, so
+ * such a page under-charges by about 1,500. CHAT_FILE_VIEW_REPLAYS_PER_TURN
+ * holds this to four results a turn, so the whole error is at most around 6,000
+ * tokens of a 120,000 token budget, and raising it would charge the ordinary
+ * page - which is most of them - for the dense one. Re-tune it only alongside
+ * that bound.
+ *
+ * Charged whether or not the part is really rebuilt for this input, per the
+ * invariant above: a reference that could not be read sends a short note
+ * instead, and over-charging that is the safe direction.
+ */
+const CHAT_FILE_VIEW_PDF_PAGE_TOKENS = 4_000;
+
+/**
  * The fixed instructions replay wraps around every PDF page - what the page is,
  * that the text and the image are two views of it, and that they are not two
  * transactions. Around 450 characters per page, so about 90 tokens.
@@ -457,7 +480,10 @@ const estimateReplayItemTokens = (
       return ITEM_ENVELOPE_TOKENS
         + estimateTextTokens(JSON.stringify(item.output))
         + estimateTextTokens(item.call_id)
-        + estimateTextTokens(item.status ?? "");
+        + estimateTextTokens(item.status ?? "")
+        + (item.chatFileView === undefined
+          ? 0
+          : (item.chatFileView.page === null ? IMAGE_TOKENS : CHAT_FILE_VIEW_PDF_PAGE_TOKENS));
     case "reasoning":
     case "compaction":
       // An encrypted payload is base64, which tokenizes far denser than text.
@@ -746,6 +772,11 @@ const selectChatHistoryWindowStart = (
  * extracted for them - the current turn's and the stored ones still in reach -
  * so a container is charged what it really replays rather than its cap.
  *
+ * `trailingSystemText` is a system item the input appends after the user turn,
+ * such as the file manifest. It is not part of the fixed reserve, because it is
+ * neither fixed nor the same between sessions, so it is charged here with the
+ * turn it is sent on.
+ *
  * Deterministic: identical stored history and identical turn input yield an
  * identical plan, which is what keeps the prompt-cache prefix still between
  * turns that changed nothing. Not pure - sizing reports an attachment it could
@@ -755,9 +786,13 @@ export const planChatHistoryReplay = (
   messages: ReadonlyArray<ServerChatMessage>,
   turnInput: ReadonlyArray<ContentPart>,
   extractedText?: ChatAttachmentExtractedText,
+  trailingSystemText?: string,
 ): ChatHistoryReplayPlan => {
   const sizing = measureChatHistory(messages, extractedText);
-  const turnInputTokens = estimateContentPartsTokens(turnInput, extractedText);
+  const turnInputTokens = estimateContentPartsTokens(turnInput, extractedText)
+    + (trailingSystemText === undefined
+      ? 0
+      : ITEM_ENVELOPE_TOKENS + estimateTextTokens(trailingSystemText));
   const unboundedSentInputTokens = computeSentInputTokens(sizing, turnInputTokens, 0);
   const compactionBoundary = findLatestChatCompactionBoundary(messages);
 

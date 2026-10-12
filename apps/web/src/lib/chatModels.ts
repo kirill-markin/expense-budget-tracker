@@ -43,21 +43,28 @@ export const CHAT_SENT_INPUT_BUDGET_TOKENS = 120_000;
  * estimates end to end and started dropping turns at around 83k real tokens,
  * barely above the compaction threshold this budget deliberately sits 40k above.
  *
- * Measured with `o200k_base` on the real prompt: instructions 1,045 + tool
- * schemas 989 + clock 44 = 2,078 tokens. The schema figure is the five catalog
- * tools at their measured 805 plus 184 for the rendered `bash` tool; the
- * instructions grew from 673 when the `## Files and the shell` section was
- * added for it, re-measured whole rather than estimated.
+ * Measured with `o200k_base` on the real prompt: instructions 1,169 + tool
+ * schemas 1,168 + clock 44 = 2,381 tokens. The schema figure is the rendered
+ * array whole, which is what a call sends. One tool at a time it is
+ * list_workspaces 75, get_schema 129, get_guide 239, sql_query 172,
+ * sql_execute 188, bash 184 and view_file 179 - 1,166 together, the two tokens
+ * between that and 1,168 being the array's own separators.
  *
- * 2,600 therefore leaves 522 tokens of headroom, and that number is the one to
+ * 2,600 therefore leaves 219 tokens of headroom, and that number is the one to
  * read before adding anything here: the prompt and the tool catalog have to fit
- * inside it. It is also what a session's own stored content has to pass before
- * its first measurement is usable - the reserve minus the real overhead - so a
- * session opened with "hi" is sized by estimate until a call of its own clears
- * that price, and the measurement that clears it then supersedes those
- * estimates. Raising the reserve to buy room is the mistake this whole comment
- * exists to prevent: every token added above the real overhead is added to that
- * price and delays the turn at which the session starts sizing itself.
+ * inside it, and both are now close enough to it that another tool means
+ * trimming the prompt rather than appending to it. It is also what a session's
+ * own stored content has to pass before its first measurement is usable - the
+ * reserve minus the real overhead - so a session opened with "hi" is sized by
+ * estimate until a call of its own clears that price, and the measurement that
+ * clears it then supersedes those estimates. Raising the reserve to buy room is
+ * the mistake this whole comment exists to prevent: every token added above the
+ * real overhead is added to that price and delays the turn at which the session
+ * starts sizing itself.
+ *
+ * What a turn sends about this session's own files is not in here: that listing
+ * is neither fixed nor the same between sessions, so `planChatHistoryReplay`
+ * charges it with the turn it is sent on.
  */
 export const CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS = 2_600;
 export const CHAT_MODEL_LABEL = "GPT-6.1 Sol" as const;

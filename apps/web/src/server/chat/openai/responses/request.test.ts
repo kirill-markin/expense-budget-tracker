@@ -146,3 +146,46 @@ test("buildOpenAIResponsesRequest keeps the whole history when the run never com
     { type: "function_call_output", call_id: "call-1", output: "{\"rows\":[]}" },
   ]);
 });
+
+test("buildOpenAIResponsesRequest sends no view_file reference to the provider", (): void => {
+  // `chatFileView` is the one field of a stored item that is this app's own: a
+  // file id, a path and a digest of the user's file, kept so a later turn can
+  // read the bytes again. The provider has no use for it, so it must not be in
+  // the request body - on either branch, and with the native part it stands for
+  // still there.
+  const part: OpenAI.Responses.ResponseInputImageContent = {
+    type: "input_image",
+    detail: "auto",
+    image_url: "data:image/png;base64,aaaa",
+  };
+  const viewOutput: StoredOpenAIReplayItem = {
+    type: "function_call_output",
+    call_id: "call-1",
+    output: [{ type: "input_text", text: '"/files/receipt.png", image/png, 2 bytes.' }, part],
+    chatFileView: {
+      fileId: "11111111-1111-4111-8111-111111111111",
+      path: "/files/receipt.png",
+      sha256: "a".repeat(64),
+      page: null,
+    },
+  };
+  const call: StoredOpenAIReplayItem = {
+    type: "function_call",
+    call_id: "call-1",
+    name: "view_file",
+    arguments: "{}",
+  };
+  const compaction: StoredOpenAIReplayItem = {
+    type: "compaction",
+    id: "compaction-1",
+    encrypted_content: "opaque-summary",
+  };
+
+  for (const continuationItems of [[call, viewOutput], [compaction, call, viewOutput]]) {
+    const request = buildTestRequest(continuationItems);
+    const body = JSON.stringify(request.input);
+    assert.ok(!body.includes("chatFileView"), body);
+    assert.ok(!body.includes("a".repeat(64)), body);
+    assert.ok(body.includes("data:image/png;base64,aaaa"), body);
+  }
+});

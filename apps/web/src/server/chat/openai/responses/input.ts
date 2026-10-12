@@ -23,9 +23,11 @@ import { planChatHistoryReplay } from "@/server/chat/openai/responses/history";
 import {
   normalizeStoredOpenAIReplayItems,
   replayItemsFromCompaction,
-  toOpenAIResponseInputItem,
+  toReplayedOpenAIResponseInputItem,
+  type ChatFileViewPartsByCallId,
   type ServerChatMessage,
 } from "@/server/chat/openai/responses/replayItems";
+import type { ChatTurnFileContext } from "@/server/chatFiles/sessionContext";
 import {
   ChatAttachmentTooLargeError,
   HeicFileAttachmentError,
@@ -832,6 +834,7 @@ const validateReplayAttachments = (
 const buildAssistantHistoryItems = (
   message: ServerChatMessage,
   compactionItemIndex: number | null,
+  viewParts: ChatFileViewPartsByCallId,
 ): ReadonlyArray<OpenAIInputItem> => {
   if (message.openaiItems !== undefined) {
     const replayedItems = compactionItemIndex === null
@@ -867,7 +870,9 @@ const buildAssistantHistoryItems = (
       ? items.filter((item) => item.type !== "compaction")
       : items;
 
-    return replayableItems.map(toOpenAIResponseInputItem);
+    return replayableItems.map(
+      (item) => toReplayedOpenAIResponseInputItem(item, viewParts),
+    );
   }
 
   return [];
@@ -925,6 +930,7 @@ export const buildChatCompletionInput = async (
   timezone: string,
   sessionId: string,
   requestId: string,
+  fileContext: ChatTurnFileContext,
 ): Promise<ChatCompletionInput> => {
   /**
    * Rebuild the app-owned session history for manual Responses API context
@@ -947,7 +953,12 @@ export const buildChatCompletionInput = async (
     sessionId,
     requestId,
   );
-  const plan = planChatHistoryReplay(normalizedHistory, turnInput, attachmentText);
+  const plan = planChatHistoryReplay(
+    normalizedHistory,
+    turnInput,
+    attachmentText,
+    fileContext.manifest ?? undefined,
+  );
   const replayedHistory = normalizedHistory.slice(plan.startIndex);
   validateReplayAttachments(replayedHistory, turnInput, plan.startIndex);
 
@@ -962,6 +973,7 @@ export const buildChatCompletionInput = async (
       input.push(...buildAssistantHistoryItems(
         message,
         offset === 0 ? plan.compactionItemIndex : null,
+        fileContext.viewParts,
       ));
       continue;
     }
@@ -973,6 +985,20 @@ export const buildChatCompletionInput = async (
   }
 
   input.push(await buildUserInputMessage(turnInput, attachmentText));
+
+  // What the session's files are now, which the instructions cannot carry: they
+  // are the cached prefix and this changes as the user uploads and the model
+  // writes. Behind the user's message, so the model reads the request first, and
+  // ahead of the clock, which stays the last item. An in-run compaction cut
+  // drops it along with the rest, and that is correct: the compaction item it
+  // produced already stands for this listing.
+  if (fileContext.manifest !== null) {
+    input.push({
+      role: "system",
+      type: "message",
+      content: fileContext.manifest,
+    });
+  }
 
   // The clock is the only part of the prompt that moves between turns, so it is
   // the last input item. OpenAI matches the cache on the longest byte-identical

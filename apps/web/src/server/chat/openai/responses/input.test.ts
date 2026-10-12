@@ -16,6 +16,11 @@ import type {
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
 import type { ContentPart } from "@/server/chat/types";
+import { EMPTY_CHAT_TURN_FILE_CONTEXT } from "@/server/chatFiles/sessionContext";
+import {
+  buildChatFileViewReplayItem,
+  toPersistedOpenAIReplayItems,
+} from "@/server/chat/openai/responses/replayItems";
 
 const HEIC_BASE64_PREFIX = "AAAAGGZ0eXBoZWljAAAAAA==";
 const JPEG_BASE64_PREFIX = "/9j/4AAQSkZJRg==";
@@ -39,7 +44,7 @@ test("buildChatCompletionInput rejects a legacy HEIC attachment without mutating
   const originalTurnInput = structuredClone(turnInput);
 
   await assert.rejects(
-    buildChatCompletionInput(localMessages, turnInput, "Europe/Madrid", "session-1", "req-1"),
+    buildChatCompletionInput(localMessages, turnInput, "Europe/Madrid", "session-1", "req-1", EMPTY_CHAT_TURN_FILE_CONTEXT),
     (error: unknown): boolean => {
       assert.ok(error instanceof UnsupportedStoredChatAttachmentError);
       assert.equal(error.fileName, "IMG_7071.HEIC");
@@ -71,6 +76,7 @@ test("buildChatCompletionInput replays a prepared JPEG as a native input image",
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   assert.deepEqual(input[1], {
@@ -101,6 +107,7 @@ test("buildChatCompletionInput replays CSV content identified by MIME without a 
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   assert.deepEqual(input[1], {
@@ -125,6 +132,7 @@ test("buildChatCompletionInput sends current CSV content identified by uppercase
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   assert.deepEqual(input[1], {
@@ -149,6 +157,7 @@ test("buildChatCompletionInput keeps current-turn attachment validation distinct
       "Europe/Madrid",
       "session-1",
       "req-1",
+      EMPTY_CHAT_TURN_FILE_CONTEXT,
     ),
     UnsupportedImageMediaTypeError,
   );
@@ -173,6 +182,7 @@ test("buildChatCompletionInput expands logical PDF pages into ordered text and J
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   assert.equal(input.length, 4);
@@ -245,6 +255,7 @@ test("buildChatCompletionInput removes a JSONB-reordered copy of the current log
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   assert.equal(input.length, 3);
@@ -323,6 +334,7 @@ test("buildChatCompletionInput rejects a stored legacy PDF before OpenAI mapping
         "Europe/Madrid",
         "session-1",
         "req-1",
+        EMPTY_CHAT_TURN_FILE_CONTEXT,
       ),
       (error: unknown): boolean => {
         assert.ok(error instanceof UnsupportedStoredChatAttachmentError);
@@ -384,6 +396,7 @@ test("buildChatCompletionInput replays a stored session from its newest compacti
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   // The turns ahead of the compaction item are inside its summary, while the
@@ -463,6 +476,7 @@ test("buildChatCompletionInput trims the oldest turns of a session that outgrew 
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   // Instructions, then a replayed user turn: an assistant turn whose question
@@ -507,6 +521,7 @@ test("buildChatCompletionInput keeps replaying history when a small workbook is 
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   // The session is still replayed around the attachment rather than erased, and
@@ -553,6 +568,7 @@ test("buildChatCompletionInput keeps replaying history around a small stored wor
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
   const withWorkbook = await buildChatCompletionInput(
     [...createLongStoredSession(19, null), ...storedWorkbookTurn],
@@ -560,6 +576,7 @@ test("buildChatCompletionInput keeps replaying history around a small stored wor
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   // One stored spreadsheet must not cost the session its history.
@@ -607,6 +624,7 @@ test("buildChatCompletionInput keeps the newest turn and drops a compaction item
     "Europe/Madrid",
     "session-1",
     "req-1",
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
   // The newest question and its answer are kept rather than the session being
@@ -647,4 +665,79 @@ test("PDF telemetry carries only the source digest and derived page summaries", 
     },
   }]);
   assert.equal(JSON.stringify(sanitized).includes(JPEG_BASE64_PREFIX), false);
+});
+
+test("buildChatCompletionInput sends the file listing behind the turn and keeps the clock last", async (): Promise<void> => {
+  const manifest = 'Files of this chat:\n"/files/receipt.png" 70';
+  const { items } = await buildChatCompletionInput(
+    [],
+    [{ type: "text", text: "What did I pay?" }],
+    "Europe/Madrid",
+    "session-1",
+    "req-1",
+    { manifest, viewParts: new Map() },
+  );
+
+  const clock = items.at(-1);
+  const listing = items.at(-2);
+  assert.ok(clock !== undefined && "content" in clock && typeof clock.content === "string");
+  assert.match(clock.content, /^Current datetime/u);
+  assert.ok(listing !== undefined && "content" in listing);
+  assert.equal(listing.content, manifest);
+  assert.equal("role" in listing ? listing.role : null, "system");
+});
+
+test("buildChatCompletionInput replays a stored view_file result as a native image part", async (): Promise<void> => {
+  const imagePart = {
+    type: "input_image",
+    detail: "auto",
+    image_url: "data:image/png;base64,iVBORw0KGgo",
+  } as const;
+  const viewedItem = buildChatFileViewReplayItem(
+    "call-view-1",
+    '"/files/receipt.png", image/png, 70 bytes. The image follows this line.',
+    imagePart,
+    {
+      fileId: "file-1",
+      path: "/files/receipt.png",
+      sha256: "a".repeat(64),
+      page: null,
+    },
+  );
+  const localMessages: ReadonlyArray<ServerChatMessage> = [
+    { role: "user", content: [{ type: "text", text: "Look at the receipt" }] },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "It is 12 EUR" }],
+      openaiItems: toPersistedOpenAIReplayItems([
+        {
+          type: "function_call",
+          call_id: "call-view-1",
+          name: "view_file",
+          arguments: '{"path":"/files/receipt.png","page":null}',
+        },
+        viewedItem,
+      ]),
+    },
+  ];
+
+  const { items } = await buildChatCompletionInput(
+    localMessages,
+    [{ type: "text", text: "And the total?" }],
+    "Europe/Madrid",
+    "session-1",
+    "req-1",
+    { manifest: null, viewParts: new Map([["call-view-1", imagePart]]) },
+  );
+
+  const replayed = items.find((item) => item.type === "function_call_output");
+  assert.ok(replayed !== undefined);
+  const output = "output" in replayed ? replayed.output : null;
+  assert.ok(Array.isArray(output));
+  assert.deepEqual(output.at(-1), imagePart);
+  // Stored as a reference, so the row the replay came from holds no bytes.
+  assert.equal(
+    JSON.stringify(localMessages[1]?.openaiItems).includes("base64"),
+    false,
+  );
 });
