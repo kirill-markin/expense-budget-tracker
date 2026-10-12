@@ -11,6 +11,7 @@ import {
 } from "@/server/chat/openai/tooling/toolCalls";
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import { runChatFileDerivativesPass } from "@/server/chatFiles/derivatives";
+import { ingestInlineChatAttachments } from "@/server/chatFiles/ingest";
 import { buildChatTurnFileContext } from "@/server/chatFiles/sessionContext";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
@@ -95,6 +96,7 @@ const sleepWithAbort = (
 
 type OpenAILoopDependencies = Readonly<{
   buildChatCompletionInput: typeof buildChatCompletionInput;
+  ingestInlineChatAttachments: typeof ingestInlineChatAttachments;
   runChatFileDerivativesPass: typeof runChatFileDerivativesPass;
   buildChatTurnFileContext: typeof buildChatTurnFileContext;
   getObservedOpenAIClient: typeof getObservedOpenAIClient;
@@ -172,6 +174,7 @@ const buildToolOutputReplayItem = (
 
 const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   buildChatCompletionInput,
+  ingestInlineChatAttachments,
   runChatFileDerivativesPass,
   buildChatTurnFileContext,
   getObservedOpenAIClient,
@@ -491,6 +494,20 @@ const runLoopWithDeps = async (
   dependencies: OpenAILoopDependencies,
 ): Promise<OpenAILoopCompletion> => {
   const client = dependencies.getObservedOpenAIClient();
+  // Before the conversions, because the files this turn arrived with are among
+  // the ones they convert. Both routes reach the loop and only the loop, and a
+  // turn reaches it once, so this is also the one place an attachment is stored
+  // exactly as often as it was sent.
+  await dependencies.ingestInlineChatAttachments(
+    {
+      requestId: params.requestId,
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      isDemoMode: params.isDemoMode,
+    },
+    params.turnInput,
+  );
   // Before the history is built, because the derivatives are files of this
   // session and the history describes what the session holds. A session with
   // nothing waiting costs one indexed read and no invocation at all.

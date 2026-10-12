@@ -497,6 +497,49 @@ type ChatFileContextEvent = Readonly<{
 }>;
 
 /**
+ * What one turn's inline attachments became.
+ *
+ * `inlineCount` minus `storedCount` is the attachments of that turn the sandbox
+ * cannot reach, so a session where the two stay apart is one whose uploads the
+ * model can only read through the prompt. `declinedCount` is the files refused
+ * for a reason of their own, each of which also records that reason; `stopped`
+ * marks a turn a deployment fault ended, whose own record is in the `error`
+ * family beside this one.
+ */
+type ChatFileIngestEvent = Readonly<{
+  domain: "chat";
+  action: "file_ingest";
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  inlineCount: number;
+  storedCount: number;
+  declinedCount: number;
+  stopped: boolean;
+}>;
+
+/**
+ * One inline attachment stored as no file of the session, and why.
+ *
+ * Every reason here is a fact about the attachment or about what the session
+ * already holds, never a fault of this deployment: a media type no stored name
+ * accepts, a name that keeps no usable character, a /files the next file would
+ * not fit in, or a name whose duplicate suffixes are spent.
+ */
+type ChatFileIngestDeclinedEvent = Readonly<{
+  domain: "chat";
+  action: "file_ingest_declined";
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  mediaType: string;
+  sizeBytes: number;
+  reason: string;
+}>;
+
+/**
  * A sandbox invocation that was retried. Throttling and transport failures are
  * the only retried classes, so this records a capacity or network event rather
  * than a fault of the request, and the call may still have succeeded.
@@ -599,6 +642,8 @@ type LogEvent =
   | ChatSandboxRetryEvent
   | ChatFileDerivativesEvent
   | ChatFileContextEvent
+  | ChatFileIngestEvent
+  | ChatFileIngestDeclinedEvent
   | ApiEvent
   | SqlApiEvent
   | AuthEvent

@@ -143,10 +143,42 @@ export const isAcceptedChatFileMediaType = (
   mediaType: string,
 ): boolean => getAcceptedChatFileMediaTypes(fileName).includes(mediaType);
 
+/**
+ * Extension a media type may be stored under, or null for a type no extension
+ * accepts.
+ *
+ * The inverse of the table above, for the one attachment that declares a type
+ * and no name at all: an inline image part. Read from the same table rather
+ * than from a second list of its own, so a type accepted for an extension and
+ * the extension chosen for that type can never disagree.
+ */
+export const getChatFileExtensionForMediaType = (
+  mediaType: string,
+): string | null => {
+  const normalizedMediaType = mediaType.trim().toLowerCase();
+  for (const [extension, mediaTypes] of ACCEPTED_MEDIA_TYPES_BY_EXTENSION) {
+    if (mediaTypes.includes(normalizedMediaType)) {
+      return extension;
+    }
+  }
+
+  return null;
+};
+
 export const sanitizeChatFileName = (fileName: string): string => {
   const { stem, extension } = splitSanitizedChatFileName(fileName);
   return `${stem}${extension}`;
 };
+
+/**
+ * Duplicate indexes one declared name may take inside a session, which bounds
+ * the search every writer of a row does for a free path.
+ *
+ * Sanitization folds distinct declared names onto the same sandbox name, so a
+ * session can legitimately need a few suffixes. Exhausting them is a caller
+ * outcome rather than an operator-facing failure.
+ */
+export const CHAT_FILE_MAXIMUM_PATH_DUPLICATES = 100;
 
 /**
  * Sandbox path of a declared file name. A duplicate index above 1 appends the

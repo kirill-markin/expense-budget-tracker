@@ -17,6 +17,7 @@ import {
 } from "@/server/chat/openai/loop";
 import type { ChatCompletionInput } from "@/server/chat/openai/responses/input";
 import type { ChatFileDerivativesPassOutcome } from "@/server/chatFiles/derivatives";
+import type { ChatFileIngestOutcome } from "@/server/chatFiles/ingest";
 import {
   EMPTY_CHAT_TURN_FILE_CONTEXT,
   type ChatTurnFileContext,
@@ -55,6 +56,12 @@ const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
   buildChatCompletionInput: async (): Promise<ChatCompletionInput> => ({
     items: [],
     replayedMessages: 0,
+  }),
+  ingestInlineChatAttachments: async (): Promise<ChatFileIngestOutcome> => ({
+    inlineCount: 0,
+    storedCount: 0,
+    declinedCount: 0,
+    stopped: false,
   }),
   runChatFileDerivativesPass: async (): Promise<ChatFileDerivativesPassOutcome> => ({
     preparedCount: 0,
