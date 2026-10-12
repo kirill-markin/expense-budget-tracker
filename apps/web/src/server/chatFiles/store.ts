@@ -526,7 +526,13 @@ export const markChatFileDerivativesFailed = async (
     return mapOptionalChatFileRow(result.rows[0] as ChatFileRow | undefined);
   });
 
-export const deleteChatFile = async (
+/**
+ * The row alone, which is half of removing a file: the object it named is
+ * reclaimed by chatFiles/deleteFile.ts, this statement's only caller. The
+ * removed row is returned because its object_key is the last place that key is
+ * named, so the reclaim has nothing to look it up from afterwards.
+ */
+export const deleteChatFileRow = async (
   userId: string,
   workspaceId: string,
   sessionId: string,
