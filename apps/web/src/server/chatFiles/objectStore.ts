@@ -449,3 +449,31 @@ export const getChatFilesObjectStoreIfConfigured = (): ChatFilesObjectStore | nu
 
   return getChatFilesObjectStore();
 };
+
+/**
+ * How many days a stored chat file object lives, or null when nothing expires
+ * one.
+ *
+ * Set by the AWS stack from the very number its bucket's lifecycle rule uses
+ * (CHAT_FILES_EXPIRATION_DAYS in infra/aws/lib/chat-files-bucket.ts), because
+ * only the deployment knows it: nothing in the API tells a client when an
+ * object will be deleted. Absent rather than defaulted, deliberately - a
+ * self-hosted bucket reached through CHAT_FILES_S3_ENDPOINT has no lifecycle
+ * rule and loses no object, so a default would make every caller claim an
+ * expiry that never happens there.
+ */
+export const readChatFilesObjectLifetimeDays = (): number | null => {
+  const value = readOptionalEnvValue("CHAT_FILES_EXPIRATION_DAYS");
+  if (value === null) {
+    return null;
+  }
+
+  const days = Number(value);
+  if (!Number.isInteger(days) || days <= 0) {
+    throw new Error(
+      `CHAT_FILES_EXPIRATION_DAYS must be a whole number of days above zero, got "${value}"`,
+    );
+  }
+
+  return days;
+};

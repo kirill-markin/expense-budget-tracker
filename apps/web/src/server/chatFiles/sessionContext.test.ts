@@ -77,6 +77,15 @@ const UNCONVERTIBLE_PDF = createChatFile({
   derivativesError: UNCONVERTIBLE_REASON,
 });
 
+const EXPIRED_REASON =
+  '"/files/old.pdf" cannot be converted: its stored copy expired - this deployment keeps an uploaded file for 90 days and this one was attached 94 days ago. Attach the file to this chat again to work with it.';
+
+const EXPIRED_PDF = createChatFile({
+  fileId: "file-7",
+  path: "/files/old.pdf",
+  derivativesError: EXPIRED_REASON,
+});
+
 const RECEIPT = createChatFile({
   fileId: "file-4",
   path: "/files/receipt.jpg",
@@ -135,10 +144,12 @@ test("a session with no files adds nothing to the prompt", (): void => {
   );
 });
 
-test("a PDF with no text copy is still told it can be looked at a page at a time", (): void => {
-  // The one remedy that holds in every "no text copy" state and is knowable
-  // here: a conversion that failed says nothing about whether the sandbox can
-  // copy out a page. A media-type fact, so only a PDF gets it.
+test("a PDF with no text copy is told it can be looked at a page at a time, unless its stored copy is gone", (): void => {
+  // The remedy holds for a conversion that failed on the file's own bytes or on
+  // its path, which says nothing about whether the sandbox can copy out a page.
+  // A media-type fact, so only a PDF gets it - and not the one verdict that is
+  // about the stored object, because view_file presigns that same object to copy
+  // a page out of it, so the only answer it could give there is a failure.
   const pdf = buildChatFileManifest([UNCONVERTIBLE_PDF], true) ?? "";
   const workbook = buildChatFileManifest([
     createChatFile({
@@ -148,9 +159,14 @@ test("a PDF with no text copy is still told it can be looked at a page at a time
       derivativesError: "the workbook could not be opened",
     }),
   ], true) ?? "";
+  const expired = buildChatFileManifest([EXPIRED_PDF], true) ?? "";
 
   assert.match(pdf, /no text copy: .+, and view_file still shows one page of it at a time$/u);
   assert.doesNotMatch(workbook, /view_file/u);
+  assert.equal(expired, [
+    'Files of this chat, as "path" bytes, then what else exists for that file:',
+    `"/files/old.pdf" 182304 -> no text copy: ${EXPIRED_REASON}`,
+  ].join("\n"));
 });
 
 test("a deployment with no sandbox never promises a text copy it cannot make", (): void => {

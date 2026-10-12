@@ -24,6 +24,7 @@ import { PDF_MEDIA_TYPE } from "@/lib/chatPdf";
 import { readChatSandboxFunctionName } from "@/server/chat/sandbox/invoke";
 import {
   CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN,
+  mentionsExpiredChatFileObject,
 } from "@/server/chatFiles/derivatives";
 import {
   listSessionChatFiles,
@@ -167,15 +168,21 @@ const describeDerivatives = (
 /**
  * What is still true of a PDF with no text copy.
  *
- * The only remedy that holds in every one of those states, and the only one this
- * function can know: a conversion that failed says nothing about whether the
- * sandbox can copy out a page, which is a different operation on the same file.
- * A fact about the media type rather than about the cause, so it is additive -
- * the reason beside it carries its own remedy, and that wording is the
- * derivative pass's to get right.
+ * The remedy that holds in nearly every one of those states, and the only one
+ * this function can know: a conversion that failed on the file's own bytes or on
+ * its path says nothing about whether the sandbox can copy out a page, which is
+ * a different operation on the same file. A fact about the media type rather
+ * than about the cause, so it is additive - the reason beside it carries its own
+ * remedy, and that wording is the derivative pass's to get right.
+ *
+ * The exception is the one verdict that is about the stored object instead:
+ * `view_file` presigns that very object to copy a page out of it, so offering a
+ * page for an upload whose copy has expired would spend a sandbox invocation on
+ * a read that cannot answer, and let the model tell the user the file is still
+ * viewable rather than ask for it again.
  */
 const describeViewFileRemedy = (file: ChatFile): string =>
-  file.mediaType === PDF_MEDIA_TYPE
+  file.mediaType === PDF_MEDIA_TYPE && !mentionsExpiredChatFileObject(file.derivativesError)
     ? ", and view_file still shows one page of it at a time"
     : "";
 
