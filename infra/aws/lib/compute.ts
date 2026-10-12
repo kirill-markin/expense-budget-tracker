@@ -8,7 +8,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 import * as path from "path";
-import { CHAT_FILES_OBJECT_PREFIX } from "./chat-files-bucket";
+import { CHAT_FILES_EXPIRATION_DAYS, CHAT_FILES_OBJECT_PREFIX } from "./chat-files-bucket";
 import { CHAT_SANDBOX_FUNCTION_NAME } from "./chat-sandbox";
 
 export interface ComputeProps {
@@ -194,6 +194,10 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_USER: "app",
       CHAT_FILES_BUCKET: props.chatFilesBucket.bucketName,
       CHAT_FILES_S3_REGION: cdk.Aws.REGION,
+      // The bucket's own lifecycle rule, so the app can give an upload whose
+      // object has already expired a permanent verdict instead of retrying a
+      // read that can never succeed again.
+      CHAT_FILES_EXPIRATION_DAYS: String(CHAT_FILES_EXPIRATION_DAYS),
       // CHAT_FILES_S3_ENDPOINT stays unset on AWS: it exists so a self-hosted
       // deployment can point the same code at an S3-compatible service, which
       // is also the only place path-style addressing is needed.

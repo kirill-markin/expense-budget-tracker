@@ -29,6 +29,14 @@ const DERIVATIVE_SHA256 = "b".repeat(64);
 
 const FUNCTION_NAME = "chat-sandbox";
 
+/** A deployment whose bucket deletes a stored object this many days after it. */
+const OBJECT_LIFETIME_DAYS = 90;
+
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
+/** A row created this many days ago, as the store reads created_at. */
+const createdDaysAgo = (days: number): number => Date.now() - days * DAY_MS;
+
 const context: ChatFileDerivativesContext = {
   requestId: "req-1",
   userId: "user-1",
@@ -124,6 +132,9 @@ const createFixture = (
 
   const dependencies: ChatFileDerivativesDependencies = {
     readFunctionName: (): string | null => FUNCTION_NAME,
+    // Unset by default, which is a deployment that expires no object: no test
+    // below is given an age verdict unless it asks for a lifetime.
+    readObjectLifetimeDays: (): number | null => null,
     listSessionChatFiles: async (): Promise<ReadonlyArray<ChatFile>> => sessionFiles,
     sumSessionFilesMountBytes: async (
       userId: string,
@@ -208,6 +219,12 @@ const createFixture = (
 const neverAnswers: PrepareAnswer = (): never => {
   throw new Error("prepare was invoked but this test expected no invocation");
 };
+
+const unavailableAnswer: PrepareAnswer = (): unknown => ({
+  status: "unavailable",
+  error: '"/files/report.pdf" could not be prepared now: "the object store refused the read"',
+  durationMs: 9,
+});
 
 test("a deployment with no sandbox reads no chat file row at all", async (): Promise<void> => {
   const { dependencies, recorded } = createFixture([createChatFile({})], neverAnswers, {
@@ -364,6 +381,131 @@ test("an unavailable source keeps both of its verdict fields empty and does not 
     recorded.invocations.map((invocation) => invocation.source.path),
     [first.path, second.path],
   );
+});
+
+test("a source past the deployment's object lifetime is refused once and spends no invocation", async (): Promise<void> => {
+  // Oldest first, which is the order listSessionChatFiles returns and the
+  // reason this matters: the expired row is reached before the fresh upload on
+  // every turn, and a read of its deleted object answers `unavailable`, which
+  // records nothing - so without this verdict it would spend one of the turn's
+  // two invocations forever and the document uploaded today would wait behind
+  // it. Two days past the lifetime, so it is past the day of grace as well.
+  const expired = createChatFile({
+    fileId: "aaaaaaaa-0000-4000-8000-000000000001",
+    path: "/files/old.pdf",
+    createdAt: createdDaysAgo(OBJECT_LIFETIME_DAYS + 2),
+  });
+  const fresh = createChatFile({
+    fileId: "aaaaaaaa-0000-4000-8000-000000000002",
+    path: "/files/new.pdf",
+    createdAt: createdDaysAgo(0),
+  });
+  const { dependencies, recorded } = createFixture(
+    [expired, fresh],
+    prepareOneTextDerivative(512),
+    { readObjectLifetimeDays: (): number | null => OBJECT_LIFETIME_DAYS },
+  );
+
+  assert.deepEqual(
+    await runChatFileDerivativesPassWithDependencies(context, dependencies),
+    {
+      preparedCount: 1,
+      derivedCount: 1,
+      failedCount: 1,
+      unavailableCount: 0,
+      deferredCount: 0,
+      stopReason: null,
+    },
+  );
+  // The expired row is never sent anywhere, and the turn's conversion goes to
+  // the upload that still has an object.
+  assert.deepEqual(
+    recorded.invocations.map((invocation) => invocation.source.path),
+    [fresh.path],
+  );
+  assert.deepEqual(recorded.prepared, [fresh.fileId]);
+  assert.equal(recorded.failed.length, 1);
+  assert.equal(recorded.failed[0].fileId, expired.fileId);
+  assert.match(recorded.failed[0].reason, /its stored copy expired/u);
+  assert.match(recorded.failed[0].reason, /Attach the file to this chat again/u);
+});
+
+test("a source at the object lifetime plus its day of grace keeps being attempted", async (): Promise<void> => {
+  // The bound's strictness and its grace day together, which nothing else pins.
+  // An age of exactly `lifetime + 1` whole days - the extra second only keeps
+  // the floor off the day above - is the last age that gets no verdict: the
+  // bucket rounds an object's expiration date up to the next midnight UTC and
+  // removes it asynchronously after that, so the bytes can still be there, and
+  // this verdict is permanent.
+  const source = createChatFile({
+    createdAt: createdDaysAgo(OBJECT_LIFETIME_DAYS + 1) - 1_000,
+  });
+  const { dependencies, recorded } = createFixture(
+    [source],
+    unavailableAnswer,
+    { readObjectLifetimeDays: (): number | null => OBJECT_LIFETIME_DAYS },
+  );
+
+  assert.deepEqual(
+    await runChatFileDerivativesPassWithDependencies(context, dependencies),
+    {
+      preparedCount: 0,
+      derivedCount: 0,
+      failedCount: 0,
+      unavailableCount: 1,
+      deferredCount: 0,
+      stopReason: null,
+    },
+  );
+  assert.equal(recorded.invocations.length, 1);
+  assert.deepEqual(recorded.failed, []);
+});
+
+test("a source inside the object lifetime still records nothing for a storage outage", async (): Promise<void> => {
+  const source = createChatFile({ createdAt: createdDaysAgo(OBJECT_LIFETIME_DAYS - 1) });
+  const { dependencies, recorded } = createFixture(
+    [source],
+    unavailableAnswer,
+    { readObjectLifetimeDays: (): number | null => OBJECT_LIFETIME_DAYS },
+  );
+
+  assert.deepEqual(
+    await runChatFileDerivativesPassWithDependencies(context, dependencies),
+    {
+      preparedCount: 0,
+      derivedCount: 0,
+      failedCount: 0,
+      unavailableCount: 1,
+      deferredCount: 0,
+      stopReason: null,
+    },
+  );
+  // Its object is still there, so the refused read is an outage and the row
+  // keeps both verdict fields empty for a later turn to attempt again.
+  assert.equal(recorded.invocations.length, 1);
+  assert.deepEqual(recorded.failed, []);
+});
+
+test("a deployment that expires no object gives no age verdict at any age", async (): Promise<void> => {
+  // A self-hosted bucket reached through CHAT_FILES_S3_ENDPOINT has no
+  // lifecycle rule, so this object exists however old its row is and calling it
+  // expired would be false.
+  const source = createChatFile({ createdAt: createdDaysAgo(OBJECT_LIFETIME_DAYS * 10) });
+  const { dependencies, recorded } = createFixture([source], unavailableAnswer, {});
+
+  assert.deepEqual(
+    await runChatFileDerivativesPassWithDependencies(context, dependencies),
+    {
+      preparedCount: 0,
+      derivedCount: 0,
+      failedCount: 0,
+      unavailableCount: 1,
+      deferredCount: 0,
+      stopReason: null,
+    },
+  );
+  assert.equal(recorded.invocations.length, 1);
+  assert.deepEqual(recorded.failed, []);
 });
 
 test("a session near the mount ceiling is refused before any invocation, counting an upload in flight", async (): Promise<void> => {

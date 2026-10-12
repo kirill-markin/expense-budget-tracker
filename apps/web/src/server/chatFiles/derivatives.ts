@@ -32,7 +32,10 @@ import {
   type SandboxSlotMinting,
   type SandboxWriteSlot,
 } from "@/server/chat/sandbox/invoke";
-import { getChatFilesObjectStore } from "@/server/chatFiles/objectStore";
+import {
+  getChatFilesObjectStore,
+  readChatFilesObjectLifetimeDays,
+} from "@/server/chatFiles/objectStore";
 import {
   deleteChatFile,
   insertChatFile,
@@ -158,6 +161,7 @@ export type ChatFileDerivativesDependencies = Readonly<
     markChatFileDerivativesPrepared: typeof markChatFileDerivativesPrepared;
     markChatFileDerivativesFailed: typeof markChatFileDerivativesFailed;
     readFunctionName: () => string | null;
+    readObjectLifetimeDays: () => number | null;
   }
 >;
 
@@ -288,17 +292,78 @@ const isPreparableSource = (file: ChatFile): boolean =>
   && file.derivativesError === null
   && classifyChatSandboxSourceKind(file.mediaType, file.path) !== null;
 
+/** Milliseconds in a day, for reading a stored object's age in whole days. */
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
+/**
+ * The sentence that opens the one verdict here about the stored object rather
+ * than about the file.
+ *
+ * Exported as a test rather than kept private, because that verdict is the only
+ * one that changes what another surface may still offer for the same file:
+ * `view_file`'s PDF page presigns the very object this sentence says is gone, so
+ * the manifest has to be able to tell this verdict from every other. Matched on
+ * the sentence the verdict below writes, so the two cannot drift, and a path
+ * that happened to contain it would only cost its own line that one clause.
+ */
+const EXPIRED_OBJECT_CLAUSE = "its stored copy expired";
+
+export const mentionsExpiredChatFileObject = (
+  derivativesError: string | null,
+): boolean => derivativesError !== null && derivativesError.includes(EXPIRED_OBJECT_CLAUSE);
+
 /**
  * Why this source cannot be sent at all, or null when it can.
  *
  * Checked here rather than left to the prepare request schema, for the reason
  * the `bash` caller checks its own file set: a schema rejection arrives as a
  * Lambda FunctionError, which is an operator-shaped failure carrying no verdict
- * and no answer. Both bounds are facts about the stored row, so a row that
- * fails them fails every later attempt too.
+ * and no answer. Every bound here is a fact about the stored row, so a row that
+ * fails one of them fails every later attempt too.
+ *
+ * The age bound is the one that is about the object rather than the row.
+ * `objectLifetimeDays` is how long this deployment keeps a stored chat file, so
+ * a source older than that, by more than the day of grace below, has no object
+ * left to read: the conversion would be answered `unavailable`, which records
+ * nothing by design, and the row would stay pending and spend one of the turn's
+ * CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN invocations on every later turn of this
+ * chat - pending sources are tried oldest first, so two such rows starve the
+ * budget and a document uploaded today is never converted at all. Refusing it
+ * here gives it the permanent verdict its answer never will, and an age only
+ * grows, so no later turn disagrees. A source inside the lifetime, or inside
+ * that grace, is untouched: its `unavailable` is a storage outage and must still
+ * record nothing.
+ *
+ * Null means this deployment expires no object - a self-hosted bucket reached
+ * through CHAT_FILES_S3_ENDPOINT has no lifecycle rule - and then there is no
+ * age at which the stored copy is gone, so no age verdict may be given at all.
  */
-const describeUnpreparableSource = (file: ChatFile): string | null =>
-  describeUnsaveablePath(file.path) ?? describeUnsaveableFileBytes(file.sizeBytes);
+const describeUnpreparableSource = (
+  file: ChatFile,
+  objectLifetimeDays: number | null,
+): string | null => {
+  const unstorable = describeUnsaveablePath(file.path)
+    ?? describeUnsaveableFileBytes(file.sizeBytes);
+  if (unstorable !== null) {
+    return unstorable;
+  }
+  if (objectLifetimeDays === null) {
+    return null;
+  }
+  const ageDays = Math.floor((Date.now() - file.createdAt) / DAY_MS);
+
+  // One whole day of grace past the lifetime, because this verdict is permanent
+  // while the deletion it claims is not punctual: the bucket rounds an object's
+  // expiration date up to the next midnight UTC and then removes it
+  // asynchronously some time after that date, so a row at exactly the lifetime
+  // can still have readable bytes - and a premature verdict declares a file dead
+  // while the sandbox could have converted it. The day costs nothing against
+  // what this bound is for, which is only to stop a source whose object is
+  // certainly gone from taking a conversion slot on every later turn.
+  return ageDays > objectLifetimeDays + 1
+    ? `${EXPIRED_OBJECT_CLAUSE} - this deployment keeps an uploaded file for ${String(objectLifetimeDays)} days and this one was attached ${String(ageDays)} days ago. Attach the file to this chat again to work with it.`
+    : null;
+};
 
 /**
  * Why this derivative set cannot become rows of this session, or null when it
@@ -669,11 +734,13 @@ const recordPrepareResponse = async (
  * their cost makes free.
  *
  * All three are permanent and none spends an invocation. A row the request
- * schema would reject is rejected on every later turn too; this chat's /files
- * can only grow - nothing removes a single upload or derivative, and the one
- * deletion there is takes the whole session's files together with the rows
- * these verdicts are read from - so a session past the ceiling is past it for
- * good; and a path an upload has taken stays taken for the same reason.
+ * schema would reject is rejected on every later turn too, and an upload past
+ * this deployment's object expiration has no object to read on any of them;
+ * this chat's /files can only grow - nothing removes a single upload or
+ * derivative, and the one deletion there is takes the whole session's files
+ * together with the rows these verdicts are read from - so a session past the
+ * ceiling is past it for good; and a path an upload has taken stays taken for
+ * the same reason.
  * `filesBytes` is the committed total its caller read for this source -
  * including the derivatives earlier sources of this same pass committed - and
  * not a number carried from the pass's own first listing, which a mint
@@ -692,8 +759,9 @@ const describeUndeliverableSource = (
   source: ChatFile,
   filesBytes: number,
   sessionPaths: ReadonlySet<string>,
+  objectLifetimeDays: number | null,
 ): string | null => {
-  const unpreparable = describeUnpreparableSource(source);
+  const unpreparable = describeUnpreparableSource(source, objectLifetimeDays);
   if (unpreparable !== null) {
     return `${quoteUntrustedSandboxValue(source.path)} cannot be converted: ${unpreparable}`;
   }
@@ -736,7 +804,12 @@ const prepareSource = async (
   context: ChatFileDerivativesContext,
   dependencies: ChatFileDerivativesDependencies,
 ): Promise<SourceOutcome> => {
-  const undeliverable = describeUndeliverableSource(source, filesBytes, sessionPaths);
+  const undeliverable = describeUndeliverableSource(
+    source,
+    filesBytes,
+    sessionPaths,
+    dependencies.readObjectLifetimeDays(),
+  );
   if (undeliverable !== null) {
     return failSource(source, undeliverable, context, dependencies);
   }
@@ -964,6 +1037,7 @@ export const buildChatFileDerivativesDependencies = (): ChatFileDerivativesDepen
   invokeSandbox: invokeSandboxFunction,
   createFileId: (): string => randomUUID(),
   readFunctionName: readChatSandboxFunctionName,
+  readObjectLifetimeDays: readChatFilesObjectLifetimeDays,
   log,
 });
 

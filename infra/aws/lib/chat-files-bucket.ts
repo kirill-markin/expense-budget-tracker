@@ -11,7 +11,11 @@ export const CHAT_FILES_OBJECT_PREFIX = "sessions/";
 // from the object's own creation, so this is an upload's age and not the
 // session's: a chat still in use loses the files uploaded into it this long
 // ago, while its messages stay.
-const CHAT_FILES_EXPIRATION_DAYS = 90;
+//
+// Exported because the web app needs the same number to tell an upload whose
+// object this rule has already deleted from one whose read merely failed; it is
+// passed in as CHAT_FILES_EXPIRATION_DAYS by compute.ts.
+export const CHAT_FILES_EXPIRATION_DAYS = 90;
 
 export interface ChatFilesBucketProps {
   appDomain: string;
