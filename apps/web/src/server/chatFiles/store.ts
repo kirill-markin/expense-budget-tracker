@@ -415,8 +415,8 @@ export const listSessionChatFiles = async (
  * so a caller asking what the session has spent would otherwise pay for the
  * whole listing, column by column, to add one column up. Unconfirmed rows are
  * included: a minted row names a size and is about to become a mounted file,
- * and nothing reclaims a mint whose upload never arrived, so the mint is what
- * the session has spent.
+ * and nothing short of clearing the session's files reclaims a mint whose
+ * upload never arrived, so until then the mint is what the session has spent.
  */
 export const sumSessionFilesMountBytes = async (
   userId: string,
