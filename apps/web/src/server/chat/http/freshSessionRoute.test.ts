@@ -22,7 +22,7 @@ import {
   selectChatModelRouting,
   type ChatModelRoutingLogEvent,
 } from "@/server/chat/modelRouting";
-import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
+import type { ChatStreamEvent, UnconvertedContentPart } from "@/server/chat/types";
 
 const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
 
@@ -54,7 +54,7 @@ const createAssistantItem = (): PersistedChatMessageItem => ({
 });
 
 const createPreparedRun = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): PreparedChatRun => ({
   sessionId: "session-1",
   activeRunId: "run-1",
@@ -127,7 +127,7 @@ const withSuppressedConsoleLog = async (
 
 test("POST /api/chat/new starts one prepared session and identifies it in the first stream event", async (): Promise<void> => {
   await withOpenAiApiKey(async (): Promise<void> => {
-    const content: ReadonlyArray<ContentPart> = [{ type: "text", text: "Hello" }];
+    const content: ReadonlyArray<UnconvertedContentPart> = [{ type: "text", text: "Hello" }];
     let prepareCallCount = 0;
     let startedSessionId: string | null = null;
     const routingEvents: Array<ChatModelRoutingLogEvent> = [];
