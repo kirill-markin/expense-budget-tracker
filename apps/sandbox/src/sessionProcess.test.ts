@@ -7,8 +7,12 @@ import { join } from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ChatSandboxBashRequest } from "./contract.js";
-import type { SandboxChildCommand, SandboxChildMessage } from "./sessionChild.js";
-import { createSessionRunner, type SessionChildSpec } from "./sessionProcess.js";
+import {
+  SANDBOX_CHILD_ENV_VAR,
+  type SandboxChildCommand,
+  type SandboxChildMessage,
+} from "./sessionChild.js";
+import { createSessionRunner, SESSION_CHILD, type SessionChildSpec } from "./sessionProcess.js";
 
 const STUB_CHILD_PATH = fileURLToPath(new URL("./sessionProcess.testChild.ts", import.meta.url));
 
@@ -305,15 +309,13 @@ test("a child that never reports ready fails the invocation", async (): Promise<
 });
 
 // Re-entrancy, which the Lambda never reaches - one invocation per execution
-// environment - but the self-hosted container this same supervisor serves does:
-// one Node process taking concurrent requests. Measured against the runner
-// before the guard, two overlapping calls for different sessions both saw no
-// current session and both forked, the second assignment won, and the first
-// child was then unreachable and killed by nothing - surviving in the
-// environment with the previous chat's heap and python worker. Two overlapping
-// calls for one session both attached to the one child, whose first result
-// resolved both, so the second caller was handed the first one's stdout with
-// exit code 0 for a command that never ran.
+// environment. Measured against the runner before the guard, two overlapping
+// calls for different sessions both saw no current session and both forked, the
+// second assignment won, and the first child was then unreachable and killed by
+// nothing - surviving in the environment with the previous chat's heap and
+// python worker. Two overlapping calls for one session both attached to the one
+// child, whose first result resolved both, so the second caller was handed the
+// first one's stdout with exit code 0 for a command that never ran.
 test("a command arriving while one is in flight is refused rather than sharing a process", async (): Promise<void> => {
   for (const secondSession of ["s1", "s2"]) {
     const run = createSessionRunner(stubSpec({}));
@@ -350,4 +352,21 @@ test("the runner accepts the next command after one fails", async (): Promise<vo
 
   const next = await run(command("s1", "ok"), Date.now() + COMMAND_BUDGET_MS);
   assert.equal(next.exitCode, 0);
+});
+
+/**
+ * The deployed child's environment, which no test above can red.
+ *
+ * Every runner here is given a substituted spec whose env is built from this
+ * process's own, so a production env widened to inherit the Lambda's would pass
+ * the whole suite. What that inherits is the execution role's credentials, and
+ * the child running untrusted shell and python needs none of them: the host
+ * allowlist is read in the parent and every transfer spends a pre-signed URL.
+ * So the key set is pinned against the real spec rather than a stub of it.
+ */
+test("the deployed session child is given only the heap ceiling, the zone and the child marker", (): void => {
+  assert.deepEqual(
+    Object.keys(SESSION_CHILD.env).sort(),
+    [SANDBOX_CHILD_ENV_VAR, "NODE_OPTIONS", "TZ"].sort(),
+  );
 });
