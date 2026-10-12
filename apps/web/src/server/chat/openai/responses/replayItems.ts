@@ -33,11 +33,41 @@ export type StoredOpenAIReplayFunctionToolCall = Readonly<{
   status?: OpenAI.Responses.ResponseFunctionToolCall["status"];
 }>;
 
+/**
+ * Where the bytes of one `view_file` result are read from, stored instead of
+ * those bytes.
+ *
+ * A native `input_image` costs around 1,600 tokens and the same image as base64
+ * text inside a tool result costs 15,000-25,000, so the bytes must reach the
+ * model as a native part and must never be persisted as one: a stored data URL
+ * would also be what the history window then weighs the turn by. The reference
+ * is what the row holds, and prompt assembly reads the file again to rebuild the
+ * part.
+ *
+ * The digest is the row's own at view time. A /work path the model has since
+ * rewritten carries a different one, so the rebuild can tell "the same file" from
+ * "another file under the same name" without reading either body.
+ */
+export type StoredChatFileViewReference = Readonly<{
+  fileId: string;
+  path: string;
+  sha256: string;
+  /** PDF page this reference renders, or null for the whole file as an image. */
+  page: number | null;
+}>;
+
 export type StoredOpenAIReplayFunctionCallOutput = Readonly<{
   type: "function_call_output";
   call_id: string;
   output: OpenAI.Responses.ResponseInputItem.FunctionCallOutput["output"];
   status?: OpenAI.Responses.ResponseInputItem.FunctionCallOutput["status"];
+  /**
+   * Set by `view_file` alone. While the run that produced it is still going,
+   * `output` carries the native part beside its text; everything persisted has
+   * been through `toPersistedOpenAIReplayItems`, which keeps the text and this
+   * reference and drops the bytes.
+   */
+  chatFileView?: StoredChatFileViewReference;
 }>;
 
 /**
@@ -144,6 +174,40 @@ export const parseChatHistoryMeasurement = (
   }
 
   return { inputTokens, outputTokens, replayedMessages };
+};
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
+
+/**
+ * One persisted view reference, or null when it is not replayable.
+ *
+ * The payload is untrusted JSONB, and an incomplete reference would be read as a
+ * file to look up and then answered against a path or a digest that is not a
+ * string. Reported as absent instead: the stored text part still replays, which
+ * is what the item says happened, minus the bytes.
+ */
+const toChatFileViewReference = (
+  value: unknown,
+): StoredChatFileViewReference | null => {
+  if (value === null || typeof value !== "object") {
+    return null;
+  }
+
+  const { fileId, path, sha256, page } = value as Readonly<{
+    fileId?: unknown;
+    path?: unknown;
+    sha256?: unknown;
+    page?: unknown;
+  }>;
+  if (!isNonEmptyString(fileId) || !isNonEmptyString(path) || !isNonEmptyString(sha256)) {
+    return null;
+  }
+  if (page !== null && !(typeof page === "number" && Number.isInteger(page))) {
+    return null;
+  }
+
+  return { fileId, path, sha256, page };
 };
 
 const requireReplayCallId = (callId: string | null | undefined): string => {
@@ -288,11 +352,15 @@ const normalizeStoredOpenAIReplayItem = (
   }
 
   if (item.type === "function_call_output") {
+    const reference = toChatFileViewReference(
+      "chatFileView" in item ? item.chatFileView : null,
+    );
     return {
       type: "function_call_output",
       call_id: requireReplayCallId(item.call_id),
       output: item.output,
       ...(item.status !== undefined && item.status !== null ? { status: item.status } : {}),
+      ...(reference === null ? {} : { chatFileView: reference }),
     };
   }
 
@@ -331,10 +399,134 @@ export const normalizeStoredOpenAIReplayItems = (
   };
 };
 
+/**
+ * One stored item as a request may carry it.
+ *
+ * A cast, because every member of StoredOpenAIReplayItem is a subset of the
+ * provider type it stands for - except `chatFileView`, which is this app's own
+ * and is dropped here. It is where the bytes of a `view_file` result are read
+ * from: a file id, a path and a digest of the user's file, which the provider has
+ * no use for and must not be sent. Dropped in the cast rather than at each call
+ * site, so no caller has to remember to.
+ */
 export const toOpenAIResponseInputItem = (
   item: StoredOpenAIReplayItem,
-): OpenAI.Responses.ResponseInputItem =>
-  item as unknown as OpenAI.Responses.ResponseInputItem;
+): OpenAI.Responses.ResponseInputItem => {
+  if (item.type !== "function_call_output" || item.chatFileView === undefined) {
+    return item as unknown as OpenAI.Responses.ResponseInputItem;
+  }
+  const { chatFileView: _droppedReference, ...sendable } = item;
+
+  return sendable as unknown as OpenAI.Responses.ResponseInputItem;
+};
+
+/** The native half of a `view_file` result: one image, or one PDF page. */
+export type ChatFileViewPart =
+  | OpenAI.Responses.ResponseInputImageContent
+  | OpenAI.Responses.ResponseInputFileContent;
+
+/** Native parts rebuilt for this input, by the call id of the result they belong to. */
+export type ChatFileViewPartsByCallId = ReadonlyMap<string, ChatFileViewPart>;
+
+export type StoredChatFileViewCall = Readonly<{
+  callId: string;
+  reference: StoredChatFileViewReference;
+}>;
+
+/**
+ * Said in place of a part this input does not carry.
+ *
+ * The stored text part ahead of it already names the file, so this sentence
+ * interpolates nothing: a filename is the user's and would be untrusted text
+ * sitting flush against an instruction to the model.
+ */
+const CHAT_FILE_VIEW_UNAVAILABLE_NOTE =
+  "The image or page this result showed is not part of this request. "
+  + "Call view_file again if you still need to look at it.";
+
+const toOutputTextParts = (
+  output: StoredOpenAIReplayFunctionCallOutput["output"],
+): ReadonlyArray<OpenAI.Responses.ResponseFunctionCallOutputItem> =>
+  typeof output === "string"
+    ? [{ type: "input_text", text: output }]
+    : output.filter((part) => part.type === "input_text");
+
+/**
+ * One `view_file` result as the run that produced it sends it: the text the model
+ * reads, and the native part beside it.
+ */
+export const buildChatFileViewReplayItem = (
+  callId: string,
+  text: string,
+  part: ChatFileViewPart,
+  reference: StoredChatFileViewReference,
+): StoredOpenAIReplayFunctionCallOutput => ({
+  type: "function_call_output",
+  call_id: callId,
+  output: [{ type: "input_text", text }, part],
+  chatFileView: reference,
+});
+
+/**
+ * The items as a row may hold them.
+ *
+ * The only transformation is dropping the bytes of a `view_file` result, whose
+ * reference stays: see StoredChatFileViewReference for why a stored data URL is
+ * the thing this exists to prevent. Applied where the run hands its items over
+ * for persistence, so nothing downstream of that has to remember to.
+ */
+export const toPersistedOpenAIReplayItems = (
+  items: ReadonlyArray<StoredOpenAIReplayItem>,
+): ReadonlyArray<StoredOpenAIReplayItem> =>
+  items.map((item) => (
+    item.type === "function_call_output" && item.chatFileView !== undefined
+      ? { ...item, output: [...toOutputTextParts(item.output)] }
+      : item
+  ));
+
+/** Every persisted `view_file` result of a session, oldest first. */
+export const listStoredChatFileViewCalls = (
+  messages: ReadonlyArray<ServerChatMessage>,
+): ReadonlyArray<StoredChatFileViewCall> =>
+  messages.flatMap((message) => (
+    message.role === "assistant" && message.openaiItems !== undefined
+      ? message.openaiItems.flatMap((item): ReadonlyArray<StoredChatFileViewCall> => (
+        item.type === "function_call_output" && item.chatFileView !== undefined
+          ? [{ callId: item.call_id, reference: item.chatFileView }]
+          : []
+      ))
+      : []
+  ));
+
+/**
+ * One stored item as this input sends it, with a `view_file` result's bytes put
+ * back from `viewParts`.
+ *
+ * A result whose part is absent keeps its text and says so, rather than being
+ * dropped: dropping the output of a call that is still replayed is answered with
+ * `400 No tool call found for function call output`, and dropping both would
+ * erase a step the model took.
+ */
+export const toReplayedOpenAIResponseInputItem = (
+  item: StoredOpenAIReplayItem,
+  viewParts: ChatFileViewPartsByCallId,
+): OpenAI.Responses.ResponseInputItem => {
+  if (item.type !== "function_call_output" || item.chatFileView === undefined) {
+    return toOpenAIResponseInputItem(item);
+  }
+
+  const part = viewParts.get(item.call_id);
+
+  return {
+    type: "function_call_output",
+    call_id: item.call_id,
+    output: [
+      ...toOutputTextParts(item.output),
+      part ?? { type: "input_text", text: CHAT_FILE_VIEW_UNAVAILABLE_NOTE },
+    ],
+    ...(item.status !== undefined ? { status: item.status } : {}),
+  };
+};
 
 /**
  * Index of the newest replayable compaction item, or `-1`. One response can

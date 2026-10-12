@@ -446,6 +446,36 @@ type ChatFileDerivativesEvent = Readonly<{
 }>;
 
 /**
+ * What one turn's prompt carried about this session's files: the listing, and
+ * the `view_file` results its stored history replayed.
+ *
+ * Both are standing per-turn costs, so this is the record that makes them
+ * visible. `manifestChars` is a listing charged against the history budget on
+ * every turn of a session that has files, and `expandedCount` is one object read
+ * or one sandbox invocation each, paid before the first token of the turn and
+ * bounded by CHAT_FILE_VIEW_REPLAYS_PER_TURN. It counts the reads attempted
+ * rather than the ones that answered, so a read that failed is in it too.
+ * `unavailableCount` is the results this input carries no bytes for - past that
+ * bound, or no longer readable - which the model is told about instead, so
+ * `viewCallCount` climbing while `expandedCount` sits at the bound is a session
+ * the model keeps re-viewing in.
+ */
+type ChatFileContextEvent = Readonly<{
+  domain: "chat";
+  action: "file_context";
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  fileCount: number;
+  manifestChars: number;
+  viewCallCount: number;
+  expandedCount: number;
+  unavailableCount: number;
+  durationMs: number;
+}>;
+
+/**
  * A sandbox invocation that was retried. Throttling and transport failures are
  * the only retried classes, so this records a capacity or network event rather
  * than a fault of the request, and the call may still have succeeded.
@@ -547,6 +577,7 @@ type LogEvent =
   | ChatSandboxEvent
   | ChatSandboxRetryEvent
   | ChatFileDerivativesEvent
+  | ChatFileContextEvent
   | ApiEvent
   | SqlApiEvent
   | AuthEvent

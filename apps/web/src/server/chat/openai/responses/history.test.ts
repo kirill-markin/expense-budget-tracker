@@ -99,15 +99,15 @@ const createAssistantMessage = (
 const TURN_TEXT_CHARACTERS = 6_000;
 
 /**
- * The real per-call overhead, measured with `o200k_base`: instructions 1,045 +
- * tool schemas 989 + clock 44.
+ * The real per-call overhead, measured with `o200k_base`: instructions 1,169 +
+ * tool schemas 1,168 + clock 44.
  *
- * Re-measured when the `bash` tool added its prompt section and its schema.
- * This grounds the simulation below against the real tokenizer, so leaving it
- * at the old 1,522 would have understated every simulated call by what that
- * tool added and checked a weaker bound than the test claims to.
+ * This grounds the simulation below against the real tokenizer, so it has to be
+ * re-measured whenever the prompt or the tool catalog grows: a stale value
+ * understates every simulated call by whatever was added and checks a weaker
+ * bound than the test claims to.
  */
-const REAL_OVERHEAD_TOKENS = 2_078;
+const REAL_OVERHEAD_TOKENS = 2_381;
 
 /**
  * What the module charges for one rendered PDF page image. Mirrored here so a
@@ -497,6 +497,75 @@ test("a PDF page is charged the fixed instructions replay wraps around it", (): 
     sizedText >= real,
     `A replayed PDF page really costs ${String(real)} o200k tokens of text and is `
     + `sized at ${String(sizedText)}`,
+  );
+});
+
+test("a stored view_file reference is charged the part the input rebuilds from it", (): void => {
+  // The stored item is a few hundred bytes of text and a reference, and what it
+  // sends is that text plus a native image or a one-page PDF. Sizing the row
+  // alone would weigh an image-carrying turn at nothing, which is the one
+  // direction this module may not be wrong in.
+  const reference = {
+    fileId: "11111111-1111-4111-8111-111111111111",
+    path: "/files/receipt.png",
+    sha256: "a".repeat(64),
+    page: null,
+  } as const;
+  const image: StoredOpenAIReplayItem = {
+    type: "function_call_output",
+    call_id: "call_a1b2c3d4e5f6a7b8c9d0",
+    output: [{ type: "input_text", text: '"/files/receipt.png", image/png, 70 bytes.' }],
+    chatFileView: reference,
+  };
+  const pdfPage: StoredOpenAIReplayItem = {
+    ...image,
+    chatFileView: { ...reference, page: 3 },
+  };
+
+  const sizeOf = (item: StoredOpenAIReplayItem): number =>
+    measureChatHistory([{ role: "assistant", content: [], openaiItems: [item] }]).totalTokens;
+
+  assert.ok(sizeOf(image) >= 1_600);
+  assert.ok(sizeOf(pdfPage) > sizeOf(image));
+});
+
+test("the file listing a turn appends is charged against the budget", (): void => {
+  // The listing is a system item the input pushes after the user message, so it
+  // is part of what the call sends and not part of the fixed reserve. Charging
+  // it is the whole reason `planChatHistoryReplay` takes it: a window that sizes
+  // a turn without it computes one input size and sends a larger one, on every
+  // turn of every session that holds a file.
+  //
+  // Every line of it is the user's own filename, so a non-ASCII one is the
+  // ordinary case here rather than an edge of it, and it has to be in the
+  // fixture. Over pure ASCII the flat character rate and the real estimate
+  // agree exactly, so an ASCII-only manifest would pass this assertion just as
+  // well against a charge that reads a Cyrillic or CJK name at 1/1.4 tokens per
+  // character instead of the 3 it costs: a 4.2x under-charge, which is exactly
+  // the failure above.
+  const manifest = [
+    'Files of this chat, as "path" bytes, then what else exists for that file:',
+    '"/files/budget.xlsx" 20100 -> 3 files under "/files/budget.xlsx.d/"',
+    '"/files/receipt.jpg" 302118',
+    '"/files/scan.pdf" 182304 -> no text copy: the PDF has no extractable text layer',
+    '"/files/statement.pdf" 182304 -> "/files/statement.pdf.txt"',
+    '"/files/бюджет-2026.xlsx" 20100 -> "/files/бюджет-2026.xlsx.d/свод.csv"',
+    '"/files/预算报告.pdf" 182304 -> "/files/预算报告.pdf.txt"',
+    '"/work/sums.csv" 480',
+  ].join("\n");
+
+  const without = planChatHistoryReplay([], TURN_INPUT);
+  const withManifest = planChatHistoryReplay([], TURN_INPUT, undefined, manifest);
+
+  // A text item is charged its envelope plus its text, which is exactly what a
+  // turn input text part costs, so the charge is stated against that rather
+  // than against a number copied out of the module.
+  const expected = estimateContentPartsTokens([{ type: "text", text: manifest }]);
+  assert.ok(expected > 0);
+  assert.equal(withManifest.sentInputTokens - without.sentInputTokens, expected);
+  assert.equal(
+    withManifest.unboundedSentInputTokens - without.unboundedSentInputTokens,
+    expected,
   );
 });
 

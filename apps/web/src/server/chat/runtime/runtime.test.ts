@@ -33,6 +33,7 @@ import { selectChatModelRouting } from "@/server/chat/modelRouting";
 import type { PersistedChatMessageItem } from "@/server/chat/store/shared";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
+import { EMPTY_CHAT_TURN_FILE_CONTEXT } from "@/server/chatFiles/sessionContext";
 
 type ActiveRunPayload = Readonly<{ activeRunId: string }>;
 
@@ -1163,6 +1164,7 @@ test("startPersistedChatRunWithDeps persists and streams recovery for poisoned H
               loopParams.timezone,
               loopParams.sessionId,
               loopParams.requestId,
+              EMPTY_CHAT_TURN_FILE_CONTEXT,
             );
             throw new Error("Expected stored attachment preflight to reject the input");
           },

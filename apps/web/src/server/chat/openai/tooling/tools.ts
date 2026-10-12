@@ -61,6 +61,7 @@ import {
   ChatTurnCancelledError,
 } from "@/server/chat/store";
 import { createChatWorkspaceUnavailableLogEvent } from "@/server/chat/workspaceUnavailableLog";
+import { viewChatFile, type ChatFileView } from "@/server/chatFiles/viewFile";
 import { log, MAX_SQL_POLICY_LOG_MESSAGE_CHARS } from "@/server/logger";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import type { WorkspaceSummary } from "@/server/workspaces";
@@ -122,6 +123,7 @@ type ChatToolDependencies = Readonly<{
   listChatWorkspaces: typeof listChatWorkspaces;
   loadAllowedSchemaForChatWorkspace: typeof loadAllowedSchemaForChatWorkspace;
   runChatSandboxCommand: typeof runChatSandboxCommand;
+  viewChatFile: typeof viewChatFile;
   log: typeof log;
 }>;
 
@@ -130,6 +132,7 @@ const DEFAULT_CHAT_TOOL_DEPENDENCIES: ChatToolDependencies = {
   listChatWorkspaces,
   loadAllowedSchemaForChatWorkspace,
   runChatSandboxCommand,
+  viewChatFile,
   log,
 };
 
@@ -174,6 +177,13 @@ export type ExecutedChatToolCall = Readonly<{
    * page the user is looking at.
    */
   workspaceId: string | null;
+  /**
+   * The native image or PDF page a successful `view_file` produced, and nothing
+   * else sets it. `output` above is the text of the same result, which is what
+   * the transcript and the telemetry record; the run sends this part beside that
+   * text and persists the reference inside it instead of the bytes.
+   */
+  fileView?: ChatFileView;
 }> & ExecutedChatToolCallResult;
 
 type SqlToolInput = Readonly<{
@@ -264,7 +274,11 @@ const resolveChatSqlToolName = (
 };
 
 type OpenAIToolInputProperty = Readonly<{
-  type: "string" | readonly ["string", "null"];
+  type:
+    | "string"
+    | "integer"
+    | readonly ["string", "null"]
+    | readonly ["integer", "null"];
   description: string;
   enum?: ReadonlyArray<string>;
 }>;
@@ -280,6 +294,12 @@ type RenderableToolInputField = Readonly<{
   name: string;
   description: string;
   required: boolean;
+  /**
+   * JSON type of the field, a string when absent. The shared catalog describes
+   * no type at all, because every field of it is a string; a web-chat-only tool
+   * that takes a number declares it here.
+   */
+  valueType?: "integer";
 }>;
 
 type RenderableTool = Readonly<{
@@ -308,7 +328,33 @@ const BASH_TOOL = {
   }],
 } satisfies RenderableTool;
 
-export const WEB_CHAT_ONLY_TOOLS: ReadonlyArray<RenderableTool> = [BASH_TOOL];
+/**
+ * The one tool that answers with bytes rather than text.
+ *
+ * A page number rather than a page range, and one file rather than several: each
+ * part it returns is around 1,600 tokens of the turn's input and stays in the
+ * session's history afterwards, so the model asking for exactly the page it
+ * needs is the whole cost control.
+ */
+const VIEW_FILE_TOOL = {
+  name: "view_file",
+  description: `Look at one image, or one page of one PDF, from this chat's files under ${SANDBOX_FILES_DIR} or ${SANDBOX_WORK_DIR}. Use it for what text cannot carry: a photographed receipt, a chart, a stamp, a scanned page with no text layer. For a document's text read the plain-text copy beside it with bash, which is far cheaper.`,
+  inputFields: [{
+    name: "path",
+    description: `Absolute path of the file, under ${SANDBOX_FILES_DIR}/ or ${SANDBOX_WORK_DIR}/, exactly as ls shows it.`,
+    required: true,
+  }, {
+    name: "page",
+    description: "Page of a PDF to look at, counting from 1. Required for a PDF and must be null for an image. One call shows one page.",
+    required: false,
+    valueType: "integer",
+  }],
+} satisfies RenderableTool;
+
+export const WEB_CHAT_ONLY_TOOLS: ReadonlyArray<RenderableTool> = [
+  BASH_TOOL,
+  VIEW_FILE_TOOL,
+];
 
 /**
  * A strict OpenAI function tool must list every property in `required`, so a
@@ -319,8 +365,18 @@ export const WEB_CHAT_ONLY_TOOLS: ReadonlyArray<RenderableTool> = [BASH_TOOL];
  * profile, because the catalog's own wording demands a workspaceId this surface
  * can resolve from the session instead.
  */
+const buildToolInputType = (
+  field: RenderableToolInputField,
+): OpenAIToolInputProperty["type"] => {
+  if (field.valueType === "integer") {
+    return field.required ? "integer" : ["integer", "null"];
+  }
+
+  return field.required ? "string" : ["string", "null"];
+};
+
 const buildToolInputProperty = (field: RenderableToolInputField): OpenAIToolInputProperty => ({
-  type: field.required ? "string" : ["string", "null"],
+  type: buildToolInputType(field),
   description: field.name === "workspaceId"
     ? getWorkspaceIdInputFieldDescription(WEB_CHAT_SURFACE_PROFILE)
     : field.description,
@@ -839,6 +895,70 @@ const executeBashToolCall = async (
   }
 };
 
+const viewFileInputSchema = z.object({
+  path: z.string().min(1),
+  // Nullable rather than absent for the reason workspaceId is: a strict tool
+  // schema renders an optional field as a nullable one, so an image is asked
+  // for with an explicit null.
+  page: z.number().int().nullish(),
+});
+
+/**
+ * A viewed file is not an agent payload.
+ *
+ * Every other tool answers with the shared `{ok, data, instructions}` envelope,
+ * and this one cannot: its answer is a native image or PDF part, and the text
+ * beside it is the caption of that part rather than a serialized result. So the
+ * caption is the output - the same string the transcript shows - and the part
+ * travels in `fileView`. A refusal has no part and goes back to the envelope.
+ */
+const executeViewFileToolCall = async (
+  rawArguments: string,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): Promise<ExecutedChatToolCall> => {
+  try {
+    const input = viewFileInputSchema.safeParse(
+      parseToolArgumentsJson(rawArguments, VIEW_FILE_TOOL.name),
+    );
+    if (!input.success) {
+      throw buildInvalidToolArgumentsError(VIEW_FILE_TOOL.name, input.error.message);
+    }
+    const result = await dependencies.viewChatFile(
+      input.data.path,
+      input.data.page ?? null,
+      context,
+    );
+    if (result.kind === "refused") {
+      const payload = buildAgentErrorPayload(
+        result.refusal.code,
+        result.refusal.message,
+        result.refusal.instructions,
+        { retryable: false },
+      );
+      return {
+        output: serializeAgentPayload(payload),
+        isMutating: false,
+        workspaceId: null,
+        succeeded: false,
+        error: { name: "ChatFileViewRefused", message: result.refusal.message },
+        errorCode: payload.error.code,
+      };
+    }
+
+    return {
+      output: result.view.text,
+      isMutating: false,
+      workspaceId: null,
+      succeeded: true,
+      error: null,
+      fileView: result.view,
+    };
+  } catch (error) {
+    return buildDiscoveryErrorResult(error, VIEW_FILE_TOOL.name, context, dependencies);
+  }
+};
+
 export const executeChatToolCallWithDependencies = async (
   toolName: string,
   rawArguments: string,
@@ -863,6 +983,9 @@ export const executeChatToolCallWithDependencies = async (
   }
   if (toolName === BASH_TOOL.name) {
     return executeBashToolCall(rawArguments, context, dependencies);
+  }
+  if (toolName === VIEW_FILE_TOOL.name) {
+    return executeViewFileToolCall(rawArguments, context, dependencies);
   }
   if (
     toolName === SQL_QUERY_TOOL.name

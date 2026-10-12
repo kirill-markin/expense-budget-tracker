@@ -17,6 +17,10 @@ import {
 } from "@/server/chat/openai/loop";
 import type { ChatCompletionInput } from "@/server/chat/openai/responses/input";
 import type { ChatFileDerivativesPassOutcome } from "@/server/chatFiles/derivatives";
+import {
+  EMPTY_CHAT_TURN_FILE_CONTEXT,
+  type ChatTurnFileContext,
+} from "@/server/chatFiles/sessionContext";
 import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import {
@@ -24,6 +28,7 @@ import {
   createToolCallStateMap,
 } from "@/server/chat/openai/tooling/toolCalls";
 import type { OpenAIResponsesRequest } from "@/server/chat/openai/responses/request";
+import type { ExecutedChatToolCall } from "@/server/chat/openai/tooling/tools";
 import type { ChatStreamEvent } from "@/server/chat/types";
 
 const EXPECTED_USER_1_SAFETY_IDENTIFIER = "v1_xsKJ5J6cBbIUWGA4e3O8sY30P7CaHkpKlxPHbIi7VBs";
@@ -59,6 +64,8 @@ const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
     deferredCount: 0,
     stopReason: null,
   }),
+  buildChatTurnFileContext: async (): Promise<ChatTurnFileContext> =>
+    EMPTY_CHAT_TURN_FILE_CONTEXT,
   getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
   runOneModelCall: async (): Promise<never> => {
     throw new Error("runOneModelCall was invoked but the test did not override it via createTestLoopDeps");
@@ -1087,4 +1094,89 @@ test("route refresh fires only for a mutation in the session's active workspace"
 
   assert.equal(await didRefreshRoute("workspace-1"), true);
   assert.equal(await didRefreshRoute("workspace-2"), false);
+});
+
+/**
+ * The run sends the bytes and stores the reference, and both halves matter: a
+ * later call of the same turn has to see the image, and the row it persists must
+ * not carry base64 - a stored image costs 10 to 20 times a native one and is
+ * also what every later turn's history window is sized from.
+ */
+test("runOpenAILoop sends a viewed file's bytes and persists its reference instead", async (): Promise<void> => {
+  const imagePart = {
+    type: "input_image",
+    detail: "auto",
+    image_url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg",
+  } as const;
+  const viewCall = createFunctionCall("call-view", "view_file", '{"path":"/files/receipt.png","page":null}');
+  const sentInputs: Array<string> = [];
+  let modelCallCount = 0;
+
+  const completion = await runOpenAILoopWithDeps(
+    createLoopParams(),
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      runOneModelCall: async (
+        _client: OpenAI,
+        _callParams: StartOpenAILoopParams,
+        _emitEvent: OpenAILoopEventHandler,
+        request: OpenAIResponsesRequest,
+      ) => {
+        modelCallCount += 1;
+        sentInputs.push(JSON.stringify(request.input));
+        if (modelCallCount === 1) {
+          return {
+            finalResponse: createFinalResponse(""),
+            functionCalls: [viewCall],
+            replayItems: [createFunctionCallReplayItem("call-view", "view_file", '{"path":"/files/receipt.png","page":null}')],
+            streamedText: "",
+            toolStates: createStartedToolStates("call-view", "view_file", '{"path":"/files/receipt.png","page":null}'),
+          };
+        }
+
+        return {
+          finalResponse: createFinalResponse("It is 12 EUR"),
+          functionCalls: [],
+          replayItems: [createAssistantReplayItem("It is 12 EUR")],
+          streamedText: "It is 12 EUR",
+          toolStates: createToolCallStateMap(),
+        };
+      },
+      runOneToolCall: async (): Promise<ExecutedChatToolCall> => ({
+        output: '"/files/receipt.png", image/png, 70 bytes. The image follows this line.',
+        isMutating: false,
+        workspaceId: null,
+        succeeded: true,
+        error: null,
+        fileView: {
+          text: '"/files/receipt.png", image/png, 70 bytes. The image follows this line.',
+          part: imagePart,
+          reference: {
+            fileId: "11111111-1111-4111-8111-111111111111",
+            path: "/files/receipt.png",
+            sha256: "a".repeat(64),
+            page: null,
+          },
+        },
+      }),
+    }),
+  );
+
+  // The second call of the same turn carries the native part.
+  assert.ok(sentInputs[1]?.includes(imagePart.image_url));
+  assert.deepEqual(completion.openaiItems.at(-2), {
+    type: "function_call_output",
+    call_id: "call-view",
+    output: [{
+      type: "input_text",
+      text: '"/files/receipt.png", image/png, 70 bytes. The image follows this line.',
+    }],
+    chatFileView: {
+      fileId: "11111111-1111-4111-8111-111111111111",
+      path: "/files/receipt.png",
+      sha256: "a".repeat(64),
+      page: null,
+    },
+  });
+  assert.equal(JSON.stringify(completion.openaiItems).includes("base64"), false);
 });

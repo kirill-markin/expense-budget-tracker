@@ -173,6 +173,8 @@ A surface profile records the little that each surface narrows: how a workspace 
 - `sql_query` runs in a repeatable-read, read-only transaction under the `api_sql_reader` role, and `sql_execute` runs under `api_sql_executor`. Reads and writes are separated on purpose.
 - A tool call carries exactly one statement on both surfaces. On the HTTP side, `/v1/sql/query` and `/v1/sql/execute` are single-statement too, while the compatibility-only `/v1/sql` route still accepts a semicolon-separated script. That asymmetry is intentional.
 
+The web chat registers two tools of its own, in `WEB_CHAT_ONLY_TOOLS` and never in the shared catalog: `bash`, one shell command over this chat session's files, and `view_file`, one image or one page of one PDF returned as a native image or file part rather than as text. Neither is offered to the MCP server or to `/v1`, because both act on one browser chat session's file space, which an external client does not have — advertising them there would describe a filesystem the caller cannot reach.
+
 The web chat additionally dispatches `query_database`, the name its SQL tool had before the read/write split, because stored transcripts replay it into the model. It resolves to `sql_query` or `sql_execute` by statement kind and is never advertised.
 
 ## Multi-currency conversion

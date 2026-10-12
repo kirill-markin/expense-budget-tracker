@@ -32,6 +32,7 @@ import {
   type QueryResult,
 } from "@/server/chat/shared";
 import type { ChatSandboxCommandResult } from "@/server/chat/sandbox/invoke";
+import type { ChatFileViewResult } from "@/server/chatFiles/viewFile";
 import type { WorkspaceSummary } from "@/server/workspaces";
 import {
   executeChatToolCallWithDependencies,
@@ -107,6 +108,25 @@ const unusedLoadAllowedSchemaForChatWorkspace = async (): Promise<never> => {
 const unusedRunChatSandboxCommand = async (): Promise<never> => {
   throw new Error("runChatSandboxCommand must not be called by this tool");
 };
+
+const unusedViewChatFile = async (): Promise<never> => {
+  throw new Error("viewChatFile must not be called by this tool");
+};
+
+/** A file this chat showed the model as a native image part. */
+const viewedImage = async (): Promise<ChatFileViewResult> => ({
+  kind: "viewed",
+  view: {
+    text: "\"/files/receipt.png\", image/png, 3 bytes. The image follows this line.",
+    part: { type: "input_image", detail: "auto", image_url: "data:image/png;base64,iVBO" },
+    reference: {
+      fileId: "11111111-1111-4111-8111-111111111111",
+      path: "/files/receipt.png",
+      sha256: "a".repeat(64),
+      page: null,
+    },
+  },
+});
 
 /** A sandbox that ran the command and changed nothing. */
 const ranEmptyCommand = async (): Promise<ChatSandboxCommandResult> => ({
@@ -220,6 +240,7 @@ test("sql_query forwards the exact session and turn scope to SQL execution", asy
         return { json: EXECUTED_SQL_OUTPUT };
       },
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -244,6 +265,7 @@ test("each SQL tool runs the single-statement validator that matches it", async 
   const dependencies = {
     execQuery: createRecordingExecQuery(executions),
     runChatSandboxCommand: unusedRunChatSandboxCommand,
+    viewChatFile: unusedViewChatFile,
     log: createLogCollector(loggedEvents),
     listChatWorkspaces: listAllWorkspaces,
     loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -305,6 +327,7 @@ test("a multi-statement script is rejected with single_statement_required", asyn
     {
       execQuery: unusedExecQuery,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: createLogCollector(loggedEvents),
       listChatWorkspaces: unusedListChatWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -339,6 +362,7 @@ test("the deprecated query_database alias runs the policy of the tool that repla
   const dependencies = {
     execQuery: createRecordingExecQuery(executions),
     runChatSandboxCommand: unusedRunChatSandboxCommand,
+    viewChatFile: unusedViewChatFile,
     log: createLogCollector(loggedEvents),
     listChatWorkspaces: listAllWorkspaces,
     loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -391,6 +415,7 @@ test("sql_execute runs against an explicit workspaceId the caller is a member of
     {
       execQuery: createRecordingExecQuery(executions),
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -413,6 +438,7 @@ test("sql_execute rejects a workspaceId outside the caller's workspaces before e
     {
       execQuery: unusedExecQuery,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -440,6 +466,7 @@ test("a failed statement keeps its raw message in the shared error envelope", as
         );
       },
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -482,6 +509,7 @@ test("a non-statement execution failure is redacted instead of blamed on the SQL
         throw new Error(internalMessage);
       },
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: (event): void => {
         loggedEvents.push(JSON.stringify(event));
       },
@@ -525,6 +553,7 @@ test("a data exception raised by the real class gate keeps its message", async (
       execQuery: async (): Promise<never> =>
         throwChatUserSqlExecutionError(createPgError("22012", "division by zero")),
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -562,6 +591,7 @@ test("a statement cancelled at its timeout is answered as a deadline failure", a
           createPgError("57014", "canceling statement due to statement timeout"),
         ),
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -603,6 +633,7 @@ test("a lost transaction outcome on a read is redacted rather than reported as a
         );
       },
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: (event): void => {
         loggedEvents.push(JSON.stringify(event));
       },
@@ -627,6 +658,7 @@ test("list_workspaces returns every accessible workspace without touching SQL", 
     {
       execQuery: unusedExecQuery,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -650,6 +682,7 @@ test("list_workspaces instructions come from this surface's profile, not the sta
     {
       execQuery: unusedExecQuery,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: async () => [WORKSPACE_1],
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -666,6 +699,7 @@ test("get_schema falls back to the session workspace when workspaceId is omitted
   const dependencies = {
     execQuery: unusedExecQuery,
     runChatSandboxCommand: unusedRunChatSandboxCommand,
+    viewChatFile: unusedViewChatFile,
     log: unexpectedLog,
     listChatWorkspaces: listAllWorkspaces,
     loadAllowedSchemaForChatWorkspace: async (
@@ -714,6 +748,7 @@ test("get_schema accepts an explicit workspaceId the caller is a member of", asy
     {
       execQuery: unusedExecQuery,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: async (_context, workspaceId) => {
@@ -736,6 +771,7 @@ test("get_schema rejects a workspaceId outside the caller's workspaces before re
     {
       execQuery: unusedExecQuery,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -758,6 +794,7 @@ test("get_guide returns the shared guide for every catalog topic", async (): Pro
       {
         execQuery: unusedExecQuery,
         runChatSandboxCommand: unusedRunChatSandboxCommand,
+        viewChatFile: unusedViewChatFile,
         log: unexpectedLog,
         listChatWorkspaces: unusedListChatWorkspaces,
         loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -781,6 +818,7 @@ test("get_guide rejects a topic outside the catalog", async (): Promise<void> =>
     {
       execQuery: unusedExecQuery,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: unusedListChatWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -813,6 +851,19 @@ test("the rendered tool schemas match the catalog's required flags", (): void =>
   }
 });
 
+/**
+ * A strict schema that typed this field as a string would have the model send
+ * "3", which the executor's own parser then rejects as not a number - a tool the
+ * model cannot call correctly on any attempt.
+ */
+test("view_file renders its page as a nullable integer and its path as a string", (): void => {
+  const parameters = getRenderedToolParameters("view_file");
+
+  assert.equal(parameters.properties.path?.type, "string");
+  assert.deepEqual(parameters.properties.page?.type, ["integer", "null"]);
+  assert.deepEqual([...parameters.required], ["path", "page"]);
+});
+
 test("get_guide renders the catalog guide topics as its topic enum", (): void => {
   const topicProperty = getRenderedToolParameters(GET_GUIDE_TOOL.name).properties.topic;
   assert.deepEqual(topicProperty.enum, [...AGENT_GUIDE_TOPICS]);
@@ -833,6 +884,8 @@ test("every registered tool name has a dispatch path", async (): Promise<void> =
       topic: AGENT_GUIDE_TOPICS[0],
       workspaceId: null,
       command: "ls -l /work",
+      path: "/files/receipt.png",
+      page: null,
     });
 
     const result = await executeChatToolCallWithDependencies(
@@ -844,6 +897,7 @@ test("every registered tool name has a dispatch path", async (): Promise<void> =
         listChatWorkspaces: listAllWorkspaces,
         loadAllowedSchemaForChatWorkspace: async () => RELATIONS,
         runChatSandboxCommand: ranEmptyCommand,
+        viewChatFile: viewedImage,
         log: unexpectedLog,
       },
     );
@@ -857,6 +911,7 @@ test("every registered tool name has a dispatch path", async (): Promise<void> =
       listChatWorkspaces: unusedListChatWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
     }),
     /Unsupported OpenAI tool call: run_report/u,
@@ -874,6 +929,7 @@ test("this surface registers the whole catalog and never names the deprecated al
     listChatWorkspaces: listAllWorkspaces,
     loadAllowedSchemaForChatWorkspace: async (): Promise<ReadonlyArray<SchemaRelation>> => RELATIONS,
     runChatSandboxCommand: unusedRunChatSandboxCommand,
+    viewChatFile: unusedViewChatFile,
     log: unexpectedLog,
   };
   const discoveryOutputs = await Promise.all([
@@ -928,6 +984,7 @@ test("an unexpected discovery failure is redacted for the model and logged in fu
       },
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: (event): void => {
         loggedEvents.push(JSON.stringify(event));
       },
@@ -954,6 +1011,7 @@ test("a rejected workspaceId keeps its actionable message", async (): Promise<vo
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
     },
   );
@@ -981,6 +1039,7 @@ test("an unexpected workspace lookup failure on a SQL tool is redacted and logge
       },
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: (event): void => {
         loggedEvents.push(JSON.stringify(event));
       },
@@ -1018,6 +1077,7 @@ test("an unknown mutation outcome sends sql_execute to verify instead of retryin
         );
       },
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -1064,6 +1124,7 @@ test("a lost outcome before sql_execute issued its mutation is redacted rather t
         );
       },
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: createLogCollector(loggedEvents),
       listChatWorkspaces: listAllWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -1123,6 +1184,7 @@ test("a turn that is no longer active is never told to retry the call", async ()
           throw abandonedTurnError;
         },
         runChatSandboxCommand: unusedRunChatSandboxCommand,
+        viewChatFile: unusedViewChatFile,
         log: unexpectedLog,
         listChatWorkspaces: listAllWorkspaces,
         loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
@@ -1163,6 +1225,7 @@ test("a workspace access failure inside execution is redacted and logged as work
         throw new WorkspaceAccessError(CONTEXT.userId, CONTEXT.workspaceId);
       },
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: (event): void => {
         loggedEvents.push(JSON.stringify(event));
       },
@@ -1226,6 +1289,7 @@ test("a sandbox note reaches the model as one attributed entry and never as comm
           fullOutputPath: null,
         },
       }),
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
     },
   );
@@ -1276,6 +1340,7 @@ test("a refused bash command keeps the refusal's own code and next step", async 
           instructions: "Do not call bash again in this chat.",
         },
       }),
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
     },
   );
@@ -1297,6 +1362,7 @@ test("bash rejects arguments that carry no command", async (): Promise<void> => 
       listChatWorkspaces: unusedListChatWorkspaces,
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
       runChatSandboxCommand: unusedRunChatSandboxCommand,
+      viewChatFile: unusedViewChatFile,
       log: unexpectedLog,
     },
   );
@@ -1357,6 +1423,7 @@ test("the bash instructions describe each list by its own kept-of-total", async 
             fullOutputPath: null,
           },
         }),
+        viewChatFile: unusedViewChatFile,
         log: unexpectedLog,
       },
     );
