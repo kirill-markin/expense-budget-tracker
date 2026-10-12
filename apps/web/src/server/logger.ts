@@ -392,7 +392,7 @@ type ChatTranscriptionEvent = Readonly<{
 
 /**
  * Chat file objects reclaimed by this subsystem's own deletes. Not every
- * reclaim is one of these two events: the bucket expires an object 90 days
+ * reclaim is one of these three events: the bucket expires an object 90 days
  * after it was written and logs nothing, and one session's files deleted on
  * request are counted by the `chat` `session_files_deleted` event.
  * `not_configured` records a workspace sweep on a deployment that stores no
@@ -403,7 +403,15 @@ type ChatTranscriptionEvent = Readonly<{
  * counts the objects actually deleted, including on the failure the error
  * propagates. `displaced_object_deleted` is the one object a /work save
  * replaced, whose row is already committed away - so a `failed` outcome is the
- * whole record of a leak the save deliberately did not raise on.
+ * whole record of a leak the save deliberately did not raise on, and the same
+ * holds for `unnamed_objects_deleted`.
+ *
+ * `unnamed_objects_deleted` reclaims keys nothing can name any more: a deleted
+ * row's object, or the write slots of a sandbox invocation that no row of this
+ * chat names. Its objectCount is the keys handed to the delete and not the
+ * objects that existed - which slots were uploaded into is not knowable from
+ * the answer, so every slot a request signed and no row took is handed over,
+ * which on an ordinary command is most of them holding nothing.
  */
 type ChatFilesEvent =
   | Readonly<{
@@ -424,6 +432,16 @@ type ChatFilesEvent =
     sessionId: string;
     path: string;
     objectKey: string;
+    error: string | null;
+  }>
+  | Readonly<{
+    domain: "chat-files";
+    action: "unnamed_objects_deleted";
+    outcome: "deleted" | "failed";
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    objectCount: number;
     error: string | null;
   }>;
 

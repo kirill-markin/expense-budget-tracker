@@ -33,11 +33,14 @@ import {
   type SandboxWriteSlot,
 } from "@/server/chat/sandbox/invoke";
 import {
+  deleteChatFile,
+  deleteUnnamedChatFileObjects,
+} from "@/server/chatFiles/deleteFile";
+import {
   getChatFilesObjectStore,
   readChatFilesObjectLifetimeDays,
 } from "@/server/chatFiles/objectStore";
 import {
-  deleteChatFile,
   insertChatFile,
   listSessionChatFiles,
   markChatFileDerivativesFailed,
@@ -158,6 +161,7 @@ export type ChatFileDerivativesDependencies = Readonly<
     sumSessionFilesMountBytes: typeof sumSessionFilesMountBytes;
     insertChatFile: typeof insertChatFile;
     deleteChatFile: typeof deleteChatFile;
+    deleteUnnamedChatFileObjects: typeof deleteUnnamedChatFileObjects;
     markChatFileDerivativesPrepared: typeof markChatFileDerivativesPrepared;
     markChatFileDerivativesFailed: typeof markChatFileDerivativesFailed;
     readFunctionName: () => string | null;
@@ -451,8 +455,21 @@ const logDerivativeError = (
 };
 
 /**
- * Remove the derived rows of a conversion this side is refusing, and report
- * rather than raise when a removal fails.
+ * Remove the derived rows of a conversion this side is refusing, and answer
+ * with the ids whose object is accounted for - meaning some mechanism here
+ * owned that key, not that the bytes are gone: a removal that found its row
+ * reclaimed the key itself (chatFiles/deleteFile.ts), and that reclaim can have
+ * failed, been logged and swallowed. Either way the key is not the batch
+ * reclaim's to take.
+ *
+ * Three outcomes, and the answer separates them. A removal that found the row
+ * owns its key; a removal that raised may have left the row in place, holding
+ * bytes every later mount of it reads, so its key is left alone as well. A row
+ * that was already gone is the third and is left out, so its key is reclaimed
+ * from the slots, which is free whichever removal got there first: a delete
+ * reclaims the key of the row it removed, a cascade from chat_sessions removes
+ * rows and no object at all, and the on-request sweep of chatFiles/cleanup.ts
+ * deleted the session's objects ahead of its rows.
  *
  * Compensation, so it must never become the error the caller reports: the
  * failure that started the refusal is the one an operator has to see, and a
@@ -473,16 +490,21 @@ const deleteDerivedRows = async (
   source: ChatFile,
   context: ChatFileDerivativesContext,
   dependencies: ChatFileDerivativesDependencies,
-): Promise<void> => {
+): Promise<ReadonlyArray<string>> => {
+  const accountedFileIds: Array<string> = [];
   for (const derivedFileId of derivedFileIds) {
     try {
-      await dependencies.deleteChatFile(
+      const removed = await dependencies.deleteChatFile(
         context.userId,
         context.workspaceId,
         context.sessionId,
         derivedFileId,
       );
+      if (removed !== null) {
+        accountedFileIds.push(derivedFileId);
+      }
     } catch (error) {
+      accountedFileIds.push(derivedFileId);
       logDerivativeError(
         `a derived row of a refused conversion could not be removed and now holds a path its source will be refused for, derivedFileId=${derivedFileId}: ${describeError(error)}`,
         source,
@@ -491,6 +513,40 @@ const deleteDerivedRows = async (
       );
     }
   }
+
+  return accountedFileIds;
+};
+
+/** This conversion wrote no derived row, which is every refusal but a partial insert. */
+const NO_DERIVED_ROWS: ReadonlyArray<string> = [];
+
+/**
+ * Reclaim the objects of a conversion whose derivatives this chat is not
+ * keeping.
+ *
+ * Every slot the request signed, minus the ids already accounted for, rather
+ * than the slots an answer named: a refusal does not say which of them
+ * the sandbox uploaded into - an `unavailable` answer can come out of the
+ * upload phase itself, with part of the set already stored, and an abandoned
+ * turn drops an answer unread - while a delete of a slot that holds nothing is
+ * free.
+ *
+ * The ids are matched against `slotId`, because that is what every id here was
+ * read from: a derived row carries its slot's id as its file id.
+ */
+const reclaimRefusedConversionObjects = async (
+  slots: ReadonlyArray<SandboxWriteSlot>,
+  accountedSlotIds: ReadonlyArray<string>,
+  context: ChatFileDerivativesContext,
+  dependencies: ChatFileDerivativesDependencies,
+): Promise<void> => {
+  const accounted = new Set(accountedSlotIds);
+  await dependencies.deleteUnnamedChatFileObjects(
+    context.userId,
+    context.workspaceId,
+    context.sessionId,
+    slots.filter((slot) => !accounted.has(slot.slotId)).map((slot) => slot.objectKey),
+  );
 };
 
 /**
@@ -502,32 +558,26 @@ const deleteDerivedRows = async (
  * insert is undone and the source keeps no verdict, so the next turn converts
  * it again from a session that holds none of its derivatives.
  *
- * The objects of the removed rows stay in the bucket, and so do the objects of
- * every other answered conversion this side refuses. This layer could delete
- * them - it signed every slot key and holds them in `slotsById` - and it
- * deliberately does not. The one per-row reclaim in this subsystem's ordinary
- * work is chatFiles/saveWorkFile.ts, for the row a /work save displaces, and
- * what makes that reclaim safe is that it never chooses a key: the committed
- * replacement DELETE hands it the one key nothing in the database names any
- * more. This side has no such statement to take a key from - the rows that
- * would have named these objects are exactly the ones it just failed to write -
- * so it would be deleting on its own judgement of what is unreachable. What is
- * bounded is how many such objects one refusal leaves: at most the slots of one
- * invocation. How long they live is bounded by the bucket alone: both sweeps
- * that would reach them are in chatFiles/cleanup.ts and wait for someone to ask
- * - the session's own deletion through the `DELETE` of /api/chat/files, or its
- * workspace's - while the bucket expires an object 90 days after it was written
- * (infra/aws/lib/chat-files-bucket.ts) with nobody asking at all.
+ * The objects go with the rows. Each removed row takes its own object
+ * (chatFiles/deleteFile.ts), and every slot nothing accounted for - the rest of
+ * a partial insert here, and every slot of every other answered conversion this
+ * side refuses - is reclaimed from the keys this request signed, which it holds
+ * in `slots`. The insert that raised counts as accounted for too: its row is in
+ * doubt rather than absent, so its key stays.
  */
 const insertDerivedRows = async (
   source: ChatFile,
   derivatives: ReadonlyArray<z.infer<typeof sandboxWrittenFileSchema>>,
+  slots: ReadonlyArray<SandboxWriteSlot>,
   context: ChatFileDerivativesContext,
   dependencies: ChatFileDerivativesDependencies,
 ): Promise<void> => {
   const insertedFileIds: Array<string> = [];
+  /** The insert in flight, so a raise below names the row it left in doubt. */
+  let inDoubtFileId: string | null = null;
   try {
     for (const derivative of derivatives) {
+      inDoubtFileId = derivative.slotId;
       await dependencies.insertChatFile(context.userId, context.workspaceId, {
         // The slot's own id, because the object the sandbox uploaded lives under
         // the key that id derives.
@@ -543,9 +593,21 @@ const insertDerivedRows = async (
         sha256: derivative.sha256,
       });
       insertedFileIds.push(derivative.slotId);
+      inDoubtFileId = null;
     }
   } catch (error) {
-    await deleteDerivedRows(insertedFileIds, source, context, dependencies);
+    const accounted = await deleteDerivedRows(insertedFileIds, source, context, dependencies);
+    // The insert that raised counts as accounted for and its key is left
+    // behind: a raise does not settle that the row is absent - its COMMIT can
+    // have reached the server with the answer lost on the way back - and the
+    // key would then be taken from under a row the next pass mounts. See the
+    // invariant in chatFiles/deleteFile.ts.
+    await reclaimRefusedConversionObjects(
+      slots,
+      inDoubtFileId === null ? accounted : [...accounted, inDoubtFileId],
+      context,
+      dependencies,
+    );
     throw error;
   }
 };
@@ -636,18 +698,26 @@ const failSource = async (
 const recordPrepareResponse = async (
   source: ChatFile,
   response: PrepareResponse,
-  slotsById: ReadonlyMap<string, SandboxWriteSlot>,
+  slots: ReadonlyArray<SandboxWriteSlot>,
   sessionPaths: Set<string>,
   context: ChatFileDerivativesContext,
   dependencies: ChatFileDerivativesDependencies,
 ): Promise<SourceOutcome> => {
+  // Every refusal below reclaims the invocation's slots before it writes
+  // whatever verdict it writes: no row of this session names those keys in
+  // either order, and a verdict write that raises must not take the reclaim
+  // down with it. The opposite order, the one chatFiles/saveWorkFile.ts uses,
+  // belongs where a committed row is what decides that a key may go.
   if (response.status === "failed") {
+    await reclaimRefusedConversionObjects(slots, NO_DERIVED_ROWS, context, dependencies);
     return failSource(source, response.error, context, dependencies);
   }
   if (response.status === "unavailable") {
+    await reclaimRefusedConversionObjects(slots, NO_DERIVED_ROWS, context, dependencies);
     return { ...NO_DERIVATIVES, unavailableCount: 1 };
   }
 
+  const slotsById = new Map(slots.map((slot) => [slot.slotId, slot]));
   const contradiction = describeSandboxContradiction(response.derivatives, slotsById);
   if (contradiction !== null) {
     logDerivativeError(
@@ -656,12 +726,14 @@ const recordPrepareResponse = async (
       context,
       dependencies,
     );
+    await reclaimRefusedConversionObjects(slots, NO_DERIVED_ROWS, context, dependencies);
     return { ...NO_DERIVATIVES, stopReason: "unrecordable" };
   }
 
   const derivativePaths = response.derivatives.map((derivative) => derivative.path);
   const unrecordable = describeUnrecordableDerivatives(derivativePaths, sessionPaths);
   if (unrecordable !== null) {
+    await reclaimRefusedConversionObjects(slots, NO_DERIVED_ROWS, context, dependencies);
     return failSource(
       source,
       `${quoteUntrustedSandboxValue(source.path)} was converted, but ${unrecordable}`,
@@ -670,7 +742,7 @@ const recordPrepareResponse = async (
     );
   }
 
-  await insertDerivedRows(source, response.derivatives, context, dependencies);
+  await insertDerivedRows(source, response.derivatives, slots, context, dependencies);
   const derivedFileIds = response.derivatives.map((derivative) => derivative.slotId);
   /**
    * Both ways this update can fail to mark the source undo the same inserts,
@@ -700,15 +772,19 @@ const recordPrepareResponse = async (
       source.fileId,
     );
   } catch (error) {
-    await deleteDerivedRows(derivedFileIds, source, context, dependencies);
+    const accounted = await deleteDerivedRows(derivedFileIds, source, context, dependencies);
+    await reclaimRefusedConversionObjects(slots, accounted, context, dependencies);
     throw error;
   }
   if (prepared === null) {
     // The row went away between the inserts and this update, so either its
     // session is being deleted or this session's files were deleted on request.
     // Both take the derived rows with them; remove the ones that did not go, so
-    // nothing is left claiming a source that is gone.
-    await deleteDerivedRows(derivedFileIds, source, context, dependencies);
+    // nothing is left claiming a source that is gone. Reclaiming the keys of
+    // the ones that did go is free either way: the cascade took no object with
+    // them, and the on-request sweep had already taken it.
+    const accounted = await deleteDerivedRows(derivedFileIds, source, context, dependencies);
+    await reclaimRefusedConversionObjects(slots, accounted, context, dependencies);
     return { ...NO_DERIVATIVES, stopReason: "source_gone" };
   }
 
@@ -832,21 +908,35 @@ const prepareSource = async (
     writeSlots: slots.map((slot) => ({ slotId: slot.slotId, putUrl: slot.putUrl })),
   });
 
-  const response = parsePrepareResponse(
-    await invokeSandboxWithRetries(functionName, payload, context, dependencies),
-  );
+  let response: PrepareResponse;
+  try {
+    response = parsePrepareResponse(
+      await invokeSandboxWithRetries(functionName, payload, context, dependencies),
+    );
+  } catch (error) {
+    // An attempt can have uploaded into these slots and still end here - a
+    // timeout on the way back, an answer that is not the contract's - and no
+    // derived row of this conversion can exist, because the only place one is
+    // written is recordPrepareResponse below, from an answer this never
+    // produced. The reclaim logs its own failure instead of raising, and the
+    // bucket it needs is the one that signed these slots, so the error raised
+    // here stays the conversion's own.
+    await reclaimRefusedConversionObjects(slots, NO_DERIVED_ROWS, context, dependencies);
+    throw error;
+  }
   if (context.signal?.aborted === true) {
     // The whole answer is dropped, `failed` included: the row keeps no verdict,
-    // so a later turn converts this source again. The objects the sandbox
-    // uploaded into the minted slots are left behind, which is what every
-    // refusal of an answered conversion does - see insertDerivedRows.
+    // so a later turn converts this source again, with slots of its own. The
+    // objects the sandbox uploaded into these slots go now, because no row of
+    // this session will ever name them.
+    await reclaimRefusedConversionObjects(slots, NO_DERIVED_ROWS, context, dependencies);
     return { ...NO_DERIVATIVES, stopReason: "aborted" };
   }
 
   return recordPrepareResponse(
     source,
     response,
-    new Map(slots.map((slot) => [slot.slotId, slot])),
+    slots,
     sessionPaths,
     context,
     dependencies,
@@ -968,8 +1058,8 @@ export const runChatFileDerivativesPassWithDependencies = async (
     // each in its own transaction, before this line runs, so the next
     // iteration's read already counts them and overwrites this number. Only
     // what became rows is counted, because that is the set the next `bash`
-    // mounts; a set the sandbox uploaded and this side refused leaves objects
-    // behind but no file of the session.
+    // mounts; a set the sandbox uploaded and this side refused becomes no file
+    // of the session, and its objects are reclaimed with the refusal.
     filesBytes += outcome.derivedBytes;
   }
 
@@ -1020,6 +1110,7 @@ export const buildChatFileDerivativesDependencies = (): ChatFileDerivativesDepen
   sumSessionFilesMountBytes,
   insertChatFile,
   deleteChatFile,
+  deleteUnnamedChatFileObjects,
   markChatFileDerivativesPrepared,
   markChatFileDerivativesFailed,
   presignReadUrl: async (

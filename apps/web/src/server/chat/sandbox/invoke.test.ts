@@ -116,6 +116,8 @@ type Harness = Readonly<{
   upserts: Array<NewChatFile>;
   deletedFileIds: Array<string>;
   writtenObjectKeys: Array<string>;
+  /** Object keys handed to the reclaim, in the order they were handed over. */
+  reclaimedObjectKeys: Array<string>;
 }>;
 
 const createHarness = (
@@ -127,6 +129,7 @@ const createHarness = (
   const upserts: Array<NewChatFile> = [];
   const deletedFileIds: Array<string> = [];
   const writtenObjectKeys: Array<string> = [];
+  const reclaimedObjectKeys: Array<string> = [];
   let nextFileId = 100;
 
   return {
@@ -134,6 +137,7 @@ const createHarness = (
     upserts,
     deletedFileIds,
     writtenObjectKeys,
+    reclaimedObjectKeys,
     dependencies: {
       listSessionChatFiles: async (): Promise<ReadonlyArray<ChatFile>> => files,
       saveWorkChatFile: async (
@@ -152,6 +156,14 @@ const createHarness = (
       ): Promise<ChatFile | null> => {
         deletedFileIds.push(fileId);
         return null;
+      },
+      deleteUnnamedChatFileObjects: async (
+        _userId: string,
+        _workspaceId: string,
+        _sessionId: string,
+        objectKeys: ReadonlyArray<string>,
+      ): Promise<void> => {
+        reclaimedObjectKeys.push(...objectKeys);
       },
       presignReadUrl: async (objectKey: string): Promise<string> =>
         `https://objects.example/${objectKey}?get`,
@@ -175,6 +187,23 @@ const createHarness = (
     },
   };
 };
+
+/**
+ * The keys a command's reclaim hands over: every slot the request signed but
+ * the ones whose key a row may hold.
+ *
+ * Not the slots the answer rejected. Whether a slot holds an upload is not
+ * knowable from the answer - it is trimmed to a length budget on the way back,
+ * and a failed invocation carries no answer at all - so the rows are what keeps
+ * a key and a delete of a key holding nothing is free.
+ */
+const unnamedSlotObjectKeys = (
+  request: SandboxRequest | undefined,
+  accountedSlotIds: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  (request?.writeSlots ?? [])
+    .filter((slot) => !accountedSlotIds.includes(slot.slotId))
+    .map((slot) => buildChatFileObjectKey(SESSION_ID, slot.slotId));
 
 const neverInvoked = async (): Promise<never> => {
   throw new Error("the sandbox must not be invoked for this command");
@@ -281,8 +310,10 @@ test("the write slots are minted with distinct ids, bounded by the response budg
   const slots = harness.requests[0]?.writeSlots ?? [];
   assert.equal(slots.length, CHAT_SANDBOX_WRITE_SLOTS);
   assert.equal(new Set(slots.map((slot) => slot.slotId)).size, CHAT_SANDBOX_WRITE_SLOTS);
-  // Well below the roughly 620 entries the sandbox's writtenFiles budget holds,
-  // so it can never drop an entry whose object it already uploaded.
+  // Well below the roughly 620 entries the sandbox's writtenFiles budget holds
+  // for ordinary paths. Long enough paths still push a full set past it, which
+  // is why the reclaim works from the slots this side signed rather than from
+  // the entries the answer came back with.
   assert.ok(CHAT_SANDBOX_WRITE_SLOTS < 200);
 });
 
@@ -357,6 +388,116 @@ test("a save naming an unminted slot or a path outside /work is not recorded", a
   }
   // Every path a note names is quoted, because it came from outside this chat.
   assert.ok(data?.sandboxNotes.some((note) => note.startsWith('"/work/forged.csv"')));
+  // Every slot this request signed but the one a row committed for is reclaimed:
+  // the uploads of the rejected entries, and the slots no entry named, are alike
+  // bytes no row will ever point at. The forged slot id is not among the keys,
+  // because this request never signed it.
+  assert.deepEqual(
+    harness.reclaimedObjectKeys,
+    unnamedSlotObjectKeys(harness.requests[0], [harness.upserts[0]?.fileId ?? ""]),
+  );
+});
+
+/**
+ * One slot id arriving twice, rejected and then saved, is what a reclaim built
+ * from the answer's rejections gets wrong: a rejection does not spend the slot,
+ * so the entry after it can still become the row that names the object.
+ */
+test("a slot rejected once and then saved keeps the object its row names", async (): Promise<void> => {
+  const harness = createHarness(
+    [],
+    (request: SandboxRequest): string => answerOf({
+      writtenFiles: [
+        { path: "/files/escaped.csv", slotId: request.writeSlots[0]?.slotId ?? "", sizeBytes: 1, sha256: "a".repeat(64) },
+        { path: "/work/kept.csv", slotId: request.writeSlots[0]?.slotId ?? "", sizeBytes: 2, sha256: "b".repeat(64) },
+      ],
+    }),
+  );
+
+  const result = await runChatSandboxCommandWithDependencies(
+    "true",
+    CONTEXT,
+    harness.dependencies,
+  );
+
+  assert.deepEqual(
+    result.kind === "ran" ? result.data.savedFiles : [],
+    [{ path: "/work/kept.csv", sizeBytes: 2 }],
+  );
+  const committedSlotId = harness.requests[0]?.writeSlots[0]?.slotId ?? "";
+  assert.equal(harness.upserts[0]?.fileId, committedSlotId);
+  // The reclaim leaves that one key alone; taking it would leave a row whose
+  // bytes are gone, and every later mount of its path would fail.
+  assert.deepEqual(
+    harness.reclaimedObjectKeys,
+    unnamedSlotObjectKeys(harness.requests[0], [committedSlotId]),
+  );
+});
+
+/**
+ * A save that raised leaves its row in doubt rather than absent: the COMMIT can
+ * have reached the server with the answer lost on the way back. The slot is
+ * therefore left alone, even though this side reports the path as not recorded.
+ */
+test("a save that raised leaves the object of its slot alone", async (): Promise<void> => {
+  const harness = createHarness(
+    [],
+    (request: SandboxRequest): string => answerOf({
+      writtenFiles: [
+        {
+          path: "/work/in-doubt.csv",
+          slotId: request.writeSlots[0]?.slotId ?? "",
+          sizeBytes: 2,
+          sha256: "b".repeat(64),
+        },
+      ],
+    }),
+    {
+      saveWorkChatFile: async (): Promise<never> => {
+        throw new Error("Connection terminated unexpectedly");
+      },
+    },
+  );
+
+  const result = await runChatSandboxCommandWithDependencies(
+    "true",
+    CONTEXT,
+    harness.dependencies,
+  );
+
+  const data = result.kind === "ran" ? result.data : null;
+  // This side did not record the save, so it reports no saved file and tells
+  // the model the path is not available.
+  assert.deepEqual(data?.savedFiles, []);
+  assert.ok(data?.sandboxNotes.some((note) => /could not be recorded in this chat/u.test(note)));
+  // The key stays all the same: a row that did commit would be left naming
+  // bytes that are gone, and every later mount of its path would fail.
+  assert.deepEqual(
+    harness.reclaimedObjectKeys,
+    unnamedSlotObjectKeys(harness.requests[0], [harness.requests[0]?.writeSlots[0]?.slotId ?? ""]),
+  );
+});
+
+/**
+ * An invocation that failed is the other reason the reclaim cannot work from
+ * the answer: the uploads can have completed and the answer never arrived.
+ */
+test("an invocation that failed reclaims every slot it signed", async (): Promise<void> => {
+  const timeout = Object.assign(new Error("timed out"), { name: "TimeoutError" });
+  const requests: Array<SandboxRequest> = [];
+  const harness = createHarness([], answerOf({}), {
+    invokeSandbox: async (_functionName: string, payload: string): Promise<never> => {
+      requests.push(JSON.parse(payload) as SandboxRequest);
+      throw timeout;
+    },
+  });
+
+  // The command's own error, not the reclaim's: nothing it does changes this.
+  await assert.rejects(
+    runChatSandboxCommandWithDependencies("true", CONTEXT, harness.dependencies),
+    (thrown: unknown): boolean => thrown === timeout,
+  );
+  assert.deepEqual(harness.reclaimedObjectKeys, unnamedSlotObjectKeys(requests[0], []));
 });
 
 /**
@@ -436,6 +577,37 @@ test("output past the budget is cut in the middle and saved whole to /work", asy
   // chat_files requires 64 hex characters, and these bytes are the app's own,
   // so the digest is measured rather than asserted by an uploader.
   assert.match(harness.upserts[0]?.sha256 ?? "", /^[0-9a-f]{64}$/u);
+});
+
+/**
+ * The spill writes its object before its row, so a save that did not land
+ * leaves bytes nothing names - and the save is also what can raise with its
+ * row committed, which no answer here distinguishes. The key is left behind
+ * for that one case, because a leaked object is reached anyway and bytes taken
+ * from under a committed row are not recoverable.
+ */
+test("a spill whose row could not be saved leaves the object it wrote behind", async (): Promise<void> => {
+  const harness = createHarness([], answerOf({ stdout: "x".repeat(60_000) }), {
+    saveWorkChatFile: async (): Promise<never> => {
+      throw new Error("chat_files insert failed");
+    },
+  });
+
+  const result = await runChatSandboxCommandWithDependencies(
+    "cat /files/report.csv",
+    CONTEXT,
+    harness.dependencies,
+  );
+
+  const data = result.kind === "ran" ? result.data : null;
+  // The output is still cut and the model is told the whole of it was not kept.
+  assert.equal(data?.fullOutputPath, null);
+  assert.ok(data?.sandboxNotes.some((note) => /could not be saved/u.test(note)));
+  assert.equal(harness.writtenObjectKeys.length, 1);
+  // The command saved no file, so every slot it signed is reclaimed - and the
+  // spill's own key is not among them.
+  assert.deepEqual(harness.reclaimedObjectKeys, unnamedSlotObjectKeys(harness.requests[0], []));
+  assert.ok(!harness.reclaimedObjectKeys.includes(harness.writtenObjectKeys[0] ?? ""));
 });
 
 test("output inside the budget is passed through whole and spills nothing", async (): Promise<void> => {
@@ -826,6 +998,12 @@ test("a path reported saved twice is recorded once", async (): Promise<void> => 
   assert.ok(
     result.kind === "ran"
     && result.data.sandboxNotes.some((note) => /was reported saved twice/u.test(note)),
+  );
+  // Only the first became a row, so the second entry's slot is reclaimed with
+  // every other slot of this request.
+  assert.deepEqual(
+    harness.reclaimedObjectKeys,
+    unnamedSlotObjectKeys(harness.requests[0], [harness.upserts[0]?.fileId ?? ""]),
   );
 });
 

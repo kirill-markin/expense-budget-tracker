@@ -79,6 +79,8 @@ type Recorded = Readonly<{
   prepared: Array<string>;
   failed: Array<Readonly<{ fileId: string; reason: string }>>;
   deleted: Array<string>;
+  /** Object keys handed to the reclaim, in the order they were handed over. */
+  reclaimed: Array<string>;
   events: Array<LoggedEvent>;
 }>;
 
@@ -88,8 +90,22 @@ const createRecorded = (): Recorded => ({
   prepared: [],
   failed: [],
   deleted: [],
+  reclaimed: [],
   events: [],
 });
+
+/** The key a slot of this session was signed for, as the store derives it. */
+const slotObjectKeys = (
+  writeSlots: ReadonlyArray<Readonly<{ slotId: string }>>,
+): ReadonlyArray<string> =>
+  writeSlots.map((slot) => `sessions/${SESSION_ID}/${slot.slotId}`);
+
+/** The keys of every slot a request signed but the ones a row accounted for. */
+const unnamedSlotObjectKeys = (
+  writeSlots: ReadonlyArray<Readonly<{ slotId: string }>>,
+  accountedSlotIds: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  slotObjectKeys(writeSlots.filter((slot) => !accountedSlotIds.includes(slot.slotId)));
 
 /** The answer `prepare` gives for one source, as a function of its slots. */
 type PrepareAnswer = (payload: PreparePayload) => unknown;
@@ -111,6 +127,12 @@ const prepareOneTextDerivative = (sizeBytes: number): PrepareAnswer =>
 type Fixture = Readonly<{
   dependencies: ChatFileDerivativesDependencies;
   recorded: Recorded;
+  /**
+   * The rows this session holds, which is what the fixture's own statements
+   * read and write. An override that stands in for one of them records its
+   * landed row here, so what the others then answer stays emergent.
+   */
+  storedRows: Map<string, ChatFile>;
 }>;
 
 const createFixture = (
@@ -160,6 +182,11 @@ const createFixture = (
       storedRows.set(inserted.fileId, inserted);
       return inserted;
     },
+    /**
+     * The row the removal found, as the store answers it - and the object went
+     * with it - or null when there was no row of that id left to remove, which
+     * is how an already-gone derivative reads here.
+     */
     deleteChatFile: async (
       _userId: string,
       _workspaceId: string,
@@ -167,8 +194,19 @@ const createFixture = (
       fileId: string,
     ): Promise<ChatFile | null> => {
       recorded.deleted.push(fileId);
-      storedRows.delete(fileId);
-      return null;
+      const removed = storedRows.delete(fileId);
+      return removed ? createChatFile({ fileId }) : null;
+    },
+    deleteUnnamedChatFileObjects: async (
+      userId: string,
+      workspaceId: string,
+      sessionId: string,
+      objectKeys: ReadonlyArray<string>,
+    ): Promise<void> => {
+      assert.equal(userId, context.userId);
+      assert.equal(workspaceId, context.workspaceId);
+      assert.equal(sessionId, context.sessionId);
+      recorded.reclaimed.push(...objectKeys);
     },
     markChatFileDerivativesPrepared: async (
       _userId: string,
@@ -213,7 +251,7 @@ const createFixture = (
     ...overrides,
   };
 
-  return { dependencies, recorded };
+  return { dependencies, recorded, storedRows };
 };
 
 const neverAnswers: PrepareAnswer = (): never => {
@@ -381,6 +419,10 @@ test("an unavailable source keeps both of its verdict fields empty and does not 
     recorded.invocations.map((invocation) => invocation.source.path),
     [first.path, second.path],
   );
+  // The outage can be the upload phase itself, with part of the set already
+  // stored, so every slot of the unavailable answer is reclaimed; the converted
+  // source's slots are not, because its derivatives are rows of this session.
+  assert.deepEqual(recorded.reclaimed, slotObjectKeys(recorded.invocations[0].writeSlots));
 });
 
 test("a source past the deployment's object lifetime is refused once and spends no invocation", async (): Promise<void> => {
@@ -626,13 +668,63 @@ test("an archive's taken derivative path is a verdict only the answer can reach"
     recorded.failed[0].reason,
     /^"\/files\/library\.zip" was converted, but its derivatives cannot be added to this chat's files - counted together with them, the same path "\/files\/library\.zip\.d\/notes\.txt" is listed twice\./u,
   );
+  // The answer is refused whole, so no row of this session names any slot it
+  // signed and every one of them is reclaimed, uploaded into or not.
+  assert.deepEqual(recorded.reclaimed, slotObjectKeys(recorded.invocations[0].writeSlots));
+});
+
+test("a derivative set that contradicts the request reclaims every slot of the invocation", async (): Promise<void> => {
+  const source = createChatFile({ fileId: "aaaaaaaa-0000-4000-8000-000000000001" });
+  // A slot id this request never minted, so the answer names an upload nothing
+  // on this side can hold and the whole conversion is refused.
+  const unmintedSlot: PrepareAnswer = (): unknown => ({
+    status: "prepared",
+    derivatives: [{
+      path: "/files/report.pdf.txt",
+      slotId: "dddddddd-0000-4000-8000-000000000001",
+      sizeBytes: 1_024,
+      sha256: DERIVATIVE_SHA256,
+    }],
+    notes: [],
+    durationMs: 12,
+  });
+  const { dependencies, recorded } = createFixture([source], unmintedSlot, {});
+
+  assert.deepEqual(
+    await runChatFileDerivativesPassWithDependencies(context, dependencies),
+    {
+      preparedCount: 0,
+      derivedCount: 0,
+      failedCount: 0,
+      unavailableCount: 0,
+      deferredCount: 1,
+      stopReason: "unrecordable",
+    },
+  );
+  assert.deepEqual(recorded.inserted, []);
+  assert.deepEqual(recorded.prepared, []);
+  assert.deepEqual(recorded.failed, []);
+  // Pinned to the branch this test is named for: an answer that stopped being
+  // validated at all would raise in the parse instead, and that catch reclaims
+  // the same slots and answers with the same outcome.
+  const errors = recorded.events
+    .filter((event) => event.action === "error")
+    .map((event) => ("error" in event ? event.error : ""));
+  assert.equal(errors.length, 1);
+  assert.match(
+    errors[0],
+    /answered with a derivative set this chat cannot hold: it named upload slot "dddddddd-0000-4000-8000-000000000001"/u,
+  );
+  assert.deepEqual(recorded.reclaimed, slotObjectKeys(recorded.invocations[0].writeSlots));
 });
 
 test("a raised invocation leaves no verdict, pages through the chat error action, and ends the pass", async (): Promise<void> => {
   const first = createChatFile({ fileId: "aaaaaaaa-0000-4000-8000-000000000001", path: "/files/a.pdf" });
   const second = createChatFile({ fileId: "aaaaaaaa-0000-4000-8000-000000000002", path: "/files/b.pdf" });
+  const invoked: Array<PreparePayload> = [];
   const { dependencies, recorded } = createFixture([first, second], neverAnswers, {
-    invokeSandbox: async (): Promise<never> => {
+    invokeSandbox: async (_functionName: string, payload: string): Promise<never> => {
+      invoked.push(JSON.parse(payload) as PreparePayload);
       throw new Error("ResourceNotFoundException: Function not found");
     },
   });
@@ -665,6 +757,9 @@ test("a raised invocation leaves no verdict, pages through the chat error action
     workspaceId: context.workspaceId,
     sessionId: context.sessionId,
   });
+  // The attempt can have uploaded into its slots and never come back with the
+  // answer that would name them, so every slot it signed is reclaimed.
+  assert.deepEqual(recorded.reclaimed, slotObjectKeys(invoked[0].writeSlots));
 });
 
 test("one turn converts at most CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN sources and defers the rest", async (): Promise<void> => {
@@ -712,6 +807,18 @@ test("a prepared source whose row vanished before the update stores none of its 
       // never for an update that worked, so a caller that read null as success
       // would count a converted source nothing points at any more.
       markChatFileDerivativesPrepared: async (): Promise<ChatFile | null> => null,
+      // The normal case of this branch: the source's row went with its session,
+      // and the ON DELETE CASCADE of 0083 took the derived rows along with it,
+      // so the removal below finds nothing left to remove.
+      deleteChatFile: async (
+        _userId: string,
+        _workspaceId: string,
+        _sessionId: string,
+        fileId: string,
+      ): Promise<ChatFile | null> => {
+        recorded.deleted.push(fileId);
+        return null;
+      },
     },
   );
 
@@ -730,6 +837,9 @@ test("a prepared source whose row vanished before the update stores none of its 
   // gone, and the second source is not sent into a session being deleted.
   assert.deepEqual(recorded.deleted, [recorded.inserted[0].fileId]);
   assert.equal(recorded.invocations.length, 1);
+  // The derived row was already gone, so nothing ever took the object its id
+  // names: that slot is reclaimed with every other slot of the invocation.
+  assert.deepEqual(recorded.reclaimed, slotObjectKeys(recorded.invocations[0].writeSlots));
 });
 
 test("a refused source whose row vanished before the verdict is not counted as refused", async (): Promise<void> => {
@@ -761,6 +871,38 @@ test("a refused source whose row vanished before the verdict is not counted as r
   assert.equal(recorded.invocations.length, 1);
 });
 
+/**
+ * The verdict write is a DB write like any other and can raise. The slots of a
+ * refused conversion are bytes no row of this session names in either order, so
+ * the reclaim runs before the write rather than behind it.
+ */
+test("a verdict write that raises on a refusal still reclaims the invocation's slots", async (): Promise<void> => {
+  const source = createChatFile({ fileId: "aaaaaaaa-0000-4000-8000-000000000001" });
+  const failed: PrepareAnswer = (): unknown => ({
+    status: "failed",
+    error: '"/files/report.pdf" could not be prepared: "its container is encrypted"',
+    durationMs: 7,
+  });
+  const { dependencies, recorded } = createFixture([source], failed, {
+    markChatFileDerivativesFailed: async (): Promise<never> => {
+      throw new Error("chat_files update failed");
+    },
+  });
+
+  assert.deepEqual(
+    await runChatFileDerivativesPassWithDependencies(context, dependencies),
+    {
+      preparedCount: 0,
+      derivedCount: 0,
+      failedCount: 0,
+      unavailableCount: 0,
+      deferredCount: 1,
+      stopReason: "unrecordable",
+    },
+  );
+  assert.deepEqual(recorded.reclaimed, slotObjectKeys(recorded.invocations[0].writeSlots));
+});
+
 test("a derived row that cannot be inserted takes the rows beside it with it", async (): Promise<void> => {
   const source = createChatFile({ fileId: "aaaaaaaa-0000-4000-8000-000000000001" });
   const twoDerivatives: PrepareAnswer = (payload): unknown => ({
@@ -783,7 +925,11 @@ test("a derived row that cannot be inserted takes the rows beside it with it", a
     durationMs: 12,
   });
   const insertedFileIds: Array<string> = [];
-  const { dependencies, recorded } = createFixture([source], twoDerivatives, {
+  // The fixture is read from inside the override it is built with, which runs
+  // only once the pass is under way: the row this insert claims landed is
+  // stored where the fixture's own delete reads it, so that delete answers it
+  // the way the store would instead of being overridden as well.
+  const fixture: Fixture = createFixture([source], twoDerivatives, {
     insertChatFile: async (
       _userId: string,
       _workspaceId: string,
@@ -793,9 +939,12 @@ test("a derived row that cannot be inserted takes the rows beside it with it", a
         throw new Error("chat_files insert failed");
       }
       insertedFileIds.push(newChatFile.fileId);
-      return createChatFile({ ...newChatFile, isConfirmed: true });
+      const landed = createChatFile({ ...newChatFile, isConfirmed: true });
+      fixture.storedRows.set(landed.fileId, landed);
+      return landed;
     },
   });
+  const { dependencies, recorded } = fixture;
 
   assert.deepEqual(
     await runChatFileDerivativesPassWithDependencies(context, dependencies),
@@ -813,6 +962,17 @@ test("a derived row that cannot be inserted takes the rows beside it with it", a
   assert.deepEqual(recorded.deleted, insertedFileIds);
   assert.deepEqual(recorded.prepared, []);
   assert.deepEqual(recorded.failed, []);
+  // The row that did land took its own object when it was removed again, and
+  // the insert that raised left its row in doubt, so that slot's key stays as
+  // well. Every other slot is reclaimed, uploaded into or not.
+  const inDoubtSlotId = recorded.invocations[0].writeSlots[1].slotId;
+  assert.deepEqual(
+    recorded.reclaimed,
+    unnamedSlotObjectKeys(
+      recorded.invocations[0].writeSlots,
+      [...insertedFileIds, inDoubtSlotId],
+    ),
+  );
 });
 
 test("a verdict update that raises after the inserts takes the derived rows with it", async (): Promise<void> => {
@@ -841,6 +1001,12 @@ test("a verdict update that raises after the inserts takes the derived rows with
   // side caused, against a derivative that is mounted and readable.
   assert.deepEqual(recorded.deleted, [recorded.inserted[0].fileId]);
   assert.deepEqual(recorded.failed, []);
+  // That removal found its row and took the row's own object with it, so its
+  // slot is the one key left behind; every other slot of the invocation goes.
+  assert.deepEqual(
+    recorded.reclaimed,
+    unnamedSlotObjectKeys(recorded.invocations[0].writeSlots, [recorded.inserted[0].fileId]),
+  );
 });
 
 test("a compensating delete that fails reports itself and still leaves the original error", async (): Promise<void> => {
@@ -879,7 +1045,7 @@ test("a compensating delete that fails reports itself and still leaves the origi
       if (fileId === insertedFileIds[0]) {
         throw new Error("chat_files delete failed");
       }
-      return null;
+      return createChatFile({ fileId });
     },
   });
 
@@ -907,6 +1073,18 @@ test("a compensating delete that fails reports itself and still leaves the origi
   assert.match(errors[1], /preparing one source failed: Error: chat_files insert failed/u);
   // Not the delete's error: compensation must not stand in for its cause.
   assert.doesNotMatch(errors[1], /chat_files delete failed/u);
+  // No object of these three is reclaimed here: the row that could not be
+  // removed is still a file of this session naming it, the removed one took its
+  // own object with it, and the insert that raised left a third row in doubt.
+  // Every other slot goes.
+  const inDoubtSlotId = recorded.invocations[0].writeSlots[2].slotId;
+  assert.deepEqual(
+    recorded.reclaimed,
+    unnamedSlotObjectKeys(
+      recorded.invocations[0].writeSlots,
+      [...insertedFileIds, inDoubtSlotId],
+    ),
+  );
 });
 
 test("the derivatives of one source are charged against the next source of the same pass", async (): Promise<void> => {
@@ -1098,6 +1276,9 @@ test("a turn stopped between two sources does not start the second", async (): P
   assert.deepEqual(recorded.inserted, []);
   assert.deepEqual(recorded.prepared, []);
   assert.deepEqual(recorded.failed, []);
+  // The answer is dropped, so nothing will ever name what it uploaded: the
+  // slots of that invocation are reclaimed before the pass ends.
+  assert.deepEqual(recorded.reclaimed, slotObjectKeys(recorded.invocations[0].writeSlots));
 });
 
 test("a turn stopped before the pass runs reads the rows and converts nothing", async (): Promise<void> => {

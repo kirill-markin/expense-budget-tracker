@@ -38,12 +38,15 @@ import {
 } from "../../../../../sandbox/src/contract";
 import { getChatFileNameFromSandboxPath } from "@/lib/chatFiles";
 import {
+  deleteChatFile,
+  deleteUnnamedChatFileObjects,
+} from "@/server/chatFiles/deleteFile";
+import {
   buildChatFileObjectKey,
   getChatFilesObjectStore,
 } from "@/server/chatFiles/objectStore";
 import { saveWorkChatFile } from "@/server/chatFiles/saveWorkFile";
 import {
-  deleteChatFile,
   isChatFileId,
   listSessionChatFiles,
   type ChatFile,
@@ -376,6 +379,7 @@ export type ChatSandboxDependencies = Readonly<{
   listSessionChatFiles: typeof listSessionChatFiles;
   saveWorkChatFile: typeof saveWorkChatFile;
   deleteChatFile: typeof deleteChatFile;
+  deleteUnnamedChatFileObjects: typeof deleteUnnamedChatFileObjects;
   presignReadUrl: (
     objectKey: string,
     downloadFileName: string,
@@ -582,6 +586,7 @@ export const buildChatSandboxDependencies = (): ChatSandboxDependencies => ({
   listSessionChatFiles,
   saveWorkChatFile,
   deleteChatFile,
+  deleteUnnamedChatFileObjects,
   presignReadUrl: async (
     objectKey: string,
     downloadFileName: string,
@@ -852,10 +857,8 @@ type RecordedChanges = Readonly<{
  * command can run, and a row written for a key this request did not sign is a
  * row pointing at an object that does not exist. A rejected entry becomes a
  * note rather than a failure - one unrecordable file must not lose the rest -
- * and its uploaded object stays in the bucket with no row naming it, until a
- * delete that works by prefix reaches it: chatFiles/cleanup.ts sweeping the
- * session or its workspace, or the bucket expiring the object 90 days after it
- * was written, which is the only one of the three nobody has to ask for.
+ * and every slot this request signed that no row of it can name is reclaimed
+ * at the end, whether its entry was rejected or never reported at all.
  *
  * `deletedPaths` is the sandbox's judgement and the only source of a removal
  * here: nothing on this side infers that a file is gone. The sandbox already
@@ -890,6 +893,15 @@ const recordSandboxChanges = async (
   const pathNotes: Array<string> = [];
   const aggregateNotes: Array<string> = [];
   const savedFiles: Array<ChatSandboxSavedFile> = [];
+  /**
+   * The slots whose key a row of this chat may hold, which is every slot the
+   * reclaim at the end must leave alone; the rest of what this request signed
+   * goes once the response has been read through.
+   *
+   * Two things put a slot in here: a save that committed, and a save that
+   * raised - because a raise does not settle that the row is absent.
+   */
+  const accountedSlotIds = new Set<string>();
   let workBytes = sumBytes(mountedFiles.filter((file) => isWorkPath(file.path)));
 
   for (const written of response.writtenFiles) {
@@ -934,6 +946,7 @@ const recordSandboxChanges = async (
         sha256: written.sha256,
       });
       writtenPaths.add(written.path);
+      accountedSlotIds.add(written.slotId);
       workBytes = workBytes - (previous?.sizeBytes ?? 0) + row.sizeBytes;
       savedFiles.push({ path: row.path, sizeBytes: row.sizeBytes });
     } catch (error) {
@@ -951,8 +964,41 @@ const recordSandboxChanges = async (
         workspaceId: context.workspaceId,
         sessionId: context.sessionId,
       });
+      /**
+       * The slot is left alone, object and all: a save that raised leaves its
+       * row in doubt rather than absent - the COMMIT can have reached the
+       * server with the answer lost on the way back, which is what the
+       * PoolErrors metric counts - and taking the key would strip the bytes
+       * from a row that is a file of this chat. Leaking the object instead is
+       * what the invariant in chatFiles/deleteFile.ts chooses.
+       *
+       * The note and the counted bytes stay as they are either way: this side
+       * did not record the save, so it must not report the path as a file of
+       * this chat.
+       */
+      accountedSlotIds.add(written.slotId);
     }
   }
+
+  /**
+   * Every slot this request signed but the accounted ones, in one batch once
+   * the whole response is read.
+   *
+   * Taken from the slots and not from the entries this side rejected, because
+   * the answer is not what says where the sandbox uploaded. It is trimmed to a
+   * length budget on the way back, so an upload can be missing from it
+   * altogether; and one slot id can arrive twice, rejected and then saved,
+   * where a set built from the rejection would take the saved row's bytes. A
+   * delete of a key that holds nothing succeeds, so erring wide costs nothing.
+   */
+  await dependencies.deleteUnnamedChatFileObjects(
+    context.userId,
+    context.workspaceId,
+    context.sessionId,
+    slots
+      .filter((slot) => !accountedSlotIds.has(slot.slotId))
+      .map((slot) => slot.objectKey),
+  );
 
   const deletedPaths: Array<string> = [];
   let failedDeleteCount = 0;
@@ -993,6 +1039,11 @@ const recordSandboxChanges = async (
         workspaceId: context.workspaceId,
         sessionId: context.sessionId,
       });
+      // The row's object is left behind, though this side holds its key from
+      // the mounted listing: a removal that raised leaves the row in doubt
+      // rather than gone, and a row that still stands has every later mount of
+      // this chat reading its bytes. Leaking the object instead is what the
+      // invariant in chatFiles/deleteFile.ts chooses.
     }
   }
 
@@ -1171,6 +1222,12 @@ const spillFullOutput = async (
       workspaceId: context.workspaceId,
       sessionId: context.sessionId,
     });
+    // The spill's object is deliberately left behind. This catch covers the
+    // row save as well as the write, and a save that raised leaves its row in
+    // doubt rather than absent, so the key cannot be taken: a row whose bytes
+    // are gone fails every later mount of this chat, while the leaked object
+    // is reached without anyone asking - see chatFiles/deleteFile.ts for the
+    // invariant.
     return { path: null, notes: [describeSpillRefusal({ kind: "not_saved" })] };
   }
 };
@@ -1612,6 +1669,19 @@ export const runChatSandboxCommandWithDependencies = async (
       stderr: null,
       error: describeError(error),
     }, dependencies);
+    // An attempt can have uploaded into its slots and still end here - a
+    // timeout on the way back, an answer that is not the contract's - and no
+    // row of this invocation can exist, because the only place one is written
+    // is recordSandboxChanges below, from an answer this never produced. So
+    // every slot it signed is unnamed. The reclaim logs its own failure instead
+    // of raising, and the bucket it needs is the one that signed these slots,
+    // so the error raised here stays the command's own.
+    await dependencies.deleteUnnamedChatFileObjects(
+      context.userId,
+      context.workspaceId,
+      context.sessionId,
+      slots.map((slot) => slot.objectKey),
+    );
     throw error;
   }
 
