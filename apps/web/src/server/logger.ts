@@ -282,6 +282,50 @@ type ChatEvent =
     mediaType: string;
     sizeBytes: number;
   }>
+  /**
+   * A chat attachment upload was refused because the session's attachment mount
+   * would pass the bytes an upload may take it to. A caller outcome rather than
+   * a server failure, so the action is deliberately kept out of the `error`
+   * family that the CloudWatch web error alarm pages on; a user who filled a
+   * chat must not page the on-call. It exists so a filled session stays
+   * searchable, and because `sessionFilesBytes` beside a session's minted and
+   * confirmed counts is the only signal that rows minted but never uploaded are
+   * what took the space.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "file_upload_session_bytes_refused";
+    route: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    sessionFilesBytes: number;
+    sizeBytes: number;
+    limit: number;
+  }>
+  /**
+   * One chat session's files were deleted on request: the objects went from the
+   * bucket and their chat_files rows with them, while the session keeps its
+   * messages. Counted per call, so a deletion that reclaimed nothing is still
+   * visible, and kept out of the `error` family the web error alarm pages on.
+   *
+   * `failed` records a deletion that stopped partway: objectCount still counts
+   * the objects that did go whenever the failure carried that count, rowCount
+   * is 0 because no completed row deletion was recorded rather than because
+   * the rows are known to survive, and the retry is idempotent.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "session_files_deleted";
+    outcome: "deleted" | "failed";
+    route: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    objectCount: number;
+    rowCount: number;
+    error: string | null;
+  }>
   | Readonly<{
     domain: "chat";
     action: "run_transition_skipped";
@@ -347,9 +391,9 @@ type ChatTranscriptionEvent = Readonly<{
 }>;
 
 /**
- * Chat file objects reclaimed when their workspace went away. The bucket has no
- * expiration rule, so this is the only reclaim path, and objectCount counts the
- * objects actually deleted, including on the failure the error propagates.
+ * Chat file objects reclaimed when their workspace went away. objectCount
+ * counts the objects actually deleted, including on the failure the error
+ * propagates.
  * not_configured records a deployment that stores no chat file at all.
  */
 type ChatFilesEvent = Readonly<{

@@ -39,6 +39,7 @@ import {
   listSessionChatFiles,
   markChatFileDerivativesFailed,
   markChatFileDerivativesPrepared,
+  sumSessionFilesMountBytes,
   type ChatFile,
 } from "@/server/chatFiles/store";
 import { log } from "@/server/logger";
@@ -83,10 +84,10 @@ export const CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN = 2;
  * or below the difference still fits under the first number after any one
  * conversion this pass can ask for, and a session above it might not.
  *
- * Refused here because here is the only place the sum exists. The sandbox
- * enforces SANDBOX_FILES_REQUEST_MAX_BYTES as request-schema validation on
- * every `bash` call, and it must: /files is downloaded into memory and nothing
- * evicts it. But it sees one request, never a session's history, so it caps one
+ * Refused here because the sandbox cannot do it. It enforces
+ * SANDBOX_FILES_REQUEST_MAX_BYTES as request-schema validation on every `bash`
+ * call, and it must: /files is downloaded into memory and nothing evicts it.
+ * But it sees one request, never a session's history, so it caps one
  * archive's expansion at SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES and leaves the
  * running total to its caller. Two 50 MiB archives of CSVs reach 356 MiB of
  * that mount with no adversarial intent, and a third would put the session past
@@ -94,6 +95,18 @@ export const CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN = 2;
  * that would delete something, because this chat has no other way to remove a
  * file. So the refusal has to happen before the derivatives exist, which is
  * before this pass invokes anything.
+ *
+ * Exported because the upload route holds a session's uploads at this same
+ * number (mintChatFileUpload in chat/http/filesRoute.ts). Uploads are the other
+ * way /files grows, and they have no ceiling of their own beyond one file's, so
+ * eleven of them reach 550 MiB on distinct names. Sharing this number makes the
+ * two gates agree by construction: a session admitted there is at or below this
+ * total, which is exactly the state this one still converts for, and the worst
+ * case is this number plus SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES, which is
+ * SANDBOX_FILES_REQUEST_MAX_BYTES and trips neither check. The one thing that
+ * reaches past it is several mints of one session reading one total at once,
+ * which that route bounds and names; this side cannot be the one that overshoots
+ * because it reads the committed total for every source it converts.
  *
  * Deliberately one number and one direction. A second gate measuring the real
  * derivative sizes after the answer arrived would admit the small sets this one
@@ -116,7 +129,7 @@ export const CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN = 2;
  * one source whose conversion had already been answered when the abort arrived,
  * worth at most SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES.
  */
-const SESSION_DERIVABLE_FILES_MAX_BYTES =
+export const SESSION_DERIVABLE_FILES_MAX_BYTES =
   SANDBOX_FILES_REQUEST_MAX_BYTES - SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES;
 
 export type ChatFileDerivativesContext = Readonly<{
@@ -139,6 +152,7 @@ export type ChatFileDerivativesContext = Readonly<{
 export type ChatFileDerivativesDependencies = Readonly<
   SandboxReadPresigning & SandboxSlotMinting & SandboxInvoking & {
     listSessionChatFiles: typeof listSessionChatFiles;
+    sumSessionFilesMountBytes: typeof sumSessionFilesMountBytes;
     insertChatFile: typeof insertChatFile;
     deleteChatFile: typeof deleteChatFile;
     markChatFileDerivativesPrepared: typeof markChatFileDerivativesPrepared;
@@ -238,6 +252,12 @@ const parsePrepareResponse = (body: string): PrepareResponse => {
 
 const isFilesPath = (path: string): boolean => path.startsWith(`${SANDBOX_FILES_DIR}/`);
 
+/**
+ * Bytes of /files in a listing this pass already holds.
+ *
+ * Telemetry only, and deliberately not a gate's input: a listing is a snapshot
+ * and the gate below reads the committed total instead. See the pass loop.
+ */
 const sumFilesBytes = (files: ReadonlyArray<ChatFile>): number =>
   files
     .filter((file) => isFilesPath(file.path))
@@ -427,11 +447,12 @@ const deleteDerivedRows = async (
  * deciding when a chat's objects are reclaimed. Its other refusal is not the
  * precedent: a /work file it cannot record never gets a row in the first place,
  * so it leaves an object and nothing else. What is bounded is how many
- * such objects one refusal leaves: at most the slots of one invocation. What is
- * not bounded is how long they live - chatFiles/cleanup.ts sweeps a session
- * prefix only when its workspace is deleted, there is no per-session route, and
- * the bucket carries no expiration rule (infra/aws/lib/chat-files-bucket.ts),
- * so "the session's own cleanup" is not a thing that runs on its own.
+ * such objects one refusal leaves: at most the slots of one invocation. How
+ * long they live is bounded by the bucket alone: chatFiles/cleanup.ts sweeps a
+ * session prefix when its workspace is deleted or when the `DELETE` of
+ * /api/chat/files asks for that session, and both wait for someone to ask,
+ * while the bucket expires an object 90 days after it was written
+ * (infra/aws/lib/chat-files-bucket.ts) with nobody asking at all.
  */
 const insertDerivedRows = async (
   source: ChatFile,
@@ -618,9 +639,10 @@ const recordPrepareResponse = async (
     throw error;
   }
   if (prepared === null) {
-    // The row went away between the inserts and this update, so its session is
-    // being deleted. The derived rows would have cascaded with it; remove the
-    // ones that did not, so nothing is left claiming a source that is gone.
+    // The row went away between the inserts and this update, so either its
+    // session is being deleted or this session's files were deleted on request.
+    // Both take the derived rows with them; remove the ones that did not go, so
+    // nothing is left claiming a source that is gone.
     await deleteDerivedRows(derivedFileIds, source, context, dependencies);
     return { ...NO_DERIVATIVES, stopReason: "source_gone" };
   }
@@ -648,10 +670,14 @@ const recordPrepareResponse = async (
  *
  * All three are permanent and none spends an invocation. A row the request
  * schema would reject is rejected on every later turn too; this chat's /files
- * can only grow - it has no way to delete an upload or a derivative - so a
- * session past the ceiling is past it for good; and a path an upload has taken
- * stays taken for the same reason. `filesBytes` is the running total including
- * the derivatives earlier sources of this same pass added.
+ * can only grow - nothing removes a single upload or derivative, and the one
+ * deletion there is takes the whole session's files together with the rows
+ * these verdicts are read from - so a session past the ceiling is past it for
+ * good; and a path an upload has taken stays taken for the same reason.
+ * `filesBytes` is the committed total its caller read for this source -
+ * including the derivatives earlier sources of this same pass committed - and
+ * not a number carried from the pass's own first listing, which a mint
+ * committing beside the pass is missing from.
  *
  * The third one is only reachable for a document, and that is a fact about the
  * sandbox rather than a shortcut: a document's single derivative is at
@@ -699,8 +725,8 @@ const describeUndeliverableSource = (
  * left is one conversion, and then the answer recorded - unless the user
  * stopped the turn while it was in flight, which is checked between the two.
  * An abandoned turn must write nothing: the session it would write to may
- * already be running the next turn, whose own pass read this session's byte
- * total before these rows existed.
+ * already be running the next turn, whose own pass has already read this
+ * session's byte total for the source it is converting.
  */
 const prepareSource = async (
   source: ChatFile,
@@ -780,6 +806,22 @@ export const runChatFileDerivativesPassWithDependencies = async (
   }
 
   const sessionPaths = new Set(sessionFiles.map((file) => file.path));
+  /**
+   * What /files holds, as freshly as this pass has measured it, and nothing a
+   * gate reads is older than the source it is deciding.
+   *
+   * The listing above only seeds it, for the one ending that logs before any
+   * source is considered - a turn abandoned at the top of the loop. Every
+   * iteration overwrites it with a committed total before the gate reads it,
+   * because a mint that commits after the listing is invisible to the listing
+   * and the overshoot that follows is the mount lost: a session holding 256 MiB
+   * with two pending sources, read once, admits a 50 MiB mint in parallel and
+   * then converts both sources against the total the mint is missing from,
+   * reaching 562 MiB of a 512 MiB mount. So the number is re-read instead of
+   * carried, which costs one query per source and at most
+   * CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN per turn - a `SUM` over one session's
+   * rows, beside a conversion the sandbox is allowed 90 seconds for.
+   */
   let filesBytes = sumFilesBytes(sessionFiles);
   let preparedCount = 0;
   let derivedCount = 0;
@@ -803,12 +845,12 @@ export const runChatFileDerivativesPassWithDependencies = async (
     /**
      * One catch for every way this can raise, and it has to be one.
      *
-     * Everything that raises out of prepareSource is a fault of this
-     * deployment rather than a fact about the user's file - a parser the
-     * function cannot load, a request shape the schema refuses, an answer that
-     * is not the contract's, a row write that failed - and none of them is a
-     * verdict. So no verdict is written, the row stays eligible, and the pass
-     * stops instead of sending the next source into the same fault.
+     * Everything that raises in here is a fault of this deployment rather than
+     * a fact about the user's file - a byte total that could not be read, a
+     * parser the function cannot load, a request shape the schema refuses, an
+     * answer that is not the contract's, a row write that failed - and none of
+     * them is a verdict. So no verdict is written, the row stays eligible, and
+     * the pass stops instead of sending the next source into the same fault.
      *
      * Caught rather than propagated, because this pass sits in front of the
      * user's turn: an unconvertible upload must not be able to end every chat
@@ -819,6 +861,11 @@ export const runChatFileDerivativesPassWithDependencies = async (
      */
     let outcome: SourceOutcome;
     try {
+      filesBytes = await dependencies.sumSessionFilesMountBytes(
+        context.userId,
+        context.workspaceId,
+        context.sessionId,
+      );
       outcome = await prepareSource(
         source,
         functionName,
@@ -842,8 +889,13 @@ export const runChatFileDerivativesPassWithDependencies = async (
     failedCount += outcome.failedCount;
     unavailableCount += outcome.unavailableCount;
     stopReason = outcome.stopReason;
-    // Only what became rows is charged, because that is the set the next `bash`
-    // mounts. A set the sandbox uploaded and this side refused leaves objects
+    // What the conversion just added, so the logged total is the state the pass
+    // leaves rather than the state the last gate read. No gate is charged from
+    // here: the rows these bytes describe were committed by insertChatFile,
+    // each in its own transaction, before this line runs, so the next
+    // iteration's read already counts them and overwrites this number. Only
+    // what became rows is counted, because that is the set the next `bash`
+    // mounts; a set the sandbox uploaded and this side refused leaves objects
     // behind but no file of the session.
     filesBytes += outcome.derivedBytes;
   }
@@ -892,6 +944,7 @@ let defaultDependencies: ChatFileDerivativesDependencies | null = null;
 
 export const buildChatFileDerivativesDependencies = (): ChatFileDerivativesDependencies => ({
   listSessionChatFiles,
+  sumSessionFilesMountBytes,
   insertChatFile,
   deleteChatFile,
   markChatFileDerivativesPrepared,
