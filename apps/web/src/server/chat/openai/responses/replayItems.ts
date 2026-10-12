@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import type { ChatMessage } from "@/server/chat/types";
+import type { ChatMessage, UnconvertedChatMessage } from "@/server/chat/types";
 
 /**
  * Server-only subset of OpenAI conversation items we persist so later turns can
@@ -130,7 +130,7 @@ export type ChatHistoryMeasurement = Readonly<{
   replayedMessages: number;
 }>;
 
-export type ServerChatMessage = ChatMessage & Readonly<{
+type ChatMessageReplayMetadata = Readonly<{
   /**
    * Opaque replay metadata used only by the server-side OpenAI integration.
    * The browser transcript continues to render from `content`.
@@ -141,6 +141,21 @@ export type ServerChatMessage = ChatMessage & Readonly<{
    * that ended in an error or a cancellation, which are sized by estimate.
    */
   replayMeasurement?: ChatHistoryMeasurement;
+}>;
+
+export type ServerChatMessage = ChatMessage & ChatMessageReplayMetadata;
+
+/**
+ * One message as its stored payload reads, before the turn prologue converts
+ * the inline documents it may still hold into files of the session.
+ *
+ * `itemId` is what tells the turn being answered from the turns behind it,
+ * which the conversion needs: the two say different things about a document
+ * that became no file. So this type is what the run is handed, and
+ * {@link ServerChatMessage} is what it builds its input from.
+ */
+export type StoredChatMessage = UnconvertedChatMessage & ChatMessageReplayMetadata & Readonly<{
+  itemId: string;
 }>;
 
 const isMeasurementCount = (value: unknown): value is number =>

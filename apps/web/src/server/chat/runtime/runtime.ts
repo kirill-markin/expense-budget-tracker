@@ -8,7 +8,7 @@ import {
   upsertToolCallContent,
 } from "@/lib/chatHistory";
 import type {
-  ServerChatMessage,
+  StoredChatMessage,
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
 import { UnsupportedStoredChatAttachmentError } from "@/server/chat/openai/responses/input";
@@ -37,9 +37,9 @@ import { createChatErrorLogEvent } from "@/server/chat/logging";
 import type { ChatModelRoutingDecision } from "@/server/chat/modelRouting";
 import type {
   ChatStreamEvent,
-  ContentPart,
   ReasoningSummaryContentPart,
   ToolCallContentPart,
+  UnconvertedContentPart,
 } from "@/server/chat/types";
 import { log, type ChatErrorStage } from "@/server/logger";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
@@ -90,8 +90,8 @@ export type StartPersistedChatRunParams = Readonly<{
    */
   isDemoMode: boolean;
   assistantItemId: string;
-  localMessages: ReadonlyArray<ServerChatMessage>;
-  turnInput: ReadonlyArray<ContentPart>;
+  localMessages: ReadonlyArray<StoredChatMessage>;
+  turnInput: ReadonlyArray<UnconvertedContentPart>;
   modelRouting: ChatModelRoutingDecision;
   diagnostics: ChatRunDiagnostics;
 }>;
@@ -441,9 +441,9 @@ const logRunTransitionSkipped = (
 };
 
 const applyAssistantDelta = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   event: Extract<ChatStreamEvent, { type: "delta" }>,
-): ReadonlyArray<ContentPart> =>
+): ReadonlyArray<UnconvertedContentPart> =>
   appendAssistantTextContent(content, {
     text: event.text,
     streamPosition: {
@@ -462,7 +462,7 @@ const updateAssistantInProgress = async (
   sessionId: string,
   activeRunId: string,
   assistantItemId: string,
-  assistantContent: ReadonlyArray<ContentPart>,
+  assistantContent: ReadonlyArray<UnconvertedContentPart>,
 ): Promise<void> => {
   await dependencies.updateAssistantMessageItem(userId, workspaceId, {
     sessionId,
@@ -496,7 +496,7 @@ const persistToolCallProgress = async (
   sessionId: string,
   activeRunId: string,
   assistantItemId: string,
-  assistantContent: ReadonlyArray<ContentPart>,
+  assistantContent: ReadonlyArray<UnconvertedContentPart>,
   event: Extract<ChatStreamEvent, { type: "tool_call" }>,
   seenInvalidationVersions: Map<string, number>,
 ): Promise<Extract<ChatStreamEvent, { type: "tool_call" }>> => {
@@ -549,8 +549,8 @@ const persistToolCallProgress = async (
 };
 
 const finalizeAssistantToolCalls = (
-  assistantContent: ReadonlyArray<ContentPart>,
-): ReadonlyArray<ContentPart> =>
+  assistantContent: ReadonlyArray<UnconvertedContentPart>,
+): ReadonlyArray<UnconvertedContentPart> =>
   finalizePendingToolCallContent(
     assistantContent,
     INCOMPLETE_TOOL_CALL_PROVIDER_STATUS,
@@ -570,7 +570,7 @@ export const runPersistedChatSessionWithDeps = async (
   params: StartPersistedChatRunParams,
   dependencies: ChatRuntimeDependencies,
 ): Promise<void> => {
-  let assistantContent: ReadonlyArray<ContentPart> = [];
+  let assistantContent: ReadonlyArray<UnconvertedContentPart> = [];
   let assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | undefined;
   let pendingObservationOutcome: ChatTurnObservationOutcome | null = null;
   let pendingCancellationOutcome: ChatCancellationObservationOutcome | null = null;

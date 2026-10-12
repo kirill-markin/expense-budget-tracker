@@ -12,20 +12,30 @@ import {
   getChatModelRollingWindowStart,
   selectChatModelRouting,
 } from "@/server/chat/modelRouting";
-import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
-import type { ContentPart } from "@/server/chat/types";
+import type { StoredChatMessage } from "@/server/chat/openai/responses/replayItems";
+import type {
+  InlineFileContentPart,
+  PdfContentPart,
+  UnconvertedContentPart,
+} from "@/server/chat/types";
+
+let messageCount = 0;
 
 const createUserMessage = (
-  content: ReadonlyArray<ContentPart>,
-): ServerChatMessage => ({
-  role: "user",
-  content,
-});
+  content: ReadonlyArray<UnconvertedContentPart>,
+): StoredChatMessage => {
+  messageCount += 1;
+  return {
+    itemId: `item-${String(messageCount)}`,
+    role: "user",
+    content,
+  };
+};
 
 const createPdf = (
   fileName: string,
   content: string,
-): Extract<ContentPart, { type: "file" }> => ({
+): InlineFileContentPart => ({
   type: "file",
   fileName,
   mediaType: "application/pdf",
@@ -35,7 +45,7 @@ const createPdf = (
 const createLogicalPdf = (
   fileName: string,
   content: string,
-): Extract<ContentPart, { type: "pdf" }> => ({
+): PdfContentPart => ({
   type: "pdf",
   fileName,
   mediaType: "application/pdf",
@@ -48,7 +58,7 @@ const createLogicalPdf = (
 });
 
 test("selectChatModelRouting keeps Sol Medium below both routing thresholds", (): void => {
-  const messages: ReadonlyArray<ServerChatMessage> = [
+  const messages: ReadonlyArray<StoredChatMessage> = [
     createUserMessage([createPdf("one.pdf", "pdf-one")]),
     createUserMessage([createPdf("two.pdf", "pdf-two")]),
     createUserMessage([createPdf("three.pdf", "pdf-three")]),
@@ -78,7 +88,7 @@ test("selectChatModelRouting switches to Luna Max at the rolling user-message th
 });
 
 test("persisted PDF-heavy history activates Luna on the fifth user message", (): void => {
-  const messages: ReadonlyArray<ServerChatMessage> = [
+  const messages: ReadonlyArray<StoredChatMessage> = [
     createUserMessage([createPdf("one.pdf", "pdf-one")]),
     createUserMessage([createPdf("two.pdf", "pdf-two")]),
     createUserMessage([createPdf("three.pdf", "pdf-three")]),
@@ -100,7 +110,7 @@ test("persisted PDF-heavy history activates Luna on the fifth user message", ():
 
 test("unique PDF counting uses content and excludes images and non-PDF files", (): void => {
   const firstPdf = createPdf("first-name.pdf", "same-pdf-content");
-  const messages: ReadonlyArray<ServerChatMessage> = [
+  const messages: ReadonlyArray<StoredChatMessage> = [
     createUserMessage([firstPdf]),
     createUserMessage([{ ...firstPdf, fileName: "reattached.pdf" }]),
     createUserMessage([createPdf("other.pdf", "other-pdf-content")]),
@@ -124,7 +134,7 @@ test("unique PDF counting uses content and excludes images and non-PDF files", (
 });
 
 test("unique PDF counting deduplicates logical PDFs and matching legacy stored PDFs", (): void => {
-  const messages: ReadonlyArray<ServerChatMessage> = [
+  const messages: ReadonlyArray<StoredChatMessage> = [
     createUserMessage([createLogicalPdf("statement.pdf", "same-source")]),
     createUserMessage([createLogicalPdf("renamed.pdf", "same-source")]),
     createUserMessage([createPdf("legacy.pdf", "same-source")]),
@@ -135,7 +145,7 @@ test("unique PDF counting deduplicates logical PDFs and matching legacy stored P
 });
 
 test("unique PDF counting recognizes legacy extension-only and signature-only files", (): void => {
-  const messages: ReadonlyArray<ServerChatMessage> = [
+  const messages: ReadonlyArray<StoredChatMessage> = [
     createUserMessage([{
       type: "file",
       fileName: "statement.PDF",

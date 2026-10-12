@@ -1,15 +1,15 @@
 import type {
-  ContentPart,
   ReasoningSummaryContentPart,
   StreamPosition,
   TextContentPart,
   ToolCallContentPart,
+  UnconvertedContentPart,
 } from "@/server/chat/types";
 
 export type StoredMessage = Readonly<{
   messageId?: string;
   role: "user" | "assistant";
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   timestamp: number;
   isError: boolean;
   isStopped: boolean;
@@ -24,14 +24,14 @@ type AppendAssistantTextParams = Readonly<{
 }>;
 
 const isOrderedAssistantPart = (
-  part: ContentPart,
+  part: UnconvertedContentPart,
 ): part is OrderedAssistantContentPart =>
   (part.type === "text" || part.type === "tool_call" || part.type === "reasoning_summary")
   && part.streamPosition !== undefined;
 export { isOrderedAssistantPart };
 
 const isLegacyAssistantPart = (
-  part: ContentPart,
+  part: UnconvertedContentPart,
 ): boolean =>
   (part.type === "text" || part.type === "tool_call")
   && part.streamPosition === undefined;
@@ -47,7 +47,7 @@ const normalizeResponseIndex = (
   responseIndex ?? 0;
 
 const assertSupportedAssistantContent = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): void => {
   if (content.some(isLegacyAssistantPart)) {
     throw new Error(
@@ -116,9 +116,9 @@ const mergeChronologyPosition = (
 });
 
 const insertOrderedAssistantPart = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   nextPart: OrderedAssistantContentPart,
-): ReadonlyArray<ContentPart> => {
+): ReadonlyArray<UnconvertedContentPart> => {
   let insertIndex = content.length;
 
   for (let i = 0; i < content.length; i++) {
@@ -137,7 +137,7 @@ const insertOrderedAssistantPart = (
 };
 
 const findTextPartIndex = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   streamPosition: StreamPosition,
 ): number =>
   content.findIndex((part) =>
@@ -166,9 +166,9 @@ const isSameReasoningSummary = (
   existing.streamPosition.itemId === incoming.streamPosition.itemId;
 
 export const appendAssistantTextContent = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   params: AppendAssistantTextParams,
-): ReadonlyArray<ContentPart> => {
+): ReadonlyArray<UnconvertedContentPart> => {
   assertSupportedAssistantContent(content);
 
   const existingIndex = findTextPartIndex(content, params.streamPosition);
@@ -195,9 +195,9 @@ export const appendAssistantTextContent = (
 };
 
 export const upsertToolCallContent = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   toolCall: ToolCallContentPart,
-): ReadonlyArray<ContentPart> => {
+): ReadonlyArray<UnconvertedContentPart> => {
   assertSupportedAssistantContent(content);
 
   if (toolCall.streamPosition === undefined) {
@@ -256,9 +256,9 @@ export const upsertToolCallContent = (
 };
 
 export const upsertReasoningSummaryContent = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   reasoningSummary: ReasoningSummaryContentPart,
-): ReadonlyArray<ContentPart> => {
+): ReadonlyArray<UnconvertedContentPart> => {
   assertSupportedAssistantContent(content);
 
   const existingIndex = content.findIndex((part) =>
@@ -289,10 +289,10 @@ export const upsertReasoningSummaryContent = (
 };
 
 export const finalizePendingToolCallContent = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   providerStatus: string,
   output: string,
-): ReadonlyArray<ContentPart> =>
+): ReadonlyArray<UnconvertedContentPart> =>
   content.map((part) => {
     if (part.type !== "tool_call" || part.status !== "started") {
       return part;

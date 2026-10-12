@@ -20,8 +20,8 @@ import {
   listStoredChatFileViewCalls,
   toPersistedOpenAIReplayItems,
   type ChatHistoryMeasurement,
+  type StoredChatMessage,
   type StoredOpenAIReplayMessage,
-  type ServerChatMessage,
   type StoredOpenAIReplayItem,
   toStoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
@@ -44,7 +44,7 @@ import {
   extractOpenAIErrorContext,
   parseRetryAfterMs,
 } from "@/server/chat/logging";
-import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
+import type { ChatStreamEvent, UnconvertedContentPart } from "@/server/chat/types";
 import { log as serverLog } from "@/server/logger";
 
 export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 30;
@@ -133,8 +133,8 @@ export type StartOpenAILoopParams = Readonly<{
   turnId: string;
   locale: SupportedLocale;
   timezone: string;
-  localMessages: ReadonlyArray<ServerChatMessage>;
-  turnInput: ReadonlyArray<ContentPart>;
+  localMessages: ReadonlyArray<StoredChatMessage>;
+  turnInput: ReadonlyArray<UnconvertedContentPart>;
   model: ChatEffectiveModelId;
   reasoningEffort: ChatEffectiveReasoningEffort;
   /** Demo-mode state of the request that started this run, captured there. */
@@ -499,18 +499,24 @@ const runLoopWithDeps = async (
   // turn reaches it once, so this is also the one place an attachment is stored
   // exactly as often as it was sent.
   //
+  // What it answers with is this run's history and turn input: a document is a
+  // file of the session from here on, and nothing below this line has its
+  // bytes.
+  //
   // The run's signal goes with it for the same reason it goes to the pass
   // below, and for one more: the rows this writes are what the next turn's byte
   // gates measure, and stop-then-send puts that next turn in front of them.
-  await dependencies.ingestInlineChatAttachments(
+  const ingest = await dependencies.ingestInlineChatAttachments(
     {
       requestId: params.requestId,
       userId: params.userId,
       workspaceId: params.workspaceId,
       sessionId: params.sessionId,
+      turnItemId: params.turnId,
       isDemoMode: params.isDemoMode,
       signal: params.signal ?? null,
     },
+    params.localMessages,
     params.turnInput,
   );
   // Before the history is built, because the derivatives are files of this
@@ -540,15 +546,15 @@ const runLoopWithDeps = async (
       sessionId: params.sessionId,
       isDemoMode: params.isDemoMode,
     },
-    listStoredChatFileViewCalls(params.localMessages),
+    listStoredChatFileViewCalls(ingest.messages),
     params.signal ?? null,
   );
   const {
     items: baseInput,
     replayedMessages: baseReplayedMessages,
   } = await dependencies.buildChatCompletionInput(
-    params.localMessages,
-    params.turnInput,
+    ingest.messages,
+    ingest.turnInput,
     params.timezone,
     params.sessionId,
     params.requestId,

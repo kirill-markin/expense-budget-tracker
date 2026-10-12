@@ -5,19 +5,28 @@ import type {
 import { z } from "zod";
 import { parseTimezone } from "@/lib/timezone";
 import { validateChatAttachments } from "@/server/chat/attachments/validation";
-import type { ContentPart } from "@/server/chat/types";
+import { getChatDocumentFileName } from "@/lib/chatFiles";
+import {
+  isInlineFileContentPart,
+  type UnconvertedContentPart,
+} from "@/server/chat/types";
 import { extractUserEmail, extractUserId, extractWorkspaceId } from "@/server/userId";
 
+/**
+ * One turn as a client sends it. A document is still inline bytes here, which
+ * the turn prologue turns into a file of the session: the wire keeps accepting
+ * that shape until the browser uploads documents ahead of the turn.
+ */
 export type ChatRequestBody = Readonly<{
   sessionId: string;
   turnId: string | null;
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   model: string;
   timezone: string;
 }>;
 
 export type FreshChatRequestBody = Readonly<{
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   model: string;
   timezone: string;
 }>;
@@ -56,7 +65,7 @@ export type ChatHistoryResponse = Readonly<{
   messages: ReadonlyArray<Readonly<{
     messageId: string;
     role: "user" | "assistant";
-    content: ReadonlyArray<ContentPart>;
+    content: ReadonlyArray<UnconvertedContentPart>;
     timestamp: number;
     isError: boolean;
     isStopped: boolean;
@@ -101,7 +110,7 @@ const isPdfPageContent = (value: unknown): boolean =>
   && typeof value.text === "string"
   && typeof value.jpegBase64Data === "string";
 
-const isContentPart = (value: unknown): value is ContentPart => {
+const isContentPart = (value: unknown): value is UnconvertedContentPart => {
   if (!isRecord(value) || typeof value.type !== "string") {
     return false;
   }
@@ -130,16 +139,16 @@ const isContentPart = (value: unknown): value is ContentPart => {
 };
 
 const collectChatAttachmentFileNames = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): ReadonlyArray<string> =>
   content
-    .filter((part): part is Extract<ContentPart, { type: "file" | "pdf" }> =>
+    .filter((part): part is Extract<UnconvertedContentPart, { type: "file" | "pdf" }> =>
       part.type === "file" || part.type === "pdf")
-    .map((part) => part.fileName);
+    .map((part) => part.type === "pdf" ? part.fileName : getChatDocumentFileName(part));
 
 const normalizeParsedContentPart = (
-  part: ContentPart,
-): ContentPart => {
+  part: UnconvertedContentPart,
+): UnconvertedContentPart => {
   if (part.type !== "pdf") {
     return part;
   }
@@ -157,12 +166,28 @@ const normalizeParsedContentPart = (
   };
 };
 
+/**
+ * The snapshot names every document of a message and carries the bytes of
+ * none.
+ *
+ * A stored payload keeps the bytes it arrived with, so the transcript would
+ * otherwise reload a message about a file with no file in it - and the turn
+ * prologue's conversion is in memory, so there is no later snapshot that puts
+ * one back. The name is what the transcript renders a document as, and the
+ * export says it holds no contents.
+ */
+const withoutDocumentBytes = (
+  content: ReadonlyArray<UnconvertedContentPart>,
+): ReadonlyArray<UnconvertedContentPart> =>
+  content.map((part) =>
+    isInlineFileContentPart(part) ? { ...part, base64Data: "" } : part);
+
 const toChatHistoryMessage = (
   message: ChatSessionSnapshot["messages"][number],
 ): ChatHistoryResponse["messages"][number] => ({
   messageId: message.itemId,
   role: message.role,
-  content: message.content,
+  content: withoutDocumentBytes(message.content),
   timestamp: message.timestamp,
   isError: message.isError,
   isStopped: message.isStopped,
@@ -261,7 +286,7 @@ export const parseFreshChatRequestBody = (body: unknown): FreshChatRequestBody =
 export const buildChatRequestDiagnostics = (
   requestId: string,
   model: string,
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   userId?: string,
   workspaceId?: string,
   sessionId?: string,

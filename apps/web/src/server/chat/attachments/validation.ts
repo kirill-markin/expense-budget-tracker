@@ -21,11 +21,12 @@ import {
   isLegacyRawPdfFilePart,
   isSha256Hex,
 } from "@/lib/chatPdf";
-import type {
-  ContentPart,
-  FileContentPart,
-  ImageContentPart,
-  PdfContentPart,
+import {
+  isInlineFileContentPart,
+  type ImageContentPart,
+  type InlineFileContentPart,
+  type PdfContentPart,
+  type UnconvertedContentPart,
 } from "@/server/chat/types";
 
 /**
@@ -220,7 +221,7 @@ const validateImagePart = (
 };
 
 const validateFilePart = (
-  part: FileContentPart,
+  part: InlineFileContentPart,
   partIndex: number,
 ): void => {
   validateAttachmentByteLength(part.base64Data, partIndex, part.mediaType, part.fileName);
@@ -362,13 +363,17 @@ const validatePdfPart = (
   });
 };
 
+/**
+ * A referenced document carries no bytes to validate: its row was written by
+ * the ingest pass, which admitted its media type and its name there.
+ */
 export const validateChatAttachments = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): void => {
   content.forEach((part, partIndex): void => {
     if (part.type === "image") {
       validateImagePart(part, partIndex);
-    } else if (part.type === "file") {
+    } else if (isInlineFileContentPart(part)) {
       validateFilePart(part, partIndex);
     } else if (part.type === "pdf") {
       validatePdfPart(part, partIndex);

@@ -1,45 +1,44 @@
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
+import { getChatDocumentFileName, UnnamedChatFilePathError } from "@/lib/chatFiles";
 import {
-  PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS,
-  isLegacyRawPdfFilePart,
-} from "@/lib/chatPdf";
-import type {
-  FileContentPart,
-  ImageContentPart,
-  PdfContentPart,
+  isInlineFileContentPart,
+  type FileContentPart,
+  type ImageContentPart,
+  type InlineFileContentPart,
+  type PdfContentPart,
 } from "@/server/chat/types";
 
 /**
- * Canonical attachment policy shared by runtime chat input reconstruction and
- * markdown export generation.
+ * Attachment rendering of the Copy-transcript export.
  *
- * Runtime / model-input behavior. Extracted text is the only representation of
- * an extractable format, bounded per attachment by
- * {@link capAttachmentPromptText} at model-input construction:
- * - CSV files are decoded as UTF-8 and sent as `input_text` only.
- * - Other plain text-like files are decoded as UTF-8 and sent as `input_text`
- *   only.
- * - XLS/XLSX workbooks are converted to per-sheet CSV text and sent as
- *   `input_text` only.
- * - DOCX files are deterministically converted to raw text and sent as
- *   `input_text` only, or as an explicit no-extractable-text line.
- * - Images remain native `input_image` items backed by base64 data URLs.
- * - Logical PDFs render as ordered extracted-text + JPEG `input_image` page pairs.
- * - Legacy raw PDF file parts are rejected before model input construction.
- * - Other binary formats stay as native `input_file` attachments only.
+ * Nothing here feeds model input. A document is a file of the session the model
+ * reads with `bash`, and the browser is sent its name and none of its bytes, so
+ * the export names the file instead of rendering contents it does not hold. It
+ * cannot read the object either: the page's `connect-src 'self'` admits no
+ * request to the store the pre-signed read URL points at, and the host of that
+ * store is this deployment's own setting.
+ *
+ * The extraction below therefore has one subject left, an attachment still
+ * inline in the browser's own copy of a turn it has just sent, whose bytes are
+ * in hand. That send is what item 08 replaces, and this goes with it.
  *
  * Markdown export behavior:
- * - Text-like files render as fenced code/text blocks.
- * - XLS/XLSX render as per-sheet CSV blocks.
- * - DOCX renders as extracted raw text, or `[no-extractable-text]` when the
- *   file carries none.
+ * - A document reloaded from the server renders as `[no-document-contents]`.
+ * - A document that is already a file of the session renders as that file.
+ * - Text-like inline files render as fenced code/text blocks.
+ * - Inline XLS/XLSX render as per-sheet CSV blocks.
+ * - Inline DOCX renders as extracted raw text, or `[no-extractable-text]` when
+ *   the file carries none.
  * - Images render as `[binary-data]`.
  * - Logical PDFs render extracted text plus a marker for each rendered page image.
- * - Legacy raw PDFs render as `[legacy-pdf-reattach-required]`.
  * - Other opaque binaries render as `[binary-data]`.
  */
-export type AttachmentContentPart = FileContentPart | ImageContentPart | PdfContentPart;
+export type AttachmentContentPart =
+  | FileContentPart
+  | InlineFileContentPart
+  | ImageContentPart
+  | PdfContentPart;
 
 export type MarkdownAttachment = Readonly<{
   label: string;
@@ -48,19 +47,20 @@ export type MarkdownAttachment = Readonly<{
 }>;
 
 export const BINARY_DATA_PLACEHOLDER = "[binary-data]";
-export const LEGACY_PDF_REATTACH_PLACEHOLDER = "[legacy-pdf-reattach-required]";
+/**
+ * A document this copy of the transcript holds no bytes of: every document of a
+ * reloaded message, because the snapshot carries the name alone.
+ */
+export const DOCUMENT_NO_CONTENTS_PLACEHOLDER = "[no-document-contents]";
 export const PDF_RENDERED_PAGE_PLACEHOLDER = "[rendered-page-image]";
 export const PDF_MISSING_TEXT_PLACEHOLDER = "[no-embedded-text]";
 export const DOCX_MISSING_TEXT_PLACEHOLDER = "[no-extractable-text]";
 
-// Model-facing counterpart of DOCX_MISSING_TEXT_PLACEHOLDER: an image-only DOCX
-// must read as unextractable rather than as an empty document.
-const DOCX_MISSING_TEXT_PROMPT_LINE =
-  "[No text could be extracted from this DOCX file. Ask the user to re-attach it as a PDF or images.]";
-
-// One number bounds the extracted text of every attachment format, reusing the
-// aggregate limit logical PDFs are already validated against.
-export const ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS = PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS;
+/** Name and declared type of one attachment, which is what the format predicates read. */
+type AttachmentDescriptor = Readonly<{
+  fileName: string;
+  mediaType: string;
+}>;
 
 const CSV_MEDIA_TYPES = new Set([
   "application/csv",
@@ -166,89 +166,79 @@ const buildCodeBlockLines = (
   "```",
 ];
 
-const getTextDecoder = (): TextDecoder =>
-  new TextDecoder("utf-8", { fatal: true });
+const decodeUtf8 = (
+  bytes: Uint8Array,
+): string =>
+  new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 
-const hasOpenCodeFence = (
-  promptText: string,
-): boolean =>
-  promptText.split("\n").filter((line) => line.startsWith("```")).length % 2 === 1;
-
-/**
- * Bounds one attachment's extracted text. Applied by model-input construction
- * only, so the markdown export keeps the full extraction. A cut that lands
- * inside a fenced block closes that fence before the marker.
- */
-export const capAttachmentPromptText = (
-  fileName: string,
-  promptText: string,
-): string => {
-  if (promptText.length <= ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS) {
-    return promptText;
-  }
-
-  const keptText = promptText.slice(0, ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS);
-  return [
-    keptText,
-    ...(hasOpenCodeFence(keptText) ? ["```"] : []),
-    `[truncated: extracted text of ${fileName} exceeded `
-    + `${String(ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS)} characters]`,
-  ].join("\n");
-};
-
-export const decodeUtf8File = (
-  part: FileContentPart,
-): string => {
-  try {
-    return getTextDecoder().decode(decodeBase64Bytes(part.base64Data));
-  } catch (error) {
-    throw new AttachmentSerializationError(
-      part.fileName,
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-};
+const describeAttachment = (
+  part: FileContentPart | InlineFileContentPart,
+): AttachmentDescriptor => ({
+  fileName: getChatDocumentFileName(part),
+  mediaType: part.mediaType,
+});
 
 export const getAttachmentLabel = (
   part: AttachmentContentPart,
-): string =>
-  part.type === "image" ? "[image]" : part.fileName;
+): string => {
+  if (part.type === "image") {
+    return "[image]";
+  }
 
-export const isWorkbookAttachment = (
-  part: FileContentPart,
-): boolean =>
-  WORKBOOK_MEDIA_TYPES.has(part.mediaType.toLowerCase())
-  || WORKBOOK_EXTENSIONS.has(getFileExtension(part.fileName));
-
-export const isPdfAttachment = (
-  part: FileContentPart,
-): boolean => isLegacyRawPdfFilePart(part);
-
-export const isDocxAttachment = (
-  part: FileContentPart,
-): boolean =>
-  DOCX_MEDIA_TYPES.has(part.mediaType.toLowerCase())
-  || DOCX_EXTENSIONS.has(getFileExtension(part.fileName));
-
-export const isCsvAttachment = (
-  part: FileContentPart,
-): boolean =>
-  CSV_MEDIA_TYPES.has(part.mediaType.toLowerCase())
-  || CSV_FILE_EXTENSIONS.has(getFileExtension(part.fileName));
-
-export const isTextFileAttachment = (
-  part: FileContentPart,
-): boolean => {
-  const mediaType = part.mediaType.toLowerCase();
-  return mediaType.startsWith("text/")
-    || TEXT_MEDIA_TYPES.has(mediaType)
-    || TEXT_FILE_EXTENSIONS.has(getFileExtension(part.fileName));
+  return part.type === "pdf" ? part.fileName : describeAttachment(part).fileName;
 };
 
-export const getMarkdownFenceLanguage = (
-  part: FileContentPart,
+/** Label of an attachment whose own name cannot be read. */
+const UNNAMED_ATTACHMENT_LABEL = "[unnamed-attachment]";
+
+/**
+ * The same label for the export, which may not fail over one attachment.
+ *
+ * Reading the name of a reference part raises for a path that carries none, and
+ * the export is one string built from every attachment of the transcript, so
+ * such a part has to cost its own label rather than the whole copy. That raise
+ * alone is answered with the label: anything else is a part this module cannot
+ * read at all, and is raised rather than exported as an unnamed attachment.
+ */
+const readAttachmentLabel = (
+  part: AttachmentContentPart,
 ): string => {
-  const extension = getFileExtension(part.fileName);
+  try {
+    return getAttachmentLabel(part);
+  } catch (error) {
+    if (!(error instanceof UnnamedChatFilePathError)) {
+      throw error;
+    }
+
+    return UNNAMED_ATTACHMENT_LABEL;
+  }
+};
+
+const isWorkbookAttachment = (
+  descriptor: AttachmentDescriptor,
+): boolean =>
+  WORKBOOK_MEDIA_TYPES.has(descriptor.mediaType.toLowerCase())
+  || WORKBOOK_EXTENSIONS.has(getFileExtension(descriptor.fileName));
+
+const isDocxAttachment = (
+  descriptor: AttachmentDescriptor,
+): boolean =>
+  DOCX_MEDIA_TYPES.has(descriptor.mediaType.toLowerCase())
+  || DOCX_EXTENSIONS.has(getFileExtension(descriptor.fileName));
+
+const isTextFileAttachment = (
+  descriptor: AttachmentDescriptor,
+): boolean => {
+  const mediaType = descriptor.mediaType.toLowerCase();
+  return mediaType.startsWith("text/")
+    || TEXT_MEDIA_TYPES.has(mediaType)
+    || TEXT_FILE_EXTENSIONS.has(getFileExtension(descriptor.fileName));
+};
+
+const getMarkdownFenceLanguage = (
+  descriptor: AttachmentDescriptor,
+): string => {
+  const extension = getFileExtension(descriptor.fileName);
   if (extension === ".csv") return "csv";
   if (extension === ".html") return "html";
   if (extension === ".js") return "javascript";
@@ -262,27 +252,16 @@ export const getMarkdownFenceLanguage = (
   return "text";
 };
 
-export const buildTextFilePromptText = (
-  part: FileContentPart,
-): string => {
-  const rawText = decodeUtf8File(part);
-  return [
-    `Attached file: ${part.fileName}`,
-    ...buildCodeBlockLines(getMarkdownFenceLanguage(part), rawText),
-  ].join("\n");
-};
-
-export const buildWorkbookPromptText = (
-  part: FileContentPart,
-): string => {
+const buildWorkbookCsvLines = (
+  descriptor: AttachmentDescriptor,
+  bytes: Uint8Array,
+): ReadonlyArray<string> => {
   try {
-    const workbook = XLSX.read(decodeBase64Bytes(part.base64Data), {
-      type: "array",
-    });
-    const sheetBlocks = workbook.SheetNames.flatMap((sheetName) => {
+    const workbook = XLSX.read(bytes, { type: "array" });
+    return workbook.SheetNames.flatMap((sheetName) => {
       const sheet = workbook.Sheets[sheetName];
       if (sheet === undefined) {
-        throw new AttachmentSerializationError(part.fileName, `missing sheet ${sheetName}`);
+        throw new AttachmentSerializationError(descriptor.fileName, `missing sheet ${sheetName}`);
       }
       const csv = trimTrailingNewline(XLSX.utils.sheet_to_csv(sheet));
       return [
@@ -290,15 +269,13 @@ export const buildWorkbookPromptText = (
         ...buildCodeBlockLines("csv", csv),
       ];
     });
-
-    return [`Attached workbook: ${part.fileName}`, ...sheetBlocks].join("\n");
   } catch (error) {
     if (error instanceof AttachmentSerializationError) {
       throw error;
     }
 
     throw new AttachmentSerializationError(
-      part.fileName,
+      descriptor.fileName,
       error instanceof Error ? error.message : String(error),
     );
   }
@@ -312,38 +289,69 @@ const normalizeExtractedText = (
 };
 
 const extractDocxText = async (
-  part: FileContentPart,
+  descriptor: AttachmentDescriptor,
+  bytes: Uint8Array,
 ): Promise<string> => {
-  const data = decodeBase64Bytes(part.base64Data);
   try {
     const result = await mammoth.extractRawText(typeof Buffer !== "undefined"
-      ? { buffer: Buffer.from(data) }
-      : { arrayBuffer: toArrayBuffer(data) });
+      ? { buffer: Buffer.from(bytes) }
+      : { arrayBuffer: toArrayBuffer(bytes) });
     return normalizeExtractedText(result.value);
   } catch (error) {
     throw new AttachmentSerializationError(
-      part.fileName,
+      descriptor.fileName,
       error instanceof Error ? error.message : String(error),
     );
   }
 };
 
-export const buildDocxPromptText = async (
+/** What a document that is a file of the session reads as in the export. */
+const buildStoredDocumentLines = (
   part: FileContentPart,
-): Promise<string> => {
-  const rawText = await extractDocxText(part);
-  return [
-    `Attached DOCX file: ${part.fileName}`,
-    ...(rawText.length === 0
-      ? [DOCX_MISSING_TEXT_PROMPT_LINE]
-      : buildCodeBlockLines("text", rawText)),
-  ].join("\n");
+): ReadonlyArray<string> => [
+  `[chat file ${JSON.stringify(part.path)}, ${String(part.sizeBytes)} bytes]`,
+];
+
+const buildDocumentLines = async (
+  descriptor: AttachmentDescriptor,
+  bytes: Uint8Array,
+): Promise<ReadonlyArray<string>> => {
+  // Nothing to extract, and the two cases that reach it are the same fact about
+  // this copy of the message: a reloaded document is named and empty, and a
+  // file the user attached empty has no contents either.
+  if (bytes.byteLength === 0) {
+    return [DOCUMENT_NO_CONTENTS_PLACEHOLDER];
+  }
+
+  if (isTextFileAttachment(descriptor)) {
+    try {
+      return buildCodeBlockLines(getMarkdownFenceLanguage(descriptor), decodeUtf8(bytes));
+    } catch (error) {
+      throw new AttachmentSerializationError(
+        descriptor.fileName,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  if (isWorkbookAttachment(descriptor)) {
+    return buildWorkbookCsvLines(descriptor, bytes);
+  }
+
+  if (isDocxAttachment(descriptor)) {
+    const text = await extractDocxText(descriptor, bytes);
+    return text.length > 0
+      ? buildCodeBlockLines("text", text)
+      : [DOCX_MISSING_TEXT_PLACEHOLDER];
+  }
+
+  return [BINARY_DATA_PLACEHOLDER];
 };
 
 export const serializeAttachmentForMarkdown = async (
   part: AttachmentContentPart,
 ): Promise<MarkdownAttachment> => {
-  const label = getAttachmentLabel(part);
+  const label = readAttachmentLabel(part);
   if (part.type === "pdf") {
     return {
       label,
@@ -365,46 +373,22 @@ export const serializeAttachmentForMarkdown = async (
     };
   }
 
-  try {
-    if (isPdfAttachment(part)) {
-      return {
-        label,
-        mediaType: part.mediaType,
-        lines: [LEGACY_PDF_REATTACH_PLACEHOLDER],
-      };
-    }
-
-    if (isTextFileAttachment(part)) {
-      return {
-        label,
-        mediaType: part.mediaType,
-        lines: buildCodeBlockLines(getMarkdownFenceLanguage(part), decodeUtf8File(part)),
-      };
-    }
-
-    if (isWorkbookAttachment(part)) {
-      return {
-        label,
-        mediaType: part.mediaType,
-        lines: buildWorkbookPromptText(part).split("\n").slice(1),
-      };
-    }
-
-    if (isDocxAttachment(part)) {
-      const text = await extractDocxText(part);
-      return {
-        label,
-        mediaType: part.mediaType,
-        lines: text.length > 0
-          ? buildCodeBlockLines("text", text)
-          : [DOCX_MISSING_TEXT_PLACEHOLDER],
-      };
-    }
-
+  if (!isInlineFileContentPart(part)) {
     return {
       label,
       mediaType: part.mediaType,
-      lines: [BINARY_DATA_PLACEHOLDER],
+      lines: buildStoredDocumentLines(part),
+    };
+  }
+
+  try {
+    return {
+      label,
+      mediaType: part.mediaType,
+      lines: await buildDocumentLines(
+        describeAttachment(part),
+        decodeBase64Bytes(part.base64Data),
+      ),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

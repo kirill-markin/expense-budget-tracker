@@ -2,14 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { crc32 } from "node:zlib";
 import {
-  LEGACY_PDF_REATTACH_PLACEHOLDER,
+  DOCUMENT_NO_CONTENTS_PLACEHOLDER,
   PDF_MISSING_TEXT_PLACEHOLDER,
   PDF_RENDERED_PAGE_PLACEHOLDER,
-  buildDocxPromptText,
   getAttachmentLabel,
   serializeAttachmentForMarkdown,
 } from "@/lib/chatAttachments";
-import type { PdfContentPart } from "@/server/chat/types";
+import type { FileContentPart, PdfContentPart } from "@/server/chat/types";
+
+const buildStoredDocument = (
+  path: string,
+  mediaType: string,
+): FileContentPart => ({
+  type: "file",
+  fileId: "11111111-1111-4111-8111-111111111111",
+  path,
+  mediaType,
+  sizeBytes: 1_024,
+  sha256: "a".repeat(64),
+});
 
 const DOCX_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -90,9 +101,9 @@ const buildStoredZip = (
   return Buffer.concat([localBytes, centralBytes, endRecord]);
 };
 
-const buildMinimalDocxBase64 = (
+const buildMinimalDocxBytes = (
   sentence: string,
-): string =>
+): Buffer =>
   buildStoredZip([
     {
       name: "[Content_Types].xml",
@@ -123,7 +134,7 @@ const buildMinimalDocxBase64 = (
         + `<w:body><w:p><w:r><w:t>${sentence}</w:t></w:r></w:p></w:body>`
         + "</w:document>",
     },
-  ]).toString("base64");
+  ]);
 
 test("logical PDF export keeps one attachment label and ordered page representations", async (): Promise<void> => {
   const pdf: PdfContentPart = {
@@ -154,52 +165,53 @@ test("logical PDF export keeps one attachment label and ordered page representat
   });
 });
 
-test("legacy PDF export marks the file for reattachment", async (): Promise<void> => {
-  const legacyPdfs = [
-    {
-      type: "file" as const,
-      fileName: "legacy.bin",
-      mediaType: "application/pdf",
-      base64Data: Buffer.from("opaque").toString("base64"),
-    },
-    {
-      type: "file" as const,
-      fileName: "legacy.pdf",
-      mediaType: "application/octet-stream",
-      base64Data: Buffer.from("opaque").toString("base64"),
-    },
-    {
-      type: "file" as const,
-      fileName: "legacy.bin",
-      mediaType: "text/plain",
-      base64Data: Buffer.from("%PDF-1.7 raw").toString("base64"),
-    },
-  ];
+test("a stored document is named in the export rather than read", async (): Promise<void> => {
+  const document = buildStoredDocument("/files/budget.docx", DOCX_MEDIA_TYPE);
 
-  for (const legacyPdf of legacyPdfs) {
-    const attachment = await serializeAttachmentForMarkdown(legacyPdf);
-    assert.deepEqual(attachment.lines, [LEGACY_PDF_REATTACH_PLACEHOLDER]);
-  }
+  assert.equal(getAttachmentLabel(document), "budget.docx");
+  assert.deepEqual(await serializeAttachmentForMarkdown(document), {
+    label: "budget.docx",
+    mediaType: DOCX_MEDIA_TYPE,
+    lines: ['[chat file "/files/budget.docx", 1024 bytes]'],
+  });
 });
 
-test("DOCX extraction reads real Word package bytes", async (): Promise<void> => {
-  const docx = {
-    type: "file" as const,
+// The export is one string built from every attachment of the transcript, so a
+// part whose name cannot be read costs its own label and nothing else.
+test("a document whose path carries no name is labelled rather than raised", async (): Promise<void> => {
+  const document = buildStoredDocument("/files/", DOCX_MEDIA_TYPE);
+
+  assert.deepEqual(await serializeAttachmentForMarkdown(document), {
+    label: "[unnamed-attachment]",
+    mediaType: DOCX_MEDIA_TYPE,
+    lines: ['[chat file "/files/", 1024 bytes]'],
+  });
+});
+
+test("an inline document still exports from its own bytes", async (): Promise<void> => {
+  const attachment = await serializeAttachmentForMarkdown({
+    type: "file",
+    fileName: "rows.csv",
+    mediaType: "text/csv",
+    base64Data: Buffer.from("amount\n42").toString("base64"),
+  });
+
+  assert.deepEqual(attachment, {
+    label: "rows.csv",
+    mediaType: "text/csv",
+    lines: ["```csv", "amount\n42", "```"],
+  });
+});
+
+test("inline DOCX extraction reads real Word package bytes", async (): Promise<void> => {
+  const attachment = await serializeAttachmentForMarkdown({
+    type: "file",
     fileName: "budget.docx",
     mediaType: DOCX_MEDIA_TYPE,
-    base64Data: buildMinimalDocxBase64(DOCX_SENTENCE),
-  };
+    base64Data: buildMinimalDocxBytes(DOCX_SENTENCE).toString("base64"),
+  });
 
-  assert.equal(
-    await buildDocxPromptText(docx),
-    [
-      "Attached DOCX file: budget.docx",
-      "```text",
-      DOCX_SENTENCE,
-      "```",
-    ].join("\n"),
-  );
-  assert.deepEqual(await serializeAttachmentForMarkdown(docx), {
+  assert.deepEqual(attachment, {
     label: "budget.docx",
     mediaType: DOCX_MEDIA_TYPE,
     lines: [
@@ -207,5 +219,22 @@ test("DOCX extraction reads real Word package bytes", async (): Promise<void> =>
       DOCX_SENTENCE,
       "```",
     ],
+  });
+});
+
+// Every document of a reloaded message: the snapshot carries its name and none
+// of its bytes, so the export may not render it as an empty file.
+test("a document reloaded with no bytes is named and reported as holding nothing", async (): Promise<void> => {
+  const attachment = await serializeAttachmentForMarkdown({
+    type: "file",
+    fileName: "rows.csv",
+    mediaType: "text/csv",
+    base64Data: "",
+  });
+
+  assert.deepEqual(attachment, {
+    label: "rows.csv",
+    mediaType: "text/csv",
+    lines: [DOCUMENT_NO_CONTENTS_PLACEHOLDER],
   });
 });
