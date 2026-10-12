@@ -301,7 +301,8 @@ test("minting refuses an upload the session has no room for", async (): Promise<
         return SESSION_UPLOAD_MAX_BYTES;
       },
       // The refusal has to happen before the row exists: a minted row is itself
-      // charged to the session and nothing reclaims one whose upload never came.
+      // charged to the session, and nothing reclaims one automatically once it
+      // exists, short of clearing the session's files.
       insertChatFile: async () => {
         throw new Error("a session with no room must not record a row");
       },
@@ -320,7 +321,7 @@ test("minting refuses an upload the session has no room for", async (): Promise<
     "Chat file report.csv was not added: this chat's /files already holds "
     + `${String(SESSION_UPLOAD_MAX_BYTES)} bytes and this upload would add 1024, past the `
     + `${String(SESSION_UPLOAD_MAX_BYTES)} bytes an upload may take it to. `
-    + "An upload cannot be removed from a chat, so attach this file in a new chat.",
+    + "Attach this file in a new chat.",
   );
   // The resolved session id, so no caller can have another session's total read.
   assert.deepEqual(sumCalls, [["user-1", "workspace-1", "session-1"]]);
@@ -355,7 +356,7 @@ test("a session already past the ceiling is told that, not told what an upload w
     "Chat file report.csv was not added: this chat's /files holds "
     + `${String(SESSION_UPLOAD_MAX_BYTES + 1)} bytes, already past the `
     + `${String(SESSION_UPLOAD_MAX_BYTES)} bytes an upload may take it to, so no further `
-    + "upload fits. An upload cannot be removed from a chat, so attach this file in a new chat.",
+    + "upload fits. Attach this file in a new chat.",
   );
 });
 
