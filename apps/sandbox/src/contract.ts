@@ -188,6 +188,25 @@ export const SANDBOX_PREPARE_MAX_DERIVATIVES = 64;
 export const SANDBOX_PREPARE_MAX_TEXT_CHARACTERS = 32 * 1024 * 1024;
 
 /**
+ * Bytes everything one source may be converted into, across every derivative.
+ *
+ * Read by both sides for two different jobs, which is why it is here rather
+ * than beside either. prepareOperation.ts spends it as the ceiling on what one
+ * archive expands to - it cannot be below SANDBOX_FILE_MAX_BYTES, or an entry
+ * at that cap could never be stored, and this is the next power of two above
+ * it. The web caller reserves it per source before it asks for a conversion at
+ * all: /files may hold SANDBOX_FILES_REQUEST_MAX_BYTES for a whole session, so
+ * a session already holding more than that minus this one cannot be given
+ * another derivative set without a later command of it becoming unseedable.
+ *
+ * It also has to cover the text path, which has no byte cap of its own:
+ * SANDBOX_PREPARE_MAX_TEXT_CHARACTERS UTF-16 characters are at most three UTF-8
+ * bytes each, so 96 MiB, which this clears. Lowering it below that would make
+ * the caller's reservation smaller than what a workbook can really produce.
+ */
+export const SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES = 128 * 1024 * 1024;
+
+/**
  * Bytes of one-page PDF the `pdf_page` answer may carry.
  *
  * A Lambda RequestResponse payload is capped at 6 MB and the page travels as
@@ -526,6 +545,129 @@ const checkDocumentRequestShape = (
     addCustomIssue(ctx, `writeSlots repeats the slotId '${duplicateSlotId}'`);
   }
 };
+
+/** What this sandbox can turn into plain files, by what it produces. */
+export type ChatSandboxSourceKind = "pdf" | "docx" | "workbook" | "zip";
+
+/**
+ * The media type the chat recorded for an upload, which is the signal the web
+ * task validated it on.
+ */
+const SOURCE_KIND_BY_MEDIA_TYPE: ReadonlyMap<string, ChatSandboxSourceKind> = new Map([
+  ["application/pdf", "pdf"],
+  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "workbook"],
+  ["application/vnd.ms-excel", "workbook"],
+  ["application/zip", "zip"],
+  // The type Windows reports for an archive, accepted for `.zip` by
+  // apps/web/src/lib/chatFiles.ts and therefore reachable here.
+  ["application/x-zip-compressed", "zip"],
+]);
+
+/**
+ * The second signal, consulted only when the media type names nothing at all.
+ *
+ * Browsers upload a workbook as `application/octet-stream` often enough that
+ * keying on the media type alone would silently leave real spreadsheets
+ * unconverted, which is why apps/web/src/lib/chatFiles.ts accepts that one type
+ * for every extension it knows.
+ */
+const SOURCE_KIND_BY_EXTENSION: ReadonlyMap<string, ChatSandboxSourceKind> = new Map([
+  [".pdf", "pdf"],
+  [".docx", "docx"],
+  [".xlsx", "workbook"],
+  [".xls", "workbook"],
+  [".zip", "zip"],
+]);
+
+/**
+ * The media types that name no format, which are the only ones whose extension
+ * is consulted.
+ *
+ * A media type that names a format is believed even when it names one with no
+ * derivative, and the asymmetry is the point: a PNG that the user called
+ * `report.pdf` would otherwise be handed to pdf.js, which throws, and the
+ * caller records that as a permanent derivatives_error for an ordinary mistake.
+ * Saying it has no derivative is both true and recoverable. The one type listed
+ * is CHAT_FILE_OPAQUE_MEDIA_TYPE in apps/web/src/lib/chatFiles.ts, which is the
+ * only type an upload may carry that does not already name its format.
+ */
+const OPAQUE_MEDIA_TYPES: ReadonlySet<string> = new Set(["application/octet-stream"]);
+
+/**
+ * Extensions whose file already IS the plain text a derivative would hold,
+ * whatever media type the browser reported for it.
+ *
+ * One entry and one reason: Windows with Excel installed reports a `.csv` as
+ * `application/vnd.ms-excel`, which apps/web/src/lib/chatFiles.ts accepts for
+ * that extension and which maps to `workbook` above - so a CSV would otherwise
+ * be handed to SheetJS, spending a write slot on a `.d/Sheet1.csv` sidecar that
+ * repeats the upload byte for byte. The extension decides here because it is
+ * the half of the pair that is right.
+ */
+const SELF_DESCRIBING_EXTENSIONS: ReadonlySet<string> = new Set([".csv"]);
+
+export const chatSandboxPathExtension = (path: string): string => {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const dot = name.lastIndexOf(".");
+
+  return dot <= 0 ? "" : name.slice(dot).toLowerCase();
+};
+
+export const isSelfDescribingChatSandboxSource = (path: string): boolean =>
+  SELF_DESCRIBING_EXTENSIONS.has(chatSandboxPathExtension(path));
+
+/**
+ * Which conversion one stored file gets, or null when it gets none.
+ *
+ * In the contract, and read from both sides, because the two sides ask it for
+ * halves of one decision that must agree. prepareOperation.ts asks it to pick a
+ * parser; the web task asks it to decide whether to spend an invocation at all,
+ * and a web copy that said "no" where this says "pdf" would leave a real
+ * document permanently unconverted with nothing recording why. The pair is
+ * (mediaType, path) rather than a ChatSandboxFile so the caller can ask before
+ * it has minted a pre-signed URL for one.
+ */
+export const classifyChatSandboxSourceKind = (
+  mediaType: string,
+  path: string,
+): ChatSandboxSourceKind | null => {
+  const normalizedMediaType = mediaType.trim().toLowerCase();
+  if (isSelfDescribingChatSandboxSource(path)) {
+    return null;
+  }
+
+  return SOURCE_KIND_BY_MEDIA_TYPE.get(normalizedMediaType)
+    ?? (OPAQUE_MEDIA_TYPES.has(normalizedMediaType)
+      ? SOURCE_KIND_BY_EXTENSION.get(chatSandboxPathExtension(path)) ?? null
+      : null);
+};
+
+/** Suffix of the one text derivative a document produces. */
+export const SANDBOX_TEXT_DERIVATIVE_SUFFIX = ".txt";
+
+/**
+ * The derivative paths a source's kind fixes in advance, or null when only the
+ * conversion can name them.
+ *
+ * A document has exactly one derivative, at `<path>.txt`, and that is knowable
+ * from the row alone. A workbook's sheets and an archive's entries are named
+ * from inside the source, so nothing outside the conversion can predict them.
+ *
+ * Stated here rather than in either caller, because both sides spend it: the
+ * sandbox builds the document path from this suffix, and the web caller mints
+ * write slots and waits on a conversion before it sees any path at all - so for
+ * the predictable half it can refuse a set this chat could not store without
+ * spending either. Two copies of the suffix would be a prediction that stops
+ * matching the file it predicts.
+ */
+export const predictChatSandboxDerivativePaths = (
+  kind: ChatSandboxSourceKind,
+  path: string,
+): ReadonlyArray<string> | null =>
+  kind === "pdf" || kind === "docx"
+    ? [`${path}${SANDBOX_TEXT_DERIVATIVE_SUFFIX}`]
+    : null;
 
 /**
  * Convert one source file into the text derivatives stored beside it.

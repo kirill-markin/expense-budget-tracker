@@ -6,6 +6,7 @@ import { zipSync, unzipSync } from "fflate";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import * as XLSX from "xlsx";
 import {
+  predictChatSandboxDerivativePaths,
   SANDBOX_PREPARE_MAX_DERIVATIVES,
   SANDBOX_WORK_FILE_MEDIA_TYPE,
   type ChatSandboxPrepareResponse,
@@ -404,6 +405,13 @@ test("a PDF with a text layer becomes one .txt with a marker per page", async ()
   );
   const prepared = requirePrepared(outcome.response);
   assert.deepEqual(prepared.derivatives.map((entry) => entry.path), ["/files/statement.pdf.txt"]);
+  // The web caller predicts this path from the stored row, before it mints a
+  // slot or waits on anything, so that a chat that has already taken it can be
+  // told so for free. The two must name the same path.
+  assert.deepEqual(
+    prepared.derivatives.map((entry) => entry.path),
+    predictChatSandboxDerivativePaths("pdf", "/files/statement.pdf"),
+  );
   assert.deepEqual(prepared.notes, []);
   assert.equal(outcome.uploads.length, 1);
   assert.equal(outcome.uploads[0].mediaType, SANDBOX_WORK_FILE_MEDIA_TYPE);
@@ -447,6 +455,10 @@ test("a DOCX becomes one .txt beside it", async (): Promise<void> => {
   );
   const prepared = requirePrepared(outcome.response);
   assert.deepEqual(prepared.derivatives.map((entry) => entry.path), ["/files/invoice.docx.txt"]);
+  assert.deepEqual(
+    prepared.derivatives.map((entry) => entry.path),
+    predictChatSandboxDerivativePaths("docx", "/files/invoice.docx"),
+  );
   assert.match(decode(outcome.uploads[0].content), /Invoice 42[\s\S]*Total 99\.90 EUR/u);
 });
 
@@ -467,6 +479,10 @@ test("an XLSX becomes one CSV per sheet in its .d directory", async (): Promise<
     "/files/book.xlsx.d/Budget.csv",
     "/files/book.xlsx.d/Notes.csv",
   ]);
+  // Both names came from inside the workbook, which is why nothing outside this
+  // conversion may claim to predict them: the web caller has to spend the
+  // invocation and check the answer it gets back.
+  assert.equal(predictChatSandboxDerivativePaths("workbook", "/files/book.xlsx"), null);
   assert.equal(decode(outcome.uploads[0].content), "date,amount\n2026-01-01,12.5");
   assert.equal(decode(outcome.uploads[1].content), "note\nkept");
 });

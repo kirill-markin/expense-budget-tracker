@@ -10,6 +10,7 @@ import {
   applyToolCallOutput,
 } from "@/server/chat/openai/tooling/toolCalls";
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
+import { runChatFileDerivativesPass } from "@/server/chatFiles/derivatives";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
   findLatestCompactionItemIndex,
@@ -89,6 +90,7 @@ const sleepWithAbort = (
 
 type OpenAILoopDependencies = Readonly<{
   buildChatCompletionInput: typeof buildChatCompletionInput;
+  runChatFileDerivativesPass: typeof runChatFileDerivativesPass;
   getObservedOpenAIClient: typeof getObservedOpenAIClient;
   runOneModelCall: typeof runOneModelCall;
   runOneToolCall: typeof runOneToolCall;
@@ -144,6 +146,7 @@ const toFunctionCallOutputInputItem = (
 
 const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   buildChatCompletionInput,
+  runChatFileDerivativesPass,
   getObservedOpenAIClient,
   runOneModelCall,
   runOneToolCall,
@@ -461,6 +464,22 @@ const runLoopWithDeps = async (
   dependencies: OpenAILoopDependencies,
 ): Promise<OpenAILoopCompletion> => {
   const client = dependencies.getObservedOpenAIClient();
+  // Before the history is built, because the derivatives are files of this
+  // session and the history describes what the session holds. A session with
+  // nothing waiting costs one indexed read and no invocation at all.
+  //
+  // The run's signal goes with it, because this is the one thing the turn does
+  // before the first token: two conversions can run to the sandbox function's
+  // two-minute timeout, and without the signal the user would be pressing stop
+  // on a chat that has shown nothing and waiting all of it out anyway.
+  await dependencies.runChatFileDerivativesPass({
+    requestId: params.requestId,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    isDemoMode: params.isDemoMode,
+    signal: params.signal ?? null,
+  });
   const {
     items: baseInput,
     replayedMessages: baseReplayedMessages,

@@ -408,6 +408,44 @@ type ChatSandboxEvent = Readonly<{
 }>;
 
 /**
+ * One derivative pass of a chat turn: how many uploads were waiting for a
+ * conversion, what the pass did about them, and why it stopped.
+ *
+ * Deliberately not in the `error` action family the CloudWatch web error alarm
+ * pages on. Every ending it records is a state of the session's files that the
+ * next turn can still improve on - a permanent verdict included - while the
+ * endings that are a fault of this deployment log the chat `error` action
+ * beside this one and page on their own.
+ *
+ * `preparedCount`, `failedCount`, `unavailableCount` and `deferredCount`
+ * partition `pendingCount`, so a session losing ground is visible as a sum.
+ * `unavailableCount` is the one with no verdict behind it: a source counted
+ * there is attempted again on the next turn, and nothing bounds how many turns
+ * that repeats for, so a rising count over one session is an outage this layer
+ * cannot stop paying for.
+ *
+ * `filesBytes` is what /files holds once the pass is done, which is the number
+ * the aggregate ceiling is measured against, so a session approaching it is
+ * visible before its commands start being refused.
+ */
+type ChatFileDerivativesEvent = Readonly<{
+  domain: "chat";
+  action: "file_derivatives";
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  pendingCount: number;
+  preparedCount: number;
+  derivedCount: number;
+  failedCount: number;
+  unavailableCount: number;
+  deferredCount: number;
+  filesBytes: number;
+  stopReason: "unrecordable" | "source_gone" | "aborted" | null;
+}>;
+
+/**
  * A sandbox invocation that was retried. Throttling and transport failures are
  * the only retried classes, so this records a capacity or network event rather
  * than a fault of the request, and the call may still have succeeded.
@@ -508,6 +546,7 @@ type LogEvent =
   | ChatFilesEvent
   | ChatSandboxEvent
   | ChatSandboxRetryEvent
+  | ChatFileDerivativesEvent
   | ApiEvent
   | SqlApiEvent
   | AuthEvent
