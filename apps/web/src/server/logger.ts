@@ -282,6 +282,27 @@ type ChatEvent =
     mediaType: string;
     sizeBytes: number;
   }>
+  /**
+   * A chat attachment upload was refused because the session's attachment mount
+   * would pass the bytes an upload may take it to. A caller outcome rather than
+   * a server failure, so the action is deliberately kept out of the `error`
+   * family that the CloudWatch web error alarm pages on; a user who filled a
+   * chat must not page the on-call. It exists so a filled session stays
+   * searchable, and because `sessionFilesBytes` beside a session's minted and
+   * confirmed counts is the only signal that rows minted but never uploaded are
+   * what took the space.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "file_upload_session_bytes_refused";
+    route: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    sessionFilesBytes: number;
+    sizeBytes: number;
+    limit: number;
+  }>
   | Readonly<{
     domain: "chat";
     action: "run_transition_skipped";
