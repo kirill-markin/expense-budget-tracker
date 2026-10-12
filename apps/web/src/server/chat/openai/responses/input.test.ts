@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import * as XLSX from "xlsx";
 import { CHAT_SENT_INPUT_BUDGET_TOKENS } from "@/lib/chatModels";
-import {
-  LegacyPdfFileAttachmentError,
-  UnsupportedImageMediaTypeError,
-} from "@/server/chat/attachments/validation";
+import { UnsupportedImageMediaTypeError } from "@/server/chat/attachments/validation";
 import {
   buildChatCompletionInput,
   sanitizeContentPartsForTelemetry,
@@ -24,17 +20,12 @@ import {
 
 const HEIC_BASE64_PREFIX = "AAAAGGZ0eXBoZWljAAAAAA==";
 const JPEG_BASE64_PREFIX = "/9j/4AAQSkZJRg==";
-const CSV_BASE64 = Buffer.from(
-  "date,amount\n2026-08-16,-844.82",
-  "utf8",
-).toString("base64");
 
 test("buildChatCompletionInput rejects a legacy HEIC attachment without mutating history", async (): Promise<void> => {
   const localMessages: ReadonlyArray<ServerChatMessage> = [{
     role: "user",
     content: [{
-      type: "file",
-      fileName: "IMG_7071.HEIC",
+      type: "image",
       mediaType: "image/heic",
       base64Data: HEIC_BASE64_PREFIX,
     }],
@@ -47,9 +38,8 @@ test("buildChatCompletionInput rejects a legacy HEIC attachment without mutating
     buildChatCompletionInput(localMessages, turnInput, "Europe/Madrid", "session-1", "req-1", EMPTY_CHAT_TURN_FILE_CONTEXT),
     (error: unknown): boolean => {
       assert.ok(error instanceof UnsupportedStoredChatAttachmentError);
-      assert.equal(error.fileName, "IMG_7071.HEIC");
+      assert.equal(error.fileName, null);
       assert.equal(error.mediaType, "image/heic");
-      assert.match(error.message, /filename "IMG_7071\.HEIC"/);
       assert.match(error.message, /media type "image\/heic"/);
       assert.equal(error.message.includes(HEIC_BASE64_PREFIX), false);
       return true;
@@ -90,14 +80,16 @@ test("buildChatCompletionInput replays a prepared JPEG as a native input image",
   });
 });
 
-test("buildChatCompletionInput replays CSV content identified by MIME without a native input file", async (): Promise<void> => {
+test("buildChatCompletionInput replays a stored document as the file the sandbox mounts", async (): Promise<void> => {
   const localMessages: ReadonlyArray<ServerChatMessage> = [{
     role: "user",
     content: [{
       type: "file",
-      fileName: "statement.data",
+      fileId: "11111111-1111-4111-8111-111111111111",
+      path: "/files/statement.csv",
       mediaType: "text/csv",
-      base64Data: CSV_BASE64,
+      sizeBytes: 31,
+      sha256: "d".repeat(64),
     }],
   }];
 
@@ -115,32 +107,8 @@ test("buildChatCompletionInput replays CSV content identified by MIME without a 
     type: "message",
     content: [{
       type: "input_text",
-      text: "Attached file: statement.data\n```text\ndate,amount\n2026-08-16,-844.82\n```",
-    }],
-  });
-});
-
-test("buildChatCompletionInput sends current CSV content identified by uppercase extension without a native input file", async (): Promise<void> => {
-  const { items: input } = await buildChatCompletionInput(
-    [],
-    [{
-      type: "file",
-      fileName: "statement.CSV",
-      mediaType: "application/octet-stream",
-      base64Data: CSV_BASE64,
-    }],
-    "Europe/Madrid",
-    "session-1",
-    "req-1",
-    EMPTY_CHAT_TURN_FILE_CONTEXT,
-  );
-
-  assert.deepEqual(input[1], {
-    role: "user",
-    type: "message",
-    content: [{
-      type: "input_text",
-      text: "Attached file: statement.CSV\n```csv\ndate,amount\n2026-08-16,-844.82\n```",
+      text: "Attached file \"/files/statement.csv\", 31 bytes. "
+        + "Read it with the bash tool; this message does not carry its contents.",
     }],
   });
 });
@@ -300,52 +268,6 @@ test("buildChatCompletionInput removes a JSONB-reordered copy of the current log
   );
 });
 
-test("buildChatCompletionInput rejects a stored legacy PDF before OpenAI mapping", async (): Promise<void> => {
-  const legacyPdfs: ReadonlyArray<Extract<ContentPart, { type: "file" }>> = [
-    {
-      type: "file",
-      fileName: "legacy.bin",
-      mediaType: "application/pdf",
-      base64Data: Buffer.from("opaque").toString("base64"),
-    },
-    {
-      type: "file",
-      fileName: "legacy.pdf",
-      mediaType: "application/octet-stream",
-      base64Data: Buffer.from("opaque").toString("base64"),
-    },
-    {
-      type: "file",
-      fileName: "legacy.bin",
-      mediaType: "application/octet-stream",
-      base64Data: Buffer.from("%PDF-1.7 private").toString("base64"),
-    },
-  ];
-
-  for (const legacyPdf of legacyPdfs) {
-    const localMessages: ReadonlyArray<ServerChatMessage> = [{
-      role: "user",
-      content: [legacyPdf],
-    }];
-    await assert.rejects(
-      buildChatCompletionInput(
-        localMessages,
-        [{ type: "text", text: "Continue" }],
-        "Europe/Madrid",
-        "session-1",
-        "req-1",
-        EMPTY_CHAT_TURN_FILE_CONTEXT,
-      ),
-      (error: unknown): boolean => {
-        assert.ok(error instanceof UnsupportedStoredChatAttachmentError);
-        assert.equal(error.fileName, legacyPdf.fileName);
-        assert.ok(error.cause instanceof LegacyPdfFileAttachmentError);
-        return true;
-      },
-    );
-  }
-});
-
 test("buildChatCompletionInput replays a stored session from its newest compaction item", async (): Promise<void> => {
   const localMessages: ReadonlyArray<ServerChatMessage> = [
     { role: "user", content: [{ type: "text", text: "First question" }] },
@@ -491,104 +413,6 @@ test("buildChatCompletionInput trims the oldest turns of a session that outgrew 
   assert.ok(replayedMessages > 0);
 });
 
-test("buildChatCompletionInput keeps replaying history when a small workbook is attached", async (): Promise<void> => {
-  // A container attachment cannot be sized from its own bytes, and the cap that
-  // bounds its extracted text is 200k tokens - more than the whole budget. Sized
-  // that way, a tiny spreadsheet made no cut fit, collapsed the replay to the
-  // newest pair, and the monotone boundary then held it there for the rest of
-  // the session. This workbook extracts to a few hundred characters and must be
-  // charged that.
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet([["date", "amount"], ["2026-08-16", -844.82]]),
-    "Ledger",
-  );
-  const localMessages = createLongStoredSession(20, null);
-  const turnInput: ReadonlyArray<ContentPart> = [
-    { type: "text", text: "What does this sheet say?" },
-    {
-      type: "file",
-      fileName: "ledger.xlsx",
-      mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      base64Data: XLSX.write(workbook, { type: "base64", bookType: "xlsx" }),
-    },
-  ];
-
-  const { items: input, replayedMessages } = await buildChatCompletionInput(
-    localMessages,
-    turnInput,
-    "Europe/Madrid",
-    "session-1",
-    "req-1",
-    EMPTY_CHAT_TURN_FILE_CONTEXT,
-  );
-
-  // The session is still replayed around the attachment rather than erased, and
-  // the workbook is sent once, as extracted CSV.
-  assert.ok(
-    replayedMessages > 2,
-    `Only ${String(replayedMessages)} messages survived a ${String(localMessages.length)} `
-    + "message session with one small workbook attached",
-  );
-  const serializedInput = JSON.stringify(input);
-  assert.ok(serializedInput.includes("Sheet: Ledger"));
-  assert.ok(serializedInput.includes("2026-08-16"));
-  assert.equal(serializedInput.includes("truncated: extracted text"), false);
-});
-
-test("buildChatCompletionInput keeps replaying history around a small stored workbook", async (): Promise<void> => {
-  // The stored-attachment half of the same defect. One small spreadsheet sitting
-  // in the history used to be charged the extracted-text cap - more than the
-  // whole budget for a single content part - so every cut was unfit and the
-  // monotone boundary pinned the session at its newest pair for good.
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet([["date", "amount"], ["2026-08-16", -844.82]]),
-    "Ledger",
-  );
-  const storedWorkbookTurn: ReadonlyArray<ServerChatMessage> = [
-    {
-      role: "user",
-      content: [{
-        type: "file",
-        fileName: "ledger.xlsx",
-        mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        base64Data: XLSX.write(workbook, { type: "base64", bookType: "xlsx" }),
-      }],
-    },
-    ...createLongStoredTurn(99, []).slice(1),
-  ];
-  const turnInput: ReadonlyArray<ContentPart> = [{ type: "text", text: "Continue" }];
-
-  const withoutWorkbook = await buildChatCompletionInput(
-    createLongStoredSession(20, null),
-    turnInput,
-    "Europe/Madrid",
-    "session-1",
-    "req-1",
-    EMPTY_CHAT_TURN_FILE_CONTEXT,
-  );
-  const withWorkbook = await buildChatCompletionInput(
-    [...createLongStoredSession(19, null), ...storedWorkbookTurn],
-    turnInput,
-    "Europe/Madrid",
-    "session-1",
-    "req-1",
-    EMPTY_CHAT_TURN_FILE_CONTEXT,
-  );
-
-  // One stored spreadsheet must not cost the session its history.
-  assert.ok(
-    withWorkbook.replayedMessages >= withoutWorkbook.replayedMessages - 2,
-    `A stored workbook cut the replay from ${String(withoutWorkbook.replayedMessages)} `
-    + `messages to ${String(withWorkbook.replayedMessages)}`,
-  );
-  // And it is replayed as its extracted CSV, once.
-  assert.ok(JSON.stringify(withWorkbook.items).includes("Sheet: Ledger"));
-});
-
 test("buildChatCompletionInput keeps the newest turn and drops a compaction item the budget no longer accepts", async (): Promise<void> => {
   const localMessages: ReadonlyArray<ServerChatMessage> = [
     ...createLongStoredTurn(0, []),
@@ -665,6 +489,27 @@ test("PDF telemetry carries only the source digest and derived page summaries", 
     },
   }]);
   assert.equal(JSON.stringify(sanitized).includes(JPEG_BASE64_PREFIX), false);
+});
+
+test("document telemetry carries the stored row's own measurements", async (): Promise<void> => {
+  const sanitized = await sanitizeContentPartsForTelemetry([{
+    type: "file",
+    fileId: "11111111-1111-4111-8111-111111111111",
+    path: "/files/statement.csv",
+    mediaType: "text/csv",
+    sizeBytes: 31,
+    sha256: "e".repeat(64),
+  }]);
+
+  assert.deepEqual(sanitized, [{
+    type: "file",
+    summary: {
+      fileName: "/files/statement.csv",
+      mediaType: "text/csv",
+      sizeBytes: 31,
+      sha256: "e".repeat(64),
+    },
+  }]);
 });
 
 test("buildChatCompletionInput sends the file listing behind the turn and keeps the clock last", async (): Promise<void> => {

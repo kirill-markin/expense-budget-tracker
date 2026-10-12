@@ -13,13 +13,20 @@ import {
   type ChatFile,
   type NewChatFile,
 } from "@/server/chatFiles/store";
-import type { ContentPart } from "@/server/chat/types";
+import type { StoredChatMessage } from "@/server/chat/openai/responses/replayItems";
+import type {
+  FileContentPart,
+  UnconvertedContentPart,
+} from "@/server/chat/types";
+
+const TURN_ITEM_ID = "33333333-3333-4333-8333-333333333333";
 
 const CONTEXT: ChatFileIngestContext = {
   requestId: "request-1",
   userId: "user-1",
   workspaceId: "workspace-1",
   sessionId: "11111111-1111-4111-8111-111111111111",
+  turnItemId: TURN_ITEM_ID,
   isDemoMode: false,
   signal: null,
 };
@@ -32,20 +39,20 @@ const toBase64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString("bas
 const digestOf = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-const IMAGE_PART: ContentPart = {
+const IMAGE_PART: UnconvertedContentPart = {
   type: "image",
   mediaType: "image/png",
   base64Data: toBase64(IMAGE_BYTES),
 };
 
-const CSV_PART: ContentPart = {
+const CSV_PART: UnconvertedContentPart = {
   type: "file",
   mediaType: "text/csv",
   fileName: "January statement.csv",
   base64Data: toBase64(CSV_BYTES),
 };
 
-const PDF_PART: ContentPart = {
+const PDF_PART: UnconvertedContentPart = {
   type: "pdf",
   fileName: "statement.pdf",
   mediaType: "application/pdf",
@@ -63,6 +70,10 @@ type IngestHarness = Readonly<{
   dependencies: ChatFileIngestDependencies;
   rows: Map<string, ChatFile>;
   written: Array<WrittenObject>;
+  /** The object keys the pass gave back, in the order it gave them back. */
+  deletedObjectKeys: Array<string>;
+  /** Every file id this harness minted, which is one per attempt. */
+  mintedFileIds: Array<string>;
   logged: Array<Readonly<Record<string, unknown>>>;
 }>;
 
@@ -71,6 +82,7 @@ type HarnessOptions = Readonly<{
   getObjectStoreError: Error | null;
   sessionFilesBytes: number;
   writeObject: ((objectKey: string) => void) | null;
+  confirmChatFileUpload: ((fileId: string) => void) | null;
   existingPaths: ReadonlyArray<string>;
 }>;
 
@@ -79,6 +91,7 @@ const DEFAULT_OPTIONS: HarnessOptions = {
   getObjectStoreError: null,
   sessionFilesBytes: 0,
   writeObject: null,
+  confirmChatFileUpload: null,
   existingPaths: [],
 };
 
@@ -117,8 +130,9 @@ const createHarness = (
     }));
   }
   const written: Array<WrittenObject> = [];
+  const deletedObjectKeys: Array<string> = [];
+  const mintedFileIds: Array<string> = [];
   const logged: Array<Readonly<Record<string, unknown>>> = [];
-  let mintedCount = 0;
   const objectStore = {
     writeObject: async (
       objectKey: string,
@@ -133,6 +147,8 @@ const createHarness = (
   return {
     rows,
     written,
+    deletedObjectKeys,
+    mintedFileIds,
     logged,
     dependencies: {
       getObjectStore: (): ChatFilesObjectStore | null => {
@@ -143,8 +159,11 @@ const createHarness = (
         return options.objectStoreConfigured ? objectStore : null;
       },
       createFileId: (): string => {
-        mintedCount += 1;
-        return `22222222-2222-4222-8222-2222222222${String(mintedCount).padStart(2, "0")}`;
+        const fileId = `22222222-2222-4222-8222-2222222222${
+          String(mintedFileIds.length + 1).padStart(2, "0")
+        }`;
+        mintedFileIds.push(fileId);
+        return fileId;
       },
       getChatFileByPath: async (
         _userId: string,
@@ -168,6 +187,7 @@ const createHarness = (
         fileId: string,
         sha256: string,
       ): Promise<ChatFile | null> => {
+        options.confirmChatFileUpload?.(fileId);
         for (const [path, chatFile] of rows) {
           if (chatFile.fileId !== fileId || chatFile.isConfirmed) {
             continue;
@@ -178,7 +198,27 @@ const createHarness = (
         }
         return null;
       },
+      // The row first and its object second, as chatFiles/deleteFile.ts does
+      // it, so a row given back takes its own key with it whatever the object
+      // holds.
+      deleteChatFile: async (
+        _userId: string,
+        _workspaceId: string,
+        _sessionId: string,
+        fileId: string,
+      ): Promise<ChatFile | null> => {
+        for (const [path, chatFile] of rows) {
+          if (chatFile.fileId !== fileId) {
+            continue;
+          }
+          rows.delete(path);
+          deletedObjectKeys.push(chatFile.objectKey);
+          return chatFile;
+        }
+        return null;
+      },
       sumSessionFilesMountBytes: async (): Promise<number> => options.sessionFilesBytes,
+      listSessionChatFiles: async (): Promise<ReadonlyArray<ChatFile>> => [...rows.values()],
       log: (event): void => {
         logged.push(event as unknown as Readonly<Record<string, unknown>>);
       },
@@ -189,8 +229,9 @@ const createHarness = (
 void test("an inline image and file become confirmed rows holding their own bytes", async () => {
   const harness = createHarness({});
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [IMAGE_PART, CSV_PART, { type: "text", text: "what is this" }],
     harness.dependencies,
   );
@@ -199,6 +240,8 @@ void test("an inline image and file become confirmed rows holding their own byte
     inlineCount: 2,
     storedCount: 2,
     declinedCount: 0,
+    referencedCount: 0,
+    unreferencedCount: 0,
     stopReason: null,
   });
   assert.deepEqual([...harness.rows.keys()], [
@@ -230,8 +273,9 @@ void test("an inline image and file become confirmed rows holding their own byte
 void test("a browser-preprocessed PDF part is counted and declined, because its original bytes never arrive", async () => {
   const harness = createHarness({});
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [PDF_PART],
     harness.dependencies,
   );
@@ -240,6 +284,8 @@ void test("a browser-preprocessed PDF part is counted and declined, because its 
     inlineCount: 1,
     storedCount: 0,
     declinedCount: 1,
+    referencedCount: 0,
+    unreferencedCount: 0,
     stopReason: null,
   });
   assert.equal(harness.rows.size, 0);
@@ -262,6 +308,7 @@ void test("a name already taken in the session takes the next duplicate path", a
 
   await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [IMAGE_PART],
     harness.dependencies,
   );
@@ -272,8 +319,9 @@ void test("a name already taken in the session takes the next duplicate path", a
 void test("a declared type the upload policy refuses is declined and the file beside it is still stored", async () => {
   const harness = createHarness({});
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [
       { type: "file", mediaType: "text/plain", fileName: "budget.xlsx", base64Data: toBase64(CSV_BYTES) },
       CSV_PART,
@@ -285,6 +333,8 @@ void test("a declared type the upload policy refuses is declined and the file be
     inlineCount: 2,
     storedCount: 1,
     declinedCount: 1,
+    referencedCount: 0,
+    unreferencedCount: 0,
     stopReason: null,
   });
   assert.deepEqual([...harness.rows.keys()], ["/files/January_statement.csv"]);
@@ -299,8 +349,9 @@ void test("a declared type the upload policy refuses is declined and the file be
 void test("a name that keeps no usable character is declined rather than raised", async () => {
   const harness = createHarness({});
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [{ type: "file", mediaType: "application/octet-stream", fileName: "///", base64Data: toBase64(CSV_BYTES) }],
     harness.dependencies,
   );
@@ -318,8 +369,9 @@ void test("a name that keeps no usable character is declined rather than raised"
 void test("an attachment a full session has no room for is declined", async () => {
   const harness = createHarness({ sessionFilesBytes: SESSION_DERIVABLE_FILES_MAX_BYTES });
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [IMAGE_PART],
     harness.dependencies,
   );
@@ -343,8 +395,9 @@ void test("an attachment that exactly fills the session's remaining bytes is sto
     sessionFilesBytes: SESSION_DERIVABLE_FILES_MAX_BYTES - IMAGE_BYTES.byteLength,
   });
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [IMAGE_PART],
     harness.dependencies,
   );
@@ -359,8 +412,9 @@ void test("an attachment one byte past the session's remaining bytes is declined
     sessionFilesBytes: SESSION_DERIVABLE_FILES_MAX_BYTES - IMAGE_BYTES.byteLength + 1,
   });
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [IMAGE_PART],
     harness.dependencies,
   );
@@ -379,8 +433,9 @@ void test("an attachment one byte past the session's remaining bytes is declined
 void test("a turn already stopped when the pass starts writes nothing at all", async () => {
   const harness = createHarness({});
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     { ...CONTEXT, signal: AbortSignal.abort() },
+    [],
     [IMAGE_PART, CSV_PART],
     harness.dependencies,
   );
@@ -389,6 +444,8 @@ void test("a turn already stopped when the pass starts writes nothing at all", a
     inlineCount: 2,
     storedCount: 0,
     declinedCount: 0,
+    referencedCount: 0,
+    unreferencedCount: 0,
     stopReason: "aborted",
   });
   assert.equal(harness.rows.size, 0);
@@ -403,8 +460,9 @@ void test("a turn stopped while one attachment is uploading stores no attachment
     },
   });
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     { ...CONTEXT, signal: controller.signal },
+    [],
     [IMAGE_PART, CSV_PART],
     harness.dependencies,
   );
@@ -413,6 +471,8 @@ void test("a turn stopped while one attachment is uploading stores no attachment
     inlineCount: 2,
     storedCount: 1,
     declinedCount: 0,
+    referencedCount: 0,
+    unreferencedCount: 0,
     stopReason: "aborted",
   });
   assert.deepEqual([...harness.rows.keys()], ["/files/image.png"]);
@@ -421,8 +481,9 @@ void test("a turn stopped while one attachment is uploading stores no attachment
 void test("a declared media type is normalized before it is checked and before it is stored", async () => {
   const harness = createHarness({});
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [{ type: "file", mediaType: " TEXT/CSV ", fileName: "January statement.csv", base64Data: toBase64(CSV_BYTES) }],
     harness.dependencies,
   );
@@ -438,8 +499,9 @@ void test("an object store this deployment cannot read stops the pass instead of
     getObjectStoreError: new Error("CHAT_FILES_S3_REGION is not set"),
   });
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [IMAGE_PART],
     harness.dependencies,
   );
@@ -448,6 +510,8 @@ void test("an object store this deployment cannot read stops the pass instead of
     inlineCount: 1,
     storedCount: 0,
     declinedCount: 0,
+    referencedCount: 0,
+    unreferencedCount: 0,
     stopReason: "unrecordable",
   });
   assert.equal(
@@ -456,15 +520,16 @@ void test("an object store this deployment cannot read stops the pass instead of
   );
 });
 
-void test("a failing object write stops the pass, leaves the row unconfirmed, and does not end the turn", async () => {
+void test("a failing object write stops the pass, gives its row back, and does not end the turn", async () => {
   const harness = createHarness({
     writeObject: (): void => {
       throw new Error("ServiceUnavailable");
     },
   });
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [IMAGE_PART, CSV_PART],
     harness.dependencies,
   );
@@ -473,16 +538,23 @@ void test("a failing object write stops the pass, leaves the row unconfirmed, an
     inlineCount: 2,
     storedCount: 0,
     declinedCount: 0,
+    referencedCount: 0,
+    unreferencedCount: 0,
     stopReason: "unrecordable",
   });
-  const unconfirmed = harness.rows.get("/files/image.png");
-  assert.equal(unconfirmed?.isConfirmed, false);
-  assert.equal(harness.rows.size, 1);
+  const mintedFileId = String(harness.mintedFileIds[0]);
+  assert.equal(harness.rows.size, 0);
+  // The object goes with the row, because what the failed write left under that
+  // key is a document part written at best.
+  assert.deepEqual(
+    harness.deletedObjectKeys,
+    [`sessions/${CONTEXT.sessionId}/${mintedFileId}`],
+  );
   const errors = harness.logged.filter((event) => event.action === "error");
   assert.equal(errors.length, 1);
   // The attachment that failed, named by its row rather than by a media type
   // two files of one turn can share.
-  assert.ok(String(errors[0]?.error).includes(`fileId=${String(unconfirmed?.fileId)}`));
+  assert.ok(String(errors[0]?.error).includes(`fileId=${mintedFileId}`));
 });
 
 void test("a turn carrying no attachment is no outcome of this pass, however this deployment is configured", async () => {
@@ -490,8 +562,9 @@ void test("a turn carrying no attachment is no outcome of this pass, however thi
     getObjectStoreError: new Error("CHAT_FILES_S3_REGION is not set"),
   });
 
-  const outcome = await ingestInlineChatAttachmentsWithDependencies(
+  const { outcome } = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [{ type: "text", text: "what is my balance" }],
     harness.dependencies,
   );
@@ -500,6 +573,8 @@ void test("a turn carrying no attachment is no outcome of this pass, however thi
     inlineCount: 0,
     storedCount: 0,
     declinedCount: 0,
+    referencedCount: 0,
+    unreferencedCount: 0,
     stopReason: null,
   });
   assert.deepEqual(harness.logged, []);
@@ -511,11 +586,13 @@ void test("demo mode and a deployment with no bucket store nothing", async () =>
 
   await ingestInlineChatAttachmentsWithDependencies(
     { ...CONTEXT, isDemoMode: true },
+    [],
     [IMAGE_PART],
     demoHarness.dependencies,
   );
   await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
+    [],
     [IMAGE_PART],
     unconfiguredHarness.dependencies,
   );
@@ -524,4 +601,282 @@ void test("demo mode and a deployment with no bucket store nothing", async () =>
   assert.equal(unconfiguredHarness.rows.size, 0);
   assert.deepEqual(demoHarness.logged, []);
   assert.deepEqual(unconfiguredHarness.logged, []);
+});
+
+const buildUserMessage = (
+  itemId: string,
+  content: ReadonlyArray<UnconvertedContentPart>,
+): StoredChatMessage => ({ itemId, role: "user", content });
+
+void test("a stored payload's inline document becomes the reference to its file", async () => {
+  const harness = createHarness({});
+  const content = [CSV_PART, { type: "text" as const, text: "import this" }];
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  const stored = harness.rows.get("/files/January_statement.csv");
+  const reference: FileContentPart = {
+    type: "file",
+    fileId: String(stored?.fileId),
+    path: "/files/January_statement.csv",
+    mediaType: "text/csv",
+    sizeBytes: CSV_BYTES.byteLength,
+    sha256: digestOf(CSV_BYTES),
+  };
+  assert.equal(result.outcome.referencedCount, 1);
+  assert.deepEqual(result.turnInput, [reference, { type: "text", text: "import this" }]);
+  // One conversion stands for the turn and its stored copy, which is what keeps
+  // normalizeHistoryMessages dropping the duplicate rather than sending it twice.
+  assert.equal(result.messages[0]?.content, result.turnInput);
+});
+
+void test("an older payload's document is converted on a later turn of the session", async () => {
+  const harness = createHarness({});
+  const storedContent = [CSV_PART];
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [
+      buildUserMessage("turn-1", storedContent),
+      buildUserMessage(TURN_ITEM_ID, [{ type: "text", text: "and now?" }]),
+    ],
+    [{ type: "text", text: "and now?" }],
+    harness.dependencies,
+  );
+
+  // The document of the older turn was never stored, so this pass stores it and
+  // references it, and leaves the turn carrying nothing untouched.
+  assert.equal(harness.rows.size, 1);
+  assert.equal(result.outcome.referencedCount, 1);
+  assert.equal(result.messages[0]?.content[0]?.type, "file");
+  assert.deepEqual(result.messages[1]?.content, [{ type: "text", text: "and now?" }]);
+});
+
+void test("a document the pass converted once is not stored a second time", async () => {
+  const harness = createHarness({});
+  const content = [CSV_PART];
+
+  await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+  // The same payload once more, which is every later turn of the session: the
+  // bytes stay in it, so this pass has to find the row it already wrote rather
+  // than store the document a second time.
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], ["/files/January_statement.csv"]);
+  assert.equal(result.outcome.referencedCount, 1);
+});
+
+// A row left behind by a failed attempt would be a row no listing names and
+// nothing reclaims, holding one of the duplicate indexes of its own path and
+// its bytes in the session's mount total - and the payload keeps its bytes, so
+// every later turn would mint another one beside it.
+void test("a document whose object write failed leaves no row, and the next turn mints one at the first path", async () => {
+  let isWriteFailing = true;
+  const harness = createHarness({
+    writeObject: (): void => {
+      if (isWriteFailing) {
+        throw new Error("ServiceUnavailable");
+      }
+    },
+  });
+  const content = [CSV_PART];
+
+  await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], []);
+
+  isWriteFailing = false;
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], ["/files/January_statement.csv"]);
+  assert.equal(harness.rows.get("/files/January_statement.csv")?.isConfirmed, true);
+  assert.equal(result.outcome.referencedCount, 1);
+});
+
+void test("a document whose confirmation failed leaves no row, and the next turn mints one at the first path", async () => {
+  let isConfirmationFailing = true;
+  const harness = createHarness({
+    confirmChatFileUpload: (): void => {
+      if (isConfirmationFailing) {
+        throw new Error("could not connect to the database");
+      }
+    },
+  });
+  const content = [CSV_PART];
+
+  await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], []);
+  assert.deepEqual(
+    harness.deletedObjectKeys,
+    [`sessions/${CONTEXT.sessionId}/${String(harness.mintedFileIds[0])}`],
+  );
+
+  isConfirmationFailing = false;
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], ["/files/January_statement.csv"]);
+  assert.equal(harness.rows.get("/files/January_statement.csv")?.isConfirmed, true);
+  assert.equal(result.outcome.referencedCount, 1);
+});
+
+void test("a document that became no file reads as unavailable and keeps its bytes", async () => {
+  const harness = createHarness({ objectStoreConfigured: false });
+  const content = [CSV_PART];
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  assert.equal(result.outcome.unreferencedCount, 1);
+  const part = result.turnInput[0];
+  assert.equal(part?.type, "text");
+  assert.match(
+    part?.type === "text" ? part.text : "",
+    /"January statement\.csv" was attached to this message, but it is not available/u,
+  );
+});
+
+// Identical bytes under one name are what a digest cannot resolve: the rows
+// differ only in their path, so a part has to reach the row this run stored it
+// as rather than whichever row the digest matches first.
+void test("two documents of identical bytes become two files, each referenced by its own part", async () => {
+  const harness = createHarness({});
+  const buildCsvPart = (): UnconvertedContentPart => ({
+    type: "file",
+    mediaType: "text/csv",
+    fileName: "January statement.csv",
+    base64Data: toBase64(CSV_BYTES),
+  });
+  const content = [buildCsvPart(), buildCsvPart()];
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], [
+    "/files/January_statement.csv",
+    "/files/January_statement-2.csv",
+  ]);
+  assert.equal(result.outcome.referencedCount, 2);
+  assert.deepEqual(
+    result.turnInput.map((part) => part.type === "file" ? part.path : part.type),
+    ["/files/January_statement.csv", "/files/January_statement-2.csv"],
+  );
+  assert.equal(result.messages[0]?.content, result.turnInput);
+});
+
+// The digest of the bytes is not enough on its own: a row's sha256 is only what
+// its writer claimed, so a document whose name reduces to another path is a
+// file of its own rather than the earlier row under a different name.
+void test("a document re-attached under another name is stored as its own file", async () => {
+  const harness = createHarness({});
+  const first = [CSV_PART];
+  await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, first)],
+    first,
+    harness.dependencies,
+  );
+
+  const renamed: UnconvertedContentPart = {
+    type: "file",
+    mediaType: "text/csv",
+    fileName: "statement-copy.csv",
+    base64Data: toBase64(CSV_BYTES),
+  };
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    { ...CONTEXT, turnItemId: "turn-2" },
+    [
+      buildUserMessage(TURN_ITEM_ID, first),
+      buildUserMessage("turn-2", [renamed]),
+    ],
+    [renamed],
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], [
+    "/files/January_statement.csv",
+    "/files/statement-copy.csv",
+  ]);
+  assert.deepEqual(
+    result.turnInput.map((part) => part.type === "file" ? part.path : part.type),
+    ["/files/statement-copy.csv"],
+  );
+});
+
+// Nothing in the derivatives pass or the sandbox converts HEIC, so a payload
+// stored before the browser started converting it must not become a mounted
+// file the model is told to read.
+void test("a legacy HEIC document is never stored and reads as no longer available", async () => {
+  const harness = createHarness({});
+  const heic: UnconvertedContentPart = {
+    type: "file",
+    mediaType: "image/heic",
+    fileName: "IMG_7071.HEIC",
+    base64Data: toBase64(IMAGE_BYTES),
+  };
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [
+      buildUserMessage("turn-1", [heic]),
+      buildUserMessage(TURN_ITEM_ID, [{ type: "text", text: "and now?" }]),
+    ],
+    [{ type: "text", text: "and now?" }],
+    harness.dependencies,
+  );
+
+  assert.equal(harness.rows.size, 0);
+  assert.equal(result.outcome.inlineCount, 0);
+  assert.equal(result.outcome.unreferencedCount, 1);
+  const part = result.messages[0]?.content[0];
+  assert.match(
+    part?.type === "text" ? part.text : "",
+    /"IMG_7071\.HEIC" was attached to an earlier message and is no longer available/u,
+  );
+  // Nothing is re-attempted and nothing is nagged about: the same name and type
+  // would be refused on every later turn of this session.
+  assert.deepEqual(harness.logged.filter((event) => event.action === "file_ingest_declined"), []);
 });

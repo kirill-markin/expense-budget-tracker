@@ -9,16 +9,16 @@ import {
   type StoredMessage,
 } from "@/lib/chatHistory";
 import type {
-  ContentPart,
   ReasoningSummaryContentPart,
   StreamPosition,
   ToolCallContentPart,
+  UnconvertedContentPart,
 } from "@/server/chat/types";
 
 type ChatHistoryState = Readonly<{
   messages: ReadonlyArray<StoredMessage>;
   replaceMessages: (messages: ReadonlyArray<StoredMessage>) => void;
-  appendUserMessage: (content: ReadonlyArray<ContentPart>) => void;
+  appendUserMessage: (content: ReadonlyArray<UnconvertedContentPart>) => void;
   startAssistantMessage: () => void;
   appendAssistantChunk: (text: string, streamPosition: StreamPosition) => void;
   upsertReasoningSummary: (reasoningSummary: ReasoningSummaryContentPart) => void;
@@ -36,7 +36,7 @@ export const useChatHistory = (): ChatHistoryState => {
     setMessages(nextMessages);
   }, []);
 
-  const appendUserMessage = useCallback((content: ReadonlyArray<ContentPart>): void => {
+  const appendUserMessage = useCallback((content: ReadonlyArray<UnconvertedContentPart>): void => {
     const msg: StoredMessage = {
       role: "user",
       content,

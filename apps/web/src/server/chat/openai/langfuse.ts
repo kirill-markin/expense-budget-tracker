@@ -6,7 +6,7 @@ import type {
   StartActiveObservationOpts,
 } from "@langfuse/tracing";
 import { createTraceId, propagateAttributes, startActiveObservation } from "@langfuse/tracing";
-import type { ContentPart } from "@/server/chat/types";
+import type { UnconvertedContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { sanitizeContentPartsForTelemetry } from "./responses/input";
 
@@ -18,7 +18,7 @@ type ChatTraceMetadata = Readonly<{
   model: string;
   turnIndex: number;
   runState: string;
-  turnInput: ReadonlyArray<ContentPart>;
+  turnInput: ReadonlyArray<UnconvertedContentPart>;
 }>;
 
 export type ChatTranscriptionTraceMetadata = Readonly<{
@@ -35,18 +35,18 @@ export type ChatTranscriptionTraceMetadata = Readonly<{
 export type ChatTurnObservationOutcome =
   | Readonly<{
     kind: "completed";
-    assistantContent: ReadonlyArray<ContentPart>;
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
   }>
   | Readonly<{
     kind: "cancelled";
-    assistantContent: ReadonlyArray<ContentPart>;
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
   }>
   | Readonly<{
     kind: "invalidated";
   }>
   | Readonly<{
     kind: "failed";
-    assistantContent: ReadonlyArray<ContentPart>;
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
     message: string;
   }>;
 

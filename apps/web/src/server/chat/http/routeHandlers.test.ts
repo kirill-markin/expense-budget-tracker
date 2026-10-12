@@ -23,7 +23,7 @@ import {
   stopActiveChatRun,
   type ChatRunStartReservation,
 } from "@/server/chat/runtime/runtime";
-import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
+import type { ChatStreamEvent, UnconvertedContentPart } from "@/server/chat/types";
 
 const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
 const TURN_ID = "00000000-0000-4000-8000-000000000001";
@@ -110,7 +110,7 @@ const createPostDependencies = (
     _userId: string,
     _workspaceId: string,
     sessionId: string | undefined,
-    _content: ReadonlyArray<ContentPart>,
+    _content: ReadonlyArray<UnconvertedContentPart>,
     _turnId: string,
   ) => ({
     kind: "started",
@@ -1053,7 +1053,7 @@ test("getChatRouteWithDeps maps missing sessions to 404", async (): Promise<void
 });
 
 test("getChatRouteWithDeps exposes exact active turn identity without internal heartbeat fields", async (): Promise<void> => {
-  const publicContent: ReadonlyArray<ContentPart> = [{ type: "text", text: "Hello" }];
+  const publicContent: ReadonlyArray<UnconvertedContentPart> = [{ type: "text", text: "Hello" }];
   const response = await getChatRouteWithDeps(
     new Request("http://localhost/api/chat?sessionId=session-1", {
       method: "GET",

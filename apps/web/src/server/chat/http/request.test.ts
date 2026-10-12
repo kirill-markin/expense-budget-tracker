@@ -4,9 +4,11 @@ import {
   buildChatRequestDiagnostics,
   InvalidChatTimezoneError,
   parseChatRequestBody,
+  toChatHistoryResponse,
 } from "@/server/chat/http/request";
 import { LegacyPdfFileAttachmentError } from "@/server/chat/attachments/validation";
-import type { PdfContentPart } from "@/server/chat/types";
+import type { ChatSessionSnapshot } from "@/server/chat/store";
+import type { FileContentPart, PdfContentPart } from "@/server/chat/types";
 
 const PDF_PART: PdfContentPart = {
   type: "pdf",
@@ -131,4 +133,56 @@ test("parseChatRequestBody preserves a legacy IANA alias timezone", (): void => 
   });
 
   assert.equal(parsed.timezone, "US/Pacific");
+});
+
+test("the session snapshot names every document of a message and carries no bytes of one", (): void => {
+  const storedDocument: FileContentPart = {
+    type: "file",
+    fileId: "11111111-1111-4111-8111-111111111111",
+    path: "/files/rows.csv",
+    mediaType: "text/csv",
+    sizeBytes: 9,
+    sha256: "c".repeat(64),
+  };
+  const snapshot: ChatSessionSnapshot = {
+    sessionId: "session-id",
+    runState: "idle",
+    updatedAt: 1,
+    activeRunId: null,
+    activeRunHeartbeatAt: null,
+    mainContentInvalidationVersion: 0,
+    messages: [{
+      itemId: "item-id",
+      sessionId: "session-id",
+      role: "user",
+      content: [
+        storedDocument,
+        {
+          type: "file",
+          fileName: "not-converted-yet.csv",
+          mediaType: "text/csv",
+          base64Data: Buffer.from("amount\n42").toString("base64"),
+        },
+        { type: "text", text: "Import this" },
+      ],
+      state: "completed",
+      isError: false,
+      isStopped: false,
+      timestamp: 1,
+      updatedAt: 1,
+    }],
+  };
+
+  // The unconverted document keeps its name, so the transcript still renders the
+  // attachment, and loses its bytes, which the snapshot never carries.
+  assert.deepEqual(toChatHistoryResponse(snapshot).messages[0].content, [
+    storedDocument,
+    {
+      type: "file",
+      fileName: "not-converted-yet.csv",
+      mediaType: "text/csv",
+      base64Data: "",
+    },
+    { type: "text", text: "Import this" },
+  ]);
 });

@@ -181,36 +181,6 @@ type ChatEvent =
     budgetTokens: number;
   }>
   /**
-   * A text attachment could not be decoded while the history was being sized, so
-   * that part fell back to a byte bound instead of its real decoded length.
-   * Carries no request context: sizing is a pure function of the stored history
-   * and runs below the request plumbing.
-   */
-  | Readonly<{
-    domain: "chat";
-    action: "attachment_sizing_decode_failed";
-    vendor: ChatVendor;
-    mediaType: string;
-    sizeBytes: number;
-    error: string;
-  }>
-  /**
-   * An attachment could not be extracted while the history was being sized, so
-   * that part fell back to a bound instead of its real extracted length. The
-   * turn itself is unaffected here: if the part is replayed, the request build
-   * extracts it again and raises the real error.
-   */
-  | Readonly<{
-    domain: "chat";
-    action: "attachment_sizing_extraction_failed";
-    vendor: ChatVendor;
-    requestId: string;
-    sessionId: string;
-    mediaType: string;
-    sizeBytes: number;
-    error: string;
-  }>
-  /**
    * A model call came back with a compaction item, so every later call of the
    * run and every later turn of the session replays from that item instead of
    * the context it absorbed.
@@ -561,10 +531,12 @@ type ChatFileContextEvent = Readonly<{
 /**
  * What one turn's inline attachments became.
  *
- * `inlineCount` counts every attachment the turn carried, so `inlineCount`
- * minus `storedCount` is the attachments of that turn the sandbox cannot reach
- * and a session where the two stay apart is one whose uploads the model can
- * only read through the prompt. `declinedCount` is the files refused for a
+ * `inlineCount` counts every attachment the pass set out to store - the turn's
+ * own, plus the documents of older payloads the session holds no row for and
+ * the upload policy accepts - so
+ * `inlineCount` minus `storedCount` is the attachments the sandbox cannot
+ * reach: an image is still sent inline, so only a document among them is one
+ * the model cannot read at all. `declinedCount` is the files refused for a
  * reason of their own, each of which also records that reason, and the
  * remainder is the attachments no count claims: the ones a `stopReason` left
  * unreached, and the attachment whose own failure is an `unrecordable`.
@@ -585,6 +557,14 @@ type ChatFileIngestEvent = Readonly<{
   inlineCount: number;
   storedCount: number;
   declinedCount: number;
+  /**
+   * Inline documents of the session's stored payloads this run replaced by a
+   * reference to the file they are, and the ones left with no file to point at,
+   * which read to the model as unavailable instead. Both are counted over every
+   * payload on every turn, because the payloads keep their bytes.
+   */
+  referencedCount: number;
+  unreferencedCount: number;
   stopReason: "unrecordable" | "aborted" | null;
   durationMs: number;
 }>;

@@ -1,6 +1,6 @@
 import { withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
-import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
+import type { StoredChatMessage } from "@/server/chat/openai/responses/replayItems";
 import {
   type ChatSessionSnapshot,
   type PersistedChatMessageItem,
@@ -15,8 +15,9 @@ import { listChatMessagesWithQuery } from "./messageStore";
 
 export const buildLocalChatMessages = (
   messages: ReadonlyArray<PersistedChatMessageItem>,
-): ReadonlyArray<ServerChatMessage> =>
+): ReadonlyArray<StoredChatMessage> =>
   messages.map((message) => ({
+    itemId: message.itemId,
     role: message.role,
     content: message.content,
     ...(message.openaiItems !== undefined ? { openaiItems: message.openaiItems } : {}),

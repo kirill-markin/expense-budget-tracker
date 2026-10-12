@@ -161,7 +161,7 @@ export const SANDBOX_PREPARE_MAX_DERIVATIVES = 64;
  * Characters of extractable text one source may be converted into, across every
  * derivative it produces.
  *
- * The sandbox counterpart of ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS in
+ * The sandbox counterpart of PDF_MAXIMUM_TOTAL_TEXT_CHARACTERS in
  * apps/web/src/lib/chatPdf.ts, which is 500,000 and cannot be imported here
  * because apps/sandbox is deliberately not a web dependency. It is 67 times
  * larger because the two numbers bound different things: that one bounds what

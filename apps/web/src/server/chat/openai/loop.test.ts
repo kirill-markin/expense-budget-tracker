@@ -17,7 +17,10 @@ import {
 } from "@/server/chat/openai/loop";
 import type { ChatCompletionInput } from "@/server/chat/openai/responses/input";
 import type { ChatFileDerivativesPassOutcome } from "@/server/chatFiles/derivatives";
-import type { ChatFileIngestOutcome } from "@/server/chatFiles/ingest";
+import type {
+  ChatFileIngestOutcome,
+  ChatFileIngestResult,
+} from "@/server/chatFiles/ingest";
 import {
   EMPTY_CHAT_TURN_FILE_CONTEXT,
   type ChatTurnFileContext,
@@ -30,7 +33,16 @@ import {
 } from "@/server/chat/openai/tooling/toolCalls";
 import type { OpenAIResponsesRequest } from "@/server/chat/openai/responses/request";
 import type { ExecutedChatToolCall } from "@/server/chat/openai/tooling/tools";
-import type { ChatStreamEvent } from "@/server/chat/types";
+import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
+
+const IDLE_INGEST_OUTCOME: ChatFileIngestOutcome = {
+  inlineCount: 0,
+  storedCount: 0,
+  declinedCount: 0,
+  referencedCount: 0,
+  unreferencedCount: 0,
+  stopReason: null,
+};
 
 const EXPECTED_USER_1_SAFETY_IDENTIFIER = "v1_xsKJ5J6cBbIUWGA4e3O8sY30P7CaHkpKlxPHbIi7VBs";
 
@@ -57,11 +69,20 @@ const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
     items: [],
     replayedMessages: 0,
   }),
-  ingestInlineChatAttachments: async (): Promise<ChatFileIngestOutcome> => ({
-    inlineCount: 0,
-    storedCount: 0,
-    declinedCount: 0,
-    stopReason: null,
+  ingestInlineChatAttachments: async (
+    _context: Parameters<LoopDeps["ingestInlineChatAttachments"]>[0],
+    messages: Parameters<LoopDeps["ingestInlineChatAttachments"]>[1],
+    turnInput: Parameters<LoopDeps["ingestInlineChatAttachments"]>[2],
+  ): Promise<ChatFileIngestResult> => ({
+    outcome: IDLE_INGEST_OUTCOME,
+    // No document in any of these fixtures, so the conversion is the identity.
+    messages: messages.map((message) => ({
+      ...message,
+      content: message.content.filter(
+        (part): part is ContentPart => part.type !== "file",
+      ),
+    })),
+    turnInput: turnInput.filter((part): part is ContentPart => part.type !== "file"),
   }),
   runChatFileDerivativesPass: async (): Promise<ChatFileDerivativesPassOutcome> => ({
     preparedCount: 0,
@@ -259,10 +280,10 @@ test("runOpenAILoop ingests this turn's attachments once, with the run's signal,
     createTestLoopDeps({
       ingestInlineChatAttachments: async (
         context: Parameters<LoopDeps["ingestInlineChatAttachments"]>[0],
-      ): Promise<ChatFileIngestOutcome> => {
+      ): Promise<ChatFileIngestResult> => {
         calls.push("ingest");
         ingestSignals.push(context.signal);
-        return { inlineCount: 0, storedCount: 0, declinedCount: 0, stopReason: null };
+        return { outcome: IDLE_INGEST_OUTCOME, messages: [], turnInput: [] };
       },
       runChatFileDerivativesPass: async (): Promise<ChatFileDerivativesPassOutcome> => {
         calls.push("derivatives");

@@ -10,7 +10,7 @@ import {
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
 import type { StoredMessage } from "@/lib/chatHistory";
 import { resolveBrowserTimezone } from "@/lib/timezone";
-import type { ContentPart } from "@/server/chat/types";
+import type { UnconvertedContentPart } from "@/server/chat/types";
 import type { PendingAttachment } from "../../shell/panel/FileAttachment";
 import type { ChatSessionSnapshot } from "../bootstrap/chatSessionSnapshot";
 import {
@@ -55,7 +55,7 @@ export type StopChatSessionResponse =
 
 type ChatMessageRequestBody = Readonly<{
   model: string;
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   timezone: string;
 }>;
 
@@ -72,12 +72,12 @@ export type PreparedChatSendRequest =
   }>
   | Readonly<{
     kind: "too_large";
-    contentParts: ReadonlyArray<ContentPart>;
+    contentParts: ReadonlyArray<UnconvertedContentPart>;
     errorMessage: string;
   }>
   | Readonly<{
     kind: "ready";
-    contentParts: ReadonlyArray<ContentPart>;
+    contentParts: ReadonlyArray<UnconvertedContentPart>;
   }>;
 
 export type StreamChatResponseParams = Readonly<{
@@ -216,6 +216,8 @@ const isValidChatSnapshotContentPart = (value: unknown): boolean => {
       return typeof value.mediaType === "string"
         && typeof value.base64Data === "string";
     case "file":
+      // A document arrives named and empty: the snapshot carries no bytes of
+      // one, and the transcript renders it by its name.
       return typeof value.mediaType === "string"
         && typeof value.base64Data === "string"
         && typeof value.fileName === "string";
@@ -838,7 +840,7 @@ export const resolveChatExactTurnOwnership = (
 
 export const buildFailedChatSendHistory = (
   authoritativeMessages: ReadonlyArray<StoredMessage>,
-  submittedContent: ReadonlyArray<ContentPart>,
+  submittedContent: ReadonlyArray<UnconvertedContentPart>,
   errorMessage: string,
   timestamp: number,
 ): ReadonlyArray<StoredMessage> => [
@@ -861,7 +863,7 @@ export const buildFailedChatSendHistory = (
 
 export const buildPendingChatSendHistory = (
   authoritativeMessages: ReadonlyArray<StoredMessage>,
-  submittedContent: ReadonlyArray<ContentPart>,
+  submittedContent: ReadonlyArray<UnconvertedContentPart>,
   timestamp: number,
 ): ReadonlyArray<StoredMessage> => [
   ...authoritativeMessages,
@@ -883,7 +885,7 @@ export const buildPendingChatSendHistory = (
 
 export const buildStoppedChatSendHistory = (
   authoritativeMessages: ReadonlyArray<StoredMessage>,
-  submittedContent: ReadonlyArray<ContentPart>,
+  submittedContent: ReadonlyArray<UnconvertedContentPart>,
   timestamp: number,
 ): ReadonlyArray<StoredMessage> => [
   ...authoritativeMessages,
@@ -905,7 +907,7 @@ export const buildStoppedChatSendHistory = (
 
 export type PendingChatTurnTranscript = Readonly<{
   authoritativeMessages: ReadonlyArray<StoredMessage>;
-  submittedContent: ReadonlyArray<ContentPart>;
+  submittedContent: ReadonlyArray<UnconvertedContentPart>;
   turnId: string;
 }>;
 
@@ -962,7 +964,7 @@ const decodeBase64Prefix = (base64Data: string): Uint8Array => {
 
 const isPendingPdfAttachment = (
   attachment: PendingAttachment,
-): attachment is Extract<ContentPart, { type: "pdf" }> =>
+): attachment is Extract<UnconvertedContentPart, { type: "pdf" }> =>
   "type" in attachment && attachment.type === "pdf";
 
 const isRawHeicAttachment = (attachment: PendingAttachment): boolean =>
@@ -976,8 +978,8 @@ const isRawHeicAttachment = (attachment: PendingAttachment): boolean =>
 const buildContentParts = (
   text: string,
   attachments: ReadonlyArray<PendingAttachment>,
-): ReadonlyArray<ContentPart> => {
-  const parts: Array<ContentPart> = [];
+): ReadonlyArray<UnconvertedContentPart> => {
+  const parts: Array<UnconvertedContentPart> = [];
 
   for (const attachment of attachments) {
     if (isPendingPdfAttachment(attachment)) {
@@ -1079,7 +1081,7 @@ export const prepareChatSendRequest = (
 };
 
 export const buildChatSendRequestBody = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   sessionId: string,
   turnId: string,
 ): string =>
@@ -1092,7 +1094,7 @@ export const buildChatSendRequestBody = (
   } satisfies ExistingChatSendRequestBody);
 
 export const buildFreshChatSendRequestBody = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): string =>
   JSON.stringify({
     model: CHAT_MODEL_ID,
@@ -1102,7 +1104,7 @@ export const buildFreshChatSendRequestBody = (
 
 export const createChatSendTransport = (
   target: ChatTarget,
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   turnId: string,
 ): ChatSendTransport =>
   target.kind === "draft"

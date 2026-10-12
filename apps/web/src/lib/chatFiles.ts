@@ -3,6 +3,11 @@
  * ceiling, the media types a declared file name may be stored under, and the
  * sandbox path a declared name is reduced to.
  */
+import {
+  isInlineFileContentPart,
+  type FileContentPart,
+  type InlineFileContentPart,
+} from "@/server/chat/types";
 
 export const CHAT_FILE_MAXIMUM_BYTES = 50 * 1024 * 1024;
 
@@ -11,14 +16,16 @@ export const CHAT_FILE_MAXIMUM_BYTES = 50 * 1024 * 1024;
  * apps/sandbox/src/contract.ts and must stay equal to it.
  *
  * Spelled out rather than imported, and the import is the tempting option now
- * that the server has a path to that module. Two things make it the wrong
- * trade, and both are narrower than "it would bloat the client": no browser
- * module imports this file today - every current importer is server code or a
- * test - so the concern is this file's stated purpose, which is to be the
- * policy the upload UI shares; and `apps/sandbox` declares no
- * `"sideEffects": false`, so a bundler asked to pull one string out of the
- * contract module cannot drop the zod request schema that comes with it. The
- * cost is latent rather than present, which is the kind that lands later.
+ * that the server has a path to that module. What makes it the wrong trade is
+ * narrower than "it would bloat the client": this file is in the client bundle,
+ * through lib/chatAttachments.ts and the transcript components that import it,
+ * and `apps/sandbox` declares no `"sideEffects": false`, so a bundler asked to
+ * pull one string out of the contract module cannot drop the zod request schema
+ * that comes with it. The browser would pay that today, not later.
+ *
+ * The one value this file imports from `@/server/chat/types` costs the bundle
+ * nothing by the same measure: that module imports nothing at all, so it drags
+ * no runtime dependency in behind it.
  *
  * The equality is asserted instead, in server/chat/sandbox/invoke.test.ts,
  * where importing the contract is already free - so the two cannot drift in
@@ -204,12 +211,31 @@ export const buildChatFileSandboxPath = (
   return `${CHAT_FILE_SANDBOX_DIRECTORY}/${stem}${duplicateSuffix}${extension}`;
 };
 
+/** Raised when a stored sandbox path carries no file name to read back. */
+export class UnnamedChatFilePathError extends Error {
+  public constructor(path: string) {
+    super(`Chat file path carries no file name: ${path}`);
+    this.name = "UnnamedChatFilePathError";
+  }
+}
+
 /** File name a stored sandbox path stands for, used as the download name. */
 export const getChatFileNameFromSandboxPath = (path: string): string => {
   const fileName = path.slice(path.lastIndexOf("/") + 1);
   if (fileName === "") {
-    throw new Error(`Chat file path carries no file name: ${path}`);
+    throw new UnnamedChatFilePathError(path);
   }
 
   return fileName;
 };
+
+/**
+ * Name one document part reads under: the user's own while it is still inline,
+ * and the one its sandbox path carries once it is a file of the session.
+ */
+export const getChatDocumentFileName = (
+  part: FileContentPart | InlineFileContentPart,
+): string =>
+  isInlineFileContentPart(part)
+    ? part.fileName
+    : getChatFileNameFromSandboxPath(part.path);

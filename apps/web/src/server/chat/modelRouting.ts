@@ -8,8 +8,12 @@ import {
   type ChatEffectiveReasoningEffort,
 } from "@/lib/chatModels";
 import { isLegacyRawPdfFilePart } from "@/lib/chatPdf";
-import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
-import type { FileContentPart, PdfContentPart } from "@/server/chat/types";
+import type { StoredChatMessage } from "@/server/chat/openai/responses/replayItems";
+import {
+  isInlineFileContentPart,
+  type InlineFileContentPart,
+  type PdfContentPart,
+} from "@/server/chat/types";
 
 export const CHAT_MODEL_ROLLING_WINDOW_HOURS = 24;
 export const CHAT_MODEL_ROLLING_USER_MESSAGE_THRESHOLD = 30;
@@ -54,7 +58,7 @@ export type ChatModelRoutingLogEvent = Readonly<{
 }>;
 
 const getPdfContentFingerprint = (
-  part: FileContentPart,
+  part: InlineFileContentPart,
 ): string =>
   createHash("sha256")
     .update(Buffer.from(part.base64Data, "base64"))
@@ -65,7 +69,7 @@ const getLogicalPdfFingerprint = (
 ): string => part.sourceSha256;
 
 export const countUniquePdfAttachments = (
-  messages: ReadonlyArray<ServerChatMessage>,
+  messages: ReadonlyArray<StoredChatMessage>,
 ): number => {
   const fingerprints = new Set<string>();
   for (const message of messages) {
@@ -77,7 +81,10 @@ export const countUniquePdfAttachments = (
         fingerprints.add(getLogicalPdfFingerprint(part));
         continue;
       }
-      if (part.type === "file" && isLegacyRawPdfFilePart(part)) {
+      // Raw PDF bytes only ever reach here inline. The wire has refused one
+      // since the logical PDF replaced it, and routing is computed from the
+      // stored payloads, which keep the bytes they arrived with.
+      if (isInlineFileContentPart(part) && isLegacyRawPdfFilePart(part)) {
         fingerprints.add(getPdfContentFingerprint(part));
       }
     }
@@ -110,7 +117,7 @@ const requireMessageCount = (
 
 export const selectChatModelRouting = (
   rolling24HourUserMessageCount: number,
-  messages: ReadonlyArray<ServerChatMessage>,
+  messages: ReadonlyArray<StoredChatMessage>,
 ): ChatModelRoutingDecision => {
   const validatedRollingMessageCount = requireMessageCount(
     rolling24HourUserMessageCount,

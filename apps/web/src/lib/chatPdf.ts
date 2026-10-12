@@ -1,5 +1,5 @@
 import type {
-  FileContentPart,
+  InlineFileContentPart,
   PdfContentPart,
 } from "@/server/chat/types";
 
@@ -100,7 +100,7 @@ export const hasPdfSignature = (
 };
 
 export const isLegacyRawPdfFilePart = (
-  part: FileContentPart,
+  part: InlineFileContentPart,
 ): boolean =>
   isPdfFileCandidate(part.fileName, part.mediaType)
   || hasPdfSignature(

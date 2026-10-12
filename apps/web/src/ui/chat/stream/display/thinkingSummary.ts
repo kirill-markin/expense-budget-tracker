@@ -1,9 +1,9 @@
-import type { ContentPart } from "@/server/chat/types";
+import type { UnconvertedContentPart } from "@/server/chat/types";
 import type { StoredMessage } from "@/ui/hooks/useChatHistory";
 
 export type AssistantStreamingIndicator = "thinking" | "streaming" | "hidden";
 
-const isToolCallPart = (part: ContentPart): boolean =>
+const isToolCallPart = (part: UnconvertedContentPart): boolean =>
   part.type === "tool_call";
 
 /**

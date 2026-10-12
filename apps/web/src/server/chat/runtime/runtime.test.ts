@@ -31,9 +31,29 @@ import {
 import { ChatSessionRunTransitionError } from "@/server/chat/store";
 import { selectChatModelRouting } from "@/server/chat/modelRouting";
 import type { PersistedChatMessageItem } from "@/server/chat/store/shared";
-import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
+import {
+  isInlineFileContentPart,
+  type ChatStreamEvent,
+  type ContentPart,
+  type UnconvertedContentPart,
+} from "@/server/chat/types";
+import type { ServerChatMessage, StoredChatMessage } from "@/server/chat/openai/responses/replayItems";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import { EMPTY_CHAT_TURN_FILE_CONTEXT } from "@/server/chatFiles/sessionContext";
+
+/**
+ * What the turn prologue hands the input builder. These fixtures carry no
+ * document, so it is the identity on them.
+ */
+const toConvertedContent = (
+  content: ReadonlyArray<UnconvertedContentPart>,
+): ReadonlyArray<ContentPart> =>
+  content.filter((part): part is ContentPart => !isInlineFileContentPart(part));
+
+const toConvertedMessages = (
+  messages: ReadonlyArray<StoredChatMessage>,
+): ReadonlyArray<ServerChatMessage> =>
+  messages.map((message) => ({ ...message, content: toConvertedContent(message.content) }));
 
 type ActiveRunPayload = Readonly<{ activeRunId: string }>;
 
@@ -1129,10 +1149,10 @@ test("startPersistedChatRunWithDeps persists and streams recovery for poisoned H
   const params: StartPersistedChatRunParams = {
     ...createRunParams(sessionId),
     localMessages: [{
+      itemId: "item-legacy-heic",
       role: "user",
       content: [{
-        type: "file",
-        fileName: "IMG_7071.HEIC",
+        type: "image",
         mediaType: "image/heic",
         base64Data: "AAAAGGZ0eXBoZWljAAAAAA==",
       }],
@@ -1159,8 +1179,8 @@ test("startPersistedChatRunWithDeps persists and streams recovery for poisoned H
         {
           runOpenAILoop: async (loopParams): Promise<OpenAILoopCompletion> => {
             await buildChatCompletionInput(
-              loopParams.localMessages,
-              loopParams.turnInput,
+              toConvertedMessages(loopParams.localMessages),
+              toConvertedContent(loopParams.turnInput),
               loopParams.timezone,
               loopParams.sessionId,
               loopParams.requestId,

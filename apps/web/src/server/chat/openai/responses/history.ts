@@ -22,7 +22,9 @@
  *
  * Unmeasured turns fall back to a character and attachment estimate that reads
  * high on purpose, and sizes exactly what replay sends: `openaiItems` for an
- * assistant turn, `content` for a user turn, never both.
+ * assistant turn, `content` for a user turn, never both. A document is not in
+ * either: it is a file of the session, so what it costs an input is the one line
+ * that names it.
  *
  * A measurement is used whichever of the routed models produced it, but only
  * while it still leaves tokens for the messages in its range that no earlier
@@ -35,10 +37,7 @@
  * re-sizes everything it replayed at once rather than only the messages no
  * earlier call had reached. No weight is therefore revised by more than one
  * measurement - estimate to measurement and no further - and identical history
- * always yields the identical replay boundary. One revision sits outside that
- * bound: an estimate can be replaced by another estimate when a growing history
- * pushes a stored container out of the extraction budget and it falls back to
- * its cap, which only persisting an attachment's extracted length removes.
+ * always yields the identical replay boundary.
  *
  * That rule is not what makes a cross-model measurement safe, since a lower
  * measurement is adopted as it stands whenever it is still positive. What
@@ -64,58 +63,31 @@
  * message fits when its real content could exceed the budget.**
  *
  * So nothing here is scaled down to keep a message replayable. A quantity this
- * module can only bound - a container nobody could read, a native image, a
- * rendered PDF page - is charged at that bound in full, and a quantity it can
- * count is counted. The consequence is accepted deliberately: a message whose
- * attachments are larger than the budget leaves no cut that reaches through it,
- * so the window cuts past it and the history before it is lost.
+ * module can only bound - a native image, a rendered PDF page - is charged at
+ * that bound in full, and a quantity it can count is counted. The consequence is
+ * accepted deliberately: a message whose attachments are larger than the budget
+ * leaves no cut that reaches through it, so the window cuts past it and the
+ * history before it is lost.
  *
- * The alternative was measured and is worse. Ceilinging such a message at half
- * the budget made sizing report that it fit. One 500,000 character text
- * attachment, every one of them charged the same 60,000 tokens:
- *
- *   dense CSV, this product's own import format    250,021 real   2.08x budget
- *   private use area, DOCX symbol-font text      1,000,000 real   8.33x budget
- *   CJK compatibility ideographs, U+0801         1,500,000 real  12.50x budget
- *
- * So the under-charge reached 25x per message, and the headline case is the
- * ordinary one: a single large bank-export CSV sitting in the replay window puts
- * one call at twice the budget by itself, in a product built on tabular
- * financial data. Two CJK attachments in one message reported 114,793 and really
- * sent 796,814. Such a call returns `context_length_exceeded`, an errored turn
- * stores no measurement, and sizing is deterministic - so the next turn computes
- * the same plan and fails the same way. The provider-side compaction and "the
- * turn's own measurement corrects it" that justified the ceiling do not apply on
- * exactly the errored, cancelled and tool-limit paths where such a call lands.
- * Losing history is recoverable by asking again; a session that cannot answer at
- * all is not.
- *
- * Note the contradiction a ceiling creates, because it is what stops someone
- * reintroducing one for tidiness: `NON_ASCII_TOKENS_PER_CHARACTER` was raised to
- * 3 precisely to stop under-charging the private use area and the CJK
- * compatibility blocks, and a ceiling then throws that result away for exactly
- * the same content. The two pull in opposite directions, and the bound is the
- * half that keeps the window honest.
- 
+ * Ceilinging such a message at a share of the budget was measured and is worse:
+ * sizing then reports that it fits. A 50-page PDF is some 81,000 tokens of
+ * pages, so two of them in one window send more than the model accepts, the call
+ * returns `context_length_exceeded`, an errored turn stores no measurement, and
+ * sizing is deterministic - so the next turn computes the same plan and fails
+ * the same way. Losing history is recoverable by asking again; a session that
+ * cannot answer at all is not.
  */
 import {
   CHAT_SENT_INPUT_BUDGET_TOKENS,
   CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS,
 } from "@/lib/chatModels";
-import {
-  ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS,
-  decodeUtf8File,
-  isDocxAttachment,
-  isTextFileAttachment,
-  isWorkbookAttachment,
-} from "@/lib/chatAttachments";
+import { buildChatFilePromptText } from "@/server/chat/openai/responses/chatFilePrompt";
 import {
   findLatestChatCompactionBoundary,
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
-import type { ContentPart, FileContentPart } from "@/server/chat/types";
-import { log } from "@/server/logger";
+import type { ContentPart } from "@/server/chat/types";
 
 /**
  * Characters per token of ASCII text. Not a proven floor over ASCII - these are
@@ -157,17 +129,10 @@ const NON_ASCII_TOKENS_PER_CHARACTER = 3;
 
 /**
  * Characters per token of base64, measured at 1.00 for repetitive payloads and
- * 1.3 to 1.5 for dense ones. An opaque attachment replays as a base64 data URL
- * and an encrypted reasoning or compaction payload is base64 too, so both are
- * charged at this rate rather than at the text rate.
+ * 1.3 to 1.5 for dense ones. An encrypted reasoning or compaction payload is
+ * base64, so it is charged at this rate rather than at the text rate.
  */
 const BASE64_CHARS_PER_TOKEN = 1;
-
-/**
- * The `[truncated: ...]` line replay appends past the extracted-text cap, plus
- * the fence it closes - charged on top of the cap, which is where it is sent.
- */
-const ATTACHMENT_TRUNCATION_NOTICE_TOKENS = 64;
 
 /**
  * JSON envelope, role and type markers of one replayed item or content part,
@@ -289,130 +254,13 @@ const estimateTextTokens = (
   );
 };
 
-/**
- * Tokens of a quantity of characters nobody has in hand - a byte count or a cap.
- * Charged at the ASCII rate, the only one a bare count can be charged at.
- */
-const estimateCharacterTokens = (
-  characters: number,
-): number =>
-  Math.ceil(characters / ASCII_CHARS_PER_TOKEN);
-
 const estimateBase64Tokens = (
   base64Data: string,
 ): number =>
   Math.ceil(base64Data.length / BASE64_CHARS_PER_TOKEN);
 
-const estimateBase64ByteLength = (
-  base64Data: string,
-): number =>
-  Math.ceil((base64Data.length * 3) / 4);
-
-/**
- * Extractable formats whose stored bytes are a container rather than the text
- * they yield: a workbook or a DOCX is read through a ZIP or BIFF reader, so its
- * bytes bound nothing about the text replay sends. The predicates come from the
- * attachment policy itself, so a format added there is covered here too.
- */
-const isContainerExtractableAttachment = (
-  part: FileContentPart,
-): boolean =>
-  isWorkbookAttachment(part) || isDocxAttachment(part);
-
-/**
- * An extractable attachment replays as extracted text, capped at
- * `ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS`, and an opaque one replays as
- * its own bytes. Extraction is asynchronous and sizing is not, so the decoded
- * byte length stands in for the extracted text it bounds - which it does only
- * for the formats that store that text verbatim.
- *
- * A container does not. A 50 KB `.xlsx` of 20,000 rows replays as the full
- * 500,000 character cap, some 125k real tokens, while its own bytes would charge
- * 20k - an under-charge of most of the budget from one file the attachment limit
- * accepts without comment.
- *
- * So a container is sized from its extracted text wherever that text is in hand.
- * The caller holds it for the current turn's containers and for as many stored
- * ones as its extraction budget allows, since this same request extracts them
- * anyway, only later. Charging an 8 KB workbook the cap instead made no cut fit
- * and collapsed the window to the newest pair: 6.5k tokens sent out of a 120k
- * budget, 38 of 40 messages dropped, over a file that really cost 2k.
- *
- * The cap remains for a container too large to extract on this path, and is
- * charged in full: it is the honest bound on what that file could replay as, and
- * a message carrying one is meant to leave no fitting cut rather than to be kept
- * and resent above the budget. Extracted text is not persisted beside an
- * attachment the way a PDF's pages are; doing so is the durable fix and belongs
- * with the attachment storage work.
- */
-
-/** Tokens of an extraction as replay sends it: capped, with its notice line. */
-const estimateExtractedTextTokens = (
-  extractedText: string,
-): number =>
-  extractedText.length <= ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS
-    ? estimateTextTokens(extractedText)
-    : estimateTextTokens(extractedText.slice(0, ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS))
-      + ATTACHMENT_TRUNCATION_NOTICE_TOKENS;
-
-const estimateFileTokens = (
-  part: FileContentPart,
-  extractedText: string | undefined,
-): number => {
-  if (extractedText !== undefined) {
-    return estimateExtractedTextTokens(extractedText);
-  }
-
-  if (isContainerExtractableAttachment(part)) {
-    // A container cannot be read from here: sizing is synchronous and inflating
-    // a ZIP is not, so this one is a cap rather than a measurement of anything -
-    // charged in full, per the invariant above.
-    return estimateCharacterTokens(ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS);
-  }
-
-  if (isTextFileAttachment(part)) {
-    // A text attachment decodes synchronously, so the text it replays as really
-    // is available here: counting it beats charging its byte count against the
-    // cap, which over-charged a multi-byte file by its UTF-8 width and never
-    // noticed a file that decodes shorter than it stores.
-    try {
-      return estimateExtractedTextTokens(decodeUtf8File(part));
-    } catch (error) {
-      // Reported rather than swallowed: this is the one sizing path that falls
-      // back to a bound without the caller knowing, and a file that cannot be
-      // decoded here cannot be replayed later either.
-      log({
-        domain: "chat",
-        action: "attachment_sizing_decode_failed",
-        vendor: "openai",
-        mediaType: part.mediaType,
-        sizeBytes: estimateBase64ByteLength(part.base64Data),
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      return estimateCharacterTokens(Math.min(
-        estimateBase64ByteLength(part.base64Data),
-        ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS,
-      ));
-    }
-  }
-
-  // An opaque attachment replays as its own base64, which is exact in length.
-  return estimateBase64Tokens(part.base64Data);
-};
-
-/**
- * Extracted text already in hand for an attachment part, keyed by the part
- * itself - for the current turn's attachments and for the stored ones this turn
- * could still replay. Sizing and sending then agree by construction, since this
- * module sizes the very string the caller is about to send, dense characters and
- * all.
- */
-export type ChatAttachmentExtractedText = ReadonlyMap<ContentPart, string>;
-
 const estimateContentPartTokens = (
   part: ContentPart,
-  extractedText: ChatAttachmentExtractedText | undefined,
 ): number => {
   switch (part.type) {
     case "text":
@@ -430,7 +278,11 @@ const estimateContentPartTokens = (
     case "image":
       return ITEM_ENVELOPE_TOKENS + IMAGE_TOKENS;
     case "file":
-      return ITEM_ENVELOPE_TOKENS + estimateFileTokens(part, extractedText?.get(part));
+      // The line itself, because that line is the whole part: a document's
+      // bytes are never in an input, and what the model spends on reading it
+      // is the `bash` call it makes and the output that call returns, both of
+      // them its own later items.
+      return ITEM_ENVELOPE_TOKENS + estimateTextTokens(buildChatFilePromptText(part));
     case "pdf":
       return part.pages.reduce(
         (total, page) => total
@@ -451,10 +303,9 @@ const estimateContentPartTokens = (
  */
 export const estimateContentPartsTokens = (
   content: ReadonlyArray<ContentPart>,
-  extractedText?: ChatAttachmentExtractedText,
 ): number =>
   content.reduce(
-    (total, part) => total + estimateContentPartTokens(part, extractedText),
+    (total, part) => total + estimateContentPartTokens(part),
     0,
   );
 
@@ -499,7 +350,6 @@ const estimateReplayItemTokens = (
  */
 const estimateMessageTokens = (
   message: ServerChatMessage,
-  extractedText: ChatAttachmentExtractedText | undefined,
 ): number => {
   if (message.role === "assistant") {
     return (message.openaiItems ?? []).reduce(
@@ -508,7 +358,7 @@ const estimateMessageTokens = (
     );
   }
 
-  return estimateContentPartsTokens(message.content, extractedText);
+  return estimateContentPartsTokens(message.content);
 };
 
 const sumTokens = (
@@ -591,12 +441,11 @@ type MessageTokenWeight = Readonly<{
  */
 const buildMessageTokenWeights = (
   messages: ReadonlyArray<ServerChatMessage>,
-  extractedText: ChatAttachmentExtractedText | undefined,
 ): ReadonlyArray<number> => {
   const weights: Array<MessageTokenWeight> = [];
   for (const [index, message] of messages.entries()) {
     weights.push({
-      tokens: estimateMessageTokens(message, extractedText),
+      tokens: estimateMessageTokens(message),
       fromMeasurement: false,
     });
     const measurement = message.replayMeasurement;
@@ -660,11 +509,10 @@ const buildMessageTokenWeights = (
  */
 export const measureChatHistory = (
   messages: ReadonlyArray<ServerChatMessage>,
-  extractedText?: ChatAttachmentExtractedText,
 ): ChatHistorySizing => {
   const prefixTokens: Array<number> = [0];
   let totalTokens = 0;
-  for (const weight of buildMessageTokenWeights(messages, extractedText)) {
+  for (const weight of buildMessageTokenWeights(messages)) {
     totalTokens += weight;
     prefixTokens.push(totalTokens);
   }
@@ -710,12 +558,11 @@ export const computeSentInputTokens = (
  * Boundary motion is deliberately NOT monotone. An earlier design clamped this
  * start to the furthest boundary a previous call had used, to keep the
  * prompt-cache prefix still when estimates are replaced by measurements. It
- * cannot coexist with attachment bounds that are revised later: a floor derived
- * from a bound that was 100x too high froze a healthy session at 2 of 40
- * messages for good, and every attempt to exempt such bounds either could not
- * see them - sizing has no way to tell an extracted container from an unreadable
- * one - or turned the clamp off often enough to let the boundary oscillate
- * (measured `0, 6, 0, 12, 0, 18`). What guards against that oscillation is the
+ * cannot coexist with an estimate a later measurement revises: a floor derived
+ * from an estimate that was 100x too high froze a healthy session at 2 of 40
+ * messages for good, and every attempt to exempt such estimates either could
+ * not see them or turned the clamp off often enough to let the boundary
+ * oscillate (measured `0, 6, 0, 12, 0, 18`). What guards against that oscillation is the
  * weight rule: a measurement-derived weight is immutable, so identical history
  * yields an identical boundary and no weight is revised by more than one
  * measurement under the window. What remains is a boundary that may step back
@@ -768,28 +615,22 @@ const selectChatHistoryWindowStart = (
  * `context_management`. When it no longer fits, the item is stale and the window
  * applies instead.
  *
- * `extractedText` sizes attachments from the text the caller has already
- * extracted for them - the current turn's and the stored ones still in reach -
- * so a container is charged what it really replays rather than its cap.
- *
  * `trailingSystemText` is a system item the input appends after the user turn,
  * such as the file manifest. It is not part of the fixed reserve, because it is
  * neither fixed nor the same between sessions, so it is charged here with the
  * turn it is sent on.
  *
- * Deterministic: identical stored history and identical turn input yield an
- * identical plan, which is what keeps the prompt-cache prefix still between
- * turns that changed nothing. Not pure - sizing reports an attachment it could
- * not decode - but nothing it reports affects what it returns.
+ * Pure and deterministic: identical stored history and identical turn input
+ * yield an identical plan, which is what keeps the prompt-cache prefix still
+ * between turns that changed nothing.
  */
 export const planChatHistoryReplay = (
   messages: ReadonlyArray<ServerChatMessage>,
   turnInput: ReadonlyArray<ContentPart>,
-  extractedText?: ChatAttachmentExtractedText,
   trailingSystemText?: string,
 ): ChatHistoryReplayPlan => {
-  const sizing = measureChatHistory(messages, extractedText);
-  const turnInputTokens = estimateContentPartsTokens(turnInput, extractedText)
+  const sizing = measureChatHistory(messages);
+  const turnInputTokens = estimateContentPartsTokens(turnInput)
     + (trailingSystemText === undefined
       ? 0
       : ITEM_ENVELOPE_TOKENS + estimateTextTokens(trailingSystemText));
