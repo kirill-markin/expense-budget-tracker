@@ -449,9 +449,9 @@ const deleteDerivedRows = async (
  * so it would be deleting on its own judgement of what is unreachable. What is
  * bounded is how many such objects one refusal leaves: at most the slots of one
  * invocation. How long they live is bounded by the bucket alone: both sweeps
- * that would reach them wait for someone to ask - chatFiles/cleanup.ts on its
- * workspace's deletion, and the `DELETE` of /api/chat/files for that session -
- * while the bucket expires an object 90 days after it was written
+ * that would reach them are in chatFiles/cleanup.ts and wait for someone to ask
+ * - the session's own deletion through the `DELETE` of /api/chat/files, or its
+ * workspace's - while the bucket expires an object 90 days after it was written
  * (infra/aws/lib/chat-files-bucket.ts) with nobody asking at all.
  */
 const insertDerivedRows = async (
