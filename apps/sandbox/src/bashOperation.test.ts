@@ -619,6 +619,48 @@ test("a seeded file replaced from the shell reports its new content", async (): 
   assert.deepEqual(savedPaths(await scripted.diff()), ["/work/a.csv"]);
 });
 
+// The shell's environment is just-bash's own synthetic map, not this process's:
+// `createSandboxBash` passes no `env`, and `BashOptions.env` could only add
+// entries to that map, never narrow it. So the isolation a chat depends on is
+// the dependency's property, and this is the only place that holds it. Both
+// routes a model would actually take are covered: the shell's own `printenv`
+// and `env`, and CPython's `os.environ`, which runs in a worker thread that
+// inherits this process's variables at the JS level.
+test("a command cannot read the environment of the process hosting the sandbox", async (): Promise<void> => {
+  const hostVar = "SANDBOX_HOST_ONLY_PROBE";
+  const hostValue = "host-only-probe-value";
+  const previous = process.env[hostVar];
+  process.env[hostVar] = hostValue;
+  try {
+    const sandbox = createSandbox(SEEDED_TREE);
+
+    const result = await sandbox.exec(
+      "printenv && env"
+        + " && python3 -c \"import os; print('PY:' + repr(sorted(os.environ.items())))\""
+        + " && echo ENV-PROBE-DONE",
+    );
+
+    // The command ran to its end, so an absent variable is isolation rather
+    // than a shell that errored before printing anything.
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /ENV-PROBE-DONE/);
+    // Each arm really did report an environment.
+    assert.match(result.stdout, /OSTYPE=/);
+    assert.match(result.stdout, /PY:\[.*'PATH'/s);
+
+    assert.ok(
+      !result.stdout.includes(hostVar) && !result.stdout.includes(hostValue),
+      `the host process environment is visible to a sandbox command: ${result.stdout}`,
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env[hostVar];
+    } else {
+      process.env[hostVar] = previous;
+    }
+  }
+});
+
 // The filesystem keys a write by its literal path and leaves a symlinked
 // component alone, so this content is real and out of reach of the tree walk.
 // The seed must stay exactly as it is - nothing wrote to that path - and the

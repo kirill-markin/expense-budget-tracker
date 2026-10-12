@@ -22,6 +22,7 @@
 import {
   buildChatFileSandboxPath,
   CHAT_FILE_MAXIMUM_BYTES,
+  CHAT_FILE_SANDBOX_DIRECTORY,
   getAcceptedChatFileMediaTypes,
   getChatFileNameFromSandboxPath,
   parseChatFileMediaType,
@@ -31,6 +32,7 @@ import { ApiRouteError, createBadRequestError } from "@/server/api/errors";
 import { handleRoute } from "@/server/api/handleRoute";
 import { jsonNoStore } from "@/server/api/noStore";
 import { getChatSessionId } from "@/server/chat/store";
+import { SESSION_DERIVABLE_FILES_MAX_BYTES } from "@/server/chatFiles/derivatives";
 import {
   ChatSessionFileDeletionFailedError,
   deleteChatSessionFiles,
@@ -46,6 +48,7 @@ import {
   getChatFileByPath,
   insertChatFile,
   isChatFilePathUniqueViolation,
+  sumSessionFilesMountBytes,
   UNCONFIRMED_CHAT_FILE_SHA256,
   type ChatFile,
 } from "@/server/chatFiles/store";
@@ -97,6 +100,7 @@ export type ChatFilesRouteDependencies = Readonly<{
   getChatSessionId: typeof getChatSessionId;
   getChatFileById: typeof getChatFileById;
   getChatFileByPath: typeof getChatFileByPath;
+  sumSessionFilesMountBytes: typeof sumSessionFilesMountBytes;
   insertChatFile: typeof insertChatFile;
   confirmChatFileUpload: typeof confirmChatFileUpload;
   presignChatFileUploadUrl: (
@@ -129,6 +133,7 @@ export const buildChatFilesRouteDependencies = (
   getChatSessionId,
   getChatFileById,
   getChatFileByPath,
+  sumSessionFilesMountBytes,
   insertChatFile,
   confirmChatFileUpload,
   presignChatFileUploadUrl: async (
@@ -391,6 +396,143 @@ const insertChatFileAtFreePath = async (
   );
 };
 
+/**
+ * Why this session has no room, in whichever of its two states it is in.
+ *
+ * Both are refusals of the same comparison, and stating only the first would
+ * misdescribe the second: a session the derivative gate has already carried
+ * past the ceiling holds more bytes than an upload may take it to, so naming
+ * the limit beside the holding reads as a limit that is already broken, and
+ * naming what the upload would add is beside the point when nothing would fit.
+ * The totals are bytes rather than MiB in both, because the number a caller
+ * compares against is the one its own request carried.
+ */
+const describeFilledSessionFiles = (
+  sessionFilesBytes: number,
+  sizeBytes: number,
+): string =>
+  sessionFilesBytes > SESSION_DERIVABLE_FILES_MAX_BYTES
+    ? `this chat's ${CHAT_FILE_SANDBOX_DIRECTORY} holds ${String(sessionFilesBytes)} bytes, `
+      + `already past the ${String(SESSION_DERIVABLE_FILES_MAX_BYTES)} bytes an upload may `
+      + "take it to, so no further upload fits."
+    : `this chat's ${CHAT_FILE_SANDBOX_DIRECTORY} already holds ${String(sessionFilesBytes)} `
+      + `bytes and this upload would add ${String(sizeBytes)}, past the `
+      + `${String(SESSION_DERIVABLE_FILES_MAX_BYTES)} bytes an upload may take it to.`;
+
+/**
+ * Refuse an upload a session has no room for.
+ *
+ * CHAT_FILE_MAXIMUM_BYTES bounds one file and the duplicate limit above bounds
+ * repeats of one name, so nothing bounded what a session holds in total:
+ * eleven 50 MiB uploads on distinct names reach 550 MiB of /files, and from
+ * then on every `bash` call of that session is refused before it runs, because
+ * the mount is validated against SANDBOX_FILES_REQUEST_MAX_BYTES on every
+ * call. That includes any command that would clear space, so the session's
+ * shell is gone for good and only a new chat recovers it. This is the gate that
+ * keeps that from being reachable, and it belongs here because here is where a
+ * file is admitted.
+ *
+ * The ceiling is SESSION_DERIVABLE_FILES_MAX_BYTES rather than a number of this
+ * route's own, which is the whole point of importing it: uploads stop exactly
+ * where the derivatives of one more source still fit, so the two gates agree by
+ * construction and 384 MiB + 128 MiB is the 512 MiB one command may mount. A
+ * constant of this route's own could only disagree with that one.
+ *
+ * Unconfirmed rows count, because the total counts every row of the mount: a
+ * minted row names a size, is about to become a mounted file, and nothing
+ * reclaims a mint whose upload never happened, so this gate is also the only
+ * thing bounding abandoned mints.
+ *
+ * Bytes and not rows, and the difference is reachable: sizeBytes may be 0, a
+ * zero-byte upload never advances the total, so this gate admits them without
+ * end. Each confirmed row still becomes a mounted file carrying one pre-signed
+ * URL in the `bash` payload, and what bounds that payload is the 6 MB Lambda
+ * RequestResponse limit rather than anything here, so about four thousand such
+ * rows take the session to the same dead end by a different route: the
+ * invocation stops being one Lambda will accept, which is every `bash` call of
+ * that chat failing with nothing the model can run to undo it.
+ * MAXIMUM_PATH_DUPLICATES is no obstacle, because the names are the caller's
+ * and nothing bounds how many it invents. A count cap is deliberately not added
+ * here anyway: there is no sandbox row ceiling for one to agree with, the way
+ * this gate agrees with SESSION_DERIVABLE_FILES_MAX_BYTES, and the limit it
+ * would stand in for is the payload that chat/sandbox/invoke.ts builds and
+ * nothing measures - that module measures the mount bytes instead, which is
+ * why the 6 MB arrives as an AWS rejection rather than as a sentence of ours.
+ * Reaching it also takes about four thousand scripted mint-PUT-confirm round
+ * trips against the caller's own session, which is why the path is named here
+ * instead of guessed at with a number.
+ *
+ * Read without a lock, like the derivative gate that shares the number. Two
+ * mints of one session can read the same total, and each of N mints that read
+ * the same total T was admitted on T plus its own size being within the
+ * ceiling, so N of them at CHAT_FILE_MAXIMUM_BYTES leave at most the ceiling
+ * plus (N - 1) * CHAT_FILE_MAXIMUM_BYTES - one mint's worth less than the count
+ * suggests. The derivative reserve absorbs three of them (384 + 2 * 50 = 484
+ * MiB, inside the 512 MiB one command may mount), so such a session loses later
+ * conversions and keeps its shell; four reach 534 MiB and take the shell.
+ *
+ * The derivative gate re-reads the committed total for every source it
+ * converts, which closes the window from that pass's listing to its gate. It
+ * cannot close the window from its gate to the derivative insert, and that
+ * window is the conversion - up to the sandbox function's two-minute timeout.
+ * Nothing narrows it from either side: this route's dependencies carry no
+ * run-state check, so mints are accepted freely while a turn runs, and the
+ * insert re-checks paths and one file's bytes rather than the session total
+ * (describeSandboxContradiction in chatFiles/derivatives.ts, deliberately one
+ * number and one direction). So a conversion does still spend reserve that a
+ * mint committing beside it has taken, and with a conversion in flight the
+ * threshold is two mints where without one it is four: a session committed at
+ * 334 MiB, converting its one pending source, admits two 50 MiB mints that
+ * each read 334 and each fit 334 + 50 inside the ceiling, commits 434 MiB, and
+ * then stores a 128 MiB derivative set - within the reserve, and reachable as
+ * two entries inside the 100 MiB one stored file may hold - for 562 MiB.
+ *
+ * Closing either window means serializing one session's mints - a
+ * SELECT ... FOR UPDATE on its chat_sessions row around this read and the
+ * insert - and this route holds no transaction across the two. That remedy is
+ * also the only one that covers both windows: re-checking the session total at
+ * the insert instead would spend a conversion and then refuse to store it, for
+ * a reason that is neither the file's fault nor cleanly retryable.
+ */
+const assertSessionFilesBytesAvailable = async (
+  dependencies: ChatFilesRouteDependencies,
+  context: ChatFilesRequestContext,
+  sessionId: string,
+  mintRequest: ChatFileUploadMintRequest,
+): Promise<void> => {
+  const sessionFilesBytes = await dependencies.sumSessionFilesMountBytes(
+    context.userId,
+    context.workspaceId,
+    sessionId,
+  );
+  if (sessionFilesBytes + mintRequest.sizeBytes <= SESSION_DERIVABLE_FILES_MAX_BYTES) {
+    return;
+  }
+
+  dependencies.log({
+    domain: "chat",
+    action: "file_upload_session_bytes_refused",
+    route: ROUTE_PATH,
+    userId: context.userId,
+    workspaceId: context.workspaceId,
+    sessionId,
+    sessionFilesBytes,
+    sizeBytes: mintRequest.sizeBytes,
+    limit: SESSION_DERIVABLE_FILES_MAX_BYTES,
+  });
+
+  // 409 rather than 400: the same request succeeds in another chat, so what is
+  // wrong is this session's state and not the body. The remedy names a new chat
+  // because it is the only true one - no surface of this product deletes an
+  // attachment, and `bash` may only delete a /work file it wrote.
+  throw new ApiRouteError(
+    409,
+    `Chat file ${mintRequest.fileName} was not added: `
+    + describeFilledSessionFiles(sessionFilesBytes, mintRequest.sizeBytes)
+    + " An upload cannot be removed from a chat, so attach this file in a new chat.",
+  );
+};
+
 const mintChatFileUpload = async (
   dependencies: ChatFilesRouteDependencies,
   context: ChatFilesRequestContext,
@@ -401,6 +543,7 @@ const mintChatFileUpload = async (
     context,
     mintRequest.sessionId,
   );
+  await assertSessionFilesBytesAvailable(dependencies, context, sessionId, mintRequest);
   const chatFile = await insertChatFileAtFreePath(
     dependencies,
     context,

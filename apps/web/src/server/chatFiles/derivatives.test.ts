@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CHAT_FILE_MAXIMUM_BYTES, CHAT_FILE_SANDBOX_DIRECTORY } from "@/lib/chatFiles";
 import {
   CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN,
   runChatFileDerivativesPassWithDependencies,
@@ -14,6 +15,7 @@ import {
 } from "@/server/chatFiles/store";
 import type { log } from "@/server/logger";
 import {
+  SANDBOX_FILE_MAX_BYTES,
   SANDBOX_FILES_REQUEST_MAX_BYTES,
   SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES,
   SANDBOX_PREPARE_MAX_DERIVATIVES,
@@ -109,12 +111,32 @@ const createFixture = (
   overrides: Partial<ChatFileDerivativesDependencies>,
 ): Fixture => {
   const recorded = createRecorded();
-  const rowsByFileId = new Map(sessionFiles.map((file) => [file.fileId, file]));
+  /**
+   * The stored rows, as a statement of this session would see them.
+   *
+   * The byte total is answered from here rather than from `sessionFiles`,
+   * because the pass re-reads it per source and the point of that read is that
+   * it sees what the listing does not: a row this pass inserted a moment ago,
+   * and a row nothing in this pass wrote.
+   */
+  const storedRows = new Map(sessionFiles.map((file) => [file.fileId, file]));
   let slotIndex = 0;
 
   const dependencies: ChatFileDerivativesDependencies = {
     readFunctionName: (): string | null => FUNCTION_NAME,
     listSessionChatFiles: async (): Promise<ReadonlyArray<ChatFile>> => sessionFiles,
+    sumSessionFilesMountBytes: async (
+      userId: string,
+      workspaceId: string,
+      sessionId: string,
+    ): Promise<number> => {
+      assert.equal(userId, context.userId);
+      assert.equal(workspaceId, context.workspaceId);
+      assert.equal(sessionId, context.sessionId);
+      return [...storedRows.values()]
+        .filter((file) => file.path.startsWith(`${CHAT_FILE_SANDBOX_DIRECTORY}/`))
+        .reduce((total, file) => total + file.sizeBytes, 0);
+    },
     insertChatFile: async (
       userId: string,
       workspaceId: string,
@@ -123,7 +145,9 @@ const createFixture = (
       assert.equal(userId, context.userId);
       assert.equal(workspaceId, context.workspaceId);
       recorded.inserted.push(newChatFile);
-      return createChatFile({ ...newChatFile, isConfirmed: true });
+      const inserted = createChatFile({ ...newChatFile, isConfirmed: true });
+      storedRows.set(inserted.fileId, inserted);
+      return inserted;
     },
     deleteChatFile: async (
       _userId: string,
@@ -132,6 +156,7 @@ const createFixture = (
       fileId: string,
     ): Promise<ChatFile | null> => {
       recorded.deleted.push(fileId);
+      storedRows.delete(fileId);
       return null;
     },
     markChatFileDerivativesPrepared: async (
@@ -141,7 +166,7 @@ const createFixture = (
       fileId: string,
     ): Promise<ChatFile | null> => {
       recorded.prepared.push(fileId);
-      const row = rowsByFileId.get(fileId);
+      const row = storedRows.get(fileId);
       assert.ok(row !== undefined, `prepared an unknown file ${fileId}`);
       return { ...row, derivativesPreparedAt: 10 };
     },
@@ -153,7 +178,7 @@ const createFixture = (
       derivativesError: string,
     ): Promise<ChatFile | null> => {
       recorded.failed.push({ fileId, reason: derivativesError });
-      const row = rowsByFileId.get(fileId);
+      const row = storedRows.get(fileId);
       assert.ok(row !== undefined, `failed an unknown file ${fileId}`);
       return { ...row, derivativesError };
     },
@@ -259,6 +284,14 @@ test("a prepared source becomes one derived row per derivative and is never look
   }]);
   assert.deepEqual(recorded.prepared, [source.fileId]);
   assert.deepEqual(recorded.failed, []);
+  // The logged total is the state the pass leaves: the committed total its gate
+  // read, plus the derivative it then stored.
+  assert.deepEqual(
+    recorded.events
+      .filter((event) => event.action === "file_derivatives")
+      .map((event) => ("filesBytes" in event ? event.filesBytes : null)),
+    [source.sizeBytes + 4_096],
+  );
 });
 
 test("a failed source is a permanent verdict, so a later pass does not retry it", async (): Promise<void> => {
@@ -771,6 +804,76 @@ test("the derivatives of one source are charged against the next source of the s
   assert.match(
     recorded.failed[0].reason,
     new RegExp(`already holds ${String(ceiling + 1)} bytes`, "u"),
+  );
+});
+
+test("an upload committed beside the pass is charged to the source behind it", async (): Promise<void> => {
+  const ceiling = SANDBOX_FILES_REQUEST_MAX_BYTES - SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES;
+  // The largest a single derivative may be, so one conversion is enough to make
+  // the difference between the two totals decide the second source.
+  const derivedBytes = SANDBOX_FILE_MAX_BYTES;
+  const first = createChatFile({ fileId: "aaaaaaaa-0000-4000-8000-000000000001", path: "/files/a.pdf" });
+  const second = createChatFile({ fileId: "aaaaaaaa-0000-4000-8000-000000000002", path: "/files/b.pdf" });
+  // Sized so the first source's own derivative lands the session exactly on the
+  // ceiling: a pass reading its own arithmetic finds the second source still
+  // convertible, because the ceiling is not past the ceiling.
+  const held = createChatFile({
+    fileId: "aaaaaaaa-0000-4000-8000-000000000003",
+    path: "/files/held.bin",
+    mediaType: "application/octet-stream",
+    sizeBytes: ceiling - derivedBytes - first.sizeBytes - second.sizeBytes,
+  });
+  let mintedBesidePass = 0;
+  const answer: PrepareAnswer = (payload): unknown => {
+    // The upload route admits a mint while this conversion is in flight. It read
+    // the same total this pass listed, found room for 50 MiB in it, and
+    // committed its row - so the row exists for every statement after this
+    // point, and for none of the arithmetic done before it.
+    mintedBesidePass = CHAT_FILE_MAXIMUM_BYTES;
+    return prepareOneTextDerivative(derivedBytes)(payload);
+  };
+  const fixture = createFixture([first, second, held], answer, {});
+  const dependencies: ChatFileDerivativesDependencies = {
+    ...fixture.dependencies,
+    sumSessionFilesMountBytes: async (
+      userId: string,
+      workspaceId: string,
+      sessionId: string,
+    ): Promise<number> =>
+      await fixture.dependencies.sumSessionFilesMountBytes(userId, workspaceId, sessionId)
+      + mintedBesidePass,
+  };
+
+  assert.deepEqual(
+    await runChatFileDerivativesPassWithDependencies(context, dependencies),
+    {
+      preparedCount: 1,
+      derivedCount: 1,
+      failedCount: 1,
+      unavailableCount: 0,
+      deferredCount: 0,
+      stopReason: null,
+    },
+  );
+  // The second source is refused on the committed total, which is the listing
+  // plus the mint plus the first conversion - 434 MiB of a 512 MiB mount. A pass
+  // that carried its own total forward instead would invoke the second source
+  // here and leave the session at 562 MiB, where every later `bash` call of
+  // this chat is refused before it runs.
+  assert.equal(fixture.recorded.invocations.length, 1);
+  assert.equal(fixture.recorded.failed.length, 1);
+  assert.equal(fixture.recorded.failed[0].fileId, second.fileId);
+  const committedBytes = ceiling + CHAT_FILE_MAXIMUM_BYTES;
+  assert.match(
+    fixture.recorded.failed[0].reason,
+    new RegExp(`already holds ${String(committedBytes)} bytes`, "u"),
+  );
+  // The logged total is the state the pass leaves, not the total it started on.
+  assert.deepEqual(
+    fixture.recorded.events
+      .filter((event) => event.action === "file_derivatives")
+      .map((event) => ("filesBytes" in event ? event.filesBytes : null)),
+    [committedBytes],
   );
 });
 

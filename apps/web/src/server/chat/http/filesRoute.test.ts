@@ -15,6 +15,22 @@ import {
   type ChatFile,
   type NewChatFile,
 } from "@/server/chatFiles/store";
+import type { log } from "@/server/logger";
+import {
+  SANDBOX_FILES_REQUEST_MAX_BYTES,
+  SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES,
+} from "../../../../../sandbox/src/contract";
+
+/** LogEvent itself is module-private, so the event is named through `log`. */
+type LoggedEvent = Parameters<typeof log>[0];
+
+/**
+ * The bytes an upload may take a session's /files to, stated from the contract
+ * rather than read from the route, so the two cannot drift: the route's gate and
+ * the derivative gate have to leave the same reserve.
+ */
+const SESSION_UPLOAD_MAX_BYTES =
+  SANDBOX_FILES_REQUEST_MAX_BYTES - SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES;
 
 const CONFIRMED_SHA256 = "a".repeat(64);
 
@@ -64,6 +80,7 @@ const createDependencies = (
   getChatSessionId: async () => "session-1",
   getChatFileById: async () => createChatFile({}),
   getChatFileByPath: async () => null,
+  sumSessionFilesMountBytes: async () => 0,
   insertChatFile: async (_userId, _workspaceId, newChatFile: NewChatFile) =>
     createChatFile({
       fileId: newChatFile.fileId,
@@ -271,6 +288,106 @@ test("minting refuses a size above the ceiling", async (): Promise<void> => {
 
   assert.equal(response.status, 400);
   assert.match(await response.text(), /sizeBytes/);
+});
+
+test("minting refuses an upload the session has no room for", async (): Promise<void> => {
+  const sumCalls: Array<ReadonlyArray<unknown>> = [];
+  const events: Array<LoggedEvent> = [];
+  const response = await postChatFilesRouteWithDeps(
+    createPostRequest(mintBody, createHeaders()),
+    createDependencies({
+      sumSessionFilesMountBytes: async (userId, workspaceId, sessionId) => {
+        sumCalls.push([userId, workspaceId, sessionId]);
+        return SESSION_UPLOAD_MAX_BYTES;
+      },
+      // The refusal has to happen before the row exists: a minted row is itself
+      // charged to the session and nothing reclaims one whose upload never came.
+      insertChatFile: async () => {
+        throw new Error("a session with no room must not record a row");
+      },
+      presignChatFileUploadUrl: async () => {
+        throw new Error("a session with no room must not be signed an upload");
+      },
+      log: (event) => {
+        events.push(event);
+      },
+    }),
+  );
+
+  assert.equal(response.status, 409);
+  assert.equal(
+    await response.text(),
+    "Chat file report.csv was not added: this chat's /files already holds "
+    + `${String(SESSION_UPLOAD_MAX_BYTES)} bytes and this upload would add 1024, past the `
+    + `${String(SESSION_UPLOAD_MAX_BYTES)} bytes an upload may take it to. `
+    + "An upload cannot be removed from a chat, so attach this file in a new chat.",
+  );
+  // The resolved session id, so no caller can have another session's total read.
+  assert.deepEqual(sumCalls, [["user-1", "workspace-1", "session-1"]]);
+  assert.deepEqual(events, [{
+    domain: "chat",
+    action: "file_upload_session_bytes_refused",
+    route: "/api/chat/files",
+    userId: "user-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    sessionFilesBytes: SESSION_UPLOAD_MAX_BYTES,
+    sizeBytes: 1024,
+    limit: SESSION_UPLOAD_MAX_BYTES,
+  }]);
+});
+
+test("a session already past the ceiling is told that, not told what an upload would add", async (): Promise<void> => {
+  // The state the derivative gate can leave: conversions carried /files past
+  // what an upload may take it to, so the holding is larger than the limit and
+  // even a zero-byte upload is refused. Stating the arithmetic of this one
+  // would read as a limit that is already broken.
+  const response = await postChatFilesRouteWithDeps(
+    createPostRequest({ ...mintBody, sizeBytes: 0 }, createHeaders()),
+    createDependencies({
+      sumSessionFilesMountBytes: async () => SESSION_UPLOAD_MAX_BYTES + 1,
+    }),
+  );
+
+  assert.equal(response.status, 409);
+  assert.equal(
+    await response.text(),
+    "Chat file report.csv was not added: this chat's /files holds "
+    + `${String(SESSION_UPLOAD_MAX_BYTES + 1)} bytes, already past the `
+    + `${String(SESSION_UPLOAD_MAX_BYTES)} bytes an upload may take it to, so no further `
+    + "upload fits. An upload cannot be removed from a chat, so attach this file in a new chat.",
+  );
+});
+
+test("minting admits the upload that exactly fills the session, and nothing past it", async (): Promise<void> => {
+  const mintAtSessionTotal = async (sessionFilesBytes: number): Promise<number> =>
+    (await postChatFilesRouteWithDeps(
+      createPostRequest(mintBody, createHeaders()),
+      createDependencies({ sumSessionFilesMountBytes: async () => sessionFilesBytes }),
+    )).status;
+
+  // Both halves of the boundary, because the ceiling is load-bearing in both
+  // directions: one byte lower would turn away a session the derivative gate
+  // still converts for, and one byte higher would admit a session whose next
+  // conversion could land past the bytes one command may mount.
+  assert.equal(await mintAtSessionTotal(SESSION_UPLOAD_MAX_BYTES - 1024), 200);
+  assert.equal(await mintAtSessionTotal(SESSION_UPLOAD_MAX_BYTES - 1024 + 1), 409);
+});
+
+test("confirmation does not charge the session total again", async (): Promise<void> => {
+  const response = await postChatFilesRouteWithDeps(
+    createPostRequest(
+      { sessionId: "session-1", fileId: FILE_ID, sha256: CONFIRMED_SHA256 },
+      createHeaders(),
+    ),
+    createDependencies({
+      sumSessionFilesMountBytes: async () => {
+        throw new Error("the session total belongs to minting, not to confirmation");
+      },
+    }),
+  );
+
+  assert.equal(response.status, 200);
 });
 
 test("minting refuses a session the caller does not own", async (): Promise<void> => {

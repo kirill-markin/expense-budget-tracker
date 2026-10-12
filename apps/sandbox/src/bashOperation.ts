@@ -1292,6 +1292,11 @@ export const createFilesFs = (
  * Exported so a test drives the same interpreter, mounts and limits the Lambda
  * does: every recurrence of a stale seed so far was reachable from real shell
  * and invisible to a test that called the filesystem directly.
+ *
+ * No `env` is passed, and one would not narrow anything: 3.6.0 builds the shell
+ * environment from its own synthetic map and spreads `options.env` into it, so a
+ * command never sees this process's variables. Pinned by the host-environment
+ * test in bashOperation.test.ts.
  */
 export const createSandboxBash = (filesFs: PresignedFs, workFs: RecordingWorkFs): Bash =>
   new Bash({
