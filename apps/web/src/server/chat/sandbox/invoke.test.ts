@@ -136,7 +136,7 @@ const createHarness = (
     writtenObjectKeys,
     dependencies: {
       listSessionChatFiles: async (): Promise<ReadonlyArray<ChatFile>> => files,
-      upsertWorkChatFile: async (
+      saveWorkChatFile: async (
         _userId: string,
         _workspaceId: string,
         newChatFile: NewChatFile,

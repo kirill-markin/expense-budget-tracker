@@ -137,9 +137,13 @@ const INSERT_CHAT_FILE_SQL = `
  * pre-signed slot that received it was minted before anyone knew which path it
  * would hold. The row's identity is (session_id, file_id) and its object key is
  * derived from that pair, so the row cannot merely be repointed: it is replaced
- * by one whose file id is the slot's. The old object is left behind -
- * reclaiming it is item 10's job, and deleting it here would race a reader
- * already holding a pre-signed URL for it.
+ * by one whose file id is the slot's. RETURNING carries the displaced key out,
+ * because once this row is gone nothing in the database names the object
+ * holding its bytes, so the reclaim this key feeds is the only delete that can
+ * be aimed at it. Three things still reach it without naming it, all by prefix:
+ * chatFiles/cleanup.ts sweeping the session or its workspace, and the bucket
+ * expiring the object 90 days after it was written, the only one of the three
+ * nobody has to ask for (infra/aws/lib/chat-files-bucket.ts).
  *
  * Confined to a row this surface owns. A conflicting row of another origin
  * would be an attachment or a derivative at a /work path, which nothing can
@@ -151,6 +155,7 @@ const DELETE_REPLACED_WORK_CHAT_FILE_SQL = `
   WHERE session_id = $1
     AND path = $2
     AND origin = 'work'
+  RETURNING object_key
 `;
 
 const SELECT_CHAT_FILE_BY_ID_SQL = `
@@ -232,6 +237,9 @@ const DELETE_CHAT_FILE_SQL = `
 
 /** The one column SUM_SESSION_FILES_MOUNT_BYTES_SQL returns. */
 type SessionFilesMountBytesRow = Readonly<{ total_bytes: string }>;
+
+/** The one column DELETE_REPLACED_WORK_CHAT_FILE_SQL returns. */
+type DisplacedObjectKeyRow = Readonly<{ object_key: string }>;
 
 const parseSizeBytes = (value: string, fileId: string): number => {
   const sizeBytes = Number(value);
@@ -317,6 +325,26 @@ export const insertChatFile = async (
 };
 
 /**
+ * The stored /work row, and the objects the save displaced and nothing else can
+ * reach: their rows are gone, so no later read can name their keys.
+ * chatFiles/saveWorkFile.ts deletes them, once this transaction has committed.
+ *
+ * The keys come from the DELETE's own RETURNING, the one source that cannot
+ * disagree with the database. A caller's picture of the session is assembled
+ * before its turn runs and cannot name a row that same turn already wrote.
+ *
+ * A plural only because a statement answers in rows: the UNIQUE
+ * (session_id, path) index bounds it at one. It names the rows that statement
+ * deleted and not rows a cascade took with them, which is complete while only
+ * an attachment can be a derivative source - see isPreparableSource in
+ * chatFiles/derivatives.ts - so a /work row has no derivative.
+ */
+export type UpsertedWorkChatFile = Readonly<{
+  file: ChatFile;
+  displacedObjectKeys: ReadonlyArray<string>;
+}>;
+
+/**
  * Store the row for one /work file the sandbox reported saving, replacing
  * whatever this session held at that path.
  *
@@ -335,7 +363,7 @@ export const upsertWorkChatFile = async (
   userId: string,
   workspaceId: string,
   newChatFile: NewChatFile,
-): Promise<ChatFile> => {
+): Promise<UpsertedWorkChatFile> => {
   if (!isChatFileId(newChatFile.fileId)) {
     throw new Error(`Chat file id must be a lowercase UUID, got "${newChatFile.fileId}"`);
   }
@@ -347,7 +375,7 @@ export const upsertWorkChatFile = async (
 
   const objectKey = buildChatFileObjectKey(newChatFile.sessionId, newChatFile.fileId);
   return withUserContext(userId, workspaceId, async (queryFn) => {
-    await queryFn(DELETE_REPLACED_WORK_CHAT_FILE_SQL, [
+    const displaced = await queryFn(DELETE_REPLACED_WORK_CHAT_FILE_SQL, [
       newChatFile.sessionId,
       newChatFile.path,
     ]);
@@ -372,7 +400,11 @@ export const upsertWorkChatFile = async (
       );
     }
 
-    return mapChatFileRow(row);
+    return {
+      file: mapChatFileRow(row),
+      displacedObjectKeys: (displaced.rows as ReadonlyArray<DisplacedObjectKeyRow>)
+        .map((displacedRow) => displacedRow.object_key),
+    };
   });
 };
 
