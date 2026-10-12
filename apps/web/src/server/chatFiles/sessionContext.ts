@@ -1,6 +1,7 @@
 /**
  * What this chat session's files contribute to one turn's prompt: a listing of
- * them, and the bytes of the `view_file` results the stored history replays.
+ * them, the bytes of its resident images, and the bytes of the `view_file`
+ * results the stored history replays.
  *
  * The listing exists because nothing else tells the model what it holds. A
  * document is converted in a turn's prologue, at most
@@ -12,20 +13,31 @@
  * file could not be converted. So both are rendered here, each in the clause of
  * the file it is about.
  *
- * Both halves are paid on every turn, which is what bounds their shape. The
+ * Every part of it is paid on every turn, which is what bounds their shape. The
  * listing is capped and says when it was cut, and it is omitted entirely for a
  * session with no files, so an ordinary chat pays nothing for it. The view
  * results cost one read each, so only the newest
  * CHAT_FILE_VIEW_REPLAYS_PER_TURN distinct files and pages are read for at all -
  * a read that fails spends one of those - and the rest keep their text and say
- * so.
+ * so. The images are the same shape of cost under
+ * CHAT_RESIDENT_IMAGES_PER_TURN, and an image past it is named by the listing
+ * and shown by `view_file` rather than carried.
  */
 import { PDF_MEDIA_TYPE } from "@/lib/chatPdf";
+import {
+  CHAT_ATTACHMENT_MAXIMUM_BYTES,
+  isSendableChatImage,
+} from "@/server/chat/attachments/validation";
 import { readChatSandboxFunctionName } from "@/server/chat/sandbox/invoke";
+import type { ContentPart, ImageContentPart } from "@/server/chat/types";
 import {
   CHAT_FILE_DERIVATIVE_SOURCES_PER_TURN,
   mentionsExpiredChatFileObject,
 } from "@/server/chatFiles/derivatives";
+import {
+  buildChatFileObjectKey,
+  readChatFileObjectBytesIfConfigured,
+} from "@/server/chatFiles/objectStore";
 import {
   listSessionChatFiles,
   type ChatFile,
@@ -38,6 +50,7 @@ import {
 import type {
   ChatFileViewPart,
   ChatFileViewPartsByCallId,
+  ServerChatMessage,
   StoredChatFileViewCall,
 } from "@/server/chat/openai/responses/replayItems";
 import { log } from "@/server/logger";
@@ -101,9 +114,39 @@ export const CHAT_FILE_MANIFEST_MAX_CHARS = 1_200;
  */
 export const CHAT_FILE_VIEW_REPLAYS_PER_TURN = 4;
 
+/**
+ * Images one turn carries the bytes of, newest first.
+ *
+ * An image of a message is a file of the session like any other attachment, so
+ * its bytes are read from the object and rendered into the input again on every
+ * turn. That is one object read per resident image per turn, which is the cost
+ * this bounds, and eight of them is the same ceiling
+ * CHAT_FILE_VIEW_REPLAYS_PER_TURN already allows: an image is charged at
+ * `IMAGE_TOKENS`, so eight is 16,000 tokens of the 120,000 token budget, where
+ * four view results are up to 16,000 too.
+ *
+ * A count rather than a rolling per-turn eviction, which is the decision that
+ * keeps the prompt cache: the cache matches on a byte-identical rendered prefix,
+ * and rewriting which images a turn carries on every turn would break it for the
+ * whole prompt behind the first rewritten message. A count only ever grows, so
+ * an image leaves the resident set once and stays out, and a session of eight
+ * images or fewer - which is nearly all of them - never changes a rendered byte.
+ * The one event that moves an image back in is the user attaching bytes the
+ * session already holds, which resolves to that same row: it costs the prompt
+ * behind the two messages whose images swapped, and is paid so that the image
+ * the turn is about is the one sent.
+ *
+ * An image past it does not vanish: the manifest names its path and its size on
+ * every turn, and `view_file` shows that path, so the model can still see that
+ * the image exists and ask for it. What it costs is the model noticing it has to
+ * ask.
+ */
+export const CHAT_RESIDENT_IMAGES_PER_TURN = 8;
+
 export type ChatFileManifestDependencies = Readonly<{
   listSessionChatFiles: typeof listSessionChatFiles;
   viewChatFile: typeof viewChatFile;
+  readObjectBytes: typeof readChatFileObjectBytesIfConfigured;
   /**
    * The sandbox function, or null where none is configured. Read here as well as
    * by the derivatives pass, because the listing states what another message
@@ -113,15 +156,43 @@ export type ChatFileManifestDependencies = Readonly<{
   log: typeof log;
 }>;
 
+/**
+ * What this turn can do with one image of the session.
+ *
+ * The three states that carry no bytes are told apart because they are three
+ * different instructions to the model: a capped image's object is still there,
+ * so `view_file` shows it on the turn the model asks; an unavailable one's is
+ * not, so that same call is bound to fail and what is left is asking the user to
+ * attach it again; and a row past the bytes one image may be shown as is refused
+ * by `view_file` and by the wire alike, so neither of those answers it and only
+ * a smaller copy would. Production expires a stored object at
+ * CHAT_FILES_EXPIRATION_DAYS while the payload keeps its reference for good, so
+ * every image of an old enough session reads as unavailable on every turn, and
+ * collapsing the states would spend a tool call, or a re-attach that cannot
+ * succeed, on each of them every time.
+ */
+export type ChatImageSendState =
+  | Readonly<{ kind: "resident"; base64Data: string }>
+  | Readonly<{ kind: "capped" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "oversized" }>;
+
 export type ChatTurnFileContext = Readonly<{
   /** The trailing system item, or null when this session holds no file. */
   manifest: string | null;
   viewParts: ChatFileViewPartsByCallId;
+  /**
+   * How each image of the messages this input may send is to be sent, by the
+   * file id of the part that stands for it. Absent is the turn that read no
+   * object at all, which the input renders as capped.
+   */
+  imageStateByFileId: ReadonlyMap<string, ChatImageSendState>;
 }>;
 
 export const EMPTY_CHAT_TURN_FILE_CONTEXT: ChatTurnFileContext = {
   manifest: null,
   viewParts: new Map(),
+  imageStateByFileId: new Map(),
 };
 
 const MANIFEST_HEADER =
@@ -391,9 +462,149 @@ const buildViewCallKey = (
 ): string =>
   `${reference.fileId}\u0000${reference.sha256}\u0000${String(reference.page)}`;
 
+/**
+ * Every image of this session's user messages and of the turn being answered,
+ * oldest first and one entry per distinct file.
+ *
+ * Both are walked because the turn's own payload is the one message the input
+ * may drop as a duplicate, so neither source alone names every image the input
+ * can send; the same image in both is one file and takes one slot.
+ *
+ * A file is ordered by its last occurrence, which the resident set is the tail
+ * of: an image the user attached to the turn being answered may not be the one
+ * evicted in favour of strictly older ones, and re-attaching bytes the session
+ * already holds resolves to that same row. Last occurrence over the stored
+ * messages as much as over the turn input, and over one walk of both so the two
+ * cannot drift apart: the turn's own payload is one of those messages from the
+ * next turn on, so ordering a file by where it first arrived would put that
+ * image back at its old position, swap the resident set a second time for one
+ * re-attach, and cap the very image the user asked about.
+ */
+export const listChatImageReferences = (
+  messages: ReadonlyArray<ServerChatMessage>,
+  turnInput: ReadonlyArray<ContentPart>,
+): ReadonlyArray<ImageContentPart> => {
+  const walked: ReadonlyArray<ContentPart> = [
+    ...messages
+      .filter((message) => message.role === "user")
+      .flatMap((message) => message.content),
+    ...turnInput,
+  ];
+  const byFileId = new Map<string, ImageContentPart>();
+  for (const part of walked) {
+    if (part.type !== "image") {
+      continue;
+    }
+    // Deleted before it is set, because an existing key keeps its position.
+    byFileId.delete(part.fileId);
+    byFileId.set(part.fileId, part);
+  }
+
+  return [...byFileId.values()];
+};
+
+const UNAVAILABLE_IMAGE: ChatImageSendState = { kind: "unavailable" };
+
+const CAPPED_IMAGE: ChatImageSendState = { kind: "capped" };
+
+const OVERSIZED_IMAGE: ChatImageSendState = { kind: "oversized" };
+
+/**
+ * The bytes of one resident image, or the state that says why this input carries
+ * none of them.
+ *
+ * Two endings are answers rather than faults, and neither of them records one:
+ * an object that is gone, and bytes that are not the image the part claims. The
+ * second one matters because a reference is not validated anywhere else - the
+ * wire checks an image's signature against its declared type while the bytes are
+ * still inline, and a payload stored before that check predates it - and handing
+ * the provider a part it refuses would cost the whole turn rather than this one
+ * image. Answered by the attachment image checks rather than raised by them, so
+ * one set of signature rules covers every image this app sends while a session
+ * whose stored bytes nothing can repair does not record a fault for every one of
+ * its turns, for good.
+ *
+ * Anything else raises, and is caught for the reason the view rebuild beside
+ * this one states: this runs in front of the turn's first token, over an image
+ * the model has already been shown, so a read this deployment cannot make leaves
+ * that image unavailable instead of ending a turn the user is waiting on.
+ */
+const readResidentImage = async (
+  image: ImageContentPart,
+  context: ChatFileViewContext,
+  dependencies: ChatFileManifestDependencies,
+): Promise<ChatImageSendState> => {
+  try {
+    const bytes = await dependencies.readObjectBytes(
+      buildChatFileObjectKey(context.sessionId, image.fileId),
+    );
+    if (bytes === null) {
+      return UNAVAILABLE_IMAGE;
+    }
+
+    const base64Data = Buffer.from(bytes).toString("base64");
+
+    return isSendableChatImage({ type: "image", mediaType: image.mediaType, base64Data })
+      ? { kind: "resident", base64Data }
+      : UNAVAILABLE_IMAGE;
+  } catch (error) {
+    dependencies.log({
+      domain: "chat",
+      action: "error",
+      vendor: "openai",
+      stage: "agent",
+      error: `Chat image replay: one image of this session cannot be sent, fileId=${image.fileId}, mediaType=${image.mediaType}: ${describeError(error)}`,
+      requestId: context.requestId,
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      sessionId: context.sessionId,
+    });
+
+    return UNAVAILABLE_IMAGE;
+  }
+};
+
+/**
+ * How every image of this input is to be sent: a row past the bytes one image may
+ * be shown as answered from the row alone, the newest of the rest read together,
+ * and the ones behind the bound capped without a read.
+ *
+ * The size claim is a property of the row rather than of residency, which is why
+ * it is answered before the bound and at every index: capped tells the model to
+ * call `view_file` for that path, and `view_file` refuses that row on this very
+ * comparison, so a claim answered only for the rows the bound admits would hand
+ * the ones behind it the single instruction their row cannot deliver. Answering
+ * it first is free, because the row carries its own size and no read is needed -
+ * which is also why a substituted object is never materialised as bytes and again
+ * as base64 before the same ceiling refuses it.
+ *
+ * Together rather than one after another, because these reads are serial latency
+ * in front of the turn's first token and nothing about one decides whether the
+ * next is worth making: every one of them is a different object, and a
+ * deployment fault that loses one must not cost the model the images beside it.
+ */
+const readResidentImages = async (
+  images: ReadonlyArray<ImageContentPart>,
+  context: ChatFileViewContext,
+  dependencies: ChatFileManifestDependencies,
+): Promise<ReadonlyMap<string, ChatImageSendState>> => {
+  const firstResidentIndex = Math.max(images.length - CHAT_RESIDENT_IMAGES_PER_TURN, 0);
+  const states = await Promise.all(images.map(async (image, index) => [
+    image.fileId,
+    image.sizeBytes > CHAT_ATTACHMENT_MAXIMUM_BYTES
+      ? OVERSIZED_IMAGE
+      : index < firstResidentIndex
+        ? CAPPED_IMAGE
+        : await readResidentImage(image, context, dependencies),
+  ] as const));
+
+  return new Map(states);
+};
+
 export const buildChatTurnFileContextWithDependencies = async (
   context: ChatFileViewContext,
   viewCalls: ReadonlyArray<StoredChatFileViewCall>,
+  images: ReadonlyArray<ImageContentPart>,
   signal: AbortSignal | null,
   dependencies: ChatFileManifestDependencies,
 ): Promise<ChatTurnFileContext> => {
@@ -413,6 +624,13 @@ export const buildChatTurnFileContextWithDependencies = async (
     files,
     dependencies.readFunctionName() !== null,
   );
+  // Read before the view results, and not inside their loop: these are the
+  // user's own attachments of the messages this input sends, where a view result
+  // is one the model asked for, and the turn the user abandoned is not worth
+  // either read. The same signal stops both.
+  const imageStateByFileId = signal?.aborted === true
+    ? new Map<string, ChatImageSendState>()
+    : await readResidentImages(images, context, dependencies);
   const viewParts = new Map<string, ChatFileViewPart>();
   // What this turn has already spent a read on, by distinct file and page: the
   // part the read answered with, or null where it answered with nothing. Absent
@@ -454,7 +672,7 @@ export const buildChatTurnFileContextWithDependencies = async (
     viewParts.set(viewCall.callId, part);
   }
 
-  if (manifest !== null || viewCalls.length > 0) {
+  if (manifest !== null || viewCalls.length > 0 || images.length > 0) {
     dependencies.log({
       domain: "chat",
       action: "file_context",
@@ -467,21 +685,33 @@ export const buildChatTurnFileContextWithDependencies = async (
       viewCallCount: viewCalls.length,
       expandedCount,
       unavailableCount: viewCalls.length - viewParts.size,
+      imageCount: images.length,
+      residentImageCount: [...imageStateByFileId.values()].filter(
+        (state) => state.kind === "resident",
+      ).length,
       durationMs: Date.now() - startedAt,
     });
   }
 
-  return { manifest, viewParts };
+  return { manifest, viewParts, imageStateByFileId };
 };
 
 export const buildChatTurnFileContext = async (
   context: ChatFileViewContext,
   viewCalls: ReadonlyArray<StoredChatFileViewCall>,
+  images: ReadonlyArray<ImageContentPart>,
   signal: AbortSignal | null,
 ): Promise<ChatTurnFileContext> =>
   await buildChatTurnFileContextWithDependencies(
     context,
     viewCalls,
+    images,
     signal,
-    { listSessionChatFiles, viewChatFile, readFunctionName: readChatSandboxFunctionName, log },
+    {
+      listSessionChatFiles,
+      viewChatFile,
+      readObjectBytes: readChatFileObjectBytesIfConfigured,
+      readFunctionName: readChatSandboxFunctionName,
+      log,
+    },
   );

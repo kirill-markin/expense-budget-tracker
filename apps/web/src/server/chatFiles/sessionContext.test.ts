@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CHAT_ATTACHMENT_MAXIMUM_BYTES } from "@/server/chat/attachments/validation";
 import {
   buildChatFileManifest,
   buildChatTurnFileContextWithDependencies,
   CHAT_FILE_MANIFEST_MAX_CHARS,
   CHAT_FILE_VIEW_REPLAYS_PER_TURN,
+  CHAT_RESIDENT_IMAGES_PER_TURN,
+  listChatImageReferences,
   type ChatFileManifestDependencies,
+  type ChatImageSendState,
+  type ChatTurnFileContext,
 } from "@/server/chatFiles/sessionContext";
 import type { ChatFile } from "@/server/chatFiles/store";
 import type { ChatFileViewContext, ChatFileViewResult } from "@/server/chatFiles/viewFile";
-import type { StoredChatFileViewCall } from "@/server/chat/openai/responses/replayItems";
+import type {
+  ServerChatMessage,
+  StoredChatFileViewCall,
+} from "@/server/chat/openai/responses/replayItems";
+import type { ContentPart, ImageContentPart } from "@/server/chat/types";
 
 const CONTEXT: ChatFileViewContext = {
   requestId: "request-1",
@@ -214,10 +223,24 @@ const IMAGE_PART = {
   image_url: "data:image/png;base64,iVBO",
 } as const;
 
+const JPEG_BYTES = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]);
+const HEIC_BYTES = Uint8Array.from(Buffer.from("AAAAGGZ0eXBoZWljAAAAAA==", "base64"));
+
+const createImageReference = (
+  fileId: string,
+): ImageContentPart => ({
+  type: "image",
+  fileId,
+  path: `/files/${fileId}.jpg`,
+  mediaType: "image/jpeg",
+  sizeBytes: JPEG_BYTES.byteLength,
+});
+
 const createViewDependencies = (
   overrides: Partial<ChatFileManifestDependencies>,
 ): ChatFileManifestDependencies => ({
   listSessionChatFiles: async (): Promise<ReadonlyArray<ChatFile>> => [RECEIPT],
+  readObjectBytes: async (): Promise<Uint8Array | null> => JPEG_BYTES,
   viewChatFile: async (): Promise<ChatFileViewResult> => ({
     kind: "viewed",
     view: {
@@ -251,6 +274,7 @@ test("a stored view_file result is rebuilt from its reference, once per file", a
   const context = await buildChatTurnFileContextWithDependencies(
     CONTEXT,
     [VIEW_CALL, { ...VIEW_CALL, callId: "call-2" }],
+    [],
     null,
     createViewDependencies({
       viewChatFile: async (path, page, viewContext): Promise<ChatFileViewResult> => {
@@ -272,6 +296,7 @@ test("a file that changed under its reference is not replayed as the one the mod
   const context = await buildChatTurnFileContextWithDependencies(
     CONTEXT,
     [VIEW_CALL],
+    [],
     null,
     createViewDependencies({
       viewChatFile: async (): Promise<ChatFileViewResult> => ({
@@ -299,6 +324,7 @@ test("demo mode reads nothing at all", async (): Promise<void> => {
   const context = await buildChatTurnFileContextWithDependencies(
     { ...CONTEXT, isDemoMode: true },
     [VIEW_CALL],
+    [],
     null,
     createViewDependencies({
       listSessionChatFiles: async (): Promise<never> => {
@@ -334,6 +360,7 @@ test("one turn rebuilds the newest files only, however many the session looked a
   const context = await buildChatTurnFileContextWithDependencies(
     CONTEXT,
     viewCalls,
+    [],
     null,
     createViewDependencies({
       viewChatFile: async (path, page): Promise<ChatFileViewResult> => {
@@ -379,6 +406,7 @@ test("a rebuild that raises leaves the result its text instead of ending the tur
   const context = await buildChatTurnFileContextWithDependencies(
     CONTEXT,
     [VIEW_CALL, { ...VIEW_CALL, callId: "call-2", reference: { ...VIEW_CALL.reference, fileId: "file-9" } }],
+    [],
     null,
     createViewDependencies({
       viewChatFile: async (): Promise<never> => {
@@ -422,6 +450,7 @@ test("a rebuild that fails is charged against the per-turn bound like one that a
   const context = await buildChatTurnFileContextWithDependencies(
     CONTEXT,
     viewCalls,
+    [],
     null,
     createViewDependencies({
       viewChatFile: async (path): Promise<never> => {
@@ -465,6 +494,7 @@ test("a reference whose rebuild failed is not read again for a repeat of it", as
   const context = await buildChatTurnFileContextWithDependencies(
     CONTEXT,
     viewCalls,
+    [],
     null,
     createViewDependencies({
       viewChatFile: async (): Promise<never> => {
@@ -500,6 +530,7 @@ test("a cached part only satisfies a reference whose digest it was compared agai
   const context = await buildChatTurnFileContextWithDependencies(
     CONTEXT,
     [older, newer],
+    [],
     null,
     createViewDependencies({
       // The row as it is now, which is what the newer reference recorded.
@@ -516,4 +547,333 @@ test("a cached part only satisfies a reference whose digest it was compared agai
 
   assert.deepEqual(context.viewParts.get("call-newer"), IMAGE_PART);
   assert.equal(context.viewParts.has("call-older"), false);
+});
+
+const IMAGE = createImageReference("image-1");
+
+/** Dependency fragment that collects the error-family records of one run. */
+const logErrorsInto = (
+  errors: Array<string>,
+): Partial<ChatFileManifestDependencies> => ({
+  log: (event): void => {
+    if (event.domain === "chat" && event.action === "error") {
+      errors.push(event.error);
+    }
+  },
+});
+
+/**
+ * The state of each image by file id, as the class the input renders from.
+ *
+ * Asserted as classes rather than as the lines they produce: what matters is
+ * that an image the bound evicted and an image whose object is gone are not the
+ * same state, because they are not the same instruction to the model.
+ */
+const imageKindsOf = (
+  context: ChatTurnFileContext,
+): ReadonlyArray<readonly [string, ChatImageSendState["kind"]]> =>
+  [...context.imageStateByFileId].map(([fileId, state]) => [fileId, state.kind] as const);
+
+test("a resident image is read by file id and carried as its own base64", async (): Promise<void> => {
+  const readKeys: Array<string> = [];
+
+  const context = await buildChatTurnFileContextWithDependencies(
+    CONTEXT,
+    [],
+    [IMAGE],
+    null,
+    createViewDependencies({
+      readObjectBytes: async (objectKey): Promise<Uint8Array | null> => {
+        readKeys.push(objectKey);
+        return JPEG_BYTES;
+      },
+    }),
+  );
+
+  assert.deepEqual(readKeys, [`sessions/${CONTEXT.sessionId}/image-1`]);
+  assert.deepEqual(
+    [...context.imageStateByFileId],
+    [["image-1", { kind: "resident", base64Data: Buffer.from(JPEG_BYTES).toString("base64") }]],
+  );
+});
+
+test("one turn reads the newest images only, however many the session holds", async (): Promise<void> => {
+  // One object read per resident image per turn, paid in front of the turn's
+  // first token, so the count must not grow with the session.
+  const images = Array.from(
+    { length: CHAT_RESIDENT_IMAGES_PER_TURN + 2 },
+    (_, index) => createImageReference(`image-${String(index)}`),
+  );
+  const readKeys: Array<string> = [];
+
+  const context = await buildChatTurnFileContextWithDependencies(
+    CONTEXT,
+    [],
+    images,
+    null,
+    createViewDependencies({
+      readObjectBytes: async (objectKey): Promise<Uint8Array | null> => {
+        readKeys.push(objectKey);
+        return JPEG_BYTES;
+      },
+    }),
+  );
+
+  assert.equal(readKeys.length, CHAT_RESIDENT_IMAGES_PER_TURN);
+  // The newest are the ones carried, and the two oldest are capped: their
+  // objects are untouched and still there, which is what view_file reads.
+  assert.deepEqual(imageKindsOf(context).slice(0, 3), [
+    ["image-0", "capped"],
+    ["image-1", "capped"],
+    ["image-2", "resident"],
+  ]);
+  assert.equal(context.imageStateByFileId.get("image-9")?.kind, "resident");
+});
+
+test("a re-attached image is resident on that turn and stays resident after it", async (): Promise<void> => {
+  // The resident set is the tail of the order and a re-attached image resolves
+  // to the row it first arrived under, so an image the user attached to this
+  // turn must not be the one evicted in favour of strictly older ones - and it
+  // must not go back to its old position on the next turn either, which would
+  // swap the resident set a second time for one re-attach and cap the image the
+  // model was just shown.
+  const older = Array.from(
+    { length: CHAT_RESIDENT_IMAGES_PER_TURN + 1 },
+    (_, index) => createImageReference(`image-${String(index)}`),
+  );
+  const reattached = older[0];
+  assert.ok(reattached !== undefined);
+  const stored: ReadonlyArray<ServerChatMessage> = older.map((image) => ({
+    role: "user",
+    content: [image],
+  }));
+  const reattachInput: ReadonlyArray<ContentPart> = [
+    reattached,
+    { type: "text", text: "and this one?" },
+  ];
+  // The re-attach turn, and then the turn after it: the payload of the re-attach
+  // is one of the stored messages by then, and the turn input no longer carries
+  // that image at all.
+  const reattachTurn = listChatImageReferences(stored, reattachInput);
+  const nextTurn = listChatImageReferences(
+    [...stored, { role: "user", content: reattachInput }],
+    [{ type: "text", text: "and the total?" }],
+  );
+  const expectedOrder = [
+    ...older.slice(1).map((image) => image.fileId),
+    reattached.fileId,
+  ];
+
+  assert.deepEqual(reattachTurn.map((image) => image.fileId), expectedOrder);
+  assert.deepEqual(nextTurn.map((image) => image.fileId), expectedOrder);
+
+  for (const images of [reattachTurn, nextTurn]) {
+    const context = await buildChatTurnFileContextWithDependencies(
+      CONTEXT,
+      [],
+      images,
+      null,
+      createViewDependencies({}),
+    );
+
+    assert.equal(context.imageStateByFileId.get(reattached.fileId)?.kind, "resident");
+    // The oldest image the turn is not about is the one that left instead.
+    assert.equal(context.imageStateByFileId.get("image-1")?.kind, "capped");
+  }
+});
+
+test("an image whose stored object is gone is told apart from one past the bound", async (): Promise<void> => {
+  const errors: Array<string> = [];
+
+  const context = await buildChatTurnFileContextWithDependencies(
+    CONTEXT,
+    [],
+    [IMAGE],
+    null,
+    createViewDependencies({
+      readObjectBytes: async (): Promise<Uint8Array | null> => null,
+      ...logErrorsInto(errors),
+    }),
+  );
+
+  // view_file reads the same object, so the model may not be sent to it here.
+  assert.deepEqual(imageKindsOf(context), [["image-1", "unavailable"]]);
+  // A copy that expired is a state of the session's files rather than a fault
+  // of this deployment, so nothing is recorded in the error family for it.
+  assert.deepEqual(errors, []);
+});
+
+test("an image whose row is past the bytes one image may be shown as is not read at all", async (): Promise<void> => {
+  // The row carries its own size, so the object is not materialised as bytes
+  // and again as base64 only for the same ceiling to refuse it.
+  const errors: Array<string> = [];
+
+  const context = await buildChatTurnFileContextWithDependencies(
+    CONTEXT,
+    [],
+    [{ ...IMAGE, sizeBytes: CHAT_ATTACHMENT_MAXIMUM_BYTES + 1 }],
+    null,
+    createViewDependencies({
+      readObjectBytes: async (): Promise<never> => {
+        throw new Error("a row past the ceiling was read anyway");
+      },
+      ...logErrorsInto(errors),
+    }),
+  );
+
+  // Its own state, because neither instruction the other two carry can answer
+  // it: view_file refuses the same row, and the wire refuses an attachment of
+  // that size on arrival.
+  assert.deepEqual(imageKindsOf(context), [["image-1", "oversized"]]);
+  assert.deepEqual(errors, []);
+});
+
+test("a row past that ceiling is oversized behind the bound too, not capped", async (): Promise<void> => {
+  // The size claim is a property of the row and not of residency: capped sends
+  // the model to view_file, which refuses this very row on the same comparison.
+  // Nothing here picks which images are behind the bound - the session's own
+  // order does, and the ordinary row beside this one is what shows where the
+  // bound fell.
+  const images = Array.from(
+    { length: CHAT_RESIDENT_IMAGES_PER_TURN + 2 },
+    (_, index) => createImageReference(`image-${String(index)}`),
+  );
+  const stored: ReadonlyArray<ServerChatMessage> = images.map((image, index) => ({
+    role: "user",
+    content: [index === 0
+      ? { ...image, sizeBytes: CHAT_ATTACHMENT_MAXIMUM_BYTES + 1 }
+      : image],
+  }));
+  const readKeys: Array<string> = [];
+
+  const context = await buildChatTurnFileContextWithDependencies(
+    CONTEXT,
+    [],
+    listChatImageReferences(stored, []),
+    null,
+    createViewDependencies({
+      readObjectBytes: async (objectKey): Promise<Uint8Array | null> => {
+        readKeys.push(objectKey);
+        return JPEG_BYTES;
+      },
+    }),
+  );
+
+  assert.deepEqual(imageKindsOf(context).slice(0, 3), [
+    ["image-0", "oversized"],
+    ["image-1", "capped"],
+    ["image-2", "resident"],
+  ]);
+  // Answered from the row, so the object behind it is not read here either.
+  assert.equal(readKeys.includes(`sessions/${CONTEXT.sessionId}/image-0`), false);
+});
+
+test("bytes that are not the image the part claims are not sent to the provider", async (): Promise<void> => {
+  // Nothing else validates a reference: the wire checks an image's signature
+  // while its bytes are still inline, and a payload stored before that check
+  // predates it. A part the provider refuses would cost the whole turn.
+  const errors: Array<string> = [];
+
+  const context = await buildChatTurnFileContextWithDependencies(
+    CONTEXT,
+    [],
+    [IMAGE],
+    null,
+    createViewDependencies({
+      readObjectBytes: async (): Promise<Uint8Array | null> => HEIC_BYTES,
+      ...logErrorsInto(errors),
+    }),
+  );
+
+  assert.deepEqual(imageKindsOf(context), [["image-1", "unavailable"]]);
+  // Nothing can repair the bytes a stored payload points at, so recording this
+  // would be one error record on every turn of that session, for good.
+  assert.deepEqual(errors, []);
+});
+
+test("a read that raises leaves its image unsent instead of ending the turn", async (): Promise<void> => {
+  const errors: Array<string> = [];
+
+  const context = await buildChatTurnFileContextWithDependencies(
+    CONTEXT,
+    [],
+    [IMAGE, createImageReference("image-2")],
+    null,
+    createViewDependencies({
+      readObjectBytes: async (objectKey): Promise<Uint8Array | null> => {
+        if (objectKey.endsWith("image-1")) {
+          throw new Error("ThrottlingException: rate exceeded");
+        }
+        return JPEG_BYTES;
+      },
+      ...logErrorsInto(errors),
+    }),
+  );
+
+  // One object this deployment cannot read does not cost the model the images
+  // beside it.
+  assert.deepEqual(imageKindsOf(context), [
+    ["image-1", "unavailable"],
+    ["image-2", "resident"],
+  ]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0] ?? "", /Chat image replay: .*fileId=image-1.*ThrottlingException/u);
+});
+
+test("the turn the user abandoned reads no image at all", async (): Promise<void> => {
+  const controller = new AbortController();
+  controller.abort();
+
+  const context = await buildChatTurnFileContextWithDependencies(
+    CONTEXT,
+    [],
+    [IMAGE],
+    controller.signal,
+    createViewDependencies({
+      readObjectBytes: async (): Promise<never> => {
+        throw new Error("the abandoned turn read an object");
+      },
+    }),
+  );
+
+  assert.equal(context.imageStateByFileId.size, 0);
+});
+
+test("demo mode carries no image either", async (): Promise<void> => {
+  const context = await buildChatTurnFileContextWithDependencies(
+    { ...CONTEXT, isDemoMode: true },
+    [],
+    [IMAGE],
+    null,
+    createViewDependencies({
+      readObjectBytes: async (): Promise<never> => {
+        throw new Error("demo mode has no bucket to read");
+      },
+    }),
+  );
+
+  assert.equal(context.imageStateByFileId.size, 0);
+});
+
+test("one image in both the turn input and its stored payload takes one slot", (): void => {
+  // The input may drop the stored copy of the turn as a duplicate, so both are
+  // walked; the same file in both must not spend two of the bound's reads.
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    { role: "user", content: [IMAGE] },
+    { role: "assistant", content: [{ type: "text", text: "A receipt." }] },
+    { role: "user", content: [IMAGE, { type: "text", text: "and this one?" }] },
+  ];
+  const turnInput: ReadonlyArray<ContentPart> = [IMAGE, { type: "text", text: "and this one?" }];
+
+  assert.deepEqual(listChatImageReferences(messages, turnInput), [IMAGE]);
+});
+
+test("an image part of an assistant message is not listed", (): void => {
+  // Only a user message carries an attachment; an assistant one that somehow
+  // held an image part would be a read nothing asked for.
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    { role: "assistant", content: [createImageReference("image-9")] },
+  ];
+
+  assert.deepEqual(listChatImageReferences(messages, [IMAGE]), [IMAGE]);
 });

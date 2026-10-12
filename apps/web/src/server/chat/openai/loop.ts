@@ -12,7 +12,10 @@ import {
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import { runChatFileDerivativesPass } from "@/server/chatFiles/derivatives";
 import { ingestInlineChatAttachments } from "@/server/chatFiles/ingest";
-import { buildChatTurnFileContext } from "@/server/chatFiles/sessionContext";
+import {
+  buildChatTurnFileContext,
+  listChatImageReferences,
+} from "@/server/chatFiles/sessionContext";
 import { getObservedOpenAIClient } from "@/server/chat/openai/client";
 import {
   buildChatFileViewReplayItem,
@@ -536,8 +539,9 @@ const runLoopWithDeps = async (
     signal: params.signal ?? null,
   });
   // After the conversions, so the listing it builds names the derivatives this
-  // turn just created, and before the input, which carries both the listing and
-  // the bytes of the view_file results the stored history replays.
+  // turn just created and the images it reads are the references those
+  // conversions produced, and before the input, which carries the listing and
+  // the bytes of both the images and the view_file results it replays.
   const fileContext = await dependencies.buildChatTurnFileContext(
     {
       requestId: params.requestId,
@@ -547,6 +551,7 @@ const runLoopWithDeps = async (
       isDemoMode: params.isDemoMode,
     },
     listStoredChatFileViewCalls(ingest.messages),
+    listChatImageReferences(ingest.messages, ingest.turnInput),
     params.signal ?? null,
   );
   const {

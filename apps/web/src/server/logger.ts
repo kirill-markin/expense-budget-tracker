@@ -499,10 +499,11 @@ type ChatFileDerivativesEvent = Readonly<{
 }>;
 
 /**
- * What one turn's prompt carried about this session's files: the listing, and
- * the `view_file` results its stored history replayed.
+ * What one turn's prompt carried about this session's files: the listing, the
+ * `view_file` results its stored history replayed, and the images of its
+ * messages.
  *
- * Both are standing per-turn costs, so this is the record that makes them
+ * All of them are standing per-turn costs, so this is the record that makes them
  * visible. `manifestChars` is a listing charged against the history budget on
  * every turn of a session that has files, and `expandedCount` is one object read
  * or one sandbox invocation each, paid before the first token of the turn and
@@ -512,6 +513,18 @@ type ChatFileDerivativesEvent = Readonly<{
  * bound, or no longer readable - which the model is told about instead, so
  * `viewCallCount` climbing while `expandedCount` sits at the bound is a session
  * the model keeps re-viewing in.
+ *
+ * `imageCount` is the distinct images of the messages this input may send, and
+ * `residentImageCount` the ones it carries the bytes of. The reads attempted for
+ * them are at most the smaller of `imageCount` and
+ * CHAT_RESIDENT_IMAGES_PER_TURN, so the gap between the two numbers is the
+ * images past that bound, the rows past the bytes one image may be shown as -
+ * which are answered without a read of their own - and the reads that answered
+ * with nothing or with bytes of another format. None of those records a fault,
+ * because each is a state of the session's files rather than of this deployment;
+ * only a read this deployment could not make does. A turn the user stopped reads
+ * no image at all, so there `residentImageCount` is 0 against a non-zero
+ * `imageCount` with nothing recorded beside it.
  */
 type ChatFileContextEvent = Readonly<{
   domain: "chat";
@@ -525,6 +538,8 @@ type ChatFileContextEvent = Readonly<{
   viewCallCount: number;
   expandedCount: number;
   unavailableCount: number;
+  imageCount: number;
+  residentImageCount: number;
   durationMs: number;
 }>;
 
@@ -532,12 +547,14 @@ type ChatFileContextEvent = Readonly<{
  * What one turn's inline attachments became.
  *
  * `inlineCount` counts every attachment the pass set out to store - the turn's
- * own, plus the documents of older payloads the session holds no row for and
- * the upload policy accepts - so
- * `inlineCount` minus `storedCount` is the attachments the sandbox cannot
- * reach: an image is still sent inline, so only a document among them is one
- * the model cannot read at all. `declinedCount` is the files refused for a
- * reason of their own, each of which also records that reason, and the
+ * own, plus the attachments of older payloads the session holds no row for and
+ * the upload policy accepts - so `inlineCount` minus `storedCount` is the
+ * attachments that became no file of the session. The model is told about those
+ * in place of themselves rather than shown, bar a browser-preprocessed PDF: its
+ * original bytes never reach the server, so it is counted and declined here
+ * while the input still shows it, as the page text and page JPEGs the browser
+ * sent in its place. `declinedCount` is the files refused for a reason of their
+ * own, each of which also records that reason, and the
  * remainder is the attachments no count claims: the ones a `stopReason` left
  * unreached, and the attachment whose own failure is an `unrecordable`.
  * `unrecordable` is a deployment fault, whose own record is in the `error`
@@ -558,7 +575,7 @@ type ChatFileIngestEvent = Readonly<{
   storedCount: number;
   declinedCount: number;
   /**
-   * Inline documents of the session's stored payloads this run replaced by a
+   * Inline attachments of the session's stored payloads this run replaced by a
    * reference to the file they are, and the ones left with no file to point at,
    * which read to the model as unavailable instead. Both are counted over every
    * payload on every turn, because the payloads keep their bytes.

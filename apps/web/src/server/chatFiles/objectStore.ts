@@ -451,6 +451,23 @@ export const getChatFilesObjectStoreIfConfigured = (): ChatFilesObjectStore | nu
 };
 
 /**
+ * Bytes of one stored chat file, or null where there are none to read: this
+ * deployment holds no bucket, or the bucket holds no such object.
+ *
+ * Null rather than a thrown configuration error for the first case, because a
+ * deployment with no bucket owns no chat file either - so whatever named the
+ * object has already answered, and this is that ordering made explicit rather
+ * than relied on.
+ */
+export const readChatFileObjectBytesIfConfigured = async (
+  objectKey: string,
+): Promise<Uint8Array | null> => {
+  const store = getChatFilesObjectStoreIfConfigured();
+
+  return store === null ? null : await store.readObjectBytes(objectKey);
+};
+
+/**
  * How many days a stored chat file object lives, or null when nothing expires
  * one.
  *

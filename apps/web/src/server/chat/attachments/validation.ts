@@ -23,8 +23,9 @@ import {
 } from "@/lib/chatPdf";
 import {
   isInlineFileContentPart,
-  type ImageContentPart,
+  isInlineImageContentPart,
   type InlineFileContentPart,
+  type InlineImageContentPart,
   type PdfContentPart,
   type UnconvertedContentPart,
 } from "@/server/chat/types";
@@ -182,41 +183,74 @@ const decodeTolerantBase64Prefix = (value: string): Uint8Array => {
   );
 };
 
-const validateAttachmentByteLength = (
+const findAttachmentByteLengthFault = (
   base64Data: string,
   partIndex: number,
   mediaType: string,
   fileName: string | null,
-): void => {
+): ChatAttachmentTooLargeError | null => {
   const sizeBytes = getBase64DecodedByteLength(base64Data);
-  if (sizeBytes > CHAT_ATTACHMENT_MAXIMUM_BYTES) {
-    throw new ChatAttachmentTooLargeError(partIndex, mediaType, fileName, sizeBytes);
-  }
+
+  return sizeBytes > CHAT_ATTACHMENT_MAXIMUM_BYTES
+    ? new ChatAttachmentTooLargeError(partIndex, mediaType, fileName, sizeBytes)
+    : null;
 };
 
-const validateImagePart = (
-  part: ImageContentPart,
+/**
+ * What refuses this image part, or null where nothing does. Returned rather than
+ * raised, because an image read back from storage is refused by the same rules
+ * and there a refusal is a state of the session's files to be rendered rather
+ * than an error to be thrown.
+ */
+const findImagePartFault = (
+  part: InlineImageContentPart,
   partIndex: number,
-): void => {
-  validateAttachmentByteLength(part.base64Data, partIndex, part.mediaType, null);
+): Error | null => {
+  const byteLengthFault = findAttachmentByteLengthFault(
+    part.base64Data,
+    partIndex,
+    part.mediaType,
+    null,
+  );
+  if (byteLengthFault !== null) {
+    return byteLengthFault;
+  }
 
   const normalizedMediaType = normalizeOpenAIImageMimeType(part.mediaType);
   if (normalizedMediaType === null) {
-    throw new UnsupportedImageMediaTypeError(partIndex, part.mediaType);
+    return new UnsupportedImageMediaTypeError(partIndex, part.mediaType);
   }
 
   if (!hasValidBase64Shape(part.base64Data)) {
-    throw new InvalidBase64ImageDataError(partIndex, part.mediaType);
+    return new InvalidBase64ImageDataError(partIndex, part.mediaType);
   }
 
   const prefix = decodeBase64Prefix(part.base64Data);
   if (hasHeicFileSignature(prefix)) {
-    throw new ImageMimeSignatureMismatchError(partIndex, part.mediaType, "image/heic");
+    return new ImageMimeSignatureMismatchError(partIndex, part.mediaType, "image/heic");
   }
 
   const detectedMediaType = detectOpenAIImageMimeType(prefix);
-  if (detectedMediaType !== normalizedMediaType) {
-    throw new ImageMimeSignatureMismatchError(partIndex, part.mediaType, detectedMediaType);
+
+  return detectedMediaType === normalizedMediaType
+    ? null
+    : new ImageMimeSignatureMismatchError(partIndex, part.mediaType, detectedMediaType);
+};
+
+/** Whether these bytes may be sent as an image of the type they claim. */
+export const isSendableChatImage = (
+  part: InlineImageContentPart,
+): boolean =>
+  // The index only names the part in an error message, which this discards.
+  findImagePartFault(part, 0) === null;
+
+const validateImagePart = (
+  part: InlineImageContentPart,
+  partIndex: number,
+): void => {
+  const fault = findImagePartFault(part, partIndex);
+  if (fault !== null) {
+    throw fault;
   }
 };
 
@@ -224,7 +258,15 @@ const validateFilePart = (
   part: InlineFileContentPart,
   partIndex: number,
 ): void => {
-  validateAttachmentByteLength(part.base64Data, partIndex, part.mediaType, part.fileName);
+  const byteLengthFault = findAttachmentByteLengthFault(
+    part.base64Data,
+    partIndex,
+    part.mediaType,
+    part.fileName,
+  );
+  if (byteLengthFault !== null) {
+    throw byteLengthFault;
+  }
 
   if (isLegacyRawPdfFilePart(part)) {
     throw new LegacyPdfFileAttachmentError(
@@ -364,14 +406,14 @@ const validatePdfPart = (
 };
 
 /**
- * A referenced document carries no bytes to validate: its row was written by
- * the ingest pass, which admitted its media type and its name there.
+ * A referenced document or image carries no bytes to validate: its row was
+ * written by the ingest pass, which admitted its media type and its name there.
  */
 export const validateChatAttachments = (
   content: ReadonlyArray<UnconvertedContentPart>,
 ): void => {
   content.forEach((part, partIndex): void => {
-    if (part.type === "image") {
+    if (isInlineImageContentPart(part)) {
       validateImagePart(part, partIndex);
     } else if (isInlineFileContentPart(part)) {
       validateFilePart(part, partIndex);
