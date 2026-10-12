@@ -5,6 +5,7 @@
 import { isDemoModeFromRequest } from "@/lib/demoMode";
 import {
   buildChatFilesRouteDependencies,
+  deleteChatFilesRouteWithDeps,
   getChatFilesRouteWithDeps,
   postChatFilesRouteWithDeps,
 } from "@/server/chat/http/filesRoute";
@@ -16,3 +17,6 @@ export const POST = async (request: Request): Promise<Response> =>
 
 export const GET = async (request: Request): Promise<Response> =>
   getChatFilesRouteWithDeps(request, DEPENDENCIES);
+
+export const DELETE = async (request: Request): Promise<Response> =>
+  deleteChatFilesRouteWithDeps(request, DEPENDENCIES);
