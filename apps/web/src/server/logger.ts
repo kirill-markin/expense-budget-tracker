@@ -391,20 +391,41 @@ type ChatTranscriptionEvent = Readonly<{
 }>;
 
 /**
- * Chat file objects reclaimed when their workspace went away. objectCount
+ * Chat file objects reclaimed by this subsystem's own deletes. Not every
+ * reclaim is one of these two events: the bucket expires an object 90 days
+ * after it was written and logs nothing, and one session's files deleted on
+ * request are counted by the `chat` `session_files_deleted` event.
+ * `not_configured` records a workspace sweep on a deployment that stores no
+ * chat file at all, which a displaced /work object has no counterpart for: its
+ * row could not exist without a bucket.
+ *
+ * `workspace_objects_deleted` sweeps a workspace that went away, and objectCount
  * counts the objects actually deleted, including on the failure the error
- * propagates.
- * not_configured records a deployment that stores no chat file at all.
+ * propagates. `displaced_object_deleted` is the one object a /work save
+ * replaced, whose row is already committed away - so a `failed` outcome is the
+ * whole record of a leak the save deliberately did not raise on.
  */
-type ChatFilesEvent = Readonly<{
-  domain: "chat-files";
-  action: "workspace_objects_deleted";
-  outcome: "deleted" | "failed" | "not_configured";
-  workspaceId: string;
-  sessionCount: number;
-  objectCount: number;
-  error: string | null;
-}>;
+type ChatFilesEvent =
+  | Readonly<{
+    domain: "chat-files";
+    action: "workspace_objects_deleted";
+    outcome: "deleted" | "failed" | "not_configured";
+    workspaceId: string;
+    sessionCount: number;
+    objectCount: number;
+    error: string | null;
+  }>
+  | Readonly<{
+    domain: "chat-files";
+    action: "displaced_object_deleted";
+    outcome: "deleted" | "failed";
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    path: string;
+    objectKey: string;
+    error: string | null;
+  }>;
 
 /**
  * One `bash` command of the web chat's file sandbox: the metadata of every call
@@ -520,6 +541,68 @@ type ChatFileContextEvent = Readonly<{
 }>;
 
 /**
+ * What one turn's inline attachments became.
+ *
+ * `inlineCount` counts every attachment the turn carried, so `inlineCount`
+ * minus `storedCount` is the attachments of that turn the sandbox cannot reach
+ * and a session where the two stay apart is one whose uploads the model can
+ * only read through the prompt. `declinedCount` is the files refused for a
+ * reason of their own, each of which also records that reason, and the
+ * remainder is the attachments no count claims: the ones a `stopReason` left
+ * unreached, and the attachment whose own failure is an `unrecordable`.
+ * `unrecordable` is a deployment fault, whose own record is in the `error`
+ * family beside this one; `aborted` is the user stopping the turn.
+ *
+ * `durationMs` is paid serially in front of the turn's first token, once per
+ * attachment and with nothing capping how many a turn carries, which is why it
+ * is recorded at all.
+ */
+type ChatFileIngestEvent = Readonly<{
+  domain: "chat";
+  action: "file_ingest";
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  inlineCount: number;
+  storedCount: number;
+  declinedCount: number;
+  stopReason: "unrecordable" | "aborted" | null;
+  durationMs: number;
+}>;
+
+/**
+ * One inline attachment stored as no file of the session, and why.
+ *
+ * Every reason here is a fact about the attachment or about what the session
+ * already holds, never a fault of this deployment: a PDF whose original bytes
+ * the browser never sent, a media type no stored name accepts, a name that
+ * keeps no usable character, a /files the next file would not fit in, or a name
+ * whose duplicate suffixes are spent.
+ *
+ * `mediaType` is the value the turn declared rather than the normalized one,
+ * because a refusal of the type is about what arrived. `sizeBytes` is the bytes
+ * of the attachment this pass holds, which is 0 for the PDF whose original
+ * never arrived.
+ */
+type ChatFileIngestDeclinedEvent = Readonly<{
+  domain: "chat";
+  action: "file_ingest_declined";
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  mediaType: string;
+  sizeBytes: number;
+  reason:
+    | "pdf_original_not_sent"
+    | "media_type_not_accepted"
+    | "unusable_file_name"
+    | "session_files_full"
+    | "path_duplicates_exhausted";
+}>;
+
+/**
  * A sandbox invocation that was retried. Throttling and transport failures are
  * the only retried classes, so this records a capacity or network event rather
  * than a fault of the request, and the call may still have succeeded.
@@ -622,6 +705,8 @@ type LogEvent =
   | ChatSandboxRetryEvent
   | ChatFileDerivativesEvent
   | ChatFileContextEvent
+  | ChatFileIngestEvent
+  | ChatFileIngestDeclinedEvent
   | ApiEvent
   | SqlApiEvent
   | AuthEvent

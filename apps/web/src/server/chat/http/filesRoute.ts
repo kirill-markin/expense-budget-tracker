@@ -22,6 +22,7 @@
 import {
   buildChatFileSandboxPath,
   CHAT_FILE_MAXIMUM_BYTES,
+  CHAT_FILE_MAXIMUM_PATH_DUPLICATES,
   CHAT_FILE_SANDBOX_DIRECTORY,
   getAcceptedChatFileMediaTypes,
   getChatFileNameFromSandboxPath,
@@ -63,11 +64,6 @@ const UPLOAD_URL_EXPIRES_IN_SECONDS = 900;
 
 // The read URL is handed to a browser that uses it immediately.
 const READ_URL_EXPIRES_IN_SECONDS = 300;
-
-// Sanitization folds distinct declared names onto the same sandbox name, so a
-// session can legitimately need a few suffixes. Exhausting them is a caller
-// outcome, answered with 409 rather than an operator-facing failure.
-const MAXIMUM_PATH_DUPLICATES = 100;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
@@ -358,7 +354,7 @@ const insertChatFileAtFreePath = async (
   fileId: string,
   mintRequest: ChatFileUploadMintRequest,
 ): Promise<ChatFile> => {
-  for (let duplicateIndex = 1; duplicateIndex <= MAXIMUM_PATH_DUPLICATES; duplicateIndex += 1) {
+  for (let duplicateIndex = 1; duplicateIndex <= CHAT_FILE_MAXIMUM_PATH_DUPLICATES; duplicateIndex += 1) {
     const path = buildChatFileSandboxPath(mintRequest.fileName, duplicateIndex);
     const existingChatFile = await dependencies.getChatFileByPath(
       context.userId,
@@ -391,7 +387,7 @@ const insertChatFileAtFreePath = async (
   throw new ApiRouteError(
     409,
     `Chat file name ${mintRequest.fileName} already has `
-    + `${String(MAXIMUM_PATH_DUPLICATES)} sandbox paths in this session; `
+    + `${String(CHAT_FILE_MAXIMUM_PATH_DUPLICATES)} sandbox paths in this session; `
     + "use another name",
   );
 };
@@ -427,10 +423,12 @@ const describeFilledSessionFiles = (
  * eleven 50 MiB uploads on distinct names reach 550 MiB of /files, and from
  * then on every `bash` call of that session is refused before it runs, because
  * the mount is validated against SANDBOX_FILES_REQUEST_MAX_BYTES on every
- * call. That includes any command that would clear space, so the session's
- * shell is gone for good and only a new chat recovers it. This is the gate that
- * keeps that from being reachable, and it belongs here because here is where a
- * file is admitted.
+ * call. That includes any command that would clear space, so nothing the model
+ * runs recovers that session's shell: it returns only once the session's files
+ * are cleared from outside the sandbox, which `DELETE` on this route does for
+ * the whole session at once, and otherwise the chat is continued in a new one.
+ * This is the gate that keeps that from being reachable, and it belongs here
+ * because here is where a file is admitted.
  *
  * The ceiling is SESSION_DERIVABLE_FILES_MAX_BYTES rather than a number of this
  * route's own, which is the whole point of importing it: uploads stop exactly
@@ -440,8 +438,9 @@ const describeFilledSessionFiles = (
  *
  * Unconfirmed rows count, because the total counts every row of the mount: a
  * minted row names a size, is about to become a mounted file, and nothing
- * reclaims a mint whose upload never happened, so this gate is also the only
- * thing bounding abandoned mints.
+ * reclaims a mint whose upload never happened short of clearing the whole
+ * session's files, so this gate is also the only automatic bound on abandoned
+ * mints.
  *
  * Bytes and not rows, and the difference is reachable: sizeBytes may be 0, a
  * zero-byte upload never advances the total, so this gate admits them without
@@ -451,7 +450,7 @@ const describeFilledSessionFiles = (
  * rows take the session to the same dead end by a different route: the
  * invocation stops being one Lambda will accept, which is every `bash` call of
  * that chat failing with nothing the model can run to undo it.
- * MAXIMUM_PATH_DUPLICATES is no obstacle, because the names are the caller's
+ * CHAT_FILE_MAXIMUM_PATH_DUPLICATES is no obstacle, because the names are the caller's
  * and nothing bounds how many it invents. A count cap is deliberately not added
  * here anyway: there is no sandbox row ceiling for one to agree with, the way
  * this gate agrees with SESSION_DERIVABLE_FILES_MAX_BYTES, and the limit it
@@ -523,13 +522,16 @@ const assertSessionFilesBytesAvailable = async (
 
   // 409 rather than 400: the same request succeeds in another chat, so what is
   // wrong is this session's state and not the body. The remedy names a new chat
-  // because it is the only true one - no surface of this product deletes an
-  // attachment, and `bash` may only delete a /work file it wrote.
+  // because it is the only one a browser has: `DELETE` on this route does free
+  // the cap, by clearing every file of the session at once, but no in-repo
+  // client calls it, and `bash` may only delete a /work file it wrote. So the
+  // sentence says nothing about removing an upload rather than naming a control
+  // this product does not offer.
   throw new ApiRouteError(
     409,
     `Chat file ${mintRequest.fileName} was not added: `
     + describeFilledSessionFiles(sessionFilesBytes, mintRequest.sizeBytes)
-    + " An upload cannot be removed from a chat, so attach this file in a new chat.",
+    + " Attach this file in a new chat.",
   );
 };
 
