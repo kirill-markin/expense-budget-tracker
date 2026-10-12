@@ -1,3 +1,4 @@
+import { CHAT_FILE_SANDBOX_DIRECTORY } from "@/lib/chatFiles";
 import { buildChatFileObjectKey } from "@/server/chatFiles/objectStore";
 import { withUserContext } from "@/server/db";
 
@@ -173,6 +174,25 @@ const LIST_SESSION_CHAT_FILES_SQL = `
   ORDER BY created_at, file_id
 `;
 
+/**
+ * Bytes a session holds under the attachment mount.
+ *
+ * Confined to that mount because each mount carries its own ceiling in
+ * apps/sandbox/src/contract.ts: a large scratch file the model wrote to /work
+ * spends the /work budget and must not answer a question about /files.
+ *
+ * SUM over a bigint column answers numeric and an aggregate over no row
+ * answers NULL, so the total is coalesced and cast to the same text the row
+ * columns arrive as. starts_with rather than LIKE, so the prefix is matched
+ * literally with no pattern character to escape.
+ */
+const SUM_SESSION_FILES_MOUNT_BYTES_SQL = `
+  SELECT COALESCE(SUM(size_bytes), 0)::text AS total_bytes
+  FROM public.chat_files
+  WHERE session_id = $1
+    AND starts_with(path, $2)
+`;
+
 const CONFIRM_CHAT_FILE_UPLOAD_SQL = `
   UPDATE public.chat_files
   SET sha256 = $3,
@@ -210,6 +230,9 @@ const DELETE_CHAT_FILE_SQL = `
   RETURNING ${SELECTED_COLUMNS}
 `;
 
+/** The one column SUM_SESSION_FILES_MOUNT_BYTES_SQL returns. */
+type SessionFilesMountBytesRow = Readonly<{ total_bytes: string }>;
+
 const parseSizeBytes = (value: string, fileId: string): number => {
   const sizeBytes = Number(value);
   if (!Number.isSafeInteger(sizeBytes)) {
@@ -217,6 +240,18 @@ const parseSizeBytes = (value: string, fileId: string): number => {
   }
 
   return sizeBytes;
+};
+
+const parseSessionFilesMountBytes = (value: string, sessionId: string): number => {
+  const totalBytes = Number(value);
+  if (!Number.isSafeInteger(totalBytes)) {
+    throw new Error(
+      "Chat file size_bytes total is not a safe integer, "
+      + `sessionId=${sessionId}, value=${value}`,
+    );
+  }
+
+  return totalBytes;
 };
 
 const mapChatFileRow = (row: ChatFileRow): ChatFile => ({
@@ -371,6 +406,41 @@ export const listSessionChatFiles = async (
   withUserContext(userId, workspaceId, async (queryFn) => {
     const result = await queryFn(LIST_SESSION_CHAT_FILES_SQL, [sessionId]);
     return (result.rows as ReadonlyArray<ChatFileRow>).map(mapChatFileRow);
+  });
+
+/**
+ * One number instead of every row, for a caller that needs only the total.
+ *
+ * Nothing bounds how many rows a session holds - a zero-byte file is a file -
+ * so a caller asking what the session has spent would otherwise pay for the
+ * whole listing, column by column, to add one column up. Unconfirmed rows are
+ * included: a minted row names a size and is about to become a mounted file,
+ * and nothing reclaims a mint whose upload never arrived, so the mint is what
+ * the session has spent.
+ */
+export const sumSessionFilesMountBytes = async (
+  userId: string,
+  workspaceId: string,
+  sessionId: string,
+): Promise<number> =>
+  withUserContext(userId, workspaceId, async (queryFn) => {
+    const result = await queryFn(SUM_SESSION_FILES_MOUNT_BYTES_SQL, [
+      sessionId,
+      `${CHAT_FILE_SANDBOX_DIRECTORY}/`,
+    ]);
+    const row = result.rows[0] as SessionFilesMountBytesRow | undefined;
+    if (row === undefined) {
+      // Unreachable while the statement above has no GROUP BY: an aggregate
+      // over no row still answers one row, which COALESCE makes 0. Kept because
+      // dropping it would leave the cast above unchecked, so the one thing this
+      // cannot answer - a shape change of that statement - would arrive as a
+      // TypeError on undefined instead of the sibling raises' sentence.
+      throw new Error(
+        `Chat file byte total returned no row, sessionId=${sessionId}`,
+      );
+    }
+
+    return parseSessionFilesMountBytes(row.total_bytes, sessionId);
   });
 
 /**
