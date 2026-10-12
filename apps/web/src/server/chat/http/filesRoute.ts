@@ -6,13 +6,18 @@
  * object, and `GET` mints a short-lived pre-signed read URL for a file the
  * caller's own session already owns.
  *
+ * `DELETE` removes one session's files - the stored objects and their
+ * chat_files rows - and deliberately keeps the session and its messages: the
+ * chat text is lost only when the account goes.
+ *
  * Ownership is proven here, at every call site, before any key reaches the
  * object store: requireChatFileObjectKey inside the store only asserts the
  * bucket prefix the IAM grant is scoped to, never that a key belongs to the
- * caller. Both surfaces therefore resolve the session through
- * getChatSessionId, read the row inside that session, and rebuild the expected
- * key from the pair. For that reason the confirmation body and the read query
- * carry `sessionId` beside `fileId`.
+ * caller. Every one of the three surfaces therefore resolves the session
+ * through getChatSessionId, and the two that touch a single file read the row
+ * inside that session and rebuild the expected key from the pair. For that
+ * reason the confirmation body and the read query carry `sessionId` beside
+ * `fileId`, while `DELETE` needs the session id alone.
  */
 import {
   buildChatFileSandboxPath,
@@ -26,6 +31,11 @@ import { ApiRouteError, createBadRequestError } from "@/server/api/errors";
 import { handleRoute } from "@/server/api/handleRoute";
 import { jsonNoStore } from "@/server/api/noStore";
 import { getChatSessionId } from "@/server/chat/store";
+import {
+  ChatSessionFileDeletionFailedError,
+  deleteChatSessionFiles,
+  type ChatSessionFileDeletion,
+} from "@/server/chatFiles/cleanup";
 import {
   buildChatFileObjectKey,
   getChatFilesObjectStore,
@@ -75,6 +85,10 @@ type ChatFileUploadConfirmRequest = Readonly<{
 
 type ChatFilesPostRequest = ChatFileUploadMintRequest | ChatFileUploadConfirmRequest;
 
+type ChatFilesDeleteRequest = Readonly<{
+  sessionId: string;
+}>;
+
 /** File id of a minted row: the store stores only a lowercase UUID. */
 export const createChatFileId = (): string => crypto.randomUUID();
 
@@ -97,6 +111,7 @@ export type ChatFilesRouteDependencies = Readonly<{
     expiresInSeconds: number,
   ) => Promise<string>;
   headChatFileObjectSize: (objectKey: string) => Promise<number | null>;
+  deleteChatSessionFiles: typeof deleteChatSessionFiles;
   createFileId: () => string;
   log: typeof log;
 }>;
@@ -131,6 +146,7 @@ export const buildChatFilesRouteDependencies = (
     getChatFilesObjectStore().presignGetUrl(objectKey, downloadFileName, expiresInSeconds),
   headChatFileObjectSize: async (objectKey: string): Promise<number | null> =>
     getChatFilesObjectStore().headObjectSize(objectKey),
+  deleteChatSessionFiles,
   createFileId: createChatFileId,
   log,
 });
@@ -251,6 +267,14 @@ const parseChatFilesPostRequest = (body: unknown): ChatFilesPostRequest => {
   return "fileId" in body
     ? parseConfirmRequest(body)
     : parseMintRequest(body);
+};
+
+const parseChatFilesDeleteRequest = (body: unknown): ChatFilesDeleteRequest => {
+  if (!isRecord(body)) {
+    throw createBadRequestError("Request body must be a JSON object");
+  }
+
+  return { sessionId: requireNonEmptyString(body.sessionId, "sessionId") };
 };
 
 const readJsonBody = async (request: Request): Promise<unknown> => {
@@ -575,6 +599,94 @@ export const getChatFilesRouteWithDeps = async (
         path: chatFile.path,
         readUrl,
         expiresInSeconds: READ_URL_EXPIRES_IN_SECONDS,
+      });
+    },
+  );
+
+/**
+ * Delete one session's files and record what went, on both endings.
+ *
+ * The failure record is what makes a partial deletion queryable: the objects
+ * that already went are a field here, while handleRoute's generic error entry
+ * repeats the same count inside the message text. The error is rethrown
+ * unchanged, so the response is whatever its class deserves - the route's 500
+ * for an unexpected fault - and the retry stays idempotent.
+ */
+const deleteSessionFilesRecordingOutcome = async (
+  dependencies: ChatFilesRouteDependencies,
+  context: ChatFilesRequestContext,
+  sessionId: string,
+): Promise<ChatSessionFileDeletion> => {
+  try {
+    const deletion = await dependencies.deleteChatSessionFiles(
+      context.userId,
+      context.workspaceId,
+      sessionId,
+    );
+
+    dependencies.log({
+      domain: "chat",
+      action: "session_files_deleted",
+      outcome: "deleted",
+      route: ROUTE_PATH,
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      sessionId,
+      objectCount: deletion.objectCount,
+      rowCount: deletion.rowCount,
+      error: null,
+    });
+
+    return deletion;
+  } catch (error) {
+    dependencies.log({
+      domain: "chat",
+      action: "session_files_deleted",
+      outcome: "failed",
+      route: ROUTE_PATH,
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      sessionId,
+      objectCount: error instanceof ChatSessionFileDeletionFailedError
+        ? error.deletedObjectCount
+        : 0,
+      rowCount: 0,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    throw error;
+  }
+};
+
+export const deleteChatFilesRouteWithDeps = async (
+  request: Request,
+  dependencies: ChatFilesRouteDependencies,
+): Promise<Response> =>
+  handleRoute(
+    {
+      route: ROUTE_PATH,
+      method: "DELETE",
+      internalErrorMessage: "Chat file deletion failed",
+    },
+    async (): Promise<Response> => {
+      assertChatFilesAvailable(dependencies, request);
+      const context = extractChatFilesRequestContext(request);
+      const deleteRequest = parseChatFilesDeleteRequest(await readJsonBody(request));
+      const sessionId = await requireOwnedChatSession(
+        dependencies,
+        context,
+        deleteRequest.sessionId,
+      );
+      const deletion = await deleteSessionFilesRecordingOutcome(
+        dependencies,
+        context,
+        sessionId,
+      );
+
+      return jsonNoStore({
+        sessionId,
+        deletedObjectCount: deletion.objectCount,
+        deletedFileCount: deletion.rowCount,
       });
     },
   );

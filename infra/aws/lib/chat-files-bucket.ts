@@ -7,6 +7,12 @@ import { Construct } from "constructs";
 // apps/web/src/server/chatFiles/objectStore.ts, which repeats this prefix.
 export const CHAT_FILES_OBJECT_PREFIX = "sessions/";
 
+// How long a stored chat file object lives. A lifecycle rule can only count
+// from the object's own creation, so this is an upload's age and not the
+// session's: a chat still in use loses the files uploaded into it this long
+// ago, while its messages stay.
+const CHAT_FILES_EXPIRATION_DAYS = 90;
+
 export interface ChatFilesBucketProps {
   appDomain: string;
 }
@@ -25,11 +31,19 @@ export function chatFilesBucket(
     encryption: s3.BucketEncryption.S3_MANAGED,
     enforceSSL: true,
     removalPolicy: cdk.RemovalPolicy.RETAIN,
-    // Objects live exactly as long as their chat session, which this product
-    // retains indefinitely, so there is no object expiration rule: a row in
-    // chat_files always resolves to an object. The only lifecycle rule reclaims
-    // parts left behind by interrupted multipart uploads.
-    lifecycleRules: [{ abortIncompleteMultipartUploadAfter: cdk.Duration.days(1) }],
+    // Chat sessions are retained indefinitely but their objects are not, so a
+    // chat_files row outlives its object: a row whose object has expired reads
+    // as the missing-object error the file manifest already reports, which is
+    // the intended end state and needs no bookkeeping of its own. The second
+    // rule reclaims parts left behind by interrupted multipart uploads.
+    lifecycleRules: [
+      {
+        id: "ExpireChatFileObjects",
+        prefix: CHAT_FILES_OBJECT_PREFIX,
+        expiration: cdk.Duration.days(CHAT_FILES_EXPIRATION_DAYS),
+      },
+      { abortIncompleteMultipartUploadAfter: cdk.Duration.days(1) },
+    ],
     // Browser uploads and downloads go straight to S3 with pre-signed URLs,
     // so only the app origin may call the bucket cross-origin.
     cors: [{

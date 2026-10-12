@@ -427,11 +427,12 @@ const deleteDerivedRows = async (
  * deciding when a chat's objects are reclaimed. Its other refusal is not the
  * precedent: a /work file it cannot record never gets a row in the first place,
  * so it leaves an object and nothing else. What is bounded is how many
- * such objects one refusal leaves: at most the slots of one invocation. What is
- * not bounded is how long they live - chatFiles/cleanup.ts sweeps a session
- * prefix only when its workspace is deleted, there is no per-session route, and
- * the bucket carries no expiration rule (infra/aws/lib/chat-files-bucket.ts),
- * so "the session's own cleanup" is not a thing that runs on its own.
+ * such objects one refusal leaves: at most the slots of one invocation. How
+ * long they live is bounded by the bucket alone: chatFiles/cleanup.ts sweeps a
+ * session prefix when its workspace is deleted or when the `DELETE` of
+ * /api/chat/files asks for that session, and both wait for someone to ask,
+ * while the bucket expires an object 90 days after it was written
+ * (infra/aws/lib/chat-files-bucket.ts) with nobody asking at all.
  */
 const insertDerivedRows = async (
   source: ChatFile,
@@ -618,9 +619,10 @@ const recordPrepareResponse = async (
     throw error;
   }
   if (prepared === null) {
-    // The row went away between the inserts and this update, so its session is
-    // being deleted. The derived rows would have cascaded with it; remove the
-    // ones that did not, so nothing is left claiming a source that is gone.
+    // The row went away between the inserts and this update, so either its
+    // session is being deleted or this session's files were deleted on request.
+    // Both take the derived rows with them; remove the ones that did not go, so
+    // nothing is left claiming a source that is gone.
     await deleteDerivedRows(derivedFileIds, source, context, dependencies);
     return { ...NO_DERIVATIVES, stopReason: "source_gone" };
   }
@@ -648,10 +650,12 @@ const recordPrepareResponse = async (
  *
  * All three are permanent and none spends an invocation. A row the request
  * schema would reject is rejected on every later turn too; this chat's /files
- * can only grow - it has no way to delete an upload or a derivative - so a
- * session past the ceiling is past it for good; and a path an upload has taken
- * stays taken for the same reason. `filesBytes` is the running total including
- * the derivatives earlier sources of this same pass added.
+ * can only grow - nothing removes a single upload or derivative, and the one
+ * deletion there is takes the whole session's files together with the rows
+ * these verdicts are read from - so a session past the ceiling is past it for
+ * good; and a path an upload has taken stays taken for the same reason.
+ * `filesBytes` is the running total including the derivatives earlier sources
+ * of this same pass added.
  *
  * The third one is only reachable for a document, and that is a fact about the
  * sandbox rather than a shortcut: a document's single derivative is at
