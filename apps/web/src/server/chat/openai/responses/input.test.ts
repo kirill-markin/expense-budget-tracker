@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CHAT_SENT_INPUT_BUDGET_TOKENS } from "@/lib/chatModels";
-import { UnsupportedImageMediaTypeError } from "@/server/chat/attachments/validation";
+import {
+  CHAT_ATTACHMENT_MAXIMUM_BYTES,
+  InvalidPdfAttachmentError,
+} from "@/server/chat/attachments/validation";
 import {
   buildChatCompletionInput,
   sanitizeContentPartsForTelemetry,
@@ -12,7 +15,11 @@ import type {
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
 import type { ContentPart } from "@/server/chat/types";
-import { EMPTY_CHAT_TURN_FILE_CONTEXT } from "@/server/chatFiles/sessionContext";
+import {
+  EMPTY_CHAT_TURN_FILE_CONTEXT,
+  type ChatImageSendState,
+  type ChatTurnFileContext,
+} from "@/server/chatFiles/sessionContext";
 import {
   buildChatFileViewReplayItem,
   toPersistedOpenAIReplayItems,
@@ -21,13 +28,31 @@ import {
 const HEIC_BASE64_PREFIX = "AAAAGGZ0eXBoZWljAAAAAA==";
 const JPEG_BASE64_PREFIX = "/9j/4AAQSkZJRg==";
 
-test("buildChatCompletionInput rejects a legacy HEIC attachment without mutating history", async (): Promise<void> => {
+/** A stored image part, which carries no bytes of its own. */
+const STORED_IMAGE: Extract<ContentPart, { type: "image" }> = {
+  type: "image",
+  fileId: "22222222-2222-4222-8222-222222222222",
+  path: "/files/image.jpg",
+  mediaType: "image/jpeg",
+  sizeBytes: 11,
+};
+
+const withImageState = (
+  state: ChatImageSendState,
+): ChatTurnFileContext => ({
+  ...EMPTY_CHAT_TURN_FILE_CONTEXT,
+  imageStateByFileId: new Map([[STORED_IMAGE.fileId, state]]),
+});
+
+test("buildChatCompletionInput rejects a legacy broken PDF page without mutating history", async (): Promise<void> => {
   const localMessages: ReadonlyArray<ServerChatMessage> = [{
     role: "user",
     content: [{
-      type: "image",
-      mediaType: "image/heic",
-      base64Data: HEIC_BASE64_PREFIX,
+      type: "pdf",
+      fileName: "statement.pdf",
+      mediaType: "application/pdf",
+      sourceSha256: "a".repeat(64),
+      pages: [{ pageNumber: 1, text: "", jpegBase64Data: HEIC_BASE64_PREFIX }],
     }],
   }];
   const turnInput: ReadonlyArray<ContentPart> = [{ type: "text", text: "Continue" }];
@@ -38,9 +63,8 @@ test("buildChatCompletionInput rejects a legacy HEIC attachment without mutating
     buildChatCompletionInput(localMessages, turnInput, "Europe/Madrid", "session-1", "req-1", EMPTY_CHAT_TURN_FILE_CONTEXT),
     (error: unknown): boolean => {
       assert.ok(error instanceof UnsupportedStoredChatAttachmentError);
-      assert.equal(error.fileName, null);
-      assert.equal(error.mediaType, "image/heic");
-      assert.match(error.message, /media type "image\/heic"/);
+      assert.equal(error.fileName, "statement.pdf");
+      assert.equal(error.mediaType, "application/pdf");
       assert.equal(error.message.includes(HEIC_BASE64_PREFIX), false);
       return true;
     },
@@ -50,14 +74,10 @@ test("buildChatCompletionInput rejects a legacy HEIC attachment without mutating
   assert.deepEqual(turnInput, originalTurnInput);
 });
 
-test("buildChatCompletionInput replays a prepared JPEG as a native input image", async (): Promise<void> => {
+test("buildChatCompletionInput renders a resident image from the bytes read for this turn", async (): Promise<void> => {
   const localMessages: ReadonlyArray<ServerChatMessage> = [{
     role: "user",
-    content: [{
-      type: "image",
-      mediaType: "image/jpeg",
-      base64Data: JPEG_BASE64_PREFIX,
-    }],
+    content: [STORED_IMAGE],
   }];
 
   const { items: input } = await buildChatCompletionInput(
@@ -66,7 +86,7 @@ test("buildChatCompletionInput replays a prepared JPEG as a native input image",
     "Europe/Madrid",
     "session-1",
     "req-1",
-    EMPTY_CHAT_TURN_FILE_CONTEXT,
+    withImageState({ kind: "resident", base64Data: JPEG_BASE64_PREFIX }),
   );
 
   assert.deepEqual(input[1], {
@@ -76,6 +96,96 @@ test("buildChatCompletionInput replays a prepared JPEG as a native input image",
       type: "input_image",
       detail: "auto",
       image_url: `data:image/jpeg;base64,${JPEG_BASE64_PREFIX}`,
+    }],
+  });
+});
+
+// Two calls over the same image have to render the identical string: the prompt
+// cache matches on a byte-identical prefix, which is the whole reason the bytes
+// are rendered rather than pre-signed.
+test("buildChatCompletionInput renders one resident image identically on every turn", async (): Promise<void> => {
+  const localMessages: ReadonlyArray<ServerChatMessage> = [{
+    role: "user",
+    content: [STORED_IMAGE],
+  }];
+  const render = async (): Promise<unknown> => (await buildChatCompletionInput(
+    localMessages,
+    [{ type: "text", text: "And now?" }],
+    "Europe/Madrid",
+    "session-1",
+    "req-1",
+    withImageState({ kind: "resident", base64Data: JPEG_BASE64_PREFIX }),
+  )).items[1];
+
+  assert.deepEqual(await render(), await render());
+});
+
+/** The user message one stored image rendered into, whatever it rendered as. */
+const renderStoredImage = async (
+  fileContext: ChatTurnFileContext,
+): Promise<unknown> => (await buildChatCompletionInput(
+  [{ role: "user", content: [STORED_IMAGE] }],
+  [{ type: "text", text: "What is in the image?" }],
+  "Europe/Madrid",
+  "session-1",
+  "req-1",
+  fileContext,
+)).items[1];
+
+// Past the per-turn bound its object is untouched, so the model is told the file
+// is there and how to look at it. The turn that read no object at all - the one
+// the user stopped - reads the same way.
+test("buildChatCompletionInput names an image the bound left out", async (): Promise<void> => {
+  const named = {
+    role: "user",
+    type: "message",
+    content: [{
+      type: "input_text",
+      text: "Attached image \"/files/image.jpg\", 11 bytes. "
+        + "This message does not carry its pixels; call view_file with that path to look at it.",
+    }],
+  };
+
+  assert.deepEqual(await renderStoredImage(withImageState({ kind: "capped" })), named);
+  assert.deepEqual(await renderStoredImage(EMPTY_CHAT_TURN_FILE_CONTEXT), named);
+});
+
+// view_file reads the very same object, so an image whose copy is gone may not
+// be answered with a call that is bound to fail: production expires an object
+// while the payload keeps its reference for good.
+test("buildChatCompletionInput never sends the model to view_file for an image that is gone", async (): Promise<void> => {
+  const rendered = await renderStoredImage(withImageState({ kind: "unavailable" }));
+
+  assert.doesNotMatch(JSON.stringify(rendered), /view_file/u);
+  assert.deepEqual(rendered, {
+    role: "user",
+    type: "message",
+    content: [{
+      type: "input_text",
+      text: "Attached image \"/files/image.jpg\", 11 bytes, is no longer available in this chat "
+        + "and cannot be shown. Tell the user it has to be attached again if they need it "
+        + "looked at.",
+    }],
+  });
+});
+
+// The wire refuses an attachment of that size on arrival and view_file refuses
+// the same row, so neither instruction the other states carry can be given: an
+// image this large is answered with the one thing that could still work.
+test("buildChatCompletionInput promises no re-attach for an image too large to show", async (): Promise<void> => {
+  const rendered = await renderStoredImage(withImageState({ kind: "oversized" }));
+
+  assert.doesNotMatch(JSON.stringify(rendered), /view_file/u);
+  assert.doesNotMatch(JSON.stringify(rendered), /attached again/u);
+  assert.deepEqual(rendered, {
+    role: "user",
+    type: "message",
+    content: [{
+      type: "input_text",
+      text: "Attached image \"/files/image.jpg\", 11 bytes, is past the "
+        + `${String(CHAT_ATTACHMENT_MAXIMUM_BYTES)} bytes one image may be shown as, so this chat `
+        + "cannot show it at all. Tell the user it is too large to look at, and that only a "
+        + "smaller copy of it could be attached.",
     }],
   });
 });
@@ -118,16 +228,18 @@ test("buildChatCompletionInput keeps current-turn attachment validation distinct
     buildChatCompletionInput(
       [],
       [{
-        type: "image",
-        mediaType: "image/heic",
-        base64Data: HEIC_BASE64_PREFIX,
+        type: "pdf",
+        fileName: "statement.pdf",
+        mediaType: "application/pdf",
+        sourceSha256: "a".repeat(64),
+        pages: [{ pageNumber: 1, text: "", jpegBase64Data: HEIC_BASE64_PREFIX }],
       }],
       "Europe/Madrid",
       "session-1",
       "req-1",
       EMPTY_CHAT_TURN_FILE_CONTEXT,
     ),
-    UnsupportedImageMediaTypeError,
+    InvalidPdfAttachmentError,
   );
 });
 
@@ -512,6 +624,19 @@ test("document telemetry carries the stored row's own measurements", async (): P
   }]);
 });
 
+test("image telemetry carries the stored row's own measurements and no digest", async (): Promise<void> => {
+  const sanitized = await sanitizeContentPartsForTelemetry([STORED_IMAGE]);
+
+  assert.deepEqual(sanitized, [{
+    type: "image",
+    summary: {
+      fileName: "/files/image.jpg",
+      mediaType: "image/jpeg",
+      sizeBytes: 11,
+    },
+  }]);
+});
+
 test("buildChatCompletionInput sends the file listing behind the turn and keeps the clock last", async (): Promise<void> => {
   const manifest = 'Files of this chat:\n"/files/receipt.png" 70';
   const { items } = await buildChatCompletionInput(
@@ -520,7 +645,7 @@ test("buildChatCompletionInput sends the file listing behind the turn and keeps 
     "Europe/Madrid",
     "session-1",
     "req-1",
-    { manifest, viewParts: new Map() },
+    { ...EMPTY_CHAT_TURN_FILE_CONTEXT, manifest },
   );
 
   const clock = items.at(-1);
@@ -572,7 +697,7 @@ test("buildChatCompletionInput replays a stored view_file result as a native ima
     "Europe/Madrid",
     "session-1",
     "req-1",
-    { manifest: null, viewParts: new Map([["call-view-1", imagePart]]) },
+    { ...EMPTY_CHAT_TURN_FILE_CONTEXT, viewParts: new Map([["call-view-1", imagePart]]) },
   );
 
   const replayed = items.find((item) => item.type === "function_call_output");

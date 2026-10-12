@@ -47,6 +47,7 @@ import type {
 import {
   buildChatFileObjectKey,
   getChatFilesObjectStoreIfConfigured,
+  readChatFileObjectBytesIfConfigured,
 } from "@/server/chatFiles/objectStore";
 import { getChatFileByPath, type ChatFile } from "@/server/chatFiles/store";
 import { log } from "@/server/logger";
@@ -372,13 +373,7 @@ let defaultDependencies: ChatFileViewDependencies | null = null;
 
 export const buildChatFileViewDependencies = (): ChatFileViewDependencies => ({
   getChatFileByPath,
-  readObjectBytes: async (objectKey: string): Promise<Uint8Array | null> => {
-    // Null rather than a thrown configuration error: a deployment with no
-    // bucket owns no chat file either, so the lookup above has already answered
-    // and this is the ordering being made explicit rather than relied on.
-    const store = getChatFilesObjectStoreIfConfigured();
-    return store === null ? null : await store.readObjectBytes(objectKey);
-  },
+  readObjectBytes: readChatFileObjectBytesIfConfigured,
   presignReadUrl: async (
     objectKey: string,
     downloadFileName: string,

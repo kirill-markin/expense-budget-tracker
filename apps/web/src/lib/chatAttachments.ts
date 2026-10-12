@@ -6,6 +6,7 @@ import {
   type FileContentPart,
   type ImageContentPart,
   type InlineFileContentPart,
+  type InlineImageContentPart,
   type PdfContentPart,
 } from "@/server/chat/types";
 
@@ -38,6 +39,7 @@ export type AttachmentContentPart =
   | FileContentPart
   | InlineFileContentPart
   | ImageContentPart
+  | InlineImageContentPart
   | PdfContentPart;
 
 export type MarkdownAttachment = Readonly<{

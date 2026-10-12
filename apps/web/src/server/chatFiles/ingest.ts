@@ -8,29 +8,26 @@
  * /api/chat/files mints, so the listing names it, `bash` mounts it, the
  * derivatives pass converts it and view_file reads it.
  *
- * A document then exists only as that file for everything the model is sent.
- * This pass is therefore also what replaces every inline document of the
- * session's stored user messages - this turn's, just inserted, and any older
- * payload - with the reference the model and the history are built from. The
- * stored payload keeps its bytes, which are this product's only indefinitely
- * retained copy of the document, so the replacement is made in memory and made
- * again on every turn.
+ * An attachment then exists only as that file for everything the model is sent.
+ * This pass is therefore also what replaces every inline document and every
+ * inline image of the session's stored user messages - this turn's, just
+ * inserted, and any older payload - with the reference the model and the history
+ * are built from. The stored payload keeps its bytes, which are this product's
+ * only indefinitely retained copy of the attachment, so the replacement is made
+ * in memory and made again on every turn.
  *
  * A part this run stored is matched to its row by object identity, which is the
  * only mechanism that describes that mapping exactly: a row's sha256 is
  * heterogeneous by origin, and a minted upload's is the uploader's claim rather
- * than a digest of what the object holds, so no row identifies a document on
- * its own. A document stored by an earlier turn has no such part to match and
+ * than a digest of what the object holds, so no row identifies an attachment on
+ * its own. An attachment stored by an earlier turn has no such part to match and
  * is resolved by its digest, its declared size and a sandbox path its own name
  * reduces to, all three together. The same resolution decides what the session
- * already holds, so the pass is idempotent and a document is never stored twice.
- *
- * Images stay inline, so nothing replaces them and their rows are written for
- * the turn they arrive on alone - listing a stored image part again would mint
- * a second row of the same bytes on every later turn.
+ * already holds, so the pass is idempotent and an attachment is never stored
+ * twice.
  *
  * Nothing here ends a turn, bar the structured log of its own outcome, and that
- * is the whole shape of its error handling. A document this cannot store is
+ * is the whole shape of its error handling. An attachment this cannot store is
  * reported to the model in place of itself, so the user is told it did not
  * arrive rather than answered as though it had, while raising would cost them
  * the answer. A refusal of the file is logged as the ordinary outcome it is; a
@@ -54,9 +51,10 @@ import type {
 } from "@/server/chat/openai/responses/replayItems";
 import {
   isInlineFileContentPart,
+  isInlineImageContentPart,
   type ContentPart,
-  type ImageContentPart,
   type InlineFileContentPart,
+  type InlineImageContentPart,
   type PdfContentPart,
   type UnconvertedContentPart,
 } from "@/server/chat/types";
@@ -88,9 +86,11 @@ export type ChatFileIngestContext = Readonly<{
    * Item id of the user message this turn is answering, which is the turn id
    * both routes insert it under.
    *
-   * What it separates is which attachments of which payload this pass stores:
-   * the turn's own, whatever their kind, and the documents alone of every
-   * payload behind it.
+   * The turn's own payload is the copy of `turnInput` the route inserted, so
+   * this is what keeps one attachment from being counted and stored as two. It
+   * also decides which of the two unavailable texts an attachment that became
+   * no file reads as: the turn being answered asks the user to attach it again,
+   * and the turns behind it carry no instruction.
    */
   turnItemId: string;
   /** Captured when the request arrived: a persisted run outlives it. */
@@ -148,10 +148,10 @@ export type ChatFileIngestDeclineReason =
 export type ChatFileIngestOutcome = Readonly<{
   /**
    * Attachments this pass set out to store, whatever became of each: the turn's
-   * own, and the documents of older payloads the session holds no row for and
+   * own, and the attachments of older payloads the session holds no row for and
    * the upload policy accepts. 0 for every turn no store ran for - demo mode
    * and a deployment with no bucket answer the idle outcome whatever the turn
-   * carried - and 0 for a document already stored, which needs the reference
+   * carried - and 0 for an attachment already stored, which needs the reference
    * and not the write.
    */
   inlineCount: number;
@@ -161,7 +161,7 @@ export type ChatFileIngestOutcome = Readonly<{
    * bytes that never arrived.
    */
   declinedCount: number;
-  /** Inline documents of the walked payloads replaced by a file reference. */
+  /** Inline attachments of the walked payloads replaced by a file reference. */
   referencedCount: number;
   /** Those left with no file to reference, which read as unavailable instead. */
   unreferencedCount: number;
@@ -170,7 +170,7 @@ export type ChatFileIngestOutcome = Readonly<{
 
 /**
  * What the run is handed back: the outcome, and the same messages and turn
- * input with every inline document now a file of the session.
+ * input with every inline attachment now a file of the session.
  */
 export type ChatFileIngestResult = Readonly<{
   outcome: ChatFileIngestOutcome;
@@ -181,16 +181,21 @@ export type ChatFileIngestResult = Readonly<{
 /** File name of an inline image part, which carries a media type and no name. */
 const IMAGE_FILE_NAME_STEM = "image";
 
-type InlineAttachmentPart = ImageContentPart | InlineFileContentPart | PdfContentPart;
+type InlineAttachmentPart =
+  | InlineImageContentPart
+  | InlineFileContentPart
+  | PdfContentPart;
 
-type StorableAttachmentPart = ImageContentPart | InlineFileContentPart;
+type StorableAttachmentPart = InlineImageContentPart | InlineFileContentPart;
 
 /** The attachment parts of one turn, whether or not this module can store them. */
 const selectInlineAttachmentParts = (
   content: ReadonlyArray<UnconvertedContentPart>,
 ): ReadonlyArray<InlineAttachmentPart> =>
   content.filter((part): part is InlineAttachmentPart =>
-    part.type === "image" || part.type === "pdf" || isInlineFileContentPart(part));
+    part.type === "pdf"
+    || isInlineImageContentPart(part)
+    || isInlineFileContentPart(part));
 
 type StoredFileResolution =
   | Readonly<{ kind: "file"; fileName: string; mediaType: string }>
@@ -212,17 +217,24 @@ type StoredFileResolution =
  * call, and is the file's own fact rather than a fault of this deployment, so
  * it is answered here instead of raised.
  *
- * A HEIC document is refused ahead of that check, which accepts the pair. The
+ * A HEIC attachment is refused ahead of that check, which accepts the pair. The
  * wire has refused one since the browser started converting it, so the only
  * ones left are in payloads stored before that; nothing in chatFiles/
  * derivatives.ts or apps/sandbox can convert one, so storing it would mount a
- * file no command can read and tell the model to read it.
+ * file no command can read and tell the model to read it. What keeps an
+ * unsupported image off the wire is `readResidentImage`, which checks the bytes
+ * of every image it reads before the input renders them; this check is over the
+ * declared type, so neither stands in for the other - a payload written before
+ * the wire check can declare `image/jpeg` over HEIC bytes.
  */
 const resolveStoredFile = (
   part: StorableAttachmentPart,
 ): StoredFileResolution => {
   const mediaType = parseChatFileMediaType(part.mediaType);
   if (mediaType === null) {
+    return { kind: "declined", reason: "media_type_not_accepted" };
+  }
+  if (normalizeHeicImageMimeType(mediaType) !== null) {
     return { kind: "declined", reason: "media_type_not_accepted" };
   }
 
@@ -234,10 +246,7 @@ const resolveStoredFile = (
       : { kind: "file", fileName: `${IMAGE_FILE_NAME_STEM}${extension}`, mediaType };
   }
 
-  if (
-    normalizeHeicImageMimeType(mediaType) !== null
-    || isHeicFileExtension(part.fileName)
-  ) {
+  if (isHeicFileExtension(part.fileName)) {
     return { kind: "declined", reason: "media_type_not_accepted" };
   }
 
@@ -651,7 +660,7 @@ const storeAttachments = async (
 };
 
 /**
- * What the model is told in place of a document of the turn it is answering
+ * What the model is told in place of an attachment of the turn it is answering
  * that became no file of the session: a deployment with no object store, a type
  * or a name the upload policy refuses, a session with no room left, or a write
  * that failed.
@@ -659,44 +668,81 @@ const storeAttachments = async (
  * Said rather than dropped, because dropping it answers a message about a file
  * as though no file had been sent. It asks for the re-attach because the turn
  * being answered is the one the user can still act on.
+ *
+ * An image is named as an image and no further: the name it would have been
+ * stored under is built from its media type here, so saying it would tell the
+ * user about a file name they never chose.
  */
-const buildUnavailableTurnDocumentText = (
-  fileName: string,
+const buildUnavailableTurnAttachmentText = (
+  part: StorableAttachmentPart,
 ): string =>
-  `[The file ${JSON.stringify(fileName)} was attached to this message, but it is not `
-  + "available in this chat: no command can read it and it has no contents here. "
-  + "Tell the user it did not arrive and ask them to attach it again.]";
+  part.type === "image"
+    ? "[An image was attached to this message, but it is not available in this chat: "
+      + "no command can read it and its pixels are not here. "
+      + "Tell the user it did not arrive and ask them to attach it again.]"
+    : `[The file ${JSON.stringify(part.fileName)} was attached to this message, but it is not `
+      + "available in this chat: no command can read it and it has no contents here. "
+      + "Tell the user it did not arrive and ask them to attach it again.]";
 
 /**
- * The same for a document of an earlier turn, which carries no instruction.
+ * The same for an attachment of an earlier turn, which carries no instruction.
  *
- * Every payload of the session is walked again on every turn, and a document
+ * Every payload of the session is walked again on every turn, and an attachment
  * that can never become a file stays one: a name or a type the upload policy
  * refuses, a session whose mount budget is spent, a deployment with no bucket.
  * Asking for a re-attach there would nag the user, on turns that are not about
  * the file, for something that cannot succeed.
  */
-const buildUnavailableHistoryDocumentText = (
-  fileName: string,
+const buildUnavailableHistoryAttachmentText = (
+  part: StorableAttachmentPart,
 ): string =>
-  `[The file ${JSON.stringify(fileName)} was attached to an earlier message and is no `
-  + "longer available in this chat.]";
+  part.type === "image"
+    ? "[An image was attached to an earlier message and is no longer available in this chat.]"
+    : `[The file ${JSON.stringify(part.fileName)} was attached to an earlier message and is no `
+      + "longer available in this chat.]";
 
-type InlineDocumentMeasurement = Readonly<{
+type InlineAttachmentMeasurement = Readonly<{
   sha256: string;
   sizeBytes: number;
 }>;
 
-/** What one inline document's own bytes are, as its stored row records them. */
-const measureInlineDocument = (
-  part: InlineFileContentPart,
-): InlineDocumentMeasurement => {
+/** What one inline attachment's own bytes are, as its stored row records them. */
+const measureInlineAttachment = (
+  part: StorableAttachmentPart,
+): InlineAttachmentMeasurement => {
   const bytes = Buffer.from(part.base64Data, "base64");
 
   return {
     sha256: createHash("sha256").update(bytes).digest("hex"),
     sizeBytes: bytes.byteLength,
   };
+};
+
+/**
+ * One run's measurements, by the part each was taken over.
+ *
+ * Every payload of the session is walked twice on every turn - once to choose
+ * what to store, once to convert - and a measurement is a full base64 decode and
+ * a SHA-256 pass over the attachment's whole bytes. Nothing bounds how many
+ * attachments a session holds, so a measurement taken per walk is a cost that
+ * doubles and then grows with the session for its whole life, paid in front of
+ * the turn's first token.
+ */
+type InlineAttachmentMeasurements = Map<StorableAttachmentPart, InlineAttachmentMeasurement>;
+
+const measureInlineAttachmentOnce = (
+  part: StorableAttachmentPart,
+  measurements: InlineAttachmentMeasurements,
+): InlineAttachmentMeasurement => {
+  const measured = measurements.get(part);
+  if (measured !== undefined) {
+    return measured;
+  }
+
+  const measurement = measureInlineAttachment(part);
+  measurements.set(part, measurement);
+
+  return measurement;
 };
 
 /**
@@ -722,26 +768,40 @@ const buildCandidateSandboxPaths = (
 };
 
 /**
- * The row an earlier turn of this session stored this document as, or null.
+ * The row an earlier turn of this session stored this attachment as, or null.
  *
  * Three facts have to agree, and none of them identifies a row alone. The
  * digest, because a row's sha256 is heterogeneous by origin and a minted
  * upload's is only what the uploader claimed, so a row that does not describe
- * its own bytes may not capture the document beside it. The declared size, for
- * the same reason. And a path this document's own name reduces to, so a
+ * its own bytes may not capture the attachment beside it. The declared size, for
+ * the same reason. And a path this attachment's stored name reduces to, so a
  * document re-attached under another name is stored as the file it is rather
  * than bound to the earlier one.
  *
- * A row is claimed by one part at most, so two documents of identical bytes in
+ * `fileName` is the resolved one rather than the part's, which is what lets an
+ * image be resolved at all: it declares a media type and no name, so the name
+ * its row was written under is the one resolveStoredFile builds from that type.
+ *
+ * A row is claimed by one part at most, so two attachments of identical bytes in
  * one payload read as the two files they were stored as.
+ *
+ * A session with no stored attachment is answered before the bytes are measured
+ * at all: there is nothing for a digest to match, and the measurement is the
+ * expensive half of this call.
  */
-const findDocumentRow = (
-  part: InlineFileContentPart,
+const findAttachmentRow = (
+  part: StorableAttachmentPart,
+  fileName: string,
   files: ReadonlyArray<ChatFile>,
   claimedFileIds: ReadonlySet<string>,
+  measurements: InlineAttachmentMeasurements,
 ): ChatFile | null => {
-  const { sha256, sizeBytes } = measureInlineDocument(part);
-  const candidatePaths = buildCandidateSandboxPaths(part.fileName);
+  if (files.length === 0) {
+    return null;
+  }
+
+  const { sha256, sizeBytes } = measureInlineAttachmentOnce(part, measurements);
+  const candidatePaths = buildCandidateSandboxPaths(fileName);
 
   return files.find((candidate) =>
     candidate.sha256 === sha256
@@ -761,83 +821,137 @@ type ConvertedMessage = Readonly<{
   conversion: ConvertedContent;
 }>;
 
+/** What the selection below resolves against: it runs before anything is stored. */
+const NO_PARTS_STORED_YET: ReadonlyMap<InlineAttachmentPart, ChatFile> = new Map();
+
+/** The two inline attachment shapes this module stores, and nothing else. */
+const isStorableAttachmentPart = (
+  part: UnconvertedContentPart,
+): part is StorableAttachmentPart =>
+  isInlineImageContentPart(part) || isInlineFileContentPart(part);
+
 /**
- * One payload's inline documents replaced by the files of the session they are:
- * by identity for a part this run stored, and by
- * {@link findDocumentRow} for one an earlier turn did.
+ * The row this part is the attachment of, or null when it is the attachment of
+ * none: the row this run stored it as, matched by identity, or the row an
+ * earlier turn stored it as, matched by {@link findAttachmentRow}.
  *
- * `buildUnavailableText` is what a document with no file reads as, and the
+ * An attachment the upload policy refuses by its own name or type has no row to
+ * find, and must not claim the row of an attachment beside it that holds the
+ * same bytes under a name the policy accepts.
+ */
+const resolveAttachmentRow = (
+  part: StorableAttachmentPart,
+  storedThisRun: ReadonlyMap<InlineAttachmentPart, ChatFile>,
+  olderFiles: ReadonlyArray<ChatFile>,
+  claimedFileIds: ReadonlySet<string>,
+  measurements: InlineAttachmentMeasurements,
+): ChatFile | null => {
+  const resolution = resolveStoredFile(part);
+  if (resolution.kind === "declined") {
+    return null;
+  }
+
+  return storedThisRun.get(part)
+    ?? findAttachmentRow(
+      part,
+      resolution.fileName,
+      olderFiles,
+      claimedFileIds,
+      measurements,
+    );
+};
+
+/**
+ * One payload's inline attachments replaced by the files of the session they
+ * are.
+ *
+ * `buildUnavailableText` is what an attachment with no file reads as, and the
  * caller owns it because the turn being answered and the turns behind it say
  * different things about one.
  */
-const convertInlineDocuments = (
+const convertInlineAttachments = (
   content: ReadonlyArray<UnconvertedContentPart>,
   storedThisRun: ReadonlyMap<InlineAttachmentPart, ChatFile>,
   olderFiles: ReadonlyArray<ChatFile>,
-  buildUnavailableText: (fileName: string) => string,
+  measurements: InlineAttachmentMeasurements,
+  buildUnavailableText: (part: StorableAttachmentPart) => string,
 ): ConvertedContent => {
   const parts: Array<ContentPart> = [];
   const claimedFileIds = new Set<string>();
   let referencedCount = 0;
   let unreferencedCount = 0;
   for (const part of content) {
-    if (!isInlineFileContentPart(part)) {
+    if (!isStorableAttachmentPart(part)) {
       parts.push(part);
       continue;
     }
 
-    // A document the upload policy refuses by its own name or type has no row
-    // to find, and must not claim the row of an attachment beside it that holds
-    // the same bytes under a name the policy accepts.
-    const file = resolveStoredFile(part).kind === "declined"
-      ? null
-      : (storedThisRun.get(part) ?? findDocumentRow(part, olderFiles, claimedFileIds));
+    const file = resolveAttachmentRow(
+      part,
+      storedThisRun,
+      olderFiles,
+      claimedFileIds,
+      measurements,
+    );
     if (file === null) {
-      parts.push({ type: "text", text: buildUnavailableText(part.fileName) });
+      parts.push({ type: "text", text: buildUnavailableText(part) });
       unreferencedCount += 1;
       continue;
     }
 
     claimedFileIds.add(file.fileId);
-    parts.push({
-      type: "file",
-      fileId: file.fileId,
-      path: file.path,
-      mediaType: file.mediaType,
-      sizeBytes: file.sizeBytes,
-      sha256: file.sha256,
-    });
+    parts.push(part.type === "image"
+      ? {
+        type: "image",
+        fileId: file.fileId,
+        path: file.path,
+        mediaType: file.mediaType,
+        sizeBytes: file.sizeBytes,
+      }
+      : {
+        type: "file",
+        fileId: file.fileId,
+        path: file.path,
+        mediaType: file.mediaType,
+        sizeBytes: file.sizeBytes,
+        sha256: file.sha256,
+      });
     referencedCount += 1;
   }
 
   return { parts, referencedCount, unreferencedCount };
 };
 
-const holdsInlineDocument = (
+const holdsInlineAttachment = (
   content: ReadonlyArray<UnconvertedContentPart>,
-): boolean => content.some(isInlineFileContentPart);
+): boolean => content.some(isStorableAttachmentPart);
 
 /**
- * Documents of one payload that no row of an earlier turn already holds.
+ * Attachments of one payload that no row of an earlier turn already holds.
  *
- * The claim is per payload, exactly as the conversion claims one: two documents
- * of identical bytes need two rows, and a payload walked again on a later turn
- * has to find both of them rather than store a third.
+ * The claim is per payload, exactly as the conversion claims one: two
+ * attachments of identical bytes need two rows, and a payload walked again on a
+ * later turn has to find both of them rather than store a third.
  */
-const selectUnstoredDocuments = (
+const selectUnstoredAttachments = (
   content: ReadonlyArray<UnconvertedContentPart>,
   olderFiles: ReadonlyArray<ChatFile>,
-): ReadonlySet<InlineFileContentPart> => {
+  measurements: InlineAttachmentMeasurements,
+): ReadonlySet<StorableAttachmentPart> => {
   const claimedFileIds = new Set<string>();
-  const unstored = new Set<InlineFileContentPart>();
+  const unstored = new Set<StorableAttachmentPart>();
   for (const part of content) {
-    if (!isInlineFileContentPart(part)) {
+    if (!isStorableAttachmentPart(part)) {
       continue;
     }
 
-    const file = resolveStoredFile(part).kind === "declined"
-      ? null
-      : findDocumentRow(part, olderFiles, claimedFileIds);
+    const file = resolveAttachmentRow(
+      part,
+      NO_PARTS_STORED_YET,
+      olderFiles,
+      claimedFileIds,
+      measurements,
+    );
     if (file === null) {
       unstored.add(part);
       continue;
@@ -850,40 +964,42 @@ const selectUnstoredDocuments = (
 };
 
 /**
- * The attachments this pass stores: the turn's own, whatever their kind, and
- * the documents of the payloads behind it.
+ * The attachments this pass stores: the turn's own, whatever their kind, and the
+ * images and documents of the payloads behind it.
  *
- * An older payload contributes its documents alone, because an image stays
- * inline: its row was written on the turn it arrived on, and selecting it again
- * would mint a second row of the same bytes on every later turn of the session.
- *
- * A document the session already holds a row for is left out of both, and that
- * skip is what makes the pass idempotent: the payload keeps its bytes, so every
- * later turn walks the same document and has to reference that row rather than
+ * An attachment the session already holds a row for is left out, and that skip
+ * is what makes the pass idempotent: the payload keeps its bytes, so every later
+ * turn walks the same attachment and has to reference that row rather than
  * charge the session for a second copy of it.
  *
- * A document the upload policy refuses is left out of the older payloads, and
+ * An attachment the upload policy refuses is left out of the older payloads, and
  * only there. What refuses it is its own name and type, so every later turn of
  * the session would refuse it again, pay the same reads and record the same
- * decline; a document of the turn being answered is declined below instead, so
- * that turn's own counts say what became of it.
+ * decline; an attachment of the turn being answered is declined below instead,
+ * so that turn's own counts say what became of it.
  */
 const selectPartsToStore = (
   context: ChatFileIngestContext,
   messages: ReadonlyArray<StoredChatMessage>,
   turnInput: ReadonlyArray<UnconvertedContentPart>,
   olderFiles: ReadonlyArray<ChatFile>,
+  measurements: InlineAttachmentMeasurements,
 ): ReadonlyArray<InlineAttachmentPart> => {
-  const unstoredTurnDocuments = selectUnstoredDocuments(turnInput, olderFiles);
-  const turnParts = selectInlineAttachmentParts(turnInput).filter(
-    (part) => !isInlineFileContentPart(part) || unstoredTurnDocuments.has(part),
+  const unstoredTurnAttachments = selectUnstoredAttachments(
+    turnInput,
+    olderFiles,
+    measurements,
   );
-  const olderDocuments = messages
+  const turnParts = selectInlineAttachmentParts(turnInput).filter(
+    (part) => !isStorableAttachmentPart(part) || unstoredTurnAttachments.has(part),
+  );
+  const olderAttachments = messages
     .filter((message) => message.role === "user" && message.itemId !== context.turnItemId)
-    .flatMap((message) => [...selectUnstoredDocuments(message.content, olderFiles)]
-      .filter((part) => resolveStoredFile(part).kind !== "declined"));
+    .flatMap((message) =>
+      [...selectUnstoredAttachments(message.content, olderFiles, measurements)]
+        .filter((part) => resolveStoredFile(part).kind !== "declined"));
 
-  return [...turnParts, ...olderDocuments];
+  return [...turnParts, ...olderAttachments];
 };
 
 /**
@@ -908,29 +1024,70 @@ const toConvertedMessage = (
   content: conversion.parts,
 });
 
+/**
+ * The history of a run held user messages, and the turn being answered was not
+ * one of them.
+ *
+ * Raised rather than worked around, because the turn's own stored payload is the
+ * one message both walks below leave to the turn's own measurement and
+ * conversion, and they find it by this id alone. A run where the id missed would
+ * decode and hash every attachment of that payload a second time, and convert it
+ * into parts that cannot compare equal to the turn's, so the payload is sent
+ * once as history and once as the turn - and every count this pass records would
+ * read as a clean run.
+ */
+export class MissingChatTurnMessageError extends Error {
+  public constructor(
+    turnItemId: string,
+    userItemIds: ReadonlyArray<string>,
+  ) {
+    super(
+      "Chat file ingest holds no user message for the turn it is answering: "
+      + `turnItemId=${turnItemId}, userMessageCount=${String(userItemIds.length)}, `
+      + `newestUserItemIds=${JSON.stringify(userItemIds.slice(-3))}`,
+    );
+    this.name = "MissingChatTurnMessageError";
+  }
+}
+
 export const ingestInlineChatAttachmentsWithDependencies = async (
   context: ChatFileIngestContext,
   messages: ReadonlyArray<StoredChatMessage>,
   turnInput: ReadonlyArray<UnconvertedContentPart>,
   dependencies: ChatFileIngestDependencies,
 ): Promise<ChatFileIngestResult> => {
+  // A run whose history holds user messages holds the turn's own among them:
+  // both routes insert that message and then list the session. Checked rather
+  // than trusted, because this id is the whole of what keeps the turn's stored
+  // payload out of the walks below. A history with no user message at all
+  // carries no stored copy of the turn, so there is nothing for the id to miss.
+  const userItemIds = messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.itemId);
+  if (userItemIds.length > 0 && !userItemIds.includes(context.turnItemId)) {
+    throw new MissingChatTurnMessageError(context.turnItemId, userItemIds);
+  }
+
   const startedAt = Date.now();
-  const hasDocuments = holdsInlineDocument(turnInput)
-    || messages.some((message) => holdsInlineDocument(message.content));
+  const hasInlineAttachments = holdsInlineAttachment(turnInput)
+    || messages.some((message) => holdsInlineAttachment(message.content));
   // Demo mode holds no database and no bucket, so nothing is listed and nothing
-  // is stored. A document of such a turn reads as the unavailable file it is.
+  // is stored. An attachment of such a turn reads as the unavailable file it is.
   //
   // Read before anything is stored, and once: these are the rows of the turns
   // behind this one, which is what the digest resolution may match against, and
   // what this pass writes is matched by identity instead.
-  const olderFiles = hasDocuments && !context.isDemoMode
+  const olderFiles = hasInlineAttachments && !context.isDemoMode
     ? await listAttachmentFiles(context, dependencies)
     : [];
+  // Shared by the selection and the conversion below, which walk the same parts:
+  // one measurement per attachment per turn rather than one per walk.
+  const measurements: InlineAttachmentMeasurements = new Map();
   const storeOutcome = context.isDemoMode
     ? IDLE_STORE_OUTCOME
     : await storeAttachments(
       context,
-      selectPartsToStore(context, messages, turnInput, olderFiles),
+      selectPartsToStore(context, messages, turnInput, olderFiles, measurements),
       dependencies,
     );
   const storedThisRun = new Map<InlineAttachmentPart, ChatFile>(
@@ -938,11 +1095,12 @@ export const ingestInlineChatAttachmentsWithDependencies = async (
       ({ part, chatFile }): readonly [InlineAttachmentPart, ChatFile] => [part, chatFile],
     ),
   );
-  const turnConversion = convertInlineDocuments(
+  const turnConversion = convertInlineAttachments(
     turnInput,
     storedThisRun,
     olderFiles,
-    buildUnavailableTurnDocumentText,
+    measurements,
+    buildUnavailableTurnAttachmentText,
   );
   // The turn's own stored payload is the copy of `turnInput` this run inserted,
   // so one conversion stands for both. They have to agree exactly:
@@ -953,15 +1111,16 @@ export const ingestInlineChatAttachmentsWithDependencies = async (
     message,
     conversion: message.itemId === context.turnItemId
       ? turnConversion
-      : convertInlineDocuments(
+      : convertInlineAttachments(
         message.content,
         storedThisRun,
         olderFiles,
-        buildUnavailableHistoryDocumentText,
+        measurements,
+        buildUnavailableHistoryAttachmentText,
       ),
   }));
   // Counted over the stored payloads alone: the turn input is one of them on
-  // every live path, so counting it again would report one document as two.
+  // every live path, so counting it again would report one attachment as two.
   const outcome: ChatFileIngestOutcome = {
     inlineCount: storeOutcome.inlineCount,
     storedCount: storeOutcome.storedCount,
@@ -977,7 +1136,7 @@ export const ingestInlineChatAttachmentsWithDependencies = async (
     ),
   };
 
-  if (outcome.inlineCount > 0 || hasDocuments) {
+  if (outcome.inlineCount > 0 || hasInlineAttachments) {
     dependencies.log({
       domain: "chat",
       action: "file_ingest",

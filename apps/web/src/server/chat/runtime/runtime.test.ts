@@ -33,6 +33,7 @@ import { selectChatModelRouting } from "@/server/chat/modelRouting";
 import type { PersistedChatMessageItem } from "@/server/chat/store/shared";
 import {
   isInlineFileContentPart,
+  isInlineImageContentPart,
   type ChatStreamEvent,
   type ContentPart,
   type UnconvertedContentPart,
@@ -42,13 +43,14 @@ import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import { EMPTY_CHAT_TURN_FILE_CONTEXT } from "@/server/chatFiles/sessionContext";
 
 /**
- * What the turn prologue hands the input builder. These fixtures carry no
- * document, so it is the identity on them.
+ * What the turn prologue hands the input builder. These fixtures carry no inline
+ * attachment, so it is the identity on them.
  */
 const toConvertedContent = (
   content: ReadonlyArray<UnconvertedContentPart>,
 ): ReadonlyArray<ContentPart> =>
-  content.filter((part): part is ContentPart => !isInlineFileContentPart(part));
+  content.filter((part): part is ContentPart =>
+    !isInlineFileContentPart(part) && !isInlineImageContentPart(part));
 
 const toConvertedMessages = (
   messages: ReadonlyArray<StoredChatMessage>,
@@ -1144,17 +1146,22 @@ test("runPersistedChatSessionWithDeps rejects terminal failure persistence throu
   assert.equal(recorded.cancelledPayload, null);
 });
 
-test("startPersistedChatRunWithDeps persists and streams recovery for poisoned HEIC history", async (): Promise<void> => {
-  const sessionId = "session-legacy-heic";
+test("startPersistedChatRunWithDeps persists and streams recovery for a poisoned stored attachment", async (): Promise<void> => {
+  const sessionId = "session-legacy-attachment";
   const params: StartPersistedChatRunParams = {
     ...createRunParams(sessionId),
+    // A stored attachment the input builder refuses to replay. A PDF carries its
+    // own bytes in the payload and is the one kind that still can be: an image
+    // and a document are files of the session by the time the input is built.
     localMessages: [{
-      itemId: "item-legacy-heic",
+      itemId: "item-legacy-attachment",
       role: "user",
       content: [{
-        type: "image",
-        mediaType: "image/heic",
-        base64Data: "AAAAGGZ0eXBoZWljAAAAAA==",
+        type: "pdf",
+        fileName: "statement.pdf",
+        mediaType: "application/pdf",
+        sourceSha256: "a".repeat(64),
+        pages: [{ pageNumber: 1, text: "", jpegBase64Data: "AAAAGGZ0eXBoZWljAAAAAA==" }],
       }],
     }],
     turnInput: [{ type: "text", text: "Continue" }],

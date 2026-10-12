@@ -14,7 +14,34 @@ export type TextContentPart = Readonly<{
   streamPosition?: StreamPosition;
 }>;
 
+/**
+ * An image of the chat session, by reference. The bytes are never in a message:
+ * the input reads the stored object and renders the data URL again on every turn
+ * the image is resident in, while the per-turn manifest names it at `path` and
+ * `view_file` shows it there once it is not.
+ *
+ * A pre-signed URL would be the cheaper send and may not be used: the prompt
+ * cache matches on a byte-identical rendered prefix, and a signature that
+ * changes every turn would cost the whole prompt behind it.
+ */
 export type ImageContentPart = Readonly<{
+  type: "image";
+  fileId: string;
+  path: string;
+  mediaType: string;
+  sizeBytes: number;
+}>;
+
+/**
+ * An image still carrying its own bytes: what the browser sends until pre-signed
+ * uploads replace that send, and what a payload written before the reference
+ * above still holds.
+ *
+ * `chatFiles/ingest.ts` is the only place that turns one into an
+ * {@link ImageContentPart}. Nothing sends it to the model and nothing stores it
+ * once converted.
+ */
+export type InlineImageContentPart = Readonly<{
   type: "image";
   mediaType: string;
   base64Data: string;
@@ -95,14 +122,17 @@ export type ContentPart =
 
 /**
  * A part as a client sends it and as a stored payload may still read: every
- * part of {@link ContentPart}, plus the inline document shape that the turn
+ * part of {@link ContentPart}, plus the inline attachment shapes that the turn
  * prologue converts away.
  *
  * Only the request, store and browser-transcript boundaries use this. Model
  * input construction and history sizing take {@link ContentPart} alone, so a
- * document reaches them as a reference or not at all.
+ * document or an image reaches them as a reference or not at all.
  */
-export type UnconvertedContentPart = ContentPart | InlineFileContentPart;
+export type UnconvertedContentPart =
+  | ContentPart
+  | InlineFileContentPart
+  | InlineImageContentPart;
 
 /** Tells the two document shapes apart; only the inline one carries bytes. */
 export const isInlineFileContentPart = (
@@ -110,12 +140,18 @@ export const isInlineFileContentPart = (
 ): part is InlineFileContentPart =>
   part.type === "file" && "base64Data" in part;
 
+/** The same for the two image shapes. */
+export const isInlineImageContentPart = (
+  part: UnconvertedContentPart,
+): part is InlineImageContentPart =>
+  part.type === "image" && "base64Data" in part;
+
 export type ChatMessage = Readonly<{
   role: ChatRole;
   content: ReadonlyArray<ContentPart>;
 }>;
 
-/** One message whose documents may not be files of the session yet. */
+/** One message whose attachments may not be files of the session yet. */
 export type UnconvertedChatMessage = Readonly<{
   role: ChatRole;
   content: ReadonlyArray<UnconvertedContentPart>;

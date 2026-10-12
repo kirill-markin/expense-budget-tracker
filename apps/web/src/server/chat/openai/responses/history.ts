@@ -152,6 +152,10 @@ const ITEM_ENVELOPE_TOKENS = 24;
  * model-specific, and the mini and nano tiers scale image tokens on top of them.
  * They hold for `CHAT_MODEL_ID` and `CHAT_FALLBACK_MODEL_ID`; routing the chat
  * to another family means re-deriving them.
+ *
+ * Charged whether or not the input really carries the image, the way the view
+ * replay beside it is: an image past CHAT_RESIDENT_IMAGES_PER_TURN sends a short
+ * note instead, and over-charging that is the safe direction.
  */
 const IMAGE_TOKENS = 2_000;
 

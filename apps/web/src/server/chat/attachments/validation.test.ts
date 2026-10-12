@@ -11,7 +11,7 @@ import {
 } from "@/server/chat/attachments/validation";
 import type {
   InlineFileContentPart,
-  ImageContentPart,
+  InlineImageContentPart,
   PdfContentPart,
 } from "@/server/chat/types";
 
@@ -28,7 +28,7 @@ const XLSX_BASE64_PREFIX = "UEsDBBQABgA=";
 const createImagePart = (
   mediaType: string,
   base64Data: string,
-): ImageContentPart => ({
+): InlineImageContentPart => ({
   type: "image",
   mediaType,
   base64Data,
@@ -58,7 +58,7 @@ const createPdfPart = (): PdfContentPart => ({
 });
 
 test("validateChatAttachments accepts supported images with matching signatures", (): void => {
-  const validImages: ReadonlyArray<ImageContentPart> = [
+  const validImages: ReadonlyArray<InlineImageContentPart> = [
     createImagePart("image/jpeg", JPEG_BASE64_PREFIX),
     createImagePart("image/png", PNG_BASE64_PREFIX),
     createImagePart("image/gif", GIF_BASE64_PREFIX),
@@ -184,6 +184,20 @@ test("validateChatAttachments leaves XLSX attachments unchanged", (): void => {
   );
 
   assert.doesNotThrow((): void => validateChatAttachments([workbook]));
+});
+
+// A reference holds no bytes to check, so not even a media type these checks
+// refuse makes one fail here. What admitted the row is the ingest pass, which
+// refuses that type there; the bytes behind the row are checked where they are
+// read, in chatFiles/sessionContext.ts.
+test("validateChatAttachments has nothing to check in a referenced image", (): void => {
+  assert.doesNotThrow((): void => validateChatAttachments([{
+    type: "image",
+    fileId: "11111111-1111-4111-8111-111111111111",
+    path: "/files/image.heic",
+    mediaType: "image/heic",
+    sizeBytes: 4_096,
+  }]));
 });
 
 test("validateChatAttachments accepts bounded logical PDFs and valid large images", (): void => {

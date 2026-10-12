@@ -4,6 +4,7 @@ import test from "node:test";
 import { SESSION_DERIVABLE_FILES_MAX_BYTES } from "@/server/chatFiles/derivatives";
 import {
   ingestInlineChatAttachmentsWithDependencies,
+  MissingChatTurnMessageError,
   type ChatFileIngestContext,
   type ChatFileIngestDependencies,
 } from "@/server/chatFiles/ingest";
@@ -14,9 +15,11 @@ import {
   type NewChatFile,
 } from "@/server/chatFiles/store";
 import type { StoredChatMessage } from "@/server/chat/openai/responses/replayItems";
-import type {
-  FileContentPart,
-  UnconvertedContentPart,
+import {
+  isInlineFileContentPart,
+  isInlineImageContentPart,
+  type FileContentPart,
+  type UnconvertedContentPart,
 } from "@/server/chat/types";
 
 const TURN_ITEM_ID = "33333333-3333-4333-8333-333333333333";
@@ -58,6 +61,66 @@ const PDF_PART: UnconvertedContentPart = {
   mediaType: "application/pdf",
   sourceSha256: "a".repeat(64),
   pages: [{ pageNumber: 1, text: "page one", jpegBase64Data: toBase64(IMAGE_BYTES) }],
+};
+
+const buildUserMessage = (
+  itemId: string,
+  content: ReadonlyArray<UnconvertedContentPart>,
+): StoredChatMessage => ({ itemId, role: "user", content });
+
+type CountedAttachment = Readonly<{
+  part: UnconvertedContentPart;
+  /** How many times this run read the part's bytes, which is one decode each. */
+  decodes: () => number;
+}>;
+
+/**
+ * The same attachment, with its bytes reachable only through a counter.
+ *
+ * A decode of an attachment's bytes is what a measurement and a write each cost,
+ * and both are a full pass over the whole attachment. Counted as events rather
+ * than timed, so a pass that measures the same part twice fails here however
+ * fast the machine running it is.
+ */
+const countDecodesOf = (
+  part: UnconvertedContentPart,
+): CountedAttachment => {
+  let decodes = 0;
+  if (isInlineImageContentPart(part)) {
+    const { base64Data } = part;
+
+    return {
+      part: {
+        type: "image",
+        mediaType: part.mediaType,
+        get base64Data(): string {
+          decodes += 1;
+
+          return base64Data;
+        },
+      },
+      decodes: (): number => decodes,
+    };
+  }
+  if (isInlineFileContentPart(part)) {
+    const { base64Data } = part;
+
+    return {
+      part: {
+        type: "file",
+        fileName: part.fileName,
+        mediaType: part.mediaType,
+        get base64Data(): string {
+          decodes += 1;
+
+          return base64Data;
+        },
+      },
+      decodes: (): number => decodes,
+    };
+  }
+
+  throw new Error("only an inline attachment carries bytes to count the decodes of");
 };
 
 type WrittenObject = Readonly<{
@@ -268,6 +331,151 @@ void test("an inline image and file become confirmed rows holding their own byte
       byteLength: CSV_BYTES.byteLength,
     },
   ]);
+});
+
+void test("an inline image becomes the reference the input reads its bytes back by", async () => {
+  const harness = createHarness({});
+  const content = [IMAGE_PART, { type: "text" as const, text: "what is this" }];
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  const stored = harness.rows.get("/files/image.png");
+  // No digest on the part: it is read back by file id, and the object under one
+  // file id is written once.
+  assert.deepEqual(result.turnInput, [
+    {
+      type: "image",
+      fileId: String(stored?.fileId),
+      path: "/files/image.png",
+      mediaType: "image/png",
+      sizeBytes: IMAGE_BYTES.byteLength,
+    },
+    { type: "text", text: "what is this" },
+  ]);
+  assert.equal(result.outcome.referencedCount, 1);
+  assert.equal(result.messages[0]?.content, result.turnInput);
+});
+
+void test("an older payload's image resolves to its existing row rather than minting a duplicate", async () => {
+  const harness = createHarness({});
+  const content = [IMAGE_PART];
+
+  await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+  // Every later turn of the session walks that payload again, and its bytes are
+  // still in it: the row written for the turn it arrived on is the one the part
+  // has to resolve to.
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [
+      buildUserMessage("turn-1", content),
+      buildUserMessage(TURN_ITEM_ID, [{ type: "text", text: "and now?" }]),
+    ],
+    [{ type: "text", text: "and now?" }],
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], ["/files/image.png"]);
+  assert.equal(result.outcome.inlineCount, 0);
+  assert.equal(result.outcome.referencedCount, 1);
+  assert.equal(result.messages[0]?.content[0]?.type, "image");
+});
+
+void test("one turn measures each attachment of each payload once, however many the session holds", async () => {
+  // Every payload is walked twice per turn - once to choose what to store, once
+  // to convert - and nothing bounds how many attachments a session holds, so a
+  // measurement taken per walk is a full decode and a SHA-256 pass per
+  // attachment per walk, in front of the turn's first token, for the life of the
+  // session.
+  const harness = createHarness({});
+  const image = countDecodesOf(IMAGE_PART);
+  const csv = countDecodesOf(CSV_PART);
+  const stored = [image.part, csv.part];
+  const turnText: UnconvertedContentPart = { type: "text", text: "and now?" };
+
+  await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage("turn-1", stored), buildUserMessage(TURN_ITEM_ID, [turnText])],
+    [turnText],
+    harness.dependencies,
+  );
+
+  // The turn each arrived on: the session held no row for either to be matched
+  // against, so the only decode is the write's own.
+  assert.deepEqual([image.decodes(), csv.decodes()], [1, 1]);
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage("turn-1", stored), buildUserMessage(TURN_ITEM_ID, [turnText])],
+    [turnText],
+    harness.dependencies,
+  );
+
+  // Every later turn: one measurement each, which both walks are answered from.
+  assert.deepEqual([image.decodes(), csv.decodes()], [2, 2]);
+  assert.equal(result.outcome.inlineCount, 0);
+  assert.equal(result.outcome.referencedCount, 2);
+});
+
+void test("two images of identical bytes become two files, each referenced by its own part", async () => {
+  const harness = createHarness({});
+  const buildImagePart = (): UnconvertedContentPart => ({
+    type: "image",
+    mediaType: "image/png",
+    base64Data: toBase64(IMAGE_BYTES),
+  });
+  const content = [buildImagePart(), buildImagePart()];
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [buildUserMessage(TURN_ITEM_ID, content)],
+    content,
+    harness.dependencies,
+  );
+
+  assert.deepEqual([...harness.rows.keys()], ["/files/image.png", "/files/image-2.png"]);
+  const paths = result.turnInput.map((part) => part.type === "image" ? part.path : null);
+  assert.deepEqual(paths, ["/files/image.png", "/files/image-2.png"]);
+});
+
+// Nothing shows a HEIC image to the model: the provider refuses the part, and
+// no conversion in this app produces one it would accept. A stored row would
+// also mount a file no command can read.
+void test("a legacy HEIC image is never stored and reads as no longer available", async () => {
+  const harness = createHarness({});
+  const heic: UnconvertedContentPart = {
+    type: "image",
+    mediaType: "image/heic",
+    base64Data: toBase64(IMAGE_BYTES),
+  };
+
+  const result = await ingestInlineChatAttachmentsWithDependencies(
+    CONTEXT,
+    [
+      buildUserMessage("turn-1", [heic]),
+      buildUserMessage(TURN_ITEM_ID, [{ type: "text", text: "and now?" }]),
+    ],
+    [{ type: "text", text: "and now?" }],
+    harness.dependencies,
+  );
+
+  assert.equal(harness.rows.size, 0);
+  assert.equal(result.outcome.inlineCount, 0);
+  assert.equal(result.outcome.unreferencedCount, 1);
+  const part = result.messages[0]?.content[0];
+  assert.match(
+    part?.type === "text" ? part.text : "",
+    /^\[An image was attached to an earlier message and is no longer available/u,
+  );
 });
 
 void test("a browser-preprocessed PDF part is counted and declined, because its original bytes never arrive", async () => {
@@ -584,13 +792,13 @@ void test("demo mode and a deployment with no bucket store nothing", async () =>
   const demoHarness = createHarness({});
   const unconfiguredHarness = createHarness({ objectStoreConfigured: false });
 
-  await ingestInlineChatAttachmentsWithDependencies(
+  const demo = await ingestInlineChatAttachmentsWithDependencies(
     { ...CONTEXT, isDemoMode: true },
     [],
     [IMAGE_PART],
     demoHarness.dependencies,
   );
-  await ingestInlineChatAttachmentsWithDependencies(
+  const unconfigured = await ingestInlineChatAttachmentsWithDependencies(
     CONTEXT,
     [],
     [IMAGE_PART],
@@ -599,14 +807,22 @@ void test("demo mode and a deployment with no bucket store nothing", async () =>
 
   assert.equal(demoHarness.rows.size, 0);
   assert.equal(unconfiguredHarness.rows.size, 0);
-  assert.deepEqual(demoHarness.logged, []);
-  assert.deepEqual(unconfiguredHarness.logged, []);
+  assert.deepEqual(demoHarness.written, []);
+  assert.deepEqual(unconfiguredHarness.written, []);
+  // Nothing is refused and nothing fails: the pass records its own outcome and
+  // no more, because neither deployment stores a chat file at all.
+  assert.deepEqual(demoHarness.logged.map((event) => event.action), ["file_ingest"]);
+  assert.deepEqual(unconfiguredHarness.logged.map((event) => event.action), ["file_ingest"]);
+  // The attachment became no file either way, so the model is told so rather
+  // than sent a message about an image that is not in it.
+  for (const result of [demo, unconfigured]) {
+    const part = result.turnInput[0];
+    assert.match(
+      part?.type === "text" ? part.text : "",
+      /^\[An image was attached to this message, but it is not available/u,
+    );
+  }
 });
-
-const buildUserMessage = (
-  itemId: string,
-  content: ReadonlyArray<UnconvertedContentPart>,
-): StoredChatMessage => ({ itemId, role: "user", content });
 
 void test("a stored payload's inline document becomes the reference to its file", async () => {
   const harness = createHarness({});
@@ -879,4 +1095,32 @@ void test("a legacy HEIC document is never stored and reads as no longer availab
   // Nothing is re-attempted and nothing is nagged about: the same name and type
   // would be refused on every later turn of this session.
   assert.deepEqual(harness.logged.filter((event) => event.action === "file_ingest_declined"), []);
+});
+
+// The turn's own stored payload is the one message both walks leave to the
+// turn's own measurement and conversion, and they find it by its item id alone:
+// a run where that id missed would measure every attachment of that payload a
+// second time and send the payload twice, with nothing in its counts to say so.
+void test("a history that does not hold the turn being answered fails loudly", async () => {
+  const harness = createHarness({});
+
+  await assert.rejects(
+    ingestInlineChatAttachmentsWithDependencies(
+      { ...CONTEXT, turnItemId: "turn-9" },
+      [buildUserMessage(TURN_ITEM_ID, [IMAGE_PART])],
+      [IMAGE_PART],
+      harness.dependencies,
+    ),
+    (error: unknown): boolean => {
+      assert.ok(error instanceof MissingChatTurnMessageError);
+      assert.match(error.message, /turnItemId=turn-9/u);
+      assert.match(error.message, new RegExp(TURN_ITEM_ID, "u"));
+      return true;
+    },
+  );
+
+  // Raised before anything was written, so the run that could not tell its own
+  // turn apart neither minted a row nor wrote an object.
+  assert.deepEqual(harness.mintedFileIds, []);
+  assert.deepEqual(harness.written, []);
 });
