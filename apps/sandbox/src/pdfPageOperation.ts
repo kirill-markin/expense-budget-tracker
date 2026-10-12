@@ -158,6 +158,15 @@ export const extractPdfPage = async (
   }
 };
 
+/**
+ * The operation with its real transfer, in whichever process is running it.
+ *
+ * Not the entry point the Lambda reaches: handler.ts sends a `pdf_page` to the
+ * one-shot child of prepareProcess.ts, which is what calls this, because
+ * pdf-lib must not be handed attacker-chosen bytes in the supervisor a warm
+ * execution environment reuses across the chat sessions of different users. So
+ * nothing here may assume that its process survives the answer.
+ */
 export const runChatSandboxPdfPage = async (
   request: ChatSandboxPdfPageRequest,
   deadlineEpochMs: number,

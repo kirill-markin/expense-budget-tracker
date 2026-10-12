@@ -1,10 +1,12 @@
 /**
  * One child process of this sandbox, whatever it was forked to run.
  *
- * Two operations need a child, for two different reasons. `bash` needs one per
- * chat session, so no module scope, heap or python worker is shared between
- * chats. `prepare` needs one per conversion, so a parser that will not fit in
- * memory or in the clock dies with the child rather than with the invocation.
+ * Every operation needs one, for two different reasons. `bash` needs a child
+ * per chat session, so no module scope, heap or python worker is shared between
+ * chats. `prepare` and `pdf_page` need one per job, so a parser that will not
+ * fit in memory or in the clock dies with the child rather than with the
+ * invocation, and so no untrusted document is ever parsed in the supervisor a
+ * warm execution environment reuses across sessions.
  * What they share is this: the fork with a stated interpreter and environment,
  * the ready handshake, one command over IPC under a deadline, and a kill that
  * is waited for. The supervisors above decide what a dead child means.
@@ -39,7 +41,7 @@ export type SandboxChildSpec = Readonly<{
 /**
  * What every child of this sandbox says, over the one channel it has.
  *
- * Generic in the response because the protocol is the same for both operations
+ * Generic in the response because the protocol is the same for every operation
  * and the payload is not: a supervisor instantiates this with its own
  * operation's response type, so neither side has to narrow a union it could
  * only narrow by guessing.
