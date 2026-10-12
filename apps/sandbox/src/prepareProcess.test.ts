@@ -458,9 +458,7 @@ test("a document that converts is answered from the child, which is then reaped"
  * conversions can want more than one invocation has and end as a kill of
  * whichever process the kernel picks - a dead invocation instead of a refusal
  * of one document. Nothing on Lambda can reach that, because an execution
- * environment serves one invocation at a time; the self-hosted container is one
- * Node process serving concurrent requests, where this guard is the only thing
- * providing it.
+ * environment serves one invocation at a time.
  *
  * Refused rather than queued, as createSessionRunner refuses a second command:
  * a conversion serialized behind another would sit out its own window and come
@@ -595,14 +593,12 @@ test("a conversion holding more than the resident ceiling is refused for that, a
  * a fact about the document.
  *
  * A cgroup v2 OOM kill picks by oom_badness across the whole cgroup, so the
- * process that dies need not be the one that grew: a concurrent `pdf_page`
- * child holds its source and the pdf-lib structures built from it, and
- * sessionProcess.ts keeps a warm `bash` child holding the previous command's
- * retained originals and a python worker. A conversion selected for either is
- * not a fact about the document, and `failed` is
- * recorded as a permanent derivatives_error the caller never retries - so an
- * unordered SIGKILL is `unavailable`, while V8's own heap abort (SIGABRT) and
- * any exit code are the document and `failed`.
+ * process that dies need not be the one that grew: sessionProcess.ts keeps a
+ * warm `bash` child holding the previous command's retained originals and a
+ * python worker. A conversion selected for it is not a fact about the document,
+ * and `failed` is recorded as a permanent derivatives_error the caller never
+ * retries - so an unordered SIGKILL is `unavailable`, while V8's own heap abort
+ * (SIGABRT) and any exit code are the document and `failed`.
  *
  * It is stated on answerPrepareChildExit rather than driven through a real
  * child, and that is a finding rather than a preference. The end-to-end form of
@@ -802,9 +798,7 @@ test("a page the document does not have is refused from the child, not raised", 
  * The argument is the conversion runner's: each child may take the heap stated
  * for it, so two at once can want more than the invocation has and end as a
  * kill of whichever process the kernel picks. Nothing on Lambda reaches it,
- * because an execution environment serves one invocation at a time; the
- * self-hosted container is one Node process serving concurrent requests, where
- * this guard is the only thing providing it.
+ * because an execution environment serves one invocation at a time.
  *
  * It reds the guard, and it reds a guard that sets its flag after an await.
  */

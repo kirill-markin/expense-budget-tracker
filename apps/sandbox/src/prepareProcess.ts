@@ -534,12 +534,11 @@ const refusedResponse = (
  * `unavailable` and not `failed`, and the reason is in the kernel's rule. A
  * cgroup v2 OOM kill picks the process with the highest oom_badness against the
  * memcg limit, not the process that grew: a conversion child can be selected
- * because a concurrent `pdf_page` child is holding its 50 MiB source and the
- * pdf-lib structures built from it, or because the warm `bash` child is holding
- * the previous command's 512 MiB of retained originals and a python worker. So
- * the file that gets killed need not be the file that filled the function, and
- * recording it as a permanent derivatives_error would mark an ordinary document
- * unconvertible for good on the strength of another process's memory. Retrying it is exactly right, which
+ * because the warm `bash` child is holding the previous command's 512 MiB of
+ * retained originals and a python worker. So the file that gets killed need not
+ * be the file that filled the function, and recording it as a permanent
+ * derivatives_error would mark an ordinary document unconvertible for good on
+ * the strength of another process's memory. Retrying it is exactly right, which
  * is what this arm is for - the same arm a 503 gets, for the same reason.
  *
  * It costs the case where the source really was the cause, which is then
@@ -650,8 +649,7 @@ const oneShotChildSpec = (
  * than the 10,240 MB of the invocation and end as a kill of whichever process
  * the kernel picks rather than as a refusal of one document. On Lambda the
  * guarantee costs nothing, because an execution environment serves one
- * invocation at a time; the self-hosted container is one Node process serving
- * concurrent requests, and there this is the only thing providing it.
+ * invocation at a time.
  */
 export const createPrepareRunner = (
   heapMb: number,

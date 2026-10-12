@@ -158,16 +158,14 @@ const childExitResponse = (
  * refused with an explicit error rather than serialized behind the first, which
  * would have it sit out its own deadline and come back as a timeout it never
  * earned. On Lambda the guarantee costs nothing, because an execution
- * environment serves one invocation at a time; the self-hosted container named
- * at the top of this file is one Node process serving concurrent requests, and
- * there this is the only thing providing it. Without it, two overlapping calls
- * for different sessions both see no current session and both fork, the second
- * assignment wins, and the first child is then unreachable and never killed by
- * any later call - it survives in the environment holding the previous chat's
- * heap and python worker. Two overlapping calls for one session both attach to
- * the one child, whose first result resolves both, so the second caller is
- * handed the first one's stdout with exit code 0 while its own command never
- * ran at all.
+ * environment serves one invocation at a time. Without it, two overlapping
+ * calls for different sessions both see no current session and both fork, the
+ * second assignment wins, and the first child is then unreachable and never
+ * killed by any later call - it survives in the environment holding the
+ * previous chat's heap and python worker. Two overlapping calls for one session
+ * both attach to the one child, whose first result resolves both, so the second
+ * caller is handed the first one's stdout with exit code 0 while its own command
+ * never ran at all.
  */
 export const createSessionRunner = (spec: SessionChildSpec): SessionCommandRunner => {
   let currentSession: SessionChild | null = null;
@@ -248,7 +246,7 @@ export const createSessionRunner = (spec: SessionChildSpec): SessionCommandRunne
   };
 };
 
-const SESSION_CHILD: SessionChildSpec = {
+export const SESSION_CHILD: SessionChildSpec = {
   modulePath: fileURLToPath(import.meta.url),
   // Empty rather than inherited: fork() passes the parent's execArgv on, and
   // under `node --import tsx --test` that would start the child in test-runner
