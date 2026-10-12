@@ -6,24 +6,31 @@ import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import test, { after } from "node:test";
 import { zipSync } from "fflate";
+import { PDFDocument } from "pdf-lib";
 import type {
+  ChatSandboxPdfPageRequest,
+  ChatSandboxPdfPageResponse,
   ChatSandboxPrepareRequest,
   ChatSandboxPrepareResponse,
 } from "./contract.js";
 import {
+  answerPdfPageChildEnding,
   answerPrepareChildExit,
+  createPdfPageRunner,
   createPrepareRunner,
   parseChildResidentBytes,
   readChildResidentBytes,
   SANDBOX_PREPARE_CHILD_ENV_VAR,
+  type ChatSandboxPdfPageRunner,
   type ChatSandboxPrepareRunner,
   type SandboxChildResidentReader,
 } from "./prepareProcess.js";
 
 /**
- * What this suite covers, which prepareOperation.test.ts cannot: the conversion
- * is bounded by the death of a real child process rather than by anything the
- * conversion itself checks.
+ * What this suite covers, which prepareOperation.test.ts and
+ * pdfPageOperation.test.ts cannot: the work is done in a real child process,
+ * and is bounded by that child's death rather than by anything the operation
+ * itself checks.
  *
  * prepareOperation.test.ts drives prepareSource in process, so every refusal it
  * sees is one this workspace decided to make. The two bounds that matter for a
@@ -33,14 +40,20 @@ import {
  * real module, with the heap ceiling turned down to what a test can reach.
  *
  * It also pins the thing no assertion can state directly: the child is reaped.
- * A conversion child left alive holds an open IPC channel, which keeps this
+ * A one-shot child left alive holds an open IPC channel, which keeps this
  * process from ever exiting and turns a regression into a hung run instead of a
  * red one, so the count of live children is asserted after each case.
  *
- * The case that states what a dead child means forks nothing, deliberately:
- * that answer is a pure function of the child's exit, and its own docstring
- * records why driving it through a real child was a test of the machine
- * instead.
+ * `pdf_page` is here for the same reason `prepare` is, and the cases for it sit
+ * further down: both operations hand a parser attacker-chosen bytes, so neither
+ * may run in the supervisor a warm execution environment reuses across the chat
+ * sessions of different users, and both are therefore served by the one-shot
+ * child this module forks.
+ *
+ * The cases that state what a dead child means fork nothing, deliberately:
+ * those answers are pure functions of how the child ended, and their own
+ * docstrings record why driving them through a real child was a test of the
+ * machine instead.
  */
 
 /**
@@ -582,11 +595,11 @@ test("a conversion holding more than the resident ceiling is refused for that, a
  * a fact about the document.
  *
  * A cgroup v2 OOM kill picks by oom_badness across the whole cgroup, so the
- * process that dies need not be the one that grew: a `pdf_page` earlier in the
- * same execution environment leaves its source and its pdf-lib structures in
- * the parent, and sessionProcess.ts keeps a warm `bash` child holding the
- * previous command's retained originals and a python worker. A conversion
- * selected for either is not a fact about the document, and `failed` is
+ * process that dies need not be the one that grew: a concurrent `pdf_page`
+ * child holds its source and the pdf-lib structures built from it, and
+ * sessionProcess.ts keeps a warm `bash` child holding the previous command's
+ * retained originals and a python worker. A conversion selected for either is
+ * not a fact about the document, and `failed` is
  * recorded as a permanent derivatives_error the caller never retries - so an
  * unordered SIGKILL is `unavailable`, while V8's own heap abort (SIGABRT) and
  * any exit code are the document and `failed`.
@@ -669,13 +682,259 @@ test("a conversion child's exit is answered by how it died, and only the kernel'
 });
 
 /**
+ * The source every `pdf_page` case here reads, served by the same service.
+ *
+ * The page number is a parameter because it is the model's, and two of the
+ * cases below differ only in it: one asks for a page the document has and one
+ * for a page it does not, which is the operation's own refusal and has to
+ * survive the way back from the child.
+ */
+const pdfPageRequest = (
+  origin: string,
+  content: Uint8Array,
+  page: number,
+): ChatSandboxPdfPageRequest => ({
+  operation: "pdf_page",
+  source: {
+    path: "/files/statement.pdf",
+    sizeBytes: content.byteLength,
+    mediaType: "application/pdf",
+    sha256: createHash("sha256").update(content).digest("hex"),
+    mtimeMs: 1,
+    getUrl: `${origin}/source`,
+  },
+  page,
+});
+
+const buildPdf = async (pageCount: number): Promise<Uint8Array> => {
+  const document = await PDFDocument.create();
+  for (let page = 0; page < pageCount; page += 1) {
+    document.addPage();
+  }
+
+  return document.save();
+};
+
+const readPage = async (
+  run: ChatSandboxPdfPageRunner,
+  content: Uint8Array,
+  page: number,
+  deadlineEpochMs: number,
+): Promise<Readonly<{ response: ChatSandboxPdfPageResponse; puts: ReadonlyArray<string> }>> => {
+  const service = await startObjectService(content);
+  try {
+    const response = await run(pdfPageRequest(service.origin, content, page), deadlineEpochMs);
+
+    return { response, puts: service.puts };
+  } finally {
+    service.server.close();
+  }
+};
+
+/**
+ * A page read through the real child, which is the whole point of this runner.
+ *
+ * pdfPageOperation.test.ts drives the copy in process over a stub transfer, so
+ * everything it proves is true of a function call. What it cannot prove is
+ * where that call happens, and that is the defect this runner closes: the
+ * document was parsed by pdf-lib in the supervisor, which a warm Lambda reuses
+ * across invocations and so across the chat sessions of different users.
+ *
+ * So this is the real fork: the child loads pdf-lib, fetches the source over a
+ * pre-signed URL of its own, copies the page out and sends it back as base64 up
+ * the IPC channel, and the page itself is the assertion - a one-page PDF out of
+ * a three-page original, loadable. The reap is asserted for the reason every
+ * case here asserts it: a surviving child holds the channel open.
+ */
+test("a page is copied in a child, answered from it, and the child is reaped", async (): Promise<void> => {
+  const run = createPdfPageRunner(SMALL_HEAP_MB, CHECKOUT_INTERPRETER, readRealResidentBytes);
+  const { response, puts } = await readPage(
+    run,
+    await buildPdf(3),
+    2,
+    Date.now() + AMPLE_DEADLINE_MS,
+  );
+
+  assert.equal(response.status, "rendered", `the page was not copied: ${JSON.stringify(response)}`);
+  assert.ok(response.status === "rendered");
+  assert.equal(response.page, 2);
+  assert.equal(response.pageCount, 3);
+  const returned = await PDFDocument.load(Buffer.from(response.pdfBase64, "base64"));
+  assert.equal(returned.getPageCount(), 1);
+  // This operation mints no write slot and stores nothing, so anything reaching
+  // the service other than the source read is a defect of the child's own.
+  assert.deepEqual(puts, [], "a page copy stored something");
+  assert.equal(liveChildCount(), 0, "the child that answered was not reaped");
+});
+
+/**
+ * The operation's own refusal, through the real child, which is the one thing
+ * only this file can show about it.
+ *
+ * A page number outside the document is the commonest answer this operation
+ * gives - the number is the model's - and it is a `failed` response rather than
+ * a raise precisely so the model learns the real page count and can ask again.
+ * That answer is built inside the child, serialized over IPC and returned by
+ * the supervisor untouched, so a supervisor that mapped responses instead of
+ * returning them, or that read a `failed` as a dead child, would lose the page
+ * count the model needs. It is the counterpart of the refused-upload case
+ * above, for the operation that stores nothing.
+ */
+test("a page the document does not have is refused from the child, not raised", async (): Promise<void> => {
+  const run = createPdfPageRunner(SMALL_HEAP_MB, CHECKOUT_INTERPRETER, readRealResidentBytes);
+  const { response } = await readPage(
+    run,
+    await buildPdf(3),
+    40,
+    Date.now() + AMPLE_DEADLINE_MS,
+  );
+
+  assert.equal(response.status, "failed", `the page was not refused: ${JSON.stringify(response)}`);
+  assert.ok(response.status === "failed");
+  assert.match(response.error, /"\/files\/statement\.pdf" has 3 pages, so page 40 is not one of them/u);
+  assert.equal(liveChildCount(), 0, "the child that refused the page was not reaped");
+});
+
+/**
+ * And this runner's mutual exclusion, which is about the memory of the whole
+ * function rather than about either page.
+ *
+ * The argument is the conversion runner's: each child may take the heap stated
+ * for it, so two at once can want more than the invocation has and end as a
+ * kill of whichever process the kernel picks. Nothing on Lambda reaches it,
+ * because an execution environment serves one invocation at a time; the
+ * self-hosted container is one Node process serving concurrent requests, where
+ * this guard is the only thing providing it.
+ *
+ * It reds the guard, and it reds a guard that sets its flag after an await.
+ */
+test("a second page arriving while one is in flight is refused", async (): Promise<void> => {
+  const run = createPdfPageRunner(SMALL_HEAP_MB, CHECKOUT_INTERPRETER, readRealResidentBytes);
+  const content = await buildPdf(3);
+  const service = await startObjectService(content);
+  try {
+    const first = run(pdfPageRequest(service.origin, content, 1), Date.now() + AMPLE_DEADLINE_MS);
+    await assert.rejects(
+      run(pdfPageRequest(service.origin, content, 2), Date.now() + AMPLE_DEADLINE_MS),
+      /already reading a page, so it cannot also read page 2 of "\/files\/statement\.pdf"/u,
+      "the second page was not refused",
+    );
+    const response = await first;
+    assert.equal(response.status, "rendered", `the first page was not copied: ${JSON.stringify(response)}`);
+    assert.equal(liveChildCount(), 0, "a child outlived the pair");
+  } finally {
+    service.server.close();
+  }
+});
+
+/**
+ * And that the refusal above costs the runner nothing, which is the half of a
+ * mutual exclusion that is easy to leave unproven.
+ *
+ * The conversion runner has this case for the same reason, and this one is not
+ * redundant with it: the guard here is a second closure holding its own flag,
+ * so a `finally` dropped from this runner alone is green in every other case in
+ * this file - including the refusal above, which never calls the runner a third
+ * time. What it would really be is a sandbox that reads no page at all for the
+ * rest of the execution environment's life.
+ */
+test("the runner accepts the next page after a concurrent one was refused", async (): Promise<void> => {
+  const run = createPdfPageRunner(SMALL_HEAP_MB, CHECKOUT_INTERPRETER, readRealResidentBytes);
+  const content = await buildPdf(3);
+  const service = await startObjectService(content);
+  try {
+    const first = run(pdfPageRequest(service.origin, content, 1), Date.now() + AMPLE_DEADLINE_MS);
+    await assert.rejects(run(pdfPageRequest(service.origin, content, 2), Date.now() + AMPLE_DEADLINE_MS));
+    await first;
+  } finally {
+    service.server.close();
+  }
+  const { response } = await readPage(run, content, 3, Date.now() + AMPLE_DEADLINE_MS);
+  assert.equal(response.status, "rendered", `the runner stopped reading pages: ${JSON.stringify(response)}`);
+  assert.equal(liveChildCount(), 0, "a child outlived this case");
+});
+
+/**
+ * The four ways a page copy can end without an answer, and what each one is
+ * allowed to tell the model.
+ *
+ * Stated on answerPdfPageChildEnding rather than driven through a real child,
+ * and for a stronger version of the reason the conversion exit case states.
+ * Two of these arms cannot be produced by any document anybody has: a pdf-lib
+ * parse that outlives a 90 s window, or one that holds 7 GiB of resident
+ * memory, would have to be built rather than found, and a case that built one
+ * would be measuring the machine instead of the decision. The decision is a
+ * pure function of how the child ended, so the endings are supplied. That a
+ * real child's death reaches a supervisor as an `exit` outcome through this
+ * same machinery is covered where it is cheap - the heap case at the top of
+ * this file drives a real fork to a real SIGABRT.
+ *
+ * The arms are one decision and are pinned together. It reds a timeout
+ * answered as a heap abort, a kill ordered by the memory watch answered as the
+ * kernel's, and the kernel's kill answered as a fact about this document - the
+ * last of which matters because this contract has no retryable arm, so the only
+ * place that can say "ask again" is the reason text.
+ */
+test("a page copy that produced no answer is refused by how its child ended", (): void => {
+  // Nothing here is fetched, so the request is only the file the answers name.
+  const request = pdfPageRequest("http://127.0.0.1:1", encode("x"), 3);
+  const startedAt = Date.now();
+  const context = {
+    request,
+    startedAt,
+    heapMb: PRODUCTION_HEAP_MB,
+    windowMs: 90_000,
+    exceededBytes: null,
+  };
+
+  const timedOut = answerPdfPageChildEnding({ kind: "timeout" }, context);
+  assert.equal(timedOut.status, "failed");
+  assert.ok(timedOut.status === "failed");
+  assert.match(timedOut.error, /page 3 of "\/files\/statement\.pdf" could not be read/u);
+  assert.match(timedOut.error, /did not finish within the 90000 ms this invocation allows for one page/u);
+
+  // The watch answers before the exit is classified, because it is the only
+  // one of the three that knows it ordered the kill.
+  const overCeiling = answerPdfPageChildEnding(
+    { kind: "exit", code: null, signal: "SIGKILL" },
+    { ...context, exceededBytes: (7_169 * 1024 * 1024) },
+  );
+  assert.ok(overCeiling.status === "failed");
+  assert.match(
+    overCeiling.error,
+    /hold 7169 MiB of memory, past the 7168 MiB one document may hold/u,
+  );
+
+  const killed = answerPdfPageChildEnding({ kind: "exit", code: null, signal: "SIGKILL" }, context);
+  assert.ok(killed.status === "failed");
+  assert.match(killed.error, /killed by the kernel for the memory of this sandbox/u);
+  // The only thing this contract can offer instead of an `unavailable` arm.
+  assert.match(killed.error, /asking for the page again is worth one attempt/u);
+
+  const aborted = answerPdfPageChildEnding({ kind: "exit", code: null, signal: "SIGABRT" }, context);
+  assert.ok(aborted.status === "failed");
+  assert.match(
+    aborted.error,
+    /killed by SIGABRT, which is how exhausting the 4096 MiB heap one document may use ends/u,
+  );
+
+  const exited = answerPdfPageChildEnding({ kind: "exit", code: 134, signal: null }, context);
+  assert.ok(exited.status === "failed");
+  assert.match(
+    exited.error,
+    /ended the process doing it with exit code 134, which is how exhausting the 4096 MiB heap one document may use ends/u,
+  );
+});
+
+/**
  * And the other direction, which is the half of a memory guard that is easy to
  * leave unproven: it did not fire on any of the documents above.
  *
- * Every case in this file ran under readRealResidentBytes, so each was measured
- * for real at 250 ms intervals against the same ceiling production uses. Two of
- * them - the heap case and the clock case - run for over a second, so the
- * figures cannot be empty, and that is asserted first: without it this case
+ * Every case in this file that forks a child ran under readRealResidentBytes -
+ * the page copies as much as the conversions - so each was measured for real at
+ * 250 ms intervals against the same ceiling production uses. Two of them - the
+ * heap case and the clock case - run for over a second, so the figures cannot
+ * be empty, and that is asserted first: without it this case
  * would pass just as well with a reader that answered `null` to everything,
  * which is the shape a guard switched off has.
  *
@@ -685,7 +944,7 @@ test("a conversion child's exit is answered by how it died, and only the kernel'
  * that were never in trouble. The heaviest case here peaks around 1,450 MiB,
  * and the assertion below is what would notice a ceiling moved under it.
  */
-test("the resident bound measured every conversion above and refused none of them", (): void => {
+test("the resident bound measured every child above and refused none of them", (): void => {
   assert.ok(
     residentFigures.length > 0,
     "no conversion above was ever measured, so the cases ran with the bound switched off",

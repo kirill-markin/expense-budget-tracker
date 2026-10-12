@@ -350,7 +350,20 @@ const loadPdfjs = async (): Promise<typeof import("pdfjs-dist/legacy/build/pdf.m
 /** The marker a text derivative puts in front of one page's text. */
 const pdfPageMarker = (page: number): string => `--- page ${String(page)} ---`;
 
+/**
+ * The line a text derivative puts under the marker of a page with no text, when
+ * other pages of the same document have some. Only the missing text layer is
+ * observed (a layer of whitespace alone counts as missing, as it does for
+ * `hasText`): a scan, a blank sheet, and a page holding only a picture all look
+ * alike here, so the line states the observation and leaves the paid page view
+ * conditional on there being something to see.
+ */
+const PDF_NO_TEXT_PAGE_LINE = "[no text layer on this page: if it shows anything, it is only pixels - look at it with view_file]\n";
+
 type PdfText = Readonly<{ text: string; hasText: boolean }>;
+
+/** One page's marker and extracted text, kept apart until the whole document is read. */
+type PdfPageText = Readonly<{ marker: string; body: string; hasText: boolean }>;
 
 /** One text item of a page, as the text stream delivers it. */
 type PdfTextItem = Readonly<{ str?: string; hasEOL?: boolean }>;
@@ -365,7 +378,9 @@ type PdfTextChunk = Readonly<{ items: ReadonlyArray<PdfTextItem> }>;
  * the text knows which page number to ask for the image of, so they are written
  * even for a page that holds nothing. A document whose pages are all empty is
  * reported through `hasText` instead of as a failure - a scan is a PDF this
- * sandbox read correctly, not one it could not read.
+ * sandbox read correctly, not one it could not read. In a document that has
+ * text elsewhere, a page with none gets PDF_NO_TEXT_PAGE_LINE under its marker,
+ * which can only be decided once every page has been read.
  *
  * `streamTextContent` rather than `getTextContent`, and that is the whole
  * difference between a bound and a post-mortem: the second materialises every
@@ -404,14 +419,14 @@ const extractPdfText = async (bytes: Uint8Array): Promise<PdfText> => {
   try {
     const document = await task.promise;
     const spendText = createTextBudget();
-    const pages: Array<string> = [];
-    let hasText = false;
+    const pages: Array<PdfPageText> = [];
     for (let page = 1; page <= document.numPages; page += 1) {
       const loaded = await document.getPage(page);
       try {
         const marker = `${pdfPageMarker(page)}\n`;
         spendText(marker.length + 1);
-        const parts: Array<string> = [marker];
+        const parts: Array<string> = [];
+        let pageHasText = false;
         const stream: ReadableStream<PdfTextChunk> = loaded.streamTextContent();
         const reader = stream.getReader();
         try {
@@ -428,7 +443,7 @@ const extractPdfText = async (bytes: Uint8Array): Promise<PdfText> => {
               }
               const text = item.hasEOL === true ? `${item.str}\n` : item.str;
               spendText(text.length);
-              hasText = hasText || item.str.trim() !== "";
+              pageHasText = pageHasText || item.str.trim() !== "";
               parts.push(text);
             }
           }
@@ -440,13 +455,24 @@ const extractPdfText = async (bytes: Uint8Array): Promise<PdfText> => {
           throw error;
         }
         parts.push("\n");
-        pages.push(parts.join(""));
+        pages.push({ marker, body: parts.join(""), hasText: pageHasText });
       } finally {
         loaded.cleanup();
       }
     }
 
-    return { text: pages.join("\n"), hasText };
+    const hasText = pages.some((page) => page.hasText);
+    const rendered: Array<string> = [];
+    for (const page of pages) {
+      if (hasText && !page.hasText) {
+        spendText(PDF_NO_TEXT_PAGE_LINE.length);
+        rendered.push(`${page.marker}${PDF_NO_TEXT_PAGE_LINE}${page.body}`);
+      } else {
+        rendered.push(`${page.marker}${page.body}`);
+      }
+    }
+
+    return { text: rendered.join("\n"), hasText };
   } finally {
     // The loading task, not the document: pdf.js 6 has no `document.destroy`.
     await task.destroy();

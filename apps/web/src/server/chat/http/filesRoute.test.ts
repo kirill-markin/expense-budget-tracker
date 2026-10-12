@@ -3,10 +3,12 @@ import test from "node:test";
 
 import {
   createChatFileId,
+  deleteChatFilesRouteWithDeps,
   getChatFilesRouteWithDeps,
   postChatFilesRouteWithDeps,
   type ChatFilesRouteDependencies,
 } from "@/server/chat/http/filesRoute";
+import { ChatSessionFileDeletionFailedError } from "@/server/chatFiles/cleanup";
 import {
   isChatFileId,
   UNCONFIRMED_CHAT_FILE_SHA256,
@@ -93,6 +95,7 @@ const createDependencies = (
   presignChatFileUploadUrl: async () => "https://bucket.example/upload",
   presignChatFileReadUrl: async () => "https://bucket.example/read",
   headChatFileObjectSize: async () => 1024,
+  deleteChatSessionFiles: async () => ({ objectCount: 0, rowCount: 0 }),
   createFileId: () => FILE_ID,
   log: () => undefined,
   ...overrides,
@@ -101,6 +104,13 @@ const createDependencies = (
 const createPostRequest = (body: unknown, headers: Headers): Request =>
   new Request("http://localhost/api/chat/files", {
     method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+const createDeleteRequest = (body: unknown, headers: Headers): Request =>
+  new Request("http://localhost/api/chat/files", {
+    method: "DELETE",
     headers,
     body: JSON.stringify(body),
   });
@@ -596,4 +606,118 @@ test("reading rejects a row whose object key is not its session's", async (): Pr
   );
 
   assert.equal(response.status, 500);
+});
+
+test("deletion removes the caller's own session files and reports what went", async (): Promise<void> => {
+  const deletionCalls: Array<ReadonlyArray<unknown>> = [];
+  const loggedDeletions: Array<ReadonlyArray<unknown>> = [];
+  const response = await deleteChatFilesRouteWithDeps(
+    createDeleteRequest({ sessionId: "session-1" }, createHeaders()),
+    createDependencies({
+      deleteChatSessionFiles: async (userId, workspaceId, sessionId) => {
+        deletionCalls.push([userId, workspaceId, sessionId]);
+        return { objectCount: 3, rowCount: 2 };
+      },
+      log: (event) => {
+        if (event.domain === "chat" && event.action === "session_files_deleted") {
+          loggedDeletions.push([
+            event.outcome,
+            event.sessionId,
+            event.objectCount,
+            event.rowCount,
+            event.error,
+          ]);
+        }
+      },
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    sessionId: "session-1",
+    deletedObjectCount: 3,
+    deletedFileCount: 2,
+  });
+  assert.deepEqual(deletionCalls, [["user-1", "workspace-1", "session-1"]]);
+  assert.deepEqual(loggedDeletions, [["deleted", "session-1", 3, 2, null]]);
+});
+
+test("a deletion that fails partway still reports the objects it reclaimed", async (): Promise<void> => {
+  const loggedDeletions: Array<ReadonlyArray<unknown>> = [];
+  const loggedErrors: Array<string | null> = [];
+  const response = await deleteChatFilesRouteWithDeps(
+    createDeleteRequest({ sessionId: "session-1" }, createHeaders()),
+    createDependencies({
+      deleteChatSessionFiles: async () => {
+        throw new ChatSessionFileDeletionFailedError(
+          "Chat session file deletion failed, sessionId=session-1, deletedObjectCount=900",
+          900,
+          new Error("Object batch delete failed"),
+        );
+      },
+      log: (event) => {
+        if (event.domain === "chat" && event.action === "session_files_deleted") {
+          loggedDeletions.push([
+            event.outcome,
+            event.sessionId,
+            event.objectCount,
+            event.rowCount,
+          ]);
+          loggedErrors.push(event.error);
+        }
+      },
+    }),
+  );
+
+  assert.equal(response.status, 500);
+  // The client reads the route's generic message only: the detailed one, with
+  // its session id and counts, belongs to the log entries.
+  assert.match(await response.text(), /Chat file deletion failed/u);
+  assert.deepEqual(loggedDeletions, [["failed", "session-1", 900, 0]]);
+  const [loggedError] = loggedErrors;
+  assert.ok(typeof loggedError === "string");
+  assert.match(loggedError, /deletedObjectCount=900/u);
+});
+
+test("deletion refuses a session the caller does not own", async (): Promise<void> => {
+  const response = await deleteChatFilesRouteWithDeps(
+    createDeleteRequest({ sessionId: "session-9" }, createHeaders()),
+    createDependencies({
+      getChatSessionId: async () => null,
+      deleteChatSessionFiles: async () => {
+        throw new Error("a foreign session must not be deleted");
+      },
+    }),
+  );
+
+  assert.equal(response.status, 404);
+});
+
+test("deletion refuses demo mode", async (): Promise<void> => {
+  const response = await deleteChatFilesRouteWithDeps(
+    createDeleteRequest({ sessionId: "session-1" }, createHeaders()),
+    createDependencies({
+      isDemoMode: () => true,
+      deleteChatSessionFiles: async () => {
+        throw new Error("demo mode must not delete anything");
+      },
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /demo mode/);
+});
+
+test("deletion refuses a body without a session id", async (): Promise<void> => {
+  const response = await deleteChatFilesRouteWithDeps(
+    createDeleteRequest({}, createHeaders()),
+    createDependencies({
+      deleteChatSessionFiles: async () => {
+        throw new Error("an unidentified session must not be deleted");
+      },
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /sessionId/);
 });
