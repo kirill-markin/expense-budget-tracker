@@ -48,12 +48,17 @@ export type ChatFile = Readonly<{
   mediaType: string;
   sizeBytes: number;
   /**
-   * Digest the uploader asserted for the object's bytes, never one the app
-   * verified: the app never reads the body and the upload is not signed with
-   * ChecksumSHA256, so a body that contradicts this value is stored as
-   * readily as one that matches. It is a client-supplied label, so nothing may
-   * treat it as proof of content, and deduplication or derivative reuse may
-   * not key on it alone.
+   * Digest asserted for the object's bytes, by whoever wrote them.
+   *
+   * Heterogeneous by origin, and the row does not say which it is. A minted
+   * upload's is the uploader's own claim, and a sandbox-written file's is the
+   * function's: the app reads neither body, and the upload is not signed with
+   * ChecksumSHA256, so a body that contradicts this value is stored as readily
+   * as one that matches. The bytes the app PUT itself - an inline attachment, a
+   * spilled command output - carry the digest it measured over them. So nothing
+   * may treat the field as proof of content without first establishing which
+   * of the two wrote it, and deduplication or derivative reuse may not key on
+   * it alone.
    */
   sha256: string;
   /**

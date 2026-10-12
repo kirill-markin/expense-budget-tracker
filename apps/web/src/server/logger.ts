@@ -499,12 +499,18 @@ type ChatFileContextEvent = Readonly<{
 /**
  * What one turn's inline attachments became.
  *
- * `inlineCount` minus `storedCount` is the attachments of that turn the sandbox
- * cannot reach, so a session where the two stay apart is one whose uploads the
- * model can only read through the prompt. `declinedCount` is the files refused
- * for a reason of their own, each of which also records that reason; `stopped`
- * marks a turn a deployment fault ended, whose own record is in the `error`
- * family beside this one.
+ * `inlineCount` counts every attachment the turn carried, so `inlineCount`
+ * minus `storedCount` is the attachments of that turn the sandbox cannot reach
+ * and a session where the two stay apart is one whose uploads the model can
+ * only read through the prompt. `declinedCount` is the files refused for a
+ * reason of their own, each of which also records that reason, and the
+ * remainder is what a `stopReason` left unreached. `unrecordable` is a
+ * deployment fault, whose own record is in the `error` family beside this one;
+ * `aborted` is the user stopping the turn.
+ *
+ * `durationMs` is paid serially in front of the turn's first token, once per
+ * attachment and with nothing capping how many a turn carries, which is why it
+ * is recorded at all.
  */
 type ChatFileIngestEvent = Readonly<{
   domain: "chat";
@@ -516,16 +522,23 @@ type ChatFileIngestEvent = Readonly<{
   inlineCount: number;
   storedCount: number;
   declinedCount: number;
-  stopped: boolean;
+  stopReason: "unrecordable" | "aborted" | null;
+  durationMs: number;
 }>;
 
 /**
  * One inline attachment stored as no file of the session, and why.
  *
  * Every reason here is a fact about the attachment or about what the session
- * already holds, never a fault of this deployment: a media type no stored name
- * accepts, a name that keeps no usable character, a /files the next file would
- * not fit in, or a name whose duplicate suffixes are spent.
+ * already holds, never a fault of this deployment: a PDF whose original bytes
+ * the browser never sent, a media type no stored name accepts, a name that
+ * keeps no usable character, a /files the next file would not fit in, or a name
+ * whose duplicate suffixes are spent.
+ *
+ * `mediaType` is the value the turn declared rather than the normalized one,
+ * because a refusal of the type is about what arrived. `sizeBytes` is the bytes
+ * of the attachment this pass holds, which is 0 for the PDF whose original
+ * never arrived.
  */
 type ChatFileIngestDeclinedEvent = Readonly<{
   domain: "chat";
@@ -536,7 +549,12 @@ type ChatFileIngestDeclinedEvent = Readonly<{
   sessionId: string;
   mediaType: string;
   sizeBytes: number;
-  reason: string;
+  reason:
+    | "pdf_original_not_sent"
+    | "media_type_not_accepted"
+    | "unusable_file_name"
+    | "session_files_full"
+    | "path_duplicates_exhausted";
 }>;
 
 /**

@@ -498,6 +498,10 @@ const runLoopWithDeps = async (
   // the ones they convert. Both routes reach the loop and only the loop, and a
   // turn reaches it once, so this is also the one place an attachment is stored
   // exactly as often as it was sent.
+  //
+  // The run's signal goes with it for the same reason it goes to the pass
+  // below, and for one more: the rows this writes are what the next turn's byte
+  // gates measure, and stop-then-send puts that next turn in front of them.
   await dependencies.ingestInlineChatAttachments(
     {
       requestId: params.requestId,
@@ -505,6 +509,7 @@ const runLoopWithDeps = async (
       workspaceId: params.workspaceId,
       sessionId: params.sessionId,
       isDemoMode: params.isDemoMode,
+      signal: params.signal ?? null,
     },
     params.turnInput,
   );

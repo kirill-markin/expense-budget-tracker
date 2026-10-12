@@ -12,13 +12,15 @@
  * and while that policy still inlines the bytes the only thing this adds to a
  * prompt is the one listing line the row earns.
  *
- * Nothing here ends a turn, and that is the whole shape of its error handling.
- * The model already holds the inline copy of every attachment this runs for, so
- * a file this cannot store costs the session its shell access to that file and
- * nothing else, while raising would cost the user an answer they can see no
- * other way to get. A refusal of the file is logged as the ordinary outcome it
- * is; a fault of this deployment is logged in the `error` family and stops the
- * pass, because the attachment beside it would go into the same fault.
+ * Nothing here ends a turn, bar the structured log of its own outcome, and that
+ * is the whole shape of its error handling. The model already holds the inline
+ * copy of every attachment this runs for, so a file this cannot store costs the
+ * session its shell access to that file and nothing else, while raising would
+ * cost the user an answer they can see no other way to get. A refusal of the
+ * file is logged as the ordinary outcome it is; a fault of this deployment -
+ * its object store configuration included - is logged in the `error` family and
+ * stops the pass, because the attachment beside it would go into the same
+ * fault.
  */
 import { createHash } from "node:crypto";
 import {
@@ -26,12 +28,14 @@ import {
   CHAT_FILE_MAXIMUM_PATH_DUPLICATES,
   getChatFileExtensionForMediaType,
   isAcceptedChatFileMediaType,
+  parseChatFileMediaType,
   UnusableChatFileNameError,
 } from "@/lib/chatFiles";
 import type {
   ContentPart,
   FileContentPart,
   ImageContentPart,
+  PdfContentPart,
 } from "@/server/chat/types";
 import { SESSION_DERIVABLE_FILES_MAX_BYTES } from "@/server/chatFiles/derivatives";
 import {
@@ -57,11 +61,22 @@ export type ChatFileIngestContext = Readonly<{
   sessionId: string;
   /** Captured when the request arrived: a persisted run outlives it. */
   isDemoMode: boolean;
+  /**
+   * The run's own signal, or null for a caller that cannot be stopped.
+   *
+   * Required rather than optional, for the reason the derivatives pass behind
+   * this one states at SESSION_DERIVABLE_FILES_MAX_BYTES: stop-then-send is
+   * reachable, the rows this pass commits are invisible to the total the next
+   * turn's gates read, and a session pushed past
+   * SANDBOX_FILES_REQUEST_MAX_BYTES loses its shell for good. A caller that
+   * forgot to thread it would also leave the user pressing stop and waiting out
+   * every remaining upload of the turn they stopped.
+   */
+  signal: AbortSignal | null;
 }>;
 
 export type ChatFileIngestDependencies = Readonly<{
   getObjectStore: typeof getChatFilesObjectStoreIfConfigured;
-  /** Minted here, because the object key the row stores derives from it. */
   createFileId: () => string;
   getChatFileByPath: typeof getChatFileByPath;
   insertChatFile: typeof insertChatFile;
@@ -70,73 +85,102 @@ export type ChatFileIngestDependencies = Readonly<{
   log: typeof log;
 }>;
 
+/**
+ * Why the pass ended before it ran out of attachments, or null when it did not.
+ *
+ * `unrecordable` is this deployment failing, so the attachment beside the one
+ * that failed would go into the same fault. `aborted` is the user no longer
+ * waiting on this turn, and it writes nothing further at all: a row this pass
+ * commits after the stop counts against a total the next turn's gates have
+ * already read.
+ */
+export type ChatFileIngestStopReason = "unrecordable" | "aborted";
+
+/**
+ * One attachment this pass stored no file of the session for, and why.
+ *
+ * Every one of them is a fact about the attachment or about what the session
+ * already holds, never a fault of this deployment - those stop the pass instead.
+ */
+export type ChatFileIngestDeclineReason =
+  | "pdf_original_not_sent"
+  | "media_type_not_accepted"
+  | "unusable_file_name"
+  | "session_files_full"
+  | "path_duplicates_exhausted";
+
 export type ChatFileIngestOutcome = Readonly<{
-  /** Attachments this turn carried that a row could be written for. */
+  /** Attachments this turn carried, whatever became of each. */
   inlineCount: number;
   storedCount: number;
-  /** Attachments refused for a reason of their own: a name, a type, or no room. */
+  /**
+   * Attachments refused for a reason of their own: a name, a type, no room, or
+   * bytes that never arrived.
+   */
   declinedCount: number;
-  /** True when a fault of this deployment ended the pass early. */
-  stopped: boolean;
+  stopReason: ChatFileIngestStopReason | null;
 }>;
 
 const IDLE_OUTCOME: ChatFileIngestOutcome = {
   inlineCount: 0,
   storedCount: 0,
   declinedCount: 0,
-  stopped: false,
+  stopReason: null,
 };
 
 /** File name of an inline image part, which carries a media type and no name. */
 const IMAGE_FILE_NAME_STEM = "image";
 
-type InlineAttachmentPart = ImageContentPart | FileContentPart;
+type InlineAttachmentPart = ImageContentPart | FileContentPart | PdfContentPart;
 
-/**
- * The attachment parts of one turn whose bytes this module holds.
- *
- * A `pdf` part is deliberately not among them, and cannot be: the browser's
- * PDF pass sends page text and page JPEGs, so the bytes of the PDF the user
- * attached never reach the server at all. Storing a PDF as a file of the
- * session therefore waits on the browser sending the original, which is the
- * same change that drops the inline send.
- */
+type StorableAttachmentPart = ImageContentPart | FileContentPart;
+
+/** The attachment parts of one turn, whether or not this module can store them. */
 const selectInlineAttachmentParts = (
   content: ReadonlyArray<ContentPart>,
 ): ReadonlyArray<InlineAttachmentPart> =>
   content.filter((part): part is InlineAttachmentPart =>
-    part.type === "image" || part.type === "file");
+    part.type === "image" || part.type === "file" || part.type === "pdf");
 
-type StoredFileNameResolution =
-  | Readonly<{ kind: "name"; fileName: string }>
-  | Readonly<{ kind: "declined"; reason: "media_type_not_accepted" | "unusable_file_name" }>;
+type StoredFileResolution =
+  | Readonly<{ kind: "file"; fileName: string; mediaType: string }>
+  | Readonly<{ kind: "declined"; reason: ChatFileIngestDeclineReason }>;
 
 /**
- * The name this attachment would be stored under, or why it has none.
+ * The name and media type this attachment would be stored under, or why it has
+ * neither.
  *
- * An image part declares a type and no name, so its name is built from the
- * type. A file part's name is the user's own, and is checked against the type
- * beside it: the upload policy reads the stored path and the accepted types out
- * of one name, so an attachment whose pair that policy refuses is one this
- * module may not store under either half of it. A name that keeps no usable
- * character at all is refused by the same call, and is the file's own fact
- * rather than a fault of this deployment, so it is answered here instead of
- * raised.
+ * The declared type is normalized first, the way the mint route normalizes the
+ * one it is handed: the accepted-type table holds bare lowercase type/subtype,
+ * and the value that reaches the row becomes the object's Content-Type, which
+ * everything downstream reads as canonical. An image part declares a type and
+ * no name, so its name is built from the type. A file part's name is the user's
+ * own, and is checked against the type beside it: the upload policy reads the
+ * stored path and the accepted types out of one name, so an attachment whose
+ * pair that policy refuses is one this module may not store under either half
+ * of it. A name that keeps no usable character at all is refused by the same
+ * call, and is the file's own fact rather than a fault of this deployment, so
+ * it is answered here instead of raised.
  */
-const resolveStoredFileName = (
-  part: InlineAttachmentPart,
-): StoredFileNameResolution => {
+const resolveStoredFile = (
+  part: StorableAttachmentPart,
+): StoredFileResolution => {
+  const mediaType = parseChatFileMediaType(part.mediaType);
+  if (mediaType === null) {
+    return { kind: "declined", reason: "media_type_not_accepted" };
+  }
+
   if (part.type === "image") {
-    const extension = getChatFileExtensionForMediaType(part.mediaType);
+    const extension = getChatFileExtensionForMediaType(mediaType);
 
     return extension === null
       ? { kind: "declined", reason: "media_type_not_accepted" }
-      : { kind: "name", fileName: `${IMAGE_FILE_NAME_STEM}${extension}` };
+      : { kind: "file", fileName: `${IMAGE_FILE_NAME_STEM}${extension}`, mediaType };
   }
 
   try {
-    return isAcceptedChatFileMediaType(part.fileName, part.mediaType)
-      ? { kind: "name", fileName: part.fileName }
+    return isAcceptedChatFileMediaType(part.fileName, mediaType)
+      ? { kind: "file", fileName: part.fileName, mediaType }
       : { kind: "declined", reason: "media_type_not_accepted" };
   } catch (error) {
     if (!(error instanceof UnusableChatFileNameError)) {
@@ -151,7 +195,7 @@ const describeError = (error: unknown): string =>
   error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 
 const logDeclined = (
-  reason: string,
+  reason: ChatFileIngestDeclineReason,
   mediaType: string,
   sizeBytes: number,
   context: ChatFileIngestContext,
@@ -171,12 +215,41 @@ const logDeclined = (
 };
 
 /**
+ * A fault of this deployment, named the way the derivatives pass names one.
+ *
+ * The file id is in it wherever one exists, because a media type cannot tell
+ * the two CSVs of one turn apart; null is every failure reached before the row.
+ */
+const logIngestError = (
+  message: string,
+  fileId: string | null,
+  context: ChatFileIngestContext,
+  dependencies: ChatFileIngestDependencies,
+): void => {
+  dependencies.log({
+    domain: "chat",
+    action: "error",
+    vendor: "openai",
+    stage: "agent",
+    error: `Chat file ingest: ${message}, fileId=${fileId ?? "none"}`,
+    requestId: context.requestId,
+    userId: context.userId,
+    workspaceId: context.workspaceId,
+    sessionId: context.sessionId,
+  });
+};
+
+/**
  * The row for one attachment, at the first sandbox path this session has free.
  *
  * The UNIQUE (session_id, path) index is the arbiter, exactly as it is for a
  * minted upload: a losing insert moves on to the next duplicate index rather
- * than failing, and only the path advances, so the file id and the object key
- * stay the ones this call minted.
+ * than failing, and only the path advances. Nothing else of the row is at
+ * stake, because the object is keyed off the id the winning insert returned
+ * rather than off anything decided per attempt - so an attempt that loses costs
+ * one read and one insert and leaves no trace. The name reached here through
+ * the same split buildChatFileSandboxPath performs, so it can no longer be a
+ * name with no sandbox form.
  */
 const insertAttachmentRowAtFreePath = async (
   fileName: string,
@@ -185,10 +258,6 @@ const insertAttachmentRowAtFreePath = async (
   context: ChatFileIngestContext,
   dependencies: ChatFileIngestDependencies,
 ): Promise<ChatFile | null> => {
-  // Minted once rather than per attempt, so a path that advances leaves the
-  // object key the row stores where it already was. The name reached here
-  // through the same split buildChatFileSandboxPath performs, so it can no
-  // longer be a name with no sandbox form.
   const fileId = dependencies.createFileId();
   for (
     let duplicateIndex = 1;
@@ -227,6 +296,12 @@ const insertAttachmentRowAtFreePath = async (
   return null;
 };
 
+type InlineAttachmentResult =
+  | Readonly<{ kind: "stored" }>
+  | Readonly<{ kind: "declined" }>
+  /** A fault of this deployment, with the row it had reached or null. */
+  | Readonly<{ kind: "failed"; fileId: string | null; error: unknown }>;
+
 /**
  * Store one attachment, or say why it was not stored.
  *
@@ -236,74 +311,128 @@ const insertAttachmentRowAtFreePath = async (
  * no command mounts it, while its declared size still counts against what the
  * session may hold. A write that fails therefore leaves exactly what an
  * abandoned upload leaves.
+ *
+ * It answers rather than raises, so the fault it answers with can name the row
+ * it had reached: a turn carrying two files of one type is two attachments a
+ * media type alone cannot tell apart.
  */
 const storeInlineAttachment = async (
   part: InlineAttachmentPart,
   objectStore: ChatFilesObjectStore,
   context: ChatFileIngestContext,
   dependencies: ChatFileIngestDependencies,
-): Promise<"stored" | "declined"> => {
-  const bytes = Uint8Array.from(Buffer.from(part.base64Data, "base64"));
+): Promise<InlineAttachmentResult> => {
+  if (part.type === "pdf") {
+    // Counted and declined rather than passed over, so that inlineCount names
+    // every attachment of the turn and the attachments the sandbox cannot reach
+    // are the difference between the two counts. Its bytes are what is missing:
+    // the browser's PDF pass sends page text and page JPEGs, so the bytes of
+    // the PDF the user attached never reach the server at all, and no size of
+    // it is known here. Storing a PDF as a file of the session therefore waits
+    // on the browser sending the original, which is the same change that drops
+    // the inline send.
+    logDeclined("pdf_original_not_sent", part.mediaType, 0, context, dependencies);
+
+    return { kind: "declined" };
+  }
+
+  // Handed on as the Uint8Array a Buffer already is: wrapping it would be a
+  // second allocation of a 20 MiB attachment, per attachment, before the first
+  // token of the turn.
+  const bytes = Buffer.from(part.base64Data, "base64");
   const sizeBytes = bytes.byteLength;
-  const resolution = resolveStoredFileName(part);
+  const resolution = resolveStoredFile(part);
   if (resolution.kind === "declined") {
     logDeclined(resolution.reason, part.mediaType, sizeBytes, context, dependencies);
 
-    return "declined";
+    return { kind: "declined" };
   }
 
-  // Re-read per attachment rather than carried across the turn, for the reason
-  // the derivatives pass re-reads it: a row committed beside this one is
-  // invisible to a total measured before it, and the overshoot is the session's
-  // whole mount.
-  const sessionFilesBytes = await dependencies.sumSessionFilesMountBytes(
-    context.userId,
-    context.workspaceId,
-    context.sessionId,
-  );
-  if (sessionFilesBytes + sizeBytes > SESSION_DERIVABLE_FILES_MAX_BYTES) {
-    logDeclined("session_files_full", part.mediaType, sizeBytes, context, dependencies);
-
-    return "declined";
-  }
-
-  const chatFile = await insertAttachmentRowAtFreePath(
-    resolution.fileName,
-    part.mediaType,
-    sizeBytes,
-    context,
-    dependencies,
-  );
-  if (chatFile === null) {
-    logDeclined("path_duplicates_exhausted", part.mediaType, sizeBytes, context, dependencies);
-
-    return "declined";
-  }
-
-  await objectStore.writeObject(
-    buildChatFileObjectKey(context.sessionId, chatFile.fileId),
-    chatFile.mediaType,
-    bytes,
-  );
-  const confirmed = await dependencies.confirmChatFileUpload(
-    context.userId,
-    context.workspaceId,
-    context.sessionId,
-    chatFile.fileId,
-    createHash("sha256").update(bytes).digest("hex"),
-  );
-  if (confirmed === null) {
-    // The row was minted by this call and nothing else holds its file id, so
-    // the only way its sentinel digest is already gone is a row this pass did
-    // not write - which means the key it just wrote the object under is not
-    // the row's own.
-    throw new Error(
-      "Chat file ingest confirmation matched no unconfirmed row it had just inserted, "
-      + `sessionId=${context.sessionId}, fileId=${chatFile.fileId}`,
+  let chatFile: ChatFile | null = null;
+  try {
+    // Re-read per attachment rather than carried across the turn, for the
+    // reason the derivatives pass re-reads it: a row committed beside this one
+    // is invisible to a total measured before it, and the overshoot is the
+    // session's whole mount.
+    const sessionFilesBytes = await dependencies.sumSessionFilesMountBytes(
+      context.userId,
+      context.workspaceId,
+      context.sessionId,
     );
+    if (sessionFilesBytes + sizeBytes > SESSION_DERIVABLE_FILES_MAX_BYTES) {
+      logDeclined("session_files_full", part.mediaType, sizeBytes, context, dependencies);
+
+      return { kind: "declined" };
+    }
+
+    chatFile = await insertAttachmentRowAtFreePath(
+      resolution.fileName,
+      resolution.mediaType,
+      sizeBytes,
+      context,
+      dependencies,
+    );
+    if (chatFile === null) {
+      logDeclined("path_duplicates_exhausted", part.mediaType, sizeBytes, context, dependencies);
+
+      return { kind: "declined" };
+    }
+
+    await objectStore.writeObject(
+      buildChatFileObjectKey(context.sessionId, chatFile.fileId),
+      chatFile.mediaType,
+      bytes,
+    );
+    const confirmed = await dependencies.confirmChatFileUpload(
+      context.userId,
+      context.workspaceId,
+      context.sessionId,
+      chatFile.fileId,
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    if (confirmed === null) {
+      // The row was minted by this call and nothing else holds its file id, so
+      // the only way its sentinel digest is already gone is a row this pass did
+      // not write - which means the key it just wrote the object under is not
+      // the row's own.
+      throw new Error(
+        "confirmation matched no unconfirmed row it had just inserted",
+      );
+    }
+  } catch (error) {
+    return { kind: "failed", fileId: chatFile?.fileId ?? null, error };
   }
 
-  return "stored";
+  return { kind: "stored" };
+};
+
+type ObjectStoreResolution =
+  | Readonly<{ kind: "store"; objectStore: ChatFilesObjectStore }>
+  | Readonly<{ kind: "unconfigured" }>
+  | Readonly<{ kind: "unreadable"; error: unknown }>;
+
+/**
+ * The bucket this pass writes into, the absence of one, or the fault that hid
+ * it.
+ *
+ * CHAT_FILES_BUCKET alone decides whether a store is expected and the rest of
+ * its configuration is demanded only once it is, so a deployment that sets the
+ * bucket and not the region raises in here rather than answering null. That is
+ * a fault of the deployment and is recorded as one, and it may not be the thing
+ * that ends every chat turn carrying an attachment.
+ */
+const resolveObjectStore = (
+  dependencies: ChatFileIngestDependencies,
+): ObjectStoreResolution => {
+  try {
+    const objectStore = dependencies.getObjectStore();
+
+    return objectStore === null
+      ? { kind: "unconfigured" }
+      : { kind: "store", objectStore };
+  } catch (error) {
+    return { kind: "unreadable", error };
+  }
 };
 
 export const ingestInlineChatAttachmentsWithDependencies = async (
@@ -311,49 +440,72 @@ export const ingestInlineChatAttachmentsWithDependencies = async (
   content: ReadonlyArray<ContentPart>,
   dependencies: ChatFileIngestDependencies,
 ): Promise<ChatFileIngestOutcome> => {
-  // Demo mode holds no database and no bucket, and a deployment with no bucket
-  // stores no chat file at all. Both answer before the content is walked, so
-  // neither pays for it.
+  // Demo mode holds no database and no bucket, so it answers before the content
+  // is walked and does not pay for it.
   if (context.isDemoMode) {
     return IDLE_OUTCOME;
   }
-  const objectStore = dependencies.getObjectStore();
-  if (objectStore === null) {
-    return IDLE_OUTCOME;
-  }
 
+  // Walked before the bucket is read, so a turn that carries no attachment
+  // costs nothing and cannot be the turn a misconfigured store fails.
   const parts = selectInlineAttachmentParts(content);
   if (parts.length === 0) {
     return IDLE_OUTCOME;
   }
 
+  const startedAt = Date.now();
+  const resolution = resolveObjectStore(dependencies);
+  // A deployment with no bucket stores no chat file at all, and that is not an
+  // outcome of this turn.
+  if (resolution.kind === "unconfigured") {
+    return IDLE_OUTCOME;
+  }
+
   let storedCount = 0;
   let declinedCount = 0;
-  let stopped = false;
-  for (const part of parts) {
-    let result: "stored" | "declined";
-    try {
-      result = await storeInlineAttachment(part, objectStore, context, dependencies);
-    } catch (error) {
-      dependencies.log({
-        domain: "chat",
-        action: "error",
-        vendor: "openai",
-        stage: "agent",
-        error: `Chat file ingest: storing one inline attachment failed, mediaType=${part.mediaType}: ${describeError(error)}`,
-        requestId: context.requestId,
-        userId: context.userId,
-        workspaceId: context.workspaceId,
-        sessionId: context.sessionId,
-      });
-      stopped = true;
-      break;
+  let stopReason: ChatFileIngestStopReason | null = null;
+  if (resolution.kind === "unreadable") {
+    logIngestError(
+      `the object store this deployment configured could not be read: ${describeError(resolution.error)}`,
+      null,
+      context,
+      dependencies,
+    );
+    stopReason = "unrecordable";
+  } else {
+    for (const part of parts) {
+      // Checked per attachment, and the whole reason the signal is threaded
+      // here: a row this pass commits after the stop is a row the next turn's
+      // gates read a total without, and nothing after the stop is work anyone
+      // is waiting on either. Checked before the write rather than after it, so
+      // the attachments not reached leave nothing at all behind.
+      if (context.signal?.aborted === true) {
+        stopReason = "aborted";
+        break;
+      }
+
+      const result = await storeInlineAttachment(
+        part,
+        resolution.objectStore,
+        context,
+        dependencies,
+      );
+      if (result.kind === "failed") {
+        logIngestError(
+          `storing one inline attachment failed, mediaType=${part.mediaType}: ${describeError(result.error)}`,
+          result.fileId,
+          context,
+          dependencies,
+        );
+        stopReason = "unrecordable";
+        break;
+      }
+      if (result.kind === "stored") {
+        storedCount += 1;
+        continue;
+      }
+      declinedCount += 1;
     }
-    if (result === "stored") {
-      storedCount += 1;
-      continue;
-    }
-    declinedCount += 1;
   }
 
   dependencies.log({
@@ -366,10 +518,11 @@ export const ingestInlineChatAttachmentsWithDependencies = async (
     inlineCount: parts.length,
     storedCount,
     declinedCount,
-    stopped,
+    stopReason,
+    durationMs: Date.now() - startedAt,
   });
 
-  return { inlineCount: parts.length, storedCount, declinedCount, stopped };
+  return { inlineCount: parts.length, storedCount, declinedCount, stopReason };
 };
 
 export const ingestInlineChatAttachments = async (

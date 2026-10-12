@@ -144,13 +144,17 @@ export const isAcceptedChatFileMediaType = (
 ): boolean => getAcceptedChatFileMediaTypes(fileName).includes(mediaType);
 
 /**
- * Extension a media type may be stored under, or null for a type no extension
+ * An extension the media type is accepted for, or null for a type no extension
  * accepts.
  *
- * The inverse of the table above, for the one attachment that declares a type
- * and no name at all: an inline image part. Read from the same table rather
- * than from a second list of its own, so a type accepted for an extension and
- * the extension chosen for that type can never disagree.
+ * The first match in the table above and not its inverse: several types are
+ * accepted for more than one extension - `application/vnd.ms-excel` for `.csv`
+ * before `.xls`, `text/plain` for thirteen - and this answers with whichever
+ * the table holds first. That is enough for its one caller, which needs any
+ * accepted name for an attachment the user gave none: an inline image part,
+ * whose every accepted type is listed for image extensions alone, so the first
+ * match does name the format. Nothing may read the answer as the extension of
+ * the type.
  */
 export const getChatFileExtensionForMediaType = (
   mediaType: string,
