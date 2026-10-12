@@ -342,6 +342,36 @@ export type ChatSandboxCommandResult =
   | Readonly<{ kind: "ran"; data: ChatSandboxCommandData }>
   | Readonly<{ kind: "refused"; refusal: ChatSandboxCommandRefusal }>;
 
+/**
+ * What each shared helper below needs, as its own type.
+ *
+ * Narrow slices rather than the whole ChatSandboxDependencies, so a caller with
+ * its own dependency set - the derivative pass has no write slots to upsert and
+ * no spill object to write - satisfies them structurally without carrying
+ * fields it never uses.
+ */
+export type SandboxReadPresigning = Readonly<{
+  presignReadUrl: (
+    objectKey: string,
+    downloadFileName: string,
+    expiresInSeconds: number,
+  ) => Promise<string>;
+}>;
+
+export type SandboxSlotMinting = Readonly<{
+  presignWriteSlotUrl: (
+    objectKey: string,
+    mediaType: string,
+    expiresInSeconds: number,
+  ) => Promise<string>;
+  createFileId: () => string;
+}>;
+
+export type SandboxInvoking = Readonly<{
+  invokeSandbox: (functionName: string, payload: string) => Promise<string>;
+  log: typeof log;
+}>;
+
 export type ChatSandboxDependencies = Readonly<{
   listSessionChatFiles: typeof listSessionChatFiles;
   upsertWorkChatFile: typeof upsertWorkChatFile;
@@ -371,7 +401,7 @@ export class ChatSandboxResponseError extends Error {
   }
 }
 
-const writtenFileSchema = z.object({
+export const sandboxWrittenFileSchema = z.object({
   path: z.string(),
   slotId: z.string(),
   sizeBytes: z.number().int().nonnegative(),
@@ -391,7 +421,7 @@ const sandboxResponseSchema = z.object({
   stderr: z.string(),
   exitCode: z.number().int(),
   durationMs: z.number().int().nonnegative(),
-  writtenFiles: z.array(writtenFileSchema),
+  writtenFiles: z.array(sandboxWrittenFileSchema),
   deletedPaths: z.array(z.string()),
   notes: z.array(z.string()),
 });
@@ -399,7 +429,7 @@ const sandboxResponseSchema = z.object({
 type SandboxResponse = z.infer<typeof sandboxResponseSchema>;
 
 /** One minted slot, and the row it becomes if the sandbox spends it. */
-type WriteSlot = Readonly<{
+export type SandboxWriteSlot = Readonly<{
   slotId: string;
   fileId: string;
   objectKey: string;
@@ -542,6 +572,12 @@ export const invokeSandboxFunction = async (
   return body;
 };
 
+/** Null when this deployment configures no sandbox, so nothing can be run. */
+export const readChatSandboxFunctionName = (): string | null => {
+  const value = process.env[CHAT_SANDBOX_FUNCTION_NAME_ENV_VAR];
+  return value === undefined || value === "" ? null : value;
+};
+
 export const buildChatSandboxDependencies = (): ChatSandboxDependencies => ({
   listSessionChatFiles,
   upsertWorkChatFile,
@@ -565,10 +601,7 @@ export const buildChatSandboxDependencies = (): ChatSandboxDependencies => ({
   ): Promise<void> => getChatFilesObjectStore().writeObject(objectKey, mediaType, content),
   invokeSandbox: invokeSandboxFunction,
   createFileId: (): string => randomUUID(),
-  readFunctionName: (): string | null => {
-    const value = process.env[CHAT_SANDBOX_FUNCTION_NAME_ENV_VAR];
-    return value === undefined || value === "" ? null : value;
-  },
+  readFunctionName: readChatSandboxFunctionName,
   log,
 });
 
@@ -673,28 +706,42 @@ const describeUnmountableFiles = (
  * and every later command of that chat would fail before running, with no way
  * for the model to delete what it created.
  */
+export const buildSandboxRequestFile = async (
+  file: ChatFile,
+  dependencies: SandboxReadPresigning,
+): Promise<Readonly<Record<string, unknown>>> => ({
+  path: file.path,
+  sizeBytes: file.sizeBytes,
+  mediaType: file.mediaType,
+  sha256: file.sha256,
+  mtimeMs: file.updatedAt,
+  getUrl: await dependencies.presignReadUrl(
+    requireSessionOwnedObjectKey(file),
+    getChatFileNameFromSandboxPath(file.path),
+    SANDBOX_URL_EXPIRES_IN_SECONDS,
+  ),
+});
+
 const buildRequestFiles = async (
   files: ReadonlyArray<ChatFile>,
   dependencies: ChatSandboxDependencies,
 ): Promise<ReadonlyArray<Readonly<Record<string, unknown>>>> =>
-  Promise.all(files.map(async (file) => ({
-    path: file.path,
-    sizeBytes: file.sizeBytes,
-    mediaType: file.mediaType,
-    sha256: file.sha256,
-    mtimeMs: file.updatedAt,
-    getUrl: await dependencies.presignReadUrl(
-      requireSessionOwnedObjectKey(file),
-      getChatFileNameFromSandboxPath(file.path),
-      SANDBOX_URL_EXPIRES_IN_SECONDS,
-    ),
-  })));
+  Promise.all(files.map(async (file) => buildSandboxRequestFile(file, dependencies)));
 
-const buildWriteSlots = async (
+/**
+ * The slots one sandbox request may spend, minted here for every operation.
+ *
+ * Shared rather than copied, because the count is load-bearing in both
+ * directions - a `prepare` needs exactly SANDBOX_PREPARE_MAX_DERIVATIVES of
+ * them, which the type assertion above pins to this number - and because the
+ * object key of a slot has to be the one its row will carry. Two copies of
+ * either would be a slot whose upload no row ever points at.
+ */
+export const buildSandboxWriteSlots = async (
   sessionId: string,
-  dependencies: ChatSandboxDependencies,
-): Promise<ReadonlyArray<WriteSlot>> =>
-  Promise.all(Array.from({ length: CHAT_SANDBOX_WRITE_SLOTS }, async (): Promise<WriteSlot> => {
+  dependencies: SandboxSlotMinting,
+): Promise<ReadonlyArray<SandboxWriteSlot>> =>
+  Promise.all(Array.from({ length: CHAT_SANDBOX_WRITE_SLOTS }, async (): Promise<SandboxWriteSlot> => {
     const fileId = dependencies.createFileId();
     if (!isChatFileId(fileId)) {
       throw new Error(`Chat sandbox write slot id must be a lowercase UUID, got "${fileId}"`);
@@ -715,11 +762,20 @@ const buildWriteSlots = async (
     };
   }));
 
-const invokeWithRetries = async (
+/**
+ * One invocation and the throttle retries it is owed, for every operation.
+ *
+ * Takes the two fields it logs rather than a command context: the derivative
+ * pass has no tool call, and a second copy of this loop would be a second
+ * answer to which failures may be re-sent - the one decision in this module
+ * that must not be duplicated, because retrying the wrong class double-applies
+ * a user's own file changes.
+ */
+export const invokeSandboxWithRetries = async (
   functionName: string,
   payload: string,
-  context: ChatSandboxCommandContext,
-  dependencies: ChatSandboxDependencies,
+  context: Readonly<{ requestId: string; sessionId: string }>,
+  dependencies: SandboxInvoking,
 ): Promise<string> => {
   let lastError: unknown;
   for (let attempt = 1; attempt <= INVOKE_ATTEMPTS; attempt += 1) {
@@ -807,7 +863,7 @@ type RecordedChanges = Readonly<{
  */
 const recordSandboxChanges = async (
   response: SandboxResponse,
-  slots: ReadonlyArray<WriteSlot>,
+  slots: ReadonlyArray<SandboxWriteSlot>,
   mountedFiles: ReadonlyArray<ChatFile>,
   context: ChatSandboxCommandContext,
   dependencies: ChatSandboxDependencies,
@@ -1523,7 +1579,7 @@ export const runChatSandboxCommandWithDependencies = async (
     return { kind: "refused", refusal };
   }
 
-  const slots = await buildWriteSlots(context.sessionId, dependencies);
+  const slots = await buildSandboxWriteSlots(context.sessionId, dependencies);
   const payload = JSON.stringify({
     operation: "bash",
     sessionId: context.sessionId,
@@ -1536,7 +1592,7 @@ export const runChatSandboxCommandWithDependencies = async (
   let response: SandboxResponse;
   try {
     response = parseSandboxResponse(
-      await invokeWithRetries(functionName, payload, context, dependencies),
+      await invokeSandboxWithRetries(functionName, payload, context, dependencies),
     );
   } catch (error) {
     logSandboxCommand(context, command, mountedFiles, {

@@ -23,18 +23,23 @@
  */
 import type { WorkSheet } from "xlsx";
 import {
+  classifyChatSandboxSourceKind,
   describeUnmountableFileSet,
   describeUnsaveableFileBytes,
   describeUnsaveablePath,
+  isSelfDescribingChatSandboxSource,
   quoteUntrustedSandboxText,
   quoteUntrustedSandboxValue,
   SANDBOX_FILE_MAX_BYTES,
+  SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES,
   SANDBOX_PREPARE_MAX_DERIVATIVES,
   SANDBOX_PREPARE_MAX_TEXT_CHARACTERS,
+  SANDBOX_TEXT_DERIVATIVE_SUFFIX,
   SANDBOX_WORK_FILE_MEDIA_TYPE,
   type ChatSandboxFile,
   type ChatSandboxPrepareRequest,
   type ChatSandboxPrepareResponse,
+  type ChatSandboxSourceKind,
   type ChatSandboxWriteSlot,
   type ChatSandboxWrittenFile,
 } from "./contract.js";
@@ -47,70 +52,6 @@ import {
   type SandboxObjectTransfer,
 } from "./objects.js";
 import { isSandboxDefect } from "./sandboxDefect.js";
-
-/** What this sandbox can turn into plain files, by what it produces. */
-type SourceKind = "pdf" | "docx" | "workbook" | "zip";
-
-/**
- * The media type the chat recorded for an upload, which is the signal the web
- * task validated it on.
- */
-const SOURCE_KIND_BY_MEDIA_TYPE: ReadonlyMap<string, SourceKind> = new Map([
-  ["application/pdf", "pdf"],
-  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
-  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "workbook"],
-  ["application/vnd.ms-excel", "workbook"],
-  ["application/zip", "zip"],
-  // The type Windows reports for an archive, accepted for `.zip` by
-  // apps/web/src/lib/chatFiles.ts and therefore reachable here.
-  ["application/x-zip-compressed", "zip"],
-]);
-
-/**
- * The second signal, consulted only when the media type names nothing at all.
- *
- * Browsers upload a workbook as `application/octet-stream` often enough that
- * keying on the media type alone would silently leave real spreadsheets
- * unconverted, which is why apps/web/src/lib/chatFiles.ts accepts that one type
- * for every extension it knows.
- */
-const SOURCE_KIND_BY_EXTENSION: ReadonlyMap<string, SourceKind> = new Map([
-  [".pdf", "pdf"],
-  [".docx", "docx"],
-  [".xlsx", "workbook"],
-  [".xls", "workbook"],
-  [".zip", "zip"],
-]);
-
-/**
- * The media types that name no format, which are the only ones whose extension
- * is consulted.
- *
- * A media type that names a format is believed even when it names one with no
- * derivative, and the asymmetry is the point: a PNG that the user called
- * `report.pdf` would otherwise be handed to pdf.js, which throws, and the
- * caller records that as a permanent derivatives_error for an ordinary mistake.
- * Saying it has no derivative is both true and recoverable. The one type listed
- * is CHAT_FILE_OPAQUE_MEDIA_TYPE in apps/web/src/lib/chatFiles.ts, which is the
- * only type an upload may carry that does not already name its format.
- */
-const OPAQUE_MEDIA_TYPES: ReadonlySet<string> = new Set(["application/octet-stream"]);
-
-/**
- * Extensions whose file already IS the plain text a derivative would hold,
- * whatever media type the browser reported for it.
- *
- * One entry and one reason: Windows with Excel installed reports a `.csv` as
- * `application/vnd.ms-excel`, which apps/web/src/lib/chatFiles.ts accepts for
- * that extension and which maps to `workbook` above - so a CSV would otherwise
- * be handed to SheetJS, spending a write slot on a `.d/Sheet1.csv` sidecar that
- * repeats the upload byte for byte. The extension decides here because it is
- * the half of the pair that is right.
- */
-const SELF_DESCRIBING_EXTENSIONS: ReadonlySet<string> = new Set([".csv"]);
-
-/** Suffix of the one text derivative a document produces. */
-const TEXT_DERIVATIVE_SUFFIX = ".txt";
 
 /**
  * Suffix of the directory holding the many derivatives of one source.
@@ -128,21 +69,6 @@ const DERIVATIVE_DIRECTORY_SUFFIX = ".d";
  * said, so stating it twice would only create two answers to one question.
  */
 const ZIP_MAX_ENTRY_BYTES = SANDBOX_FILE_MAX_BYTES;
-
-/**
- * Ceiling on everything one archive expands to.
- *
- * Bounded from below and from above by two different numbers. It cannot be
- * smaller than ZIP_MAX_ENTRY_BYTES, or that cap could never be reached, and
- * this is the next power of two above it. And /files may hold
- * SANDBOX_FILES_REQUEST_MAX_BYTES - 512 MiB - for a whole chat, so one archive
- * costs at most the 50 MiB a chat file may be plus this, which is 178 MiB of
- * that mount: two such archives fit and a third leaves a session whose next
- * command cannot be seeded at all. That third one is not this layer's to
- * refuse, because only the caller knows the session's running total, so this
- * number keeps the blast radius small rather than removing it.
- */
-const ZIP_MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 
 /**
  * Compressed bytes handed to the archive reader at a time.
@@ -266,25 +192,6 @@ const describeRetryBound = (failure: ObjectReadFailure): string =>
     : "";
 
 const encodeText = (text: string): Uint8Array => new TextEncoder().encode(text);
-
-const extensionOf = (path: string): string => {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  const dot = name.lastIndexOf(".");
-
-  return dot <= 0 ? "" : name.slice(dot).toLowerCase();
-};
-
-const classifySourceKind = (source: ChatSandboxFile): SourceKind | null => {
-  const mediaType = source.mediaType.trim().toLowerCase();
-  if (SELF_DESCRIBING_EXTENSIONS.has(extensionOf(source.path))) {
-    return null;
-  }
-
-  return SOURCE_KIND_BY_MEDIA_TYPE.get(mediaType)
-    ?? (OPAQUE_MEDIA_TYPES.has(mediaType)
-      ? SOURCE_KIND_BY_EXTENSION.get(extensionOf(source.path)) ?? null
-      : null);
-};
 
 /**
  * Characters no name taken from inside a source may carry into a path.
@@ -667,9 +574,9 @@ const createZipEntryGate = (): ((entry: ZipEntryHeader) => void) => {
       );
     }
     declaredTotalBytes += entry.declaredBytes;
-    if (declaredTotalBytes > ZIP_MAX_TOTAL_BYTES) {
+    if (declaredTotalBytes > SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES) {
       throw new Error(
-        `it expands to at least ${String(declaredTotalBytes)} bytes, past the ${String(ZIP_MAX_TOTAL_BYTES)} bytes one archive may expand to`,
+        `it expands to at least ${String(declaredTotalBytes)} bytes, past the ${String(SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES)} bytes one archive may expand to`,
       );
     }
   };
@@ -856,9 +763,9 @@ const readZipDerivatives = async (
         );
       }
       totalBytes += chunk.length;
-      if (totalBytes > ZIP_MAX_TOTAL_BYTES) {
+      if (totalBytes > SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES) {
         throw new Error(
-          `it expands to at least ${String(totalBytes)} bytes, past the ${String(ZIP_MAX_TOTAL_BYTES)} bytes one archive may expand to`,
+          `it expands to at least ${String(totalBytes)} bytes, past the ${String(SANDBOX_PREPARE_MAX_DERIVATIVE_BYTES)} bytes one archive may expand to`,
         );
       }
       chunks.push(chunk);
@@ -890,16 +797,16 @@ const readZipDerivatives = async (
  * rather than as the one true thing, which is that the file is already text.
  */
 const describeMissingDerivative = (source: ChatSandboxFile): string =>
-  SELF_DESCRIBING_EXTENSIONS.has(extensionOf(source.path))
+  isSelfDescribingChatSandboxSource(source.path)
     ? `${quotedName(source.path)} is already the plain text a derivative would hold, so it has none: read the file itself.`
     : `${quotedName(source.path)} has no text derivative: ${quoteUntrustedSandboxText(source.mediaType)} is not a format this chat converts, so read the file itself.`;
 
 const buildDerivatives = async (
-  kind: SourceKind,
+  kind: ChatSandboxSourceKind,
   source: ChatSandboxFile,
   bytes: Uint8Array,
 ): Promise<PreparedDerivatives> => {
-  const textPath = `${source.path}${TEXT_DERIVATIVE_SUFFIX}`;
+  const textPath = `${source.path}${SANDBOX_TEXT_DERIVATIVE_SUFFIX}`;
   switch (kind) {
     case "pdf": {
       const extracted = await extractPdfText(bytes);
@@ -1104,7 +1011,7 @@ export const prepareSource = async (
     error: `${quotedName(request.source.path)} could not be prepared now: ${quoteUntrustedSandboxText(reason)}`,
     durationMs: Date.now() - startedAt,
   });
-  const kind = classifySourceKind(request.source);
+  const kind = classifyChatSandboxSourceKind(request.source.mediaType, request.source.path);
   if (kind === null) {
     return {
       status: "prepared",

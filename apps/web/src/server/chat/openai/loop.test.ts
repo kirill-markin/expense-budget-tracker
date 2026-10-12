@@ -16,6 +16,7 @@ import {
   type StartOpenAILoopParams,
 } from "@/server/chat/openai/loop";
 import type { ChatCompletionInput } from "@/server/chat/openai/responses/input";
+import type { ChatFileDerivativesPassOutcome } from "@/server/chatFiles/derivatives";
 import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import {
@@ -49,6 +50,14 @@ const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
   buildChatCompletionInput: async (): Promise<ChatCompletionInput> => ({
     items: [],
     replayedMessages: 0,
+  }),
+  runChatFileDerivativesPass: async (): Promise<ChatFileDerivativesPassOutcome> => ({
+    preparedCount: 0,
+    derivedCount: 0,
+    failedCount: 0,
+    unavailableCount: 0,
+    deferredCount: 0,
+    stopReason: null,
   }),
   getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
   runOneModelCall: async (): Promise<never> => {
