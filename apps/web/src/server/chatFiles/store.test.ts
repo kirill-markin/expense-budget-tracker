@@ -4,8 +4,11 @@ import test, { mock } from "node:test";
 import type { NewChatFile } from "@/server/chatFiles/store";
 
 const FILE_ID = "4f0a1d2e-7c3b-4a9d-8e51-6b2c9d0f3a74";
+const REPLACED_FILE_ID = "b1c2d3e4-5f60-4718-9a2b-3c4d5e6f7081";
 const SESSION_ID = "session-1";
 const EXPECTED_OBJECT_KEY = `sessions/${SESSION_ID}/${FILE_ID}`;
+const DISPLACED_OBJECT_KEY = `sessions/${SESSION_ID}/${REPLACED_FILE_ID}`;
+const WORK_PATH = "/work/report.txt";
 
 const buildNewChatFile = (fileId: string, sha256: string): NewChatFile => ({
   fileId,
@@ -16,6 +19,13 @@ const buildNewChatFile = (fileId: string, sha256: string): NewChatFile => ({
   mediaType: "text/csv",
   sizeBytes: 1024,
   sha256,
+});
+
+const buildNewWorkChatFile = (sha256: string): NewChatFile => ({
+  ...buildNewChatFile(FILE_ID, sha256),
+  origin: "work",
+  path: WORK_PATH,
+  mediaType: "text/plain",
 });
 
 /** The inserted row, shaped as node-pg hands a RETURNING result back. */
@@ -42,6 +52,9 @@ const statements: Array<Statement> = [];
 /** Answer of the aggregate statement, so one test can change what it returns. */
 let aggregateTotalBytes = "0";
 
+/** Rows the replacement DELETE reports, so one test can displace an object. */
+let displacedObjectKeys: ReadonlyArray<string> = [];
+
 /**
  * Mocked at module scope, because the store module is loaded once per file: a
  * second mock registered inside a later test would be shadowed by the instance
@@ -62,9 +75,14 @@ mock.module("@/server/db", {
     ): Promise<T> =>
       callback(async (text, params) => {
         statements.push({ text, params });
-        return text.includes("SUM(size_bytes)")
-          ? { rows: [{ total_bytes: aggregateTotalBytes }] }
-          : { rows: [buildInsertedRow(params)] };
+        if (text.includes("SUM(size_bytes)")) {
+          return { rows: [{ total_bytes: aggregateTotalBytes }] };
+        }
+        if (text.includes("DELETE FROM public.chat_files")) {
+          return { rows: displacedObjectKeys.map((objectKey) => ({ object_key: objectKey })) };
+        }
+
+        return { rows: [buildInsertedRow(params)] };
       }),
   },
 });
@@ -97,6 +115,26 @@ test("insertChatFile derives the object key and refuses a non-UUID file id", asy
   );
   // The refused id never reached a statement.
   assert.equal(readStatements("INSERT INTO public.chat_files").length, 1);
+});
+
+test("upsertWorkChatFile reports the object key its replacement delete returned", async (): Promise<void> => {
+  const { upsertWorkChatFile, UNCONFIRMED_CHAT_FILE_SHA256 } = await import("@/server/chatFiles/store");
+
+  displacedObjectKeys = [DISPLACED_OBJECT_KEY];
+  const upserted = await upsertWorkChatFile(
+    "user-1",
+    "workspace-1",
+    buildNewWorkChatFile(UNCONFIRMED_CHAT_FILE_SHA256),
+  );
+  assert.equal(upserted.file.objectKey, EXPECTED_OBJECT_KEY);
+  assert.deepEqual(upserted.displacedObjectKeys, [DISPLACED_OBJECT_KEY]);
+
+  const deletes = readStatements("DELETE FROM public.chat_files");
+  assert.equal(deletes.length, 1);
+  assert.deepEqual(deletes[0].params, [SESSION_ID, WORK_PATH]);
+  // The statement that removed the row is the only thing that can still name
+  // the object it pointed at, so the key has to leave through its RETURNING.
+  assert.match(deletes[0].text, /RETURNING object_key/u);
 });
 
 test("sumSessionFilesMountBytes charges the attachment mount only", async (): Promise<void> => {

@@ -368,20 +368,38 @@ type ChatTranscriptionEvent = Readonly<{
 }>;
 
 /**
- * Chat file objects reclaimed when their workspace went away. The bucket has no
- * expiration rule, so this is the only reclaim path, and objectCount counts the
- * objects actually deleted, including on the failure the error propagates.
- * not_configured records a deployment that stores no chat file at all.
+ * Chat file objects reclaimed. The bucket has no expiration rule, so these two
+ * events cover every reclaim there is, and an object no event names is an
+ * object nothing will ever remove. `not_configured` records a deployment that
+ * stores no chat file at all.
+ *
+ * `workspace_objects_deleted` sweeps a workspace that went away, and objectCount
+ * counts the objects actually deleted, including on the failure the error
+ * propagates. `displaced_object_deleted` is the one object a /work save
+ * replaced, whose row is already committed away - so a `failed` outcome is the
+ * whole record of a leak the save deliberately did not raise on.
  */
-type ChatFilesEvent = Readonly<{
-  domain: "chat-files";
-  action: "workspace_objects_deleted";
-  outcome: "deleted" | "failed" | "not_configured";
-  workspaceId: string;
-  sessionCount: number;
-  objectCount: number;
-  error: string | null;
-}>;
+type ChatFilesEvent =
+  | Readonly<{
+    domain: "chat-files";
+    action: "workspace_objects_deleted";
+    outcome: "deleted" | "failed" | "not_configured";
+    workspaceId: string;
+    sessionCount: number;
+    objectCount: number;
+    error: string | null;
+  }>
+  | Readonly<{
+    domain: "chat-files";
+    action: "displaced_object_deleted";
+    outcome: "deleted" | "failed" | "not_configured";
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    path: string;
+    objectKey: string;
+    error: string | null;
+  }>;
 
 /**
  * One `bash` command of the web chat's file sandbox: the metadata of every call

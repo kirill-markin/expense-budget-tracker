@@ -41,11 +41,11 @@ import {
   buildChatFileObjectKey,
   getChatFilesObjectStore,
 } from "@/server/chatFiles/objectStore";
+import { saveWorkChatFile } from "@/server/chatFiles/saveWorkFile";
 import {
   deleteChatFile,
   isChatFileId,
   listSessionChatFiles,
-  upsertWorkChatFile,
   type ChatFile,
 } from "@/server/chatFiles/store";
 import {
@@ -374,7 +374,7 @@ export type SandboxInvoking = Readonly<{
 
 export type ChatSandboxDependencies = Readonly<{
   listSessionChatFiles: typeof listSessionChatFiles;
-  upsertWorkChatFile: typeof upsertWorkChatFile;
+  saveWorkChatFile: typeof saveWorkChatFile;
   deleteChatFile: typeof deleteChatFile;
   presignReadUrl: (
     objectKey: string,
@@ -580,7 +580,7 @@ export const readChatSandboxFunctionName = (): string | null => {
 
 export const buildChatSandboxDependencies = (): ChatSandboxDependencies => ({
   listSessionChatFiles,
-  upsertWorkChatFile,
+  saveWorkChatFile,
   deleteChatFile,
   presignReadUrl: async (
     objectKey: string,
@@ -917,7 +917,7 @@ const recordSandboxChanges = async (
     spentSlotIds.add(written.slotId);
     const previous = rowsByPath.get(written.path);
     try {
-      const row = await dependencies.upsertWorkChatFile(context.userId, context.workspaceId, {
+      const row = await dependencies.saveWorkChatFile(context.userId, context.workspaceId, {
         // Always the slot's own id, never the replaced row's: the object the
         // sandbox uploaded lives under the key this id derives, and a row
         // carrying any other id would name an object that is not its content.
@@ -1141,7 +1141,7 @@ const spillFullOutput = async (
       SPILLED_OUTPUT_MEDIA_TYPE,
       content,
     );
-    const row = await dependencies.upsertWorkChatFile(context.userId, context.workspaceId, {
+    const row = await dependencies.saveWorkChatFile(context.userId, context.workspaceId, {
       fileId,
       sessionId: context.sessionId,
       origin: "work",
