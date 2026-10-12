@@ -143,10 +143,46 @@ export const isAcceptedChatFileMediaType = (
   mediaType: string,
 ): boolean => getAcceptedChatFileMediaTypes(fileName).includes(mediaType);
 
+/**
+ * An extension the media type is accepted for, or null for a type no extension
+ * accepts.
+ *
+ * The first match in the table above and not its inverse: several types are
+ * accepted for more than one extension - `application/vnd.ms-excel` for `.csv`
+ * before `.xls`, `text/plain` for thirteen - and this answers with whichever
+ * the table holds first. That is enough for its one caller, which needs any
+ * accepted name for an attachment the user gave none: an inline image part,
+ * whose every accepted type is listed for image extensions alone, so the first
+ * match does name the format. Nothing may read the answer as the extension of
+ * the type.
+ */
+export const getChatFileExtensionForMediaType = (
+  mediaType: string,
+): string | null => {
+  const normalizedMediaType = mediaType.trim().toLowerCase();
+  for (const [extension, mediaTypes] of ACCEPTED_MEDIA_TYPES_BY_EXTENSION) {
+    if (mediaTypes.includes(normalizedMediaType)) {
+      return extension;
+    }
+  }
+
+  return null;
+};
+
 export const sanitizeChatFileName = (fileName: string): string => {
   const { stem, extension } = splitSanitizedChatFileName(fileName);
   return `${stem}${extension}`;
 };
+
+/**
+ * Duplicate indexes one declared name may take inside a session, which bounds
+ * the search every writer of a row does for a free path.
+ *
+ * Sanitization folds distinct declared names onto the same sandbox name, so a
+ * session can legitimately need a few suffixes. Exhausting them is a caller
+ * outcome rather than an operator-facing failure.
+ */
+export const CHAT_FILE_MAXIMUM_PATH_DUPLICATES = 100;
 
 /**
  * Sandbox path of a declared file name. A duplicate index above 1 appends the

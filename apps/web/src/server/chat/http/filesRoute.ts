@@ -22,6 +22,7 @@
 import {
   buildChatFileSandboxPath,
   CHAT_FILE_MAXIMUM_BYTES,
+  CHAT_FILE_MAXIMUM_PATH_DUPLICATES,
   CHAT_FILE_SANDBOX_DIRECTORY,
   getAcceptedChatFileMediaTypes,
   getChatFileNameFromSandboxPath,
@@ -63,11 +64,6 @@ const UPLOAD_URL_EXPIRES_IN_SECONDS = 900;
 
 // The read URL is handed to a browser that uses it immediately.
 const READ_URL_EXPIRES_IN_SECONDS = 300;
-
-// Sanitization folds distinct declared names onto the same sandbox name, so a
-// session can legitimately need a few suffixes. Exhausting them is a caller
-// outcome, answered with 409 rather than an operator-facing failure.
-const MAXIMUM_PATH_DUPLICATES = 100;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
@@ -358,7 +354,7 @@ const insertChatFileAtFreePath = async (
   fileId: string,
   mintRequest: ChatFileUploadMintRequest,
 ): Promise<ChatFile> => {
-  for (let duplicateIndex = 1; duplicateIndex <= MAXIMUM_PATH_DUPLICATES; duplicateIndex += 1) {
+  for (let duplicateIndex = 1; duplicateIndex <= CHAT_FILE_MAXIMUM_PATH_DUPLICATES; duplicateIndex += 1) {
     const path = buildChatFileSandboxPath(mintRequest.fileName, duplicateIndex);
     const existingChatFile = await dependencies.getChatFileByPath(
       context.userId,
@@ -391,7 +387,7 @@ const insertChatFileAtFreePath = async (
   throw new ApiRouteError(
     409,
     `Chat file name ${mintRequest.fileName} already has `
-    + `${String(MAXIMUM_PATH_DUPLICATES)} sandbox paths in this session; `
+    + `${String(CHAT_FILE_MAXIMUM_PATH_DUPLICATES)} sandbox paths in this session; `
     + "use another name",
   );
 };
@@ -454,7 +450,7 @@ const describeFilledSessionFiles = (
  * rows take the session to the same dead end by a different route: the
  * invocation stops being one Lambda will accept, which is every `bash` call of
  * that chat failing with nothing the model can run to undo it.
- * MAXIMUM_PATH_DUPLICATES is no obstacle, because the names are the caller's
+ * CHAT_FILE_MAXIMUM_PATH_DUPLICATES is no obstacle, because the names are the caller's
  * and nothing bounds how many it invents. A count cap is deliberately not added
  * here anyway: there is no sandbox row ceiling for one to agree with, the way
  * this gate agrees with SESSION_DERIVABLE_FILES_MAX_BYTES, and the limit it

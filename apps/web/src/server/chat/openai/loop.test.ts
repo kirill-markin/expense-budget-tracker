@@ -17,6 +17,7 @@ import {
 } from "@/server/chat/openai/loop";
 import type { ChatCompletionInput } from "@/server/chat/openai/responses/input";
 import type { ChatFileDerivativesPassOutcome } from "@/server/chatFiles/derivatives";
+import type { ChatFileIngestOutcome } from "@/server/chatFiles/ingest";
 import {
   EMPTY_CHAT_TURN_FILE_CONTEXT,
   type ChatTurnFileContext,
@@ -55,6 +56,12 @@ const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
   buildChatCompletionInput: async (): Promise<ChatCompletionInput> => ({
     items: [],
     replayedMessages: 0,
+  }),
+  ingestInlineChatAttachments: async (): Promise<ChatFileIngestOutcome> => ({
+    inlineCount: 0,
+    storedCount: 0,
+    declinedCount: 0,
+    stopReason: null,
   }),
   runChatFileDerivativesPass: async (): Promise<ChatFileDerivativesPassOutcome> => ({
     preparedCount: 0,
@@ -238,6 +245,52 @@ test("runOpenAILoop propagates the default model policy to an ordinary call", as
 
   assert.equal(observedRequests[0]?.model, CHAT_MODEL_ID);
   assert.equal(observedRequests[0]?.reasoning.effort, CHAT_MODEL_REASONING_EFFORT);
+});
+
+test("runOpenAILoop ingests this turn's attachments once, with the run's signal, before the conversions", async (): Promise<void> => {
+  const params = createLoopParams();
+  const signal = new AbortController().signal;
+  const calls: Array<string> = [];
+  const ingestSignals: Array<AbortSignal | null> = [];
+
+  await runOpenAILoopWithDeps(
+    { ...params, signal },
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      ingestInlineChatAttachments: async (
+        context: Parameters<LoopDeps["ingestInlineChatAttachments"]>[0],
+      ): Promise<ChatFileIngestOutcome> => {
+        calls.push("ingest");
+        ingestSignals.push(context.signal);
+        return { inlineCount: 0, storedCount: 0, declinedCount: 0, stopReason: null };
+      },
+      runChatFileDerivativesPass: async (): Promise<ChatFileDerivativesPassOutcome> => {
+        calls.push("derivatives");
+        return {
+          preparedCount: 0,
+          derivedCount: 0,
+          failedCount: 0,
+          unavailableCount: 0,
+          deferredCount: 0,
+          stopReason: null,
+        };
+      },
+      runOneModelCall: async () => ({
+        finalResponse: createFinalResponse("Done"),
+        functionCalls: [],
+        replayItems: [createAssistantReplayItem("Done")],
+        streamedText: "Done",
+        toolStates: createToolCallStateMap(),
+      }),
+    }),
+  );
+
+  // Exactly once, because a turn reaches this loop once and an attachment
+  // stored twice is two rows and two objects of the same bytes; and ahead of
+  // the conversions, because the attachment this turn arrived with is among the
+  // files that pass converts.
+  assert.deepEqual(calls, ["ingest", "derivatives"]);
+  assert.deepEqual(ingestSignals, [signal]);
 });
 
 test("runOpenAILoop replays an in-run compaction item with the tool result and the datetime last", async (): Promise<void> => {
