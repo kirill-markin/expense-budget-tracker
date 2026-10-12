@@ -370,8 +370,9 @@ type ChatTranscriptionEvent = Readonly<{
 /**
  * Chat file objects reclaimed. The bucket has no expiration rule, so these two
  * events cover every reclaim there is, and an object no event names is an
- * object nothing will ever remove. `not_configured` records a deployment that
- * stores no chat file at all.
+ * object nothing will ever remove. `not_configured` records a workspace sweep
+ * on a deployment that stores no chat file at all, which a displaced /work
+ * object has no counterpart for: its row could not exist without a bucket.
  *
  * `workspace_objects_deleted` sweeps a workspace that went away, and objectCount
  * counts the objects actually deleted, including on the failure the error
@@ -392,7 +393,7 @@ type ChatFilesEvent =
   | Readonly<{
     domain: "chat-files";
     action: "displaced_object_deleted";
-    outcome: "deleted" | "failed" | "not_configured";
+    outcome: "deleted" | "failed";
     userId: string;
     workspaceId: string;
     sessionId: string;

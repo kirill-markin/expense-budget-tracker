@@ -440,18 +440,18 @@ const deleteDerivedRows = async (
  * The objects of the removed rows stay in the bucket, and so do the objects of
  * every other answered conversion this side refuses. This layer could delete
  * them - it signed every slot key and holds them in `slotsById` - and it
- * deliberately does not, because the same question already has one answer in
- * this subsystem: the `bash` caller removes the row of a /work file the model
- * deleted and leaves the object (the deletedPaths loop of recordSandboxChanges
- * in chat/sandbox/invoke.ts), and a second answer here would be a second place
- * deciding when a chat's objects are reclaimed. Its other refusal is not the
- * precedent: a /work file it cannot record never gets a row in the first place,
- * so it leaves an object and nothing else. What is bounded is how many
- * such objects one refusal leaves: at most the slots of one invocation. What is
- * not bounded is how long they live - chatFiles/cleanup.ts sweeps a session
- * prefix only when its workspace is deleted, there is no per-session route, and
- * the bucket carries no expiration rule (infra/aws/lib/chat-files-bucket.ts),
- * so "the session's own cleanup" is not a thing that runs on its own.
+ * deliberately does not. The one place in this subsystem that does reclaim an
+ * object is chatFiles/saveWorkFile.ts, for the row a /work save displaces, and
+ * what makes that reclaim safe is that it never chooses a key: the committed
+ * replacement DELETE hands it the one key nothing in the database names any
+ * more. This side has no such statement to take a key from - the rows that
+ * would have named these objects are exactly the ones it just failed to write -
+ * so it would be deleting on its own judgement of what is unreachable. What is
+ * bounded is how many such objects one refusal leaves: at most the slots of one
+ * invocation. What is not bounded is how long they live - chatFiles/cleanup.ts
+ * sweeps a session prefix only when its workspace is deleted, there is no
+ * per-session route, and the bucket carries no expiration rule
+ * (infra/aws/lib/chat-files-bucket.ts).
  */
 const insertDerivedRows = async (
   source: ChatFile,

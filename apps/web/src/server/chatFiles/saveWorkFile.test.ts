@@ -83,7 +83,7 @@ test("replacing a /work file reclaims the object the delete reported", async ():
       assert.equal(newChatFile.path, WORK_PATH);
       return buildUpserted([DISPLACED_OBJECT_KEY]);
     },
-    getChatFilesObjectStoreIfConfigured: () => ({
+    getChatFilesObjectStore: () => ({
       deleteObject: async (objectKey) => {
         deletedObjectKeys.push(objectKey);
       },
@@ -113,7 +113,7 @@ test("a first save at a path reclaims nothing and never reaches the bucket", asy
 
   const row = await saveWorkChatFileWithDeps("user-1", "workspace-1", buildNewWorkChatFile(), {
     upsertWorkChatFile: async () => buildUpserted([]),
-    getChatFilesObjectStoreIfConfigured: (): never => {
+    getChatFilesObjectStore: (): never => {
       throw new Error("the bucket must not be reached when the save displaced nothing");
     },
     log: createEventCapture(capturedEvents),
@@ -129,7 +129,7 @@ test("a failed reclaim keeps the save and is the only record of the leak", async
   // The row is already committed, so the save stands and the turn goes on.
   const row = await saveWorkChatFileWithDeps("user-1", "workspace-1", buildNewWorkChatFile(), {
     upsertWorkChatFile: async () => buildUpserted([DISPLACED_OBJECT_KEY]),
-    getChatFilesObjectStoreIfConfigured: () => ({
+    getChatFilesObjectStore: () => ({
       deleteObject: async (): Promise<never> => {
         throw new Error("AccessDenied: s3:DeleteObject on expense-tracker-chat-files");
       },
@@ -149,4 +149,41 @@ test("a failed reclaim keeps the save and is the only record of the leak", async
     objectKey: DISPLACED_OBJECT_KEY,
     error: "AccessDenied: s3:DeleteObject on expense-tracker-chat-files",
   }]);
+});
+
+test("a missing bucket fails the save rather than recording nothing to reclaim", async (): Promise<void> => {
+  const capturedEvents: Array<CapturedDisplacedObjectEvent> = [];
+
+  // Outside the try that swallows a delete failure: a displaced /work row
+  // cannot exist without a bucket, so this is a broken deployment and not a
+  // leak to log.
+  await assert.rejects(
+    () => saveWorkChatFileWithDeps("user-1", "workspace-1", buildNewWorkChatFile(), {
+      upsertWorkChatFile: async () => buildUpserted([DISPLACED_OBJECT_KEY]),
+      getChatFilesObjectStore: (): never => {
+        throw new Error("Missing required environment variable CHAT_FILES_BUCKET");
+      },
+      log: createEventCapture(capturedEvents),
+    }),
+    /CHAT_FILES_BUCKET/u,
+  );
+  assert.deepEqual(capturedEvents, []);
+});
+
+test("a displaced key equal to the stored key raises, never deleting live bytes", async (): Promise<void> => {
+  const capturedEvents: Array<CapturedDisplacedObjectEvent> = [];
+
+  await assert.rejects(
+    () => saveWorkChatFileWithDeps("user-1", "workspace-1", buildNewWorkChatFile(), {
+      upsertWorkChatFile: async () => buildUpserted([OBJECT_KEY]),
+      getChatFilesObjectStore: () => ({
+        deleteObject: async (objectKey): Promise<never> => {
+          throw new Error(`the save's own object must never be deleted, got ${objectKey}`);
+        },
+      }),
+      log: createEventCapture(capturedEvents),
+    }),
+    /Displaced \/work object key equals the key this save stored/u,
+  );
+  assert.deepEqual(capturedEvents, []);
 });

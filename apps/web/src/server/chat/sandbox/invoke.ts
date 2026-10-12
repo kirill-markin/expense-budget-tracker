@@ -850,9 +850,10 @@ type RecordedChanges = Readonly<{
  * under, and every slot against the slots this invocation actually minted: a
  * row written for a path the schema would then reject is a chat where no later
  * command can run, and a row written for a key this request did not sign is a
- * row pointing at an object that does not exist. A rejected entry leaves its
- * uploaded object behind, which the session's own cleanup reclaims, and becomes
- * a note rather than a failure - one unrecordable file must not lose the rest.
+ * row pointing at an object that does not exist. A rejected entry becomes a
+ * note rather than a failure - one unrecordable file must not lose the rest -
+ * and its uploaded object stays in the bucket with no row naming it, until
+ * chatFiles/cleanup.ts sweeps the session prefix on its workspace's deletion.
  *
  * `deletedPaths` is the sandbox's judgement and the only source of a removal
  * here: nothing on this side infers that a file is gone. The sandbox already
