@@ -8,6 +8,12 @@
  * beside the row, so a caller that reaches past this module gets a type that
  * does not fit where the row is used, rather than a silently leaked object.
  *
+ * Worth doing even though the bucket expires an object 90 days after it was
+ * written (infra/aws/lib/chat-files-bucket.ts): every overwrite of a /work path
+ * would otherwise pay those 90 days of storage for bytes no row names, and a
+ * delete made where the key is known to be unreachable is a better answer than
+ * waiting out a rule that cannot tell reachable bytes from unreachable ones.
+ *
  * The row goes first and the object second - the opposite order from
  * chatFiles/cleanup.ts, for the opposite reason. There the rows describe
  * objects already being swept, so they must not outlive them; here the row's
@@ -20,10 +26,24 @@
  * consumes today, and a stopped turn's sandbox invocation keeps its 600-second
  * mount URLs, because no AbortSignal reaches Lambda and the next turn of the
  * same session is admitted as soon as the cancellation is persisted
- * (chat/runtime/runtime.ts). That is accepted rather than ordered around: two
- * live turns of one session cannot overlap (chat/store/lifecycleStore.ts), and
- * the output of an abandoned one is discarded, so the broken URL costs a turn
- * nothing that is still being read.
+ * (chat/runtime/runtime.ts).
+ *
+ * That tail does not only hold URLs, it writes: nothing under chat/sandbox/
+ * checks for an abort, so a stopped invocation still runs recordSandboxChanges
+ * to the end, and now reclaims there too. So the URL this breaks can be the
+ * live turn's rather than the abandoned one's - the user stops a command that
+ * wrote /work/out.csv and retries at once, the retry mints a mount URL for the
+ * row standing then, and the stopped turn's late save displaces that row and
+ * deletes that key underneath it. Accepted rather than ordered around: the
+ * window is sub-second, nothing is lost because the row the next command reads
+ * is the late save's own, and the cost is one `bash` command erroring on a
+ * missing key where before this module it read stale bytes. For the abandoned
+ * turn itself the URL breaks for nothing still read: two live turns of one
+ * session cannot overlap, and the stop discards the output of exactly the call
+ * whose mount URLs are at risk, the one still in flight
+ * (buildUserStoppedAssistantContent in chat/store/lifecycleStore.ts substitutes
+ * only a tool call still `started` with no output of its own; calls that
+ * already finished are persisted verbatim under `state: "cancelled"`).
  */
 import { getChatFilesObjectStore } from "@/server/chatFiles/objectStore";
 import { type ChatFile, type NewChatFile, upsertWorkChatFile } from "@/server/chatFiles/store";
@@ -52,7 +72,10 @@ const describeReclaimFailure = (error: unknown): string =>
 /**
  * A delete that fails is logged and never raised: the save it belongs to
  * committed, the path holds the file the model wrote, and the whole cost is one
- * unreachable object. Raising here would fail a turn whose work succeeded.
+ * object left for the bucket's 90-day expiration. Raising would not undo any of
+ * that - both callers catch it (chat/sandbox/invoke.ts), and the note one of
+ * them writes, that the file could not be recorded in this chat, is itself
+ * false once the row is committed.
  *
  * A missing bucket is the opposite and raises, because a displaced /work row
  * cannot exist without one: every slot mint and spill write goes through the

@@ -134,8 +134,8 @@ test("upsertWorkChatFile reports the object key its replacement delete returned"
   assert.deepEqual(deletes[0].params, [SESSION_ID, WORK_PATH]);
   // The statement that removed the row is the only thing that can still name
   // the object it pointed at, so the key has to leave through its RETURNING.
-  // Load-bearing, not a static-text check: the pool stub answers by statement
-  // prefix, so the displacedObjectKeys assertion above still passes with
+  // Load-bearing, not a static-text check: the pool stub matches a substring of
+  // the statement, so the displacedObjectKeys assertion above still passes with
   // RETURNING deleted from the SQL and this regex is the only thing that fails.
   assert.match(deletes[0].text, /RETURNING object_key/u);
 });

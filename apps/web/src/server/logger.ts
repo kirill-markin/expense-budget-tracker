@@ -303,6 +303,29 @@ type ChatEvent =
     sizeBytes: number;
     limit: number;
   }>
+  /**
+   * One chat session's files were deleted on request: the objects went from the
+   * bucket and their chat_files rows with them, while the session keeps its
+   * messages. Counted per call, so a deletion that reclaimed nothing is still
+   * visible, and kept out of the `error` family the web error alarm pages on.
+   *
+   * `failed` records a deletion that stopped partway: objectCount still counts
+   * the objects that did go whenever the failure carried that count, rowCount
+   * is 0 because no completed row deletion was recorded rather than because
+   * the rows are known to survive, and the retry is idempotent.
+   */
+  | Readonly<{
+    domain: "chat";
+    action: "session_files_deleted";
+    outcome: "deleted" | "failed";
+    route: string;
+    userId: string;
+    workspaceId: string;
+    sessionId: string;
+    objectCount: number;
+    rowCount: number;
+    error: string | null;
+  }>
   | Readonly<{
     domain: "chat";
     action: "run_transition_skipped";
@@ -368,11 +391,13 @@ type ChatTranscriptionEvent = Readonly<{
 }>;
 
 /**
- * Chat file objects reclaimed. The bucket has no expiration rule, so these two
- * events cover every reclaim there is, and an object no event names is an
- * object nothing will ever remove. `not_configured` records a workspace sweep
- * on a deployment that stores no chat file at all, which a displaced /work
- * object has no counterpart for: its row could not exist without a bucket.
+ * Chat file objects reclaimed by this subsystem's own deletes. Not every
+ * reclaim is one of these two events: the bucket expires an object 90 days
+ * after it was written and logs nothing, and one session's files deleted on
+ * request are counted by the `chat` `session_files_deleted` event.
+ * `not_configured` records a workspace sweep on a deployment that stores no
+ * chat file at all, which a displaced /work object has no counterpart for: its
+ * row could not exist without a bucket.
  *
  * `workspace_objects_deleted` sweeps a workspace that went away, and objectCount
  * counts the objects actually deleted, including on the failure the error

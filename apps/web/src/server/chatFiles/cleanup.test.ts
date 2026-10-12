@@ -3,12 +3,15 @@ import test from "node:test";
 import type { QueryResult } from "pg";
 
 import {
+  ChatSessionFileDeletionFailedError,
+  deleteChatSessionFilesWithDeps,
   deleteWorkspaceChatFileObjectsForTrustedIdentityWithDeps,
   deleteWorkspaceChatFileObjectsWithDeps,
 } from "@/server/chatFiles/cleanup";
 import { ChatFileObjectBatchDeleteError } from "@/server/chatFiles/objectStore";
 import { log } from "@/server/logger";
 import type { UserIdentity } from "@/server/users";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import { WorkspaceDeletionRequiresSingleMemberError } from "@/server/workspaces";
 
 const createQueryResult = (
@@ -254,4 +257,99 @@ test("trusted identity chat file cleanup lists the target workspace from the ide
     objectCount: 2,
     error: null,
   }]);
+});
+
+test("session chat file deletion removes every object before any row", async (): Promise<void> => {
+  const steps: Array<string> = [];
+  const deletedObjectKeys: Array<string> = [];
+
+  const deletion = await deleteChatSessionFilesWithDeps("user-1", "workspace-1", "session-1", {
+    getChatFilesObjectStoreIfConfigured: () => ({
+      listSessionObjectKeys: async (sessionId) => {
+        assert.equal(sessionId, "session-1");
+        steps.push("list");
+        return ["sessions/session-1/file-0", "sessions/session-1/file-1"];
+      },
+      deleteObjectBatch: async (batch) => {
+        steps.push("delete-objects");
+        deletedObjectKeys.push(...batch);
+      },
+    }),
+    queryAs: async (userId, workspaceId, text, params) => {
+      steps.push("delete-rows");
+      assert.equal(userId, "user-1");
+      assert.equal(workspaceId, "workspace-1");
+      assert.match(text, /DELETE FROM public\.chat_files/u);
+      assert.match(text, /WHERE session_id = \$1/u);
+      assert.deepEqual(params, ["session-1"]);
+      return createQueryResult([{ file_id: "file-0" }, { file_id: "file-1" }]);
+    },
+  });
+
+  assert.deepEqual(deletion, { objectCount: 2, rowCount: 2 });
+  assert.deepEqual(deletedObjectKeys, [
+    "sessions/session-1/file-0",
+    "sessions/session-1/file-1",
+  ]);
+  assert.deepEqual(steps, ["list", "delete-objects", "delete-rows"]);
+});
+
+test("session chat file deletion keeps the rows when an object batch fails", async (): Promise<void> => {
+  await assert.rejects(
+    deleteChatSessionFilesWithDeps("user-1", "workspace-1", "session-1", {
+      getChatFilesObjectStoreIfConfigured: () => ({
+        listSessionObjectKeys: async () => [
+          "sessions/session-1/file-0",
+          "sessions/session-1/file-1",
+        ],
+        deleteObjectBatch: async (batch) => {
+          throw new ChatFileObjectBatchDeleteError(
+            "Object batch delete failed, bucket=chat-files, failedCount=1",
+            [batch[1]],
+          );
+        },
+      }),
+      queryAs: async () => {
+        throw new Error("a failed object sweep must not delete rows");
+      },
+    }),
+    (error: unknown) => {
+      // The count is what the route logs: the objects of the failed batch S3
+      // did remove are gone, and nothing else records them.
+      assert.ok(error instanceof ChatSessionFileDeletionFailedError);
+      assert.equal(error.deletedObjectCount, 1);
+      assert.match(error.message, /deletedObjectCount=1/u);
+      assert.match(error.message, /Object batch delete failed/u);
+      return true;
+    },
+  );
+});
+
+test("session chat file deletion leaves a lost membership classified", async (): Promise<void> => {
+  await assert.rejects(
+    deleteChatSessionFilesWithDeps("user-1", "workspace-1", "session-1", {
+      getChatFilesObjectStoreIfConfigured: () => ({
+        listSessionObjectKeys: async () => ["sessions/session-1/file-0"],
+        deleteObjectBatch: async () => undefined,
+      }),
+      queryAs: async () => {
+        throw new WorkspaceAccessError("user-1", "workspace-1");
+      },
+    }),
+    (error: unknown) => {
+      // Wrapping this one would cost the route its 409 and reload answer.
+      assert.ok(error instanceof WorkspaceAccessError);
+      assert.ok(!(error instanceof ChatSessionFileDeletionFailedError));
+      return true;
+    },
+  );
+});
+
+test("session chat file deletion still removes the rows with no object store configured", async (): Promise<void> => {
+  const deletion = await deleteChatSessionFilesWithDeps("user-1", "workspace-1", "session-1", {
+    getChatFilesObjectStoreIfConfigured: () => null,
+    queryAs: async () => createQueryResult([{ file_id: "file-0" }]),
+  });
+
+  assert.deepEqual(deletion, { objectCount: 0, rowCount: 1 });
 });

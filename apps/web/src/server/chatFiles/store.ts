@@ -139,7 +139,8 @@ const INSERT_CHAT_FILE_SQL = `
  * derived from that pair, so the row cannot merely be repointed: it is replaced
  * by one whose file id is the slot's. RETURNING carries the displaced key out,
  * because once this row is gone nothing in the database names the object
- * holding its bytes, and the bucket has no expiration rule to reclaim it.
+ * holding its bytes, and the only thing left that would reclaim it is the
+ * bucket's own 90-day expiration (infra/aws/lib/chat-files-bucket.ts).
  *
  * Confined to a row this surface owns. A conflicting row of another origin
  * would be an attachment or a derivative at a /work path, which nothing can

@@ -852,8 +852,10 @@ type RecordedChanges = Readonly<{
  * command can run, and a row written for a key this request did not sign is a
  * row pointing at an object that does not exist. A rejected entry becomes a
  * note rather than a failure - one unrecordable file must not lose the rest -
- * and its uploaded object stays in the bucket with no row naming it, until
- * chatFiles/cleanup.ts sweeps the session prefix on its workspace's deletion.
+ * and its uploaded object stays in the bucket with no row naming it, until a
+ * delete that works by prefix reaches it: chatFiles/cleanup.ts sweeping the
+ * session or its workspace, or the bucket expiring the object 90 days after it
+ * was written, which is the only one of the three nobody has to ask for.
  *
  * `deletedPaths` is the sandbox's judgement and the only source of a removal
  * here: nothing on this side infers that a file is gone. The sandbox already
@@ -1006,7 +1008,9 @@ const recordSandboxChanges = async (
    * function exists. So the next command is not a FunctionError - it is a clean
    * refusal, and it is a refusal of EVERY later command, including any command
    * that would delete something. The chat has no other way to remove a file
-   * either: `/api/chat/files` exposes POST and GET and nothing else.
+   * either: `/api/chat/files` exposes POST, GET and a DELETE that removes every
+   * file of one session at the user's own request, and nothing that removes a
+   * single file for the model.
    *
    * That makes "delete some files" the one remedy this note must not give. The
    * only true thing to say is that this chat is finished for file work and the
