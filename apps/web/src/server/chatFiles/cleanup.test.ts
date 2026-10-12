@@ -47,6 +47,9 @@ const createEventCapture = (captured: Array<CapturedChatFilesEvent>): typeof log
     if (event.domain !== "chat-files") {
       throw new Error(`Unexpected log event domain ${event.domain}`);
     }
+    if (event.action !== "workspace_objects_deleted") {
+      throw new Error(`Unexpected chat-files log action ${event.action}`);
+    }
 
     captured.push(event);
   };
