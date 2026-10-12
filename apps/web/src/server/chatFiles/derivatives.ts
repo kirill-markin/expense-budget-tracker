@@ -41,6 +41,7 @@ import {
   readChatFilesObjectLifetimeDays,
 } from "@/server/chatFiles/objectStore";
 import {
+  classifyChatFileStatementFailure,
   insertChatFile,
   listSessionChatFiles,
   markChatFileDerivativesFailed,
@@ -463,8 +464,9 @@ const logDerivativeError = (
  * reclaim's to take.
  *
  * Three outcomes, and the answer separates them. A removal that found the row
- * owns its key; a removal that raised may have left the row in place, holding
- * bytes every later mount of it reads, so its key is left alone as well. A row
+ * owns its key; a removal that raised keeps the key whatever its failure says,
+ * because a removal settled not to have committed left the row standing on
+ * bytes every later mount of it reads, and an unsettled one may have. A row
  * that was already gone is the third and is left out, so its key is reclaimed
  * from the slots, which is free whichever removal got there first: a delete
  * reclaims the key of the row it removed, a cascade from chat_sessions removes
@@ -562,8 +564,8 @@ const reclaimRefusedConversionObjects = async (
  * (chatFiles/deleteFile.ts), and every slot nothing accounted for - the rest of
  * a partial insert here, and every slot of every other answered conversion this
  * side refuses - is reclaimed from the keys this request signed, which it holds
- * in `slots`. The insert that raised counts as accounted for too: its row is in
- * doubt rather than absent, so its key stays.
+ * in `slots`. The insert that raised keeps its key unless its own failure
+ * settles that no row took it.
  */
 const insertDerivedRows = async (
   source: ChatFile,
@@ -573,11 +575,11 @@ const insertDerivedRows = async (
   dependencies: ChatFileDerivativesDependencies,
 ): Promise<void> => {
   const insertedFileIds: Array<string> = [];
-  /** The insert in flight, so a raise below names the row it left in doubt. */
-  let inDoubtFileId: string | null = null;
+  /** The insert in flight, so a raise below names the row its failure settles. */
+  let inFlightFileId: string | null = null;
   try {
     for (const derivative of derivatives) {
-      inDoubtFileId = derivative.slotId;
+      inFlightFileId = derivative.slotId;
       await dependencies.insertChatFile(context.userId, context.workspaceId, {
         // The slot's own id, because the object the sandbox uploaded lives under
         // the key that id derives.
@@ -593,21 +595,21 @@ const insertDerivedRows = async (
         sha256: derivative.sha256,
       });
       insertedFileIds.push(derivative.slotId);
-      inDoubtFileId = null;
+      inFlightFileId = null;
     }
   } catch (error) {
     const accounted = await deleteDerivedRows(insertedFileIds, source, context, dependencies);
-    // The insert that raised counts as accounted for and its key is left
-    // behind: a raise does not settle that the row is absent - its COMMIT can
-    // have reached the server with the answer lost on the way back - and the
-    // key would then be taken from under a row the next pass mounts. See the
-    // invariant in chatFiles/deleteFile.ts.
-    await reclaimRefusedConversionObjects(
-      slots,
-      inDoubtFileId === null ? accounted : [...accounted, inDoubtFileId],
-      context,
-      dependencies,
-    );
+    // The insert's own failure decides its key: settled not to have committed,
+    // it stored no row, so the key is nobody's and the reclaim takes it with
+    // the rest of the partial insert; unsettled, the key stays rather than be
+    // taken from under a row the next pass mounts. See
+    // classifyChatFileStatementFailure in chatFiles/store.ts and the invariant
+    // in chatFiles/deleteFile.ts.
+    const accountedSlotIds = inFlightFileId !== null
+      && classifyChatFileStatementFailure(error) !== "rolled-back"
+      ? [...accounted, inFlightFileId]
+      : accounted;
+    await reclaimRefusedConversionObjects(slots, accountedSlotIds, context, dependencies);
     throw error;
   }
 };

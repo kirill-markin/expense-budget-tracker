@@ -13,6 +13,7 @@ import {
   type ChatFile,
   type NewChatFile,
 } from "@/server/chatFiles/store";
+import { DbTransactionOutcomeUnknownError } from "@/server/db/contextRunner";
 import type { log } from "@/server/logger";
 import {
   SANDBOX_FILE_MAX_BYTES,
@@ -963,8 +964,70 @@ test("a derived row that cannot be inserted takes the rows beside it with it", a
   assert.deepEqual(recorded.prepared, []);
   assert.deepEqual(recorded.failed, []);
   // The row that did land took its own object when it was removed again, and
-  // the insert that raised left its row in doubt, so that slot's key stays as
-  // well. Every other slot is reclaimed, uploaded into or not.
+  // the insert that raised rolled back, so it stored no row and its slot's key
+  // goes with every other slot's, uploaded into or not.
+  assert.deepEqual(
+    recorded.reclaimed,
+    unnamedSlotObjectKeys(recorded.invocations[0].writeSlots, insertedFileIds),
+  );
+});
+
+/**
+ * The same insert whose outcome cannot be settled: the COMMIT can have reached
+ * the server with the answer lost on the way back, so its row may be standing
+ * on those bytes and the slot's key stays.
+ */
+test("a derived row whose insert outcome is unknown keeps its object", async (): Promise<void> => {
+  const source = createChatFile({ fileId: "aaaaaaaa-0000-4000-8000-000000000001" });
+  const twoDerivatives: PrepareAnswer = (payload): unknown => ({
+    status: "prepared",
+    derivatives: [0, 1].map((index) => ({
+      path: `/files/report.pdf.${String(index)}.txt`,
+      slotId: payload.writeSlots[index].slotId,
+      sizeBytes: 1_024,
+      sha256: DERIVATIVE_SHA256,
+    })),
+    notes: [],
+    durationMs: 12,
+  });
+  const insertedFileIds: Array<string> = [];
+  const fixture: Fixture = createFixture([source], twoDerivatives, {
+    insertChatFile: async (
+      _userId: string,
+      _workspaceId: string,
+      newChatFile: NewChatFile,
+    ): Promise<ChatFile> => {
+      if (insertedFileIds.length === 1) {
+        throw new DbTransactionOutcomeUnknownError(
+          "commit",
+          new Error("Connection terminated unexpectedly"),
+          undefined,
+        );
+      }
+      insertedFileIds.push(newChatFile.fileId);
+      const landed = createChatFile({ ...newChatFile, isConfirmed: true });
+      fixture.storedRows.set(landed.fileId, landed);
+      return landed;
+    },
+  });
+  const { dependencies, recorded } = fixture;
+
+  assert.deepEqual(
+    await runChatFileDerivativesPassWithDependencies(context, dependencies),
+    {
+      preparedCount: 0,
+      derivedCount: 0,
+      failedCount: 0,
+      unavailableCount: 0,
+      deferredCount: 1,
+      stopReason: "unrecordable",
+    },
+  );
+  // Only the row the insert answered for is removed again: the unsettled one is
+  // not a row this side knows it has.
+  assert.deepEqual(recorded.deleted, insertedFileIds);
+  // That removal took its own object, and the unsettled row's slot keeps its
+  // key. Every other slot of the invocation is reclaimed.
   const inDoubtSlotId = recorded.invocations[0].writeSlots[1].slotId;
   assert.deepEqual(
     recorded.reclaimed,
@@ -1023,7 +1086,9 @@ test("a compensating delete that fails reports itself and still leaves the origi
     durationMs: 12,
   });
   const insertedFileIds: Array<string> = [];
-  const { dependencies, recorded } = createFixture([source], threeDerivatives, {
+  // Both overrides land and read their rows where the fixture keeps them, so
+  // every answer the pass gets about a row is the one the store would give.
+  const fixture: Fixture = createFixture([source], threeDerivatives, {
     insertChatFile: async (
       _userId: string,
       _workspaceId: string,
@@ -1033,7 +1098,10 @@ test("a compensating delete that fails reports itself and still leaves the origi
         throw new Error("chat_files insert failed");
       }
       insertedFileIds.push(newChatFile.fileId);
-      return createChatFile({ ...newChatFile, isConfirmed: true });
+      fixture.recorded.inserted.push(newChatFile);
+      const landed = createChatFile({ ...newChatFile, isConfirmed: true });
+      fixture.storedRows.set(landed.fileId, landed);
+      return landed;
     },
     deleteChatFile: async (
       _userId: string,
@@ -1041,13 +1109,18 @@ test("a compensating delete that fails reports itself and still leaves the origi
       _sessionId: string,
       fileId: string,
     ): Promise<ChatFile | null> => {
-      recorded.deleted.push(fileId);
+      fixture.recorded.deleted.push(fileId);
       if (fileId === insertedFileIds[0]) {
+        // Raised with the row untouched, which is the one state that keeps a
+        // derived row standing on the path its source is converted to.
         throw new Error("chat_files delete failed");
       }
-      return createChatFile({ fileId });
+      const removed = fixture.storedRows.get(fileId) ?? null;
+      fixture.storedRows.delete(fileId);
+      return removed;
     },
   });
+  const { dependencies, recorded } = fixture;
 
   assert.deepEqual(
     await runChatFileDerivativesPassWithDependencies(context, dependencies),
@@ -1073,17 +1146,14 @@ test("a compensating delete that fails reports itself and still leaves the origi
   assert.match(errors[1], /preparing one source failed: Error: chat_files insert failed/u);
   // Not the delete's error: compensation must not stand in for its cause.
   assert.doesNotMatch(errors[1], /chat_files delete failed/u);
-  // No object of these three is reclaimed here: the row that could not be
-  // removed is still a file of this session naming it, the removed one took its
-  // own object with it, and the insert that raised left a third row in doubt.
-  // Every other slot goes.
-  const inDoubtSlotId = recorded.invocations[0].writeSlots[2].slotId;
+  // Neither inserted row's object is reclaimed here: the removal that rolled
+  // back left its row standing as a file of this session naming those bytes,
+  // which is retention rather than a leak, and the removed one took its own
+  // object with it. The insert that rolled back stored no row, so that slot
+  // goes with every other slot of the invocation.
   assert.deepEqual(
     recorded.reclaimed,
-    unnamedSlotObjectKeys(
-      recorded.invocations[0].writeSlots,
-      [...insertedFileIds, inDoubtSlotId],
-    ),
+    unnamedSlotObjectKeys(recorded.invocations[0].writeSlots, insertedFileIds),
   );
 });
 

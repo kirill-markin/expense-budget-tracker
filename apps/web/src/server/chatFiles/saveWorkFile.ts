@@ -50,7 +50,12 @@
  * `state: "cancelled"`).
  */
 import { getChatFilesObjectStore } from "@/server/chatFiles/objectStore";
-import { type ChatFile, type NewChatFile, upsertWorkChatFile } from "@/server/chatFiles/store";
+import {
+  ChatFileRowCommittedError,
+  type ChatFile,
+  type NewChatFile,
+  upsertWorkChatFile,
+} from "@/server/chatFiles/store";
 import { log } from "@/server/logger";
 
 /** The one object-store capability a reclaim needs. */
@@ -126,24 +131,46 @@ export const saveWorkChatFileWithDeps = async (
   dependencies: SaveWorkChatFileDependencies,
 ): Promise<ChatFile> => {
   const upserted = await dependencies.upsertWorkChatFile(userId, workspaceId, newChatFile);
-  // A first save at a path displaces nothing, and then the object store is
-  // never consulted at all: no client is built and no event is logged.
-  for (const objectKey of upserted.displacedObjectKeys) {
-    if (objectKey === upserted.file.objectKey) {
-      // UNIQUE (object_key) cannot catch this: the DELETE ran before the INSERT
-      // in the same transaction, so the save already committed and the reclaim
-      // would now delete the bytes its own row points at.
-      throw new Error(
-        "Displaced /work object key equals the key this save stored, "
-        + `so reclaiming it would delete live bytes: objectKey=${objectKey}, `
-        + `sessionId=${newChatFile.sessionId}, path=${newChatFile.path}, `
-        + `fileId=${newChatFile.fileId}`,
-      );
+  try {
+    // A first save at a path displaces nothing, and then the object store is
+    // never consulted at all: no client is built and no event is logged.
+    for (const objectKey of upserted.displacedObjectKeys) {
+      if (objectKey === upserted.file.objectKey) {
+        // UNIQUE (object_key) cannot catch this: the DELETE ran before the
+        // INSERT in the same transaction, so the save already committed and the
+        // reclaim would now delete the bytes its own row points at.
+        throw new ChatFileRowCommittedError(
+          "Displaced /work object key equals the key this save stored, "
+          + `so reclaiming it would delete live bytes: objectKey=${objectKey}, `
+          + `sessionId=${newChatFile.sessionId}, path=${newChatFile.path}, `
+          + `fileId=${newChatFile.fileId}`,
+          null,
+        );
+      }
+      await reclaimDisplacedObject(userId, workspaceId, newChatFile, objectKey, dependencies);
     }
-    await reclaimDisplacedObject(userId, workspaceId, newChatFile, objectKey, dependencies);
-  }
 
-  return upserted.file;
+    return upserted.file;
+  } catch (error) {
+    // Every statement of this half ran past the upsert's COMMIT, so none of its
+    // failures may leave here as the plain error a rolled-back transaction
+    // raises: a caller judging this save's object key reads the kind off the
+    // error (classifyChatFileStatementFailure in chatFiles/store.ts), and the
+    // plain kind would have it delete the committed row's bytes. Converted for
+    // the whole half rather than at each raise, so a raise added below the
+    // commit later cannot be the one that was missed. The return sits inside
+    // the try for the same reason: left outside it, a statement added above
+    // the return would raise past the commit uncovered.
+    throw error instanceof ChatFileRowCommittedError
+      ? error
+      : new ChatFileRowCommittedError(
+        "A /work save committed and then failed reclaiming the object it "
+        + `displaced, so its row stands: sessionId=${newChatFile.sessionId}, `
+        + `path=${newChatFile.path}, fileId=${newChatFile.fileId}: `
+        + describeReclaimFailure(error),
+        error,
+      );
+  }
 };
 
 export const saveWorkChatFile = async (

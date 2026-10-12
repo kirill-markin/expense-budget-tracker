@@ -3,7 +3,12 @@ import test from "node:test";
 import { describeUnsaveableWorkBytes } from "../../../../../sandbox/src/contract";
 import { CHAT_FILE_SANDBOX_DIRECTORY } from "@/lib/chatFiles";
 import { buildChatFileObjectKey } from "@/server/chatFiles/objectStore";
-import type { ChatFile, NewChatFile } from "@/server/chatFiles/store";
+import {
+  ChatFileRowCommittedError,
+  type ChatFile,
+  type NewChatFile,
+} from "@/server/chatFiles/store";
+import { DbTransactionOutcomeUnknownError } from "@/server/db/contextRunner";
 import {
   CHAT_SANDBOX_WRITE_SLOTS,
   describeSpillRefusal,
@@ -130,7 +135,27 @@ const createHarness = (
   const deletedFileIds: Array<string> = [];
   const writtenObjectKeys: Array<string> = [];
   const reclaimedObjectKeys: Array<string> = [];
+  /**
+   * The rows this session holds, which the fixture's own statements read and
+   * write, so a later statement sees what an earlier one left.
+   */
+  const storedRows = new Map<string, ChatFile>(files.map((file) => [file.fileId, file]));
   let nextFileId = 100;
+
+  /**
+   * One /work save as the store leaves it: the row at that path is replaced
+   * rather than kept beside the new one.
+   */
+  const commitWorkRow = (newChatFile: NewChatFile): ChatFile => {
+    for (const [storedFileId, storedRow] of storedRows) {
+      if (storedRow.origin === "work" && storedRow.path === newChatFile.path) {
+        storedRows.delete(storedFileId);
+      }
+    }
+    const row = rowFromNewChatFile(newChatFile);
+    storedRows.set(row.fileId, row);
+    return row;
+  };
 
   return {
     requests,
@@ -146,8 +171,9 @@ const createHarness = (
         newChatFile: NewChatFile,
       ): Promise<ChatFile> => {
         upserts.push(newChatFile);
-        return rowFromNewChatFile(newChatFile);
+        return commitWorkRow(newChatFile);
       },
+      /** The removed row, as the store answers it, or null when there was none. */
       deleteChatFile: async (
         _userId: string,
         _workspaceId: string,
@@ -155,7 +181,9 @@ const createHarness = (
         fileId: string,
       ): Promise<ChatFile | null> => {
         deletedFileIds.push(fileId);
-        return null;
+        const row = storedRows.get(fileId) ?? null;
+        storedRows.delete(fileId);
+        return row;
       },
       deleteUnnamedChatFileObjects: async (
         _userId: string,
@@ -434,30 +462,30 @@ test("a slot rejected once and then saved keeps the object its row names", async
   );
 });
 
-/**
- * A save that raised leaves its row in doubt rather than absent: the COMMIT can
- * have reached the server with the answer lost on the way back. The slot is
- * therefore left alone, even though this side reports the path as not recorded.
- */
-test("a save that raised leaves the object of its slot alone", async (): Promise<void> => {
-  const harness = createHarness(
-    [],
-    (request: SandboxRequest): string => answerOf({
-      writtenFiles: [
-        {
-          path: "/work/in-doubt.csv",
-          slotId: request.writeSlots[0]?.slotId ?? "",
-          sizeBytes: 2,
-          sha256: "b".repeat(64),
-        },
-      ],
-    }),
-    {
-      saveWorkChatFile: async (): Promise<never> => {
-        throw new Error("Connection terminated unexpectedly");
+/** One /work file written into the first slot of the request. */
+const oneWrittenWorkFile = (path: string): ((request: SandboxRequest) => string) =>
+  (request: SandboxRequest): string => answerOf({
+    writtenFiles: [
+      {
+        path,
+        slotId: request.writeSlots[0]?.slotId ?? "",
+        sizeBytes: 2,
+        sha256: "b".repeat(64),
       },
+    ],
+  });
+
+/**
+ * A save whose transaction rolled back stored no row, so the bytes the sandbox
+ * uploaded into that slot are nobody's and the reclaim takes the key - while
+ * this side still reports the path as not recorded.
+ */
+test("a save that raised with its transaction rolled back reclaims its slot", async (): Promise<void> => {
+  const harness = createHarness([], oneWrittenWorkFile("/work/rolled-back.csv"), {
+    saveWorkChatFile: async (): Promise<never> => {
+      throw new Error("chat_files insert failed");
     },
-  );
+  });
 
   const result = await runChatSandboxCommandWithDependencies(
     "true",
@@ -467,11 +495,64 @@ test("a save that raised leaves the object of its slot alone", async (): Promise
 
   const data = result.kind === "ran" ? result.data : null;
   // This side did not record the save, so it reports no saved file and tells
-  // the model the path is not available.
+  // the model the path is not available, whichever way the key went.
   assert.deepEqual(data?.savedFiles, []);
   assert.ok(data?.sandboxNotes.some((note) => /could not be recorded in this chat/u.test(note)));
-  // The key stays all the same: a row that did commit would be left naming
-  // bytes that are gone, and every later mount of its path would fail.
+  // Nothing was spared, which is every slot of the request including this one.
+  assert.deepEqual(harness.reclaimedObjectKeys, unnamedSlotObjectKeys(harness.requests[0], []));
+});
+
+/**
+ * The other outcome of the same save: the COMMIT can have reached the server
+ * with the answer lost on the way back, so taking the key could strip the bytes
+ * from a file of this chat.
+ */
+test("a save that raised with its outcome unknown leaves the object of its slot alone", async (): Promise<void> => {
+  const harness = createHarness([], oneWrittenWorkFile("/work/in-doubt.csv"), {
+    saveWorkChatFile: async (): Promise<never> => {
+      throw new DbTransactionOutcomeUnknownError(
+        "commit",
+        new Error("Connection terminated unexpectedly"),
+        undefined,
+      );
+    },
+  });
+
+  const result = await runChatSandboxCommandWithDependencies(
+    "true",
+    CONTEXT,
+    harness.dependencies,
+  );
+
+  assert.deepEqual(result.kind === "ran" ? result.data.savedFiles : ["unset"], []);
+  assert.deepEqual(
+    harness.reclaimedObjectKeys,
+    unnamedSlotObjectKeys(harness.requests[0], [harness.requests[0]?.writeSlots[0]?.slotId ?? ""]),
+  );
+});
+
+/**
+ * The third outcome, and the one no transaction raises: chatFiles/saveWorkFile.ts
+ * checks the displaced key past its own COMMIT, so this failure arrives with the
+ * row stored. A plain error here would read as a rollback and take live bytes.
+ */
+test("a save that raised past its commit leaves the object of its slot alone", async (): Promise<void> => {
+  const harness = createHarness([], oneWrittenWorkFile("/work/committed.csv"), {
+    saveWorkChatFile: async (): Promise<never> => {
+      throw new ChatFileRowCommittedError(
+        "Displaced /work object key equals the key this save stored",
+        null,
+      );
+    },
+  });
+
+  const result = await runChatSandboxCommandWithDependencies(
+    "true",
+    CONTEXT,
+    harness.dependencies,
+  );
+
+  assert.deepEqual(result.kind === "ran" ? result.data.savedFiles : ["unset"], []);
   assert.deepEqual(
     harness.reclaimedObjectKeys,
     unnamedSlotObjectKeys(harness.requests[0], [harness.requests[0]?.writeSlots[0]?.slotId ?? ""]),
@@ -580,16 +661,18 @@ test("output past the budget is cut in the middle and saved whole to /work", asy
 });
 
 /**
- * The spill writes its object before its row, so a save that did not land
- * leaves bytes nothing names - and the save is also what can raise with its
- * row committed, which no answer here distinguishes. The key is left behind
- * for that one case, because a leaked object is reached anyway and bytes taken
- * from under a committed row are not recoverable.
+ * The spill writes its object before its row, and the save is what can raise
+ * with that row's fate unknown. The bytes are then left where they are, because
+ * a row whose bytes are gone fails every later mount of this chat.
  */
-test("a spill whose row could not be saved leaves the object it wrote behind", async (): Promise<void> => {
+test("a spill whose row outcome is unknown leaves the object it wrote behind", async (): Promise<void> => {
   const harness = createHarness([], answerOf({ stdout: "x".repeat(60_000) }), {
     saveWorkChatFile: async (): Promise<never> => {
-      throw new Error("chat_files insert failed");
+      throw new DbTransactionOutcomeUnknownError(
+        "commit",
+        new Error("Connection terminated unexpectedly"),
+        undefined,
+      );
     },
   });
 
@@ -605,9 +688,32 @@ test("a spill whose row could not be saved leaves the object it wrote behind", a
   assert.ok(data?.sandboxNotes.some((note) => /could not be saved/u.test(note)));
   assert.equal(harness.writtenObjectKeys.length, 1);
   // The command saved no file, so every slot it signed is reclaimed - and the
-  // spill's own key is not among them.
+  // spill's own key is not among them, because a row may be standing on those
+  // bytes.
   assert.deepEqual(harness.reclaimedObjectKeys, unnamedSlotObjectKeys(harness.requests[0], []));
   assert.ok(!harness.reclaimedObjectKeys.includes(harness.writtenObjectKeys[0] ?? ""));
+});
+
+/** The same save rolled back: no row took those bytes, so they are nobody's. */
+test("a spill whose save rolled back reclaims the object it wrote", async (): Promise<void> => {
+  const harness = createHarness([], answerOf({ stdout: "x".repeat(60_000) }), {
+    saveWorkChatFile: async (): Promise<never> => {
+      throw new Error("chat_files insert failed");
+    },
+  });
+
+  const result = await runChatSandboxCommandWithDependencies(
+    "cat /files/report.csv",
+    CONTEXT,
+    harness.dependencies,
+  );
+
+  assert.equal(result.kind === "ran" ? result.data.fullOutputPath : "unset", null);
+  assert.equal(harness.writtenObjectKeys.length, 1);
+  assert.deepEqual(harness.reclaimedObjectKeys, [
+    ...unnamedSlotObjectKeys(harness.requests[0], []),
+    harness.writtenObjectKeys[0] ?? "",
+  ]);
 });
 
 test("output inside the budget is passed through whole and spills nothing", async (): Promise<void> => {
@@ -1105,6 +1211,11 @@ test("a failed delete below the ceiling is told to retry the delete", async (): 
   );
   assert.ok(!notes.some((note) => /No command of this chat can run/u.test(note)));
   assert.deepEqual(result.kind === "ran" ? result.data.deletedPaths : ["unset"], []);
+  // The removal's transaction rolled back, so the row still stands and still
+  // names its bytes, which every later mount of this chat reads. This side
+  // holds that key from the mounted listing and must not use it.
+  assert.deepEqual(harness.reclaimedObjectKeys, unnamedSlotObjectKeys(harness.requests[0], []));
+  assert.ok(!harness.reclaimedObjectKeys.includes(work.objectKey));
 });
 
 /**

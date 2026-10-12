@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 
 import type { NewChatFile } from "@/server/chatFiles/store";
+import { DbTransactionOutcomeUnknownError } from "@/server/db/contextRunner";
 
 const FILE_ID = "4f0a1d2e-7c3b-4a9d-8e51-6b2c9d0f3a74";
 const REPLACED_FILE_ID = "b1c2d3e4-5f60-4718-9a2b-3c4d5e6f7081";
@@ -164,4 +165,87 @@ test("sumSessionFilesMountBytes charges the attachment mount only", async (): Pr
     () => sumSessionFilesMountBytes("user-1", "workspace-1", SESSION_ID),
     /size_bytes total is not a safe integer, sessionId=session-1, value=9007199254740993/,
   );
+});
+
+test("classifyChatFileStatementFailure reads the kinds out of the whole cause chain", async (): Promise<void> => {
+  const {
+    ChatFileRowCommittedError,
+    classifyChatFileStatementFailure,
+  } = await import("@/server/chatFiles/store");
+
+  const outcomeUnknown = new DbTransactionOutcomeUnknownError(
+    "commit",
+    new Error("Connection terminated unexpectedly"),
+    undefined,
+  );
+
+  // Neither kind anywhere in the chain, which is the one answer that lets a
+  // write site delete the key.
+  assert.equal(
+    classifyChatFileStatementFailure(new Error("duplicate key value violates unique constraint")),
+    "rolled-back",
+  );
+  assert.equal(
+    classifyChatFileStatementFailure(new Error("wrapped", { cause: new Error("inner") })),
+    "rolled-back",
+  );
+
+  // A wrapper carries either kind one link down, and both keep the object, so
+  // the wrapper's own plain class must not decide.
+  assert.equal(
+    classifyChatFileStatementFailure(new Error("wrapped", { cause: outcomeUnknown })),
+    "unknown",
+  );
+  assert.equal(
+    classifyChatFileStatementFailure(
+      new Error("wrapped", { cause: new ChatFileRowCommittedError("the row stands", null) }),
+    ),
+    "committed",
+  );
+
+  // Both kinds in one chain: the unsettled outcome answers, because it claims
+  // less than a row that is certainly there.
+  assert.equal(
+    classifyChatFileStatementFailure(
+      new ChatFileRowCommittedError("the row stands", outcomeUnknown),
+    ),
+    "unknown",
+  );
+});
+
+test("classifyChatFileStatementFailure is total past the length of a cause chain", async (): Promise<void> => {
+  const {
+    ChatFileRowCommittedError,
+    classifyChatFileStatementFailure,
+  } = await import("@/server/chatFiles/store");
+
+  const wrapDeeply = (links: number, deepest: Error): Error => {
+    let chain: Error = deepest;
+    for (let link = 0; link < links; link += 1) {
+      chain = new Error(`wrapper-${link}`, { cause: chain });
+    }
+
+    return chain;
+  };
+
+  // Longer than the walk's bound with no kind within reach of it: the walk
+  // never read the chain to its end, so it may not settle the one answer that
+  // deletes bytes.
+  assert.equal(classifyChatFileStatementFailure(wrapDeeply(200, new Error("deepest"))), "unknown");
+
+  // A kind read before the bound still answers, however much chain hangs
+  // below it unread.
+  assert.equal(
+    classifyChatFileStatementFailure(
+      new ChatFileRowCommittedError("the row stands", wrapDeeply(200, new Error("deepest"))),
+    ),
+    "committed",
+  );
+
+  // A cyclic cause is what the bound is insurance against: nothing here builds
+  // one, and the walk runs inside a catch at every reader, where not returning
+  // would skip the whole reclaim decision rather than answer it wrongly.
+  const cycleHead = new Error("head");
+  cycleHead.cause = new Error("tail", { cause: cycleHead });
+  assert.equal(classifyChatFileStatementFailure(cycleHead), "unknown");
 });
