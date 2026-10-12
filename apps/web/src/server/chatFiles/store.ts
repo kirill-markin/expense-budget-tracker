@@ -1,6 +1,7 @@
 import { CHAT_FILE_SANDBOX_DIRECTORY } from "@/lib/chatFiles";
 import { buildChatFileObjectKey } from "@/server/chatFiles/objectStore";
 import { withUserContext } from "@/server/db";
+import { DbTransactionOutcomeUnknownError } from "@/server/db/contextRunner";
 
 export type ChatFileOrigin = "attachment" | "work" | "derived";
 
@@ -32,6 +33,76 @@ export const isChatFilePathUniqueViolation = (error: unknown): boolean =>
   && error.code === UNIQUE_VIOLATION_CODE
   && "constraint" in error
   && error.constraint === SESSION_PATH_UNIQUE_CONSTRAINT;
+
+/**
+ * A chat_files statement that committed and then failed anyway, so its row is
+ * there whatever the failure says. Only a raise placed past a successful commit
+ * may use it, because it is what tells the classification below apart from the
+ * ordinary failure of a statement that never landed.
+ */
+export class ChatFileRowCommittedError extends Error {
+  public constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = "ChatFileRowCommittedError";
+  }
+}
+
+/** What a failed chat_files statement settles about its own transaction. */
+export type ChatFileStatementOutcome = "rolled-back" | "committed" | "unknown";
+
+/**
+ * Cause links read before the walk below gives up. Nothing constructs a chain
+ * this long, let alone a cyclic one; the bound is what makes the walk total,
+ * which it has to be because every reader runs it inside a catch: a walk that
+ * does not return skips the whole reclaim decision rather than mis-answering.
+ */
+const MAX_CAUSE_CHAIN_LINKS = 32;
+
+/**
+ * db/contextRunner.ts rethrows a transaction body's own error only once its
+ * ROLLBACK succeeded, so a plain error settles that the transaction did not
+ * commit and none of its rows exist. DbTransactionOutcomeUnknownError is the
+ * answer that cannot be settled, and the reason this classification exists at
+ * all: the rollback itself failed, or the COMMIT may have reached the server
+ * with the reply lost on the way back, which is what the PoolErrors metric
+ * counts.
+ *
+ * The cause chain is read and not only the error handed over, because
+ * either kind travels wrapped: chatFiles/saveWorkFile.ts rethrows whatever
+ * escapes past its own commit, and chat/shared.ts re-wraps an unknown outcome.
+ * Both kinds keep the object, so either one found anywhere in the chain answers
+ * over the wrapper's plain "rolled-back" - the one answer that deletes bytes -
+ * and an unsettled outcome answers over a committed one because it claims less.
+ *
+ * What the answer is worth is the caller's to decide, because it turns on the
+ * direction of the statement: a write that did not commit named no object,
+ * while a removal that did not commit left its row standing on the same bytes.
+ */
+export const classifyChatFileStatementFailure = (
+  error: unknown,
+): ChatFileStatementOutcome => {
+  let outcome: ChatFileStatementOutcome = "rolled-back";
+  let link: unknown = error;
+  for (let readLinks = 0; readLinks < MAX_CAUSE_CHAIN_LINKS; readLinks += 1) {
+    if (!(link instanceof Error)) {
+      return outcome;
+    }
+    if (link instanceof DbTransactionOutcomeUnknownError) {
+      return "unknown";
+    }
+    if (link instanceof ChatFileRowCommittedError) {
+      outcome = "committed";
+    }
+    link = link.cause;
+  }
+
+  // The chain outran the bound, so an unread link may carry either kind. A
+  // kind already read stands, because both of them keep the object; with none
+  // read the answer is "unknown" and not "rolled-back", which would settle a
+  // rollback off a chain this walk never reached the end of and is the one
+  // answer that deletes bytes.
+  return outcome === "rolled-back" ? "unknown" : outcome;
+};
 
 const FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

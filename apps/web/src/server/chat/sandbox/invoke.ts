@@ -47,6 +47,7 @@ import {
 } from "@/server/chatFiles/objectStore";
 import { saveWorkChatFile } from "@/server/chatFiles/saveWorkFile";
 import {
+  classifyChatFileStatementFailure,
   isChatFileId,
   listSessionChatFiles,
   type ChatFile,
@@ -898,8 +899,9 @@ const recordSandboxChanges = async (
    * reclaim at the end must leave alone; the rest of what this request signed
    * goes once the response has been read through.
    *
-   * Two things put a slot in here: a save that committed, and a save that
-   * raised - because a raise does not settle that the row is absent.
+   * A save that committed puts its slot in here, and so does a save whose
+   * failure leaves its row unsettled; only a save settled not to have
+   * committed leaves its slot out, for the reclaim to take.
    */
   const accountedSlotIds = new Set<string>();
   let workBytes = sumBytes(mountedFiles.filter((file) => isWorkPath(file.path)));
@@ -965,18 +967,20 @@ const recordSandboxChanges = async (
         sessionId: context.sessionId,
       });
       /**
-       * The slot is left alone, object and all: a save that raised leaves its
-       * row in doubt rather than absent - the COMMIT can have reached the
-       * server with the answer lost on the way back, which is what the
-       * PoolErrors metric counts - and taking the key would strip the bytes
-       * from a row that is a file of this chat. Leaking the object instead is
-       * what the invariant in chatFiles/deleteFile.ts chooses.
+       * The failure says whether the key may go: a save settled not to have
+       * committed named no object, so its slot is left out of the accounted set
+       * and the reclaim at the end takes it, while a save whose outcome cannot
+       * be settled keeps its slot - taking the key from a row that did commit
+       * would strip the bytes from a file of this chat. See
+       * classifyChatFileStatementFailure in chatFiles/store.ts.
        *
        * The note and the counted bytes stay as they are either way: this side
        * did not record the save, so it must not report the path as a file of
-       * this chat.
+       * this chat whichever way the key goes.
        */
-      accountedSlotIds.add(written.slotId);
+      if (classifyChatFileStatementFailure(error) !== "rolled-back") {
+        accountedSlotIds.add(written.slotId);
+      }
     }
   }
 
@@ -1039,11 +1043,12 @@ const recordSandboxChanges = async (
         workspaceId: context.workspaceId,
         sessionId: context.sessionId,
       });
-      // The row's object is left behind, though this side holds its key from
-      // the mounted listing: a removal that raised leaves the row in doubt
-      // rather than gone, and a row that still stands has every later mount of
-      // this chat reading its bytes. Leaking the object instead is what the
-      // invariant in chatFiles/deleteFile.ts chooses.
+      // The object stays, though this side holds its key from the mounted
+      // listing, and nothing the failure can say changes that: a removal
+      // settled not to have committed left the row standing on those bytes,
+      // which every later mount of this chat reads, and an unsettled one may
+      // have. So the first is correct retention and only the second is a leak -
+      // see the invariant in chatFiles/deleteFile.ts.
     }
   }
 
@@ -1191,12 +1196,9 @@ const spillFullOutput = async (
   }
 
   const fileId = dependencies.createFileId();
+  const objectKey = buildChatFileObjectKey(context.sessionId, fileId);
   try {
-    await dependencies.writeObject(
-      buildChatFileObjectKey(context.sessionId, fileId),
-      SPILLED_OUTPUT_MEDIA_TYPE,
-      content,
-    );
+    await dependencies.writeObject(objectKey, SPILLED_OUTPUT_MEDIA_TYPE, content);
     const row = await dependencies.saveWorkChatFile(context.userId, context.workspaceId, {
       fileId,
       sessionId: context.sessionId,
@@ -1222,12 +1224,23 @@ const spillFullOutput = async (
       workspaceId: context.workspaceId,
       sessionId: context.sessionId,
     });
-    // The spill's object is deliberately left behind. This catch covers the
-    // row save as well as the write, and a save that raised leaves its row in
-    // doubt rather than absent, so the key cannot be taken: a row whose bytes
-    // are gone fails every later mount of this chat, while the leaked object
-    // is reached without anyone asking - see chatFiles/deleteFile.ts for the
-    // invariant.
+    // One classification settles both halves of this catch. A write that
+    // raised stored no row at all, and a save settled not to have committed
+    // stored none either, so in both the key is nobody's; a delete of a key
+    // that holds nothing is free, which is what the failed write leaves behind.
+    // A save whose outcome cannot be settled keeps its object instead, because
+    // a row whose bytes are gone fails every later mount of this chat - see
+    // classifyChatFileStatementFailure in chatFiles/store.ts and the invariant
+    // in chatFiles/deleteFile.ts.
+    if (classifyChatFileStatementFailure(error) === "rolled-back") {
+      await dependencies.deleteUnnamedChatFileObjects(
+        context.userId,
+        context.workspaceId,
+        context.sessionId,
+        [objectKey],
+      );
+    }
+
     return { path: null, notes: [describeSpillRefusal({ kind: "not_saved" })] };
   }
 };
