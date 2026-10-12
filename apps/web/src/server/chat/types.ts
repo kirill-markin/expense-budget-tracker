@@ -20,7 +20,34 @@ export type ImageContentPart = Readonly<{
   base64Data: string;
 }>;
 
+/**
+ * A document of the chat session, by reference. The bytes are never in a
+ * message: the file is mounted in the sandbox at `path` and the model reads it
+ * with `bash`, while the per-turn manifest names it.
+ *
+ * `sha256` and `sizeBytes` are the stored row's, so a part identifies one set
+ * of bytes rather than one path: a later file written to the same path is a
+ * different `fileId`.
+ */
 export type FileContentPart = Readonly<{
+  type: "file";
+  fileId: string;
+  path: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+}>;
+
+/**
+ * A document still carrying its own bytes: what the browser sends until
+ * pre-signed uploads replace that send, and what a payload written before the
+ * reference above still holds.
+ *
+ * `chatFiles/ingest.ts` is the only place that turns one into a
+ * {@link FileContentPart}. Nothing sends it to the model and nothing stores it
+ * once converted.
+ */
+export type InlineFileContentPart = Readonly<{
   type: "file";
   mediaType: string;
   base64Data: string;
@@ -66,9 +93,32 @@ export type ContentPart =
   | ToolCallContentPart
   | ReasoningSummaryContentPart;
 
+/**
+ * A part as a client sends it and as a stored payload may still read: every
+ * part of {@link ContentPart}, plus the inline document shape that the turn
+ * prologue converts away.
+ *
+ * Only the request, store and browser-transcript boundaries use this. Model
+ * input construction and history sizing take {@link ContentPart} alone, so a
+ * document reaches them as a reference or not at all.
+ */
+export type UnconvertedContentPart = ContentPart | InlineFileContentPart;
+
+/** Tells the two document shapes apart; only the inline one carries bytes. */
+export const isInlineFileContentPart = (
+  part: UnconvertedContentPart,
+): part is InlineFileContentPart =>
+  part.type === "file" && "base64Data" in part;
+
 export type ChatMessage = Readonly<{
   role: ChatRole;
   content: ReadonlyArray<ContentPart>;
+}>;
+
+/** One message whose documents may not be files of the session yet. */
+export type UnconvertedChatMessage = Readonly<{
+  role: ChatRole;
+  content: ReadonlyArray<UnconvertedContentPart>;
 }>;
 
 export type ChatStreamEvent =

@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { finalizePendingToolCallContent } from "@/lib/chatHistory";
 import { withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
-import type { ServerChatMessage } from "@/server/chat/openai/responses/replayItems";
-import type { ContentPart } from "@/server/chat/types";
+import type { StoredChatMessage } from "@/server/chat/openai/responses/replayItems";
+import type { UnconvertedContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import {
   getChatModelRollingWindowStart,
@@ -59,7 +59,7 @@ const resolvePreparedChatModelRouting = async (
   queryFn: QueryFn,
   userId: string,
   workspaceId: string,
-  localMessages: ReadonlyArray<ServerChatMessage>,
+  localMessages: ReadonlyArray<StoredChatMessage>,
 ): Promise<ChatModelRoutingDecision> => {
   const rollingWindowStart = getChatModelRollingWindowStart(new Date());
   const rollingUserMessageCount = await countWorkspaceUserMessagesSinceWithQuery(
@@ -72,8 +72,8 @@ const resolvePreparedChatModelRouting = async (
 };
 
 export const buildUserStoppedAssistantContent = (
-  content: ReadonlyArray<ContentPart>,
-): ReadonlyArray<ContentPart> =>
+  content: ReadonlyArray<UnconvertedContentPart>,
+): ReadonlyArray<UnconvertedContentPart> =>
   content.map((part) => {
     if (part.type !== "tool_call" || part.status !== "started") {
       return part;
@@ -117,7 +117,7 @@ export const prepareChatRunWithQuery = async (
   userId: string,
   workspaceId: string,
   requestedSessionId: string | undefined,
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   turnId: string,
 ): Promise<PrepareChatRunResult> => {
   const sessionRow = requestedSessionId === undefined
@@ -181,7 +181,7 @@ export const prepareChatRun = async (
   userId: string,
   workspaceId: string,
   requestedSessionId: string | undefined,
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   turnId: string,
 ): Promise<PrepareChatRunResult> =>
   withUserContext(userId, workspaceId, async (queryFn) =>
@@ -309,7 +309,7 @@ export const prepareFreshChatRunWithQuery = async (
   queryFn: QueryFn,
   userId: string,
   workspaceId: string,
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): Promise<PreparedChatRun> => {
   const activeRunId = randomUUID();
   const sessionRow = await createRunningChatSessionWithQuery(
@@ -356,7 +356,7 @@ export const prepareFreshChatRunWithQuery = async (
 export const prepareFreshChatRun = async (
   userId: string,
   workspaceId: string,
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): Promise<PreparedChatRun> =>
   withUserContext(userId, workspaceId, async (queryFn) =>
     prepareFreshChatRunWithQuery(queryFn, userId, workspaceId, content));

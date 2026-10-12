@@ -1,6 +1,6 @@
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
-import type { ContentPart } from "@/server/chat/types";
+import type { UnconvertedContentPart } from "@/server/chat/types";
 import {
   parseMainContentInvalidationVersion,
   type ChatItemState,
@@ -20,7 +20,7 @@ import { lockActiveChatSessionRunWithQuery } from "./sessionStore";
 
 type ChatItemPayload = Readonly<{
   role: "user" | "assistant";
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   openaiItems?: ReadonlyArray<StoredOpenAIReplayItem>;
   replayMeasurement?: ChatHistoryMeasurement;
 }>;
@@ -175,7 +175,7 @@ const requireChatItemRow = (
 
 const toChatItemPayload = (
   role: "user" | "assistant",
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
   assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | undefined,
   assistantReplayMeasurement: ChatHistoryMeasurement | undefined,
 ): ChatItemPayload => ({
@@ -192,7 +192,7 @@ const toChatItemPayload = (
 const isVisibleChatItemActivity = (
   role: "user" | "assistant",
   state: ChatItemState,
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): boolean =>
   role === "user"
   || content.length > 0

@@ -1,10 +1,10 @@
 import type {
   ChatHistoryMeasurement,
-  ServerChatMessage,
+  StoredChatMessage,
   StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
 import type { ChatModelRoutingDecision } from "@/server/chat/modelRouting";
-import type { ContentPart } from "@/server/chat/types";
+import type { UnconvertedContentPart } from "@/server/chat/types";
 
 export type ChatSessionRunState = "idle" | "running" | "interrupted";
 export type ChatSessionTerminalState = Exclude<ChatSessionRunState, "running">;
@@ -66,7 +66,7 @@ export type PersistedChatMessageItem = Readonly<{
   itemId: string;
   sessionId: string;
   role: "user" | "assistant";
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   openaiItems?: ReadonlyArray<StoredOpenAIReplayItem>;
   replayMeasurement?: ChatHistoryMeasurement;
   state: ChatItemState;
@@ -90,8 +90,8 @@ export type PreparedChatRun = Readonly<{
   sessionId: string;
   activeRunId: string;
   assistantItem: PersistedChatMessageItem;
-  localMessages: ReadonlyArray<ServerChatMessage>;
-  turnInput: ReadonlyArray<ContentPart>;
+  localMessages: ReadonlyArray<StoredChatMessage>;
+  turnInput: ReadonlyArray<UnconvertedContentPart>;
   modelRouting: ChatModelRoutingDecision;
 }>;
 
@@ -110,14 +110,14 @@ export type InsertChatItemParams = Readonly<{
   sessionId: string;
   role: "user" | "assistant";
   state: ChatItemState;
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
 export type UpdateChatMessageItemParams = Readonly<{
   sessionId: string;
   itemId: string;
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   state: ChatItemState;
   assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
   assistantReplayMeasurement?: ChatHistoryMeasurement;
@@ -126,7 +126,7 @@ export type UpdateChatMessageItemParams = Readonly<{
 export type UpdateChatMessageItemAndInvalidateMainContentParams = Readonly<{
   sessionId: string;
   itemId: string;
-  content: ReadonlyArray<ContentPart>;
+  content: ReadonlyArray<UnconvertedContentPart>;
   state: ChatItemState;
   assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
@@ -143,7 +143,7 @@ export type PersistAssistantTerminalErrorParams = Readonly<{
   sessionId: string;
   activeRunId: string;
   assistantItemId: string;
-  assistantContent: ReadonlyArray<ContentPart>;
+  assistantContent: ReadonlyArray<UnconvertedContentPart>;
   assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
   errorMessage: string;
   sessionState: ChatSessionTerminalState;
@@ -153,7 +153,7 @@ export type PersistAssistantCancelledParams = Readonly<{
   sessionId: string;
   activeRunId: string;
   assistantItemId: string;
-  assistantContent: ReadonlyArray<ContentPart>;
+  assistantContent: ReadonlyArray<UnconvertedContentPart>;
   assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
 }>;
 
@@ -161,7 +161,7 @@ export type CompleteChatRunParams = Readonly<{
   sessionId: string;
   activeRunId: string;
   assistantItemId: string;
-  assistantContent: ReadonlyArray<ContentPart>;
+  assistantContent: ReadonlyArray<UnconvertedContentPart>;
   assistantOpenAIItems?: ReadonlyArray<StoredOpenAIReplayItem>;
   /**
    * Recorded for every run whose stored items are what its last model call
@@ -175,7 +175,7 @@ export type CompleteChatRunParams = Readonly<{
 
 export type UserStoppedChatRunUpdatePlan = Readonly<{
   assistantItem: PersistedChatMessageItem | null;
-  assistantContent: ReadonlyArray<ContentPart> | null;
+  assistantContent: ReadonlyArray<UnconvertedContentPart> | null;
   assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | null;
   sessionState: ChatSessionTerminalState;
 }>;

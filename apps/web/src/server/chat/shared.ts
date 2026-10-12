@@ -16,7 +16,6 @@ import {
   type SqlPolicyError,
   type ValidatedExpenseSql,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
-import type { ContentPart } from "@/server/chat/types";
 import {
   applySqlResultCharBudget,
   type BudgetedSqlStatementEntry,
@@ -521,25 +520,3 @@ export const execQuery = async (
   target: ChatSqlTarget,
 ): Promise<QueryResult> =>
   execQueryWithDependencies(validated, context, target, DEFAULT_EXEC_QUERY_DEPENDENCIES);
-
-export const extractText = (content: ReadonlyArray<ContentPart>): string =>
-  content
-    .filter((p) => p.type === "text")
-    .map((p) => (p.type === "text" ? p.text : ""))
-    .join("");
-
-export const summarizeContent = (content: ReadonlyArray<ContentPart>): string => {
-  const parts: Array<string> = [];
-  for (const p of content) {
-    if (p.type === "text") {
-      parts.push(p.text);
-    } else if (p.type === "image") {
-      parts.push("[attached image]");
-    } else if (p.type === "file") {
-      parts.push(`[attached file: ${p.fileName}]`);
-    } else if (p.type === "pdf") {
-      parts.push(`[attached PDF: ${p.fileName}]`);
-    }
-  }
-  return parts.join("\n");
-};

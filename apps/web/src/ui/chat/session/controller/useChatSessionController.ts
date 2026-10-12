@@ -12,7 +12,7 @@ import {
   useChatHistory,
   type StoredMessage,
 } from "@/ui/hooks/useChatHistory";
-import type { ContentPart } from "@/server/chat/types";
+import type { UnconvertedContentPart } from "@/server/chat/types";
 import type { PendingAttachment } from "../../shell/panel/FileAttachment";
 import type { ChatSessionSnapshot } from "../bootstrap/chatSessionSnapshot";
 import {
@@ -168,7 +168,7 @@ type OwnedChatTurn = ChatSendReconciliationOwner & Readonly<{
 
 type PendingChatTurn = OwnedChatTurn & Readonly<{
   requestBody: string;
-  submittedContent: ReadonlyArray<ContentPart>;
+  submittedContent: ReadonlyArray<UnconvertedContentPart>;
   authoritativeMessages: ReadonlyArray<StoredMessage>;
   retryAbortController: AbortController;
   onSubmissionRejected: () => void;

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getEncoding } from "js-tiktoken";
-import { ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS } from "@/lib/chatAttachments";
 import {
   CHAT_SENT_INPUT_BUDGET_TOKENS,
   CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS,
@@ -19,10 +18,11 @@ import {
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
+import { buildChatFilePromptText } from "@/server/chat/openai/responses/chatFilePrompt";
 import { buildPdfPagePromptText } from "@/server/chat/openai/responses/input";
 import { OPENAI_CHAT_TOOLS } from "@/server/chat/openai/tooling/tools";
 import { buildSystemInstructions, formatDatetime } from "@/server/chat/shared";
-import type { ContentPart } from "@/server/chat/types";
+import type { ContentPart, FileContentPart } from "@/server/chat/types";
 
 const COMPACTION_ITEM: StoredOpenAIReplayItem = {
   type: "compaction",
@@ -238,118 +238,50 @@ test("the character estimate is an upper bound on every shape this product repla
       + `${String(estimated)}: the estimate must never read low`,
     );
   }
-
-  // An opaque attachment replays as a base64 data URL, which reaches one token
-  // per character - its decoded byte count is not the quantity being sent.
-  const base64Data = Buffer.from("x".repeat(30_000)).toString("base64");
-  assert.ok(
-    estimateContentPartsTokens([{
-      type: "file",
-      fileName: "archive.bin",
-      mediaType: "application/octet-stream",
-      base64Data,
-    }]) >= realTokenCount(base64Data),
-  );
 });
 
-test("a container with no extracted text is charged its honest cap", (): void => {
-  // Nobody has read this one - too large for the sizing path to extract - so its
-  // size is a bound. It is charged at that bound in full, which is larger than
-  // the budget, so no cut reaches through it: the window drops the message and
-  // the history before it. The alternative, scaling it down to keep the message
-  // replayable, makes sizing claim a fit it cannot deliver.
-  const base64Data = Buffer.from("x".repeat(400_000)).toString("base64");
-  const workbookTokens = estimateContentPartsTokens([{
+test("a document is charged the line it replays as, not the bytes it holds", (): void => {
+  // A document's bytes are not in the input at all: the model reads the file the
+  // sandbox mounts, so a 400 KB workbook and a one-line CSV are within a few
+  // tokens of each other. What the input does carry is the line naming the file,
+  // and that is the quantity this module can count - a stem may be a hundred
+  // characters of any script, and nothing caps how many documents one turn
+  // carries, so a constant standing for the line reads low by the window.
+  const document = (path: string, sizeBytes: number): FileContentPart => ({
     type: "file",
-    fileName: "ledger.xlsx",
+    fileId: "11111111-1111-4111-8111-111111111111",
+    path,
     mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    base64Data,
-  }]);
-  const docxTokens = estimateContentPartsTokens([{
-    type: "file",
-    fileName: "notes.docx",
-    mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    base64Data,
-  }]);
+    sizeBytes,
+    sha256: "a".repeat(64),
+  });
 
-  for (const tokens of [workbookTokens, docxTokens]) {
+  const shapes: ReadonlyArray<readonly [string, number]> = [
+    ["/files/small.xlsx", 64],
+    ["/files/ledger.xlsx", 400_000],
+    [`/files/${"\u6536\u652f\u660e\u7ec6\u8868".repeat(20)}.xlsx`, 400_000],
+  ];
+  for (const [path, sizeBytes] of shapes) {
+    const part = document(path, sizeBytes);
     assert.ok(
-      tokens >= ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS / 1.4,
-      `An unread container is charged ${String(tokens)} tokens, under the cap on the `
-      + "text it could replay as",
+      estimateContentPartsTokens([part]) >= realTokenCount(buildChatFilePromptText(part)),
+      `a document at ${path} is sized below the line it really sends`,
     );
   }
 });
 
-test("two unread containers in one message are both charged", (): void => {
-  // A message can carry any number of attachments: the picker is a bare multiple
-  // input with no count cap. Charging a per-message ceiling instead of both of
-  // them made sizing report 114,793 for a message that really sent 796,814.
-  const container = (fileName: string): ContentPart => ({
-    type: "file",
-    fileName,
-    mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    base64Data: Buffer.from("x".repeat(400_000)).toString("base64"),
-  });
-  const one = estimateContentPartsTokens([container("a.xlsx")]);
-
-  const two = estimateContentPartsTokens([container("a.xlsx"), container("b.xlsx")]);
-
-  assert.ok(
-    two >= one * 2,
-    `Two unread containers are charged ${String(two)} tokens, less than the `
-    + `${String(one * 2)} the same two parts cost separately`,
-  );
-  assert.ok(two > CHAT_SENT_INPUT_BUDGET_TOKENS);
-});
-
-test("a large CSV attachment is charged what it really costs", (): void => {
-  // The headline case, and the ordinary one: a bank export is this product's own
-  // import format. 500,000 characters of it cost 250,021 real tokens - twice the
-  // budget in one message - and were charged 60,000 while the per-message
-  // ceiling stood. A ceiling reintroduced on the ASCII path alone would pass a
-  // CJK-only test and fail here.
-  const content = `date,amount,category,currency\n${Array.from(
-    { length: 15_000 },
-    (_, index) => `2026-08-${String((index % 28) + 1).padStart(2, "0")},-${String(1_000 + index)}.${String(index % 100).padStart(2, "0")},Groceries,EUR\n`,
-  ).join("")}`;
-  const attachment: ContentPart = {
-    type: "file",
-    fileName: "statement.csv",
-    mediaType: "text/csv",
-    base64Data: Buffer.from(content, "utf8").toString("base64"),
-  };
-
-  const sized = estimateContentPartsTokens([attachment]);
-
-  const real = realTokenCount(content.slice(0, ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS));
-  assert.ok(
-    sized >= real,
-    `A CSV attachment really costs ${String(real)} o200k tokens and is sized at `
-    + `${String(sized)}: sizing may never claim a message fits when its real `
-    + "content could exceed the budget",
-  );
-  assert.ok(real > CHAT_SENT_INPUT_BUDGET_TOKENS);
-  assert.ok(sized > CHAT_SENT_INPUT_BUDGET_TOKENS);
-});
-
-test("a CJK text attachment is charged what it really costs", (): void => {
+test("CJK text is charged what it really costs", (): void => {
   // The case that retired the per-message ceiling: 500,000 CJK characters really
   // cost 386,367 tokens. Sized at a ceiling of 60,024 the window kept the
   // message, the call came back `context_length_exceeded`, an errored turn
   // stores no measurement, and the identical plan failed again on every retry.
   const sentence = "这个月的预算回顾涵盖了每一个账户和计划支出。";
-  const asAttachment = (content: string): ContentPart => ({
-    type: "file",
-    fileName: "notes.txt",
-    mediaType: "text/plain",
-    base64Data: Buffer.from(content, "utf8").toString("base64"),
-  });
+  const asText = (content: string): ContentPart => ({ type: "text", text: content });
   // Grounded on a sample, so the suite does not spend seconds tokenizing half a
   // megabyte of CJK: the rate is what matters and it is linear.
   const sample = sentence.repeat(2_000);
 
-  const sampleSized = estimateContentPartsTokens([asAttachment(sample)]);
+  const sampleSized = estimateContentPartsTokens([asText(sample)]);
 
   const sampleReal = realTokenCount(sample);
   assert.ok(
@@ -358,66 +290,21 @@ test("a CJK text attachment is charged what it really costs", (): void => {
     + `${String(sampleSized)}: sizing may never claim a message fits when its real `
     + "content could exceed the budget",
   );
-  // And at the size a user really attaches, the message reads as not fitting.
-  const full = estimateContentPartsTokens([asAttachment(sentence.repeat(23_810))]);
+  // And at the size a user really pastes, the message reads as not fitting.
+  const full = estimateContentPartsTokens([asText(sentence.repeat(23_810))]);
   assert.ok(full > CHAT_SENT_INPUT_BUDGET_TOKENS);
-  assert.ok(
-    sampleReal / sample.length * ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS
-    > CHAT_SENT_INPUT_BUDGET_TOKENS,
-  );
 });
 
-test("a container is charged its extracted text when the caller has extracted it", (): void => {
-  // The bound above is for a container nobody has read. For the current turn, and
-  // for a stored one still in reach, the caller extracts the text anyway, and
-  // charging a small workbook a six-figure bound instead of the 2k it really
-  // replays collapsed the whole window.
-  const workbook: ContentPart = {
-    type: "file",
-    fileName: "ledger.xlsx",
-    mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    base64Data: Buffer.from("x".repeat(8_000)).toString("base64"),
-  };
-  const extractedText = `date,amount\n${Array.from(
-    { length: 40 },
-    (_, index) => `2026-08-16,-${String(1_000 + index)}.00\n`,
-  ).join("")}`;
-
-  const sizedFromText = estimateContentPartsTokens(
-    [workbook],
-    new Map([[workbook, extractedText]]),
-  );
-
-  assert.ok(sizedFromText >= realTokenCount(extractedText));
-  assert.ok(sizedFromText < estimateContentPartsTokens([workbook]) / 10);
-  // Replay caps the extraction, so sizing cannot be talked far past that cap
-  // either - only by the `[truncated: ...]` notice replay appends past it.
-  const atCap = estimateContentPartsTokens(
-    [workbook],
-    new Map([[workbook, "x".repeat(ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS)]]),
-  );
-  const pastCap = estimateContentPartsTokens(
-    [workbook],
-    new Map([[workbook, "x".repeat(ATTACHMENT_MAXIMUM_EXTRACTED_TEXT_CHARACTERS * 4)]]),
-  );
-  assert.ok(pastCap > atCap, "the truncation notice past the cap is charged");
-  assert.ok(pastCap <= atCap + 128);
-});
-
-test("a text attachment larger than the budget is cut past, not kept and oversent", (): void => {
-  // A 518 KB `.txt` is 87,101 real tokens. The character bound charges it
-  // 357,231, so no cut reaches through it and the window starts after it: the
-  // history before it is lost, which is the accepted trade. What must not happen
-  // is the opposite - sizing reporting a fit and the call failing - so the
-  // reported size stays inside the budget while the message itself is dropped.
+test("a message larger than the budget is cut past, not kept and oversent", (): void => {
+  // 518 KB of pasted text is 87,101 real tokens, charged 357,231 by the
+  // character bound, so no cut reaches through it and the window starts after
+  // it: the history before it is lost, which is the accepted trade. What must
+  // not happen is the opposite - sizing reporting a fit and the call failing -
+  // so the reported size stays inside the budget while the message itself is
+  // dropped.
   const content = "The monthly budget review covers every account, transfer and planned expense. "
     .repeat(6_700);
-  const attachment: ContentPart = {
-    type: "file",
-    fileName: "notes.txt",
-    mediaType: "text/plain",
-    base64Data: Buffer.from(content, "utf8").toString("base64"),
-  };
+  const attachment: ContentPart = { type: "text", text: content };
   const turn = (index: number): ReadonlyArray<ServerChatMessage> => [
     createUserMessage(`Question ${String(index)}`),
     createAssistantMessage(`Answer ${String(index)}`, undefined, []),
@@ -555,7 +442,7 @@ test("the file listing a turn appends is charged against the budget", (): void =
   ].join("\n");
 
   const without = planChatHistoryReplay([], TURN_INPUT);
-  const withManifest = planChatHistoryReplay([], TURN_INPUT, undefined, manifest);
+  const withManifest = planChatHistoryReplay([], TURN_INPUT, manifest);
 
   // A text item is charged its envelope plus its text, which is exactly what a
   // turn input text part costs, so the charge is stated against that rather
@@ -1082,80 +969,6 @@ test("a measured session's boundary never pulls back", (): void => {
     assert.ok(
       startIndex >= (startIndexes[offset - 1] ?? 0),
       `A measured session moved its replay boundary backwards: ${series}`,
-    );
-  }
-});
-
-test("a collapse decided by a container bound does not become permanent", (): void => {
-  // A container the sizing path cannot read is charged the extracted-text cap -
-  // here 714,334 tokens for two of them, against a real 2,000 - so no cut
-  // reaches through that message and the window correctly keeps only the newest
-  // pair for that one turn. What must not happen is that boundary latching: the
-  // session replayed all 38 of its messages a turn earlier and the budget still
-  // has room for every one of them.
-  const container = (fileName: string): ContentPart => ({
-    type: "file",
-    fileName,
-    mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    base64Data: Buffer.from("x".repeat(40_000)).toString("base64"),
-  });
-  const question = "What changed in groceries this month? ".repeat(20);
-  const answer = "Spending rose by 4% against plan. ".repeat(20);
-  // What the two workbooks really cost once the provider has read them, which is
-  // what makes the sizing's 714,334 a mis-estimate rather than the truth.
-  const REAL_CONTAINER_TOKENS = 1_000;
-  const realContentTokens = (content: ReadonlyArray<ContentPart>): number =>
-    content.reduce(
-      (total, part) => total + (part.type === "text"
-        ? realTextTokens(part.text)
-        : REAL_CONTAINER_TOKENS),
-      0,
-    );
-  let messages: ReadonlyArray<ServerChatMessage> = [];
-  const startIndexes: Array<number> = [];
-  const runTurn = (turnInput: ReadonlyArray<ContentPart>): void => {
-    const plan = planChatHistoryReplay(messages, turnInput);
-    startIndexes.push(plan.startIndex);
-    messages = [
-      ...messages,
-      { role: "user", content: turnInput },
-      createAssistantMessage(answer, {
-        inputTokens: SIMULATED_OVERHEAD_TOKENS
-          + messages.slice(plan.startIndex).reduce(
-            (total, message) => total + (message.role === "user"
-              ? realContentTokens(message.content)
-              : realMessageTokens(message)),
-            0,
-          )
-          + realContentTokens(turnInput),
-        outputTokens: realTextTokens(answer),
-        replayedMessages: messages.length + 1 - plan.startIndex,
-      }, []),
-    ];
-  };
-
-  for (let turnIndex = 0; turnIndex < 20; turnIndex += 1) {
-    runTurn([{ type: "text", text: `${question}${String(turnIndex)}` }]);
-  }
-  const collapsedTurn = startIndexes.length;
-  runTurn([
-    { type: "text", text: "Here are two sheets" },
-    container("a.xlsx"),
-    container("b.xlsx"),
-  ]);
-  for (let turnIndex = 0; turnIndex < 4; turnIndex += 1) {
-    runTurn([{ type: "text", text: `${question}after${String(turnIndex)}` }]);
-  }
-
-  const series = startIndexes.join(", ");
-  // The containers' own turn is cut back, because sizing may not claim they fit.
-  assert.ok(startIndexes[collapsedTurn] > 0, `The collapse never happened: ${series}`);
-  // Every later turn replays the session again.
-  for (const startIndex of startIndexes.slice(collapsedTurn + 1)) {
-    assert.equal(
-      startIndex,
-      0,
-      `A container bound latched the replay boundary: ${series}`,
     );
   }
 });

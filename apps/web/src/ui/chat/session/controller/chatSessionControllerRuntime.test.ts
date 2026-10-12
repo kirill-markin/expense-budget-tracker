@@ -3713,9 +3713,9 @@ test("snapshot validation requires complete persisted messages and supported con
       base64Data: "aW1hZ2U=",
     }, {
       type: "file",
-      mediaType: "application/pdf",
-      base64Data: "cGRm",
-      fileName: "receipt.pdf",
+      mediaType: "text/csv",
+      base64Data: "",
+      fileName: "receipt.csv",
     }, {
       type: "tool_call",
       id: "call-1",

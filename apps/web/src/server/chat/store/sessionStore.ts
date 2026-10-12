@@ -1,6 +1,7 @@
 import { queryAs, withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
-import type { ContentPart } from "@/server/chat/types";
+import { getChatDocumentFileName } from "@/lib/chatFiles";
+import type { UnconvertedContentPart } from "@/server/chat/types";
 import {
   ChatSessionRunTransitionError,
   ChatSessionNotFoundError,
@@ -215,11 +216,12 @@ const normalizeChatSessionTitle = (value: string): string | null => {
 };
 
 export const deriveChatSessionTitle = (
-  content: ReadonlyArray<ContentPart>,
+  content: ReadonlyArray<UnconvertedContentPart>,
 ): string | null => {
   const textTitle = normalizeChatSessionTitle(
     content
-      .filter((part): part is Extract<ContentPart, { type: "text" }> => part.type === "text")
+      .filter((part): part is Extract<UnconvertedContentPart, { type: "text" }> =>
+        part.type === "text")
       .map((part) => part.text)
       .join(""),
   );
@@ -227,13 +229,17 @@ export const deriveChatSessionTitle = (
     return textTitle;
   }
 
-  const firstFile = content.find(
-    (part): part is Extract<ContentPart, { type: "file" | "pdf" }> =>
+  const firstAttachment = content.find(
+    (part): part is Extract<UnconvertedContentPart, { type: "file" | "pdf" }> =>
       part.type === "file" || part.type === "pdf",
   );
-  return firstFile === undefined
-    ? null
-    : normalizeChatSessionTitle(firstFile.fileName);
+  if (firstAttachment === undefined) {
+    return null;
+  }
+
+  return normalizeChatSessionTitle(firstAttachment.type === "pdf"
+    ? firstAttachment.fileName
+    : getChatDocumentFileName(firstAttachment));
 };
 
 export const createRunningChatSessionWithQuery = async (

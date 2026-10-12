@@ -10,7 +10,7 @@ import {
   validateChatAttachments,
 } from "@/server/chat/attachments/validation";
 import type {
-  FileContentPart,
+  InlineFileContentPart,
   ImageContentPart,
   PdfContentPart,
 } from "@/server/chat/types";
@@ -38,7 +38,7 @@ const createFilePart = (
   fileName: string,
   mediaType: string,
   base64Data: string,
-): FileContentPart => ({
+): InlineFileContentPart => ({
   type: "file",
   fileName,
   mediaType,
@@ -127,7 +127,7 @@ test("validateChatAttachments rejects malformed base64 image data", (): void => 
 });
 
 test("validateChatAttachments rejects HEIC file extensions with empty or generic MIME types", (): void => {
-  const disguisedFiles: ReadonlyArray<FileContentPart> = [
+  const disguisedFiles: ReadonlyArray<InlineFileContentPart> = [
     createFilePart("camera.HEIC", "", HEIC_BASE64_PREFIX),
     createFilePart("camera.HEIC", "application/octet-stream", HEIC_BASE64_PREFIX),
   ];
@@ -148,7 +148,7 @@ test("validateChatAttachments rejects HEIC file extensions with empty or generic
 });
 
 test("validateChatAttachments rejects HEIC generic files by MIME and signature", (): void => {
-  const disguisedFiles: ReadonlyArray<FileContentPart> = [
+  const disguisedFiles: ReadonlyArray<InlineFileContentPart> = [
     createFilePart("camera.bin", "image/heif", XLSX_BASE64_PREFIX),
     createFilePart("camera.bin", "application/octet-stream", HEIC_BASE64_PREFIX),
     createFilePart("camera.bin", "application/octet-stream", HEIC_COMPATIBLE_BRAND_BASE64),
@@ -163,7 +163,7 @@ test("validateChatAttachments rejects HEIC generic files by MIME and signature",
 });
 
 test("validateChatAttachments rejects unpadded and whitespace-encoded HEIC generic files", (): void => {
-  const disguisedFiles: ReadonlyArray<FileContentPart> = [
+  const disguisedFiles: ReadonlyArray<InlineFileContentPart> = [
     createFilePart("camera.bin", "application/octet-stream", HEIC_UNPADDED_BASE64_PREFIX),
     createFilePart("camera.bin", "application/octet-stream", HEIC_WHITESPACE_BASE64_PREFIX),
   ];
