@@ -499,7 +499,7 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
   // match its schema; a payload naming an `operation` this sandbox does not
   // serve; a pre-signed URL whose host is not one of the deployment's; a
   // prepare request carrying fewer write slots than a source has parts; and a
-  // caller invoking one runner concurrently.
+  // caller invoking the bash, conversion or page-copy runner concurrently.
   //
   // The build: a bundle that cannot load one of the document parsers; and a
   // TypeError, ReferenceError or RangeError of the sandbox's own, every one of
@@ -508,16 +508,17 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
   // carrying V8's text, rather than being written down as that document being
   // broken.
   //
-  // The child protocol, on the bash path and the conversion path alike: a child
-  // that could not be forked, never completed its ready handshake, or reported
-  // ready without a pid; a command or a conversion that could not be sent to a
-  // child which had just reported ready; an IPC or serialization `error` event
-  // on a channel a command had already been written to; and an exit reporting a
-  // signal `os.constants.signals` does not number, or reporting neither a code
-  // nor a signal.
+  // The child protocol, on the bash path, the conversion path and the page-copy
+  // path alike: a child that could not be forked, never completed its ready
+  // handshake, or reported ready without a pid; a command, a conversion or a
+  // page copy that could not be sent to a child which had just reported ready;
+  // an IPC or serialization `error` event on a channel a command had already
+  // been written to; and an exit reporting a signal `os.constants.signals` does
+  // not number, or reporting neither a code nor a signal.
   //
   // The runtime: a /proc/<pid>/status publishing a memory block with no `VmRSS`
-  // line, which leaves a conversion child's resident memory unbounded.
+  // line, which leaves a conversion child's or a page child's resident memory
+  // unbounded.
   //
   // Each is a wiring, contract, build or runtime defect that no retry fixes and
   // that nothing else reports. What is deliberately not on the list is

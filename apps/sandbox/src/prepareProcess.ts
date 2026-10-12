@@ -1,5 +1,6 @@
 /**
- * The bound on one conversion: a child process with a heap cap and a clock.
+ * The bound on one document operation: a child process with a heap cap and a
+ * clock.
  *
  * Converting a document means handing attacker-chosen bytes to pdf.js, mammoth
  * or SheetJS and asking them how much memory they would like. Every attempt to
@@ -30,6 +31,17 @@
  * session's next command, while a conversion child serves one source and is
  * killed and reaped whatever it answered, because there is no next conversion
  * for it to be warm for and a surviving one holds an open IPC channel.
+ *
+ * Two operations run here rather than one, and for the same reason: `prepare`
+ * converts a source, and `pdf_page` copies one page out of a PDF with pdf-lib.
+ * Both hand attacker-chosen bytes to a parser, so neither may parse them in the
+ * supervisor, which a warm Lambda keeps across invocations and therefore across
+ * the chat sessions of different users - a parser that corrupts its own process
+ * would be corrupting the one process the next session also runs in. Each gets
+ * a one-shot child of its own under the same heap cap, the same clock and the
+ * same resident ceiling. What differs between them is only the answer each maps
+ * its child's death onto, because the two contracts differ: a `prepare` has an
+ * `unavailable` arm the caller retries and a `pdf_page` has not.
  */
 import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -39,22 +51,36 @@ import {
   sendSandboxChildCommand,
   terminateSandboxChild,
   type SandboxChildMessage,
+  type SandboxChildOutcome,
   type SandboxChildSpec,
 } from "./childProcess.js";
 import {
   quoteUntrustedSandboxText,
   quoteUntrustedSandboxValue,
+  type ChatSandboxPdfPageRequest,
+  type ChatSandboxPdfPageResponse,
   type ChatSandboxPrepareRequest,
   type ChatSandboxPrepareResponse,
 } from "./contract.js";
 import { createPresignedObjectTransfer } from "./objects.js";
+import { runChatSandboxPdfPage } from "./pdfPageOperation.js";
 import { prepareSource } from "./prepareOperation.js";
 
-/** Set on the forked process only, which is how the same file becomes the child's main. */
+/**
+ * Set on the forked process only, which is how the same file becomes the
+ * child's main - whichever of the two document operations it was forked for.
+ */
 export const SANDBOX_PREPARE_CHILD_ENV_VAR = "CHAT_SANDBOX_PREPARE_CHILD";
 
 /**
- * V8 old-space ceiling of one conversion child, in MiB.
+ * V8 old-space ceiling of one document child, in MiB.
+ *
+ * Written about a conversion throughout, because a conversion is what the
+ * number was measured against and what can reach it. A `pdf_page` child runs
+ * under the same ceiling: its heap is the object graph pdf-lib parses out of at
+ * most the 50 MiB a chat file may be, which is nowhere near this, so the number
+ * binds the same way and the page copy needs none of the margin argued for
+ * below.
  *
  * Two sides to the number. Below it must sit every document worth converting,
  * and measured on this runtime the real ones are nowhere near: a 260-page
@@ -190,6 +216,29 @@ const PREPARE_CHILD_HEAP_MB = 4_096;
 const SANDBOX_PREPARE_BUDGET_MS = 90_000;
 
 /**
+ * Wall clock one page copy may spend, from fork to answer.
+ *
+ * The same number as the conversion budget above and deliberately not the same
+ * constant: they are the same size because each is the only document operation
+ * of its own invocation of the same 120 s function, but they bound different
+ * work, and a budget moved for one of them must not move silently for the
+ * other.
+ *
+ * Why it is below the invocation's own deadline rather than equal to it is the
+ * conversion budget's argument unchanged: an overrun is then a refusal of one
+ * page the model is told about, rather than something the caller discovers as a
+ * dead Lambda, and the child's 1 s grace and worst-case 5 s reap fall inside
+ * the 27 s between this window and the handler's deadline instead of past the
+ * function's timeout.
+ *
+ * It is an order of magnitude above what the operation does - pdf-lib parses
+ * the document, copies one page's objects across and serializes them - and that
+ * is the point of stating it at all: the bound exists for the document that
+ * does not finish, which is the document nobody has measured.
+ */
+const SANDBOX_PDF_PAGE_BUDGET_MS = 90_000;
+
+/**
  * Resident memory one conversion child may hold, in MiB, whatever it is held in.
  *
  * The companion of the heap cap above and not a substitute for it: that one
@@ -211,12 +260,22 @@ const SANDBOX_PREPARE_BUDGET_MS = 90_000;
  * From above, it must leave the rest of the function room, because this child
  * is not alone in the cgroup. Lambda gives the invocation 10,240 MB; 3,072 MiB
  * of that is reserved here for three things the 70 MB parent floor does not
- * cover. The supervisor itself. A `pdf_page` that ran earlier in the same
- * environment, which runs in the parent (handler.ts), so its 50 MiB source and
- * the pdf-lib structures built from it are resident until V8 gets round to
- * them. And the warm `bash` child sessionProcess.ts keeps alive between
- * invocations, holding the previous command's heap - up to the 512 MiB of
- * /files originals PresignedFs retains - and its python worker beside it.
+ * cover. The supervisor itself. The measured cost of a `pdf_page` child of a
+ * concurrent request - its 50 MiB source and the pdf-lib structures built from
+ * it, held for as long as the page copy runs. That figure is what a page copy
+ * costs, not what anything enforces: a page child runs under this same ceiling
+ * and the same heap flag, so two document children at once are permitted twice
+ * this ceiling against the function's 10,240 MB, and what would end them is the
+ * kernel's kill both ceilings exist to pre-empt. Nothing reaches that today - a
+ * Lambda execution environment serves one invocation at a time, and there is no
+ * self-hosted sandbox container to serve two requests in one process - which is
+ * why the reserve may be sized on what a page copy measures. A sandbox that
+ * ever served two at once would need a bound the two runners share, not a
+ * larger reserve here. A `pdf_page` that ran earlier reserves nothing, because
+ * its child is killed and reaped with its answer. And the warm `bash` child
+ * sessionProcess.ts keeps alive between invocations, holding the previous
+ * command's heap - up to the 512 MiB of /files originals PresignedFs retains -
+ * and its python worker beside it.
  * Together those are about 2.6 GiB of worst case, and the reserve rounds up.
  *
  * So 7,168 MiB, and the point of the number is which death the function dies:
@@ -413,17 +472,38 @@ const watchChildMemory = (
   };
 };
 
-/** The one thing a conversion child is ever asked to do. */
-export type PrepareChildCommand = Readonly<{
-  kind: "prepare";
-  request: ChatSandboxPrepareRequest;
-  deadlineEpochMs: number;
-}>;
+/**
+ * The two things a one-shot child is ever asked to do.
+ *
+ * A union with the operation in it rather than two protocols, because the child
+ * is the same module forked the same way for both: the kind is what tells the
+ * new process which parser it was started for, and `tsc` is then what stops a
+ * command of one kind being answered with the other's response type.
+ */
+export type PrepareChildCommand =
+  | Readonly<{
+    kind: "prepare";
+    request: ChatSandboxPrepareRequest;
+    deadlineEpochMs: number;
+  }>
+  | Readonly<{
+    kind: "pdf_page";
+    request: ChatSandboxPdfPageRequest;
+    deadlineEpochMs: number;
+  }>;
+
+/** What either child can send back, which is one response of its own operation. */
+type PrepareChildResponse = ChatSandboxPrepareResponse | ChatSandboxPdfPageResponse;
 
 export type ChatSandboxPrepareRunner = (
   request: ChatSandboxPrepareRequest,
   deadlineEpochMs: number,
 ) => Promise<ChatSandboxPrepareResponse>;
+
+export type ChatSandboxPdfPageRunner = (
+  request: ChatSandboxPdfPageRequest,
+  deadlineEpochMs: number,
+) => Promise<ChatSandboxPdfPageResponse>;
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? `${error.name}: ${error.message}` : String(error);
@@ -454,12 +534,12 @@ const refusedResponse = (
  * `unavailable` and not `failed`, and the reason is in the kernel's rule. A
  * cgroup v2 OOM kill picks the process with the highest oom_badness against the
  * memcg limit, not the process that grew: a conversion child can be selected
- * because a `pdf_page` left 50 MiB and its pdf-lib structures in the parent, or
- * because the warm `bash` child is holding the previous command's 512 MiB of
- * retained originals and a python worker. So the file that gets killed need not
- * be the file that filled the function, and recording it as a permanent
- * derivatives_error would mark an ordinary document unconvertible for good on
- * the strength of another process's memory. Retrying it is exactly right, which
+ * because a concurrent `pdf_page` child is holding its 50 MiB source and the
+ * pdf-lib structures built from it, or because the warm `bash` child is holding
+ * the previous command's 512 MiB of retained originals and a python worker. So
+ * the file that gets killed need not be the file that filled the function, and
+ * recording it as a permanent derivatives_error would mark an ordinary document
+ * unconvertible for good on the strength of another process's memory. Retrying it is exactly right, which
  * is what this arm is for - the same arm a 503 gets, for the same reason.
  *
  * It costs the case where the source really was the cause, which is then
@@ -506,6 +586,27 @@ export const answerPrepareChildExit = (
         ? `converting it ended the process doing it with exit code ${String(exit.code)}, which is how exhausting the ${String(heapMb)} MiB heap one conversion may use ends`
         : `converting it had the process doing it killed by ${exit.signal}, which is how exhausting the ${String(heapMb)} MiB heap one conversion may use ends`,
     );
+
+/**
+ * How either one-shot child is started.
+ *
+ * One builder because it is one child, forked the same way for both document
+ * operations: what each part of it is, and why nothing else about it is a
+ * parameter, is in createPrepareRunner's docstring below. The heap ceiling is a
+ * command-line flag rather than NODE_OPTIONS so that it is this module's
+ * statement and cannot be read as the function's.
+ */
+const oneShotChildSpec = (
+  heapMb: number,
+  interpreterArgv: ReadonlyArray<string>,
+): SandboxChildSpec => ({
+  modulePath: fileURLToPath(import.meta.url),
+  execArgv: [...interpreterArgv, `--max-old-space-size=${String(heapMb)}`],
+  env: {
+    TZ: process.env.TZ,
+    [SANDBOX_PREPARE_CHILD_ENV_VAR]: "1",
+  },
+});
 
 /**
  * One conversion in one child, under a stated heap ceiling.
@@ -557,16 +658,7 @@ export const createPrepareRunner = (
   interpreterArgv: ReadonlyArray<string>,
   readResidentBytes: SandboxChildResidentReader,
 ): ChatSandboxPrepareRunner => {
-  const spec: SandboxChildSpec = {
-    modulePath: fileURLToPath(import.meta.url),
-    // The heap ceiling is a command-line flag rather than NODE_OPTIONS so that
-    // it is this module's statement and cannot be read as the function's.
-    execArgv: [...interpreterArgv, `--max-old-space-size=${String(heapMb)}`],
-    env: {
-      TZ: process.env.TZ,
-      [SANDBOX_PREPARE_CHILD_ENV_VAR]: "1",
-    },
-  };
+  const spec: SandboxChildSpec = oneShotChildSpec(heapMb, interpreterArgv);
 
   let conversionInFlight = false;
 
@@ -677,7 +769,241 @@ export const runChatSandboxPrepare: ChatSandboxPrepareRunner =
   createPrepareRunner(PREPARE_CHILD_HEAP_MB, [], readChildResidentBytes);
 
 /**
- * The child side of one conversion.
+ * The same answer for a page the child could not hand back.
+ *
+ * `failed` is the only arm this contract has for it, which is a narrower set of
+ * answers than a conversion gets and needs nothing more: a refused page is
+ * shown to the model as the reason and nothing is written down about the file,
+ * so what a conversion expresses by `unavailable` - try this file again later -
+ * is expressed here by saying so in the reason. The page number and the quoted
+ * path are the subject, exactly as pdfPageOperation's own refusals are, because
+ * both end up in the same model-visible answer.
+ */
+const refusedPageResponse = (
+  request: ChatSandboxPdfPageRequest,
+  startedAt: number,
+  reason: string,
+): ChatSandboxPdfPageResponse => ({
+  status: "failed",
+  error: `page ${String(request.page)} of ${quoteUntrustedSandboxValue(request.source.path)} could not be read: ${quoteUntrustedSandboxText(reason)}`,
+  durationMs: Date.now() - startedAt,
+});
+
+/** How a page copy can end other than by answering or by never starting. */
+export type PdfPageChildEnding = Extract<
+  SandboxChildOutcome<ChatSandboxPdfPageResponse>,
+  Readonly<{ kind: "timeout" | "exit" }>
+>;
+
+/**
+ * What a page copy that produced no answer means, as a function of how it ended.
+ *
+ * Separated from the runner and exported for the reason answerPrepareChildExit
+ * is: it is the whole decision, where the fork, the clock and the memory poll
+ * around it are machinery, and a test can state every arm of it without a child.
+ * That is not a convenience here but the only way two of the arms can be
+ * covered at all - a pdf-lib parse that outlives a 90 s window, or one holding
+ * 7 GiB, is a document nobody has and a test that produced one would be
+ * measuring the machine. That a real child's death reaches a supervisor as an
+ * `exit` outcome through this same machinery is covered where it is cheap: the
+ * conversion case in prepareProcess.test.ts drives a real fork to a real
+ * SIGABRT.
+ *
+ * The three deaths are the three the conversion runner tells apart, with the
+ * same meanings and one difference in what can be said about them. The memory
+ * watch answers first, because it is the only one that knows it ordered the
+ * kill. A SIGKILL this sandbox did not order is the kernel's, which under
+ * cgroup v2 picks by oom_badness across the whole cgroup and so need not have
+ * picked the process that grew - this contract has no retryable arm to put that
+ * in, so the reason says it instead, which is what the caller renders to the
+ * model. Everything else - V8's heap-limit abort, which arrives as SIGABRT, and
+ * any exit code - is the document.
+ */
+export const answerPdfPageChildEnding = (
+  ending: PdfPageChildEnding,
+  context: Readonly<{
+    request: ChatSandboxPdfPageRequest;
+    startedAt: number;
+    heapMb: number;
+    windowMs: number;
+    exceededBytes: number | null;
+  }>,
+): ChatSandboxPdfPageResponse => {
+  const { request, startedAt, heapMb, windowMs, exceededBytes } = context;
+  if (ending.kind === "timeout") {
+    return refusedPageResponse(
+      request,
+      startedAt,
+      `reading it did not finish within the ${String(windowMs)} ms this invocation allows for one page`,
+    );
+  }
+  if (exceededBytes !== null) {
+    return refusedPageResponse(
+      request,
+      startedAt,
+      `reading it had the process doing it hold ${String(Math.round(exceededBytes / 1024 / 1024))} MiB of memory, past the ${String(PREPARE_CHILD_RESIDENT_CEILING_MB)} MiB one document may hold, so it was stopped`,
+    );
+  }
+  if (ending.signal === "SIGKILL") {
+    return refusedPageResponse(
+      request,
+      startedAt,
+      "reading it had the process doing it killed by the kernel for the memory of this sandbox, which this invocation may have been holding for something else rather than for this document, so asking for the page again is worth one attempt",
+    );
+  }
+
+  return refusedPageResponse(
+    request,
+    startedAt,
+    ending.signal === null
+      ? `reading it ended the process doing it with exit code ${String(ending.code)}, which is how exhausting the ${String(heapMb)} MiB heap one document may use ends`
+      : `reading it had the process doing it killed by ${ending.signal}, which is how exhausting the ${String(heapMb)} MiB heap one document may use ends`,
+  );
+};
+
+/**
+ * One page copy in one child, under the same ceilings a conversion gets.
+ *
+ * Everything the conversion runner above takes as a parameter it takes for the
+ * same reason, and the reasons are stated there: the heap ceiling because the
+ * refusal names it, the interpreter arguments because a checkout's child has to
+ * load TypeScript where the production one is a plain `node` on a bundle, and
+ * the resident reader because it is the content of the memory bound and no
+ * developer machine has the /proc the production one reads.
+ *
+ * What it adds over calling runChatSandboxPdfPage is the one thing that cannot
+ * be arranged inside the operation: the bytes are parsed in a process that is
+ * killed whatever it answered. The supervisor a warm Lambda keeps is reused by
+ * the next invocation, which belongs to whatever chat session arrives next, so
+ * a parser that corrupts or exhausts the process it runs in must not be running
+ * in that one. A page copy also has no state to keep between calls, so the
+ * child is reaped on every path, as a conversion child is.
+ *
+ * The page itself travels back over the IPC channel, which is what a `bash`
+ * command's stdout already does on the same machinery. It is bounded before it
+ * is sent, by SANDBOX_PDF_PAGE_MAX_BYTES - 3 MiB, a property of the Lambda
+ * response payload the operation already enforces - so this adds no transfer
+ * the function was not already making.
+ *
+ * The mutual exclusion is the conversion runner's, for the conversion runner's
+ * reason: each child may take the whole heap stated for it, so two of them at
+ * once can want more of the function's memory than it has, and a second call is
+ * refused rather than queued behind a first that would spend its own window
+ * waiting. The two runners are separate, so a `prepare` and a `pdf_page` could
+ * still overlap wherever one process serves two requests at once. Nothing does
+ * today - a Lambda execution environment serves one invocation at a time, and
+ * no self-hosted sandbox container exists - and that is what makes the overlap
+ * tolerable rather than any ceiling: the resident ceiling's reserve covers what
+ * a page copy measures, while this child is permitted the same ceiling and the
+ * same heap flag as a conversion child, so two document children at once are
+ * bounded by nothing but the kernel.
+ */
+export const createPdfPageRunner = (
+  heapMb: number,
+  interpreterArgv: ReadonlyArray<string>,
+  readResidentBytes: SandboxChildResidentReader,
+): ChatSandboxPdfPageRunner => {
+  const spec: SandboxChildSpec = oneShotChildSpec(heapMb, interpreterArgv);
+
+  let copyInFlight = false;
+
+  const copyPage = async (
+    request: ChatSandboxPdfPageRequest,
+    deadlineEpochMs: number,
+  ): Promise<ChatSandboxPdfPageResponse> => {
+    const startedAt = Date.now();
+    // The page copy's own window, so an overrun is this operation's budget and
+    // not whatever the invocation had left, and so the refusal can name it.
+    const pageDeadlineMs = Math.min(deadlineEpochMs, startedAt + SANDBOX_PDF_PAGE_BUDGET_MS);
+    // Never negative, for the reason the conversion window is not: it is what
+    // the refusal names, and a caller that left less time than the response
+    // margin gave this page no window at all.
+    const pageWindowMs = Math.max(pageDeadlineMs - startedAt, 0);
+    const child: ChildProcess = await forkSandboxChild(spec);
+    const command: PrepareChildCommand = {
+      kind: "pdf_page",
+      request,
+      deadlineEpochMs: pageDeadlineMs,
+    };
+    const memory = watchChildMemory(child, readResidentBytes);
+
+    try {
+      const outcome = await sendSandboxChildCommand<
+        PrepareChildCommand,
+        ChatSandboxPdfPageResponse
+      >(child, command, pageDeadlineMs);
+      switch (outcome.kind) {
+        case "response":
+          return outcome.response;
+        case "timeout":
+        case "exit":
+          return answerPdfPageChildEnding(outcome, {
+            request,
+            startedAt,
+            heapMb,
+            windowMs: pageWindowMs,
+            exceededBytes: memory.exceededBytes(),
+          });
+        case "unsendable":
+          // Raised rather than answered, exactly as the conversion runner
+          // raises it: the page never reached a parser, so nothing happened
+          // that is a property of this document, and a fault of this sandbox
+          // must not be reported to a model as a page it may not ask for again.
+          throw new Error(
+            `Chat sandbox page copy could not be sent to a child process that had just reported ready: ${outcome.error}`,
+          );
+      }
+    } finally {
+      // The watch first, because it holds a timer on this child's pid and the
+      // pid is about to be reaped.
+      memory.stop();
+      await terminateSandboxChild(child);
+    }
+  };
+
+  return async (request, deadlineEpochMs) => {
+    // Both statements run before the first await of the call, which is what
+    // makes this exclusive rather than a check two callers can both pass.
+    if (copyInFlight) {
+      throw new Error(
+        `Chat sandbox pdf_page runner is already reading a page, so it cannot also read page ${String(request.page)} of ${quoteUntrustedSandboxValue(request.source.path)}: one runner serves one page at a time, and the caller must not invoke it concurrently`,
+      );
+    }
+    copyInFlight = true;
+
+    try {
+      return await copyPage(request, deadlineEpochMs);
+    } finally {
+      copyInFlight = false;
+    }
+  };
+};
+
+export const runChatSandboxPdfPageInChild: ChatSandboxPdfPageRunner =
+  createPdfPageRunner(PREPARE_CHILD_HEAP_MB, [], readChildResidentBytes);
+
+/**
+ * The one job this child was forked for, whichever of the two it is.
+ *
+ * Each arm is the operation's own entry point and nothing more: the child adds
+ * no bound of its own, because the bounds are the heap flag it was started
+ * with, the deadline carried in the command and the parent's poll of its
+ * resident memory.
+ */
+const runPrepareChildCommand = (command: PrepareChildCommand): Promise<PrepareChildResponse> => {
+  switch (command.kind) {
+    case "prepare":
+      return prepareSource(
+        command.request,
+        createPresignedObjectTransfer(command.deadlineEpochMs),
+      );
+    case "pdf_page":
+      return runChatSandboxPdfPage(command.request, command.deadlineEpochMs);
+  }
+};
+
+/**
+ * The child side of one conversion or one page copy.
  *
  * It answers and then waits to be killed rather than exiting: an exit of its
  * own would race its own answer up the channel, and the parent kills it either
@@ -691,26 +1017,24 @@ export const startPrepareChild = (): void => {
     );
   }
 
-  const send = (message: SandboxChildMessage<ChatSandboxPrepareResponse>): void => {
+  const send = (message: SandboxChildMessage<PrepareChildResponse>): void => {
     channel(message);
   };
 
   process.on("message", (command: PrepareChildCommand): void => {
-    void prepareSource(
-      command.request,
-      createPresignedObjectTransfer(command.deadlineEpochMs),
-    ).then(
+    void runPrepareChildCommand(command).then(
       (response) => {
         send({ kind: "result", response });
       },
       (error: unknown) => {
-        // prepareSource answers everything it decided, including the storage
-        // failures it answers `unavailable`, so what reaches here is a fault
+        // Both operations answer everything they decided - including the
+        // storage failures prepareSource answers `unavailable` and the unread
+        // object a page copy answers `failed` - so what reaches here is a fault
         // nobody can retry and nothing can be recorded against the user's file:
         // a bundle that cannot load a parser, a TypeError of this workspace's
-        // own, and a request carrying fewer write slots than the source has
-        // parts. The parent raises it, which is a Lambda FunctionError and the
-        // only channel any of the three has.
+        // own, and a prepare request carrying fewer write slots than the source
+        // has parts. The parent raises it, which is a Lambda FunctionError and
+        // the only channel any of them has.
         send({ kind: "failure", error: describeError(error) });
       },
     );
