@@ -26,23 +26,23 @@
  * That same asymmetry fixes one invariant for every caller of the reclaim
  * below, and it is a test to apply at a deletion site rather than a list to
  * look the site up in: a key is deleted only where no transaction that could
- * have created or removed a row naming it is in doubt. A statement that raised
- * leaves its row in doubt rather than settled - the COMMIT can have reached the
- * server with the answer lost on the way back - so a failed write may have
- * created the row and a failed removal may have left it standing. Taking the
- * key either way can strip the bytes from a row later mounts read, which
- * nothing recovers, while leaving the object costs storage the three
- * prefix-driven mechanisms above reclaim anyway.
+ * have created or removed a row naming it is in doubt. Taking the key of a row
+ * that is there strips the bytes from a row later mounts read, which nothing
+ * recovers, while leaving the object costs storage the three prefix-driven
+ * mechanisms above reclaim anyway.
  *
- * The sites that therefore leak deliberately say so in place, and which sites
- * those are is answered by applying the rule to the code. No set of them is
- * written down here: an enumeration here is a second place to keep in sync with
- * the code, and it is the place that goes stale. The failed /work save in
- * chat/sandbox/invoke.ts is one of them, a write that may have created the row;
- * deleteDerivedRows in chatFiles/derivatives.ts is one of the mirror image, a
- * removal that may have left the row standing. Settling them, by reading the
- * row back before its key is judged, is follow-up item 16b, which must
- * enumerate them from the rule rather than from this docstring.
+ * Which is in doubt the failure itself answers, through
+ * classifyChatFileStatementFailure in chatFiles/store.ts, and the direction of
+ * the statement turns that answer into this one. A write whose transaction did
+ * not commit named no object, so its key is nobody's and the reclaim takes it;
+ * a removal whose transaction did not commit left its row standing on the same
+ * bytes, so the key stays and that is correct retention rather than a leak.
+ * Of the decisions made here, only an outcome that cannot be settled leaves a
+ * key behind deliberately, in either direction; a reclaim that was decided
+ * and then failed leaves one too, which is the swallowed failure above. Which
+ * sites those are is answered by applying this to the code. No set of them is
+ * written down here: an enumeration here is a second place to keep in sync
+ * with the code, and it is the place that goes stale.
  */
 import {
   getChatFilesObjectStore,

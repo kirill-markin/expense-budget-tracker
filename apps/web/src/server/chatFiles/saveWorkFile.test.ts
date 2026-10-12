@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { saveWorkChatFileWithDeps } from "@/server/chatFiles/saveWorkFile";
-import type { NewChatFile, UpsertedWorkChatFile } from "@/server/chatFiles/store";
+import {
+  ChatFileRowCommittedError,
+  type NewChatFile,
+  type UpsertedWorkChatFile,
+} from "@/server/chatFiles/store";
 import { log } from "@/server/logger";
 
 const SESSION_ID = "session-1";
@@ -151,21 +155,28 @@ test("a failed reclaim keeps the save and is the only record of the leak", async
   }]);
 });
 
-test("a missing bucket fails the save rather than recording nothing to reclaim", async (): Promise<void> => {
+test("a missing bucket fails the save as committed rather than recording nothing to reclaim", async (): Promise<void> => {
   const capturedEvents: Array<CapturedDisplacedObjectEvent> = [];
+  const missingBucket = new Error("Missing required environment variable CHAT_FILES_BUCKET");
 
   // Outside the try that swallows a delete failure: a displaced /work row
   // cannot exist without a bucket, so this is a broken deployment and not a
-  // leak to log.
+  // leak to log. The class is asserted and not only the message, because the
+  // class is the whole answer a caller reclaiming this key reads: this raise is
+  // past the upsert's commit, and the plain kind reads as a rollback and takes
+  // the stored row's bytes.
   await assert.rejects(
     () => saveWorkChatFileWithDeps("user-1", "workspace-1", buildNewWorkChatFile(), {
       upsertWorkChatFile: async () => buildUpserted([DISPLACED_OBJECT_KEY]),
       getChatFilesObjectStore: (): never => {
-        throw new Error("Missing required environment variable CHAT_FILES_BUCKET");
+        throw missingBucket;
       },
       log: createEventCapture(capturedEvents),
     }),
-    /CHAT_FILES_BUCKET/u,
+    (error: unknown): boolean =>
+      error instanceof ChatFileRowCommittedError
+      && error.cause === missingBucket
+      && /CHAT_FILES_BUCKET/u.test(error.message),
   );
   assert.deepEqual(capturedEvents, []);
 });
@@ -183,7 +194,11 @@ test("a displaced key equal to the stored key raises, never deleting live bytes"
       }),
       log: createEventCapture(capturedEvents),
     }),
-    /Displaced \/work object key equals the key this save stored/u,
+    // The class, because String(error) matches a plain Error just as well and
+    // the class is what keeps a caller from deleting the stored key.
+    (error: unknown): boolean =>
+      error instanceof ChatFileRowCommittedError
+      && /Displaced \/work object key equals the key this save stored/u.test(error.message),
   );
   assert.deepEqual(capturedEvents, []);
 });
