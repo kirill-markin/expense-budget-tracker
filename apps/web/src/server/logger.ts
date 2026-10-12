@@ -548,9 +548,10 @@ type ChatFileContextEvent = Readonly<{
  * and a session where the two stay apart is one whose uploads the model can
  * only read through the prompt. `declinedCount` is the files refused for a
  * reason of their own, each of which also records that reason, and the
- * remainder is what a `stopReason` left unreached. `unrecordable` is a
- * deployment fault, whose own record is in the `error` family beside this one;
- * `aborted` is the user stopping the turn.
+ * remainder is the attachments no count claims: the ones a `stopReason` left
+ * unreached, and the attachment whose own failure is an `unrecordable`.
+ * `unrecordable` is a deployment fault, whose own record is in the `error`
+ * family beside this one; `aborted` is the user stopping the turn.
  *
  * `durationMs` is paid serially in front of the turn's first token, once per
  * attachment and with nothing capping how many a turn carries, which is why it

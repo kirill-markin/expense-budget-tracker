@@ -110,7 +110,11 @@ export type ChatFileIngestDeclineReason =
   | "path_duplicates_exhausted";
 
 export type ChatFileIngestOutcome = Readonly<{
-  /** Attachments this turn carried, whatever became of each. */
+  /**
+   * Attachments this pass walked, whatever became of each, and 0 for every turn
+   * no pass ran for: demo mode and a deployment with no bucket answer the idle
+   * outcome whatever the turn carried.
+   */
   inlineCount: number;
   storedCount: number;
   /**
@@ -391,12 +395,15 @@ const storeInlineAttachment = async (
       createHash("sha256").update(bytes).digest("hex"),
     );
     if (confirmed === null) {
-      // The row was minted by this call and nothing else holds its file id, so
-      // the only way its sentinel digest is already gone is a row this pass did
-      // not write - which means the key it just wrote the object under is not
-      // the row's own.
+      // The row went away between the insert and this confirmation, so either
+      // its workspace is being deleted or this session's files were deleted on
+      // request, or else the key the object went under is not the row's own.
+      // Either way the object this wrote is left for the session prefix sweep
+      // of chatFiles/cleanup.ts, which names keys the rows no longer do.
       throw new Error(
-        "confirmation matched no unconfirmed row it had just inserted",
+        "confirmation matched no unconfirmed row it had just inserted: "
+        + "this session's files went away mid-pass, or the object key is "
+        + "not the row's own",
       );
     }
   } catch (error) {
