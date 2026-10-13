@@ -8,6 +8,7 @@ import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS, RTL_LOCALES, type SupportedLocale } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
 import { NAV_LINKS } from "@/lib/navigation";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import { t } from "@/i18n/serverT";
 import { buildRequestIdentity } from "@/server/db/requestIdentity";
@@ -25,6 +26,7 @@ import { FilteredModeProvider } from "@/ui/FilteredModeProvider";
 import { FormatProvider } from "@/ui/FormatProvider";
 import { ModeToggle } from "@/ui/ModeToggle";
 import { TableEditorActivationProvider } from "@/ui/tables/shared/TableEditorActivationProvider";
+import { ThemeProvider } from "@/ui/ThemeProvider";
 
 import "./globals.css";
 
@@ -36,6 +38,7 @@ export const metadata: Metadata = {
 export default async function RootLayout(props: Readonly<{ children: React.ReactNode }>) {
   const { children } = props;
   const headersList = await headers();
+  const nonce = headersList.get("x-nonce") ?? undefined;
   const requestPath = headersList.get("x-request-path") ?? "";
   const isPublicMonthlySharePage = requestPath.startsWith("/share/monthly/");
 
@@ -43,11 +46,16 @@ export default async function RootLayout(props: Readonly<{ children: React.React
     const publicLocale = await getLocaleCookie();
 
     return (
-      <html lang={publicLocale} dir={RTL_LOCALES.has(publicLocale) ? "rtl" : "ltr"}>
+      <html lang={publicLocale} dir={RTL_LOCALES.has(publicLocale) ? "rtl" : "ltr"} suppressHydrationWarning>
+        <head>
+          <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        </head>
         <body>
-          <I18nProvider locale={publicLocale}>
-            {children}
-          </I18nProvider>
+          <ThemeProvider>
+            <I18nProvider locale={publicLocale}>
+              {children}
+            </I18nProvider>
+          </ThemeProvider>
         </body>
       </html>
     );
@@ -106,53 +114,58 @@ export default async function RootLayout(props: Readonly<{ children: React.React
     : { mode: "workspace", userId: currentUserId, workspaceId: currentWorkspaceId };
 
   return (
-    <html lang={locale} dir={RTL_LOCALES.has(locale) ? "rtl" : "ltr"}>
+    <html lang={locale} dir={RTL_LOCALES.has(locale) ? "rtl" : "ltr"} suppressHydrationWarning>
+      <head>
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body>
-        <I18nProvider locale={locale}>
-          <FormatProvider numberFormat={numberFormat} dateFormat={dateFormat}>
-            <TableEditorActivationProvider>
-              <FilteredModeProvider isDemoMode={demo} autoFilterDelayMinutes={autoFilterDelayMinutes}>
-                <div className="header-sticky">
-                  {demo && (
-                    <div className="demo-banner">
-                      {t(locale, "demo.banner")}<span className="demo-banner-detail"> {t(locale, "demo.bannerDetail")}</span>
-                    </div>
-                  )}
-                  <FilteredBanner />
-                  <header className="topbar">
-                    <Link href="/" className="topbar-brand">
-                      <span className="brand-full">{t(locale, "brand.full")}</span>
-                      <span className="brand-short">{t(locale, "brand.short")}</span>
-                    </Link>
-                    <div className="topbar-actions">
-                      <ModeToggle isDemoMode={demo} />
-                      <AccountMenu
-                        authEnabled={authEnabled}
-                        workspaces={workspaces}
-                        currentWorkspaceId={currentWorkspaceId}
-                      />
-                    </div>
-                  </header>
-                  <nav className="nav">
-                    {NAV_LINKS.map((link) => (
-                      <Link key={link.href} href={link.href}>{t(locale, link.labelKey)}</Link>
-                    ))}
-                    <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
-                  </nav>
-                </div>
-                <ChatLayoutProvider
-                  initialChatOpen={chatOpen}
-                  initialChatWidth={chatWidth}
-                  draftScope={chatDraftScope}
-                >
-                  <ChatLayoutShell workspaceId={currentWorkspaceId}>
-                    {children}
-                  </ChatLayoutShell>
-                </ChatLayoutProvider>
-              </FilteredModeProvider>
-            </TableEditorActivationProvider>
-          </FormatProvider>
-        </I18nProvider>
+        <ThemeProvider>
+          <I18nProvider locale={locale}>
+            <FormatProvider numberFormat={numberFormat} dateFormat={dateFormat}>
+              <TableEditorActivationProvider>
+                <FilteredModeProvider isDemoMode={demo} autoFilterDelayMinutes={autoFilterDelayMinutes}>
+                  <div className="header-sticky">
+                    {demo && (
+                      <div className="demo-banner">
+                        {t(locale, "demo.banner")}<span className="demo-banner-detail"> {t(locale, "demo.bannerDetail")}</span>
+                      </div>
+                    )}
+                    <FilteredBanner />
+                    <header className="topbar">
+                      <Link href="/" className="topbar-brand">
+                        <span className="brand-full">{t(locale, "brand.full")}</span>
+                        <span className="brand-short">{t(locale, "brand.short")}</span>
+                      </Link>
+                      <div className="topbar-actions">
+                        <ModeToggle isDemoMode={demo} />
+                        <AccountMenu
+                          authEnabled={authEnabled}
+                          workspaces={workspaces}
+                          currentWorkspaceId={currentWorkspaceId}
+                        />
+                      </div>
+                    </header>
+                    <nav className="nav">
+                      {NAV_LINKS.map((link) => (
+                        <Link key={link.href} href={link.href}>{t(locale, link.labelKey)}</Link>
+                      ))}
+                      <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
+                    </nav>
+                  </div>
+                  <ChatLayoutProvider
+                    initialChatOpen={chatOpen}
+                    initialChatWidth={chatWidth}
+                    draftScope={chatDraftScope}
+                  >
+                    <ChatLayoutShell workspaceId={currentWorkspaceId}>
+                      {children}
+                    </ChatLayoutShell>
+                  </ChatLayoutProvider>
+                </FilteredModeProvider>
+              </TableEditorActivationProvider>
+            </FormatProvider>
+          </I18nProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

@@ -46,7 +46,7 @@
 
 .item:hover {
   color: var(--text);
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--hover-bg);
 }
 
 .itemActive {
@@ -95,5 +95,5 @@
 .error {
   padding: 2px 0;
   font-size: 11px;
-  color: #c0392b;
+  color: var(--danger);
 }

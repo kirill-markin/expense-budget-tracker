@@ -17,6 +17,7 @@ import { getUserSettings } from "@/server/userSettings";
 import { queryAs } from "@/server/db";
 import { listAgentConnections } from "@/server/agent/connections";
 import { AgentConnectionsManager } from "@/ui/settings/AgentConnectionsManager";
+import { AppearanceSettings } from "@/ui/settings/AppearanceSettings";
 import { FilteredCategorySettings } from "@/ui/settings/FilteredCategorySettings";
 import { PublicMonthlyShareSettings } from "@/ui/settings/PublicMonthlyShareSettings";
 import { UserSettingsForm } from "@/ui/settings/UserSettingsForm";
@@ -156,6 +157,11 @@ export default async function SettingsPage() {
 
   return (
     <main className="container">
+      <section className="panel">
+        <h1 className="title">{t(locale, "settings.appearance")}</h1>
+        <AppearanceSettings />
+      </section>
+
       <section className="panel">
         <h1 className="title">{t(locale, "settings.userSettings")}</h1>
         <Suspense fallback={<LoadingIndicator />}>

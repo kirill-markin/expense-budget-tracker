@@ -23,15 +23,15 @@
 }
 
 .statusEnabled {
-  color: #116329;
-  border-color: rgba(17, 99, 41, 0.35);
-  background: rgba(17, 99, 41, 0.08);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
 }
 
 .statusDisabled {
-  color: #7a2e25;
-  border-color: rgba(192, 57, 43, 0.35);
-  background: rgba(192, 57, 43, 0.07);
+  color: var(--danger-strong);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
 }
 
 .warningStack {
@@ -44,7 +44,7 @@
 .demoText {
   margin: 0;
   padding-inline-start: 10px;
-  border-inline-start: 3px solid rgba(192, 57, 43, 0.55);
+  border-inline-start: 3px solid color-mix(in srgb, var(--danger) 55%, transparent);
   color: var(--text);
   font-size: 13px;
   line-height: 1.5;
@@ -204,7 +204,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  color: #7a2e25;
+  color: var(--danger-strong);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -212,7 +212,7 @@
 .inlineWarning input {
   flex: 0 0 auto;
   margin-block-start: 2px;
-  accent-color: #c0392b;
+  accent-color: var(--danger);
 }
 
 .copyToast {

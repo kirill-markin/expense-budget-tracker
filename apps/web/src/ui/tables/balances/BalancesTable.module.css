@@ -9,7 +9,7 @@
 }
 
 .stale {
-  color: #c0392b;
+  color: var(--danger);
 }
 
 .statusInactive {
@@ -40,8 +40,8 @@
   font-size: 12px;
   font-weight: 400;
   white-space: normal;
-  color: #f0f0f0;
-  background: #1a1a1a;
-  border: 1px solid #333;
+  color: var(--tooltip-text);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--tooltip-border);
   border-radius: 4px;
 }

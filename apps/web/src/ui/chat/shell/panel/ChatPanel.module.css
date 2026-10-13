@@ -160,8 +160,8 @@
 }
 
 .messageError {
-  color: #c0392b;
-  border-color: #c0392b;
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .stoppedNotice {
@@ -437,8 +437,8 @@
 }
 
 .microphoneButton[aria-pressed="true"] {
-  color: #c0392b;
-  border-color: #c0392b;
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .modelLabel {
@@ -490,7 +490,7 @@
 }
 
 .attachmentRemove:hover {
-  color: #c0392b;
+  color: var(--danger);
 }
 
 .attachmentProcessing {
@@ -505,9 +505,9 @@
 }
 
 .attachmentError {
-  border-inline-start: 2px solid #c0392b;
+  border-inline-start: 2px solid var(--danger);
   padding-inline-start: 6px;
-  color: #c0392b;
+  color: var(--danger);
   font-size: 11px;
   line-height: 1.4;
 }

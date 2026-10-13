@@ -85,12 +85,12 @@
 
 .copyButton:hover {
   color: var(--text);
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--selected-bg);
 }
 
 .copyButton:focus-visible {
   color: var(--text);
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--selected-bg);
   outline: 2px solid var(--text);
   outline-offset: 1px;
 }
@@ -119,8 +119,8 @@
 }
 
 .copyFeedbackError {
-  border-color: #c0392b;
-  color: #c0392b;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .cellDelete {
@@ -146,7 +146,7 @@
 }
 
 .deleteButton:hover {
-  color: #c0392b;
+  color: var(--danger);
 }
 
 @media (hover: none), (pointer: coarse) {
@@ -228,7 +228,7 @@
 
 .transactionsFiltersRow:hover,
 .transactionsFiltersRowOpen {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--subtle-bg);
   border-color: var(--text);
 }
 
@@ -308,7 +308,7 @@
 }
 
 .transactionsFiltersPickerOption:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--subtle-bg);
 }
 
 .transactionsFiltersPickerOption input[type="checkbox"] {

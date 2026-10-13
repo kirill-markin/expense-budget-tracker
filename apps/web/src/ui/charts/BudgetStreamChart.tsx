@@ -181,7 +181,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
   if (incomeData.length === 0 && spendData.length === 0 && !masked) {
     return (
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Budget streamgraph">
-        <text x={width / 2} y={height / 2} textAnchor="middle" fill="#898989" fontSize={14}>
+        <text x={width / 2} y={height / 2} textAnchor="middle" fill="var(--muted)" fontSize={14}>
           {t("chart.noData")}
         </text>
       </svg>
@@ -397,7 +397,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                     x2={width - margin.right}
                     y1={y}
                     y2={y}
-                    stroke={tick === 0 ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.08)"}
+                    stroke={tick === 0 ? "var(--grid-line-strong)" : "var(--grid-line)"}
                     strokeWidth={tick === 0 ? 1.5 : 1}
                   />
                   <text
@@ -405,7 +405,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                     y={y}
                     textAnchor="end"
                     dominantBaseline="middle"
-                    fill="#898989"
+                    fill="var(--muted)"
                     fontSize={11}
                   >
                     {formatAmount(tick, numberFormat)}
@@ -423,13 +423,13 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                     x2={x}
                     y1={margin.top}
                     y2={height - margin.bottom}
-                    stroke="rgba(0,0,0,0.06)"
+                    stroke="var(--grid-line)"
                   />
                   <text
                     x={x}
                     y={height - margin.bottom + 18}
                     textAnchor="middle"
-                    fill="#898989"
+                    fill="var(--muted)"
                     fontSize={11}
                   >
                     {formatMonth(tick, t)}
@@ -463,17 +463,17 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
               x2={width - margin.right}
               y1={yScale(0)}
               y2={yScale(0)}
-              stroke="rgba(0,0,0,0.4)"
+              stroke="var(--grid-line-strong)"
               strokeWidth={1.5}
             />
 
-            <text x={margin.left} y={margin.top - 10} fill="#898989" fontSize={11}>
+            <text x={margin.left} y={margin.top - 10} fill="var(--muted)" fontSize={11}>
               {reportingCurrency}
             </text>
-            <text x={margin.left} y={yScale(0) - 6} fill="#898989" fontSize={10}>
+            <text x={margin.left} y={yScale(0) - 6} fill="var(--text)" stroke="var(--bg)" strokeWidth={3} paintOrder="stroke" fontSize={10}>
               {t("chart.income")}
             </text>
-            <text x={margin.left} y={yScale(0) + 14} fill="#898989" fontSize={10}>
+            <text x={margin.left} y={yScale(0) + 14} fill="var(--text)" stroke="var(--bg)" strokeWidth={3} paintOrder="stroke" fontSize={10}>
               {t("chart.spend")}
             </text>
 
@@ -483,7 +483,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                 x2={hover.svgX}
                 y1={margin.top}
                 y2={height - margin.bottom}
-                stroke="rgba(0,0,0,0.4)"
+                stroke="var(--grid-line-strong)"
                 strokeWidth={1}
                 strokeDasharray="4 3"
                 pointerEvents="none"

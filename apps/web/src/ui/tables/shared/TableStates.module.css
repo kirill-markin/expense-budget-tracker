@@ -4,12 +4,12 @@
  * untrusted and genuinely over plan still reads as red.
  */
 .warning {
-  color: var(--table-state-warning-color, #b7791f);
+  color: var(--table-state-warning-color, var(--warning));
 }
 
 .over,
 .error {
-  color: var(--table-state-danger-color, #c0392b);
+  color: var(--table-state-danger-color, var(--danger));
 }
 
 .loadingEdge {
