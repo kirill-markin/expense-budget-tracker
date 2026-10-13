@@ -32,8 +32,8 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #141414;
-  --panel: #141414;
+  --bg: #000000;
+  --panel: #000000;
   --panel-border: #737373;
   --text: #f2f2f2;
   --muted: #aaaaaa;
@@ -50,7 +50,7 @@
   --danger: #ff8a80;
   --danger-hover: #ffb4ad;
   --danger-strong: #ff9e94;
-  --on-danger: #141414;
+  --on-danger: #000000;
   --success: #8bd59f;
   --positive: #81c784;
   --warning: #f5c451;
