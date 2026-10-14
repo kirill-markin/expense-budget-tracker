@@ -74,7 +74,7 @@ jobs:
             worker:
               - 'apps/worker/**'
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
           cache: 'npm'
@@ -196,7 +196,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
           cache: 'npm'
@@ -239,7 +239,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: playwright-report
           path: apps/web/playwright-report/
@@ -247,7 +247,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: test-results
           path: apps/web/test-results/
@@ -260,7 +260,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
 
@@ -295,7 +295,7 @@ jobs:
 
       - name: Upload agent API smoke log
         if: failure()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: agent-api-smoke-log
           path: artifacts/agent-api-smoke.log

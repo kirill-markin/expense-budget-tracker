@@ -14,11 +14,11 @@
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.4.299",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.164",
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   },
