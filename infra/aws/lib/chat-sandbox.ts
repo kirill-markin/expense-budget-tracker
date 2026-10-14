@@ -29,6 +29,25 @@ export interface ChatSandboxResult {
   chatSandboxFn: lambda_nodejs.NodejsFunction;
 }
 
+const buildSandboxDependencyInstallCommand = (inputDir: string, outputDir: string): string => {
+  const script = [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    'const { execFileSync } = require("node:child_process");',
+    'const [inputDir, outputDir] = process.argv.slice(1);',
+    'const root = JSON.parse(fs.readFileSync(path.join(inputDir, "package.json"), "utf8"));',
+    'const sandbox = JSON.parse(fs.readFileSync(path.join(inputDir, "apps/sandbox/package.json"), "utf8"));',
+    'fs.writeFileSync(path.join(outputDir, "package.json"), JSON.stringify({ dependencies: { "just-bash": sandbox.dependencies["just-bash"] }, overrides: root.overrides }));',
+    'fs.copyFileSync(path.join(inputDir, "package-lock.json"), path.join(outputDir, "package-lock.json"));',
+    'fs.writeFileSync(path.join(outputDir, ".npmrc"), "omit=optional\\nignore-scripts=true\\n");',
+    'execFileSync("npm", ["ci"], { cwd: outputDir, stdio: "inherit" });',
+  ].join(" ");
+  const args = [script, inputDir, outputDir].map((value: string): string =>
+    `'${value.replaceAll("'", `'"'"'`)}'`,
+  );
+  return `node -e ${args.join(" ")}`;
+};
+
 /**
  * Lambda that runs chat `bash` commands over one session's files.
  *
@@ -74,7 +93,7 @@ export function chatSandbox(scope: Construct, props: ChatSandboxProps): ChatSand
       // Installed rather than bundled: the workers above are separate files
       // resolved at runtime, and the 9.9 MB vendored CPython tree has to keep
       // its exact relative paths.
-      nodeModules: ["just-bash"],
+      externalModules: ["just-bash"],
       // The document parsers are CommonJS and reach for node builtins with
       // `require`, which esbuild cannot turn into an import while emitting an ES
       // module: it emits a `__require` shim that throws
@@ -88,36 +107,13 @@ export function chatSandbox(scope: Construct, props: ChatSandboxProps): ChatSand
       // stand in for it.
       banner: "import { createRequire as __nodeCreateRequire } from 'node:module'; const require = __nodeCreateRequire(import.meta.url);",
       commandHooks: {
-        beforeBundling: () => [],
-        // Two settings, for two different problems with the same pair of
-        // packages, and `.npmrc` is the only file this hook can usefully write:
-        // CDK runs `beforeInstall` and only then writes the staging
-        // `package.json` as `{dependencies}`, overwriting whatever the hook left
-        // there, and there is no hook between that write and `npm ci`. So a
-        // `package.json` field - `allowScripts`, for instance - cannot be
-        // injected from here at all.
-        //
-        // `omit=optional` keeps just-bash's optional native dependencies off
-        // disk: they only add zstd and xz support, which nothing here uses, and
-        // they would otherwise be built from source inside the bundling step.
-        // Measured: 37 packages installed with it, 75 without.
-        //
-        // `ignore-scripts` is what lets this install run at all. The repository
-        // `.npmrc` sets `strict-allow-scripts=true`, which this staging
-        // directory inherits while the root `package.json`'s `allowScripts`
-        // denials do not reach it, and the check validates the lockfile tree
-        // before `omit` is applied - so omitting those packages is not enough
-        // and the asset fails to bundle with ESTRICTALLOWSCRIPTS, stopping the
-        // whole deploy. Disabling scripts satisfies the check by making it
-        // vacuous, and is stricter than denying the two packages by name: this
-        // directory exists only to stage files for a Lambda bundle, so nothing
-        // installed here has any business running an install script. Verified
-        // against npm 12.2.0, the version `packageManager` pins: just-bash
-        // installs intact (46 MB, 1113 files, `python.wasm` present) and both a
-        // shell command and `python3` run from it.
-        beforeInstall: (_inputDir: string, outputDir: string) => [
-          `printf 'omit=optional\\nignore-scripts=true\\n' > ${path.join(outputDir, ".npmrc")}`,
+        // CDK's nodeModules staging discards root overrides. Install explicitly
+        // so npm ci keeps the security pins; omit unused native codecs and run
+        // no dependency scripts in the Lambda staging directory.
+        beforeBundling: (inputDir: string, outputDir: string) => [
+          buildSandboxDependencyInstallCommand(inputDir, outputDir),
         ],
+        beforeInstall: () => [],
         // Two things the emitted bundle has to carry that no test of this
         // repository can check, because both are differences between the bundle
         // and the unbundled layout every suite runs in: the source passes under
