@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import {
   assembleBashResponse,
+  createChatSandboxTransfer,
   createFilesFs,
   createSandboxBash,
   createWorkFs,
@@ -34,7 +35,6 @@ import {
   type ChatSandboxFile,
 } from "./contract.js";
 import {
-  createPresignedObjectTransfer,
   hashObjectContent,
   ObjectTransferError,
   type SandboxObjectTransfer,
@@ -2181,10 +2181,13 @@ test("every refusal note is inside the priority bound the caller uses", (): void
  * builds per request. With the layer armed and the read unwrapped, every
  * attached CSV, spreadsheet and document was unreadable - a security violation
  * surfaced to the model as `TypeError: fetch failed` - and the whole
- * port-driven suite stayed green. So the two tests below serve the object over
- * real HTTP from 127.0.0.1 and read it through the production
- * `createPresignedObjectTransfer`, `createFilesFs` and `createSandboxBash`,
- * with `globalThis.fetch` left alone.
+ * port-driven suite stayed green. So the tests below serve the object over
+ * real HTTP from 127.0.0.1 and read it with `globalThis.fetch` left alone: two
+ * through the production `createChatSandboxTransfer`, `createFilesFs` and
+ * `createSandboxBash`, and the last one through `runChatSandboxBash` itself.
+ * The transfer comes from that exported factory rather than being assembled
+ * here: `runChatSandboxBash` mounts the same one, so the production read runner
+ * has no second definition that could drift from what these tests prove.
  *
  * The request parser is deliberately not in this path: `presignedUrlSchema`
  * accepts https only, and the host allowlist it enforces
@@ -2278,7 +2281,10 @@ const catFileOverRealNetwork = async (
     mtimeMs: 1_700_000_000_000,
     getUrl,
   };
-  const realTransfer = createPresignedObjectTransfer(Date.now() + 30_000);
+  // Not a read runner of this test's own: the same factory `runChatSandboxBash`
+  // mounts, so the production choice of read runner is what these two tests
+  // exercise, and changing it back to `runObjectReadDirectly` fails them.
+  const realTransfer = createChatSandboxTransfer(Date.now() + 30_000);
   const sandboxedDuringReads: boolean[] = [];
   const transfer: SandboxObjectTransfer = {
     ...realTransfer,
@@ -2356,9 +2362,10 @@ test("a /files content read completes over the real network inside exec", async 
  * A 200 on the first attempt never reaches the parts of `transferWithRetries`
  * that run between attempts, so it would pass with the wrapper around the
  * inner `fetch` alone. 503 is retryable, so this run also spends the
- * `setTimeout` behind `delay()` and the `process.stdout` write behind `log()`,
- * both of them patched to throw inside `exec`: it fails unless the wrapper
- * encloses the whole retry loop.
+ * `setTimeout` behind `delay()`, which is patched to throw inside `exec` -
+ * unlike the `process.stdout` write behind `log()`, since 3.6.0's
+ * `applyPatches` skips the `process_stdout` and `process_stderr` violation
+ * types. So it fails unless the wrapper encloses the whole retry loop.
  */
 test("a /files content read survives a retryable status over the real network", async (): Promise<void> => {
   const content = "date,amount\n2026-10-03,90.12\n";
@@ -2372,6 +2379,63 @@ test("a /files content read survives a retryable status over the real network", 
     assert.equal(result.stdout, content);
     assert.equal(server.servedRequests(), 2, "the retryable status did not cost a second attempt");
     assertDefenseLayerWasArmed(result);
+  } finally {
+    await server.close();
+  }
+});
+
+/**
+ * The same real-network read, mounted by the production entry point.
+ *
+ * The two tests above pin the factory but not `runChatSandboxBash`'s use of
+ * it. Rewriting its one call to `createPresignedObjectTransfer(
+ * deadlineEpochMs, runObjectReadDirectly)` restores the /files outage one
+ * level up, and both of them stay green. Every other test that calls
+ * `runChatSandboxBash` goes through `runSandbox`, which replaces
+ * `globalThis.fetch`, so undici never runs there and no patched global is ever
+ * in the read's way - the suite's only reaction to that rewrite would be
+ * whatever a stubbed `Response` happens to touch.
+ *
+ * This one leaves `globalThis.fetch` alone, so the mount `runChatSandboxBash`
+ * built is what performs a real `fetch` inside `exec`. A refused read does not
+ * throw: the mount records it, `cat` reports a missing file on stderr and the
+ * refusal reaches `notes`, which is why the assertions below cover all three
+ * channels rather than stdout alone.
+ *
+ * No PUT server is needed. `cat` leaves /work unchanged, so `diffWorkFiles`
+ * uploads nothing and the unreachable `writeSlots` hosts are never called.
+ */
+test("a /files content read completes over the real network through the entry point", async (): Promise<void> => {
+  const content = "date,amount\n2026-10-04,34.56\n";
+  const bytes = encode(content);
+  const path = `${SANDBOX_FILES_DIR}/statement.csv`;
+  const server = await startObjectServer(content, [200]);
+
+  try {
+    const response = await runChatSandboxBash(
+      {
+        operation: "bash",
+        sessionId: "0f1e2d3c-4b5a-4968-8776-65544332211f",
+        command: `cat ${path}`,
+        files: [{
+          path,
+          sizeBytes: bytes.byteLength,
+          mediaType: "text/csv",
+          sha256: hashObjectContent(bytes),
+          mtimeMs: 1_700_000_000_000,
+          getUrl: server.url,
+        }],
+        writeSlots: [...writeSlots(4)],
+      },
+      Date.now() + 30_000,
+    );
+
+    assert.equal(response.stderr, "");
+    assert.equal(response.exitCode, 0);
+    assert.equal(response.stdout, content);
+    assert.deepEqual(response.notes, []);
+    assert.deepEqual(response.writtenFiles, []);
+    assert.equal(server.servedRequests(), 1);
   } finally {
     await server.close();
   }

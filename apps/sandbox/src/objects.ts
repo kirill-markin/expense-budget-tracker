@@ -7,7 +7,6 @@
  * validated against, redirects included. Callers take the transfer as a port,
  * so the filesystems and the /work diff stay testable without the network.
  */
-import { DefenseInDepthBox } from "just-bash";
 import { createHash } from "node:crypto";
 
 const TRANSFER_ATTEMPTS = 3;
@@ -28,6 +27,28 @@ export type SandboxObjectTransfer = Readonly<{
   readObject: (getUrl: string) => Promise<Uint8Array>;
   writeObject: (putUrl: string, mediaType: string, content: Uint8Array) => Promise<void>;
 }>;
+
+/**
+ * How one read of an object is allowed to run.
+ *
+ * The shape of `DefenseInDepthBox.runTrustedAsync`, taken as a port and
+ * supplied by the `bash.exec` caller rather than imported here, which is the
+ * whole point of the port: `prepareProcess.ts` imports this module, so a
+ * top-level just-bash import would load the library into every
+ * document-conversion child as well, and that child would then load a library
+ * it never calls as part of the 60-70 ms of node start-up plus just-bash import
+ * measured in childProcess.ts - the import is one share of that window, not the
+ * whole of it, and the rest is paid either way. It is a share a conversion
+ * child spends once per source, against its own deadline, for nothing. Callers
+ * that are not inside an execution pass `runObjectReadDirectly`.
+ */
+export type ObjectReadRunner = <T>(read: () => Promise<T>) => Promise<T>;
+
+/**
+ * The runner of a read that is not inside `bash.exec`, where no global is
+ * patched and the read needs nothing around it.
+ */
+export const runObjectReadDirectly: ObjectReadRunner = (read) => read();
 
 type SandboxLogEvent = Readonly<{
   action: "object_get_retry" | "object_put_retry";
@@ -317,10 +338,12 @@ const requireNoRedirect = (response: Response, label: string): void => {
  * own lazy entries - `InMemoryFs.materializeLazy` runs a loader inside
  * `runTrustedAsync`, which is why the /work seeds never broke - and there the
  * defense-in-depth layer has `WeakRef`, `FinalizationRegistry`, `Proxy`,
- * `performance`, `setTimeout` and `process.stdout` patched to throw. Node's
- * bundled undici constructs several of those per request, so an unwrapped read
- * threw a security violation that reached the model as `TypeError: fetch
- * failed` - every attached CSV, spreadsheet and document unreadable.
+ * `performance` and `setTimeout` patched to throw. Node's bundled undici
+ * constructs several of those per request, so an unwrapped read threw a
+ * security violation that reached the model as `TypeError: fetch failed` -
+ * every attached CSV, spreadsheet and document unreadable.
+ *
+ * The wrapper arrives as `runRead`, not as an import: see `ObjectReadRunner`.
  *
  * `runTrustedAsync` suspends the blocking per `executionId`, not per async
  * context: `isTrustedContext` is true for every context of this `exec` while
@@ -343,8 +366,9 @@ const requireNoRedirect = (response: Response, label: string): void => {
 const readPresignedObject = async (
   getUrl: string,
   deadlineEpochMs: number,
+  runRead: ObjectReadRunner,
 ): Promise<Uint8Array> =>
-  DefenseInDepthBox.runTrustedAsync(() =>
+  runRead(() =>
     transferWithRetries("object_get_retry", deadlineEpochMs, async (signal) => {
       const response = await fetch(getUrl, { method: "GET", redirect: "manual", signal });
       requireNoRedirect(response, "Pre-signed object read");
@@ -385,12 +409,14 @@ const writePresignedObject = async (
 
 /**
  * Bind every transfer of one invocation to the same deadline, so a stalled
- * connection cannot outlive the Lambda it reports back to.
+ * connection cannot outlive the Lambda it reports back to, and state which
+ * runner its reads run under.
  */
 export const createPresignedObjectTransfer = (
   deadlineEpochMs: number,
+  runRead: ObjectReadRunner,
 ): SandboxObjectTransfer => ({
-  readObject: (getUrl: string) => readPresignedObject(getUrl, deadlineEpochMs),
+  readObject: (getUrl: string) => readPresignedObject(getUrl, deadlineEpochMs, runRead),
   writeObject: (putUrl: string, mediaType: string, content: Uint8Array) =>
     writePresignedObject(putUrl, mediaType, content, deadlineEpochMs),
 });
