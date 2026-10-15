@@ -28,6 +28,8 @@
   "settings.themeDark": "تیره",
   "settings.themeHint": "در حساب شما ذخیره می‌شود و روی همهٔ دستگاه‌هایتان اعمال می‌گردد. گزینهٔ سیستم از ظاهر هر دستگاه پیروی می‌کند.",
   "settings.themeSaveError": "ذخیرهٔ پوسته در حساب شما انجام نشد: {{message}}",
+  "settings.lowercase": "حروف کوچک",
+  "settings.lowercaseHint": "پیش‌نمایش همهٔ متن‌های برنامه با حروف کوچک، بدون تغییر داده‌ها. برای اعمال در همهٔ دستگاه‌ها ذخیره کنید.",
   "settings.userSettings": "تنظیمات کاربر",
   "settings.workspaceSettings": "تنظیمات فضای کاری",
   "settings.filteredCategories": "دسته‌بندی‌های فیلتر شده",

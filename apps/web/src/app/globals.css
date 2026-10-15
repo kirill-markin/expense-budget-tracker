@@ -5,3 +5,13 @@
 @import "./styles/base.css" layer(base);
 @import "./styles/shell.css" layer(shell);
 @import "./styles/utilities.css" layer(utilities);
+
+/* Override component capitalization, including portals, form controls, and SVG
+   chart labels. This changes presentation without rewriting user data. */
+html[data-lowercase="true"],
+html[data-lowercase="true"] *,
+html[data-lowercase="true"] *::before,
+html[data-lowercase="true"] *::after,
+html[data-lowercase="true"] *::placeholder {
+  text-transform: lowercase !important;
+}

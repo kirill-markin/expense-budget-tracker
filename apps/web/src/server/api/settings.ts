@@ -21,11 +21,13 @@ type ParsedUserSettingsBody = Readonly<{
   dateFormat?: DateFormat;
   autoFilterDelayMinutes?: AutoFilterDelayMinutes;
   theme?: ThemePreference;
+  lowercase?: boolean;
   hasLocale: boolean;
   hasNumberFormat: boolean;
   hasDateFormat: boolean;
   hasAutoFilterDelayMinutes: boolean;
   hasTheme: boolean;
+  hasLowercase: boolean;
 }>;
 
 type ParsedWorkspaceSettingsBody = Readonly<{
@@ -118,6 +120,7 @@ export const parseUserSettingsBody = (input: unknown): ParsedUserSettingsBody =>
     dateFormat: dateFormatSchema.optional(),
     autoFilterDelayMinutes: autoFilterDelayMinutesSchema.optional(),
     theme: themeSchema.optional(),
+    lowercase: z.boolean().optional(),
   }));
 
   const hasLocale = parsed.locale !== undefined;
@@ -125,8 +128,9 @@ export const parseUserSettingsBody = (input: unknown): ParsedUserSettingsBody =>
   const hasDateFormat = parsed.dateFormat !== undefined;
   const hasAutoFilterDelayMinutes = parsed.autoFilterDelayMinutes !== undefined;
   const hasTheme = parsed.theme !== undefined;
+  const hasLowercase = parsed.lowercase !== undefined;
 
-  if (!hasLocale && !hasNumberFormat && !hasDateFormat && !hasAutoFilterDelayMinutes && !hasTheme) {
+  if (!hasLocale && !hasNumberFormat && !hasDateFormat && !hasAutoFilterDelayMinutes && !hasTheme && !hasLowercase) {
     throw createBadRequestError("No fields to update");
   }
 
@@ -136,11 +140,13 @@ export const parseUserSettingsBody = (input: unknown): ParsedUserSettingsBody =>
     dateFormat: parsed.dateFormat,
     autoFilterDelayMinutes: parsed.autoFilterDelayMinutes,
     theme: parsed.theme,
+    lowercase: parsed.lowercase,
     hasLocale,
     hasNumberFormat,
     hasDateFormat,
     hasAutoFilterDelayMinutes,
     hasTheme,
+    hasLowercase,
   };
 };
 

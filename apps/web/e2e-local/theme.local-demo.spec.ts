@@ -190,7 +190,11 @@ test("keeps mobile RTL settings stable and supports keyboard selection in Englis
   await select.selectOption("dark");
   await expectTheme(page, "dark");
   await expectReadableDarkSurface(select);
-  expect(await select.boundingBox()).toEqual(originalBounds);
+  const darkBounds = await select.boundingBox();
+  if (darkBounds === null) throw new Error("Theme select must retain measurable bounds");
+  expect(darkBounds.x + darkBounds.width).toEqual(originalBounds.x + originalBounds.width);
+  expect(darkBounds.y).toEqual(originalBounds.y);
+  expect(darkBounds.height).toEqual(originalBounds.height);
 
   // macOS headless Chromium cannot navigate native popups with arrow keys,
   // and Playwright's keyboard layout cannot type Arabic option initials.
@@ -219,4 +223,123 @@ test("keeps mobile RTL settings stable and supports keyboard selection in Englis
   await expect(select).toHaveValue("dark");
   await expectTheme(page, "dark");
   await expectReadableDarkSurface(select);
+});
+
+const userSettingsPanel = (page: Page): Locator => page.locator("section.panel").filter({ has: page.locator("#user-lowercase") });
+
+test("groups appearance under user settings and keeps dropdown arrows inset in LTR and RTL", async ({ page, context, baseURL }, testInfo) => {
+  if (baseURL === undefined) throw new Error("Local Demo Playwright baseURL is required");
+  for (const locale of ["en", "ar"]) {
+    await context.addCookies([{ name: "locale", value: locale, domain: new URL(baseURL).hostname, path: "/" }]);
+    await page.setViewportSize(locale === "en" ? { width: 1440, height: 1000 } : { width: 390, height: 844 });
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.goto("/settings", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#appearance-theme")).toBeEnabled();
+      await expect(userSettingsPanel(page).locator("#appearance-theme")).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Appearance", exact: true })).toHaveCount(0);
+      const select = page.locator("#appearance-theme");
+      const geometry = await select.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const arrow = getComputedStyle(element.parentElement!, "::after");
+        return {
+          width: element.getBoundingClientRect().width,
+          appearance: style.appearance,
+          paddingEnd: Number.parseFloat(style.paddingInlineEnd),
+          arrowInset: Number.parseFloat(arrow.insetInlineEnd),
+          arrowSize: Number.parseFloat(arrow.width),
+          pointerEvents: arrow.pointerEvents,
+        };
+      });
+      expect(geometry.appearance).toBe("none");
+      expect(geometry.arrowInset).toBeGreaterThanOrEqual(10);
+      expect(geometry.paddingEnd).toBeGreaterThan(geometry.arrowInset + geometry.arrowSize + 8);
+      expect(geometry.pointerEvents).toBe("none");
+      // The theme selector should size to its choices without the old minimum-width gap.
+      if (locale === "en") expect(geometry.width).toBeLessThan(110);
+      for (const control of await page.locator("main select").all()) {
+        await control.scrollIntoViewIfNeeded();
+        const bounds = await control.boundingBox();
+        if (bounds === null) throw new Error("Settings dropdown must have measurable bounds");
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+      }
+      await page.locator("main").evaluate((element) => { element.parentElement!.scrollTop = 0; });
+      await page.screenshot({ path: testInfo.outputPath(`settings-${locale}-${colorScheme}.png`) });
+    }
+  }
+});
+
+test("previews and saves lowercase across app pages and reload without changing entered text", async ({ page }, testInfo) => {
+  await page.goto("/settings", { waitUntil: "domcontentloaded" });
+  const checkbox = page.locator("#user-lowercase");
+  const save = userSettingsPanel(page).getByRole("button", { name: "Save", exact: true });
+  await expect(checkbox).not.toBeChecked();
+  await expect(save).toBeDisabled();
+  await checkbox.check();
+  await expect(page.locator("html")).toHaveAttribute("data-lowercase", "true");
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(save).toBeDisabled();
+  await expect.poll(async () => (await page.context().cookies()).find((cookie) => cookie.name === "lowercase")?.value).toBe("true");
+
+  await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      document.documentElement.dataset.lowercaseAtDomReady = document.documentElement.dataset.lowercase;
+    }, { once: true });
+  });
+  for (const path of ["/budget", "/transactions", "/balances", "/dashboards", "/chat", "/settings"]) {
+    await page.goto(path, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("html")).toHaveAttribute("data-lowercase-at-dom-ready", "true");
+    await expect(page.locator("nav")).toHaveCSS("text-transform", "lowercase");
+    expect(await page.locator("nav").evaluate((element) => (element as HTMLElement).innerText)).toContain("budget");
+    if (path === "/chat") {
+      const input = page.getByTestId("chat-composer-input");
+      await input.fill("Keep MY Original Text");
+      await expect(input).toHaveValue("Keep MY Original Text");
+      await expect(input).toHaveCSS("text-transform", "lowercase");
+      await expect.poll(() => input.evaluate((element) => getComputedStyle(element, "::placeholder").textTransform)).toBe("lowercase");
+    }
+    if (path === "/settings") {
+      await expect(checkbox).toBeChecked();
+      // This component normally forces uppercase; lowercase must override it too.
+      await expect(page.locator('section.panel p').filter({ hasText: "Danger Zone" }).first()).toHaveCSS("text-transform", "lowercase");
+      await page.screenshot({ path: testInfo.outputPath("settings-lowercase.png") });
+    }
+  }
+
+  await checkbox.uncheck();
+  await save.click();
+  await expect(save).toBeDisabled();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(checkbox).not.toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-lowercase", "false");
+  expect(await page.locator("nav").evaluate((element) => (element as HTMLElement).innerText)).toContain("Budget");
+});
+
+test("retains an unsaved lowercase preview across navigation and lets failed saves retry", async ({ page }) => {
+  await page.goto("/settings", { waitUntil: "domcontentloaded" });
+  await page.locator("#user-lowercase").check();
+  await page.locator('nav a[href="/budget"]').click();
+  await expect(page).toHaveURL(/\/budget$/);
+  await page.locator('nav a[href="/settings"]').click();
+  await expect(page.locator("#user-lowercase")).toBeChecked();
+  const save = userSettingsPanel(page).getByRole("button", { name: "Save", exact: true });
+  await expect(save).toBeEnabled();
+
+  await page.route("**/api/user-settings", async (route) => {
+    await route.fulfill({ status: 500, contentType: "text/plain", body: "Unable to save settings" });
+  }, { times: 1 });
+  await save.click();
+  await expect(userSettingsPanel(page).getByText("Unable to save settings", { exact: true })).toBeVisible();
+  await expect(save).toBeEnabled();
+
+  await page.route("**/api/user-settings", (route) => route.abort(), { times: 1 });
+  await save.click();
+  await expect(userSettingsPanel(page).getByText(/Failed to fetch|NetworkError/)).toBeVisible();
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(save).toBeDisabled();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#user-lowercase")).toBeChecked();
 });

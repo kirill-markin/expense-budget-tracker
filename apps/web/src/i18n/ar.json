@@ -28,6 +28,8 @@
   "settings.themeDark": "داكنة",
   "settings.themeHint": "يُحفظ في حسابك ويُطبّق على جميع أجهزتك. خيار النظام يتبع مظهر كل جهاز.",
   "settings.themeSaveError": "تعذّر حفظ المظهر في حسابك: {{message}}",
+  "settings.lowercase": "أحرف صغيرة",
+  "settings.lowercaseHint": "معاينة جميع نصوص التطبيق بأحرف صغيرة دون تغيير بياناتك. احفظ لتطبيق الخيار على جميع أجهزتك.",
   "settings.userSettings": "إعدادات المستخدم",
   "settings.workspaceSettings": "إعدادات مساحة العمل",
   "settings.filteredCategories": "الفئات المُصفّاة",
