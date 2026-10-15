@@ -69,7 +69,7 @@ The script runs `cdk bootstrap` (prepares the AWS account), then `cdk deploy` (c
 
 **CI/CD (all subsequent deploys):** `.github/workflows/deploy.yml`
 
-Triggered on every push to `main`. Runs the same `cdk deploy` to update infrastructure and images, then runs migrations when needed, then checks `https://app.<domain>/api/health` through Cloudflare to confirm DB readiness, then invokes the FX fetcher Lambda when worker code changes.
+Triggered on a push to `main` that touches the `paths:` list in `.github/workflows/deploy.yml`, and manually via `workflow_dispatch`; a push touching nothing in that list produces no Deploy run. Runs the same `cdk deploy` to update infrastructure and images, then runs migrations when needed, then checks `https://app.<domain>/api/health` through Cloudflare to confirm DB readiness, then invokes the FX fetcher Lambda when worker code changes.
 
 Schema changes in this pipeline must remain backward-compatible for at least one deploy. If a change requires “migrate before new web code serves traffic”, use a separate two-phase rollout instead of the default pipeline.
 

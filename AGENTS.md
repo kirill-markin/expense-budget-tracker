@@ -18,7 +18,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Prefer non-interactive terminal commands.
 - The web app supports multiple languages. When adding or changing any translation in `apps/web/src/i18n/`, update the same keys in every locale file in that directory in the same change.
 - Change schema via new files in `db/migrations/` only; never edit already-applied migrations.
-- CI/CD is GitHub Actions on push to `main` (`.github/workflows/deploy.yml`).
+- CI/CD is GitHub Actions on push to `main` (`.github/workflows/deploy.yml`), filtered by its `paths:` list: a merge touching nothing in that list produces no Deploy run, which is correct and not a missed trigger.
 - The deploy process intentionally may update the web service before running migrations; this accepted deploy order is not an issue by itself.
 - Do not build AWS SDK bundles or other AWS deployment artifacts locally. Push code to `main`, and let CI/CD build and deploy everything.
 - Themeable colors belong in `apps/web/src/app/styles/tokens.css` under both `:root` and `:root[data-theme="dark"]`; write no new hex color anywhere else under `apps/web/src`, and keep `scripts/checks/pr/check-css-hex-colors.mjs` green.
@@ -85,7 +85,7 @@ Before querying AWS resources:
 
 - CDK context: `infra/aws/cdk.context.local.json`
 - CDK stack name: `ExpenseBudgetTracker`
-- CI/CD: on push to `main`, GitHub Actions deploys CDK, builds and pushes Docker images to ECR, runs the ECS migration task, and updates the ECS service. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
+- CI/CD: GitHub Actions deploys CDK, builds and pushes Docker images to ECR, runs the ECS migration task, and updates the ECS service. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
 
 ## Local Development
 
