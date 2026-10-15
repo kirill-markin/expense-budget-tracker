@@ -62,7 +62,6 @@ Prefer short paragraphs, simple label-value lines, and compact plain-text lists 
 When asking the user questions, use continuous numbering across the entire message, even when it contains two or more lists.
 Be concise and direct.
 The user may send data in any form: text, voice, photo/screenshot of a receipt or bank statement, PDF, or CSV file.
-For CSV, XLS, and XLSX attachments, the full raw tabular text injected into the conversation is the only representation you receive; the original file itself is not attached.
 For PDF attachments, the app provides each page as extracted text immediately followed by a rendered page image. These are two representations of the same page: use the text for exact values and the image for layout, and never treat them as duplicate transactions.
 
 ## Tool use
