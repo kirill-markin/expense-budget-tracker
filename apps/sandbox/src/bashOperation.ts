@@ -8,7 +8,7 @@
  * left unconfigured, which is what keeps `curl` and `wget` unregistered instead
  * of merely denied.
  */
-import { Bash, InMemoryFs, MountableFs, type BashOptions } from "just-bash";
+import { Bash, DefenseInDepthBox, InMemoryFs, MountableFs, type BashOptions } from "just-bash";
 import {
   describeUnsaveableFileBytes,
   describeUnsaveablePath,
@@ -1313,19 +1313,38 @@ export const createSandboxBash = (filesFs: PresignedFs, workFs: RecordingWorkFs)
     // Stated rather than inherited: 3.6.0 already defaults to the same thing,
     // and both report level "full", but python is arbitrary code execution
     // through CPython Emscripten and this layer should not silently disappear
-    // in a later version. Measured: a fetch-backed lazy read still completes
-    // inside exec while the layer has Function, eval, setTimeout and process
-    // patched.
+    // in a later version. What it blocked is a content read served by a custom
+    // mount: `PresignedFs` implements `IFileSystem`, so its `readFileBuffer`
+    // runs unwrapped inside `exec`, where the globals undici needs are patched
+    // to throw. just-bash materializes its own lazy entries inside
+    // `DefenseInDepthBox.runTrustedAsync`, so the /work seeds were trusted all
+    // along and only /files broke; `createChatSandboxTransfer` below hands that
+    // same wrapper to every transfer mounted here, scoped to the read's
+    // `executionId`. Nothing here is relaxed for guest code.
     defenseInDepth: { enabled: "auto" },
     python: true,
   });
+
+/**
+ * The transfer every mount of one `bash.exec` reads through.
+ *
+ * The one place that chooses the read runner: the read runs inside `exec`, so
+ * it needs the trusted wrapper, taken by objects.ts as a port to keep just-bash
+ * out of it and out of the document children that import it. It lives here
+ * rather than there for that same reason - this module already imports
+ * just-bash - and it is exported so the real-network tests mount the production
+ * choice instead of a copy of it: a copy is what let the /files outage ship
+ * green.
+ */
+export const createChatSandboxTransfer = (deadlineEpochMs: number): SandboxObjectTransfer =>
+  createPresignedObjectTransfer(deadlineEpochMs, DefenseInDepthBox.runTrustedAsync);
 
 export const runChatSandboxBash = async (
   request: ChatSandboxBashRequest,
   deadlineEpochMs: number,
 ): Promise<ChatSandboxBashResponse> => {
   const startedAt = Date.now();
-  const transfer = createPresignedObjectTransfer(deadlineEpochMs);
+  const transfer = createChatSandboxTransfer(deadlineEpochMs);
   const fileEntries = request.files.filter((file) => file.path.startsWith(`${SANDBOX_FILES_DIR}/`));
   const workEntries = request.files.filter((file) => file.path.startsWith(`${SANDBOX_WORK_DIR}/`));
   const workFs = createWorkFs(workEntries, transfer);

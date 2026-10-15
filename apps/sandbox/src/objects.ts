@@ -28,6 +28,28 @@ export type SandboxObjectTransfer = Readonly<{
   writeObject: (putUrl: string, mediaType: string, content: Uint8Array) => Promise<void>;
 }>;
 
+/**
+ * How one read of an object is allowed to run.
+ *
+ * The shape of `DefenseInDepthBox.runTrustedAsync`, taken as a port and
+ * supplied by the `bash.exec` caller rather than imported here, which is the
+ * whole point of the port: `prepareProcess.ts` imports this module, so a
+ * top-level just-bash import would load the library into every
+ * document-conversion child as well, and that child would then load a library
+ * it never calls as part of the 60-70 ms of node start-up plus just-bash import
+ * measured in childProcess.ts - the import is one share of that window, not the
+ * whole of it, and the rest is paid either way. It is a share a conversion
+ * child spends once per source, against its own deadline, for nothing. Callers
+ * that are not inside an execution pass `runObjectReadDirectly`.
+ */
+export type ObjectReadRunner = <T>(read: () => Promise<T>) => Promise<T>;
+
+/**
+ * The runner of a read that is not inside `bash.exec`, where no global is
+ * patched and the read needs nothing around it.
+ */
+export const runObjectReadDirectly: ObjectReadRunner = (read) => read();
+
 type SandboxLogEvent = Readonly<{
   action: "object_get_retry" | "object_put_retry";
   attempt: number;
@@ -306,22 +328,59 @@ const requireNoRedirect = (response: Response, label: string): void => {
   );
 };
 
+/**
+ * The one transfer that runs while a script is executing, declared as the
+ * infrastructure code it is.
+ *
+ * /files answers `ls` and `stat` from the request, but reading content calls
+ * this from `PresignedFs.readFileBuffer` inside `bash.exec`. That is a custom
+ * mount's own content read, which just-bash does not wrap the way it wraps its
+ * own lazy entries - `InMemoryFs.materializeLazy` runs a loader inside
+ * `runTrustedAsync`, which is why the /work seeds never broke - and there the
+ * defense-in-depth layer has `WeakRef`, `FinalizationRegistry`, `Proxy`,
+ * `performance` and `setTimeout` patched to throw. Node's bundled undici
+ * constructs several of those per request, so an unwrapped read threw a
+ * security violation that reached the model as `TypeError: fetch failed` -
+ * every attached CSV, spreadsheet and document unreadable.
+ *
+ * The wrapper arrives as `runRead`, not as an import: see `ObjectReadRunner`.
+ *
+ * `runTrustedAsync` suspends the blocking per `executionId`, not per async
+ * context: `isTrustedContext` is true for every context of this `exec` while
+ * the read is in flight, and only another execution keeps its own gate. The
+ * layer still covers guest code because just-bash runs none of it concurrently
+ * inside one `exec` - pipeline stages are materialized to completion rather
+ * than streamed, the AST's `background` flag is parsed and printed but never
+ * acted on, and a python read blocks its own worker. A change that introduces
+ * real concurrency inside `exec` has to narrow this wrapper instead of
+ * inheriting a guarantee the library never made.
+ *
+ * The WHOLE retry loop is inside the wrapper, not just the `fetch`: the delay
+ * between attempts is a `setTimeout`, and that is blocked too, so a wrapper
+ * around the inner attempt alone would turn the first retryable failure into
+ * the violation it was meant to survive.
+ *
+ * `writePresignedObject` deliberately stays outside: the /work diff runs after
+ * `exec` returns, so no patched global is in its way.
+ */
 const readPresignedObject = async (
   getUrl: string,
   deadlineEpochMs: number,
+  runRead: ObjectReadRunner,
 ): Promise<Uint8Array> =>
-  transferWithRetries("object_get_retry", deadlineEpochMs, async (signal) => {
-    const response = await fetch(getUrl, { method: "GET", redirect: "manual", signal });
-    requireNoRedirect(response, "Pre-signed object read");
-    if (!response.ok) {
-      throw new ObjectTransferError(
-        `Pre-signed object read failed with HTTP ${String(response.status)}: ${await describeResponseBody(response)}`,
-        response.status,
-      );
-    }
+  runRead(() =>
+    transferWithRetries("object_get_retry", deadlineEpochMs, async (signal) => {
+      const response = await fetch(getUrl, { method: "GET", redirect: "manual", signal });
+      requireNoRedirect(response, "Pre-signed object read");
+      if (!response.ok) {
+        throw new ObjectTransferError(
+          `Pre-signed object read failed with HTTP ${String(response.status)}: ${await describeResponseBody(response)}`,
+          response.status,
+        );
+      }
 
-    return new Uint8Array(await response.arrayBuffer());
-  });
+      return new Uint8Array(await response.arrayBuffer());
+    }));
 
 const writePresignedObject = async (
   putUrl: string,
@@ -350,12 +409,14 @@ const writePresignedObject = async (
 
 /**
  * Bind every transfer of one invocation to the same deadline, so a stalled
- * connection cannot outlive the Lambda it reports back to.
+ * connection cannot outlive the Lambda it reports back to, and state which
+ * runner its reads run under.
  */
 export const createPresignedObjectTransfer = (
   deadlineEpochMs: number,
+  runRead: ObjectReadRunner,
 ): SandboxObjectTransfer => ({
-  readObject: (getUrl: string) => readPresignedObject(getUrl, deadlineEpochMs),
+  readObject: (getUrl: string) => readPresignedObject(getUrl, deadlineEpochMs, runRead),
   writeObject: (putUrl: string, mediaType: string, content: Uint8Array) =>
     writePresignedObject(putUrl, mediaType, content, deadlineEpochMs),
 });

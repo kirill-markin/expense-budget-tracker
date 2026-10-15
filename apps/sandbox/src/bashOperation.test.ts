@@ -1,7 +1,10 @@
+import { DefenseInDepthBox } from "just-bash";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
 import {
   assembleBashResponse,
+  createChatSandboxTransfer,
   createFilesFs,
   createSandboxBash,
   createWorkFs,
@@ -2165,5 +2168,275 @@ test("every refusal note is inside the priority bound the caller uses", (): void
       bulk.has(note),
       `a note past the ${String(SANDBOX_MAX_PRIORITY_NOTES)} the caller prioritizes is not a bulk /work note, so it is being demoted to tier 5: ${note}`,
     );
+  }
+});
+
+/**
+ * The read path with the network left in.
+ *
+ * Every other test here hands the mounts a `SandboxObjectTransfer` port, and
+ * that is exactly what hid a total outage of /files content reads: the port
+ * never runs `fetch`, while the real one runs it INSIDE `bash.exec`, where
+ * just-bash's defense-in-depth layer patches the globals Node's bundled undici
+ * builds per request. With the layer armed and the read unwrapped, every
+ * attached CSV, spreadsheet and document was unreadable - a security violation
+ * surfaced to the model as `TypeError: fetch failed` - and the whole
+ * port-driven suite stayed green. So the tests below serve the object over
+ * real HTTP from 127.0.0.1 and read it with `globalThis.fetch` left alone: two
+ * through the production `createChatSandboxTransfer`, `createFilesFs` and
+ * `createSandboxBash`, and the last one through `runChatSandboxBash` itself.
+ * The transfer comes from that exported factory rather than being assembled
+ * here: `runChatSandboxBash` mounts the same one, so the production read runner
+ * has no second definition that could drift from what these tests prove.
+ *
+ * The request parser is deliberately not in this path: `presignedUrlSchema`
+ * accepts https only, and the host allowlist it enforces
+ * (`CHAT_SANDBOX_OBJECT_HOSTS`) checks URL strings in the parent process,
+ * before any object is read, so it is not part of what the read does.
+ */
+type ObjectServer = Readonly<{
+  url: string;
+  servedRequests: () => number;
+  close: () => Promise<void>;
+}>;
+
+/** Serves one object over real HTTP, answering `statuses` in order. */
+const startObjectServer = async (
+  content: string,
+  statuses: readonly number[],
+): Promise<ObjectServer> => {
+  const bytes = encode(content);
+  let served = 0;
+  const server = createServer((_request, response): void => {
+    const status = statuses[served];
+    served += 1;
+    if (status === undefined) {
+      // One request per listed status; another one is a defect under test, and
+      // `servedRequests` below is what reports it.
+      response.destroy();
+      return;
+    }
+
+    if (status !== 200) {
+      response.writeHead(status, { "content-type": "text/plain", connection: "close" });
+      response.end("object storage is busy");
+      return;
+    }
+
+    response.writeHead(200, {
+      "content-type": "text/csv",
+      "content-length": String(bytes.byteLength),
+      // Without it undici keeps the socket alive and `close` below waits out
+      // the server's keep-alive timeout.
+      connection: "close",
+    });
+    response.end(content);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.ok(address !== null && typeof address === "object", "the server has no bound port");
+
+  return {
+    url: `http://127.0.0.1:${String(address.port)}/statement.csv`,
+    servedRequests: (): number => served,
+    close: async (): Promise<void> => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error === undefined) {
+            resolve();
+            return;
+          }
+
+          reject(error);
+        });
+      });
+    },
+  };
+};
+
+type RealNetworkRead = Readonly<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  /**
+   * `DefenseInDepthBox.isInSandboxedContext()` as observed from inside the
+   * read, `undefined` when the read never ran.
+   */
+  sandboxedDuringRead: boolean | undefined;
+}>;
+
+const catFileOverRealNetwork = async (
+  content: string,
+  getUrl: string,
+): Promise<RealNetworkRead> => {
+  const bytes = encode(content);
+  const file: ChatSandboxFile = {
+    path: `${SANDBOX_FILES_DIR}/statement.csv`,
+    sizeBytes: bytes.byteLength,
+    mediaType: "text/csv",
+    sha256: hashObjectContent(bytes),
+    mtimeMs: 1_700_000_000_000,
+    getUrl,
+  };
+  // Not a read runner of this test's own: the same factory `runChatSandboxBash`
+  // mounts, so the production choice of read runner is what these two tests
+  // exercise, and changing it back to `runObjectReadDirectly` fails them.
+  const realTransfer = createChatSandboxTransfer(Date.now() + 30_000);
+  const sandboxedDuringReads: boolean[] = [];
+  const transfer: SandboxObjectTransfer = {
+    ...realTransfer,
+    readObject: (url: string): Promise<Uint8Array> => {
+      sandboxedDuringReads.push(DefenseInDepthBox.isInSandboxedContext());
+
+      return realTransfer.readObject(url);
+    },
+  };
+  const bash = createSandboxBash(createFilesFs([file], transfer), createWorkFs([], transfer));
+  const result = await bash.exec(`cat ${file.path}`);
+
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    sandboxedDuringRead: sandboxedDuringReads.at(0),
+  };
+};
+
+/**
+ * Pin that the run proved something, observed from inside the read rather than
+ * from configuration.
+ *
+ * Without this, a `defenseInDepth: false` in `createSandboxBash` would leave
+ * both tests green while nothing was patched during the read - the silent
+ * disappearance the option exists to catch. Config cannot see that: with no box
+ * activated there is no singleton, and a bare `DefenseInDepthBox.getInstance()`
+ * mints a fresh default-enabled one that reports `state: "enabled"` about
+ * nothing.
+ *
+ * `isInSandboxedContext()` reads the defense `AsyncLocalStorage` store instead.
+ * A disabled box returns a handle whose `run` calls straight through without
+ * installing a store, so the flag is false; an armed one runs the read inside
+ * `{ sandboxActive: true, executionId }`, and `runTrustedAsync` re-runs that
+ * same store with `trusted` added, so the flag stays true on both sides of the
+ * wrapper. True therefore means the globals undici needs really were patched
+ * while this read was in flight.
+ *
+ * `enabled: "auto"` resolves to `state: "unsupported"` only where
+ * `AsyncLocalStorage` is missing - no `node:async_hooks`, or the browser
+ * bundle - which does not happen in this suite. Below Node 23.5 the missing
+ * context-aware `module.registerHooks` only downgrades `level` to
+ * `"best-effort"`: the state is still `"enabled"` and the globals are still
+ * patched, so nothing here rests on `.nvmrc`.
+ */
+const assertDefenseLayerWasArmed = (read: RealNetworkRead): void => {
+  assert.equal(
+    read.sandboxedDuringRead,
+    true,
+    `the read observed isInSandboxedContext() === ${String(read.sandboxedDuringRead)}, so no blocked global was in its way and this run says nothing about the trusted wrapper`,
+  );
+};
+
+test("a /files content read completes over the real network inside exec", async (): Promise<void> => {
+  const content = "date,amount\n2026-10-01,12.34\n2026-10-02,56.78\n";
+  const server = await startObjectServer(content, [200]);
+
+  try {
+    const result = await catFileOverRealNetwork(content, server.url);
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout, content);
+    assert.equal(server.servedRequests(), 1);
+    assertDefenseLayerWasArmed(result);
+  } finally {
+    await server.close();
+  }
+});
+
+/**
+ * The retry granularity, over the same real network.
+ *
+ * A 200 on the first attempt never reaches the parts of `transferWithRetries`
+ * that run between attempts, so it would pass with the wrapper around the
+ * inner `fetch` alone. 503 is retryable, so this run also spends the
+ * `setTimeout` behind `delay()`, which is patched to throw inside `exec` -
+ * unlike the `process.stdout` write behind `log()`, since 3.6.0's
+ * `applyPatches` skips the `process_stdout` and `process_stderr` violation
+ * types. So it fails unless the wrapper encloses the whole retry loop.
+ */
+test("a /files content read survives a retryable status over the real network", async (): Promise<void> => {
+  const content = "date,amount\n2026-10-03,90.12\n";
+  const server = await startObjectServer(content, [503, 200]);
+
+  try {
+    const result = await catFileOverRealNetwork(content, server.url);
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout, content);
+    assert.equal(server.servedRequests(), 2, "the retryable status did not cost a second attempt");
+    assertDefenseLayerWasArmed(result);
+  } finally {
+    await server.close();
+  }
+});
+
+/**
+ * The same real-network read, mounted by the production entry point.
+ *
+ * The two tests above pin the factory but not `runChatSandboxBash`'s use of
+ * it. Rewriting its one call to `createPresignedObjectTransfer(
+ * deadlineEpochMs, runObjectReadDirectly)` restores the /files outage one
+ * level up, and both of them stay green. Every other test that calls
+ * `runChatSandboxBash` goes through `runSandbox`, which replaces
+ * `globalThis.fetch`, so undici never runs there and no patched global is ever
+ * in the read's way - the suite's only reaction to that rewrite would be
+ * whatever a stubbed `Response` happens to touch.
+ *
+ * This one leaves `globalThis.fetch` alone, so the mount `runChatSandboxBash`
+ * built is what performs a real `fetch` inside `exec`. A refused read does not
+ * throw: the mount records it, `cat` reports a missing file on stderr and the
+ * refusal reaches `notes`, which is why the assertions below cover all three
+ * channels rather than stdout alone.
+ *
+ * No PUT server is needed. `cat` leaves /work unchanged, so `diffWorkFiles`
+ * uploads nothing and the unreachable `writeSlots` hosts are never called.
+ */
+test("a /files content read completes over the real network through the entry point", async (): Promise<void> => {
+  const content = "date,amount\n2026-10-04,34.56\n";
+  const bytes = encode(content);
+  const path = `${SANDBOX_FILES_DIR}/statement.csv`;
+  const server = await startObjectServer(content, [200]);
+
+  try {
+    const response = await runChatSandboxBash(
+      {
+        operation: "bash",
+        sessionId: "0f1e2d3c-4b5a-4968-8776-65544332211f",
+        command: `cat ${path}`,
+        files: [{
+          path,
+          sizeBytes: bytes.byteLength,
+          mediaType: "text/csv",
+          sha256: hashObjectContent(bytes),
+          mtimeMs: 1_700_000_000_000,
+          getUrl: server.url,
+        }],
+        writeSlots: [...writeSlots(4)],
+      },
+      Date.now() + 30_000,
+    );
+
+    assert.equal(response.stderr, "");
+    assert.equal(response.exitCode, 0);
+    assert.equal(response.stdout, content);
+    assert.deepEqual(response.notes, []);
+    assert.deepEqual(response.writtenFiles, []);
+    assert.equal(server.servedRequests(), 1);
+  } finally {
+    await server.close();
   }
 });

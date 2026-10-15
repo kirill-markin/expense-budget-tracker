@@ -24,6 +24,7 @@ import {
   createPresignedObjectTransfer,
   describeObjectReadFailure,
   requireDescribedObject,
+  runObjectReadDirectly,
   type SandboxObjectTransfer,
 } from "./objects.js";
 import { isSandboxDefect } from "./sandboxDefect.js";
@@ -171,4 +172,4 @@ export const runChatSandboxPdfPage = async (
   request: ChatSandboxPdfPageRequest,
   deadlineEpochMs: number,
 ): Promise<ChatSandboxPdfPageResponse> =>
-  extractPdfPage(request, createPresignedObjectTransfer(deadlineEpochMs));
+  extractPdfPage(request, createPresignedObjectTransfer(deadlineEpochMs, runObjectReadDirectly));
