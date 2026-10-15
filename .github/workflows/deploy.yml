@@ -1,4 +1,4 @@
-# CI/CD — triggered on push to main.
+# CI/CD — triggered on a push to main that touches the `paths:` list below, and manually via `workflow_dispatch`.
 #
 # Uses the same `cdk deploy` as the bootstrap script.
 # CDK builds Docker images (via fromAsset), pushes them to the bootstrap ECR,

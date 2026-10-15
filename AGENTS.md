@@ -85,7 +85,7 @@ Before querying AWS resources:
 
 - CDK context: `infra/aws/cdk.context.local.json`
 - CDK stack name: `ExpenseBudgetTracker`
-- CI/CD: on push to `main`, GitHub Actions deploys CDK, builds and pushes Docker images to ECR, runs the ECS migration task, and updates the ECS service. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
+- CI/CD: GitHub Actions deploys CDK, builds and pushes Docker images to ECR, runs the ECS migration task, and updates the ECS service. Secrets: `AWS_DEPLOY_ROLE_ARN`, `CDK_CONTEXT`
 
 ## Local Development
 
