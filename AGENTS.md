@@ -21,6 +21,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - CI/CD is GitHub Actions on push to `main` (`.github/workflows/deploy.yml`).
 - The deploy process intentionally may update the web service before running migrations; this accepted deploy order is not an issue by itself.
 - Do not build AWS SDK bundles or other AWS deployment artifacts locally. Push code to `main`, and let CI/CD build and deploy everything.
+- Themeable colors belong in `apps/web/src/app/styles/tokens.css` under both `:root` and `:root[data-theme="dark"]`; write no new hex color anywhere else under `apps/web/src`, and keep `scripts/checks/pr/check-css-hex-colors.mjs` green.
 - RTL support is required:
   - In CSS, use logical properties such as `inset-inline-start`/`end`, `margin-inline-start`/`end`, `padding-inline-start`/`end`, `border-inline-start`/`end`, and `text-align: start`/`end` instead of physical left/right variants.
   - Use `[dir="rtl"]` overrides only when no logical equivalent exists (for example `box-shadow`).
