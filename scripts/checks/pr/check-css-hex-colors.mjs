@@ -18,13 +18,7 @@ const HEX_COLOR_PATTERN = /#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})\b/giu;
  * @type {ReadonlyArray<LiteralExemption>}
  */
 const KNOWN_LITERAL_EXEMPTIONS = [
-  { file: `${SCAN_ROOT}/ui/charts/BudgetStreamChart.module.css`, declaration: "color: #f5c451;", count: 1 },
-  { file: `${SCAN_ROOT}/ui/chat/shell/panel/ChatPanel.module.css`, declaration: "border: 2px dashed var(--accent, #4a90d9);", count: 1 },
   { file: `${SCAN_ROOT}/ui/chat/shell/panel/ChatPanel.module.css`, declaration: "color: #fff;", count: 1 },
-  { file: `${SCAN_ROOT}/ui/tables/budget/BudgetTable.module.css`, declaration: "border-bottom: 7px solid #4caf50;", count: 1 },
-  { file: `${SCAN_ROOT}/ui/tables/budget/BudgetTable.module.css`, declaration: "border-top: 7px solid #f44336;", count: 1 },
-  { file: `${SCAN_ROOT}/ui/tables/budget/BudgetTable.module.css`, declaration: "border-bottom: 7px solid #f44336;", count: 1 },
-  { file: `${SCAN_ROOT}/ui/tables/budget/BudgetTable.module.css`, declaration: "border-top: 7px solid #4caf50;", count: 1 },
 ];
 
 /**

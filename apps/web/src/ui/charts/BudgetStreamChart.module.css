@@ -74,10 +74,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Untrusted, not over budget: the same warning amber the tables use, in the
-   lighter shade that stays readable on the dark tooltip. */
+/* Untrusted, not over budget. The tooltip surface is dark in both themes, so this amber
+   must not follow the theme the way the tables' --warning does. */
 .tooltipWarn {
-  color: #f5c451;
+  color: var(--tooltip-warning);
   font-size: 11px;
   margin-top: 4px;
 }
