@@ -520,7 +520,7 @@
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.45);
-  border: 2px dashed var(--accent, #4a90d9);
+  border: 2px dashed var(--accent);
   border-radius: 6px;
   pointer-events: none;
   color: #fff;
