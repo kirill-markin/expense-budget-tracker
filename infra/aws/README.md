@@ -486,7 +486,7 @@ The canonical MCP transport is `https://mcp.yourdomain.com/mcp`, and its protect
 
    The production runtime is fully app-managed now: transcript state lives in Postgres, the tool loop runs in the web process, and recovery uses `/api/chat` snapshots instead of provider-managed conversation state. For ongoing operations and troubleshooting, use [`docs/langfuse-operations.md`](../../docs/langfuse-operations.md).
 
-## CI/CD (automatic deploys on push)
+## CI/CD (automatic path-filtered deploys)
 
 CDK creates an IAM OIDC role for GitHub Actions. Requires step 6 (first deploy + initial image push) to be completed first — CI/CD reads stack outputs and pushes to existing ECR repos.
 
