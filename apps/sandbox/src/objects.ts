@@ -7,6 +7,7 @@
  * validated against, redirects included. Callers take the transfer as a port,
  * so the filesystems and the /work diff stay testable without the network.
  */
+import { DefenseInDepthBox } from "just-bash";
 import { createHash } from "node:crypto";
 
 const TRANSFER_ATTEMPTS = 3;
@@ -306,22 +307,56 @@ const requireNoRedirect = (response: Response, label: string): void => {
   );
 };
 
+/**
+ * The one transfer that runs while a script is executing, declared as the
+ * infrastructure code it is.
+ *
+ * /files answers `ls` and `stat` from the request, but reading content calls
+ * this from `PresignedFs.readFileBuffer` inside `bash.exec`. That is a custom
+ * mount's own content read, which just-bash does not wrap the way it wraps its
+ * own lazy entries - `InMemoryFs.materializeLazy` runs a loader inside
+ * `runTrustedAsync`, which is why the /work seeds never broke - and there the
+ * defense-in-depth layer has `WeakRef`, `FinalizationRegistry`, `Proxy`,
+ * `performance`, `setTimeout` and `process.stdout` patched to throw. Node's
+ * bundled undici constructs several of those per request, so an unwrapped read
+ * threw a security violation that reached the model as `TypeError: fetch
+ * failed` - every attached CSV, spreadsheet and document unreadable.
+ *
+ * `runTrustedAsync` suspends the blocking per `executionId`, not per async
+ * context: `isTrustedContext` is true for every context of this `exec` while
+ * the read is in flight, and only another execution keeps its own gate. The
+ * layer still covers guest code because just-bash runs none of it concurrently
+ * inside one `exec` - pipeline stages are materialized to completion rather
+ * than streamed, the AST's `background` flag is parsed and printed but never
+ * acted on, and a python read blocks its own worker. A change that introduces
+ * real concurrency inside `exec` has to narrow this wrapper instead of
+ * inheriting a guarantee the library never made.
+ *
+ * The WHOLE retry loop is inside the wrapper, not just the `fetch`: the delay
+ * between attempts is a `setTimeout`, and that is blocked too, so a wrapper
+ * around the inner attempt alone would turn the first retryable failure into
+ * the violation it was meant to survive.
+ *
+ * `writePresignedObject` deliberately stays outside: the /work diff runs after
+ * `exec` returns, so no patched global is in its way.
+ */
 const readPresignedObject = async (
   getUrl: string,
   deadlineEpochMs: number,
 ): Promise<Uint8Array> =>
-  transferWithRetries("object_get_retry", deadlineEpochMs, async (signal) => {
-    const response = await fetch(getUrl, { method: "GET", redirect: "manual", signal });
-    requireNoRedirect(response, "Pre-signed object read");
-    if (!response.ok) {
-      throw new ObjectTransferError(
-        `Pre-signed object read failed with HTTP ${String(response.status)}: ${await describeResponseBody(response)}`,
-        response.status,
-      );
-    }
+  DefenseInDepthBox.runTrustedAsync(() =>
+    transferWithRetries("object_get_retry", deadlineEpochMs, async (signal) => {
+      const response = await fetch(getUrl, { method: "GET", redirect: "manual", signal });
+      requireNoRedirect(response, "Pre-signed object read");
+      if (!response.ok) {
+        throw new ObjectTransferError(
+          `Pre-signed object read failed with HTTP ${String(response.status)}: ${await describeResponseBody(response)}`,
+          response.status,
+        );
+      }
 
-    return new Uint8Array(await response.arrayBuffer());
-  });
+      return new Uint8Array(await response.arrayBuffer());
+    }));
 
 const writePresignedObject = async (
   putUrl: string,

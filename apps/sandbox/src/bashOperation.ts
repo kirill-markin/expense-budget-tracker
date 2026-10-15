@@ -1313,9 +1313,14 @@ export const createSandboxBash = (filesFs: PresignedFs, workFs: RecordingWorkFs)
     // Stated rather than inherited: 3.6.0 already defaults to the same thing,
     // and both report level "full", but python is arbitrary code execution
     // through CPython Emscripten and this layer should not silently disappear
-    // in a later version. Measured: a fetch-backed lazy read still completes
-    // inside exec while the layer has Function, eval, setTimeout and process
-    // patched.
+    // in a later version. What it blocked is a content read served by a custom
+    // mount: `PresignedFs` implements `IFileSystem`, so its `readFileBuffer`
+    // runs unwrapped inside `exec`, where the globals undici needs are patched
+    // to throw. just-bash materializes its own lazy entries inside
+    // `DefenseInDepthBox.runTrustedAsync`, so the /work seeds were trusted all
+    // along and only /files broke; `readPresignedObject` now takes the same
+    // wrapper, scoped to that read's `executionId`. Nothing here is relaxed
+    // for guest code.
     defenseInDepth: { enabled: "auto" },
     python: true,
   });
