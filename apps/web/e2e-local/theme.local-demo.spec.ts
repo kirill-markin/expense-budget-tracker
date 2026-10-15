@@ -1,12 +1,17 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const THEME_STORAGE_KEY = "expense-tracker-theme";
 type ResolvedTheme = "light" | "dark";
 type Rgb = readonly [number, number, number];
 
 const expectTheme = async (page: Page, theme: ResolvedTheme): Promise<void> => {
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
   await expect(page.locator("html")).toHaveCSS("color-scheme", theme);
+};
+
+const expectThemeCookie = async (page: Page, value: string): Promise<void> => {
+  await expect.poll(async (): Promise<string | undefined> =>
+    (await page.context().cookies()).find((cookie): boolean => cookie.name === "theme")?.value,
+  ).toBe(value);
 };
 
 const parseRgb = (color: string): Rgb => {
@@ -85,8 +90,7 @@ test("applies explicit choices immediately and preserves them across navigation 
   const select = page.locator("#appearance-theme");
   await select.selectOption("dark");
   await expectTheme(page, "dark");
-  expect(await page.evaluate((key): string | null => localStorage.getItem(key), THEME_STORAGE_KEY))
-    .toBe("dark");
+  await expectThemeCookie(page, "dark");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.emulateMedia({ colorScheme: "light" });
   await expectTheme(page, "dark");
@@ -106,29 +110,6 @@ test("applies explicit choices immediately and preserves them across navigation 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(select).toHaveValue("light");
   await expectTheme(page, "light");
-});
-
-test("synchronizes preference changes and removal between open tabs", async ({ page, context }) => {
-  await page.emulateMedia({ colorScheme: "light" });
-  await page.goto("/settings", { waitUntil: "domcontentloaded" });
-  const otherPage = await context.newPage();
-  await otherPage.emulateMedia({ colorScheme: "light" });
-  await otherPage.goto("/settings", { waitUntil: "domcontentloaded" });
-  const select = page.locator("#appearance-theme");
-  const otherSelect = otherPage.locator("#appearance-theme");
-
-  await select.selectOption("dark");
-  await expect(otherSelect).toHaveValue("dark");
-  await expectTheme(otherPage, "dark");
-  await otherSelect.selectOption("light");
-  await expect(select).toHaveValue("light");
-  await expectTheme(page, "light");
-
-  await otherPage.evaluate((key): void => localStorage.removeItem(key), THEME_STORAGE_KEY);
-  await expect(select).toHaveValue("system");
-  await page.emulateMedia({ colorScheme: "dark" });
-  await expectTheme(page, "dark");
-  await otherPage.close();
 });
 
 test("keeps theme selection usable when browser storage is unavailable", async ({ page }) => {

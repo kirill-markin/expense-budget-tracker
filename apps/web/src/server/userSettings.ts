@@ -11,6 +11,7 @@ import {
   DATE_FORMATS,
   AUTO_FILTER_DELAY_MINUTES,
 } from "@/lib/locale";
+import { THEME_PREFERENCES, type ThemePreference } from "@/lib/theme";
 import { queryAs } from "@/server/db";
 
 type UserSettingsRow = Readonly<{
@@ -18,6 +19,7 @@ type UserSettingsRow = Readonly<{
   number_format: string;
   date_format: string;
   auto_filter_delay_minutes: unknown;
+  theme: string;
 }>;
 
 const parseNumberFormat = (raw: string): NumberFormat => {
@@ -44,11 +46,18 @@ const parseAutoFilterDelayMinutes = (raw: unknown): AutoFilterDelayMinutes => {
   throw new Error(`Unexpected user_settings.auto_filter_delay_minutes value ${String(raw)}. Expected one of: ${AUTO_FILTER_DELAY_MINUTES.join(", ")} or null`);
 };
 
+const parseTheme = (raw: string): ThemePreference => {
+  if ((THEME_PREFERENCES as ReadonlyArray<string>).includes(raw)) {
+    return raw as ThemePreference;
+  }
+  throw new Error(`Unexpected user_settings.theme value ${raw}. Expected one of: ${THEME_PREFERENCES.join(", ")}`);
+};
+
 export const getUserSettings = async (userId: string, workspaceId: string, initialLocale: SupportedLocale): Promise<UserSettings> => {
   const result = await queryAs(
     userId,
     workspaceId,
-    "SELECT locale, number_format, date_format, auto_filter_delay_minutes FROM user_settings WHERE user_id = $1",
+    "SELECT locale, number_format, date_format, auto_filter_delay_minutes, theme FROM user_settings WHERE user_id = $1",
     [userId],
   );
   if (result.rows.length === 0) {
@@ -60,13 +69,14 @@ export const getUserSettings = async (userId: string, workspaceId: string, initi
     numberFormat: parseNumberFormat(row.number_format),
     dateFormat: parseDateFormat(row.date_format),
     autoFilterDelayMinutes: parseAutoFilterDelayMinutes(row.auto_filter_delay_minutes),
+    theme: parseTheme(row.theme),
   };
 };
 
 export const updateUserSettings = async (
   userId: string,
   workspaceId: string,
-  settings: Partial<Pick<UserSettings, "locale" | "numberFormat" | "dateFormat" | "autoFilterDelayMinutes">>,
+  settings: Partial<Pick<UserSettings, "locale" | "numberFormat" | "dateFormat" | "autoFilterDelayMinutes" | "theme">>,
   initialLocale: SupportedLocale,
 ): Promise<UserSettings> => {
   const setClauses: Array<string> = [];
@@ -93,6 +103,11 @@ export const updateUserSettings = async (
     params.push(settings.autoFilterDelayMinutes);
     idx++;
   }
+  if (settings.theme !== undefined) {
+    setClauses.push(`theme = $${idx}`);
+    params.push(settings.theme);
+    idx++;
+  }
 
   if (setClauses.length === 0) {
     return getUserSettings(userId, workspaceId, initialLocale);
@@ -101,7 +116,7 @@ export const updateUserSettings = async (
   const result = await queryAs(
     userId,
     workspaceId,
-    `UPDATE user_settings SET ${setClauses.join(", ")} WHERE user_id = $1 RETURNING locale, number_format, date_format, auto_filter_delay_minutes`,
+    `UPDATE user_settings SET ${setClauses.join(", ")} WHERE user_id = $1 RETURNING locale, number_format, date_format, auto_filter_delay_minutes, theme`,
     params,
   );
 
@@ -115,5 +130,6 @@ export const updateUserSettings = async (
     numberFormat: parseNumberFormat(row.number_format),
     dateFormat: parseDateFormat(row.date_format),
     autoFilterDelayMinutes: parseAutoFilterDelayMinutes(row.auto_filter_delay_minutes),
+    theme: parseTheme(row.theme),
   };
 };

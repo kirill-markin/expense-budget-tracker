@@ -12,8 +12,8 @@ import {
   useState,
 } from "react";
 
+import { fetchWithCsrf } from "@/lib/csrf";
 import {
-  parseThemePreference,
   resolveTheme,
   THEME_MEDIA_QUERY,
   THEME_STORAGE_KEY,
@@ -23,17 +23,48 @@ import {
 type ThemeContextValue = Readonly<{
   preference: ThemePreference;
   ready: boolean;
+  error: string | null;
   setPreference: (preference: ThemePreference) => void;
 }>;
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-export const ThemeProvider = (props: Readonly<{ children: ReactNode }>): ReactElement => {
-  // Keep the server render and initial client render identical. The head script
-  // applies the actual colors before hydration; this state controls the selector.
-  const [preference, setPreferenceState] = useState<ThemePreference>("system");
+const readStoredPreference = (): string | null => {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY);
+  } catch {
+    // Browser privacy settings may block storage; there is nothing to adopt.
+    return null;
+  }
+};
+
+const removeStoredPreference = (): void => {
+  try {
+    window.localStorage.removeItem(THEME_STORAGE_KEY);
+  } catch {
+    // Browser privacy settings may block storage; nothing is stored to remove.
+  }
+};
+
+/**
+ * canPersist is false on the public share pages: an anonymous visitor has no
+ * settings API to save a preference to.
+ * canAdopt is true only when initialPreference came from `user_settings` and a
+ * PUT can confirm a write there, so the legacy localStorage key is left
+ * untouched on the share pages, in demo mode, and when the database was down.
+ */
+export const ThemeProvider = (props: Readonly<{
+  initialPreference: ThemePreference;
+  canPersist: boolean;
+  canAdopt: boolean;
+  children: ReactNode;
+}>): ReactElement => {
+  // The server resolved the preference and rendered the matching colors, so the
+  // first client render must repeat it unchanged.
+  const [preference, setPreferenceState] = useState<ThemePreference>(props.initialPreference);
   const [ready, setReady] = useState<boolean>(false);
-  const preferenceRef = useRef<ThemePreference>("system");
+  const [error, setError] = useState<string | null>(null);
+  const preferenceRef = useRef<ThemePreference>(props.initialPreference);
 
   const applyPreference = useCallback((next: ThemePreference): void => {
     preferenceRef.current = next;
@@ -41,16 +72,61 @@ export const ThemeProvider = (props: Readonly<{ children: ReactNode }>): ReactEl
     document.documentElement.dataset.theme = resolveTheme(next, window.matchMedia(THEME_MEDIA_QUERY).matches);
   }, []);
 
-  // Reapply before paint if a development Strict Mode remount clears the
-  // attribute written by the head script, then enable the hydrated selector.
-  useLayoutEffect(() => {
-    let storage: Storage | null = null;
+  /** Resolves to true once the account holds the preference. */
+  const persistPreference = useCallback(async (next: ThemePreference): Promise<boolean> => {
+    setError(null);
     try {
-      storage = window.localStorage;
-      applyPreference(parseThemePreference(storage.getItem(THEME_STORAGE_KEY)));
-    } catch {
-      // Browser privacy settings may block storage. System mode remains usable.
-      applyPreference("system");
+      const response = await fetchWithCsrf("/api/user-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ theme: next }),
+      });
+      if (!response.ok) {
+        setError(await response.text());
+        return false;
+      }
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }, []);
+
+  // data-theme is also a React-controlled prop on <html>, so any root re-render
+  // (router.refresh()) reconciles it back to the server value and can strip it.
+  // Re-asserting the client truth on every provider render keeps this the single
+  // writer after first paint; a layout effect runs after the whole mutation
+  // phase, so it lands last whatever the commit order was.
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = resolveTheme(
+      preferenceRef.current,
+      window.matchMedia(THEME_MEDIA_QUERY).matches,
+    );
+  });
+
+  // Enable the hydrated selector, and adopt a pre-account preference once.
+  useLayoutEffect(() => {
+    if (props.canAdopt) {
+      const stored = readStoredPreference();
+      // Both branches read the server-sent value, never preferenceRef, which
+      // the adoption itself mutates: on a Strict Mode remount the second run
+      // would otherwise take the removal branch while the first run's save is
+      // still in flight.
+      if (props.initialPreference === "system" && (stored === "light" || stored === "dark")) {
+        applyPreference(stored);
+        // The adoption runs once ever, so until the account holds the
+        // preference the legacy key is its only copy: drop it only after the
+        // save succeeded.
+        void persistPreference(stored).then((saved: boolean): void => {
+          if (saved) {
+            removeStoredPreference();
+          }
+        });
+      } else {
+        // The account holds a preference of its own, so the legacy key is
+        // obsolete.
+        removeStoredPreference();
+      }
     }
 
     const media = window.matchMedia(THEME_MEDIA_QUERY);
@@ -59,33 +135,31 @@ export const ThemeProvider = (props: Readonly<{ children: ReactNode }>): ReactEl
         document.documentElement.dataset.theme = resolveTheme("system", event.matches);
       }
     };
-    const handleStorageChange = (event: StorageEvent): void => {
-      if (event.key !== null && event.key !== THEME_STORAGE_KEY) return;
-      if (storage !== null && event.storageArea !== storage) return;
-      applyPreference(parseThemePreference(event.newValue));
-    };
 
     media.addEventListener("change", handleSystemChange);
-    window.addEventListener("storage", handleStorageChange);
     setReady(true);
     return () => {
       media.removeEventListener("change", handleSystemChange);
-      window.removeEventListener("storage", handleStorageChange);
     };
-  }, [applyPreference]);
+  }, [applyPreference, persistPreference, props.canAdopt, props.initialPreference]);
 
   const setPreference = useCallback((next: ThemePreference): void => {
     applyPreference(next);
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, next);
-    } catch {
-      // Apply changes for this visit even when the browser cannot persist them.
+    if (props.canPersist) {
+      void persistPreference(next).then((saved: boolean): void => {
+        // An explicit choice that reached the account supersedes the legacy
+        // key, including the copy a failed adoption deliberately retained;
+        // without this, picking `system` could never stick.
+        if (saved && props.canAdopt) {
+          removeStoredPreference();
+        }
+      });
     }
-  }, [applyPreference]);
+  }, [applyPreference, persistPreference, props.canPersist, props.canAdopt]);
 
   const value = useMemo<ThemeContextValue>(
-    () => ({ preference, ready, setPreference }),
-    [preference, ready, setPreference],
+    () => ({ preference, ready, error, setPreference }),
+    [preference, ready, error, setPreference],
   );
 
   return <ThemeContext value={value}>{props.children}</ThemeContext>;
