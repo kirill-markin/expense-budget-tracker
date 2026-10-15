@@ -256,7 +256,7 @@
   padding-inline: 12px;
   border-block-end: 1px solid var(--panel-border);
   background: var(--panel);
-  color: #c0392b;
+  color: var(--danger);
   font-size: 12px;
   text-align: start;
   white-space: pre-wrap;

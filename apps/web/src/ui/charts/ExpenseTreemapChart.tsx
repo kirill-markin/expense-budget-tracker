@@ -173,7 +173,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
     return (
       <div className={styles.wrap}>
         <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Expense treemap">
-          <text x={WIDTH / 2} y={HEIGHT / 2} textAnchor="middle" fill="#898989" fontSize={14}>
+          <text x={WIDTH / 2} y={HEIGHT / 2} textAnchor="middle" fill="var(--muted)" fontSize={14}>
             {t("chart.noSpendData")}
           </text>
         </svg>

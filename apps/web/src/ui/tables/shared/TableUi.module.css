@@ -32,7 +32,7 @@
 }
 
 .row:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--hover-bg);
 }
 
 .rowTotal {
@@ -176,7 +176,7 @@
 
 .selectOption:hover,
 .selectOptionHighlight {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--subtle-bg);
 }
 
 .selectOptionActive {
@@ -238,7 +238,7 @@
 }
 
 .textareaHint:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--subtle-bg);
 }
 
 .textareaHintActive {
@@ -284,7 +284,7 @@
 }
 
 .filterPopoverOption:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--subtle-bg);
 }
 
 .filterPopoverOption input[type="checkbox"] {

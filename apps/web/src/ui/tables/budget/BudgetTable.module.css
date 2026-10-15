@@ -120,7 +120,7 @@
 
 .stickyCol.data-masked {
   background:
-    repeating-conic-gradient(var(--accent) 0% 25%, #d0d0d0 0% 50%) content-box,
+    repeating-conic-gradient(var(--accent) 0% 25%, var(--mask-bg) 0% 50%) content-box,
     var(--panel);
   background-size: 6px 6px, auto;
 }
@@ -149,7 +149,7 @@
 }
 
 .categoryRow:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--hover-bg);
 }
 
 .categoryLabel {
@@ -173,11 +173,11 @@
 }
 
 .remainderPositive:not(:global(.data-masked)) {
-  color: #2e7d32;
+  color: var(--positive);
 }
 
 .remainderNegative:not(:global(.data-masked)) {
-  color: #c0392b;
+  color: var(--danger);
 }
 
 .currentMonth {
@@ -232,22 +232,22 @@ tbody tr:last-child .currentMonthActual {
 }
 
 .yearTotalDanger {
-  --budget-table-year-total-color: #e74c3c;
-  --table-state-danger-color: #e74c3c;
+  --budget-table-year-total-color: var(--inverse-danger);
+  --table-state-danger-color: var(--inverse-danger);
 }
 
-/* Lighter amber so the untrusted state stays readable on the dark year total. */
+/* Use inverse colors on the year total, which has the text color as its background. */
 .yearTotalWarning {
-  --budget-table-year-total-color: #f5c451;
-  --table-state-warning-color: #f5c451;
+  --budget-table-year-total-color: var(--inverse-warning);
+  --table-state-warning-color: var(--inverse-warning);
 }
 
 .yearTotal.remainderNegative:not(:global(.data-masked)) {
-  color: #e74c3c;
+  color: var(--inverse-danger);
 }
 
 .yearTotal.remainderPositive:not(:global(.data-masked)) {
-  color: #4caf50;
+  color: var(--inverse-positive);
 }
 
 .yearTotal:has(+ .yearTotal) {
@@ -256,7 +256,7 @@ tbody tr:last-child .currentMonthActual {
 
 .yearTotal.data-masked {
   background-image:
-    repeating-conic-gradient(var(--accent) 0% 25%, #d0d0d0 0% 50%),
+    repeating-conic-gradient(var(--accent) 0% 25%, var(--mask-bg) 0% 50%),
     linear-gradient(var(--text), var(--text));
   background-size: 6px 6px, auto;
   background-origin: content-box, padding-box;
@@ -265,7 +265,7 @@ tbody tr:last-child .currentMonthActual {
 
 .yearLoading {
   text-align: center;
-  color: var(--muted);
+  color: var(--bg);
 }
 
 .monthLoading {
@@ -547,7 +547,7 @@ tbody tr:last-child .currentMonthActual {
 .adjustmentInput[aria-invalid="true"],
 .adjustmentMonthInput[aria-invalid="true"],
 .adjustmentSelect[aria-invalid="true"] {
-  border-color: #c0392b;
+  border-color: var(--danger);
 }
 
 .adjustmentInput {
@@ -587,7 +587,7 @@ tbody tr:last-child .currentMonthActual {
 
 .adjustmentDeleteButton {
   inline-size: 36px;
-  color: #c0392b;
+  color: var(--danger);
   font-size: 20px;
   line-height: 1;
 }
@@ -610,7 +610,7 @@ tbody tr:last-child .currentMonthActual {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: #c0392b;
+  color: var(--danger);
 }
 
 .adjustmentRecoveryButton {
@@ -693,9 +693,9 @@ tbody tr:last-child .currentMonthActual {
 }
 
 .adjustmentModalConfirm {
-  border-color: #c0392b;
-  background: #c0392b;
-  color: #fff;
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--on-danger);
 }
 
 .addCategoryButton {
@@ -735,7 +735,7 @@ tbody tr:last-child .currentMonthActual {
 }
 
 .addCategoryInput[aria-invalid="true"] {
-  border-color: #c0392b;
+  border-color: var(--danger);
 }
 
 .addCategoryMessage {
@@ -744,7 +744,7 @@ tbody tr:last-child .currentMonthActual {
 }
 
 .addCategoryError {
-  color: #c0392b;
+  color: var(--danger);
   font-size: 11px;
   white-space: normal;
 }

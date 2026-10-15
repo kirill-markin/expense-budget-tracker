@@ -107,7 +107,7 @@
 }
 
 .error {
-  color: #b00020;
+  color: var(--danger);
 }
 
 .empty {
@@ -180,7 +180,7 @@
 .categoryCell {
   padding-block: 6px;
   padding-inline: 10px;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--soft-border);
   color: var(--text);
   font-weight: 500;
   text-align: start;
@@ -190,7 +190,7 @@
   min-inline-size: 110px;
   padding-block: 6px;
   padding-inline: 10px;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--soft-border);
   text-align: end;
   font-variant-numeric: tabular-nums;
 }
@@ -212,8 +212,8 @@
       135deg,
       transparent 0,
       transparent 5px,
-      #d0d0d0 5px,
-      #d0d0d0 6px
+      var(--mask-bg) 5px,
+      var(--mask-bg) 6px
     ),
     var(--panel);
   color: transparent;

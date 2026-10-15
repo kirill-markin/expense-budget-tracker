@@ -28,8 +28,8 @@
   position: absolute;
   pointer-events: none;
   z-index: 100;
-  background: rgba(20, 20, 20, 0.92);
-  color: #fff;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.5;
@@ -45,7 +45,7 @@
 
 .tooltipConverted {
   font-size: 11px;
-  color: #aaa;
+  color: var(--tooltip-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -54,7 +54,7 @@
 }
 
 .tooltipMuted {
-  color: #aaa;
+  color: var(--tooltip-muted);
   font-size: 11px;
 }
 

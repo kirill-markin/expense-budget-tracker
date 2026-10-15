@@ -1,7 +1,7 @@
 .data-masked {
   user-select: none;
   color: transparent !important;
-  background-image: repeating-conic-gradient(var(--accent) 0% 25%, #d0d0d0 0% 50%);
+  background-image: repeating-conic-gradient(var(--accent) 0% 25%, var(--mask-bg) 0% 50%);
   background-size: 6px 6px;
   background-origin: content-box;
   background-clip: content-box;
