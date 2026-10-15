@@ -1,3 +1,5 @@
+import type { ThemePreference } from "@/lib/theme";
+
 export type SupportedLocale = "en" | "ru" | "es" | "uk" | "fa" | "zh" | "ar" | "he";
 
 export const SUPPORTED_LOCALES: ReadonlyArray<SupportedLocale> = ["en", "ru", "es", "uk", "fa", "zh", "ar", "he"];
@@ -34,6 +36,7 @@ export type UserSettings = Readonly<{
   numberFormat: NumberFormat;
   dateFormat: DateFormat;
   autoFilterDelayMinutes: AutoFilterDelayMinutes;
+  theme: ThemePreference;
 }>;
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -41,6 +44,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   numberFormat: "1,234.56",
   dateFormat: "YYYY-MM-DD",
   autoFilterDelayMinutes: 2,
+  theme: "system",
 };
 
 export const resolveLocale = (raw: string): SupportedLocale => {

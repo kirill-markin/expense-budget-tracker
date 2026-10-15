@@ -8,7 +8,8 @@ import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS, RTL_LOCALES, type SupportedLocale } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
 import { NAV_LINKS } from "@/lib/navigation";
-import { THEME_INIT_SCRIPT } from "@/lib/theme";
+import { SYSTEM_THEME_INIT_SCRIPT, type ThemePreference } from "@/lib/theme";
+import { getThemeCookie } from "@/lib/themeCookie";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import { t } from "@/i18n/serverT";
 import { buildRequestIdentity } from "@/server/db/requestIdentity";
@@ -44,14 +45,22 @@ export default async function RootLayout(props: Readonly<{ children: React.React
 
   if (isPublicMonthlySharePage) {
     const publicLocale = await getLocaleCookie();
+    const publicTheme = await getThemeCookie();
 
     return (
-      <html lang={publicLocale} dir={RTL_LOCALES.has(publicLocale) ? "rtl" : "ltr"} suppressHydrationWarning>
+      <html
+        lang={publicLocale}
+        dir={RTL_LOCALES.has(publicLocale) ? "rtl" : "ltr"}
+        data-theme={publicTheme === "system" ? undefined : publicTheme}
+        suppressHydrationWarning
+      >
         <head>
-          <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+          {publicTheme === "system" && (
+            <script nonce={nonce} dangerouslySetInnerHTML={{ __html: SYSTEM_THEME_INIT_SCRIPT }} />
+          )}
         </head>
         <body>
-          <ThemeProvider>
+          <ThemeProvider initialPreference={publicTheme} canPersist={false} canAdopt={false}>
             <I18nProvider locale={publicLocale}>
               {children}
             </I18nProvider>
@@ -75,9 +84,16 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   let numberFormat = DEFAULT_USER_SETTINGS.numberFormat;
   let dateFormat = DEFAULT_USER_SETTINGS.dateFormat;
   let autoFilterDelayMinutes = DEFAULT_USER_SETTINGS.autoFilterDelayMinutes;
+  let theme: ThemePreference = DEFAULT_USER_SETTINGS.theme;
+  // The one-time localStorage adoption, and the cleanup of a stale legacy key,
+  // may only run when the rendered preference came from `user_settings`. The
+  // demo and DB-unavailable paths below read it from the cookie instead, where
+  // no PUT can confirm that the account holds a preference.
+  let themeFromAccount = false;
 
   if (demo) {
     locale = await getLocaleCookie();
+    theme = await getThemeCookie();
   } else {
     try {
       const workspaceId = extractWorkspaceIdFromHeaders(headersList);
@@ -102,10 +118,13 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       numberFormat = userSettings.numberFormat;
       dateFormat = userSettings.dateFormat;
       autoFilterDelayMinutes = userSettings.autoFilterDelayMinutes;
+      theme = userSettings.theme;
+      themeFromAccount = true;
     } catch (err) {
       unstable_rethrow(err);
       console.error("Layout DB unavailable, using defaults: %s", err instanceof Error ? err.message : String(err));
       locale = await getLocaleCookie();
+      theme = await getThemeCookie();
     }
   }
 
@@ -114,12 +133,19 @@ export default async function RootLayout(props: Readonly<{ children: React.React
     : { mode: "workspace", userId: currentUserId, workspaceId: currentWorkspaceId };
 
   return (
-    <html lang={locale} dir={RTL_LOCALES.has(locale) ? "rtl" : "ltr"} suppressHydrationWarning>
+    <html
+      lang={locale}
+      dir={RTL_LOCALES.has(locale) ? "rtl" : "ltr"}
+      data-theme={theme === "system" ? undefined : theme}
+      suppressHydrationWarning
+    >
       <head>
-        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        {theme === "system" && (
+          <script nonce={nonce} dangerouslySetInnerHTML={{ __html: SYSTEM_THEME_INIT_SCRIPT }} />
+        )}
       </head>
       <body>
-        <ThemeProvider>
+        <ThemeProvider initialPreference={theme} canPersist={true} canAdopt={themeFromAccount}>
           <I18nProvider locale={locale}>
             <FormatProvider numberFormat={numberFormat} dateFormat={dateFormat}>
               <TableEditorActivationProvider>

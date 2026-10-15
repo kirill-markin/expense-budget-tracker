@@ -10,6 +10,7 @@ import {
   type NumberFormat,
   type SupportedLocale,
 } from "@/lib/locale";
+import { THEME_PREFERENCES, type ThemePreference } from "@/lib/theme";
 import { INVALID_TIMEZONE_MESSAGE, parseTimezone } from "@/lib/timezone";
 import { createBadRequestError } from "@/server/api/errors";
 import { integerRangeSchema, parseWithSchema } from "@/server/api/validation";
@@ -19,10 +20,12 @@ type ParsedUserSettingsBody = Readonly<{
   numberFormat?: NumberFormat;
   dateFormat?: DateFormat;
   autoFilterDelayMinutes?: AutoFilterDelayMinutes;
+  theme?: ThemePreference;
   hasLocale: boolean;
   hasNumberFormat: boolean;
   hasDateFormat: boolean;
   hasAutoFilterDelayMinutes: boolean;
+  hasTheme: boolean;
 }>;
 
 type ParsedWorkspaceSettingsBody = Readonly<{
@@ -68,6 +71,12 @@ const autoFilterDelayMinutesSchema = z.unknown().superRefine((value, ctx) => {
   }
 }).transform((value): AutoFilterDelayMinutes => value as AutoFilterDelayMinutes);
 
+const themeSchema = z.unknown().superRefine((value, ctx) => {
+  if (typeof value !== "string" || !(THEME_PREFERENCES as ReadonlyArray<string>).includes(value)) {
+    ctx.addIssue({ code: "custom", message: `Invalid theme. Expected one of: ${THEME_PREFERENCES.join(", ")}` });
+  }
+}).transform((value): ThemePreference => value as ThemePreference);
+
 const reportingCurrencySchema = z.unknown().superRefine((value, ctx) => {
   if (typeof value !== "string" || !/^[A-Z]{3}$/.test(value)) {
     ctx.addIssue({ code: "custom", message: "Invalid reportingCurrency. Expected 3-letter ISO 4217 code" });
@@ -108,14 +117,16 @@ export const parseUserSettingsBody = (input: unknown): ParsedUserSettingsBody =>
     numberFormat: numberFormatSchema.optional(),
     dateFormat: dateFormatSchema.optional(),
     autoFilterDelayMinutes: autoFilterDelayMinutesSchema.optional(),
+    theme: themeSchema.optional(),
   }));
 
   const hasLocale = parsed.locale !== undefined;
   const hasNumberFormat = parsed.numberFormat !== undefined;
   const hasDateFormat = parsed.dateFormat !== undefined;
   const hasAutoFilterDelayMinutes = parsed.autoFilterDelayMinutes !== undefined;
+  const hasTheme = parsed.theme !== undefined;
 
-  if (!hasLocale && !hasNumberFormat && !hasDateFormat && !hasAutoFilterDelayMinutes) {
+  if (!hasLocale && !hasNumberFormat && !hasDateFormat && !hasAutoFilterDelayMinutes && !hasTheme) {
     throw createBadRequestError("No fields to update");
   }
 
@@ -124,10 +135,12 @@ export const parseUserSettingsBody = (input: unknown): ParsedUserSettingsBody =>
     numberFormat: parsed.numberFormat,
     dateFormat: parsed.dateFormat,
     autoFilterDelayMinutes: parsed.autoFilterDelayMinutes,
+    theme: parsed.theme,
     hasLocale,
     hasNumberFormat,
     hasDateFormat,
     hasAutoFilterDelayMinutes,
+    hasTheme,
   };
 };
 

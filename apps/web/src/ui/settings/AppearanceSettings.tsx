@@ -10,7 +10,7 @@ import styles from "./SettingsForm.module.css";
 
 export const AppearanceSettings = (): ReactElement => {
   const { t } = useTranslation();
-  const { preference, ready, setPreference } = useTheme();
+  const { preference, ready, error, setPreference } = useTheme();
 
   return (
     <div className={styles.form}>
@@ -35,6 +35,9 @@ export const AppearanceSettings = (): ReactElement => {
         <p id="appearance-theme-hint" className={styles.label} style={{ margin: 0 }}>
           {t("settings.themeHint")}
         </p>
+        {error !== null && (
+          <div className={styles.error}>{t("settings.themeSaveError", { message: error })}</div>
+        )}
       </div>
     </div>
   );
