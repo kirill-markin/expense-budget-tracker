@@ -382,7 +382,7 @@ The script handles the full first-time deployment:
 
 CDK injects the deterministic hash of the exact staged web Docker image asset as `LANGFUSE_RELEASE`. The same asset object supplies the ECS container image, so the release changes with every included image-context input, including included files ignored by Git.
 
-After this one-time bootstrap, all subsequent deploys happen automatically via CI/CD on push to `main`.
+After this one-time bootstrap, subsequent deploys happen automatically via CI/CD on a push to `main` that touches the `paths:` list in `.github/workflows/deploy.yml`; a push touching nothing in that list produces no Deploy run, and `workflow_dispatch` runs the same workflow manually.
 
 Infrastructure liveness and database readiness are intentionally separate:
 
@@ -510,11 +510,13 @@ After first deploy:
    - `CDK_RESEND_SENDER_EMAIL` — `no-reply@mail.yourdomain.com`
    - `CDK_LANGFUSE_BASE_URL` — optional custom Langfuse base URL; omit it to use `https://cloud.langfuse.com`
 
-3. Every push to `main` will automatically:
+3. Every push to `main` that touches the `paths:` list in `.github/workflows/deploy.yml` will automatically:
    - `cdk deploy` — update infrastructure, Lambda, and IAM permissions
    - Build and push content-addressed Docker image assets to ECR
    - Run migration ECS task (one-off Fargate task)
    - Restart ECS service (`force-new-deployment` picks up the new `latest` image)
+
+   A push touching nothing in that list produces no Deploy run; `workflow_dispatch` runs the same workflow manually.
 
 No AWS keys stored in GitHub — uses OIDC federation.
 
