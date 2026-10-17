@@ -28,6 +28,8 @@
   "settings.themeDark": "Oscuro",
   "settings.themeHint": "Se guarda en tu cuenta y se aplica en todos tus dispositivos. Sistema sigue la apariencia de cada dispositivo.",
   "settings.themeSaveError": "No se pudo guardar el tema en tu cuenta: {{message}}",
+  "settings.lowercase": "Minúsculas",
+  "settings.lowercaseHint": "Previsualiza todo el texto de la aplicación en minúsculas sin cambiar tus datos. Guarda para aplicarlo en todos tus dispositivos.",
   "settings.userSettings": "Configuración de usuario",
   "settings.workspaceSettings": "Configuración del espacio",
   "settings.filteredCategories": "Categorías filtradas",

@@ -28,6 +28,8 @@
   "settings.themeDark": "כהה",
   "settings.themeHint": "נשמר בחשבון שלך וחל בכל המכשירים שלך. האפשרות מערכת תואמת למראה של כל מכשיר.",
   "settings.themeSaveError": "לא ניתן לשמור את ערכת הנושא בחשבון שלך: {{message}}",
+  "settings.lowercase": "אותיות קטנות",
+  "settings.lowercaseHint": "תצוגה מקדימה של כל הטקסט ביישום באותיות קטנות בלי לשנות את הנתונים. יש לשמור כדי להחיל בכל המכשירים.",
   "settings.userSettings": "הגדרות משתמש",
   "settings.workspaceSettings": "הגדרות סביבת עבודה",
   "settings.filteredCategories": "קטגוריות מסוננות",

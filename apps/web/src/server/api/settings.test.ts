@@ -4,6 +4,30 @@ import test from "node:test";
 import { ApiRouteError } from "@/server/api/errors";
 import { parseUserSettingsBody } from "@/server/api/settings";
 
+test("parseUserSettingsBody accepts enabling and disabling lowercase", (): void => {
+  for (const lowercase of [true, false]) {
+    const result = parseUserSettingsBody({ lowercase });
+    assert.equal(result.lowercase, lowercase);
+    assert.equal(result.hasLowercase, true);
+  }
+});
+
+test("parseUserSettingsBody preserves an absent lowercase preference", (): void => {
+  const result = parseUserSettingsBody({ theme: "dark" });
+  assert.equal(result.lowercase, undefined);
+  assert.equal(result.hasLowercase, false);
+});
+
+test("parseUserSettingsBody rejects non-boolean lowercase preferences", (): void => {
+  for (const lowercase of ["true", "false", 1, 0, null, {}]) {
+    assert.throws(() => parseUserSettingsBody({ lowercase }), (error: unknown): boolean => {
+      assert.ok(error instanceof ApiRouteError);
+      assert.equal(error.status, 400);
+      return true;
+    });
+  }
+});
+
 test("parseUserSettingsBody accepts the space-dot number format", (): void => {
   const result = parseUserSettingsBody({ numberFormat: "1 234.56" });
 

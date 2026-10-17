@@ -28,6 +28,8 @@
   "settings.themeDark": "Dark",
   "settings.themeHint": "Saved to your account and applied on all your devices. System follows each device’s appearance.",
   "settings.themeSaveError": "Could not save the theme to your account: {{message}}",
+  "settings.lowercase": "Lowercase",
+  "settings.lowercaseHint": "Preview all app text in lowercase without changing your data. Save to apply on all your devices.",
   "settings.userSettings": "User Settings",
   "settings.workspaceSettings": "Workspace Settings",
   "settings.filteredCategories": "Filtered Categories",

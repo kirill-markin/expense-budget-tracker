@@ -86,6 +86,7 @@ test("postEnableMonthlyCategoryShareRouteWithDeps rejects a phrase from the wron
         dateFormat: "YYYY-MM-DD",
         autoFilterDelayMinutes: 2,
         theme: "system",
+        lowercase: false,
       }),
       enableMonthlyCategoryShare: async () => {
         enableCalled = true;
@@ -118,6 +119,7 @@ test("postEnableMonthlyCategoryShareRouteWithDeps accepts the localized public-l
           dateFormat: "YYYY-MM-DD",
           autoFilterDelayMinutes: 2,
           theme: "system",
+          lowercase: false,
         }),
         enableMonthlyCategoryShare: async (userId, workspaceId, appOrigin) => {
           receivedContext = [userId, workspaceId, appOrigin];

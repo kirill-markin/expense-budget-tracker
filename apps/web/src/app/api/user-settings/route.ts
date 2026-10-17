@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS, type AutoFilterDelayMinutes, type SupportedLocale, type NumberFormat, type DateFormat } from "@/lib/locale";
+import { getLowercaseFromRequest } from "@/lib/lowercaseCookie";
 import { getLocaleFromRequest } from "@/lib/localeCookie";
 import type { ThemePreference } from "@/lib/theme";
 import { getThemeFromRequest } from "@/lib/themeCookie";
@@ -16,7 +17,7 @@ export const GET = async (request: Request): Promise<Response> =>
     { route: "/api/user-settings", method: "GET", internalErrorMessage: "Database query failed" },
     async (): Promise<Response> => {
       if (isDemoModeFromRequest(request)) {
-        return Response.json({ ...DEFAULT_USER_SETTINGS, theme: getThemeFromRequest(request) });
+        return Response.json({ ...DEFAULT_USER_SETTINGS, theme: getThemeFromRequest(request), lowercase: getLowercaseFromRequest(request) });
       }
       const userId = extractUserId(request);
       const workspaceId = extractWorkspaceId(request);
@@ -33,18 +34,22 @@ export const PUT = async (request: Request): Promise<Response> =>
       const body = parseUserSettingsBody(await parseJsonBody(request, z.unknown()));
 
       if (isDemoModeFromRequest(request)) {
-        const result: Record<string, unknown> = { ...DEFAULT_USER_SETTINGS, theme: getThemeFromRequest(request) };
+        const result: Record<string, unknown> = { ...DEFAULT_USER_SETTINGS, theme: getThemeFromRequest(request), lowercase: getLowercaseFromRequest(request) };
         if (body.hasLocale) result.locale = body.locale;
         if (body.hasNumberFormat) result.numberFormat = body.numberFormat;
         if (body.hasDateFormat) result.dateFormat = body.dateFormat;
         if (body.hasAutoFilterDelayMinutes) result.autoFilterDelayMinutes = body.autoFilterDelayMinutes;
         if (body.hasTheme) result.theme = body.theme;
+        if (body.hasLowercase) result.lowercase = body.lowercase;
         const responseHeaders = new Headers({ "Content-Type": "application/json" });
         if (body.hasLocale) {
           responseHeaders.append("Set-Cookie", `locale=${body.locale as string}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`);
         }
         if (body.hasTheme) {
           responseHeaders.append("Set-Cookie", `theme=${body.theme as string}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`);
+        }
+        if (body.hasLowercase) {
+          responseHeaders.append("Set-Cookie", `lowercase=${String(body.lowercase)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`);
         }
         return new Response(JSON.stringify(result), { headers: responseHeaders });
       }
@@ -58,12 +63,14 @@ export const PUT = async (request: Request): Promise<Response> =>
         dateFormat?: DateFormat;
         autoFilterDelayMinutes?: AutoFilterDelayMinutes;
         theme?: ThemePreference;
+        lowercase?: boolean;
       } = {};
       if (body.hasLocale) updates.locale = body.locale as SupportedLocale;
       if (body.hasNumberFormat) updates.numberFormat = body.numberFormat as NumberFormat;
       if (body.hasDateFormat) updates.dateFormat = body.dateFormat as DateFormat;
       if (body.hasAutoFilterDelayMinutes) updates.autoFilterDelayMinutes = body.autoFilterDelayMinutes as AutoFilterDelayMinutes;
       if (body.hasTheme) updates.theme = body.theme as ThemePreference;
+      if (body.hasLowercase) updates.lowercase = body.lowercase;
 
       const result = await updateUserSettings(userId, workspaceId, updates, initialLocale);
       const responseHeaders = new Headers({ "Content-Type": "application/json" });
@@ -72,6 +79,9 @@ export const PUT = async (request: Request): Promise<Response> =>
       }
       if (body.hasTheme) {
         responseHeaders.append("Set-Cookie", `theme=${result.theme}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`);
+      }
+      if (body.hasLowercase) {
+        responseHeaders.append("Set-Cookie", `lowercase=${String(result.lowercase)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`);
       }
       return new Response(JSON.stringify(result), { headers: responseHeaders });
     },

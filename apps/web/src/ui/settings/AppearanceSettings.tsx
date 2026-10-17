@@ -13,32 +13,30 @@ export const AppearanceSettings = (): ReactElement => {
   const { preference, ready, error, setPreference } = useTheme();
 
   return (
-    <div className={styles.form}>
-      <div className={styles.row}>
-        <label className={styles.label} htmlFor="appearance-theme">
-          {t("settings.theme")}
-        </label>
-        <div className={styles.control}>
-          <select
-            id="appearance-theme"
-            className={styles.select}
-            value={preference}
-            disabled={!ready}
-            aria-describedby="appearance-theme-hint"
-            onChange={(event) => setPreference(parseThemePreference(event.target.value))}
-          >
-            <option value="system">{t("settings.themeSystem")}</option>
-            <option value="light">{t("settings.themeLight")}</option>
-            <option value="dark">{t("settings.themeDark")}</option>
-          </select>
-        </div>
-        <p id="appearance-theme-hint" className={styles.label} style={{ margin: 0 }}>
-          {t("settings.themeHint")}
-        </p>
-        {error !== null && (
-          <div className={styles.error}>{t("settings.themeSaveError", { message: error })}</div>
-        )}
+    <div className={styles.row}>
+      <label className={styles.label} htmlFor="appearance-theme">
+        {t("settings.theme")}
+      </label>
+      <div className={styles.control}>
+        <select
+          id="appearance-theme"
+          className={styles.select}
+          value={preference}
+          disabled={!ready}
+          aria-describedby="appearance-theme-hint"
+          onChange={(event) => setPreference(parseThemePreference(event.target.value))}
+        >
+          <option value="system">{t("settings.themeSystem")}</option>
+          <option value="light">{t("settings.themeLight")}</option>
+          <option value="dark">{t("settings.themeDark")}</option>
+        </select>
       </div>
+      <p id="appearance-theme-hint" className={styles.label} style={{ margin: 0 }}>
+        {t("settings.themeHint")}
+      </p>
+      {error !== null && (
+        <div className={styles.error}>{t("settings.themeSaveError", { message: error })}</div>
+      )}
     </div>
   );
 };

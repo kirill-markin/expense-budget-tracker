@@ -37,6 +37,7 @@ export type UserSettings = Readonly<{
   dateFormat: DateFormat;
   autoFilterDelayMinutes: AutoFilterDelayMinutes;
   theme: ThemePreference;
+  lowercase: boolean;
 }>;
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -45,6 +46,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   dateFormat: "YYYY-MM-DD",
   autoFilterDelayMinutes: 2,
   theme: "system",
+  lowercase: false,
 };
 
 export const resolveLocale = (raw: string): SupportedLocale => {

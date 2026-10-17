@@ -28,6 +28,8 @@
   "settings.themeDark": "Темна",
   "settings.themeHint": "Зберігається в акаунті та застосовується на всіх ваших пристроях. Системна тема відповідає оформленню кожного пристрою.",
   "settings.themeSaveError": "Не вдалося зберегти тему в акаунті: {{message}}",
+  "settings.lowercase": "Малі літери",
+  "settings.lowercaseHint": "Попередній перегляд усього тексту застосунку малими літерами без зміни даних. Збережіть, щоб застосувати на всіх пристроях.",
   "settings.userSettings": "Налаштування користувача",
   "settings.workspaceSettings": "Налаштування простору",
   "settings.filteredCategories": "Фільтр категорій",

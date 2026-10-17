@@ -27,6 +27,29 @@
   align-items: center;
 }
 
+.control:has(> .select) {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.control:has(> .select)::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 12px;
+  top: calc(50% - 5px);
+  width: 6px;
+  height: 6px;
+  border-inline-end: 1px solid var(--text);
+  border-bottom: 1px solid var(--text);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.control:dir(rtl)::after {
+  transform: rotate(-45deg);
+}
+
 .select,
 .input {
   font-family: inherit;
@@ -36,6 +59,31 @@
   background: var(--bg);
   color: var(--text);
   min-width: 100px;
+}
+
+.select {
+  appearance: none;
+  field-sizing: content;
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: 12px 32px;
+  cursor: var(--cursor-pointer);
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  font-size: 13px;
+  cursor: var(--cursor-pointer);
+}
+
+.checkboxLabel input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
 }
 
 .input::placeholder {

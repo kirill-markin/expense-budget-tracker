@@ -20,6 +20,7 @@ type UserSettingsRow = Readonly<{
   date_format: string;
   auto_filter_delay_minutes: unknown;
   theme: string;
+  lowercase: boolean;
 }>;
 
 const parseNumberFormat = (raw: string): NumberFormat => {
@@ -57,7 +58,7 @@ export const getUserSettings = async (userId: string, workspaceId: string, initi
   const result = await queryAs(
     userId,
     workspaceId,
-    "SELECT locale, number_format, date_format, auto_filter_delay_minutes, theme FROM user_settings WHERE user_id = $1",
+    "SELECT locale, number_format, date_format, auto_filter_delay_minutes, theme, lowercase FROM user_settings WHERE user_id = $1",
     [userId],
   );
   if (result.rows.length === 0) {
@@ -70,13 +71,14 @@ export const getUserSettings = async (userId: string, workspaceId: string, initi
     dateFormat: parseDateFormat(row.date_format),
     autoFilterDelayMinutes: parseAutoFilterDelayMinutes(row.auto_filter_delay_minutes),
     theme: parseTheme(row.theme),
+    lowercase: row.lowercase,
   };
 };
 
 export const updateUserSettings = async (
   userId: string,
   workspaceId: string,
-  settings: Partial<Pick<UserSettings, "locale" | "numberFormat" | "dateFormat" | "autoFilterDelayMinutes" | "theme">>,
+  settings: Partial<Pick<UserSettings, "locale" | "numberFormat" | "dateFormat" | "autoFilterDelayMinutes" | "theme" | "lowercase">>,
   initialLocale: SupportedLocale,
 ): Promise<UserSettings> => {
   const setClauses: Array<string> = [];
@@ -109,6 +111,12 @@ export const updateUserSettings = async (
     idx++;
   }
 
+  if (settings.lowercase !== undefined) {
+    setClauses.push(`lowercase = $${idx}`);
+    params.push(settings.lowercase);
+    idx++;
+  }
+
   if (setClauses.length === 0) {
     return getUserSettings(userId, workspaceId, initialLocale);
   }
@@ -116,7 +124,7 @@ export const updateUserSettings = async (
   const result = await queryAs(
     userId,
     workspaceId,
-    `UPDATE user_settings SET ${setClauses.join(", ")} WHERE user_id = $1 RETURNING locale, number_format, date_format, auto_filter_delay_minutes, theme`,
+    `UPDATE user_settings SET ${setClauses.join(", ")} WHERE user_id = $1 RETURNING locale, number_format, date_format, auto_filter_delay_minutes, theme, lowercase`,
     params,
   );
 
@@ -131,5 +139,6 @@ export const updateUserSettings = async (
     dateFormat: parseDateFormat(row.date_format),
     autoFilterDelayMinutes: parseAutoFilterDelayMinutes(row.auto_filter_delay_minutes),
     theme: parseTheme(row.theme),
+    lowercase: row.lowercase,
   };
 };

@@ -17,6 +17,8 @@ import {
   SUPPORTED_LOCALES,
 } from "@/lib/locale";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
+import { useLowercase } from "@/ui/LowercaseProvider";
+import { AppearanceSettings } from "./AppearanceSettings";
 
 import styles from "./SettingsForm.module.css";
 
@@ -57,6 +59,7 @@ const parseAutoFilterDelayMinutes = (raw: string): AutoFilterDelayMinutes => {
 export const UserSettingsForm = (props: Props): ReactElement => {
   const { t } = useTranslation();
   const { updateAutoFilterDelayMinutes } = useFilteredMode();
+  const { lowercase, setLowercase, savedLowercase, setSavedLowercase } = useLowercase();
   const [locale, setLocale] = useState<SupportedLocale>(props.locale);
   const [numberFormat, setNumberFormat] = useState<NumberFormat>(props.numberFormat);
   const [dateFormat, setDateFormat] = useState<DateFormat>(props.dateFormat);
@@ -71,6 +74,7 @@ export const UserSettingsForm = (props: Props): ReactElement => {
   const [saved, setSaved] = useState<boolean>(false);
 
   const dirty =
+    lowercase !== savedLowercase ||
     locale !== props.locale ||
     numberFormat !== props.numberFormat ||
     dateFormat !== props.dateFormat ||
@@ -82,40 +86,51 @@ export const UserSettingsForm = (props: Props): ReactElement => {
     setSaved(false);
 
     const body: Record<string, unknown> = {};
+    if (lowercase !== savedLowercase) body.lowercase = lowercase;
     if (locale !== props.locale) body.locale = locale;
     if (numberFormat !== props.numberFormat) body.numberFormat = numberFormat;
     if (dateFormat !== props.dateFormat) body.dateFormat = dateFormat;
     if (autoFilterDelayMinutes !== savedAutoFilterDelayMinutes) body.autoFilterDelayMinutes = autoFilterDelayMinutes;
 
-    const response = await fetchWithCsrf("/api/user-settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    try {
+      const response = await fetchWithCsrf("/api/user-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-    if (!response.ok) {
-      const text = await response.text();
-      setError(text);
+      if (!response.ok) {
+        const text = await response.text();
+        setError(text);
+        setSaving(false);
+        return;
+      }
+
+      if (autoFilterDelayMinutes !== savedAutoFilterDelayMinutes) {
+        updateAutoFilterDelayMinutes(autoFilterDelayMinutes);
+        setSavedAutoFilterDelayMinutes(autoFilterDelayMinutes);
+      }
+
+      setSavedLowercase(lowercase);
+
+      if (locale !== props.locale || numberFormat !== props.numberFormat || dateFormat !== props.dateFormat) {
+        window.location.reload();
+        return;
+      }
+
       setSaving(false);
-      return;
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSaving(false);
     }
-
-    if (autoFilterDelayMinutes !== savedAutoFilterDelayMinutes) {
-      updateAutoFilterDelayMinutes(autoFilterDelayMinutes);
-      setSavedAutoFilterDelayMinutes(autoFilterDelayMinutes);
-    }
-
-    if (locale !== props.locale || numberFormat !== props.numberFormat || dateFormat !== props.dateFormat) {
-      window.location.reload();
-      return;
-    }
-
-    setSaving(false);
-    setSaved(true);
   }, [
     autoFilterDelayMinutes,
     dateFormat,
     locale,
+    lowercase,
+    savedLowercase,
+    setSavedLowercase,
     numberFormat,
     props.dateFormat,
     props.locale,
@@ -126,6 +141,24 @@ export const UserSettingsForm = (props: Props): ReactElement => {
 
   return (
     <div className={styles.form}>
+      <AppearanceSettings />
+      <div className={styles.row}>
+        <label className={styles.checkboxLabel} htmlFor="user-lowercase">
+          <input
+            id="user-lowercase"
+            type="checkbox"
+            checked={lowercase}
+            disabled={saving}
+            aria-describedby="user-lowercase-hint"
+            onChange={(event) => { setLowercase(event.target.checked); setSaved(false); }}
+          />
+          {t("settings.lowercase")}
+        </label>
+        <p id="user-lowercase-hint" className={styles.label} style={{ margin: 0 }}>
+          {t("settings.lowercaseHint")}
+        </p>
+      </div>
+
       <div className={styles.row}>
         <label className={styles.label} htmlFor="user-locale">
           {t("settings.language")}
