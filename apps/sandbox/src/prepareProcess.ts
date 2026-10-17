@@ -62,7 +62,7 @@ import {
   type ChatSandboxPrepareRequest,
   type ChatSandboxPrepareResponse,
 } from "./contract.js";
-import { createPresignedObjectTransfer } from "./objects.js";
+import { createPresignedObjectTransfer, runObjectReadDirectly } from "./objects.js";
 import { runChatSandboxPdfPage } from "./pdfPageOperation.js";
 import { prepareSource } from "./prepareOperation.js";
 
@@ -993,7 +993,7 @@ const runPrepareChildCommand = (command: PrepareChildCommand): Promise<PrepareCh
     case "prepare":
       return prepareSource(
         command.request,
-        createPresignedObjectTransfer(command.deadlineEpochMs),
+        createPresignedObjectTransfer(command.deadlineEpochMs, runObjectReadDirectly),
       );
     case "pdf_page":
       return runChatSandboxPdfPage(command.request, command.deadlineEpochMs);

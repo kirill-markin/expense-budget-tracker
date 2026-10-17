@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPresignedObjectTransfer } from "./objects.js";
+import { createPresignedObjectTransfer, runObjectReadDirectly } from "./objects.js";
 
 /** Far enough out that the attempt timeout never decides a test. */
 const deadline = (): number => Date.now() + 60_000;
@@ -23,7 +23,9 @@ const countAttempts = async (attempt: Attempt): Promise<number> => {
     return attempt();
   }) as typeof fetch;
   try {
-    await createPresignedObjectTransfer(deadline()).readObject("https://objects.example/x");
+    await createPresignedObjectTransfer(deadline(), runObjectReadDirectly).readObject(
+      "https://objects.example/x",
+    );
   } catch {
     // The failure itself is asserted by the caller through the attempt count.
   } finally {
@@ -81,7 +83,9 @@ const failureMessage = async (status: number, body: string): Promise<string> => 
   globalThis.fetch = (async (): Promise<Response> =>
     new Response(body, { status })) as typeof fetch;
   try {
-    await createPresignedObjectTransfer(deadline()).readObject("https://objects.example/x");
+    await createPresignedObjectTransfer(deadline(), runObjectReadDirectly).readObject(
+      "https://objects.example/x",
+    );
     return "";
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
