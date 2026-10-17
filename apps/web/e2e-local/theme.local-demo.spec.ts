@@ -255,7 +255,6 @@ test("groups appearance under user settings and keeps dropdown arrows inset in L
       expect(geometry.arrowInset).toBeGreaterThanOrEqual(10);
       expect(geometry.paddingEnd).toBeGreaterThan(geometry.arrowInset + geometry.arrowSize + 8);
       expect(geometry.pointerEvents).toBe("none");
-      // The theme selector should size to its choices without the old minimum-width gap.
       if (locale === "en") expect(geometry.width).toBeLessThan(110);
       for (const control of await page.locator("main select").all()) {
         await control.scrollIntoViewIfNeeded();
@@ -302,6 +301,9 @@ test("previews and saves lowercase across app pages and reload without changing 
     }
     if (path === "/settings") {
       await expect(checkbox).toBeChecked();
+      const instructions = page.locator('section:has(> a[href="https://api.expense-budget-tracker.com/v1/"]) pre');
+      await expect(instructions).toHaveCSS("text-transform", "none");
+      expect(await instructions.evaluate((element) => (element as HTMLElement).innerText)).toContain("Start with GET ");
       // This component normally forces uppercase; lowercase must override it too.
       await expect(page.locator('section.panel p').filter({ hasText: "Danger Zone" }).first()).toHaveCSS("text-transform", "lowercase");
       await page.screenshot({ path: testInfo.outputPath("settings-lowercase.png") });
