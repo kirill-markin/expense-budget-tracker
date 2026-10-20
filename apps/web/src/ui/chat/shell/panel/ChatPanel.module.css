@@ -316,7 +316,8 @@
   resize: none;
   font-family: inherit;
   font-size: 13px;
-  padding: 6px 8px;
+  line-height: 20px;
+  padding: 7px 8px;
   border: 1px solid var(--panel-border);
   background: var(--bg);
   color: var(--text);
