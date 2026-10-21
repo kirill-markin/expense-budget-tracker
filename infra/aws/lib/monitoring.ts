@@ -29,7 +29,7 @@ export interface MonitoringProps {
   mcpHttpApi: apigwv2.HttpApi;
   mcpFn: lambda.Function;
   chatSandboxFn: lambda.Function;
-  customEmailSenderFn: lambda.IFunction;
+  customEmailSenderFn: lambda.Function;
 }
 
 export interface MonitoringResult {
@@ -572,6 +572,34 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     threshold: 1,
     evaluationPeriods: 1,
     alarmDescription: "Custom email sender Lambda was throttled",
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
+
+  // Recipients Resend rejects as undeliverable. The Lambda completes the invocation
+  // instead of throwing, so the Lambda error alarm above no longer sees them and this
+  // is the only signal left. The log group's format is Text, so the structured line is
+  // matched as a term rather than on its JSON fields.
+  const undeliverableEmailMetricFilter = new logs.MetricFilter(
+    scope,
+    "CustomEmailSenderUndeliverableMetricFilter",
+    {
+      logGroup: props.customEmailSenderFn.logGroup,
+      filterPattern: logs.FilterPattern.allTerms("custom_email_sender_undeliverable"),
+      metricNamespace: "ExpenseBudgetTracker/Auth",
+      metricName: "UndeliverableEmails",
+      metricValue: "1",
+    },
+  );
+
+  new cloudwatch.Alarm(scope, "CustomEmailSenderUndeliverableAlarm", {
+    metric: undeliverableEmailMetricFilter.metric({
+      period: cdk.Duration.hours(1),
+      statistic: "Sum",
+    }),
+    threshold: 5,
+    evaluationPeriods: 1,
+    alarmDescription:
+      "5+ emails were rejected as undeliverable in an hour — a single typo is expected, a run of them means a caller is looping or the sending domain is refused",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
