@@ -13,7 +13,7 @@ export interface AuthProps {
 export interface AuthResult {
   userPool: cognito.UserPool;
   userPoolClient: cognito.UserPoolClient;
-  customEmailSenderFn: lambda.IFunction;
+  customEmailSenderFn: lambda.Function;
 }
 
 export function auth(scope: Construct, props: AuthProps): AuthResult {

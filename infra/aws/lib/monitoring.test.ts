@@ -226,3 +226,50 @@ test("the pool error alarm needs errors in 6 consecutive periods, not one burst"
   assert.equal(alarm.TreatMissingData, "notBreaching");
   assert.deepEqual(alarm.AlarmActions, [{ Ref: alertTopicLogicalId(template) }]);
 });
+
+const UNDELIVERABLE_NAMESPACE = "ExpenseBudgetTracker/Auth";
+const UNDELIVERABLE_METRIC_NAME = "UndeliverableEmails";
+// The custom email sender's log group is Text-format, so its structured line is matched as
+// a term the way the FX worker's is, not on JSON fields.
+const UNDELIVERABLE_PATTERN = '"custom_email_sender_undeliverable"';
+
+test("undeliverable recipients are counted and alarmed only on a run of them", (): void => {
+  const template = synthesizeMonitoringTemplate();
+  const filters = Object.values(template.findResources("AWS::Logs::MetricFilter"))
+    .map((resource) => asRecord(asRecord(resource).Properties))
+    .map((properties) => ({ properties, transformation: singleTransformation(properties) }))
+    .filter(
+      ({ transformation }) =>
+        transformation.MetricNamespace === UNDELIVERABLE_NAMESPACE
+        && transformation.MetricName === UNDELIVERABLE_METRIC_NAME,
+    );
+
+  assert.equal(filters.length, 1);
+  assert.equal(
+    requireString(filters[0].properties.FilterPattern, "FilterPattern"),
+    UNDELIVERABLE_PATTERN,
+  );
+  // The Lambda's own log group, however CDK renders the reference to it.
+  assert.ok(
+    JSON.stringify(filters[0].properties.LogGroupName).includes("CustomEmailSenderFn"),
+    `Expected the filter to watch the custom email sender log group, got ${JSON.stringify(filters[0].properties.LogGroupName)}`,
+  );
+
+  const alarms = Object.values(template.findResources("AWS::CloudWatch::Alarm"))
+    .map((resource) => asRecord(asRecord(resource).Properties))
+    .filter((properties) => properties.MetricName === UNDELIVERABLE_METRIC_NAME);
+
+  assert.equal(alarms.length, 1);
+  const alarm = alarms[0];
+  assert.equal(alarm.Namespace, UNDELIVERABLE_NAMESPACE);
+  assert.equal(alarm.Statistic, "Sum");
+  // One mistyped address is ordinary; five in an hour is a caller looping or a refused
+  // sending domain. The Lambda now completes these invocations, so the Lambda error alarm
+  // no longer reports them at all.
+  assert.equal(alarm.Period, 3600);
+  assert.equal(alarm.EvaluationPeriods, 1);
+  assert.equal(alarm.Threshold, 5);
+  assert.equal(alarm.ComparisonOperator, "GreaterThanOrEqualToThreshold");
+  assert.equal(alarm.TreatMissingData, "notBreaching");
+  assert.deepEqual(alarm.AlarmActions, [{ Ref: alertTopicLogicalId(template) }]);
+});
