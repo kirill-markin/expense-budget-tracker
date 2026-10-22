@@ -20,6 +20,7 @@ import { initiateEmailOtp, signInWithPassword, type TokenResult } from "../serve
 import { getDemoEmailPassword } from "../server/demoEmailAccess.js";
 import { log, maskEmail } from "../server/logger.js";
 import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otp/otpRateLimit.js";
+import { hasUndeliverableReservedDomain } from "../server/reservedEmailDomains.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -87,6 +88,17 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
         log({ domain: "auth", action: "send_code_demo_sign_in_error", error: err instanceof Error ? err.message : String(err) });
         return c.json({ error: "Demo sign-in failed" }, 500);
       }
+    }
+
+    // Runs after the review-email branch, which allowlists @example.com addresses.
+    if (hasUndeliverableReservedDomain(email)) {
+      log({
+        domain: "auth",
+        action: "send_code_rejected",
+        reason: "undeliverable_email",
+        maskedEmail: maskEmail(email),
+      });
+      return c.json({ error: "Invalid email" }, 400);
     }
 
     const requestIp = dependencies.getClientIp(c);

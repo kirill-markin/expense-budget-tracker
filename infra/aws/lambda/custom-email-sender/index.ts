@@ -396,6 +396,26 @@ function getResendErrorMetadata(headers: Headers, responseText: string): ResendE
   };
 }
 
+const resendUndeliverableStatus: number = 422;
+const resendUndeliverableErrorName: string = "validation_error";
+
+/**
+ * Resend answers 422 validation_error when the recipient address itself cannot
+ * receive mail, so no retry and no other sender can deliver it.
+ */
+function isUndeliverableRecipientResponse(statusCode: number, responseText: string): boolean {
+  if (statusCode !== resendUndeliverableStatus) {
+    return false;
+  }
+
+  const parsedBody = parseResendErrorBody(responseText);
+  if (parsedBody === null || typeof parsedBody.name !== "string") {
+    return false;
+  }
+
+  return parsedBody.name.trim() === resendUndeliverableErrorName;
+}
+
 function formatResendFailureMessage(statusCode: number, errorMetadata: ResendErrorMetadata): string {
   const metadataFields: string[] = [`statusCode=${statusCode}`];
   if (errorMetadata.errorClassification !== null) {
@@ -448,6 +468,23 @@ export async function sendResendEmail(
 
       const responseText = await response.text();
       const errorMetadata = getResendErrorMetadata(response.headers, responseText);
+      // A rejected recipient is a caller error, not a sender failure: throwing here
+      // makes Cognito retry the asynchronous trigger twice and page the on-call on the
+      // Lambda error alarm, so the invocation is reported and completes instead.
+      if (isUndeliverableRecipientResponse(response.status, responseText)) {
+        console.log(JSON.stringify({
+          domain: "auth",
+          action: "custom_email_sender_undeliverable",
+          attempt,
+          errorClassification: errorMetadata.errorClassification,
+          maskedEmail: maskEmail(payload.toEmail),
+          requestId: errorMetadata.requestId,
+          statusCode: response.status,
+          subject: payload.subject,
+        }));
+        return;
+      }
+
       lastError = new Error(formatResendFailureMessage(response.status, errorMetadata));
       if (attempt < resendMaxAttempts && isRetryableResendStatus(response.status)) {
         console.warn(JSON.stringify({

@@ -188,7 +188,7 @@ test("a non-allowlisted email never enters the review-email branch", async (): P
     const response = await app.request("/api/agent/send-code", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "owner@production.invalid" }),
+      body: JSON.stringify({ email: "owner@production-mailbox.com" }),
     });
 
     assert.equal(response.status, 500);
@@ -196,6 +196,34 @@ test("a non-allowlisted email never enters the review-email branch", async (): P
     assert.equal(unhandledErrors.length, 1);
     // The allowlist guard is the only thing keeping a real email off a path that writes a row.
     assert.match(unhandledErrors[0].message, /must short-circuit before the send limiter/u);
+  });
+});
+
+test("a reserved email domain is refused, while the allowlisted review email is not", async (): Promise<void> => {
+  // A reserved domain cannot receive mail, so Cognito's email sender fails on it and its
+  // asynchronous retries turn one caller mistake into a paging Lambda error alarm.
+  await withDemoEmailAccess(DEMO_PASSWORD, async (): Promise<void> => {
+    const store = createChallengeStoreDouble();
+    const app = createApp(store.createSupersedingAgentOtpChallenge);
+
+    const refused = await app.request("/api/agent/send-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "demo@example.com" }),
+    });
+
+    assert.equal(refused.status, 400);
+    const body = await refused.json() as Readonly<{
+      ok: boolean;
+      error: Readonly<{ code: string }>;
+    }>;
+    assert.equal(body.ok, false);
+    assert.equal(body.error.code, "undeliverable_email");
+    assert.equal(store.storedChallenges().length, 0);
+
+    // The guard sits behind the review-email branch, so the allowlisted address on the
+    // same reserved domain still signs in.
+    assert.equal((await postDemoSendCode(app)).status, 200);
   });
 });
 

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Hono } from "hono";
 import { createLoginPageApp } from "../routes/loginPage.js";
+import { createSendCodeApp } from "../routes/sendCode.js";
 import { createAuthApp, getAuthRoutes } from "./app.js";
+import type { TokenResult } from "./cognitoAuth.js";
+import { getDemoEmailPassword, resetDemoEmailAccessConfigForTests } from "./demoEmailAccess.js";
 import type { AuthUnhandledErrorEvent } from "./logger.js";
 
 test("root failures are structured and generic without logging request credentials", async (): Promise<void> => {
@@ -104,4 +107,66 @@ test("cognito mode registers the email login routes and proxy_jwt mode omits the
     (await app.request("https://auth.example.com/api/send-code", { method: "POST" })).status,
     404,
   );
+});
+
+const DEMO_REVIEW_EMAIL = "e2e-test@example.com";
+const DEMO_REVIEW_PASSWORD = "demo-shared-password";
+
+const postBrowserSendCode = async (app: Hono, email: string): Promise<Response> =>
+  await app.request("https://auth.example.com/api/send-code", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+
+test("the browser send-code route refuses a reserved email domain", async (): Promise<void> => {
+  // A reserved domain cannot receive mail, so Cognito's email sender fails on it and its
+  // asynchronous retries turn one caller mistake into a paging Lambda error alarm. The
+  // browser answer stays the generic one shown for any unusable address.
+  const previousEmail = process.env.DEMO_EMAIL_DOSTIP;
+  const previousPassword = process.env.DEMO_PASSWORD_DOSTIP;
+  process.env.DEMO_EMAIL_DOSTIP = DEMO_REVIEW_EMAIL;
+  process.env.DEMO_PASSWORD_DOSTIP = DEMO_REVIEW_PASSWORD;
+  resetDemoEmailAccessConfigForTests();
+  try {
+    const app = createSendCodeApp({
+      delay: async (): Promise<void> => undefined,
+      createCsrfToken: (): string => "csrf-token",
+      getClientIp: (): string => {
+        throw new Error("A reserved email domain must be refused before the send limiter");
+      },
+      initiateEmailOtp: async (): Promise<never> => {
+        throw new Error("A reserved email domain must not start a Cognito OTP flow");
+      },
+      signInWithPassword: async (): Promise<TokenResult> => ({
+        idToken: "id-token",
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+        expiresIn: 3600,
+      }),
+      getDemoEmailPassword,
+      checkAndRecordOtpSendDecision: async (): Promise<never> => {
+        throw new Error("A reserved email domain must not be metered");
+      },
+      createBrowserOtpChallenge: async (): Promise<never> => {
+        throw new Error("A reserved email domain must not store a challenge");
+      },
+      now: (): number => 1_700_000_000_000,
+    });
+
+    const refused = await postBrowserSendCode(app, "demo@example.com");
+    assert.equal(refused.status, 400);
+    assert.deepEqual(await refused.json(), { error: "Invalid email" });
+
+    // The guard sits behind the review-email branch, so the allowlisted address on the
+    // same reserved domain still signs in.
+    const review = await postBrowserSendCode(app, DEMO_REVIEW_EMAIL);
+    assert.equal(review.status, 200);
+  } finally {
+    if (previousEmail === undefined) delete process.env.DEMO_EMAIL_DOSTIP;
+    else process.env.DEMO_EMAIL_DOSTIP = previousEmail;
+    if (previousPassword === undefined) delete process.env.DEMO_PASSWORD_DOSTIP;
+    else process.env.DEMO_PASSWORD_DOSTIP = previousPassword;
+    resetDemoEmailAccessConfigForTests();
+  }
 });

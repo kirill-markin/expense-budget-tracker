@@ -18,6 +18,7 @@ import { initiateEmailOtp } from "../server/cognitoAuth.js";
 import { createDemoAgentOtpSession, getDemoEmailPassword } from "../server/demoEmailAccess.js";
 import { log, maskEmail } from "../server/logger.js";
 import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otp/otpRateLimit.js";
+import { hasUndeliverableReservedDomain } from "../server/reservedEmailDomains.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const JITTER_MIN_MS = 200;
@@ -125,6 +126,26 @@ export const createAgentSendCodeApp = (dependencies: AgentSendCodeDependencies):
           "Demo review account recognized. Call verify-code next to mint the API key for this session.",
         ),
         200,
+      );
+    }
+
+    // Runs after the review-email branch, which allowlists @example.com addresses.
+    if (hasUndeliverableReservedDomain(email)) {
+      log({
+        domain: "auth",
+        action: "agent_send_code_rejected",
+        reason: "undeliverable_email",
+        maskedEmail: maskEmail(email),
+      });
+      return c.json(
+        buildErrorEnvelope(
+          { field: "email", expected: "email address at a domain that can receive mail" },
+          [],
+          "Ask the user for a real email address they can read, then retry.",
+          "undeliverable_email",
+          "This email domain cannot receive mail",
+        ),
+        400,
       );
     }
 
