@@ -1,6 +1,6 @@
 # Built from the repository root: this is an npm workspace and the only
 # lockfile lives there (see apps/auth/Dockerfile for the same layout).
-FROM node:24.21.0-alpine AS npm
+FROM node:24.22.1-alpine AS npm
 RUN npm install --global npm@12.2.0
 
 FROM npm AS deps
@@ -20,7 +20,7 @@ COPY packages/agent-shared/package.json packages/agent-shared/package.json
 COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci
 
-FROM node:24.21.0-alpine AS builder
+FROM node:24.22.1-alpine AS builder
 
 WORKDIR /workspace
 
@@ -41,7 +41,7 @@ COPY packages/agent-shared/package.json packages/agent-shared/package.json
 COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci --omit=dev
 
-FROM node:24.21.0-alpine
+FROM node:24.22.1-alpine
 
 WORKDIR /app/apps/worker
 
