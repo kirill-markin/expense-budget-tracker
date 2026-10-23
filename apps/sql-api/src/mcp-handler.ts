@@ -16,6 +16,7 @@ import {
 } from "./mcp/auth.js";
 import { getReadOnlyTransactionDeadlineError } from "./dbDeadline.js";
 import { getMcpRuntimeConfig, type McpRuntimeConfig } from "./mcp/config.js";
+import { MCP_MAX_REQUEST_BODY_BYTES } from "./mcp/limits.js";
 import {
   buildBearerChallenge,
   buildProtectedResourceMetadata,
@@ -176,6 +177,7 @@ const handleMcpTransportRequest = async (
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
+    maxRequestBodySize: MCP_MAX_REQUEST_BODY_BYTES,
     enableDnsRebindingProtection: true,
     allowedHosts: [config.canonicalHost],
     allowedOrigins: [config.resourceOrigin],
@@ -304,13 +306,6 @@ export const createMcpApp = (dependencies: McpHandlerDependencies): Hono =>
     () => createSqlExecutionDeadline(MCP_SQL_STATEMENT_TIMEOUT_MS, dependencies.now),
   );
 
-/**
- * MCP app wired to the production dependencies.
- *
- * It applies no request body ceiling of its own. The container entry point
- * reaches it through the adapter in mcpHttp.ts, which applies the shared
- * ceiling, and the Lambda path relies on the API Gateway cap.
- */
 export const createDefaultMcpApp = (): Hono => createMcpApp(defaultDependencies);
 
 export const createMcpHandler = (

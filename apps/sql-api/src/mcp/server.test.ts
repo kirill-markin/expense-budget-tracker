@@ -21,6 +21,7 @@ import type { SqlApiLogEvent } from "../logger.js";
 import type { AuthenticatedMcpAccessToken } from "./auth.js";
 import { MCP_SQL_TOOL_MAX_RESULT_SIZE_CHARS, type McpServerDependencies } from "./server.js";
 import { TEST_MCP_CALLER, withMcpClient } from "./testClient.js";
+import { MCP_MAX_TOOL_INPUT_ELEMENTS } from "./limits.js";
 
 const PERSONAL_WORKSPACE_ID = "workspace-personal";
 const BUSINESS_WORKSPACE_ID = "workspace-business";
@@ -310,6 +311,27 @@ const withClient = (
   dependencies: McpServerDependencies,
   callback: (client: Client) => Promise<void>,
 ): Promise<void> => withMcpClient("mcp-server-test", connection, dependencies, callback);
+
+test("MCP server rejects excessive nested arguments before tool validation or execution", async (): Promise<void> => {
+  const calls = createCalls();
+  await withClient(
+    createConnection(["expenses:read"]),
+    createDependencies([PERSONAL_WORKSPACE_ID], calls),
+    async (client): Promise<void> => {
+      const result = await client.callTool({
+        name: "list_workspaces",
+        arguments: { extra: { items: Array.from({ length: MCP_MAX_TOOL_INPUT_ELEMENTS }, () => 0) } },
+      });
+      assert.equal(result.isError, true);
+      assert.match(JSON.stringify(result.content), /arguments contain more than the maximum/u);
+      assert.deepEqual(calls.listedUserIds, []);
+
+      const valid = await client.callTool({ name: "list_workspaces", arguments: {} });
+      assert.notEqual(valid.isError, true);
+      assert.equal(calls.listedUserIds.length, 1);
+    },
+  );
+});
 
 test("MCP server emits the public runtime contract and routes successful tool calls", async (): Promise<void> => {
   const calls = createCalls();
