@@ -72,18 +72,15 @@ test("pre-signed upload URLs sign only the headers the app binds", async (): Pro
   assert.deepEqual(sortedQueryParameterNames(workFileUrl), EXPECTED_PUT_QUERY_PARAMETERS);
 });
 
-/**
- * The deliberate asymmetry: x-amz-checksum-mode stays, because it comes from
- * responseChecksumValidation, a separate option the PUT fix left alone. It asks
- * S3 to return the stored checksum on download and costs the GET nothing.
- */
-test("pre-signed download URLs keep the response checksum mode", async (): Promise<void> => {
+test("pre-signed download URLs force identity encoding and keep response checksums", async (): Promise<void> => {
   const objectStore = createObjectStore();
 
   const getUrl = await objectStore.presignGetUrl(OBJECT_KEY, "report.csv", 900);
+  assert.equal(new URL(getUrl).searchParams.get("response-content-encoding"), "identity");
   assert.deepEqual(sortedQueryParameterNames(getUrl), [
     ...EXPECTED_SIGV4_QUERY_PARAMETERS,
     "response-content-disposition",
+    "response-content-encoding",
     "x-amz-checksum-mode",
     "x-id",
   ]);
