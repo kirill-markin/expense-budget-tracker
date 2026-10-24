@@ -5,13 +5,6 @@ import * as lambda_nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
-/**
- * Fixed function name.
- *
- * The web task needs the name in its container environment and an invoke
- * permission on this exact function, and compute() runs before this construct,
- * so both sides reference the name instead of the construct.
- */
 export const CHAT_SANDBOX_FUNCTION_NAME = "expense-tracker-chat-sandbox";
 
 /**

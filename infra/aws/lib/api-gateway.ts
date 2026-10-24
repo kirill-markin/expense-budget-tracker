@@ -32,14 +32,16 @@ export interface ApiGatewayProps {
   lambdaSg: ec2.SecurityGroup;
   db: rds.DatabaseInstance;
   appDbSecret: cdk.aws_secretsmanager.Secret;
+  activeAuthorizerFn: lambda.Function;
+  activeSqlApiFn: lambda.Function;
   baseDomain: string;
   apiCertificateArn: string | undefined;
 }
 
 export interface ApiGatewayResult {
   restApi: apigw.RestApi;
-  authorizerFn: lambda_nodejs.NodejsFunction;
-  sqlApiFn: lambda_nodejs.NodejsFunction;
+  authorizerFn: lambda.Function;
+  sqlApiFn: lambda.Function;
 }
 
 const lambdaBundling: lambda_nodejs.BundlingOptions = {
@@ -156,17 +158,21 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
   sqlApiFn.addEnvironment("DB_NAME", "tracker");
   sqlApiFn.addEnvironment("PUBLIC_API_BASE_URL", publicApiBaseUrl);
   sqlApiFn.addEnvironment("PUBLIC_AUTH_BASE_URL", `https://auth.${props.baseDomain}`);
+  // Monitoring materializes these resources lazily; retain them for the legacy functions.
+  void authorizerFn.logGroup;
+  void sqlApiFn.logGroup;
 
   // --- REST API ---
   const accessLogGroup = new logs.LogGroup(scope, "SqlApiAccessLogGroup", {
     retention: logs.RetentionDays.ONE_MONTH,
     removalPolicy: cdk.RemovalPolicy.DESTROY,
   });
+  const stageName = "v1";
   const restApi = new apigw.RestApi(scope, "SqlRestApi", {
     restApiName: "expense-tracker-sql-api",
     description: "SQL API for machine clients (LLM agents, scripts)",
     deployOptions: {
-      stageName: "v1",
+      stageName,
       throttlingBurstLimit: 100,
       throttlingRateLimit: 50,
       accessLogDestination: new apigw.LogGroupLogDestination(accessLogGroup),
@@ -248,6 +254,49 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
     authorizationType: apigw.AuthorizationType.CUSTOM,
   });
 
+  // Preserve the legacy integration grants while changing only their invocation URIs.
+  const lambdaInvocationUri = (fn: lambda.IFunction): string =>
+    `arn:${cdk.Aws.PARTITION}:apigateway:${cdk.Aws.REGION}:lambda:path/2015-03-31/functions/${fn.functionArn}/invocations`;
+  const imageAuthorizerPermission = new lambda.CfnPermission(scope, "SqlApiImageAuthorizerPermission", {
+    action: "lambda:InvokeFunction",
+    functionName: props.activeAuthorizerFn.functionArn,
+    principal: "apigateway.amazonaws.com",
+    sourceArn: authorizer.authorizerArn,
+  });
+  (authorizer.node.defaultChild as apigw.CfnAuthorizer).authorizerUri = lambdaInvocationUri(props.activeAuthorizerFn);
+  const deployment = restApi.latestDeployment;
+  if (deployment === undefined) {
+    throw new Error("SQL API image cutover requires the REST API's automatic deployment");
+  }
+  deployment.node.addDependency(imageAuthorizerPermission);
+  deployment.addToLogicalId({
+    authorizer: props.activeAuthorizerFn.functionArn,
+    sql: props.activeSqlApiFn.functionArn,
+  });
+  for (const method of restApi.methods) {
+    // methodArn references the Stage, which must wait for these grants and the deployment.
+    const imagePermission = new lambda.CfnPermission(method, "ImageInvokePermission", {
+      action: "lambda:InvokeFunction",
+      functionName: props.activeSqlApiFn.functionArn,
+      principal: "apigateway.amazonaws.com",
+      sourceArn: restApi.arnForExecuteApi(
+        method.httpMethod,
+        method.resource.path.replace(/\{[^}]*\}/g, "*"),
+        stageName,
+      ),
+    });
+    const imageTestPermission = new lambda.CfnPermission(method, "ImageTestInvokePermission", {
+      action: "lambda:InvokeFunction",
+      functionName: props.activeSqlApiFn.functionArn,
+      principal: "apigateway.amazonaws.com",
+      sourceArn: method.testMethodArn,
+    });
+    const cfnMethod = method.node.defaultChild as apigw.CfnMethod;
+    cfnMethod.addPropertyOverride("Integration.Uri", lambdaInvocationUri(props.activeSqlApiFn));
+    cfnMethod.addDependency(imagePermission);
+    cfnMethod.addDependency(imageTestPermission);
+  }
+
   // --- Usage Plan (per-key throttling via usageIdentifierKey) ---
   restApi.addUsagePlan("SqlApiUsagePlan", {
     name: "sql-api-default",
@@ -277,5 +326,5 @@ export function apiGateway(scope: Construct, props: ApiGatewayProps): ApiGateway
     });
   }
 
-  return { restApi, authorizerFn, sqlApiFn };
+  return { restApi, authorizerFn: props.activeAuthorizerFn, sqlApiFn: props.activeSqlApiFn };
 }
