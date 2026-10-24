@@ -216,6 +216,9 @@ export class ChatFilesObjectStore {
         // force a download: otherwise an object saved as text/html or
         // image/svg+xml executes as a document on the bucket's own origin.
         ResponseContentDisposition: buildAttachmentDisposition(downloadFileName),
+        // Preserve stored bytes: uploader-controlled encoding must not trigger
+        // HTTP decompression before the sandbox checks size and integrity.
+        ResponseContentEncoding: "identity",
       }),
       { expiresIn: requirePresignExpiry(expiresInSeconds) },
     );
