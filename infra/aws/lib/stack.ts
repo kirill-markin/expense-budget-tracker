@@ -2,8 +2,8 @@ import * as cdk from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
 import { networking } from "./networking";
-import { auth, bindAuthImageTriggers } from "./auth";
-import { preSignUp } from "./pre-signup";
+import { auth } from "./auth";
+import { customEmailSenderKey } from "./custom-email-sender";
 import { database } from "./database";
 import { secrets } from "./secrets";
 import { chatFilesBucket } from "./chat-files-bucket";
@@ -12,7 +12,6 @@ import { ingress } from "./ingress";
 import { fxFetcher } from "./fx-fetcher";
 import { apiGateway } from "./api-gateway";
 import { mcpGateway } from "./mcp-gateway";
-import { chatSandbox } from "./chat-sandbox";
 import { monitoring } from "./monitoring";
 import { ciCd } from "./ci-cd";
 import { backupPlan } from "./backup";
@@ -56,18 +55,16 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     );
 
     const net = networking(this);
-    const preSignUpFn = preSignUp(this);
-    const authResult = auth(this, {
-      preSignUpFn,
-      resendApiKeySecretArn,
-      resendSenderEmail,
-    });
     const dbResult = database(this, { vpc: net.vpc, dbSg: net.dbSg });
     const sec = secrets(this);
     const chatFiles = chatFilesBucket(this, { appDomain });
-    if (resendApiKeySecretArn === undefined || resendSenderEmail === undefined) {
-      throw new Error("Cognito sender configuration is required for Lambda image candidates");
+    if (resendApiKeySecretArn === undefined) {
+      throw new Error("resendApiKeySecretArn is required for Cognito email delivery");
     }
+    if (resendSenderEmail === undefined) {
+      throw new Error("resendSenderEmail is required for Cognito email delivery");
+    }
+    const senderKey = customEmailSenderKey(this, resendApiKeySecretArn);
     const images = lambdaImageCandidates(this, {
       vpc: net.vpc,
       lambdaSg: net.lambdaSg,
@@ -75,12 +72,16 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       appDbSecret: dbResult.appDbSecret,
       workerDbSecret: dbResult.workerDbSecret,
       chatFilesBucket: chatFiles.chatFilesBucket,
-      customEmailSenderKey: authResult.customEmailSenderKey,
+      customEmailSenderKey: senderKey,
       resendApiKeySecretArn,
       resendSenderEmail,
       baseDomain,
     }, lambdaImageCode);
-    bindAuthImageTriggers(authResult, images.signup, images.email);
+    const authResult = auth(this, {
+      preSignUpFn: images.signup,
+      customEmailSenderFn: images.email,
+      customEmailSenderKey: senderKey,
+    });
     const comp = compute(this, {
       vpc: net.vpc,
       ecsSg: net.ecsSg,
@@ -116,32 +117,19 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     const fx = fxFetcher(this, {
-      vpc: net.vpc,
-      lambdaSg: net.lambdaSg,
-      db: dbResult.db,
-      workerDbSecret: dbResult.workerDbSecret,
-      activeFxFetcher: images.fx,
+      fxFetcherFn: images.fx,
     });
     const api = apiGateway(this, {
-      vpc: net.vpc,
-      lambdaSg: net.lambdaSg,
-      db: dbResult.db,
-      appDbSecret: dbResult.appDbSecret,
-      activeAuthorizerFn: images.authorizer,
-      activeSqlApiFn: images.api,
+      authorizerFn: images.authorizer,
+      sqlApiFn: images.api,
       baseDomain,
       apiCertificateArn,
     });
     const mcp = mcpGateway(this, {
-      vpc: net.vpc,
-      lambdaSg: net.lambdaSg,
-      db: dbResult.db,
-      appDbSecret: dbResult.appDbSecret,
-      activeMcpFn: images.mcp,
+      mcpFn: images.mcp,
       baseDomain,
       mcpCertificateArn,
     });
-    chatSandbox(this, { chatFilesBucket: chatFiles.chatFilesBucket });
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,

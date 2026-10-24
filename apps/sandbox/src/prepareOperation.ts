@@ -304,8 +304,7 @@ const workerMessageHandlerOf = (worker: unknown): unknown =>
  * back to `await import(this.workerSrc)` - the runtime import no bundler can
  * follow. So a bundle that lost the assignment below fails every PDF of that
  * deployment inside phase 2's catch, where the answer is a permanent verdict on
- * the user's file; infra/aws/lib/chat-sandbox.ts names that very failure,
- * "Setting up fake worker failed", as what its bundle guard protects against.
+ * the user's file.
  *
  * Checking the global instead of awaiting pdf.js's own getter is deliberate:
  * that getter memoises its promise for the life of the module, so a check

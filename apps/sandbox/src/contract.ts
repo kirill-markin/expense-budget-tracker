@@ -80,7 +80,7 @@ export const SANDBOX_WORK_FILE_MEDIA_TYPE = "application/octet-stream";
 
 /**
  * Hosts whose pre-signed URLs this sandbox may call, as a comma-separated list
- * of `host` or `host:port` values set by infra/aws/lib/chat-sandbox.ts.
+ * of `host` or `host:port` values set by infra/aws/lib/lambda-image-candidates.ts.
  *
  * The function has no VPC and therefore unrestricted egress, so the URL
  * allowlist is what keeps a malformed or hostile payload from turning the

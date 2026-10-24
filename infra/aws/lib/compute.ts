@@ -10,7 +10,6 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 import * as path from "path";
 import { CHAT_FILES_EXPIRATION_DAYS, CHAT_FILES_OBJECT_PREFIX } from "./chat-files-bucket";
-import { CHAT_SANDBOX_FUNCTION_NAME } from "./chat-sandbox";
 
 export interface ComputeProps {
   vpc: ec2.Vpc;
@@ -246,18 +245,9 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     `${CHAT_FILES_OBJECT_PREFIX}*`,
   );
 
-  // Draining tasks still invoke the fixed-name sandbox from their old environment.
   webTaskDef.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ["lambda:InvokeFunction"],
-    resources: [
-      cdk.Stack.of(scope).formatArn({
-        service: "lambda",
-        resource: "function",
-        resourceName: CHAT_SANDBOX_FUNCTION_NAME,
-        arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
-      }),
-      props.chatSandboxFn.functionArn,
-    ],
+    resources: [props.chatSandboxFn.functionArn],
   }));
 
   // Near-zero-downtime rolling update: with the ECS defaults (minHealthyPercent=100%,

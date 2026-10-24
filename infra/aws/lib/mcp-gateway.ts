@@ -1,25 +1,16 @@
-import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2_integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as lambda_nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
-import * as rds from "aws-cdk-lib/aws-rds";
-import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { SQL_API_DB_POOL_MAX_CONNECTIONS } from "@expense-budget-tracker/agent-shared";
 import { MCP_SQL_STATEMENT_TIMEOUT_MS } from "@expense-budget-tracker/agent-shared/sql-policy";
 import { Construct } from "constructs";
 
 export interface McpGatewayProps {
-  vpc: ec2.Vpc;
-  lambdaSg: ec2.SecurityGroup;
-  db: rds.DatabaseInstance;
-  appDbSecret: secretsmanager.Secret;
-  activeMcpFn: lambda.Function;
+  mcpFn: lambda.Function;
   baseDomain: string;
   mcpCertificateArn: string | undefined;
 }
@@ -106,105 +97,9 @@ export const createMcpHttpApiCustomDomain = (
   return domain;
 };
 
-const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
-
-const buildPemBundleValidationScript = (): string => shellQuote([
-  'const { readFileSync } = require("node:fs");',
-  'const { X509Certificate } = require("node:crypto");',
-  "try {",
-  '  const body = readFileSync(process.argv[1], "utf8");',
-  "  const certificatePattern = /-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----/gu;",
-  "  const certificates = body.match(certificatePattern) ?? [];",
-  '  if (certificates.length === 0) throw new Error("RDS CA response contains no PEM certificates");',
-  "  if (body.replace(certificatePattern, \"\").trim() !== \"\") throw new Error(\"RDS CA response contains non-certificate content\");",
-  "  for (const certificate of certificates) new X509Certificate(certificate);",
-  "} catch (error) {",
-  '  console.error(error instanceof Error ? error.message : "RDS CA response validation failed");',
-  "  process.exit(1);",
-  "}",
-].join(" "));
-
-export const buildRdsCaDownloadCommand = (outputDir: string): string => {
-  const destination = shellQuote(path.join(outputDir, "rds-global-bundle.pem"));
-  const temporaryDestination = shellQuote(path.join(outputDir, "rds-global-bundle.pem.download"));
-  const errorDestination = shellQuote(path.join(outputDir, "rds-global-bundle.pem.error"));
-  const downloadUrl = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem";
-  const validatePemBundle = buildPemBundleValidationScript();
-  return [
-    "attempt=1",
-    "while [ \"$attempt\" -le 4 ]; do",
-    `  rm -f ${temporaryDestination} ${errorDestination}`,
-    "  http_status=none",
-    "  curl_status=0",
-    "  validation_status=not_run",
-    `  if http_status=$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output ${temporaryDestination} --write-out '%{http_code}' ${downloadUrl} 2>${errorDestination}); then`,
-    "    if [ \"$http_status\" = \"200\" ]; then",
-    `      if node -e ${validatePemBundle} ${temporaryDestination} 2>>${errorDestination}; then`,
-    `        mv ${temporaryDestination} ${destination}`,
-    `        rm -f ${errorDestination}`,
-    "        exit 0",
-    "      else",
-    "        validation_status=$?",
-    "      fi",
-    "    fi",
-    "  else",
-    "    curl_status=$?",
-    "  fi",
-    `  response_body=$(head -c 2000 ${temporaryDestination} 2>/dev/null | tr '\\n' ' ')`,
-    `  transport_error=$(head -c 2000 ${errorDestination} 2>/dev/null | tr '\\n' ' ')`,
-    `  rm -f ${temporaryDestination} ${errorDestination}`,
-    "  if [ \"$attempt\" -eq 4 ]; then",
-    `    echo \"ERROR: RDS CA bundle download failed after 4 attempts; url=${downloadUrl}; expected_http_status=200; curl_status=$curl_status; http_status=\${http_status:-none}; validation_status=$validation_status; response=\${response_body:-empty}; transport_or_validation_error=\${transport_error:-none}\" >&2`,
-    "    exit 1",
-    "  fi",
-    `  echo \"WARNING: RDS CA bundle download attempt $attempt/4 failed; url=${downloadUrl}; expected_http_status=200; curl_status=$curl_status; http_status=\${http_status:-none}; validation_status=$validation_status; response=\${response_body:-empty}; transport_or_validation_error=\${transport_error:-none}; retrying in 2 seconds\" >&2`,
-    "  sleep 2",
-    "  attempt=$((attempt + 1))",
-    "done",
-  ].join("\n");
-};
-
-const lambdaBundling: lambda_nodejs.BundlingOptions = {
-  minify: true,
-  sourceMap: true,
-  commandHooks: {
-    beforeBundling: () => [],
-    beforeInstall: () => [],
-    afterBundling: (_inputDir: string, outputDir: string) => [
-      buildRdsCaDownloadCommand(outputDir),
-    ],
-  },
-};
-
 export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGatewayResult {
   const mcpDomainName = `mcp.${props.baseDomain}`;
-  const resourceUrl = `https://${mcpDomainName}/mcp`;
-  const mcpFn = new lambda_nodejs.NodejsFunction(scope, "McpHandler", {
-    entry: path.join(__dirname, "../../../apps/sql-api/src/mcp-handler.ts"),
-    handler: "handler",
-    runtime: lambda.Runtime.NODEJS_24_X,
-    timeout: cdk.Duration.seconds(MCP_TIMEOUT_BUDGET.lambdaSeconds),
-    memorySize: 256,
-    // Reserved concurrency, independently of the HTTP API token bucket, caps
-    // 20 execution environments. Their one-connection pools can open at most 20
-    // of roughly 85 RDS connections, leaving capacity for about 65 more.
-    reservedConcurrentExecutions: MCP_CAPACITY_BUDGET.reservedConcurrentExecutions,
-    vpc: props.vpc,
-    vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-    securityGroups: [props.lambdaSg],
-    environment: {
-      NODE_EXTRA_CA_CERTS: "/var/task/rds-global-bundle.pem",
-      DB_SECRET_ARN: props.appDbSecret.secretArn,
-      DB_HOST: props.db.dbInstanceEndpointAddress,
-      DB_NAME: "tracker",
-      OAUTH_ISSUER: `https://auth.${props.baseDomain}`,
-      OAUTH_RESOURCE: resourceUrl,
-    },
-    bundling: lambdaBundling,
-  });
-  props.appDbSecret.grantRead(mcpFn);
-  // Retain the legacy log-retention resource after monitoring switches to the image.
-  void mcpFn.logGroup;
+  const { mcpFn } = props;
 
   const httpApi = new apigwv2.HttpApi(scope, "McpHttpApi", {
     apiName: "expense-tracker-mcp-http-api",
@@ -220,23 +115,7 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
       timeout: cdk.Duration.seconds(MCP_TIMEOUT_BUDGET.integrationSeconds),
     },
   );
-  const routes = addMcpHttpApiRoutes(httpApi, integration);
-  // Keep the integration identity and its legacy grants during in-flight requests.
-  const cfnIntegration = routes[0].node.findChild("McpHttpLambdaIntegration").node.defaultChild as apigwv2.CfnIntegration;
-  cfnIntegration.integrationUri = props.activeMcpFn.functionArn;
-  for (const route of routes) {
-    const permission = new lambda.CfnPermission(route, "ImageInvokePermission", {
-      action: "lambda:InvokeFunction",
-      functionName: props.activeMcpFn.functionArn,
-      principal: "apigateway.amazonaws.com",
-      sourceArn: cdk.Stack.of(scope).formatArn({
-        service: "execute-api",
-        resource: httpApi.apiId,
-        resourceName: `*/*${route.path}`,
-      }),
-    });
-    cfnIntegration.addDependency(permission);
-  }
+  addMcpHttpApiRoutes(httpApi, integration);
 
   const accessLogGroup = new logs.LogGroup(scope, "McpApiAccessLogGroup", {
     retention: logs.RetentionDays.ONE_MONTH,
@@ -258,7 +137,7 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
   });
 
   if (props.mcpCertificateArn === undefined) {
-    return { httpApi, httpStage, mcpFn: props.activeMcpFn, customDomainTarget: undefined };
+    return { httpApi, httpStage, mcpFn, customDomainTarget: undefined };
   }
 
   const certificate = acm.Certificate.fromCertificateArn(
@@ -277,7 +156,7 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
   return {
     httpApi,
     httpStage,
-    mcpFn: props.activeMcpFn,
+    mcpFn,
     customDomainTarget: domain.regionalDomainName,
   };
 }
