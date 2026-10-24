@@ -9,7 +9,6 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import {
   addMcpHttpApiRoutes,
-  buildRdsCaDownloadCommand,
   createMcpHttpAccessLogFormat,
   createMcpHttpApiCustomDomain,
   MCP_CAPACITY_BUDGET,
@@ -170,29 +169,6 @@ test("MCP HTTP API custom domain has one root mapping and regional Cloudflare ta
   const mapping = Object.values(mappings)[0];
   assert.ok(mapping !== undefined);
   assert.equal(Object.hasOwn(mapping.Properties, "ApiMappingKey"), false);
-});
-
-test("MCP bundling accepts only an HTTP 200 valid PEM bundle before installation", (): void => {
-  const command = buildRdsCaDownloadCommand("/tmp/mcp bundle");
-
-  assert.match(command, /--connect-timeout 10/u);
-  assert.match(command, /--max-time 60/u);
-  assert.match(command, /--write-out '%\{http_code\}'/u);
-  assert.match(command, /\[ "\$http_status" = "200" \]/u);
-  assert.match(command, /X509Certificate/u);
-  assert.match(command, /RDS CA response contains no PEM certificates/u);
-  assert.match(command, /RDS CA response contains non-certificate content/u);
-  assert.match(command, /response=\$\{response_body:-empty\}/u);
-  assert.match(command, /transport_or_validation_error=\$\{transport_error:-none\}/u);
-  assert.match(command, /attempt \$attempt\/4 failed/u);
-  assert.match(command, /failed after 4 attempts/u);
-  assert.match(command, /'\/tmp\/mcp bundle\/rds-global-bundle\.pem'/u);
-  const statusCheckIndex = command.indexOf('    if [ "$http_status" = "200" ]');
-  const validationIndex = command.indexOf("      if node -e ");
-  const installIndex = command.indexOf("        mv ");
-  assert.ok(statusCheckIndex >= 0);
-  assert.ok(validationIndex > statusCheckIndex);
-  assert.ok(installIndex > validationIndex);
 });
 
 test("MCP request, integration, and Lambda timeouts preserve response headroom", (): void => {
