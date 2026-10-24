@@ -19,6 +19,9 @@ const LAMBDA_NODE_IMAGE_BASES: Readonly<Record<"amd64" | "arm64", string>> = JSO
 export type LambdaImageCandidateName = "fx" | "authorizer" | "api" | "mcp" | "sandbox" | "signup" | "email";
 export type LambdaImageCodeFactory = (name: LambdaImageCandidateName) => lambda.DockerImageCode;
 
+// Apply after root .env example negations so CDK can prune output directories.
+export const LAMBDA_IMAGE_ASSET_EXCLUDES: ReadonlyArray<string> = ["**/cdk.out", "**/cdk.out/**"];
+
 export const lambdaImageCode: LambdaImageCodeFactory = (name) => {
   const arm = name === "sandbox";
   return lambda.DockerImageCode.fromImageAsset(path.join(__dirname, "../../.."), {
@@ -27,6 +30,7 @@ export const lambdaImageCode: LambdaImageCodeFactory = (name) => {
     buildArgs: { AWS_NODE_BASE: LAMBDA_NODE_IMAGE_BASES[arm ? "arm64" : "amd64"], FUNCTION: name },
     cmd: ["index.handler"],
     ignoreMode: cdk.IgnoreMode.DOCKER,
+    exclude: [...LAMBDA_IMAGE_ASSET_EXCLUDES],
   });
 };
 
