@@ -46,11 +46,10 @@ test("image candidates have isolated roles and execution budgets, with no produc
   template.resourceCountIs("AWS::Cognito::UserPool", 0);
   assert.equal(new Set(functions.map((fn) => fn.role?.node.path)).size, 7);
   template.resourceCountIs("AWS::KMS::Key", 1);
-  for (const fn of functions) {
-    const resource = fn.node.defaultChild as lambda.CfnFunction;
-    assert.equal(resource.packageType, "Image");
-    assert.equal(resource.functionName, undefined);
-  }
+  template.allResourcesProperties("AWS::Lambda::Function", {
+    PackageType: "Image",
+    FunctionName: Match.absent(),
+  });
   template.hasResourceProperties("AWS::Lambda::Function", {
     Architectures: ["arm64"],
     MemorySize: 10240,
