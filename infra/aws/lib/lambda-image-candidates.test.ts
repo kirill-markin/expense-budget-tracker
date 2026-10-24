@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
 import test from "node:test";
 import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
@@ -9,7 +11,27 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Match, Template } from "aws-cdk-lib/assertions";
-import { lambdaImageCandidates } from "./lambda-image-candidates";
+import { LAMBDA_IMAGE_ASSET_EXCLUDES, lambdaImageCandidates } from "./lambda-image-candidates";
+
+test("Lambda image staging prunes CDK output after root Docker ignore negations", (): void => {
+  const root = path.join(__dirname, "../../..");
+  const rootPatterns = readFileSync(path.join(root, ".dockerignore"), "utf8").split("\n").filter(Boolean);
+  const outputDirectory = path.join(root, "infra/aws/cdk.out");
+  const ignore = cdk.IgnoreStrategy.docker(root, [
+    ...rootPatterns,
+    ...LAMBDA_IMAGE_ASSET_EXCLUDES,
+    "!.dockerignore",
+    "!Dockerfile",
+    outputDirectory,
+  ]);
+
+  assert.equal(ignore.completelyIgnores(outputDirectory), true);
+  assert.equal(ignore.completelyIgnores(path.join(outputDirectory, "asset.hash")), true);
+  assert.equal(ignore.ignores(path.join(outputDirectory, "asset.hash/.env.example")), true);
+  assert.equal(ignore.ignores(path.join(root, ".env.example")), false);
+  assert.equal(ignore.ignores(path.join(root, ".env.production")), true);
+  assert.equal(ignore.ignores(path.join(root, "infra/aws/lambda-images/Dockerfile")), false);
+});
 
 test("image candidates have isolated roles and execution budgets, with no production integrations", (): void => {
   const stack = new cdk.Stack(new cdk.App(), "CandidateTest", {
