@@ -19,6 +19,7 @@ export interface McpGatewayProps {
   lambdaSg: ec2.SecurityGroup;
   db: rds.DatabaseInstance;
   appDbSecret: secretsmanager.Secret;
+  activeMcpFn: lambda.Function;
   baseDomain: string;
   mcpCertificateArn: string | undefined;
 }
@@ -26,7 +27,7 @@ export interface McpGatewayProps {
 export interface McpGatewayResult {
   httpApi: apigwv2.HttpApi;
   httpStage: apigwv2.HttpStage;
-  mcpFn: lambda_nodejs.NodejsFunction;
+  mcpFn: lambda.Function;
   customDomainTarget: string | undefined;
 }
 
@@ -72,18 +73,18 @@ export const createMcpHttpAccessLogFormat = (): apigw.AccessLogFormat =>
 export const addMcpHttpApiRoutes = (
   httpApi: apigwv2.HttpApi,
   integration: apigwv2.HttpRouteIntegration,
-): void => {
-  httpApi.addRoutes({
+): ReadonlyArray<apigwv2.HttpRoute> => [
+  ...httpApi.addRoutes({
     path: "/mcp",
     methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
     integration,
-  });
-  httpApi.addRoutes({
+  }),
+  ...httpApi.addRoutes({
     path: "/.well-known/oauth-protected-resource/mcp",
     methods: [apigwv2.HttpMethod.GET],
     integration,
-  });
-};
+  }),
+];
 
 export const createMcpHttpApiCustomDomain = (
   scope: Construct,
@@ -202,6 +203,8 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
     bundling: lambdaBundling,
   });
   props.appDbSecret.grantRead(mcpFn);
+  // Retain the legacy log-retention resource after monitoring switches to the image.
+  void mcpFn.logGroup;
 
   const httpApi = new apigwv2.HttpApi(scope, "McpHttpApi", {
     apiName: "expense-tracker-mcp-http-api",
@@ -217,7 +220,23 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
       timeout: cdk.Duration.seconds(MCP_TIMEOUT_BUDGET.integrationSeconds),
     },
   );
-  addMcpHttpApiRoutes(httpApi, integration);
+  const routes = addMcpHttpApiRoutes(httpApi, integration);
+  // Keep the integration identity and its legacy grants during in-flight requests.
+  const cfnIntegration = routes[0].node.findChild("McpHttpLambdaIntegration").node.defaultChild as apigwv2.CfnIntegration;
+  cfnIntegration.integrationUri = props.activeMcpFn.functionArn;
+  for (const route of routes) {
+    const permission = new lambda.CfnPermission(route, "ImageInvokePermission", {
+      action: "lambda:InvokeFunction",
+      functionName: props.activeMcpFn.functionArn,
+      principal: "apigateway.amazonaws.com",
+      sourceArn: cdk.Stack.of(scope).formatArn({
+        service: "execute-api",
+        resource: httpApi.apiId,
+        resourceName: `*/*${route.path}`,
+      }),
+    });
+    cfnIntegration.addDependency(permission);
+  }
 
   const accessLogGroup = new logs.LogGroup(scope, "McpApiAccessLogGroup", {
     retention: logs.RetentionDays.ONE_MONTH,
@@ -239,7 +258,7 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
   });
 
   if (props.mcpCertificateArn === undefined) {
-    return { httpApi, httpStage, mcpFn, customDomainTarget: undefined };
+    return { httpApi, httpStage, mcpFn: props.activeMcpFn, customDomainTarget: undefined };
   }
 
   const certificate = acm.Certificate.fromCertificateArn(
@@ -258,7 +277,7 @@ export function mcpGateway(scope: Construct, props: McpGatewayProps): McpGateway
   return {
     httpApi,
     httpStage,
-    mcpFn,
+    mcpFn: props.activeMcpFn,
     customDomainTarget: domain.regionalDomainName,
   };
 }

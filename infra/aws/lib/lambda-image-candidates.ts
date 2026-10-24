@@ -18,6 +18,7 @@ const LAMBDA_NODE_IMAGE_BASES: Readonly<Record<"amd64" | "arm64", string>> = JSO
 
 export type LambdaImageCandidateName = "fx" | "authorizer" | "api" | "mcp" | "sandbox" | "signup" | "email";
 export type LambdaImageCodeFactory = (name: LambdaImageCandidateName) => lambda.DockerImageCode;
+export type LambdaImageCandidates = Readonly<Record<LambdaImageCandidateName, lambda.DockerImageFunction>>;
 
 // Apply after root .env example negations so CDK can prune output directories.
 export const LAMBDA_IMAGE_ASSET_EXCLUDES: ReadonlyArray<string> = ["**/cdk.out", "**/cdk.out/**"];
@@ -51,7 +52,7 @@ export const lambdaImageCandidates = (
   scope: Construct,
   props: LambdaImageCandidatesProps,
   createCode: LambdaImageCodeFactory,
-): ReadonlyArray<lambda.DockerImageFunction> => {
+): LambdaImageCandidates => {
   const dbNetwork = {
     vpc: props.vpc,
     vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
@@ -136,5 +137,5 @@ export const lambdaImageCandidates = (
   });
   props.customEmailSenderKey.grantDecrypt(email);
   secretsmanager.Secret.fromSecretCompleteArn(scope, "CandidateResendApiKeySecret", props.resendApiKeySecretArn).grantRead(email);
-  return [fx, authorizer, api, mcp, sandbox, signup, email];
+  return { fx, authorizer, api, mcp, sandbox, signup, email };
 };

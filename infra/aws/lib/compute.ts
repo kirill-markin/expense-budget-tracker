@@ -3,6 +3,7 @@ import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -16,6 +17,7 @@ export interface ComputeProps {
   ecsSg: ec2.SecurityGroup;
   db: rds.DatabaseInstance;
   chatFilesBucket: s3.Bucket;
+  chatSandboxFn: lambda.IFunction;
   appDbSecret: cdk.aws_secretsmanager.Secret;
   authDbSecret: cdk.aws_secretsmanager.Secret;
   workerDbSecret: cdk.aws_secretsmanager.Secret;
@@ -202,7 +204,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       // deployment can point the same code at an S3-compatible service, which
       // is also the only place path-style addressing is needed.
       CHAT_FILES_S3_FORCE_PATH_STYLE: "false",
-      CHAT_SANDBOX_FUNCTION_NAME,
+      CHAT_SANDBOX_FUNCTION_NAME: props.chatSandboxFn.functionName,
       LANGFUSE_BASE_URL: props.langfuseBaseUrl,
       LANGFUSE_RELEASE: webDockerImageAsset.assetHash,
       // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
@@ -244,18 +246,18 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     `${CHAT_FILES_OBJECT_PREFIX}*`,
   );
 
-  // The chat sandbox function is created after this construct, so the grant
-  // names it by its fixed name instead of taking the construct. Nothing else is
-  // granted: the sandbox receives everything it may touch as pre-signed URLs in
-  // the invocation payload.
+  // Draining tasks still invoke the fixed-name sandbox from their old environment.
   webTaskDef.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ["lambda:InvokeFunction"],
-    resources: [cdk.Stack.of(scope).formatArn({
-      service: "lambda",
-      resource: "function",
-      resourceName: CHAT_SANDBOX_FUNCTION_NAME,
-      arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
-    })],
+    resources: [
+      cdk.Stack.of(scope).formatArn({
+        service: "lambda",
+        resource: "function",
+        resourceName: CHAT_SANDBOX_FUNCTION_NAME,
+        arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
+      }),
+      props.chatSandboxFn.functionArn,
+    ],
   }));
 
   // Near-zero-downtime rolling update: with the ECS defaults (minHealthyPercent=100%,
@@ -272,6 +274,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     securityGroups: [props.ecsSg],
     ...serviceDeploymentProps,
   });
+  webService.node.addDependency(webTaskDef.taskRole);
 
   // Auto-scaling: 1–3 tasks, scale on CPU. Hard cap at 3 to limit cost.
   const scaling = webService.autoScaleTaskCount({

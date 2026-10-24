@@ -13,14 +13,14 @@ export interface FxFetcherProps {
   lambdaSg: ec2.SecurityGroup;
   db: rds.DatabaseInstance;
   workerDbSecret: cdk.aws_secretsmanager.Secret;
+  activeFxFetcher: lambda.Function;
 }
 
 export interface FxFetcherResult {
-  fxFetcher: lambda_nodejs.NodejsFunction;
+  fxFetcher: lambda.Function;
 }
 
 export function fxFetcher(scope: Construct, props: FxFetcherProps): FxFetcherResult {
-  // --- Lambda (FX fetchers) ---
   const fn = new lambda_nodejs.NodejsFunction(scope, "FxFetcher", {
     entry: path.join(__dirname, "../../../apps/worker/src/lambda.ts"),
     handler: "handler",
@@ -31,16 +31,11 @@ export function fxFetcher(scope: Construct, props: FxFetcherProps): FxFetcherRes
     vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     securityGroups: [props.lambdaSg],
     environment: {
-      // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
-      // Points to the CA bundle downloaded by afterBundling hook below.
-      // Lambda bundles are extracted to /var/task/ at runtime.
       NODE_EXTRA_CA_CERTS: "/var/task/rds-global-bundle.pem",
     },
     bundling: {
       minify: true,
       sourceMap: true,
-      // Download the RDS CA bundle into the Lambda deployment package
-      // so Node.js can verify RDS certificates via NODE_EXTRA_CA_CERTS.
       commandHooks: {
         beforeBundling: () => [],
         beforeInstall: () => [],
@@ -55,12 +50,15 @@ export function fxFetcher(scope: Construct, props: FxFetcherProps): FxFetcherRes
   fn.addEnvironment("DB_SECRET_ARN", props.workerDbSecret.secretArn);
   fn.addEnvironment("DB_HOST", props.db.dbInstanceEndpointAddress);
   fn.addEnvironment("DB_NAME", "tracker");
+  // Retain the legacy log-retention resource after monitoring switches to the image.
+  void fn.logGroup;
 
-  // EventBridge: daily at 08:00 UTC
-  new events.Rule(scope, "FxSchedule", {
+  const schedule = new events.Rule(scope, "FxSchedule", {
     schedule: events.Schedule.cron({ hour: "8", minute: "0" }),
-    targets: [new events_targets.LambdaFunction(fn)],
   });
+  // Binding without adding a target preserves the legacy function's exact-rule grant.
+  new events_targets.LambdaFunction(fn).bind(schedule, "Legacy");
+  schedule.addTarget(new events_targets.LambdaFunction(props.activeFxFetcher));
 
-  return { fxFetcher: fn };
+  return { fxFetcher: props.activeFxFetcher };
 }

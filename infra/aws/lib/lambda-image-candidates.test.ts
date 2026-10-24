@@ -66,7 +66,7 @@ test("image candidates have isolated roles and execution budgets, with no produc
   template.resourceCountIs("AWS::ApiGateway::RestApi", 0);
   template.resourceCountIs("AWS::ApiGatewayV2::Api", 0);
   template.resourceCountIs("AWS::Cognito::UserPool", 0);
-  assert.equal(new Set(functions.map((fn) => fn.role?.node.path)).size, 7);
+  assert.equal(new Set(Object.values(functions).map((fn) => fn.role?.node.path)).size, 7);
   template.resourceCountIs("AWS::KMS::Key", 1);
   template.allResourcesProperties("AWS::Lambda::Function", {
     PackageType: "Image",

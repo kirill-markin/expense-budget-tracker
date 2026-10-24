@@ -2,7 +2,7 @@ import * as cdk from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
 import { networking } from "./networking";
-import { auth } from "./auth";
+import { auth, bindAuthImageTriggers } from "./auth";
 import { preSignUp } from "./pre-signup";
 import { database } from "./database";
 import { secrets } from "./secrets";
@@ -65,11 +65,28 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const dbResult = database(this, { vpc: net.vpc, dbSg: net.dbSg });
     const sec = secrets(this);
     const chatFiles = chatFilesBucket(this, { appDomain });
+    if (resendApiKeySecretArn === undefined || resendSenderEmail === undefined) {
+      throw new Error("Cognito sender configuration is required for Lambda image candidates");
+    }
+    const images = lambdaImageCandidates(this, {
+      vpc: net.vpc,
+      lambdaSg: net.lambdaSg,
+      db: dbResult.db,
+      appDbSecret: dbResult.appDbSecret,
+      workerDbSecret: dbResult.workerDbSecret,
+      chatFilesBucket: chatFiles.chatFilesBucket,
+      customEmailSenderKey: authResult.customEmailSenderKey,
+      resendApiKeySecretArn,
+      resendSenderEmail,
+      baseDomain,
+    }, lambdaImageCode);
+    bindAuthImageTriggers(authResult, images.signup, images.email);
     const comp = compute(this, {
       vpc: net.vpc,
       ecsSg: net.ecsSg,
       db: dbResult.db,
       chatFilesBucket: chatFiles.chatFilesBucket,
+      chatSandboxFn: images.sandbox,
       appDbSecret: dbResult.appDbSecret,
       authDbSecret: dbResult.authDbSecret,
       workerDbSecret: dbResult.workerDbSecret,
@@ -103,12 +120,15 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       lambdaSg: net.lambdaSg,
       db: dbResult.db,
       workerDbSecret: dbResult.workerDbSecret,
+      activeFxFetcher: images.fx,
     });
     const api = apiGateway(this, {
       vpc: net.vpc,
       lambdaSg: net.lambdaSg,
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
+      activeAuthorizerFn: images.authorizer,
+      activeSqlApiFn: images.api,
       baseDomain,
       apiCertificateArn,
     });
@@ -117,25 +137,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       lambdaSg: net.lambdaSg,
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
+      activeMcpFn: images.mcp,
       baseDomain,
       mcpCertificateArn,
     });
-    const sandbox = chatSandbox(this, { chatFilesBucket: chatFiles.chatFilesBucket });
-    if (resendApiKeySecretArn === undefined || resendSenderEmail === undefined) {
-      throw new Error("Cognito sender configuration is required for Lambda image candidates");
-    }
-    lambdaImageCandidates(this, {
-      vpc: net.vpc,
-      lambdaSg: net.lambdaSg,
-      db: dbResult.db,
-      appDbSecret: dbResult.appDbSecret,
-      workerDbSecret: dbResult.workerDbSecret,
-      chatFilesBucket: chatFiles.chatFilesBucket,
-      customEmailSenderKey: authResult.customEmailSenderKey,
-      resendApiKeySecretArn,
-      resendSenderEmail,
-      baseDomain,
-    }, lambdaImageCode);
+    chatSandbox(this, { chatFilesBucket: chatFiles.chatFilesBucket });
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,
@@ -152,8 +158,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       sqlApiFn: api.sqlApiFn,
       mcpHttpApi: mcp.httpApi,
       mcpFn: mcp.mcpFn,
-      chatSandboxFn: sandbox.chatSandboxFn,
-      customEmailSenderFn: authResult.customEmailSenderFn,
+      chatSandboxFn: images.sandbox,
+      customEmailSenderFn: images.email,
     });
     ciCd(this, {
       stackId: this.stackId,
