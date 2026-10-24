@@ -23,10 +23,12 @@ on:
       - 'scripts/run-migration-task.sh'
       - 'scripts/check-web-readiness.sh'
       - 'scripts/live-agent-api-smoke.mjs'
+      - 'scripts/checks/check-lambda-images.mjs'
       - '.npmrc'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/deploy.yml'
+      - '.github/workflows/lambda-images.yml'
   workflow_dispatch:
 
 concurrency:
@@ -42,7 +44,13 @@ env:
   STACK_NAME: ExpenseBudgetTracker
 
 jobs:
+  lambda_images:
+    uses: ./.github/workflows/lambda-images.yml
+    permissions:
+      contents: read
+
   deploy:
+    needs: lambda_images
     runs-on: ubuntu-26.04-arm
     timeout-minutes: 60
     outputs:
@@ -96,6 +104,11 @@ jobs:
 
       - name: Build shared package
         run: npm --workspace @expense-budget-tracker/agent-shared run build
+
+      - name: Enable x86 Lambda image builds on the ARM deploy runner
+        uses: docker/setup-qemu-action@v4.4.0
+        with:
+          platforms: amd64
 
       # Refresh Cloudflare edge IP ranges so the ALB security group stays current.
       # Best-effort: if the API is unreachable, the committed cloudflare-ips.json is used.

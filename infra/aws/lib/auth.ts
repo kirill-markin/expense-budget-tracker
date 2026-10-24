@@ -1,6 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as kms from "aws-cdk-lib/aws-kms";
 import { Construct } from "constructs";
 import { customEmailSender } from "./custom-email-sender";
 
@@ -14,6 +15,7 @@ export interface AuthResult {
   userPool: cognito.UserPool;
   userPoolClient: cognito.UserPoolClient;
   customEmailSenderFn: lambda.Function;
+  customEmailSenderKey: kms.Key;
 }
 
 export function auth(scope: Construct, props: AuthProps): AuthResult {
@@ -30,9 +32,6 @@ export function auth(scope: Construct, props: AuthProps): AuthResult {
     resendSenderEmail: props.resendSenderEmail,
   });
 
-  // --- Cognito User Pool ---
-  // Open registration: any user can sign up with email.
-  // Each user gets an isolated workspace via RLS — no shared data.
   const userPool = new cognito.UserPool(scope, "UserPool", {
     userPoolName: "expense-tracker-users",
     selfSignUpEnabled: true,
@@ -70,5 +69,6 @@ export function auth(scope: Construct, props: AuthProps): AuthResult {
     userPool,
     userPoolClient,
     customEmailSenderFn: sender.fn,
+    customEmailSenderKey: sender.kmsKey,
   };
 }

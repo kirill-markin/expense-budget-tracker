@@ -17,6 +17,7 @@ import { monitoring } from "./monitoring";
 import { ciCd } from "./ci-cd";
 import { backupPlan } from "./backup";
 import { outputs } from "./outputs";
+import { lambdaImageCandidates, lambdaImageCode } from "./lambda-image-candidates";
 
 function getOptionalContextValue(stack: cdk.Stack, key: string): string | undefined {
   const value = stack.node.tryGetContext(key);
@@ -120,6 +121,21 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       mcpCertificateArn,
     });
     const sandbox = chatSandbox(this, { chatFilesBucket: chatFiles.chatFilesBucket });
+    if (resendApiKeySecretArn === undefined || resendSenderEmail === undefined) {
+      throw new Error("Cognito sender configuration is required for Lambda image candidates");
+    }
+    lambdaImageCandidates(this, {
+      vpc: net.vpc,
+      lambdaSg: net.lambdaSg,
+      db: dbResult.db,
+      appDbSecret: dbResult.appDbSecret,
+      workerDbSecret: dbResult.workerDbSecret,
+      chatFilesBucket: chatFiles.chatFilesBucket,
+      customEmailSenderKey: authResult.customEmailSenderKey,
+      resendApiKeySecretArn,
+      resendSenderEmail,
+      baseDomain,
+    }, lambdaImageCode);
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,

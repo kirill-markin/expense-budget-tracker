@@ -564,6 +564,9 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 
 ## Monitoring
 
+The non-serving image replacements and their verification procedure are in
+[Lambda image candidates](../../docs/lambda-image-candidates.md).
+
 - **Alarms**: ALB 5xx, SQL and MCP API Gateway 5xx, WAF body/query re-blocks, ECS CPU/memory and scale-out, DB connections/storage, Lambda errors, and MCP Lambda throttling with a 20-execution reserved concurrency limit
 - **Access logs**: S3 bucket with all HTTP requests, 90-day retention
 - **Container logs**: CloudWatch Logs `/expense-tracker/web` and `/expense-tracker/migrate`, 30-day retention
