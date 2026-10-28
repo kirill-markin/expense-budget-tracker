@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
@@ -40,6 +40,15 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Expense Budget Tracker",
   description: "Personal finance tracker",
+};
+
+// `interactiveWidget: "resizes-content"` makes a mobile on-screen keyboard shrink
+// the layout viewport instead of covering the chat composer, which keeps the
+// `height: 100%` shell chain correct.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  interactiveWidget: "resizes-content",
 };
 
 // The address is only an account hint inside the opened account menu, so a
