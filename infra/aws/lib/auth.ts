@@ -20,6 +20,8 @@ export function auth(scope: Construct, props: AuthProps): AuthResult {
     userPoolName: "expense-tracker-users",
     selfSignUpEnabled: true,
     signInAliases: { email: true },
+    featurePlan: cognito.FeaturePlan.ESSENTIALS,
+    signInPolicy: { allowedFirstAuthFactors: { password: true, emailOtp: true } },
     autoVerify: { email: true },
     customSenderKmsKey: props.customEmailSenderKey,
     keepOriginal: { email: true },
@@ -29,11 +31,6 @@ export function auth(scope: Construct, props: AuthProps): AuthResult {
     },
     removalPolicy: cdk.RemovalPolicy.RETAIN,
   });
-
-  // Essentials tier required for USER_AUTH + EMAIL_OTP (no L2 support yet)
-  const cfnUserPool = userPool.node.defaultChild as cdk.CfnResource;
-  cfnUserPool.addPropertyOverride("UserPoolTier", "ESSENTIALS");
-  cfnUserPool.addPropertyOverride("Policies.SignInPolicy.AllowedFirstAuthFactors", ["PASSWORD", "EMAIL_OTP"]);
 
   const userPoolClient = userPool.addClient("AppClient", {
     generateSecret: false,
