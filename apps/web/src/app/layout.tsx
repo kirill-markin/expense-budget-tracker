@@ -17,7 +17,11 @@ import { buildRequestIdentity } from "@/server/db/requestIdentity";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/workspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
 import { getUserSettings } from "@/server/userSettings";
-import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
+import {
+  extractUserEmailFromHeaders,
+  extractUserIdFromHeaders,
+  extractWorkspaceIdFromHeaders,
+} from "@/server/userId";
 import { resolveWorkspaceForCurrentRequestIdentity } from "@/server/workspaceBootstrap";
 import { AccountMenu } from "@/ui/AccountMenu";
 import { ChatLayoutProvider, ChatLayoutShell } from "@/ui/chat";
@@ -36,6 +40,17 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Expense Budget Tracker",
   description: "Personal finance tracker",
+};
+
+// The address is only an account hint inside the opened account menu, so a
+// request that reached the layout without the mirrored header still renders.
+const readAccountEmail = (headersList: Headers): string => {
+  try {
+    return extractUserEmailFromHeaders(headersList);
+  } catch (err) {
+    unstable_rethrow(err);
+    return "";
+  }
 };
 
 export default async function RootLayout(props: Readonly<{ children: React.ReactNode }>) {
@@ -83,6 +98,9 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   // Every authenticated mode carries a real per-user identity, so the active
   // workspace must be resolved against it. AUTH_MODE=none has a single fixed one.
   const authEnabled = process.env.AUTH_MODE !== "none";
+  // Demo mode serves shared sample data and AUTH_MODE=none has no real account,
+  // so neither names an address worth showing.
+  const accountEmail = authEnabled && !demo ? readAccountEmail(headersList) : "";
   let reportingCurrency = "USD";
   let workspaces: ReadonlyArray<WorkspaceSummary> = [];
   let currentWorkspaceId = "";
@@ -178,6 +196,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                           <ModeToggle isDemoMode={demo} />
                           <AccountMenu
                             authEnabled={authEnabled}
+                            accountEmail={accountEmail}
                             workspaces={workspaces}
                             currentWorkspaceId={currentWorkspaceId}
                           />
