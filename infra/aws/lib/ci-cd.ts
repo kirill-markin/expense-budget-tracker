@@ -2,14 +2,12 @@ import * as cdk from "aws-cdk-lib";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
 export interface CiCdProps {
   stackId: string;
   webService: ecs.FargateService;
   migrateTaskDef: ecs.FargateTaskDefinition;
-  migrateLogGroup: logs.LogGroup;
   cluster: ecs.Cluster;
   fxFetcher: lambda.IFunction;
   githubRepo: string;
@@ -73,17 +71,6 @@ export function ciCd(scope: Construct, props: CiCdProps): void {
             resources: [
               props.migrateTaskDef.taskRole.roleArn,
               props.migrateTaskDef.executionRole!.roleArn,
-            ],
-          }),
-          new iam.PolicyStatement({
-            sid: "EcsWaitLogs",
-            actions: [
-              "logs:GetLogEvents",
-              "logs:FilterLogEvents",
-            ],
-            resources: [
-              props.migrateLogGroup.logGroupArn,
-              `${props.migrateLogGroup.logGroupArn}:*`,
             ],
           }),
           new iam.PolicyStatement({
