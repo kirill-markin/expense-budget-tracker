@@ -18,12 +18,13 @@ type WorkspaceSummary = Readonly<{
 
 type Props = Readonly<{
   authEnabled: boolean;
+  accountEmail: string;
   workspaces: ReadonlyArray<WorkspaceSummary>;
   currentWorkspaceId: string;
 }>;
 
 export const AccountMenu = (props: Props): ReactElement | null => {
-  const { authEnabled, workspaces, currentWorkspaceId } = props;
+  const { authEnabled, accountEmail, workspaces, currentWorkspaceId } = props;
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [isCreating, setIsCreating] = useState<boolean>(false);
@@ -146,6 +147,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
       </button>
       {isOpen && (
         <div ref={menuRef} className={styles.dropdown}>
+          {accountEmail !== "" && <div className={styles.accountEmail}>{accountEmail}</div>}
           {workspaces.length > 0 && (
             <>
               <div className={styles.sectionLabel}>{t("account.workspaces")}</div>
