@@ -61,3 +61,20 @@ test("the user pool keeps the original email until a new one is verified", (): v
     UserAttributeUpdateSettings: { AttributesRequireVerificationBeforeUpdate: ["email"] },
   });
 });
+
+/**
+ * EMAIL_OTP as a first auth factor requires the Essentials tier, so a CDK
+ * upgrade that drops either property silently disables passwordless sign-in.
+ * `Policies` is now rendered by the L2 construct, so a CDK release that starts
+ * emitting a default PasswordPolicy would push an unintended change onto the
+ * retained production pool; the absence assertion catches that.
+ */
+test("the user pool runs the Essentials tier and accepts password or email OTP sign-in", (): void => {
+  synthesizeAuthTemplate().hasResourceProperties("AWS::Cognito::UserPool", {
+    UserPoolTier: "ESSENTIALS",
+    Policies: {
+      SignInPolicy: { AllowedFirstAuthFactors: ["PASSWORD", "EMAIL_OTP"] },
+      PasswordPolicy: Match.absent(),
+    },
+  });
+});
