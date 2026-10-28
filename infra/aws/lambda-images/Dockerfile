@@ -1,7 +1,7 @@
 ARG AWS_NODE_BASE
 FROM ${AWS_NODE_BASE} AS build
 WORKDIR /workspace
-RUN npm install --global npm@12.2.0
+RUN npm install --global npm@12.2.1
 COPY . .
 RUN npm ci && npm --workspace @expense-budget-tracker/agent-shared run build
 ARG FUNCTION
