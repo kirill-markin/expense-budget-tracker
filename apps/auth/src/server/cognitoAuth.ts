@@ -100,12 +100,16 @@ const cognitoFetch = async (
   return response.json() as Promise<Record<string, unknown>>;
 };
 
+/**
+ * The app client forbids user-side writes to `email`, so no UserAttributes are
+ * sent; the pool uses email as the username attribute and Cognito populates
+ * `email` from `Username`.
+ */
 const signUpUser = async (email: string): Promise<void> => {
   await cognitoFetch("SignUp", {
     ClientId: getClientId(),
     Username: email,
     Password: randomBytes(48).toString("base64"),
-    UserAttributes: [{ Name: "email", Value: email }],
   });
 };
 
@@ -200,6 +204,7 @@ const DEFINITIVE_REFRESH_REJECTION_TYPES = new Set([
   "NotAuthorizedException",
   "PasswordResetRequiredException",
   "RefreshTokenExpiredException",
+  "RefreshTokenReuseException",
   "UserNotConfirmedException",
   "UserNotFoundException",
 ]);
@@ -237,15 +242,15 @@ const isTransientRefreshError = (error: unknown): boolean => {
 const extractSessionRefreshResult = (result: Record<string, unknown>): SessionRefreshResult => {
   const authResult = result.AuthenticationResult;
   if (typeof authResult !== "object" || authResult === null || Array.isArray(authResult)) {
-    throw new Error("Cognito REFRESH_TOKEN_AUTH did not return AuthenticationResult");
+    throw new Error("Cognito GetTokensFromRefreshToken did not return AuthenticationResult");
   }
   const idToken = (authResult as Readonly<Record<string, unknown>>)["IdToken"];
   const rotatedRefreshToken = (authResult as Readonly<Record<string, unknown>>)["RefreshToken"];
   if (typeof idToken !== "string" || idToken === "") {
-    throw new Error("Cognito REFRESH_TOKEN_AUTH did not return an ID token");
+    throw new Error("Cognito GetTokensFromRefreshToken did not return an ID token");
   }
   if (rotatedRefreshToken !== undefined && typeof rotatedRefreshToken !== "string") {
-    throw new Error("Cognito REFRESH_TOKEN_AUTH returned an invalid refresh token");
+    throw new Error("Cognito GetTokensFromRefreshToken returned an invalid refresh token");
   }
   return {
     idToken,
@@ -259,10 +264,9 @@ export const refreshCognitoSessionWithDependencies = async (
 ): Promise<SessionRefreshResult> => {
   for (let attempt = 1; attempt <= REFRESH_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const result = await dependencies.request("InitiateAuth", {
-        AuthFlow: "REFRESH_TOKEN_AUTH",
+      const result = await dependencies.request("GetTokensFromRefreshToken", {
+        RefreshToken: refreshToken,
         ClientId: getClientId(),
-        AuthParameters: { REFRESH_TOKEN: refreshToken },
       });
       return extractSessionRefreshResult(result);
     } catch (error) {
