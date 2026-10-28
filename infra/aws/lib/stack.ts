@@ -3,7 +3,7 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
 import { networking } from "./networking";
 import { auth } from "./auth";
-import { preSignUp } from "./pre-signup";
+import { customEmailSenderKey } from "./custom-email-sender";
 import { database } from "./database";
 import { secrets } from "./secrets";
 import { chatFilesBucket } from "./chat-files-bucket";
@@ -12,11 +12,11 @@ import { ingress } from "./ingress";
 import { fxFetcher } from "./fx-fetcher";
 import { apiGateway } from "./api-gateway";
 import { mcpGateway } from "./mcp-gateway";
-import { chatSandbox } from "./chat-sandbox";
 import { monitoring } from "./monitoring";
 import { ciCd } from "./ci-cd";
 import { backupPlan } from "./backup";
 import { outputs } from "./outputs";
+import { lambdaImageCandidates, lambdaImageCode } from "./lambda-image-candidates";
 
 function getOptionalContextValue(stack: cdk.Stack, key: string): string | undefined {
   const value = stack.node.tryGetContext(key);
@@ -55,20 +55,39 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     );
 
     const net = networking(this);
-    const preSignUpFn = preSignUp(this);
-    const authResult = auth(this, {
-      preSignUpFn,
-      resendApiKeySecretArn,
-      resendSenderEmail,
-    });
     const dbResult = database(this, { vpc: net.vpc, dbSg: net.dbSg });
     const sec = secrets(this);
     const chatFiles = chatFilesBucket(this, { appDomain });
+    if (resendApiKeySecretArn === undefined) {
+      throw new Error("resendApiKeySecretArn is required for Cognito email delivery");
+    }
+    if (resendSenderEmail === undefined) {
+      throw new Error("resendSenderEmail is required for Cognito email delivery");
+    }
+    const senderKey = customEmailSenderKey(this, resendApiKeySecretArn);
+    const images = lambdaImageCandidates(this, {
+      vpc: net.vpc,
+      lambdaSg: net.lambdaSg,
+      db: dbResult.db,
+      appDbSecret: dbResult.appDbSecret,
+      workerDbSecret: dbResult.workerDbSecret,
+      chatFilesBucket: chatFiles.chatFilesBucket,
+      customEmailSenderKey: senderKey,
+      resendApiKeySecretArn,
+      resendSenderEmail,
+      baseDomain,
+    }, lambdaImageCode);
+    const authResult = auth(this, {
+      preSignUpFn: images.signup,
+      customEmailSenderFn: images.email,
+      customEmailSenderKey: senderKey,
+    });
     const comp = compute(this, {
       vpc: net.vpc,
       ecsSg: net.ecsSg,
       db: dbResult.db,
       chatFilesBucket: chatFiles.chatFilesBucket,
+      chatSandboxFn: images.sandbox,
       appDbSecret: dbResult.appDbSecret,
       authDbSecret: dbResult.authDbSecret,
       workerDbSecret: dbResult.workerDbSecret,
@@ -98,28 +117,19 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     });
 
     const fx = fxFetcher(this, {
-      vpc: net.vpc,
-      lambdaSg: net.lambdaSg,
-      db: dbResult.db,
-      workerDbSecret: dbResult.workerDbSecret,
+      fxFetcherFn: images.fx,
     });
     const api = apiGateway(this, {
-      vpc: net.vpc,
-      lambdaSg: net.lambdaSg,
-      db: dbResult.db,
-      appDbSecret: dbResult.appDbSecret,
+      authorizerFn: images.authorizer,
+      sqlApiFn: images.api,
       baseDomain,
       apiCertificateArn,
     });
     const mcp = mcpGateway(this, {
-      vpc: net.vpc,
-      lambdaSg: net.lambdaSg,
-      db: dbResult.db,
-      appDbSecret: dbResult.appDbSecret,
+      mcpFn: images.mcp,
       baseDomain,
       mcpCertificateArn,
     });
-    const sandbox = chatSandbox(this, { chatFilesBucket: chatFiles.chatFilesBucket });
     const mon = monitoring(this, {
       alertEmail,
       alb: ing.alb,
@@ -136,8 +146,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       sqlApiFn: api.sqlApiFn,
       mcpHttpApi: mcp.httpApi,
       mcpFn: mcp.mcpFn,
-      chatSandboxFn: sandbox.chatSandboxFn,
-      customEmailSenderFn: authResult.customEmailSenderFn,
+      chatSandboxFn: images.sandbox,
+      customEmailSenderFn: images.email,
     });
     ciCd(this, {
       stackId: this.stackId,

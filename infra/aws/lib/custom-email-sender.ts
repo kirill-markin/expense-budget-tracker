@@ -1,31 +1,12 @@
 import * as cdk from "aws-cdk-lib";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
-import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
-import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
-import * as path from "path";
-
-export interface CustomEmailSenderProps {
-  resendApiKeySecretArn: string;
-  resendSenderEmail: string;
-}
-
-export interface CustomEmailSenderResult {
-  fn: lambdaNodejs.NodejsFunction;
-  kmsKey: kms.Key;
-}
 
 interface SecretArnParts {
   region: string;
   account: string;
 }
-
-const bundling: lambdaNodejs.BundlingOptions = {
-  minify: true,
-  sourceMap: true,
-};
 
 const secretArnPattern: RegExp = /^arn:[^:]+:secretsmanager:([^:]+):(\d{12}):secret:.+$/;
 
@@ -106,11 +87,11 @@ function allowCloudFormationExecutionRoleToCreateCognitoGrant(kmsKey: kms.Key): 
   }));
 }
 
-export function customEmailSender(
+export function customEmailSenderKey(
   scope: Construct,
-  props: CustomEmailSenderProps,
-): CustomEmailSenderResult {
-  validateSecretArnMatchesStack(scope, props.resendApiKeySecretArn);
+  resendApiKeySecretArn: string,
+): kms.Key {
+  validateSecretArnMatchesStack(scope, resendApiKeySecretArn);
 
   const kmsKey = new kms.Key(scope, "CustomEmailSenderKey", {
     alias: "expense-tracker-cognito-custom-email-sender",
@@ -119,33 +100,5 @@ export function customEmailSender(
   });
   allowCloudFormationExecutionRoleToCreateCognitoGrant(kmsKey);
 
-  const resendApiKeySecret = secretsmanager.Secret.fromSecretCompleteArn(
-    scope,
-    "ResendApiKeySecret",
-    props.resendApiKeySecretArn,
-  );
-
-  const fn = new lambdaNodejs.NodejsFunction(scope, "CustomEmailSenderFn", {
-    entry: path.join(__dirname, "../lambda/custom-email-sender/index.ts"),
-    handler: "handler",
-    runtime: lambda.Runtime.NODEJS_24_X,
-    timeout: cdk.Duration.seconds(30),
-    memorySize: 256,
-    bundling,
-    environment: {
-      KEY_ARN: kmsKey.keyArn,
-      KEY_ID: kmsKey.keyId,
-      RESEND_API_KEY_SECRET_ARN: props.resendApiKeySecretArn,
-      RESEND_FROM_EMAIL: props.resendSenderEmail,
-      RESEND_FROM_NAME: "Expense Budget Tracker",
-    },
-  });
-
-  kmsKey.grantDecrypt(fn);
-  resendApiKeySecret.grantRead(fn);
-
-  return {
-    fn,
-    kmsKey,
-  };
+  return kmsKey;
 }

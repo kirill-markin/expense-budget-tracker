@@ -1,16 +1,7 @@
-/**
- * HTTP adapter for the MCP container entry point.
- *
- * Behind API Gateway the MCP app only ever sees a payload the gateway already
- * capped. The container is exposed directly, so it applies the same ceiling
- * before the transport reads anything. Authentication happens inside the app,
- * after this guard, so every request body is bounded rather than skipped.
- */
-
 import type { Hono } from "hono";
 import { createDefaultMcpApp } from "./mcp-handler.js";
+import { MCP_MAX_REQUEST_BODY_BYTES } from "./mcp/limits.js";
 import {
-  MAX_REQUEST_BODY_BYTES,
   RequestBodyTooLargeError,
   readBoundedRequestBytes,
 } from "./requestBodyLimit.js";
@@ -47,7 +38,7 @@ const buildRequestBodyTooLargeResponse = (error: RequestBodyTooLargeError): Resp
 export const createBoundedMcpFetch = (app: Hono): McpFetch => async (request: Request): Promise<Response> => {
   let bounded: Request;
   try {
-    bounded = await bufferRequestWithinLimit(request, MAX_REQUEST_BODY_BYTES);
+    bounded = await bufferRequestWithinLimit(request, MCP_MAX_REQUEST_BODY_BYTES);
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {
       return buildRequestBodyTooLargeResponse(error);

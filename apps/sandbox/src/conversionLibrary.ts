@@ -19,7 +19,7 @@ const describeError = (error: unknown): string =>
  * its format rather than of the one being converted.
  *
  * Measured against esbuild 0.28.2: a bundle emitted without the createRequire
- * banner of infra/aws/lib/chat-sandbox.ts fails `await import("mammoth")` with
+ * banner of infra/aws/lambda-images/build.mjs fails `await import("mammoth")` with
  * `Dynamic require of "url" is not supported`, while the same bundle with the
  * banner loads mammoth and refuses a corrupt package with `Corrupted zip: can't
  * find end of central directory`. Under one `catch` neither carries anything to

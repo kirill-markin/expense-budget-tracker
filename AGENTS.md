@@ -137,6 +137,7 @@ AWS profile and region setup is in `## AWS Deployment`. Start from logs and trac
 - [docs/architecture.md](docs/architecture.md) - system overview, data model, agent tool surfaces, multi-currency design, auth model
 - [docs/deployment.md](docs/deployment.md) - local Docker Compose and AWS CDK setup
 - [docs/self-hosting.md](docs/self-hosting.md) - running the whole product outside AWS behind an edge proxy: hostnames, bypass list, revocation
+- [docs/account-email-changes.md](docs/account-email-changes.md) - the admin-only procedure for changing an account email, and the heads-up it requires
 - [docs/langfuse-operations.md](docs/langfuse-operations.md) - Langfuse trace shape, filters, and telemetry troubleshooting
 - [docs/agent-telemetry.md](docs/agent-telemetry.md) - what each agent surface records about tool calls, and the CloudWatch queries that count failures
 - [infra/aws/README.md](infra/aws/README.md) - full AWS CDK deployment guide

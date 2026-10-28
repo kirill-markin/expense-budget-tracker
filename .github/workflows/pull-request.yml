@@ -13,8 +13,13 @@ permissions:
   pull-requests: read
 
 jobs:
+  lambda_images:
+    uses: ./.github/workflows/lambda-images.yml
+
   quality_gate:
     name: PR Quality Gate
+    needs: lambda_images
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     outputs:
@@ -25,6 +30,12 @@ jobs:
       sql_api_tests: ${{ steps.changes.outputs.sql_api_tests }}
       web_tests: ${{ steps.changes.outputs.web_tests }}
     steps:
+      - name: Require packaged Lambda image checks
+        if: needs.lambda_images.result != 'success'
+        run: |
+          echo "::error::Both packaged Lambda image jobs must pass."
+          exit 1
+
       - uses: actions/checkout@v7.0.1
 
       - uses: actions/setup-node@v7.1.0

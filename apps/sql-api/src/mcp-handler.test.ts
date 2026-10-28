@@ -3,6 +3,7 @@ import test from "node:test";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import {
   MCP_SQL_STATEMENT_TIMEOUT_MS,
+  MAX_SQL_SCRIPT_LENGTH,
   SqlExecutionDeadlineError,
   type SqlExecutionDeadline,
 } from "@expense-budget-tracker/agent-shared/sql-policy";
@@ -16,6 +17,7 @@ import {
 } from "./mcp/auth.js";
 import type { McpRuntimeConfig } from "./mcp/config.js";
 import { createMcpServer } from "./mcp/server.js";
+import { MCP_MAX_REQUEST_BODY_BYTES } from "./mcp/limits.js";
 import { MAX_MCP_CALLER_LOG_CHARS, type SqlApiLogEvent } from "./logger.js";
 import {
   createMcpApp,
@@ -534,6 +536,41 @@ test("MCP handler preserves authenticated GET protocol behavior without exposing
   });
   assert.equal(deleted.status, 404);
   assert.equal(authenticationCalls, 1);
+});
+
+test("MCP Lambda bounds JSON bodies without relying on Content-Length", async (): Promise<void> => {
+  const handler = createMcpHandler(createDependencies(async () => CONNECTION, []));
+  const headers = {
+    ...authenticatedHeaders(),
+    accept: "application/json, text/event-stream",
+    "content-type": "application/json",
+  };
+  const initialize = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "mcp-handler-test", version: "1.0.0" },
+      _meta: { escaped: "\u0000".repeat(MAX_SQL_SCRIPT_LENGTH) },
+    },
+  };
+  const body = JSON.stringify(initialize);
+  const accepted = await handler(createHttpApiV2Event(
+    "POST", "/mcp", headers, "", body, false, undefined,
+  ));
+  assert.equal(accepted.statusCode, 200);
+
+  const oversized = `${body}${" ".repeat(MCP_MAX_REQUEST_BODY_BYTES + 1 - Buffer.byteLength(body))}`;
+  for (const isBase64Encoded of [false, true]) {
+    const rejected = await handler(createHttpApiV2Event(
+      "POST", "/mcp", headers, "",
+      isBase64Encoded ? Buffer.from(oversized).toString("base64") : oversized,
+      isBase64Encoded, undefined,
+    ));
+    assert.equal(rejected.statusCode, 413);
+  }
 });
 
 test("MCP handler uses stateless JSON transport with no session identifier", async (): Promise<void> => {

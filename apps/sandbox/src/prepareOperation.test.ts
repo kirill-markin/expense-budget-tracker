@@ -1039,7 +1039,7 @@ for (const mismatch of ["size", "digest"] as const) {
  * broken document and is least like one.
  *
  * Measured against esbuild 0.28.2: a bundle emitted without the createRequire
- * banner of infra/aws/lib/chat-sandbox.ts fails `await import("mammoth")` with
+ * banner of infra/aws/lambda-images/build.mjs fails `await import("mammoth")` with
  * `Dynamic require of "url" is not supported`, and that is what every DOCX of
  * such a deployment would be answered with - permanently, for files that are
  * fine. So the load is labelled where it happens, and prepareSource re-raises
@@ -1089,8 +1089,8 @@ test("a DOCX whose parser this build cannot load is raised rather than answered"
  * import(this.workerSrc)` and fails with "Setting up fake worker failed" -
  * inside phase 2's catch, where the answer is a permanent verdict on the user's
  * file. So a bundle emitted without the static import of pdf.worker.mjs would
- * have had every PDF of that deployment recorded as unconvertible, which is the
- * exact failure the afterBundling guard in infra/aws/lib/chat-sandbox.ts names.
+ * have had every PDF of that deployment recorded as unconvertible, which the
+ * image bundle guard in infra/aws/lambda-images/build.mjs prevents.
  *
  * The global is stubbed rather than deleted, because `??=` would otherwise
  * import the real worker and leave nothing to prove. It reds loadPdfjs without

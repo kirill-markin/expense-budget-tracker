@@ -1,12 +1,3 @@
-/**
- * Request body ceiling shared by the directly exposed container surfaces.
- *
- * API Gateway rejected any payload above its 10 MB hard cap before the
- * integration ran. The containers keep the same ceiling, so a legitimate client
- * sees identical behavior, and an oversized body is refused while it streams
- * instead of being buffered whole.
- */
-
 export const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 
 // Named in the error message, so each surface keeps the wording its own

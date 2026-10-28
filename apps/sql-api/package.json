@@ -14,11 +14,11 @@
     "start:mcp": "node dist/serve-mcp.js"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1151.0",
+    "@aws-sdk/client-secrets-manager": "^3.1158.0",
     "@expense-budget-tracker/agent-shared": "1.7.0",
     "@hono/node-server": "^2.1.5",
-    "@modelcontextprotocol/sdk": "^1.32.1",
-    "hono": "^4.13.13",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "hono": "^4.13.14",
     "pg": "^8.23.1",
     "zod": "^4.6.7"
   },
@@ -30,6 +30,6 @@
     "typescript": "^6.0.3"
   },
   "engines": {
-    "node": "24.x"
+    "node": ">=24.22.1 <25"
   }
 }

@@ -6,6 +6,7 @@ import type {
   StartActiveObservationOpts,
 } from "@langfuse/tracing";
 import { createTraceId, propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import { z } from "zod";
 import type { UnconvertedContentPart } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import { sanitizeContentPartsForTelemetry } from "./responses/input";
@@ -144,8 +145,13 @@ const MASK_PATTERNS: ReadonlyArray<Readonly<{
 
 const MEDIA_DATA_URI_PATTERN = /^data:[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+;base64,([A-Za-z0-9+/]*={0,2})$/;
 
-const metadataValue = (value: string | number | boolean): string =>
-  String(value).slice(0, 200);
+const metadataValue = (value: string | number | boolean): string => {
+  let text = String(value).slice(0, 198);
+  while (JSON.stringify(text).length > 200) {
+    text = text.slice(0, -1);
+  }
+  return text;
+};
 
 const buildTraceMetadata = (
   params: ChatTraceMetadata,
@@ -275,6 +281,13 @@ export const sanitizeLangfuseSerializedTelemetry = (data: unknown): string => {
     );
 };
 
+const telemetryJsonSchema = z.json();
+
+export const sanitizeLangfuseTelemetry = (data: unknown): JsonValue =>
+  typeof data === "string"
+    ? sanitizeLangfuseSerializedTelemetry(data)
+    : sanitizeLangfuseTelemetryValue(telemetryJsonSchema.parse(data));
+
 export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
@@ -312,8 +325,8 @@ export const createLangfuseSpanProcessor = (): LangfuseSpanProcessor | null => {
     release,
     shouldExportSpan: ({ otelSpan }: Readonly<{ otelSpan: ReadableSpan }>): boolean =>
       isDefaultExportSpan(otelSpan),
-    mask: ({ data }: Readonly<{ data: unknown }>): string =>
-      sanitizeLangfuseSerializedTelemetry(data),
+    mask: ({ data }: Readonly<{ data: unknown }>): JsonValue =>
+      sanitizeLangfuseTelemetry(data),
   });
 };
 

@@ -33,6 +33,7 @@ import {
   type McpScope,
 } from "./config.js";
 import { mcpDataServices, type McpDataServices } from "./dataService.js";
+import { MCP_MAX_TOOL_INPUT_ELEMENTS } from "./limits.js";
 import {
   buildMcpSuccessResult,
   buildMcpToolErrorResult,
@@ -261,6 +262,7 @@ export const createMcpServerWithDependencies = (
       icons: [{ src: MCP_ICON_URL, mimeType: "image/svg+xml", sizes: ["any"] }],
     },
     {
+      maxToolInputElements: MCP_MAX_TOOL_INPUT_ELEMENTS,
       instructions: "Start with list_workspaces, then call get_schema before writing SQL. Use sql_query for one read-only SELECT or WITH...SELECT statement (expenses:read) and sql_execute for one approved INSERT, UPDATE, or DELETE statement (expenses:write). Before the first mutation of a task call get_guide with topic writing_data, follow the returned protocol, get explicit user approval for the exact change set, and verify row counts and balances with sql_query afterwards. Call get_guide with topic sql_dialect before writing SQL that uses functions, case-insensitive matching, or date filters, and with topic query_recipes for the canonical read queries before composing reporting SQL by hand: this SQL surface is restricted. If list_workspaces returns multiple workspaces, pass one returned workspaceId to every other tool; omit workspaceId only when exactly one workspace is available. Discover the canonical machine API and authentication onboarding with GET https://api.expense-budget-tracker.com/v1/. The public /v1/openapi.json and /v1/swagger.json routes are source-discovery compatibility probes, not OpenAPI specifications.",
     },
   );

@@ -1,0 +1,4 @@
+{
+  "amd64": "public.ecr.aws/lambda/nodejs@sha256:5e24cf7b98b54d2d782476d9579f8043c5c30e42d7ef97759a67b2940f696b2d",
+  "arm64": "public.ecr.aws/lambda/nodejs@sha256:067e3248e3dd1c497c017b8b51c7a4c4f85957a838652712d49eeb7dcc11e84d"
+}

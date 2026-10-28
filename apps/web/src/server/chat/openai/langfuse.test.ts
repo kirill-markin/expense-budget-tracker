@@ -3,6 +3,7 @@ import test from "node:test";
 import { propagateAttributes, type LangfuseObservation } from "@langfuse/tracing";
 import {
   sanitizeLangfuseSerializedTelemetry,
+  sanitizeLangfuseTelemetry,
   startChatTranscriptionObservationWithDeps,
   startChatTurnObservationWithDeps,
   type ChatTurnObservationOutcome,
@@ -607,6 +608,54 @@ test("sanitizeLangfuseSerializedTelemetry masks nested text while preserving med
     ],
   });
   assert.equal(sanitized.includes(JSON.stringify(MEDIA_DATA_URI)), true);
+});
+
+test("sanitizeLangfuseTelemetry masks structured metadata without changing its JSON shape", (): void => {
+  const metadata = {
+    contact: "alice@example.com",
+    nested: [{ account: 1234567890123456, media: MEDIA_DATA_URI }],
+    enabled: true,
+    count: 42,
+    missing: null,
+  };
+  const original = structuredClone(metadata);
+
+  assert.deepEqual(sanitizeLangfuseTelemetry(metadata), {
+    contact: "<masked-email>",
+    nested: [{ account: "<masked-phone>", media: MEDIA_DATA_URI }],
+    enabled: true,
+    count: 42,
+    missing: null,
+  });
+  assert.deepEqual(metadata, original);
+  assert.equal(sanitizeLangfuseTelemetry("alice@example.com"), "<masked-email>");
+  assert.equal(sanitizeLangfuseTelemetry(1234567890123456), "<masked-phone>");
+  assert.equal(sanitizeLangfuseTelemetry(false), false);
+  assert.equal(sanitizeLangfuseTelemetry(null), null);
+  assert.throws(() => sanitizeLangfuseTelemetry({ invalid: undefined }));
+});
+
+test("startChatTranscriptionObservationWithDeps bounds JSON-encoded propagated metadata", async (): Promise<void> => {
+  const recording = createRecordingObservation();
+  let propagated = false;
+
+  await startChatTranscriptionObservationWithDeps(
+    { ...CHAT_TRANSCRIPTION_PARAMS, fileName: '"\\\n'.repeat(100) },
+    async (): Promise<string> => "transcribed",
+    {
+      ...createObservationDependencies(recording.observation, ignoreLog),
+      propagateAttributes: (attributes, fn) => {
+        propagated = true;
+        const fileName = attributes.metadata?.fileName;
+        assert.equal(typeof fileName, "string");
+        assert.ok(JSON.stringify(fileName).length <= 200);
+        assert.notEqual(fileName, "");
+        return propagateAttributes(attributes, fn);
+      },
+    },
+  );
+
+  assert.equal(propagated, true);
 });
 
 test("sanitizeLangfuseSerializedTelemetry masks malformed media and ordinary text", (): void => {
