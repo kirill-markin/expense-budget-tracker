@@ -1,4 +1,4 @@
 {
-  "amd64": "public.ecr.aws/lambda/nodejs@sha256:b157a991e174a3696e77c991727001756bb4d4ea4bba426d3401e515b9285b0d",
-  "arm64": "public.ecr.aws/lambda/nodejs@sha256:e6b1d506504ce1a6d9d4a3e5a0a3c90aad030517cee74a05bdd5116c2b8326ba"
+  "amd64": "public.ecr.aws/lambda/nodejs@sha256:5e24cf7b98b54d2d782476d9579f8043c5c30e42d7ef97759a67b2940f696b2d",
+  "arm64": "public.ecr.aws/lambda/nodejs@sha256:067e3248e3dd1c497c017b8b51c7a4c4f85957a838652712d49eeb7dcc11e84d"
 }
