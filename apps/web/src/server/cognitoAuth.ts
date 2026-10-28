@@ -93,17 +93,14 @@ export const revokeRefreshToken = async (token: string): Promise<void> => {
 };
 
 export const refreshTokens = async (refreshToken: string): Promise<RefreshResult> => {
-  const result = await cognitoFetch("InitiateAuth", {
-    AuthFlow: "REFRESH_TOKEN_AUTH",
+  const result = await cognitoFetch("GetTokensFromRefreshToken", {
+    RefreshToken: refreshToken,
     ClientId: getClientId(),
-    AuthParameters: {
-      REFRESH_TOKEN: refreshToken,
-    },
   });
 
   const authResult = result.AuthenticationResult as Record<string, unknown> | undefined;
   if (authResult === undefined) {
-    throw new Error("Cognito REFRESH_TOKEN_AUTH did not return AuthenticationResult");
+    throw new Error("Cognito GetTokensFromRefreshToken did not return AuthenticationResult");
   }
 
   const newRefreshToken = authResult.RefreshToken as string | undefined;
