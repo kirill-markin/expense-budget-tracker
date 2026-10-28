@@ -15,8 +15,8 @@ const refreshedAuthenticationResult: Readonly<Record<string, unknown>> = {
 };
 
 const cognitoError = (cognitoType: string, status: number): Error => Object.assign(
-  new Error(`Cognito InitiateAuth failed with ${cognitoType} (HTTP ${status})`),
-  { cognitoType, cognitoStatus: status, cognitoTarget: "InitiateAuth" },
+  new Error(`Cognito GetTokensFromRefreshToken failed with ${cognitoType} (HTTP ${status})`),
+  { cognitoType, cognitoStatus: status, cognitoTarget: "GetTokensFromRefreshToken" },
 );
 
 const withCognitoClientId = async (operation: () => Promise<void>): Promise<void> => {
@@ -33,11 +33,13 @@ const withCognitoClientId = async (operation: () => Promise<void>): Promise<void
 test("Cognito refresh retries a transient network failure and then succeeds", async (): Promise<void> => {
   await withCognitoClientId(async () => {
     let requests = 0;
+    const calls: Array<Readonly<{ target: string; body: Record<string, unknown> }>> = [];
     const delays: Array<number> = [];
     const events: Array<CognitoRefreshRetryEvent> = [];
     const dependencies: RefreshCognitoSessionDependencies = {
-      request: async () => {
+      request: async (target, body) => {
         requests += 1;
+        calls.push({ target, body });
         if (requests === 1) throw new TypeError("fetch failed");
         return refreshedAuthenticationResult;
       },
@@ -48,6 +50,10 @@ test("Cognito refresh retries a transient network failure and then succeeds", as
     const result = await refreshCognitoSessionWithDependencies("sensitive-refresh-token", dependencies);
 
     assert.deepEqual(result, { idToken: "fresh-id-token", refreshToken: "rotated-refresh-token" });
+    assert.deepEqual(calls, [
+      { target: "GetTokensFromRefreshToken", body: { RefreshToken: "sensitive-refresh-token", ClientId: "test-client-id" } },
+      { target: "GetTokensFromRefreshToken", body: { RefreshToken: "sensitive-refresh-token", ClientId: "test-client-id" } },
+    ]);
     assert.equal(requests, 2);
     assert.deepEqual(delays, [100]);
     assert.deepEqual(events, [{
@@ -118,5 +124,45 @@ test("Cognito refresh does not retry a definitive authentication rejection", asy
     assert.equal(requests, 1);
     assert.deepEqual(delays, []);
     assert.deepEqual(events, []);
+  });
+});
+
+test("Cognito refresh treats a rotated-out refresh token as definitive", async (): Promise<void> => {
+  await withCognitoClientId(async () => {
+    let requests = 0;
+    const delays: Array<number> = [];
+    const events: Array<CognitoRefreshRetryEvent> = [];
+    const reuse = cognitoError("RefreshTokenReuseException", 400);
+    const dependencies: RefreshCognitoSessionDependencies = {
+      request: async () => {
+        requests += 1;
+        throw reuse;
+      },
+      delay: async (milliseconds) => { delays.push(milliseconds); },
+      logRetry: (event) => { events.push(event); },
+    };
+
+    await assert.rejects(
+      refreshCognitoSessionWithDependencies("rotated-out-refresh-token", dependencies),
+      (error: unknown) => error === reuse,
+    );
+    assert.equal(isDefinitiveCognitoRefreshRejection(reuse), true);
+    assert.equal(requests, 1);
+    assert.deepEqual(delays, []);
+    assert.deepEqual(events, []);
+  });
+});
+
+test("Cognito refresh keeps the submitted token when the response omits a rotated one", async (): Promise<void> => {
+  await withCognitoClientId(async () => {
+    const dependencies: RefreshCognitoSessionDependencies = {
+      request: async () => ({ AuthenticationResult: { IdToken: "fresh-id-token" } }),
+      delay: async () => { throw new Error("unexpected retry delay"); },
+      logRetry: () => { throw new Error("unexpected retry log"); },
+    };
+
+    const result = await refreshCognitoSessionWithDependencies("non-rotating-refresh-token", dependencies);
+
+    assert.deepEqual(result, { idToken: "fresh-id-token", refreshToken: undefined });
   });
 });
