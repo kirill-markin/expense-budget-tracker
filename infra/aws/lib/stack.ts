@@ -153,7 +153,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       stackId: this.stackId,
       webService: comp.webService,
       migrateTaskDef: comp.migrateTaskDef,
-      migrateLogGroup: comp.migrateLogGroup,
       cluster: comp.cluster,
       fxFetcher: fx.fxFetcher,
       githubRepo,
