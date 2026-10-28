@@ -1,7 +1,7 @@
 # Built from the repository root: this is an npm workspace and the only
 # lockfile lives there (see apps/auth/Dockerfile for the same layout).
 FROM node:24.22.1-alpine AS npm
-RUN npm install --global npm@12.2.0
+RUN npm install --global npm@12.2.1
 
 FROM npm AS deps
 
@@ -10,7 +10,7 @@ WORKDIR /workspace
 # apps/sandbox/package.json is deliberately missing from the list below: it
 # would pull just-bash's 91 MB vendored CPython tree into every image, and the
 # sandbox ships as a Lambda bundle instead. `npm ci` reconciles the lockfile
-# without it; verified on npm 11.17.0 and 12.2.0.
+# without it.
 COPY .npmrc package.json package-lock.json ./
 COPY apps/auth/package.json apps/auth/package.json
 COPY apps/sql-api/package.json apps/sql-api/package.json
