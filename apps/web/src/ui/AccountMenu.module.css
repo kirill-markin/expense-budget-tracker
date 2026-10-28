@@ -24,7 +24,12 @@
   top: 100%;
   inset-inline-end: 0;
   margin-top: 4px;
+  /* The popup is absolutely positioned inside a wrapper sized to the trigger
+     button, so its shrink-to-fit width collapses to min-width. Sizing it to its
+     own content lets a typical account address fit on one line. */
+  width: max-content;
   min-width: 180px;
+  max-width: 240px;
   background: var(--bg);
   border: 1px solid var(--panel-border);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
@@ -41,6 +46,7 @@
   font-family: inherit;
   font-size: 12px;
   text-align: start;
+  overflow-wrap: anywhere;
   cursor: var(--cursor-pointer);
 }
 
@@ -57,6 +63,14 @@
 .itemCreate {
   color: var(--muted);
   font-style: italic;
+}
+
+.accountEmail {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: start;
+  overflow-wrap: anywhere;
 }
 
 .sectionLabel {
