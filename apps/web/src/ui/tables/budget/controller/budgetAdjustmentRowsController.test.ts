@@ -16,6 +16,7 @@ import {
   BudgetAdjustmentApiError,
   type DeleteBudgetAdjustmentOutcome,
 } from "@/ui/tables/budget/budgetTableApi";
+import { createYearTotalInvalidationScheduler } from "@/ui/tables/budget/controller/useBudgetTableYearTotals";
 
 type Deferred<T> = Readonly<{
   promise: Promise<T>;
@@ -1943,4 +1944,51 @@ test("activate does not schedule a suspended timer beside an active row flush", 
   secondPatch.resolve(applyPatch(initial, { amount: 3 }));
   assert.equal(await activeFlush, "saved");
   assert.equal(harness.runtime.getSnapshot().pendingMutationCount, 0);
+});
+
+test("adjustment mutations reach the shared coalescing path as one refetch per year", async (): Promise<void> => {
+  const first = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
+  const second = createAdjustment(SECOND_ID, 1, "2026-08", "Travel", null);
+  const harness = createHarness([first, second]);
+  harness.runtime.commands.replaceDraft(
+    FIRST_ID,
+    createDraft("2", "2026-07", "Food", ""),
+  );
+  assert.equal(await harness.runtime.commands.flushRow(FIRST_ID), "saved");
+  harness.runtime.commands.replaceDraft(
+    SECOND_ID,
+    createDraft("3", "2026-08", "Travel", ""),
+  );
+  assert.equal(await harness.runtime.commands.flushRow(SECOND_ID), "saved");
+  assert.deepEqual(
+    harness.invalidatedYears.map((years): ReadonlyArray<string> => [...years].sort()),
+    [["2026"], ["2026"]],
+  );
+
+  const pendingTimers = new Map<number, () => void>();
+  const refetchedYears: Array<ReadonlyArray<string>> = [];
+  let nextTimeoutId = 1;
+  const scheduler = createYearTotalInvalidationScheduler({
+    setTimer: (callback): number => {
+      const timeoutId = nextTimeoutId;
+      nextTimeoutId += 1;
+      pendingTimers.set(timeoutId, callback);
+      return timeoutId;
+    },
+    clearTimer: (timeoutId): void => {
+      pendingTimers.delete(timeoutId);
+    },
+    invalidateYears: (years): void => {
+      refetchedYears.push([...years].sort());
+    },
+  });
+  for (const years of harness.invalidatedYears) {
+    scheduler.schedule(years);
+  }
+  assert.equal(pendingTimers.size, 1);
+
+  for (const callback of [...pendingTimers.values()]) {
+    callback();
+  }
+  assert.deepEqual(refetchedYears, [["2026"]]);
 });

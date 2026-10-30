@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { BudgetRangeExtension } from "@/ui/tables/budget/budgetTableLogic";
+import { getTargetFillMonths } from "@/ui/tables/budget/budgetTableLogic";
+import type { BudgetBaseCell } from "@/ui/tables/budget/budgetBaseRangeReconciliation";
 import {
   buildBudgetViewportRetryKey,
+  getAcknowledgedBaseYears,
   retainPendingBudgetViewportRetryProgress,
   selectBudgetViewportRangeExtension,
 } from "@/ui/tables/budget/controller/useBudgetTableRangeState";
@@ -105,4 +108,24 @@ test("retains only retry progress for exact keys that remain pending", (): void 
 
   assert.deepEqual([...retained.keys()], [pendingKey]);
   assert.deepEqual([...progressByKey.keys()], [pendingKey, obsoleteKey]);
+});
+
+test("invalidates the single year a base plan acknowledgement changed", (): void => {
+  assert.deepEqual(
+    [...getAcknowledgedBaseYears([
+      { month: "2026-07", direction: "spend", category: "Food" },
+    ])],
+    ["2026"],
+  );
+});
+
+test("invalidates one year for a fill-months acknowledgement", (): void => {
+  const cells = getTargetFillMonths("2026-07").map((month): BudgetBaseCell => ({
+    month,
+    direction: "spend",
+    category: "Food",
+  }));
+
+  assert.deepEqual(cells.at(-1)?.month, "2026-12");
+  assert.deepEqual([...getAcknowledgedBaseYears(cells)], ["2026"]);
 });

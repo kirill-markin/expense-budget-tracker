@@ -209,6 +209,14 @@ export const isFutureMonth = (month: string, currentMonth: string): boolean => m
 
 export const isDecember = (month: string): boolean => month.endsWith("-12");
 
+/**
+ * Calendar years the given months belong to, which are exactly the year totals
+ * a mutation of those months can change.
+ */
+export const getAffectedYears = (
+  months: ReadonlyArray<string>,
+): ReadonlySet<string> => new Set(months.map((month): string => getYear(month)));
+
 export const monthToDateFrom = (month: string): string => `${month}-01`;
 
 export const monthToDateTo = (month: string): string => {

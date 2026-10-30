@@ -5,6 +5,7 @@ import type { BudgetGridResult, BudgetRow, BusinessPersonalTransferCell, Cumulat
 import { offsetMonth } from "@/lib/monthUtils";
 import {
   adjustCumulativeBeforeForPrependedRows,
+  getAffectedYears,
   getBudgetRangeExtension,
   getTargetFillMonths,
   type BudgetPlansMode,
@@ -90,6 +91,13 @@ type UseBudgetTableRangeStateParams = Readonly<{
     signal: AbortSignal,
   ) => Promise<BudgetAdjustmentRangeLoadOutcome>;
   onCategoryEdited: (direction: string, category: string) => void;
+  /**
+   * Called with the calendar years of the cells a base plan mutation was just
+   * acknowledged for, so their year totals refetch from the server. Only
+   * acknowledgements report: an optimistic save would send the refetch ahead
+   * of the write it is supposed to read back.
+   */
+  onYearTotalsInvalidated: (years: ReadonlySet<string>) => void;
 }>;
 
 export type BudgetTableRangeState = Readonly<{
@@ -249,6 +257,16 @@ const getPendingBudgetViewportRangeExtensions = (
   return extensions;
 };
 
+/**
+ * Year totals a base plan acknowledgement changed, read off the cells the
+ * acknowledgement actually applied to.
+ */
+export const getAcknowledgedBaseYears = (
+  cells: ReadonlyArray<BudgetBaseCell>,
+): ReadonlySet<string> => getAffectedYears(
+  cells.map((cell): string => cell.month),
+);
+
 const enumerateRangeMonths = (
   monthFrom: string,
   monthTo: string,
@@ -357,6 +375,7 @@ export const useBudgetTableRangeState = ({
   onVisibleRangeRefreshEnd,
   loadBudgetRange,
   onCategoryEdited,
+  onYearTotalsInvalidated,
 }: UseBudgetTableRangeStateParams): BudgetTableRangeState => {
   const [allRows, setAllRows] = useState<ReadonlyArray<BudgetRow>>(rows);
   const [
@@ -744,7 +763,8 @@ export const useBudgetTableRangeState = ({
     setAllRows((previous): ReadonlyArray<BudgetRow> => (
       applyBudgetBaseToRows(previous, cell, baseValue)
     ));
-  }, [publishBaseAcknowledgements]);
+    onYearTotalsInvalidated(getAcknowledgedBaseYears(currentCells));
+  }, [onYearTotalsInvalidated, publishBaseAcknowledgements]);
 
   const handleFillMonthsAcknowledged = useCallback((
     sourceMonth: string,
@@ -775,7 +795,8 @@ export const useBudgetTableRangeState = ({
         previous,
       )
     ));
-  }, [publishBaseAcknowledgements]);
+    onYearTotalsInvalidated(getAcknowledgedBaseYears(currentCells));
+  }, [onYearTotalsInvalidated, publishBaseAcknowledgements]);
 
   const refreshLoadedRange = useCallback((): void => {
     enqueueRangeRequest(runVisibleRangeRefresh, "visible range refresh coordination");

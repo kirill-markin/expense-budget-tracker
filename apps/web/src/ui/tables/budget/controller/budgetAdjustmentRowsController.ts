@@ -43,6 +43,7 @@ import {
   BudgetAdjustmentApiError,
   type DeleteBudgetAdjustmentOutcome,
 } from "@/ui/tables/budget/budgetTableApi";
+import { getAffectedYears } from "@/ui/tables/budget/budgetTableLogic";
 
 export type BudgetAdjustmentCellLocation = Readonly<{
   month: string;
@@ -190,9 +191,6 @@ export const classifyBudgetAdjustmentFailure = (
     && error.status < 500
     ? "definitive"
     : "ambiguous";
-
-const getAffectedYears = (months: ReadonlyArray<string>): ReadonlySet<string> =>
-  new Set(months.map((month): string => month.slice(0, 4)));
 
 const enumerateMonths = (monthFrom: string, monthTo: string): ReadonlyArray<string> => {
   const months: Array<string> = [];
