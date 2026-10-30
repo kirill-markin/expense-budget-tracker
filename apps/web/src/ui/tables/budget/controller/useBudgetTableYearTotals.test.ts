@@ -5,6 +5,7 @@ import type { YearFetchResult } from "@/ui/tables/budget/budgetTableLogic";
 import {
   addYearTotalStaleMarks,
   buildYearTotalRequest,
+  computeYearTotals,
   createYearTotalInvalidationScheduler,
   getObservedYearsToFetch,
   removeInvalidatedYearFetchResults,
@@ -154,6 +155,28 @@ test("keeps the cached totals identity when the dropped year was never fetched",
   const cached = new Map<string, YearFetchResult>([["2027", emptyYearResult()]]);
 
   assert.equal(removeInvalidatedYearFetchResults(cached, new Set(["2026"])), cached);
+});
+
+test("leaves a stale year uncomputed while keeping its entry for the refetch", (): void => {
+  const cached = new Map<string, YearFetchResult>([
+    ["2025", emptyYearResult()],
+    ["2026", emptyYearResult()],
+  ]);
+  const staleYears = addYearTotalStaleMarks(new Set(), new Set(["2026"]));
+
+  const computed = computeYearTotals(cached, staleYears, "2026-08", null, "actuals");
+
+  assert.deepEqual([...computed.keys()], ["2025"]);
+  assert.deepEqual(
+    getObservedYearsToFetch(
+      new Set(["2025", "2026"]),
+      new Set(cached.keys()),
+      staleYears,
+      new Map(),
+      new Map([["2026", 1]]),
+    ),
+    [{ year: "2026", revision: 1 }],
+  );
 });
 
 test("coalesces a burst of invalidations for one year into a single refetch", (): void => {
