@@ -28,8 +28,8 @@ export type BudgetTableYearTotalsState = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   /**
    * Edit invalidation: the affected year totals refetch once the burst of
-   * requests for each of them settles, and keep rendering their previously
-   * fetched value until the fresh one lands.
+   * requests for each of them settles, and stay unresolved until the fresh
+   * value lands, so their columns load instead of showing a stale number.
    */
   scheduleYearTotalsInvalidation: (years: ReadonlySet<string>) => void;
   /**
@@ -130,8 +130,8 @@ export const createYearTotalInvalidationScheduler = (
 };
 
 /**
- * A stale mark keeps the year's last fetched total on screen while its refetch
- * is pending, and is what makes that refetch run at all: the cached entry is
+ * A stale mark withholds the year's last fetched total while its refetch is
+ * pending, and is what makes that refetch run at all: the cached entry is
  * still there, so nothing else would ask for the year again.
  *
  * Adding always returns a new set, including for a year already marked: the
@@ -190,6 +190,41 @@ export const removeInvalidatedYearFetchResults = (
     next.delete(year);
   }
   return next.size === previous.size ? previous : next;
+};
+
+/**
+ * Totals of every cached year that currently reads true. A year marked stale is
+ * being refetched, so it resolves to nothing instead of to the number its last
+ * reading produced, which an edit has already made wrong.
+ */
+export const computeYearTotals = (
+  yearFetchResults: ReadonlyMap<string, YearFetchResult>,
+  staleYears: ReadonlySet<string>,
+  currentMonth: string,
+  effectiveAllowlist: ReadonlySet<string> | null,
+  plansMode: BudgetPlansMode,
+): ReadonlyMap<string, YearTotalComputed> => {
+  const result = new Map<string, YearTotalComputed>();
+  for (const [year, data] of yearFetchResults) {
+    if (staleYears.has(year)) {
+      continue;
+    }
+    result.set(
+      year,
+      computeYearTotal(
+        data.rows,
+        data.cumulativeBefore,
+        data.monthEndBalances,
+        data.monthEndBalancesByLiquidity,
+        data.businessPersonalTransfers,
+        year,
+        currentMonth,
+        effectiveAllowlist,
+        plansMode,
+      ),
+    );
+  }
+  return result;
 };
 
 export const snapshotYearTotalInvalidation = (
@@ -465,8 +500,7 @@ export const useBudgetTableYearTotals = ({
             failure,
           );
           // Nothing is going to refresh this year any more, so the retained
-          // total has nothing left to wait for and the column falls back to
-          // its loading skeleton.
+          // entry has nothing left to wait for and goes with its stale mark.
           setStaleYears((previous): ReadonlySet<string> => (
             removeYearTotalStaleMarks(previous, new Set([year]))
           ));
@@ -517,26 +551,15 @@ export const useBudgetTableYearTotals = ({
     }
   }, [advanceYearRetryTrigger, currentMonth, observedYears, refreshToken, staleYears, yearFetchResults, yearRetryTrigger]);
 
-  const yearComputed = useMemo<ReadonlyMap<string, YearTotalComputed>>(() => {
-    const result = new Map<string, YearTotalComputed>();
-    for (const [year, data] of yearFetchResults) {
-      result.set(
-        year,
-        computeYearTotal(
-          data.rows,
-          data.cumulativeBefore,
-          data.monthEndBalances,
-          data.monthEndBalancesByLiquidity,
-          data.businessPersonalTransfers,
-          year,
-          currentMonth,
-          effectiveAllowlist,
-          plansMode,
-        ),
-      );
-    }
-    return result;
-  }, [yearFetchResults, currentMonth, effectiveAllowlist, plansMode]);
+  const yearComputed = useMemo<ReadonlyMap<string, YearTotalComputed>>(() => (
+    computeYearTotals(
+      yearFetchResults,
+      staleYears,
+      currentMonth,
+      effectiveAllowlist,
+      plansMode,
+    )
+  ), [yearFetchResults, staleYears, currentMonth, effectiveAllowlist, plansMode]);
 
   const scheduleYearTotalsInvalidation = useCallback((
     years: ReadonlySet<string>,
