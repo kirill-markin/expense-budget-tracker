@@ -5,6 +5,7 @@ import { generateMonthRange } from "@/lib/monthUtils";
 import {
   buildBudgetValueColumns,
   buildColumnSequence,
+  getAffectedYears,
   getBudgetDisplayRange,
   getBudgetRangeExtension,
   getTargetFillMonths,
@@ -219,4 +220,12 @@ test("starts no month divider in the default mode", (): void => {
     columnSequence.map((_column, index) => startsBudgetMonthDivider(columnSequence, index, "2026-03", "actuals")),
     columnSequence.map(() => false),
   );
+});
+
+test("collapses affected months into their distinct calendar years", (): void => {
+  assert.deepEqual(
+    [...getAffectedYears(["2026-07", "2026-12", "2027-01"])].sort(),
+    ["2026", "2027"],
+  );
+  assert.deepEqual([...getAffectedYears([])], []);
 });

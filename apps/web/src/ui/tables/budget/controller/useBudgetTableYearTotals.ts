@@ -18,9 +18,24 @@ import {
   logBudgetTableWarning,
 } from "@/ui/tables/budget/table/logBudgetTableError";
 
+/**
+ * How long the last invalidation request for a year waits before its refetch
+ * runs, so a burst of edits inside one year costs a single server read.
+ */
+export const YEAR_TOTAL_INVALIDATION_COALESCE_DELAY_MS = 800;
+
 export type BudgetTableYearTotalsState = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
-  invalidateYearTotals: (years: ReadonlySet<string>) => void;
+  /**
+   * Edit invalidation: the affected year totals refetch once the burst of
+   * requests for each of them settles, and keep rendering their previously
+   * fetched value until the fresh one lands.
+   */
+  scheduleYearTotalsInvalidation: (years: ReadonlySet<string>) => void;
+  /**
+   * Mode-switch and range-refresh invalidation: every year total is dropped at
+   * once, so no column keeps a number the switch already made misleading.
+   */
   resetYearTotals: () => void;
 }>;
 
@@ -64,9 +79,86 @@ export const buildYearTotalRequest = (
   actualTo: currentMonth,
 });
 
+export type YearTotalInvalidationScheduler = Readonly<{
+  /** Restarts the coalescing window of every given year. */
+  schedule: (years: ReadonlySet<string>) => void;
+  cancelAll: () => void;
+}>;
+
+type YearTotalInvalidationSchedulerDependencies = Readonly<{
+  setTimer: (callback: () => void, delayMs: number) => number;
+  clearTimer: (timeoutId: number) => void;
+  invalidateYears: (years: ReadonlySet<string>) => void;
+}>;
+
+/**
+ * The single owner of the per-year coalescing timers every edit invalidation
+ * passes through, whether it comes from a base plan cell or an adjustment. One
+ * year holds at most one timer, so a burst produces exactly one invalidation
+ * for that year once its last request stops resetting the window.
+ */
+export const createYearTotalInvalidationScheduler = (
+  dependencies: YearTotalInvalidationSchedulerDependencies,
+): YearTotalInvalidationScheduler => {
+  const timeoutIdByYear = new Map<string, number>();
+  const cancelYear = (year: string): void => {
+    const timeoutId = timeoutIdByYear.get(year);
+    if (timeoutId === undefined) {
+      return;
+    }
+    dependencies.clearTimer(timeoutId);
+    timeoutIdByYear.delete(year);
+  };
+
+  return {
+    schedule: (years): void => {
+      for (const year of years) {
+        cancelYear(year);
+        const timeoutId = dependencies.setTimer((): void => {
+          timeoutIdByYear.delete(year);
+          dependencies.invalidateYears(new Set([year]));
+        }, YEAR_TOTAL_INVALIDATION_COALESCE_DELAY_MS);
+        timeoutIdByYear.set(year, timeoutId);
+      }
+    },
+    cancelAll: (): void => {
+      for (const year of [...timeoutIdByYear.keys()]) {
+        cancelYear(year);
+      }
+    },
+  };
+};
+
+/**
+ * A stale mark keeps the year's last fetched total on screen while its refetch
+ * is pending, and is what makes that refetch run at all: the cached entry is
+ * still there, so nothing else would ask for the year again.
+ *
+ * Adding always returns a new set, including for a year already marked: the
+ * revision behind the mark changed, so the fetch planning effect has to run
+ * again. Removing may return the previous set, since it only ever withdraws a
+ * request to fetch.
+ */
+export const addYearTotalStaleMarks = (
+  previous: ReadonlySet<string>,
+  years: ReadonlySet<string>,
+): ReadonlySet<string> => new Set([...previous, ...years]);
+
+export const removeYearTotalStaleMarks = (
+  previous: ReadonlySet<string>,
+  years: ReadonlySet<string>,
+): ReadonlySet<string> => {
+  const next = new Set(previous);
+  for (const year of years) {
+    next.delete(year);
+  }
+  return next.size === previous.size ? previous : next;
+};
+
 export const getObservedYearsToFetch = (
   observedYears: ReadonlySet<string>,
   fetchedYears: ReadonlySet<string>,
+  staleYears: ReadonlySet<string>,
   fetchingRevisionByYear: ReadonlyMap<string, number>,
   revisionByYear: ReadonlyMap<string, number>,
 ): ReadonlyArray<Readonly<{ year: string; revision: number }>> => (
@@ -75,7 +167,7 @@ export const getObservedYearsToFetch = (
     .flatMap((year): ReadonlyArray<Readonly<{ year: string; revision: number }>> => {
       const revision = revisionByYear.get(year) ?? 0;
       if (
-        fetchedYears.has(year)
+        (fetchedYears.has(year) && !staleYears.has(year))
         || fetchingRevisionByYear.get(year) === revision
       ) {
         return [];
@@ -107,6 +199,7 @@ export const useBudgetTableYearTotals = ({
   refreshToken,
 }: UseBudgetTableYearTotalsParams): BudgetTableYearTotalsState => {
   const [yearFetchResults, setYearFetchResults] = useState<ReadonlyMap<string, YearFetchResult>>(new Map());
+  const [staleYears, setStaleYears] = useState<ReadonlySet<string>>(new Set());
   const [yearRetryTrigger, setYearRetryTrigger] = useState<number>(0);
   const yearFetchingRef = useRef<Map<string, number>>(new Map());
   const yearRevisionRef = useRef<Map<string, number>>(new Map());
@@ -128,6 +221,44 @@ export const useBudgetTableYearTotals = ({
       return value + 1;
     });
   }, []);
+
+  /**
+   * Abandons whatever is in flight or waiting for the given years, so the next
+   * fetch planning pass owns them at a fresh revision.
+   */
+  const discardYearTotalProgress = useCallback((years: ReadonlySet<string>): void => {
+    for (const year of years) {
+      yearRevisionRef.current.set(year, (yearRevisionRef.current.get(year) ?? 0) + 1);
+      yearFetchingRef.current.delete(year);
+      yearRetryProgressRef.current.delete(year);
+      const scheduledRetry = yearRetryTimerRef.current.get(year);
+      if (scheduledRetry !== undefined) {
+        window.clearTimeout(scheduledRetry.timeoutId);
+        yearRetryTimerRef.current.delete(year);
+      }
+    }
+  }, []);
+
+  const markYearTotalsStale = useCallback((years: ReadonlySet<string>): void => {
+    const invalidatedYears = snapshotYearTotalInvalidation(years);
+    discardYearTotalProgress(invalidatedYears);
+    setStaleYears((previous): ReadonlySet<string> => (
+      addYearTotalStaleMarks(previous, invalidatedYears)
+    ));
+  }, [discardYearTotalProgress]);
+
+  const invalidationSchedulerRef = useRef<YearTotalInvalidationScheduler | null>(null);
+  if (invalidationSchedulerRef.current === null) {
+    invalidationSchedulerRef.current = createYearTotalInvalidationScheduler({
+      setTimer: (callback, delayMs): number => window.setTimeout(callback, delayMs),
+      clearTimer: (timeoutId): void => {
+        window.clearTimeout(timeoutId);
+      },
+      invalidateYears: markYearTotalsStale,
+    });
+  }
+  const invalidationScheduler: YearTotalInvalidationScheduler =
+    invalidationSchedulerRef.current;
 
   useEffect(() => {
     const abortController = lifecycleAbortControllerRef.current;
@@ -159,6 +290,7 @@ export const useBudgetTableYearTotals = ({
         window.clearTimeout(timeoutId);
       }
       yearRetryTimerRef.current.clear();
+      invalidationSchedulerRef.current?.cancelAll();
     };
   }, [advanceYearRetryTrigger]);
 
@@ -175,6 +307,7 @@ export const useBudgetTableYearTotals = ({
     const yearsToFetch = getObservedYearsToFetch(
       observedYears,
       new Set(yearFetchResults.keys()),
+      staleYears,
       unavailableRevisionByYear,
       yearRevisionRef.current,
     );
@@ -223,6 +356,9 @@ export const useBudgetTableYearTotals = ({
             if (acceptedRetryRecord?.revision === revision) {
               yearRetryProgressRef.current.delete(year);
             }
+            setStaleYears((previous): ReadonlySet<string> => (
+              removeYearTotalStaleMarks(previous, new Set([year]))
+            ));
             setYearFetchResults((previous) => new Map([
               ...previous,
               [
@@ -323,6 +459,15 @@ export const useBudgetTableYearTotals = ({
             `year total background fetch for ${year} after ${cycleCompletion.progress.completedCycleCount} cycles`,
             failure,
           );
+          // Nothing is going to refresh this year any more, so the retained
+          // total has nothing left to wait for and the column falls back to
+          // its loading skeleton.
+          setStaleYears((previous): ReadonlySet<string> => (
+            removeYearTotalStaleMarks(previous, new Set([year]))
+          ));
+          setYearFetchResults((previous) => (
+            removeInvalidatedYearFetchResults(previous, new Set([year]))
+          ));
           return;
         }
 
@@ -365,7 +510,7 @@ export const useBudgetTableYearTotals = ({
       };
       void runYearFetchCycle();
     }
-  }, [advanceYearRetryTrigger, currentMonth, observedYears, refreshToken, yearFetchResults, yearRetryTrigger]);
+  }, [advanceYearRetryTrigger, currentMonth, observedYears, refreshToken, staleYears, yearFetchResults, yearRetryTrigger]);
 
   const yearComputed = useMemo<ReadonlyMap<string, YearTotalComputed>>(() => {
     const result = new Map<string, YearTotalComputed>();
@@ -388,35 +533,42 @@ export const useBudgetTableYearTotals = ({
     return result;
   }, [yearFetchResults, currentMonth, effectiveAllowlist, plansMode]);
 
-  const invalidateYearTotals = useCallback((years: ReadonlySet<string>): void => {
-    const invalidatedYears = snapshotYearTotalInvalidation(years);
-    for (const year of invalidatedYears) {
-      yearRevisionRef.current.set(year, (yearRevisionRef.current.get(year) ?? 0) + 1);
-      yearFetchingRef.current.delete(year);
-      yearRetryProgressRef.current.delete(year);
-      const scheduledRetry = yearRetryTimerRef.current.get(year);
-      if (scheduledRetry !== undefined) {
-        window.clearTimeout(scheduledRetry.timeoutId);
-        yearRetryTimerRef.current.delete(year);
-      }
-    }
-    setYearFetchResults((previous) => removeInvalidatedYearFetchResults(previous, invalidatedYears));
-  }, []);
+  const scheduleYearTotalsInvalidation = useCallback((
+    years: ReadonlySet<string>,
+  ): void => {
+    invalidationScheduler.schedule(years);
+  }, [invalidationScheduler]);
 
   const resetYearTotals = useCallback((): void => {
     const years = new Set<string>([
       ...yearFetchResults.keys(),
+      ...staleYears,
       ...yearFetchingRef.current.keys(),
       ...yearRetryProgressRef.current.keys(),
       ...yearRetryTimerRef.current.keys(),
       ...observedYears,
     ]);
-    invalidateYearTotals(years);
-  }, [invalidateYearTotals, observedYears, yearFetchResults]);
+    // A reset changes what every year total means, so no edit invalidation may
+    // survive it to retain a number from the previous reading.
+    invalidationScheduler.cancelAll();
+    discardYearTotalProgress(years);
+    setStaleYears((previous): ReadonlySet<string> => (
+      removeYearTotalStaleMarks(previous, years)
+    ));
+    setYearFetchResults((previous) => (
+      removeInvalidatedYearFetchResults(previous, years)
+    ));
+  }, [
+    discardYearTotalProgress,
+    invalidationScheduler,
+    observedYears,
+    staleYears,
+    yearFetchResults,
+  ]);
 
   return {
     yearComputed,
-    invalidateYearTotals,
+    scheduleYearTotalsInvalidation,
     resetYearTotals,
   };
 };

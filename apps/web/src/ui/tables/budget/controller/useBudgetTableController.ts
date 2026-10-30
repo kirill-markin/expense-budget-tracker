@@ -193,7 +193,7 @@ export const useBudgetTableController = (
   const displayRange = useMemo(() => getBudgetDisplayRange(currentMonth), [currentMonth]);
   const [observedYearTotals, setObservedYearTotals] = useState<ReadonlySet<string>>(new Set());
   const resetYearTotalsRef = useRef<() => void>(() => undefined);
-  const invalidateYearTotalsRef = useRef<(years: ReadonlySet<string>) => void>(
+  const scheduleYearTotalsInvalidationRef = useRef<(years: ReadonlySet<string>) => void>(
     () => undefined,
   );
   const handleVisibleRangeRefreshStart = useCallback((): void => {
@@ -219,8 +219,10 @@ export const useBudgetTableController = (
     ));
   }, []);
 
-  const invalidateAdjustmentYears = useCallback((years: ReadonlySet<string>): void => {
-    invalidateYearTotalsRef.current(years);
+  // The one edit-invalidation entry point both mutation paths use: base plan
+  // cells through the range state, adjustments through their own controller.
+  const invalidateEditedYears = useCallback((years: ReadonlySet<string>): void => {
+    scheduleYearTotalsInvalidationRef.current(years);
   }, []);
 
   // A category the user touches in this session stays visible until the page
@@ -260,7 +262,7 @@ export const useBudgetTableController = (
     currentMonth,
     rangePlansMode: getBudgetRangeFetchPlansMode(plansMode, loadedPlansMode),
     refreshToken,
-    invalidateYears: invalidateAdjustmentYears,
+    invalidateYears: invalidateEditedYears,
   });
 
   // Retaining a cell means its adjustment editor is open, which is the single
@@ -298,9 +300,10 @@ export const useBudgetTableController = (
     onVisibleRangeRefreshEnd: handleVisibleRangeRefreshEnd,
     loadBudgetRange: budgetAdjustments.loadRange,
     onCategoryEdited: markCategoryEdited,
+    onYearTotalsInvalidated: invalidateEditedYears,
   });
 
-  const { yearComputed, invalidateYearTotals, resetYearTotals } = useBudgetTableYearTotals({
+  const { yearComputed, scheduleYearTotalsInvalidation, resetYearTotals } = useBudgetTableYearTotals({
     observedYears: observedYearTotals,
     currentMonth,
     plansMode: loadedPlansMode,
@@ -308,7 +311,7 @@ export const useBudgetTableController = (
     refreshToken,
   });
   resetYearTotalsRef.current = resetYearTotals;
-  invalidateYearTotalsRef.current = invalidateYearTotals;
+  scheduleYearTotalsInvalidationRef.current = scheduleYearTotalsInvalidation;
 
   const rowsWithAdjustments = useMemo<ReadonlyArray<BudgetRow>>(
     () => budgetAdjustments.applyToBudgetRows(
