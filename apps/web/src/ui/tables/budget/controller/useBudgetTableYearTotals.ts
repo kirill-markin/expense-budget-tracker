@@ -577,7 +577,7 @@ export const useBudgetTableYearTotals = ({
       ...observedYears,
     ]);
     // A reset changes what every year total means, so no edit invalidation may
-    // survive it to retain a number from the previous reading.
+    // survive it to withhold or refetch a total the reset already dropped.
     invalidationScheduler.cancelAll();
     discardYearTotalProgress(years);
     setStaleYears((previous): ReadonlySet<string> => (

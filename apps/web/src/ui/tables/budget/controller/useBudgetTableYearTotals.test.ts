@@ -167,6 +167,7 @@ test("leaves a stale year uncomputed while keeping its entry for the refetch", (
   const computed = computeYearTotals(cached, staleYears, "2026-08", null, "actuals");
 
   assert.deepEqual([...computed.keys()], ["2025"]);
+  assert.deepEqual([...cached.keys()], ["2025", "2026"]);
   assert.deepEqual(
     getObservedYearsToFetch(
       new Set(["2025", "2026"]),
