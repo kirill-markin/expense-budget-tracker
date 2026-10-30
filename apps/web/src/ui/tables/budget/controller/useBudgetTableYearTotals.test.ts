@@ -136,21 +136,24 @@ test("stops refetching a year once a landed fresh result clears its mark", (): v
   );
 });
 
-test("drops the retained stale total when a year exhausts its retries", (): void => {
+test("drops a year's cached total and stale mark together", (): void => {
   const cached = new Map<string, YearFetchResult>([
     ["2026", emptyYearResult()],
     ["2027", emptyYearResult()],
   ]);
   const staleYears = addYearTotalStaleMarks(new Set(), new Set(["2026"]));
-  // The column read the retained total for as long as the refetch could still
-  // land; exhaustion takes both the mark and the number away.
-  assert.equal(cached.has("2026"), true);
 
   assert.deepEqual(
     [...removeInvalidatedYearFetchResults(cached, new Set(["2026"])).keys()],
     ["2027"],
   );
   assert.deepEqual([...removeYearTotalStaleMarks(staleYears, new Set(["2026"]))], []);
+});
+
+test("keeps the cached totals identity when the dropped year was never fetched", (): void => {
+  const cached = new Map<string, YearFetchResult>([["2027", emptyYearResult()]]);
+
+  assert.equal(removeInvalidatedYearFetchResults(cached, new Set(["2026"])), cached);
 });
 
 test("coalesces a burst of invalidations for one year into a single refetch", (): void => {
