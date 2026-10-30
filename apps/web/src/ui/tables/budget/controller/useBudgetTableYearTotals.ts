@@ -176,6 +176,11 @@ export const getObservedYearsToFetch = (
     })
 );
 
+/**
+ * Returns the previous map when no year was cached, like the stale marks do: a
+ * fresh map identity costs a render and a full re-run of the fetch planning
+ * effect, and a drop that removed nothing has nothing for either to react to.
+ */
 export const removeInvalidatedYearFetchResults = (
   previous: ReadonlyMap<string, YearFetchResult>,
   years: ReadonlySet<string>,
@@ -184,7 +189,7 @@ export const removeInvalidatedYearFetchResults = (
   for (const year of years) {
     next.delete(year);
   }
-  return next;
+  return next.size === previous.size ? previous : next;
 };
 
 export const snapshotYearTotalInvalidation = (
@@ -558,7 +563,12 @@ export const useBudgetTableYearTotals = ({
     setYearFetchResults((previous) => (
       removeInvalidatedYearFetchResults(previous, years)
     ));
+    // Both drops above may keep their previous value, so the reset asks for the
+    // replan itself instead of relying on one of them to change identity: the
+    // discarded revisions are what every year has to be fetched at now.
+    advanceYearRetryTrigger();
   }, [
+    advanceYearRetryTrigger,
     discardYearTotalProgress,
     invalidationScheduler,
     observedYears,

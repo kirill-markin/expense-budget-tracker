@@ -1946,7 +1946,7 @@ test("activate does not schedule a suspended timer beside an active row flush", 
   assert.equal(harness.runtime.getSnapshot().pendingMutationCount, 0);
 });
 
-test("adjustment mutations reach the shared coalescing path as one refetch per year", async (): Promise<void> => {
+test("feeds recorded adjustment years into the scheduler as one refetch per year", async (): Promise<void> => {
   const first = createAdjustment(FIRST_ID, 1, "2026-07", "Food", null);
   const second = createAdjustment(SECOND_ID, 1, "2026-08", "Travel", null);
   const harness = createHarness([first, second]);
