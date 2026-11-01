@@ -42,7 +42,7 @@ import {
 } from "./results.js";
 
 const SERVER_NAME = "expense-budget-tracker";
-const SERVER_VERSION = "1.7.0";
+const SERVER_VERSION = "1.8.0";
 
 const guideTopicSchema = z.enum(AGENT_GUIDE_TOPICS).describe(
   getAgentToolInputFieldDescription(GET_GUIDE_TOOL, "topic"),
