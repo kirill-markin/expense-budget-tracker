@@ -12,7 +12,7 @@
     "just-bash": "3.6.0",
     "mammoth": "^1.13.0",
     "pdf-lib": "1.17.1",
-    "pdfjs-dist": "6.4.299",
+    "pdfjs-dist": "6.5.438",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.6.7"
   },
@@ -23,6 +23,6 @@
     "typescript": "^6.0.3"
   },
   "engines": {
-    "node": ">=24.22.1 <25"
+    "node": ">=24.22.2 <25"
   }
 }
