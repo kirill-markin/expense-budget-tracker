@@ -20,6 +20,7 @@ import {
 } from "../../stream/hooks/chatAutoScroll";
 import {
   getDurationParts,
+  getElapsedMs,
   splitAssistantWorkBlock,
 } from "../../stream/display/assistantWorkBlock";
 import {
@@ -133,7 +134,7 @@ const WorkingForTitle = (props: Readonly<{ startedAt: number }>): ReactElement =
     return () => window.clearInterval(intervalId);
   }, []);
 
-  return <>{t("chat.workingFor", { duration: formatWorkDuration(Math.max(0, now - startedAt), t) })}</>;
+  return <>{t("chat.workingFor", { duration: formatWorkDuration(getElapsedMs(startedAt, now), t) })}</>;
 };
 
 const renderWorkBlockTitle = (
@@ -145,7 +146,7 @@ const renderWorkBlockTitle = (
   if (message.completedAt === undefined) return t("chat.worked");
   // A mid-stream snapshot refresh sets a server-clock timestamp, then the live finish stamps a browser-clock completedAt.
   return t("chat.workedFor", {
-    duration: formatWorkDuration(Math.max(0, message.completedAt - message.timestamp), t),
+    duration: formatWorkDuration(getElapsedMs(message.timestamp, message.completedAt), t),
   });
 };
 
