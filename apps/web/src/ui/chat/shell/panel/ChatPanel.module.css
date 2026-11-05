@@ -166,7 +166,8 @@
 }
 
 .messageAssistant {
-  align-self: flex-start;
+  align-self: stretch;
+  max-width: none;
   padding-inline: 0;
 }
 
@@ -280,7 +281,7 @@
   margin-block-end: 0;
 }
 
-.workBlock[open] {
+.workBlockWithEndLine[open] {
   padding-block-end: var(--chat-block-gap);
   border-block-end: 1px solid var(--soft-border);
 }
