@@ -2,9 +2,12 @@ import type { ToolCallContentPart } from "@/server/chat/types";
 
 type Translate = (key: string) => string;
 
+export type ToolStatusKind = "completed" | "failed" | "incomplete" | "in_progress";
+
 export type ToolCallDisplayState = Readonly<{
   label: string;
   statusLabel: string;
+  statusKind: ToolStatusKind;
   input: string | null;
   output: string | null;
 }>;
@@ -34,17 +37,21 @@ export const formatToolLabel = (
 };
 
 /**
- * Maps the provider status to the localized summary label shown beside a tool.
- *
  * The provider can report richer states than the transcript-level
  * `started/completed` flag, so the UI prefers the provider status when present.
  */
+const normalizeToolStatus = (
+  status: "started" | "completed",
+  providerStatus: string | null | undefined,
+): string => providerStatus ?? (status === "completed" ? "completed" : "running");
+
+/** Maps the provider status to the localized summary label shown beside a tool. */
 export const formatToolStatusLabel = (
   status: "started" | "completed",
   providerStatus: string | null | undefined,
   t: Translate,
 ): string => {
-  const normalizedStatus = providerStatus ?? (status === "completed" ? "completed" : "running");
+  const normalizedStatus = normalizeToolStatus(status, providerStatus);
   if (normalizedStatus === "running") return t("chat.toolStatusRunning");
   if (normalizedStatus === "in_progress") return t("chat.toolStatusInProgress");
   if (normalizedStatus === "interpreting") return t("chat.toolStatusInterpreting");
@@ -53,6 +60,18 @@ export const formatToolStatusLabel = (
   if (normalizedStatus === "failed") return t("chat.toolStatusFailed");
   if (normalizedStatus === "incomplete") return t("chat.toolStatusIncomplete");
   return normalizedStatus.replaceAll("_", " ");
+};
+
+/** Every status other than the three terminal ones renders as still running. */
+const getToolStatusKind = (
+  status: "started" | "completed",
+  providerStatus: string | null | undefined,
+): ToolStatusKind => {
+  const normalizedStatus = normalizeToolStatus(status, providerStatus);
+  if (normalizedStatus === "completed") return "completed";
+  if (normalizedStatus === "failed") return "failed";
+  if (normalizedStatus === "incomplete") return "incomplete";
+  return "in_progress";
 };
 
 /**
@@ -184,6 +203,9 @@ export const getToolCallDisplayState = (
     statusLabel: isFailedTool
       ? t("chat.toolStatusFailed")
       : formatToolStatusLabel(toolCall.status, toolCall.providerStatus, t),
+    statusKind: isFailedTool
+      ? "failed"
+      : getToolStatusKind(toolCall.status, toolCall.providerStatus),
     input: formatToolInput(toolCall.name, toolCall.input),
     output: isTerminal
       ? formatToolOutput(toolCall.name, toolCall.output)

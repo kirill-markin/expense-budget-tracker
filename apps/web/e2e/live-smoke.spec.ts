@@ -204,7 +204,7 @@ test.describe.serial("live smoke: auth, transactions, balances, budget, and AI c
 
       await expect.poll(
         async () => {
-          const tableText = await page.locator("table").first().textContent();
+          const tableText = await page.locator("table:not([data-testid='chat-panel'] table)").first().textContent();
           return tableText ?? "";
         },
         { timeout: externalUiTimeoutMs },

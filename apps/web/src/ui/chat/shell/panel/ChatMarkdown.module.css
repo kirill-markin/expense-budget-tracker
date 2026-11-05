@@ -1,0 +1,125 @@
+/* The wrapper keeps no padding or border so block margins collapse with adjacent tool rows. */
+.markdown {
+  white-space: normal;
+}
+
+.markdown > :first-child {
+  margin-block-start: 0;
+}
+
+.markdown > :last-child {
+  margin-block-end: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote,
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6,
+.markdown hr,
+.tableScroll {
+  margin-block: var(--chat-block-gap);
+  margin-inline: 0;
+}
+
+.markdown h1,
+.markdown h2 {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-inline-start: 20px;
+}
+
+.markdown ul {
+  list-style: disc;
+}
+
+.markdown ol {
+  list-style: decimal;
+}
+
+.markdown li > ul,
+.markdown li > ol,
+.markdown li > p {
+  margin-block: 0;
+}
+
+.markdown a {
+  text-decoration: underline;
+}
+
+.markdown code {
+  font-family: inherit;
+  font-size: 12px;
+  background: var(--subtle-bg);
+  padding-inline: 3px;
+}
+
+.markdown pre {
+  padding: 6px 8px;
+  background: var(--subtle-bg);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown blockquote {
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--panel-border);
+  color: var(--muted);
+}
+
+.markdown hr {
+  border: 0;
+  border-block-start: 1px solid var(--panel-border);
+}
+
+.tableScroll {
+  max-inline-size: 100%;
+  overflow-x: auto;
+}
+
+.markdown table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.markdown th,
+.markdown td {
+  padding: 4px 8px;
+  border: 1px solid var(--panel-border);
+  text-align: start;
+  vertical-align: top;
+  /* Undo the inherited mid-token breaking so wide tables scroll in .tableScroll. */
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.markdown th {
+  font-weight: 700;
+  background: var(--subtle-bg);
+}

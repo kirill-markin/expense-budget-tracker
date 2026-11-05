@@ -20,7 +20,11 @@ import {
 } from "../../stream/hooks/chatAutoScroll";
 import { getOrderedMessageBlocks } from "../../stream/display/messageContentOrder";
 import { getAssistantStreamingIndicator } from "../../stream/display/thinkingSummary";
-import { getToolCallDisplayState } from "../../stream/display/toolCallDisplay";
+import {
+  getToolCallDisplayState,
+  type ToolCallDisplayState,
+} from "../../stream/display/toolCallDisplay";
+import { ChatMarkdown } from "./ChatMarkdown";
 import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
@@ -78,6 +82,28 @@ const cacheScrollPosition = (
   return nextCache;
 };
 
+const renderToolStatus = (
+  displayState: ToolCallDisplayState,
+): ReactElement | null => {
+  if (displayState.statusKind === "completed") return null;
+  return (
+    <>
+      {" "}
+      <span
+        className={cn(
+          styles.toolCallStatus,
+          displayState.statusKind === "failed" ? styles.toolCallStatusFailed : "",
+        )}
+      >
+        {displayState.statusLabel}
+      </span>
+      {displayState.statusKind === "in_progress" && (
+        <span aria-hidden="true" className={styles.dots} />
+      )}
+    </>
+  );
+};
+
 const renderMessageContent = (
   message: StoredMessage,
   t: (key: string, params?: Readonly<Record<string, string | number>>) => string,
@@ -92,17 +118,20 @@ const renderMessageContent = (
     }
 
     if (block.type === "text") {
+      if (message.role === "assistant") {
+        return <ChatMarkdown key={`t-${index}`} text={block.text} />;
+      }
       return <span key={`t-${index}`}>{block.text}</span>;
     }
 
     if (block.type === "tool_call") {
       const displayState = getToolCallDisplayState(block.part, (key) => t(key));
       return (
-        <details
-          key={`tc-${index}`}
-          className={cn(styles.toolCall, block.part.status === "started" ? styles.toolCallStarted : "")}
-        >
-          <summary className={styles.toolCallSummary}>{`${displayState.label} (${displayState.statusLabel})`}</summary>
+        <details key={`tc-${index}`} className={styles.toolCall}>
+          <summary className={styles.toolCallSummary}>
+            {displayState.label}
+            {renderToolStatus(displayState)}
+          </summary>
           {displayState.input !== null && (
             <pre className={styles.toolCallInput}>{displayState.input}</pre>
           )}
@@ -114,10 +143,7 @@ const renderMessageContent = (
     }
 
     return (
-      <details
-        key={`rs-${index}`}
-        className={cn(styles.toolCall, styles.reasoningSummary)}
-      >
+      <details key={`rs-${index}`} className={styles.toolCall}>
         <summary className={styles.toolCallSummary}>{t("chat.thinkingSummary")}</summary>
         <pre className={cn(styles.toolCallOutput, styles.reasoningSummaryContent)}>{block.part.summary}</pre>
       </details>

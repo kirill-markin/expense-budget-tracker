@@ -63,14 +63,29 @@ test("a failed SQL tool call is labelled failed from its shared error envelope",
   });
 
   for (const name of SQL_TOOL_NAMES) {
-    assert.equal(
-      getToolCallDisplayState(createToolCall(name, failedOutput), translate).statusLabel,
-      "chat.toolStatusFailed",
+    const failedState = getToolCallDisplayState(createToolCall(name, failedOutput), translate);
+    assert.equal(failedState.statusLabel, "chat.toolStatusFailed");
+    assert.equal(failedState.statusKind, "failed");
+
+    const completedState = getToolCallDisplayState(
+      createToolCall(name, "{\"ok\":true,\"data\":{},\"instructions\":\"\"}"),
+      translate,
     );
-    assert.equal(
-      getToolCallDisplayState(createToolCall(name, "{\"ok\":true,\"data\":{},\"instructions\":\"\"}"), translate)
-        .statusLabel,
-      "chat.toolStatusCompleted",
-    );
+    assert.equal(completedState.statusLabel, "chat.toolStatusCompleted");
+    assert.equal(completedState.statusKind, "completed");
+  }
+});
+
+test("a tool call's status kind follows the provider status that picks its label", (): void => {
+  const completedCall = createToolCall("sql_query", "{\"ok\":true,\"data\":{},\"instructions\":\"\"}");
+  const cases: ReadonlyArray<Readonly<{ toolCall: ToolCallContentPart; statusKind: string }>> = [
+    { toolCall: { ...completedCall, status: "started", providerStatus: undefined }, statusKind: "in_progress" },
+    { toolCall: { ...completedCall, status: "started", providerStatus: "searching" }, statusKind: "in_progress" },
+    { toolCall: { ...completedCall, providerStatus: "failed" }, statusKind: "failed" },
+    { toolCall: { ...completedCall, providerStatus: "incomplete" }, statusKind: "incomplete" },
+  ];
+
+  for (const { toolCall, statusKind } of cases) {
+    assert.equal(getToolCallDisplayState(toolCall, translate).statusKind, statusKind);
   }
 });
