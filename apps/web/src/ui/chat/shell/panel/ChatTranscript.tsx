@@ -18,7 +18,14 @@ import {
   getChatScrollDistanceToBottom,
   getNextAutoScrollPinnedState,
 } from "../../stream/hooks/chatAutoScroll";
-import { getOrderedMessageBlocks } from "../../stream/display/messageContentOrder";
+import {
+  getDurationParts,
+  splitAssistantWorkBlock,
+} from "../../stream/display/assistantWorkBlock";
+import {
+  getOrderedMessageBlocks,
+  type OrderedMessageBlock,
+} from "../../stream/display/messageContentOrder";
 import { getAssistantStreamingIndicator } from "../../stream/display/thinkingSummary";
 import {
   getToolCallDisplayState,
@@ -104,51 +111,138 @@ const renderToolStatus = (
   );
 };
 
-const renderMessageContent = (
+type Translate = (key: string, params?: Readonly<Record<string, string | number>>) => string;
+
+const formatWorkDuration = (durationMs: number, t: Translate): string => {
+  const { hours, minutes, seconds } = getDurationParts(durationMs);
+  if (hours > 0) return t("chat.durationHours", { hours, minutes });
+  if (minutes > 0) return t("chat.durationMinutes", { minutes, seconds });
+  return t("chat.durationSeconds", { seconds });
+};
+
+const WORKING_DURATION_TICK_MS = 1000;
+
+/** Live "Working for …"; the browser clock may run behind a server-provided start, hence the clamp. */
+const WorkingForTitle = (props: Readonly<{ startedAt: number }>): ReactElement => {
+  const { startedAt } = props;
+  const { t } = useTranslation();
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNow(Date.now()), WORKING_DURATION_TICK_MS);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  return <>{t("chat.workingFor", { duration: formatWorkDuration(Math.max(0, now - startedAt), t) })}</>;
+};
+
+const renderWorkBlockTitle = (
   message: StoredMessage,
-  t: (key: string, params?: Readonly<Record<string, string | number>>) => string,
+  isRunning: boolean,
+  t: Translate,
+): ReactElement | string => {
+  if (isRunning) return <WorkingForTitle startedAt={message.timestamp} />;
+  if (message.completedAt === undefined) return t("chat.worked");
+  // A mid-stream snapshot refresh sets a server-clock timestamp, then the live finish stamps a browser-clock completedAt.
+  return t("chat.workedFor", {
+    duration: formatWorkDuration(Math.max(0, message.completedAt - message.timestamp), t),
+  });
+};
+
+const renderMessageBlock = (
+  message: StoredMessage,
+  block: OrderedMessageBlock,
+  key: string,
+  t: Translate,
 ): ReactElement => {
-  const elements: Array<ReactElement> = getOrderedMessageBlocks(message).map((block, index) => {
-    if (block.type === "attachments") {
-      return (
-        <span key={`a-${index}`}>
-          {`[${block.parts.map(getAttachmentLabel).join(", ")}]\n`}
-        </span>
-      );
-    }
-
-    if (block.type === "text") {
-      if (message.role === "assistant") {
-        return <ChatMarkdown key={`t-${index}`} text={block.text} />;
-      }
-      return <span key={`t-${index}`}>{block.text}</span>;
-    }
-
-    if (block.type === "tool_call") {
-      const displayState = getToolCallDisplayState(block.part, (key) => t(key));
-      return (
-        <details key={`tc-${index}`} className={styles.toolCall}>
-          <summary className={styles.toolCallSummary}>
-            {displayState.label}
-            {renderToolStatus(displayState)}
-          </summary>
-          {displayState.input !== null && (
-            <pre className={styles.toolCallInput}>{displayState.input}</pre>
-          )}
-          {displayState.output !== null && (
-            <pre className={styles.toolCallOutput}>{displayState.output}</pre>
-          )}
-        </details>
-      );
-    }
-
+  if (block.type === "attachments") {
     return (
-      <details key={`rs-${index}`} className={styles.toolCall}>
-        <summary className={styles.toolCallSummary}>{t("chat.thinkingSummary")}</summary>
-        <pre className={cn(styles.toolCallOutput, styles.reasoningSummaryContent)}>{block.part.summary}</pre>
+      <span key={key}>
+        {`[${block.parts.map(getAttachmentLabel).join(", ")}]\n`}
+      </span>
+    );
+  }
+
+  if (block.type === "text") {
+    if (message.role === "assistant") {
+      return <ChatMarkdown key={key} text={block.text} />;
+    }
+    return <span key={key}>{block.text}</span>;
+  }
+
+  if (block.type === "tool_call") {
+    const displayState = getToolCallDisplayState(block.part, (toolKey) => t(toolKey));
+    return (
+      <details key={key} className={styles.toolCall} data-testid="chat-tool-call">
+        <summary className={styles.toolCallSummary}>
+          {displayState.label}
+          {renderToolStatus(displayState)}
+        </summary>
+        {displayState.input !== null && (
+          <pre className={styles.toolCallInput}>{displayState.input}</pre>
+        )}
+        {displayState.output !== null && (
+          <pre className={styles.toolCallOutput}>{displayState.output}</pre>
+        )}
       </details>
     );
-  });
+  }
+
+  return (
+    <details key={key} className={styles.toolCall}>
+      <summary className={styles.toolCallSummary}>{t("chat.thinkingSummary")}</summary>
+      <pre className={cn(styles.toolCallOutput, styles.reasoningSummaryContent)}>{block.part.summary}</pre>
+    </details>
+  );
+};
+
+/**
+ * The work block of an assistant reply: tool calls, reasoning, and intermediate text
+ * before the final answer. It stays open while the reply runs and whenever the reply
+ * did not finish cleanly with an answer; React only writes `open` when this value
+ * changes, so a manual toggle survives unrelated re-renders.
+ */
+const renderAssistantContent = (
+  message: StoredMessage,
+  isRunning: boolean,
+  isFollowedByAssistantError: boolean,
+  t: Translate,
+): ReadonlyArray<ReactElement> => {
+  const blocks = getOrderedMessageBlocks(message);
+  const { attachments, work, answer } = splitAssistantWorkBlock(blocks);
+  if (work.length === 0) {
+    return blocks.map((block, index) => renderMessageBlock(message, block, `b-${index}`, t));
+  }
+
+  const hasAnswer = answer.some((block) => block.text.trim().length > 0);
+  const isOpen = isRunning
+    || !hasAnswer
+    || message.isStopped
+    || message.isError
+    || isFollowedByAssistantError;
+
+  return [
+    ...attachments.map((block, index) => renderMessageBlock(message, block, `a-${index}`, t)),
+    <details key="work" className={styles.workBlock} open={isOpen}>
+      <summary className={styles.workBlockSummary}>
+        {renderWorkBlockTitle(message, isRunning, t)}
+      </summary>
+      {work.map((block, index) => renderMessageBlock(message, block, `w-${index}`, t))}
+    </details>,
+    ...answer.map((block, index) => renderMessageBlock(message, block, `t-${index}`, t)),
+  ];
+};
+
+const renderMessageContent = (
+  message: StoredMessage,
+  isRunning: boolean,
+  isFollowedByAssistantError: boolean,
+  t: Translate,
+): ReactElement => {
+  const elements = message.role === "assistant"
+    ? renderAssistantContent(message, isRunning, isFollowedByAssistantError, t)
+    : getOrderedMessageBlocks(message).map((block, index) =>
+      renderMessageBlock(message, block, `b-${index}`, t));
 
   return (
     <>
@@ -372,6 +466,10 @@ export const ChatTranscript = (props: Props): ReactElement => {
           isAssistantRunActive,
           isLastAssistant,
         );
+        const nextMessage: StoredMessage | undefined = messages[index + 1];
+        const isFollowedByAssistantError = nextMessage !== undefined
+          && nextMessage.role === "assistant"
+          && nextMessage.isError;
 
         return (
           <div
@@ -382,7 +480,12 @@ export const ChatTranscript = (props: Props): ReactElement => {
               message.isError ? styles.messageError : "",
             )}
           >
-            {renderMessageContent(message, t)}
+            {renderMessageContent(
+              message,
+              isLastAssistant,
+              isFollowedByAssistantError,
+              t,
+            )}
             {streamingIndicator === "thinking" && (
               <span className={styles.thinkingIndicator}>
                 <span>{t("chat.thinking")}</span>

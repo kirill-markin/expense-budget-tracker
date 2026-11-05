@@ -13,6 +13,8 @@ export type StoredMessage = Readonly<{
   timestamp: number;
   isError: boolean;
   isStopped: boolean;
+  /** Epoch ms when an assistant reply finished; absent while it runs or when unknown. */
+  completedAt?: number;
 }>;
 
 type OrderedAssistantPart = TextContentPart | ToolCallContentPart | ReasoningSummaryContentPart;
@@ -328,9 +330,13 @@ export const applyAssistantError = (
     return [...messages, errorMessage];
   }
 
+  // A reply followed by an error did not finish, so it carries no finish time;
+  // the server's chat history response applies the same rule.
+  const { completedAt: _completedAt, ...unfinished } = last;
+
   if (last.content.length === 0) {
     const updated: StoredMessage = {
-      ...last,
+      ...unfinished,
       content: errorMessage.content,
       isError: true,
       isStopped: false,
@@ -338,5 +344,5 @@ export const applyAssistantError = (
     return [...messages.slice(0, -1), updated];
   }
 
-  return [...messages, errorMessage];
+  return [...messages.slice(0, -1), unfinished, errorMessage];
 };

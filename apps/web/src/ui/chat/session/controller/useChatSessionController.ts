@@ -996,7 +996,11 @@ export const useChatSessionController = (
       if (streamResult.requestAcceptance === "accepted") {
         publishSessionChange(pendingChatTurn.sessionId);
       }
-      if (streamResult.receivedContent) {
+      if (
+        streamResult.receivedContent
+        && !streamResult.wasAborted
+        && streamResult.streamFailure === null
+      ) {
         finalizeAssistant();
       }
       dispatchAction({ type: "live_stream_disconnected" });
@@ -2033,7 +2037,11 @@ export const useChatSessionController = (
       publishSessionChange(runGuard.target.sessionId);
     }
 
-    if (streamResult.receivedContent) {
+    if (
+      streamResult.receivedContent
+      && !streamResult.wasAborted
+      && streamResult.streamFailure === null
+    ) {
       finalizeAssistant();
     }
     dispatchAction({ type: "live_stream_disconnected" });

@@ -1098,6 +1098,7 @@ test("getChatRouteWithDeps exposes exact active turn identity without internal h
       role: "assistant",
       content: publicContent,
       timestamp: 123,
+      completedAt: 456,
       isError: false,
       isStopped: false,
     }],

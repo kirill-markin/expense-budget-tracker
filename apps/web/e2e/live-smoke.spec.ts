@@ -281,7 +281,7 @@ async function readLedgerInsertToolCalls(
   page: Page,
 ): Promise<ReadonlyArray<CompletedLedgerInsertToolCall>> {
   return page.evaluate(() => {
-    return Array.from(document.querySelectorAll("details"))
+    return Array.from(document.querySelectorAll("details[data-testid='chat-tool-call']"))
       .map((detail) => {
         const summary = detail.querySelector("summary")?.textContent?.trim() ?? "";
         const blocks = Array.from(detail.querySelectorAll("pre"))

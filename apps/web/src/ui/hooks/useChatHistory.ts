@@ -95,8 +95,20 @@ export const useChatHistory = (): ChatHistoryState => {
   }, []);
 
   const finalizeAssistant = useCallback((): void => {
-    // Trigger a save by touching state (the useEffect will persist)
-    setMessages((prev) => [...prev]);
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (
+        last === undefined
+        || last.role !== "assistant"
+        || last.completedAt !== undefined
+        || last.isError
+        || last.isStopped
+      ) {
+        return [...prev];
+      }
+      const completed: StoredMessage = { ...last, completedAt: Date.now() };
+      return [...prev.slice(0, -1), completed];
+    });
   }, []);
 
   const markAssistantError = useCallback((errorText: string): void => {

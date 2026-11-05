@@ -249,6 +249,44 @@
   display: none;
 }
 
+.workBlock {
+  display: block;
+  margin-block: var(--chat-block-gap);
+}
+
+.workBlockSummary {
+  cursor: var(--cursor-pointer);
+  color: var(--muted);
+  font-size: 12px;
+  list-style: none;
+  user-select: none;
+}
+
+.workBlockSummary::before {
+  content: "\25B6";
+  display: inline-block;
+  margin-inline-end: 6px;
+  font-size: 9px;
+  transition: transform 0.15s ease;
+}
+
+.workBlockSummary::-webkit-details-marker {
+  display: none;
+}
+
+.workBlock[open] > .workBlockSummary {
+  margin-block-end: var(--chat-block-gap);
+}
+
+.workBlock[open] > .workBlockSummary::before {
+  transform: rotate(90deg);
+}
+
+.workBlock:not([open]) > .workBlockSummary {
+  padding-block-end: 6px;
+  border-block-end: 1px solid var(--soft-border);
+}
+
 .toolCallStatus {
   font-size: 11px;
 }

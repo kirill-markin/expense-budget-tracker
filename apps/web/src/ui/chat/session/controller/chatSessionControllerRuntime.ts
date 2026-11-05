@@ -329,6 +329,10 @@ export function assertValidChatSessionSnapshot(
       || !Number.isFinite(message.timestamp)
       || typeof message.isError !== "boolean"
       || typeof message.isStopped !== "boolean"
+      || (
+        message.completedAt !== undefined
+        && (typeof message.completedAt !== "number" || !Number.isFinite(message.completedAt))
+      )
     ) {
       throw new ChatSessionSnapshotSchemaError(
         `Chat session snapshot included an invalid persisted message: sessionId=${snapshot.sessionId}, messageId=${message.messageId}`,

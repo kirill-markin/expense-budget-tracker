@@ -69,6 +69,7 @@ export type ChatHistoryResponse = Readonly<{
     timestamp: number;
     isError: boolean;
     isStopped: boolean;
+    completedAt?: number;
   }>>;
 }>;
 
@@ -184,14 +185,30 @@ const withoutDocumentBytes = (
 
 const toChatHistoryMessage = (
   message: ChatSessionSnapshot["messages"][number],
-): ChatHistoryResponse["messages"][number] => ({
-  messageId: message.itemId,
-  role: message.role,
-  content: withoutDocumentBytes(message.content),
-  timestamp: message.timestamp,
-  isError: message.isError,
-  isStopped: message.isStopped,
-});
+  index: number,
+  messages: ChatSessionSnapshot["messages"],
+): ChatHistoryResponse["messages"][number] => {
+  const next = messages[index + 1];
+  // A completed assistant item was last updated by its completion, so
+  // `updatedAt` is the time the reply finished. A completed item directly
+  // followed by an assistant error is the partial content of a failed run
+  // (its `updatedAt` can be the much later recovery time), so it has no
+  // finish time; `applyAssistantError` in `lib/chatHistory.ts` keeps the
+  // client to the same rule.
+  const hasFinished = message.role === "assistant"
+    && message.state === "completed"
+    && !(next !== undefined && next.role === "assistant" && next.isError);
+
+  return {
+    messageId: message.itemId,
+    role: message.role,
+    content: withoutDocumentBytes(message.content),
+    timestamp: message.timestamp,
+    isError: message.isError,
+    isStopped: message.isStopped,
+    ...(hasFinished ? { completedAt: message.updatedAt } : {}),
+  };
+};
 
 const getActiveTurnId = (
   snapshot: ChatSessionSnapshot,

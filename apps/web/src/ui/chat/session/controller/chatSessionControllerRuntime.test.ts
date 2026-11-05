@@ -316,6 +316,34 @@ test("client, active-turn, and persisted-message identities match canonical Zod 
   }
 });
 
+test("snapshot validation accepts a numeric finish time and rejects any other", (): void => {
+  const createSnapshot = (completedAt: unknown): unknown => ({
+    sessionId: "session-finish-time",
+    runState: "idle",
+    activeTurnId: null,
+    updatedAt: 20,
+    mainContentInvalidationVersion: 0,
+    messages: [{
+      messageId: TURN_ID,
+      role: "assistant",
+      content: [{ type: "text", text: "Done" }],
+      timestamp: 10,
+      isError: false,
+      isStopped: false,
+      completedAt,
+    }],
+  });
+
+  assert.doesNotThrow((): void => {
+    assertValidChatSessionSnapshot(createSnapshot(20));
+  });
+  for (const invalidCompletedAt of ["20", null, Number.NaN]) {
+    assert.throws((): void => {
+      assertValidChatSessionSnapshot(createSnapshot(invalidCompletedAt));
+    }, ChatSessionSnapshotSchemaError);
+  }
+});
+
 test("accepted and restored snapshots preserve exact active turn ownership until terminal", (): void => {
   const pendingOwner = {
     ownerId: Symbol("pending-owner"),
