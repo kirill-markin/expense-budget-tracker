@@ -274,6 +274,10 @@
   display: none;
 }
 
+.workBlock > :last-child {
+  margin-block-end: 0;
+}
+
 .workBlock[open] > .workBlockSummary {
   margin-block-end: var(--chat-block-gap);
 }

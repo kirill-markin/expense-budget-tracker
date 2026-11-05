@@ -39,6 +39,10 @@ export const splitAssistantWorkBlock = (
   };
 };
 
+/** Clamped at zero: the start and end may come from different clocks. */
+export const getElapsedMs = (startMs: number, endMs: number): number =>
+  Math.max(0, endMs - startMs);
+
 export const getDurationParts = (durationMs: number): DurationParts => {
   if (!Number.isFinite(durationMs) || durationMs < 0) {
     throw new Error(

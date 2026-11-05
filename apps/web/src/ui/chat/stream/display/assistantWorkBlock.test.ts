@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getDurationParts, splitAssistantWorkBlock } from "./assistantWorkBlock";
+import { getDurationParts, getElapsedMs, splitAssistantWorkBlock } from "./assistantWorkBlock";
 import type { OrderedMessageBlock } from "./messageContentOrder";
 
 const text = (value: string): OrderedMessageBlock => ({ type: "text", text: value });
@@ -95,4 +95,9 @@ test("duration parts floor to whole seconds, minutes, and hours", (): void => {
 
 test("a negative duration is rejected with its value", (): void => {
   assert.throws(() => getDurationParts(-1), /got -1\./);
+});
+
+test("elapsed time is the span between start and end, clamped at zero", (): void => {
+  assert.equal(getElapsedMs(1_000, 4_500), 3_500);
+  assert.equal(getElapsedMs(4_500, 1_000), 0);
 });
