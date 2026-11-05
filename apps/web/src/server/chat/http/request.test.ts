@@ -186,3 +186,91 @@ test("the session snapshot names every document of a message and carries no byte
     { type: "text", text: "Import this" },
   ]);
 });
+
+test("the session snapshot carries a finish time only for completed assistant replies", (): void => {
+  const createItem = (
+    itemId: string,
+    role: "user" | "assistant",
+    state: ChatSessionSnapshot["messages"][number]["state"],
+  ): ChatSessionSnapshot["messages"][number] => ({
+    itemId,
+    sessionId: "session-id",
+    role,
+    content: [{ type: "text", text: itemId }],
+    state,
+    isError: state === "error",
+    isStopped: state === "cancelled",
+    timestamp: 100,
+    updatedAt: 250,
+  });
+  const snapshot: ChatSessionSnapshot = {
+    sessionId: "session-id",
+    runState: "idle",
+    updatedAt: 250,
+    activeRunId: null,
+    activeRunHeartbeatAt: null,
+    mainContentInvalidationVersion: 0,
+    messages: [
+      createItem("user-completed", "user", "completed"),
+      createItem("assistant-completed", "assistant", "completed"),
+      createItem("assistant-in-progress", "assistant", "in_progress"),
+      createItem("assistant-error", "assistant", "error"),
+      createItem("assistant-cancelled", "assistant", "cancelled"),
+    ],
+  };
+
+  const messages = toChatHistoryResponse(snapshot).messages;
+
+  assert.deepEqual(
+    messages.map((message) => [message.messageId, "completedAt" in message, message.completedAt]),
+    [
+      ["user-completed", false, undefined],
+      ["assistant-completed", true, 250],
+      ["assistant-in-progress", false, undefined],
+      ["assistant-error", false, undefined],
+      ["assistant-cancelled", false, undefined],
+    ],
+  );
+});
+
+test("the session snapshot gives no finish time to the partial reply of a failed run", (): void => {
+  const createAssistantItem = (
+    itemId: string,
+    state: "completed" | "error",
+    updatedAt: number,
+  ): ChatSessionSnapshot["messages"][number] => ({
+    itemId,
+    sessionId: "session-id",
+    role: "assistant",
+    content: [{ type: "text", text: itemId }],
+    state,
+    isError: state === "error",
+    isStopped: false,
+    timestamp: 100,
+    updatedAt,
+  });
+  const snapshot: ChatSessionSnapshot = {
+    sessionId: "session-id",
+    runState: "idle",
+    updatedAt: 90_000_000,
+    activeRunId: null,
+    activeRunHeartbeatAt: null,
+    mainContentInvalidationVersion: 0,
+    messages: [
+      createAssistantItem("assistant-finished", "completed", 250),
+      createAssistantItem("assistant-partial", "completed", 90_000_000),
+      createAssistantItem("assistant-error", "error", 90_000_000),
+    ],
+  };
+
+  const messages = toChatHistoryResponse(snapshot).messages;
+
+  assert.deepEqual(
+    messages.map((message) => [message.messageId, "completedAt" in message, message.completedAt]),
+    [
+      ["assistant-finished", true, 250],
+      ["assistant-partial", false, undefined],
+      ["assistant-error", false, undefined],
+    ],
+  );
+});
