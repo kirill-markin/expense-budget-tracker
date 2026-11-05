@@ -260,6 +260,8 @@
   font-size: 12px;
   list-style: none;
   user-select: none;
+  padding-block-end: 6px;
+  border-block-end: 1px solid var(--soft-border);
 }
 
 .workBlockSummary::before {
@@ -278,17 +280,17 @@
   margin-block-end: 0;
 }
 
+.workBlock[open] {
+  padding-block-end: var(--chat-block-gap);
+  border-block-end: 1px solid var(--soft-border);
+}
+
 .workBlock[open] > .workBlockSummary {
   margin-block-end: var(--chat-block-gap);
 }
 
 .workBlock[open] > .workBlockSummary::before {
   transform: rotate(90deg);
-}
-
-.workBlock:not([open]) > .workBlockSummary {
-  padding-block-end: 6px;
-  border-block-end: 1px solid var(--soft-border);
 }
 
 .toolCallStatus {
