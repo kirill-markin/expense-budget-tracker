@@ -6,6 +6,7 @@ import {
   formatToolInput,
   formatToolOutput,
   getToolCallDisplayState,
+  type ToolStatusKind,
 } from "./toolCallDisplay";
 
 const SQL = "SELECT account_id FROM accounts";
@@ -78,7 +79,7 @@ test("a failed SQL tool call is labelled failed from its shared error envelope",
 
 test("a tool call's status kind follows the provider status that picks its label", (): void => {
   const completedCall = createToolCall("sql_query", "{\"ok\":true,\"data\":{},\"instructions\":\"\"}");
-  const cases: ReadonlyArray<Readonly<{ toolCall: ToolCallContentPart; statusKind: string }>> = [
+  const cases: ReadonlyArray<Readonly<{ toolCall: ToolCallContentPart; statusKind: ToolStatusKind }>> = [
     { toolCall: { ...completedCall, status: "started", providerStatus: undefined }, statusKind: "in_progress" },
     { toolCall: { ...completedCall, status: "started", providerStatus: "searching" }, statusKind: "in_progress" },
     { toolCall: { ...completedCall, providerStatus: "failed" }, statusKind: "failed" },
