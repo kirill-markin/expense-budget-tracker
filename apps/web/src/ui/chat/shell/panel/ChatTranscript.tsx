@@ -221,10 +221,16 @@ const renderAssistantContent = (
     || message.isStopped
     || message.isError
     || isFollowedByAssistantError;
+  // While the reply runs, the open block gets its bottom line only once answer text has started.
+  const hasEndLine = hasAnswer || !isRunning;
 
   return [
     ...attachments.map((block, index) => renderMessageBlock(message, block, `a-${index}`, t)),
-    <details key="work" className={styles.workBlock} open={isOpen}>
+    <details
+      key="work"
+      className={cn(styles.workBlock, hasEndLine ? styles.workBlockWithEndLine : "")}
+      open={isOpen}
+    >
       <summary className={styles.workBlockSummary}>
         {renderWorkBlockTitle(message, isRunning, t)}
       </summary>
