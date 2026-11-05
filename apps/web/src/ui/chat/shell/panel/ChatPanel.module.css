@@ -140,12 +140,23 @@
 }
 
 .message {
+  /* 12px rows at line-height 1.5 are 18px tall and text lines 19.5px, so this gap
+     puts consecutive single-line blocks ~31px (1.6 x 19.5px) center to center. */
+  --chat-block-gap: 12px;
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
   max-width: 85%;
   padding: 8px 12px;
+}
+
+.message > :first-child {
+  margin-block-start: 0;
+}
+
+.message > :last-child {
+  margin-block-end: 0;
 }
 
 .messageUser {
@@ -156,12 +167,13 @@
 
 .messageAssistant {
   align-self: flex-start;
-  border: 1px solid var(--panel-border);
+  padding-inline: 0;
 }
 
 .messageError {
   color: var(--danger);
-  border-color: var(--danger);
+  border: 1px solid var(--danger);
+  padding-inline: 12px;
 }
 
 .stoppedNotice {
@@ -209,13 +221,12 @@
 
 .toolCall {
   display: block;
-  border: 1px solid var(--panel-border);
-  margin: 6px 0;
+  margin-block: var(--chat-block-gap);
+  margin-inline-start: 4px;
   font-size: 12px;
 }
 
 .toolCallSummary {
-  padding: 4px 8px;
   cursor: var(--cursor-pointer);
   color: var(--muted);
   list-style: none;
@@ -238,21 +249,19 @@
   display: none;
 }
 
-.toolCallStarted {
-  border-style: dashed;
-  animation: toolCallPulse 1.5s ease-in-out infinite;
+.toolCallStatus {
+  font-size: 11px;
 }
 
-@keyframes toolCallPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+.toolCallStatusFailed {
+  color: var(--danger);
 }
 
 .toolCallInput,
 .toolCallOutput {
   margin: 0;
   padding: 6px 8px;
-  border-top: 1px solid var(--panel-border);
+  background: var(--subtle-bg);
   font-family: inherit;
   font-size: 12px;
   line-height: 1.4;
@@ -264,9 +273,12 @@
   color: var(--muted);
 }
 
-.reasoningSummary {
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--panel-border) 65%, transparent);
+.toolCallSummary + pre {
+  margin-block-start: 4px;
+}
+
+.toolCallInput + .toolCallOutput {
+  margin-block-start: 1px;
 }
 
 .reasoningSummaryContent {
