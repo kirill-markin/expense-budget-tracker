@@ -24,6 +24,7 @@ import {
   getToolCallDisplayState,
   type ToolCallDisplayState,
 } from "../../stream/display/toolCallDisplay";
+import { ChatMarkdown } from "./ChatMarkdown";
 import styles from "./ChatPanel.module.css";
 
 type Props = Readonly<{
@@ -117,6 +118,9 @@ const renderMessageContent = (
     }
 
     if (block.type === "text") {
+      if (message.role === "assistant") {
+        return <ChatMarkdown key={`t-${index}`} text={block.text} />;
+      }
       return <span key={`t-${index}`}>{block.text}</span>;
     }
 
