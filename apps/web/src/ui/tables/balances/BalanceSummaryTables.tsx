@@ -215,7 +215,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "accountGroup",
       header: t("balances.accountGroup"),
       renderCell: (row: AccountGroupTotal): ReactElement => (
-        <td key="accountGroup" title={getAccountGroupLabel(row.accountGroup)} className={cn(tableStyles.cell, maskClass)}>{getAccountGroupLabel(row.accountGroup)}</td>
+        <td key="accountGroup" title={maskClass === "" ? getAccountGroupLabel(row.accountGroup) : undefined} className={cn(tableStyles.cell, maskClass)}>{getAccountGroupLabel(row.accountGroup)}</td>
       ),
       rightAlign: false,
       sortKey: "accountGroup",

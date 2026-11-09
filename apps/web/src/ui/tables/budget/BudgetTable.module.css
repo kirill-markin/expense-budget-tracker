@@ -485,6 +485,9 @@ tbody tr:last-child .currentMonthActual {
 }
 
 .adjustmentTable {
+  --adjustment-month-min-inline-size: 120px;
+  --adjustment-action-inline-size: 36px;
+
   min-inline-size: 0;
 }
 
@@ -494,9 +497,9 @@ tbody tr:last-child .currentMonthActual {
   grid-template-columns:
     minmax(72px, 0.8fr)
     minmax(120px, 1.3fr)
+    minmax(var(--adjustment-month-min-inline-size), 1fr)
     minmax(120px, 1fr)
-    minmax(120px, 1fr)
-    36px;
+    var(--adjustment-action-inline-size);
   gap: 8px;
   align-items: start;
 }
@@ -871,11 +874,11 @@ tbody tr:last-child .currentMonthActual {
   .adjustmentAddButton,
   .adjustmentModalCancel,
   .adjustmentModalConfirm {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   .adjustmentDeleteButton {
-    inline-size: 44px;
+    inline-size: var(--touch-target);
   }
 }
 
@@ -883,11 +886,11 @@ tbody tr:last-child .currentMonthActual {
   .cell,
   .categoryLabel,
   .directionLabel {
-    block-size: 40px;
+    block-size: var(--touch-target);
   }
 
   .planCellButton {
-    min-block-size: 40px;
+    min-block-size: var(--touch-target);
   }
 
   .todayButton,
@@ -902,7 +905,7 @@ tbody tr:last-child .currentMonthActual {
   .adjustmentModalConfirm,
   .popoverFillButton,
   .popoverInput {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   .popoverInput,
@@ -914,7 +917,17 @@ tbody tr:last-child .currentMonthActual {
   }
 
   .adjustmentDeleteButton {
-    min-inline-size: 44px;
+    min-inline-size: var(--touch-target);
+  }
+
+  .adjustmentTable {
+    --adjustment-month-min-inline-size: 180px;
+    --adjustment-action-inline-size: var(--touch-target);
+  }
+
+  .adjustmentNoteInput {
+    field-sizing: content;
+    padding-block: calc((var(--touch-target) - 2px - 1lh) / 2);
   }
 }
 

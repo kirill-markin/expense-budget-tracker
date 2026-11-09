@@ -2,6 +2,16 @@ type AxisLabel = Readonly<{ x: number; width: number }>;
 
 type AxisTick = Readonly<{ index: number; anchor: "middle" | "end" }>;
 
+const wideGlyph = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff01-\uff60\uffe0-\uffe6]/u;
+
+/** Monospace labels use narrow cells, while CJK and full-width glyphs occupy an em. */
+export const streamAxisLabelWidth = (label: string, fontSize: number): number =>
+  Array.from(label).reduce((width, glyph) => width + (wideGlyph.test(glyph) ? 1 : 0.62) * fontSize, 0);
+
+/** Reserve the tick gap (10px) and an outer inset (4px) for the widest label. */
+export const streamYAxisGutter = (labels: ReadonlyArray<string>, fontSize: number): number =>
+  Math.max(48, Math.ceil(Math.max(0, ...labels.map((label) => streamAxisLabelWidth(label, fontSize))) + 14));
+
 /** All dimensions are rendered CSS pixels, including the minimum label gap. */
 export const streamAxisTicks = (
   labels: ReadonlyArray<AxisLabel>,

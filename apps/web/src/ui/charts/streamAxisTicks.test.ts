@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { streamAxisTicks } from "./streamAxisTicks";
+import { streamAxisLabelWidth, streamAxisTicks, streamYAxisGutter } from "./streamAxisTicks";
 
 const monthLabels = (width: number, fontSize: number, count: number = 12): ReadonlyArray<Readonly<{ x: number; width: number }>> =>
   Array.from({ length: count }, (_, index) => ({
@@ -13,6 +13,37 @@ test("desktop keeps upstream's centered monthly ticks", () => {
   const labels = monthLabels(900, 11);
   const ticks = streamAxisTicks(labels, 828, 900);
   assert.deepEqual(ticks, labels.map((_, index) => ({ index, anchor: "middle" })));
+});
+
+test("CJK month labels use a full em for wide glyphs and anchor inside the end edge", () => {
+  const fontSize = 11;
+  const labelWidth = streamAxisLabelWidth("11月 '26", fontSize);
+  assert.ok(Math.abs(labelWidth - (6 * 0.62 + 1) * fontSize) < 0.001);
+  assert.ok(labelWidth > 48);
+  const labels = monthLabels(900, fontSize).map((label) => ({ ...label, width: labelWidth }));
+  const ticks = streamAxisTicks(labels, 828, 900);
+  const last = ticks[ticks.length - 1];
+  assert.deepEqual(last, { index: 11, anchor: "end" });
+  assert.ok(labels[last.index].x <= 900);
+});
+
+test("axis estimates preserve narrow glyphs and count wide Unicode code points once", () => {
+  assert.ok(Math.abs(streamAxisLabelWidth("Nov '26", 11) - 7 * 11 * 0.62) < 0.001);
+  assert.equal(streamAxisLabelWidth("月Ａ。한あカ𠮷", 12), 7 * 12);
+});
+
+test("compact y-axis gutters fit the widest signed formatted amount with an inset", () => {
+  assert.equal(streamYAxisGutter(["0", "50"], 12), 48);
+  assert.equal(streamYAxisGutter([], 12), 48);
+  for (const labels of [
+    ["-50.0k", "0", "50.0k"],
+    ["-60,0k", "0", "60,0k"],
+    ["-5,000.0k", "0", "5,000.0k"],
+  ]) {
+    const gutter = streamYAxisGutter(labels, 12);
+    assert.ok(gutter >= 48);
+    for (const label of labels) assert.ok(gutter - 10 - streamAxisLabelWidth(label, 12) >= 4);
+  }
 });
 
 test("phone and tablet ticks use a regular month interval and leave label gaps", () => {

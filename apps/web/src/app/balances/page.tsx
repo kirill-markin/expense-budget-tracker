@@ -58,7 +58,7 @@ export default async function BalancesDashboardPage() {
   return (
     <main className="container">
       <section className="panel">
-        <h1 className="title">{t(locale, "nav.balances")}</h1>
+        <h1 className="title page-title">{t(locale, "nav.balances")}</h1>
 
         <Suspense fallback={<LoadingIndicator />}>
           <BalancesData />

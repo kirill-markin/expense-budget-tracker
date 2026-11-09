@@ -282,12 +282,12 @@
 @media (pointer: coarse) {
   .jsonLink,
   .loadEarlierButton {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   .categoryCell,
   .cell {
-    block-size: 40px;
+    block-size: var(--touch-target);
     box-sizing: border-box;
   }
 }

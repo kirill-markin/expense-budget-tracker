@@ -3,12 +3,18 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { resolveCellOverlayPosition, type CellRect, type OverlayViewport } from "./cellOverlayPosition";
 
 const responsiveQuery = "(max-width: 1099px), (pointer: coarse)";
+let responsiveMedia: MediaQueryList | null = null;
+const getResponsiveMedia = (): MediaQueryList => {
+  responsiveMedia ??= window.matchMedia(responsiveQuery);
+  return responsiveMedia;
+};
 const subscribe = (onChange: () => void): (() => void) => {
-  const media = window.matchMedia(responsiveQuery);
+  const media = getResponsiveMedia();
   media.addEventListener("change", onChange);
   return () => media.removeEventListener("change", onChange);
 };
-const getSnapshot = (): boolean => window.matchMedia(responsiveQuery).matches;
+const subscribeClosed = (): (() => void) => () => {};
+const getSnapshot = (): boolean => getResponsiveMedia().matches;
 const getServerSnapshot = (): boolean => false;
 
 const readViewport = (): OverlayViewport => {
@@ -24,7 +30,11 @@ const readViewport = (): OverlayViewport => {
 
 /** Re-clamp the editor when the phone keyboard changes the visible viewport. */
 export const useCellOverlayPosition = (rect: CellRect | null, minWidth: number, height: number, maxWidth = 680) => {
-  const responsive = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const responsive = useSyncExternalStore(
+    rect === null ? subscribeClosed : subscribe,
+    rect === null ? getServerSnapshot : getSnapshot,
+    getServerSnapshot,
+  );
   const [viewport, setViewport] = useState<OverlayViewport>(readViewport);
   useEffect(() => {
     if (rect === null || !responsive) return;

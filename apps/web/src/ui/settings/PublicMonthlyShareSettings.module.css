@@ -245,7 +245,7 @@
 
 @media (pointer: coarse) {
   .inlineWarning {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
     align-items: center;
   }
 }

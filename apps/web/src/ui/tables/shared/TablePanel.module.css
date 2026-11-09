@@ -124,7 +124,7 @@
 
 @media (pointer: coarse) {
   .panelCloseButton {
-    min-inline-size: 44px;
-    min-block-size: 44px;
+    min-inline-size: var(--touch-target);
+    min-block-size: var(--touch-target);
   }
 }

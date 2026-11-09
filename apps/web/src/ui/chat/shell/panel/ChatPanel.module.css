@@ -656,6 +656,20 @@
 }
 
 @media (max-width: 767px) {
+  /* On phones chat is its own page and the active nav tab already names it. */
+  .header {
+    justify-content: flex-end;
+  }
+
+  .headerTitle {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
   .sidebar,
   .toggleHeader {
     display: none;
@@ -677,7 +691,7 @@
 
 @media (pointer: coarse) {
   .headerActions {
-    --chat-header-control-block-size: 44px;
+    --chat-header-control-block-size: var(--touch-target);
   }
 
   .closeButton,
@@ -687,12 +701,13 @@
   .attachmentRemove,
   .toggleFloating,
   .toggleHeader {
-    min-block-size: 44px;
-    min-inline-size: 44px;
+    min-block-size: var(--touch-target);
+    min-inline-size: var(--touch-target);
   }
 
   .textarea {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
+    padding-block: calc((var(--touch-target) - 2px - 1lh) / 2);
     font-size: 16px;
   }
 
@@ -702,6 +717,7 @@
   }
 
   .modelLabel {
+    min-block-size: var(--touch-target);
     display: block;
     align-content: center;
     overflow: hidden;
@@ -714,14 +730,18 @@
   }
 
   .accountMentionPopover {
-    --account-mention-row-block-size: 44px;
+    --account-mention-row-block-size: var(--touch-target);
     --account-mention-visible-rows: 4.5;
   }
 
   .toolCallSummary,
   .workBlockSummary {
-    min-block-size: 44px;
-    padding-block: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    align-content: center;
+    min-block-size: var(--touch-target);
+    padding-block: 6px;
   }
 }
 

@@ -12,7 +12,7 @@ import type { BudgetRow } from "@/server/budget/getBudgetGrid";
 import { useFormat } from "@/ui/FormatProvider";
 import styles from "@/ui/charts/BudgetStreamChart.module.css";
 import { useChartSize } from "@/ui/charts/useChartSize";
-import { streamAxisTicks } from "@/ui/charts/streamAxisTicks";
+import { streamAxisLabelWidth, streamAxisTicks, streamYAxisGutter } from "@/ui/charts/streamAxisTicks";
 import { formatNumber } from "@/ui/tables/shared/format";
 
 type Props = Readonly<{
@@ -168,7 +168,6 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
 
   const { width, height, renderedWidth, chartRef } = useChartSize(wrapRef, 520);
   const compact = width < 900;
-  const margin = { top: 24, right: 24, bottom: compact ? 36 : 64, left: compact ? 48 : 64 } as const;
 
   const allCategories = useMemo(
     () => [...incomeCategories, ...spendCategories],
@@ -210,10 +209,6 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
   const xMin = uniqueDates[0];
   const xMax = uniqueDates[uniqueDates.length - 1];
 
-  const xScale = scaleTime()
-    .domain([xMin, xMax])
-    .range([margin.left, width - margin.right]);
-
   const maxIncome = incomeStacked.length > 0
     ? max(incomeStacked[incomeStacked.length - 1], (d) => d[1]) ?? 0
     : 0;
@@ -225,8 +220,20 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
   const yExtent = Math.max(maxIncome, maxSpend) * 1.3;
 
   const yScale = scaleLinear()
-    .domain([-yExtent, yExtent])
-    .range([height - margin.bottom, margin.top]);
+    .domain([-yExtent, yExtent]);
+  const yTicks = yScale.ticks(width < 500 ? 4 : 8);
+  const yFontSize = compact ? 12 : 11;
+  const margin = {
+    top: 24,
+    right: 24,
+    bottom: compact ? 36 : 64,
+    left: compact ? streamYAxisGutter(yTicks.map((tick) => formatAmount(tick, numberFormat)), yFontSize) : 64,
+  } as const;
+  yScale.range([height - margin.bottom, margin.top]);
+
+  const xScale = scaleTime()
+    .domain([xMin, xMax])
+    .range([margin.left, width - margin.right]);
 
   const incomeAreaGen = area<readonly [number, number] & { readonly data: MonthRecord }>()
     .x((d) => xScale(d.data.date))
@@ -240,13 +247,12 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
     .y1((d) => yScale(-d[1]))
     .curve(curveMonotoneX);
 
-  const yTicks = yScale.ticks(width < 500 ? 4 : 8);
   const xFontSize = compact ? 12 : 11;
   const renderedScale = renderedWidth / width;
   const xTicks = streamAxisTicks(
     uniqueDates.map((date) => ({
       x: xScale(date) * renderedScale,
-      width: formatMonth(date, t).length * xFontSize * 0.62 * renderedScale,
+      width: streamAxisLabelWidth(formatMonth(date, t), xFontSize) * renderedScale,
     })),
     (width - margin.left - margin.right) * renderedScale,
     renderedWidth,
@@ -430,7 +436,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                     textAnchor="end"
                     dominantBaseline="middle"
                     fill="var(--muted)"
-                    fontSize={compact ? 12 : 11}
+                    fontSize={yFontSize}
                   >
                     {formatAmount(tick, numberFormat)}
                   </text>

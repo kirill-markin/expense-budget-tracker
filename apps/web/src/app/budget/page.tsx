@@ -170,7 +170,7 @@ export default async function BudgetDashboardPage({ searchParams }: BudgetDashbo
   return (
     <main className="container">
       <section className="panel">
-        <h1 className="title">{t(locale, "nav.budget")}</h1>
+        <h1 className="title page-title">{t(locale, "nav.budget")}</h1>
 
         <Suspense fallback={<LoadingIndicator />}>
           <BudgetData plansMode={plansMode} />

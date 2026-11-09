@@ -45,7 +45,7 @@ input[type="reset"]:not(:disabled) *,
   /* Zero specificity keeps layout in each component; table editors own their sizing. */
   :where(button, select, summary, [role="button"], input[type="button"], input[type="submit"], input[type="reset"]):not(:where(table *, [role="grid"] *)),
   :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="hidden"], [type="color"]), textarea):not(:where(table *, [role="grid"] *)) {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   /* Component font declarations must not reintroduce iOS focus zoom. */

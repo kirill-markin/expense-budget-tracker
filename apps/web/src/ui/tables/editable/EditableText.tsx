@@ -29,7 +29,7 @@ export const EditableText = (props: Props): ReactElement => {
   const [rect, setRect] = useState<Rect | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cellRef = useRef<HTMLTableCellElement | null>(null);
-  const editorPosition = useCellOverlayPosition(rect, 160, Math.max(rect?.height ?? 0, 44));
+  const editorPosition = useCellOverlayPosition(rect, 160, rect?.height ?? 0);
 
   useEffect(() => {
     if (editing && inputRef.current !== null) {

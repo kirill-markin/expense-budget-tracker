@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { useChatLayout } from "./ChatLayoutProvider";
 import styles from "../panel/ChatPanel.module.css";
+import controlStyles from "@/ui/Controls.module.css";
 
 const subscribeToPointer = (onChange: () => void): (() => void) => {
   const media = window.matchMedia("(pointer: coarse)");
@@ -33,7 +34,7 @@ export const ChatToggle = ({ placement = "floating" }: Props): ReactElement | nu
       aria-haspopup="dialog"
       aria-expanded={isOpen}
       aria-controls="chat-sidebar"
-      className={isHeader ? styles.toggleHeader : styles.toggleFloating}
+      className={isHeader ? `${styles.toggleHeader} ${controlStyles.headerChatToggle}` : styles.toggleFloating}
       onClick={() => setIsOpen(!isOpen)}
     >
       {t("chat.title")}

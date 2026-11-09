@@ -40,6 +40,7 @@ export const useBudgetTableViewport = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollAnchorRef = useRef<BudgetScrollAnchor | null>(null);
   const anchorMeasurementFrameRef = useRef<number | null>(null);
+  const lastAnchorMeasurementRef = useRef<Readonly<{ scrollLeft: number; width: number }> | null>(null);
   const isPlansModeLayoutSettledRef = useRef(false);
   const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
 
@@ -122,6 +123,10 @@ export const useBudgetTableViewport = ({
     }
 
     scrollAnchorRef.current = selectLeadingBudgetScrollAnchor(candidates);
+    lastAnchorMeasurementRef.current = {
+      scrollLeft: scrollElement.scrollLeft,
+      width: scrollElement.clientWidth,
+    };
   }, [getValueAreaInlineStart, isRtl]);
 
   // One measurement per animation frame keeps a continuous drag cheap and
@@ -139,6 +144,16 @@ export const useBudgetTableViewport = ({
     }
 
     const handleScroll = (): void => {
+      // Vertical scrolling leaves the horizontal anchor unchanged. Compare the
+      // signed scrollLeft directly so negative RTL offsets remain distinct.
+      const lastMeasurement = lastAnchorMeasurementRef.current;
+      if (
+        lastMeasurement !== null
+        && lastMeasurement.scrollLeft === scrollElement.scrollLeft
+        && lastMeasurement.width === scrollElement.clientWidth
+      ) {
+        return;
+      }
       if (anchorMeasurementFrameRef.current !== null) {
         return;
       }

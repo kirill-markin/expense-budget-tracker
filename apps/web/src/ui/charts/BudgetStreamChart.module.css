@@ -164,3 +164,10 @@
     transform: translateX(8px);
   }
 }
+
+@media (max-width: 767px) and (pointer: coarse) {
+  .legendDisclosure summary {
+    line-height: 20px;
+    padding-block: calc((var(--touch-target) - 2px - 1lh) / 2);
+  }
+}

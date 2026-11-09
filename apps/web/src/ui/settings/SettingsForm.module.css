@@ -378,7 +378,7 @@
   .checkboxLabel,
   .filteredItem,
   .inlineLink {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   .inlineLink {
@@ -399,7 +399,7 @@
 
   /* These are action rows, rather than the app's dense editable tables. */
   .table .save {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 }
 

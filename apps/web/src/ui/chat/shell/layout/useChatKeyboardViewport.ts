@@ -5,6 +5,14 @@ import { useEffect } from "react";
 const KEYBOARD_HEIGHT_THRESHOLD_PX = 150;
 const CHAT_TEXT_INPUT_SELECTOR = '[data-testid="chat-panel"] :is(textarea, input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="password"], input[type="tel"], input[type="url"], input[type="number"])';
 
+export const clearChatKeyboardViewport = (): void => {
+  const root = document.documentElement;
+  root.removeAttribute("data-keyboard-open");
+  root.removeAttribute("data-chat-viewport-overlay");
+  root.style.removeProperty("--chat-viewport-height");
+  root.style.removeProperty("--chat-viewport-offset-top");
+};
+
 export const useChatKeyboardViewport = (): void => {
   useEffect(() => {
     const root = document.documentElement;
@@ -15,17 +23,10 @@ export const useChatKeyboardViewport = (): void => {
     const largestHeights = new Map<number, number>();
     let frame: number | null = null;
 
-    const clearKeyboard = (): void => {
-      root.removeAttribute("data-keyboard-open");
-      root.removeAttribute("data-chat-viewport-overlay");
-      root.style.removeProperty("--chat-viewport-height");
-      root.style.removeProperty("--chat-viewport-offset-top");
-    };
-
     const update = (): void => {
       frame = null;
       if (!pointer.matches) {
-        clearKeyboard();
+        clearChatKeyboardViewport();
         return;
       }
 
@@ -43,7 +44,7 @@ export const useChatKeyboardViewport = (): void => {
         && largestHeight - height > KEYBOARD_HEIGHT_THRESHOLD_PX;
 
       if (!isKeyboardOpen) {
-        clearKeyboard();
+        clearChatKeyboardViewport();
         return;
       }
 
@@ -80,7 +81,7 @@ export const useChatKeyboardViewport = (): void => {
       viewport?.removeEventListener("resize", scheduleUpdate);
       viewport?.removeEventListener("scroll", scheduleUpdate);
       pointer.removeEventListener("change", scheduleUpdate);
-      clearKeyboard();
+      clearChatKeyboardViewport();
     };
   }, []);
 };

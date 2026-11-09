@@ -16,46 +16,50 @@ export const Navigation = (): ReactElement => {
   useEffect(() => {
     const nav = navRef.current;
     if (nav === null) return;
+    const revealActiveTab = (): void => {
+      const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
+      if (active === null) return;
+      // Scroll only the tab strip; scrollIntoView can also move the app's viewport.
+      const tabBounds = active.getBoundingClientRect();
+      const navBounds = nav.getBoundingClientRect();
+      const navStyle = getComputedStyle(nav);
+      const rtl = navStyle.direction === "rtl";
+      const startPadding = parseFloat(navStyle.scrollPaddingInlineStart) || 0;
+      const endPadding = parseFloat(navStyle.scrollPaddingInlineEnd) || 0;
+      const leftPadding = rtl ? endPadding : startPadding;
+      const rightPadding = rtl ? startPadding : endPadding;
+      if (tabBounds.left < navBounds.left + leftPadding || tabBounds.right > navBounds.right - rightPadding) {
+        nav.scrollBy({ left: tabBounds.left - navBounds.left - (navBounds.width - tabBounds.width) / 2 });
+      }
+    };
     const updateOverflow = (): void => {
       const bounds = nav.getBoundingClientRect();
-      const first = nav.firstElementChild?.getBoundingClientRect();
-      const last = nav.lastElementChild?.getBoundingClientRect();
-      if (first === undefined || last === undefined) return;
+      const tabs = Array.from(nav.children, (link) => link.getBoundingClientRect());
+      if (tabs.length === 0) return;
+      // Use the outermost tabs, not DOM order: the phone layout reorders tabs with CSS.
+      const overflowsLeft = Math.min(...tabs.map((tab) => tab.left)) < bounds.left - 1;
+      const overflowsRight = Math.max(...tabs.map((tab) => tab.right)) > bounds.right + 1;
       const rtl = getComputedStyle(nav).direction === "rtl";
       // Bounds work for either direction without depending on RTL scrollLeft modes.
-      const start = rtl ? first.right > bounds.right + 1 : first.left < bounds.left - 1;
-      const end = rtl ? last.left < bounds.left - 1 : last.right > bounds.right + 1;
+      const start = rtl ? overflowsRight : overflowsLeft;
+      const end = rtl ? overflowsLeft : overflowsRight;
       setOverflow((previous) => previous.start === start && previous.end === end
         ? previous
         : { start, end });
     };
-    const observer = new ResizeObserver(updateOverflow);
+    const updateLayout = (): void => {
+      revealActiveTab();
+      updateOverflow();
+    };
+    const observer = new ResizeObserver(updateLayout);
     observer.observe(nav);
     Array.from(nav.children).forEach((link) => observer.observe(link));
     nav.addEventListener("scroll", updateOverflow, { passive: true });
-    updateOverflow();
+    updateLayout();
     return () => {
       observer.disconnect();
       nav.removeEventListener("scroll", updateOverflow);
     };
-  }, [t]);
-
-  useEffect(() => {
-    const nav = navRef.current;
-    const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (nav === null || active === undefined || active === null) return;
-    // Scroll only the tab strip; scrollIntoView can also move the app's viewport.
-    const tabBounds = active.getBoundingClientRect();
-    const navBounds = nav.getBoundingClientRect();
-    const navStyle = getComputedStyle(nav);
-    const rtl = navStyle.direction === "rtl";
-    const startPadding = parseFloat(navStyle.scrollPaddingInlineStart) || 0;
-    const endPadding = parseFloat(navStyle.scrollPaddingInlineEnd) || 0;
-    const leftPadding = rtl ? endPadding : startPadding;
-    const rightPadding = rtl ? startPadding : endPadding;
-    if (tabBounds.left < navBounds.left + leftPadding || tabBounds.right > navBounds.right - rightPadding) {
-      nav.scrollBy({ left: tabBounds.left - navBounds.left - (navBounds.width - tabBounds.width) / 2 });
-    }
   }, [pathname, t]);
 
   return (

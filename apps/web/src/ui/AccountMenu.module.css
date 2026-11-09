@@ -116,12 +116,12 @@
   .button,
   .item,
   .createInput {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   .button {
     justify-content: center;
-    min-inline-size: 44px;
+    min-inline-size: var(--touch-target);
   }
 
   .createInput {
@@ -134,5 +134,21 @@
     max-inline-size: calc(100vw - 24px);
     max-block-size: calc(100dvh - 100px);
     overflow-y: auto;
+  }
+}
+
+@media (max-width: 1099px), (pointer: coarse) {
+  .button {
+    justify-content: center;
+    min-inline-size: var(--touch-target);
+    min-block-size: var(--touch-target);
+    color: var(--mode-strip-color);
+    border-color: currentColor;
+    background: transparent;
+  }
+
+  .button:hover {
+    color: var(--mode-strip-active-color);
+    border-color: currentColor;
   }
 }

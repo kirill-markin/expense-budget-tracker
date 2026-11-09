@@ -381,7 +381,7 @@
 
 @media (pointer: coarse) {
   .cell {
-    block-size: 40px;
+    block-size: var(--touch-target);
     box-sizing: border-box;
   }
 
@@ -391,19 +391,25 @@
   .textareaEditor,
   .filterPopoverSearch {
     font-size: 16px;
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   .selectOption,
   .textareaHint,
   .filterPopoverOption {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
     box-sizing: border-box;
   }
 
   .selectOption {
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+
+  .selectOption,
+  .textareaHint {
+    display: flex;
+    align-items: center;
   }
 }
 

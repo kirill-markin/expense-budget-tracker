@@ -336,11 +336,11 @@
   .dialogAction,
   .loadMoreButton,
   .sessionButton {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   .historyButton,
   .closeAction {
-    min-inline-size: 44px;
+    min-inline-size: var(--touch-target);
   }
 }

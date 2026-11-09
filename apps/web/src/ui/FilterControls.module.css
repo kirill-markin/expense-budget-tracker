@@ -60,7 +60,7 @@
 
 @media (pointer: coarse) {
   .filterInput {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
     font-size: 16px;
     max-inline-size: 100%;
   }

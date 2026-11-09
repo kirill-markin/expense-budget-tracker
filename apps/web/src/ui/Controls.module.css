@@ -48,6 +48,59 @@
 
 @media (pointer: coarse) {
   .segment {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
+  }
+}
+
+@media (max-width: 1099px), (pointer: coarse) {
+  .modeToggle .segment {
+    min-inline-size: var(--touch-target);
+    min-block-size: var(--touch-target);
+    padding: 4px 6px;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    color: var(--mode-strip-color);
+    font-size: 12px;
+    line-height: 24px;
+    white-space: nowrap;
+  }
+
+  .modeToggle .segmentActive {
+    color: var(--mode-strip-active-color);
+    font-weight: 650;
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+  }
+
+  .modeToggle .segment:not(:disabled):hover {
+    color: var(--mode-strip-active-color);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  .modeToggle .segment:focus-visible {
+    outline-color: var(--mode-strip-active-color);
+    outline-offset: -2px;
+  }
+}
+
+@media (max-width: 1099px), (pointer: coarse) {
+  .headerChatToggle:not(:disabled) {
+    color: var(--mode-strip-color);
+    background: transparent;
+    border-color: currentColor;
+  }
+
+  .headerChatToggle:not(:disabled):hover {
+    color: var(--mode-strip-active-color);
+    border-color: currentColor;
+  }
+
+  .headerChatToggle:not(:disabled)[aria-expanded="true"] {
+    color: var(--header-row-bg);
+    background: var(--mode-strip-active-color);
+    border-color: var(--mode-strip-active-color);
   }
 }

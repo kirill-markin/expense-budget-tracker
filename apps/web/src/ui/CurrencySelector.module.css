@@ -4,20 +4,21 @@
   letter-spacing: 0.5px;
 }
 
-@media (max-width: 767px), (pointer: coarse) {
+@media (max-width: 1099px), (pointer: coarse) {
   .label {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-inline-size: 44px;
-    min-block-size: 44px;
-    border: 1px solid var(--panel-border);
+    min-inline-size: var(--touch-target);
+    min-block-size: var(--touch-target);
+    border: 1px solid currentColor;
     padding-inline: 6px;
+    color: var(--mode-strip-color);
   }
 
   .label:hover {
-    color: var(--text);
-    border-color: var(--text);
+    color: var(--mode-strip-active-color);
+    border-color: var(--mode-strip-active-color);
     text-decoration: none;
   }
 }

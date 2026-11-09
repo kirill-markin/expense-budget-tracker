@@ -207,16 +207,18 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                             <span className="brand-full">{t(locale, "brand.full")}</span>
                             <span className="brand-short">{t(locale, "brand.short")}</span>
                           </Link>
-                          <div className="topbar-actions">
+                          <div className="topbar-controls">
                             <ModeToggle isDemoMode={demo} />
-                            <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
-                            <ChatToggle placement="header" />
-                            <AccountMenu
-                              authEnabled={authEnabled}
-                              accountEmail={accountEmail}
-                              workspaces={workspaces}
-                              currentWorkspaceId={currentWorkspaceId}
-                            />
+                            <div className="topbar-actions topbar-end">
+                              <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
+                              <ChatToggle placement="header" />
+                              <AccountMenu
+                                authEnabled={authEnabled}
+                                accountEmail={accountEmail}
+                                workspaces={workspaces}
+                                currentWorkspaceId={currentWorkspaceId}
+                              />
+                            </div>
                           </div>
                         </header>
                         <Navigation />

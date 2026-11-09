@@ -16,7 +16,7 @@ import { useChatLayout } from "./ChatLayoutProvider";
 import { ChatPanel } from "../panel/ChatPanel";
 import { ChatToggle } from "./ChatToggle";
 import { useChatViewport } from "./chatViewport";
-import { useChatKeyboardViewport } from "./useChatKeyboardViewport";
+import { clearChatKeyboardViewport, useChatKeyboardViewport } from "./useChatKeyboardViewport";
 import styles from "./ChatLayoutShell.module.css";
 
 type Props = Readonly<{
@@ -31,6 +31,7 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
   const viewport = useChatViewport();
   const { t } = useTranslation();
   const drawerRef = useRef<HTMLDivElement>(null);
+  const restoreFocusFrameRef = useRef<number | null>(null);
   const pathname = usePathname();
   const router = useRouter();
   const isFullscreenChat = pathname === "/chat";
@@ -63,6 +64,10 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
 
   useEffect(() => {
     if (!isOverlayOpen) return;
+    if (restoreFocusFrameRef.current !== null) {
+      window.cancelAnimationFrame(restoreFocusFrameRef.current);
+      restoreFocusFrameRef.current = null;
+    }
     const drawer = drawerRef.current;
     const previousFocus = document.activeElement;
     const headerToggle = document.querySelector<HTMLButtonElement>('[data-testid="chat-header-toggle"]');
@@ -75,33 +80,42 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
     drawer?.querySelector<HTMLButtonElement>('[data-testid="chat-sidebar-close"]')?.focus();
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      // History is portaled above the drawer and owns its keyboard handling.
-      if (document.querySelector('[data-testid="chat-history-dialog"][open]') !== null) return;
+      if (event.defaultPrevented) return;
+      const history = document.querySelector<HTMLDialogElement>('[data-testid="chat-history-dialog"][open]');
       if (event.key === "Escape") {
+        // History owns dismissal, but its portaled controls stay in the drawer's Tab cycle.
+        if (history !== null) return;
         event.preventDefault();
         setIsOpen(false);
       }
       if (event.key !== "Tab" || drawer === null) return;
-      const controls = Array.from(drawer.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]',
-      )).filter((element) => element.getClientRects().length > 0);
+      const controls = [drawer, ...(history === null ? [] : [history])].flatMap((root) =>
+        Array.from(root.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]',
+        )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0),
+      );
       if (headerToggle !== null && headerToggle.getClientRects().length > 0) controls.unshift(headerToggle);
-      const first = controls[0];
-      const last = controls[controls.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
+      // Portals can have unrelated page controls between them in document order.
+      const currentIndex = controls.findIndex((element) => element === document.activeElement);
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? controls.length : currentIndex) - 1
+        : (currentIndex + 1) % controls.length;
+      event.preventDefault();
+      controls[nextIndex]?.focus();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       headerControls.forEach((element, index) => { element.inert = headerInertStates[index]; });
-      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
-      else (headerToggle ?? document.querySelector<HTMLButtonElement>('[data-testid="chat-sidebar-open"]'))?.focus();
+      clearChatKeyboardViewport();
+      // The keyboard state hides the header; restore focus only after it is visible again.
+      restoreFocusFrameRef.current = window.requestAnimationFrame(() => {
+        restoreFocusFrameRef.current = null;
+        const target = previousFocus instanceof HTMLElement && previousFocus.isConnected
+          ? previousFocus
+          : headerToggle ?? document.querySelector<HTMLButtonElement>('[data-testid="chat-sidebar-open"]');
+        if (target?.isConnected && target.getClientRects().length > 0) target.focus();
+      });
     };
   }, [isOverlayOpen, setIsOpen]);
 

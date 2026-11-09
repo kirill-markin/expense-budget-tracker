@@ -386,8 +386,8 @@
 
   .tableScroll td.cellCopy,
   .tableScroll td.cellDelete {
-    inline-size: 44px;
-    min-inline-size: 44px;
+    inline-size: var(--touch-target);
+    min-inline-size: var(--touch-target);
     padding-inline: 0;
   }
 
@@ -416,22 +416,26 @@
   .transactionsFiltersOverlayAction,
   .transactionsFiltersRow,
   .transactionsFiltersPickerOption {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
+  }
+
+  .transactionsFiltersRow {
+    padding-block: 0;
   }
 
   .copyButton,
   .deleteButton {
-    min-inline-size: 44px;
-    min-block-size: 44px;
+    min-inline-size: var(--touch-target);
+    min-block-size: var(--touch-target);
   }
 
   .transactionsFiltersPickerSearch {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
     font-size: 16px;
   }
 
   .filters .addRowButton {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 }
 

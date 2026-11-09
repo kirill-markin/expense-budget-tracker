@@ -33,6 +33,8 @@
   --inverse-warning: #f5c451;
   --inverse-positive: #4caf50;
   --cursor-pointer: pointer;
+  /* Minimum block size for touch (coarse pointer) and phone controls. */
+  --touch-target: 40px;
 }
 
 :root[data-theme="dark"] {
