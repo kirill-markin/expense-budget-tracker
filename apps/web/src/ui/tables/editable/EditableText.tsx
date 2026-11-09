@@ -2,6 +2,7 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { useCellOverlayPosition } from "@/ui/tables/overlays/useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 
 import { CellComboOverlay } from "@/ui/tables/overlays/CellComboOverlay";
@@ -28,6 +29,7 @@ export const EditableText = (props: Props): ReactElement => {
   const [rect, setRect] = useState<Rect | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cellRef = useRef<HTMLTableCellElement | null>(null);
+  const editorPosition = useCellOverlayPosition(rect, 160, Math.max(rect?.height ?? 0, 44));
 
   useEffect(() => {
     if (editing && inputRef.current !== null) {
@@ -104,9 +106,10 @@ export const EditableText = (props: Props): ReactElement => {
           className={styles.editorOverlay}
           type="text"
           value={editValue}
-          style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }}
+          style={{ ...(editorPosition ?? { top: rect.top, left: rect.left, width: rect.width }), height: rect.height }}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={commitEdit}
+          onClick={(event) => event.stopPropagation()}
           onKeyDown={handleKeyDown}
         />,
         document.body,

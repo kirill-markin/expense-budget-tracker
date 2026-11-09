@@ -12,6 +12,8 @@ import { useFormat } from "@/ui/FormatProvider";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
+import { HorizontalTableScroll } from "@/ui/tables/shared/HorizontalTableScroll";
+import { useTransactionColumnOrder } from "./useTransactionColumnOrder";
 import { DataTable } from "@/ui/tables/shared/data-table/DataTable";
 import type { ColumnDef, PageResult } from "@/ui/tables/shared/data-table/types";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
@@ -213,7 +215,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     deleteEntry(entryId);
   };
 
-  const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = [
+  const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = useTransactionColumnOrder<LedgerEntry>([
     transactionCopyColumn(effectiveAllowlist, pendingEntryIds, copyTransaction, t("txn.copyAction")),
     editableDateColumn(getMaskClass, handleDateTimeCommit),
     editableAccountColumn(getMaskClass, handleAccountCommit, hints.accounts),
@@ -225,7 +227,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
     editableCounterpartyColumn(getMaskClass, handleCounterpartyCommit, hints.counterparties),
     editableNoteColumn(getMaskClass, handleNoteCommit, hints.notes),
     editableDeleteColumn(handleDelete),
-  ];
+  ]);
   const errorTitle = error !== null && error.startsWith(CREATE_ERROR_PREFIX)
     ? t("txn.failedToCreate")
     : error !== null && error.startsWith(UPDATE_ERROR_PREFIX)
@@ -239,8 +241,8 @@ export const DrillDownPanel = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className={panelStyles.overlayBackdrop} onClick={closePanel} />
-      <div className={panelStyles.sidePanel} ref={panelRef} style={panelWidth !== null ? { width: panelWidth } : undefined}>
+      <div data-bleed className={panelStyles.overlayBackdrop} onClick={closePanel} />
+      <div data-bleed className={panelStyles.sidePanel} ref={panelRef} style={panelWidth !== null ? { width: panelWidth } : undefined}>
         <div
           className={cn(panelStyles.panelResizeHandle, isDragging ? panelStyles.panelResizeHandleDragging : "")}
           onMouseDown={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -278,17 +280,19 @@ export const DrillDownPanel = (props: Props): ReactElement => {
         <TransactionCopyFeedback feedback={copyFeedback} />
 
         <div className={panelStyles.panelBody}>
-          <DataTable<LedgerEntry>
-            columns={columns}
-            rows={rows}
-            rowKey={(row) => row.entryId}
-            sort={sort}
-            onSort={onSort}
-            emptyMessage={t("txn.noMatch")}
-            loading={loading}
-            loadingMore={loadingMore}
-            sentinelRef={sentinelRef}
-          />
+          <HorizontalTableScroll inPanel className={transactionStyles.tableScroll}>
+            <DataTable<LedgerEntry>
+              columns={columns}
+              rows={rows}
+              rowKey={(row) => row.entryId}
+              sort={sort}
+              onSort={onSort}
+              emptyMessage={t("txn.noMatch")}
+              loading={loading}
+              loadingMore={loadingMore}
+              sentinelRef={sentinelRef}
+            />
+          </HorizontalTableScroll>
         </div>
       </div>
     </>

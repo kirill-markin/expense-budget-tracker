@@ -1,4 +1,5 @@
 .layoutShell {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -14,4 +15,63 @@
 .mainContentWithChatClearance {
   --chat-toggle-clearance: 88px;
   padding-block-end: calc(var(--chat-toggle-clearance) + env(safe-area-inset-bottom, 0px));
+}
+
+.sidebarSlot {
+  display: contents;
+}
+
+.backdrop {
+  display: none;
+}
+
+@media (max-width: 1099px) {
+  .mainContentWithChatClearance {
+    padding-block-end: env(safe-area-inset-bottom, 0px);
+  }
+
+  .defaultSidebar {
+    display: none;
+  }
+
+  .backdrop {
+    position: absolute;
+    inset: 0;
+    display: block;
+    z-index: 90;
+    border: 0;
+    background: var(--tooltip-bg);
+    opacity: 0.55;
+  }
+
+  .sidebarSlot {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    display: flex;
+    inline-size: min(420px, 85vw);
+    z-index: 100;
+  }
+
+  .backdrop.defaultSidebar,
+  .sidebarSlot.defaultSidebar {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .sidebarSlot,
+  .backdrop {
+    display: none;
+  }
+
+  .mainContentWithChatClearance {
+    padding-block-end: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+@media (pointer: coarse) {
+  .mainContentWithChatClearance {
+    padding-block-end: env(safe-area-inset-bottom, 0px);
+  }
 }

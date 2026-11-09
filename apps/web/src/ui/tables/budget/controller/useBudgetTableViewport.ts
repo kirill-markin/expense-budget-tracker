@@ -165,6 +165,31 @@ export const useBudgetTableViewport = ({
     measureScrollAnchor();
   }, [measureScrollAnchor, scrollToCurrentMonth]);
 
+  // Phone columns are narrower. Restore before scroll-event measurements can
+  // replace the old anchor with geometry from a resized window or tablet.
+  useEffect(() => {
+    const restoreAfterResize = (): void => {
+      const scrollElement = scrollRef.current;
+      if (scrollElement === null) return;
+      if (anchorMeasurementFrameRef.current !== null) {
+        cancelAnimationFrame(anchorMeasurementFrameRef.current);
+        anchorMeasurementFrameRef.current = null;
+      }
+      const anchor = scrollAnchorRef.current;
+      const monthElement = anchor === null ? null : scrollElement.querySelector<HTMLElement>(
+        `[${MONTH_OBSERVATION_ATTRIBUTE}="${anchor.month}"]`,
+      );
+      if (anchor !== null && monthElement !== null) {
+        scrollMonthToInlineOffset(monthElement, scrollElement, anchor.inlineOffset);
+      } else {
+        scrollToCurrentMonth();
+      }
+      measureScrollAnchor();
+    };
+    window.addEventListener("resize", restoreAfterResize);
+    return () => window.removeEventListener("resize", restoreAfterResize);
+  }, [measureScrollAnchor, scrollMonthToInlineOffset, scrollToCurrentMonth]);
+
   // Switching the mode doubles or halves the width of every elapsed month, so
   // the same `scrollLeft` points at completely different months afterwards.
   // This runs once the new value columns and the new inline size are

@@ -8,7 +8,7 @@ export default async function ChatPage() {
   const workspaceId = extractWorkspaceIdFromHeaders(headersList);
 
   return (
-    <main className="container" style={{ display: "flex", justifyContent: "center" }}>
+    <main className="container" style={{ display: "flex", justifyContent: "center", blockSize: "100%", minBlockSize: 0 }}>
       <ChatPanel key={`fullscreen-${workspaceId}`} mode="fullscreen" workspaceId={workspaceId} />
     </main>
   );

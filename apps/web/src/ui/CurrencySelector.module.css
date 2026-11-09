@@ -1,6 +1,23 @@
 .label {
-  margin-inline-start: auto;
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 0.5px;
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 44px;
+    min-block-size: 44px;
+    border: 1px solid var(--panel-border);
+    padding-inline: 6px;
+  }
+
+  .label:hover {
+    color: var(--text);
+    border-color: var(--text);
+    text-decoration: none;
+  }
 }

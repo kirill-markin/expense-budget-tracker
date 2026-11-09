@@ -6,8 +6,10 @@ const MIN_WIDTH = 280;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 360;
 
+export type ChatOpenState = "open" | "closed" | "unset";
+
 type ChatCookies = Readonly<{
-  chatOpen: boolean;
+  chatOpen: ChatOpenState;
   chatWidth: number;
 }>;
 
@@ -18,7 +20,9 @@ const clampWidth = (value: number): number =>
 export const readChatCookies = async (): Promise<ChatCookies> => {
   const cookieStore = await cookies();
   const chatOpenRaw = cookieStore.get(CHAT_OPEN_COOKIE)?.value;
-  const chatOpen = chatOpenRaw !== "false";
+  const chatOpen: ChatOpenState = chatOpenRaw === "true"
+    ? "open"
+    : chatOpenRaw === "false" ? "closed" : "unset";
 
   const rawWidth = cookieStore.get(CHAT_WIDTH_COOKIE)?.value;
   const parsed = rawWidth !== undefined ? Number(rawWidth) : NaN;

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useCellOverlayPosition } from "@/ui/tables/overlays/useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 import { useFormat } from "@/ui/FormatProvider";
 
@@ -34,6 +35,7 @@ export const EditableAmount = (props: Props): ReactElement => {
   const [rect, setRect] = useState<Rect | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cellRef = useRef<HTMLTableCellElement | null>(null);
+  const editorPosition = useCellOverlayPosition(rect, 110, Math.max(rect?.height ?? 0, 44));
   const editingRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -138,13 +140,14 @@ export const EditableAmount = (props: Props): ReactElement => {
           aria-invalid={validationError !== null}
           aria-label={t("table.amount")}
           value={editValue}
-          style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height, textAlign: "right" }}
+          style={{ ...(editorPosition ?? { top: rect.top, left: rect.left, width: rect.width }), height: rect.height, textAlign: "end" }}
           onChange={(e) => {
             setEditValue(e.target.value);
             setValidationError(null);
             e.currentTarget.setCustomValidity("");
           }}
           onBlur={commitEdit}
+          onClick={(event) => event.stopPropagation()}
           onKeyDown={handleKeyDown}
         />,
         document.body,

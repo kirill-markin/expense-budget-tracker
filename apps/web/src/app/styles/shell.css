@@ -116,7 +116,101 @@
   border-top: 1px solid var(--panel-border);
 }
 
-@media (max-width: 768px) {
+.nav a[aria-current="page"] {
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+@media (max-width: 767px) {
+  .topbar {
+    min-block-size: 44px;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .topbar-brand {
+    flex-shrink: 0;
+  }
+
+  .topbar-actions {
+    gap: 8px;
+    min-inline-size: 0;
+  }
+
+  .topbar .mode-toggle button {
+    white-space: nowrap;
+  }
+
+  .nav-scroll {
+    --nav-fade-direction: to right;
+    position: relative;
+  }
+
+  [dir="rtl"] .nav-scroll {
+    --nav-fade-direction: to left;
+  }
+
+  .nav-scroll::before,
+  .nav-scroll::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inline-size: 24px;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0;
+  }
+
+  .nav-scroll::before {
+    inset-inline-start: 0;
+    background: linear-gradient(var(--nav-fade-direction), var(--bg), transparent);
+  }
+
+  .nav-scroll::after {
+    inset-inline-end: 0;
+    background: linear-gradient(var(--nav-fade-direction), transparent, var(--bg));
+  }
+
+  .nav-scroll[data-scroll-start="true"]::before,
+  .nav-scroll[data-scroll-end="true"]::after {
+    opacity: 1;
+  }
+
+  .nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+    scroll-padding-inline: 24px;
+    scrollbar-width: none;
+    gap: 4px;
+    padding: 0 12px;
+    min-block-size: 44px;
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    align-self: stretch;
+    scroll-snap-align: center;
+    padding-inline: 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .nav a[aria-current="page"] {
+    background: var(--text);
+    color: var(--bg);
+    text-decoration: none;
+  }
+
   .demo-banner-detail {
     display: none;
   }
@@ -133,7 +227,37 @@
     padding-inline-start: 0;
   }
 
-  .panel > * {
+  .panel > :not([data-bleed]) {
     padding-inline-start: 16px;
+  }
+
+  .panel > [data-bleed] {
+    padding-inline: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .nav a,
+  .topbar .mode-toggle button {
+    min-block-size: 44px;
+  }
+
+  .nav a {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
+@media (max-width: 767px) {
+  body {
+    block-size: 100dvh;
+  }
+}
+
+@media (pointer: coarse) {
+  .link-list a {
+    display: flex;
+    align-items: center;
+    min-block-size: 44px;
   }
 }

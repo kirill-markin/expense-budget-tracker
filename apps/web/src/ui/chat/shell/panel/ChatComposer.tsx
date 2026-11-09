@@ -410,7 +410,7 @@ export const ChatComposer = (props: Props): ReactElement => {
         </div>
       )}
       <div className={styles.controls}>
-        <span className={styles.modelLabel}>{CHAT_MODEL_BADGE_LABEL}</span>
+        <span className={styles.modelLabel} title={CHAT_MODEL_BADGE_LABEL}>{CHAT_MODEL_BADGE_LABEL}</span>
         <div className={styles.controlsRight}>
           <button
             type="button"

@@ -15,6 +15,7 @@ import {
   type SetStateAction,
 } from "react";
 
+import type { ChatOpenState } from "@/lib/chatCookies";
 import {
   areChatTargetsEqual,
   getChatTargetKey,
@@ -51,9 +52,11 @@ import {
   writeChatDraft,
   type ChatDraftScope,
 } from "./chatDraftStorage";
+import { useChatViewport } from "./chatViewport";
 
 type ChatLayoutContextValue = Readonly<{
   isOpen: boolean;
+  isOpenDefault: boolean;
   setIsOpen: (open: boolean) => void;
   chatWidth: number;
   setChatWidth: (width: number) => void;
@@ -567,7 +570,7 @@ const writeCookie = (name: string, value: string): void => {
 
 type Props = Readonly<{
   children: ReactNode;
-  initialChatOpen: boolean;
+  initialChatOpen: ChatOpenState;
   initialChatWidth: number;
   draftScope: ChatDraftScope;
 }>;
@@ -575,6 +578,7 @@ type Props = Readonly<{
 type ScopedChatLayoutProviderProps = Readonly<{
   children: ReactNode;
   isOpen: boolean;
+  isOpenDefault: boolean;
   setIsOpen: (open: boolean) => void;
   chatWidth: number;
   setChatWidth: (width: number) => void;
@@ -588,6 +592,7 @@ const ScopedChatLayoutProvider = (
   const {
     children,
     isOpen,
+    isOpenDefault,
     setIsOpen,
     chatWidth,
     setChatWidth,
@@ -1533,6 +1538,7 @@ const ScopedChatLayoutProvider = (
   return (
     <ChatLayoutContext.Provider value={{
       isOpen,
+      isOpenDefault,
       setIsOpen,
       chatWidth,
       setChatWidth,
@@ -1573,7 +1579,12 @@ export const ChatLayoutProvider = (props: Props): ReactElement => {
     initialChatWidth,
     draftScope,
   } = props;
-  const [isOpen, setIsOpenState] = useState<boolean>(initialChatOpen);
+  const viewport = useChatViewport();
+  const [openPreference, setOpenPreference] = useState<ChatOpenState>(initialChatOpen);
+  const isOpenDefault = openPreference === "unset";
+  const isOpen = isOpenDefault
+    ? viewport === "docked" || viewport === "unresolved"
+    : openPreference === "open";
   const [chatWidth, setChatWidthState] = useState<number>(initialChatWidth);
   const draftWorkspaceId = draftScope.mode === "workspace"
     ? draftScope.workspaceId
@@ -1593,7 +1604,7 @@ export const ChatLayoutProvider = (props: Props): ReactElement => {
   );
   const scopeKey = getChatPendingSubmissionScopeKey(stableDraftScope);
   const setIsOpen = useCallback((open: boolean): void => {
-    setIsOpenState(open);
+    setOpenPreference(open ? "open" : "closed");
     writeCookie("chat-open", String(open));
   }, []);
   const setChatWidth = useCallback((width: number): void => {
@@ -1605,6 +1616,7 @@ export const ChatLayoutProvider = (props: Props): ReactElement => {
     <ScopedChatLayoutProvider
       key={scopeKey}
       isOpen={isOpen}
+      isOpenDefault={isOpenDefault}
       setIsOpen={setIsOpen}
       chatWidth={chatWidth}
       setChatWidth={setChatWidth}

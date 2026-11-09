@@ -65,6 +65,7 @@ export const AccountMenu = (props: Props): ReactElement | null => {
         setIsCreating(false);
         setNewName("");
         setError("");
+        buttonRef.current?.focus();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -140,10 +141,11 @@ export const AccountMenu = (props: Props): ReactElement | null => {
         className={styles.button}
         type="button"
         onClick={toggle}
+        aria-label={t("account.menu")}
         aria-expanded={isOpen}
         aria-haspopup="true"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M20 21a8 8 0 0 0-16 0" /></svg>
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M20 21a8 8 0 0 0-16 0" /></svg>
       </button>
       {isOpen && (
         <div ref={menuRef} className={styles.dropdown}>

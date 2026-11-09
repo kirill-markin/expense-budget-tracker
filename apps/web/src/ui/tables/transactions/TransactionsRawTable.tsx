@@ -11,10 +11,11 @@ import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import alertStyles from "@/ui/Alert.module.css";
 import filterStyles from "@/ui/FilterControls.module.css";
 
+import { HorizontalTableScroll } from "@/ui/tables/shared/HorizontalTableScroll";
+import { useTransactionColumnOrder } from "./useTransactionColumnOrder";
 import { DataTable } from "@/ui/tables/shared/data-table/DataTable";
 import type { ColumnDef, PageResult } from "@/ui/tables/shared/data-table/types";
 import { useTableSort } from "@/ui/tables/shared/data-table/useTableSort";
-import tableStyles from "@/ui/tables/shared/TableUi.module.css";
 import transactionStyles from "./TransactionsTable.module.css";
 import { TransactionCopyFeedback } from "./TransactionCopyFeedback";
 import { serializeFilterValues } from "./filters/transactionsFiltersState";
@@ -241,7 +242,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     deleteEntry(entryId);
   };
 
-  const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = [
+  const columns: ReadonlyArray<ColumnDef<LedgerEntry>> = useTransactionColumnOrder<LedgerEntry>([
     transactionCopyColumn(effectiveAllowlist, pendingEntryIds, copyTransaction, t("txn.copyAction")),
     editableDateColumn(getRowMaskClass, handleDateTimeCommit),
     editableAccountColumn(getRowMaskClass, handleAccountCommit, hints.accounts),
@@ -252,7 +253,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
     editableCounterpartyColumn(getRowMaskClass, handleCounterpartyCommit, hints.counterparties),
     editableNoteColumn(getRowMaskClass, handleNoteCommit, hints.notes),
     editableDeleteColumn(handleDelete),
-  ];
+  ]);
   const errorTitle = error !== null && error.startsWith(CREATE_ERROR_PREFIX)
     ? t("txn.failedToCreate")
     : error !== null && error.startsWith(UPDATE_ERROR_PREFIX)
@@ -266,7 +267,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className={filterStyles.filters}>
+      <div className={`${filterStyles.filters} ${transactionStyles.filters}`}>
         <label className={filterStyles.filterLabel}>
           {t("common.from")}
           <input
@@ -286,7 +287,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           />
         </label>
         <div className={filterStyles.filterLabel}>
-          {t("txn.filtersButton")}
+          <span className={transactionStyles.filtersLabel}>{t("txn.filtersButton")}</span>
           <button
             ref={filtersTriggerRef}
             type="button"
@@ -336,7 +337,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
 
       <TransactionCopyFeedback feedback={copyFeedback} />
 
-      <div className={tableStyles.scroll}>
+      <HorizontalTableScroll className={transactionStyles.tableScroll}>
         <DataTable<LedgerEntry>
           columns={columns}
           rows={rows}
@@ -348,7 +349,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
           loadingMore={loadingMore}
           sentinelRef={sentinelRef}
         />
-      </div>
+      </HorizontalTableScroll>
     </>
   );
 };

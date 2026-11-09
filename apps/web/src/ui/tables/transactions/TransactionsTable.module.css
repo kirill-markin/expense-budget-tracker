@@ -141,7 +141,8 @@
   line-height: 1;
 }
 
-:global(tr:hover) .deleteButton {
+:global(tr:hover) .deleteButton,
+.deleteButton:focus-visible {
   opacity: 1;
 }
 
@@ -150,7 +151,8 @@
 }
 
 @media (hover: none), (pointer: coarse) {
-  .copyButton {
+  .copyButton,
+  .deleteButton {
     opacity: 1;
   }
 }
@@ -323,8 +325,124 @@
   white-space: nowrap;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .transactionsFiltersOverlayBody {
     padding: 10px;
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px 12px;
+  }
+
+  .filters > * {
+    min-inline-size: 0;
+  }
+
+  .filters input,
+  .transactionsFiltersTrigger {
+    inline-size: 100%;
+    min-inline-size: 0;
+  }
+
+  .filters .addRowButton {
+    grid-column: 2;
+    grid-row: 2;
+    min-block-size: 31px;
+    align-self: end;
+  }
+
+  .filterCount {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    padding-block-end: 0;
+  }
+}
+
+@media (max-width: 1099px) {
+  .tableScroll :is(th[data-column="date"], td:first-child:not([colspan])) {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 10;
+    box-sizing: border-box;
+    inline-size: 112px;
+    min-inline-size: 112px;
+    max-inline-size: 112px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    background-color: var(--panel);
+    border-inline-end: 1px solid var(--panel-border);
+    box-shadow: inset -1px 0 0 var(--panel-border);
+  }
+
+  [dir="rtl"] .tableScroll :is(th[data-column="date"], td:first-child:not([colspan])) {
+    box-shadow: inset 1px 0 0 var(--panel-border);
+  }
+
+  .tableScroll td:not(:first-child) {
+    min-inline-size: 88px;
+  }
+
+  .tableScroll td.cellCopy,
+  .tableScroll td.cellDelete {
+    inline-size: 44px;
+    min-inline-size: 44px;
+    padding-inline: 0;
+  }
+
+  .cellNote {
+    --transaction-note-inline-size: 260px;
+  }
+}
+
+@media (max-width: 767px) {
+  .cellNote {
+    --transaction-note-inline-size: 140px;
+  }
+
+  .tableScroll :is(th[data-column="date"], td:first-child:not([colspan])) {
+    padding-inline-start: 16px;
+  }
+}
+
+@media (pointer: coarse) {
+  .cellCopy,
+  .cellDelete {
+    padding-block: 0;
+  }
+
+  .addRowButton,
+  .transactionsFiltersOverlayAction,
+  .transactionsFiltersRow,
+  .transactionsFiltersPickerOption {
+    min-block-size: 44px;
+  }
+
+  .copyButton,
+  .deleteButton {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+
+  .transactionsFiltersPickerSearch {
+    min-block-size: 44px;
+    font-size: 16px;
+  }
+
+  .filters .addRowButton {
+    min-block-size: 44px;
+  }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .filtersLabel {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }

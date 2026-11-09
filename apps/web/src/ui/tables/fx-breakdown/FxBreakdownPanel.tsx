@@ -11,6 +11,7 @@ import type { FxBreakdownRow, FxBreakdownResult } from "@/server/budget/getFxBre
 import { useFormat } from "@/ui/FormatProvider";
 import alertStyles from "@/ui/Alert.module.css";
 
+import { HorizontalTableScroll } from "@/ui/tables/shared/HorizontalTableScroll";
 import { formatFxAmount } from "@/ui/tables/fx/format";
 import { formatAmount, formatNumber } from "@/ui/tables/shared/format";
 import panelStyles from "@/ui/tables/shared/TablePanel.module.css";
@@ -117,8 +118,8 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className={panelStyles.overlayBackdrop} onClick={closePanel} />
-      <div className={panelStyles.sidePanel} ref={panelRef} style={panelWidth !== null ? { width: panelWidth } : undefined}>
+      <div data-bleed className={panelStyles.overlayBackdrop} onClick={closePanel} />
+      <div data-bleed className={panelStyles.sidePanel} ref={panelRef} style={panelWidth !== null ? { width: panelWidth } : undefined}>
         <div
           className={cn(panelStyles.panelResizeHandle, isDragging ? panelStyles.panelResizeHandleDragging : "")}
           onMouseDown={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -141,58 +142,60 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
         )}
 
         <div className={panelStyles.panelBody}>
-          <table className={tableStyles.table}>
-            <thead>
-              <tr>
-                <th className={tableStyles.headCell}>Currency</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Open</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Open ${reportingCurrency}`}</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Flow ${reportingCurrency}`}</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Close</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Close ${reportingCurrency}`}</th>
-                <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`FX ${reportingCurrency}`}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.currency} className={tableStyles.row}>
-                  <td className={cn(tableStyles.cell, tableStyles.cellMono)}>{row.currency}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.openNative, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.openRate, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.openReport, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.flowReport, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeReport, numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight, row.fxAdjustReport < 0 ? tableStateStyles.over : "")}>{formatFxAmount(row.fxAdjustReport, numberFormat)}</td>
-                </tr>
-              ))}
-              {!loading && rows.length === 0 && (
+          <HorizontalTableScroll inPanel stickyFirstColumn>
+            <table className={tableStyles.table}>
+              <thead>
                 <tr>
-                  <td className={tableStyles.cell} colSpan={9} style={{ textAlign: "center", color: "var(--muted)" }}>
-                    No data for this month.
-                  </td>
+                  <th className={tableStyles.headCell}>Currency</th>
+                  <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Open</th>
+                  <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
+                  <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Open ${reportingCurrency}`}</th>
+                  <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Flow ${reportingCurrency}`}</th>
+                  <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Close</th>
+                  <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>Rate</th>
+                  <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`Close ${reportingCurrency}`}</th>
+                  <th className={cn(tableStyles.headCell, tableStyles.headCellRight)}>{`FX ${reportingCurrency}`}</th>
                 </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.currency} className={tableStyles.row}>
+                    <td className={cn(tableStyles.cell, tableStyles.cellMono)}>{row.currency}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.openNative, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.openRate, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.openReport, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.flowReport, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeReport, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight, row.fxAdjustReport < 0 ? tableStateStyles.over : "")}>{formatFxAmount(row.fxAdjustReport, numberFormat)}</td>
+                  </tr>
+                ))}
+                {!loading && rows.length === 0 && (
+                  <tr>
+                    <td className={tableStyles.cell} colSpan={9} style={{ textAlign: "center", color: "var(--muted)" }}>
+                      No data for this month.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              {rows.length > 0 && (
+                <tfoot>
+                  <tr className={tableStyles.row} style={{ fontWeight: 600 }}>
+                    <td className={tableStyles.cell}>Total</td>
+                    <td className={tableStyles.cell} />
+                    <td className={tableStyles.cell} />
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.openReport, 0), numberFormat)}</td>
+                    <td className={tableStyles.cell} />
+                    <td className={tableStyles.cell} />
+                    <td className={tableStyles.cell} />
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.closeReport, 0), numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight, totalFxAdjust < 0 ? tableStateStyles.over : "")}>{formatFxAmount(totalFxAdjust, numberFormat)}</td>
+                  </tr>
+                </tfoot>
               )}
-            </tbody>
-            {rows.length > 0 && (
-              <tfoot>
-                <tr className={tableStyles.row} style={{ fontWeight: 600 }}>
-                  <td className={tableStyles.cell}>Total</td>
-                  <td className={tableStyles.cell} />
-                  <td className={tableStyles.cell} />
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.openReport, 0), numberFormat)}</td>
-                  <td className={tableStyles.cell} />
-                  <td className={tableStyles.cell} />
-                  <td className={tableStyles.cell} />
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.closeReport, 0), numberFormat)}</td>
-                  <td className={cn(tableStyles.cell, tableStyles.cellRight, totalFxAdjust < 0 ? tableStateStyles.over : "")}>{formatFxAmount(totalFxAdjust, numberFormat)}</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
+            </table>
+          </HorizontalTableScroll>
 
           {loading && (
             <span className={tableStateStyles.loadingEdge}>Loading</span>

@@ -587,11 +587,8 @@
   letter-spacing: 0.02em;
 }
 
-.toggleFloating {
-  position: fixed;
-  bottom: 16px;
-  inset-inline-start: 16px;
-  z-index: 60;
+.toggleFloating,
+.toggleHeader {
   font-family: inherit;
   font-size: 12px;
   padding: 6px 12px;
@@ -601,31 +598,154 @@
   cursor: var(--cursor-pointer);
 }
 
-.toggleFloating:hover {
+.toggleFloating {
+  position: fixed;
+  bottom: 16px;
+  inset-inline-start: 16px;
+  z-index: 60;
+}
+
+.toggleHeader {
+  display: none;
+}
+
+.toggleFloating:hover,
+.toggleHeader:hover {
   color: var(--text);
   border-color: var(--text);
 }
 
-@media (max-width: 768px) {
-  .sidebar {
-    position: fixed;
-    top: 0;
-    inset-inline-start: 0;
-    width: 100% !important;
-    height: 100%;
-    z-index: 100;
-  }
+.toggleHeader[aria-expanded="true"] {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
 
-  .resizeHandle {
+.overlayClose {
+  display: none;
+}
+
+.dockedClose {
+  display: inline-block;
+}
+
+@media (max-width: 1099px) {
+  .toggleFloating {
     display: none;
   }
 
+  .toggleHeader {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
+  .sidebar {
+    width: 100% !important;
+  }
+
+  .resizeHandle,
+  .dockedClose {
+    display: none;
+  }
+
+  .overlayClose {
+    display: inline;
+  }
+}
+
+@media (max-width: 767px) {
+  .sidebar,
+  .toggleHeader {
+    display: none;
+  }
+
+  .sidebarFullscreen {
+    max-inline-size: none;
+    flex: 1;
+  }
+
+  .inputArea {
+    padding-block-end: max(8px, env(safe-area-inset-bottom, 0px));
+  }
+
   .textarea {
+    max-block-size: min(240px, 30dvh);
+  }
+}
+
+@media (pointer: coarse) {
+  .headerActions {
+    --chat-header-control-block-size: 44px;
+  }
+
+  .closeButton,
+  .sendButton,
+  .attachButton,
+  .microphoneButton,
+  .attachmentRemove,
+  .toggleFloating,
+  .toggleHeader {
+    min-block-size: 44px;
+    min-inline-size: 44px;
+  }
+
+  .textarea {
+    min-block-size: 44px;
     font-size: 16px;
   }
 
+  .controls,
+  .modelLabel {
+    min-inline-size: 0;
+  }
+
+  .modelLabel {
+    display: block;
+    align-content: center;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .controlsRight {
+    flex-shrink: 0;
+  }
+
   .accountMentionPopover {
-    --account-mention-row-block-size: 40px;
+    --account-mention-row-block-size: 44px;
     --account-mention-visible-rows: 4.5;
+  }
+
+  .toolCallSummary,
+  .workBlockSummary {
+    min-block-size: 44px;
+    padding-block: 12px;
+  }
+}
+
+@media (min-width: 768px) and (pointer: coarse) {
+  .toggleHeader {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+  }
+}
+
+@media (pointer: coarse) {
+  .toggleFloating {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1099px) {
+  .empty {
+    padding-block: 0;
+  }
+
+  .emptyTitle:first-child {
+    margin-block-start: 0;
   }
 }

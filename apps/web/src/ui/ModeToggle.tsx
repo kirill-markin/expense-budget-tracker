@@ -30,7 +30,7 @@ export const ModeToggle = (props: Props): ReactElement => {
 
   return (
     <div
-      className={styles.segmented}
+      className={`${styles.segmented} mode-toggle`}
       data-table-editor-visibility-control="true"
       aria-busy={modeTransitionPending}
     >

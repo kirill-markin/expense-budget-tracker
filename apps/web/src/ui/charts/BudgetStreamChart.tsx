@@ -11,6 +11,8 @@ import type { NumberFormat } from "@/lib/locale";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
 import { useFormat } from "@/ui/FormatProvider";
 import styles from "@/ui/charts/BudgetStreamChart.module.css";
+import { useChartSize } from "@/ui/charts/useChartSize";
+import { streamAxisTicks } from "@/ui/charts/streamAxisTicks";
 import { formatNumber } from "@/ui/tables/shared/format";
 
 type Props = Readonly<{
@@ -144,7 +146,7 @@ const findClosestDateIndex = (
 
 export const BudgetStreamChart = (props: Props): ReactElement => {
   const { rows, allowlist, reportingCurrency, onMonthClick } = props;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { numberFormat } = useFormat();
   const masked = allowlist !== null && allowlist.size === 0;
   const svgRef = useRef<SVGSVGElement>(null);
@@ -164,9 +166,9 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
     return { incomeCategories: ic, spendCategories: sc, incomeData: id, spendData: sd };
   }, [rows, allowlist]);
 
-  const width = 900;
-  const height = 520;
-  const margin = { top: 24, right: 24, bottom: 64, left: 64 } as const;
+  const { width, height, renderedWidth, chartRef } = useChartSize(wrapRef, 520);
+  const compact = width < 900;
+  const margin = { top: 24, right: 24, bottom: compact ? 36 : 64, left: compact ? 48 : 64 } as const;
 
   const allCategories = useMemo(
     () => [...incomeCategories, ...spendCategories],
@@ -180,11 +182,13 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
 
   if (incomeData.length === 0 && spendData.length === 0 && !masked) {
     return (
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Budget streamgraph">
-        <text x={width / 2} y={height / 2} textAnchor="middle" fill="var(--muted)" fontSize={14}>
-          {t("chart.noData")}
-        </text>
-      </svg>
+      <div ref={chartRef} className={styles.chartWrap}>
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Budget streamgraph">
+          <text x={width / 2} y={height / 2} textAnchor="middle" fill="var(--muted)" fontSize={14}>
+            {t("chart.noData")}
+          </text>
+        </svg>
+      </div>
     );
   }
 
@@ -236,8 +240,17 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
     .y1((d) => yScale(-d[1]))
     .curve(curveMonotoneX);
 
-  const yTicks = yScale.ticks(8);
-  const xTicks = uniqueDates;
+  const yTicks = yScale.ticks(width < 500 ? 4 : 8);
+  const xFontSize = compact ? 12 : 11;
+  const renderedScale = renderedWidth / width;
+  const xTicks = streamAxisTicks(
+    uniqueDates.map((date) => ({
+      x: xScale(date) * renderedScale,
+      width: formatMonth(date, t).length * xFontSize * 0.62 * renderedScale,
+    })),
+    (width - margin.left - margin.right) * renderedScale,
+    renderedWidth,
+  );
 
   const handleMouseMove = (event: React.MouseEvent<SVGSVGElement>): void => {
     const svg = svgRef.current;
@@ -335,36 +348,46 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
     onMonthClick(formatMonthToYYYYMM(date));
   };
 
+  const legend = (
+    <div className={styles.legend}>
+      {incomeCategories.length > 0 && (
+        <>
+          <span className={styles.legendHeading}>{t("chart.income")}:</span>
+          {incomeCategories.map((cat) => (
+            <span key={`legend-income-${cat}`} className={styles.legendItem}>
+              <span className={styles.legendSwatch} style={{ background: colorScale(cat) }} />
+              {cat}
+            </span>
+          ))}
+        </>
+      )}
+      {spendCategories.length > 0 && (
+        <>
+          <span className={styles.legendHeading}>{t("chart.spend")}:</span>
+          {spendCategories.map((cat) => (
+            <span key={`legend-spend-${cat}`} className={styles.legendItem}>
+              <span className={styles.legendSwatch} style={{ background: colorScale(cat) }} />
+              {cat}
+            </span>
+          ))}
+        </>
+      )}
+    </div>
+  );
+
   return (
     <>
       {!masked && (
-        <div className={styles.legend}>
-          {incomeCategories.length > 0 && (
-            <>
-              <span className={styles.legendHeading}>{t("chart.income")}:</span>
-              {incomeCategories.map((cat) => (
-                <span key={`legend-income-${cat}`} className={styles.legendItem}>
-                  <span className={styles.legendSwatch} style={{ background: colorScale(cat) }} />
-                  {cat}
-                </span>
-              ))}
-            </>
-          )}
-          {spendCategories.length > 0 && (
-            <>
-              <span className={styles.legendHeading}>{t("chart.spend")}:</span>
-              {spendCategories.map((cat) => (
-                <span key={`legend-spend-${cat}`} className={styles.legendItem}>
-                  <span className={styles.legendSwatch} style={{ background: colorScale(cat) }} />
-                  {cat}
-                </span>
-              ))}
-            </>
-          )}
-        </div>
+        <>
+          <div className={styles.legendDesktop}>{legend}</div>
+          <details className={styles.legendDisclosure}>
+            <summary>{t("chart.legend", { count: allCategories.length })}</summary>
+            {legend}
+          </details>
+        </>
       )}
 
-      <div ref={wrapRef} className={cn(styles.chartWrap, masked ? "data-masked" : "")}>
+      <div ref={chartRef} className={cn(styles.chartWrap, masked ? "data-masked" : "")}>
         <svg
           ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
@@ -403,10 +426,11 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                   <text
                     x={margin.left - 10}
                     y={y}
+                    direction="ltr"
                     textAnchor="end"
                     dominantBaseline="middle"
                     fill="var(--muted)"
-                    fontSize={11}
+                    fontSize={compact ? 12 : 11}
                   >
                     {formatAmount(tick, numberFormat)}
                   </text>
@@ -414,7 +438,8 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
               );
             })}
 
-            {xTicks.map((tick) => {
+            {xTicks.map(({ index, anchor }) => {
+              const tick = uniqueDates[index];
               const x = xScale(tick);
               return (
                 <g key={`x-${tick.toISOString()}`}>
@@ -428,9 +453,9 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                   <text
                     x={x}
                     y={height - margin.bottom + 18}
-                    textAnchor="middle"
+                    textAnchor={anchor === "end" && i18n.dir() === "rtl" ? "start" : anchor}
                     fill="var(--muted)"
-                    fontSize={11}
+                    fontSize={xFontSize}
                   >
                     {formatMonth(tick, t)}
                   </text>
@@ -467,13 +492,13 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
               strokeWidth={1.5}
             />
 
-            <text x={margin.left} y={margin.top - 10} fill="var(--muted)" fontSize={11}>
+            <text textAnchor={i18n.dir() === "rtl" ? "end" : "start"} x={margin.left} y={margin.top - 10} fill="var(--muted)" fontSize={compact ? 12 : 11}>
               {reportingCurrency}
             </text>
-            <text x={margin.left} y={yScale(0) - 6} fill="var(--text)" stroke="var(--bg)" strokeWidth={3} paintOrder="stroke" fontSize={10}>
+            <text className={styles.directionLabel} textAnchor={i18n.dir() === "rtl" ? "end" : "start"} x={margin.left} y={yScale(0) - 6} fill="var(--text)" stroke="var(--bg)" strokeWidth={3} paintOrder="stroke" fontSize={compact ? 11 : 10}>
               {t("chart.income")}
             </text>
-            <text x={margin.left} y={yScale(0) + 14} fill="var(--text)" stroke="var(--bg)" strokeWidth={3} paintOrder="stroke" fontSize={10}>
+            <text className={styles.directionLabel} textAnchor={i18n.dir() === "rtl" ? "end" : "start"} x={margin.left} y={yScale(0) + (compact ? 16 : 14)} fill="var(--text)" stroke="var(--bg)" strokeWidth={3} paintOrder="stroke" fontSize={compact ? 11 : 10}>
               {t("chart.spend")}
             </text>
 
