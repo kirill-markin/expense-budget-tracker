@@ -260,4 +260,18 @@
     align-items: center;
     min-block-size: 44px;
   }
+
+  html[data-keyboard-open] .header-sticky {
+    display: none;
+  }
+
+  html[data-keyboard-open] body {
+    block-size: var(--chat-viewport-height);
+  }
+
+  html[data-chat-viewport-overlay] body {
+    position: fixed;
+    inset-block-start: var(--chat-viewport-offset-top);
+    inline-size: 100%;
+  }
 }

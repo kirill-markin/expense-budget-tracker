@@ -738,6 +738,29 @@
   .toggleFloating {
     display: none;
   }
+
+  :global(html[data-keyboard-open]) .header {
+    padding-block: 2px;
+  }
+
+  :global(html[data-keyboard-open]) .textarea {
+    max-block-size: min(96px, calc(var(--chat-viewport-height) * 0.3));
+    overflow-y: auto;
+  }
+}
+
+@media (min-width: 1100px) and (pointer: coarse) {
+  :global(html:not([data-keyboard-open])) .sidebarClose {
+    display: none;
+  }
+
+  :global(html[data-keyboard-open]) .dockedClose {
+    display: none;
+  }
+
+  :global(html[data-keyboard-open]) .overlayClose {
+    display: inline;
+  }
 }
 
 @media (min-width: 768px) and (max-width: 1099px) {

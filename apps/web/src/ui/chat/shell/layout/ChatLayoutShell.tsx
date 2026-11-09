@@ -16,6 +16,7 @@ import { useChatLayout } from "./ChatLayoutProvider";
 import { ChatPanel } from "../panel/ChatPanel";
 import { ChatToggle } from "./ChatToggle";
 import { useChatViewport } from "./chatViewport";
+import { useChatKeyboardViewport } from "./useChatKeyboardViewport";
 import styles from "./ChatLayoutShell.module.css";
 
 type Props = Readonly<{
@@ -24,6 +25,7 @@ type Props = Readonly<{
 }>;
 
 export const ChatLayoutShell = (props: Props): ReactElement => {
+  useChatKeyboardViewport();
   const { children, workspaceId } = props;
   const { isOpen, isOpenDefault, setIsOpen } = useChatLayout();
   const viewport = useChatViewport();
@@ -83,7 +85,7 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
       const controls = Array.from(drawer.querySelectorAll<HTMLElement>(
         'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]',
       )).filter((element) => element.getClientRects().length > 0);
-      if (headerToggle !== null) controls.unshift(headerToggle);
+      if (headerToggle !== null && headerToggle.getClientRects().length > 0) controls.unshift(headerToggle);
       const first = controls[0];
       const last = controls[controls.length - 1];
       if (event.shiftKey && document.activeElement === first) {
