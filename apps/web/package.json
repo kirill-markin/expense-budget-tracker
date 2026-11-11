@@ -21,9 +21,6 @@
     "@aws-sdk/client-s3": "^3.1166.0",
     "@aws-sdk/s3-request-presigner": "^3.1166.0",
     "@expense-budget-tracker/agent-shared": "1.8.0",
-    "@langfuse/openai": "^6.1.1",
-    "@langfuse/otel": "^6.1.1",
-    "@langfuse/tracing": "^6.1.1",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/core": "^2.12.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.223.1",
@@ -48,6 +45,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@opentelemetry/context-async-hooks": "2.12.1",
     "@playwright/test": "^1.65.0",
     "@types/d3": "^7.4.3",
     "@types/node": "^24.19.2",

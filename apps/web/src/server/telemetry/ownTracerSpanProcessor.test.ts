@@ -16,7 +16,7 @@ test("a span of a foreign tracer never reaches the wrapped processor's exporter"
   });
 
   provider.getTracer("next.js").startSpan("GET /api/chat").end();
-  provider.getTracer("langfuse-sdk").startSpan("observation").end();
+  provider.getTracer("@opentelemetry/instrumentation-undici").startSpan("POST").end();
   provider.getTracer(TELEMETRY_TRACER_NAME).startSpan("invoke_agent chat").end();
   await provider.forceFlush();
 

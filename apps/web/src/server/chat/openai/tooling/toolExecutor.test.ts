@@ -1,83 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { LangfuseObservation, LangfuseTool } from "@langfuse/tracing";
+import { SpanStatusCode } from "@opentelemetry/api";
+import type { ReadableSpan } from "@opentelemetry/sdk-trace-base";
+import { registerInMemorySpanExporterForTests } from "@/server/telemetry/spanRecorderForTests";
 import { runOneToolCallWithDependencies } from "./toolExecutor";
 import type { ExecutedChatToolCall } from "./tools";
 
 type ToolExecutorParams = Parameters<typeof runOneToolCallWithDependencies>[0];
 type ToolExecutorDependencies = Parameters<typeof runOneToolCallWithDependencies>[1];
-type ObservationUpdate = Parameters<LangfuseTool["update"]>[0];
-type ObservationOtelUpdate = Parameters<LangfuseObservation["updateOtelSpanAttributes"]>[0];
-type ObservationLifecycleEvent = "attributes" | "update" | "end";
 type ToolExecutorLogEvent = Parameters<ToolExecutorDependencies["log"]>[0];
-
-type ObservationErrors = Readonly<{
-  update: Error | null;
-  updateOtelSpanAttributes: Error | null;
-  end: Error | null;
-}>;
-
-type RecordingObservation = Readonly<{
-  rootObservation: LangfuseObservation;
-  updates: ReadonlyArray<ObservationUpdate>;
-  otelUpdates: ReadonlyArray<ObservationOtelUpdate>;
-  lifecycle: ReadonlyArray<ObservationLifecycleEvent>;
-  getEndCount: () => number;
-}>;
-
-const createObservation = (
-  errors: ObservationErrors,
-): RecordingObservation => {
-  const updates: Array<ObservationUpdate> = [];
-  const otelUpdates: Array<ObservationOtelUpdate> = [];
-  const lifecycle: Array<ObservationLifecycleEvent> = [];
-  let endCount = 0;
-
-  const toolObservation = {
-    update: (attributes: ObservationUpdate): void => {
-      updates.push(attributes);
-      lifecycle.push("update");
-      if (errors.update !== null) {
-        throw errors.update;
-      }
-    },
-    updateOtelSpanAttributes: (attributes: ObservationOtelUpdate): void => {
-      otelUpdates.push(attributes);
-      lifecycle.push("attributes");
-      if (errors.updateOtelSpanAttributes !== null) {
-        throw errors.updateOtelSpanAttributes;
-      }
-    },
-    end: (): void => {
-      endCount += 1;
-      lifecycle.push("end");
-      if (errors.end !== null) {
-        throw errors.end;
-      }
-    },
-  } as unknown as LangfuseObservation;
-
-  const rootObservation = {
-    startObservation: (): LangfuseObservation => toolObservation,
-  } as unknown as LangfuseObservation;
-
-  return {
-    rootObservation,
-    updates,
-    otelUpdates,
-    lifecycle,
-    getEndCount: (): number => endCount,
-  };
-};
-
-const createRecordingObservation = (): RecordingObservation =>
-  createObservation({
-    update: null,
-    updateOtelSpanAttributes: null,
-    end: null,
-  });
-
 type ToolCallLogRecord = Extract<ToolExecutorLogEvent, { action: "tool_call" }>;
+
+const spanExporter = registerInMemorySpanExporterForTests();
+
+const TOOL_ARGUMENTS = JSON.stringify({ sql: "SELECT 1" });
 
 const collectToolCallRecords = (
   events: ReadonlyArray<ToolExecutorLogEvent>,
@@ -85,21 +21,13 @@ const collectToolCallRecords = (
   (event): event is ToolCallLogRecord => event.action === "tool_call",
 );
 
-const collectErrorEvents = (
-  events: ReadonlyArray<ToolExecutorLogEvent>,
-): ReadonlyArray<ToolExecutorLogEvent> => events.filter(
-  (event): boolean => event.action === "error",
-);
-
-const createToolExecutorParams = (
-  rootObservation: LangfuseObservation,
-): ToolExecutorParams => ({
+const createToolExecutorParams = (): ToolExecutorParams => ({
   item: {
     type: "function_call",
     id: "tool-item-1",
     call_id: "tool-call-1",
     name: "query_database",
-    arguments: JSON.stringify({ sql: "SELECT 1" }),
+    arguments: TOOL_ARGUMENTS,
     status: "completed",
   },
   requestId: "request-1",
@@ -108,39 +36,54 @@ const createToolExecutorParams = (
   sessionId: "session-1",
   turnId: "turn-1",
   isDemoMode: false,
-  rootObservation,
 });
 
-test("successful tools keep the default observation level and end once", async (): Promise<void> => {
-  const recording = createRecordingObservation();
-  const toolOutput = "x".repeat(4_001);
+const takeOnlySpan = (): ReadableSpan => {
+  const spans = spanExporter.getFinishedSpans();
+  spanExporter.reset();
+  assert.equal(spans.length, 1);
+  const span = spans[0];
+  assert.ok(span !== undefined);
+  return span;
+};
+
+const assertToolSpanIdentity = (span: ReadableSpan): void => {
+  assert.equal(span.name, "execute_tool query_database");
+  assert.equal(span.attributes["gen_ai.operation.name"], "execute_tool");
+  assert.equal(span.attributes["gen_ai.tool.name"], "query_database");
+  assert.equal(span.attributes["gen_ai.tool.call.id"], "tool-call-1");
+  assert.equal(span.attributes["gen_ai.tool.type"], "function");
+  assert.equal(span.attributes["user.id"], "user-1");
+  assert.equal(span.attributes["app.workspace_id"], "workspace-1");
+  assert.equal(span.attributes["gen_ai.conversation.id"], "session-1");
+  // Tool arguments and output never enter a span.
+  assert.equal(JSON.stringify(span.attributes).includes("SELECT 1"), false);
+};
+
+test("a successful tool call ends one span without an error", async (): Promise<void> => {
   const expectedResult: ExecutedChatToolCall = {
-    output: toolOutput,
+    output: "tool output text",
     isMutating: false,
     workspaceId: "workspace-1",
     succeeded: true,
     error: null,
   };
   const logEvents: Array<ToolExecutorLogEvent> = [];
-  const dependencies: ToolExecutorDependencies = {
+
+  const result = await runOneToolCallWithDependencies(createToolExecutorParams(), {
     executeChatToolCall: async (): Promise<ExecutedChatToolCall> => expectedResult,
     log: (event): void => {
       logEvents.push(event);
     },
-  };
-
-  const result = await runOneToolCallWithDependencies(
-    createToolExecutorParams(recording.rootObservation),
-    dependencies,
-  );
+  });
 
   assert.equal(result, expectedResult);
-  assert.deepEqual(recording.updates, []);
-  assert.deepEqual(recording.otelUpdates[0]?.output, {
-    output: `${"x".repeat(4_000)}...`,
-  });
-  assert.deepEqual(recording.lifecycle, ["attributes", "end"]);
-  assert.equal(recording.getEndCount(), 1);
+  const span = takeOnlySpan();
+  assertToolSpanIdentity(span);
+  assert.equal(span.status.code, SpanStatusCode.UNSET);
+  assert.equal(span.attributes["app.tool.mutating"], false);
+  assert.equal(span.attributes["app.tool.error_code"], undefined);
+  assert.equal(JSON.stringify(span.attributes).includes("tool output text"), false);
   const records = collectToolCallRecords(logEvents);
   assert.equal(records.length, 1);
   assert.equal(records[0]?.status, "completed");
@@ -149,47 +92,31 @@ test("successful tools keep the default observation level and end once", async (
   assert.equal(typeof records[0]?.durationMs, "number");
 });
 
-test("returned tool failures set the observation error level and end once", async (): Promise<void> => {
-  const recording = createRecordingObservation();
-  const error = {
-    name: "DatabaseError",
-    message: "relation accounts does not exist",
-  };
+test("a returned tool failure marks its span with the agent error code", async (): Promise<void> => {
   const expectedResult: ExecutedChatToolCall = {
-    output: JSON.stringify({
-      ok: false,
-      error: { code: "sql_execution_failed", message: error.message },
-      instructions: "Review SQL syntax, relation names, values, and constraints, then call sql_query again.",
-    }),
+    output: JSON.stringify({ ok: false }),
     isMutating: false,
     workspaceId: null,
     succeeded: false,
-    error,
+    error: { name: "DatabaseError", message: "relation accounts does not exist" },
     errorCode: "sql_execution_failed",
   };
   const logEvents: Array<ToolExecutorLogEvent> = [];
-  const dependencies: ToolExecutorDependencies = {
+
+  const result = await runOneToolCallWithDependencies(createToolExecutorParams(), {
     executeChatToolCall: async (): Promise<ExecutedChatToolCall> => expectedResult,
     log: (event): void => {
       logEvents.push(event);
     },
-  };
-
-  const result = await runOneToolCallWithDependencies(
-    createToolExecutorParams(recording.rootObservation),
-    dependencies,
-  );
+  });
 
   assert.equal(result, expectedResult);
-  assert.deepEqual(recording.otelUpdates[0]?.output, {
-    output: expectedResult.output,
-  });
-  assert.deepEqual(recording.updates, [{
-    level: "ERROR",
-    statusMessage: "DatabaseError: relation accounts does not exist",
-  }]);
-  assert.deepEqual(recording.lifecycle, ["attributes", "update", "end"]);
-  assert.equal(recording.getEndCount(), 1);
+  const span = takeOnlySpan();
+  assertToolSpanIdentity(span);
+  assert.deepEqual(span.status, { code: SpanStatusCode.ERROR, message: "sql_execution_failed" });
+  assert.equal(span.attributes["error.type"], "sql_execution_failed");
+  assert.equal(span.attributes["app.tool.error_code"], "sql_execution_failed");
+  assert.equal(JSON.stringify([span.attributes, span.events, span.status]).includes("relation accounts"), false);
   const records = collectToolCallRecords(logEvents);
   assert.equal(records.length, 1);
   assert.equal(records[0]?.status, "error");
@@ -198,158 +125,30 @@ test("returned tool failures set the observation error level and end once", asyn
   assert.equal(records[0]?.workspaceId, "workspace-1");
 });
 
-test("thrown tool failures set the observation error level and rethrow", async (): Promise<void> => {
-  const recording = createRecordingObservation();
+test("a thrown tool failure marks its span with the error class and rethrows", async (): Promise<void> => {
   const expectedError = new TypeError("database connection closed");
   const logEvents: Array<ToolExecutorLogEvent> = [];
-  const dependencies: ToolExecutorDependencies = {
-    executeChatToolCall: async (): Promise<never> => {
-      throw expectedError;
-    },
-    log: (event): void => {
-      logEvents.push(event);
-    },
-  };
 
   await assert.rejects(
-    runOneToolCallWithDependencies(
-      createToolExecutorParams(recording.rootObservation),
-      dependencies,
-    ),
+    runOneToolCallWithDependencies(createToolExecutorParams(), {
+      executeChatToolCall: async (): Promise<never> => {
+        throw expectedError;
+      },
+      log: (event): void => {
+        logEvents.push(event);
+      },
+    }),
     (error: unknown): boolean => error === expectedError,
   );
 
+  const span = takeOnlySpan();
+  assertToolSpanIdentity(span);
+  assert.deepEqual(span.status, { code: SpanStatusCode.ERROR, message: "TypeError" });
+  assert.equal(span.attributes["error.type"], "TypeError");
+  assert.equal(span.attributes["app.tool.error_code"], "internal_error");
+  assert.equal(JSON.stringify([span.attributes, span.events, span.status]).includes("connection closed"), false);
   const records = collectToolCallRecords(logEvents);
   assert.equal(records.length, 1);
   assert.equal(records[0]?.status, "error");
   assert.equal(records[0]?.errorCode, "internal_error");
-  assert.deepEqual(recording.otelUpdates[0]?.output, {
-    error: "database connection closed",
-  });
-  assert.deepEqual(recording.updates, [{
-    level: "ERROR",
-    statusMessage: "TypeError: database connection closed",
-  }]);
-  assert.deepEqual(recording.lifecycle, ["attributes", "update", "end"]);
-  assert.equal(recording.getEndCount(), 1);
-});
-
-test("returned tool failures survive all observation update and end failures", async (): Promise<void> => {
-  const attributesError = new Error("Langfuse attributes failed");
-  const updateError = new Error("Langfuse update failed");
-  const endError = new Error("Langfuse end failed");
-  const recording = createObservation({
-    update: updateError,
-    updateOtelSpanAttributes: attributesError,
-    end: endError,
-  });
-  const expectedResult: ExecutedChatToolCall = {
-    output: JSON.stringify({ ok: false }),
-    isMutating: false,
-    workspaceId: null,
-    succeeded: false,
-    error: {
-      name: "DatabaseError",
-      message: "query failed",
-    },
-    errorCode: "internal_error",
-  };
-  const logEvents: Array<ToolExecutorLogEvent> = [];
-  const dependencies: ToolExecutorDependencies = {
-    executeChatToolCall: async (): Promise<ExecutedChatToolCall> => expectedResult,
-    log: (event): void => {
-      logEvents.push(event);
-    },
-  };
-
-  const result = await runOneToolCallWithDependencies(
-    createToolExecutorParams(recording.rootObservation),
-    dependencies,
-  );
-
-  assert.equal(result, expectedResult);
-  assert.deepEqual(recording.lifecycle, ["attributes", "update", "end"]);
-  assert.equal(logEvents.length, 4);
-  assert.equal(collectToolCallRecords(logEvents).length, 1);
-  assert.deepEqual(collectErrorEvents(logEvents), [
-    {
-      domain: "chat",
-      action: "error",
-      vendor: "openai",
-      stage: "agent",
-      error: `Langfuse tool observation update_attributes failed for query_database (tool-call-1): ${attributesError.message}`,
-      requestId: "request-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-    },
-    {
-      domain: "chat",
-      action: "error",
-      vendor: "openai",
-      stage: "agent",
-      error: `Langfuse tool observation update failed for query_database (tool-call-1): ${updateError.message}`,
-      requestId: "request-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-    },
-    {
-      domain: "chat",
-      action: "error",
-      vendor: "openai",
-      stage: "agent",
-      error: `Langfuse tool observation end failed for query_database (tool-call-1): ${endError.message}`,
-      requestId: "request-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      sessionId: "session-1",
-    },
-  ]);
-});
-
-test("thrown tool failures survive all observation update and end failures", async (): Promise<void> => {
-  const attributesError = new Error("Langfuse attributes failed");
-  const updateError = new Error("Langfuse update failed");
-  const endError = new Error("Langfuse end failed");
-  const recording = createObservation({
-    update: updateError,
-    updateOtelSpanAttributes: attributesError,
-    end: endError,
-  });
-  const expectedError = new TypeError("database connection closed");
-  const logEvents: Array<ToolExecutorLogEvent> = [];
-  const dependencies: ToolExecutorDependencies = {
-    executeChatToolCall: async (): Promise<never> => {
-      throw expectedError;
-    },
-    log: (event): void => {
-      logEvents.push(event);
-    },
-  };
-
-  await assert.rejects(
-    runOneToolCallWithDependencies(
-      createToolExecutorParams(recording.rootObservation),
-      dependencies,
-    ),
-    (error: unknown): boolean => error === expectedError,
-  );
-
-  assert.deepEqual(recording.lifecycle, ["attributes", "update", "end"]);
-  assert.equal(logEvents.length, 4);
-  assert.equal(collectToolCallRecords(logEvents).length, 1);
-  const errorEvents = collectErrorEvents(logEvents);
-  assert.deepEqual(
-    errorEvents.map((event): string | null => "requestId" in event ? event.requestId ?? null : null),
-    ["request-1", "request-1", "request-1"],
-  );
-  assert.deepEqual(
-    errorEvents.map((event): string | null => "error" in event ? event.error ?? null : null),
-    [
-      `Langfuse tool observation update_attributes failed for query_database (tool-call-1): ${attributesError.message}`,
-      `Langfuse tool observation update failed for query_database (tool-call-1): ${updateError.message}`,
-      `Langfuse tool observation end failed for query_database (tool-call-1): ${endError.message}`,
-    ],
-  );
 });

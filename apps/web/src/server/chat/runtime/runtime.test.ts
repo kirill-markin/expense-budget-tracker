@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type OpenAI from "openai";
 import { t as translate } from "@/i18n/serverT";
-import type { LangfuseObservation } from "@langfuse/tracing";
 import {
   CHAT_FALLBACK_MODEL_ID,
   CHAT_FALLBACK_MODEL_REASONING_EFFORT,
@@ -14,7 +13,6 @@ import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
 import { runOpenAILoopWithDeps, type OpenAILoopCompletion } from "@/server/chat/openai/loop";
 import { createToolCallStateMap } from "@/server/chat/openai/tooling/toolCalls";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
-import type { ChatTurnObservationOutcome } from "@/server/chat/openai/langfuse";
 import {
   CHAT_DRAFT_WRITE_INTERVAL_MS,
   CHAT_RUN_HEARTBEAT_INTERVAL_MS,
@@ -30,6 +28,7 @@ import {
   stopActiveChatRun,
   type ChatRunStartReservation,
   type ChatRuntimeDependencies,
+  type ChatTurnOutcome,
   type StartPersistedChatRunParams,
 } from "./runtime";
 import { ChatSessionRunTransitionError, INTERRUPTED_TOOL_CALL_OUTPUT } from "@/server/chat/store";
@@ -195,13 +194,8 @@ const createRuntimeDependencies = (
 ): ChatRuntimeDependencies => ({
   runOpenAILoop: overrides.runOpenAILoop ?? (async (): Promise<OpenAILoopCompletion> =>
     createLoopCompletion([])),
-  startChatTurnObservation: overrides.startChatTurnObservation ?? (async (
-    _params,
-    fn: (
-      rootObservation: LangfuseObservation | null,
-    ) => Promise<ChatTurnObservationOutcome>,
-  ): Promise<void> => {
-    await fn(null);
+  runInChatTurnSpan: overrides.runInChatTurnSpan ?? (async (_params, fn): Promise<void> => {
+    await fn();
   }),
   completeChatRun: overrides.completeChatRun ?? (async (
     _userId,
@@ -292,9 +286,9 @@ test("runPersistedChatSessionWithDeps reports and runs the effective fallback mo
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (observationParams, fn): Promise<void> => {
-            observedTraceModel = observationParams.model;
-            await fn(null);
+          runInChatTurnSpan: async (spanParams, fn): Promise<void> => {
+            observedTraceModel = spanParams.model;
+            await fn();
           },
           runOpenAILoop: async (loopParams): Promise<OpenAILoopCompletion> => {
             observedLoopModel = loopParams.model;
@@ -328,7 +322,7 @@ test("runPersistedChatSessionWithDeps persists stopped state for user aborts wit
     completedPayload: null as unknown,
   };
   const lifecycle: Array<string> = [];
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
 
   createActiveChatRunForTests(sessionId, params.activeRunId);
 
@@ -337,9 +331,9 @@ test("runPersistedChatSessionWithDeps persists stopped state for user aborts wit
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
             lifecycle.push("root-start");
-            rootOutcome = await fn(null);
+            rootOutcome = await fn();
             lifecycle.push("root-outcome");
           },
           persistAssistantCancelled: async (
@@ -406,7 +400,7 @@ test("runPersistedChatSessionWithDeps classifies persisted cancellation before a
       logLines.push(message);
     }
   };
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
   try {
@@ -414,8 +408,8 @@ test("runPersistedChatSessionWithDeps classifies persisted cancellation before a
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
-            rootOutcome = await fn(null);
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
+            rootOutcome = await fn();
           },
           runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             assert.deepEqual(stopActiveChatRun(params.sessionId, params.activeRunId), {
@@ -483,16 +477,16 @@ test("runPersistedChatSessionWithDeps retries requested cancellation after stop 
   const lifecycle: Array<string> = [];
   const originalLog = console.log;
   console.log = (): void => undefined;
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
   const runPromise = runPersistedChatSessionWithDeps(
     params,
     createRuntimeDependencies(
       {
-        startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+        runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
           lifecycle.push("root-start");
-          rootOutcome = await fn(null);
+          rootOutcome = await fn();
           lifecycle.push("root-outcome");
         },
         persistAssistantCancelled: async (
@@ -571,7 +565,7 @@ test("runPersistedChatSessionWithDeps stops post-event work after cancellation p
     completedPayload: null as unknown,
   };
   let postEventWorkRan = false;
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
   try {
@@ -579,8 +573,8 @@ test("runPersistedChatSessionWithDeps stops post-event work after cancellation p
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
-            rootOutcome = await fn(null);
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
+            rootOutcome = await fn();
           },
           runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
             assert.deepEqual(stopActiveChatRun(params.sessionId, params.activeRunId), {
@@ -627,7 +621,7 @@ test("runPersistedChatSessionWithDeps stops tool work when a tool completion wri
     const progressWriteStarted = createDeferred();
     const releaseProgressWrite = createDeferred();
     let postEventToolExecutionAttempted = false;
-    let rootOutcome: ChatTurnObservationOutcome | null = null;
+    let rootOutcome: ChatTurnOutcome | null = null;
     const baseDependencies = createRuntimeDependencies({}, recorded);
     createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
@@ -635,8 +629,8 @@ test("runPersistedChatSessionWithDeps stops tool work when a tool completion wri
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
-            rootOutcome = await fn(null);
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
+            rootOutcome = await fn();
           },
           updateAssistantMessageItem: async (
             userId,
@@ -715,16 +709,16 @@ test("runPersistedChatSessionWithDeps keeps persisted cancellation when an in-fl
   const lifecycle: Array<string> = [];
   const originalLog = console.log;
   console.log = (): void => undefined;
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
   const runPromise = runPersistedChatSessionWithDeps(
     params,
     createRuntimeDependencies(
       {
-        startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+        runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
           lifecycle.push("root-start");
-          rootOutcome = await fn(null);
+          rootOutcome = await fn();
           lifecycle.push("root-outcome");
         },
         updateAssistantMessageItem: async (): Promise<PersistedChatMessageItem> => {
@@ -812,10 +806,10 @@ test("runPersistedChatSessionWithDeps rejects abort cancellation persistence thr
         params,
         createRuntimeDependencies(
           {
-            startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+            runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
               lifecycle.push("root-start");
               try {
-                await fn(null);
+                await fn();
               } catch (error) {
                 lifecycle.push("root-error");
                 throw error;
@@ -868,10 +862,10 @@ test("runPersistedChatSessionWithDeps rejects event cancellation persistence thr
         params,
         createRuntimeDependencies(
           {
-            startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+            runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
               lifecycle.push("root-start");
               try {
-                await fn(null);
+                await fn();
               } catch (error) {
                 lifecycle.push("root-error");
                 throw error;
@@ -924,10 +918,10 @@ test("runPersistedChatSessionWithDeps rejects resolved-loop cancellation persist
         params,
         createRuntimeDependencies(
           {
-            startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+            runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
               lifecycle.push("root-start");
               try {
-                await fn(null);
+                await fn();
               } catch (error) {
                 lifecycle.push("root-error");
                 throw error;
@@ -969,16 +963,16 @@ test("runPersistedChatSessionWithDeps persists terminal errors when the provider
     completedPayload: null as unknown,
   };
   const lifecycle: Array<string> = [];
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
   try {
     await runPersistedChatSessionWithDeps(
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
             lifecycle.push("root-start");
-            rootOutcome = await fn(null);
+            rootOutcome = await fn();
             lifecycle.push("root-outcome");
           },
           persistAssistantTerminalError: async (
@@ -1036,16 +1030,16 @@ test("runPersistedChatSessionWithDeps retries requested cancellation after termi
   const lifecycle: Array<string> = [];
   const originalLog = console.log;
   console.log = (): void => undefined;
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
   const runPromise = runPersistedChatSessionWithDeps(
     params,
     createRuntimeDependencies(
       {
-        startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+        runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
           lifecycle.push("root-start");
-          rootOutcome = await fn(null);
+          rootOutcome = await fn();
           lifecycle.push("root-outcome");
         },
         persistAssistantTerminalError: async (
@@ -1129,10 +1123,10 @@ test("runPersistedChatSessionWithDeps rejects terminal failure persistence throu
         params,
         createRuntimeDependencies(
           {
-            startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+            runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
               lifecycle.push("root-start");
               try {
-                await fn(null);
+                await fn();
               } catch (error) {
                 lifecycle.push("root-error");
                 throw error;
@@ -1247,7 +1241,7 @@ test("runPersistedChatSessionWithDeps skips terminal error persistence when prov
     terminalErrorPayload: null as unknown,
     completedPayload: null as unknown,
   };
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   const originalLog = console.log;
   console.log = (): void => undefined;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
@@ -1257,8 +1251,8 @@ test("runPersistedChatSessionWithDeps skips terminal error persistence when prov
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
-            rootOutcome = await fn(null);
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
+            rootOutcome = await fn();
           },
           runOpenAILoop: async (): Promise<OpenAILoopCompletion> => {
             throw new Error("Provider stream failed");
@@ -1300,13 +1294,13 @@ test("runPersistedChatSessionWithDeps blocks tool dispatch after Stop on another
   let localSignal: AbortSignal | undefined;
   let persistedRunChecks = 0;
   let toolDispatches = 0;
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
   try {
     await runPersistedChatSessionWithDeps(params, createRuntimeDependencies({
-      startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
-        rootOutcome = await fn(null);
+      runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
+        rootOutcome = await fn();
       },
       updateAssistantMessageItem: async (_userId, _workspaceId, payload) =>
         updateAssistantMessageItemWithQuery(async (_sql, queryParams) => {
@@ -1320,7 +1314,7 @@ test("runPersistedChatSessionWithDeps blocks tool dispatch after Stop on another
         localSignal = loopParams.signal;
         const tool = { ...createStartedToolCallEvent(), name: "bash" };
         return runOpenAILoopWithDeps(loopParams, onEvent, {
-          getObservedOpenAIClient: () => ({}) as OpenAI,
+          getOpenAIClient: () => ({}) as OpenAI,
           ingestInlineChatAttachments: async (_context, messages, turnInput) => ({
             outcome: {
               inlineCount: 0,
@@ -1393,7 +1387,7 @@ test("runPersistedChatSessionWithDeps skips cancellation persistence when user a
     terminalErrorPayload: null as unknown,
     completedPayload: null as unknown,
   };
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   const originalLog = console.log;
   console.log = (): void => undefined;
   createActiveChatRunForTests(sessionId, params.activeRunId);
@@ -1403,8 +1397,8 @@ test("runPersistedChatSessionWithDeps skips cancellation persistence when user a
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
-            rootOutcome = await fn(null);
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
+            rootOutcome = await fn();
           },
           runOpenAILoop: async (
             _loopParams,
@@ -2507,7 +2501,7 @@ test("runPersistedChatSessionWithDeps persists finalized output before resolving
     completedPayload: null as unknown,
   };
   const lifecycle: Array<string> = [];
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
 
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
   try {
@@ -2515,9 +2509,9 @@ test("runPersistedChatSessionWithDeps persists finalized output before resolving
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
             lifecycle.push("root-start");
-            rootOutcome = await fn(null);
+            rootOutcome = await fn();
             lifecycle.push("root-outcome");
           },
           completeChatRun: async (_userId, _workspaceId, payload): Promise<void> => {
@@ -2680,7 +2674,7 @@ test("runPersistedChatSessionWithDeps skips terminal error persistence when comp
     completedPayload: null as unknown,
   };
   const lifecycle: Array<string> = [];
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   const originalLog = console.log;
   console.log = (): void => undefined;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
@@ -2690,9 +2684,9 @@ test("runPersistedChatSessionWithDeps skips terminal error persistence when comp
       params,
       createRuntimeDependencies(
         {
-          startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+          runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
             lifecycle.push("root-start");
-            rootOutcome = await fn(null);
+            rootOutcome = await fn();
             lifecycle.push("root-outcome");
           },
           completeChatRun: async (): Promise<void> => {
@@ -2733,16 +2727,16 @@ test("runPersistedChatSessionWithDeps keeps persisted cancellation when completi
   const lifecycle: Array<string> = [];
   const originalLog = console.log;
   console.log = (): void => undefined;
-  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  let rootOutcome: ChatTurnOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
   const runPromise = runPersistedChatSessionWithDeps(
     params,
     createRuntimeDependencies(
       {
-        startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+        runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
           lifecycle.push("root-start");
-          rootOutcome = await fn(null);
+          rootOutcome = await fn();
           lifecycle.push("root-outcome");
         },
         completeChatRun: async (): Promise<void> => {
@@ -2814,10 +2808,10 @@ test("runPersistedChatSessionWithDeps rejects completion persistence through the
         params,
         createRuntimeDependencies(
           {
-            startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+            runInChatTurnSpan: async (_spanParams, fn): Promise<void> => {
               lifecycle.push("root-start");
               try {
-                await fn(null);
+                await fn();
               } catch (error) {
                 lifecycle.push("root-error");
                 throw error;

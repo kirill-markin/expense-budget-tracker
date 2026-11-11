@@ -180,8 +180,8 @@ export type ExecutedChatToolCall = Readonly<{
   /**
    * The native image or PDF page a successful `view_file` produced, and nothing
    * else sets it. `output` above is the text of the same result, which is what
-   * the transcript and the telemetry record; the run sends this part beside that
-   * text and persists the reference inside it instead of the bytes.
+   * the transcript records; the run sends this part beside that text and
+   * persists the reference inside it instead of the bytes.
    */
   fileView?: ChatFileView;
 }> & ExecutedChatToolCallResult;

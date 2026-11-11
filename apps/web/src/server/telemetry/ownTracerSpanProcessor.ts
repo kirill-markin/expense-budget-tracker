@@ -6,9 +6,9 @@ const isOwnTracerSpan = (span: ReadableSpan): boolean =>
 
 /**
  * Passes only spans of our own tracer to the wrapped processor. The global
- * provider also receives Next.js request spans and Langfuse observation spans;
- * without this filter they would take queue slots of a BatchSpanProcessor and,
- * during a slow export, push our spans out of a full queue.
+ * provider also receives Next.js request spans; without this filter they would
+ * take queue slots of a BatchSpanProcessor and, during a slow export, push our
+ * spans out of a full queue.
  */
 export const createOwnTracerSpanProcessor = (processor: SpanProcessor): SpanProcessor => ({
   onStart: (span, parentContext): void => {

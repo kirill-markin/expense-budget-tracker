@@ -17,6 +17,11 @@ import {
 } from "@/server/chat/openai/responses/request";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import { log } from "@/server/logger";
+import {
+  getErrorClassName,
+  runInModelCallSpan,
+  setModelCallResponseAttributes,
+} from "@/server/telemetry/chatSpans";
 import type { OpenAILoopEventHandler, StartOpenAILoopParams } from "../loop";
 
 const MAX_REASONING_ITEMS = 8;
@@ -228,6 +233,13 @@ const consumeStreamResponse = async (
   return { finalResponse, streamedText, toolStates };
 };
 
+const getModelCallErrorType = (error: unknown): string => {
+  if (error instanceof ChatModelCallTimeoutError) {
+    return "timeout";
+  }
+  return isUserAbortError(error) ? "cancelled" : getErrorClassName(error);
+};
+
 export const runOneModelCall = async (
   client: OpenAI,
   params: StartOpenAILoopParams,
@@ -235,64 +247,81 @@ export const runOneModelCall = async (
   request: OpenAIResponsesRequest,
   promptCacheKey: string,
   callIndex: number,
-): Promise<ModelCallResult> => {
-  const modelCallStartedAt = Date.now();
-  const { signal, timeoutSignal } = buildModelCallSignal(params.signal, MODEL_CALL_TIMEOUT_MS);
-  const stream: ResponseStreamWithOptionalFinalResponse = client.responses.stream(
-    request,
-    { signal },
-  );
-
-  try {
-    const { finalResponse, streamedText, toolStates } = await consumeStreamResponse(
-      stream,
-      emitEvent,
-      callIndex,
-    );
-    // Recorded before the replay mapping, which throws on an output item it
-    // cannot persist: a call that dies there is exactly the one worth measuring.
-    log(buildChatResponseLogEvent({
+  attempt: number,
+  replayedMessages: number,
+): Promise<ModelCallResult> =>
+  runInModelCallSpan(
+    {
       requestId: params.requestId,
       userId: params.userId,
+      workspaceId: params.workspaceId,
       sessionId: params.sessionId,
-      callIndex,
-      promptCacheKey,
-      durationMs: Date.now() - modelCallStartedAt,
       model: request.model,
-      response: finalResponse,
-    }));
-    const { items: replayItems, droppedCompactionItems } = toStoredOpenAIReplayItems(
-      finalResponse.output,
-    );
-    if (droppedCompactionItems > 0) {
-      log({
-        domain: "chat",
-        action: "replay_item_dropped",
-        vendor: "openai",
-        itemType: "compaction",
-        reason: "missing_replay_fields",
-        count: droppedCompactionItems,
-        requestId: params.requestId,
-        sessionId: params.sessionId,
-        callIndex,
-      });
-    }
-    return {
-      finalResponse,
-      functionCalls: finalResponse.output
-        .filter((item) => item.type === "function_call")
-        .map((item) => item as ParsedFunctionToolCall),
-      replayItems,
-      streamedText,
-      toolStates,
-    };
-  } catch (error) {
-    // Distinguish per-call timeout from user-initiated abort: both surface as
-    // AbortError, but only timeout is retryable. User abort takes precedence.
-    const userAborted = params.signal !== undefined && params.signal.aborted;
-    if (timeoutSignal.aborted && !userAborted && isUserAbortError(error)) {
-      throw new ChatModelCallTimeoutError(MODEL_CALL_TIMEOUT_MS);
-    }
-    throw error;
-  }
-};
+      callIndex,
+      attempt,
+      replayedMessages,
+    },
+    getModelCallErrorType,
+    async (span): Promise<ModelCallResult> => {
+      const modelCallStartedAt = Date.now();
+      const { signal, timeoutSignal } = buildModelCallSignal(params.signal, MODEL_CALL_TIMEOUT_MS);
+      const stream: ResponseStreamWithOptionalFinalResponse = client.responses.stream(
+        request,
+        { signal },
+      );
+
+      try {
+        const { finalResponse, streamedText, toolStates } = await consumeStreamResponse(
+          stream,
+          emitEvent,
+          callIndex,
+        );
+        // Recorded before the replay mapping, which throws on an output item it
+        // cannot persist: a call that dies there is exactly the one worth measuring.
+        log(buildChatResponseLogEvent({
+          requestId: params.requestId,
+          userId: params.userId,
+          sessionId: params.sessionId,
+          callIndex,
+          promptCacheKey,
+          durationMs: Date.now() - modelCallStartedAt,
+          model: request.model,
+          response: finalResponse,
+        }));
+        setModelCallResponseAttributes(span, finalResponse);
+        const { items: replayItems, droppedCompactionItems } = toStoredOpenAIReplayItems(
+          finalResponse.output,
+        );
+        if (droppedCompactionItems > 0) {
+          log({
+            domain: "chat",
+            action: "replay_item_dropped",
+            vendor: "openai",
+            itemType: "compaction",
+            reason: "missing_replay_fields",
+            count: droppedCompactionItems,
+            requestId: params.requestId,
+            sessionId: params.sessionId,
+            callIndex,
+          });
+        }
+        return {
+          finalResponse,
+          functionCalls: finalResponse.output
+            .filter((item) => item.type === "function_call")
+            .map((item) => item as ParsedFunctionToolCall),
+          replayItems,
+          streamedText,
+          toolStates,
+        };
+      } catch (error) {
+        // Distinguish per-call timeout from user-initiated abort: both surface as
+        // AbortError, but only timeout is retryable. User abort takes precedence.
+        const userAborted = params.signal !== undefined && params.signal.aborted;
+        if (timeoutSignal.aborted && !userAborted && isUserAbortError(error)) {
+          throw new ChatModelCallTimeoutError(MODEL_CALL_TIMEOUT_MS);
+        }
+        throw error;
+      }
+    },
+  );

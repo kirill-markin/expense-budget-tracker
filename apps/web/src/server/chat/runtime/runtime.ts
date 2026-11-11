@@ -15,10 +15,6 @@ import { UnsupportedStoredChatAttachmentError } from "@/server/chat/openai/respo
 import { runOpenAILoop } from "@/server/chat/openai/loop";
 import { isOpenAITransientError } from "@/server/chat/logging";
 import {
-  startChatTurnObservation,
-  type ChatTurnObservationOutcome,
-} from "@/server/chat/openai/langfuse";
-import {
   buildUserStoppedAssistantContent,
   ChatSessionRunTransitionError,
   completeChatRun,
@@ -42,6 +38,7 @@ import type {
   UnconvertedContentPart,
 } from "@/server/chat/types";
 import { log, type ChatErrorStage } from "@/server/logger";
+import { runInChatTurnSpan, type ChatTurnSpanParams } from "@/server/telemetry/chatSpans";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 export const CHAT_DRAFT_WRITE_INTERVAL_MS = 250;
@@ -61,18 +58,36 @@ type ChatRunDiagnostics = Readonly<{
   attachmentFileNames: ReadonlyArray<string>;
 }>;
 
+export type ChatTurnOutcome =
+  | Readonly<{
+    kind: "completed";
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
+  }>
+  | Readonly<{
+    kind: "cancelled";
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
+  }>
+  | Readonly<{
+    kind: "invalidated";
+  }>
+  | Readonly<{
+    kind: "failed";
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
+    message: string;
+  }>;
+
 type ChatInvalidatedObservationOutcome = Extract<
-  ChatTurnObservationOutcome,
+  ChatTurnOutcome,
   { kind: "invalidated" }
 >;
 
 type ChatCancellationObservationOutcome = Extract<
-  ChatTurnObservationOutcome,
+  ChatTurnOutcome,
   { kind: "cancelled" | "invalidated" }
 >;
 
 type ChatFailureObservationOutcome = Extract<
-  ChatTurnObservationOutcome,
+  ChatTurnOutcome,
   { kind: "failed" | "invalidated" }
 >;
 
@@ -132,7 +147,10 @@ export type ChatRunStartReservationResult =
 
 export type ChatRuntimeDependencies = Readonly<{
   runOpenAILoop: typeof runOpenAILoop;
-  startChatTurnObservation: typeof startChatTurnObservation;
+  runInChatTurnSpan: (
+    params: ChatTurnSpanParams,
+    fn: () => Promise<ChatTurnOutcome>,
+  ) => Promise<void>;
   completeChatRun: typeof completeChatRun;
   persistAssistantCancelled: typeof persistAssistantCancelled;
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
@@ -154,7 +172,7 @@ const chatRunStartReservations = new Map<
 
 const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
   runOpenAILoop,
-  startChatTurnObservation,
+  runInChatTurnSpan,
   completeChatRun,
   persistAssistantCancelled,
   persistAssistantTerminalError,
@@ -581,7 +599,7 @@ export const runPersistedChatSessionWithDeps = async (
 ): Promise<void> => {
   let assistantContent: ReadonlyArray<UnconvertedContentPart> = [];
   let assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | undefined;
-  let pendingObservationOutcome: ChatTurnObservationOutcome | null = null;
+  let pendingObservationOutcome: ChatTurnOutcome | null = null;
   let pendingCancellationOutcome: ChatCancellationObservationOutcome | null = null;
   let activeRootPersistenceError: unknown | null = null;
   let activeRootPersistenceFailed = false;
@@ -592,7 +610,7 @@ export const runPersistedChatSessionWithDeps = async (
   let draftWriteInFlight: Promise<void> | null = null;
   let draftWriteFailure: Readonly<{ error: unknown }> | null = null;
   const seenInvalidationVersions = new Map<string, number>();
-  const getPendingObservationOutcome = (): ChatTurnObservationOutcome | null =>
+  const getPendingObservationOutcome = (): ChatTurnOutcome | null =>
     pendingObservationOutcome;
   const heartbeatTimer = setInterval(() => {
     void dependencies.touchChatSessionHeartbeat(
@@ -678,7 +696,7 @@ export const runPersistedChatSessionWithDeps = async (
     throw error;
   };
 
-  const stopOpenAILoop = (outcome: ChatTurnObservationOutcome): never => {
+  const stopOpenAILoop = (outcome: ChatTurnOutcome): never => {
     pendingObservationOutcome = outcome;
     throw CHAT_RUN_LOOP_STOP_SIGNAL;
   };
@@ -809,18 +827,19 @@ export const runPersistedChatSessionWithDeps = async (
       });
     }
 
-    await dependencies.startChatTurnObservation(
+    await dependencies.runInChatTurnSpan(
       {
         requestId: params.requestId,
         userId: params.userId,
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
+        turnId: params.activeRunId,
+        assistantItemId: params.assistantItemId,
         model: params.modelRouting.effectiveModel,
+        reasoningEffort: params.modelRouting.effectiveReasoningEffort,
         turnIndex: params.diagnostics.messageCount,
-        runState: "running",
-        turnInput: params.turnInput,
       },
-      async (rootObservation): Promise<ChatTurnObservationOutcome> => {
+      async (): Promise<ChatTurnOutcome> => {
         const prepareProgressCheckpoint = async (): Promise<void> => {
           await discardPendingDraftAndWaitForWrite();
           stopOpenAILoopIfInterrupted(await persistUserCancellationIfNeeded());
@@ -941,7 +960,6 @@ export const runPersistedChatSessionWithDeps = async (
             turnInput: params.turnInput,
             model: params.modelRouting.effectiveModel,
             reasoningEffort: params.modelRouting.effectiveReasoningEffort,
-            rootObservation,
             beforeToolDispatch,
             signal: getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.signal,
           }, handleOpenAILoopEvent);

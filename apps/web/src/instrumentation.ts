@@ -11,8 +11,6 @@
  * - AUTH_MODE=none is allowed only for explicit local dev/test, or for a
  *   deployment that opts in with ALLOW_INSECURE_NO_AUTH=true
  * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (cognito/ECS)
- * - LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL are either all set or all absent
- * - LANGFUSE_RELEASE is an explicit release fingerprint when Langfuse telemetry is enabled
  *
  * Throws with all collected errors on misconfiguration. Skipped in dev.
  */
@@ -20,7 +18,6 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { BatchSpanProcessor, type SpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { getAuthModeValidationErrors, isInsecureNoAuthAllowed } from "@/server/authMode";
-import { createLangfuseSpanProcessor } from "@/server/chat/openai/langfuse";
 import { getDatabaseConnectionSettings } from "@/server/db/connectionSettings";
 import { log } from "@/server/logger";
 import { createOwnTracerSpanProcessor } from "@/server/telemetry/ownTracerSpanProcessor";
@@ -28,44 +25,6 @@ import { PostgresSpanExporter } from "@/server/telemetry/postgresSpanExporter";
 
 let telemetrySdk: NodeSDK | null = null;
 let telemetryStarted = false;
-
-type LangfuseEnvironment = Readonly<{
-  [name: string]: string | undefined;
-  LANGFUSE_PUBLIC_KEY?: string;
-  LANGFUSE_SECRET_KEY?: string;
-  LANGFUSE_BASE_URL?: string;
-  LANGFUSE_RELEASE?: string;
-}>;
-
-export const getLangfuseConfigValidationErrors = (
-  environment: LangfuseEnvironment,
-): ReadonlyArray<string> => {
-  const connectionValues = [
-    environment.LANGFUSE_PUBLIC_KEY,
-    environment.LANGFUSE_SECRET_KEY,
-    environment.LANGFUSE_BASE_URL,
-  ];
-  const connectionSettingsAbsent = connectionValues.every(
-    (value) => value === undefined || value === "",
-  );
-  if (connectionSettingsAbsent) {
-    return [];
-  }
-
-  const errors: Array<string> = [];
-  if (connectionValues.some((value) => value === undefined || value.trim() === "")) {
-    errors.push(
-      "LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_BASE_URL must be configured together with non-empty values",
-    );
-  }
-  if (!/^[0-9a-f]{64}$/.test(environment.LANGFUSE_RELEASE ?? "")) {
-    errors.push(
-      "LANGFUSE_RELEASE must be an explicit 64-character lowercase hexadecimal release fingerprint when Langfuse telemetry is enabled",
-    );
-  }
-
-  return errors;
-};
 
 type OtlpEnvironment = Readonly<{
   [name: string]: string | undefined;
@@ -94,10 +53,6 @@ const createSpanProcessors = (): ReadonlyArray<SpanProcessor> => {
   // The exporter reads the endpoint, headers and other OTEL_EXPORTER_OTLP_* settings itself.
   if (isOtlpTraceExportConfigured(process.env)) {
     processors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
-  }
-  const langfuseSpanProcessor = createLangfuseSpanProcessor();
-  if (langfuseSpanProcessor !== null) {
-    processors.push(langfuseSpanProcessor);
   }
   return processors;
 };
@@ -154,8 +109,6 @@ export const register = (): void => {
   } else {
     if (!process.env.DATABASE_URL) errors.push("DATABASE_URL must be set in production");
   }
-
-  errors.push(...getLangfuseConfigValidationErrors(process.env));
 
   if (errors.length > 0) {
     throw new Error(
