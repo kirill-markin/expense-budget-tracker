@@ -39,7 +39,8 @@ const isOtlpTraceExportConfigured = (environment: OtlpEnvironment): boolean =>
 
 const createSpanProcessors = (): ReadonlyArray<SpanProcessor> => {
   // A full queue drops new spans rather than holding back the chat that ends
-  // them, so only spans of our own tracer may take its slots.
+  // them, so only spans of our own tracer may take its slots. Both sinks get
+  // exactly those spans, never the Next.js request spans with their URLs.
   const processors: Array<SpanProcessor> = [
     createOwnTracerSpanProcessor(
       new BatchSpanProcessor(new PostgresSpanExporter(getDatabaseConnectionSettings(process.env)), {
@@ -52,7 +53,7 @@ const createSpanProcessors = (): ReadonlyArray<SpanProcessor> => {
   ];
   // The exporter reads the endpoint, headers and other OTEL_EXPORTER_OTLP_* settings itself.
   if (isOtlpTraceExportConfigured(process.env)) {
-    processors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
+    processors.push(createOwnTracerSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter())));
   }
   return processors;
 };

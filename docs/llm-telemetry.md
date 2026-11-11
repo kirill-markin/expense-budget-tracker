@@ -17,7 +17,7 @@ The web app records every chat turn and voice transcription as OpenTelemetry spa
 | `name`, `operation_name` | span name and `gen_ai.operation.name`: `invoke_agent`, `chat`, `execute_tool`, `transcribe` |
 | `status_code`, `status_message` | `unset`, `ok` or `error`; the message is an error class name or our own error code, never free error text |
 | `start_time`, `end_time` | span timing |
-| `user_id`, `workspace_id`, `session_id` | who and where; `session_id` is the chat session, null for a transcription without one |
+| `user_id`, `workspace_id`, `session_id` | who and where; `session_id` is the chat session, always null on a transcription span |
 | `attributes` | every span attribute, keyed by its OpenTelemetry name |
 | `resource_attributes` | `service.name` and the other attributes of the exporting process |
 
@@ -42,4 +42,4 @@ Production rows are read through the private admin-reader Lambda with [`scripts/
 
 ## Optional OTLP export
 
-Setting `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` on the web service also sends the same spans to that OTLP/HTTP collector; `OTEL_EXPORTER_OTLP_HEADERS` carries its authentication, and the exporter reads the other standard `OTEL_EXPORTER_OTLP_*` settings itself. The Postgres table is written either way. The AWS stack sets no OTLP endpoint; the Docker compose files pass `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` through.
+Setting `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` on the web service also sends the same spans to that OTLP/HTTP collector, and no Next.js request spans; `OTEL_EXPORTER_OTLP_HEADERS` carries its authentication, and the exporter reads the other standard `OTEL_EXPORTER_OTLP_*` settings itself. The Postgres table is written either way. The AWS stack sets no OTLP endpoint; the Docker compose files pass `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` through.
