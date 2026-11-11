@@ -16,6 +16,15 @@ const UNPADDED_MEDIA_DATA_URI_MOD_3 = "data:application/octet-stream;base64,1234
 const PADDED_MEDIA_DATA_URI_ONE = "data:application/octet-stream;base64,123456789012345=";
 const PADDED_MEDIA_DATA_URI_TWO = "data:application/octet-stream;base64,12345678901234==";
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
+// A 2.5 MB base64url run without `@`; the unbounded email pattern took seconds on 160 KB of it.
+const LARGE_BASE64URL_TEXT = "aB3-xY9_Qz7-".repeat(208_334);
+const MASK_TIME_LIMIT_MS = 1_000;
+
+const measureMilliseconds = (run: () => void): number => {
+  const startedAt = performance.now();
+  run();
+  return performance.now() - startedAt;
+};
 
 type StartObservationDependencies = Parameters<typeof startChatTurnObservationWithDeps>[2];
 type StartActiveObservationDependency = StartObservationDependencies["startActiveObservation"];
@@ -760,4 +769,37 @@ test("sanitizeLangfuseSerializedTelemetry does not mutate its source value", ():
 
   assert.deepEqual(telemetry, originalTelemetry);
   assert.equal(serializedTelemetry, JSON.stringify(originalTelemetry));
+});
+
+test("sanitizeLangfuseSerializedTelemetry omits encrypted content without scanning it", (): void => {
+  let sanitized = "";
+  const elapsedMs = measureMilliseconds((): void => {
+    sanitized = sanitizeLangfuseSerializedTelemetry(JSON.stringify({
+      type: "compaction",
+      encrypted_content: LARGE_BASE64URL_TEXT,
+    }));
+  });
+
+  assert.ok(elapsedMs < MASK_TIME_LIMIT_MS, `masking took ${elapsedMs} ms`);
+  assert.deepEqual(JSON.parse(sanitized), {
+    type: "compaction",
+    encrypted_content: `<encrypted_content omitted: ${LARGE_BASE64URL_TEXT.length} chars>`,
+  });
+});
+
+test("sanitizeLangfuseSerializedTelemetry masks a large base64url text in linear time", (): void => {
+  let sanitized = "";
+  const elapsedMs = measureMilliseconds((): void => {
+    sanitized = sanitizeLangfuseSerializedTelemetry(LARGE_BASE64URL_TEXT);
+  });
+
+  assert.ok(elapsedMs < MASK_TIME_LIMIT_MS, `masking took ${elapsedMs} ms`);
+  assert.equal(sanitized, LARGE_BASE64URL_TEXT);
+});
+
+test("sanitizeLangfuseSerializedTelemetry still masks multi-label email domains", (): void => {
+  assert.equal(
+    sanitizeLangfuseSerializedTelemetry("Write to jane.doe@example.co.uk today"),
+    "Write to <masked-email> today",
+  );
 });
