@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { SpanStatusCode } from "@opentelemetry/api";
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import { CHAT_MODEL_ID, CHAT_MODEL_REASONING_EFFORT } from "@/lib/chatModels";
-import { runOneModelCall, startModelCallDeadline } from "@/server/chat/openai/responses/modelCall";
+import type { StartOpenAILoopParams } from "@/server/chat/openai/loop";
+import {
+  ChatModelCallTimeoutError,
+  MODEL_CALL_IDLE_TIMEOUT_MS,
+  runOneModelCall,
+  startModelCallDeadline,
+} from "@/server/chat/openai/responses/modelCall";
 import { buildOpenAIResponsesRequest } from "@/server/chat/openai/responses/request";
 import { CHAT_RUN_LOOP_STOP_SIGNAL } from "@/server/chat/runtime/loopStopSignal";
 import { registerInMemorySpanExporterForTests } from "@/server/telemetry/spanRecorderForTests";
@@ -25,40 +31,43 @@ const streamOneTextDelta = async function* (): AsyncGenerator<OpenAI.Responses.R
   yield TEXT_DELTA_EVENT;
 };
 
+const MODEL_CALL_PARAMS: StartOpenAILoopParams = {
+  requestId: "request-1",
+  userId: "user-1",
+  workspaceId: "workspace-1",
+  sessionId: "session-1",
+  turnId: "turn-1",
+  locale: "en",
+  timezone: "Europe/Madrid",
+  localMessages: [],
+  turnInput: [{ type: "text", text: "Hello" }],
+  model: CHAT_MODEL_ID,
+  reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
+  isDemoMode: false,
+  beforeToolDispatch: async (): Promise<void> => {},
+};
+
+const MODEL_CALL_REQUEST = buildOpenAIResponsesRequest(
+  [],
+  [],
+  "user-1",
+  "session-1",
+  "Europe/Madrid",
+  CHAT_MODEL_ID,
+  CHAT_MODEL_REASONING_EFFORT,
+);
+
 test("a model call ended by the runtime stop signal is stored as stopped", async (): Promise<void> => {
   const client = { responses: { stream: streamOneTextDelta } } as unknown as OpenAI;
-  const request = buildOpenAIResponsesRequest(
-    [],
-    [],
-    "user-1",
-    "session-1",
-    "Europe/Madrid",
-    CHAT_MODEL_ID,
-    CHAT_MODEL_REASONING_EFFORT,
-  );
 
   await assert.rejects(
     runOneModelCall(
       client,
-      {
-        requestId: "request-1",
-        userId: "user-1",
-        workspaceId: "workspace-1",
-        sessionId: "session-1",
-        turnId: "turn-1",
-        locale: "en",
-        timezone: "Europe/Madrid",
-        localMessages: [],
-        turnInput: [{ type: "text", text: "Hello" }],
-        model: CHAT_MODEL_ID,
-        reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
-        isDemoMode: false,
-        beforeToolDispatch: async (): Promise<void> => {},
-      },
+      MODEL_CALL_PARAMS,
       async (): Promise<never> => {
         throw CHAT_RUN_LOOP_STOP_SIGNAL;
       },
-      request,
+      MODEL_CALL_REQUEST,
       "prompt-cache-key",
       1,
       1,
@@ -136,4 +145,50 @@ test("a user abort takes precedence over a model call timeout", async (): Promis
   } finally {
     deadline.dispose();
   }
+});
+
+test("a model call that goes silent after one stream event fails with the idle timeout", async (t): Promise<void> => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  spanExporter.reset();
+  let markWaiting = (): void => {};
+  const waiting = new Promise<void>((resolve) => {
+    markWaiting = resolve;
+  });
+  const streamThenWaitForAbort = async function* (
+    _request: unknown,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncGenerator<OpenAI.Responses.ResponseStreamEvent> {
+    yield TEXT_DELTA_EVENT;
+    const aborted = waitForAbort(options.signal);
+    markWaiting();
+    await aborted;
+    throw new OpenAI.APIUserAbortError();
+  };
+  const client = { responses: { stream: streamThenWaitForAbort } } as unknown as OpenAI;
+
+  const modelCall = runOneModelCall(
+    client,
+    MODEL_CALL_PARAMS,
+    async (): Promise<void> => {},
+    MODEL_CALL_REQUEST,
+    "prompt-cache-key",
+    1,
+    1,
+    0,
+  );
+  await waiting;
+  t.mock.timers.tick(MODEL_CALL_IDLE_TIMEOUT_MS);
+
+  await assert.rejects(modelCall, (error: unknown): boolean => {
+    assert.ok(error instanceof ChatModelCallTimeoutError);
+    assert.equal(error.limit, "idle");
+    assert.equal(error.timeoutMs, MODEL_CALL_IDLE_TIMEOUT_MS);
+    assert.equal(error.streamEventCount, 1);
+    return true;
+  });
+
+  const spans = spanExporter.getFinishedSpans();
+  assert.equal(spans.length, 1);
+  assert.equal(spans[0].attributes["app.timeout.limit"], "idle");
+  assert.equal(spans[0].attributes["error.type"], "timeout");
 });

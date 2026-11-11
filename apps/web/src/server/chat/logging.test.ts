@@ -10,6 +10,7 @@ import {
   type ChatErrorLogDiagnostics,
 } from "@/server/chat/logging";
 import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 const IDLE_TIMEOUT_ERROR = new ChatModelCallTimeoutError({
   limit: "idle",
@@ -17,7 +18,6 @@ const IDLE_TIMEOUT_ERROR = new ChatModelCallTimeoutError({
   msSinceLastStreamEvent: 5_000,
   streamEventCount: 0,
 });
-import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 const DIAGNOSTICS: ChatErrorLogDiagnostics = {
   requestId: "req-1",

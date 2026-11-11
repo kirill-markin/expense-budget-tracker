@@ -22,6 +22,7 @@ type StopRenewalTimer = () => void;
 type TaskProtectionDependencies = Readonly<{
   fetchFn: FetchLike;
   getAgentUri: () => string | undefined;
+  log: typeof log;
   now: () => number;
   startRenewalTimer: (
     onTick: () => Promise<void>,
@@ -95,6 +96,8 @@ export const createTaskProtectionControllerWithDeps = (
   let taskProtectionEnabled = false;
   // Start of the current continuous protection window: the successful enable after protection was off.
   let protectionWindowStartedAtMs: number | null = null;
+  // When the agent's protection lapses: the last successful enable or renewal plus its expiry.
+  let protectionExpiresAtMs: number | null = null;
   let renewalCeilingReachedLogged = false;
   let stopRenewalTimer: StopRenewalTimer | null = null;
   let operationQueue: Promise<void> = Promise.resolve();
@@ -133,19 +136,23 @@ export const createTaskProtectionControllerWithDeps = (
           : "task_protection_enabled";
       if (!requestBody.ProtectionEnabled) {
         protectionWindowStartedAtMs = null;
+        protectionExpiresAtMs = null;
         renewalCeilingReachedLogged = false;
-      } else if (!taskProtectionEnabled) {
-        protectionWindowStartedAtMs = requestedAtMs;
+      } else {
+        if (!taskProtectionEnabled) {
+          protectionWindowStartedAtMs = requestedAtMs;
+        }
+        protectionExpiresAtMs = requestedAtMs + requestBody.ExpiresInMinutes * MS_PER_MINUTE;
       }
       taskProtectionEnabled = requestBody.ProtectionEnabled;
-      log({
+      dependencies.log({
         domain: "chat",
         action: successAction,
         activeProtectedRunCount,
         expiresInMinutes,
       });
     } catch (error) {
-      log({
+      dependencies.log({
         domain: "chat",
         action: requestBody.ProtectionEnabled
           ? "task_protection_enable_failed"
@@ -176,7 +183,7 @@ export const createTaskProtectionControllerWithDeps = (
     if (minutesUntilCeiling < 1) {
       if (!renewalCeilingReachedLogged) {
         renewalCeilingReachedLogged = true;
-        log({
+        dependencies.log({
           domain: "chat",
           action: "task_protection_renewal_ceiling_reached",
           activeProtectedRunCount,
@@ -215,7 +222,21 @@ export const createTaskProtectionControllerWithDeps = (
         );
       }
 
-      if (taskProtectionEnabled) {
+      // A failed disable leaves the flag on with no run holding it. Once the agent's protection has
+      // lapsed, this run starts a new window; before that, it renews at once inside the old window,
+      // whose ceiling still caps the expiry.
+      if (
+        activeProtectedRunCount === 1
+        && taskProtectionEnabled
+        && (protectionExpiresAtMs === null || dependencies.now() >= protectionExpiresAtMs)
+      ) {
+        taskProtectionEnabled = false;
+        protectionWindowStartedAtMs = null;
+        protectionExpiresAtMs = null;
+        renewalCeilingReachedLogged = false;
+      }
+
+      if (taskProtectionEnabled && activeProtectedRunCount > 1) {
         return;
       }
 
@@ -255,6 +276,7 @@ export const createTaskProtectionControllerWithDeps = (
 const sharedTaskProtectionController = createTaskProtectionControllerWithDeps({
   fetchFn: fetch,
   getAgentUri: (): string | undefined => process.env.ECS_AGENT_URI,
+  log,
   now: Date.now,
   startRenewalTimer: (
     onTick: () => Promise<void>,
