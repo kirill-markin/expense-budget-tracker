@@ -9,6 +9,7 @@ import {
 } from "@/lib/chatModels";
 import { ti } from "@/i18n/serverT";
 import {
+  CHAT_RUN_MAX_DURATION_MS,
   CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
   runOpenAILoopWithDeps,
   type OpenAILoopEventHandler,
@@ -103,6 +104,7 @@ const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
   },
   getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [],
   sleep: async (): Promise<void> => {},
+  now: (): number => 0,
   log: (_event: Parameters<LoopDeps["log"]>[0]): void => {},
   ...overrides,
 });
@@ -882,6 +884,110 @@ test("runOpenAILoop keeps only the compaction item of an unusable tool-limit sum
   assert.equal(completion.replayMeasurement, undefined);
 });
 
+test("runOpenAILoop ends the turn with a tool-free summary call once the turn time limit has passed", async (): Promise<void> => {
+  const params = createLoopParams();
+  const observedEvents: Array<ChatStreamEvent> = [];
+  const limitEvents: Array<Parameters<LoopDeps["log"]>[0]> = [];
+  const openAIRequests: Array<OpenAIResponsesRequest> = [];
+  const modelCallIndexes: Array<number> = [];
+  const startedAtMs = 1_000_000;
+  let nowMs = startedAtMs;
+
+  const completion = await runOpenAILoopWithDeps(
+    params,
+    async (event: ChatStreamEvent): Promise<void> => {
+      observedEvents.push(event);
+    },
+    createTestLoopDeps({
+      now: (): number => nowMs,
+      log: (event: Parameters<LoopDeps["log"]>[0]): void => {
+        if ("action" in event && event.action === "turn_time_limit_reached") {
+          limitEvents.push(event);
+        }
+      },
+      runOneModelCall: async (
+        _client: OpenAI,
+        _callParams: StartOpenAILoopParams,
+        _emitEvent: OpenAILoopEventHandler,
+        request: OpenAIResponsesRequest,
+        _promptCacheKey: string,
+        callIndex: number,
+      ) => {
+        modelCallIndexes.push(callIndex);
+        openAIRequests.push(request);
+        if (request.tools.length > 0) {
+          const callId = `call-${String(callIndex)}`;
+          return {
+            finalResponse: createFinalResponse(""),
+            functionCalls: [createFunctionCall(callId, "query_database", "{}")],
+            replayItems: [createFunctionCallReplayItem(callId, "query_database", "{}")],
+            streamedText: "",
+            toolStates: createStartedToolStates(callId, "query_database", "{}"),
+          };
+        }
+
+        return {
+          finalResponse: createFinalResponse("Done A, continue from B"),
+          functionCalls: [],
+          replayItems: [createAssistantReplayItem("Done A, continue from B")],
+          streamedText: "",
+          toolStates: createToolCallStateMap(),
+        };
+      },
+      runOneToolCall: async ({ item }): Promise<Readonly<{
+        output: string;
+        isMutating: boolean;
+        workspaceId: string | null;
+        succeeded: true;
+        error: null;
+      }>> => {
+        // The second tool runs past the limit; it still completes, and the
+        // check stops the turn only before the next model call.
+        nowMs += CHAT_RUN_MAX_DURATION_MS / 2;
+        return {
+          output: `{\"tool\":\"${item.call_id}\"}`,
+          isMutating: false,
+          workspaceId: "workspace-1",
+          succeeded: true,
+          error: null,
+        };
+      },
+    }),
+  );
+
+  assert.deepEqual(modelCallIndexes, [1, 2, 3]);
+  assert.notDeepEqual(openAIRequests[1]?.tools, []);
+  assert.deepEqual(openAIRequests.at(-1)?.tools, []);
+  assert.deepEqual(limitEvents, [{
+    domain: "chat",
+    action: "turn_time_limit_reached",
+    vendor: "openai",
+    requestId: "req-loop",
+    sessionId: "session-1",
+    elapsedMs: CHAT_RUN_MAX_DURATION_MS,
+    callIndex: 2,
+  }]);
+  assert.deepEqual(observedEvents.slice(-2), [
+    {
+      type: "delta",
+      text: "Done A, continue from B",
+      itemId: "tool-limit-summary",
+      responseIndex: 2,
+      outputIndex: 0,
+      contentIndex: 0,
+      sequenceNumber: 0,
+    },
+    { type: "done" },
+  ]);
+  assert.deepEqual(completion.openaiItems.at(-1), createAssistantReplayItem("Done A, continue from B"));
+  assert.ok(
+    completion.openaiItems.some(
+      (item) => item.type === "function_call_output" && item.call_id === "call-2",
+    ),
+    "the tool that ran past the limit keeps its output",
+  );
+});
+
 test("runOpenAILoop retries the same call on a transient OpenAI 5xx error", async (): Promise<void> => {
   const params = createLoopParams();
   let attemptCount = 0;
@@ -929,7 +1035,12 @@ test("runOpenAILoop retries on ChatModelCallTimeoutError and surfaces the error 
       createTestLoopDeps({
         runOneModelCall: async () => {
           attemptCount += 1;
-          throw new ChatModelCallTimeoutError(5_000);
+          throw new ChatModelCallTimeoutError({
+            limit: "idle",
+            timeoutMs: 5_000,
+            msSinceLastStreamEvent: 5_000,
+            streamEventCount: 0,
+          });
         },
         getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
       }),

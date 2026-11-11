@@ -1361,6 +1361,7 @@ test("runPersistedChatSessionWithDeps blocks tool dispatch after Stop on another
           },
           getModelCallRetryBackoffMs: () => [],
           sleep: async (): Promise<void> => {},
+          now: (): number => 0,
           log: (): void => {},
         });
       },

@@ -1,6 +1,11 @@
 import { log } from "@/server/logger";
 
 export const CHAT_TASK_PROTECTION_EXPIRES_IN_MINUTES = 30;
+/** Well inside the expiry, so one failed renewal still leaves a retry before protection lapses. */
+export const CHAT_TASK_PROTECTION_RENEW_INTERVAL_MS = 10 * 60 * 1000;
+/** Matches the 60-minute chat turn limit, so no turn holds back a deploy for longer. */
+export const CHAT_TASK_PROTECTION_MAX_WINDOW_MINUTES = 60;
+const MS_PER_MINUTE = 60 * 1000;
 const TASK_PROTECTION_PATH = "/task-protection/v1/state";
 const TASK_PROTECTION_RETRY_COUNT = 3;
 
@@ -12,15 +17,26 @@ type TaskProtectionController = Readonly<{
   getActiveProtectedRunCount: () => number;
 }>;
 
+type StopRenewalTimer = () => void;
+
 type TaskProtectionDependencies = Readonly<{
   fetchFn: FetchLike;
   getAgentUri: () => string | undefined;
+  now: () => number;
+  startRenewalTimer: (
+    onTick: () => Promise<void>,
+    intervalMs: number,
+  ) => StopRenewalTimer;
 }>;
 
-type TaskProtectionRequestBody = Readonly<{
-  ProtectionEnabled: boolean;
-  ExpiresInMinutes?: number;
-}>;
+type TaskProtectionRequestBody =
+  | Readonly<{
+    ProtectionEnabled: true;
+    ExpiresInMinutes: number;
+  }>
+  | Readonly<{
+    ProtectionEnabled: false;
+  }>;
 
 const buildTaskProtectionUrl = (
   agentUri: string,
@@ -34,17 +50,8 @@ const buildTaskProtectionUrl = (
 const putTaskProtectionStateWithRetries = async (
   fetchFn: FetchLike,
   agentUri: string,
-  protectionEnabled: boolean,
+  requestBody: TaskProtectionRequestBody,
 ): Promise<void> => {
-  const requestBody: TaskProtectionRequestBody = protectionEnabled
-    ? {
-      ProtectionEnabled: true,
-      ExpiresInMinutes: CHAT_TASK_PROTECTION_EXPIRES_IN_MINUTES,
-    }
-    : {
-      ProtectionEnabled: false,
-    };
-
   let lastError: Error | null = null;
   let attempt = 0;
   while (attempt < TASK_PROTECTION_RETRY_COUNT) {
@@ -86,6 +93,10 @@ export const createTaskProtectionControllerWithDeps = (
 ): TaskProtectionController => {
   let activeProtectedRunCount = 0;
   let taskProtectionEnabled = false;
+  // Start of the current continuous protection window: the successful enable after protection was off.
+  let protectionWindowStartedAtMs: number | null = null;
+  let renewalCeilingReachedLogged = false;
+  let stopRenewalTimer: StopRenewalTimer | null = null;
   let operationQueue: Promise<void> = Promise.resolve();
 
   const enqueueOperation = (
@@ -97,53 +108,118 @@ export const createTaskProtectionControllerWithDeps = (
   };
 
   const updateTaskProtection = async (
-    protectionEnabled: boolean,
+    requestBody: TaskProtectionRequestBody,
   ): Promise<void> => {
     const agentUri = dependencies.getAgentUri();
     if (agentUri === undefined || agentUri.length === 0) {
       return;
     }
 
+    const expiresInMinutes = requestBody.ProtectionEnabled
+      ? requestBody.ExpiresInMinutes
+      : undefined;
+    // Taken before the request so the window never starts later than the agent applies it.
+    const requestedAtMs = dependencies.now();
     try {
       await putTaskProtectionStateWithRetries(
         dependencies.fetchFn,
         agentUri,
-        protectionEnabled,
+        requestBody,
       );
-      taskProtectionEnabled = protectionEnabled;
+      const successAction = !requestBody.ProtectionEnabled
+        ? "task_protection_disabled"
+        : taskProtectionEnabled
+          ? "task_protection_renewed"
+          : "task_protection_enabled";
+      if (!requestBody.ProtectionEnabled) {
+        protectionWindowStartedAtMs = null;
+        renewalCeilingReachedLogged = false;
+      } else if (!taskProtectionEnabled) {
+        protectionWindowStartedAtMs = requestedAtMs;
+      }
+      taskProtectionEnabled = requestBody.ProtectionEnabled;
       log({
         domain: "chat",
-        action: protectionEnabled
-          ? "task_protection_enabled"
-          : "task_protection_disabled",
+        action: successAction,
         activeProtectedRunCount,
-        expiresInMinutes: protectionEnabled
-          ? CHAT_TASK_PROTECTION_EXPIRES_IN_MINUTES
-          : undefined,
+        expiresInMinutes,
       });
     } catch (error) {
       log({
         domain: "chat",
-        action: protectionEnabled
+        action: requestBody.ProtectionEnabled
           ? "task_protection_enable_failed"
           : "task_protection_disable_failed",
         activeProtectedRunCount,
-        expiresInMinutes: protectionEnabled
-          ? CHAT_TASK_PROTECTION_EXPIRES_IN_MINUTES
-          : undefined,
+        expiresInMinutes,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   };
 
+  // No expiry may pass the window ceiling; under a minute before it, protection is left to expire.
+  const enableTaskProtection = async (): Promise<void> => {
+    const windowStartedAtMs = protectionWindowStartedAtMs;
+    if (windowStartedAtMs === null) {
+      await updateTaskProtection({
+        ProtectionEnabled: true,
+        ExpiresInMinutes: CHAT_TASK_PROTECTION_EXPIRES_IN_MINUTES,
+      });
+      return;
+    }
+
+    const windowAgeMs = dependencies.now() - windowStartedAtMs;
+    const minutesUntilCeiling = Math.floor(
+      (CHAT_TASK_PROTECTION_MAX_WINDOW_MINUTES * MS_PER_MINUTE - windowAgeMs)
+        / MS_PER_MINUTE,
+    );
+    if (minutesUntilCeiling < 1) {
+      if (!renewalCeilingReachedLogged) {
+        renewalCeilingReachedLogged = true;
+        log({
+          domain: "chat",
+          action: "task_protection_renewal_ceiling_reached",
+          activeProtectedRunCount,
+          protectionWindowAgeMs: windowAgeMs,
+        });
+      }
+      return;
+    }
+
+    await updateTaskProtection({
+      ProtectionEnabled: true,
+      ExpiresInMinutes: Math.min(
+        CHAT_TASK_PROTECTION_EXPIRES_IN_MINUTES,
+        minutesUntilCeiling,
+      ),
+    });
+  };
+
+  // Renewing also retries an enable that failed when the first run began.
+  const renewTaskProtection = async (): Promise<void> =>
+    enqueueOperation(async (): Promise<void> => {
+      if (activeProtectedRunCount === 0) {
+        return;
+      }
+
+      await enableTaskProtection();
+    });
+
   const beginProtectedRun = async (): Promise<void> =>
     enqueueOperation(async (): Promise<void> => {
       activeProtectedRunCount += 1;
+      if (stopRenewalTimer === null) {
+        stopRenewalTimer = dependencies.startRenewalTimer(
+          renewTaskProtection,
+          CHAT_TASK_PROTECTION_RENEW_INTERVAL_MS,
+        );
+      }
+
       if (taskProtectionEnabled) {
         return;
       }
 
-      await updateTaskProtection(true);
+      await enableTaskProtection();
     });
 
   const endProtectedRun = async (): Promise<void> =>
@@ -153,11 +229,20 @@ export const createTaskProtectionControllerWithDeps = (
       }
 
       activeProtectedRunCount -= 1;
-      if (activeProtectedRunCount > 0 || !taskProtectionEnabled) {
+      if (activeProtectedRunCount > 0) {
         return;
       }
 
-      await updateTaskProtection(false);
+      if (stopRenewalTimer !== null) {
+        stopRenewalTimer();
+        stopRenewalTimer = null;
+      }
+
+      if (!taskProtectionEnabled) {
+        return;
+      }
+
+      await updateTaskProtection({ ProtectionEnabled: false });
     });
 
   return {
@@ -170,6 +255,19 @@ export const createTaskProtectionControllerWithDeps = (
 const sharedTaskProtectionController = createTaskProtectionControllerWithDeps({
   fetchFn: fetch,
   getAgentUri: (): string | undefined => process.env.ECS_AGENT_URI,
+  now: Date.now,
+  startRenewalTimer: (
+    onTick: () => Promise<void>,
+    intervalMs: number,
+  ): StopRenewalTimer => {
+    const timer = setInterval((): void => {
+      void onTick();
+    }, intervalMs);
+    timer.unref();
+    return (): void => {
+      clearInterval(timer);
+    };
+  },
 });
 
 export const beginChatTaskProtection = async (): Promise<void> =>

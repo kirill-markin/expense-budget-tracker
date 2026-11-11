@@ -52,7 +52,7 @@ jobs:
   deploy:
     needs: lambda_images
     runs-on: ubuntu-26.04-arm
-    timeout-minutes: 60
+    timeout-minutes: 90
     outputs:
       domain_name: ${{ vars.CDK_DOMAIN_NAME }}
     steps:

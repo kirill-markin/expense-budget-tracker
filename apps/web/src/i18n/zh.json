@@ -342,6 +342,7 @@
   "chat.errorBlocked": "请求被防火墙阻止",
   "chat.errorFailed": "请求失败：{{message}}",
   "chat.toolCallLimitReachedContinue": "本轮已达到 {{limit}} 次工具调用上限。请再发送一条消息，例如“continue”，我会在同一聊天会话中继续处理。",
+  "chat.turnTimeLimitReachedContinue": "本轮已达到 {{minutes}} 分钟的时间上限。请再发送一条消息，例如“continue”，我会在同一聊天会话中继续处理。",
   "chat.openaiTransientError": "AI 服务出现临时故障，本轮中途已停止。发送“continue”可从上一个完成的步骤继续。",
   "chat.contentPolicyBlocked": "AI 服务以违反内容政策为由阻止了此请求。请尝试重新组织消息。",
   "chat.unsupportedStoredAttachment": "此对话包含无法安全重放的旧附件。请点击“新建”，然后重新附加该文件。",
