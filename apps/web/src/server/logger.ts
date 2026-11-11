@@ -25,6 +25,7 @@ type ChatOpenAIErrorContextFields = Readonly<{
 type TaskProtectionAction =
   | "task_protection_enabled"
   | "task_protection_enable_failed"
+  | "task_protection_renewed"
   | "task_protection_disabled"
   | "task_protection_disable_failed";
 type ChatAttemptMetadata = Readonly<{
