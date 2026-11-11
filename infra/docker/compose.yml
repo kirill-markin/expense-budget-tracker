@@ -39,6 +39,7 @@ services:
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-app}
       AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-auth_service}
       WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-worker}
+      ADMIN_READER_DB_PASSWORD: ${ADMIN_READER_DB_PASSWORD:-admin_reader}
     volumes:
       - ../../scripts:/scripts:ro
       - ../../db:/db:ro

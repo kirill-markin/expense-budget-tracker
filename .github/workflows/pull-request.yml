@@ -213,6 +213,7 @@ jobs:
           APP_DB_PASSWORD: app
           AUTH_DB_PASSWORD: auth_service
           WORKER_DB_PASSWORD: worker
+          ADMIN_READER_DB_PASSWORD: admin_reader
 
       - name: Run auth tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
