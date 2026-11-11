@@ -1,5 +1,4 @@
 import type OpenAI from "openai";
-import type { LangfuseObservation } from "@langfuse/tracing";
 import type {
   ChatEffectiveModelId,
   ChatEffectiveReasoningEffort,
@@ -16,7 +15,7 @@ import {
   buildChatTurnFileContext,
   listChatImageReferences,
 } from "@/server/chatFiles/sessionContext";
-import { getObservedOpenAIClient } from "@/server/chat/openai/client";
+import { getOpenAIClient } from "@/server/chat/openai/client";
 import {
   buildChatFileViewReplayItem,
   findLatestCompactionItemIndex,
@@ -102,7 +101,7 @@ type OpenAILoopDependencies = Readonly<{
   ingestInlineChatAttachments: typeof ingestInlineChatAttachments;
   runChatFileDerivativesPass: typeof runChatFileDerivativesPass;
   buildChatTurnFileContext: typeof buildChatTurnFileContext;
-  getObservedOpenAIClient: typeof getObservedOpenAIClient;
+  getOpenAIClient: typeof getOpenAIClient;
   runOneModelCall: typeof runOneModelCall;
   runOneToolCall: typeof runOneToolCall;
   getModelCallRetryBackoffMs: () => ReadonlyArray<number>;
@@ -144,7 +143,6 @@ export type StartOpenAILoopParams = Readonly<{
   isDemoMode: boolean;
   signal?: AbortSignal;
   beforeToolDispatch: () => Promise<void>;
-  rootObservation: LangfuseObservation | null;
 }>;
 
 const toFunctionCallOutputInputItem = (
@@ -181,7 +179,7 @@ const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   ingestInlineChatAttachments,
   runChatFileDerivativesPass,
   buildChatTurnFileContext,
-  getObservedOpenAIClient,
+  getOpenAIClient,
   runOneModelCall,
   runOneToolCall,
   getModelCallRetryBackoffMs: (): ReadonlyArray<number> => MODEL_CALL_RETRY_BACKOFF_MS,
@@ -292,12 +290,25 @@ type RunOneModelCallWithRetryArgs = Readonly<{
   request: OpenAIResponsesRequest;
   promptCacheKey: string;
   callIndex: number;
+  replayedMessages: number;
 }>;
 
 const runOneModelCallWithRetry = async (
   args: RunOneModelCallWithRetryArgs,
 ): Promise<ModelCallResult> => {
-  const { runOneModelCallFn, backoffMs, sleep, log, client, params, emitEvent, request, promptCacheKey, callIndex } = args;
+  const {
+    runOneModelCallFn,
+    backoffMs,
+    sleep,
+    log,
+    client,
+    params,
+    emitEvent,
+    request,
+    promptCacheKey,
+    callIndex,
+    replayedMessages,
+  } = args;
   const maxAttempts = backoffMs.length + 1;
   for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
     const { trackingEmit, hasEmitted } = wrapEmitEventWithTracking(emitEvent);
@@ -309,6 +320,8 @@ const runOneModelCallWithRetry = async (
         request,
         promptCacheKey,
         callIndex,
+        attempt,
+        replayedMessages,
       );
     } catch (error) {
       const classification = classifyOpenAITransientError(error);
@@ -350,6 +363,8 @@ const runOneModelCallWithRetry = async (
     request,
     promptCacheKey,
     callIndex,
+    maxAttempts,
+    replayedMessages,
   );
 };
 
@@ -449,6 +464,7 @@ const completeToolLimitSummaryTurn = async (
     ),
     promptCacheKey,
     callIndex: summaryCallIndex,
+    replayedMessages,
   });
 
   logInRunCompaction(log, params, summaryCallIndex, summaryCall);
@@ -497,7 +513,7 @@ const runLoopWithDeps = async (
   emitEvent: OpenAILoopEventHandler,
   dependencies: OpenAILoopDependencies,
 ): Promise<OpenAILoopCompletion> => {
-  const client = dependencies.getObservedOpenAIClient();
+  const client = dependencies.getOpenAIClient();
   // Before the conversions, because the files this turn arrived with are among
   // the ones they convert. Both routes reach the loop and only the loop, and a
   // turn reaches it once, so this is also the one place an attachment is stored
@@ -591,6 +607,7 @@ const runLoopWithDeps = async (
       ),
       promptCacheKey,
       callIndex,
+      replayedMessages,
     });
 
     continuationItems.push(...modelCall.replayItems);
@@ -617,7 +634,6 @@ const runLoopWithDeps = async (
         sessionId: params.sessionId,
         turnId: params.turnId,
         isDemoMode: params.isDemoMode,
-        rootObservation: params.rootObservation,
       });
       const update = applyToolCallOutput(
         toolStates,

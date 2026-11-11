@@ -1,11 +1,14 @@
 import type OpenAI from "openai";
-import type { LangfuseObservation } from "@langfuse/tracing";
 import {
   executeChatToolCall,
-  type ChatToolExecutionError,
   type ExecutedChatToolCall,
 } from "@/server/chat/openai/tooling/tools";
 import { log } from "@/server/logger";
+import {
+  runInToolCallSpan,
+  setToolCallErrorCode,
+  setToolCallResultAttributes,
+} from "@/server/telemetry/chatSpans";
 
 type ToolExecutorParams = Readonly<{
   item: OpenAI.Responses.ResponseFunctionToolCall;
@@ -20,10 +23,9 @@ type ToolExecutorParams = Readonly<{
    * demo mode rather than fail against a database that is not there.
    */
   isDemoMode: boolean;
-  rootObservation: LangfuseObservation | null;
 }>;
 
-type ToolTelemetryOperation = "update_attributes" | "update" | "end";
+const THROWN_TOOL_ERROR_CODE = "internal_error";
 
 type ToolExecutorDependencies = Readonly<{
   executeChatToolCall: typeof executeChatToolCall;
@@ -35,48 +37,6 @@ const DEFAULT_TOOL_EXECUTOR_DEPENDENCIES: ToolExecutorDependencies = {
   log,
 };
 
-const sanitizeToolOutputForTelemetry = (
-  output: string,
-): string =>
-  output.length <= 4_000
-    ? output
-    : `${output.slice(0, 4_000)}...`;
-
-const formatToolErrorStatusMessage = (
-  error: ChatToolExecutionError,
-): string => `${error.name}: ${error.message}`;
-
-const serializeThrownToolError = (
-  error: unknown,
-): ChatToolExecutionError => error instanceof Error
-  ? {
-    name: error.name,
-    message: error.message,
-  }
-  : {
-    name: "Error",
-    message: String(error),
-  };
-
-const logToolTelemetryError = (
-  params: ToolExecutorParams,
-  operation: ToolTelemetryOperation,
-  error: unknown,
-  logger: typeof log,
-): void => {
-  logger({
-    domain: "chat",
-    action: "error",
-    vendor: "openai",
-    stage: "agent",
-    error: `Langfuse tool observation ${operation} failed for ${params.item.name} (${params.item.call_id}): ${error instanceof Error ? error.message : String(error)}`,
-    requestId: params.requestId,
-    userId: params.userId,
-    workspaceId: params.workspaceId,
-    sessionId: params.sessionId,
-  });
-};
-
 type ToolCallOutcome = Readonly<{
   status: "completed" | "error";
   errorCode: string | null;
@@ -84,9 +44,9 @@ type ToolCallOutcome = Readonly<{
 
 /**
  * The single CloudWatch record for an executed chat tool call, emitted once per
- * call next to the Langfuse observation it mirrors. The recorded workspace is
- * the session's, which every call has; the result's own workspace stays
- * reserved for the route-refresh gate.
+ * call next to the span it mirrors. The recorded workspace is the session's,
+ * which every call has; the result's own workspace stays reserved for the
+ * route-refresh gate.
  */
 const logToolCallRecord = (
   params: ToolExecutorParams,
@@ -109,19 +69,6 @@ const logToolCallRecord = (
   });
 };
 
-const runToolTelemetryOperation = (
-  params: ToolExecutorParams,
-  operation: ToolTelemetryOperation,
-  telemetryOperation: () => void,
-  logger: typeof log,
-): void => {
-  try {
-    telemetryOperation();
-  } catch (error) {
-    logToolTelemetryError(params, operation, error, logger);
-  }
-};
-
 /**
  * Executes a single local tool call and returns both the serialized tool
  * output and the canonical metadata later used for route invalidation.
@@ -132,125 +79,58 @@ const runToolTelemetryOperation = (
 export const runOneToolCallWithDependencies = async (
   params: ToolExecutorParams,
   dependencies: ToolExecutorDependencies,
-): Promise<ExecutedChatToolCall> => {
-  const toolObservation = params.rootObservation?.startObservation(
-    params.item.name,
+): Promise<ExecutedChatToolCall> =>
+  runInToolCallSpan(
     {
-      input: {
-        arguments: params.item.arguments,
-      },
-      metadata: {
-        toolName: params.item.name,
-        toolCallId: params.item.call_id,
-      },
+      requestId: params.requestId,
+      userId: params.userId,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolName: params.item.name,
+      toolCallId: params.item.call_id,
     },
-    {
-      asType: "tool",
-    },
-  ) ?? null;
-
-  const startedAt = Date.now();
-  try {
-    let output: ExecutedChatToolCall;
-    try {
-      output = await dependencies.executeChatToolCall(
-        params.item.name,
-        params.item.arguments,
-        {
-          requestId: params.requestId,
-          userId: params.userId,
-          workspaceId: params.workspaceId,
-          sessionId: params.sessionId,
-          turnId: params.turnId,
-          toolCallId: params.item.call_id,
-          isDemoMode: params.isDemoMode,
-        },
-      );
-    } catch (error) {
-      const serializedError = serializeThrownToolError(error);
-      runToolTelemetryOperation(
-        params,
-        "update_attributes",
-        (): void => toolObservation?.updateOtelSpanAttributes({
-          output: {
-            error: serializedError.message,
-          },
-          metadata: {
-            toolName: params.item.name,
+    async (span): Promise<ExecutedChatToolCall> => {
+      const startedAt = Date.now();
+      let output: ExecutedChatToolCall;
+      try {
+        output = await dependencies.executeChatToolCall(
+          params.item.name,
+          params.item.arguments,
+          {
+            requestId: params.requestId,
+            userId: params.userId,
+            workspaceId: params.workspaceId,
+            sessionId: params.sessionId,
+            turnId: params.turnId,
             toolCallId: params.item.call_id,
-            durationMs: String(Date.now() - startedAt),
+            isDemoMode: params.isDemoMode,
           },
-        }),
-        dependencies.log,
-      );
-      runToolTelemetryOperation(
-        params,
-        "update",
-        (): void => {
-          toolObservation?.update({
-            level: "ERROR",
-            statusMessage: formatToolErrorStatusMessage(serializedError),
-          });
-        },
-        dependencies.log,
-      );
-      // Today only an unsupported tool name throws here, and the MCP surface
-      // answers an unhandled error with the same code.
+        );
+      } catch (error) {
+        // Today only an unsupported tool name throws here, and the MCP surface
+        // answers an unhandled error with the same code.
+        setToolCallErrorCode(span, THROWN_TOOL_ERROR_CODE);
+        logToolCallRecord(
+          params,
+          { status: "error", errorCode: THROWN_TOOL_ERROR_CODE },
+          Date.now() - startedAt,
+          dependencies.log,
+        );
+        throw error;
+      }
+
+      setToolCallResultAttributes(span, output);
       logToolCallRecord(
         params,
-        { status: "error", errorCode: "internal_error" },
+        output.succeeded
+          ? { status: "completed", errorCode: null }
+          : { status: "error", errorCode: output.errorCode },
         Date.now() - startedAt,
         dependencies.log,
       );
-      throw error;
-    }
-
-    runToolTelemetryOperation(
-      params,
-      "update_attributes",
-      (): void => toolObservation?.updateOtelSpanAttributes({
-        output: {
-          output: sanitizeToolOutputForTelemetry(output.output),
-        },
-        metadata: {
-          toolName: params.item.name,
-          toolCallId: params.item.call_id,
-          durationMs: String(Date.now() - startedAt),
-        },
-      }),
-      dependencies.log,
-    );
-    if (!output.succeeded) {
-      runToolTelemetryOperation(
-        params,
-        "update",
-        (): void => {
-          toolObservation?.update({
-            level: "ERROR",
-            statusMessage: formatToolErrorStatusMessage(output.error),
-          });
-        },
-        dependencies.log,
-      );
-    }
-    logToolCallRecord(
-      params,
-      output.succeeded
-        ? { status: "completed", errorCode: null }
-        : { status: "error", errorCode: output.errorCode },
-      Date.now() - startedAt,
-      dependencies.log,
-    );
-    return output;
-  } finally {
-    runToolTelemetryOperation(
-      params,
-      "end",
-      (): void => toolObservation?.end(),
-      dependencies.log,
-    );
-  }
-};
+      return output;
+    },
+  );
 
 export const runOneToolCall = async (
   params: Parameters<typeof runOneToolCallWithDependencies>[0],

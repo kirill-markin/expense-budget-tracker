@@ -59,7 +59,6 @@ const createLoopParams = (): StartOpenAILoopParams => ({
   model: CHAT_MODEL_ID,
   reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
   isDemoMode: false,
-  rootObservation: null,
   beforeToolDispatch: async (): Promise<void> => {},
 });
 
@@ -95,7 +94,7 @@ const createTestLoopDeps = (overrides: Partial<LoopDeps>): LoopDeps => ({
   }),
   buildChatTurnFileContext: async (): Promise<ChatTurnFileContext> =>
     EMPTY_CHAT_TURN_FILE_CONTEXT,
-  getObservedOpenAIClient: (): OpenAI => ({}) as OpenAI,
+  getOpenAIClient: (): OpenAI => ({}) as OpenAI,
   runOneModelCall: async (): Promise<never> => {
     throw new Error("runOneModelCall was invoked but the test did not override it via createTestLoopDeps");
   },

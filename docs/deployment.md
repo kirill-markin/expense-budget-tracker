@@ -25,7 +25,7 @@ Copy [`infra/docker/.env.example`](../infra/docker/.env.example) to `infra/docke
 
 `AUTH_MODE=cognito` is not a supported configuration of this compose stack. That mode makes the web app require the `DB_HOST`/`DB_PASSWORD` pair (`apps/web/src/instrumentation.ts`), while the `web` service here wires `DATABASE_URL` instead; `infra/docker/.env` cannot supply the missing pair either, because Compose reads that file for variable interpolation and the service has no `env_file`. The authenticated deployment lives in AWS — see [`infra/aws/README.md`](../infra/aws/README.md). The standalone `auth` service is kept out of the default stack by the `cognito` profile because starting it requires real Cognito credentials, and doing so still does not give the web app an authenticated stack.
 
-If you want Langfuse tracing in local Docker, set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, and an explicit 64-character lowercase hexadecimal `LANGFUSE_RELEASE` together in `infra/docker/.env`. Leave the three connection values unset if you do not want telemetry; `LANGFUSE_RELEASE` alone does not enable it.
+Chat telemetry is always stored in the local `llm_telemetry_spans` table. To also export it to an OTLP collector, set `OTEL_EXPORTER_OTLP_ENDPOINT` and, if the collector needs authentication, `OTEL_EXPORTER_OTLP_HEADERS` in `infra/docker/.env`; see [`docs/llm-telemetry.md`](./llm-telemetry.md).
 
 ### Stop
 
@@ -48,7 +48,7 @@ To run the whole product on your own machine behind an edge proxy that authentic
 ## AWS (CDK)
 
 Full AWS deployment guide is in [`infra/aws/README.md`](../infra/aws/README.md).
-Langfuse trace verification and troubleshooting are documented in [`docs/langfuse-operations.md`](./langfuse-operations.md).
+Chat telemetry is documented in [`docs/llm-telemetry.md`](./llm-telemetry.md).
 
 We recommend deploying into a **dedicated AWS account** (the AWS equivalent of a GCP project) for complete isolation of resources, billing, and IAM. See step 1 in the AWS README for setup instructions.
 
@@ -56,7 +56,7 @@ Summary: CDK stack deploys VPC, ECS Fargate (web app), RDS Postgres (private), A
 
 ### Bootstrap and CI/CD
 
-Both bootstrap and CI/CD use the same method: `cdk deploy`. CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates/updates all infrastructure in one pass. The web task receives the deterministic hash of its exact CDK Docker image asset as `LANGFUSE_RELEASE`. `/api/live` is used only for ECS/ALB liveness. Database migrations run as a one-off ECS task after deploy, and `/api/health` is checked after deploy to confirm DB readiness.
+Both bootstrap and CI/CD use the same method: `cdk deploy`. CDK builds Docker images, pushes them to the bootstrap ECR repo, and creates/updates all infrastructure in one pass. `/api/live` is used only for ECS/ALB liveness. Database migrations run as a one-off ECS task after deploy, and `/api/health` is checked after deploy to confirm DB readiness.
 
 **Bootstrap (first deploy, one-time):** `scripts/bootstrap.sh`
 
@@ -65,7 +65,7 @@ export AWS_PROFILE=expense-tracker
 bash scripts/bootstrap.sh --region eu-central-1
 ```
 
-The script runs `cdk bootstrap` (prepares the AWS account), then `cdk deploy` (creates everything), then runs database migrations, then checks `/api/health` through the ALB DNS name to confirm DB readiness, then invokes the FX fetcher Lambda to seed exchange rates. After the first deploy, set the OpenAI and Langfuse secrets in Secrets Manager and restart ECS — see step 7 in [`infra/aws/README.md`](../infra/aws/README.md#7-post-deploy).
+The script runs `cdk bootstrap` (prepares the AWS account), then `cdk deploy` (creates everything), then runs database migrations, then checks `/api/health` through the ALB DNS name to confirm DB readiness, then invokes the FX fetcher Lambda to seed exchange rates. After the first deploy, set the OpenAI secret in Secrets Manager and restart ECS — see step 7 in [`infra/aws/README.md`](../infra/aws/README.md#7-post-deploy).
 
 **CI/CD (all subsequent deploys):** `.github/workflows/deploy.yml`
 
@@ -74,5 +74,3 @@ Triggered on a push to `main` that touches the `paths:` list in `.github/workflo
 Schema changes in this pipeline must remain backward-compatible for at least one deploy. If a change requires “migrate before new web code serves traffic”, use a separate two-phase rollout instead of the default pipeline.
 
 The chat runtime now keeps all conversation state in Postgres and the app process. OpenAI Conversations, hosted code interpreter containers, and provider-managed recovery are not part of the deployed architecture anymore. Existing environments must run migration `0032_chat_runtime_local_loop.sql` before relying on the new chat stack.
-
-The current cutover includes tracing only. Dataset creation from Langfuse traces is not part of this runtime migration and remains phase 2 observability work.

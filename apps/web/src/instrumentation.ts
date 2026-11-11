@@ -11,69 +11,65 @@
  * - AUTH_MODE=none is allowed only for explicit local dev/test, or for a
  *   deployment that opts in with ALLOW_INSECURE_NO_AUTH=true
  * - DATABASE_URL is set (local) or DB_HOST+DB_PASSWORD are set (cognito/ECS)
- * - LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL are either all set or all absent
- * - LANGFUSE_RELEASE is an explicit release fingerprint when Langfuse telemetry is enabled
  *
  * Throws with all collected errors on misconfiguration. Skipped in dev.
  */
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { NodeSDK } from "@opentelemetry/sdk-node";
+import { BatchSpanProcessor, type SpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { getAuthModeValidationErrors, isInsecureNoAuthAllowed } from "@/server/authMode";
-import { createLangfuseSpanProcessor } from "@/server/chat/openai/langfuse";
+import { getDatabaseConnectionSettings } from "@/server/db/connectionSettings";
 import { log } from "@/server/logger";
+import { createOwnTracerSpanProcessor } from "@/server/telemetry/ownTracerSpanProcessor";
+import { PostgresSpanExporter } from "@/server/telemetry/postgresSpanExporter";
 
 let telemetrySdk: NodeSDK | null = null;
 let telemetryStarted = false;
 
-type LangfuseEnvironment = Readonly<{
+type OtlpEnvironment = Readonly<{
   [name: string]: string | undefined;
-  LANGFUSE_PUBLIC_KEY?: string;
-  LANGFUSE_SECRET_KEY?: string;
-  LANGFUSE_BASE_URL?: string;
-  LANGFUSE_RELEASE?: string;
+  OTEL_EXPORTER_OTLP_ENDPOINT?: string;
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT?: string;
 }>;
 
-export const getLangfuseConfigValidationErrors = (
-  environment: LangfuseEnvironment,
-): ReadonlyArray<string> => {
-  const connectionValues = [
-    environment.LANGFUSE_PUBLIC_KEY,
-    environment.LANGFUSE_SECRET_KEY,
-    environment.LANGFUSE_BASE_URL,
-  ];
-  const connectionSettingsAbsent = connectionValues.every(
-    (value) => value === undefined || value === "",
+const isOtlpTraceExportConfigured = (environment: OtlpEnvironment): boolean =>
+  [environment.OTEL_EXPORTER_OTLP_ENDPOINT, environment.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT].some(
+    (value) => value !== undefined && value !== "",
   );
-  if (connectionSettingsAbsent) {
-    return [];
-  }
 
-  const errors: Array<string> = [];
-  if (connectionValues.some((value) => value === undefined || value.trim() === "")) {
-    errors.push(
-      "LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_BASE_URL must be configured together with non-empty values",
-    );
+const createSpanProcessors = (): ReadonlyArray<SpanProcessor> => {
+  // A full queue drops new spans rather than holding back the chat that ends
+  // them, so only spans of our own tracer may take its slots. Both sinks get
+  // exactly those spans, never the Next.js request spans with their URLs.
+  const processors: Array<SpanProcessor> = [
+    createOwnTracerSpanProcessor(
+      new BatchSpanProcessor(new PostgresSpanExporter(getDatabaseConnectionSettings(process.env)), {
+        maxQueueSize: 2048,
+        maxExportBatchSize: 256,
+        scheduledDelayMillis: 5000,
+        exportTimeoutMillis: 10000,
+      }),
+    ),
+  ];
+  // The exporter reads the endpoint, headers and other OTEL_EXPORTER_OTLP_* settings itself.
+  if (isOtlpTraceExportConfigured(process.env)) {
+    processors.push(createOwnTracerSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter())));
   }
-  if (!/^[0-9a-f]{64}$/.test(environment.LANGFUSE_RELEASE ?? "")) {
-    errors.push(
-      "LANGFUSE_RELEASE must be an explicit 64-character lowercase hexadecimal release fingerprint when Langfuse telemetry is enabled",
-    );
-  }
-
-  return errors;
+  return processors;
 };
 
-const startTelemetryIfConfigured = (): void => {
+const startTelemetry = (): void => {
   if (telemetryStarted) {
     return;
   }
 
-  const spanProcessor = createLangfuseSpanProcessor();
-  if (spanProcessor === null) {
-    return;
-  }
-
+  // Traces only: without the empty lists NodeSDK also starts OTLP metric and
+  // log pipelines aimed at the default localhost endpoint.
   telemetrySdk = new NodeSDK({
-    spanProcessors: [spanProcessor],
+    serviceName: "expense-budget-tracker-web",
+    spanProcessors: [...createSpanProcessors()],
+    metricReaders: [],
+    logRecordProcessors: [],
   });
   void telemetrySdk.start();
   telemetryStarted = true;
@@ -115,8 +111,6 @@ export const register = (): void => {
     if (!process.env.DATABASE_URL) errors.push("DATABASE_URL must be set in production");
   }
 
-  errors.push(...getLangfuseConfigValidationErrors(process.env));
-
   if (errors.length > 0) {
     throw new Error(
       `Startup validation failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
@@ -132,5 +126,5 @@ export const register = (): void => {
     });
   }
 
-  startTelemetryIfConfigured();
+  startTelemetry();
 };

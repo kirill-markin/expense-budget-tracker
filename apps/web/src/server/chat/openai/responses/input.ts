@@ -1,17 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import type OpenAI from "openai";
 import {
-  isInlineFileContentPart,
-  isInlineImageContentPart,
   type ContentPart,
   type FileContentPart,
   type ImageContentPart,
-  type InlineFileContentPart,
-  type InlineImageContentPart,
   type PdfContentPart,
-  type UnconvertedContentPart,
 } from "@/server/chat/types";
-import { getPdfDerivedImageByteLength } from "@/lib/chatPdf";
 import { CHAT_SENT_INPUT_BUDGET_TOKENS } from "@/lib/chatModels";
 import { planChatHistoryReplay } from "@/server/chat/openai/responses/history";
 import {
@@ -59,19 +53,6 @@ export type ChatCompletionInput = Readonly<{
    */
   replayedMessages: number;
 }>;
-
-type AttachmentSummary = Readonly<{
-  fileName: string;
-  mediaType: string;
-  sizeBytes: number;
-  sha256?: string;
-  pageCount?: number;
-  extractedTextCharacters?: number;
-}>;
-
-const MAX_TEXT_HISTORY_LENGTH = 8_000;
-const MAX_TOOL_PAYLOAD_LENGTH = 4_000;
-const MAX_REASONING_SUMMARY_LENGTH = 2_000;
 
 const isChatAttachmentValidationError = (error: unknown): error is Error =>
   error instanceof ChatAttachmentTooLargeError
@@ -243,14 +224,6 @@ const mapAttachmentPart = (
   }
 };
 
-const clipText = (
-  value: string,
-  maxLength: number,
-): string =>
-  value.length <= maxLength
-    ? value
-    : `${value.slice(0, maxLength)}...`;
-
 const buildToolCallHistoryText = (
   part: Extract<ContentPart, { type: "tool_call" }>,
 ): string =>
@@ -286,66 +259,6 @@ const mapMessagePart = (
   }
 
   return [{ type: "input_text", text: buildReasoningHistoryText(part) }];
-};
-
-const bytesToHex = (
-  bytes: Uint8Array,
-): string =>
-  [...bytes]
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
-
-const buildTelemetryAttachmentSummary = async (
-  part:
-    | FileContentPart
-    | InlineFileContentPart
-    | ImageContentPart
-    | InlineImageContentPart
-    | PdfContentPart,
-): Promise<AttachmentSummary> => {
-  if (part.type === "pdf") {
-    return {
-      fileName: part.fileName,
-      mediaType: part.mediaType,
-      sizeBytes: getPdfDerivedImageByteLength(part),
-      sha256: part.sourceSha256,
-      pageCount: part.pages.length,
-      extractedTextCharacters: part.pages.reduce(
-        (total, page) => total + page.text.length,
-        0,
-      ),
-    };
-  }
-
-  if (isInlineImageContentPart(part) || isInlineFileContentPart(part)) {
-    const contentBytes = Buffer.from(part.base64Data, "base64");
-    const digest = await crypto.subtle.digest("SHA-256", contentBytes);
-
-    return {
-      fileName: part.type === "image" ? "image" : part.fileName,
-      mediaType: part.mediaType,
-      sizeBytes: contentBytes.byteLength,
-      sha256: bytesToHex(new Uint8Array(digest)),
-    };
-  }
-
-  // A referenced attachment carries the stored row's own measurements, so there
-  // are no bytes here to hash and none to read. An image part carries no digest
-  // of them either: it is resolved and read by file id, so nothing needs one.
-  if (part.type === "image") {
-    return {
-      fileName: part.path,
-      mediaType: part.mediaType,
-      sizeBytes: part.sizeBytes,
-    };
-  }
-
-  return {
-    fileName: part.path,
-    mediaType: part.mediaType,
-    sizeBytes: part.sizeBytes,
-    sha256: part.sha256,
-  };
 };
 
 const normalizeHistoryMessages = (
@@ -472,41 +385,6 @@ const buildUserInputMessage = (
   type: "message",
   content: content.flatMap((part) => mapMessagePart(part, imageStateByFileId)),
 });
-
-export const sanitizeContentPartsForTelemetry = async (
-  content: ReadonlyArray<UnconvertedContentPart>,
-): Promise<ReadonlyArray<Readonly<Record<string, unknown>>>> =>
-  await Promise.all(content.map(async (part) => {
-    if (part.type === "text") {
-      return {
-        type: "text",
-        text: clipText(part.text, MAX_TEXT_HISTORY_LENGTH),
-      };
-    }
-
-    if (part.type === "image" || part.type === "file" || part.type === "pdf") {
-      return {
-        type: part.type,
-        summary: await buildTelemetryAttachmentSummary(part),
-      };
-    }
-
-    if (part.type === "tool_call") {
-      return {
-        type: "tool_call",
-        name: part.name,
-        status: part.status,
-        providerStatus: part.providerStatus ?? null,
-        input: part.input === null ? null : clipText(part.input, MAX_TOOL_PAYLOAD_LENGTH),
-        output: part.output === null ? null : clipText(part.output, MAX_TOOL_PAYLOAD_LENGTH),
-      };
-    }
-
-    return {
-      type: "reasoning_summary",
-      summary: clipText(part.summary, MAX_REASONING_SUMMARY_LENGTH),
-    };
-  }));
 
 export const buildChatCompletionInput = async (
   localMessages: ReadonlyArray<ServerChatMessage>,

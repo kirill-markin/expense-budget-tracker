@@ -16,7 +16,15 @@ const LAMBDA_NODE_IMAGE_BASES: Readonly<Record<"amd64" | "arm64", string>> = JSO
   readFileSync(path.join(__dirname, "../lambda-images/bases.json"), "utf8"),
 );
 
-export type LambdaImageCandidateName = "fx" | "authorizer" | "api" | "mcp" | "sandbox" | "signup" | "email";
+export type LambdaImageCandidateName =
+  | "fx"
+  | "authorizer"
+  | "api"
+  | "mcp"
+  | "admin-reader"
+  | "sandbox"
+  | "signup"
+  | "email";
 export type LambdaImageCodeFactory = (name: LambdaImageCandidateName) => lambda.DockerImageCode;
 export type LambdaImageCandidates = Readonly<Record<LambdaImageCandidateName, lambda.DockerImageFunction>>;
 
@@ -41,6 +49,7 @@ export interface LambdaImageCandidatesProps {
   db: rds.DatabaseInstance;
   appDbSecret: secretsmanager.Secret;
   workerDbSecret: secretsmanager.Secret;
+  adminReaderDbSecret: secretsmanager.Secret;
   chatFilesBucket: s3.Bucket;
   customEmailSenderKey: kms.Key;
   resendApiKeySecretArn: string;
@@ -112,6 +121,16 @@ export const lambdaImageCandidates = (
     },
   });
   for (const fn of [authorizer, api, mcp]) props.appDbSecret.grantRead(fn);
+  // Private on purpose: no function URL, route or resource policy, so only an
+  // IAM principal allowed lambda:InvokeFunction can call it.
+  const adminReader = create("admin-reader", {
+    ...dbNetwork,
+    timeout: cdk.Duration.seconds(30),
+    memorySize: 512,
+    reservedConcurrentExecutions: 1,
+    environment: { ...dbEnvironment, DB_SECRET_ARN: props.adminReaderDbSecret.secretArn },
+  });
+  props.adminReaderDbSecret.grantRead(adminReader);
   const sandbox = create("sandbox", {
     memorySize: 10240,
     timeout: cdk.Duration.minutes(2),
@@ -137,5 +156,5 @@ export const lambdaImageCandidates = (
   });
   props.customEmailSenderKey.grantDecrypt(email);
   secretsmanager.Secret.fromSecretCompleteArn(scope, "CandidateResendApiKeySecret", props.resendApiKeySecretArn).grantRead(email);
-  return { fx, authorizer, api, mcp, sandbox, signup, email };
+  return { fx, authorizer, api, mcp, "admin-reader": adminReader, sandbox, signup, email };
 };

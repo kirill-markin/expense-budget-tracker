@@ -5,8 +5,8 @@ import { readFile } from "node:fs/promises";
 const architecture = process.argv[2];
 assert.ok(architecture === "amd64" || architecture === "arm64", "Specify amd64 or arm64");
 const bases = JSON.parse(await readFile("infra/aws/lambda-images/bases.json", "utf8"));
-const functions = architecture === "arm64" ? ["sandbox"] : ["fx", "authorizer", "api", "mcp", "signup", "email"];
-const timeouts = { fx: 300, authorizer: 10, api: 35, mcp: 35, sandbox: 120, signup: 3, email: 30 };
+const functions = architecture === "arm64" ? ["sandbox"] : ["fx", "authorizer", "api", "mcp", "admin-reader", "signup", "email"];
+const timeouts = { fx: 300, authorizer: 10, api: 35, mcp: 35, "admin-reader": 30, sandbox: 120, signup: 3, email: 30 };
 const docker = (args, options) => execFileSync("docker", args, { timeout: 1_200_000, ...options });
 
 for (const name of functions) {

@@ -7,7 +7,6 @@ import {
 } from "@/server/chat/attachments/validation";
 import {
   buildChatCompletionInput,
-  sanitizeContentPartsForTelemetry,
   UnsupportedStoredChatAttachmentError,
 } from "@/server/chat/openai/responses/input";
 import type {
@@ -574,67 +573,6 @@ test("buildChatCompletionInput keeps the newest turn and drops a compaction item
   const serializedInput = JSON.stringify(input);
   assert.ok(serializedInput.includes("Turn 1 question"));
   assert.equal(serializedInput.includes("Turn 0 question"), false);
-});
-
-test("PDF telemetry carries only the source digest and derived page summaries", async (): Promise<void> => {
-  const sanitized = await sanitizeContentPartsForTelemetry([{
-    type: "pdf",
-    fileName: "statement.pdf",
-    mediaType: "application/pdf",
-    sourceSha256: "d".repeat(64),
-    pages: [{
-      pageNumber: 1,
-      text: "amount",
-      jpegBase64Data: JPEG_BASE64_PREFIX,
-    }],
-  }]);
-
-  assert.deepEqual(sanitized, [{
-    type: "pdf",
-    summary: {
-      fileName: "statement.pdf",
-      mediaType: "application/pdf",
-      sizeBytes: Buffer.from(JPEG_BASE64_PREFIX, "base64").byteLength,
-      sha256: "d".repeat(64),
-      pageCount: 1,
-      extractedTextCharacters: 6,
-    },
-  }]);
-  assert.equal(JSON.stringify(sanitized).includes(JPEG_BASE64_PREFIX), false);
-});
-
-test("document telemetry carries the stored row's own measurements", async (): Promise<void> => {
-  const sanitized = await sanitizeContentPartsForTelemetry([{
-    type: "file",
-    fileId: "11111111-1111-4111-8111-111111111111",
-    path: "/files/statement.csv",
-    mediaType: "text/csv",
-    sizeBytes: 31,
-    sha256: "e".repeat(64),
-  }]);
-
-  assert.deepEqual(sanitized, [{
-    type: "file",
-    summary: {
-      fileName: "/files/statement.csv",
-      mediaType: "text/csv",
-      sizeBytes: 31,
-      sha256: "e".repeat(64),
-    },
-  }]);
-});
-
-test("image telemetry carries the stored row's own measurements and no digest", async (): Promise<void> => {
-  const sanitized = await sanitizeContentPartsForTelemetry([STORED_IMAGE]);
-
-  assert.deepEqual(sanitized, [{
-    type: "image",
-    summary: {
-      fileName: "/files/image.jpg",
-      mediaType: "image/jpeg",
-      sizeBytes: 11,
-    },
-  }]);
 });
 
 test("buildChatCompletionInput sends the file listing behind the turn and keeps the clock last", async (): Promise<void> => {

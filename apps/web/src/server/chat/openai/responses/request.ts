@@ -179,7 +179,7 @@ export const buildOpenAIResponsesRequestWithOptions = (
   }],
 });
 
-const getResponseStopReason = (
+export const getResponseStopReason = (
   response: OpenAI.Responses.Response,
 ): string => {
   const stopReason = response.incomplete_details?.reason ?? response.status;
@@ -190,7 +190,7 @@ const getResponseStopReason = (
   return stopReason;
 };
 
-const getResponseUsage = (
+export const getResponseUsage = (
   response: OpenAI.Responses.Response,
 ): OpenAI.Responses.ResponseUsage => {
   if (response.usage === undefined) {

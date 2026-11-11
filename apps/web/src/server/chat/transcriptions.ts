@@ -1,12 +1,9 @@
 import { Buffer } from "node:buffer";
 import { toFile } from "openai";
 import { ApiRouteError } from "@/server/api/errors";
-import { getObservedOpenAIClient } from "@/server/chat/openai/client";
-import {
-  startChatTranscriptionObservation,
-  type ChatTranscriptionTraceMetadata,
-} from "@/server/chat/openai/langfuse";
+import { getOpenAIClient } from "@/server/chat/openai/client";
 import { log } from "@/server/logger";
+import { runInTranscriptionSpan } from "@/server/telemetry/chatSpans";
 
 export type ChatTranscriptionSource = "web";
 
@@ -29,7 +26,16 @@ export type ChatTranscriptionUpload = Readonly<{
   sessionId: string | null;
 }>;
 
-export type ChatTranscriptionTelemetryContext = ChatTranscriptionTraceMetadata;
+export type ChatTranscriptionTelemetryContext = Readonly<{
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string | null;
+  source: ChatTranscriptionSource;
+  fileName: string;
+  mediaType: string;
+  fileSize: number;
+}>;
 
 type OpenAIErrorMetadata = Readonly<{
   upstreamStatus: number | null;
@@ -64,7 +70,7 @@ const getRequiredOpenAIApiKey = (): string => {
 
 export const createOpenAITranscriptionClient = (): OpenAITranscriptionClient => {
   getRequiredOpenAIApiKey();
-  return getObservedOpenAIClient();
+  return getOpenAIClient();
 };
 
 const normalizeFileExtension = (fileName: string): string | null => {
@@ -232,7 +238,18 @@ export const transcribeChatAudioUpload = async (
 ): Promise<string> => {
   try {
     const transcriptionClient = client ?? createOpenAITranscriptionClient();
-    return await startChatTranscriptionObservation(telemetryContext, async (): Promise<string> => {
+    // The span names no conversation: the client sends this session id
+    // unverified, and a row naming a session that does not exist fails the
+    // foreign key of every span stored in the same batch.
+    return await runInTranscriptionSpan({
+      requestId: telemetryContext.requestId,
+      userId: telemetryContext.userId,
+      workspaceId: telemetryContext.workspaceId,
+      sessionId: null,
+      model: CHAT_TRANSCRIPTION_MODEL,
+      mediaType: telemetryContext.mediaType,
+      bytes: telemetryContext.fileSize,
+    }, async (): Promise<string> => {
       const buffer = Buffer.from(await upload.file.arrayBuffer());
       const file = await toFile(buffer, upload.file.name, { type: upload.file.type });
       const result = await transcriptionClient.audio.transcriptions.create({

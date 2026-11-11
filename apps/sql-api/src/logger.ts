@@ -1,5 +1,6 @@
 import type { AgentToolName } from "@expense-budget-tracker/agent-shared/agent-tools";
 import type { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
+import type { AdminReaderEvent, AdminReaderRowCounts } from "./adminReader.js";
 
 export type SafeErrorType = "error" | "type_error" | "range_error" | "non_error";
 
@@ -125,6 +126,20 @@ export type SqlApiLogEvent =
     code: string;
     errorType: SafeErrorType;
     message: string;
+  }>
+  // The audit record of one admin-reader invocation. The request holds only
+  // ids, filters and limits; the response content is never logged. request is
+  // null when the event failed validation, and errorMessage is cut to
+  // MAX_SQL_POLICY_LOG_MESSAGE_CHARS.
+  | Readonly<{
+    domain: "sql_api";
+    action: "admin_reader_call";
+    outcome: "success" | "error";
+    request: AdminReaderEvent | null;
+    rowCounts: AdminReaderRowCounts | null;
+    durationMs: number;
+    errorType: SafeErrorType | null;
+    errorMessage: string | null;
   }>;
 
 export const log = (event: SqlApiLogEvent): void => {
