@@ -109,6 +109,12 @@ type ChatEvent =
   }>
   | Readonly<{
     domain: "chat";
+    action: "task_protection_renewal_ceiling_reached";
+    activeProtectedRunCount: number;
+    protectionWindowAgeMs: number;
+  }>
+  | Readonly<{
+    domain: "chat";
     action: "response";
     vendor: ChatVendor;
     requestId: string;
