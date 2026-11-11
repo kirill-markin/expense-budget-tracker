@@ -605,6 +605,7 @@ const runLoopWithDeps = async (
 
     let toolStates = modelCall.toolStates;
     for (const functionCall of modelCall.functionCalls) {
+      params.signal?.throwIfAborted();
       const output = await dependencies.runOneToolCall({
         item: functionCall,
         requestId: params.requestId,

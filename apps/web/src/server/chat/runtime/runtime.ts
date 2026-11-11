@@ -44,6 +44,7 @@ import type {
 import { log, type ChatErrorStage } from "@/server/logger";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
+export const CHAT_DRAFT_WRITE_INTERVAL_MS = 250;
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
 export const CHAT_RUN_STALE_HEARTBEAT_MS = 30_000;
 const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
@@ -192,6 +193,14 @@ const buildUserFacingChatErrorMessage = (
   }
   return t(locale, "chat.unexpectedError");
 };
+
+// OpenAI can finish generating a function call before the local tool runs.
+const normalizeToolCallProgressEvent = (event: ChatStreamEvent): ChatStreamEvent =>
+  event.type === "tool_call"
+  && event.output === undefined
+  && (event.providerStatus ?? event.status) === "completed"
+    ? { ...event, status: "started", providerStatus: "in_progress" }
+    : event;
 
 /**
  * Converts a streamed tool-call event into the persisted assistant transcript
@@ -500,7 +509,7 @@ const persistToolCallProgress = async (
   event: Extract<ChatStreamEvent, { type: "tool_call" }>,
   seenInvalidationVersions: Map<string, number>,
 ): Promise<Extract<ChatStreamEvent, { type: "tool_call" }>> => {
-  if (event.status !== "completed" || event.refreshRoute !== true) {
+  if (event.refreshRoute !== true) {
     await updateAssistantInProgress(
       dependencies,
       userId,
@@ -578,6 +587,10 @@ export const runPersistedChatSessionWithDeps = async (
   let activeRootPersistenceFailed = false;
   let cancellationLogged = false;
   let doneEventPending = false;
+  let draftWritePending = false;
+  let draftWriteTimer: ReturnType<typeof setTimeout> | null = null;
+  let draftWriteInFlight: Promise<void> | null = null;
+  let draftWriteFailure: Readonly<{ error: unknown }> | null = null;
   const seenInvalidationVersions = new Map<string, number>();
   const getPendingObservationOutcome = (): ChatTurnObservationOutcome | null =>
     pendingObservationOutcome;
@@ -596,6 +609,58 @@ export const runPersistedChatSessionWithDeps = async (
       logChatRunError(params.diagnostics, "stream", error);
     });
   }, CHAT_RUN_HEARTBEAT_INTERVAL_MS);
+
+  const scheduleDraftWrite = (): void => {
+    if (
+      !draftWritePending
+      || draftWriteTimer !== null
+      || draftWriteInFlight !== null
+      || draftWriteFailure !== null
+      || !isCurrentActiveChatRun(params.sessionId, params.activeRunId)
+    ) {
+      return;
+    }
+
+    draftWriteTimer = setTimeout(() => {
+      draftWriteTimer = null;
+      if (!isCurrentActiveChatRun(params.sessionId, params.activeRunId)) {
+        return;
+      }
+
+      draftWritePending = false;
+      draftWriteInFlight = updateAssistantInProgress(
+        dependencies,
+        params.userId,
+        params.workspaceId,
+        params.sessionId,
+        params.activeRunId,
+        params.assistantItemId,
+        assistantContent,
+      ).catch((error: unknown): void => {
+        draftWriteFailure = { error };
+        getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.abort();
+      }).finally((): void => {
+        draftWriteInFlight = null;
+        scheduleDraftWrite();
+      });
+    }, CHAT_DRAFT_WRITE_INTERVAL_MS);
+  };
+
+  // The next checkpoint saves the full transcript, so only the already-started write must finish.
+  const discardPendingDraftAndWaitForWrite = async (): Promise<void> => {
+    draftWritePending = false;
+    if (draftWriteTimer !== null) {
+      clearTimeout(draftWriteTimer);
+      draftWriteTimer = null;
+    }
+    await draftWriteInFlight;
+  };
+
+  const throwDraftWriteFailure = (): void => {
+    if (draftWriteFailure !== null) {
+      throw draftWriteFailure.error;
+    }
+  };
 
   const classifyPersistenceFailure = (
     error: unknown,
@@ -647,6 +712,7 @@ export const runPersistedChatSessionWithDeps = async (
       return pendingCancellationOutcome;
     }
 
+    await discardPendingDraftAndWaitForWrite();
     assistantContent = buildUserStoppedAssistantContent(assistantContent);
     if (activeRun.cancellationState === "persisted") {
       logUserCancellation();
@@ -752,7 +818,13 @@ export const runPersistedChatSessionWithDeps = async (
         turnInput: params.turnInput,
       },
       async (rootObservation): Promise<ChatTurnObservationOutcome> => {
-        const handleOpenAILoopEvent = async (event: ChatStreamEvent): Promise<void> => {
+        const prepareProgressCheckpoint = async (): Promise<void> => {
+          await discardPendingDraftAndWaitForWrite();
+          stopOpenAILoopIfInterrupted(await persistUserCancellationIfNeeded());
+        };
+
+        const handleOpenAILoopEvent = async (loopEvent: ChatStreamEvent): Promise<void> => {
+          const event = normalizeToolCallProgressEvent(loopEvent);
           const existingObservationOutcome = getPendingObservationOutcome();
           if (existingObservationOutcome !== null) {
             stopOpenAILoop(existingObservationOutcome);
@@ -761,68 +833,20 @@ export const runPersistedChatSessionWithDeps = async (
           const initialCancellationOutcome = await persistUserCancellationIfNeeded();
           stopOpenAILoopIfInterrupted(initialCancellationOutcome);
 
+          const hasLocalToolResult = event.type === "tool_call" && event.output !== undefined;
+          if (!hasLocalToolResult) {
+            throwDraftWriteFailure();
+          }
+
           if (event.type === "done") {
             doneEventPending = true;
             return;
           }
 
-          if (event.type === "delta") {
-            assistantContent = applyAssistantDelta(assistantContent, event);
-            try {
-              await updateAssistantInProgress(
-                dependencies,
-                params.userId,
-                params.workspaceId,
-                params.sessionId,
-                params.activeRunId,
-                params.assistantItemId,
-                assistantContent,
-              );
-            } catch (error) {
-              stopOpenAILoop(classifyPersistenceFailure(error));
-            }
-            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
-            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
-          } else if (event.type === "tool_call") {
-            assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
-            const eventToBroadcast = await persistToolCallProgress(
-              dependencies,
-              params.userId,
-              params.workspaceId,
-              params.sessionId,
-              params.activeRunId,
-              params.assistantItemId,
-              assistantContent,
-              event,
-              seenInvalidationVersions,
-            ).catch((error: unknown): never =>
-              stopOpenAILoop(classifyPersistenceFailure(error)),
-            );
-            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
-            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
-            broadcastChatEvent(params.sessionId, params.activeRunId, eventToBroadcast);
-            return;
-          } else if (event.type === "reasoning_summary") {
-            assistantContent = upsertReasoningSummaryContent(
-              assistantContent,
-              createReasoningSummaryContentPart(event),
-            );
-            try {
-              await updateAssistantInProgress(
-                dependencies,
-                params.userId,
-                params.workspaceId,
-                params.sessionId,
-                params.activeRunId,
-                params.assistantItemId,
-                assistantContent,
-              );
-            } catch (error) {
-              stopOpenAILoop(classifyPersistenceFailure(error));
-            }
-            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
-            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
-          } else if (event.type === "error") {
+          if (event.type === "error") {
+            await prepareProgressCheckpoint();
+            throwDraftWriteFailure();
+
             const failureOutcome = await persistTerminalFailure(event.message);
             const cancellationOutcome = await persistUserCancellationIfNeeded();
             if (cancellationOutcome !== null) {
@@ -838,6 +862,49 @@ export const runPersistedChatSessionWithDeps = async (
             stopOpenAILoop(failureOutcome);
           }
 
+          if (event.type === "delta") {
+            assistantContent = applyAssistantDelta(assistantContent, event);
+          } else if (event.type === "reasoning_summary") {
+            assistantContent = upsertReasoningSummaryContent(
+              assistantContent,
+              createReasoningSummaryContentPart(event),
+            );
+          } else if (event.type === "tool_call") {
+            assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
+            if (hasLocalToolResult) {
+              await prepareProgressCheckpoint();
+              const draftError = draftWriteFailure?.error;
+              if (draftError instanceof ChatSessionRunTransitionError || draftError instanceof WorkspaceAccessError) {
+                throw draftError;
+              }
+
+              const eventToBroadcast = await persistToolCallProgress(
+                dependencies,
+                params.userId,
+                params.workspaceId,
+                params.sessionId,
+                params.activeRunId,
+                params.assistantItemId,
+                assistantContent,
+                event,
+                seenInvalidationVersions,
+              ).catch((error: unknown): never =>
+                stopOpenAILoop(classifyPersistenceFailure(error)),
+              );
+              const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
+              stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
+              broadcastChatEvent(params.sessionId, params.activeRunId, eventToBroadcast);
+              // A completed action can still be saved before ending the run for a failed draft.
+              throwDraftWriteFailure();
+              return;
+            }
+          } else {
+            broadcastChatEvent(params.sessionId, params.activeRunId, event);
+            return;
+          }
+
+          draftWritePending = true;
+          scheduleDraftWrite();
           broadcastChatEvent(params.sessionId, params.activeRunId, event);
         };
 
@@ -859,10 +926,14 @@ export const runPersistedChatSessionWithDeps = async (
             rootObservation,
             signal: getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.signal,
           }, handleOpenAILoopEvent);
-        } catch (error) {
-          if (activeRootPersistenceFailed && error === activeRootPersistenceError) {
-            throw error;
+          await discardPendingDraftAndWaitForWrite();
+          throwDraftWriteFailure();
+        } catch (loopError) {
+          await discardPendingDraftAndWaitForWrite();
+          if (activeRootPersistenceFailed && loopError === activeRootPersistenceError) {
+            throw loopError;
           }
+          const error = draftWriteFailure === null ? loopError : draftWriteFailure.error;
 
           const activeRun = getActiveChatRun(params.sessionId);
           const stoppedByUser = activeRun?.activeRunId === params.activeRunId
@@ -870,7 +941,9 @@ export const runPersistedChatSessionWithDeps = async (
 
           if (stoppedByUser) {
             const cancellationOutcome = await persistUserCancellationIfNeeded();
-            if (error !== CHAT_RUN_LOOP_STOP_SIGNAL && !isUserAbortError(error)) {
+            if (error instanceof ChatSessionRunTransitionError) {
+              logRunTransitionSkipped(error, params);
+            } else if (error !== CHAT_RUN_LOOP_STOP_SIGNAL && !isUserAbortError(error)) {
               logChatRunError(params.diagnostics, "agent", error);
             }
             if (cancellationOutcome === null) {
@@ -901,7 +974,13 @@ export const runPersistedChatSessionWithDeps = async (
             return { kind: "invalidated" };
           }
 
-          const userFacingMessage = buildUserFacingChatErrorMessage(params.locale, error);
+          if (draftWriteFailure !== null && error instanceof WorkspaceAccessError) {
+            classifyPersistenceFailure(error);
+          }
+
+          const userFacingMessage = draftWriteFailure === null
+            ? buildUserFacingChatErrorMessage(params.locale, error)
+            : t(params.locale, "chat.draftSaveError");
           const failureOutcome = await persistTerminalFailure(userFacingMessage);
           const cancellationOutcome = await persistUserCancellationIfNeeded();
           if (cancellationOutcome !== null) {
