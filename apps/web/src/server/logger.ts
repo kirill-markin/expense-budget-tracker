@@ -1,6 +1,7 @@
 import type { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
 import type { ChatHistoryBoundary } from "@/server/chat/openai/responses/history";
+import type { ModelCallTimeoutLimit } from "@/server/chat/openai/responses/modelCall";
 
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
@@ -21,6 +22,12 @@ type ChatOpenAIErrorContextFields = Readonly<{
   openaiErrorParam?: string;
   openaiRequestId?: string;
   causeCode?: string;
+}>;
+type ChatModelCallTimeoutFields = Readonly<{
+  timeoutLimit?: ModelCallTimeoutLimit;
+  timeoutMs?: number;
+  msSinceLastStreamEvent?: number;
+  streamEventCount?: number;
 }>;
 type TaskProtectionAction =
   | "task_protection_enabled"
@@ -332,7 +339,7 @@ type ChatEvent =
     messageCount?: number;
     hasAttachments?: boolean;
     attachmentFileNames?: ReadonlyArray<string>;
-  } & ChatAttemptMetadata> & ChatOpenAIErrorContextFields);
+  } & ChatAttemptMetadata> & ChatOpenAIErrorContextFields & ChatModelCallTimeoutFields);
 
 /**
  * The workspace of a chat request or run stopped being accessible to the user,

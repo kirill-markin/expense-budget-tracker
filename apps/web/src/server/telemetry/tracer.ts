@@ -15,6 +15,7 @@ export const ATTR_APP_CALL_INDEX = "app.call_index";
 export const ATTR_APP_ATTEMPT = "app.attempt";
 export const ATTR_APP_SYSTEM_INSTRUCTIONS_SHA256 = "app.system_instructions_sha256";
 export const ATTR_APP_REPLAYED_MESSAGES = "app.replayed_messages";
+export const ATTR_APP_TIMEOUT_LIMIT = "app.timeout.limit";
 export const ATTR_APP_OPENAI_USAGE = "app.openai.usage";
 export const ATTR_APP_RESPONSE_OUTPUT_ITEMS = "app.response.output_items";
 export const ATTR_APP_RESPONSE_COMPACTION_ITEMS = "app.response.compaction_items";

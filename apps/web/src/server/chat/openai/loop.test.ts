@@ -1035,7 +1035,12 @@ test("runOpenAILoop retries on ChatModelCallTimeoutError and surfaces the error 
       createTestLoopDeps({
         runOneModelCall: async () => {
           attemptCount += 1;
-          throw new ChatModelCallTimeoutError(5_000);
+          throw new ChatModelCallTimeoutError({
+            limit: "idle",
+            timeoutMs: 5_000,
+            msSinceLastStreamEvent: 5_000,
+            streamEventCount: 0,
+          });
         },
         getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
       }),

@@ -1,6 +1,9 @@
 import OpenAI from "openai";
 import { CHAT_VENDOR } from "@/lib/chatModels";
-import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
+import {
+  ChatModelCallTimeoutError,
+  type ModelCallTimeoutLimit,
+} from "@/server/chat/openai/responses/modelCall";
 import { createChatWorkspaceUnavailableLogEvent } from "@/server/chat/workspaceUnavailableLog";
 import type { ChatErrorStage, ChatWorkspaceUnavailableEvent } from "@/server/logger";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
@@ -49,7 +52,24 @@ export type ChatErrorLogEvent = Readonly<{
   messageCount?: number;
   hasAttachments?: boolean;
   attachmentFileNames?: ReadonlyArray<string>;
-}> & ChatOpenAIErrorContext;
+}> & ChatOpenAIErrorContext & ChatModelCallTimeoutContext;
+
+type ChatModelCallTimeoutContext = Readonly<{
+  timeoutLimit?: ModelCallTimeoutLimit;
+  timeoutMs?: number;
+  msSinceLastStreamEvent?: number;
+  streamEventCount?: number;
+}>;
+
+const extractModelCallTimeoutContext = (error: unknown): ChatModelCallTimeoutContext =>
+  error instanceof ChatModelCallTimeoutError
+    ? {
+      timeoutLimit: error.limit,
+      timeoutMs: error.timeoutMs,
+      msSinceLastStreamEvent: error.msSinceLastStreamEvent,
+      streamEventCount: error.streamEventCount,
+    }
+    : {};
 
 const OPENAI_REQUEST_ID_REGEX = /\b(req_[a-z0-9]+)\b/i;
 
@@ -261,5 +281,6 @@ export const createChatErrorLogEvent = (
     hasAttachments: diagnostics.hasAttachments,
     attachmentFileNames: diagnostics.attachmentFileNames,
     ...extractOpenAIErrorContext(error),
+    ...extractModelCallTimeoutContext(error),
   };
 };

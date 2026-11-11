@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { SpanStatusCode } from "@opentelemetry/api";
 import type OpenAI from "openai";
 import { CHAT_MODEL_ID, CHAT_MODEL_REASONING_EFFORT } from "@/lib/chatModels";
-import { runOneModelCall } from "@/server/chat/openai/responses/modelCall";
+import { runOneModelCall, startModelCallDeadline } from "@/server/chat/openai/responses/modelCall";
 import { buildOpenAIResponsesRequest } from "@/server/chat/openai/responses/request";
 import { CHAT_RUN_LOOP_STOP_SIGNAL } from "@/server/chat/runtime/loopStopSignal";
 import { registerInMemorySpanExporterForTests } from "@/server/telemetry/spanRecorderForTests";
@@ -72,4 +73,67 @@ test("a model call ended by the runtime stop signal is stored as stopped", async
   assert.equal(modelCall.name, `chat ${CHAT_MODEL_ID}`);
   assert.equal(modelCall.attributes["error.type"], "stopped");
   assert.deepEqual(modelCall.status, { code: SpanStatusCode.ERROR, message: "stopped" });
+});
+
+const waitForAbort = (signal: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+
+test("a model call deadline fires the idle limit when no stream event arrives", async (): Promise<void> => {
+  const deadline = startModelCallDeadline(undefined, 30, 5_000);
+  try {
+    await waitForAbort(deadline.signal);
+    const timeoutError = deadline.getTimeoutError();
+    assert.equal(timeoutError?.limit, "idle");
+    assert.equal(timeoutError?.timeoutMs, 30);
+    assert.equal(timeoutError?.streamEventCount, 0);
+    assert.ok((timeoutError?.msSinceLastStreamEvent ?? 0) >= 29);
+  } finally {
+    deadline.dispose();
+  }
+});
+
+test("stream events keep a model call alive past the idle limit", async (): Promise<void> => {
+  const deadline = startModelCallDeadline(undefined, 100, 5_000);
+  try {
+    for (let index = 0; index < 20; index += 1) {
+      await sleep(10);
+      deadline.touch();
+    }
+    assert.equal(deadline.signal.aborted, false);
+    assert.equal(deadline.getTimeoutError(), null);
+  } finally {
+    deadline.dispose();
+  }
+});
+
+test("a model call deadline fires the total limit even while events keep arriving", async (): Promise<void> => {
+  const deadline = startModelCallDeadline(undefined, 100, 250);
+  try {
+    while (!deadline.signal.aborted) {
+      await sleep(10);
+      deadline.touch();
+    }
+    const timeoutError = deadline.getTimeoutError();
+    assert.equal(timeoutError?.limit, "max_duration");
+    assert.equal(timeoutError?.message, "OpenAI model call exceeded the 250ms total limit");
+    assert.ok((timeoutError?.streamEventCount ?? 0) > 0);
+    assert.ok((timeoutError?.msSinceLastStreamEvent ?? Number.POSITIVE_INFINITY) < 100);
+  } finally {
+    deadline.dispose();
+  }
+});
+
+test("a user abort takes precedence over a model call timeout", async (): Promise<void> => {
+  const userController = new AbortController();
+  const deadline = startModelCallDeadline(userController.signal, 20, 5_000);
+  try {
+    userController.abort();
+    assert.equal(deadline.signal.aborted, true);
+    await sleep(40);
+    assert.equal(deadline.getTimeoutError(), null);
+  } finally {
+    deadline.dispose();
+  }
 });
