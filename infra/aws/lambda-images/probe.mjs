@@ -45,6 +45,10 @@ export const handler = async (_event, context) => {
       assert.equal(JSON.parse(result.body).resource, process.env.OAUTH_RESOURCE);
       break;
     }
+    case "admin-reader":
+      // Validation runs before any database access, so this probe reads nothing.
+      await assert.rejects(entry.handler({ action: "probe" }), /Invalid admin-reader event/u);
+      break;
     case "fx":
     case "email":
       // Importing initializes real SDK clients; invoking would fetch data or send mail.

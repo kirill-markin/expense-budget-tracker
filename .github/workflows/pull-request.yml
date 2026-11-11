@@ -236,6 +236,7 @@ jobs:
         env:
           MIGRATION_DATABASE_URL: postgresql://tracker:tracker@localhost:5432/tracker
           APP_DATABASE_URL: postgresql://app:app@localhost:5432/tracker
+          ADMIN_READER_DATABASE_URL: postgresql://admin_reader:admin_reader@localhost:5432/tracker
 
       - name: Run web unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.web_tests == 'true' }}

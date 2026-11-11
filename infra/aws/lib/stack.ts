@@ -71,6 +71,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       db: dbResult.db,
       appDbSecret: dbResult.appDbSecret,
       workerDbSecret: dbResult.workerDbSecret,
+      adminReaderDbSecret: dbResult.adminReaderDbSecret,
       chatFilesBucket: chatFiles.chatFilesBucket,
       customEmailSenderKey: senderKey,
       resendApiKeySecretArn,
@@ -178,6 +179,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       sqlApiFn: api.sqlApiFn,
       mcpHttpApi: mcp.httpApi,
       mcpFn: mcp.mcpFn,
+      adminReaderFn: images["admin-reader"],
       mcpCustomDomainTarget: mcp.customDomainTarget,
       mcpUrl: `https://mcp.${baseDomain}/mcp`,
     });

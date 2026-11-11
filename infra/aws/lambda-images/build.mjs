@@ -8,6 +8,7 @@ const entries = {
   authorizer: "apps/sql-api/src/authorizer.ts",
   api: "apps/sql-api/src/handler.ts",
   mcp: "apps/sql-api/src/mcp-handler.ts",
+  "admin-reader": "apps/sql-api/src/admin-reader-handler.ts",
   sandbox: "apps/sandbox/src/handler.ts",
   signup: "infra/aws/lambda/pre-signup/index.mjs",
   email: "infra/aws/lambda/custom-email-sender/index.ts",
