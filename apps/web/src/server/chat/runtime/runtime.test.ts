@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type OpenAI from "openai";
+import { t as translate } from "@/i18n/serverT";
 import type { LangfuseObservation } from "@langfuse/tracing";
 import {
   CHAT_FALLBACK_MODEL_ID,
@@ -9,10 +11,12 @@ import {
 import { prependSessionEvent } from "@/server/chat/http/freshSessionRoute";
 import { createChatEventStream } from "@/server/chat/http/sse";
 import { buildChatCompletionInput } from "@/server/chat/openai/responses/input";
-import type { OpenAILoopCompletion } from "@/server/chat/openai/loop";
+import { runOpenAILoopWithDeps, type OpenAILoopCompletion } from "@/server/chat/openai/loop";
+import { createToolCallStateMap } from "@/server/chat/openai/tooling/toolCalls";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import type { ChatTurnObservationOutcome } from "@/server/chat/openai/langfuse";
 import {
+  CHAT_DRAFT_WRITE_INTERVAL_MS,
   CHAT_RUN_HEARTBEAT_INTERVAL_MS,
   clearActiveChatRunForTests,
   createActiveChatRunForTests,
@@ -28,8 +32,9 @@ import {
   type ChatRuntimeDependencies,
   type StartPersistedChatRunParams,
 } from "./runtime";
-import { ChatSessionRunTransitionError } from "@/server/chat/store";
+import { ChatSessionRunTransitionError, INTERRUPTED_TOOL_CALL_OUTPUT } from "@/server/chat/store";
 import { selectChatModelRouting } from "@/server/chat/modelRouting";
+import { updateAssistantMessageItemWithQuery } from "@/server/chat/store/messageStore";
 import type { PersistedChatMessageItem } from "@/server/chat/store/shared";
 import {
   isInlineFileContentPart,
@@ -368,9 +373,12 @@ test("runPersistedChatSessionWithDeps persists stopped state for user aborts wit
     clearActiveChatRunForTests(sessionId);
   }
 
-  assert.equal(recorded.updatePayloads.length, 1);
+  assert.equal(recorded.updatePayloads.length, 0);
   assert.notEqual(recorded.cancelledPayload, null);
   assert.equal((recorded.cancelledPayload as ActiveRunPayload).activeRunId, params.activeRunId);
+  const [persistedText] = (recorded.cancelledPayload as { assistantContent: ReadonlyArray<ContentPart> }).assistantContent;
+  assert.ok(persistedText?.type === "text");
+  assert.equal(persistedText.text, "Partial answer");
   assert.equal(recorded.terminalErrorPayload, null);
   assert.equal(recorded.completedPayload, null);
   assert.deepEqual(lifecycle, ["root-start", "cancel-persisted", "root-outcome"]);
@@ -604,7 +612,7 @@ test("runPersistedChatSessionWithDeps stops post-event work after cancellation p
   });
 });
 
-test("runPersistedChatSessionWithDeps stops tool work when a pending event write is cancelled or replaced", async (): Promise<void> => {
+test("runPersistedChatSessionWithDeps stops tool work when a tool completion write is cancelled or replaced", async (): Promise<void> => {
   const scenarios: ReadonlyArray<"cancelled" | "replaced"> = ["cancelled", "replaced"];
 
   for (const scenario of scenarios) {
@@ -640,7 +648,12 @@ test("runPersistedChatSessionWithDeps stops tool work when a pending event write
             return baseDependencies.updateAssistantMessageItem(userId, workspaceId, payload);
           },
           runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
-            await onEvent(createStartedToolCallEvent());
+            await onEvent({
+              ...createStartedToolCallEvent(),
+              status: "completed",
+              providerStatus: "completed",
+              output: "Tool result",
+            });
             postEventToolExecutionAttempted = true;
             return createLoopCompletion([]);
           },
@@ -687,7 +700,8 @@ test("runPersistedChatSessionWithDeps stops tool work when a pending event write
   }
 });
 
-test("runPersistedChatSessionWithDeps keeps persisted cancellation when an in-flight progress write loses its transition", async (): Promise<void> => {
+test("runPersistedChatSessionWithDeps keeps persisted cancellation when an in-flight progress write loses its transition", async (t): Promise<void> => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const params = createRunParams("session-persisted-cancellation-progress-write-race");
   const recorded = {
     updatePayloads: [] as Array<unknown>,
@@ -701,7 +715,6 @@ test("runPersistedChatSessionWithDeps keeps persisted cancellation when an in-fl
   const lifecycle: Array<string> = [];
   const originalLog = console.log;
   console.log = (): void => undefined;
-  let postEventWorkRan = false;
   let rootOutcome: ChatTurnObservationOutcome | null = null;
   createActiveChatRunForTests(params.sessionId, params.activeRunId);
 
@@ -727,7 +740,8 @@ test("runPersistedChatSessionWithDeps keeps persisted cancellation when an in-fl
         },
         runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
           await onEvent(createDeltaEvent("Partial answer"));
-          postEventWorkRan = true;
+          t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
+          lifecycle.push("loop-returned");
           return createLoopCompletion([]);
         },
       },
@@ -752,13 +766,13 @@ test("runPersistedChatSessionWithDeps keeps persisted cancellation when an in-fl
     console.log = originalLog;
   }
 
-  assert.equal(postEventWorkRan, false);
   assert.equal(recorded.cancelledPayload, null);
   assert.equal(recorded.terminalErrorPayload, null);
   assert.equal(recorded.completedPayload, null);
   assert.deepEqual(lifecycle, [
     "root-start",
     "progress-write-started",
+    "loop-returned",
     "stop-route-cancelled",
     "progress-write-transition-lost",
     "root-outcome",
@@ -990,12 +1004,13 @@ test("runPersistedChatSessionWithDeps persists terminal errors when the provider
     clearActiveChatRunForTests(params.sessionId);
   }
 
-  assert.equal(recorded.updatePayloads.length, 1);
-  assert.equal((recorded.updatePayloads[0] as ActiveRunPayload).activeRunId, params.activeRunId);
-  assert.equal((recorded.updatePayloads[0] as { sessionId: string }).sessionId, params.sessionId);
+  assert.equal(recorded.updatePayloads.length, 0);
   assert.equal(recorded.cancelledPayload, null);
   assert.notEqual(recorded.terminalErrorPayload, null);
   assert.equal((recorded.terminalErrorPayload as ActiveRunPayload).activeRunId, params.activeRunId);
+  const [persistedText] = (recorded.terminalErrorPayload as { assistantContent: ReadonlyArray<ContentPart> }).assistantContent;
+  assert.ok(persistedText?.type === "text");
+  assert.equal(persistedText.text, "Partial answer");
   assert.equal(recorded.completedPayload, null);
   assert.deepEqual(lifecycle, ["root-start", "terminal-persisted", "root-outcome"]);
   assert.deepEqual(rootOutcome, {
@@ -1269,6 +1284,103 @@ test("runPersistedChatSessionWithDeps skips terminal error persistence when prov
   assert.equal(recorded.completedPayload, null);
   assert.equal(recorded.cancelledPayload, null);
   assert.deepEqual(rootOutcome, { kind: "invalidated" });
+});
+
+test("runPersistedChatSessionWithDeps blocks tool dispatch after Stop on another replica", async (t): Promise<void> => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const params = createRunParams("session-remote-stop-before-tool");
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  let persistedRunId: string | null = params.activeRunId;
+  let localSignal: AbortSignal | undefined;
+  let persistedRunChecks = 0;
+  let toolDispatches = 0;
+  let rootOutcome: ChatTurnObservationOutcome | null = null;
+  createActiveChatRunForTests(params.sessionId, params.activeRunId);
+
+  try {
+    await runPersistedChatSessionWithDeps(params, createRuntimeDependencies({
+      startChatTurnObservation: async (_observationParams, fn): Promise<void> => {
+        rootOutcome = await fn(null);
+      },
+      updateAssistantMessageItem: async (_userId, _workspaceId, payload) =>
+        updateAssistantMessageItemWithQuery(async (_sql, queryParams) => {
+          assert.deepEqual(queryParams, [params.sessionId, params.activeRunId]);
+          assert.equal(localSignal?.aborted, false);
+          assert.equal(persistedRunId, null);
+          persistedRunChecks += 1;
+          return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+        }, payload),
+      runOpenAILoop: (loopParams, onEvent): Promise<OpenAILoopCompletion> => {
+        localSignal = loopParams.signal;
+        const tool = { ...createStartedToolCallEvent(), name: "bash" };
+        return runOpenAILoopWithDeps(loopParams, onEvent, {
+          getObservedOpenAIClient: () => ({}) as OpenAI,
+          ingestInlineChatAttachments: async (_context, messages, turnInput) => ({
+            outcome: {
+              inlineCount: 0,
+              storedCount: 0,
+              declinedCount: 0,
+              referencedCount: 0,
+              unreferencedCount: 0,
+              stopReason: null,
+            },
+            messages: toConvertedMessages(messages),
+            turnInput: toConvertedContent(turnInput),
+          }),
+          runChatFileDerivativesPass: async () => ({
+            preparedCount: 0,
+            derivedCount: 0,
+            failedCount: 0,
+            unavailableCount: 0,
+            deferredCount: 0,
+            stopReason: null,
+          }),
+          buildChatTurnFileContext: async () => EMPTY_CHAT_TURN_FILE_CONTEXT,
+          buildChatCompletionInput,
+          runOneModelCall: async (_client, _params, emitEvent) => {
+            await emitEvent(tool);
+            persistedRunId = null;
+            return {
+              finalResponse: { output_text: "" } as OpenAI.Responses.Response,
+              functionCalls: [{
+                type: "function_call",
+                id: tool.itemId,
+                call_id: tool.id,
+                name: tool.name,
+                status: "completed",
+                arguments: "{}",
+              }],
+              replayItems: [],
+              streamedText: "",
+              toolStates: createToolCallStateMap(),
+            };
+          },
+          runOneToolCall: async (): Promise<never> => {
+            toolDispatches += 1;
+            throw new Error("Stopped run dispatched a tool");
+          },
+          getModelCallRetryBackoffMs: () => [],
+          sleep: async (): Promise<void> => {},
+          log: (): void => {},
+        });
+      },
+    }, recorded));
+  } finally {
+    clearActiveChatRunForTests(params.sessionId);
+  }
+
+  assert.equal(toolDispatches, 0);
+  assert.equal(persistedRunChecks, 1);
+  assert.deepEqual(rootOutcome, { kind: "invalidated" });
+  assert.equal(recorded.completedPayload, null);
+  assert.equal(recorded.terminalErrorPayload, null);
+  assert.equal(recorded.cancelledPayload, null);
 });
 
 test("runPersistedChatSessionWithDeps skips cancellation persistence when user abort lost the active-run race", async (): Promise<void> => {
@@ -1620,8 +1732,390 @@ test("startPersistedChatRunWithDeps logs rejected background persistence", async
   }]);
 });
 
+test("startPersistedChatRunWithDeps streams a large statement import while a draft write is blocked", { timeout: 5_000 }, async (t): Promise<void> => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  const params = createRunParams("session-large-statement-import");
+  const rows = Array.from({ length: 80 }, (_, index) =>
+    `('statement-${index + 1}', '2026-10-31', 'checking', -${index + 1}.25, 'USD', 'spend')`);
+  const input = JSON.stringify({
+    sql: "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind) VALUES " + rows.join(", "),
+  });
+  assert.ok(input.length > 4_096);
+  const startedTool = { ...createStartedToolCallEvent(), name: "sql_execute", input: "" };
+  const argumentFragments = Array.from({ length: input.length }, (_, index) => ({
+    ...startedTool,
+    input: input.slice(0, index + 1),
+    sequenceNumber: index + 1,
+  }));
+  const completedTool = {
+    ...startedTool,
+    sequenceNumber: input.length + 1,
+    status: "completed",
+    providerStatus: "completed",
+    input,
+    output: JSON.stringify({ rowCount: rows.length }),
+    refreshRoute: true,
+  } as const;
+  const completion = createLoopCompletion([
+    { type: "function_call", call_id: completedTool.id, name: completedTool.name, arguments: input },
+    { type: "function_call_output", call_id: completedTool.id, output: completedTool.output },
+  ]);
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  const releaseDraftWrite = createDeferred();
+  const releaseToolCheckpoint = createDeferred();
+  const finishModelRun = createDeferred();
+  const releaseCompletion = createDeferred();
+  const nextEventLoopTurn = (): Promise<undefined> =>
+    new Promise((resolve) => setImmediate(() => resolve(undefined)));
+  let progressWritesStarted = 0;
+  let toolCheckpointsStarted = 0;
+  let toolResultSubmitted = false;
+  let completionStarted = false;
+  const baseDependencies = createRuntimeDependencies({}, recorded);
+  const events = startPersistedChatRunWithDeps(
+    params,
+    requireReservation(params.sessionId, params.activeRunId),
+    {
+      ...baseDependencies,
+      updateAssistantMessageItem: async (userId, workspaceId, payload): Promise<PersistedChatMessageItem> => {
+        progressWritesStarted += 1;
+        await releaseDraftWrite.promise;
+        return baseDependencies.updateAssistantMessageItem(userId, workspaceId, payload);
+      },
+      updateAssistantMessageItemAndInvalidateMainContent: async (userId, workspaceId, payload): Promise<number> => {
+        toolCheckpointsStarted += 1;
+        await releaseToolCheckpoint.promise;
+        return baseDependencies.updateAssistantMessageItemAndInvalidateMainContent(userId, workspaceId, payload);
+      },
+      completeChatRun: async (userId, workspaceId, payload): Promise<void> => {
+        completionStarted = true;
+        await releaseCompletion.promise;
+        await baseDependencies.completeChatRun(userId, workspaceId, payload);
+      },
+      runOpenAILoop: async ({ beforeToolDispatch }, onEvent): Promise<OpenAILoopCompletion> => {
+        await onEvent(startedTool);
+        t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
+        for (const fragment of argumentFragments) {
+          await onEvent(fragment);
+          if (fragment.sequenceNumber % 1_024 === 0) {
+            t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
+          }
+        }
+        await beforeToolDispatch();
+        toolResultSubmitted = true;
+        await onEvent(completedTool);
+        await finishModelRun.promise;
+        await onEvent({ type: "done" });
+        return completion;
+      },
+    },
+  );
+
+  try {
+    const readDrafts = (async (): Promise<boolean> => {
+      for (const draft of [startedTool, ...argumentFragments]) {
+        assert.deepEqual(await events.next(), { done: false, value: draft });
+      }
+      return true;
+    })();
+    assert.equal(
+      await Promise.race([readDrafts, nextEventLoopTurn()]),
+      true,
+      "All draft argument fragments must stream while the draft write is blocked",
+    );
+
+    const readToolResult = events.next();
+    assert.equal(await Promise.race([readToolResult, nextEventLoopTurn()]), undefined);
+    assert.equal(toolResultSubmitted, false, "Tool dispatch must wait for the in-flight draft write");
+    assert.equal(progressWritesStarted, 1, "Draft writes must not overlap while fragments are streaming");
+    assert.equal(toolCheckpointsStarted, 0);
+    assert.deepEqual(recorded.updatePayloads, []);
+
+    releaseDraftWrite.resolve();
+    assert.equal(await Promise.race([readToolResult, nextEventLoopTurn()]), undefined);
+    assert.equal(toolCheckpointsStarted, 1, "The tool checkpoint must start without another timer tick");
+    assert.equal(progressWritesStarted, 2);
+    assert.equal(recorded.updatePayloads.length, 2);
+    assert.equal(toolResultSubmitted, true);
+
+    releaseToolCheckpoint.resolve();
+    assert.deepEqual(await Promise.race([readToolResult, nextEventLoopTurn()]), {
+      done: false,
+      value: { ...completedTool, mainContentInvalidationVersion: 1 },
+    });
+    const toolContent = {
+      type: "tool_call",
+      id: completedTool.id,
+      name: completedTool.name,
+      status: completedTool.status,
+      providerStatus: completedTool.providerStatus,
+      input,
+      output: completedTool.output,
+      streamPosition: {
+        itemId: completedTool.itemId,
+        responseIndex: completedTool.responseIndex,
+        outputIndex: completedTool.outputIndex,
+        contentIndex: null,
+        sequenceNumber: startedTool.sequenceNumber,
+      },
+    };
+    const progressPayload = {
+      itemId: params.assistantItemId,
+      sessionId: params.sessionId,
+      activeRunId: params.activeRunId,
+      state: "in_progress",
+    };
+    assert.deepEqual(recorded.updatePayloads, [
+      {
+        ...progressPayload,
+        content: [{
+          ...toolContent,
+          status: startedTool.status,
+          providerStatus: startedTool.providerStatus,
+          input: startedTool.input,
+          output: null,
+        }],
+      },
+      {
+        ...progressPayload,
+        content: [{
+          ...toolContent,
+          status: startedTool.status,
+          providerStatus: startedTool.providerStatus,
+          output: null,
+        }],
+      },
+      { ...progressPayload, content: [toolContent] },
+    ]);
+    assert.equal(recorded.completedPayload, null);
+
+    t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
+    const readDone = events.next();
+    finishModelRun.resolve();
+    assert.equal(
+      await Promise.race([readDone, nextEventLoopTurn()]),
+      undefined,
+      "The done event must wait for final persistence",
+    );
+    assert.equal(completionStarted, true);
+    assert.equal(recorded.completedPayload, null);
+
+    releaseCompletion.resolve();
+    assert.deepEqual(await readDone, { done: false, value: { type: "done" } });
+    assert.equal(progressWritesStarted, 2);
+    assert.equal(toolCheckpointsStarted, 1);
+    assert.equal(recorded.updatePayloads.length, 3);
+    assert.deepEqual(recorded.completedPayload, {
+      sessionId: params.sessionId,
+      activeRunId: params.activeRunId,
+      assistantItemId: params.assistantItemId,
+      assistantContent: [toolContent],
+      assistantOpenAIItems: completion.openaiItems,
+      assistantReplayMeasurement: completion.replayMeasurement,
+    });
+    assert.deepEqual(await events.next(), { done: true, value: undefined });
+    assert.equal(recorded.cancelledPayload, null);
+    assert.equal(recorded.terminalErrorPayload, null);
+  } finally {
+    releaseDraftWrite.resolve();
+    releaseToolCheckpoint.resolve();
+    finishModelRun.resolve();
+    releaseCompletion.resolve();
+    await events.return(undefined);
+    clearActiveChatRunForTests(params.sessionId);
+  }
+});
+
+test("startPersistedChatRunWithDeps aborts the model and persists a terminal error when a draft write fails", async (t): Promise<void> => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const scenarios: ReadonlyArray<"awaiting-model" | "finishing-tool"> = ["awaiting-model", "finishing-tool"];
+  for (const scenario of scenarios) {
+    const params = createRunParams(`session-draft-persistence-error-${scenario}`);
+    const recorded = {
+      updatePayloads: [] as Array<unknown>,
+      heartbeatPayloads: [] as Array<unknown>,
+      cancelledPayload: null as unknown,
+      terminalErrorPayload: null as unknown,
+      completedPayload: null as unknown,
+    };
+    const firstDelta = createDeltaEvent("Partial");
+    const secondDelta = { ...createDeltaEvent(" answer"), sequenceNumber: 1 };
+    const providerSnapshot = {
+      ...createStartedToolCallEvent(),
+      name: "sql_execute",
+      status: "completed",
+      providerStatus: "completed",
+      input: '{"sql":"INSERT INTO transactions"}',
+    } as const;
+    const completedTool = {
+      ...providerSnapshot,
+      output: "Mutation succeeded",
+      refreshRoute: true,
+    } as const;
+    const releaseDraftWrite = createDeferred();
+    let providerSnapshotHandled = false;
+    const baseDependencies = createRuntimeDependencies({}, recorded);
+    const events = startPersistedChatRunWithDeps(
+      params,
+      requireReservation(params.sessionId, params.activeRunId),
+      createRuntimeDependencies(
+        {
+          updateAssistantMessageItem: async (): Promise<never> => {
+            await releaseDraftWrite.promise;
+            throw new Error("Draft write failed");
+          },
+          runOpenAILoop: async ({ signal }, onEvent): Promise<never> => {
+            assert.ok(signal);
+            const aborted = new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+            await onEvent(firstDelta);
+            t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
+            await onEvent(secondDelta);
+            await onEvent(providerSnapshot);
+            providerSnapshotHandled = true;
+            await aborted;
+            if (scenario === "finishing-tool") {
+              await onEvent(completedTool);
+            }
+            throw signal.reason;
+          },
+          persistAssistantTerminalError: async (userId, workspaceId, payload): Promise<void> => {
+            assert.equal(recorded.updatePayloads.length, scenario === "finishing-tool" ? 1 : 0);
+            await baseDependencies.persistAssistantTerminalError(userId, workspaceId, payload);
+          },
+        },
+        recorded,
+      ),
+    );
+
+    try {
+      assert.deepEqual(await events.next(), { done: false, value: firstDelta });
+      assert.deepEqual(await events.next(), { done: false, value: secondDelta });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(providerSnapshotHandled, true);
+      assert.deepEqual(await events.next(), {
+        done: false,
+        value: { ...providerSnapshot, status: "started", providerStatus: "in_progress" },
+      });
+      const terminalErrorBeforeRelease = recorded.terminalErrorPayload;
+      assert.equal(terminalErrorBeforeRelease, null);
+
+      releaseDraftWrite.resolve();
+      if (scenario === "finishing-tool") {
+        assert.deepEqual(await events.next(), {
+          done: false,
+          value: { ...completedTool, mainContentInvalidationVersion: 1 },
+        });
+      }
+      const error = await events.next();
+      assert.equal(error.value?.type, "error");
+      const payload = recorded.terminalErrorPayload as {
+        assistantContent: ReadonlyArray<ContentPart>;
+        errorMessage: string;
+      };
+      assert.equal(payload.errorMessage, translate(params.locale, "chat.draftSaveError"));
+      assert.deepEqual(error.value, { type: "error", message: payload.errorMessage });
+      const persistedText = payload.assistantContent.find((part) => part.type === "text");
+      assert.equal(persistedText?.text, "Partial answer");
+      const persistedTool = payload.assistantContent.find((part) => part.type === "tool_call");
+      assert.equal(persistedTool?.id, providerSnapshot.id);
+      assert.equal(persistedTool?.status, "completed");
+      if (scenario === "finishing-tool") {
+        assert.equal(persistedTool?.providerStatus, "completed");
+        assert.equal(persistedTool?.output, completedTool.output);
+        assert.deepEqual(recorded.updatePayloads, [{
+          itemId: params.assistantItemId,
+          sessionId: params.sessionId,
+          activeRunId: params.activeRunId,
+          content: payload.assistantContent,
+          state: "in_progress",
+        }]);
+      } else {
+        assert.equal(persistedTool?.providerStatus, "incomplete");
+        assert.equal(persistedTool?.output, INTERRUPTED_TOOL_CALL_OUTPUT);
+      }
+      assert.equal(recorded.cancelledPayload, null);
+      assert.equal(recorded.completedPayload, null);
+      assert.deepEqual(await events.next(), { done: true, value: undefined });
+    } finally {
+      releaseDraftWrite.resolve();
+      await events.return(undefined);
+      clearActiveChatRunForTests(params.sessionId);
+    }
+  }
+});
+
+test("startPersistedChatRunWithDeps blocks tool dispatch and ends the turn when the pre-dispatch save fails", async (t): Promise<void> => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const params = createRunParams("session-pre-dispatch-save-error");
+  const startedTool = createStartedToolCallEvent();
+  const errorMessage = translate(params.locale, "chat.draftSaveError");
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  let toolDispatches = 0;
+  const events = startPersistedChatRunWithDeps(
+    params,
+    requireReservation(params.sessionId, params.activeRunId),
+    createRuntimeDependencies({
+      updateAssistantMessageItem: async (_userId, _workspaceId, payload): Promise<never> => {
+        recorded.updatePayloads.push(payload);
+        throw new Error("Transient pre-dispatch save failure");
+      },
+      runOpenAILoop: async ({ beforeToolDispatch }, onEvent): Promise<OpenAILoopCompletion> => {
+        await onEvent(startedTool);
+        await beforeToolDispatch();
+        toolDispatches += 1;
+        return createLoopCompletion([]);
+      },
+    }, recorded),
+  );
+
+  try {
+    assert.deepEqual(await events.next(), { done: false, value: startedTool });
+    const terminalEvent = await events.next();
+    assert.equal(toolDispatches, 0);
+    assert.equal(recorded.updatePayloads.length, 1);
+    assert.deepEqual(terminalEvent, {
+      done: false,
+      value: { type: "error", message: errorMessage },
+    });
+    assert.partialDeepStrictEqual(recorded.terminalErrorPayload, {
+      sessionId: params.sessionId,
+      activeRunId: params.activeRunId,
+      assistantItemId: params.assistantItemId,
+      assistantContent: [{
+        type: "tool_call",
+        id: startedTool.id,
+        status: "completed",
+        providerStatus: "incomplete",
+        output: INTERRUPTED_TOOL_CALL_OUTPUT,
+      }],
+      errorMessage,
+      sessionState: "idle",
+    });
+    assert.equal(recorded.completedPayload, null);
+    assert.equal(recorded.cancelledPayload, null);
+    assert.deepEqual(await events.next(), { done: true, value: undefined });
+  } finally {
+    await events.return(undefined);
+    clearActiveChatRunForTests(params.sessionId);
+  }
+});
+
 test("startPersistedChatRunWithDeps logs a workspace that vanished mid-run once, without heartbeat errors", async (t): Promise<void> => {
-  t.mock.timers.enable({ apis: ["setInterval"] });
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   const params = createRunParams("session-workspace-unavailable");
   const recorded = {
     updatePayloads: [] as Array<unknown>,
@@ -1630,6 +2124,7 @@ test("startPersistedChatRunWithDeps logs a workspace that vanished mid-run once,
     terminalErrorPayload: null as unknown,
     completedPayload: null as unknown,
   };
+  const draftDelta = createDeltaEvent("Hello");
   const workspaceError = new WorkspaceAccessError(params.userId, params.workspaceId);
   let heartbeatTouchCount = 0;
   const logLines: Array<string> = [];
@@ -1660,7 +2155,8 @@ test("startPersistedChatRunWithDeps logs a workspace that vanished mid-run once,
               setImmediate(resolve);
             });
             t.mock.timers.tick(CHAT_RUN_HEARTBEAT_INTERVAL_MS * 3);
-            await onEvent(createDeltaEvent("Hello"));
+            await onEvent(draftDelta);
+            t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
             return createLoopCompletion([]);
           },
         },
@@ -1668,6 +2164,7 @@ test("startPersistedChatRunWithDeps logs a workspace that vanished mid-run once,
       ),
     );
 
+    assert.deepEqual(await events.next(), { done: false, value: draftDelta });
     assert.deepEqual(await events.next(), { done: true, value: undefined });
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
@@ -2048,9 +2545,7 @@ test("runPersistedChatSessionWithDeps persists finalized output before resolving
     sessionId: params.sessionId,
     activeRunId: params.activeRunId,
   }]);
-  assert.equal(recorded.updatePayloads.length, 1);
-  assert.equal((recorded.updatePayloads[0] as ActiveRunPayload).activeRunId, params.activeRunId);
-  assert.equal((recorded.updatePayloads[0] as { sessionId: string }).sessionId, params.sessionId);
+  assert.equal(recorded.updatePayloads.length, 0);
   assert.notEqual(recorded.completedPayload, null);
   assert.equal((recorded.completedPayload as ActiveRunPayload).activeRunId, params.activeRunId);
   assert.equal((recorded.completedPayload as { sessionId: string }).sessionId, params.sessionId);
@@ -2060,6 +2555,9 @@ test("runPersistedChatSessionWithDeps persists finalized output before resolving
     }).assistantOpenAIItems,
     replayItems,
   );
+  const [persistedText] = (recorded.completedPayload as { assistantContent: ReadonlyArray<ContentPart> }).assistantContent;
+  assert.ok(persistedText?.type === "text");
+  assert.equal(persistedText.text, "Done");
   assert.deepEqual(lifecycle, ["root-start", "complete", "root-outcome"]);
   assert.deepEqual(rootOutcome, {
     kind: "completed",

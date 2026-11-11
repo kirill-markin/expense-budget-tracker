@@ -345,6 +345,7 @@
   "chat.openaiTransientError": "El servicio de IA tuvo un problema temporal y se detuvo a mitad de turno. Envía \"continuar\" para reanudar desde el último paso completado.",
   "chat.contentPolicyBlocked": "El servicio de IA bloqueó esta solicitud por una infracción de la política de contenido. Intenta reformular el mensaje.",
   "chat.unsupportedStoredAttachment": "Esta conversación contiene un archivo adjunto antiguo que no puede reproducirse de forma segura. Haz clic en «Nuevo» y vuelve a adjuntar el archivo.",
+  "chat.draftSaveError": "No se pudo guardar el progreso del chat. Comprueba qué cambios se guardaron antes de volver a enviar la solicitud.",
   "chat.unexpectedError": "Error inesperado del servicio de IA. Por favor, inténtalo de nuevo.",
   "chat.demoRateLimitReached": "Las cuentas de demostración están limitadas a {{limit}} mensajes de chat por hora. Espera unos minutos e inténtalo de nuevo.",
   "chat.stopped": "Detenido",

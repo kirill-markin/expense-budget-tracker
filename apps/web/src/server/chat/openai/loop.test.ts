@@ -60,6 +60,7 @@ const createLoopParams = (): StartOpenAILoopParams => ({
   reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
   isDemoMode: false,
   rootObservation: null,
+  beforeToolDispatch: async (): Promise<void> => {},
 });
 
 type LoopDeps = Parameters<typeof runOpenAILoopWithDeps>[2];
@@ -621,6 +622,78 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
     createFunctionCallOutputReplayItem("call-1", toolOutput),
     createAssistantReplayItem("Done"),
   ]);
+});
+
+test("runOpenAILoop skips tool dispatch after an abort and reports any tool already running", async (): Promise<void> => {
+  const phases = ["before-dispatch", "awaiting-dispatch-check", "running-tool"] as const;
+  for (const phase of phases) {
+    const abortController = new AbortController();
+    const toolCalls = [
+      createFunctionCall("first-call", "sql_execute", "{}"),
+      createFunctionCall("second-call", "sql_execute", "{}"),
+    ];
+    const toolStates = new Map(toolCalls.flatMap((call) => [
+      ...createStartedToolStates(call.call_id, call.name, call.arguments),
+    ]));
+    const startedToolIds: Array<string> = [];
+    const events: Array<ChatStreamEvent> = [];
+
+    await assert.rejects(
+      runOpenAILoopWithDeps(
+        {
+          ...createLoopParams(),
+          signal: abortController.signal,
+          beforeToolDispatch: async (): Promise<void> => {
+            if (phase === "awaiting-dispatch-check") {
+              await Promise.resolve();
+              abortController.abort();
+            }
+          },
+        },
+        (event): void => {
+          events.push(event);
+        },
+        createTestLoopDeps({
+          runOneModelCall: async () => {
+            if (phase === "before-dispatch") {
+              abortController.abort();
+            }
+            return {
+              finalResponse: createFinalResponse(""),
+              functionCalls: toolCalls,
+              replayItems: [],
+              streamedText: "",
+              toolStates,
+            };
+          },
+          runOneToolCall: async ({ item }): Promise<ExecutedChatToolCall> => {
+            startedToolIds.push(item.call_id);
+            abortController.abort();
+            return {
+              output: "Mutation succeeded",
+              isMutating: true,
+              workspaceId: "workspace-1",
+              succeeded: true,
+              error: null,
+            };
+          },
+        }),
+      ),
+      (error: unknown): boolean => error === abortController.signal.reason,
+    );
+
+    if (phase !== "running-tool") {
+      assert.deepEqual(startedToolIds, []);
+      assert.deepEqual(events, []);
+    } else {
+      assert.deepEqual(startedToolIds, ["first-call"]);
+      assert.equal(events.length, 1);
+      const [result] = events;
+      assert.ok(result?.type === "tool_call");
+      assert.equal(result.output, "Mutation succeeded");
+      assert.equal(result.refreshRoute, true);
+    }
+  }
 });
 
 test("runOpenAILoop emits a synthetic final delta and returns the summary replay item after the tool-call limit", async (): Promise<void> => {
