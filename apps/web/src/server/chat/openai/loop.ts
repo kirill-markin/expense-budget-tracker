@@ -143,6 +143,7 @@ export type StartOpenAILoopParams = Readonly<{
   /** Demo-mode state of the request that started this run, captured there. */
   isDemoMode: boolean;
   signal?: AbortSignal;
+  beforeToolDispatch: () => Promise<void>;
   rootObservation: LangfuseObservation | null;
 }>;
 
@@ -605,6 +606,8 @@ const runLoopWithDeps = async (
 
     let toolStates = modelCall.toolStates;
     for (const functionCall of modelCall.functionCalls) {
+      params.signal?.throwIfAborted();
+      await params.beforeToolDispatch();
       params.signal?.throwIfAborted();
       const output = await dependencies.runOneToolCall({
         item: functionCall,

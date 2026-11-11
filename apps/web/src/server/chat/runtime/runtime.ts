@@ -610,6 +610,17 @@ export const runPersistedChatSessionWithDeps = async (
     });
   }, CHAT_RUN_HEARTBEAT_INTERVAL_MS);
 
+  const saveAssistantProgress = (): Promise<void> =>
+    updateAssistantInProgress(
+      dependencies,
+      params.userId,
+      params.workspaceId,
+      params.sessionId,
+      params.activeRunId,
+      params.assistantItemId,
+      assistantContent,
+    );
+
   const scheduleDraftWrite = (): void => {
     if (
       !draftWritePending
@@ -628,15 +639,7 @@ export const runPersistedChatSessionWithDeps = async (
       }
 
       draftWritePending = false;
-      draftWriteInFlight = updateAssistantInProgress(
-        dependencies,
-        params.userId,
-        params.workspaceId,
-        params.sessionId,
-        params.activeRunId,
-        params.assistantItemId,
-        assistantContent,
-      ).catch((error: unknown): void => {
+      draftWriteInFlight = saveAssistantProgress().catch((error: unknown): void => {
         draftWriteFailure = { error };
         getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.abort();
       }).finally((): void => {
@@ -823,6 +826,21 @@ export const runPersistedChatSessionWithDeps = async (
           stopOpenAILoopIfInterrupted(await persistUserCancellationIfNeeded());
         };
 
+        const beforeToolDispatch = async (): Promise<void> => {
+          await prepareProgressCheckpoint();
+          throwDraftWriteFailure();
+          // A Stop on another replica can leave the local abort signal active.
+          await saveAssistantProgress().catch((error: unknown): never => {
+            if (error instanceof ChatSessionRunTransitionError || error instanceof WorkspaceAccessError) {
+              stopOpenAILoop(classifyPersistenceFailure(error));
+            }
+
+            draftWriteFailure = { error };
+            throw error;
+          });
+          stopOpenAILoopIfInterrupted(null);
+        };
+
         const handleOpenAILoopEvent = async (loopEvent: ChatStreamEvent): Promise<void> => {
           const event = normalizeToolCallProgressEvent(loopEvent);
           const existingObservationOutcome = getPendingObservationOutcome();
@@ -924,6 +942,7 @@ export const runPersistedChatSessionWithDeps = async (
             model: params.modelRouting.effectiveModel,
             reasoningEffort: params.modelRouting.effectiveReasoningEffort,
             rootObservation,
+            beforeToolDispatch,
             signal: getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.signal,
           }, handleOpenAILoopEvent);
           await discardPendingDraftAndWaitForWrite();

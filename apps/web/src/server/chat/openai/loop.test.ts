@@ -60,6 +60,7 @@ const createLoopParams = (): StartOpenAILoopParams => ({
   reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
   isDemoMode: false,
   rootObservation: null,
+  beforeToolDispatch: async (): Promise<void> => {},
 });
 
 type LoopDeps = Parameters<typeof runOpenAILoopWithDeps>[2];
@@ -624,7 +625,7 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
 });
 
 test("runOpenAILoop skips tool dispatch after an abort and reports any tool already running", async (): Promise<void> => {
-  const phases = ["before-dispatch", "running-tool"] as const;
+  const phases = ["before-dispatch", "awaiting-dispatch-check", "running-tool"] as const;
   for (const phase of phases) {
     const abortController = new AbortController();
     const toolCalls = [
@@ -639,7 +640,16 @@ test("runOpenAILoop skips tool dispatch after an abort and reports any tool alre
 
     await assert.rejects(
       runOpenAILoopWithDeps(
-        { ...createLoopParams(), signal: abortController.signal },
+        {
+          ...createLoopParams(),
+          signal: abortController.signal,
+          beforeToolDispatch: async (): Promise<void> => {
+            if (phase === "awaiting-dispatch-check") {
+              await Promise.resolve();
+              abortController.abort();
+            }
+          },
+        },
         (event): void => {
           events.push(event);
         },
@@ -672,7 +682,7 @@ test("runOpenAILoop skips tool dispatch after an abort and reports any tool alre
       (error: unknown): boolean => error === abortController.signal.reason,
     );
 
-    if (phase === "before-dispatch") {
+    if (phase !== "running-tool") {
       assert.deepEqual(startedToolIds, []);
       assert.deepEqual(events, []);
     } else {
