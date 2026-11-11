@@ -1,7 +1,7 @@
 # Built from the repository root: this is an npm workspace and the only
 # lockfile lives there (see apps/auth/Dockerfile for the same layout).
 FROM node:24.22.2-alpine AS npm
-RUN npm install --global npm@12.2.1
+RUN npm install --global npm@12.2.2
 
 FROM npm AS deps
 

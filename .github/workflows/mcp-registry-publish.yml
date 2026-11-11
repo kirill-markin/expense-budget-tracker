@@ -256,9 +256,9 @@ jobs:
             exit 1
           fi
 
-          publisher_version="v1.8.7"
+          publisher_version="v1.8.9"
           publisher_archive="mcp-publisher_linux_arm64.tar.gz"
-          publisher_sha256="653ecba7556f4ff7f9c88251400a9ddcb22f7534de497874296b41d0586febea"
+          publisher_sha256="f4eb2e2f0a3d0693247efc117902ebcc651e1d1da973c85ed165db80a93e4fbb"
           archive_path="${RUNNER_TEMP}/${publisher_archive}"
           publisher_path="${RUNNER_TEMP}/mcp-publisher"
           publisher_fetch_timeout_seconds=75
