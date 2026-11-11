@@ -14,6 +14,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 - Version-bump requests must follow `docs/version-bump.md` and keep `scripts/checks/pr/check-version-alignment.mjs` green.
 - Never bump the version during ordinary work: a release publishes the version already in the repository, and a separate request bumps it right after each MCP Registry publication (`docs/mcp-registry-publishing.md`).
 - Keep changes minimal and scoped to the current request.
+- A pull request that changes anything visible opens its description with screenshots, before any text: before and after side by side for each affected screen, with the same viewport, theme, and data, at phone and desktop widths when the layout is responsive. Attach the images to the description or host them outside the PR branch; never commit them to it.
 - Before considering a large block of work complete, run the relevant type checks and builds, and for web changes a production build (`cd apps/web && npm run lint && npm run build`).
 - Prefer non-interactive terminal commands.
 - The web app supports multiple languages. When adding or changing any translation in `apps/web/src/i18n/`, update the same keys in every locale file in that directory in the same change.
