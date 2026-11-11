@@ -25,6 +25,7 @@ import {
   updateAssistantMessageItem,
   updateAssistantMessageItemAndInvalidateMainContent,
 } from "@/server/chat/store";
+import { CHAT_RUN_LOOP_STOP_SIGNAL } from "./loopStopSignal";
 import {
   beginChatTaskProtection,
   endChatTaskProtection,
@@ -45,7 +46,6 @@ export const CHAT_DRAFT_WRITE_INTERVAL_MS = 250;
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
 export const CHAT_RUN_STALE_HEARTBEAT_MS = 30_000;
 const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
-const CHAT_RUN_LOOP_STOP_SIGNAL = Symbol("chat_run_loop_stop");
 
 type ChatRunDiagnostics = Readonly<{
   requestId: string;

@@ -15,6 +15,7 @@ import {
   buildChatResponseLogEvent,
   type OpenAIResponsesRequest,
 } from "@/server/chat/openai/responses/request";
+import { CHAT_RUN_LOOP_STOP_SIGNAL } from "@/server/chat/runtime/loopStopSignal";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import { log } from "@/server/logger";
 import {
@@ -236,6 +237,9 @@ const consumeStreamResponse = async (
 const getModelCallErrorType = (error: unknown): string => {
   if (error instanceof ChatModelCallTimeoutError) {
     return "timeout";
+  }
+  if (error === CHAT_RUN_LOOP_STOP_SIGNAL) {
+    return "stopped";
   }
   return isUserAbortError(error) ? "cancelled" : getErrorClassName(error);
 };
