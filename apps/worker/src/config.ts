@@ -41,7 +41,7 @@ export async function getDatabaseUrl(): Promise<string> {
 // RSD is fetched separately via NBS (National Bank of Serbia).
 // BGN is not fetched: Bulgaria adopted the euro and ECB closed the series at 2025-12-31.
 // Historical BGN rows stay in fx_rates_raw and keep serving reports.
-export const ECB_CURRENCIES: string[] = ["DKK", "EUR", "GBP", "TRY"];
+export const ECB_CURRENCIES: string[] = ["CAD", "DKK", "EUR", "GBP", "TRY"];
 
 export const ECB_EARLIEST_DATE: string = "1999-01-04";
 
