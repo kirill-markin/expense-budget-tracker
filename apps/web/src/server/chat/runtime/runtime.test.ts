@@ -1632,6 +1632,194 @@ test("startPersistedChatRunWithDeps logs rejected background persistence", async
   }]);
 });
 
+test("startPersistedChatRunWithDeps streams a large statement import while a draft write is blocked", { timeout: 5_000 }, async (t): Promise<void> => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  const params = createRunParams("session-large-statement-import");
+  const rows = Array.from({ length: 80 }, (_, index) =>
+    `('statement-${index + 1}', '2026-10-31', 'checking', -${index + 1}.25, 'USD', 'spend')`);
+  const input = JSON.stringify({
+    sql: "INSERT INTO ledger_entries (event_id, ts, account_id, amount, currency, kind) VALUES " + rows.join(", "),
+  });
+  assert.ok(input.length > 4_096);
+  const startedTool = { ...createStartedToolCallEvent(), name: "sql_execute", input: "" };
+  const argumentFragments = Array.from({ length: input.length }, (_, index) => ({
+    ...startedTool,
+    input: input.slice(0, index + 1),
+    sequenceNumber: index + 1,
+  }));
+  const completedTool = {
+    ...startedTool,
+    sequenceNumber: input.length + 1,
+    status: "completed",
+    providerStatus: "completed",
+    input,
+    output: JSON.stringify({ rowCount: rows.length }),
+    refreshRoute: true,
+  } as const;
+  const completion = createLoopCompletion([
+    { type: "function_call", call_id: completedTool.id, name: completedTool.name, arguments: input },
+    { type: "function_call_output", call_id: completedTool.id, output: completedTool.output },
+  ]);
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  const releaseDraftWrite = createDeferred();
+  const releaseToolCheckpoint = createDeferred();
+  const finishModelRun = createDeferred();
+  const releaseCompletion = createDeferred();
+  const nextEventLoopTurn = (): Promise<undefined> =>
+    new Promise((resolve) => setImmediate(() => resolve(undefined)));
+  let draftWritesStarted = 0;
+  let toolCheckpointsStarted = 0;
+  let toolResultSubmitted = false;
+  let completionStarted = false;
+  const baseDependencies = createRuntimeDependencies({}, recorded);
+  const events = startPersistedChatRunWithDeps(
+    params,
+    requireReservation(params.sessionId, params.activeRunId),
+    {
+      ...baseDependencies,
+      updateAssistantMessageItem: async (userId, workspaceId, payload): Promise<PersistedChatMessageItem> => {
+        draftWritesStarted += 1;
+        await releaseDraftWrite.promise;
+        return baseDependencies.updateAssistantMessageItem(userId, workspaceId, payload);
+      },
+      updateAssistantMessageItemAndInvalidateMainContent: async (userId, workspaceId, payload): Promise<number> => {
+        toolCheckpointsStarted += 1;
+        await releaseToolCheckpoint.promise;
+        return baseDependencies.updateAssistantMessageItemAndInvalidateMainContent(userId, workspaceId, payload);
+      },
+      completeChatRun: async (userId, workspaceId, payload): Promise<void> => {
+        completionStarted = true;
+        await releaseCompletion.promise;
+        await baseDependencies.completeChatRun(userId, workspaceId, payload);
+      },
+      runOpenAILoop: async (_loopParams, onEvent): Promise<OpenAILoopCompletion> => {
+        await onEvent(startedTool);
+        t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
+        for (const fragment of argumentFragments) {
+          await onEvent(fragment);
+          if (fragment.sequenceNumber % 1_024 === 0) {
+            t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
+          }
+        }
+        toolResultSubmitted = true;
+        await onEvent(completedTool);
+        await finishModelRun.promise;
+        await onEvent({ type: "done" });
+        return completion;
+      },
+    },
+  );
+
+  try {
+    const readDrafts = (async (): Promise<boolean> => {
+      for (const draft of [startedTool, ...argumentFragments]) {
+        assert.deepEqual(await events.next(), { done: false, value: draft });
+      }
+      return true;
+    })();
+    assert.equal(
+      await Promise.race([readDrafts, nextEventLoopTurn()]),
+      true,
+      "All draft argument fragments must stream while the draft write is blocked",
+    );
+
+    const readToolResult = events.next();
+    assert.equal(await Promise.race([readToolResult, nextEventLoopTurn()]), undefined);
+    assert.equal(toolResultSubmitted, true);
+    assert.equal(draftWritesStarted, 1, "Draft writes must not overlap while fragments are streaming");
+    assert.equal(toolCheckpointsStarted, 0);
+    assert.deepEqual(recorded.updatePayloads, []);
+
+    releaseDraftWrite.resolve();
+    assert.equal(await Promise.race([readToolResult, nextEventLoopTurn()]), undefined);
+    assert.equal(toolCheckpointsStarted, 1, "The tool checkpoint must start without another timer tick");
+    assert.equal(recorded.updatePayloads.length, 1);
+
+    releaseToolCheckpoint.resolve();
+    assert.deepEqual(await Promise.race([readToolResult, nextEventLoopTurn()]), {
+      done: false,
+      value: { ...completedTool, mainContentInvalidationVersion: 1 },
+    });
+    const toolContent = {
+      type: "tool_call",
+      id: completedTool.id,
+      name: completedTool.name,
+      status: completedTool.status,
+      providerStatus: completedTool.providerStatus,
+      input,
+      output: completedTool.output,
+      streamPosition: {
+        itemId: completedTool.itemId,
+        responseIndex: completedTool.responseIndex,
+        outputIndex: completedTool.outputIndex,
+        contentIndex: null,
+        sequenceNumber: startedTool.sequenceNumber,
+      },
+    };
+    const progressPayload = {
+      itemId: params.assistantItemId,
+      sessionId: params.sessionId,
+      activeRunId: params.activeRunId,
+      state: "in_progress",
+    };
+    assert.deepEqual(recorded.updatePayloads, [
+      {
+        ...progressPayload,
+        content: [{
+          ...toolContent,
+          status: startedTool.status,
+          providerStatus: startedTool.providerStatus,
+          input: startedTool.input,
+          output: null,
+        }],
+      },
+      { ...progressPayload, content: [toolContent] },
+    ]);
+    assert.equal(recorded.completedPayload, null);
+
+    t.mock.timers.tick(CHAT_DRAFT_WRITE_INTERVAL_MS);
+    const readDone = events.next();
+    finishModelRun.resolve();
+    assert.equal(
+      await Promise.race([readDone, nextEventLoopTurn()]),
+      undefined,
+      "The done event must wait for final persistence",
+    );
+    assert.equal(completionStarted, true);
+    assert.equal(recorded.completedPayload, null);
+
+    releaseCompletion.resolve();
+    assert.deepEqual(await readDone, { done: false, value: { type: "done" } });
+    assert.equal(draftWritesStarted, 1);
+    assert.equal(toolCheckpointsStarted, 1);
+    assert.equal(recorded.updatePayloads.length, 2);
+    assert.deepEqual(recorded.completedPayload, {
+      sessionId: params.sessionId,
+      activeRunId: params.activeRunId,
+      assistantItemId: params.assistantItemId,
+      assistantContent: [toolContent],
+      assistantOpenAIItems: completion.openaiItems,
+      assistantReplayMeasurement: completion.replayMeasurement,
+    });
+    assert.deepEqual(await events.next(), { done: true, value: undefined });
+    assert.equal(recorded.cancelledPayload, null);
+    assert.equal(recorded.terminalErrorPayload, null);
+  } finally {
+    releaseDraftWrite.resolve();
+    releaseToolCheckpoint.resolve();
+    finishModelRun.resolve();
+    releaseCompletion.resolve();
+    await events.return(undefined);
+    clearActiveChatRunForTests(params.sessionId);
+  }
+});
+
 test("startPersistedChatRunWithDeps aborts the model and persists a terminal error when a draft write fails", async (t): Promise<void> => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const scenarios: ReadonlyArray<"awaiting-model" | "finishing-tool"> = ["awaiting-model", "finishing-tool"];
