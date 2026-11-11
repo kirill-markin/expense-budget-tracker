@@ -115,7 +115,7 @@ NODE_EXTRA_CA_CERTS=/etc/ssl/selfhost-ca/internal-root.pem
 
 `web` and `auth` run as a non-root user, which has to traverse the mount and read the bundle — `chmod a+rx` that dedicated directory and `a+r` the bundle file in it. Nothing above or beside it needs widening; that is the second reason not to point the variable at a directory shared with anything else. Both paths must also be right: a path that does not exist, a path that is a file, an unreadable bundle (Node logs only `Ignoring extra certs` and falls back to its default store), or the wrong certificate all produce the same 401 as supplying no CA at all.
 
-This extends the trust store; it does not weaken it. It is not scoped to the JWKS fetch either: `NODE_EXTRA_CA_CERTS` widens trust for every outbound TLS connection `web` and `auth` make, the OpenAI and Langfuse integrations further down the env file included, so name a CA you are willing to trust for all of their egress. There is no setting here that skips certificate verification, and a self-hosting deployment should not want one: the JWKS is the only thing standing between a forged header and an identity.
+This extends the trust store; it does not weaken it. It is not scoped to the JWKS fetch either: `NODE_EXTRA_CA_CERTS` widens trust for every outbound TLS connection `web` and `auth` make, the OpenAI and OTLP integrations further down the env file included, so name a CA you are willing to trust for all of their egress. There is no setting here that skips certificate verification, and a self-hosting deployment should not want one: the JWKS is the only thing standing between a forged header and an identity.
 
 ## What must bypass the edge
 

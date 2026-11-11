@@ -23,14 +23,11 @@ export interface ComputeProps {
   adminReaderDbSecret: cdk.aws_secretsmanager.Secret;
   sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
-  langfusePublicKeySecret: cdk.aws_secretsmanager.Secret;
-  langfuseSecretKeySecret: cdk.aws_secretsmanager.Secret;
   userPoolId: string;
   userPoolArn: string;
   userPoolClientId: string;
   appDomain: string;
   authDomain: string;
-  langfuseBaseUrl: string;
   demoEmailDostip: string;
   demoPasswordSecret: cdk.aws_secretsmanager.ISecret | null;
 }
@@ -205,8 +202,6 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       // is also the only place path-style addressing is needed.
       CHAT_FILES_S3_FORCE_PATH_STYLE: "false",
       CHAT_SANDBOX_FUNCTION_NAME: props.chatSandboxFn.functionName,
-      LANGFUSE_BASE_URL: props.langfuseBaseUrl,
-      LANGFUSE_RELEASE: webDockerImageAsset.assetHash,
       // RDS certs are signed by Amazon's CA, not in the Node.js trust store.
       // Points to the CA bundle downloaded in apps/web/Dockerfile.
       NODE_EXTRA_CA_CERTS: "/app/rds-global-bundle.pem",
@@ -216,8 +211,6 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
       SESSION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(props.sessionEncryptionKeySecret),
       OPENAI_API_KEY: ecs.Secret.fromSecretsManager(props.openaiApiKeySecret),
-      LANGFUSE_PUBLIC_KEY: ecs.Secret.fromSecretsManager(props.langfusePublicKeySecret),
-      LANGFUSE_SECRET_KEY: ecs.Secret.fromSecretsManager(props.langfuseSecretKeySecret),
     },
     logging: ecs.LogDrivers.awsLogs({
       logGroup: webLogGroup,

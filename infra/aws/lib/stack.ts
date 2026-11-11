@@ -39,8 +39,6 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const githubRepo = this.node.tryGetContext("githubRepo") as string;
     const apiCertificateArn = this.node.tryGetContext("apiCertificateArn") as string | undefined;
     const mcpCertificateArn = getOptionalContextValue(this, "mcpCertificateArn");
-    const langfuseBaseUrl = this.node.tryGetContext("langfuseBaseUrl") as string | undefined
-      ?? "https://cloud.langfuse.com";
     const demoEmailDostip = this.node.tryGetContext("demoEmailDostip") as string | undefined ?? "";
     const originSharedSecret = this.node.tryGetContext("originSharedSecret") as string | undefined ?? "";
     const resendApiKeySecretArn = getOptionalContextValue(this, "resendApiKeySecretArn");
@@ -95,14 +93,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       adminReaderDbSecret: dbResult.adminReaderDbSecret,
       sessionEncryptionKeySecret: sec.sessionEncryptionKeySecret,
       openaiApiKeySecret: sec.openaiApiKeySecret,
-      langfusePublicKeySecret: sec.langfusePublicKeySecret,
-      langfuseSecretKeySecret: sec.langfuseSecretKeySecret,
       userPoolId: authResult.userPool.userPoolId,
       userPoolArn: authResult.userPool.userPoolArn,
       userPoolClientId: authResult.userPoolClient.userPoolClientId,
       appDomain,
       authDomain,
-      langfuseBaseUrl,
       demoEmailDostip,
       demoPasswordSecret: demoEmailDostip !== "" ? sec.demoPasswordSecret : null,
     });

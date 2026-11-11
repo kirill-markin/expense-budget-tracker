@@ -100,14 +100,11 @@ services:
       # Certificate verification itself is never relaxed. See the same block in
       # .env.selfhost.example and docs/self-hosting.md.
       NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-}
-      # Optional integrations. The chat at /chat needs the OpenAI key; the
-      # Langfuse group is all-or-nothing and LANGFUSE_RELEASE must then be a
-      # 64-character lowercase hex fingerprint.
+      # Optional integrations. The chat at /chat needs the OpenAI key; an
+      # OTLP endpoint additionally exports chat spans to that collector.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
-      LANGFUSE_RELEASE: ${LANGFUSE_RELEASE:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
     volumes:
       # The operator's CA bundle directory. Defaults to infra/docker/selfhost-ca,
       # which ships empty, so an unconfigured stack mounts nothing of substance.
