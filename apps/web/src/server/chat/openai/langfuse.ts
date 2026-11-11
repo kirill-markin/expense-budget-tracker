@@ -126,7 +126,8 @@ const MASK_PATTERNS: ReadonlyArray<Readonly<{
   replacement: string;
 }>> = [
   {
-    pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+    // Bounded quantifiers keep the scan linear on long base64 runs without `@`.
+    pattern: /\b[A-Z0-9._%+-]{1,64}@(?:[A-Z0-9-]{1,63}\.){1,8}[A-Z]{2,63}\b/gi,
     replacement: "<masked-email>",
   },
   {
@@ -222,6 +223,10 @@ const sanitizeNumber = (value: number): number | string => {
   return sanitizedValue === stringValue ? value : sanitizedValue;
 };
 
+// OpenAI ciphertext is opaque, can be megabytes, and is useless in a trace.
+const omitEncryptedContent = (value: string): string =>
+  `<encrypted_content omitted: ${value.length} chars>`;
+
 const sanitizeLangfuseTelemetryValue = (value: JsonValue): JsonValue => {
   if (typeof value === "string") {
     return sanitizeString(value);
@@ -240,7 +245,9 @@ const sanitizeLangfuseTelemetryValue = (value: JsonValue): JsonValue => {
       Object.entries(value).map(
         ([key, childValue]): readonly [string, JsonValue] => [
           sanitizeString(key),
-          sanitizeLangfuseTelemetryValue(childValue),
+          key === "encrypted_content" && typeof childValue === "string"
+            ? omitEncryptedContent(childValue)
+            : sanitizeLangfuseTelemetryValue(childValue),
         ],
       ),
     );
