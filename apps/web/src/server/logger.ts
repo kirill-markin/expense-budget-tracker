@@ -127,6 +127,15 @@ type ChatEvent =
     toolEnabledModelCallLimit: number;
     callIndex: number;
   }>
+  | Readonly<{
+    domain: "chat";
+    action: "turn_time_limit_reached";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    elapsedMs: number;
+    callIndex: number;
+  }>
   | (Readonly<{
     domain: "chat";
     action: "model_call_retry";
