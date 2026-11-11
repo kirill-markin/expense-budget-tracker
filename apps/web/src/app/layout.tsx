@@ -24,7 +24,6 @@ import {
 import { resolveWorkspaceForCurrentRequestIdentity } from "@/server/workspaceBootstrap";
 import { AccountMenu } from "@/ui/AccountMenu";
 import { ChatLayoutProvider, ChatLayoutShell } from "@/ui/chat";
-import { ChatToggle } from "@/ui/chat/shell/layout/ChatToggle";
 import type { ChatDraftScope } from "@/ui/chat/shell/layout/chatDraftStorage";
 import { CurrencySelector } from "@/ui/CurrencySelector";
 import { FilteredBanner } from "@/ui/FilteredBanner";
@@ -211,7 +210,6 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                             <ModeToggle isDemoMode={demo} />
                             <div className="topbar-actions topbar-end">
                               <CurrencySelector initialCurrency={reportingCurrency} titleText={t(locale, "currency.title")} />
-                              <ChatToggle placement="header" />
                               <AccountMenu
                                 authEnabled={authEnabled}
                                 accountEmail={accountEmail}

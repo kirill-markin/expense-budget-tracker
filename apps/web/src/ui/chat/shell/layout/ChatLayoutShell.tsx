@@ -70,10 +70,8 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
     }
     const drawer = drawerRef.current;
     const previousFocus = document.activeElement;
-    const headerToggle = document.querySelector<HTMLButtonElement>('[data-testid="chat-header-toggle"]');
-    // Keep the drawer's header toggle available as a second dismissal control.
     const headerControls = Array.from(document.querySelectorAll<HTMLElement>(
-      '.header-sticky .nav, .header-sticky .topbar-brand, .topbar-actions > :not([data-testid="chat-header-toggle"])',
+      '.header-sticky .nav, .header-sticky .topbar-brand, .topbar-actions > *',
     ));
     const headerInertStates = headerControls.map((element) => element.inert);
     headerControls.forEach((element) => { element.inert = true; });
@@ -94,7 +92,6 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
           'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]',
         )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0),
       );
-      if (headerToggle !== null && headerToggle.getClientRects().length > 0) controls.unshift(headerToggle);
       // Portals can have unrelated page controls between them in document order.
       const currentIndex = controls.findIndex((element) => element === document.activeElement);
       const nextIndex = event.shiftKey
@@ -111,9 +108,10 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
       // The keyboard state hides the header; restore focus only after it is visible again.
       restoreFocusFrameRef.current = window.requestAnimationFrame(() => {
         restoreFocusFrameRef.current = null;
-        const target = previousFocus instanceof HTMLElement && previousFocus.isConnected
+        // The floating opener unmounts while the drawer is open, which leaves focus on body.
+        const target = previousFocus instanceof HTMLElement && previousFocus !== document.body && previousFocus.isConnected
           ? previousFocus
-          : headerToggle ?? document.querySelector<HTMLButtonElement>('[data-testid="chat-sidebar-open"]');
+          : document.querySelector<HTMLButtonElement>('[data-testid="chat-sidebar-open"]');
         if (target?.isConnected && target.getClientRects().length > 0) target.focus();
       });
     };
@@ -137,7 +135,6 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
             className={cn(styles.sidebarSlot, isOpenDefault && styles.defaultSidebar)}
             role={isOverlayOpen ? "dialog" : undefined}
             aria-modal={isOverlayOpen ? true : undefined}
-            aria-owns={isOverlayOpen ? "chat-header-toggle" : undefined}
             aria-label={isOverlayOpen ? t("chat.title") : undefined}
           >
             <ChatPanel key={`sidebar-${workspaceId}`} mode="sidebar" workspaceId={workspaceId} />

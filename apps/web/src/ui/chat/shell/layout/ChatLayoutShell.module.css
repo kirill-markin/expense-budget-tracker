@@ -26,10 +26,6 @@
 }
 
 @media (max-width: 1099px) {
-  .mainContentWithChatClearance {
-    padding-block-end: env(safe-area-inset-bottom, 0px);
-  }
-
   .defaultSidebar {
     display: none;
   }
@@ -65,12 +61,6 @@
     display: none;
   }
 
-  .mainContentWithChatClearance {
-    padding-block-end: env(safe-area-inset-bottom, 0px);
-  }
-}
-
-@media (pointer: coarse) {
   .mainContentWithChatClearance {
     padding-block-end: env(safe-area-inset-bottom, 0px);
   }

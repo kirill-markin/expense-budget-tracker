@@ -85,22 +85,3 @@
     outline-offset: -2px;
   }
 }
-
-@media (max-width: 1099px), (pointer: coarse) {
-  .headerChatToggle:not(:disabled) {
-    color: var(--mode-strip-color);
-    background: transparent;
-    border-color: currentColor;
-  }
-
-  .headerChatToggle:not(:disabled):hover {
-    color: var(--mode-strip-active-color);
-    border-color: currentColor;
-  }
-
-  .headerChatToggle:not(:disabled)[aria-expanded="true"] {
-    color: var(--header-row-bg);
-    background: var(--mode-strip-active-color);
-    border-color: var(--mode-strip-active-color);
-  }
-}

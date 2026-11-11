@@ -417,18 +417,10 @@
 }
 
 @media (pointer: coarse) {
-  .nav a,
-  .topbar #chat-header-toggle {
-    min-block-size: var(--touch-target);
-  }
-
-  .topbar #chat-header-toggle {
-    min-inline-size: var(--touch-target);
-  }
-
   .nav a {
     display: inline-flex;
     align-items: center;
+    min-block-size: var(--touch-target);
   }
 }
 

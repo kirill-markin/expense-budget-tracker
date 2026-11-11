@@ -1,5 +1,4 @@
 import type { ReactElement } from "react";
-import Link from "next/link";
 
 import styles from "./CurrencySelector.module.css";
 
@@ -8,13 +7,13 @@ type Props = Readonly<{
   titleText: string;
 }>;
 
-/** Currency settings shortcut in the topbar. */
+/** Display-only currency label in the top bar. Currency is changed via /settings. */
 export const CurrencySelector = (props: Props): ReactElement => {
   const { initialCurrency, titleText } = props;
 
   return (
-    <Link href="/settings" className={styles.label} title={titleText} aria-label={`${titleText}: ${initialCurrency}`}>
+    <span className={styles.label} title={titleText}>
       {initialCurrency}
-    </Link>
+    </span>
   );
 };
