@@ -711,6 +711,23 @@ type AuthEvent =
  */
 type DbEvent = Readonly<{ domain: "db"; action: "pool_error"; error: string }>;
 
+/**
+ * The span exporter could not store spans in llm_telemetry_spans. Spans are
+ * best-effort data and a failed batch is dropped without touching any chat, so
+ * none of these actions is in the `error` family that the CloudWatch web error
+ * alarm pages on.
+ */
+type TelemetryEvent =
+  | Readonly<{ domain: "telemetry"; action: "span_export_failed"; rowCount: number; error: string }>
+  | Readonly<{
+    domain: "telemetry";
+    action: "spans_skipped";
+    spanCount: number;
+    missingAttributes: ReadonlyArray<string>;
+    spanNames: ReadonlyArray<string>;
+  }>
+  | Readonly<{ domain: "telemetry"; action: "pool_error"; error: string }>;
+
 type LogEvent =
   | ChatEvent
   | ChatWorkspaceUnavailableEvent
@@ -725,7 +742,8 @@ type LogEvent =
   | ApiEvent
   | SqlApiEvent
   | AuthEvent
-  | DbEvent;
+  | DbEvent
+  | TelemetryEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));
