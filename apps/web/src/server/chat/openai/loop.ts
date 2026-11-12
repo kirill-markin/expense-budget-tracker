@@ -49,7 +49,7 @@ import {
 import type { ChatStreamEvent, UnconvertedContentPart } from "@/server/chat/types";
 import { log as serverLog } from "@/server/logger";
 
-export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 30;
+export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 60;
 // Checked only between calls: a model or tool call already running is never cut
 // short by it.
 export const CHAT_RUN_MAX_DURATION_MS = 60 * 60 * 1000;
@@ -150,6 +150,13 @@ export type StartOpenAILoopParams = Readonly<{
   isDemoMode: boolean;
   signal?: AbortSignal;
   beforeToolDispatch: () => Promise<void>;
+  /**
+   * Receives this run's replay items each time a model call and the outputs of
+   * all its function calls are in, so a turn that fails later still stores the
+   * rounds it completed. Never called mid-round: a replayed function call
+   * without its output is rejected.
+   */
+  onReplayCheckpoint: (items: ReadonlyArray<StoredOpenAIReplayItem>) => void;
 }>;
 
 const toFunctionCallOutputInputItem = (
@@ -438,6 +445,17 @@ const logInRunCompaction = (
   });
 };
 
+/**
+ * The text of a completed response's `output_text` message parts. The SDK's
+ * `output_text` convenience field is absent on a response taken from a
+ * `response.completed` stream event, so it is never read.
+ */
+const getResponseMessageText = (response: OpenAI.Responses.Response): string =>
+  response.output
+    .flatMap((item) => (item.type === "message" ? item.content : []))
+    .flatMap((part) => (part.type === "output_text" ? [part.text] : []))
+    .join("");
+
 /** Ends the turn with one tool-free call that sums up after a run limit stops it. */
 const completeRunLimitSummaryTurn = async (
   reason: ChatRunLimitReason,
@@ -482,7 +500,7 @@ const completeRunLimitSummaryTurn = async (
   logInRunCompaction(log, params, summaryCallIndex, summaryCall);
 
   const replayMeasurement = buildReplayMeasurement(summaryCall, replayedMessages);
-  const finalResponseText = summaryCall.finalResponse.output_text.trim();
+  const finalResponseText = getResponseMessageText(summaryCall.finalResponse).trim();
   const finalAssistantText = finalResponseText.length > 0
     ? finalResponseText
     : summaryCall.streamedText.trim();
@@ -670,6 +688,7 @@ const runLoopWithDeps = async (
       }
       continuationItems.push(buildToolOutputReplayItem(functionCall.call_id, output));
     }
+    params.onReplayCheckpoint(toPersistedOpenAIReplayItems(continuationItems));
 
     if (callIndex === CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS) {
       dependencies.log({

@@ -791,6 +791,7 @@ export const runPersistedChatSessionWithDeps = async (
         activeRunId: params.activeRunId,
         assistantItemId: params.assistantItemId,
         assistantContent,
+        ...(assistantOpenAIItems === undefined ? {} : { assistantOpenAIItems }),
         errorMessage,
         sessionState: "idle",
       });
@@ -961,6 +962,9 @@ export const runPersistedChatSessionWithDeps = async (
             model: params.modelRouting.effectiveModel,
             reasoningEffort: params.modelRouting.effectiveReasoningEffort,
             beforeToolDispatch,
+            onReplayCheckpoint: (items): void => {
+              assistantOpenAIItems = items;
+            },
             signal: getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.signal,
           }, handleOpenAILoopEvent);
           await discardPendingDraftAndWaitForWrite();
@@ -1116,6 +1120,7 @@ export const runPersistedChatSessionWithDeps = async (
         activeRunId: params.activeRunId,
         assistantItemId: params.assistantItemId,
         assistantContent,
+        ...(assistantOpenAIItems === undefined ? {} : { assistantOpenAIItems }),
         errorMessage: userFacingMessage,
         sessionState: "idle",
       });

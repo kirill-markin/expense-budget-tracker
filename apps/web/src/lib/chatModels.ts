@@ -9,7 +9,7 @@ export const CHAT_MODEL_REASONING_SUMMARY = "auto" as const;
  * input exceeds it is answered with a compaction item standing for the context
  * it absorbed, which later calls replay instead of the turns themselves.
  */
-export const CHAT_COMPACT_THRESHOLD_TOKENS = 80_000;
+export const CHAT_COMPACT_THRESHOLD_TOKENS = 200_000;
 /**
  * Ceiling on the input one model call may send: the system instructions, the
  * tool schemas, the replayed history, the current user turn and the clock item
@@ -19,8 +19,9 @@ export const CHAT_COMPACT_THRESHOLD_TOKENS = 80_000;
  * is summarized by compaction before the window starts dropping its oldest
  * turns outright. The window is the floor under that: it holds even when no
  * compaction item exists, or when the one that exists no longer covers enough.
+ * It stays below OpenAI's 272k-input long-context price step.
  */
-export const CHAT_SENT_INPUT_BUDGET_TOKENS = 120_000;
+export const CHAT_SENT_INPUT_BUDGET_TOKENS = 250_000;
 /**
  * Fixed reserve for everything one call sends besides the replayed history and
  * the current user turn: the system instructions, the tool schemas, the trailing

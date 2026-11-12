@@ -175,7 +175,7 @@ const PDF_PAGE_IMAGE_TOKENS = 1_500;
  * page of 5,000 to 6,000 extracted characters runs nearer 5,500 real tokens, so
  * such a page under-charges by about 1,500. CHAT_FILE_VIEW_REPLAYS_PER_TURN
  * holds this to four results a turn, so the whole error is at most around 6,000
- * tokens of a 120,000 token budget, and raising it would charge the ordinary
+ * tokens of a 250,000 token budget, and raising it would charge the ordinary
  * page - which is most of them - for the dense one. Re-tune it only alongside
  * that bound.
  *

@@ -61,6 +61,7 @@ const createLoopParams = (): StartOpenAILoopParams => ({
   reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
   isDemoMode: false,
   beforeToolDispatch: async (): Promise<void> => {},
+  onReplayCheckpoint: (): void => {},
 });
 
 type LoopDeps = Parameters<typeof runOpenAILoopWithDeps>[2];
@@ -160,12 +161,23 @@ const createFunctionCall = (
 const FINAL_RESPONSE_INPUT_TOKENS = 1_200;
 const FINAL_RESPONSE_OUTPUT_TOKENS = 300;
 
+/**
+ * Wire shape of a `response.completed` payload: text lives only in `output`
+ * message parts, with no SDK `output_text` convenience field.
+ */
 const createFinalResponse = (
   outputText: string,
 ): OpenAI.Responses.Response =>
   ({
-    output_text: outputText,
-    output: [],
+    output: outputText.length === 0
+      ? []
+      : [{
+        type: "message",
+        id: "msg-final",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: outputText, annotations: [] }],
+      }],
     usage: {
       input_tokens: FINAL_RESPONSE_INPUT_TOKENS,
       input_tokens_details: { cached_tokens: 0 },
@@ -186,7 +198,6 @@ const createCompactedResponse = (
   inputTokens: number,
 ): OpenAI.Responses.Response =>
   ({
-    output_text: "",
     output: [],
     usage: {
       input_tokens: inputTokens,
@@ -622,6 +633,93 @@ test("runOpenAILoop executes tool calls and returns replay items from the full c
     createFunctionCallReplayItem("call-1", "query_database", "{\"sql\":\"select 1\"}"),
     createFunctionCallOutputReplayItem("call-1", toolOutput),
     createAssistantReplayItem("Done"),
+  ]);
+});
+
+test("runOpenAILoop checkpoints only completed rounds, so a later failed call keeps them", async (): Promise<void> => {
+  const firstRoundCalls = [
+    createFunctionCall("call-1", "sql_query", "{\"sql\":\"select 1\"}"),
+    createFunctionCall("call-2", "sql_query", "{\"sql\":\"select 2\"}"),
+  ];
+  const secondRoundCall = createFunctionCall("call-3", "sql_query", "{\"sql\":\"select 3\"}");
+  const checkpoints: Array<ReadonlyArray<StoredOpenAIReplayItem>> = [];
+  const checkpointCountAtToolStart: Array<number> = [];
+  const providerError = new Error("Provider stream failed");
+  let modelCallCount = 0;
+
+  await assert.rejects(
+    runOpenAILoopWithDeps(
+      {
+        ...createLoopParams(),
+        onReplayCheckpoint: (items): void => {
+          checkpoints.push(items);
+        },
+      },
+      (): void => {},
+      createTestLoopDeps({
+        runOneModelCall: async () => {
+          modelCallCount += 1;
+          if (modelCallCount === 1) {
+            return {
+              finalResponse: createFinalResponse(""),
+              functionCalls: firstRoundCalls,
+              replayItems: firstRoundCalls.map((call) =>
+                createFunctionCallReplayItem(call.call_id, call.name, call.arguments)),
+              streamedText: "",
+              toolStates: new Map(firstRoundCalls.flatMap((call) => [
+                ...createStartedToolStates(call.call_id, call.name, call.arguments),
+              ])),
+            };
+          }
+          if (modelCallCount === 2) {
+            return {
+              finalResponse: createFinalResponse(""),
+              functionCalls: [secondRoundCall],
+              replayItems: [createFunctionCallReplayItem(
+                secondRoundCall.call_id,
+                secondRoundCall.name,
+                secondRoundCall.arguments,
+              )],
+              streamedText: "",
+              toolStates: createStartedToolStates(
+                secondRoundCall.call_id,
+                secondRoundCall.name,
+                secondRoundCall.arguments,
+              ),
+            };
+          }
+          throw providerError;
+        },
+        runOneToolCall: async ({ item }): Promise<ExecutedChatToolCall> => {
+          checkpointCountAtToolStart.push(checkpoints.length);
+          return {
+            output: `output-${item.call_id}`,
+            isMutating: false,
+            workspaceId: "workspace-1",
+            succeeded: true,
+            error: null,
+          };
+        },
+      }),
+    ),
+    (error: unknown): boolean => error === providerError,
+  );
+
+  assert.equal(modelCallCount, 3);
+  assert.deepEqual(checkpointCountAtToolStart, [0, 0, 1]);
+  const firstRoundItems = [
+    createFunctionCallReplayItem("call-1", "sql_query", "{\"sql\":\"select 1\"}"),
+    createFunctionCallReplayItem("call-2", "sql_query", "{\"sql\":\"select 2\"}"),
+    createFunctionCallOutputReplayItem("call-1", "output-call-1"),
+    createFunctionCallOutputReplayItem("call-2", "output-call-2"),
+  ];
+  assert.deepEqual(checkpoints, [
+    firstRoundItems,
+    [
+      ...firstRoundItems,
+      createFunctionCallReplayItem("call-3", "sql_query", "{\"sql\":\"select 3\"}"),
+      createFunctionCallOutputReplayItem("call-3", "output-call-3"),
+    ],
   ]);
 });
 

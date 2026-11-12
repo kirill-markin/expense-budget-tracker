@@ -45,6 +45,7 @@ const MODEL_CALL_PARAMS: StartOpenAILoopParams = {
   reasoningEffort: CHAT_MODEL_REASONING_EFFORT,
   isDemoMode: false,
   beforeToolDispatch: async (): Promise<void> => {},
+  onReplayCheckpoint: (): void => {},
 };
 
 const MODEL_CALL_REQUEST = buildOpenAIResponsesRequest(

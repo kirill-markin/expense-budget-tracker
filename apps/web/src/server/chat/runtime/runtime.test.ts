@@ -1016,6 +1016,68 @@ test("runPersistedChatSessionWithDeps persists terminal errors when the provider
   });
 });
 
+test("runPersistedChatSessionWithDeps persists the last replay checkpoint when the provider loop rejects", async (): Promise<void> => {
+  const params = createRunParams("session-provider-error-after-checkpoint");
+  const recorded = {
+    updatePayloads: [] as Array<unknown>,
+    heartbeatPayloads: [] as Array<unknown>,
+    cancelledPayload: null as unknown,
+    terminalErrorPayload: null as unknown,
+    completedPayload: null as unknown,
+  };
+  const checkpointItems: ReadonlyArray<StoredOpenAIReplayItem> = [
+    {
+      type: "function_call",
+      call_id: "call-1",
+      name: "sql_query",
+      arguments: "{}",
+      status: "completed",
+    },
+    {
+      type: "function_call_output",
+      call_id: "call-1",
+      output: "{\"rows\":[]}",
+    },
+  ];
+  const originalLog = console.log;
+  console.log = (): void => undefined;
+  createActiveChatRunForTests(params.sessionId, params.activeRunId);
+  try {
+    await runPersistedChatSessionWithDeps(
+      params,
+      createRuntimeDependencies(
+        {
+          persistAssistantTerminalError: async (
+            _userId,
+            _workspaceId,
+            payload,
+          ): Promise<void> => {
+            recorded.terminalErrorPayload = payload;
+          },
+          runOpenAILoop: async (
+            { onReplayCheckpoint },
+            onEvent,
+          ): Promise<OpenAILoopCompletion> => {
+            await onEvent(createDeltaEvent("Partial answer"));
+            onReplayCheckpoint(checkpointItems);
+            throw new Error("Provider stream failed");
+          },
+        },
+        recorded,
+      ),
+    );
+  } finally {
+    console.log = originalLog;
+    clearActiveChatRunForTests(params.sessionId);
+  }
+
+  assert.equal(recorded.completedPayload, null);
+  assert.deepEqual(
+    (recorded.terminalErrorPayload as { assistantOpenAIItems: unknown }).assistantOpenAIItems,
+    checkpointItems,
+  );
+});
+
 test("runPersistedChatSessionWithDeps retries requested cancellation after terminal failure persistence", async (): Promise<void> => {
   const params = createRunParams("session-terminal-failure-cancellation-race");
   const recorded = {
