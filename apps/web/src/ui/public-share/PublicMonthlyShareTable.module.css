@@ -259,15 +259,14 @@
 
   .categoryHead {
     min-inline-size: 120px;
-    max-inline-size: 120px;
   }
 
   .stickyCol {
     box-sizing: border-box;
     padding-inline-start: 16px;
     max-inline-size: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .cell {

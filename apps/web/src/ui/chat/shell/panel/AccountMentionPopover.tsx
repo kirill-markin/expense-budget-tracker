@@ -41,6 +41,7 @@ type Props = Readonly<{
   listLabel: string;
   loadingLabel: string;
   unavailableLabel: string;
+  onAnchorClipped: () => void;
   onSelect: (suggestion: AccountMentionSuggestion) => void;
 }>;
 
@@ -74,6 +75,7 @@ export const AccountMentionPopover = (props: Props): ReactElement | null => {
     listLabel,
     loadingLabel,
     unavailableLabel,
+    onAnchorClipped,
     onSelect,
   } = props;
   const [position, setPosition] = useState<PopoverPosition | null>(null);
@@ -86,6 +88,17 @@ export const AccountMentionPopover = (props: Props): ReactElement | null => {
     }
 
     const anchorRect = anchor.getBoundingClientRect();
+    if (document.documentElement.hasAttribute("data-keyboard-open")) {
+      const inputArea = anchor.closest(`.${styles.inputArea}`);
+      if (inputArea !== null) {
+        const { top, bottom } = inputArea.getBoundingClientRect();
+        if (anchorRect.top < top || anchorRect.top >= bottom) {
+          onAnchorClipped();
+          return;
+        }
+      }
+    }
+
     const viewport = getVisibleViewport();
     const viewportInlineEnd = viewport.left + viewport.width;
     const availableWidth = Math.max(0, viewport.width - VIEWPORT_MARGIN_PX * 2);
@@ -102,7 +115,7 @@ export const AccountMentionPopover = (props: Props): ReactElement | null => {
       : left;
 
     setPosition({ top, insetInlineStart, width, maxHeight });
-  }, [anchorRef]);
+  }, [anchorRef, onAnchorClipped]);
 
   useLayoutEffect(() => {
     if (!isOpen) {
@@ -193,6 +206,6 @@ export const AccountMentionPopover = (props: Props): ReactElement | null => {
         </div>
       ))}
     </div>,
-    document.body,
+    anchorRef.current?.closest("dialog") ?? document.body,
   ) as ReactElement;
 };

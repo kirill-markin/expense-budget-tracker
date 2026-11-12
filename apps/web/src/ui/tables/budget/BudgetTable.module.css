@@ -772,7 +772,6 @@ tbody tr:last-child .currentMonthActual {
 @media (max-width: 767px) {
   .scroll {
     --budget-category-column-width: 120px;
-    --budget-value-column-width: 72px;
     --budget-year-column-width: 104px;
 
     max-block-size: calc(100dvh - 160px);

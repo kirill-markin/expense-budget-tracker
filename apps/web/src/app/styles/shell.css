@@ -307,7 +307,7 @@
   }
 }
 
-@media (max-width: 767px) {
+@media (width < 768px) {
   .topbar {
     padding-inline: 8px;
     column-gap: 4px;
@@ -378,11 +378,6 @@
     padding-inline: 10px;
     font-size: 12px;
     white-space: nowrap;
-  }
-
-  /* Phones have no side chat, so the chat page leads the tab strip. */
-  .nav a[href="/chat"] {
-    order: -1;
   }
 
   .nav a[aria-current="page"] {

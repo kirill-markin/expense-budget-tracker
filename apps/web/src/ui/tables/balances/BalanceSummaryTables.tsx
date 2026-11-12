@@ -132,7 +132,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
 
   const totalsFooterRows: ReadonlyArray<ReactElement> = [
     <tr key="total" className={cn(tableStyles.row, tableStyles.rowTotal)}>
-      <td title={t("balances.total", { currency: reportingCurrency })} className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
+      <td className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
         {reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}
       </td>
@@ -196,7 +196,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
 
   const liquidityFooterRows: ReadonlyArray<ReactElement> = [
     <tr key="total" className={cn(tableStyles.row, tableStyles.rowTotal)}>
-      <td title={t("balances.total", { currency: reportingCurrency })} className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
+      <td className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
         {reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}
       </td>
@@ -215,7 +215,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "accountGroup",
       header: t("balances.accountGroup"),
       renderCell: (row: AccountGroupTotal): ReactElement => (
-        <td key="accountGroup" title={maskClass === "" ? getAccountGroupLabel(row.accountGroup) : undefined} className={cn(tableStyles.cell, maskClass)}>{getAccountGroupLabel(row.accountGroup)}</td>
+        <td key="accountGroup" className={cn(tableStyles.cell, maskClass)}>{getAccountGroupLabel(row.accountGroup)}</td>
       ),
       rightAlign: false,
       sortKey: "accountGroup",
@@ -260,7 +260,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
 
   const accountGroupFooterRows: ReadonlyArray<ReactElement> = [
     <tr key="total" className={cn(tableStyles.row, tableStyles.rowTotal)}>
-      <td title={t("balances.total", { currency: reportingCurrency })} className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
+      <td className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
         {reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}
       </td>

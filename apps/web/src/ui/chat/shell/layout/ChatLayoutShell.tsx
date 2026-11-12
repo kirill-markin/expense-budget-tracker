@@ -1,8 +1,8 @@
 "use client";
 
-import { startTransition, useEffect, useRef } from "react";
+import { startTransition, useEffect, useLayoutEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import type { ReactElement, ReactNode } from "react";
+import type { PointerEvent, ReactElement, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
@@ -24,14 +24,23 @@ type Props = Readonly<{
   workspaceId: string;
 }>;
 
+const isBackdropPointer = (event: PointerEvent<HTMLDialogElement>): boolean => {
+  if (event.target !== event.currentTarget) return false;
+
+  const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect();
+  return event.clientX < left || event.clientX >= right
+    || event.clientY < top || event.clientY >= bottom;
+};
+
 export const ChatLayoutShell = (props: Props): ReactElement => {
   useChatKeyboardViewport();
   const { children, workspaceId } = props;
-  const { isOpen, isOpenDefault, setIsOpen } = useChatLayout();
+  const { isOpen, setIsOpen } = useChatLayout();
   const viewport = useChatViewport();
   const { t } = useTranslation();
-  const drawerRef = useRef<HTMLDivElement>(null);
-  const restoreFocusFrameRef = useRef<number | null>(null);
+  const drawerRef = useRef<HTMLDialogElement>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
+  const backdropPointerIdRef = useRef<number | null>(null);
   const pathname = usePathname();
   const router = useRouter();
   const isFullscreenChat = pathname === "/chat";
@@ -62,92 +71,77 @@ export const ChatLayoutShell = (props: Props): ReactElement => {
     return () => subscription.unsubscribe();
   }, [router, workspaceId]);
 
-  useEffect(() => {
-    if (!isOverlayOpen) return;
-    if (restoreFocusFrameRef.current !== null) {
-      window.cancelAnimationFrame(restoreFocusFrameRef.current);
-      restoreFocusFrameRef.current = null;
-    }
+  useLayoutEffect(() => {
     const drawer = drawerRef.current;
-    const previousFocus = document.activeElement;
-    const headerControls = Array.from(document.querySelectorAll<HTMLElement>(
-      '.header-sticky .nav, .header-sticky .topbar-brand, .topbar-actions > *',
-    ));
-    const headerInertStates = headerControls.map((element) => element.inert);
-    headerControls.forEach((element) => { element.inert = true; });
-    drawer?.querySelector<HTMLButtonElement>('[data-testid="chat-sidebar-close"]')?.focus();
+    if (drawer === null) return;
 
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented) return;
-      const history = document.querySelector<HTMLDialogElement>('[data-testid="chat-history-dialog"][open]');
-      if (event.key === "Escape") {
-        // History owns dismissal, but its portaled controls stay in the drawer's Tab cycle.
-        if (history !== null) return;
-        event.preventDefault();
-        setIsOpen(false);
-      }
-      if (event.key !== "Tab" || drawer === null) return;
-      const controls = [drawer, ...(history === null ? [] : [history])].flatMap((root) =>
-        Array.from(root.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]',
-        )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0),
-      );
-      // Portals can have unrelated page controls between them in document order.
-      const currentIndex = controls.findIndex((element) => element === document.activeElement);
-      const nextIndex = event.shiftKey
-        ? (currentIndex <= 0 ? controls.length : currentIndex) - 1
-        : (currentIndex + 1) % controls.length;
-      event.preventDefault();
-      controls[nextIndex]?.focus();
-    };
-    document.addEventListener("keydown", onKeyDown);
+    if (!isOverlayOpen) {
+      drawer.open = isOpen;
+      return;
+    }
+
+    drawer.open = false;
+    drawer.showModal();
+    drawer.querySelector<HTMLButtonElement>('[data-testid="chat-sidebar-close"]')?.focus();
+
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      headerControls.forEach((element, index) => { element.inert = headerInertStates[index]; });
+      backdropPointerIdRef.current = null;
       clearChatKeyboardViewport();
-      // The keyboard state hides the header; restore focus only after it is visible again.
-      restoreFocusFrameRef.current = window.requestAnimationFrame(() => {
-        restoreFocusFrameRef.current = null;
-        // The floating opener unmounts while the drawer is open, which leaves focus on body.
-        const target = previousFocus instanceof HTMLElement && previousFocus !== document.body && previousFocus.isConnected
-          ? previousFocus
-          : document.querySelector<HTMLButtonElement>('[data-testid="chat-sidebar-open"]');
-        if (target?.isConnected && target.getClientRects().length > 0) target.focus();
-      });
+      drawer.close();
     };
-  }, [isOverlayOpen, setIsOpen]);
+  }, [canShowSidebar, isOpen, isOverlayOpen]);
 
   return (
     <div className={styles.layoutShell}>
-      {canShowSidebar && isOpen && (
-        <>
-          <button
-            type="button"
-            className={cn(styles.backdrop, isOpenDefault && styles.defaultSidebar)}
-            data-testid="chat-sidebar-backdrop"
-            aria-label={t("chat.close")}
-            tabIndex={-1}
-            onClick={() => setIsOpen(false)}
-          />
-          <div
-            ref={drawerRef}
-            id="chat-sidebar"
-            className={cn(styles.sidebarSlot, isOpenDefault && styles.defaultSidebar)}
-            role={isOverlayOpen ? "dialog" : undefined}
-            aria-modal={isOverlayOpen ? true : undefined}
-            aria-label={isOverlayOpen ? t("chat.title") : undefined}
-          >
+      {canShowSidebar && (
+        <dialog
+          ref={drawerRef}
+          id="chat-sidebar"
+          className={styles.sidebarSlot}
+          role={isOverlayOpen ? undefined : "presentation"}
+          aria-label={isOverlayOpen ? t("chat.title") : undefined}
+          onCancel={(event) => {
+            if (event.target !== event.currentTarget) return;
+            event.preventDefault();
+            setIsOpen(false);
+          }}
+          onClose={(event) => {
+            if (event.target !== event.currentTarget || isOpen || document.activeElement !== document.body) {
+              return;
+            }
+            const opener = openerRef.current;
+            if (opener && opener.getClientRects().length > 0) opener.focus({ preventScroll: true });
+          }}
+          onPointerDown={(event) => {
+            backdropPointerIdRef.current = isOverlayOpen && event.isPrimary && event.button === 0
+              && isBackdropPointer(event) ? event.pointerId : null;
+          }}
+          onPointerUp={(event) => {
+            if (event.pointerId !== backdropPointerIdRef.current || !isBackdropPointer(event)) {
+              backdropPointerIdRef.current = null;
+            }
+          }}
+          onPointerCancel={() => {
+            backdropPointerIdRef.current = null;
+          }}
+          onClick={(event) => {
+            const isBackdropClick = backdropPointerIdRef.current !== null
+              && event.target === event.currentTarget && event.detail > 0;
+            backdropPointerIdRef.current = null;
+            if (isBackdropClick) setIsOpen(false);
+          }}
+        >
+          {isOpen && (
             <ChatPanel key={`sidebar-${workspaceId}`} mode="sidebar" workspaceId={workspaceId} />
-          </div>
-        </>
+          )}
+        </dialog>
       )}
       <div
         className={cn(styles.mainContent, !isFullscreenChat && styles.mainContentWithChatClearance)}
-        inert={isOverlayOpen}
       >
         {children}
       </div>
-      {canShowSidebar && !isOpen && <ChatToggle />}
+      {canShowSidebar && (!isOpen || viewport === "overlay") && <ChatToggle buttonRef={openerRef} />}
     </div>
   );
 };

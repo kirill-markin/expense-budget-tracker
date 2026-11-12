@@ -56,7 +56,6 @@ import { useChatViewport } from "./chatViewport";
 
 type ChatLayoutContextValue = Readonly<{
   isOpen: boolean;
-  isOpenDefault: boolean;
   setIsOpen: (open: boolean) => void;
   chatWidth: number;
   setChatWidth: (width: number) => void;
@@ -578,7 +577,6 @@ type Props = Readonly<{
 type ScopedChatLayoutProviderProps = Readonly<{
   children: ReactNode;
   isOpen: boolean;
-  isOpenDefault: boolean;
   setIsOpen: (open: boolean) => void;
   chatWidth: number;
   setChatWidth: (width: number) => void;
@@ -592,7 +590,6 @@ const ScopedChatLayoutProvider = (
   const {
     children,
     isOpen,
-    isOpenDefault,
     setIsOpen,
     chatWidth,
     setChatWidth,
@@ -1538,8 +1535,7 @@ const ScopedChatLayoutProvider = (
   return (
     <ChatLayoutContext.Provider value={{
       isOpen,
-      isOpenDefault,
-      setIsOpen,
+        setIsOpen,
       chatWidth,
       setChatWidth,
       chatWorkspace,
@@ -1581,8 +1577,7 @@ export const ChatLayoutProvider = (props: Props): ReactElement => {
   } = props;
   const viewport = useChatViewport();
   const [openPreference, setOpenPreference] = useState<ChatOpenState>(initialChatOpen);
-  const isOpenDefault = openPreference === "unset";
-  const isOpen = isOpenDefault
+  const isOpen = openPreference === "unset"
     ? viewport === "docked" || viewport === "unresolved"
     : openPreference === "open";
   const [chatWidth, setChatWidthState] = useState<number>(initialChatWidth);
@@ -1616,7 +1611,6 @@ export const ChatLayoutProvider = (props: Props): ReactElement => {
     <ScopedChatLayoutProvider
       key={scopeKey}
       isOpen={isOpen}
-      isOpenDefault={isOpenDefault}
       setIsOpen={setIsOpen}
       chatWidth={chatWidth}
       setChatWidth={setChatWidth}

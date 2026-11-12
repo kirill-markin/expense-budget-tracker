@@ -208,7 +208,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
       key: "accountId",
       header: t("table.account"),
       renderCell: (a: AccountRow): ReactElement => (
-        <td key="accountId" title={isMasked ? undefined : a.accountId} className={cn(tableStyles.cell, tableStyles.cellMono, "copyable-cell", maskClass)} onClick={() => copyToClipboard(a.accountId)}>
+        <td key="accountId" className={cn(tableStyles.cell, tableStyles.cellMono, "copyable-cell", maskClass)} onClick={() => copyToClipboard(a.accountId)}>
           {a.accountId}
         </td>
       ),

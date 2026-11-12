@@ -6,9 +6,16 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
 import { NAV_LINKS } from "@/lib/navigation";
+import { useChatViewport } from "./chat/shell/layout/chatViewport";
+
+const PHONE_NAV_LINKS = [
+  ...NAV_LINKS.filter((link) => link.href === "/chat"),
+  ...NAV_LINKS.filter((link) => link.href !== "/chat"),
+];
 
 export const Navigation = (): ReactElement => {
   const pathname = usePathname();
+  const isPhone = useChatViewport() === "phone";
   const { t } = useTranslation();
   const navRef = useRef<HTMLElement>(null);
   const [overflow, setOverflow] = useState({ start: false, end: true });
@@ -36,7 +43,6 @@ export const Navigation = (): ReactElement => {
       const bounds = nav.getBoundingClientRect();
       const tabs = Array.from(nav.children, (link) => link.getBoundingClientRect());
       if (tabs.length === 0) return;
-      // Use the outermost tabs, not DOM order: the phone layout reorders tabs with CSS.
       const overflowsLeft = Math.min(...tabs.map((tab) => tab.left)) < bounds.left - 1;
       const overflowsRight = Math.max(...tabs.map((tab) => tab.right)) > bounds.right + 1;
       const rtl = getComputedStyle(nav).direction === "rtl";
@@ -60,12 +66,12 @@ export const Navigation = (): ReactElement => {
       observer.disconnect();
       nav.removeEventListener("scroll", updateOverflow);
     };
-  }, [pathname, t]);
+  }, [isPhone, pathname, t]);
 
   return (
     <div className="nav-scroll" data-scroll-start={overflow.start} data-scroll-end={overflow.end}>
       <nav className="nav" ref={navRef}>
-        {NAV_LINKS.map((link) => {
+        {(isPhone ? PHONE_NAV_LINKS : NAV_LINKS).map((link) => {
           const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
           return (
             <Link key={link.href} href={link.href} aria-current={active ? "page" : undefined}>

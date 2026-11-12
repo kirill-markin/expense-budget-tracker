@@ -354,6 +354,11 @@
   flex-shrink: 0;
 }
 
+.composerContent,
+.attachmentDetails {
+  display: contents;
+}
+
 .controls {
   display: flex;
   gap: 6px;
@@ -614,7 +619,7 @@
   display: inline-block;
 }
 
-@media (max-width: 1099px) {
+@media not ((min-width: 1100px) and (pointer: fine)) {
   .sidebar {
     width: 100% !important;
   }
@@ -629,7 +634,7 @@
   }
 }
 
-@media (max-width: 767px) {
+@media (width < 768px) {
   /* On phones chat is its own page and the active nav tab already names it. */
   .header {
     justify-content: flex-end;
@@ -727,32 +732,38 @@
     padding-block: 2px;
   }
 
+  :global(html[data-keyboard-open]) .messages {
+    min-block-size: 24px;
+    padding-block: 4px;
+  }
+
+  :global(html[data-keyboard-open]) .inputArea {
+    /* Start at the controls while preserving the order inside the scrollport. */
+    flex-direction: column-reverse;
+    flex-shrink: 1;
+    min-block-size: 0;
+    padding-block: 4px;
+    overflow-y: auto;
+    overscroll-behavior-block: contain;
+  }
+
+  :global(html[data-keyboard-open]) .composerContent,
+  :global(html[data-keyboard-open]) .attachmentDetails:not(:empty) {
+    display: flex;
+    flex-direction: column;
+    flex: none;
+    gap: 4px;
+  }
+
   :global(html[data-keyboard-open]) .textarea {
+    flex: none;
     max-block-size: min(96px, calc(var(--chat-viewport-height) * 0.3));
     overflow-y: auto;
   }
 }
 
-@media (min-width: 1100px) and (pointer: coarse) {
-  :global(html:not([data-keyboard-open])) .sidebarClose {
-    display: none;
-  }
-
-  :global(html[data-keyboard-open]) .dockedClose {
-    display: none;
-  }
-
-  :global(html[data-keyboard-open]) .overlayClose {
-    display: inline;
-  }
-}
-
-@media (min-width: 768px) and (max-width: 1099px) {
+@media (768px <= width < 1100px) {
   .empty {
     padding-block: 0;
-  }
-
-  .emptyTitle:first-child {
-    margin-block-start: 0;
   }
 }
