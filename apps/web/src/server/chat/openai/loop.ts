@@ -150,6 +150,13 @@ export type StartOpenAILoopParams = Readonly<{
   isDemoMode: boolean;
   signal?: AbortSignal;
   beforeToolDispatch: () => Promise<void>;
+  /**
+   * Receives this run's replay items each time a model call and the outputs of
+   * all its function calls are in, so a turn that fails later still stores the
+   * rounds it completed. Never called mid-round: a replayed function call
+   * without its output is rejected.
+   */
+  onReplayCheckpoint: (items: ReadonlyArray<StoredOpenAIReplayItem>) => void;
 }>;
 
 const toFunctionCallOutputInputItem = (
@@ -681,6 +688,7 @@ const runLoopWithDeps = async (
       }
       continuationItems.push(buildToolOutputReplayItem(functionCall.call_id, output));
     }
+    params.onReplayCheckpoint(toPersistedOpenAIReplayItems(continuationItems));
 
     if (callIndex === CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS) {
       dependencies.log({
