@@ -524,7 +524,7 @@ test("buildChatCompletionInput trims the oldest turns of a session that outgrew 
   assert.ok(replayedMessages > 0);
 });
 
-test("buildChatCompletionInput keeps the newest turn and drops a compaction item the budget no longer accepts", async (): Promise<void> => {
+test("buildChatCompletionInput keeps the newest turn past the budget from its compaction item", async (): Promise<void> => {
   const localMessages: ReadonlyArray<ServerChatMessage> = [
     ...createLongStoredTurn(0, []),
     {
@@ -542,9 +542,8 @@ test("buildChatCompletionInput keeps the newest turn and drops a compaction item
           status: "completed",
           content: [{
             type: "output_text",
-            // One turn larger than the whole budget on its own, so no
-            // user-aligned cut fits and the compaction item behind it no longer
-            // stands for a history that fits either.
+            // One turn larger than the whole budget on its own, so neither a
+            // user-aligned cut nor the compaction item ahead of it fits.
             text: "o".repeat(CHAT_SENT_INPUT_BUDGET_TOKENS * 4),
             annotations: [],
           }],
@@ -562,16 +561,17 @@ test("buildChatCompletionInput keeps the newest turn and drops a compaction item
     EMPTY_CHAT_TURN_FILE_CONTEXT,
   );
 
-  // The newest question and its answer are kept rather than the session being
-  // erased, and the stale compaction item is not replayed in the middle of a
-  // history that is being sent in full.
-  assert.equal(input.some((item) => item.type === "compaction"), false);
-  assert.equal(JSON.stringify(input).includes("opaque-summary"), false);
-  const firstHistoryItem = input[1];
-  assert.ok(firstHistoryItem !== undefined && "role" in firstHistoryItem);
-  assert.equal(firstHistoryItem.role, "user");
+  // The newest turn is kept rather than the session being erased, and it still
+  // starts at its compaction item, which already carries its question.
+  assert.deepEqual(input.map((item) => item.type), [
+    "message",
+    "compaction",
+    "message",
+    "message",
+    "message",
+  ]);
   const serializedInput = JSON.stringify(input);
-  assert.ok(serializedInput.includes("Turn 1 question"));
+  assert.equal(serializedInput.includes("Turn 1 question"), false);
   assert.equal(serializedInput.includes("Turn 0 question"), false);
 });
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import OpenAI from "openai";
 import {
+  CHAT_COMPACT_THRESHOLD_TOKENS,
   CHAT_FALLBACK_MODEL_ID,
   CHAT_FALLBACK_MODEL_REASONING_EFFORT,
   CHAT_MODEL_ID,
@@ -193,6 +194,9 @@ const COMPACTION_REPLAY_ITEM: StoredOpenAIReplayItem = {
   encrypted_content: "opaque-summary",
 };
 
+/** A call input past the threshold, as a call that really compacted reports. */
+const CHAT_COMPACTED_CALL_INPUT_TOKENS = CHAT_COMPACT_THRESHOLD_TOKENS + 10_000;
+
 /** A compacting call: its `input_tokens` report the pre-compaction input. */
 const createCompactedResponse = (
   inputTokens: number,
@@ -373,7 +377,7 @@ test("runOpenAILoop replays an in-run compaction item with the tool result and t
           // The compaction item closes the output, so the tool result the loop
           // appends next lands behind it without its own call.
           return {
-            finalResponse: createCompactedResponse(180_000),
+            finalResponse: createCompactedResponse(CHAT_COMPACTED_CALL_INPUT_TOKENS),
             functionCalls: [createFunctionCall("call-1", "sql_query", "{}")],
             replayItems: [
               createFunctionCallReplayItem("call-1", "sql_query", "{}"),
@@ -416,7 +420,7 @@ test("runOpenAILoop replays an in-run compaction item with the tool result and t
     sessionId: "session-1",
     callIndex: 1,
     compactionItems: 1,
-    callInputTokens: 180_000,
+    callInputTokens: CHAT_COMPACTED_CALL_INPUT_TOKENS,
   }]);
   assert.deepEqual(openAIRequests.at(-1)?.input, [
     systemItem,

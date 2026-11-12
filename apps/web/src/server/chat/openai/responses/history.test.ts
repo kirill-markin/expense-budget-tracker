@@ -14,6 +14,7 @@ import {
 } from "@/server/chat/openai/responses/history";
 import {
   parseChatHistoryMeasurement,
+  replayItemsFromCompaction,
   type ChatHistoryMeasurement,
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
@@ -724,6 +725,115 @@ test("a compaction item the budget no longer accepts is dropped for the window",
   assert.ok(plan.startIndex > 3);
   assert.equal(messages[plan.startIndex]?.role, "user");
   assert.ok(plan.sentInputTokens <= CHAT_SENT_INPUT_BUDGET_TOKENS);
+});
+
+/**
+ * One tool round of a long turn: the call and an output of `outputCharacters`.
+ * Opaque ids rather than prose, so the estimate stays near the real count.
+ */
+const createToolRound = (
+  callId: string,
+  outputCharacters: number,
+): ReadonlyArray<StoredOpenAIReplayItem> => [
+  { type: "function_call", call_id: callId, name: "sql_query", arguments: "{}" },
+  {
+    type: "function_call_output",
+    call_id: callId,
+    output: `${callId} ${"r".repeat(outputCharacters)}`,
+  },
+];
+
+/** Rounds ahead of a mid-turn compaction that alone pass the budget. */
+const createRoundsPastBudget = (): ReadonlyArray<StoredOpenAIReplayItem> =>
+  Array.from({ length: 4 }).flatMap((_, round) => createToolRound(
+    `call-${String(round)}`,
+    CHAT_SENT_INPUT_BUDGET_TOKENS / 2,
+  ));
+
+/** Real tokens of a plan that starts at the compaction item of its first message. */
+const realCompactionSentInputTokens = (
+  messages: ReadonlyArray<ServerChatMessage>,
+  startIndex: number,
+  compactionItemIndex: number,
+  turnInput: ReadonlyArray<ContentPart>,
+): number =>
+  realSentInputTokens(messages, startIndex + 1, turnInput)
+  + replayItemsFromCompaction(messages[startIndex]?.openaiItems ?? [], compactionItemIndex)
+    .reduce((total, item) => total + realTokenCount(JSON.stringify(item)), 0);
+
+test("a long unmeasured turn that compacted mid-turn replays from its compaction item", (): void => {
+  const rounds = createRoundsPastBudget();
+  // A failed turn's checkpoint: the call that compacted closes its output with
+  // the compaction item, and its own output lands behind the cut.
+  const failedTurnItems: ReadonlyArray<StoredOpenAIReplayItem> = [
+    ...rounds,
+    { type: "function_call", call_id: "call-cut", name: "sql_query", arguments: "{}" },
+    COMPACTION_ITEM,
+    { type: "function_call_output", call_id: "call-cut", output: "{\"rows\":[]}" },
+  ];
+  const shapes: ReadonlyArray<Readonly<{
+    name: string;
+    assistant: ServerChatMessage;
+    compactionItemIndex: number;
+  }>> = [
+    {
+      name: "failed turn",
+      assistant: { role: "assistant", content: [], openaiItems: failedTurnItems },
+      compactionItemIndex: rounds.length + 1,
+    },
+    {
+      name: "run-limit summary fallback",
+      assistant: createAssistantMessage("Run limit reached", undefined, [...rounds, COMPACTION_ITEM]),
+      compactionItemIndex: rounds.length,
+    },
+  ];
+
+  for (const shape of shapes) {
+    const messages: ReadonlyArray<ServerChatMessage> = [
+      ...createUnmeasuredSession(2, null),
+      createUserMessage("Long question"),
+      shape.assistant,
+    ];
+
+    const plan = planChatHistoryReplay(messages, TURN_INPUT);
+
+    assert.ok(plan.unboundedSentInputTokens > CHAT_SENT_INPUT_BUDGET_TOKENS, shape.name);
+    assert.equal(plan.boundary, "compaction", shape.name);
+    assert.equal(plan.startIndex, 5, shape.name);
+    assert.equal(plan.droppedMessages, 5, shape.name);
+    assert.equal(plan.compactionItemIndex, shape.compactionItemIndex, shape.name);
+    assert.ok(plan.sentInputTokens <= CHAT_SENT_INPUT_BUDGET_TOKENS, shape.name);
+    const real = realCompactionSentInputTokens(
+      messages,
+      plan.startIndex,
+      shape.compactionItemIndex,
+      TURN_INPUT,
+    );
+    assert.ok(real <= plan.sentInputTokens, `${shape.name}: ${String(real)}`);
+  }
+});
+
+test("the newest pair past the budget still replays from its compaction item", (): void => {
+  const messages: ReadonlyArray<ServerChatMessage> = [
+    ...createUnmeasuredSession(1, null),
+    createUserMessage("Newest question"),
+    {
+      role: "assistant",
+      content: [],
+      openaiItems: [...createRoundsPastBudget(), COMPACTION_ITEM, ...createRoundsPastBudget()],
+    },
+  ];
+
+  const plan = planChatHistoryReplay(messages, TURN_INPUT);
+
+  // Even the history from the compaction item onward is past the budget, so
+  // the window falls back to the newest pair; the rounds ahead of the item are
+  // still not resent.
+  assert.equal(plan.boundary, "compaction");
+  assert.equal(plan.startIndex, 3);
+  assert.equal(plan.compactionItemIndex, 8);
+  assert.ok(plan.sentInputTokens > CHAT_SENT_INPUT_BUDGET_TOKENS);
+  assert.ok(plan.sentInputTokens < plan.unboundedSentInputTokens - CHAT_SENT_INPUT_BUDGET_TOKENS);
 });
 
 test("a turn larger than the whole budget keeps the newest question and its answer", (): void => {
