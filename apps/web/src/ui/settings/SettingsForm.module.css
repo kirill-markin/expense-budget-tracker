@@ -310,8 +310,109 @@
   cursor: var(--cursor-pointer);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1099px) {
+  .page :global(.panel) {
+    padding-inline-end: 16px;
+  }
+
+  .form,
+  .control {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  .row {
+    min-inline-size: 0;
+    max-inline-size: min(360px, 100%);
+  }
+
+  .rowWide {
+    max-inline-size: 100%;
+  }
+
+  .control {
+    flex-wrap: wrap;
+  }
+
+  .input {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    flex: 1 1 160px;
+  }
+
+  .checkboxLabel,
+  .filteredItem {
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .checkboxLabel input,
+  .filteredItem input {
+    flex-shrink: 0;
+  }
+
   .accessGrid {
     grid-template-columns: 1fr;
+    padding-inline-end: 0;
+  }
+
+  .tableWrap {
+    max-inline-size: 100%;
+    padding-inline-end: 0;
+  }
+
+  .codeblock {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .codeblockCopy {
+    position: static;
+    align-self: flex-end;
+  }
+}
+
+@media (pointer: coarse) {
+  .checkboxLabel,
+  .filteredItem,
+  .inlineLink {
+    min-block-size: var(--touch-target);
+  }
+
+  .inlineLink {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .codeblock {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .codeblockCopy {
+    position: static;
+    align-self: flex-end;
+  }
+
+  /* These are action rows, rather than the app's dense editable tables. */
+  .table .save {
+    min-block-size: var(--touch-target);
+  }
+}
+
+@media (pointer: coarse) and (min-width: 768px) {
+  .label,
+  .checkboxLabel,
+  .save,
+  .warning,
+  .accessText,
+  .inlineLink,
+  .table,
+  .filteredList,
+  .codeblock pre {
+    font-size: 14px;
   }
 }

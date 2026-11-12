@@ -45,6 +45,8 @@
 
 .scroll {
   --budget-category-column-width: 180px;
+  --budget-value-column-width: 90px;
+  --budget-year-column-width: var(--budget-value-column-width);
 
   box-sizing: border-box;
   inline-size: 100%;
@@ -84,6 +86,10 @@
 
 .valueColumn {
   inline-size: var(--budget-value-column-width);
+}
+
+.yearValueColumn {
+  inline-size: var(--budget-year-column-width);
 }
 
 .headCell {
@@ -479,6 +485,9 @@ tbody tr:last-child .currentMonthActual {
 }
 
 .adjustmentTable {
+  --adjustment-month-min-inline-size: 120px;
+  --adjustment-action-inline-size: 36px;
+
   min-inline-size: 0;
 }
 
@@ -488,9 +497,9 @@ tbody tr:last-child .currentMonthActual {
   grid-template-columns:
     minmax(72px, 0.8fr)
     minmax(120px, 1.3fr)
+    minmax(var(--adjustment-month-min-inline-size), 1fr)
     minmax(120px, 1fr)
-    minmax(120px, 1fr)
-    36px;
+    var(--adjustment-action-inline-size);
   gap: 8px;
   align-items: start;
 }
@@ -760,15 +769,71 @@ tbody tr:last-child .currentMonthActual {
   z-index: 1000;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .scroll {
     --budget-category-column-width: 120px;
+    --budget-year-column-width: 104px;
+
+    max-block-size: calc(100dvh - 160px);
+    overflow-y: auto;
+  }
+
+  .table thead {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 20;
+    background: var(--panel);
+  }
+
+  /* Collapsed borders stay behind when the header sticks, so draw the header
+     rules on the opaque cells themselves. A background layer keeps the
+     current-month box-shadows and the inverted year total intact. */
+  .table thead th:not(.yearTotal) {
+    background-color: var(--panel);
+  }
+
+  .table thead .headCell,
+  .table thead .subHeadCell {
+    border-bottom: 0;
+    background-image: linear-gradient(var(--panel-border), var(--panel-border));
+    background-repeat: no-repeat;
+    background-position: bottom;
+    background-size: 100% 1px;
   }
 
   .directionLabel,
   .categoryLabel,
   .headCell {
     padding-inline: 8px;
+  }
+
+  .stickyCol {
+    padding-inline-start: 16px;
+  }
+
+  .cell,
+  .subHeadCell {
+    padding-inline: 6px;
+  }
+
+  .planCellButton {
+    inline-size: calc(100% + 12px);
+    margin-inline: -6px;
+    padding-inline: 6px;
+  }
+
+  .alertBar {
+    flex-wrap: wrap;
+    padding-inline-end: 16px;
+  }
+
+  .addCategoryButton {
+    display: block;
+    max-inline-size: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.3;
   }
 
   .popover {
@@ -808,10 +873,65 @@ tbody tr:last-child .currentMonthActual {
   .adjustmentAddButton,
   .adjustmentModalCancel,
   .adjustmentModalConfirm {
-    min-block-size: 44px;
+    min-block-size: var(--touch-target);
   }
 
   .adjustmentDeleteButton {
-    inline-size: 44px;
+    inline-size: var(--touch-target);
+  }
+}
+
+@media (pointer: coarse) {
+  .cell,
+  .categoryLabel,
+  .directionLabel {
+    block-size: var(--touch-target);
+  }
+
+  .planCellButton {
+    min-block-size: var(--touch-target);
+  }
+
+  .todayButton,
+  .addCategoryButton,
+  .adjustmentInput,
+  .adjustmentMonthInput,
+  .adjustmentSelect,
+  .adjustmentDeleteButton,
+  .adjustmentAddButton,
+  .adjustmentRecoveryButton,
+  .adjustmentModalCancel,
+  .adjustmentModalConfirm,
+  .popoverFillButton,
+  .popoverInput {
+    min-block-size: var(--touch-target);
+  }
+
+  .popoverInput,
+  .adjustmentInput,
+  .adjustmentMonthInput,
+  .adjustmentSelect,
+  .addCategoryInput {
+    font-size: 16px;
+  }
+
+  .adjustmentDeleteButton {
+    min-inline-size: var(--touch-target);
+  }
+
+  .adjustmentTable {
+    --adjustment-month-min-inline-size: 180px;
+    --adjustment-action-inline-size: var(--touch-target);
+  }
+
+  .adjustmentNoteInput {
+    field-sizing: content;
+    padding-block: calc((var(--touch-target) - 2px - 1lh) / 2);
+  }
+}
+
+@media (pointer: coarse) and (min-width: 768px) {
+  .table {
+    font-size: 14px;
   }
 }

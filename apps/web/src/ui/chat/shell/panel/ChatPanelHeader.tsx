@@ -103,10 +103,12 @@ export const ChatPanelHeader = (props: Props): ReactElement => {
           <button
             type="button"
             data-testid="chat-sidebar-close"
+            aria-label={t("chat.close")}
             className={styles.closeButton}
             onClick={onCloseSidebar}
           >
-            &laquo;
+            <span className={styles.dockedClose} aria-hidden="true">&laquo;</span>
+            <span className={styles.overlayClose}>{t("chat.close")}</span>
           </button>
         )}
       </div>

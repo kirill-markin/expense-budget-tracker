@@ -230,7 +230,7 @@
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1099px) {
   .fieldsGrid,
   .categoryAddGrid,
   .generatedLinks,
@@ -240,5 +240,24 @@
 
   .addAction {
     align-items: start;
+  }
+}
+
+@media (pointer: coarse) {
+  .inlineWarning {
+    min-block-size: var(--touch-target);
+    align-items: center;
+  }
+}
+
+@media (pointer: coarse) and (min-width: 768px) and (max-width: 1099px) {
+  .warningText,
+  .demoText,
+  .mutedText,
+  .label,
+  .hint,
+  .categoryName,
+  .inlineWarning {
+    font-size: 14px;
   }
 }

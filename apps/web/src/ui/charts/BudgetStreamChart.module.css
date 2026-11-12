@@ -81,3 +81,93 @@
   font-size: 11px;
   margin-top: 4px;
 }
+
+.legendDisclosure {
+  display: none;
+}
+
+@media (max-width: 1099px) {
+  .chartWrap {
+    padding-inline-end: 16px;
+  }
+
+  .dateFilters input {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+}
+
+@media (max-width: 767px) {
+  .legendDesktop {
+    display: none;
+  }
+
+  .legendDisclosure {
+    display: block;
+    padding-inline-end: 16px;
+    margin-block-end: 8px;
+    font-size: 13px;
+  }
+
+  .legendDisclosure summary {
+    padding-block: 10px;
+    border-block: 1px solid var(--soft-border);
+  }
+
+  .legendDisclosure .legend {
+    padding-block-start: 12px;
+    font-size: 12px;
+    gap: 10px 12px;
+  }
+
+  .dateFilters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .dateFilters label {
+    min-inline-size: 0;
+  }
+
+  .dateFilters input {
+    inline-size: 100%;
+    padding-inline: 4px;
+  }
+
+  .dateFilters input::-webkit-calendar-picker-indicator {
+    margin-inline: 6px 0;
+    padding: 0;
+  }
+}
+
+@media (max-width: 399px) {
+  .dateFilters {
+    gap: 8px;
+  }
+
+  .dateFilters input {
+    padding-inline: 2px;
+  }
+
+  .dateFilters input::-webkit-datetime-edit {
+    padding: 0;
+  }
+
+  .dateFilters input::-webkit-calendar-picker-indicator {
+    margin-inline: 2px 0;
+  }
+}
+
+@media (max-width: 1099px), (pointer: coarse) {
+  .directionLabel {
+    transform: translateX(8px);
+  }
+}
+
+@media (max-width: 767px) and (pointer: coarse) {
+  .legendDisclosure summary {
+    line-height: 20px;
+    padding-block: calc((var(--touch-target) - 2px - 1lh) / 2);
+  }
+}

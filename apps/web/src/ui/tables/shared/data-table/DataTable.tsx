@@ -27,6 +27,7 @@ export const DataTable = <T,>(props: DataTableProps<T>): ReactElement => {
               return (
                 <th
                   key={col.key}
+                  data-column={col.key}
                   className={cn(
                     styles.headCell,
                     sortable ? styles.headCellSortable : "",

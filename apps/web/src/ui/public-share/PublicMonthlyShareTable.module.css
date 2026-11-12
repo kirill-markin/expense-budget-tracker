@@ -242,7 +242,7 @@
   color: var(--muted);
 }
 
-@media (max-width: 720px) {
+@media (max-width: 767px) {
   .header {
     flex-direction: column;
     align-items: stretch;
@@ -258,10 +258,35 @@
   }
 
   .categoryHead {
-    min-inline-size: 150px;
+    min-inline-size: 120px;
+  }
+
+  .stickyCol {
+    box-sizing: border-box;
+    padding-inline-start: 16px;
+    max-inline-size: 120px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .cell {
     min-inline-size: 96px;
+  }
+
+  .footer {
+    flex-wrap: wrap;
+  }
+}
+
+@media (pointer: coarse) {
+  .jsonLink,
+  .loadEarlierButton {
+    min-block-size: var(--touch-target);
+  }
+
+  .categoryCell,
+  .cell {
+    block-size: var(--touch-target);
+    box-sizing: border-box;
   }
 }

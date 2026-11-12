@@ -2,6 +2,7 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { useCellOverlayPosition } from "./useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 
 import styles from "@/ui/tables/shared/TableUi.module.css";
@@ -24,6 +25,7 @@ export const CellSelectOverlay = (props: Props): ReactElement => {
   const [highlightIndex, setHighlightIndex] = useState<number>(-1);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
+  const position = useCellOverlayPosition(rect, 200, 260);
 
   const filtered = buildFiltered(options, allowEmpty, search);
 
@@ -78,7 +80,8 @@ export const CellSelectOverlay = (props: Props): ReactElement => {
     <div
       ref={overlayRef}
       className={styles.selectOverlay}
-      style={{ top: rect.top, left: rect.left, minWidth: rect.width }}
+      style={position ?? { top: rect.top, left: rect.left, minWidth: rect.width }}
+      onClick={(event) => event.stopPropagation()}
     >
       <input
         ref={searchRef}

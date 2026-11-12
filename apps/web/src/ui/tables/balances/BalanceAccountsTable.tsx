@@ -25,6 +25,7 @@ import { DataTable } from "@/ui/tables/shared/data-table/DataTable";
 import type { ColumnDef, SortState } from "@/ui/tables/shared/data-table/types";
 import { formatAmount } from "@/ui/tables/shared/format";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
+import { HorizontalTableScroll } from "@/ui/tables/shared/HorizontalTableScroll";
 
 import type { AccountRow } from "@/server/balances/getBalancesSummary";
 
@@ -435,7 +436,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
           </div>
         )}
       </h2>
-      <div className={tableStyles.scroll}>
+      <HorizontalTableScroll stickyFirstColumn>
         <DataTable<AccountRow>
           columns={accountsColumns}
           rows={accounts}
@@ -448,7 +449,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
           sentinelRef={null}
           rowClassName={accountRowClassName}
         />
-      </div>
+      </HorizontalTableScroll>
       {inactiveCount > 0 && (
         <button
           className={controlsStyles.segment}

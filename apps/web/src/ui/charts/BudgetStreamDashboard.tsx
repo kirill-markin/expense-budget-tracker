@@ -13,6 +13,7 @@ import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import filterStyles from "@/ui/FilterControls.module.css";
 import { LoadingIndicator } from "@/ui/LoadingIndicator";
 import { BudgetStreamChart } from "@/ui/charts/BudgetStreamChart";
+import styles from "@/ui/charts/BudgetStreamChart.module.css";
 import { ExpenseTreemapChart } from "@/ui/charts/ExpenseTreemapChart";
 import treemapStyles from "@/ui/charts/ExpenseTreemapChart.module.css";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
@@ -198,7 +199,7 @@ export const BudgetStreamDashboard = (props: Props): ReactElement => {
 
   return (
     <>
-      <div className={filterStyles.filters}>
+      <div className={`${filterStyles.filters} ${styles.dateFilters}`}>
         <label className={filterStyles.filterLabel}>
           {t("common.from")}
           <input

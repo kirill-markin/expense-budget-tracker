@@ -57,3 +57,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+@media (pointer: coarse) {
+  .filterInput {
+    min-block-size: var(--touch-target);
+    font-size: 16px;
+    max-inline-size: 100%;
+  }
+}

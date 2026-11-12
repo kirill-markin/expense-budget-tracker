@@ -330,3 +330,17 @@
     max-inline-size: 38vw;
   }
 }
+
+@media (pointer: coarse) {
+  .historyButton,
+  .dialogAction,
+  .loadMoreButton,
+  .sessionButton {
+    min-block-size: var(--touch-target);
+  }
+
+  .historyButton,
+  .closeAction {
+    min-inline-size: var(--touch-target);
+  }
+}

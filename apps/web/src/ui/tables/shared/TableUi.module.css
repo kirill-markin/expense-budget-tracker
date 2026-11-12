@@ -4,6 +4,70 @@
   margin-bottom: 24px;
 }
 
+.scrollFrame {
+  position: relative;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+@media (max-width: 1099px) {
+  .scrollFrame::after {
+    content: "";
+    position: absolute;
+    inset-block: 0 24px;
+    inset-inline-end: 0;
+    inline-size: 20px;
+    background: linear-gradient(to right, transparent, var(--panel));
+    pointer-events: none;
+    opacity: 0;
+    z-index: 12;
+  }
+
+  [dir="rtl"] .scrollFrame::after {
+    background: linear-gradient(to left, transparent, var(--panel));
+  }
+
+  .scrollHasMore::after {
+    opacity: 1;
+  }
+
+  .scrollFrame .scroll {
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .stickyFirstColumn .table :is(th, td):first-child:not([colspan]) {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 10;
+    background-color: var(--panel);
+    border-inline-end: 1px solid var(--panel-border);
+    box-sizing: border-box;
+    inline-size: 140px;
+    min-inline-size: 140px;
+    max-inline-size: 140px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .stickyFirstColumn .table td:global(.data-masked):first-child {
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .stickyFirstColumn .table th[data-column="accountGroup"]:first-child:not([colspan]) {
+    inline-size: 156px;
+    min-inline-size: 156px;
+    max-inline-size: 156px;
+  }
+}
+
+@media (max-width: 767px) {
+  .stickyFirstColumn .table :is(th, td):first-child {
+    padding-inline-start: 16px;
+  }
+}
+
 .table {
   border-collapse: collapse;
   font-size: 13px;
@@ -126,6 +190,11 @@
   outline: none;
   box-shadow: 0 0 0 1px var(--panel-border), 0 2px 8px rgba(0, 0, 0, 0.12);
   box-sizing: border-box;
+}
+
+.dateEditor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
 }
 
 .selectOverlay {
@@ -302,4 +371,60 @@
 .filterPopoverEmpty {
   padding: 8px 10px;
   color: var(--muted);
+}
+
+@media (hover: none), (pointer: coarse) {
+  .editableSelect::after {
+    opacity: 1;
+  }
+}
+
+@media (pointer: coarse) {
+  .cell,
+  .headCellSortable {
+    block-size: var(--touch-target);
+    box-sizing: border-box;
+  }
+
+  .input,
+  .editorOverlay,
+  .selectSearch,
+  .textareaEditor,
+  .filterPopoverSearch {
+    font-size: 16px;
+    min-block-size: var(--touch-target);
+  }
+
+  .selectOption,
+  .textareaHint,
+  .filterPopoverOption {
+    min-block-size: var(--touch-target);
+    box-sizing: border-box;
+  }
+
+  .selectOption {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .selectOption,
+  .textareaHint {
+    display: flex;
+    align-items: center;
+  }
+}
+
+@media (pointer: coarse) and (min-width: 768px) {
+  .table,
+  .cellMono {
+    font-size: 14px;
+  }
+}
+
+@media (min-width: 1100px) and (pointer: fine) {
+  .panelScroll .scroll {
+    overflow: visible;
+    padding: 0;
+    margin: 0;
+  }
 }

@@ -12,6 +12,7 @@ import type { NumberFormat } from "@/lib/locale";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 import { useFormat } from "@/ui/FormatProvider";
 import styles from "@/ui/charts/ExpenseTreemapChart.module.css";
+import { useChartSize } from "@/ui/charts/useChartSize";
 import { formatNumber } from "@/ui/tables/shared/format";
 
 type Props = Readonly<{
@@ -40,8 +41,6 @@ type HoverInfo = Readonly<{
   flipUp: boolean;
 }>;
 
-const WIDTH = 900;
-const HEIGHT = 600;
 const HEADER_H = 18;
 const PAD_TOP = HEADER_H + 3;
 
@@ -114,10 +113,12 @@ const buildHierarchy = (
 
 export const ExpenseTreemapChart = (props: Props): ReactElement => {
   const { entries, allowlist, reportingCurrency, onCellClick } = props;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { numberFormat } = useFormat();
   const masked = allowlist !== null && allowlist.size === 0;
   const wrapRef = useRef<HTMLDivElement>(null);
+  const { width, height, chartRef } = useChartSize(wrapRef, 600);
+  const compact = width < 900;
   const [hover, setHover] = useState<HoverInfo | null>(null);
 
   const uncategorizedLabel = t("chart.uncategorized");
@@ -131,7 +132,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
       .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
 
     const layout = treemap<TreemapDatum>()
-      .size([WIDTH, HEIGHT])
+      .size([width, height])
       .paddingOuter(3)
       .paddingInner(2)
       .paddingTop(PAD_TOP);
@@ -148,7 +149,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
 
     const rn = root as unknown as RectNode;
     return { categoryNodes: rn.children ?? [], colorScale: cs, grandTotal: total };
-  }, [entries, allowlist, uncategorizedLabel]);
+  }, [entries, allowlist, uncategorizedLabel, width, height]);
 
   const handleLeafEnter = useCallback((event: React.MouseEvent, entry: LedgerEntry): void => {
     const wrap = wrapRef.current;
@@ -171,9 +172,9 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
 
   if (categoryNodes.length === 0 && !masked) {
     return (
-      <div className={styles.wrap}>
-        <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Expense treemap">
-          <text x={WIDTH / 2} y={HEIGHT / 2} textAnchor="middle" fill="var(--muted)" fontSize={14}>
+      <div ref={chartRef} className={styles.wrap}>
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Expense treemap">
+          <text x={width / 2} y={height / 2} textAnchor="middle" fill="var(--muted)" fontSize={14}>
             {t("chart.noSpendData")}
           </text>
         </svg>
@@ -189,8 +190,8 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
         </div>
       )}
 
-      <div ref={wrapRef} className={cn(styles.wrap, masked ? "data-masked" : "")}>
-        <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Expense treemap">
+      <div ref={chartRef} className={cn(styles.wrap, masked ? "data-masked" : "")}>
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Expense treemap">
           {!masked && categoryNodes.map((catNode, ci) => {
             const catName = catNode.data.name;
             const color = colorScale(catName);
@@ -198,7 +199,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
             const ch = catNode.y1 - catNode.y0;
             const catTotal = catNode.value ?? 0;
             const clipId = `tm-clip-${ci}`;
-            const showHeader = cw > 40 && ch > PAD_TOP;
+            const showHeader = cw > (compact ? 64 : 40) && ch > PAD_TOP;
 
             const headerText = `${catName} — ${fmtTotal(catTotal, reportingCurrency, numberFormat)}`;
             const headerLabel = estTextW(headerText, 11) < cw - 8 ? headerText : catName;
@@ -230,12 +231,14 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                     const lw = leaf.x1 - leaf.x0;
                     const lh = leaf.y1 - leaf.y0;
                     const val = leaf.value ?? 0;
-                    const fs = cellFontSize(lw, lh);
+                    const fs = compact ? Math.max(11, cellFontSize(lw, lh)) : cellFontSize(lw, lh);
                     const amt = fmtAmount(val, numberFormat);
-                    const amtFits = estTextW(amt, fs) < lw - 6 && fs + 4 < lh;
+                    const amtFits = (!compact || (lw >= 48 && lh >= 28))
+                      && estTextW(amt, fs) < lw - 6 && fs + 4 < lh;
                     const cp = leaf.data.counterparty;
-                    const cpFits = amtFits && lh > fs + 18 && lw > 40
-                      && cp !== null && estTextW(cp, 9) < lw - 6;
+                    const cpFontSize = compact ? 11 : 9;
+                    const cpFits = amtFits && lh > fs + cpFontSize + 9 && lw > 40
+                      && cp !== null && estTextW(cp, cpFontSize) < lw - 6;
 
                     return (
                       <g
@@ -255,12 +258,12 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                           strokeWidth={0.5}
                         />
                         {amtFits && (
-                          <text x={lx + 3} y={ly + fs + 2} fill="#222" fontSize={fs} fontWeight="500">
+                          <text textAnchor={i18n.dir() === "rtl" ? "end" : "start"} x={lx + 3} y={ly + fs + 2} fill="var(--treemap-text)" fontSize={fs} fontWeight="500">
                             {amt}
                           </text>
                         )}
                         {cpFits && (
-                          <text x={lx + 3} y={ly + fs + 14} fill="#555" fontSize={9}>
+                          <text textAnchor={i18n.dir() === "rtl" ? "end" : "start"} x={lx + 3} y={ly + fs + cpFontSize + 5} fill="var(--treemap-muted)" fontSize={cpFontSize}>
                             {cp}
                           </text>
                         )}
@@ -289,7 +292,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                         stroke={lighten(color, 0.35)}
                         strokeWidth={1}
                       />
-                      <text x={catNode.x0 + 4} y={catNode.y0 + 13} fill="#111" fontSize={11} fontWeight="700">
+                      <text textAnchor={i18n.dir() === "rtl" ? "end" : "start"} x={catNode.x0 + 4} y={catNode.y0 + 13} fill="var(--treemap-heading)" fontSize={11} fontWeight="700">
                         {headerLabel}
                       </text>
                     </g>

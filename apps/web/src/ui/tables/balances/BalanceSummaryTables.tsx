@@ -16,6 +16,7 @@ import { DataTable } from "@/ui/tables/shared/data-table/DataTable";
 import type { ColumnDef, SortState } from "@/ui/tables/shared/data-table/types";
 import { formatAmount } from "@/ui/tables/shared/format";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
+import { HorizontalTableScroll } from "@/ui/tables/shared/HorizontalTableScroll";
 import balancesStyles from "./BalancesTable.module.css";
 import type { ReportingCurrencyTotals } from "./balancesTableModel";
 
@@ -276,7 +277,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
   return (
     <>
       <h2 className={balancesStyles.sectionTitle}>{t("balances.byCurrency")}</h2>
-      <div className={tableStyles.scroll}>
+      <HorizontalTableScroll stickyFirstColumn>
         <DataTable<CurrencyTotal>
           columns={totalsColumns}
           rows={sortedTotals}
@@ -289,10 +290,10 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
           sentinelRef={null}
           footerRows={totalsFooterRows}
         />
-      </div>
+      </HorizontalTableScroll>
 
       <h2 className={balancesStyles.sectionTitle}>{t("balances.byLiquidity")}</h2>
-      <div className={tableStyles.scroll}>
+      <HorizontalTableScroll stickyFirstColumn>
         <DataTable<LiquidityTotal>
           columns={liquidityColumns}
           rows={sortedLiquidityTotals}
@@ -305,10 +306,10 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
           sentinelRef={null}
           footerRows={liquidityFooterRows}
         />
-      </div>
+      </HorizontalTableScroll>
 
       <h2 className={balancesStyles.sectionTitle}>{t("balances.byAccountGroup")}</h2>
-      <div className={tableStyles.scroll}>
+      <HorizontalTableScroll stickyFirstColumn>
         <DataTable<AccountGroupTotal>
           columns={accountGroupColumns}
           rows={sortedAccountGroupTotals}
@@ -321,7 +322,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
           sentinelRef={null}
           footerRows={accountGroupFooterRows}
         />
-      </div>
+      </HorizontalTableScroll>
     </>
   );
 };

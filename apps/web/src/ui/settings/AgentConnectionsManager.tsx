@@ -227,6 +227,7 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
             </div>
 
             <div className={cn(settingsStyles.codeblock, settingsStyles.codeblockTight)}>
+              <pre>{card.snippet}</pre>
               <button
                 className={settingsStyles.codeblockCopy}
                 type="button"
@@ -234,7 +235,6 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
               >
                 {copiedCardId === card.id ? t("apiKeys.copied") : t("apiKeys.copy")}
               </button>
-              <pre>{card.snippet}</pre>
             </div>
 
             <a className={settingsStyles.inlineLink} href={card.href} target="_blank" rel="noreferrer">
@@ -270,6 +270,7 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
             <>
               <p className={settingsStyles.warning}>{t("apiKeys.copyWarning")}</p>
               <div className={settingsStyles.codeblock}>
+                <pre>{createdApiKey}</pre>
                 <button
                   className={settingsStyles.codeblockCopy}
                   type="button"
@@ -277,7 +278,6 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
                 >
                   {copiedCardId === "created_key" ? t("apiKeys.copied") : t("apiKeys.copy")}
                 </button>
-                <pre>{createdApiKey}</pre>
               </div>
             </>
           )}

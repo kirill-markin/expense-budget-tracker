@@ -95,7 +95,7 @@ export default async function DashboardPage() {
   return (
     <main className="container">
       <section className="panel">
-        <h1 className="title">{t(locale, "nav.dashboards")}</h1>
+        <h1 className="title page-title">{t(locale, "nav.dashboards")}</h1>
 
         <Suspense fallback={<LoadingIndicator />}>
           <BudgetStreamData />

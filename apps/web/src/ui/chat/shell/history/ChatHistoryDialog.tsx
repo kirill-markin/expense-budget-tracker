@@ -337,7 +337,7 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
   }, []);
 
   useEffect(() => {
-    setPortalTarget(document.body);
+    setPortalTarget(historyButtonRef.current?.closest("dialog") ?? document.body);
   }, []);
 
   useLayoutEffect(() => {
@@ -412,7 +412,7 @@ export const ChatHistoryDialog = (props: Props): ReactElement => {
       onOpenChange(false);
     };
     const handleEscape = (event: globalThis.KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
+      if (event.defaultPrevented || event.key !== "Escape") return;
       event.preventDefault();
       restoreTriggerFocusRef.current = true;
       onOpenChange(false);

@@ -2,6 +2,7 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
+import { useCellOverlayPosition } from "@/ui/tables/overlays/useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 import { useFormat } from "@/ui/FormatProvider";
 
@@ -40,6 +41,7 @@ export const EditableDateTime = (props: Props): ReactElement => {
   const [rect, setRect] = useState<Rect | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cellRef = useRef<HTMLTableCellElement | null>(null);
+  const editorPosition = useCellOverlayPosition(rect, 300, rect?.height ?? 0);
 
   useEffect(() => {
     if (editing && inputRef.current !== null) {
@@ -89,19 +91,13 @@ export const EditableDateTime = (props: Props): ReactElement => {
       {editing && rect !== null && createPortal(
         <input
           ref={inputRef}
-          className={styles.editorOverlay}
+          className={cn(styles.editorOverlay, styles.dateEditor)}
           type="datetime-local"
           value={editValue}
-          style={{
-            top: rect.top,
-            left: rect.left,
-            width: rect.width,
-            height: rect.height,
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-            fontSize: "12px",
-          }}
+          style={{ ...(editorPosition ?? { top: rect.top, left: rect.left, width: rect.width }), height: rect.height }}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={commitEdit}
+          onClick={(event) => event.stopPropagation()}
           onKeyDown={handleKeyDown}
         />,
         document.body,

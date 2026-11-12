@@ -8,7 +8,7 @@ import type {
   RefObject,
   SyntheticEvent,
 } from "react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CHAT_MODEL_BADGE_LABEL } from "@/lib/chatModels";
@@ -112,6 +112,7 @@ export const ChatComposer = (props: Props): ReactElement => {
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const pendingMentionCaretRef = useRef<number | null>(null);
 
+  const inputAreaRef = useRef<HTMLDivElement>(null);
   const boundedCaretPosition = Math.min(caretPosition, inputText.length);
   const activeMention = useMemo(
     () => findAccountMentionTrigger(inputText, boundedCaretPosition),
@@ -151,6 +152,11 @@ export const ChatComposer = (props: Props): ReactElement => {
     ? getAccountMentionOptionId(selectedMentionIndex)
     : undefined;
 
+  const dismissMention = useCallback((): void => {
+    setDismissedMentionKey(mentionKey);
+    setMentionHighlight(null);
+  }, [mentionKey]);
+
   // Refetches once per popover open so accounts created or renamed during
   // the session appear without a reload.
   useEffect(() => {
@@ -174,6 +180,24 @@ export const ChatComposer = (props: Props): ReactElement => {
     setCaretPosition(pendingCaretPosition);
     pendingMentionCaretRef.current = null;
   }, [inputText, textareaRef]);
+
+  useEffect(() => {
+    const inputArea = inputAreaRef.current;
+    const textarea = textareaRef.current;
+    if (inputArea === null || textarea === null) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (document.activeElement !== textarea
+        || !document.documentElement.hasAttribute("data-keyboard-open")) return;
+
+      const { top, bottom } = inputArea.getBoundingClientRect();
+      const textareaRect = textarea.getBoundingClientRect();
+      if (textareaRect.top < top) inputArea.scrollTop += textareaRect.top - top;
+      else if (textareaRect.bottom > bottom) inputArea.scrollTop += textareaRect.bottom - bottom;
+    });
+    resizeObserver.observe(inputArea);
+    return () => resizeObserver.disconnect();
+  }, [textareaRef]);
 
   const microphoneAriaLabel = dictationState === "recording"
     ? t("chat.dictationStop")
@@ -216,8 +240,7 @@ export const ChatComposer = (props: Props): ReactElement => {
     if (!event.nativeEvent.isComposing && isMentionPopoverOpen && mentionKey !== null) {
       if (event.key === "Escape") {
         event.preventDefault();
-        setDismissedMentionKey(mentionKey);
-        setMentionHighlight(null);
+        dismissMention();
         return;
       }
 
@@ -318,60 +341,62 @@ export const ChatComposer = (props: Props): ReactElement => {
     void onSend();
   };
 
-  return (
-    <div className={styles.inputArea}>
-      {pendingAttachments.length > 0 && (
-        <div className={styles.attachmentPreview}>
-          {pendingAttachments.map((attachment, index) => (
-            <span
-              key={`${attachment.fileName}-${index}`}
-              className={styles.attachmentChip}
-              data-testid="chat-prepared-attachment"
-              data-media-type={attachment.mediaType}
-              data-encoded-size={getPendingAttachmentDecodedByteLength(attachment)}
-            >
-              {attachment.fileName}
-              <button
-                type="button"
-                className={styles.attachmentRemove}
-                onClick={() => onRemoveAttachment(index)}
+  const composerContent: ReactElement = (
+    <div className={styles.composerContent}>
+      <div className={styles.attachmentDetails}>
+        {pendingAttachments.length > 0 && (
+          <div className={styles.attachmentPreview}>
+            {pendingAttachments.map((attachment, index) => (
+              <span
+                key={`${attachment.fileName}-${index}`}
+                className={styles.attachmentChip}
+                data-testid="chat-prepared-attachment"
+                data-media-type={attachment.mediaType}
+                data-encoded-size={getPendingAttachmentDecodedByteLength(attachment)}
               >
-                &times;
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      {isAttachmentProcessing && (
-        <div
-          className={styles.attachmentProcessing}
-          data-testid="chat-attachment-processing"
-          role="status"
-          aria-live="polite"
-        >
-          {attachmentProgress === null
-            ? t("chat.attachmentProcessing")
-            : t("chat.attachmentPdfProgress", {
-              page: attachmentProgress.pageNumber,
-              total: attachmentProgress.totalPages,
-            })}
-        </div>
-      )}
-      {attachmentErrors.length > 0 && (
-        <div className={styles.attachmentErrors}>
-          {attachmentErrors.map((error, index) => (
-            <div
-              key={`${error.fileName}-${index}`}
-              className={styles.attachmentError}
-              data-testid="chat-attachment-error"
-              data-file-name={error.fileName}
-              role="alert"
-            >
-              {error.message}
-            </div>
-          ))}
-        </div>
-      )}
+                {attachment.fileName}
+                <button
+                  type="button"
+                  className={styles.attachmentRemove}
+                  onClick={() => onRemoveAttachment(index)}
+                >
+                  &times;
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {isAttachmentProcessing && (
+          <div
+            className={styles.attachmentProcessing}
+            data-testid="chat-attachment-processing"
+            role="status"
+            aria-live="polite"
+          >
+            {attachmentProgress === null
+              ? t("chat.attachmentProcessing")
+              : t("chat.attachmentPdfProgress", {
+                page: attachmentProgress.pageNumber,
+                total: attachmentProgress.totalPages,
+              })}
+          </div>
+        )}
+        {attachmentErrors.length > 0 && (
+          <div className={styles.attachmentErrors}>
+            {attachmentErrors.map((error, index) => (
+              <div
+                key={`${error.fileName}-${index}`}
+                className={styles.attachmentError}
+                data-testid="chat-attachment-error"
+                data-file-name={error.fileName}
+                role="alert"
+              >
+                {error.message}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <textarea
         ref={textareaRef}
         data-testid="chat-composer-input"
@@ -402,6 +427,7 @@ export const ChatComposer = (props: Props): ReactElement => {
         listLabel={t("chat.accountMentionsListLabel")}
         loadingLabel={t("chat.accountMentionsLoading")}
         unavailableLabel={t("chat.accountMentionsUnavailable")}
+        onAnchorClipped={dismissMention}
         onSelect={selectMention}
       />
       {dictationStatusLabel !== null && (
@@ -410,7 +436,7 @@ export const ChatComposer = (props: Props): ReactElement => {
         </div>
       )}
       <div className={styles.controls}>
-        <span className={styles.modelLabel}>{CHAT_MODEL_BADGE_LABEL}</span>
+        <span className={styles.modelLabel} title={CHAT_MODEL_BADGE_LABEL}>{CHAT_MODEL_BADGE_LABEL}</span>
         <div className={styles.controlsRight}>
           <button
             type="button"
@@ -450,4 +476,6 @@ export const ChatComposer = (props: Props): ReactElement => {
       </div>
     </div>
   );
+
+  return <div ref={inputAreaRef} className={styles.inputArea}>{composerContent}</div>;
 };

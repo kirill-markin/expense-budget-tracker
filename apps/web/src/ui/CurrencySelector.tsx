@@ -7,7 +7,7 @@ type Props = Readonly<{
   titleText: string;
 }>;
 
-/** Display-only currency label in the nav bar. Currency is changed via /settings. */
+/** Display-only currency label in the top bar. Currency is changed via /settings. */
 export const CurrencySelector = (props: Props): ReactElement => {
   const { initialCurrency, titleText } = props;
 

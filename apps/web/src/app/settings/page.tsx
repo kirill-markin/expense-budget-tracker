@@ -155,7 +155,7 @@ export default async function SettingsPage() {
   }
 
   return (
-    <main className="container">
+    <main className={cn("container", settingsStyles.page)}>
       <section className="panel">
         <h1 className="title">{t(locale, "settings.userSettings")}</h1>
         <Suspense fallback={<LoadingIndicator />}>

@@ -68,3 +68,9 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+@media (max-width: 1099px) {
+  .wrap {
+    padding-inline-end: 16px;
+  }
+}

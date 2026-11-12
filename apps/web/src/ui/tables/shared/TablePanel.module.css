@@ -92,15 +92,39 @@
   padding: 0;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1099px), (pointer: coarse) {
+  .panelHeader {
+    gap: 12px;
+  }
+
+  .panelHeaderActions {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .panelHeader > :first-child {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 767px) {
   .sidePanel {
     width: 100% !important;
     max-width: 100% !important;
     min-width: 0;
     inset-inline-start: 0;
+    border-inline-start: none;
   }
 
   .panelResizeHandle {
     display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .panelCloseButton {
+    min-inline-size: var(--touch-target);
+    min-block-size: var(--touch-target);
   }
 }

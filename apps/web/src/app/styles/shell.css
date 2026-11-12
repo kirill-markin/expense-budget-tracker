@@ -31,10 +31,19 @@
   text-decoration: none;
 }
 
-.topbar-actions {
+.topbar-controls {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.topbar-end,
+.header-mode {
+  display: contents;
+}
+
+.header-mode-settings {
+  display: none;
 }
 
 .brand-short {
@@ -59,6 +68,20 @@
   font-size: 20px;
   font-weight: 650;
   letter-spacing: 0.2px;
+}
+
+/* The active nav tab already names these pages on phones and touch tablets; keep the heading for screen readers. */
+@media (max-width: 767px), (pointer: coarse) {
+  .page-title {
+    position: absolute;
+    margin: 0;
+    padding: 0;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .subtitle {
@@ -116,7 +139,253 @@
   border-top: 1px solid var(--panel-border);
 }
 
-@media (max-width: 768px) {
+.nav a[aria-current="page"] {
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.filtered-banner .filtered-banner-settings {
+  font-size: 11px;
+  font-family: inherit;
+  padding: 1px 8px;
+  margin-inline-start: 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.filtered-banner .filtered-banner-settings:hover {
+  position: relative;
+  z-index: 1;
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.filtered-banner-settings-icon {
+  display: none;
+}
+
+/* The width-only fit ladder is shared by touch and the compact fine-pointer header. */
+@media (max-width: 1099px), (pointer: coarse) {
+  .header-sticky {
+    --mode-strip-color: var(--muted);
+    --mode-strip-active-color: var(--text);
+    --header-row-bg: var(--subtle-bg);
+  }
+
+  .header-sticky:has(> .demo-banner, > .filtered-banner) {
+    --mode-strip-color: var(--bg);
+    --mode-strip-active-color: var(--bg);
+    --header-row-bg: var(--accent);
+  }
+
+  /* Banner status remains available to screen readers; the switch names the state. */
+  .header-sticky > .demo-banner {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .header-sticky > .filtered-banner .filtered-banner-settings {
+    display: none;
+  }
+
+  .topbar {
+    display: grid;
+    /* Safe first render before the content-width observer chooses a single row. */
+    grid-template-areas: "mode mode" "brand end";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 0;
+    min-block-size: var(--touch-target);
+    padding-block: 4px;
+    background: var(--header-row-bg);
+  }
+
+  .topbar-brand {
+    grid-area: brand;
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    inline-size: max-content;
+    min-block-size: var(--touch-target);
+    color: var(--mode-strip-color);
+    white-space: nowrap;
+  }
+
+  .topbar-brand:hover {
+    color: var(--mode-strip-active-color);
+  }
+
+  .topbar-controls {
+    display: contents;
+  }
+
+  .topbar-end {
+    grid-area: end;
+    justify-self: end;
+    display: flex;
+    inline-size: max-content;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header-mode {
+    grid-area: mode;
+    justify-self: center;
+    display: flex;
+    position: relative;
+    inline-size: max-content;
+    --header-settings-space: 0px;
+  }
+
+  .header-mode:has(.header-mode-settings) {
+    --header-settings-space: calc(var(--touch-target) + 4px);
+  }
+
+  .header-mode-settings {
+    display: inline-flex;
+    position: absolute;
+    inset-inline-start: calc(100% + 4px);
+    inset-block-start: 0;
+    align-items: center;
+    justify-content: center;
+    inline-size: var(--touch-target);
+    block-size: var(--touch-target);
+    color: var(--mode-strip-active-color);
+  }
+
+  .header-mode-settings:hover {
+    color: var(--mode-strip-active-color);
+  }
+
+  .header-mode-settings .filtered-banner-settings-label {
+    display: none;
+  }
+
+  .header-mode-settings .filtered-banner-settings-icon {
+    display: block;
+  }
+
+  .topbar-brand:focus-visible,
+  .header-mode-settings:focus-visible,
+  .topbar-end > :focus-visible,
+  .topbar-end > div > button:focus-visible {
+    outline-color: var(--mode-strip-active-color);
+    outline-offset: -2px;
+  }
+
+  .topbar[data-header-layout="centered"] {
+    grid-template-areas: "brand mode end";
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .topbar[data-header-layout="compact"] {
+    grid-template-areas: "brand mode end";
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+  }
+
+  .topbar[data-header-layout="brandless"] {
+    grid-template-areas: "mode end";
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .topbar[data-header-layout="brandless"] .topbar-brand {
+    position: absolute;
+    visibility: hidden;
+  }
+
+  .topbar[data-header-layout="compact"] .header-mode,
+  .topbar[data-header-layout="brandless"] .header-mode {
+    margin-inline-end: var(--header-settings-space);
+  }
+}
+
+@media (width < 768px) {
+  .topbar {
+    padding-inline: 8px;
+    column-gap: 4px;
+  }
+
+  .topbar-end {
+    gap: 4px;
+  }
+
+  .nav-scroll {
+    --nav-fade-direction: to right;
+    position: relative;
+  }
+
+  [dir="rtl"] .nav-scroll {
+    --nav-fade-direction: to left;
+  }
+
+  .nav-scroll::before,
+  .nav-scroll::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inline-size: 24px;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0;
+  }
+
+  .nav-scroll::before {
+    inset-inline-start: 0;
+    background: linear-gradient(var(--nav-fade-direction), var(--bg), transparent);
+  }
+
+  .nav-scroll::after {
+    inset-inline-end: 0;
+    background: linear-gradient(var(--nav-fade-direction), transparent, var(--bg));
+  }
+
+  .nav-scroll[data-scroll-start="true"]::before,
+  .nav-scroll[data-scroll-end="true"]::after {
+    opacity: 1;
+  }
+
+  .nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+    scroll-padding-inline: 24px;
+    scrollbar-width: none;
+    gap: 4px;
+    padding: 0 12px;
+    min-block-size: var(--touch-target);
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    align-self: stretch;
+    scroll-snap-align: center;
+    padding-inline: 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .nav a[aria-current="page"] {
+    background: var(--text);
+    color: var(--bg);
+    text-decoration: none;
+  }
+
   .demo-banner-detail {
     display: none;
   }
@@ -133,7 +402,47 @@
     padding-inline-start: 0;
   }
 
-  .panel > * {
+  .panel > :not([data-bleed]) {
     padding-inline-start: 16px;
+  }
+
+  .panel > [data-bleed] {
+    padding-inline: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .nav a {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: var(--touch-target);
+  }
+}
+
+@media (max-width: 767px) {
+  body {
+    block-size: 100dvh;
+  }
+}
+
+@media (pointer: coarse) {
+  .link-list a {
+    display: flex;
+    align-items: center;
+    min-block-size: var(--touch-target);
+  }
+
+  html[data-keyboard-open] .header-sticky {
+    display: none;
+  }
+
+  html[data-keyboard-open] body {
+    block-size: var(--chat-viewport-height);
+  }
+
+  html[data-chat-viewport-overlay] body {
+    position: fixed;
+    inset-block-start: var(--chat-viewport-offset-top);
+    inline-size: 100%;
   }
 }

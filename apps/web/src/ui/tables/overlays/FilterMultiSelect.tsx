@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useCellOverlayPosition } from "./useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 import filterStyles from "@/ui/FilterControls.module.css";
 
@@ -156,7 +157,7 @@ const FilterMultiSelectPopover = (props: PopoverProps): ReactElement => {
     return [...selected, ...unselected];
   }, [options, search, selectedSet]);
 
-  const popoverStyle = useMemo((): CSSProperties => {
+  const desktopStyle = useMemo((): CSSProperties => {
     const width = Math.min(Math.max(rect.width, FILTER_POPOVER_MIN_WIDTH), FILTER_POPOVER_MAX_WIDTH);
     const maxLeft = window.innerWidth - width - FILTER_POPOVER_VIEWPORT_GAP;
     const left = Math.max(FILTER_POPOVER_VIEWPORT_GAP, Math.min(rect.left, maxLeft));
@@ -167,6 +168,8 @@ const FilterMultiSelectPopover = (props: PopoverProps): ReactElement => {
       maxHeight: Math.min(360, window.innerHeight - rect.top - FILTER_POPOVER_VIEWPORT_GAP),
     };
   }, [rect]);
+  const responsiveStyle = useCellOverlayPosition(rect, FILTER_POPOVER_MIN_WIDTH, 360, FILTER_POPOVER_MAX_WIDTH);
+  const popoverStyle = responsiveStyle ?? desktopStyle;
 
   useEffect(() => {
     if (searchRef.current !== null) {

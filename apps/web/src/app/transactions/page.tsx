@@ -58,7 +58,7 @@ export default async function TransactionsDashboardPage() {
   return (
     <main className="container">
       <section className="panel">
-        <h1 className="title">{t(locale, "nav.transactions")}</h1>
+        <h1 className="title page-title">{t(locale, "nav.transactions")}</h1>
 
         <Suspense fallback={<LoadingIndicator />}>
           <TransactionsData />

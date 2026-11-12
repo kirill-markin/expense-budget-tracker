@@ -2,6 +2,7 @@ import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useCellOverlayPosition } from "./useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 
 import styles from "@/ui/tables/shared/TableUi.module.css";
@@ -34,7 +35,8 @@ export const CellTextareaOverlay = (props: Props): ReactElement => {
   const closedRef = useRef<boolean>(false);
 
   const filteredHints = filterHints(hints, inputValue);
-  const position = resolveOverlayPosition(rect);
+  const responsivePosition = useCellOverlayPosition(rect, 420, 400);
+  const position = responsivePosition ?? resolveOverlayPosition(rect);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -92,12 +94,7 @@ export const CellTextareaOverlay = (props: Props): ReactElement => {
     <div
       ref={overlayRef}
       className={styles.textareaOverlay}
-      style={{
-        top: position.top,
-        left: position.left,
-        width: position.width,
-        maxHeight: position.maxHeight,
-      }}
+      style={position}
       onBlur={handleBlur}
       onMouseDown={stopOverlayMouseEvent}
       onClick={stopOverlayMouseEvent}

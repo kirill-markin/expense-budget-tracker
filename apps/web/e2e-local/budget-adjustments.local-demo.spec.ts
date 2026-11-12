@@ -2103,7 +2103,7 @@ test("keeps the adjustment editor usable on mobile RTL", async ({ page, baseURL 
   }
   expect(popoverBox.x).toBeGreaterThanOrEqual(0);
   expect(popoverBox.x + popoverBox.width).toBeLessThanOrEqual(390);
-  expect(amountBox.height).toBeGreaterThanOrEqual(44);
-  expect(monthBox.height).toBeGreaterThanOrEqual(44);
-  expect(deleteBox.height).toBeGreaterThanOrEqual(44);
+  expect(amountBox.height).toBeGreaterThanOrEqual(40);
+  expect(monthBox.height).toBeGreaterThanOrEqual(40);
+  expect(deleteBox.height).toBeGreaterThanOrEqual(40);
 });

@@ -413,6 +413,19 @@ export const ChatTranscript = (props: Props): ReactElement => {
   }, []);
 
   useEffect(() => {
+    const element = messagesRef.current;
+    if (element === null) return;
+
+    const observer = new ResizeObserver(() => {
+      if (!hasPositionedHistoryRef.current || !autoScrollPinnedRef.current) return;
+      scrollToBottom("instant");
+      previousScrollTopRef.current = element.scrollTop;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
+
+  useEffect(() => {
     if (
       !isDisplayReady
       || !hasPositionedHistoryRef.current

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useCellOverlayPosition } from "@/ui/tables/overlays/useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 
 import type { FilterMultiSelectOption } from "@/ui/tables/shared/filterMultiSelectOption";
@@ -334,12 +335,12 @@ export const TransactionsFiltersOverlay = (props: Props): ReactElement | null =>
     };
   }, [onClose, openSection, triggerRef]);
 
-  const overlayStyle = useMemo((): CSSProperties | null => {
-    if (rect === null) {
-      return null;
-    }
-    return getOverlayStyle(rect);
-  }, [rect]);
+  const anchorRect = useMemo(() => rect === null ? null : ({
+    ...rect,
+    top: rect.top + rect.height + OVERLAY_OFFSET,
+  }), [rect]);
+  const responsiveStyle = useCellOverlayPosition(anchorRect, OVERLAY_MIN_WIDTH, 540, OVERLAY_MAX_WIDTH);
+  const overlayStyle = responsiveStyle ?? (rect === null ? undefined : getOverlayStyle(rect));
 
   const activeFilterGroupCount = getActiveFilterGroupCount(values);
 
@@ -387,7 +388,7 @@ export const TransactionsFiltersOverlay = (props: Props): ReactElement | null =>
     });
   };
 
-  if (overlayStyle === null) {
+  if (overlayStyle === undefined) {
     return null;
   }
 

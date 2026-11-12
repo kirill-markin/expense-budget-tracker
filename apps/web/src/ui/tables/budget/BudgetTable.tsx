@@ -21,10 +21,7 @@ import {
 import { buildBudgetValueColumns } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 
-const BUDGET_VALUE_COLUMN_WIDTH_PX = 90;
-
 type BudgetTableGeometryStyle = CSSProperties & Readonly<{
-  "--budget-value-column-width": string;
   "--budget-values-inline-size": string;
 }>;
 
@@ -39,9 +36,9 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
     controller.currentMonth,
     controller.plansMode,
   );
+  const yearColumnCount = valueColumns.filter((column) => column.isYearTotal).length;
   const tableGeometryStyle: BudgetTableGeometryStyle = {
-    "--budget-value-column-width": `${BUDGET_VALUE_COLUMN_WIDTH_PX}px`,
-    "--budget-values-inline-size": `${valueColumns.length * BUDGET_VALUE_COLUMN_WIDTH_PX}px`,
+    "--budget-values-inline-size": `calc(${valueColumns.length - yearColumnCount} * var(--budget-value-column-width) + ${yearColumnCount} * var(--budget-year-column-width))`,
   };
 
   if (controller.months.length === 0) {
@@ -146,6 +143,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
       </div>
       <div
         className={styles.scroll}
+        data-bleed
         data-testid="budget-table-scroll"
         ref={controller.scrollRef}
       >
@@ -153,7 +151,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
           <colgroup>
             <col className={styles.categoryColumn} />
             {valueColumns.map((column) => (
-              <col key={column.key} className={styles.valueColumn} />
+              <col key={column.key} className={column.isYearTotal ? styles.yearValueColumn : styles.valueColumn} />
             ))}
           </colgroup>
           <BudgetTableHeader
