@@ -438,6 +438,17 @@ const logInRunCompaction = (
   });
 };
 
+/**
+ * The text of a completed response's `output_text` message parts. The SDK's
+ * `output_text` convenience field is absent on a response taken from a
+ * `response.completed` stream event, so it is never read.
+ */
+const getResponseMessageText = (response: OpenAI.Responses.Response): string =>
+  response.output
+    .flatMap((item) => (item.type === "message" ? item.content : []))
+    .flatMap((part) => (part.type === "output_text" ? [part.text] : []))
+    .join("");
+
 /** Ends the turn with one tool-free call that sums up after a run limit stops it. */
 const completeRunLimitSummaryTurn = async (
   reason: ChatRunLimitReason,
@@ -482,7 +493,7 @@ const completeRunLimitSummaryTurn = async (
   logInRunCompaction(log, params, summaryCallIndex, summaryCall);
 
   const replayMeasurement = buildReplayMeasurement(summaryCall, replayedMessages);
-  const finalResponseText = summaryCall.finalResponse.output_text.trim();
+  const finalResponseText = getResponseMessageText(summaryCall.finalResponse).trim();
   const finalAssistantText = finalResponseText.length > 0
     ? finalResponseText
     : summaryCall.streamedText.trim();

@@ -160,12 +160,23 @@ const createFunctionCall = (
 const FINAL_RESPONSE_INPUT_TOKENS = 1_200;
 const FINAL_RESPONSE_OUTPUT_TOKENS = 300;
 
+/**
+ * Wire shape of a `response.completed` payload: text lives only in `output`
+ * message parts, with no SDK `output_text` convenience field.
+ */
 const createFinalResponse = (
   outputText: string,
 ): OpenAI.Responses.Response =>
   ({
-    output_text: outputText,
-    output: [],
+    output: outputText.length === 0
+      ? []
+      : [{
+        type: "message",
+        id: "msg-final",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: outputText, annotations: [] }],
+      }],
     usage: {
       input_tokens: FINAL_RESPONSE_INPUT_TOKENS,
       input_tokens_details: { cached_tokens: 0 },
@@ -186,7 +197,6 @@ const createCompactedResponse = (
   inputTokens: number,
 ): OpenAI.Responses.Response =>
   ({
-    output_text: "",
     output: [],
     usage: {
       input_tokens: inputTokens,
