@@ -1,6 +1,7 @@
 import type { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { ChatModelRoutingLogEvent } from "@/server/chat/modelRouting";
 import type { ChatHistoryBoundary } from "@/server/chat/openai/responses/history";
+import type { ModelCallTimeoutLimit } from "@/server/chat/openai/responses/modelCall";
 
 type ChatVendor = "openai";
 type ToolStatus = "started" | "completed" | "error";
@@ -22,9 +23,16 @@ type ChatOpenAIErrorContextFields = Readonly<{
   openaiRequestId?: string;
   causeCode?: string;
 }>;
+type ChatModelCallTimeoutFields = Readonly<{
+  timeoutLimit?: ModelCallTimeoutLimit;
+  timeoutMs?: number;
+  msSinceLastStreamEvent?: number;
+  streamEventCount?: number;
+}>;
 type TaskProtectionAction =
   | "task_protection_enabled"
   | "task_protection_enable_failed"
+  | "task_protection_renewed"
   | "task_protection_disabled"
   | "task_protection_disable_failed";
 type ChatAttemptMetadata = Readonly<{
@@ -101,6 +109,12 @@ type ChatEvent =
   }>
   | Readonly<{
     domain: "chat";
+    action: "task_protection_renewal_ceiling_reached";
+    activeProtectedRunCount: number;
+    protectionWindowAgeMs: number;
+  }>
+  | Readonly<{
+    domain: "chat";
     action: "response";
     vendor: ChatVendor;
     requestId: string;
@@ -124,6 +138,15 @@ type ChatEvent =
     requestId: string;
     sessionId: string;
     toolEnabledModelCallLimit: number;
+    callIndex: number;
+  }>
+  | Readonly<{
+    domain: "chat";
+    action: "turn_time_limit_reached";
+    vendor: ChatVendor;
+    requestId: string;
+    sessionId: string;
+    elapsedMs: number;
     callIndex: number;
   }>
   | (Readonly<{
@@ -322,7 +345,7 @@ type ChatEvent =
     messageCount?: number;
     hasAttachments?: boolean;
     attachmentFileNames?: ReadonlyArray<string>;
-  } & ChatAttemptMetadata> & ChatOpenAIErrorContextFields);
+  } & ChatAttemptMetadata> & ChatOpenAIErrorContextFields & ChatModelCallTimeoutFields);
 
 /**
  * The workspace of a chat request or run stopped being accessible to the user,
@@ -711,6 +734,24 @@ type AuthEvent =
  */
 type DbEvent = Readonly<{ domain: "db"; action: "pool_error"; error: string }>;
 
+/**
+ * A span could not be started, or the exporter could not store spans in
+ * llm_telemetry_spans. Spans are best-effort data and a failure is dropped
+ * without touching any chat, so none of these actions is in the `error`
+ * family that the CloudWatch web error alarm pages on.
+ */
+type TelemetryEvent =
+  | Readonly<{ domain: "telemetry"; action: "span_export_failed"; rowCount: number; error: string }>
+  | Readonly<{
+    domain: "telemetry";
+    action: "spans_skipped";
+    spanCount: number;
+    missingAttributes: ReadonlyArray<string>;
+    spanNames: ReadonlyArray<string>;
+  }>
+  | Readonly<{ domain: "telemetry"; action: "pool_error"; error: string }>
+  | Readonly<{ domain: "telemetry"; action: "span_start_failed"; spanName: string; requestId: string; error: string }>;
+
 type LogEvent =
   | ChatEvent
   | ChatWorkspaceUnavailableEvent
@@ -725,7 +766,8 @@ type LogEvent =
   | ApiEvent
   | SqlApiEvent
   | AuthEvent
-  | DbEvent;
+  | DbEvent
+  | TelemetryEvent;
 
 export const log = (event: LogEvent): void => {
   console.log(JSON.stringify(event));

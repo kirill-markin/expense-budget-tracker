@@ -106,7 +106,7 @@ test("transcription accepts and propagates a 200-character session id", async ()
   assert.equal(telemetryContexts[0]?.sessionId, sessionId);
 });
 
-test("transcription rejects session ids longer than the Langfuse limit", async (): Promise<void> => {
+test("transcription rejects session ids longer than the session id limit", async (): Promise<void> => {
   let providerCalled = false;
   const response = await transcribeChatRouteWithDeps(
     createTranscriptionRequest(),

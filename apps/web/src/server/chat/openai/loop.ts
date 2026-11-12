@@ -1,5 +1,4 @@
 import type OpenAI from "openai";
-import type { LangfuseObservation } from "@langfuse/tracing";
 import type {
   ChatEffectiveModelId,
   ChatEffectiveReasoningEffort,
@@ -16,7 +15,7 @@ import {
   buildChatTurnFileContext,
   listChatImageReferences,
 } from "@/server/chatFiles/sessionContext";
-import { getObservedOpenAIClient } from "@/server/chat/openai/client";
+import { getOpenAIClient } from "@/server/chat/openai/client";
 import {
   buildChatFileViewReplayItem,
   findLatestCompactionItemIndex,
@@ -51,6 +50,10 @@ import type { ChatStreamEvent, UnconvertedContentPart } from "@/server/chat/type
 import { log as serverLog } from "@/server/logger";
 
 export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 30;
+// Checked only between calls: a model or tool call already running is never cut
+// short by it.
+export const CHAT_RUN_MAX_DURATION_MS = 60 * 60 * 1000;
+const CHAT_RUN_MAX_DURATION_MINUTES = CHAT_RUN_MAX_DURATION_MS / 60_000;
 const TOOL_LIMIT_FALLBACK_ITEM_ID = "tool-limit-summary";
 
 const MODEL_CALL_RETRY_BACKOFF_MS: ReadonlyArray<number> = [5_000, 20_000];
@@ -102,13 +105,16 @@ type OpenAILoopDependencies = Readonly<{
   ingestInlineChatAttachments: typeof ingestInlineChatAttachments;
   runChatFileDerivativesPass: typeof runChatFileDerivativesPass;
   buildChatTurnFileContext: typeof buildChatTurnFileContext;
-  getObservedOpenAIClient: typeof getObservedOpenAIClient;
+  getOpenAIClient: typeof getOpenAIClient;
   runOneModelCall: typeof runOneModelCall;
   runOneToolCall: typeof runOneToolCall;
   getModelCallRetryBackoffMs: () => ReadonlyArray<number>;
   sleep: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
+  now: () => number;
   log: typeof serverLog;
 }>;
+
+type ChatRunLimitReason = "tool_call_limit" | "time_limit";
 
 export type OpenAILoopCompletion = Readonly<{
   openaiItems: ReadonlyArray<StoredOpenAIReplayItem>;
@@ -118,7 +124,7 @@ export type OpenAILoopCompletion = Readonly<{
    * character estimate.
    *
    * Absent when the stored items are not what that call sent, which is the
-   * tool-limit fallback below: the turn is then sized by estimate, like one that
+   * run-limit fallback below: the turn is then sized by estimate, like one that
    * errored or was cancelled.
    */
   replayMeasurement?: ChatHistoryMeasurement;
@@ -143,7 +149,7 @@ export type StartOpenAILoopParams = Readonly<{
   /** Demo-mode state of the request that started this run, captured there. */
   isDemoMode: boolean;
   signal?: AbortSignal;
-  rootObservation: LangfuseObservation | null;
+  beforeToolDispatch: () => Promise<void>;
 }>;
 
 const toFunctionCallOutputInputItem = (
@@ -180,11 +186,12 @@ const DEFAULT_OPENAI_LOOP_DEPENDENCIES: OpenAILoopDependencies = {
   ingestInlineChatAttachments,
   runChatFileDerivativesPass,
   buildChatTurnFileContext,
-  getObservedOpenAIClient,
+  getOpenAIClient,
   runOneModelCall,
   runOneToolCall,
   getModelCallRetryBackoffMs: (): ReadonlyArray<number> => MODEL_CALL_RETRY_BACKOFF_MS,
   sleep: sleepWithAbort,
+  now: Date.now,
   log: serverLog,
 };
 
@@ -200,13 +207,20 @@ const createInputTextMessage = (
   }],
 });
 
-const buildToolLimitSummaryInstruction = (
-  toolEnabledModelCallLimit: number,
+const describeReachedRunLimit = (
+  reason: ChatRunLimitReason,
+): string =>
+  reason === "tool_call_limit"
+    ? `The tool-enabled model call limit for this turn (${String(CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS)}) has been reached.`
+    : `The time limit for this turn (${String(CHAT_RUN_MAX_DURATION_MINUTES)} minutes) has been reached.`;
+
+const buildRunLimitSummaryInstruction = (
+  reason: ChatRunLimitReason,
 ): OpenAI.Responses.ResponseInputItem.Message =>
   createInputTextMessage(
     "system",
     [
-      `The tool-enabled model call limit for this turn (${String(toolEnabledModelCallLimit)}) has been reached.`,
+      describeReachedRunLimit(reason),
       "Do not call any tools in this response.",
       "Briefly summarize what you already completed.",
       "Explicitly name the checkpoint that is fully completed.",
@@ -217,12 +231,17 @@ const buildToolLimitSummaryInstruction = (
     ].join(" "),
   );
 
-const buildToolLimitFallbackText = (
+const buildRunLimitFallbackText = (
   locale: SupportedLocale,
+  reason: ChatRunLimitReason,
 ): string =>
-  ti(locale, "chat.toolCallLimitReachedContinue", {
-    limit: CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
-  });
+  reason === "tool_call_limit"
+    ? ti(locale, "chat.toolCallLimitReachedContinue", {
+      limit: CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
+    })
+    : ti(locale, "chat.turnTimeLimitReachedContinue", {
+      minutes: CHAT_RUN_MAX_DURATION_MINUTES,
+    });
 
 const createAssistantReplayMessage = (
   text: string,
@@ -291,12 +310,25 @@ type RunOneModelCallWithRetryArgs = Readonly<{
   request: OpenAIResponsesRequest;
   promptCacheKey: string;
   callIndex: number;
+  replayedMessages: number;
 }>;
 
 const runOneModelCallWithRetry = async (
   args: RunOneModelCallWithRetryArgs,
 ): Promise<ModelCallResult> => {
-  const { runOneModelCallFn, backoffMs, sleep, log, client, params, emitEvent, request, promptCacheKey, callIndex } = args;
+  const {
+    runOneModelCallFn,
+    backoffMs,
+    sleep,
+    log,
+    client,
+    params,
+    emitEvent,
+    request,
+    promptCacheKey,
+    callIndex,
+    replayedMessages,
+  } = args;
   const maxAttempts = backoffMs.length + 1;
   for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
     const { trackingEmit, hasEmitted } = wrapEmitEventWithTracking(emitEvent);
@@ -308,6 +340,8 @@ const runOneModelCallWithRetry = async (
         request,
         promptCacheKey,
         callIndex,
+        attempt,
+        replayedMessages,
       );
     } catch (error) {
       const classification = classifyOpenAITransientError(error);
@@ -349,6 +383,8 @@ const runOneModelCallWithRetry = async (
     request,
     promptCacheKey,
     callIndex,
+    maxAttempts,
+    replayedMessages,
   );
 };
 
@@ -402,7 +438,10 @@ const logInRunCompaction = (
   });
 };
 
-const completeToolLimitSummaryTurn = async (
+/** Ends the turn with one tool-free call that sums up after a run limit stops it. */
+const completeRunLimitSummaryTurn = async (
+  reason: ChatRunLimitReason,
+  summaryCallIndex: number,
   params: StartOpenAILoopParams,
   emitEvent: OpenAILoopEventHandler,
   runOneModelCallFn: typeof runOneModelCall,
@@ -415,17 +454,6 @@ const completeToolLimitSummaryTurn = async (
   continuationItems: Array<StoredOpenAIReplayItem>,
   promptCacheKey: string,
 ): Promise<OpenAILoopCompletion> => {
-  log({
-    domain: "chat",
-    action: "tool_call_limit_reached",
-    vendor: "openai",
-    requestId: params.requestId,
-    sessionId: params.sessionId,
-    toolEnabledModelCallLimit: CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
-    callIndex: CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
-  });
-
-  const summaryCallIndex = CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS + 1;
   const replayedMessages = selectReplayedMessages(baseReplayedMessages, continuationItems);
   const summaryCall = await runOneModelCallWithRetry({
     runOneModelCallFn,
@@ -442,12 +470,13 @@ const completeToolLimitSummaryTurn = async (
       params.sessionId,
       params.timezone,
       [],
-      [buildToolLimitSummaryInstruction(CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS)],
+      [buildRunLimitSummaryInstruction(reason)],
       params.model,
       params.reasoningEffort,
     ),
     promptCacheKey,
     callIndex: summaryCallIndex,
+    replayedMessages,
   });
 
   logInRunCompaction(log, params, summaryCallIndex, summaryCall);
@@ -469,7 +498,7 @@ const completeToolLimitSummaryTurn = async (
     };
   }
 
-  const fallbackText = buildToolLimitFallbackText(params.locale);
+  const fallbackText = buildRunLimitFallbackText(params.locale, reason);
   // The summary call's own answer is unusable here, but a compaction item it
   // returned is the only replayable form of the context it absorbed, so the
   // next turn still needs it. Its unanswered function calls are left out: this
@@ -496,7 +525,8 @@ const runLoopWithDeps = async (
   emitEvent: OpenAILoopEventHandler,
   dependencies: OpenAILoopDependencies,
 ): Promise<OpenAILoopCompletion> => {
-  const client = dependencies.getObservedOpenAIClient();
+  const startedAt = dependencies.now();
+  const client = dependencies.getOpenAIClient();
   // Before the conversions, because the files this turn arrived with are among
   // the ones they convert. Both routes reach the loop and only the loop, and a
   // turn reaches it once, so this is also the one place an attachment is stored
@@ -590,6 +620,7 @@ const runLoopWithDeps = async (
       ),
       promptCacheKey,
       callIndex,
+      replayedMessages,
     });
 
     continuationItems.push(...modelCall.replayItems);
@@ -605,6 +636,9 @@ const runLoopWithDeps = async (
 
     let toolStates = modelCall.toolStates;
     for (const functionCall of modelCall.functionCalls) {
+      params.signal?.throwIfAborted();
+      await params.beforeToolDispatch();
+      params.signal?.throwIfAborted();
       const output = await dependencies.runOneToolCall({
         item: functionCall,
         requestId: params.requestId,
@@ -613,7 +647,6 @@ const runLoopWithDeps = async (
         sessionId: params.sessionId,
         turnId: params.turnId,
         isDemoMode: params.isDemoMode,
-        rootObservation: params.rootObservation,
       });
       const update = applyToolCallOutput(
         toolStates,
@@ -639,7 +672,46 @@ const runLoopWithDeps = async (
     }
 
     if (callIndex === CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS) {
-      return completeToolLimitSummaryTurn(
+      dependencies.log({
+        domain: "chat",
+        action: "tool_call_limit_reached",
+        vendor: "openai",
+        requestId: params.requestId,
+        sessionId: params.sessionId,
+        toolEnabledModelCallLimit: CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS,
+        callIndex,
+      });
+      return completeRunLimitSummaryTurn(
+        "tool_call_limit",
+        callIndex + 1,
+        params,
+        emitEvent,
+        dependencies.runOneModelCall,
+        retryBackoffMs,
+        dependencies.sleep,
+        dependencies.log,
+        client,
+        baseInput,
+        baseReplayedMessages,
+        continuationItems,
+        promptCacheKey,
+      );
+    }
+
+    const elapsedMs = dependencies.now() - startedAt;
+    if (elapsedMs >= CHAT_RUN_MAX_DURATION_MS) {
+      dependencies.log({
+        domain: "chat",
+        action: "turn_time_limit_reached",
+        vendor: "openai",
+        requestId: params.requestId,
+        sessionId: params.sessionId,
+        elapsedMs,
+        callIndex,
+      });
+      return completeRunLimitSummaryTurn(
+        "time_limit",
+        callIndex + 1,
         params,
         emitEvent,
         dependencies.runOneModelCall,

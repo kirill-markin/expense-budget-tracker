@@ -61,7 +61,7 @@ MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
 
 - **VPC** with public and private subnets (2 AZs, 1 NAT instance — t4g.small for cost savings)
 - **RDS Postgres 18** (t4g.micro) in private subnet, credentials in Secrets Manager
-- **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key, Langfuse public key, Langfuse secret key
+- **Secrets Manager** — DB credentials (auto-generated), app DB password, OpenAI API key
 - **ECR** — two repositories (`expense-tracker/web`, `expense-tracker/migrate`), images built in CI
 - **ECS Fargate** — web service (0.5 vCPU / 1 GB ARM64, 1–3 tasks, CPU-based auto-scaling with alert on scale-out) + one-off migration task definition
 - **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
@@ -332,7 +332,6 @@ Edit `cdk.context.local.json` with your values:
 | `mcpCertificateArn` | Leave empty until step 5a, then add the public ACM certificate ARN for `mcp.yourdomain.com` |
 | `resendApiKeySecretArn` | Secrets Manager ARN for `expense-tracker/resend-api-key` from step 4 |
 | `resendSenderEmail` | Cognito sender address from step 4, e.g. `no-reply@mail.yourdomain.com` |
-| `langfuseBaseUrl` | Langfuse base URL, defaults to `https://cloud.langfuse.com` |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
 | `originSharedSecret` | Optional. Cloudflare-to-ALB shared secret — leave empty until the Transform Rule exists (see [Origin shared secret](#origin-shared-secret-cloudflare--alb)) |
@@ -379,8 +378,6 @@ The script handles the full first-time deployment:
 4. Runs the migration ECS task
 5. Calls `/api/health` through the ALB DNS name until DB readiness succeeds
 6. Seeds exchange rates
-
-CDK injects the deterministic hash of the exact staged web Docker image asset as `LANGFUSE_RELEASE`. The same asset object supplies the ECS container image, so the release changes with every included image-context input, including included files ignored by Git.
 
 After this one-time bootstrap, subsequent deploys happen automatically via CI/CD on a push to `main` that touches the `paths:` list in `.github/workflows/deploy.yml`; a push touching nothing in that list produces no Deploy run, and `workflow_dispatch` runs the same workflow manually.
 
@@ -449,24 +446,14 @@ The canonical MCP transport is `https://mcp.yourdomain.com/mcp`, and its protect
 1. **Confirm SNS email** — check the `alertEmail` inbox for a message from "AWS Notifications" with subject "AWS Notification - Subscription Confirmation". Click the "Confirm subscription" link inside. Without this, CloudWatch alarm notifications will not be delivered
 2. **Visit your domain** — Email OTP login page appears. Open registration: anyone can sign up with email. Each user gets an isolated workspace via RLS — no shared data between users
 3. **Session encryption key** — CDK auto-generates a cryptographically random 32-byte hex key in Secrets Manager (`expense-tracker/session-encryption-key`). It encrypts the OTP session cookie (Cognito session + email + CSRF token) with AES-256-GCM during the login flow. Rotating this key invalidates only in-flight OTP sessions (users mid-login must request a new code). To rotate: `aws secretsmanager put-secret-value --secret-id expense-tracker/session-encryption-key --secret-string "$(openssl rand -hex 32)" --profile expense-tracker`, then restart the auth ECS service
-4. **Set AI and telemetry secrets (first deploy only)** — the AI chat feature uses OpenAI GPT-5.4 and exports traces to Langfuse Cloud. CDK creates placeholder secrets in AWS Secrets Manager on the first deploy; replace them with real values once:
+4. **Set the AI secret (first deploy only)** — the AI chat feature uses OpenAI GPT-5.4. CDK creates a placeholder secret in AWS Secrets Manager on the first deploy; replace it with the real value once:
    ```bash
    aws secretsmanager put-secret-value \
      --secret-id expense-tracker/openai-api-key \
      --secret-string 'sk-...' \
      --profile expense-tracker
-
-   aws secretsmanager put-secret-value \
-     --secret-id expense-tracker/langfuse-public-key \
-     --secret-string 'pk-lf-...' \
-     --profile expense-tracker
-
-   aws secretsmanager put-secret-value \
-     --secret-id expense-tracker/langfuse-secret-key \
-     --secret-string 'sk-lf-...' \
-     --profile expense-tracker
    ```
-   `langfuseBaseUrl` is injected as a regular ECS environment variable and defaults to `https://cloud.langfuse.com`. CDK injects the exact web Docker asset fingerprint as `LANGFUSE_RELEASE`. Then restart the ECS service to pick up the new values:
+   Then restart the ECS service to pick up the new value:
    ```bash
    aws ecs update-service \
      --cluster <EcsClusterName from output> \
@@ -477,14 +464,9 @@ The canonical MCP transport is `https://mcp.yourdomain.com/mcp`, and its protect
    This is a one-time step. Subsequent deploys reuse the same secret — CDK does not overwrite values that are already set.
    If you are upgrading an existing stack to the app-managed chat runtime, make sure the migration ECS task applies `0032_chat_runtime_local_loop.sql`. That migration drops `openai_conversation_id` and `chat_code_interpreter_containers`, and the new runtime does not support OpenAI Conversations or hosted code interpreter containers.
 
-5. **Verify Langfuse traces** — after the ECS restart, send one real chat message in the web UI and confirm that Langfuse shows:
-   - trace name `chat_turn`
-   - session-scoped grouping by the chat `sessionId`
-   - tags `surface:web-chat`, `runtime:local-loop`, and `vendor:openai`
-   - metadata with `requestId`, `workspaceId`, `model`, `turnIndex`, and `runState`
-   - nested observations for the OpenAI generation and any local tool call, each named after the tool the model called, such as `get_schema` or `sql_query`
+5. **Verify chat telemetry** — after the ECS restart, send one real chat message in the web UI and read its session with [`scripts/admin-read.sh`](../../scripts/admin-read.sh) (see [`docs/admin-reader.md`](../../docs/admin-reader.md)). The turn should show one `invoke_agent web_chat` root span with a `chat <model>` span per model call attempt and an `execute_tool <tool>` span per local tool call, such as `execute_tool sql_query`.
 
-   The production runtime is fully app-managed now: transcript state lives in Postgres, the tool loop runs in the web process, and recovery uses `/api/chat` snapshots instead of provider-managed conversation state. For ongoing operations and troubleshooting, use [`docs/langfuse-operations.md`](../../docs/langfuse-operations.md).
+   The production runtime is fully app-managed: transcript state lives in Postgres, the tool loop runs in the web process, and recovery uses `/api/chat` snapshots instead of provider-managed conversation state. The span model is in [`docs/llm-telemetry.md`](../../docs/llm-telemetry.md).
 
 ## CI/CD (automatic path-filtered deploys)
 
@@ -508,7 +490,6 @@ After first deploy:
    - `CDK_GITHUB_REPO` — GitHub repo (e.g. `user/expense-budget-tracker`)
    - `CDK_RESEND_API_KEY_SECRET_ARN` — Secrets Manager ARN for `expense-tracker/resend-api-key`
    - `CDK_RESEND_SENDER_EMAIL` — `no-reply@mail.yourdomain.com`
-   - `CDK_LANGFUSE_BASE_URL` — optional custom Langfuse base URL; omit it to use `https://cloud.langfuse.com`
 
 3. Every push to `main` that touches the `paths:` list in `.github/workflows/deploy.yml` will automatically:
    - `cdk deploy` — update infrastructure, Lambda, and IAM permissions
@@ -564,7 +545,7 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 
 ## Monitoring
 
-All seven application Lambdas run pinned container images. Their update and
+All eight application Lambdas run pinned container images. Their update and
 read-only verification procedure is in
 [Production Lambda images](../../docs/lambda-image-candidates.md).
 

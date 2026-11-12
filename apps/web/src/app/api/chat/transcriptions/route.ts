@@ -18,7 +18,7 @@ type ChatTranscriptionsRouteDependencies = Readonly<{
   transcribeChatAudioUpload: typeof transcribeChatAudioUpload;
 }>;
 
-const LANGFUSE_SESSION_ID_MAX_LENGTH = 200;
+const TRANSCRIPTION_SESSION_ID_MAX_LENGTH = 200;
 
 const DEFAULT_CHAT_TRANSCRIPTIONS_ROUTE_DEPENDENCIES: ChatTranscriptionsRouteDependencies = {
   ensureUserProvisioned,
@@ -37,10 +37,10 @@ const assertAuthenticatedChatRequest = (request: Request): void => {
 };
 
 const assertSupportedTranscriptionSessionId = (sessionId: string | null): void => {
-  if (sessionId !== null && sessionId.length > LANGFUSE_SESSION_ID_MAX_LENGTH) {
+  if (sessionId !== null && sessionId.length > TRANSCRIPTION_SESSION_ID_MAX_LENGTH) {
     throw new ApiRouteError(
       400,
-      `sessionId must contain at most ${String(LANGFUSE_SESSION_ID_MAX_LENGTH)} characters for audio transcription`,
+      `sessionId must contain at most ${String(TRANSCRIPTION_SESSION_ID_MAX_LENGTH)} characters for audio transcription`,
     );
   }
 };

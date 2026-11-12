@@ -1,6 +1,6 @@
 # Agent Telemetry
 
-How to answer "how many agent tool calls failed, where and why" for the three agent surfaces from the records production already writes. Langfuse owns the chat trace shape and is documented separately in [langfuse-operations.md](langfuse-operations.md).
+How to answer "how many agent tool calls failed, where and why" for the three agent surfaces from the records production already writes. The chat span model is documented separately in [llm-telemetry.md](llm-telemetry.md).
 
 Each surface writes to more than one place, and each place counts a different unit, so always say which one a number came from:
 
@@ -108,7 +108,7 @@ filter domain = "chat" and action = "tool_call"
 | sort failures desc, calls desc
 ```
 
-Individual calls, with everything needed to open the matching request, session, user and Langfuse trace. Add `and status = "error"` to the filter to list only the failures:
+Individual calls, with everything needed to open the matching request, session, user and chat spans in `llm_telemetry_spans`. Add `and status = "error"` to the filter to list only the failures:
 
 ```
 filter domain = "chat" and action = "tool_call"

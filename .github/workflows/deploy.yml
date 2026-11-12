@@ -52,7 +52,7 @@ jobs:
   deploy:
     needs: lambda_images
     runs-on: ubuntu-26.04-arm
-    timeout-minutes: 60
+    timeout-minutes: 90
     outputs:
       domain_name: ${{ vars.CDK_DOMAIN_NAME }}
     steps:
@@ -138,7 +138,6 @@ jobs:
             "mcpCertificateArn": "${{ secrets.CDK_MCP_CERTIFICATE_ARN }}",
             "resendApiKeySecretArn": "${{ vars.CDK_RESEND_API_KEY_SECRET_ARN }}",
             "resendSenderEmail": "${{ vars.CDK_RESEND_SENDER_EMAIL }}",
-            "langfuseBaseUrl": "${{ vars.CDK_LANGFUSE_BASE_URL }}",
             "alertEmail": "${{ vars.CDK_ALERT_EMAIL }}",
             "githubRepo": "${{ vars.CDK_GITHUB_REPO }}",
             "demoEmailDostip": "${{ vars.CDK_DEMO_EMAIL_DOSTIP }}",

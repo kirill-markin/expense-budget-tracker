@@ -1,7 +1,7 @@
 # Production Lambda images
 
-All seven application Lambdas use the architecture-specific AWS Node 24 digests
-pinned in [bases.json](../infra/aws/lambda-images/bases.json): six x86 functions
+All eight application Lambdas use the architecture-specific AWS Node 24 digests
+pinned in [bases.json](../infra/aws/lambda-images/bases.json): seven x86 functions
 and the ARM sandbox. Each function has its own execution role; the email sender
 has decrypt-only access to the retained Cognito encryption key. Construct IDs
 and stack output keys retain their `LambdaImageCandidate` names.
@@ -26,13 +26,16 @@ the just-bash worker/WASM/CPython layout and root dependency overrides.
 
 The packaged probe initializes the real handler and checks the supervisor and
 child interpreter. It uses synthetic fixtures without database writes, FX
-fetches or email sends. Application events cannot enable it.
+fetches or email sends; the admin-reader probe only checks that an invalid
+event is rejected before any database access. Application events cannot enable it.
 
 ## Verify production without configuration changes
 
 Use the matching account's `--profile` and `--region` on every AWS command.
 Read `LambdaImageCandidate<name>Arn` from the stack outputs for `fx`,
-`authorizer`, `api`, `mcp`, `sandbox`, `signup` and `email`.
+`authorizer`, `api`, `mcp`, `admin-reader`, `sandbox`, `signup` and `email`.
+For `admin-reader` the key is `LambdaImageCandidateadminreaderArn`; the admin
+reader itself is described in [admin-reader.md](admin-reader.md).
 
 - Use `aws lambda get-function` and `aws lambda get-function-configuration`
   to confirm `PackageType: Image`, the resolved image digest, architecture,

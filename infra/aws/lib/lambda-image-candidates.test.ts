@@ -44,6 +44,7 @@ test("production image functions have isolated roles, preserved budgets and dire
   const vpc = new ec2.Vpc(stack, "Vpc");
   const appDbSecret = new secretsmanager.Secret(stack, "AppSecret");
   const workerDbSecret = new secretsmanager.Secret(stack, "WorkerSecret");
+  const adminReaderDbSecret = new secretsmanager.Secret(stack, "AdminReaderSecret");
   const resendApiKeySecretArn = "arn:aws:secretsmanager:eu-central-1:123456789012:secret:resend-abcdef";
   const key = customEmailSenderKey(stack, resendApiKeySecretArn);
   const repository = ecr.Repository.fromRepositoryArn(
@@ -58,6 +59,7 @@ test("production image functions have isolated roles, preserved budgets and dire
     }),
     appDbSecret,
     workerDbSecret,
+    adminReaderDbSecret,
     chatFilesBucket: new s3.Bucket(stack, "Files"),
     customEmailSenderKey: key,
     resendApiKeySecretArn,
@@ -82,7 +84,8 @@ test("production image functions have isolated roles, preserved budgets and dire
   });
   fxFetcher(stack, { fxFetcherFn: functions.fx });
   const template = Template.fromStack(stack);
-  template.resourceCountIs("AWS::Lambda::Function", 7);
+  template.resourceCountIs("AWS::Lambda::Function", 8);
+  template.resourceCountIs("AWS::Lambda::Url", 0);
   template.resourceCountIs("AWS::Lambda::Permission", 31);
   template.resourceCountIs("AWS::Events::Rule", 1);
   template.resourceCountIs("AWS::ApiGateway::RestApi", 1);
@@ -161,7 +164,7 @@ test("production image functions have isolated roles, preserved budgets and dire
   assert.equal(identity.userPool.node.path, "CandidateTest/UserPool");
   assert.equal(identity.userPoolClient.node.path, "CandidateTest/UserPool/AppClient");
   assert.equal(key.node.path, "CandidateTest/CustomEmailSenderKey");
-  assert.equal(new Set(Object.values(functions).map((fn) => fn.role?.node.path)).size, 7);
+  assert.equal(new Set(Object.values(functions).map((fn) => fn.role?.node.path)).size, 8);
   template.resourceCountIs("AWS::KMS::Key", 1);
   template.allResourcesProperties("AWS::Lambda::Function", {
     PackageType: "Image",
@@ -191,6 +194,25 @@ test("production image functions have isolated roles, preserved budgets and dire
       NODE_EXTRA_CA_CERTS: "/var/task/rds-global-bundle.pem",
     }) },
   });
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Architectures: ["x86_64"],
+    MemorySize: 512,
+    Timeout: 30,
+    ReservedConcurrentExecutions: 1,
+    VpcConfig: Match.anyValue(),
+    Environment: { Variables: {
+      DB_HOST: Match.anyValue(),
+      DB_NAME: "tracker",
+      DB_SECRET_ARN: stack.resolve(adminReaderDbSecret.secretArn),
+      NODE_EXTRA_CA_CERTS: "/var/task/rds-global-bundle.pem",
+    } },
+  });
+  const adminReaderArn = JSON.stringify(stack.resolve(functions["admin-reader"].functionArn));
+  assert.equal(
+    invokePermissions.some((permission) => JSON.stringify(permission.Properties.FunctionName) === adminReaderArn),
+    false,
+    "Only IAM principals may invoke the admin reader",
+  );
   const policies = JSON.stringify(template.findResources("AWS::IAM::Policy"));
   assert.equal(policies.includes("s3:"), false, "Sandbox must rely on caller-presigned URLs");
   assert.equal(policies.includes("lambda:InvokeFunction"), false, "Image execution roles need no invoke grants");

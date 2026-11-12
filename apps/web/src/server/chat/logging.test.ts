@@ -12,6 +12,13 @@ import {
 import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
+const IDLE_TIMEOUT_ERROR = new ChatModelCallTimeoutError({
+  limit: "idle",
+  timeoutMs: 5_000,
+  msSinceLastStreamEvent: 5_000,
+  streamEventCount: 0,
+});
+
 const DIAGNOSTICS: ChatErrorLogDiagnostics = {
   requestId: "req-1",
   sessionId: "session-1",
@@ -99,6 +106,24 @@ test("createChatErrorLogEvent accepts a plain string and produces no OpenAI cont
   assert.equal(event.errorClass, undefined);
 });
 
+test("createChatErrorLogEvent records which model call limit fired and the last stream event age", (): void => {
+  const error = new ChatModelCallTimeoutError({
+    limit: "idle",
+    timeoutMs: 180_000,
+    msSinceLastStreamEvent: 180_004,
+    streamEventCount: 412,
+  });
+
+  const event = createChatErrorLogEvent(DIAGNOSTICS, "agent", error);
+
+  assert.ok(event.action === "error");
+  assert.equal(event.error, "OpenAI model call was silent for 180000ms");
+  assert.equal(event.timeoutLimit, "idle");
+  assert.equal(event.timeoutMs, 180_000);
+  assert.equal(event.msSinceLastStreamEvent, 180_004);
+  assert.equal(event.streamEventCount, 412);
+});
+
 test("createChatErrorLogEvent logs a WorkspaceAccessError as workspace_unavailable, not error", (): void => {
   const error = new WorkspaceAccessError("user-1", "workspace-1");
 
@@ -116,7 +141,7 @@ test("createChatErrorLogEvent logs a WorkspaceAccessError as workspace_unavailab
 });
 
 test("isOpenAITransientError returns true for retryable OpenAI failures", (): void => {
-  assert.equal(isOpenAITransientError(new ChatModelCallTimeoutError(5_000)), true);
+  assert.equal(isOpenAITransientError(IDLE_TIMEOUT_ERROR), true);
   assert.equal(
     isOpenAITransientError(new OpenAI.APIError(429, { message: "rate limit" }, "429 rate limit", undefined)),
     true,
@@ -150,7 +175,7 @@ test("isOpenAITransientError returns false for non-retryable failures", (): void
 
 test("classifyOpenAITransientError labels each retryable case distinctly", (): void => {
   assert.deepEqual(
-    classifyOpenAITransientError(new ChatModelCallTimeoutError(5_000)),
+    classifyOpenAITransientError(IDLE_TIMEOUT_ERROR),
     { retryable: true, reason: "timeout" },
   );
   assert.deepEqual(

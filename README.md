@@ -92,9 +92,8 @@ After `POST /v1/workspaces/{workspaceId}/select`, the API key remembers that wor
 1. **For full privacy, [self-host](infra/aws/README.md) on your own AWS account.** If you deploy or use the hosted service with the AWS/CDK setup described in [`infra/aws/README.md`](infra/aws/README.md), the LLM chat runtime stores transcript state in Postgres. That means chat data is available to:
    - the deployed service operator, because the data is stored in the service database
    - OpenAI, because chat requests are sent there to power the feature
-   - Langfuse Cloud, because chat telemetry is exported there
 
-   If you use chat to import bank statements, screenshots, PDFs, CSVs, or other financial files, data extracted from those files can also reach OpenAI and Langfuse as part of chat processing and tracing. If you do not trust even one of these parties, do not store your financial data in this hosted deployment.
+   LLM call telemetry stays in the service's own database. If you use chat to import bank statements, screenshots, PDFs, CSVs, or other financial files, data extracted from those files can also reach OpenAI as part of chat processing. If you do not trust even one of these parties, do not store your financial data in this hosted deployment.
 
 2. **The code is already deployed, and the maintainer stores his own real finances there.** Only maintainer Kirill Markin has access to the [demo](https://expense-budget-tracker.com/) database. For partial privacy, sign up with an email that doesn't contain your real name. [Try the demo →](https://expense-budget-tracker.com/)
 

@@ -15,10 +15,6 @@ import { UnsupportedStoredChatAttachmentError } from "@/server/chat/openai/respo
 import { runOpenAILoop } from "@/server/chat/openai/loop";
 import { isOpenAITransientError } from "@/server/chat/logging";
 import {
-  startChatTurnObservation,
-  type ChatTurnObservationOutcome,
-} from "@/server/chat/openai/langfuse";
-import {
   buildUserStoppedAssistantContent,
   ChatSessionRunTransitionError,
   completeChatRun,
@@ -29,6 +25,7 @@ import {
   updateAssistantMessageItem,
   updateAssistantMessageItemAndInvalidateMainContent,
 } from "@/server/chat/store";
+import { CHAT_RUN_LOOP_STOP_SIGNAL } from "./loopStopSignal";
 import {
   beginChatTaskProtection,
   endChatTaskProtection,
@@ -42,12 +39,13 @@ import type {
   UnconvertedContentPart,
 } from "@/server/chat/types";
 import { log, type ChatErrorStage } from "@/server/logger";
+import { runInChatTurnSpan, type ChatTurnSpanParams } from "@/server/telemetry/chatSpans";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
+export const CHAT_DRAFT_WRITE_INTERVAL_MS = 250;
 export const CHAT_RUN_HEARTBEAT_INTERVAL_MS = 5_000;
 export const CHAT_RUN_STALE_HEARTBEAT_MS = 30_000;
 const INCOMPLETE_TOOL_CALL_PROVIDER_STATUS = "incomplete";
-const CHAT_RUN_LOOP_STOP_SIGNAL = Symbol("chat_run_loop_stop");
 
 type ChatRunDiagnostics = Readonly<{
   requestId: string;
@@ -60,18 +58,36 @@ type ChatRunDiagnostics = Readonly<{
   attachmentFileNames: ReadonlyArray<string>;
 }>;
 
+export type ChatTurnOutcome =
+  | Readonly<{
+    kind: "completed";
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
+  }>
+  | Readonly<{
+    kind: "cancelled";
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
+  }>
+  | Readonly<{
+    kind: "invalidated";
+  }>
+  | Readonly<{
+    kind: "failed";
+    assistantContent: ReadonlyArray<UnconvertedContentPart>;
+    message: string;
+  }>;
+
 type ChatInvalidatedObservationOutcome = Extract<
-  ChatTurnObservationOutcome,
+  ChatTurnOutcome,
   { kind: "invalidated" }
 >;
 
 type ChatCancellationObservationOutcome = Extract<
-  ChatTurnObservationOutcome,
+  ChatTurnOutcome,
   { kind: "cancelled" | "invalidated" }
 >;
 
 type ChatFailureObservationOutcome = Extract<
-  ChatTurnObservationOutcome,
+  ChatTurnOutcome,
   { kind: "failed" | "invalidated" }
 >;
 
@@ -131,7 +147,10 @@ export type ChatRunStartReservationResult =
 
 export type ChatRuntimeDependencies = Readonly<{
   runOpenAILoop: typeof runOpenAILoop;
-  startChatTurnObservation: typeof startChatTurnObservation;
+  runInChatTurnSpan: (
+    params: ChatTurnSpanParams,
+    fn: () => Promise<ChatTurnOutcome>,
+  ) => Promise<void>;
   completeChatRun: typeof completeChatRun;
   persistAssistantCancelled: typeof persistAssistantCancelled;
   persistAssistantTerminalError: typeof persistAssistantTerminalError;
@@ -153,7 +172,7 @@ const chatRunStartReservations = new Map<
 
 const DEFAULT_CHAT_RUNTIME_DEPENDENCIES: ChatRuntimeDependencies = {
   runOpenAILoop,
-  startChatTurnObservation,
+  runInChatTurnSpan,
   completeChatRun,
   persistAssistantCancelled,
   persistAssistantTerminalError,
@@ -192,6 +211,14 @@ const buildUserFacingChatErrorMessage = (
   }
   return t(locale, "chat.unexpectedError");
 };
+
+// OpenAI can finish generating a function call before the local tool runs.
+const normalizeToolCallProgressEvent = (event: ChatStreamEvent): ChatStreamEvent =>
+  event.type === "tool_call"
+  && event.output === undefined
+  && (event.providerStatus ?? event.status) === "completed"
+    ? { ...event, status: "started", providerStatus: "in_progress" }
+    : event;
 
 /**
  * Converts a streamed tool-call event into the persisted assistant transcript
@@ -500,7 +527,7 @@ const persistToolCallProgress = async (
   event: Extract<ChatStreamEvent, { type: "tool_call" }>,
   seenInvalidationVersions: Map<string, number>,
 ): Promise<Extract<ChatStreamEvent, { type: "tool_call" }>> => {
-  if (event.status !== "completed" || event.refreshRoute !== true) {
+  if (event.refreshRoute !== true) {
     await updateAssistantInProgress(
       dependencies,
       userId,
@@ -572,14 +599,18 @@ export const runPersistedChatSessionWithDeps = async (
 ): Promise<void> => {
   let assistantContent: ReadonlyArray<UnconvertedContentPart> = [];
   let assistantOpenAIItems: ReadonlyArray<StoredOpenAIReplayItem> | undefined;
-  let pendingObservationOutcome: ChatTurnObservationOutcome | null = null;
+  let pendingObservationOutcome: ChatTurnOutcome | null = null;
   let pendingCancellationOutcome: ChatCancellationObservationOutcome | null = null;
   let activeRootPersistenceError: unknown | null = null;
   let activeRootPersistenceFailed = false;
   let cancellationLogged = false;
   let doneEventPending = false;
+  let draftWritePending = false;
+  let draftWriteTimer: ReturnType<typeof setTimeout> | null = null;
+  let draftWriteInFlight: Promise<void> | null = null;
+  let draftWriteFailure: Readonly<{ error: unknown }> | null = null;
   const seenInvalidationVersions = new Map<string, number>();
-  const getPendingObservationOutcome = (): ChatTurnObservationOutcome | null =>
+  const getPendingObservationOutcome = (): ChatTurnOutcome | null =>
     pendingObservationOutcome;
   const heartbeatTimer = setInterval(() => {
     void dependencies.touchChatSessionHeartbeat(
@@ -597,6 +628,61 @@ export const runPersistedChatSessionWithDeps = async (
     });
   }, CHAT_RUN_HEARTBEAT_INTERVAL_MS);
 
+  const saveAssistantProgress = (): Promise<void> =>
+    updateAssistantInProgress(
+      dependencies,
+      params.userId,
+      params.workspaceId,
+      params.sessionId,
+      params.activeRunId,
+      params.assistantItemId,
+      assistantContent,
+    );
+
+  const scheduleDraftWrite = (): void => {
+    if (
+      !draftWritePending
+      || draftWriteTimer !== null
+      || draftWriteInFlight !== null
+      || draftWriteFailure !== null
+      || !isCurrentActiveChatRun(params.sessionId, params.activeRunId)
+    ) {
+      return;
+    }
+
+    draftWriteTimer = setTimeout(() => {
+      draftWriteTimer = null;
+      if (!isCurrentActiveChatRun(params.sessionId, params.activeRunId)) {
+        return;
+      }
+
+      draftWritePending = false;
+      draftWriteInFlight = saveAssistantProgress().catch((error: unknown): void => {
+        draftWriteFailure = { error };
+        getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.abort();
+      }).finally((): void => {
+        draftWriteInFlight = null;
+        scheduleDraftWrite();
+      });
+    }, CHAT_DRAFT_WRITE_INTERVAL_MS);
+  };
+
+  // The next checkpoint saves the full transcript, so only the already-started write must finish.
+  const discardPendingDraftAndWaitForWrite = async (): Promise<void> => {
+    draftWritePending = false;
+    if (draftWriteTimer !== null) {
+      clearTimeout(draftWriteTimer);
+      draftWriteTimer = null;
+    }
+    await draftWriteInFlight;
+  };
+
+  const throwDraftWriteFailure = (): void => {
+    if (draftWriteFailure !== null) {
+      throw draftWriteFailure.error;
+    }
+  };
+
   const classifyPersistenceFailure = (
     error: unknown,
   ): ChatInvalidatedObservationOutcome => {
@@ -610,7 +696,7 @@ export const runPersistedChatSessionWithDeps = async (
     throw error;
   };
 
-  const stopOpenAILoop = (outcome: ChatTurnObservationOutcome): never => {
+  const stopOpenAILoop = (outcome: ChatTurnOutcome): never => {
     pendingObservationOutcome = outcome;
     throw CHAT_RUN_LOOP_STOP_SIGNAL;
   };
@@ -647,6 +733,7 @@ export const runPersistedChatSessionWithDeps = async (
       return pendingCancellationOutcome;
     }
 
+    await discardPendingDraftAndWaitForWrite();
     assistantContent = buildUserStoppedAssistantContent(assistantContent);
     if (activeRun.cancellationState === "persisted") {
       logUserCancellation();
@@ -740,19 +827,41 @@ export const runPersistedChatSessionWithDeps = async (
       });
     }
 
-    await dependencies.startChatTurnObservation(
+    await dependencies.runInChatTurnSpan(
       {
         requestId: params.requestId,
         userId: params.userId,
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
+        turnId: params.activeRunId,
+        assistantItemId: params.assistantItemId,
         model: params.modelRouting.effectiveModel,
+        reasoningEffort: params.modelRouting.effectiveReasoningEffort,
         turnIndex: params.diagnostics.messageCount,
-        runState: "running",
-        turnInput: params.turnInput,
       },
-      async (rootObservation): Promise<ChatTurnObservationOutcome> => {
-        const handleOpenAILoopEvent = async (event: ChatStreamEvent): Promise<void> => {
+      async (): Promise<ChatTurnOutcome> => {
+        const prepareProgressCheckpoint = async (): Promise<void> => {
+          await discardPendingDraftAndWaitForWrite();
+          stopOpenAILoopIfInterrupted(await persistUserCancellationIfNeeded());
+        };
+
+        const beforeToolDispatch = async (): Promise<void> => {
+          await prepareProgressCheckpoint();
+          throwDraftWriteFailure();
+          // A Stop on another replica can leave the local abort signal active.
+          await saveAssistantProgress().catch((error: unknown): never => {
+            if (error instanceof ChatSessionRunTransitionError || error instanceof WorkspaceAccessError) {
+              stopOpenAILoop(classifyPersistenceFailure(error));
+            }
+
+            draftWriteFailure = { error };
+            throw error;
+          });
+          stopOpenAILoopIfInterrupted(null);
+        };
+
+        const handleOpenAILoopEvent = async (loopEvent: ChatStreamEvent): Promise<void> => {
+          const event = normalizeToolCallProgressEvent(loopEvent);
           const existingObservationOutcome = getPendingObservationOutcome();
           if (existingObservationOutcome !== null) {
             stopOpenAILoop(existingObservationOutcome);
@@ -761,68 +870,20 @@ export const runPersistedChatSessionWithDeps = async (
           const initialCancellationOutcome = await persistUserCancellationIfNeeded();
           stopOpenAILoopIfInterrupted(initialCancellationOutcome);
 
+          const hasLocalToolResult = event.type === "tool_call" && event.output !== undefined;
+          if (!hasLocalToolResult) {
+            throwDraftWriteFailure();
+          }
+
           if (event.type === "done") {
             doneEventPending = true;
             return;
           }
 
-          if (event.type === "delta") {
-            assistantContent = applyAssistantDelta(assistantContent, event);
-            try {
-              await updateAssistantInProgress(
-                dependencies,
-                params.userId,
-                params.workspaceId,
-                params.sessionId,
-                params.activeRunId,
-                params.assistantItemId,
-                assistantContent,
-              );
-            } catch (error) {
-              stopOpenAILoop(classifyPersistenceFailure(error));
-            }
-            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
-            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
-          } else if (event.type === "tool_call") {
-            assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
-            const eventToBroadcast = await persistToolCallProgress(
-              dependencies,
-              params.userId,
-              params.workspaceId,
-              params.sessionId,
-              params.activeRunId,
-              params.assistantItemId,
-              assistantContent,
-              event,
-              seenInvalidationVersions,
-            ).catch((error: unknown): never =>
-              stopOpenAILoop(classifyPersistenceFailure(error)),
-            );
-            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
-            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
-            broadcastChatEvent(params.sessionId, params.activeRunId, eventToBroadcast);
-            return;
-          } else if (event.type === "reasoning_summary") {
-            assistantContent = upsertReasoningSummaryContent(
-              assistantContent,
-              createReasoningSummaryContentPart(event),
-            );
-            try {
-              await updateAssistantInProgress(
-                dependencies,
-                params.userId,
-                params.workspaceId,
-                params.sessionId,
-                params.activeRunId,
-                params.assistantItemId,
-                assistantContent,
-              );
-            } catch (error) {
-              stopOpenAILoop(classifyPersistenceFailure(error));
-            }
-            const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
-            stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
-          } else if (event.type === "error") {
+          if (event.type === "error") {
+            await prepareProgressCheckpoint();
+            throwDraftWriteFailure();
+
             const failureOutcome = await persistTerminalFailure(event.message);
             const cancellationOutcome = await persistUserCancellationIfNeeded();
             if (cancellationOutcome !== null) {
@@ -838,6 +899,49 @@ export const runPersistedChatSessionWithDeps = async (
             stopOpenAILoop(failureOutcome);
           }
 
+          if (event.type === "delta") {
+            assistantContent = applyAssistantDelta(assistantContent, event);
+          } else if (event.type === "reasoning_summary") {
+            assistantContent = upsertReasoningSummaryContent(
+              assistantContent,
+              createReasoningSummaryContentPart(event),
+            );
+          } else if (event.type === "tool_call") {
+            assistantContent = upsertToolCallContent(assistantContent, createToolCallContentPart(event));
+            if (hasLocalToolResult) {
+              await prepareProgressCheckpoint();
+              const draftError = draftWriteFailure?.error;
+              if (draftError instanceof ChatSessionRunTransitionError || draftError instanceof WorkspaceAccessError) {
+                throw draftError;
+              }
+
+              const eventToBroadcast = await persistToolCallProgress(
+                dependencies,
+                params.userId,
+                params.workspaceId,
+                params.sessionId,
+                params.activeRunId,
+                params.assistantItemId,
+                assistantContent,
+                event,
+                seenInvalidationVersions,
+              ).catch((error: unknown): never =>
+                stopOpenAILoop(classifyPersistenceFailure(error)),
+              );
+              const postPersistenceCancellationOutcome = await persistUserCancellationIfNeeded();
+              stopOpenAILoopIfInterrupted(postPersistenceCancellationOutcome);
+              broadcastChatEvent(params.sessionId, params.activeRunId, eventToBroadcast);
+              // A completed action can still be saved before ending the run for a failed draft.
+              throwDraftWriteFailure();
+              return;
+            }
+          } else {
+            broadcastChatEvent(params.sessionId, params.activeRunId, event);
+            return;
+          }
+
+          draftWritePending = true;
+          scheduleDraftWrite();
           broadcastChatEvent(params.sessionId, params.activeRunId, event);
         };
 
@@ -856,13 +960,17 @@ export const runPersistedChatSessionWithDeps = async (
             turnInput: params.turnInput,
             model: params.modelRouting.effectiveModel,
             reasoningEffort: params.modelRouting.effectiveReasoningEffort,
-            rootObservation,
+            beforeToolDispatch,
             signal: getCurrentActiveChatRun(params.sessionId, params.activeRunId)?.abortController.signal,
           }, handleOpenAILoopEvent);
-        } catch (error) {
-          if (activeRootPersistenceFailed && error === activeRootPersistenceError) {
-            throw error;
+          await discardPendingDraftAndWaitForWrite();
+          throwDraftWriteFailure();
+        } catch (loopError) {
+          await discardPendingDraftAndWaitForWrite();
+          if (activeRootPersistenceFailed && loopError === activeRootPersistenceError) {
+            throw loopError;
           }
+          const error = draftWriteFailure === null ? loopError : draftWriteFailure.error;
 
           const activeRun = getActiveChatRun(params.sessionId);
           const stoppedByUser = activeRun?.activeRunId === params.activeRunId
@@ -870,7 +978,9 @@ export const runPersistedChatSessionWithDeps = async (
 
           if (stoppedByUser) {
             const cancellationOutcome = await persistUserCancellationIfNeeded();
-            if (error !== CHAT_RUN_LOOP_STOP_SIGNAL && !isUserAbortError(error)) {
+            if (error instanceof ChatSessionRunTransitionError) {
+              logRunTransitionSkipped(error, params);
+            } else if (error !== CHAT_RUN_LOOP_STOP_SIGNAL && !isUserAbortError(error)) {
               logChatRunError(params.diagnostics, "agent", error);
             }
             if (cancellationOutcome === null) {
@@ -901,7 +1011,13 @@ export const runPersistedChatSessionWithDeps = async (
             return { kind: "invalidated" };
           }
 
-          const userFacingMessage = buildUserFacingChatErrorMessage(params.locale, error);
+          if (draftWriteFailure !== null && error instanceof WorkspaceAccessError) {
+            classifyPersistenceFailure(error);
+          }
+
+          const userFacingMessage = draftWriteFailure === null
+            ? buildUserFacingChatErrorMessage(params.locale, error)
+            : t(params.locale, "chat.draftSaveError");
           const failureOutcome = await persistTerminalFailure(userFacingMessage);
           const cancellationOutcome = await persistUserCancellationIfNeeded();
           if (cancellationOutcome !== null) {

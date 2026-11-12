@@ -125,12 +125,13 @@ AWS profile and region setup is in `## AWS Deployment`. Start from logs and trac
 
 | Source | How to reach it | Use for |
 | --- | --- | --- |
-| Postgres, prod | No direct connection by design: RDS is private, with no bastion. Read through `POST https://api.expense-budget-tracker.com/v1/sql/query` with `Authorization: ApiKey <key>` — a fixed relation list, scoped to the selected workspace. Anything wider needs a temporary path opened deliberately; never add standing database access while debugging. | workspace data, counts, data shape |
+| Postgres, prod | No direct connection by design: RDS is private, with no bastion. Read through `POST https://api.expense-budget-tracker.com/v1/sql/query` with `Authorization: ApiKey <key>` — a fixed relation list, scoped to the selected workspace. Anything wider needs a temporary path opened deliberately; never add standing database access while debugging. The admin-reader Lambda below is the one deliberate read-only exception. | workspace data, counts, data shape |
 | Postgres, local | `make dev`, then `psql` with `DATABASE_URL` from `.env.example` | schema, views, query development |
 | CloudWatch Logs | `/expense-tracker/web` (30-day retention), `/expense-tracker/auth`, `/expense-tracker/migrate`; Lambda groups under `/aws/lambda/` for FX, authorizer, SQL API, and MCP handlers; API Gateway access logs and agent tool-call queries in [docs/agent-telemetry.md](docs/agent-telemetry.md) | request-level debugging by `requestId`, agent tool-call failures |
 | CloudWatch metrics | custom namespace `ExpenseBudgetTracker/Db`, metric `PoolErrors`; alarms and metric filters in `infra/aws/lib/monitoring.ts` | error rates, DB pool failures, ECS, RDS, and API Gateway health |
 | ALB access logs | S3 bucket `expense-tracker-alb-logs-<accountId>`, 90-day expiration | traffic, status codes, client IPs |
-| Langfuse Cloud | `LANGFUSE_*` keys in the repository-root `.env` (gitignored, main checkout only); read `GET $LANGFUSE_BASE_URL/api/public/v2/observations` with HTTP Basic auth `public:secret`, always bounded by `fromStartTime` and `toStartTime` and paged by `meta.cursor`; request the `fields` groups you need (`io`, `metadata`, `usage`, `trace_context`), since omitted groups are absent; filter by `traceName = chat_turn`, `isRootObservation = true` for turn input and output, `sessionId`, `userId`, metadata `workspaceId`; aggregate with `GET /api/public/v2/metrics`; never call the deprecated v1 `traces`, `observations`, `sessions`, or `metrics` reads | chat traces, model and tool behavior, cost |
+| LLM telemetry and chats, prod | `scripts/admin-read.sh` (private admin-reader Lambda, read-only, IAM); see [docs/admin-reader.md](docs/admin-reader.md) and [docs/llm-telemetry.md](docs/llm-telemetry.md) | chat spans, model and tool behavior, token usage, transcripts across users |
+| Langfuse Cloud | historical chat traces from before 2026-11-11, read-only, never written to any more; `LANGFUSE_*` keys in the main checkout `.env`; read `GET $LANGFUSE_BASE_URL/api/public/v2/observations` with HTTP Basic auth `public:secret`, bounded by `fromStartTime` and `toStartTime`, paged by `meta.cursor`, requesting the `fields` groups you need; never call the deprecated v1 reads | old chat investigations |
 | GitHub Actions | `gh run list --workflow deploy.yml` | deploy and migration failures |
 
 ## Reference
@@ -139,7 +140,7 @@ AWS profile and region setup is in `## AWS Deployment`. Start from logs and trac
 - [docs/deployment.md](docs/deployment.md) - local Docker Compose and AWS CDK setup
 - [docs/self-hosting.md](docs/self-hosting.md) - running the whole product outside AWS behind an edge proxy: hostnames, bypass list, revocation
 - [docs/account-email-changes.md](docs/account-email-changes.md) - the admin-only procedure for changing an account email, and the heads-up it requires
-- [docs/langfuse-operations.md](docs/langfuse-operations.md) - Langfuse trace shape, filters, and telemetry troubleshooting
+- [docs/llm-telemetry.md](docs/llm-telemetry.md) - chat span tree, `llm_telemetry_spans` columns and attributes, optional OTLP export
 - [docs/agent-telemetry.md](docs/agent-telemetry.md) - what each agent surface records about tool calls, and the CloudWatch queries that count failures
 - [infra/aws/README.md](infra/aws/README.md) - full AWS CDK deployment guide
 - [Makefile](Makefile) - `make up`, `make down`, `make migrate`, `make build`, `make lint`

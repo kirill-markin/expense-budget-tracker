@@ -30,6 +30,7 @@ export interface OutputsProps {
   sqlApiFn: lambda.IFunction;
   mcpHttpApi: apigwv2.HttpApi;
   mcpFn: lambda.IFunction;
+  adminReaderFn: lambda.IFunction;
   mcpCustomDomainTarget: string | undefined;
   mcpUrl: string;
 }
@@ -115,6 +116,10 @@ export function outputs(scope: Construct, props: OutputsProps): void {
   new cdk.CfnOutput(scope, "McpFunctionName", {
     value: props.mcpFn.functionName,
     description: "Lambda function name for the MCP handler",
+  });
+  new cdk.CfnOutput(scope, "AdminReaderFunctionName", {
+    value: props.adminReaderFn.functionName,
+    description: "Lambda function name for the private admin reader (scripts/admin-read.sh)",
   });
   if (props.mcpCustomDomainTarget !== undefined) {
     new cdk.CfnOutput(scope, "McpCustomDomain", {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run all Postgres migrations and views, then create the app role for RLS.
+# Run all Postgres migrations and views, then set the login role passwords.
 #
 # Connection — one of:
 #   MIGRATION_DATABASE_URL — full connection string (local Docker Compose).
@@ -9,6 +9,7 @@
 #   APP_DB_PASSWORD    — password for the app role (default: 'app').
 #   WORKER_DB_PASSWORD — password for the worker role (default: 'worker').
 #   AUTH_DB_PASSWORD   — password for the auth_service role (default: 'auth_service').
+#   ADMIN_READER_DB_PASSWORD — password for the admin_reader role (default: 'admin_reader').
 
 set -euo pipefail
 
@@ -43,9 +44,14 @@ if [[ -n "${PGHOST:-}" && -z "${AUTH_DB_PASSWORD:-}" ]]; then
   echo "ERROR: AUTH_DB_PASSWORD is required in production (PGHOST mode)" >&2
   exit 1
 fi
+if [[ -n "${PGHOST:-}" && -z "${ADMIN_READER_DB_PASSWORD:-}" ]]; then
+  echo "ERROR: ADMIN_READER_DB_PASSWORD is required in production (PGHOST mode)" >&2
+  exit 1
+fi
 APP_DB_PASSWORD="${APP_DB_PASSWORD:-app}"
 WORKER_DB_PASSWORD="${WORKER_DB_PASSWORD:-worker}"
 AUTH_DB_PASSWORD="${AUTH_DB_PASSWORD:-auth_service}"
+ADMIN_READER_DB_PASSWORD="${ADMIN_READER_DB_PASSWORD:-admin_reader}"
 
 # Create migration tracking table (idempotent).
 # If this is an existing database (tables already created by prior deploys),
@@ -140,6 +146,20 @@ END
 $$;
 
 ALTER ROLE auth_service WITH PASSWORD :'auth_pass';
+SQL
+
+echo "Setting admin_reader role password..."
+# Role created by migration 0089_admin_reader_role.sql.
+run_psql -v "admin_reader_pass=$ADMIN_READER_DB_PASSWORD" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'admin_reader') THEN
+    RAISE EXCEPTION 'Role admin_reader does not exist. Run migrations first.';
+  END IF;
+END
+$$;
+
+ALTER ROLE admin_reader WITH PASSWORD :'admin_reader_pass';
 SQL
 
 echo "Migrations complete."
