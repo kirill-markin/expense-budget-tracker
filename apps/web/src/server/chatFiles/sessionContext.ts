@@ -99,7 +99,7 @@ export const CHAT_FILE_MANIFEST_MAX_CHARS = 1_200;
  * turn's first token: the wrong way round.
  *
  * Four, because each rebuilt part is also 1,600 to 4,000 tokens of the turn's
- * input, so four is already up to 16,000 of the 120,000 token budget. An older
+ * input, so four is already up to 16,000 of the 250,000 token budget. An older
  * result keeps its text and says the bytes are not in this request, which the
  * model answers by calling view_file again for the one it still needs. A result
  * this turn could not rebuild says exactly the same thing, so the model cannot
@@ -122,7 +122,7 @@ export const CHAT_FILE_VIEW_REPLAYS_PER_TURN = 4;
  * turn. That is one object read per resident image per turn, which is the cost
  * this bounds, and eight of them is the same ceiling
  * CHAT_FILE_VIEW_REPLAYS_PER_TURN already allows: an image is charged at
- * `IMAGE_TOKENS`, so eight is 16,000 tokens of the 120,000 token budget, where
+ * `IMAGE_TOKENS`, so eight is 16,000 tokens of the 250,000 token budget, where
  * four view results are up to 16,000 too.
  *
  * A count rather than a rolling per-turn eviction, which is the decision that

@@ -99,6 +99,15 @@ const createAssistantMessage = (
 const TURN_TEXT_CHARACTERS = 6_000;
 
 /**
+ * Turns of `TURN_TEXT_CHARACTERS` question and answer that fill the budget at
+ * `REAL_CHARACTERS_PER_TOKEN`. Session fixtures that must cross the budget are
+ * sized in it, so they keep crossing it whatever the budget is set to.
+ */
+const TURNS_FILLING_BUDGET = Math.ceil(
+  CHAT_SENT_INPUT_BUDGET_TOKENS / ((2 * TURN_TEXT_CHARACTERS) / REAL_CHARACTERS_PER_TOKEN),
+);
+
+/**
  * The real per-call overhead, measured with `o200k_base`: instructions 1,169 +
  * tool schemas 1,168 + clock 44.
  *
@@ -490,9 +499,10 @@ test("an unmeasured session of tabular turns really sends less than the budget",
   // The shape the window has to survive: CSV is this product's import format and
   // tokenizes near 1.5 characters per token, where the sizing used to read 2.5
   // and a session computed at 120,000 really sent 156,000.
-  const messages = createDenseUnmeasuredSession(60);
+  const turnCount = Math.ceil(TURNS_FILLING_BUDGET * 1.5);
+  const messages = createDenseUnmeasuredSession(turnCount);
   const turnInput: ReadonlyArray<ContentPart> = [
-    { type: "text", text: denseText("Question 60", 60) },
+    { type: "text", text: denseText(`Question ${String(turnCount)}`, 60) },
   ];
 
   const plan = planChatHistoryReplay(messages, turnInput);
@@ -804,8 +814,9 @@ test("a long measured session keeps every sent input inside the budget", (): voi
   let adoptedMeasurements = 0;
   let maxSizedOverReal = 0;
   let maxRealSentInputTokens = 0;
+  const turnCount = TURNS_FILLING_BUDGET * 2;
 
-  for (let turnIndex = 0; turnIndex < 80; turnIndex += 1) {
+  for (let turnIndex = 0; turnIndex < turnCount; turnIndex += 1) {
     const question = `Question ${String(turnIndex)} ${"q".repeat(TURN_TEXT_CHARACTERS)}`;
     const answer = `Answer ${String(turnIndex)} ${"a".repeat(TURN_TEXT_CHARACTERS)}`;
     const turnInput: ReadonlyArray<ContentPart> = [{ type: "text", text: question }];
@@ -856,9 +867,9 @@ test("a long measured session keeps every sent input inside the budget", (): voi
   // the real overhead to price measurements out: the session then sizes itself
   // from estimates reading some 1.6x high and trims at about half the budget.
   assert.ok(
-    adoptedMeasurements >= 79,
-    `Only ${String(adoptedMeasurements)} of 80 turns were sized from their own `
-    + "measurement",
+    adoptedMeasurements >= turnCount - 1,
+    `Only ${String(adoptedMeasurements)} of ${String(turnCount)} turns were sized from `
+    + "their own measurement",
   );
   assert.ok(
     maxSizedOverReal <= 1.05,
@@ -947,7 +958,7 @@ test("a measured session's boundary never pulls back", (): void => {
   let messages: ReadonlyArray<ServerChatMessage> = [];
   const startIndexes: Array<number> = [];
 
-  for (let turnIndex = 0; turnIndex < 40; turnIndex += 1) {
+  for (let turnIndex = 0; turnIndex < TURNS_FILLING_BUDGET; turnIndex += 1) {
     const question = `Question ${String(turnIndex)} ${"q".repeat(TURN_TEXT_CHARACTERS)}`;
     const answer = `Answer ${String(turnIndex)} ${"a".repeat(TURN_TEXT_CHARACTERS)}`;
     const plan = planChatHistoryReplay(messages, [{ type: "text", text: question }]);
@@ -980,7 +991,7 @@ test("a large turn trims only its own call", (): void => {
   // motion is not monotone, and that is the point: a floor built from one large
   // turn would have kept the rest of the session out of view for good.
   let messages: ReadonlyArray<ServerChatMessage> = [];
-  for (let turnIndex = 0; turnIndex < 30; turnIndex += 1) {
+  for (let turnIndex = 0; turnIndex < TURNS_FILLING_BUDGET - 10; turnIndex += 1) {
     const question = `Question ${String(turnIndex)} ${"q".repeat(TURN_TEXT_CHARACTERS)}`;
     const answer = `Answer ${String(turnIndex)} ${"a".repeat(TURN_TEXT_CHARACTERS)}`;
     const plan = planChatHistoryReplay(messages, [{ type: "text", text: question }]);
@@ -1313,7 +1324,7 @@ test("a legacy session recovers through supersedes without revising a weight twi
   // a floor produced three P1s - so a weight that may be revised twice is a
   // boundary free to swing, which is attempt 2's failure. Counted per message
   // over a session carrying every row the sizing has to survive.
-  const legacyMessages = createUnmeasuredSession(40, 1);
+  const legacyMessages = createUnmeasuredSession(TURNS_FILLING_BUDGET, 1);
 
   const { turnResults, revisionsByMessage, messages } = runRecoveringSession(
     realTextTokens,
@@ -1388,7 +1399,7 @@ test("the densest legacy session stays inside the budget while measurements wide
 
   const { turnResults } = runRecoveringSession(
     realTokensOf,
-    createDenseUnmeasuredSession(40),
+    createDenseUnmeasuredSession(TURNS_FILLING_BUDGET),
     10,
   );
 

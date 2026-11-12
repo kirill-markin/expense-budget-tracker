@@ -49,7 +49,7 @@ import {
 import type { ChatStreamEvent, UnconvertedContentPart } from "@/server/chat/types";
 import { log as serverLog } from "@/server/logger";
 
-export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 30;
+export const CHAT_RUN_MAX_TOOL_CALL_MODEL_CALLS = 60;
 // Checked only between calls: a model or tool call already running is never cut
 // short by it.
 export const CHAT_RUN_MAX_DURATION_MS = 60 * 60 * 1000;
