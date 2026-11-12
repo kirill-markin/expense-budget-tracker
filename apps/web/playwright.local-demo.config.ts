@@ -20,7 +20,11 @@ export default defineConfig({
   },
   webServer: {
     command: `AUTH_MODE=none CORS_ORIGIN=${localBaseUrl} npm run dev -- -H 127.0.0.1 -p 3210`,
-    url: localBaseUrl,
+    env: {
+      // Avoid an aggregate connection error when workspace mode checks Postgres.
+      DATABASE_URL: "postgresql://unused:unused@127.0.0.1:1/unused",
+    },
+    url: `${localBaseUrl}/api/live`,
     reuseExistingServer: false,
     timeout: 120_000,
   },
