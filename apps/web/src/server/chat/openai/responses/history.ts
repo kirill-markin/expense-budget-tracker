@@ -84,6 +84,8 @@ import {
 import { buildChatFilePromptText } from "@/server/chat/openai/responses/chatFilePrompt";
 import {
   findLatestChatCompactionBoundary,
+  replayItemsFromCompaction,
+  type ChatCompactionBoundary,
   type ServerChatMessage,
   type StoredOpenAIReplayItem,
 } from "@/server/chat/openai/responses/replayItems";
@@ -200,7 +202,8 @@ export type ChatHistorySizing = Readonly<{
 
 /**
  * Why the replay starts where it does. `none` replays the whole stored history,
- * `compaction` starts at the newest stored compaction item, `window` trims the
+ * `compaction` starts at the newest stored compaction item, over the budget only
+ * when the window would keep that item's message anyway, `window` trims the
  * oldest turns away, `stale_compaction` means the history from that compaction
  * item onward no longer fit the budget, so the item was dropped and the window
  * applied instead.
@@ -445,7 +448,7 @@ type MessageTokenWeight = Readonly<{
  */
 const buildMessageTokenWeights = (
   messages: ReadonlyArray<ServerChatMessage>,
-): ReadonlyArray<number> => {
+): ReadonlyArray<MessageTokenWeight> => {
   const weights: Array<MessageTokenWeight> = [];
   for (const [index, message] of messages.entries()) {
     weights.push({
@@ -502,7 +505,7 @@ const buildMessageTokenWeights = (
     }
   }
 
-  return weights.map((weight) => weight.tokens);
+  return weights;
 };
 
 /**
@@ -511,18 +514,23 @@ const buildMessageTokenWeights = (
  * is `totalTokens`. Weights are never negative, so the series never decreases
  * and the sent input is non-increasing in the replay start.
  */
-export const measureChatHistory = (
-  messages: ReadonlyArray<ServerChatMessage>,
+const sizeChatHistory = (
+  weights: ReadonlyArray<MessageTokenWeight>,
 ): ChatHistorySizing => {
   const prefixTokens: Array<number> = [0];
   let totalTokens = 0;
-  for (const weight of buildMessageTokenWeights(messages)) {
-    totalTokens += weight;
+  for (const weight of weights) {
+    totalTokens += weight.tokens;
     prefixTokens.push(totalTokens);
   }
 
   return { prefixTokens, totalTokens };
 };
+
+export const measureChatHistory = (
+  messages: ReadonlyArray<ServerChatMessage>,
+): ChatHistorySizing =>
+  sizeChatHistory(buildMessageTokenWeights(messages));
 
 const requirePrefixTokens = (
   sizing: ChatHistorySizing,
@@ -552,6 +560,42 @@ export const computeSentInputTokens = (
   CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS
   + turnInputTokens
   + (sizing.totalTokens - requirePrefixTokens(sizing, startIndex));
+
+/**
+ * Everything one call would send with the replay starting at the compaction item
+ * of `boundary`. That message replays from the item onward, so a weight that was
+ * estimated from every item it stores - the rounds of a long turn ahead of its
+ * compaction among them - is replaced by the estimate of what it does replay. A
+ * measurement-derived weight is the provider's own count and is kept.
+ */
+const computeCompactionSentInputTokens = (
+  messages: ReadonlyArray<ServerChatMessage>,
+  weights: ReadonlyArray<MessageTokenWeight>,
+  sizing: ChatHistorySizing,
+  turnInputTokens: number,
+  boundary: ChatCompactionBoundary,
+): number => {
+  const weight = weights.at(boundary.messageIndex);
+  const items = messages.at(boundary.messageIndex)?.openaiItems;
+  if (weight === undefined || items === undefined) {
+    throw new Error(
+      `Chat compaction boundary at message index ${String(boundary.messageIndex)} `
+      + `has no stored items or weight: measured ${String(weights.length)} messages`,
+    );
+  }
+
+  const boundaryTokens = weight.fromMeasurement
+    ? weight.tokens
+    : replayItemsFromCompaction(items, boundary.itemIndex).reduce(
+      (total, item) => total + estimateReplayItemTokens(item),
+      0,
+    );
+
+  return CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS
+    + turnInputTokens
+    + boundaryTokens
+    + (sizing.totalTokens - requirePrefixTokens(sizing, boundary.messageIndex + 1));
+};
 
 /**
  * First message index to replay so the sent input fits the budget.
@@ -633,33 +677,42 @@ export const planChatHistoryReplay = (
   turnInput: ReadonlyArray<ContentPart>,
   trailingSystemText?: string,
 ): ChatHistoryReplayPlan => {
-  const sizing = measureChatHistory(messages);
+  const weights = buildMessageTokenWeights(messages);
+  const sizing = sizeChatHistory(weights);
   const turnInputTokens = estimateContentPartsTokens(turnInput)
     + (trailingSystemText === undefined
       ? 0
       : ITEM_ENVELOPE_TOKENS + estimateTextTokens(trailingSystemText));
   const unboundedSentInputTokens = computeSentInputTokens(sizing, turnInputTokens, 0);
   const compactionBoundary = findLatestChatCompactionBoundary(messages);
-
-  if (compactionBoundary !== null) {
-    const sentInputTokens = computeSentInputTokens(
-      sizing,
-      turnInputTokens,
-      compactionBoundary.messageIndex,
-    );
-    if (sentInputTokens <= CHAT_SENT_INPUT_BUDGET_TOKENS) {
-      return {
-        startIndex: compactionBoundary.messageIndex,
-        compactionItemIndex: compactionBoundary.itemIndex,
-        boundary: "compaction",
-        droppedMessages: compactionBoundary.messageIndex,
-        unboundedSentInputTokens,
-        sentInputTokens,
-      };
-    }
+  const compactionPlan: ChatHistoryReplayPlan | null = compactionBoundary === null
+    ? null
+    : {
+      startIndex: compactionBoundary.messageIndex,
+      compactionItemIndex: compactionBoundary.itemIndex,
+      boundary: "compaction",
+      droppedMessages: compactionBoundary.messageIndex,
+      unboundedSentInputTokens,
+      sentInputTokens: computeCompactionSentInputTokens(
+        messages,
+        weights,
+        sizing,
+        turnInputTokens,
+        compactionBoundary,
+      ),
+    };
+  if (compactionPlan !== null && compactionPlan.sentInputTokens <= CHAT_SENT_INPUT_BUDGET_TOKENS) {
+    return compactionPlan;
   }
 
   const startIndex = selectChatHistoryWindowStart(messages, sizing, turnInputTokens);
+  // A window that still keeps the message holding the compaction item - the
+  // newest-pair fallback, when even the history from that item onward exceeds
+  // the budget - replays it from that item too: every item ahead of it is inside
+  // it, so resending them raw only makes the over-budget input larger.
+  if (compactionPlan !== null && startIndex <= compactionPlan.startIndex) {
+    return compactionPlan;
+  }
 
   return {
     startIndex,

@@ -41,8 +41,7 @@ export const CHAT_SENT_INPUT_BUDGET_TOKENS = 250_000;
  * content has not yet passed that price is sized by estimate, and estimates read
  * high by design, so it drops history early. At 8,000 against a real overhead of
  * 1,522 no measurement was ever usable: a simulated 120-turn session stayed on
- * estimates end to end and started dropping turns at around 83k real tokens,
- * barely above the compaction threshold this budget deliberately sits 40k above.
+ * estimates end to end and started dropping turns at around 83k real tokens.
  *
  * Measured with `o200k_base` on the real prompt: instructions 1,169 + tool
  * schemas 1,168 + clock 44 = 2,381 tokens. The schema figure is the rendered
