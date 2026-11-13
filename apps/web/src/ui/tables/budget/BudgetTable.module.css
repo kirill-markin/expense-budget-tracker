@@ -781,12 +781,6 @@ tbody tr:last-child .currentMonthActual {
     padding-inline: 6px;
   }
 
-  .headCell.yearTotal {
-    padding-inline: 4px;
-    font-size: 12px;
-    white-space: normal;
-  }
-
   .planCellButton {
     inline-size: calc(100% + 12px);
     margin-inline: -6px;
