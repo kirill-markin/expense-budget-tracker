@@ -42,7 +42,10 @@ const failureEnvelope = JSON.stringify({ ok: false, error: { code: "sql_rejected
  * The web route as a real local server, so every call crosses the same
  * `fetch` and defense-in-depth layer it does in the Lambda.
  */
-const startBridge = async (answer: (call: ReceivedCall, index: number) => BridgeAnswer): Promise<FakeBridge> => {
+const startBridge = async (
+  answer: (call: ReceivedCall, index: number) => BridgeAnswer,
+  port: number,
+): Promise<FakeBridge> => {
   const calls: Array<ReceivedCall> = [];
   const server = createServer((request, response) => {
     let text = "";
@@ -62,7 +65,7 @@ const startBridge = async (answer: (call: ReceivedCall, index: number) => Bridge
     });
   });
   await new Promise<void>((resolve) => {
-    server.listen(0, BRIDGE_HOST, resolve);
+    server.listen(port, BRIDGE_HOST, resolve);
   });
   const address = server.address();
   assert.ok(address !== null && typeof address === "object", "the bridge has no bound port");
@@ -105,7 +108,7 @@ const withBridge = async (
   answer: (call: ReceivedCall, index: number) => BridgeAnswer,
   run: (fake: FakeBridge) => Promise<void>,
 ): Promise<void> => {
-  const fake = await startBridge(answer);
+  const fake = await startBridge(answer, 0);
   try {
     await run(fake);
   } finally {
@@ -233,9 +236,56 @@ test("a write is retried when the call was refused before it ran", async (): Pro
   );
 });
 
-test("a write that never left is retried, and the failure names neither host nor capability", async (): Promise<void> => {
+test("a write that never left is retried", async (t): Promise<void> => {
+  // Bound and closed, so the port is known to refuse the first connection.
+  const refusing = await startBridge(() => ({ status: 200, body: okEnvelope({}) }), 0);
+  await refusing.close();
+  const port = Number(new URL(refusing.bridge.url).port);
+
+  // The bridge comes back on the same port as soon as the first attempt is
+  // logged as failed, well inside the delay before the retry.
+  const failedAttempts: Array<unknown> = [];
+  const accepting: Array<Promise<FakeBridge>> = [];
+  const writeStdout = process.stdout.write.bind(process.stdout);
+  t.mock.method(process.stdout, "write", (chunk: string | Uint8Array, ...rest: Array<unknown>): boolean => {
+    if (typeof chunk === "string" && chunk.startsWith(`{"domain":"chat_sandbox","action":"sql_bridge_attempt_failed"`)) {
+      failedAttempts.push(JSON.parse(chunk));
+      if (accepting.length === 0) {
+        accepting.push(startBridge(() => ({ status: 200, body: okEnvelope({}) }), port));
+      }
+    }
+    return Reflect.apply(writeStdout, process.stdout, [chunk, ...rest]) === true;
+  });
+
+  const response = await runWithBridge("ebt-sql-execute 'DELETE FROM x'", refusing.bridge);
+  t.mock.restoreAll();
+
+  const [acceptingBridge] = accepting;
+  assert.ok(acceptingBridge !== undefined, "the first attempt was not logged as failed");
+  const fake = await acceptingBridge;
+  try {
+    assert.deepEqual(failedAttempts, [{
+      domain: "chat_sandbox",
+      action: "sql_bridge_attempt_failed",
+      kind: "execute",
+      attempt: 1,
+      status: null,
+      error: "errorName=TypeError errorCode=ECONNREFUSED",
+      body: null,
+      willRetry: true,
+    }]);
+    assert.equal(response.stderr, "");
+    assert.equal(response.exitCode, 0);
+    assert.deepEqual(response.sqlWrites, [{ workspaceId: null, count: 1 }]);
+    assert.equal(fake.calls.length, 1);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("a write refused on every attempt fails naming neither host nor capability", async (): Promise<void> => {
   // Bound and closed, so the port is known to refuse the connection.
-  const closed = await startBridge(() => ({ status: 200, body: okEnvelope({}) }));
+  const closed = await startBridge(() => ({ status: 200, body: okEnvelope({}) }), 0);
   await closed.close();
 
   const response = await runWithBridge("ebt-sql-execute 'DELETE FROM x'", closed.bridge);

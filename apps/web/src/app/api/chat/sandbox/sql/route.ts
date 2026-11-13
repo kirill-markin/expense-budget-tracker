@@ -38,15 +38,23 @@ type ChatSandboxSqlRouteDependencies = Readonly<{
   log: typeof log;
 }>;
 
+type ActiveChatRunGateDependencies = Readonly<{
+  withUserContext: typeof withUserContext;
+  lockActiveChatSessionRunWithQuery: typeof lockActiveChatSessionRunWithQuery;
+}>;
+
 /**
  * A signed capability is not enough on its own: the run it names must still be
  * its session's running run. Read from Postgres rather than this task's memory,
  * because the sandbox's request may reach any web task.
  */
-const requireActiveChatRun = async (capability: ChatSandboxSqlCapability): Promise<void> => {
+export const requireActiveChatRunWithDeps = async (
+  capability: ChatSandboxSqlCapability,
+  dependencies: ActiveChatRunGateDependencies,
+): Promise<void> => {
   try {
-    await withUserContext(capability.userId, capability.workspaceId, async (queryFn) =>
-      lockActiveChatSessionRunWithQuery(
+    await dependencies.withUserContext(capability.userId, capability.workspaceId, async (queryFn) =>
+      dependencies.lockActiveChatSessionRunWithQuery(
         queryFn,
         capability.sessionId,
         capability.activeRunId,
@@ -63,10 +71,11 @@ const requireActiveChatRun = async (capability: ChatSandboxSqlCapability): Promi
   }
 };
 
-const DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES: ChatSandboxSqlRouteDependencies = {
+export const DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES: ChatSandboxSqlRouteDependencies = {
   now: Date.now,
   createRequestId: (): string => crypto.randomUUID(),
-  requireActiveChatRun,
+  requireActiveChatRun: (capability: ChatSandboxSqlCapability): Promise<void> =>
+    requireActiveChatRunWithDeps(capability, { withUserContext, lockActiveChatSessionRunWithQuery }),
   sql: { execQuery: execWholeQuery, listChatWorkspaces, log },
   log,
 };
