@@ -9,7 +9,10 @@ import {
   parseRetryAfterMs,
   type ChatErrorLogDiagnostics,
 } from "@/server/chat/logging";
-import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
+import {
+  ChatModelCallTimeoutError,
+  ChatModelResponseFailedError,
+} from "@/server/chat/openai/responses/modelCall";
 import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 const IDLE_TIMEOUT_ERROR = new ChatModelCallTimeoutError({
@@ -122,6 +125,25 @@ test("createChatErrorLogEvent records which model call limit fired and the last 
   assert.equal(event.timeoutMs, 180_000);
   assert.equal(event.msSinceLastStreamEvent, 180_004);
   assert.equal(event.streamEventCount, 412);
+});
+
+test("createChatErrorLogEvent records OpenAI's code and message for a failed response", (): void => {
+  const error = new ChatModelResponseFailedError({
+    id: "resp-1",
+    status: "failed",
+    error: { code: "rate_limit_exceeded", message: "Rate limit reached" },
+  } as unknown as OpenAI.Responses.Response);
+
+  const event = createChatErrorLogEvent(DIAGNOSTICS, "agent", error);
+
+  assert.ok(event.action === "error");
+  assert.equal(event.error, "OpenAI response resp-1 failed with status failed: rate_limit_exceeded: Rate limit reached");
+  assert.equal(event.errorClass, "ChatModelResponseFailedError");
+  assert.equal(event.openaiErrorCode, "rate_limit_exceeded");
+  assert.deepEqual(
+    classifyOpenAITransientError(error),
+    { retryable: true, reason: "response_failed_rate_limit_exceeded" },
+  );
 });
 
 test("createChatErrorLogEvent logs a WorkspaceAccessError as workspace_unavailable, not error", (): void => {

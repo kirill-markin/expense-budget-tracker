@@ -10,6 +10,7 @@ import {
 import {
   buildChatResponseLogEvent,
   buildOpenAIResponsesRequest,
+  getResponseUsage,
   type OpenAIResponsesRequest,
 } from "@/server/chat/openai/responses/request";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
@@ -72,6 +73,19 @@ test("buildChatResponseLogEvent records the effective request model", (): void =
   });
 
   assert.equal(event.model, CHAT_FALLBACK_MODEL_ID);
+});
+
+test("getResponseUsage names the response when OpenAI reports null usage", (): void => {
+  const response = {
+    id: "response-1",
+    status: "failed",
+    output: [],
+    usage: null,
+  } as unknown as OpenAI.Responses.Response;
+
+  assert.throws(() => getResponseUsage(response), {
+    message: "OpenAI response response-1 is missing usage",
+  });
 });
 
 test("buildOpenAIResponsesRequest asks OpenAI to compact above the threshold", (): void => {
