@@ -91,14 +91,23 @@ test("restores the latest measured position in the new columns", (): void => {
   const anchor: BudgetScrollAnchor = { month: "2026-03", inlineOffset: -40 };
 
   assert.deepEqual(
-    selectBudgetScrollAnchorRestoration(anchor),
+    selectBudgetScrollAnchorRestoration(anchor, true),
     { action: "restore", anchor },
   );
 });
 
 test("falls back to the current month before anything was measured", (): void => {
   assert.deepEqual(
-    selectBudgetScrollAnchorRestoration(null),
+    selectBudgetScrollAnchorRestoration(null, true),
     { action: "reset" },
   );
+});
+
+test("keeps the current month on open and after Today while loaded widths change", (): void => {
+  // A measurement may include the tail of the previous month due to subpixels.
+  // Only a horizontal scroll makes that measured month the user's anchor.
+  const anchor: BudgetScrollAnchor = { month: "2026-10", inlineOffset: -89.75 };
+  assert.deepEqual(selectBudgetScrollAnchorRestoration(anchor, false), { action: "reset" });
+  assert.deepEqual(selectBudgetScrollAnchorRestoration(null, false), { action: "reset" });
+  assert.deepEqual(selectBudgetScrollAnchorRestoration(anchor, true), { action: "restore", anchor });
 });

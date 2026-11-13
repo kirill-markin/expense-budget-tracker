@@ -19,6 +19,7 @@ import {
   useBudgetTableController,
 } from "@/ui/tables/budget/controller/useBudgetTableController";
 import { buildBudgetColumnContent, getBudgetColumnInlineSize, getBudgetValuesInlineSize } from "@/ui/tables/budget/budgetTableLogic";
+import { useBudgetTableViewport } from "@/ui/tables/budget/controller/useBudgetTableViewport";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 
 type BudgetTableGeometryStyle = CSSProperties & Readonly<{
@@ -43,11 +44,19 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
     controller.hasLiquidityBreakdown, controller.liquidityTiers,
     controller.mebByLiq, controller.projectedLiqBalances, numberFormat, t,
   ]);
+  const columnInlineSizes = valueColumns.map(getBudgetColumnInlineSize);
+  const viewport = useBudgetTableViewport({
+    currentMonth: controller.currentMonth,
+    plansMode: controller.plansMode,
+    columnWidthsSignature: columnInlineSizes.join(";"),
+    pendingSaves: controller.pendingSaves,
+    onMonthsObserved: controller.onMonthsObserved,
+    onYearTotalsObserved: controller.onYearTotalsObserved,
+  });
   if (controller.months.length === 0) {
     return <p className={styles.empty}>{t("budget.noData")}</p>;
   }
 
-  const columnInlineSizes = valueColumns.map(getBudgetColumnInlineSize);
   const tableGeometryStyle: BudgetTableGeometryStyle = {
     "--budget-values-inline-size": getBudgetValuesInlineSize(columnInlineSizes),
   };
@@ -69,7 +78,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
         </div>
       )}
       <div className={styles.alertBar}>
-        <button className={styles.todayButton} type="button" onClick={controller.scrollToCurrentMonth}>
+        <button className={styles.todayButton} type="button" onClick={viewport.scrollToCurrentMonth}>
           {t("common.today")}
         </button>
         {/*
@@ -152,7 +161,7 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
         className={styles.scroll}
         data-bleed
         data-testid="budget-table-scroll"
-        ref={controller.scrollRef}
+        ref={viewport.scrollRef}
       >
         <table className={styles.table} style={tableGeometryStyle}>
           <colgroup>
