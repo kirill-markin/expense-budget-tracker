@@ -3,6 +3,7 @@
 import { Fragment, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import type { CellVisibility } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import type { UnpairedTransferLeg } from "@/server/budget/getBudgetGrid";
@@ -166,7 +167,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
                   ? () => openDrillDown(buildDirectionYearDrillDownFilter(column.year, block.direction, allowedCategoriesArray))
                   : undefined}
               >
-                {formatAmount(yearSubtotal.actual, numberFormat)}
+                <NumericText>{formatAmount(yearSubtotal.actual, numberFormat)}</NumericText>
               </td>
             );
           },
@@ -179,7 +180,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
               : (yearData.directionSubtotals.get(block.direction) ?? zeroCellValue);
             return (
               <td key={`total-${column.year}`} className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}`}>
-                {formatAmount(yearSubtotal.planned, numberFormat)}
+                <NumericText>{formatAmount(yearSubtotal.planned, numberFormat)}</NumericText>
               </td>
             );
           },
@@ -204,7 +205,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
                   className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalPlanStateClass}`}
                   title={yearUnconvertibleTitle(isYearPlanTainted, yearCurrencies) ?? undefined}
                 >
-                  {formatAmount(yearSubtotal.planned, numberFormat)}
+                  <NumericText>{formatAmount(yearSubtotal.planned, numberFormat)}</NumericText>
                 </td>
                 <td
                   className={`${styles.cell}${subtotalClass} ${styles.yearTotal}${dirVis.maskClass}${yearTotalActualStateClass}${dirVis.showData ? ` ${styles.cellClickable}` : ""}`}
@@ -213,7 +214,7 @@ export const DirectionSubtotalRow = (props: DirectionSubtotalRowProps): ReactEle
                     ? () => openDrillDown(buildDirectionYearDrillDownFilter(column.year, block.direction, allowedCategoriesArray))
                     : undefined}
                 >
-                  {formatAmount(yearSubtotal.actual, numberFormat)}
+                  <NumericText>{formatAmount(yearSubtotal.actual, numberFormat)}</NumericText>
                 </td>
               </Fragment>
             );

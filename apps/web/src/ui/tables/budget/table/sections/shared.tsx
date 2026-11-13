@@ -1,5 +1,6 @@
 import { Fragment, type ReactElement } from "react";
 
+import { NumericText } from "@/ui/NumericText";
 import { MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import {
@@ -149,7 +150,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
           title={visibleActualTitle}
           onClick={visibleActualClick ?? undefined}
         >
-          {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
+          <NumericText>{isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}</NumericText>
         </td>
       );
     }
@@ -160,7 +161,7 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
         className={`${styles.cell}${monthDividerClass}${subtotalClass}${maskClass}${plannedTaintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
         title={visiblePlanTitle}
       >
-        {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
+        <NumericText>{isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}</NumericText>
       </td>
     );
   }
@@ -175,14 +176,14 @@ export const renderValueCells = (params: RenderValueCellsParams): ReactElement =
         className={`${styles.cell}${monthDividerClass}${planEmphasisClass}${subtotalClass}${maskClass}${plannedTaintedClass}${!isMasked && isPlanOver ? ` ${tableStateStyles.over}` : ""} ${visiblePlannedValueClass}`}
         title={visiblePlanTitle}
       >
-        {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}
+        <NumericText>{isMasked ? MASKED_CELL_PLACEHOLDER : formatter(planned, numberFormat)}</NumericText>
       </td>
       <td
         className={`${styles.cell}${actualEmphasisClass}${subtotalClass}${maskClass}${actualTaintedClass}${!isMasked && isActualOver ? ` ${tableStateStyles.over}` : ""}${clickableClass} ${visibleActualValueClass}`}
         title={visibleActualTitle}
         onClick={visibleActualClick ?? undefined}
       >
-        {isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}
+        <NumericText>{isMasked ? MASKED_CELL_PLACEHOLDER : formatter(actual, numberFormat)}</NumericText>
       </td>
     </Fragment>
   );

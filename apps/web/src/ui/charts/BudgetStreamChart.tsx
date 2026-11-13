@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
 import { isCategoryVisible } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
@@ -433,6 +434,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
                     x={margin.left - 10}
                     y={y}
                     direction="ltr"
+                    unicodeBidi="isolate"
                     textAnchor="end"
                     dominantBaseline="middle"
                     fill="var(--muted)"
@@ -542,13 +544,13 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           {hover.incomeItems.length > 0 && (
             <>
               <div className={styles.tooltipSection}>
-                {t("chart.income")}: {formatAmountFull(hover.incomeTotal, numberFormat)}
+                {t("chart.income")}: <NumericText>{formatAmountFull(hover.incomeTotal, numberFormat)}</NumericText>
               </div>
               {hover.incomeItems.map((item) => (
                 <div key={`tip-i-${item.category}`} className={styles.tooltipRow}>
                   <span className={styles.legendSwatch} style={{ background: item.color }} />
                   <span>{item.category}</span>
-                  <span className={styles.tooltipValue}>{formatAmountFull(item.value, numberFormat)}</span>
+                  <span className={styles.tooltipValue}><NumericText>{formatAmountFull(item.value, numberFormat)}</NumericText></span>
                 </div>
               ))}
             </>
@@ -556,13 +558,13 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           {hover.spendItems.length > 0 && (
             <>
               <div className={styles.tooltipSection}>
-                {t("chart.spend")}: {formatAmountFull(hover.spendTotal, numberFormat)}
+                {t("chart.spend")}: <NumericText>{formatAmountFull(hover.spendTotal, numberFormat)}</NumericText>
               </div>
               {hover.spendItems.map((item) => (
                 <div key={`tip-s-${item.category}`} className={styles.tooltipRow}>
                   <span className={styles.legendSwatch} style={{ background: item.color }} />
                   <span>{item.category}</span>
-                  <span className={styles.tooltipValue}>{formatAmountFull(item.value, numberFormat)}</span>
+                  <span className={styles.tooltipValue}><NumericText>{formatAmountFull(item.value, numberFormat)}</NumericText></span>
                 </div>
               ))}
             </>

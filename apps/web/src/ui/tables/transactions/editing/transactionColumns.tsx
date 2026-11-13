@@ -1,5 +1,6 @@
 import { type ReactElement } from "react";
 
+import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
 import type { NumberFormat, DateFormat } from "@/lib/locale";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
@@ -282,7 +283,7 @@ export const buildTransactionColumns = (maskClass: string, fmt: FormatParams): R
           className={cn(tableStyles.cell, tableStyles.cellRight, maskClass, showUnpairedWarning ? tableStateStyles.warning : "")}
           title={showUnpairedWarning ? fmt.t("common.unpairedTransferReason") : undefined}
         >
-          {formatAmount(row.amount, fmt.numberFormat)}
+          <NumericText>{formatAmount(row.amount, fmt.numberFormat)}</NumericText>
         </td>
       );
     },
@@ -345,7 +346,7 @@ export const reportAmountColumn = (numberFormat: NumberFormat, reportingCurrency
   header: reportingCurrency,
   renderCell: (row: LedgerEntry): ReactElement => (
     <td key="amountReport" className={cn(tableStyles.cell, tableStyles.cellRight)}>
-      {row.amountReport !== null ? formatAmount(row.amountReport, numberFormat) : "\u2014"}
+      <NumericText>{row.amountReport !== null ? formatAmount(row.amountReport, numberFormat) : "\u2014"}</NumericText>
     </td>
   ),
   rightAlign: true,

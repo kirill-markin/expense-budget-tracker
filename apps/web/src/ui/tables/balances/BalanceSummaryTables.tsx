@@ -7,6 +7,7 @@ import {
 import { type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
 import type { NumberFormat } from "@/lib/locale";
 import type { CurrencyTotal } from "@/server/balances/getBalancesSummary";
@@ -88,7 +89,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balancePositive",
       header: t("balances.totalPlus"),
       renderCell: (row: CurrencyTotal): ReactElement => (
-        <td key="balancePositive" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balancePositive, numberFormat)}</td>
+        <td key="balancePositive" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balancePositive, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balancePositive",
@@ -97,7 +98,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balanceNegative",
       header: t("balances.totalMinus"),
       renderCell: (row: CurrencyTotal): ReactElement => (
-        <td key="balanceNegative" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balanceNegative, numberFormat)}</td>
+        <td key="balanceNegative" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balanceNegative, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balanceNegative",
@@ -106,7 +107,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balance",
       header: t("balances.balance"),
       renderCell: (row: CurrencyTotal): ReactElement => (
-        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balance, numberFormat)}</td>
+        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balance, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balance",
@@ -122,7 +123,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
             ? (buildUnconvertibleCurrenciesTitle(row.unconvertibleCurrencies, formatUnconvertibleReason) ?? undefined)
             : undefined}
         >
-          {row.balanceReport !== null ? formatAmount(row.balanceReport, numberFormat) : "\u2014"}
+          <NumericText>{row.balanceReport !== null ? formatAmount(row.balanceReport, numberFormat) : "\u2014"}</NumericText>
         </td>
       ),
       rightAlign: true,
@@ -134,14 +135,14 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
     <tr key="total" className={cn(tableStyles.row, tableStyles.rowTotal)}>
       <td className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}</NumericText>
       </td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balanceNegative !== null ? formatAmount(reportingCurrencyTotals.balanceNegative, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balanceNegative !== null ? formatAmount(reportingCurrencyTotals.balanceNegative, numberFormat) : "\u2014"}</NumericText>
       </td>
       <td className={tableStyles.cell} />
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balance !== null ? formatAmount(reportingCurrencyTotals.balance, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balance !== null ? formatAmount(reportingCurrencyTotals.balance, numberFormat) : "\u2014"}</NumericText>
       </td>
     </tr>,
   ];
@@ -160,7 +161,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balancePositive",
       header: t("balances.totalPlus"),
       renderCell: (row: LiquidityTotal): ReactElement => (
-        <td key="balancePositive" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balancePositive, numberFormat)}</td>
+        <td key="balancePositive" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balancePositive, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balancePositive",
@@ -169,7 +170,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balanceNegative",
       header: t("balances.totalMinus"),
       renderCell: (row: LiquidityTotal): ReactElement => (
-        <td key="balanceNegative" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balanceNegative, numberFormat)}</td>
+        <td key="balanceNegative" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balanceNegative, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balanceNegative",
@@ -178,7 +179,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balance",
       header: t("balances.balance"),
       renderCell: (row: LiquidityTotal): ReactElement => (
-        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balance, numberFormat)}</td>
+        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balance, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balance",
@@ -198,13 +199,13 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
     <tr key="total" className={cn(tableStyles.row, tableStyles.rowTotal)}>
       <td className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}</NumericText>
       </td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balanceNegative !== null ? formatAmount(reportingCurrencyTotals.balanceNegative, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balanceNegative !== null ? formatAmount(reportingCurrencyTotals.balanceNegative, numberFormat) : "\u2014"}</NumericText>
       </td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balance !== null ? formatAmount(reportingCurrencyTotals.balance, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balance !== null ? formatAmount(reportingCurrencyTotals.balance, numberFormat) : "\u2014"}</NumericText>
       </td>
       <td className={tableStyles.cell} />
     </tr>,
@@ -224,7 +225,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balancePositive",
       header: t("balances.totalPlus"),
       renderCell: (row: AccountGroupTotal): ReactElement => (
-        <td key="balancePositive" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balancePositive, numberFormat)}</td>
+        <td key="balancePositive" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balancePositive, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balancePositive",
@@ -233,7 +234,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balanceNegative",
       header: t("balances.totalMinus"),
       renderCell: (row: AccountGroupTotal): ReactElement => (
-        <td key="balanceNegative" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balanceNegative, numberFormat)}</td>
+        <td key="balanceNegative" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balanceNegative, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balanceNegative",
@@ -242,7 +243,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
       key: "balance",
       header: t("balances.balance"),
       renderCell: (row: AccountGroupTotal): ReactElement => (
-        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(row.balance, numberFormat)}</td>
+        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(row.balance, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balance",
@@ -262,13 +263,13 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
     <tr key="total" className={cn(tableStyles.row, tableStyles.rowTotal)}>
       <td className={cn(tableStyles.cell, tableStyles.cellBold)}>{t("balances.total", { currency: reportingCurrency })}</td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balancePositive !== null ? formatAmount(reportingCurrencyTotals.balancePositive, numberFormat) : "\u2014"}</NumericText>
       </td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balanceNegative !== null ? formatAmount(reportingCurrencyTotals.balanceNegative, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balanceNegative !== null ? formatAmount(reportingCurrencyTotals.balanceNegative, numberFormat) : "\u2014"}</NumericText>
       </td>
       <td className={cn(tableStyles.cell, tableStyles.cellRight, tableStyles.cellBold, maskClass)}>
-        {reportingCurrencyTotals.balance !== null ? formatAmount(reportingCurrencyTotals.balance, numberFormat) : "\u2014"}
+        <NumericText>{reportingCurrencyTotals.balance !== null ? formatAmount(reportingCurrencyTotals.balance, numberFormat) : "\u2014"}</NumericText>
       </td>
       <td className={tableStyles.cell} />
     </tr>,
