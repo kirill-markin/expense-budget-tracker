@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CHAT_SANDBOX_SQL_ROUTE_PATH } from "@expense-budget-tracker/agent-shared";
 import {
   SQL_EXECUTE_TOOL,
   SQL_QUERY_TOOL,
@@ -11,7 +12,6 @@ import {
   type ChatSqlCallDependencies,
 } from "@/server/chat/openai/tooling/tools";
 import {
-  CHAT_SANDBOX_SQL_ROUTE_PATH,
   ChatSandboxSqlCapabilityError,
   verifyChatSandboxSqlAuthorization,
   type ChatSandboxSqlCapability,

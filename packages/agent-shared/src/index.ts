@@ -33,6 +33,14 @@ export const ACCOUNT_DISABLED_MESSAGE = "This account is disabled or no longer p
 export const MISSING_API_KEY_CODE = "missing_api_key";
 export const MISSING_API_KEY_MESSAGE = "Missing ApiKey authorization";
 export const MISSING_API_KEY_INSTRUCTIONS = `Send ${API_KEY_AUTHORIZATION_SCHEME}, where <key> is the API key stored in the ${AGENT_API_KEY_ENV_VAR_NAME} environment variable. With no key yet, GET /v1/ on this host returns the onboarding steps.`;
+/**
+ * The chat sandbox SQL bridge: the web route the sandbox posts statements to,
+ * and the authorization scheme its signed capability is sent with. The ingress
+ * WAF exempts large JSON bodies only for this exact path and scheme, so the
+ * route and that rule must read the same values.
+ */
+export const CHAT_SANDBOX_SQL_ROUTE_PATH = "/api/chat/sandbox/sql";
+export const CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME = "ChatSandbox ";
 export const AGENT_OAUTH_SCOPES = ["expenses:read", "expenses:write"] as const;
 export const SQL_API_DB_POOL_MAX_CONNECTIONS = 1;
 // Keep raw OAuth query strings below the ALB 16 KiB request-line ceiling,

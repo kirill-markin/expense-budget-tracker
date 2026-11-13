@@ -3,6 +3,8 @@ import test from "node:test";
 import type { IResolvable } from "aws-cdk-lib";
 import type * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import {
+  CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME,
+  CHAT_SANDBOX_SQL_ROUTE_PATH,
   MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
   MAX_OAUTH_LOGIN_QUERY_BYTES,
 } from "@expense-budget-tracker/agent-shared";
@@ -244,10 +246,10 @@ test("WAF re-blocks large bodies outside the exact chat posts and the chat sandb
     ]).concat([[
       // The sandbox is a server-side client and sends no Origin header.
       [{ method: {} }, "EXACTLY", "POST"],
-      [{ uriPath: {} }, "EXACTLY", "/api/chat/sandbox/sql"],
+      [{ uriPath: {} }, "EXACTLY", CHAT_SANDBOX_SQL_ROUTE_PATH],
       [{ singleHeader: { Name: "host" } }, "EXACTLY", "app.example.com"],
       [{ singleHeader: { Name: "content-type" } }, "STARTS_WITH", "application/json"],
-      [{ singleHeader: { Name: "authorization" } }, "STARTS_WITH", "chatsandbox "],
+      [{ singleHeader: { Name: "authorization" } }, "STARTS_WITH", CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME.toLowerCase()],
     ]]),
   );
 });

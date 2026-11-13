@@ -109,15 +109,14 @@ const TURNS_FILLING_BUDGET = Math.ceil(
 );
 
 /**
- * The real per-call overhead, measured with `o200k_base`: instructions 1,169 +
- * tool schemas 1,168 + clock 44.
- *
- * This grounds the simulation below against the real tokenizer, so it has to be
- * re-measured whenever the prompt or the tool catalog grows: a stale value
- * understates every simulated call by whatever was added and checks a weaker
- * bound than the test claims to.
+ * The real per-call overhead, counted with `o200k_base` on the prompt, tool
+ * catalog and clock a call sends. It grounds the simulations below against the
+ * real tokenizer, so it is counted rather than written down: a stale figure
+ * would understate every simulated call by whatever the prompt gained.
  */
-const REAL_OVERHEAD_TOKENS = 2_381;
+const REAL_OVERHEAD_TOKENS = realTokenCount(buildSystemInstructions())
+  + realTokenCount(JSON.stringify(OPENAI_CHAT_TOOLS))
+  + realTokenCount(formatDatetime("Europe/Madrid"));
 
 /**
  * What the module charges for one rendered PDF page image. Mirrored here so a
@@ -187,13 +186,9 @@ test("the fixed per-call reserve covers the real instructions, tool schemas and 
   // counts the prompt with the tokenizer the models actually use rather than
   // through the module's own estimate, which is the bound for dense replayed
   // content and would demand a reserve far above the real overhead.
-  const overheadTokens = realTokenCount(buildSystemInstructions())
-    + realTokenCount(JSON.stringify(OPENAI_CHAT_TOOLS))
-    + realTokenCount(formatDatetime("Europe/Madrid"));
-
   assert.ok(
-    overheadTokens <= CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS,
-    `The real per-call overhead is now ${String(overheadTokens)} o200k tokens, past `
+    REAL_OVERHEAD_TOKENS <= CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS,
+    `The real per-call overhead is now ${String(REAL_OVERHEAD_TOKENS)} o200k tokens, past `
     + `the ${String(CHAT_SENT_INPUT_OVERHEAD_RESERVE_TOKENS)} token reserve. Re-measure `
     + "the prompt with o200k and trim it, or shrink the tool catalog - do NOT raise "
     + "the reserve: every token of reserve above the real overhead is a token added to "

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CHAT_SANDBOX_SQL_ROUTE_PATH } from "@expense-budget-tracker/agent-shared";
 import { describeUnsaveableWorkBytes } from "../../../../../sandbox/src/contract";
 import { CHAT_FILE_SANDBOX_DIRECTORY } from "@/lib/chatFiles";
 import { buildChatFileObjectKey } from "@/server/chatFiles/objectStore";
@@ -26,7 +27,6 @@ import {
 } from "./invoke";
 import {
   CHAT_SANDBOX_BRIDGE_SECRET_ENV_VAR,
-  CHAT_SANDBOX_SQL_ROUTE_PATH,
   verifyChatSandboxSqlAuthorization,
 } from "./sqlCapability";
 
