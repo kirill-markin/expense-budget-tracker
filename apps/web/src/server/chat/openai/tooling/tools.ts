@@ -351,7 +351,7 @@ type RenderableTool = Readonly<{
  */
 const BASH_TOOL = {
   name: "bash",
-  description: `Run one shell command, python3 included, over this chat's files. ${SANDBOX_FILES_DIR} holds the user's uploads and is read-only; ${SANDBOX_WORK_DIR} is writable scratch that persists for the rest of this chat. No network. Available: coreutils, grep, rg, sed, awk, jq, xan, js-exec, ebt-sql-query, ebt-sql-execute, python3 (standard library only, no sqlite3). Use it to inspect, filter and aggregate the user's files before reading values out of them.`,
+  description: `Run one shell command, python3 included, over this chat's files. ${SANDBOX_FILES_DIR} holds the user's uploads and is read-only; ${SANDBOX_WORK_DIR} is writable scratch that persists for the rest of this chat. No network. Available: coreutils, grep, rg, sed, awk, jq, xan, js-exec, ebt-sql-query, ebt-sql-execute, python3 (standard library only, no sqlite3). Use it to inspect, filter and aggregate the user's files.`,
   inputFields: [{
     name: "command",
     description: `One shell command line, with ${SANDBOX_WORK_DIR} as the working directory. Pipelines, redirection and ; or && are all one command. Keep printed output small: aggregate or slice rather than printing a whole file.`,

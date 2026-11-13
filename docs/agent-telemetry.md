@@ -9,7 +9,7 @@ Each surface writes to more than one place, and each place counts a different un
 | Hosted MCP server | one `mcp_tool_call` record | `mcp_tool_call`, `sql_policy_rejected`, `mcp_unexpected_error` | `/aws/lambda/ExpenseBudgetTracker-McpHandler03E6F2E1-3CSCraZ4ica1` |
 | MCP transport | one HTTP request, which can carry several tool calls | API Gateway access log | `ExpenseBudgetTracker-McpApiAccessLogGroup5B86EB4E-O26C60B6XtE9` |
 | Web chat | one `chat` / `tool_call` record | `tool_call`, `sql_policy_rejected` | `/expense-tracker/web` |
-| Web chat sandbox SQL | one `chat` / `sandbox_sql` record per route run of a SQL call from a `bash` command's code; a retried read can leave two | `sandbox_sql`, `sql_policy_rejected` | `/expense-tracker/web` |
+| Web chat sandbox SQL | one `chat` / `sandbox_sql` record per route run of a SQL call from a `bash` command's code; a retried read can leave up to four | `sandbox_sql`, `sql_policy_rejected` | `/expense-tracker/web` |
 | `/v1` machine API | one HTTP request to one resource path | API Gateway access log | `ExpenseBudgetTracker-SqlApiAccessLogGroup0B9BA1DB-6ijpABrzSkZ0` |
 | `/v1` handler | the reason behind a `/v1` failure status | `sql_policy_rejected`, `agent_request_unavailable` | `/aws/lambda/ExpenseBudgetTracker-SqlApiHandler03D84818-KW4HJkTouQLY` |
 
@@ -118,7 +118,7 @@ filter domain = "chat" and action = "tool_call"
 | sort @timestamp desc
 ```
 
-SQL from sandbox code, counted per route run rather than per `bash` call, so a retried read counts twice, by kind and failure code:
+SQL from sandbox code, counted per route run rather than per `bash` call, so a retried read can count up to four times, by kind and failure code:
 
 ```
 filter domain = "chat" and action = "sandbox_sql"
@@ -166,5 +166,5 @@ Two further actions are stage details that always accompany one of those three, 
 - `sql_policy_rejected` carries only the policy code and reason on every surface: no tool, workspace, caller, request id or statement text. It joins to a tool call only through the matching `errorCode` within the same invocation or request.
 - Neither access log carries identity: no API key, connection id or user id. Attributing `/v1` or MCP HTTP traffic to a person needs the application records or the stored connection labels.
 - A missing or unaccepted credential leaves no application record: the `/v1` authorizer and the MCP bearer challenge both answer without logging. A rejected credential exists only as an access log line — on MCP both a missing and an unaccepted token are answered `401` — so it can be counted but never explained: no reason, no identity, no key. The access log's `errorMessage` is what separates an authorizer denial from other refusals. The one authentication-stage refusal that does leave a record is `agent_account_disabled`, written with the user id behind a `403`.
-- A sandbox SQL request the route refuses before running the statement, for an invalid or expired capability (`401`), a malformed body (`400`), a run that is no longer running (`403`) or a user who is no longer a member of the capability's workspace (`409`), leaves no record in `/expense-tracker/web`. Its traces are the sandbox Lambda's own `chat_sandbox` / `sql_bridge_attempt_failed` record, which carries the status and the response body but no user, session or statement, and the request's line in the ALB access log in the S3 bucket `expense-tracker-alb-logs-<accountId>`.
+- A sandbox SQL request the route refuses before running the statement, for an invalid or expired capability (`401`), a malformed body (`400`), a run that is no longer running, a user who is no longer a member of the capability's workspace or a user with no `users` row (each `403`), leaves no record in `/expense-tracker/web`. Its traces are the sandbox Lambda's own `chat_sandbox` / `sql_bridge_attempt_failed` record, which carries the status and the response body but no user, session or statement, and the request's line in the ALB access log in the S3 bucket `expense-tracker-alb-logs-<accountId>`.
 - The `/v1` access log has no concept of a tool, and the web chat records have no concept of an HTTP status, so a single cross-surface "failure rate" is not derivable without first deciding which unit the question means.

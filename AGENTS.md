@@ -131,7 +131,6 @@ AWS profile and region setup is in `## AWS Deployment`. Start from logs and trac
 | CloudWatch metrics | custom namespace `ExpenseBudgetTracker/Db`, metric `PoolErrors`; alarms and metric filters in `infra/aws/lib/monitoring.ts` | error rates, DB pool failures, ECS, RDS, and API Gateway health |
 | ALB access logs | S3 bucket `expense-tracker-alb-logs-<accountId>`, 90-day expiration | traffic, status codes, client IPs |
 | LLM telemetry and chats, prod | `scripts/admin-read.sh` (private admin-reader Lambda, read-only, IAM); see [docs/admin-reader.md](docs/admin-reader.md) and [docs/llm-telemetry.md](docs/llm-telemetry.md) | chat spans, model and tool behavior, token usage, transcripts across users |
-| Langfuse Cloud | historical chat traces from before 2026-11-11, read-only, never written to any more; `LANGFUSE_*` keys in the main checkout `.env`; read `GET $LANGFUSE_BASE_URL/api/public/v2/observations` with HTTP Basic auth `public:secret`, bounded by `fromStartTime` and `toStartTime`, paged by `meta.cursor`, requesting the `fields` groups you need; never call the deprecated v1 reads | old chat investigations |
 | GitHub Actions | `gh run list --workflow deploy.yml` | deploy and migration failures |
 
 ## Reference
