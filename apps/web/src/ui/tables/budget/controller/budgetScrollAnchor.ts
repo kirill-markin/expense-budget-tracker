@@ -1,8 +1,8 @@
 /**
  * Horizontal scroll anchoring for the budget table.
  *
- * Changing the display mode changes how many value columns every elapsed month
- * occupies, which inserts or removes content before the current scroll offset.
+ * Changing the display mode or loading wider values changes the column widths,
+ * which inserts or removes content before the current scroll offset.
  * The month at the inline start of the value area and its offset are therefore
  * measured continuously while the user scrolls, and both are put back once the
  * new columns are laid out, which keeps the user looking at the months they
@@ -33,8 +33,8 @@ export type BudgetScrollAnchorCandidate = Readonly<{
  *
  * - "restore": the measurement describes where the user was reading, so put
  *   its month back at its offset in the new columns.
- * - "reset": nothing has been measured yet, so the current month is the only
- *   sensible position left.
+ * - "reset": the user has not scrolled or nothing has been measured, so keep
+ *   the current month flush with the value area.
  */
 export type BudgetScrollAnchorRestoration =
   | Readonly<{ action: "restore"; anchor: BudgetScrollAnchor }>
@@ -44,16 +44,15 @@ export type BudgetScrollAnchorRestoration =
  * Decides how the latest measurement meets the layout that is about to be
  * shown.
  *
- * The anchor is re-measured from every scroll rather than captured when a mode
- * is requested, so it always describes the position the user is looking at and
- * can never go stale between the request and the layout that answers it. The
- * only measurement that does not exist is the one before the first row is laid
- * out, which falls back to the current month.
+ * The anchor is re-measured from every horizontal scroll. Until the user
+ * scrolls (and after Today), keep the current month flush with the value area
+ * even if loaded data changes widths after the first paint.
  */
 export const selectBudgetScrollAnchorRestoration = (
   anchor: BudgetScrollAnchor | null,
+  hasScrolled: boolean,
 ): BudgetScrollAnchorRestoration => (
-  anchor === null ? { action: "reset" } : { action: "restore", anchor }
+  !hasScrolled || anchor === null ? { action: "reset" } : { action: "restore", anchor }
 );
 
 /**
