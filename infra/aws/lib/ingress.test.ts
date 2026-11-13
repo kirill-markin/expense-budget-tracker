@@ -218,6 +218,40 @@ test("WAF counts the managed query-size rule and re-blocks outside exact bounded
   );
 });
 
+test("WAF re-blocks large bodies outside the exact chat posts and the chat sandbox SQL bridge", (): void => {
+  const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
+  const allowed = requireLabeledReblockException(
+    getRule(rules, "BlockUnexpectedBodySizeMatches"),
+    "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body",
+  );
+  const allowedRoutes = requireStatements(requireOrStatement(allowed.orStatement).statements);
+  assert.deepEqual(
+    allowedRoutes.map((route) =>
+      requireStatements(requireAndStatement(route.andStatement).statements).map((condition) => {
+        const match = requireByteMatchStatement(condition.byteMatchStatement);
+        return [match.fieldToMatch, match.positionalConstraint, match.searchString];
+      })),
+    [
+      ["/api/chat", "application/json"],
+      ["/api/chat/new", "application/json"],
+      ["/api/chat/transcriptions", "multipart/form-data"],
+    ].map(([path, contentType]) => [
+      [{ method: {} }, "EXACTLY", "POST"],
+      [{ uriPath: {} }, "EXACTLY", path],
+      [{ singleHeader: { Name: "host" } }, "EXACTLY", "app.example.com"],
+      [{ singleHeader: { Name: "origin" } }, "EXACTLY", "https://app.example.com"],
+      [{ singleHeader: { Name: "content-type" } }, "STARTS_WITH", contentType],
+    ]).concat([[
+      // The sandbox is a server-side client and sends no Origin header.
+      [{ method: {} }, "EXACTLY", "POST"],
+      [{ uriPath: {} }, "EXACTLY", "/api/chat/sandbox/sql"],
+      [{ singleHeader: { Name: "host" } }, "EXACTLY", "app.example.com"],
+      [{ singleHeader: { Name: "content-type" } }, "STARTS_WITH", "application/json"],
+      [{ singleHeader: { Name: "authorization" } }, "STARTS_WITH", "chatsandbox "],
+    ]]),
+  );
+});
+
 test("WAF re-blocks managed loopback body matches outside exact auth-host OAuth posts", (): void => {
   const rules = buildIngressWafRules("app.example.com", "auth.example.com", "");
   assert.deepEqual(

@@ -491,13 +491,15 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
   // that argument. Grouped by what is broken:
   //
   // Deployment wiring, read once from the environment: CHAT_SANDBOX_OBJECT_HOSTS
-  // unset, or carrying an entry that is not a bare `host` or `host:port`. A
-  // typo there raises on the deployment's first request and is plausibly the
-  // likeliest entry here to ever fire.
+  // unset, or carrying an entry that is not a bare `host` or `host:port`; and
+  // CHAT_SANDBOX_SQL_BRIDGE_ORIGIN unset or not a bare http(s) origin while a
+  // request sends a sqlBridge. A typo there raises on the deployment's first
+  // request and is plausibly the likeliest entry here to ever fire.
   //
   // A caller not holding to this sandbox's contract: a payload that does not
   // match its schema; a payload naming an `operation` this sandbox does not
   // serve; a pre-signed URL whose host is not one of the deployment's; a
+  // sqlBridge URL on another origin than the deployment's web app; a
   // prepare request carrying fewer write slots than a source has parts; and a
   // caller invoking the bash, conversion or page-copy runner concurrently.
   //

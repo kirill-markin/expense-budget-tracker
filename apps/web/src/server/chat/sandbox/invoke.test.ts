@@ -24,6 +24,15 @@ import {
   type ChatSandboxDependencies,
   type SandboxInvokeResponse,
 } from "./invoke";
+import {
+  CHAT_SANDBOX_BRIDGE_SECRET_ENV_VAR,
+  CHAT_SANDBOX_SQL_ROUTE_PATH,
+  verifyChatSandboxSqlAuthorization,
+} from "./sqlCapability";
+
+// Each test file runs in its own process, so these stay out of every other file.
+process.env[CHAT_SANDBOX_BRIDGE_SECRET_ENV_VAR] = "s".repeat(64);
+process.env.CORS_ORIGIN = "https://app.example.com";
 
 const SESSION_ID = "0f1e2d3c-4b5a-4968-8776-65544332211f";
 
@@ -87,6 +96,7 @@ type SandboxAnswer = Readonly<{
   }>>;
   deletedPaths?: ReadonlyArray<string>;
   notes?: ReadonlyArray<string>;
+  sqlWrites?: ReadonlyArray<Readonly<{ workspaceId: string | null; count: number }>>;
 }>;
 
 const answerOf = (answer: SandboxAnswer): string => JSON.stringify({
@@ -97,6 +107,7 @@ const answerOf = (answer: SandboxAnswer): string => JSON.stringify({
   writtenFiles: answer.writtenFiles ?? [],
   deletedPaths: answer.deletedPaths ?? [],
   notes: answer.notes ?? [],
+  ...(answer.sqlWrites === undefined ? {} : { sqlWrites: answer.sqlWrites }),
 });
 
 type SandboxRequest = Readonly<{
@@ -112,6 +123,7 @@ type SandboxRequest = Readonly<{
     getUrl: string;
   }>>;
   writeSlots: ReadonlyArray<Readonly<{ slotId: string; putUrl: string }>>;
+  sqlBridge: Readonly<{ url: string; authorization: string }>;
 }>;
 
 type Harness = Readonly<{
@@ -315,6 +327,68 @@ test("the request carries each row's stored size and mtime, never object metadat
   );
   assert.equal(request.sessionId, SESSION_ID);
   assert.equal(request.operation, "bash");
+});
+
+test("the request carries a SQL bridge capability for this command's run", async (): Promise<void> => {
+  const harness = createHarness([], answerOf({}));
+
+  await runChatSandboxCommandWithDependencies("ebt-sql-query 'SELECT 1'", CONTEXT, harness.dependencies);
+
+  const request = harness.requests[0];
+  assert.ok(request !== undefined);
+  assert.equal(request.sqlBridge.url, `https://app.example.com${CHAT_SANDBOX_SQL_ROUTE_PATH}`);
+  assert.deepEqual(
+    verifyChatSandboxSqlAuthorization(request.sqlBridge.authorization, Date.now()),
+    {
+      activeRunId: CONTEXT.turnId,
+      sessionId: CONTEXT.sessionId,
+      userId: CONTEXT.userId,
+      workspaceId: CONTEXT.workspaceId,
+    },
+  );
+});
+
+test("only a write the sandbox reports to the open workspace marks the command as writing it", async (): Promise<void> => {
+  const wroteSessionWorkspace = async (answer: string): Promise<boolean | null> => {
+    const result = await runChatSandboxCommandWithDependencies(
+      "js-exec /work/import.js",
+      CONTEXT,
+      createHarness([], answer).dependencies,
+    );
+    return result.kind === "ran" ? result.wroteSessionWorkspace : null;
+  };
+
+  assert.equal(await wroteSessionWorkspace(answerOf({ sqlWrites: [{ workspaceId: null, count: 300 }] })), true);
+  assert.equal(
+    await wroteSessionWorkspace(answerOf({ sqlWrites: [{ workspaceId: CONTEXT.workspaceId, count: 1 }] })),
+    true,
+  );
+  assert.equal(
+    await wroteSessionWorkspace(answerOf({ sqlWrites: [{ workspaceId: "workspace-other", count: 2 }] })),
+    false,
+  );
+  // A sandbox deployed before this app sends no report, and its answer is still accepted.
+  assert.equal(await wroteSessionWorkspace(answerOf({})), false);
+});
+
+test("a command may have written SQL unless its sandbox reported no writes at all", async (): Promise<void> => {
+  const mayHaveWrittenSql = async (answer: string): Promise<boolean | null> => {
+    const result = await runChatSandboxCommandWithDependencies(
+      "js-exec /work/import.js",
+      CONTEXT,
+      createHarness([], answer).dependencies,
+    );
+    return result.kind === "ran" ? result.mayHaveWrittenSql : null;
+  };
+
+  assert.equal(await mayHaveWrittenSql(answerOf({ sqlWrites: [{ workspaceId: null, count: 3 }] })), true);
+  assert.equal(
+    await mayHaveWrittenSql(answerOf({ sqlWrites: [{ workspaceId: "workspace-other", count: 2 }] })),
+    true,
+  );
+  assert.equal(await mayHaveWrittenSql(answerOf({ sqlWrites: [] })), false);
+  // No report is what an older sandbox and a dead command process both send.
+  assert.equal(await mayHaveWrittenSql(answerOf({})), true);
 });
 
 test("an unconfirmed upload is not mounted, because its object may not exist", async (): Promise<void> => {

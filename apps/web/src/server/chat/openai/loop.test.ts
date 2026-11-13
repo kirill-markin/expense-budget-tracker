@@ -34,7 +34,10 @@ import {
   createToolCallStateMap,
 } from "@/server/chat/openai/tooling/toolCalls";
 import type { OpenAIResponsesRequest } from "@/server/chat/openai/responses/request";
-import type { ExecutedChatToolCall } from "@/server/chat/openai/tooling/tools";
+import {
+  executeChatToolCallWithDependencies,
+  type ExecutedChatToolCall,
+} from "@/server/chat/openai/tooling/tools";
 import type { ChatStreamEvent, ContentPart } from "@/server/chat/types";
 
 const IDLE_INGEST_OUTCOME: ChatFileIngestOutcome = {
@@ -1539,6 +1542,97 @@ test("route refresh fires only for a mutation in the session's active workspace"
 
   assert.equal(await didRefreshRoute("workspace-1"), true);
   assert.equal(await didRefreshRoute("workspace-2"), false);
+});
+
+/**
+ * Sandbox code commits its SQL writes in the bridge's own requests, so the bash
+ * result is the only thing that can refresh the page after an import from code.
+ */
+test("route refresh fires for a bash command whose code wrote to the active workspace", async (): Promise<void> => {
+  const bashArguments = "{\"command\":\"js-exec /work/import.js\"}";
+  const unusedToolDependency = async (): Promise<never> => {
+    throw new Error("only the sandbox runs for a bash call");
+  };
+
+  const didRefreshRoute = async (wroteSessionWorkspace: boolean): Promise<boolean> => {
+    const observedEvents: Array<ChatStreamEvent> = [];
+    let modelCallCount = 0;
+
+    await runOpenAILoopWithDeps(
+      createLoopParams(),
+      async (event: ChatStreamEvent): Promise<void> => {
+        observedEvents.push(event);
+      },
+      createTestLoopDeps({
+        runOneModelCall: async () => {
+          modelCallCount += 1;
+          if (modelCallCount === 1) {
+            return {
+              finalResponse: createFinalResponse(""),
+              functionCalls: [createFunctionCall("call-1", "bash", bashArguments)],
+              replayItems: [createFunctionCallReplayItem("call-1", "bash", bashArguments)],
+              streamedText: "",
+              toolStates: createStartedToolStates("call-1", "bash", bashArguments),
+            };
+          }
+
+          return {
+            finalResponse: createFinalResponse("Done"),
+            functionCalls: [],
+            replayItems: [createAssistantReplayItem("Done")],
+            streamedText: "Done",
+            toolStates: createToolCallStateMap(),
+          };
+        },
+        runOneToolCall: async (toolParams): Promise<ExecutedChatToolCall> =>
+          executeChatToolCallWithDependencies(
+            toolParams.item.name,
+            toolParams.item.arguments,
+            {
+              requestId: toolParams.requestId,
+              userId: toolParams.userId,
+              workspaceId: toolParams.workspaceId,
+              sessionId: toolParams.sessionId,
+              turnId: toolParams.turnId,
+              toolCallId: toolParams.item.call_id,
+              isDemoMode: toolParams.isDemoMode,
+            },
+            {
+              execQuery: unusedToolDependency,
+              listChatWorkspaces: unusedToolDependency,
+              loadAllowedSchemaForChatWorkspace: unusedToolDependency,
+              viewChatFile: unusedToolDependency,
+              runChatSandboxCommand: async () => ({
+                kind: "ran",
+                wroteSessionWorkspace,
+                mayHaveWrittenSql: wroteSessionWorkspace,
+                data: {
+                  exitCode: 0,
+                  durationMs: 1,
+                  stdout: "inserted 300\n",
+                  stderr: "",
+                  sandboxNotes: [],
+                  savedFiles: [],
+                  savedFilesTotal: 0,
+                  deletedPaths: [],
+                  deletedPathsTotal: 0,
+                  sandboxNotesTotal: 0,
+                  fullOutputPath: null,
+                },
+              }),
+              log: (): void => undefined,
+            },
+          ),
+      }),
+    );
+
+    return observedEvents.some(
+      (event) => event.type === "tool_call" && event.refreshRoute === true,
+    );
+  };
+
+  assert.equal(await didRefreshRoute(true), true);
+  assert.equal(await didRefreshRoute(false), false);
 });
 
 /**

@@ -9,6 +9,7 @@ import {
   SANDBOX_OBJECT_HOSTS_ENV_VAR,
   SANDBOX_OPERATIONS,
   SANDBOX_PREPARE_MAX_DERIVATIVES,
+  SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR,
 } from "./contract.js";
 
 const ALLOWED_HOST = "chat-files.s3.eu-central-1.amazonaws.com";
@@ -36,6 +37,7 @@ type RequestOverrides = Readonly<{
   sessionId?: unknown;
   files?: ReadonlyArray<unknown>;
   writeSlots?: ReadonlyArray<unknown>;
+  sqlBridge?: unknown;
 }>;
 
 const request = (overrides: RequestOverrides): unknown => ({
@@ -47,19 +49,35 @@ const request = (overrides: RequestOverrides): unknown => ({
   ...overrides,
 });
 
-const withAllowedHosts = (hosts: string, run: () => void): void => {
-  const previous = process.env[SANDBOX_OBJECT_HOSTS_ENV_VAR];
-  process.env[SANDBOX_OBJECT_HOSTS_ENV_VAR] = hosts;
+const withEnv = (name: string, value: string | undefined, run: () => void): void => {
+  const previous = process.env[name];
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
   try {
     run();
   } finally {
     if (previous === undefined) {
-      delete process.env[SANDBOX_OBJECT_HOSTS_ENV_VAR];
+      delete process.env[name];
     } else {
-      process.env[SANDBOX_OBJECT_HOSTS_ENV_VAR] = previous;
+      process.env[name] = previous;
     }
   }
 };
+
+const withAllowedHosts = (hosts: string, run: () => void): void => {
+  withEnv(SANDBOX_OBJECT_HOSTS_ENV_VAR, hosts, run);
+};
+
+const BRIDGE_ORIGIN = "https://app.example";
+
+const withBridgeOrigin = (origin: string | undefined, run: () => void): void => {
+  withAllowedHosts(ALLOWED_HOST, () => withEnv(SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR, origin, run));
+};
+
+const bridge = (url: string): unknown => ({ url, authorization: "ChatSandbox p.s" });
 
 test("a request on an allowed object host is accepted", (): void => {
   withAllowedHosts(ALLOWED_HOST, () => {
@@ -67,6 +85,74 @@ test("a request on an allowed object host is accepted", (): void => {
     assert.equal(parsed.files.length, 1);
     assert.equal(parsed.writeSlots.length, 1);
   });
+});
+
+test("the SQL bridge is optional, kept when sent, and must be an http(s) URL", (): void => {
+  withBridgeOrigin(BRIDGE_ORIGIN, () => {
+    const sqlBridge = { url: `${BRIDGE_ORIGIN}/api/chat/sandbox/sql`, authorization: "ChatSandbox p.s" };
+    assert.equal(parseChatSandboxBashRequest(request({})).sqlBridge, undefined);
+    assert.deepEqual(parseChatSandboxBashRequest(request({ sqlBridge })).sqlBridge, sqlBridge);
+    assert.throws(
+      () => parseChatSandboxBashRequest(request({ sqlBridge: { ...sqlBridge, url: "file:///etc/passwd" } })),
+      /does not match its schema/,
+    );
+    assert.throws(
+      () => parseChatSandboxBashRequest(request({ sqlBridge: { ...sqlBridge, authorization: "" } })),
+      /does not match its schema/,
+    );
+  });
+});
+
+// The bridge URL is sent from the Lambda like a pre-signed URL, so it gets the
+// same gate: one deployment-configured origin, matched exactly.
+test("a SQL bridge outside the configured web app origin is refused", (): void => {
+  withBridgeOrigin(BRIDGE_ORIGIN, () => {
+    for (const url of [
+      "https://attacker.example/api/chat/sandbox/sql",
+      "http://app.example/api/chat/sandbox/sql",
+      "https://app.example:8443/api/chat/sandbox/sql",
+      "https://app.example.attacker.example/api/chat/sandbox/sql",
+      "http://127.0.0.1:9001/2018-06-01/runtime/invocation/next",
+    ]) {
+      assert.throws(
+        () => parseChatSandboxBashRequest(request({ sqlBridge: bridge(url) })),
+        /is not the web app origin in CHAT_SANDBOX_SQL_BRIDGE_ORIGIN/,
+        url,
+      );
+    }
+  });
+});
+
+test("a local http origin admits a SQL bridge on exactly that origin", (): void => {
+  withBridgeOrigin("http://127.0.0.1:3001", () => {
+    const url = "http://127.0.0.1:3001/api/chat/sandbox/sql";
+    assert.deepEqual(parseChatSandboxBashRequest(request({ sqlBridge: bridge(url) })).sqlBridge, bridge(url));
+    assert.throws(
+      () => parseChatSandboxBashRequest(request({ sqlBridge: bridge("http://127.0.0.1:9001/x") })),
+      /is not the web app origin/,
+    );
+  });
+});
+
+test("a SQL bridge without a configured origin is refused, a request without one is not", (): void => {
+  for (const origin of [undefined, "  "]) {
+    withBridgeOrigin(origin, () => {
+      assert.equal(parseChatSandboxBashRequest(request({})).sqlBridge, undefined);
+      assert.throws(
+        () => parseChatSandboxBashRequest(request({ sqlBridge: bridge(`${BRIDGE_ORIGIN}/api/chat/sandbox/sql`) })),
+        new RegExp(`${SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR} is not set`),
+      );
+    });
+  }
+  for (const origin of ["app.example", "https://app.example/api", "ftp://app.example"]) {
+    withBridgeOrigin(origin, () => {
+      assert.throws(
+        () => parseChatSandboxBashRequest(request({ sqlBridge: bridge(`${BRIDGE_ORIGIN}/api/chat/sandbox/sql`) })),
+        new RegExp(`${SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR} is '`),
+        origin,
+      );
+    });
+  }
 });
 
 // The function has no VPC, so unrestricted egress makes the URL allowlist the

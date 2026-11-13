@@ -89,6 +89,15 @@ export const SANDBOX_WORK_FILE_MEDIA_TYPE = "application/octet-stream";
 export const SANDBOX_OBJECT_HOSTS_ENV_VAR = "CHAT_SANDBOX_OBJECT_HOSTS";
 
 /**
+ * The one origin a command's SQL may be sent to, `https://<appDomain>` as set
+ * by infra/aws/lib/lambda-image-candidates.ts, or a local `http://` origin.
+ *
+ * The bridge URL is the other host this sandbox calls on a payload's word, so
+ * it gets the same kind of gate as the object hosts.
+ */
+export const SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR = "CHAT_SANDBOX_SQL_BRIDGE_ORIGIN";
+
+/**
  * Aggregate /work bytes one request may seed.
  *
  * Stated here so an oversized session fails with this message instead of an
@@ -477,14 +486,34 @@ const sessionIdSchema = z.string().regex(
   "sessionId must be a lowercase-hex UUID, which is what chat_sessions.session_id holds",
 );
 
+/** The SQL calls one `bash` command's code may make through the SQL bridge. */
+export const SANDBOX_MAX_SQL_CALLS_PER_COMMAND = 500;
+
+/**
+ * Where a command's code sends SQL: the web app's bridge route and the
+ * capability minted for this one call. Both stay in the host process, out of
+ * the shell's environment, its files and the command's output. The schema
+ * admits http, but the URL must also carry the origin in
+ * SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR, so http passes only where that origin is
+ * a local web app's.
+ */
+export const chatSandboxSqlBridgeSchema = z.object({
+  url: z.url({ protocol: /^https?$/ }),
+  authorization: z.string().min(1),
+});
+
 export const chatSandboxBashRequestSchema = z.object({
   operation: z.literal("bash"),
   sessionId: sessionIdSchema,
   command: z.string().min(1),
   files: z.array(chatSandboxFileSchema),
   writeSlots: z.array(chatSandboxWriteSlotSchema),
+  // Optional so a sandbox deployed before the web app keeps serving commands;
+  // without it, SQL from code fails with its own explicit message.
+  sqlBridge: chatSandboxSqlBridgeSchema.optional(),
 }).superRefine(checkRequestShape);
 
+export type ChatSandboxSqlBridge = z.infer<typeof chatSandboxSqlBridgeSchema>;
 export type ChatSandboxFile = z.infer<typeof chatSandboxFileSchema>;
 export type ChatSandboxWriteSlot = z.infer<typeof chatSandboxWriteSlotSchema>;
 export type ChatSandboxBashRequest = z.infer<typeof chatSandboxBashRequestSchema>;
@@ -494,6 +523,13 @@ export type ChatSandboxWrittenFile = Readonly<{
   slotId: string;
   sizeBytes: number;
   sha256: string;
+}>;
+
+/** The execute calls of one command that returned the tool's success result, for one target workspace. */
+export type ChatSandboxSqlWrite = Readonly<{
+  /** As the command's code named it; null is the chat's open workspace. */
+  workspaceId: string | null;
+  count: number;
 }>;
 
 export type ChatSandboxBashResponse = Readonly<{
@@ -527,6 +563,11 @@ export type ChatSandboxBashResponse = Readonly<{
    * do not remove the escaping on the grounds that the field is separate.
    */
   notes: ReadonlyArray<string>;
+  /**
+   * Absent when the process running the command ended before it could report,
+   * so absence says nothing about whether its code wrote.
+   */
+  sqlWrites?: ReadonlyArray<ChatSandboxSqlWrite>;
 }>;
 
 /**
@@ -858,6 +899,46 @@ const requireAllowedObjectUrls = (
   }
 };
 
+const readSqlBridgeOrigin = (): string => {
+  const raw = (process.env[SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR] ?? "").trim();
+  if (raw === "") {
+    throw new Error(
+      `${SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR} is not set, so no sqlBridge can be accepted: it must hold the web app's origin, such as https://app.example.com`,
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR} is '${raw}', which is not an absolute origin`);
+  }
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:")
+    || url.pathname !== "/" || url.search !== "" || url.hash !== ""
+    || url.username !== "" || url.password !== ""
+  ) {
+    throw new Error(
+      `${SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR} is '${raw}', which is not a bare http(s) origin such as https://app.example.com`,
+    );
+  }
+
+  return url.origin;
+};
+
+/** Check the bridge URL against the deployment's one origin, when a request sends one. */
+const requireAllowedSqlBridge = (sqlBridge: ChatSandboxSqlBridge | undefined): void => {
+  if (sqlBridge === undefined) {
+    return;
+  }
+  const allowedOrigin = readSqlBridgeOrigin();
+  const origin = new URL(sqlBridge.url).origin;
+  if (origin !== allowedOrigin) {
+    throw new Error(
+      `sqlBridge.url points at origin '${origin}', which is not the web app origin in ${SANDBOX_SQL_BRIDGE_ORIGIN_ENV_VAR} (${allowedOrigin})`,
+    );
+  }
+};
+
 const requireParsedRequest = <T>(result: z.ZodSafeParseResult<T>): T => {
   if (!result.success) {
     throw new Error(`Chat sandbox request does not match its schema: ${result.error.message}`);
@@ -869,6 +950,7 @@ const requireParsedRequest = <T>(result: z.ZodSafeParseResult<T>): T => {
 export const parseChatSandboxBashRequest = (payload: unknown): ChatSandboxBashRequest => {
   const request = requireParsedRequest(chatSandboxBashRequestSchema.safeParse(payload));
   requireAllowedObjectUrls(request.files, request.writeSlots);
+  requireAllowedSqlBridge(request.sqlBridge);
 
   return request;
 };

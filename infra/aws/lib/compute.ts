@@ -23,6 +23,7 @@ export interface ComputeProps {
   adminReaderDbSecret: cdk.aws_secretsmanager.Secret;
   sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
+  chatSandboxBridgeSecret: cdk.aws_secretsmanager.Secret;
   userPoolId: string;
   userPoolArn: string;
   userPoolClientId: string;
@@ -211,6 +212,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.appDbSecret, "password"),
       SESSION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(props.sessionEncryptionKeySecret),
       OPENAI_API_KEY: ecs.Secret.fromSecretsManager(props.openaiApiKeySecret),
+      CHAT_SANDBOX_BRIDGE_SECRET: ecs.Secret.fromSecretsManager(props.chatSandboxBridgeSecret),
     },
     logging: ecs.LogDrivers.awsLogs({
       logGroup: webLogGroup,

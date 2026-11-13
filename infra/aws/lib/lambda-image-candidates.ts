@@ -138,6 +138,8 @@ export const lambdaImageCandidates = (
     environment: {
       NODE_OPTIONS: "--max-old-space-size=6144",
       CHAT_SANDBOX_OBJECT_HOSTS: props.chatFilesBucket.bucketRegionalDomainName,
+      // The web app's origin, the one place a command's SQL may be sent.
+      CHAT_SANDBOX_SQL_BRIDGE_ORIGIN: `https://app.${props.baseDomain}`,
     },
   });
   const signup = create("signup", {

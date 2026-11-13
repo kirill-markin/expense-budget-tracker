@@ -6,9 +6,20 @@
  * the per-session pre-signed URLs the web task minted for this invocation, and
  * the host allowlist those URLs are checked against. Network is deliberately
  * left unconfigured, which is what keeps `curl` and `wget` unregistered instead
- * of merely denied.
+ * of merely denied. SQL from code goes through sqlBridge.ts, which this host
+ * process sends, never the interpreter.
  */
-import { Bash, DefenseInDepthBox, InMemoryFs, MountableFs, type BashOptions } from "just-bash";
+import {
+  Bash,
+  decodeBytesToUtf8,
+  DefenseInDepthBox,
+  InMemoryFs,
+  MountableFs,
+  type BashOptions,
+  type Command,
+  type ExecResult,
+} from "just-bash";
+import { z } from "zod";
 import {
   describeUnsaveableFileBytes,
   describeUnsaveablePath,
@@ -42,6 +53,13 @@ import {
   type PresignedRefusalKind,
   type PresignedRefusals,
 } from "./presignedFs.js";
+import {
+  createSqlBridgeSession,
+  SqlBridgeCallError,
+  unavailableSqlBridgeSession,
+  type SqlBridgeCaller,
+  type SqlCallKind,
+} from "./sqlBridge.js";
 import { RecordingWorkFs, type WorkRefusals } from "./workFs.js";
 
 /**
@@ -64,6 +82,8 @@ const SANDBOX_EXECUTION_LIMITS: NonNullable<BashOptions["executionLimits"]> = {
   maxExecutionTimeMs: SANDBOX_COMMAND_BUDGET_MS,
   maxPythonTimeoutMs: SANDBOX_COMMAND_BUDGET_MS,
   maxSqliteTimeoutMs: SANDBOX_COMMAND_BUDGET_MS,
+  // A script that loops over SQL calls spends most of its time waiting on them.
+  maxJsTimeoutMs: SANDBOX_COMMAND_BUDGET_MS,
 };
 
 /**
@@ -1286,6 +1306,60 @@ export const createFilesFs = (
     SANDBOX_FILES_REQUEST_MAX_BYTES,
   );
 
+const SQL_KIND_BY_TOOL_PATH: ReadonlyMap<string, SqlCallKind> = new Map<string, SqlCallKind>([
+  ["sql.query", "query"],
+  ["sql.execute", "execute"],
+]);
+
+/** The arguments of the chat's `sql_query` and `sql_execute` tools. */
+const sqlToolArgumentsSchema = z.object({
+  sql: z.string().min(1),
+  workspaceId: z.string().min(1).optional(),
+}).strict();
+
+/** js-exec's tool hook: returns the tool's success JSON and throws on every other answer. */
+const createSqlToolHook = (
+  sqlBridge: SqlBridgeCaller,
+): ((path: string, argsJson: string, signal: AbortSignal) => Promise<string>) =>
+  async (path: string, argsJson: string, signal: AbortSignal): Promise<string> => {
+    const kind = SQL_KIND_BY_TOOL_PATH.get(path);
+    if (kind === undefined) {
+      throw new SqlBridgeCallError(`There is no tool tools.${path}: use tools.sql.query or tools.sql.execute.`);
+    }
+    const parsed = sqlToolArgumentsSchema.safeParse(argsJson === "" ? undefined : JSON.parse(argsJson));
+    if (!parsed.success) {
+      throw new SqlBridgeCallError(`tools.${path} takes one object: { sql: string, workspaceId?: string }.`);
+    }
+
+    return sqlBridge(kind, { sql: parsed.data.sql, workspaceId: parsed.data.workspaceId ?? null }, signal);
+  };
+
+/**
+ * One SQL statement as a shell command, from its only argument or from stdin:
+ * prints the tool's JSON, or the failure on stderr with exit code 1.
+ */
+const createSqlCommand = (name: string, kind: SqlCallKind, sqlBridge: SqlBridgeCaller): Command => ({
+  name,
+  execute: async (args, context): Promise<ExecResult> => {
+    const sql = args.length > 1 ? "" : args[0] ?? decodeBytesToUtf8(context.stdin);
+    if (sql.trim() === "") {
+      return {
+        stdout: "",
+        stderr: `${name}: pass one SQL statement as one quoted argument or on stdin\n`,
+        exitCode: 2,
+      };
+    }
+    try {
+      return { stdout: `${await sqlBridge(kind, { sql, workspaceId: null }, context.signal)}\n`, stderr: "", exitCode: 0 };
+    } catch (error) {
+      if (error instanceof SqlBridgeCallError) {
+        return { stdout: "", stderr: `${error.message}\n`, exitCode: 1 };
+      }
+      throw error;
+    }
+  },
+});
+
 /**
  * The shell one command of one session runs in, over both mounts.
  *
@@ -1297,8 +1371,16 @@ export const createFilesFs = (
  * environment from its own synthetic map and spreads `options.env` into it, so a
  * command never sees this process's variables. Pinned by the host-environment
  * test in bashOperation.test.ts.
+ *
+ * `sqlBridge` backs `tools.sql.*` in js-exec and the `ebt-sql-*` commands;
+ * python3 reaches neither, because just-bash gives its CPython no tool or
+ * command bridge.
  */
-export const createSandboxBash = (filesFs: PresignedFs, workFs: RecordingWorkFs): Bash =>
+export const createSandboxBash = (
+  filesFs: PresignedFs,
+  workFs: RecordingWorkFs,
+  sqlBridge: SqlBridgeCaller,
+): Bash =>
   new Bash({
     fs: new MountableFs({
       base: new InMemoryFs(),
@@ -1323,6 +1405,11 @@ export const createSandboxBash = (filesFs: PresignedFs, workFs: RecordingWorkFs)
     // `executionId`. Nothing here is relaxed for guest code.
     defenseInDepth: { enabled: "auto" },
     python: true,
+    javascript: { invokeTool: createSqlToolHook(sqlBridge) },
+    customCommands: [
+      createSqlCommand("ebt-sql-query", "query", sqlBridge),
+      createSqlCommand("ebt-sql-execute", "execute", sqlBridge),
+    ],
   });
 
 /**
@@ -1356,14 +1443,20 @@ export const runChatSandboxBash = async (
   );
 
   const filesFs = createFilesFs(fileEntries, transfer);
-  const outcome = await execCommand(createSandboxBash(filesFs, workFs), request.command);
+  const sqlBridge = request.sqlBridge === undefined
+    ? unavailableSqlBridgeSession
+    : createSqlBridgeSession(
+      request.sqlBridge,
+      Math.min(deadlineEpochMs, startedAt + SANDBOX_COMMAND_BUDGET_MS),
+    );
+  const outcome = await execCommand(createSandboxBash(filesFs, workFs, sqlBridge.call), request.command);
   // Before the mount's refusals are read, and on the command's own stderr
   // before the response rewrites the guest paths out of it.
   recordPythonWriteRefusals(filesFs, outcome.stderr);
   const diff = await diffWorkFiles(workFs, baselineByPath, request.writeSlots, transfer);
   // Read after the diff, not before: a seed is only materialized when something
   // reads it, and for `cp` that is the diff itself.
-  return assembleBashResponse(
+  const response = assembleBashResponse(
     outcome,
     {
       ...diff,
@@ -1376,4 +1469,7 @@ export const runChatSandboxBash = async (
     },
     Date.now() - startedAt,
   );
+  // Outside the response budget: one entry per workspace a write landed in,
+  // which the call cap bounds far below it.
+  return { ...response, sqlWrites: sqlBridge.readWrites() };
 };

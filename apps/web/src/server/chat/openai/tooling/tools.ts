@@ -50,6 +50,7 @@ import {
 import {
   CHAT_SQL_STATEMENT_TIMEOUT_MESSAGE,
   ChatSqlMutationOutcomeUnknownError,
+  ChatSqlResultTooLargeError,
   execQuery,
   getChatSqlDeadlineMessage,
   getChatSqlPolicyMessage,
@@ -98,7 +99,7 @@ const CHAT_TOOL_INTERNAL_ERROR_MESSAGE = "The tool request could not be complete
  */
 const DEPRECATED_CHAT_SQL_TOOL_NAME = "query_database";
 
-type ChatSqlToolName = typeof SQL_QUERY_TOOL.name | typeof SQL_EXECUTE_TOOL.name;
+export type ChatSqlToolName = typeof SQL_QUERY_TOOL.name | typeof SQL_EXECUTE_TOOL.name;
 
 export type OpenAIToolContext = Readonly<{
   /** Primary CloudWatch correlation key: every chat error log must carry it. */
@@ -116,6 +117,34 @@ export type OpenAIToolContext = Readonly<{
    * tools refuse rather than fail.
    */
   isDemoMode: boolean;
+}>;
+
+/**
+ * What one SQL tool call needs of its caller: the chat turn it runs for, and
+ * the request it logs under. The sandbox bridge supplies the same fields for
+ * the run that minted its capability.
+ */
+export type ChatSqlCallContext = Readonly<{
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  turnId: string;
+}>;
+
+type ChatToolLogDependencies = Readonly<{
+  log: typeof log;
+}>;
+
+/**
+ * The SQL tool path's own dependencies. The executor is the one thing the two
+ * callers differ in: the chat tool cuts its answer to the model's character
+ * budget, the sandbox bridge answers whole.
+ */
+export type ChatSqlCallDependencies = Readonly<{
+  execQuery: typeof execQuery;
+  listChatWorkspaces: typeof listChatWorkspaces;
+  log: typeof log;
 }>;
 
 type ChatToolDependencies = Readonly<{
@@ -165,9 +194,11 @@ export type ExecutedChatToolCall = Readonly<{
    */
   output: string;
   /**
-   * Canonical mutation flag: true for the write tool alone, which is the only
-   * one whose validator accepts a mutation. Runtime invalidation must use this
-   * value instead of inferring mutability from earlier streamed tool snapshots.
+   * Canonical mutation flag: true for the write tool, and for a bash command
+   * whose code confirmed a write to the session's workspace through the SQL
+   * bridge; writes it made only to other workspaces leave it false. Runtime
+   * invalidation must use this value instead of inferring mutability from
+   * earlier streamed tool snapshots.
    */
   isMutating: boolean;
   /**
@@ -320,7 +351,7 @@ type RenderableTool = Readonly<{
  */
 const BASH_TOOL = {
   name: "bash",
-  description: `Run one shell command, python3 included, over this chat's files. ${SANDBOX_FILES_DIR} holds the user's uploads and is read-only; ${SANDBOX_WORK_DIR} is writable scratch that persists for the rest of this chat. No network and no database: read workspace data with sql_query. Available: coreutils, grep, rg, sed, awk, jq, xan, python3 (standard library only, no sqlite3). Use it to inspect, filter and aggregate the user's files before reading values out of them.`,
+  description: `Run one shell command, python3 included, over this chat's files. ${SANDBOX_FILES_DIR} holds the user's uploads and is read-only; ${SANDBOX_WORK_DIR} is writable scratch that persists for the rest of this chat. No network. Available: coreutils, grep, rg, sed, awk, jq, xan, js-exec, ebt-sql-query, ebt-sql-execute, python3 (standard library only, no sqlite3). Use it to inspect, filter and aggregate the user's files before reading values out of them.`,
   inputFields: [{
     name: "command",
     description: `One shell command line, with ${SANDBOX_WORK_DIR} as the working directory. Pipelines, redirection and ; or && are all one command. Keep printed output small: aggregate or slice rather than printing a whole file.`,
@@ -447,8 +478,8 @@ const buildDiscoverySuccessResult = (
 const logUnexpectedChatToolError = (
   serializedError: ChatToolExecutionError,
   toolName: string,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  context: ChatSqlCallContext,
+  dependencies: ChatToolLogDependencies,
 ): void => {
   dependencies.log({
     domain: "chat",
@@ -466,8 +497,8 @@ const logUnexpectedChatToolError = (
 const buildRedactedErrorPayload = (
   error: unknown,
   toolName: string,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  context: ChatSqlCallContext,
+  dependencies: ChatToolLogDependencies,
 ): AgentErrorPayload => {
   if (error instanceof WorkspaceAccessError) {
     dependencies.log(createChatWorkspaceUnavailableLogEvent(
@@ -587,13 +618,11 @@ type PreparedSqlToolCall = Readonly<{
  */
 const prepareSqlToolCall = async (
   toolName: ChatSqlToolName,
-  rawArguments: string,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  rawInput: unknown,
+  context: ChatSqlCallContext,
+  dependencies: ChatSqlCallDependencies,
 ): Promise<PreparedSqlToolCall> => {
-  const input = sqlToolInputSchema.safeParse(
-    parseToolArgumentsJson(rawArguments, toolName),
-  );
+  const input = sqlToolInputSchema.safeParse(rawInput);
   if (!input.success) {
     throw buildInvalidToolArgumentsError(toolName, input.error.message);
   }
@@ -620,7 +649,7 @@ const prepareSqlToolCall = async (
 const buildSqlPolicyErrorPayload = (
   error: SqlPolicyError,
   toolName: ChatSqlToolName,
-  dependencies: ChatToolDependencies,
+  dependencies: ChatToolLogDependencies,
 ): AgentErrorPayload => {
   dependencies.log({
     domain: "sql-api",
@@ -646,8 +675,8 @@ const buildSqlPolicyErrorPayload = (
 const buildSqlPreparationErrorPayload = (
   error: unknown,
   toolName: ChatSqlToolName,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  context: ChatSqlCallContext,
+  dependencies: ChatToolLogDependencies,
 ): AgentErrorPayload => {
   if (error instanceof AgentToolError) {
     return buildAgentErrorPayload(error.code, error.message, error.instructions, error.details);
@@ -669,8 +698,8 @@ const buildSqlPreparationErrorPayload = (
 const buildSqlExecutionErrorPayload = (
   error: unknown,
   toolName: ChatSqlToolName,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  context: ChatSqlCallContext,
+  dependencies: ChatToolLogDependencies,
 ): AgentErrorPayload => {
   if (error instanceof AgentToolError) {
     return buildAgentErrorPayload(error.code, error.message, error.instructions, error.details);
@@ -714,6 +743,16 @@ const buildSqlExecutionErrorPayload = (
       "This chat turn is no longer the session's active turn, so the call was abandoned",
       `Stop this task and do not call ${toolName} again for this turn.`,
       { retryable: false },
+    );
+  }
+  // Raised only by the sandbox bridge's executor, whose answer code reads
+  // whole: a cut answer would silently drop rows from that code's input.
+  if (error instanceof ChatSqlResultTooLargeError) {
+    return buildAgentErrorPayload(
+      "query_result_too_large",
+      error.message,
+      `Read fewer rows per call: split the read into several ${toolName} calls, lower LIMIT, or select fewer columns.`,
+      { outputBytes: error.outputBytes, limitBytes: error.limitBytes, retryable: true },
     );
   }
   if (error instanceof ChatSqlMutationOutcomeUnknownError) {
@@ -760,17 +799,21 @@ const buildFailedSqlToolCall = (
   errorCode: payload.error.code,
 });
 
-const executeSqlToolCall = async (
+/**
+ * One sql_query or sql_execute call from already-decoded arguments: the one SQL
+ * path of this surface, which both the chat tool and the sandbox bridge run.
+ */
+export const executeChatSqlCall = async (
   toolName: ChatSqlToolName,
-  rawArguments: string,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  rawInput: unknown,
+  context: ChatSqlCallContext,
+  dependencies: ChatSqlCallDependencies,
 ): Promise<ExecutedChatToolCall> => {
   const isMutating = toolName === SQL_EXECUTE_TOOL.name;
 
   let prepared: PreparedSqlToolCall;
   try {
-    prepared = await prepareSqlToolCall(toolName, rawArguments, context, dependencies);
+    prepared = await prepareSqlToolCall(toolName, rawInput, context, dependencies);
   } catch (error) {
     return buildFailedSqlToolCall(
       error,
@@ -805,9 +848,37 @@ const executeSqlToolCall = async (
   }
 };
 
+const executeSqlToolCall = async (
+  toolName: ChatSqlToolName,
+  rawArguments: string,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): Promise<ExecutedChatToolCall> => {
+  let rawInput: unknown;
+  try {
+    rawInput = parseToolArgumentsJson(rawArguments, toolName);
+  } catch (error) {
+    return buildFailedSqlToolCall(
+      error,
+      toolName === SQL_EXECUTE_TOOL.name,
+      buildSqlPreparationErrorPayload(error, toolName, context, dependencies),
+    );
+  }
+  return executeChatSqlCall(toolName, rawInput, context, dependencies);
+};
+
 const bashToolInputSchema = z.object({
   command: z.string().min(1),
 });
+
+/**
+ * The SQL bridge commits each write as it is sent, so a command that failed -
+ * whether it exited non-zero after a timeout, an out-of-memory kill or its own
+ * error, or never answered at all - may already have applied part of an
+ * import, and running it again as it stands would insert those rows twice.
+ */
+const BASH_SQL_WRITES_MAY_HAVE_APPLIED =
+  "SQL writes this command's code sent may already have been applied: read them back with a SELECT before running it again, and re-send only what is missing.";
 
 /**
  * What the model is told about a bash result, and how to read its two voices
@@ -831,7 +902,10 @@ const bashToolInputSchema = z.object({
  * at a count that did not exist - so each list answers for itself, and every
  * total the result carries has an instruction that reads it.
  */
-const buildBashSuccessInstructions = (data: ChatSandboxCommandData): string =>
+const buildBashSuccessInstructions = (
+  data: ChatSandboxCommandData,
+  mayHaveWrittenSql: boolean,
+): string =>
   "stdout and stderr are the command's own output and nothing else. "
   + "sandboxNotes is written by the sandbox itself, never by the command, so "
   + "when a note contradicts the output - it says a file exists and could not "
@@ -848,7 +922,8 @@ const buildBashSuccessInstructions = (data: ChatSandboxCommandData): string =>
     ? ""
     : `sandboxNotes likewise holds ${String(data.sandboxNotes.length)} of ${String(data.sandboxNotesTotal)}, so more went wrong than it names. `)
   + `fullOutputPath is separate - when it is not null it names a ${SANDBOX_WORK_DIR} file this chat saved for you, holding the whole output of this command, and it is there to be read even though it is not in savedFiles. `
-  + "Check exitCode before using the output.";
+  + "Check exitCode before using the output."
+  + (data.exitCode !== 0 && mayHaveWrittenSql ? ` ${BASH_SQL_WRITES_MAY_HAVE_APPLIED}` : "");
 
 /**
  * A refused command is an error result, not an empty success.
@@ -889,10 +964,48 @@ const executeBashToolCall = async (
     }
 
     const data: ChatSandboxCommandData = result.data;
-    return buildDiscoverySuccessResult({ ...data }, buildBashSuccessInstructions(data));
+    const success = buildDiscoverySuccessResult(
+      { ...data },
+      buildBashSuccessInstructions(data, result.mayHaveWrittenSql),
+    );
+    return result.wroteSessionWorkspace
+      ? { ...success, isMutating: true, workspaceId: context.workspaceId }
+      : success;
   } catch (error) {
+    return buildBashErrorResult(error, context, dependencies);
+  }
+};
+
+/**
+ * An unexpected bash failure can arrive after the command ran - a timeout on
+ * the way back, an answer that is not the contract's - and the SQL bridge
+ * commits each write as it is sent, so the generic "retry once" advice would
+ * run an import twice.
+ */
+const BASH_UNEXPECTED_ERROR_INSTRUCTIONS =
+  `${BASH_SQL_WRITES_MAY_HAVE_APPLIED} `
+  + `Retry ${BASH_TOOL.name} at most once; if it fails again, stop and report the server error.`;
+
+const buildBashErrorResult = (
+  error: unknown,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): ExecutedChatToolCall => {
+  if (error instanceof AgentToolError) {
     return buildDiscoveryErrorResult(error, BASH_TOOL.name, context, dependencies);
   }
+  const payload: AgentErrorPayload = {
+    ...buildRedactedErrorPayload(error, BASH_TOOL.name, context, dependencies),
+    instructions: BASH_UNEXPECTED_ERROR_INSTRUCTIONS,
+  };
+  return {
+    output: serializeAgentPayload(payload),
+    isMutating: false,
+    workspaceId: null,
+    succeeded: false,
+    error: serializeToolError(error),
+    errorCode: payload.error.code,
+  };
 };
 
 const viewFileInputSchema = z.object({

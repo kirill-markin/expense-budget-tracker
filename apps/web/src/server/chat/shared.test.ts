@@ -23,7 +23,10 @@ import {
   buildSystemInstructions,
   CHAT_SQL_COMMIT_TIMEOUT_MS,
   ChatSqlMutationOutcomeUnknownError,
+  ChatSqlResultTooLargeError,
   execQueryWithDependencies,
+  execWholeQueryWithDependencies,
+  MAX_CHAT_SANDBOX_SQL_READ_OUTPUT_BYTES,
   getChatSqlDeadlineMessage,
   getChatSqlPolicyMessage,
   type ChatSqlExecutionContext,
@@ -313,6 +316,59 @@ test("execQueryWithDependencies caps the chat tool output the model receives in 
   assert.equal(statement.returnedRowCount, statement.rows.length);
   assert.equal(statement.totalRowCount, rows.length);
   assert.equal(statement.truncated, true);
+});
+
+const createReadOnlyDependencies = (queryFn: QueryFn): ExecQueryDependencies => ({
+  withUserContext: async (): Promise<never> => {
+    throw new Error("User context should not run");
+  },
+  withReadOnlyRestrictedUserContext: async <T>(
+    _userId: string,
+    _workspaceId: string,
+    _statementTimeoutMs: number,
+    callback: (restrictedQueryFn: QueryFn) => Promise<T>,
+  ): Promise<T> => callback(queryFn),
+  lockUncancelledChatTurnForMutationWithQuery: async (): Promise<void> => {},
+  now: Date.now,
+});
+
+test("execWholeQueryWithDependencies returns the whole read the chat tool would cut", async (): Promise<void> => {
+  const rows = createNoteRows(100);
+
+  const result = await execWholeQueryWithDependencies(
+    validateSingleReadOnlyExpenseSql(LONG_READ_STATEMENT),
+    CONTEXT,
+    READ_TARGET,
+    createReadOnlyDependencies(createCursorQueryFn(rows)),
+  );
+
+  const statement = (JSON.parse(result.json) as ChatSqlPayload).data.statements[0];
+  assert.ok(statement);
+  assert.ok(result.json.length > MAX_SQL_RESULT_CHARS);
+  assert.deepEqual(statement.rows, rows);
+  assert.equal(statement.truncated, false);
+});
+
+test("execWholeQueryWithDependencies refuses a read too large to return whole", async (): Promise<void> => {
+  const rows = Array.from({ length: 100 }, (_value, index) => ({
+    entry_id: `entry-${String(index)}`,
+    note: "x".repeat(45_000),
+  }));
+
+  await assert.rejects(
+    () => execWholeQueryWithDependencies(
+      validateSingleReadOnlyExpenseSql("SELECT entry_id, note FROM ledger_entries LIMIT 100"),
+      CONTEXT,
+      READ_TARGET,
+      createReadOnlyDependencies(createCursorQueryFn(rows)),
+    ),
+    (error: unknown): boolean => {
+      assert.ok(error instanceof ChatSqlResultTooLargeError);
+      assert.equal(error.limitBytes, MAX_CHAT_SANDBOX_SQL_READ_OUTPUT_BYTES);
+      assert.ok(error.outputBytes > MAX_CHAT_SANDBOX_SQL_READ_OUTPUT_BYTES);
+      return true;
+    },
+  );
 });
 
 test("execQueryWithDependencies keeps the affected row count when a chat mutation is cut", async (): Promise<void> => {

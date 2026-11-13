@@ -196,6 +196,31 @@ test("proxy_jwt keeps public paths exempt and gives an ApiKey no app-origin surf
   });
 });
 
+test("the sandbox SQL bridge needs neither a session nor a CSRF token, and gets no injected identity", async (): Promise<void> => {
+  const authEnvs: ReadonlyArray<EnvSnapshot> = [COGNITO_ENV, PROXY_JWT_ENV];
+  for (const env of authEnvs) {
+    await withEnv(env, async (): Promise<void> => {
+      const request = new NextRequest("https://app.example.com/api/chat/sandbox/sql", {
+        method: "POST",
+        headers: { authorization: "ChatSandbox payload.signature", "x-user-id": "injected-user" },
+      });
+
+      const response = await proxy(request);
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("location"), null);
+      assert.equal(response.headers.get("x-middleware-request-x-user-id"), null);
+    });
+  }
+
+  await withCognitoEnv(async (): Promise<void> => {
+    const sibling = new NextRequest("https://app.example.com/api/chat/sandbox/sql/extra", { method: "POST" });
+    const siblingResponse = await proxy(sibling);
+    assert.equal(siblingResponse.status, 403);
+    assert.equal(await siblingResponse.text(), "CSRF validation failed");
+  });
+});
+
 test("proxy_jwt still fails CSRF validation before authenticating a mutating request", async (): Promise<void> => {
   await withProxyJwtEnv(async (): Promise<void> => {
     const request = new NextRequest("https://app.example.com/api/transactions", {

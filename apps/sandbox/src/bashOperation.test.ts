@@ -40,6 +40,7 @@ import {
   type SandboxObjectTransfer,
 } from "./objects.js";
 import type { PresignedFs, PresignedRefusals } from "./presignedFs.js";
+import { unavailableSqlBridgeCaller } from "./sqlBridge.js";
 import type { RecordingWorkFs, WorkRefusals } from "./workFs.js";
 
 type RecordedWrite = Readonly<{ putUrl: string; mediaType: string; content: string }>;
@@ -181,7 +182,7 @@ const createSandbox = (
   const fileEntries = files.filter((file) => file.path.startsWith(`${SANDBOX_FILES_DIR}/`));
   const workFs = createWorkFs(workEntries, transfer);
   const filesFs = createFilesFs(fileEntries, transfer);
-  const bash = createSandboxBash(filesFs, workFs);
+  const bash = createSandboxBash(filesFs, workFs, unavailableSqlBridgeCaller);
   const baseline = baselineOf(workEntries);
   const diff = async (): Promise<WorkDiff> =>
     diffWorkFiles(workFs, baseline, writeSlots(8), transfer);
@@ -2294,7 +2295,11 @@ const catFileOverRealNetwork = async (
       return realTransfer.readObject(url);
     },
   };
-  const bash = createSandboxBash(createFilesFs([file], transfer), createWorkFs([], transfer));
+  const bash = createSandboxBash(
+    createFilesFs([file], transfer),
+    createWorkFs([], transfer),
+    unavailableSqlBridgeCaller,
+  );
   const result = await bash.exec(`cat ${file.path}`);
 
   return {

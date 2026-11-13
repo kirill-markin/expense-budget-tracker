@@ -16,6 +16,8 @@
  * The resolved userId is forwarded as x-user-id and, once established, the
  * active workspace is forwarded as x-workspace-id to downstream route
  * handlers. /api/live and /api/health are always exempt from auth.
+ * Capability-authenticated paths are exempt from auth and CSRF in every mode:
+ * their caller is server-side code holding a signed capability, not a browser.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { JwtExpiredError } from "aws-jwt-verify/error";
@@ -51,6 +53,13 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/live",
   "/api/health",
   "/.well-known/agent.json",
+];
+/**
+ * The route verifies its own signed capability and reads no identity header,
+ * so neither a session nor a CSRF token applies to it.
+ */
+const CAPABILITY_AUTHENTICATED_PATHS: ReadonlyArray<string> = [
+  "/api/chat/sandbox/sql",
 ];
 const PUBLIC_PATH_PATTERNS: ReadonlyArray<RegExp> = [
   /^\/share\/monthly\/[^/]+$/u,
@@ -145,7 +154,8 @@ const addSecurityHeaders = (response: NextResponse, nonce: string, csp?: string)
  *   4. Double-submit token — X-CSRF-Token must match the app-scoped cookie.
  *
  * The check runs at the top of proxy() — before the public-path bypass — so all
- * mutating paths (including /api/auth/*) are CSRF-protected.
+ * mutating paths (including /api/auth/*) are CSRF-protected, except the
+ * capability-authenticated paths, which carry no browser credential to forge.
  *
  * Rate limiting is handled at the infrastructure level (Cloudflare + AWS WAF
  * managed rule sets) and is not duplicated here.
@@ -236,6 +246,22 @@ const forwardWithIdentity = (
   const response = NextResponse.next({ request: { headers } });
   addSecurityHeaders(response, nonce, csp);
   maybeAttachCsrfCookie(request, response);
+  return response;
+};
+
+/** Forwarded identity headers are dropped, so a caller cannot inject one. */
+const forwardWithoutIdentity = (request: NextRequest, nonce: string): NextResponse => {
+  const csp = buildCsp(nonce);
+  const headers = new Headers(request.headers);
+  headers.delete(USER_ID_HEADER);
+  headers.delete(WORKSPACE_ID_HEADER);
+  headers.delete(USER_EMAIL_HEADER);
+  headers.delete(USER_EMAIL_VERIFIED_HEADER);
+  headers.set(REQUEST_PATH_HEADER, request.nextUrl.pathname + request.nextUrl.search);
+  headers.set("x-nonce", nonce);
+  headers.set("Content-Security-Policy", csp);
+  const response = NextResponse.next({ request: { headers } });
+  addSecurityHeaders(response, nonce, csp);
   return response;
 };
 
@@ -339,6 +365,10 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
   const { pathname } = request.nextUrl;
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
+  if (CAPABILITY_AUTHENTICATED_PATHS.includes(pathname)) {
+    return forwardWithoutIdentity(request, nonce);
+  }
+
   if (!checkCsrf(request)) {
     const response = new NextResponse("CSRF validation failed", { status: 403 });
     addSecurityHeaders(response, nonce);
@@ -359,18 +389,7 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
   // AUTH_MODE=cognito and AUTH_MODE=proxy_jwt — public paths are exempt from
   // auth (CSRF already checked above)
   if (isPublicPath(pathname)) {
-    const csp = buildCsp(nonce);
-    const headers = new Headers(request.headers);
-    headers.delete(USER_ID_HEADER);
-    headers.delete(WORKSPACE_ID_HEADER);
-    headers.delete(USER_EMAIL_HEADER);
-    headers.delete(USER_EMAIL_VERIFIED_HEADER);
-    headers.set(REQUEST_PATH_HEADER, request.nextUrl.pathname + request.nextUrl.search);
-    headers.set("x-nonce", nonce);
-    headers.set("Content-Security-Policy", csp);
-    const response = NextResponse.next({ request: { headers } });
-    addSecurityHeaders(response, nonce, csp);
-    return response;
+    return forwardWithoutIdentity(request, nonce);
   }
 
   if (authMode === "proxy_jwt") {

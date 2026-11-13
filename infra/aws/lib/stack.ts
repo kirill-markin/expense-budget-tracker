@@ -93,6 +93,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       adminReaderDbSecret: dbResult.adminReaderDbSecret,
       sessionEncryptionKeySecret: sec.sessionEncryptionKeySecret,
       openaiApiKeySecret: sec.openaiApiKeySecret,
+      chatSandboxBridgeSecret: sec.chatSandboxBridgeSecret,
       userPoolId: authResult.userPool.userPoolId,
       userPoolArn: authResult.userPool.userPoolArn,
       userPoolClientId: authResult.userPoolClient.userPoolClientId,
