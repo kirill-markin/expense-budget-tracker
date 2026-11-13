@@ -769,10 +769,38 @@ tbody tr:last-child .currentMonthActual {
   z-index: 1000;
 }
 
+@media (max-width: 1099px), (pointer: coarse) {
+  .scroll {
+    --budget-value-column-width: 76px;
+    --budget-year-column-width: 84px;
+  }
+
+  .cell,
+  .subHeadCell,
+  .headCell {
+    padding-inline: 6px;
+  }
+
+  .headCell.yearTotal {
+    padding-inline: 4px;
+    font-size: 12px;
+    white-space: normal;
+  }
+
+  .planCellButton {
+    inline-size: calc(100% + 12px);
+    margin-inline: -6px;
+    padding-inline: 6px;
+  }
+
+  .addCategoryRow {
+    display: none;
+  }
+}
+
 @media (max-width: 767px) {
   .scroll {
     --budget-category-column-width: 120px;
-    --budget-year-column-width: 104px;
 
     max-block-size: calc(100dvh - 160px);
     overflow-y: auto;
@@ -809,17 +837,6 @@ tbody tr:last-child .currentMonthActual {
 
   .stickyCol {
     padding-inline-start: 16px;
-  }
-
-  .cell,
-  .subHeadCell {
-    padding-inline: 6px;
-  }
-
-  .planCellButton {
-    inline-size: calc(100% + 12px);
-    margin-inline: -6px;
-    padding-inline: 6px;
   }
 
   .alertBar {

@@ -100,7 +100,7 @@ export const AddCategoryRow = ({
 
   return (
     <Fragment>
-      <tr className={styles.categoryRow}>
+      <tr className={`${styles.categoryRow} ${styles.addCategoryRow}`}>
         <td className={`${styles.categoryLabel} ${styles.stickyCol}`}>
           {draft === null
             ? (
@@ -146,7 +146,7 @@ export const AddCategoryRow = ({
         ))}
       </tr>
       {error !== null && (
-        <tr className={styles.categoryRow}>
+        <tr className={`${styles.categoryRow} ${styles.addCategoryRow}`}>
           <td className={`${styles.categoryLabel} ${styles.stickyCol}`} />
           <td className={styles.addCategoryMessage} colSpan={valueColumns.length}>
             <span
