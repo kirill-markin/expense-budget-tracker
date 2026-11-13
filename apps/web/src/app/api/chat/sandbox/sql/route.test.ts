@@ -21,8 +21,11 @@ import {
   type ChatSandboxSqlCapability,
 } from "@/server/chat/sandbox/sqlCapability";
 import {
+  ChatSandboxSqlAccountMissingError,
+  execChatSandboxSqlQuery,
+} from "@/server/chat/sandbox/sqlBridgeIdentity";
+import {
   execQuery,
-  execWholeQuery,
   type ChatSqlExecutionContext,
   type ChatSqlTarget,
   type QueryResult,
@@ -30,6 +33,7 @@ import {
 import { ChatSessionRunTransitionError } from "@/server/chat/store";
 import type { ChatSessionRow } from "@/server/chat/store/sessionStore";
 import type { QueryFn } from "@/server/db/contextRunner";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import type { WorkspaceSummary } from "@/server/workspaces";
 
 type RouteDependencies = Parameters<typeof chatSandboxSqlRouteWithDeps>[1];
@@ -341,16 +345,22 @@ test("the gate locks the capability's run inside the capability's user context",
   }]);
 });
 
-test("the gate answers 403 for a run that is no longer running and rethrows any other error", async (): Promise<void> => {
-  const stopped = createGate(new ChatSessionRunTransitionError({
-    sessionId: CAPABILITY.sessionId,
-    activeRunId: CAPABILITY.activeRunId,
-    operation: "authorize chat sandbox SQL",
-  }));
-  await assert.rejects(
-    requireActiveChatRunWithDeps(CAPABILITY, stopped.dependencies),
-    (error: unknown): boolean => error instanceof ApiRouteError && error.status === 403,
-  );
+test("the gate answers 403 for a stopped run, a removed member or a deleted account, and rethrows any other error", async (): Promise<void> => {
+  const refusals: ReadonlyArray<Error> = [
+    new ChatSessionRunTransitionError({
+      sessionId: CAPABILITY.sessionId,
+      activeRunId: CAPABILITY.activeRunId,
+      operation: "authorize chat sandbox SQL",
+    }),
+    new WorkspaceAccessError(CAPABILITY.userId, CAPABILITY.workspaceId),
+    new ChatSandboxSqlAccountMissingError(CAPABILITY.userId),
+  ];
+  for (const refusal of refusals) {
+    await assert.rejects(
+      requireActiveChatRunWithDeps(CAPABILITY, createGate(refusal).dependencies),
+      (error: unknown): boolean => error instanceof ApiRouteError && error.status === 403,
+    );
+  }
 
   const databaseError = new Error("connection terminated");
   const failing = createGate(databaseError);
@@ -361,6 +371,6 @@ test("the gate answers 403 for a run that is no longer running and rethrows any 
 });
 
 test("the route runs statements whole, not under the model's result budget", (): void => {
-  assert.equal(DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES.sql.execQuery, execWholeQuery);
+  assert.equal(DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES.sql.execQuery, execChatSandboxSqlQuery);
   assert.notEqual(DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES.sql.execQuery, execQuery);
 });

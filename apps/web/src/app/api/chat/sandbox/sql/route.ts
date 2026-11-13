@@ -16,13 +16,17 @@ import {
   verifyChatSandboxSqlAuthorization,
   type ChatSandboxSqlCapability,
 } from "@/server/chat/sandbox/sqlCapability";
-import { execWholeQuery } from "@/server/chat/shared";
+import {
+  ChatSandboxSqlAccountMissingError,
+  execChatSandboxSqlQuery,
+  withChatSandboxSqlUserContext,
+} from "@/server/chat/sandbox/sqlBridgeIdentity";
 import {
   ChatSessionRunTransitionError,
   lockActiveChatSessionRunWithQuery,
 } from "@/server/chat/store";
-import { withUserContext } from "@/server/db";
 import { log, MAX_SANDBOX_SQL_LOG_CHARS } from "@/server/logger";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 
 const requestBodySchema = z.object({
   kind: z.enum(["query", "execute"]),
@@ -39,7 +43,7 @@ type ChatSandboxSqlRouteDependencies = Readonly<{
 }>;
 
 type ActiveChatRunGateDependencies = Readonly<{
-  withUserContext: typeof withUserContext;
+  withUserContext: typeof withChatSandboxSqlUserContext;
   lockActiveChatSessionRunWithQuery: typeof lockActiveChatSessionRunWithQuery;
 }>;
 
@@ -67,6 +71,18 @@ export const requireActiveChatRunWithDeps = async (
         "The chat run this command belongs to is no longer running, so its code may not reach the workspace data",
       );
     }
+    if (error instanceof WorkspaceAccessError) {
+      throw new ApiRouteError(
+        403,
+        "The user this chat run belongs to is no longer a member of its workspace, so its code may not reach the workspace data",
+      );
+    }
+    if (error instanceof ChatSandboxSqlAccountMissingError) {
+      throw new ApiRouteError(
+        403,
+        "The account this chat run belongs to no longer exists, so its code may not reach the workspace data",
+      );
+    }
     throw error;
   }
 };
@@ -75,8 +91,11 @@ export const DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES: ChatSandboxSqlRouteDep
   now: Date.now,
   createRequestId: (): string => crypto.randomUUID(),
   requireActiveChatRun: (capability: ChatSandboxSqlCapability): Promise<void> =>
-    requireActiveChatRunWithDeps(capability, { withUserContext, lockActiveChatSessionRunWithQuery }),
-  sql: { execQuery: execWholeQuery, listChatWorkspaces, log },
+    requireActiveChatRunWithDeps(capability, {
+      withUserContext: withChatSandboxSqlUserContext,
+      lockActiveChatSessionRunWithQuery,
+    }),
+  sql: { execQuery: execChatSandboxSqlQuery, listChatWorkspaces, log },
   log,
 };
 

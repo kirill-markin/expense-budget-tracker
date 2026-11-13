@@ -33,6 +33,7 @@ type DbFacade = Readonly<{
   queryAsTrustedIdentity: (identity: UserIdentity, workspaceId: string, text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
   queryAsExistingWorkspace: (userId: string, workspaceId: string, text: string, params: ReadonlyArray<unknown>) => Promise<QueryResult>;
   withUserContext: <T>(userId: string, workspaceId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
+  withTrustedIdentityContext: <T>(identity: UserIdentity, workspaceId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withUserOnlyContext: <T>(userId: string, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withReadOnlyRestrictedUserContext: <T>(userId: string, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
   withReadOnlyRestrictedTrustedIdentityContext: <T>(identity: UserIdentity, workspaceId: string, statementTimeoutMs: number, callback: (queryFn: QueryFn) => Promise<T>) => Promise<T>;
@@ -142,6 +143,23 @@ export const createDbFacade = (dependencies: DbFacadeDependencies): DbFacade => 
       workspaceId,
       {
         userId,
+        workspaceId,
+        statementTimeoutMs: null,
+        restrictedRole: null,
+      },
+      callback,
+    ),
+  withTrustedIdentityContext: async <T>(
+    identity: UserIdentity,
+    workspaceId: string,
+    callback: (queryFn: QueryFn) => Promise<T>,
+  ): Promise<T> =>
+    runForTrustedIdentity(
+      dependencies,
+      identity,
+      workspaceId,
+      {
+        userId: identity.userId,
         workspaceId,
         statementTimeoutMs: null,
         restrictedRole: null,

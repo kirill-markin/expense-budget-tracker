@@ -11,6 +11,8 @@
  * withUserContext() — multiple statements in one transaction with app.user_id
  *                     and app.workspace_id. The callback receives a bound
  *                     queryFn sharing one client.
+ * withTrustedIdentityContext() — the same transaction for an already-trusted
+ *                     UserIdentity rather than a request-scoped user id.
  * withUserOnlyContext() — same, but for strictly user-scoped tables: sets
  *                     app.user_id without provisioning or selecting a workspace.
  * withReadOnlyRestrictedUserContext() — same context, but a repeatable-read,
@@ -45,6 +47,7 @@ export const queryAs = facade.queryAs;
 export const queryAsTrustedIdentity = facade.queryAsTrustedIdentity;
 export const queryAsExistingWorkspace = facade.queryAsExistingWorkspace;
 export const withUserContext = facade.withUserContext;
+export const withTrustedIdentityContext = facade.withTrustedIdentityContext;
 export const withUserOnlyContext = facade.withUserOnlyContext;
 export const withReadOnlyRestrictedUserContext = facade.withReadOnlyRestrictedUserContext;
 export const withReadOnlyRestrictedTrustedIdentityContext = facade.withReadOnlyRestrictedTrustedIdentityContext;
