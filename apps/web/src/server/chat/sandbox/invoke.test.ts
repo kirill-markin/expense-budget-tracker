@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CHAT_SANDBOX_SQL_ROUTE_PATH } from "@expense-budget-tracker/agent-shared";
 import { describeUnsaveableWorkBytes } from "../../../../../sandbox/src/contract";
 import { CHAT_FILE_SANDBOX_DIRECTORY } from "@/lib/chatFiles";
 import { buildChatFileObjectKey } from "@/server/chatFiles/objectStore";
@@ -26,7 +27,6 @@ import {
 } from "./invoke";
 import {
   CHAT_SANDBOX_BRIDGE_SECRET_ENV_VAR,
-  CHAT_SANDBOX_SQL_ROUTE_PATH,
   verifyChatSandboxSqlAuthorization,
 } from "./sqlCapability";
 
@@ -97,6 +97,7 @@ type SandboxAnswer = Readonly<{
   deletedPaths?: ReadonlyArray<string>;
   notes?: ReadonlyArray<string>;
   sqlWrites?: ReadonlyArray<Readonly<{ workspaceId: string | null; count: number }>>;
+  sqlUnconfirmedWriteCount?: number;
 }>;
 
 const answerOf = (answer: SandboxAnswer): string => JSON.stringify({
@@ -108,6 +109,7 @@ const answerOf = (answer: SandboxAnswer): string => JSON.stringify({
   deletedPaths: answer.deletedPaths ?? [],
   notes: answer.notes ?? [],
   ...(answer.sqlWrites === undefined ? {} : { sqlWrites: answer.sqlWrites }),
+  ...(answer.sqlUnconfirmedWriteCount === undefined ? {} : { sqlUnconfirmedWriteCount: answer.sqlUnconfirmedWriteCount }),
 });
 
 type SandboxRequest = Readonly<{
@@ -367,6 +369,8 @@ test("only a write the sandbox reports to the open workspace marks the command a
     await wroteSessionWorkspace(answerOf({ sqlWrites: [{ workspaceId: "workspace-other", count: 2 }] })),
     false,
   );
+  // An unconfirmed write is not refreshed on, as `sql_execute` treats an ambiguous outcome.
+  assert.equal(await wroteSessionWorkspace(answerOf({ sqlWrites: [], sqlUnconfirmedWriteCount: 1 })), false);
   // A sandbox deployed before this app sends no report, and its answer is still accepted.
   assert.equal(await wroteSessionWorkspace(answerOf({})), false);
 });
@@ -386,6 +390,9 @@ test("a command may have written SQL unless its sandbox reported no writes at al
     await mayHaveWrittenSql(answerOf({ sqlWrites: [{ workspaceId: "workspace-other", count: 2 }] })),
     true,
   );
+  assert.equal(await mayHaveWrittenSql(answerOf({ sqlWrites: [], sqlUnconfirmedWriteCount: 1 })), true);
+  assert.equal(await mayHaveWrittenSql(answerOf({ sqlWrites: [], sqlUnconfirmedWriteCount: 0 })), false);
+  // A sandbox that reports confirmed writes but predates the unconfirmed count is still accepted.
   assert.equal(await mayHaveWrittenSql(answerOf({ sqlWrites: [] })), false);
   // No report is what an older sandbox and a dead command process both send.
   assert.equal(await mayHaveWrittenSql(answerOf({})), true);

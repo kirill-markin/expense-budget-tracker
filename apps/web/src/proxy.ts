@@ -21,6 +21,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { JwtExpiredError } from "aws-jwt-verify/error";
+import { CHAT_SANDBOX_SQL_ROUTE_PATH } from "@expense-budget-tracker/agent-shared";
 import {
   createProxyJwtAuthenticatorFromEnv,
   extractProxyJwtToken,
@@ -59,7 +60,7 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
  * so neither a session nor a CSRF token applies to it.
  */
 const CAPABILITY_AUTHENTICATED_PATHS: ReadonlyArray<string> = [
-  "/api/chat/sandbox/sql",
+  CHAT_SANDBOX_SQL_ROUTE_PATH,
 ];
 const PUBLIC_PATH_PATTERNS: ReadonlyArray<RegExp> = [
   /^\/share\/monthly\/[^/]+$/u,

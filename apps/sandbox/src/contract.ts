@@ -490,6 +490,13 @@ const sessionIdSchema = z.string().regex(
 export const SANDBOX_MAX_SQL_CALLS_PER_COMMAND = 500;
 
 /**
+ * The error code of the bridge route's failure envelope for an execute whose
+ * transaction outcome was lost, so the statement may have been applied. It is
+ * the web chat's tool error code; a web test pins the two together.
+ */
+export const SANDBOX_SQL_MUTATION_OUTCOME_UNKNOWN_CODE = "sql_mutation_outcome_unknown";
+
+/**
  * Where a command's code sends SQL: the web app's bridge route and the
  * capability minted for this one call. Both stay in the host process, out of
  * the shell's environment, its files and the command's output. The schema
@@ -527,7 +534,7 @@ export type ChatSandboxWrittenFile = Readonly<{
 
 /** The execute calls of one command that returned the tool's success result, for one target workspace. */
 export type ChatSandboxSqlWrite = Readonly<{
-  /** As the command's code named it; null is the chat's open workspace. */
+  /** As the command's code named it, trimmed; null is the chat's open workspace. */
   workspaceId: string | null;
   count: number;
 }>;
@@ -568,6 +575,11 @@ export type ChatSandboxBashResponse = Readonly<{
    * so absence says nothing about whether its code wrote.
    */
   sqlWrites?: ReadonlyArray<ChatSandboxSqlWrite>;
+  /**
+   * Execute calls sent without an answer saying whether they ran, so each may
+   * have been applied. Absent for the same reason as `sqlWrites`.
+   */
+  sqlUnconfirmedWriteCount?: number;
 }>;
 
 /**

@@ -1314,7 +1314,8 @@ const SQL_KIND_BY_TOOL_PATH: ReadonlyMap<string, SqlCallKind> = new Map<string, 
 /** The arguments of the chat's `sql_query` and `sql_execute` tools. */
 const sqlToolArgumentsSchema = z.object({
   sql: z.string().min(1),
-  workspaceId: z.string().min(1).optional(),
+  // Trimmed as the web route resolves it, so the write is reported under the workspace it lands in.
+  workspaceId: z.string().trim().min(1).optional(),
 }).strict();
 
 /** js-exec's tool hook: returns the tool's success JSON and throws on every other answer. */
@@ -1470,6 +1471,10 @@ export const runChatSandboxBash = async (
     Date.now() - startedAt,
   );
   // Outside the response budget: one entry per workspace a write landed in,
-  // which the call cap bounds far below it.
-  return { ...response, sqlWrites: sqlBridge.readWrites() };
+  // which the call cap bounds far below it, and one count.
+  return {
+    ...response,
+    sqlWrites: sqlBridge.readWrites(),
+    sqlUnconfirmedWriteCount: sqlBridge.readUnconfirmedWriteCount(),
+  };
 };

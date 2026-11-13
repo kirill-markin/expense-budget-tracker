@@ -5,7 +5,11 @@ import {
   SQL_QUERY_TOOL,
 } from "@expense-budget-tracker/agent-shared/agent-tools";
 import type { ValidatedExpenseSql } from "@expense-budget-tracker/agent-shared/sql-policy";
-import { chatSandboxSqlRouteWithDeps } from "@/app/api/chat/sandbox/sql/route";
+import {
+  chatSandboxSqlRouteWithDeps,
+  DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES,
+  requireActiveChatRunWithDeps,
+} from "@/app/api/chat/sandbox/sql/route";
 import { ApiRouteError } from "@/server/api/errors";
 import {
   executeChatToolCallWithDependencies,
@@ -16,11 +20,20 @@ import {
   mintChatSandboxSqlBridge,
   type ChatSandboxSqlCapability,
 } from "@/server/chat/sandbox/sqlCapability";
-import type {
-  ChatSqlExecutionContext,
-  ChatSqlTarget,
-  QueryResult,
+import {
+  ChatSandboxSqlAccountMissingError,
+  execChatSandboxSqlQuery,
+} from "@/server/chat/sandbox/sqlBridgeIdentity";
+import {
+  execQuery,
+  type ChatSqlExecutionContext,
+  type ChatSqlTarget,
+  type QueryResult,
 } from "@/server/chat/shared";
+import { ChatSessionRunTransitionError } from "@/server/chat/store";
+import type { ChatSessionRow } from "@/server/chat/store/sessionStore";
+import type { QueryFn } from "@/server/db/contextRunner";
+import { WorkspaceAccessError } from "@/server/workspaceErrors";
 import type { WorkspaceSummary } from "@/server/workspaces";
 
 type RouteDependencies = Parameters<typeof chatSandboxSqlRouteWithDeps>[1];
@@ -277,4 +290,87 @@ test("the route accepts only a valid capability and a strict body", async (): Pr
     assert.deepEqual(bridgeSql.executions, []);
     assert.deepEqual(routeLogs, []);
   });
+});
+
+type GateDependencies = Parameters<typeof requireActiveChatRunWithDeps>[1];
+
+type GateCalls = Readonly<{
+  contexts: Array<Readonly<{ userId: string; workspaceId: string }>>;
+  locks: Array<Readonly<{ queryFn: QueryFn; sessionId: string; activeRunId: string }>>;
+}>;
+
+const LOCK_QUERY_FN: QueryFn = async () => {
+  throw new Error("The lock is replaced in this test, so no SQL may run");
+};
+
+const RUNNING_SESSION_ROW: ChatSessionRow = {
+  session_id: CAPABILITY.sessionId,
+  status: "running",
+  active_run_id: CAPABILITY.activeRunId,
+  active_run_heartbeat_at: null,
+  main_content_invalidation_version: "0",
+  updated_at: "2027-01-15T08:00:00.000Z",
+};
+
+const createGate = (lockError: Error | null): Readonly<{ calls: GateCalls; dependencies: GateDependencies }> => {
+  const calls: GateCalls = { contexts: [], locks: [] };
+  return {
+    calls,
+    dependencies: {
+      withUserContext: async (userId, workspaceId, callback) => {
+        calls.contexts.push({ userId, workspaceId });
+        return callback(LOCK_QUERY_FN);
+      },
+      lockActiveChatSessionRunWithQuery: async (queryFn, sessionId, activeRunId) => {
+        calls.locks.push({ queryFn, sessionId, activeRunId });
+        if (lockError !== null) {
+          throw lockError;
+        }
+        return RUNNING_SESSION_ROW;
+      },
+    },
+  };
+};
+
+test("the gate locks the capability's run inside the capability's user context", async (): Promise<void> => {
+  const gate = createGate(null);
+
+  await requireActiveChatRunWithDeps(CAPABILITY, gate.dependencies);
+
+  assert.deepEqual(gate.calls.contexts, [{ userId: CAPABILITY.userId, workspaceId: CAPABILITY.workspaceId }]);
+  assert.deepEqual(gate.calls.locks, [{
+    queryFn: LOCK_QUERY_FN,
+    sessionId: CAPABILITY.sessionId,
+    activeRunId: CAPABILITY.activeRunId,
+  }]);
+});
+
+test("the gate answers 403 for a stopped run, a removed member or a deleted account, and rethrows any other error", async (): Promise<void> => {
+  const refusals: ReadonlyArray<Error> = [
+    new ChatSessionRunTransitionError({
+      sessionId: CAPABILITY.sessionId,
+      activeRunId: CAPABILITY.activeRunId,
+      operation: "authorize chat sandbox SQL",
+    }),
+    new WorkspaceAccessError(CAPABILITY.userId, CAPABILITY.workspaceId),
+    new ChatSandboxSqlAccountMissingError(CAPABILITY.userId),
+  ];
+  for (const refusal of refusals) {
+    await assert.rejects(
+      requireActiveChatRunWithDeps(CAPABILITY, createGate(refusal).dependencies),
+      (error: unknown): boolean => error instanceof ApiRouteError && error.status === 403,
+    );
+  }
+
+  const databaseError = new Error("connection terminated");
+  const failing = createGate(databaseError);
+  await assert.rejects(
+    requireActiveChatRunWithDeps(CAPABILITY, failing.dependencies),
+    (error: unknown): boolean => error === databaseError,
+  );
+});
+
+test("the route runs statements whole, not under the model's result budget", (): void => {
+  assert.equal(DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES.sql.execQuery, execChatSandboxSqlQuery);
+  assert.notEqual(DEFAULT_CHAT_SANDBOX_SQL_ROUTE_DEPENDENCIES.sql.execQuery, execQuery);
 });

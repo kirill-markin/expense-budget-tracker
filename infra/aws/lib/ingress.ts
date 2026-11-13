@@ -7,6 +7,8 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
 import {
+  CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME,
+  CHAT_SANDBOX_SQL_ROUTE_PATH,
   MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
   MAX_OAUTH_LOGIN_QUERY_BYTES,
 } from "@expense-budget-tracker/agent-shared";
@@ -209,10 +211,10 @@ const postRequestToApp = (
 const chatSandboxSqlRequest = (appDomain: string): wafv2.CfnWebACL.StatementProperty =>
   andStatement([
     methodIs("POST"),
-    uriPathIs("/api/chat/sandbox/sql"),
+    uriPathIs(CHAT_SANDBOX_SQL_ROUTE_PATH),
     headerIs("host", appDomain),
     headerStartsWith("content-type", "application/json"),
-    headerStartsWith("authorization", "ChatSandbox "),
+    headerStartsWith("authorization", CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME),
   ]);
 
 // No origin check: native OAuth clients post to the auth host without a browser.

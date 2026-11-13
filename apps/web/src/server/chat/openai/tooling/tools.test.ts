@@ -17,6 +17,7 @@ import {
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { SchemaRelation } from "@/server/agent/schema";
 import { CHAT_SCHEMA_LIMITS, type ChatWorkspaceContext } from "@/server/chat/dataService";
+import { SANDBOX_SQL_MUTATION_OUTCOME_UNKNOWN_CODE } from "../../../../../../sandbox/src/contract";
 import {
   ChatSessionRunTransitionError,
   ChatTurnCancelledError,
@@ -1097,7 +1098,8 @@ test("an unknown mutation outcome sends sql_execute to verify instead of retryin
   assert.deepEqual(parseToolPayload(result.output), {
     ok: false,
     error: {
-      code: "sql_mutation_outcome_unknown",
+      // The sandbox bridge reads this code to count the write as unconfirmed.
+      code: SANDBOX_SQL_MUTATION_OUTCOME_UNKNOWN_CODE,
       message: "The SQL mutation transaction outcome is unknown",
       details: { outcome: "unknown", retryable: false },
     },

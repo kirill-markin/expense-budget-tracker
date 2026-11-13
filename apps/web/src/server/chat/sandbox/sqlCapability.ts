@@ -1,5 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import {
+  CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME,
+  CHAT_SANDBOX_SQL_ROUTE_PATH,
+} from "@expense-budget-tracker/agent-shared";
 
 /**
  * The capability the code of one `bash` command calls the chat's SQL tools
@@ -11,13 +15,11 @@ import { z } from "zod";
  */
 
 export const CHAT_SANDBOX_BRIDGE_SECRET_ENV_VAR = "CHAT_SANDBOX_BRIDGE_SECRET";
-export const CHAT_SANDBOX_SQL_ROUTE_PATH = "/api/chat/sandbox/sql";
 
 const CAPABILITY_VERSION = 1;
 const SIGNING_KEY_LABEL = "chat-sandbox-sql-v1";
 /** One command fits the sandbox Lambda's timeout, with room for the invoke to queue. */
 export const CHAT_SANDBOX_SQL_CAPABILITY_TTL_MS = 5 * 60 * 1000;
-const AUTHORIZATION_SCHEME = "ChatSandbox ";
 const MIN_SECRET_LENGTH = 32;
 
 const capabilityPayloadSchema = z.object({
@@ -103,7 +105,7 @@ export const mintChatSandboxSqlBridge = (
   const signature = signPayload(encodedPayload, readSigningKey());
   return {
     url: readBridgeUrl(),
-    authorization: `${AUTHORIZATION_SCHEME}${encodedPayload}.${signature}`,
+    authorization: `${CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME}${encodedPayload}.${signature}`,
   };
 };
 
@@ -111,11 +113,11 @@ export const verifyChatSandboxSqlAuthorization = (
   authorizationHeader: string | null,
   nowMs: number,
 ): ChatSandboxSqlCapability => {
-  if (authorizationHeader === null || !authorizationHeader.startsWith(AUTHORIZATION_SCHEME)) {
+  if (authorizationHeader === null || !authorizationHeader.startsWith(CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME)) {
     throw new ChatSandboxSqlCapabilityError("The chat sandbox SQL capability must be sent with the ChatSandbox authorization scheme");
   }
 
-  const parts = authorizationHeader.slice(AUTHORIZATION_SCHEME.length).split(".");
+  const parts = authorizationHeader.slice(CHAT_SANDBOX_SQL_AUTHORIZATION_SCHEME.length).split(".");
   const encodedPayload = parts[0];
   const providedSignature = parts[1];
   if (

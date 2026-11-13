@@ -9,8 +9,9 @@ and stack output keys retain their `LambdaImageCandidate` names.
 CI builds the images on native architecture runners and invokes every real
 handler through the AWS runtime interface emulator with a read-only root and
 an unprivileged user. The checks cover discovery/auth requests, PDF, DOCX,
-XLSX and CSV processing, the real Python worker and SQLite. The sandbox keeps
-the just-bash worker/WASM/CPython layout and root dependency overrides.
+XLSX and CSV processing, the real Python worker, SQLite and `js-exec`. The
+sandbox keeps the just-bash worker/WASM/CPython layout and root dependency
+overrides.
 
 ## Update the images
 

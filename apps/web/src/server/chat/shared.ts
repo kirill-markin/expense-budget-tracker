@@ -589,10 +589,3 @@ export const execWholeQueryWithDependencies = async (
   }
   return { json };
 };
-
-export const execWholeQuery = async (
-  validated: ValidatedExpenseSql,
-  context: ChatSqlExecutionContext,
-  target: ChatSqlTarget,
-): Promise<QueryResult> =>
-  execWholeQueryWithDependencies(validated, context, target, DEFAULT_EXEC_QUERY_DEPENDENCIES);
