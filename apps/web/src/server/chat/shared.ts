@@ -402,6 +402,19 @@ const runChatSqlWithinDeadline = async (
 // now, what later model calls of the same turn re-send, the stored replay
 // history, and the tool-output block the chat transcript renders. All of them
 // show the same kept rows and the same truncated flag.
+const toChatSqlStatementResult = (
+  statement: ExecutedExpenseSql["statements"][number],
+): ChatSqlStatementResult => ({
+  sql: statement.sql,
+  command: statement.command,
+  rows: statement.rows,
+  rowCount: statement.rowCount,
+  returnedRowCount: statement.returnedRowCount,
+  totalRowCount: statement.totalRowCount,
+  truncated: statement.truncated,
+  referencedRelations: statement.referencedRelations,
+});
+
 const applyChatSqlBudget = (
   target: ChatSqlTarget,
   executed: ExecutedExpenseSql,
@@ -409,30 +422,41 @@ const applyChatSqlBudget = (
   executed.statements.map((
     statement,
   ): BudgetedSqlStatementEntry<ChatSqlStatementResult> => ({
-    statement: {
-      sql: statement.sql,
-      command: statement.command,
-      rows: statement.rows,
-      rowCount: statement.rowCount,
-      returnedRowCount: statement.returnedRowCount,
-      totalRowCount: statement.totalRowCount,
-      truncated: statement.truncated,
-      referencedRelations: statement.referencedRelations,
-    },
+    statement: toChatSqlStatementResult(statement),
     isMutating: statement.isMutating,
   })),
   (candidate) => serializeChatSqlSuccessOutput(target, candidate).length,
 );
 
+/**
+ * A read answer the sandbox bridge refuses to return whole. Only a read is
+ * refused for its size: a write has already committed by the time its answer
+ * is serialized.
+ */
+export class ChatSqlResultTooLargeError extends Error {
+  public readonly outputBytes: number;
+  public readonly limitBytes: number;
+
+  public constructor(outputBytes: number, limitBytes: number) {
+    super(`The SQL result is too large to return (${String(outputBytes)} bytes, limit ${String(limitBytes)})`);
+    this.name = "ChatSqlResultTooLargeError";
+    this.outputBytes = outputBytes;
+    this.limitBytes = limitBytes;
+  }
+}
+
+/** Keeps one bridge answer well under the sandbox Lambda's 6 MB invocation payload limit. */
+export const MAX_CHAT_SANDBOX_SQL_READ_OUTPUT_BYTES = 4 * 1024 * 1024;
+
 // The caller validates the statement and resolves the target workspace. Policy
 // and deadline failures propagate to the tool layer, which is where the
 // model-facing error envelope is built.
-export const execQueryWithDependencies = async (
+const runChatSqlWithDependencies = async (
   validated: ValidatedExpenseSql,
   context: ChatSqlExecutionContext,
   target: ChatSqlTarget,
   dependencies: ExecQueryDependencies,
-): Promise<QueryResult> => {
+): Promise<ExecutedExpenseSql> => {
   const deadline = createSqlExecutionDeadline(
     MCP_SQL_STATEMENT_TIMEOUT_MS,
     dependencies.now,
@@ -510,6 +534,17 @@ export const execQueryWithDependencies = async (
     );
   }
 
+  return executed;
+};
+
+/** The model-facing answer: cut to the character budget the model reads. */
+export const execQueryWithDependencies = async (
+  validated: ValidatedExpenseSql,
+  context: ChatSqlExecutionContext,
+  target: ChatSqlTarget,
+  dependencies: ExecQueryDependencies,
+): Promise<QueryResult> => {
+  const executed = await runChatSqlWithDependencies(validated, context, target, dependencies);
   return { json: serializeChatSqlSuccessOutput(target, applyChatSqlBudget(target, executed)) };
 };
 
@@ -519,3 +554,34 @@ export const execQuery = async (
   target: ChatSqlTarget,
 ): Promise<QueryResult> =>
   execQueryWithDependencies(validated, context, target, DEFAULT_EXEC_QUERY_DEPENDENCIES);
+
+/**
+ * The sandbox bridge's answer: code reads it rather than the model, so it is
+ * never cut to the model's character budget, and a read too large to return
+ * whole is refused instead of silently losing rows.
+ */
+export const execWholeQueryWithDependencies = async (
+  validated: ValidatedExpenseSql,
+  context: ChatSqlExecutionContext,
+  target: ChatSqlTarget,
+  dependencies: ExecQueryDependencies,
+): Promise<QueryResult> => {
+  const executed = await runChatSqlWithDependencies(validated, context, target, dependencies);
+  const json = serializeChatSqlSuccessOutput(
+    target,
+    executed.statements.map(toChatSqlStatementResult),
+  );
+  const isMutating = validated.statements.some((statement) => statement.isMutating);
+  const outputBytes = Buffer.byteLength(json, "utf8");
+  if (!isMutating && outputBytes > MAX_CHAT_SANDBOX_SQL_READ_OUTPUT_BYTES) {
+    throw new ChatSqlResultTooLargeError(outputBytes, MAX_CHAT_SANDBOX_SQL_READ_OUTPUT_BYTES);
+  }
+  return { json };
+};
+
+export const execWholeQuery = async (
+  validated: ValidatedExpenseSql,
+  context: ChatSqlExecutionContext,
+  target: ChatSqlTarget,
+): Promise<QueryResult> =>
+  execWholeQueryWithDependencies(validated, context, target, DEFAULT_EXEC_QUERY_DEPENDENCIES);

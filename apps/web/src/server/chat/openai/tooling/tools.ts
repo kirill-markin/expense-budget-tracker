@@ -50,6 +50,7 @@ import {
 import {
   CHAT_SQL_STATEMENT_TIMEOUT_MESSAGE,
   ChatSqlMutationOutcomeUnknownError,
+  ChatSqlResultTooLargeError,
   execQuery,
   getChatSqlDeadlineMessage,
   getChatSqlPolicyMessage,
@@ -98,7 +99,7 @@ const CHAT_TOOL_INTERNAL_ERROR_MESSAGE = "The tool request could not be complete
  */
 const DEPRECATED_CHAT_SQL_TOOL_NAME = "query_database";
 
-type ChatSqlToolName = typeof SQL_QUERY_TOOL.name | typeof SQL_EXECUTE_TOOL.name;
+export type ChatSqlToolName = typeof SQL_QUERY_TOOL.name | typeof SQL_EXECUTE_TOOL.name;
 
 export type OpenAIToolContext = Readonly<{
   /** Primary CloudWatch correlation key: every chat error log must carry it. */
@@ -116,6 +117,34 @@ export type OpenAIToolContext = Readonly<{
    * tools refuse rather than fail.
    */
   isDemoMode: boolean;
+}>;
+
+/**
+ * What one SQL tool call needs of its caller: the chat turn it runs for, and
+ * the request it logs under. The sandbox bridge supplies the same fields for
+ * the run that minted its capability.
+ */
+export type ChatSqlCallContext = Readonly<{
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  turnId: string;
+}>;
+
+type ChatToolLogDependencies = Readonly<{
+  log: typeof log;
+}>;
+
+/**
+ * The SQL tool path's own dependencies. The executor is the one thing the two
+ * callers differ in: the chat tool cuts its answer to the model's character
+ * budget, the sandbox bridge answers whole.
+ */
+export type ChatSqlCallDependencies = Readonly<{
+  execQuery: typeof execQuery;
+  listChatWorkspaces: typeof listChatWorkspaces;
+  log: typeof log;
 }>;
 
 type ChatToolDependencies = Readonly<{
@@ -447,8 +476,8 @@ const buildDiscoverySuccessResult = (
 const logUnexpectedChatToolError = (
   serializedError: ChatToolExecutionError,
   toolName: string,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  context: ChatSqlCallContext,
+  dependencies: ChatToolLogDependencies,
 ): void => {
   dependencies.log({
     domain: "chat",
@@ -466,8 +495,8 @@ const logUnexpectedChatToolError = (
 const buildRedactedErrorPayload = (
   error: unknown,
   toolName: string,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  context: ChatSqlCallContext,
+  dependencies: ChatToolLogDependencies,
 ): AgentErrorPayload => {
   if (error instanceof WorkspaceAccessError) {
     dependencies.log(createChatWorkspaceUnavailableLogEvent(
@@ -587,13 +616,11 @@ type PreparedSqlToolCall = Readonly<{
  */
 const prepareSqlToolCall = async (
   toolName: ChatSqlToolName,
-  rawArguments: string,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  rawInput: unknown,
+  context: ChatSqlCallContext,
+  dependencies: ChatSqlCallDependencies,
 ): Promise<PreparedSqlToolCall> => {
-  const input = sqlToolInputSchema.safeParse(
-    parseToolArgumentsJson(rawArguments, toolName),
-  );
+  const input = sqlToolInputSchema.safeParse(rawInput);
   if (!input.success) {
     throw buildInvalidToolArgumentsError(toolName, input.error.message);
   }
@@ -620,7 +647,7 @@ const prepareSqlToolCall = async (
 const buildSqlPolicyErrorPayload = (
   error: SqlPolicyError,
   toolName: ChatSqlToolName,
-  dependencies: ChatToolDependencies,
+  dependencies: ChatToolLogDependencies,
 ): AgentErrorPayload => {
   dependencies.log({
     domain: "sql-api",
@@ -646,8 +673,8 @@ const buildSqlPolicyErrorPayload = (
 const buildSqlPreparationErrorPayload = (
   error: unknown,
   toolName: ChatSqlToolName,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  context: ChatSqlCallContext,
+  dependencies: ChatToolLogDependencies,
 ): AgentErrorPayload => {
   if (error instanceof AgentToolError) {
     return buildAgentErrorPayload(error.code, error.message, error.instructions, error.details);
@@ -669,8 +696,8 @@ const buildSqlPreparationErrorPayload = (
 const buildSqlExecutionErrorPayload = (
   error: unknown,
   toolName: ChatSqlToolName,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  context: ChatSqlCallContext,
+  dependencies: ChatToolLogDependencies,
 ): AgentErrorPayload => {
   if (error instanceof AgentToolError) {
     return buildAgentErrorPayload(error.code, error.message, error.instructions, error.details);
@@ -714,6 +741,16 @@ const buildSqlExecutionErrorPayload = (
       "This chat turn is no longer the session's active turn, so the call was abandoned",
       `Stop this task and do not call ${toolName} again for this turn.`,
       { retryable: false },
+    );
+  }
+  // Raised only by the sandbox bridge's executor, whose answer code reads
+  // whole: a cut answer would silently drop rows from that code's input.
+  if (error instanceof ChatSqlResultTooLargeError) {
+    return buildAgentErrorPayload(
+      "query_result_too_large",
+      error.message,
+      `Read fewer rows per call: split the read into several ${toolName} calls, lower LIMIT, or select fewer columns.`,
+      { outputBytes: error.outputBytes, limitBytes: error.limitBytes, retryable: true },
     );
   }
   if (error instanceof ChatSqlMutationOutcomeUnknownError) {
@@ -760,17 +797,21 @@ const buildFailedSqlToolCall = (
   errorCode: payload.error.code,
 });
 
-const executeSqlToolCall = async (
+/**
+ * One sql_query or sql_execute call from already-decoded arguments: the one SQL
+ * path of this surface, which both the chat tool and the sandbox bridge run.
+ */
+export const executeChatSqlCall = async (
   toolName: ChatSqlToolName,
-  rawArguments: string,
-  context: OpenAIToolContext,
-  dependencies: ChatToolDependencies,
+  rawInput: unknown,
+  context: ChatSqlCallContext,
+  dependencies: ChatSqlCallDependencies,
 ): Promise<ExecutedChatToolCall> => {
   const isMutating = toolName === SQL_EXECUTE_TOOL.name;
 
   let prepared: PreparedSqlToolCall;
   try {
-    prepared = await prepareSqlToolCall(toolName, rawArguments, context, dependencies);
+    prepared = await prepareSqlToolCall(toolName, rawInput, context, dependencies);
   } catch (error) {
     return buildFailedSqlToolCall(
       error,
@@ -803,6 +844,25 @@ const executeSqlToolCall = async (
       buildSqlExecutionErrorPayload(error, toolName, context, dependencies),
     );
   }
+};
+
+const executeSqlToolCall = async (
+  toolName: ChatSqlToolName,
+  rawArguments: string,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): Promise<ExecutedChatToolCall> => {
+  let rawInput: unknown;
+  try {
+    rawInput = parseToolArgumentsJson(rawArguments, toolName);
+  } catch (error) {
+    return buildFailedSqlToolCall(
+      error,
+      toolName === SQL_EXECUTE_TOOL.name,
+      buildSqlPreparationErrorPayload(error, toolName, context, dependencies),
+    );
+  }
+  return executeChatSqlCall(toolName, rawInput, context, dependencies);
 };
 
 const bashToolInputSchema = z.object({

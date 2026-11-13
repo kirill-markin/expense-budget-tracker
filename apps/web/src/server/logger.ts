@@ -484,6 +484,32 @@ type ChatSandboxEvent = Readonly<{
 }>;
 
 /**
+ * One SQL call the code of a `bash` command made through the sandbox bridge:
+ * the statement and how it ended, never the rows it read or returned.
+ *
+ * A failed statement is an `outcome` here rather than an `error` action: it is
+ * the same ordinary tool failure the chat's own SQL tools answer, and the
+ * unexpected failures among them log the chat `error` action beside this one.
+ */
+type ChatSandboxSqlEvent = Readonly<{
+  domain: "chat";
+  action: "sandbox_sql";
+  kind: "query" | "execute";
+  outcome: "succeeded" | "failed";
+  /** The agent error code the code received; null on success. */
+  errorCode: string | null;
+  /** Cut to MAX_SANDBOX_SQL_LOG_CHARS; `sqlChars` counts the whole statement. */
+  sql: string;
+  sqlChars: number;
+  durationMs: number;
+  requestId: string;
+  userId: string;
+  workspaceId: string;
+  sessionId: string;
+  activeRunId: string;
+}>;
+
+/**
  * One derivative pass of a chat turn: how many uploads were waiting for a
  * conversion, what the pass did about them, and why it stopped.
  *
@@ -663,6 +689,12 @@ type ChatSandboxRetryEvent = Readonly<{
 export const MAX_SANDBOX_COMMAND_LOG_CHARS = 2_000;
 
 /**
+ * The sandbox's code writes the statement, and the policy caps only the whole
+ * script at 100,000 characters, so the logged copy is cut to this prefix.
+ */
+export const MAX_SANDBOX_SQL_LOG_CHARS = 4_000;
+
+/**
  * Stream slice one failed command may log. Long enough for a traceback or a
  * usage message, short enough that a failing loop cannot fill the log group.
  */
@@ -759,6 +791,7 @@ type LogEvent =
   | ChatFilesEvent
   | ChatSandboxEvent
   | ChatSandboxRetryEvent
+  | ChatSandboxSqlEvent
   | ChatFileDerivativesEvent
   | ChatFileContextEvent
   | ChatFileIngestEvent
