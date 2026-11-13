@@ -43,14 +43,14 @@ export const CHAT_SENT_INPUT_BUDGET_TOKENS = 250_000;
  * 1,522 no measurement was ever usable: a simulated 120-turn session stayed on
  * estimates end to end and started dropping turns at around 83k real tokens.
  *
- * Measured with `o200k_base` on the real prompt: instructions 1,357 + tool
- * schemas 1,175 + clock 44 = 2,576 tokens. The schema figure is the rendered
+ * Measured with `o200k_base` on the real prompt: instructions 1,372 + tool
+ * schemas 1,169 + clock 44 = 2,585 tokens. The schema figure is the rendered
  * array whole, which is what a call sends. One tool at a time it is
  * list_workspaces 75, get_schema 129, get_guide 239, sql_query 172,
- * sql_execute 188, bash 191 and view_file 179 - 1,173 together, the two tokens
- * between that and 1,175 being the array's own separators.
+ * sql_execute 188, bash 185 and view_file 179 - 1,167 together, the two tokens
+ * between that and 1,169 being the array's own separators.
  *
- * 2,600 therefore leaves 24 tokens of headroom, and that number is the one to
+ * 2,600 therefore leaves 15 tokens of headroom, and that number is the one to
  * read before adding anything here: the prompt and the tool catalog have to fit
  * inside it, and both are now close enough to it that another tool means
  * trimming the prompt rather than appending to it. It is also what a session's
