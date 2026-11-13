@@ -204,6 +204,17 @@ const postRequestToApp = (
     headerStartsWith("content-type", contentTypePrefix),
   ]);
 
+// No origin check: the chat sandbox is a server-side client, which sends no
+// Origin header. Its bridge capability scheme stands in for one.
+const chatSandboxSqlRequest = (appDomain: string): wafv2.CfnWebACL.StatementProperty =>
+  andStatement([
+    methodIs("POST"),
+    uriPathIs("/api/chat/sandbox/sql"),
+    headerIs("host", appDomain),
+    headerStartsWith("content-type", "application/json"),
+    headerStartsWith("authorization", "ChatSandbox "),
+  ]);
+
 // No origin check: native OAuth clients post to the auth host without a browser.
 const postRequestToAuth = (
   authDomain: string,
@@ -350,7 +361,12 @@ export const buildIngressWafRules = (
       "BlockUnexpectedBodySizeMatches",
       2,
       "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body",
-      orStatement([chatJsonRequest, newChatJsonRequest, chatTranscriptionUploadRequest]),
+      orStatement([
+        chatJsonRequest,
+        newChatJsonRequest,
+        chatTranscriptionUploadRequest,
+        chatSandboxSqlRequest(appDomain),
+      ]),
       "expense-tracker-size-body-reblock",
     ),
     blockLabeledRequestUnless(

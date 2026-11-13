@@ -24,6 +24,15 @@ import {
   type ChatSandboxDependencies,
   type SandboxInvokeResponse,
 } from "./invoke";
+import {
+  CHAT_SANDBOX_BRIDGE_SECRET_ENV_VAR,
+  CHAT_SANDBOX_SQL_ROUTE_PATH,
+  verifyChatSandboxSqlAuthorization,
+} from "./sqlCapability";
+
+// Each test file runs in its own process, so these stay out of every other file.
+process.env[CHAT_SANDBOX_BRIDGE_SECRET_ENV_VAR] = "s".repeat(64);
+process.env.CORS_ORIGIN = "https://app.example.com";
 
 const SESSION_ID = "0f1e2d3c-4b5a-4968-8776-65544332211f";
 
@@ -112,6 +121,7 @@ type SandboxRequest = Readonly<{
     getUrl: string;
   }>>;
   writeSlots: ReadonlyArray<Readonly<{ slotId: string; putUrl: string }>>;
+  sqlBridge: Readonly<{ url: string; authorization: string }>;
 }>;
 
 type Harness = Readonly<{
@@ -315,6 +325,25 @@ test("the request carries each row's stored size and mtime, never object metadat
   );
   assert.equal(request.sessionId, SESSION_ID);
   assert.equal(request.operation, "bash");
+});
+
+test("the request carries a SQL bridge capability for this command's run", async (): Promise<void> => {
+  const harness = createHarness([], answerOf({}));
+
+  await runChatSandboxCommandWithDependencies("ebt-sql-query 'SELECT 1'", CONTEXT, harness.dependencies);
+
+  const request = harness.requests[0];
+  assert.ok(request !== undefined);
+  assert.equal(request.sqlBridge.url, `https://app.example.com${CHAT_SANDBOX_SQL_ROUTE_PATH}`);
+  assert.deepEqual(
+    verifyChatSandboxSqlAuthorization(request.sqlBridge.authorization, Date.now()),
+    {
+      activeRunId: CONTEXT.turnId,
+      sessionId: CONTEXT.sessionId,
+      userId: CONTEXT.userId,
+      workspaceId: CONTEXT.workspaceId,
+    },
+  );
 });
 
 test("an unconfirmed upload is not mounted, because its object may not exist", async (): Promise<void> => {

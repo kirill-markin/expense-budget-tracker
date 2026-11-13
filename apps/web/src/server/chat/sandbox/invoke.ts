@@ -3,10 +3,11 @@
  * Lambda.
  *
  * The sandbox holds no AWS credentials, so everything it may touch is minted
- * here: one pre-signed GET per file of this chat session, and a fixed number of
- * pre-signed PUT slots it may spend on new or changed /work files. What comes
- * back is validated, re-checked against the same bounds the request was built
- * under, and turned into chat_files rows.
+ * here: one pre-signed GET per file of this chat session, a fixed number of
+ * pre-signed PUT slots it may spend on new or changed /work files, and the SQL
+ * bridge capability of this command's chat run. What comes back is validated,
+ * re-checked against the same bounds the request was built under, and turned
+ * into chat_files rows.
  *
  * The contract itself is imported from apps/sandbox/src/contract.ts by relative
  * path, not as a package dependency, and that is deliberate on both counts. The
@@ -57,6 +58,7 @@ import {
   MAX_SANDBOX_COMMAND_LOG_CHARS,
   MAX_SANDBOX_OUTPUT_LOG_CHARS,
 } from "@/server/logger";
+import { mintChatSandboxSqlBridge } from "./sqlCapability";
 
 /**
  * Re-exported so nothing above this module needs its own cross-workspace
@@ -274,6 +276,7 @@ export type ChatSandboxCommandContext = Readonly<{
   userId: string;
   workspaceId: string;
   sessionId: string;
+  /** The chat run's active run id, which the command's SQL capability names. */
   turnId: string;
   toolCallId: string;
   /**
@@ -1654,6 +1657,12 @@ export const runChatSandboxCommandWithDependencies = async (
     return { kind: "refused", refusal };
   }
 
+  const sqlBridge = mintChatSandboxSqlBridge({
+    activeRunId: context.turnId,
+    sessionId: context.sessionId,
+    userId: context.userId,
+    workspaceId: context.workspaceId,
+  }, Date.now());
   const slots = await buildSandboxWriteSlots(context.sessionId, dependencies);
   const payload = JSON.stringify({
     operation: "bash",
@@ -1661,6 +1670,7 @@ export const runChatSandboxCommandWithDependencies = async (
     command,
     files: await buildRequestFiles(mountedFiles, dependencies),
     writeSlots: slots.map((slot) => ({ slotId: slot.slotId, putUrl: slot.putUrl })),
+    sqlBridge,
   });
 
   const startedAt = Date.now();
