@@ -32,16 +32,17 @@ const createFixtures = async (): Promise<ReadonlyArray<Fixture>> => {
 
 export const runSandboxSmoke = async (context: Context): Promise<void> => {
   // The real supervisor forks the same packaged index.mjs as production.
+  // js-exec's QuickJS runtime is an optional install the image could lose.
   const answer = await handler({
     operation: "bash",
     sessionId: randomUUID(),
-    command: `python3 -c 'import csv,io; print(sum(int(r["amount"]) for r in csv.DictReader(io.StringIO("amount\\n19\\n23\\n"))))' && sqlite3 :memory: 'SELECT 42;'`,
+    command: `python3 -c 'import csv,io; print(sum(int(r["amount"]) for r in csv.DictReader(io.StringIO("amount\\n19\\n23\\n"))))' && sqlite3 :memory: 'SELECT 42;' && js-exec -c 'console.log(6 * 7)'`,
     files: [],
     writeSlots: [],
   }, context);
   assert.ok("exitCode" in answer);
   assert.equal(answer.exitCode, 0, JSON.stringify(answer));
-  assert.equal(answer.stdout.trim(), "42\n42");
+  assert.equal(answer.stdout.trim(), "42\n42\n42");
   for (const fixture of await createFixtures()) {
     const uploaded: Array<Uint8Array> = [];
     const transfer: SandboxObjectTransfer = {

@@ -179,6 +179,7 @@ test("production image functions have isolated roles, preserved budgets and dire
     Environment: { Variables: {
       NODE_OPTIONS: "--max-old-space-size=6144",
       CHAT_SANDBOX_OBJECT_HOSTS: Match.anyValue(),
+      CHAT_SANDBOX_SQL_BRIDGE_ORIGIN: Match.stringLikeRegexp("^https://app\\."),
     } },
   });
   template.hasResourceProperties("AWS::Lambda::Function", {
