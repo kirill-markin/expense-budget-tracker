@@ -346,7 +346,18 @@ export type ChatSandboxCommandRefusal = Readonly<{
 }>;
 
 export type ChatSandboxCommandResult =
-  | Readonly<{ kind: "ran"; data: ChatSandboxCommandData }>
+  | Readonly<{
+    kind: "ran";
+    data: ChatSandboxCommandData;
+    /** The command's code confirmed at least one SQL write to the chat's open workspace. */
+    wroteSessionWorkspace: boolean;
+    /**
+     * The command's code may have committed SQL writes to some workspace: it
+     * reported at least one, or its sandbox sent no report at all, which an
+     * older sandbox and a dead command process both do.
+     */
+    mayHaveWrittenSql: boolean;
+  }>
   | Readonly<{ kind: "refused"; refusal: ChatSandboxCommandRefusal }>;
 
 /**
@@ -432,6 +443,12 @@ const sandboxResponseSchema = z.object({
   writtenFiles: z.array(sandboxWrittenFileSchema),
   deletedPaths: z.array(z.string()),
   notes: z.array(z.string()),
+  // Optional: a sandbox deployed before this app sends none, and neither does
+  // one whose command process died before it could report.
+  sqlWrites: z.array(z.object({
+    workspaceId: z.string().nullable(),
+    count: z.number().int().positive(),
+  })).optional(),
 });
 
 type SandboxResponse = z.infer<typeof sandboxResponseSchema>;
@@ -1774,6 +1791,11 @@ export const runChatSandboxCommandWithDependencies = async (
 
   return {
     kind: "ran",
+    // A null workspaceId is the one the bridge capability was minted for.
+    wroteSessionWorkspace: response.sqlWrites !== undefined && response.sqlWrites.some(
+      (write) => write.workspaceId === null || write.workspaceId === context.workspaceId,
+    ),
+    mayHaveWrittenSql: response.sqlWrites === undefined || response.sqlWrites.length > 0,
     data: {
       exitCode: response.exitCode,
       durationMs: response.durationMs,

@@ -54,9 +54,9 @@ import {
   type PresignedRefusals,
 } from "./presignedFs.js";
 import {
-  createSqlBridgeCaller,
+  createSqlBridgeSession,
   SqlBridgeCallError,
-  unavailableSqlBridgeCaller,
+  unavailableSqlBridgeSession,
   type SqlBridgeCaller,
   type SqlCallKind,
 } from "./sqlBridge.js";
@@ -1444,19 +1444,19 @@ export const runChatSandboxBash = async (
 
   const filesFs = createFilesFs(fileEntries, transfer);
   const sqlBridge = request.sqlBridge === undefined
-    ? unavailableSqlBridgeCaller
-    : createSqlBridgeCaller(
+    ? unavailableSqlBridgeSession
+    : createSqlBridgeSession(
       request.sqlBridge,
       Math.min(deadlineEpochMs, startedAt + SANDBOX_COMMAND_BUDGET_MS),
     );
-  const outcome = await execCommand(createSandboxBash(filesFs, workFs, sqlBridge), request.command);
+  const outcome = await execCommand(createSandboxBash(filesFs, workFs, sqlBridge.call), request.command);
   // Before the mount's refusals are read, and on the command's own stderr
   // before the response rewrites the guest paths out of it.
   recordPythonWriteRefusals(filesFs, outcome.stderr);
   const diff = await diffWorkFiles(workFs, baselineByPath, request.writeSlots, transfer);
   // Read after the diff, not before: a seed is only materialized when something
   // reads it, and for `cp` that is the diff itself.
-  return assembleBashResponse(
+  const response = assembleBashResponse(
     outcome,
     {
       ...diff,
@@ -1469,4 +1469,7 @@ export const runChatSandboxBash = async (
     },
     Date.now() - startedAt,
   );
+  // Outside the response budget: one entry per workspace a write landed in,
+  // which the call cap bounds far below it.
+  return { ...response, sqlWrites: sqlBridge.readWrites() };
 };

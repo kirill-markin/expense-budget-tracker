@@ -39,6 +39,7 @@ import {
   OPENAI_CHAT_TOOLS,
   WEB_CHAT_ONLY_TOOLS,
   WEB_CHAT_SURFACE_PROFILE,
+  type ExecutedChatToolCall,
   type OpenAIToolContext,
 } from "./tools";
 
@@ -131,6 +132,8 @@ const viewedImage = async (): Promise<ChatFileViewResult> => ({
 /** A sandbox that ran the command and changed nothing. */
 const ranEmptyCommand = async (): Promise<ChatSandboxCommandResult> => ({
   kind: "ran",
+  wroteSessionWorkspace: false,
+  mayHaveWrittenSql: false,
   data: {
     exitCode: 0,
     durationMs: 1,
@@ -1275,6 +1278,8 @@ test("a sandbox note reaches the model as one attributed entry and never as comm
       loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
       runChatSandboxCommand: async (): Promise<ChatSandboxCommandResult> => ({
         kind: "ran",
+        wroteSessionWorkspace: false,
+        mayHaveWrittenSql: false,
         data: {
           exitCode: 1,
           durationMs: 2,
@@ -1352,6 +1357,110 @@ test("a refused bash command keeps the refusal's own code and next step", async 
   assert.equal(payload.instructions, "Do not call bash again in this chat.");
 });
 
+/**
+ * Code that writes through the SQL bridge commits in the bridge's own request,
+ * so this result is what refreshes the page, exactly as a sql_execute would.
+ */
+test("a bash command whose code wrote to the open workspace reports a mutation there", async (): Promise<void> => {
+  const run = async (wroteSessionWorkspace: boolean): Promise<ExecutedChatToolCall> =>
+    executeChatToolCallWithDependencies(
+      "bash",
+      JSON.stringify({ command: "js-exec /work/import.js" }),
+      CONTEXT,
+      {
+        execQuery: unusedExecQuery,
+        listChatWorkspaces: unusedListChatWorkspaces,
+        loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
+        runChatSandboxCommand: async (): Promise<ChatSandboxCommandResult> => {
+          const ran = await ranEmptyCommand();
+          assert.ok(ran.kind === "ran");
+          return { ...ran, wroteSessionWorkspace };
+        },
+        viewChatFile: unusedViewChatFile,
+        log: unexpectedLog,
+      },
+    );
+
+  const wrote = await run(true);
+  assert.equal(wrote.succeeded, true);
+  assert.equal(wrote.isMutating, true);
+  assert.equal(wrote.workspaceId, CONTEXT.workspaceId);
+
+  const read = await run(false);
+  assert.equal(read.isMutating, false);
+  assert.equal(read.workspaceId, null);
+});
+
+/**
+ * An unexpected failure can arrive after the command ran, with its bridge
+ * writes committed, so a plain "retry once" would import the same rows twice.
+ */
+test("a bash command that failed unexpectedly says its SQL writes may have landed", async (): Promise<void> => {
+  const loggedEvents: Array<string> = [];
+
+  const result = await executeChatToolCallWithDependencies(
+    "bash",
+    JSON.stringify({ command: "js-exec /work/import.js" }),
+    CONTEXT,
+    {
+      execQuery: unusedExecQuery,
+      listChatWorkspaces: unusedListChatWorkspaces,
+      loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
+      runChatSandboxCommand: async (): Promise<never> => {
+        throw new Error("Task timed out after 120.00 seconds");
+      },
+      viewChatFile: unusedViewChatFile,
+      log: createLogCollector(loggedEvents),
+    },
+  );
+
+  assert.equal(result.succeeded, false);
+  assert.equal(result.isMutating, false);
+  const payload = parseToolPayload(result.output);
+  assert.equal(payload.error?.code, "internal_error");
+  assert.ok(!result.output.includes("Task timed out"));
+  assert.match(payload.instructions, /may already have been applied: read them back with a SELECT before running it again/u);
+  assert.equal(loggedEvents.length, 1);
+});
+
+/**
+ * A command that ran and then failed - the sandbox's 124 on a timeout, a killed
+ * process, its own error partway through an import loop - comes back as a
+ * result rather than a thrown error, with its bridge writes already committed,
+ * so it is that result which must say to read them back before re-running.
+ */
+test("a failed bash command that may have written says to read its SQL writes back", async (): Promise<void> => {
+  const run = async (exitCode: number, mayHaveWrittenSql: boolean): Promise<string> => {
+    const result = await executeChatToolCallWithDependencies(
+      "bash",
+      JSON.stringify({ command: "js-exec /work/import.js" }),
+      CONTEXT,
+      {
+        execQuery: unusedExecQuery,
+        listChatWorkspaces: unusedListChatWorkspaces,
+        loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
+        runChatSandboxCommand: async (): Promise<ChatSandboxCommandResult> => {
+          const ran = await ranEmptyCommand();
+          assert.ok(ran.kind === "ran");
+          return { ...ran, mayHaveWrittenSql, data: { ...ran.data, exitCode } };
+        },
+        viewChatFile: unusedViewChatFile,
+        log: unexpectedLog,
+      },
+    );
+    assert.equal(result.succeeded, true);
+    return parseToolPayload(result.output).instructions;
+  };
+  const readBack = /may already have been applied: read them back with a SELECT before running it again/u;
+
+  assert.match(await run(124, true), readBack);
+  assert.match(await run(137, true), readBack);
+  // A command that finished, or failed without writing, keeps the plain advice.
+  assert.doesNotMatch(await run(0, true), readBack);
+  assert.doesNotMatch(await run(124, false), readBack);
+  assert.match(await run(124, false), /Check exitCode before using the output\.$/u);
+});
+
 test("bash rejects arguments that carry no command", async (): Promise<void> => {
   const result = await executeChatToolCallWithDependencies(
     "bash",
@@ -1409,6 +1518,8 @@ test("the bash instructions describe each list by its own kept-of-total", async 
         loadAllowedSchemaForChatWorkspace: unusedLoadAllowedSchemaForChatWorkspace,
         runChatSandboxCommand: async (): Promise<ChatSandboxCommandResult> => ({
           kind: "ran",
+          wroteSessionWorkspace: false,
+          mayHaveWrittenSql: false,
           data: {
             exitCode: 0,
             durationMs: 1,

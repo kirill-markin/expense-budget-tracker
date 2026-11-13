@@ -194,9 +194,11 @@ export type ExecutedChatToolCall = Readonly<{
    */
   output: string;
   /**
-   * Canonical mutation flag: true for the write tool alone, which is the only
-   * one whose validator accepts a mutation. Runtime invalidation must use this
-   * value instead of inferring mutability from earlier streamed tool snapshots.
+   * Canonical mutation flag: true for the write tool, and for a bash command
+   * whose code confirmed a write to the session's workspace through the SQL
+   * bridge; writes it made only to other workspaces leave it false. Runtime
+   * invalidation must use this value instead of inferring mutability from
+   * earlier streamed tool snapshots.
    */
   isMutating: boolean;
   /**
@@ -870,6 +872,15 @@ const bashToolInputSchema = z.object({
 });
 
 /**
+ * The SQL bridge commits each write as it is sent, so a command that failed -
+ * whether it exited non-zero after a timeout, an out-of-memory kill or its own
+ * error, or never answered at all - may already have applied part of an
+ * import, and running it again as it stands would insert those rows twice.
+ */
+const BASH_SQL_WRITES_MAY_HAVE_APPLIED =
+  "SQL writes this command's code sent may already have been applied: read them back with a SELECT before running it again, and re-send only what is missing.";
+
+/**
  * What the model is told about a bash result, and how to read its two voices
  * apart.
  *
@@ -891,7 +902,10 @@ const bashToolInputSchema = z.object({
  * at a count that did not exist - so each list answers for itself, and every
  * total the result carries has an instruction that reads it.
  */
-const buildBashSuccessInstructions = (data: ChatSandboxCommandData): string =>
+const buildBashSuccessInstructions = (
+  data: ChatSandboxCommandData,
+  mayHaveWrittenSql: boolean,
+): string =>
   "stdout and stderr are the command's own output and nothing else. "
   + "sandboxNotes is written by the sandbox itself, never by the command, so "
   + "when a note contradicts the output - it says a file exists and could not "
@@ -908,7 +922,8 @@ const buildBashSuccessInstructions = (data: ChatSandboxCommandData): string =>
     ? ""
     : `sandboxNotes likewise holds ${String(data.sandboxNotes.length)} of ${String(data.sandboxNotesTotal)}, so more went wrong than it names. `)
   + `fullOutputPath is separate - when it is not null it names a ${SANDBOX_WORK_DIR} file this chat saved for you, holding the whole output of this command, and it is there to be read even though it is not in savedFiles. `
-  + "Check exitCode before using the output.";
+  + "Check exitCode before using the output."
+  + (data.exitCode !== 0 && mayHaveWrittenSql ? ` ${BASH_SQL_WRITES_MAY_HAVE_APPLIED}` : "");
 
 /**
  * A refused command is an error result, not an empty success.
@@ -949,10 +964,48 @@ const executeBashToolCall = async (
     }
 
     const data: ChatSandboxCommandData = result.data;
-    return buildDiscoverySuccessResult({ ...data }, buildBashSuccessInstructions(data));
+    const success = buildDiscoverySuccessResult(
+      { ...data },
+      buildBashSuccessInstructions(data, result.mayHaveWrittenSql),
+    );
+    return result.wroteSessionWorkspace
+      ? { ...success, isMutating: true, workspaceId: context.workspaceId }
+      : success;
   } catch (error) {
+    return buildBashErrorResult(error, context, dependencies);
+  }
+};
+
+/**
+ * An unexpected bash failure can arrive after the command ran - a timeout on
+ * the way back, an answer that is not the contract's - and the SQL bridge
+ * commits each write as it is sent, so the generic "retry once" advice would
+ * run an import twice.
+ */
+const BASH_UNEXPECTED_ERROR_INSTRUCTIONS =
+  `${BASH_SQL_WRITES_MAY_HAVE_APPLIED} `
+  + `Retry ${BASH_TOOL.name} at most once; if it fails again, stop and report the server error.`;
+
+const buildBashErrorResult = (
+  error: unknown,
+  context: OpenAIToolContext,
+  dependencies: ChatToolDependencies,
+): ExecutedChatToolCall => {
+  if (error instanceof AgentToolError) {
     return buildDiscoveryErrorResult(error, BASH_TOOL.name, context, dependencies);
   }
+  const payload: AgentErrorPayload = {
+    ...buildRedactedErrorPayload(error, BASH_TOOL.name, context, dependencies),
+    instructions: BASH_UNEXPECTED_ERROR_INSTRUCTIONS,
+  };
+  return {
+    output: serializeAgentPayload(payload),
+    isMutating: false,
+    workspaceId: null,
+    succeeded: false,
+    error: serializeToolError(error),
+    errorCode: payload.error.code,
+  };
 };
 
 const viewFileInputSchema = z.object({

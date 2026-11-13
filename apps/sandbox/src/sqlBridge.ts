@@ -9,7 +9,11 @@
  */
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
-import { SANDBOX_MAX_SQL_CALLS_PER_COMMAND, type ChatSandboxSqlBridge } from "./contract.js";
+import {
+  SANDBOX_MAX_SQL_CALLS_PER_COMMAND,
+  type ChatSandboxSqlBridge,
+  type ChatSandboxSqlWrite,
+} from "./contract.js";
 
 export type SqlCallKind = "query" | "execute";
 
@@ -33,11 +37,22 @@ export type SqlBridgeCaller = (
   signal: AbortSignal | undefined,
 ) => Promise<string>;
 
+/** One command's caller, and the writes it confirmed so far. */
+export type SqlBridgeSession = Readonly<{
+  call: SqlBridgeCaller;
+  readWrites: () => ReadonlyArray<ChatSandboxSqlWrite>;
+}>;
+
 /** The caller of a request that carried no bridge. */
 export const unavailableSqlBridgeCaller: SqlBridgeCaller = async () => {
   throw new SqlBridgeCallError(
     "SQL from code is unavailable in this command: run the statement with the sql_query or sql_execute tool instead.",
   );
+};
+
+export const unavailableSqlBridgeSession: SqlBridgeSession = {
+  call: unavailableSqlBridgeCaller,
+  readWrites: () => [],
 };
 
 export const SQL_BRIDGE_USER_AGENT = "expense-budget-tracker-chat-sandbox";
@@ -247,23 +262,37 @@ const sendWithRetries = async (
  * Calls are sent one at a time, so `xargs -P` cannot push many into the web
  * app at once; the queue only orders them, and each caller still receives its
  * own failure. The cap counts every call the code makes, failed ones included.
+ * Only an execute call that returned the tool's success result counts as a
+ * write, which is what the web app refreshes the open page on.
  */
-export const createSqlBridgeCaller = (
+export const createSqlBridgeSession = (
   bridge: ChatSandboxSqlBridge,
   deadlineEpochMs: number,
-): SqlBridgeCaller => {
+): SqlBridgeSession => {
   let calls = 0;
   let queue: Promise<unknown> = Promise.resolve();
+  const writesByWorkspace = new Map<string | null, number>();
 
-  return async (kind, args, signal) => {
+  const call: SqlBridgeCaller = async (kind, args, signal) => {
     if (calls >= SANDBOX_MAX_SQL_CALLS_PER_COMMAND) {
       throw new SqlBridgeCallError(
         `This bash command already made ${String(SANDBOX_MAX_SQL_CALLS_PER_COMMAND)} SQL calls, the most one command may make: continue the work in another bash command.`,
       );
     }
     calls += 1;
-    const result = queue.then(() => sendWithRetries(bridge, deadlineEpochMs, kind, args, signal));
+    const result = queue.then(async () => {
+      const body = await sendWithRetries(bridge, deadlineEpochMs, kind, args, signal);
+      if (kind === "execute") {
+        writesByWorkspace.set(args.workspaceId, (writesByWorkspace.get(args.workspaceId) ?? 0) + 1);
+      }
+      return body;
+    });
     queue = result.catch(() => undefined);
     return result;
+  };
+
+  return {
+    call,
+    readWrites: () => [...writesByWorkspace].map(([workspaceId, count]) => ({ workspaceId, count })),
   };
 };

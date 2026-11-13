@@ -123,6 +123,7 @@ test("the shell commands send one statement and print the tool's JSON", async ()
     assert.equal(response.stderr, "");
     assert.equal(response.exitCode, 0);
     assert.equal(response.stdout, `${okEnvelope({ rows: [{ n: 1 }] })}\n${okEnvelope({ rows: [{ n: 1 }] })}\n`);
+    assert.deepEqual(response.sqlWrites, [{ workspaceId: null, count: 1 }]);
     assert.deepEqual(fake.calls, [
       {
         authorization: AUTHORIZATION,
@@ -144,6 +145,7 @@ test("a failure envelope reaches the shell's stderr and the script's catch, noth
     assert.equal(shell.stdout, "");
     assert.equal(shell.stderr, `${failureEnvelope}\n`);
     assert.equal(shell.exitCode, 1);
+    assert.deepEqual(shell.sqlWrites, []);
 
     const script = await runWithBridge(
       `js-exec -c 'try { tools.sql.query({ sql: "SELECT x" }); } catch (error) { console.log(JSON.parse(error.message).error.code); }'`,
@@ -165,6 +167,7 @@ test("js-exec code reads results as values and prints only what it chooses", asy
 
       assert.equal(response.stderr, "");
       assert.equal(response.stdout, "inserted 3\n");
+      assert.deepEqual(response.sqlWrites, [{ workspaceId: "w-2", count: 3 }]);
       assert.deepEqual(
         fake.calls.map((call) => call.body),
         [0, 1, 2].map((i) => ({ kind: "execute", sql: `INSERT ${String(i)}`, workspaceId: "w-2" })),
@@ -209,6 +212,7 @@ test("a read is retried after a gateway failure, a write is not and says it may 
       const write = await runWithBridge("ebt-sql-execute 'DELETE FROM x'", fake.bridge);
       assert.equal(fake.calls.length, 3);
       assert.equal(write.exitCode, 1);
+      assert.deepEqual(write.sqlWrites, []);
       assert.equal(
         write.stderr,
         "The SQL bridge did not confirm this write (HTTP 503), so it may have been applied: read back with a SELECT before sending it again.\n",

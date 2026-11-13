@@ -525,6 +525,13 @@ export type ChatSandboxWrittenFile = Readonly<{
   sha256: string;
 }>;
 
+/** The execute calls of one command that returned the tool's success result, for one target workspace. */
+export type ChatSandboxSqlWrite = Readonly<{
+  /** As the command's code named it; null is the chat's open workspace. */
+  workspaceId: string | null;
+  count: number;
+}>;
+
 export type ChatSandboxBashResponse = Readonly<{
   stdout: string;
   /** The command's own stderr, and nothing else. */
@@ -556,6 +563,11 @@ export type ChatSandboxBashResponse = Readonly<{
    * do not remove the escaping on the grounds that the field is separate.
    */
   notes: ReadonlyArray<string>;
+  /**
+   * Absent when the process running the command ended before it could report,
+   * so absence says nothing about whether its code wrote.
+   */
+  sqlWrites?: ReadonlyArray<ChatSandboxSqlWrite>;
 }>;
 
 /**
