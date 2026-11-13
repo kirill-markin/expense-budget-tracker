@@ -11,6 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import {
   SANDBOX_MAX_SQL_CALLS_PER_COMMAND,
+  SANDBOX_SQL_MUTATION_OUTCOME_UNKNOWN_CODE,
   type ChatSandboxSqlBridge,
   type ChatSandboxSqlWrite,
 } from "./contract.js";
@@ -27,6 +28,17 @@ export class SqlBridgeCallError extends Error {
   }
 }
 
+/** An execute call that was sent but never answered as having run or not, so it may have been applied. */
+class SqlBridgeUnconfirmedWriteError extends SqlBridgeCallError {
+  public constructor(message: string) {
+    super(message);
+    this.name = "SqlBridgeUnconfirmedWriteError";
+  }
+}
+
+const describeUnconfirmedWrite = (failure: string): string =>
+  `The SQL bridge did not confirm this write (${failure}), so it may have been applied: read back with a SELECT before sending it again.`;
+
 /**
  * One SQL call from a command's code: resolves with the tool's success JSON as
  * the route sent it, and rejects with SqlBridgeCallError on every other answer.
@@ -37,10 +49,11 @@ export type SqlBridgeCaller = (
   signal: AbortSignal | undefined,
 ) => Promise<string>;
 
-/** One command's caller, and the writes it confirmed so far. */
+/** One command's caller, the writes it confirmed so far, and the writes it may have applied without confirmation. */
 export type SqlBridgeSession = Readonly<{
   call: SqlBridgeCaller;
   readWrites: () => ReadonlyArray<ChatSandboxSqlWrite>;
+  readUnconfirmedWriteCount: () => number;
 }>;
 
 /** The caller of a request that carried no bridge. */
@@ -53,6 +66,7 @@ export const unavailableSqlBridgeCaller: SqlBridgeCaller = async () => {
 export const unavailableSqlBridgeSession: SqlBridgeSession = {
   call: unavailableSqlBridgeCaller,
   readWrites: () => [],
+  readUnconfirmedWriteCount: () => 0,
 };
 
 export const SQL_BRIDGE_USER_AGENT = "expense-budget-tracker-chat-sandbox";
@@ -162,22 +176,29 @@ const isWriteOutcomeUnknown = (kind: SqlCallKind, outcome: AttemptOutcome): bool
   return outcome.answered ? outcome.status >= 500 : !isUnsentRequestError(outcome.error);
 };
 
-const describeUnconfirmedWrite = (failure: string): string =>
-  `The SQL bridge did not confirm this write (${failure}), so it may have been applied: read back with a SELECT before sending it again.`;
-
 const toolEnvelopeSchema = z.object({ ok: z.boolean() });
 
-/** The success envelope travels on as it arrived, for the code to parse; a failure envelope becomes the error. */
+const toolFailureCodeSchema = z.object({ error: z.object({ code: z.string() }) });
+
+/**
+ * The success envelope travels on as it arrived, for the code to parse; a
+ * failure envelope becomes the error, also as it arrived. An execute whose
+ * failure envelope says its outcome was lost is an unconfirmed write.
+ */
 const readToolResult = (kind: SqlCallKind, body: string): string => {
-  const envelope = toolEnvelopeSchema.safeParse(parseJson(body));
+  const parsed = parseJson(body);
+  const envelope = toolEnvelopeSchema.safeParse(parsed);
   if (!envelope.success) {
     const failure = "HTTP 200 without a tool result";
-    throw new SqlBridgeCallError(kind === "execute"
-      ? describeUnconfirmedWrite(failure)
-      : `The SQL bridge did not complete this query call: ${failure}`);
+    throw kind === "execute"
+      ? new SqlBridgeUnconfirmedWriteError(describeUnconfirmedWrite(failure))
+      : new SqlBridgeCallError(`The SQL bridge did not complete this query call: ${failure}`);
   }
   if (!envelope.data.ok) {
-    throw new SqlBridgeCallError(body);
+    const failure = toolFailureCodeSchema.safeParse(parsed);
+    throw kind === "execute" && failure.success && failure.data.error.code === SANDBOX_SQL_MUTATION_OUTCOME_UNKNOWN_CODE
+      ? new SqlBridgeUnconfirmedWriteError(body)
+      : new SqlBridgeCallError(body);
   }
 
   return body;
@@ -247,9 +268,9 @@ const sendWithRetries = async (
     });
     if (!willRetry) {
       const failure = describeOutcome(outcome);
-      throw new SqlBridgeCallError(isWriteOutcomeUnknown(kind, outcome)
-        ? describeUnconfirmedWrite(failure)
-        : `The SQL bridge did not complete this ${kind} call: ${failure}`);
+      throw isWriteOutcomeUnknown(kind, outcome)
+        ? new SqlBridgeUnconfirmedWriteError(describeUnconfirmedWrite(failure))
+        : new SqlBridgeCallError(`The SQL bridge did not complete this ${kind} call: ${failure}`);
     }
 
     await sleep(retryDelayMs, undefined, signal === undefined ? {} : { signal });
@@ -263,7 +284,11 @@ const sendWithRetries = async (
  * app at once; the queue only orders them, and each caller still receives its
  * own failure. The cap counts every call the code makes, failed ones included.
  * Only an execute call that returned the tool's success result counts as a
- * write, which is what the web app refreshes the open page on.
+ * write, which is what the web app refreshes the open page on. Every other
+ * execute that ends without an answer saying it did not run - an unconfirmed
+ * outcome, the route's own answer that the outcome was lost, or a cancelled
+ * call - counts as unconfirmed, which makes the web app ask for a read-back on
+ * failure but refreshes nothing.
  */
 export const createSqlBridgeSession = (
   bridge: ChatSandboxSqlBridge,
@@ -272,6 +297,7 @@ export const createSqlBridgeSession = (
   let calls = 0;
   let queue: Promise<unknown> = Promise.resolve();
   const writesByWorkspace = new Map<string | null, number>();
+  let unconfirmedWriteCount = 0;
 
   const call: SqlBridgeCaller = async (kind, args, signal) => {
     if (calls >= SANDBOX_MAX_SQL_CALLS_PER_COMMAND) {
@@ -281,11 +307,19 @@ export const createSqlBridgeSession = (
     }
     calls += 1;
     const result = queue.then(async () => {
-      const body = await sendWithRetries(bridge, deadlineEpochMs, kind, args, signal);
-      if (kind === "execute") {
-        writesByWorkspace.set(args.workspaceId, (writesByWorkspace.get(args.workspaceId) ?? 0) + 1);
+      if (kind === "query") {
+        return sendWithRetries(bridge, deadlineEpochMs, kind, args, signal);
       }
-      return body;
+      try {
+        const body = await sendWithRetries(bridge, deadlineEpochMs, kind, args, signal);
+        writesByWorkspace.set(args.workspaceId, (writesByWorkspace.get(args.workspaceId) ?? 0) + 1);
+        return body;
+      } catch (error) {
+        if (!(error instanceof SqlBridgeCallError) || error instanceof SqlBridgeUnconfirmedWriteError) {
+          unconfirmedWriteCount += 1;
+        }
+        throw error;
+      }
     });
     queue = result.catch(() => undefined);
     return result;
@@ -294,5 +328,6 @@ export const createSqlBridgeSession = (
   return {
     call,
     readWrites: () => [...writesByWorkspace].map(([workspaceId, count]) => ({ workspaceId, count })),
+    readUnconfirmedWriteCount: () => unconfirmedWriteCount,
   };
 };

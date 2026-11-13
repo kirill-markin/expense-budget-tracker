@@ -5,6 +5,7 @@ import { z } from "zod";
 import { runChatSandboxBash } from "./bashOperation.js";
 import {
   SANDBOX_MAX_SQL_CALLS_PER_COMMAND,
+  SANDBOX_SQL_MUTATION_OUTCOME_UNKNOWN_CODE,
   type ChatSandboxBashResponse,
   type ChatSandboxSqlBridge,
 } from "./contract.js";
@@ -149,6 +150,7 @@ test("a failure envelope reaches the shell's stderr and the script's catch, noth
     assert.equal(shell.stderr, `${failureEnvelope}\n`);
     assert.equal(shell.exitCode, 1);
     assert.deepEqual(shell.sqlWrites, []);
+    assert.equal(shell.sqlUnconfirmedWriteCount, 0);
 
     const script = await runWithBridge(
       `js-exec -c 'try { tools.sql.query({ sql: "SELECT x" }); } catch (error) { console.log(JSON.parse(error.message).error.code); }'`,
@@ -156,6 +158,35 @@ test("a failure envelope reaches the shell's stderr and the script's catch, noth
     );
     assert.equal(script.stderr, "");
     assert.equal(script.stdout, "sql_rejected\n");
+  });
+});
+
+test("the route's lost-outcome envelope counts an execute as unconfirmed and reaches the code unchanged", async (): Promise<void> => {
+  const outcomeUnknownEnvelope = JSON.stringify({
+    ok: false,
+    error: {
+      code: SANDBOX_SQL_MUTATION_OUTCOME_UNKNOWN_CODE,
+      message: "The SQL mutation transaction outcome is unknown",
+      details: { outcome: "unknown", retryable: false },
+    },
+  });
+  await withBridge(() => ({ status: 200, body: outcomeUnknownEnvelope }), async (fake) => {
+    const shell = await runWithBridge("ebt-sql-execute 'DELETE FROM x'", fake.bridge);
+    assert.equal(shell.stderr, `${outcomeUnknownEnvelope}\n`);
+    assert.equal(shell.exitCode, 1);
+    assert.deepEqual(shell.sqlWrites, []);
+    assert.equal(shell.sqlUnconfirmedWriteCount, 1);
+
+    const script = await runWithBridge(
+      `js-exec -c 'try { tools.sql.execute({ sql: "DELETE FROM x" }); } catch (error) { console.log(JSON.parse(error.message).error.code); }'`,
+      fake.bridge,
+    );
+    assert.equal(script.stdout, `${SANDBOX_SQL_MUTATION_OUTCOME_UNKNOWN_CODE}\n`);
+    assert.equal(script.sqlUnconfirmedWriteCount, 1);
+
+    const read = await runWithBridge("ebt-sql-query 'SELECT 1'", fake.bridge);
+    assert.equal(read.stderr, `${outcomeUnknownEnvelope}\n`);
+    assert.equal(read.sqlUnconfirmedWriteCount, 0);
   });
 });
 
@@ -177,6 +208,19 @@ test("js-exec code reads results as values and prints only what it chooses", asy
       );
     },
   );
+});
+
+test("a padded workspace id is sent and reported trimmed, as the route resolves it", async (): Promise<void> => {
+  await withBridge(() => ({ status: 200, body: okEnvelope({}) }), async (fake) => {
+    const response = await runWithBridge(
+      `js-exec -c 'tools.sql.execute({ sql: "INSERT 1", workspaceId: " w-2\\n" });'`,
+      fake.bridge,
+    );
+
+    assert.equal(response.stderr, "");
+    assert.deepEqual(response.sqlWrites, [{ workspaceId: "w-2", count: 1 }]);
+    assert.deepEqual(fake.calls.map((call) => call.body.workspaceId), ["w-2"]);
+  });
 });
 
 test("a command stops sending once it has made the most SQL calls one command may", async (): Promise<void> => {
@@ -211,11 +255,13 @@ test("a read is retried after a gateway failure, a write is not and says it may 
       const read = await runWithBridge("ebt-sql-query 'SELECT 1'", fake.bridge);
       assert.equal(read.exitCode, 0);
       assert.equal(fake.calls.length, 2);
+      assert.equal(read.sqlUnconfirmedWriteCount, 0);
 
       const write = await runWithBridge("ebt-sql-execute 'DELETE FROM x'", fake.bridge);
       assert.equal(fake.calls.length, 3);
       assert.equal(write.exitCode, 1);
       assert.deepEqual(write.sqlWrites, []);
+      assert.equal(write.sqlUnconfirmedWriteCount, 1);
       assert.equal(
         write.stderr,
         "The SQL bridge did not confirm this write (HTTP 503), so it may have been applied: read back with a SELECT before sending it again.\n",
@@ -291,6 +337,7 @@ test("a write refused on every attempt fails naming neither host nor capability"
   const response = await runWithBridge("ebt-sql-execute 'DELETE FROM x'", closed.bridge);
 
   assert.equal(response.exitCode, 1);
+  assert.equal(response.sqlUnconfirmedWriteCount, 0);
   assert.equal(
     response.stderr,
     "The SQL bridge did not complete this execute call: errorName=TypeError errorCode=ECONNREFUSED\n",

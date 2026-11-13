@@ -353,8 +353,8 @@ export type ChatSandboxCommandResult =
     wroteSessionWorkspace: boolean;
     /**
      * The command's code may have committed SQL writes to some workspace: it
-     * reported at least one, or its sandbox sent no report at all, which an
-     * older sandbox and a dead command process both do.
+     * reported at least one, confirmed or not, or its sandbox sent no report at
+     * all, which an older sandbox and a dead command process both do.
      */
     mayHaveWrittenSql: boolean;
   }>
@@ -449,6 +449,8 @@ const sandboxResponseSchema = z.object({
     workspaceId: z.string().nullable(),
     count: z.number().int().positive(),
   })).optional(),
+  // Optional for the same reasons; a sandbox that sends `sqlWrites` without it does not count unconfirmed writes.
+  sqlUnconfirmedWriteCount: z.number().int().nonnegative().optional(),
 });
 
 type SandboxResponse = z.infer<typeof sandboxResponseSchema>;
@@ -1795,7 +1797,9 @@ export const runChatSandboxCommandWithDependencies = async (
     wroteSessionWorkspace: response.sqlWrites !== undefined && response.sqlWrites.some(
       (write) => write.workspaceId === null || write.workspaceId === context.workspaceId,
     ),
-    mayHaveWrittenSql: response.sqlWrites === undefined || response.sqlWrites.length > 0,
+    mayHaveWrittenSql: response.sqlWrites === undefined
+      || response.sqlWrites.length > 0
+      || (response.sqlUnconfirmedWriteCount !== undefined && response.sqlUnconfirmedWriteCount > 0),
     data: {
       exitCode: response.exitCode,
       durationMs: response.durationMs,
