@@ -9,6 +9,7 @@ Each surface writes to more than one place, and each place counts a different un
 | Hosted MCP server | one `mcp_tool_call` record | `mcp_tool_call`, `sql_policy_rejected`, `mcp_unexpected_error` | `/aws/lambda/ExpenseBudgetTracker-McpHandler03E6F2E1-3CSCraZ4ica1` |
 | MCP transport | one HTTP request, which can carry several tool calls | API Gateway access log | `ExpenseBudgetTracker-McpApiAccessLogGroup5B86EB4E-O26C60B6XtE9` |
 | Web chat | one `chat` / `tool_call` record | `tool_call`, `sql_policy_rejected` | `/expense-tracker/web` |
+| Web chat sandbox SQL | one `chat` / `sandbox_sql` record per SQL call the route ran for a `bash` command's code | `sandbox_sql`, `sql_policy_rejected` | `/expense-tracker/web` |
 | `/v1` machine API | one HTTP request to one resource path | API Gateway access log | `ExpenseBudgetTracker-SqlApiAccessLogGroup0B9BA1DB-6ijpABrzSkZ0` |
 | `/v1` handler | the reason behind a `/v1` failure status | `sql_policy_rejected`, `agent_request_unavailable` | `/aws/lambda/ExpenseBudgetTracker-SqlApiHandler03D84818-KW4HJkTouQLY` |
 
@@ -24,7 +25,8 @@ The pattern form returns no `retentionInDays` for any group, so read retention w
 
 ## Field meanings the names do not give
 
-- `outcome` (MCP, `success` or `error`) and `status` (web chat, `completed` or `error`) say whether the model received a result or an error.
+- `outcome` (MCP, `success` or `error`; sandbox SQL, `succeeded` or `failed`) and `status` (web chat, `completed` or `error`) say whether the caller received a result or an error.
+- `sql` on a `sandbox_sql` record is the statement cut to its first 4,000 characters, and `sqlChars` is its full length. No rows are logged. `requestId` there is minted per bridge call, so it never matches the `tool_call` record of the `bash` command that sent it; join the two by `sessionId` and time. `activeRunId` is the chat run the capability named.
 - `errorCode` is the exact code the client-visible error envelope carried, so the same failure is countable by the same code on every surface. A web chat call that threw before producing any model-facing payload is recorded as the synthesized `internal_error`.
 - `caller` (MCP) is the client `User-Agent` reduced to a safe character set and cut to 120 characters, so punctuation such as a comma or underscore appears as `.` and `claude-code/2.1.282 (sdk-ts, agent-sdk/0.3.276)` is recorded as `claude-code/2.1.282 (sdk-ts. agent-sdk/0.3.276)`. A client that sends no header records `null`; one that sends an empty header records `""`. It identifies a client family, never an identity.
 - `workspaceId` on an MCP record is `null` for `list_workspaces` and `get_guide`, which resolve no workspace, and for any failure that happened before the workspace resolved. On a web chat record it is the chat session's workspace, which is not necessarily the workspace a successful cross-workspace statement acted on.
@@ -116,7 +118,15 @@ filter domain = "chat" and action = "tool_call"
 | sort @timestamp desc
 ```
 
-Why the SQL failures happened:
+SQL from sandbox code, counted per statement rather than per `bash` call, by kind and failure code:
+
+```
+filter domain = "chat" and action = "sandbox_sql"
+| stats count(*) as calls, sum(outcome = "failed") as failures by kind, errorCode
+| sort failures desc, calls desc
+```
+
+Why the SQL failures happened, from both the tools and sandbox code:
 
 ```
 filter action = "sql_policy_rejected"
@@ -156,4 +166,5 @@ Two further actions are stage details that always accompany one of those three, 
 - `sql_policy_rejected` carries only the policy code and reason on every surface: no tool, workspace, caller, request id or statement text. It joins to a tool call only through the matching `errorCode` within the same invocation or request.
 - Neither access log carries identity: no API key, connection id or user id. Attributing `/v1` or MCP HTTP traffic to a person needs the application records or the stored connection labels.
 - A missing or unaccepted credential leaves no application record: the `/v1` authorizer and the MCP bearer challenge both answer without logging. A rejected credential exists only as an access log line — on MCP both a missing and an unaccepted token are answered `401` — so it can be counted but never explained: no reason, no identity, no key. The access log's `errorMessage` is what separates an authorizer denial from other refusals. The one authentication-stage refusal that does leave a record is `agent_account_disabled`, written with the user id behind a `403`.
+- A sandbox SQL request the route refuses before running the statement, for an invalid or expired capability (`401`), a malformed body (`400`) or a run that is no longer running (`403`), leaves no `sandbox_sql` record in `/expense-tracker/web`. Its only trace is the sandbox Lambda's own `chat_sandbox` / `sql_bridge_attempt_failed` record, which carries the status and the response body but no user, session or statement.
 - The `/v1` access log has no concept of a tool, and the web chat records have no concept of an HTTP status, so a single cross-surface "failure rate" is not derivable without first deciding which unit the question means.

@@ -177,6 +177,19 @@ The web chat registers two tools of its own, in `WEB_CHAT_ONLY_TOOLS` and never 
 
 The web chat additionally dispatches `query_database`, the name its SQL tool had before the read/write split, because stored transcripts replay it into the model. It resolves to `sql_query` or `sql_execute` by statement kind and is never advertised.
 
+### SQL from sandbox code
+
+Code run by a web chat `bash` command can call the same two SQL tools, so a script can read or write many rows and hand the model only a summary. Inside the sandbox they are the `ebt-sql-query` and `ebt-sql-execute` shell commands, which always use the session's open workspace, and `tools.sql.query` / `tools.sql.execute` in `js-exec`, which take an optional `workspaceId`. `python3` cannot call them, so Python writes the statement to a `/work` file for the shell to send. One command may make at most 500 such calls. MCP and `/v1` have no equivalent, because they have no sandbox.
+
+Each call is one `POST /api/chat/sandbox/sql` to the web app, sent by the sandbox's host process; the guest interpreter's network stays off.
+
+- Every `bash` call carries a fresh capability: a token signed with HMAC-SHA256 under a key derived from `CHAT_SANDBOX_BRIDGE_SECRET`. It names one user, the session's workspace, the session and its active run, and expires after 5 minutes. The bridge URL and the capability stay in the host process, out of the shell's environment, its files and its output.
+- The capability is the route's only authentication, so `apps/web/src/proxy.ts` exempts the path from session auth and CSRF and strips forwarded identity headers. The route also checks in Postgres that the named run is still the session's running run, so the sandbox of a stopped or finished run is refused.
+- The statement then runs through `executeChatSqlCall` in `apps/web/src/server/chat/openai/tooling/tools.ts`, the same function as the chat's `sql_query` and `sql_execute` tools, with the same policy, roles and workspace resolution. Only the answer differs: code reads it whole rather than cut to the model's character budget, and a read too large to return whole is refused instead of losing rows.
+- The sandbox Lambda accepts a bridge URL only when its origin equals `CHAT_SANDBOX_SQL_BRIDGE_ORIGIN`, which CDK sets to the app origin. It is the same kind of outbound allowlist that `CHAT_SANDBOX_OBJECT_HOSTS` is for file object URLs.
+
+`CHAT_SANDBOX_BRIDGE_SECRET`, at least 32 characters, is required only when the sandbox is enabled; in AWS it is the CDK-generated Secrets Manager secret `expense-tracker/chat-sandbox-bridge-secret`. The bridge URL is derived from `CORS_ORIGIN`, because the sandbox runs outside the VPC and reaches the app over the internet. The sandbox image smoke runs `js-exec`, which the `tools.sql.*` calls depend on. Each statement the route runs leaves one `sandbox_sql` log record, described in [agent-telemetry.md](agent-telemetry.md#web-chat).
+
 ## Multi-currency conversion
 
 All amounts are stored in native currency only. No precomputed report-currency column exists on `ledger_entries`.
