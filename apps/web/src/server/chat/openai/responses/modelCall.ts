@@ -65,6 +65,42 @@ export class ChatModelCallTimeoutError extends Error {
   }
 }
 
+/** Thrown when OpenAI ends a model call with `response.failed`; carries OpenAI's own reason. */
+export class ChatModelResponseFailedError extends Error {
+  readonly responseId: string;
+  readonly responseStatus: OpenAI.Responses.ResponseStatus | undefined;
+  /** Null when OpenAI sent a failed response without an `error` object. */
+  readonly openaiErrorCode: OpenAI.Responses.ResponseError["code"] | null;
+
+  constructor(response: OpenAI.Responses.Response) {
+    const reason = response.error === null
+      ? "no error details"
+      : `${response.error.code}: ${response.error.message}`;
+    super(`OpenAI response ${response.id} failed with status ${String(response.status)}: ${reason}`);
+    this.name = "ChatModelResponseFailedError";
+    this.responseId = response.id;
+    this.responseStatus = response.status;
+    this.openaiErrorCode = response.error === null ? null : response.error.code;
+  }
+}
+
+/**
+ * Thrown when a model call's stream ends cleanly without `response.completed`,
+ * `response.incomplete`, or `response.failed`: OpenAI dropped it mid-response.
+ */
+export class ChatModelResponseUnfinishedError extends Error {
+  /** Null when the stream ended before any lifecycle event named the response. */
+  readonly responseId: string | null;
+
+  constructor(responseId: string | null) {
+    super(responseId === null
+      ? "OpenAI response stream ended before any lifecycle event"
+      : `OpenAI response ${responseId} stream ended without a terminal event`);
+    this.name = "ChatModelResponseUnfinishedError";
+    this.responseId = responseId;
+  }
+}
+
 const isUserAbortError = (error: unknown): boolean =>
   error instanceof OpenAI.APIUserAbortError
   || (error instanceof Error && error.name === "AbortError");
@@ -132,10 +168,6 @@ export type ParsedFunctionToolCall = OpenAI.Responses.ResponseFunctionToolCall &
   parsed_arguments?: unknown;
 }>;
 
-type ResponseStreamWithOptionalFinalResponse = AsyncIterable<OpenAI.Responses.ResponseStreamEvent> & Readonly<{
-  finalResponse?: () => Promise<OpenAI.Responses.Response>;
-}>;
-
 export type ModelCallResult = Readonly<{
   finalResponse: OpenAI.Responses.Response;
   functionCalls: ReadonlyArray<ParsedFunctionToolCall>;
@@ -177,28 +209,26 @@ const isOutputTextDelta = (
 ): event is OpenAI.Responses.ResponseTextDeltaEvent =>
   event.type === "response.output_text.delta";
 
-const isResponseCompletedEvent = (
+type ResponseLifecycleEvent =
+  | OpenAI.Responses.ResponseCreatedEvent
+  | OpenAI.Responses.ResponseQueuedEvent
+  | OpenAI.Responses.ResponseInProgressEvent
+  | OpenAI.Responses.ResponseCompletedEvent
+  | OpenAI.Responses.ResponseIncompleteEvent
+  | OpenAI.Responses.ResponseFailedEvent;
+
+const isResponseLifecycleEvent = (
   event: OpenAI.Responses.ResponseStreamEvent,
-): event is OpenAI.Responses.ResponseCompletedEvent =>
-  event.type === "response.completed";
-
-const getFinalResponseFromStream = async (
-  stream: ResponseStreamWithOptionalFinalResponse,
-  completedResponse: OpenAI.Responses.Response | null,
-): Promise<OpenAI.Responses.Response> => {
-  if (completedResponse !== null) {
-    return completedResponse;
-  }
-
-  if (typeof stream.finalResponse === "function") {
-    return stream.finalResponse();
-  }
-
-  throw new Error("OpenAI response stream completed without a final response");
-};
+): event is ResponseLifecycleEvent =>
+  event.type === "response.created"
+  || event.type === "response.queued"
+  || event.type === "response.in_progress"
+  || event.type === "response.completed"
+  || event.type === "response.incomplete"
+  || event.type === "response.failed";
 
 const consumeStreamResponse = async (
-  stream: ResponseStreamWithOptionalFinalResponse,
+  stream: AsyncIterable<OpenAI.Responses.ResponseStreamEvent>,
   emitEvent: OpenAILoopEventHandler,
   callIndex: number,
   onStreamEvent: () => void,
@@ -210,13 +240,13 @@ const consumeStreamResponse = async (
   const reasoningSummaries = new Map<string, string>();
   const reasoningOrder: Array<string> = [];
   let toolStates = createToolCallStateMap();
-  let completedResponse: OpenAI.Responses.Response | null = null;
+  let lastLifecycleEvent: ResponseLifecycleEvent | null = null;
   let streamedText = "";
 
   for await (const event of stream) {
     onStreamEvent();
-    if (isResponseCompletedEvent(event)) {
-      completedResponse = event.response;
+    if (isResponseLifecycleEvent(event)) {
+      lastLifecycleEvent = event;
       continue;
     }
 
@@ -300,8 +330,19 @@ const consumeStreamResponse = async (
     }
   }
 
-  const finalResponse = await getFinalResponseFromStream(stream, completedResponse);
-  return { finalResponse, streamedText, toolStates };
+  if (lastLifecycleEvent === null) {
+    throw new ChatModelResponseUnfinishedError(null);
+  }
+  switch (lastLifecycleEvent.type) {
+    case "response.failed":
+      throw new ChatModelResponseFailedError(lastLifecycleEvent.response);
+    // An incomplete response is final too: its stop reason is incomplete_details.reason.
+    case "response.completed":
+    case "response.incomplete":
+      return { finalResponse: lastLifecycleEvent.response, streamedText, toolStates };
+    default:
+      throw new ChatModelResponseUnfinishedError(lastLifecycleEvent.response.id);
+  }
 };
 
 const getModelCallErrorType = (error: unknown): string => {
@@ -344,7 +385,7 @@ export const runOneModelCall = async (
         MODEL_CALL_MAX_DURATION_MS,
       );
       try {
-        const stream: ResponseStreamWithOptionalFinalResponse = client.responses.stream(
+        const stream = client.responses.stream(
           request,
           { signal: deadline.signal },
         );
