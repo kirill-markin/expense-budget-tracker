@@ -45,6 +45,10 @@
 
 .scroll {
   --budget-category-column-width: 180px;
+  --budget-cell-padding: 10px;
+  --budget-single-year-header-padding: 4px;
+  --budget-modifier-inline-size: 10px;
+  --budget-modifier-gap: 5px;
   --budget-value-column-width: 90px;
   --budget-year-column-width: var(--budget-value-column-width);
 
@@ -95,7 +99,7 @@
 .headCell {
   box-sizing: border-box;
   overflow: hidden;
-  padding: 6px 10px;
+  padding: 6px var(--budget-cell-padding);
   text-align: center;
   font-weight: 650;
   border-bottom: 1px solid var(--panel-border);
@@ -104,7 +108,7 @@
 .subHeadCell {
   box-sizing: border-box;
   overflow: hidden;
-  padding: 2px 10px 6px;
+  padding: 2px var(--budget-cell-padding) 6px;
   text-align: end;
   font-size: 11px;
   font-weight: 400;
@@ -165,13 +169,10 @@
 
 .cell {
   box-sizing: border-box;
-  inline-size: var(--budget-value-column-width);
-  max-inline-size: var(--budget-value-column-width);
-  overflow: hidden;
-  padding: 4px 10px;
+  min-inline-size: var(--budget-value-column-width);
+  padding: 4px var(--budget-cell-padding);
   text-align: end;
   font-variant-numeric: tabular-nums;
-  text-overflow: clip;
 }
 
 .cellSubtotal {
@@ -237,6 +238,10 @@ tbody tr:last-child .currentMonthActual {
   border-inline-end: 2px solid var(--panel-border);
 }
 
+.headCell.singleYearHeader {
+  padding-inline: var(--budget-single-year-header-padding);
+}
+
 .yearTotalDanger {
   --budget-table-year-total-color: var(--inverse-danger);
   --table-state-danger-color: var(--inverse-danger);
@@ -293,11 +298,11 @@ tbody tr:last-child .currentMonthActual {
 .planCellButton {
   display: block;
   box-sizing: border-box;
-  inline-size: calc(100% + 20px);
+  inline-size: calc(100% + 2 * var(--budget-cell-padding));
   margin-block: -4px;
-  margin-inline: -10px;
+  margin-inline: calc(-1 * var(--budget-cell-padding));
   padding-block: 4px;
-  padding-inline: 10px;
+  padding-inline: var(--budget-cell-padding);
   border: none;
   background: none;
   color: inherit;
@@ -322,33 +327,29 @@ tbody tr:last-child .currentMonthActual {
 
 .iconModifier {
   display: inline-block;
-  width: 0;
-  height: 0;
-  margin-inline-end: 5px;
+  inline-size: 0;
+  block-size: 0;
+  margin-inline-end: var(--budget-modifier-gap);
   vertical-align: middle;
 }
 
 .iconGood {
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
+  border-inline: calc(var(--budget-modifier-inline-size) / 2) solid transparent;
   border-bottom: 7px solid var(--positive);
 }
 
 .iconBad {
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
+  border-inline: calc(var(--budget-modifier-inline-size) / 2) solid transparent;
   border-top: 7px solid var(--danger);
 }
 
 .iconBadUp {
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
+  border-inline: calc(var(--budget-modifier-inline-size) / 2) solid transparent;
   border-bottom: 7px solid var(--danger);
 }
 
 .iconGoodDown {
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
+  border-inline: calc(var(--budget-modifier-inline-size) / 2) solid transparent;
   border-top: 7px solid var(--positive);
 }
 
@@ -771,6 +772,7 @@ tbody tr:last-child .currentMonthActual {
 
 @media (max-width: 1099px), (pointer: coarse) {
   .scroll {
+    --budget-cell-padding: 6px;
     --budget-value-column-width: 76px;
     --budget-year-column-width: 84px;
   }
@@ -778,13 +780,7 @@ tbody tr:last-child .currentMonthActual {
   .cell,
   .subHeadCell,
   .headCell {
-    padding-inline: 6px;
-  }
-
-  .planCellButton {
-    inline-size: calc(100% + 12px);
-    margin-inline: -6px;
-    padding-inline: 6px;
+    padding-inline: var(--budget-cell-padding);
   }
 
   .addCategoryRow {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type CSSProperties, type ReactElement } from "react";
+import { Fragment, useMemo, type CSSProperties, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
 import alertStyles from "@/ui/Alert.module.css";
@@ -18,7 +18,7 @@ import {
   type BudgetTableProps,
   useBudgetTableController,
 } from "@/ui/tables/budget/controller/useBudgetTableController";
-import { buildBudgetValueColumns } from "@/ui/tables/budget/budgetTableLogic";
+import { buildBudgetColumnContent, getBudgetColumnInlineSize, getBudgetValuesInlineSize } from "@/ui/tables/budget/budgetTableLogic";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 
 type BudgetTableGeometryStyle = CSSProperties & Readonly<{
@@ -31,19 +31,26 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
   const { numberFormat } = useFormat();
   const { toastMessage, copyToClipboard } = useCopyToast();
   const controller = useBudgetTableController(props);
-  const valueColumns = buildBudgetValueColumns(
-    controller.columnSequence,
-    controller.currentMonth,
-    controller.plansMode,
-  );
-  const yearColumnCount = valueColumns.filter((column) => column.isYearTotal).length;
-  const tableGeometryStyle: BudgetTableGeometryStyle = {
-    "--budget-values-inline-size": `calc(${valueColumns.length - yearColumnCount} * var(--budget-value-column-width) + ${yearColumnCount} * var(--budget-year-column-width))`,
-  };
-
+  const valueColumns = useMemo(() => buildBudgetColumnContent(controller, numberFormat, {
+    plan: t("budget.plan"), actual: t("budget.actual"), total: t("budget.total"),
+  }), [
+    controller.columnSequence, controller.currentMonth, controller.plansMode,
+    controller.loadedFrom, controller.loadedTo, controller.blocks,
+    controller.effectiveAllowlist, controller.filteredSubtotalsMap,
+    controller.incomeSubtotals, controller.spendSubtotals, controller.transferSubtotals,
+    controller.yearComputed, controller.cumulativeBalances, controller.fxAdjustments,
+    controller.hasBusinessAccount, controller.businessPersonalTransfers,
+    controller.hasLiquidityBreakdown, controller.liquidityTiers,
+    controller.mebByLiq, controller.projectedLiqBalances, numberFormat, t,
+  ]);
   if (controller.months.length === 0) {
     return <p className={styles.empty}>{t("budget.noData")}</p>;
   }
+
+  const columnInlineSizes = valueColumns.map(getBudgetColumnInlineSize);
+  const tableGeometryStyle: BudgetTableGeometryStyle = {
+    "--budget-values-inline-size": getBudgetValuesInlineSize(columnInlineSizes),
+  };
 
   const currencyList = conversionWarnings.map((warning) => warning.currency).join(", ");
 
@@ -150,8 +157,8 @@ export const BudgetTable = (props: BudgetTableProps): ReactElement => {
         <table className={styles.table} style={tableGeometryStyle}>
           <colgroup>
             <col className={styles.categoryColumn} />
-            {valueColumns.map((column) => (
-              <col key={column.key} className={column.isYearTotal ? styles.yearValueColumn : styles.valueColumn} />
+            {valueColumns.map((column, index) => (
+              <col key={column.key} style={{ inlineSize: columnInlineSizes[index] }} className={column.isYearTotal ? styles.yearValueColumn : styles.valueColumn} />
             ))}
           </colgroup>
           <BudgetTableHeader
