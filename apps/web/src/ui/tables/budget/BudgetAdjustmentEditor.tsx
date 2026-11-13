@@ -3,6 +3,7 @@
 import { type ReactElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import {
   getBudgetAdjustmentCategoryOptions,
   isValidBudgetAdjustmentNoteInput,
@@ -98,7 +99,7 @@ export const BudgetAdjustmentEditor = (
     onDeleteSuccess,
     onSettlementSuccess,
   } = props;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const accessibilityId = useId();
   const rows = controller.getCellRows(
     location,
@@ -618,6 +619,8 @@ export const BudgetAdjustmentEditor = (
                     element,
                   )}
                   type="text"
+                  dir="ltr"
+                  style={{ textAlign: i18n.dir() === "rtl" ? "end" : "start" }}
                   inputMode="numeric"
                   pattern="[+-]?[0-9]*"
                   className={styles.adjustmentInput}
@@ -815,7 +818,7 @@ export const BudgetAdjustmentEditor = (
             {t("budget.adjustmentDeleteDescription")}
           </p>
           <dl className={styles.adjustmentDeleteSummary}>
-            <div><dt>{t("budget.adjustmentAmount")}</dt><dd>{getDeleteAmount(deleteCandidate)}</dd></div>
+            <div><dt>{t("budget.adjustmentAmount")}</dt><dd><NumericText>{getDeleteAmount(deleteCandidate)}</NumericText></dd></div>
             <div><dt>{t("budget.adjustmentNote")}</dt><dd>{deleteCandidate.draft.noteInput || "—"}</dd></div>
             <div><dt>{t("budget.adjustmentMonth")}</dt><dd>{deleteCandidate.draft.month}</dd></div>
             <div><dt>{t("budget.adjustmentCategory")}</dt><dd>{deleteCandidate.draft.category}</dd></div>

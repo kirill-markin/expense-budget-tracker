@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { useCellOverlayPosition } from "@/ui/tables/overlays/useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 import { useFormat } from "@/ui/FormatProvider";
@@ -26,7 +27,7 @@ type Props = Readonly<{
 export const EditableAmount = (props: Props): ReactElement => {
   const { entryId, currentValue, maskClass, isUnpairedTransfer, onAmountCommit } = props;
   const { numberFormat } = useFormat();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const editorId = `transaction-amount:${entryId}`;
 
   const [editing, setEditing] = useState<boolean>(false);
@@ -129,18 +130,19 @@ export const EditableAmount = (props: Props): ReactElement => {
       data-testid={`transaction-amount-${entryId}`}
       onClick={isMasked ? undefined : startEditing}
     >
-      {formatAmount(currentValue, numberFormat)}
+      <NumericText>{formatAmount(currentValue, numberFormat)}</NumericText>
       {editing && rect !== null && createPortal(
         <input
           ref={inputRef}
           className={styles.editorOverlay}
           type="text"
+          dir="ltr"
           inputMode="decimal"
           data-testid={`transaction-amount-input-${entryId}`}
           aria-invalid={validationError !== null}
           aria-label={t("table.amount")}
           value={editValue}
-          style={{ ...(editorPosition ?? { top: rect.top, left: rect.left, width: rect.width }), height: rect.height, textAlign: "end" }}
+          style={{ ...(editorPosition ?? { top: rect.top, left: rect.left, width: rect.width }), height: rect.height, textAlign: i18n.dir() === "rtl" ? "start" : "end" }}
           onChange={(e) => {
             setEditValue(e.target.value);
             setValidationError(null);

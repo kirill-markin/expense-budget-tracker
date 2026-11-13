@@ -178,6 +178,14 @@
   font-weight: 650;
 }
 
+/* RTL inline overflow otherwise clips the leading sign off a long LTR run. */
+.cell:dir(rtl) :global(bdi) {
+  display: inline-block;
+  max-inline-size: 100%;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
 .remainderPositive:not(:global(.data-masked)) {
   color: var(--positive);
 }

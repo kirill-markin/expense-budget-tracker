@@ -3,6 +3,7 @@
 import { Fragment, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { getCellVisibility, MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import { BudgetPlanCell } from "@/ui/tables/budget/BudgetPlanCell";
@@ -180,7 +181,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   ? () => openDrillDown(buildCategoryYearDrillDownFilter(column.year, block.direction, category))
                   : undefined}
               >
-                {categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}
+                <NumericText>{categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}</NumericText>
               </td>
             );
           },
@@ -198,7 +199,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   ? `budget-year-plan-${column.year}:${block.direction}:${category}`
                   : undefined}
               >
-                {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : MASKED_CELL_PLACEHOLDER}
+                <NumericText>{categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : MASKED_CELL_PLACEHOLDER}</NumericText>
               </td>
             );
           },
@@ -230,7 +231,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                     ? `budget-year-plan-${column.year}:${block.direction}:${category}`
                     : undefined}
                 >
-                  {categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : MASKED_CELL_PLACEHOLDER}
+                  <NumericText>{categoryVisibility.showData ? formatAmount(yearCell.planned, numberFormat) : MASKED_CELL_PLACEHOLDER}</NumericText>
                 </td>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${categoryVisibility.maskClass}${yearTotalActualStateClass}${categoryVisibility.showData ? ` ${styles.cellClickable}` : ""}`}
@@ -242,7 +243,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                     ? () => openDrillDown(buildCategoryYearDrillDownFilter(column.year, block.direction, category))
                     : undefined}
                 >
-                  {categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}
+                  <NumericText>{categoryVisibility.showData ? formatAmount(yearCell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}</NumericText>
                 </td>
               </Fragment>
             );
@@ -265,7 +266,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                   ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                   : undefined}
               >
-                {categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}
+                <NumericText>{categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}</NumericText>
               </td>
             );
           },
@@ -360,7 +361,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
                     ? () => openDrillDown(buildCategoryMonthDrillDownFilter(column.month, block.direction, category))
                     : undefined}
                 >
-                  {categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}
+                  <NumericText>{categoryVisibility.showData ? formatAmount(cell.actual, numberFormat) : MASKED_CELL_PLACEHOLDER}</NumericText>
                 </td>
               </Fragment>
             );
