@@ -273,3 +273,24 @@ test("undeliverable recipients are counted and alarmed only on a run of them", (
   assert.equal(alarm.TreatMissingData, "notBreaching");
   assert.deepEqual(alarm.AlarmActions, [{ Ref: alertTopicLogicalId(template) }]);
 });
+
+test("the FX alarm fires only on an event dropped after every asynchronous retry", (): void => {
+  const template = synthesizeMonitoringTemplate();
+  const fxFunctions = Object.keys(template.findResources("AWS::Lambda::Function")).filter(
+    (logicalId) => logicalId.startsWith("FxFetcher"),
+  );
+  assert.equal(fxFunctions.length, 1);
+  const alarms = Object.values(template.findResources("AWS::CloudWatch::Alarm"))
+    .map((resource) => asRecord(asRecord(resource).Properties))
+    .filter((properties) => properties.MetricName === "AsyncEventsDropped");
+
+  assert.equal(alarms.length, 1);
+  const alarm = alarms[0];
+  assert.equal(alarm.Namespace, "AWS/Lambda");
+  assert.deepEqual(alarm.Dimensions, [{ Name: "FunctionName", Value: { Ref: fxFunctions[0] } }]);
+  assert.equal(alarm.Statistic, "Sum");
+  assert.equal(alarm.Threshold, 1);
+  assert.equal(alarm.ComparisonOperator, "GreaterThanOrEqualToThreshold");
+  assert.equal(alarm.TreatMissingData, "notBreaching");
+  assert.deepEqual(alarm.AlarmActions, [{ Ref: alertTopicLogicalId(template) }]);
+});
