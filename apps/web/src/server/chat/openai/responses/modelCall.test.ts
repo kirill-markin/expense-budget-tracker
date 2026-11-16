@@ -11,7 +11,10 @@ import {
   runOneModelCall,
   startModelCallDeadline,
 } from "@/server/chat/openai/responses/modelCall";
-import { buildOpenAIResponsesRequest } from "@/server/chat/openai/responses/request";
+import {
+  buildOpenAIResponsesRequest,
+  getResponseStopReason,
+} from "@/server/chat/openai/responses/request";
 import { CHAT_RUN_LOOP_STOP_SIGNAL } from "@/server/chat/runtime/loopStopSignal";
 import { registerInMemorySpanExporterForTests } from "@/server/telemetry/spanRecorderForTests";
 
@@ -192,4 +195,42 @@ test("a model call that goes silent after one stream event fails with the idle t
   assert.equal(spans.length, 1);
   assert.equal(spans[0].attributes["app.timeout.limit"], "idle");
   assert.equal(spans[0].attributes["error.type"], "timeout");
+});
+
+test("a response.incomplete event is the final response, stopped by its incomplete reason", async (): Promise<void> => {
+  const incompleteResponse = {
+    id: "resp-1",
+    model: CHAT_MODEL_ID,
+    status: "incomplete",
+    incomplete_details: { reason: "max_output_tokens" },
+    error: null,
+    output: [],
+    usage: {
+      input_tokens: 10,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: 5,
+      output_tokens_details: { reasoning_tokens: 0 },
+      total_tokens: 15,
+    },
+  } as unknown as OpenAI.Responses.Response;
+  const streamTextThenIncomplete = async function* (): AsyncGenerator<OpenAI.Responses.ResponseStreamEvent> {
+    yield TEXT_DELTA_EVENT;
+    yield { type: "response.incomplete", sequence_number: 2, response: incompleteResponse };
+  };
+  const client = { responses: { stream: streamTextThenIncomplete } } as unknown as OpenAI;
+
+  const result = await runOneModelCall(
+    client,
+    MODEL_CALL_PARAMS,
+    async (): Promise<void> => {},
+    MODEL_CALL_REQUEST,
+    "prompt-cache-key",
+    1,
+    1,
+    0,
+  );
+
+  assert.equal(result.finalResponse, incompleteResponse);
+  assert.equal(getResponseStopReason(result.finalResponse), "max_output_tokens");
+  assert.equal(result.streamedText, "Hello");
 });

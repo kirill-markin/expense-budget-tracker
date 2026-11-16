@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { CHAT_VENDOR } from "@/lib/chatModels";
 import {
   ChatModelCallTimeoutError,
+  ChatModelResponseFailedError,
+  ChatModelResponseUnfinishedError,
   type ModelCallTimeoutLimit,
 } from "@/server/chat/openai/responses/modelCall";
 import { createChatWorkspaceUnavailableLogEvent } from "@/server/chat/workspaceUnavailableLog";
@@ -127,9 +129,13 @@ export const extractOpenAIErrorContext = (
   }
   if (error instanceof Error) {
     const causeCode = extractCauseCode(error);
+    const openaiErrorCode = error instanceof ChatModelResponseFailedError
+      ? error.openaiErrorCode
+      : null;
     const context: ChatOpenAIErrorContext = {
       errorClass: error.constructor.name,
       ...(causeCode === undefined ? {} : { causeCode }),
+      ...(openaiErrorCode === null ? {} : { openaiErrorCode }),
     };
     const match = OPENAI_REQUEST_ID_REGEX.exec(error.message);
     if (match !== null) {
@@ -150,6 +156,12 @@ const OPENAI_STREAM_TRANSIENT_ERROR_TYPES = new Set([
   "rate_limit_error",
 ]);
 
+/** `response.error.code` of a `response.failed` event uses `rate_limit_exceeded` for rate limits. */
+const OPENAI_FAILED_RESPONSE_TRANSIENT_ERROR_CODES: ReadonlySet<string> = new Set([
+  ...OPENAI_STREAM_TRANSIENT_ERROR_TYPES,
+  "rate_limit_exceeded",
+]);
+
 /**
  * Single source of truth for "is this an OpenAI failure that's worth retrying
  * or retranslating to the user as transient?". Used by the chat loop's retry
@@ -160,6 +172,15 @@ const OPENAI_STREAM_TRANSIENT_ERROR_TYPES = new Set([
 export const classifyOpenAITransientError = (error: unknown): OpenAITransientClassification => {
   if (error instanceof ChatModelCallTimeoutError) {
     return { retryable: true, reason: "timeout" };
+  }
+  if (error instanceof ChatModelResponseUnfinishedError) {
+    return { retryable: true, reason: "response_unfinished" };
+  }
+  if (error instanceof ChatModelResponseFailedError) {
+    return error.openaiErrorCode !== null
+      && OPENAI_FAILED_RESPONSE_TRANSIENT_ERROR_CODES.has(error.openaiErrorCode)
+      ? { retryable: true, reason: `response_failed_${error.openaiErrorCode}` }
+      : { retryable: false };
   }
   if (error instanceof OpenAI.APIUserAbortError) return { retryable: false };
   if (error instanceof Error && error.name === "AbortError") return { retryable: false };

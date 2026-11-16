@@ -88,6 +88,7 @@ export const lambdaImageCandidates = (
     ...dbNetwork,
     timeout: cdk.Duration.minutes(5),
     memorySize: 256,
+    retryAttempts: 2,
     environment: { ...dbEnvironment, DB_SECRET_ARN: props.workerDbSecret.secretArn },
   });
   props.workerDbSecret.grantRead(fx);

@@ -193,7 +193,7 @@ export const getResponseStopReason = (
 export const getResponseUsage = (
   response: OpenAI.Responses.Response,
 ): OpenAI.Responses.ResponseUsage => {
-  if (response.usage === undefined) {
+  if (response.usage === undefined || response.usage === null) {
     throw new Error(`OpenAI response ${response.id} is missing usage`);
   }
 
