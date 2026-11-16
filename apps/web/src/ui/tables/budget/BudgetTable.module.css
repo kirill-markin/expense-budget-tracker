@@ -748,14 +748,12 @@ tbody tr:last-child .currentMonthActual {
   border-color: var(--danger);
 }
 
-.addCategoryMessage {
-  padding: 4px 10px;
-  text-align: start;
-}
-
 .addCategoryError {
+  display: block;
+  margin-block-start: 4px;
   color: var(--danger);
   font-size: 11px;
+  overflow-wrap: anywhere;
   white-space: normal;
 }
 
@@ -781,10 +779,6 @@ tbody tr:last-child .currentMonthActual {
   .subHeadCell,
   .headCell {
     padding-inline: var(--budget-cell-padding);
-  }
-
-  .addCategoryRow {
-    display: none;
   }
 }
 
